@@ -59,6 +59,8 @@ import {
 } from "./shared.js";
 import { coerceType, tryStructToString } from "./type-coercion.js";
 import { symbolWrapperToStringThrowArm } from "./symbol-to-primitive-arms.js"; // (#6651 H1)
+import { ensureObjectRuntime } from "./object-runtime.js";
+import { anyValuePayloadToNumberBody } from "./helpers/anyvalue-to-number.js"; // (#6998)
 
 /**
  * The three coercion modes the backend dispatches over. Derived once from the
@@ -82,16 +84,25 @@ export function coercionMode(ctx: CodegenContext): CoercionMode {
  * Build the shared runtime ToPrimitive call for a value already on the stack.
  * Raw runtime bodies do not have an AST expression for `emitToString`, so this
  * is their narrow entry point into the coercion engine instead of spelling the
- * helper lookup and hint ABI at each call site.
+ * helper lookup and hint ABI at each call site. `"default"` is the runtime's
+ * null hint, which rejects a Symbol result for the ToNumber / ToString that
+ * follows; `"default-symbol"` is the explicit string (#6774 S19), which keeps
+ * it for loose equality to compare (#7194). Both are the spec's "default";
+ * the pair is not renamed because `"default"` also names the
+ * `__anyvalue_payload_to_number_default` helper, so a rename moves bytes.
  */
-export function runtimeToPrimitiveInstrs(ctx: CodegenContext, hint: "string" | "number" | "default"): Instr[] | null {
+export function runtimeToPrimitiveInstrs(
+  ctx: CodegenContext,
+  hint: "string" | "number" | "default" | "default-symbol",
+): Instr[] | null {
   const funcIdx = ctx.funcMap.get("__to_primitive");
   if (funcIdx === undefined) return null;
   if (hint === "default") {
     return [{ op: "ref.null.extern" }, { op: "call", funcIdx }];
   }
-  addStringConstantGlobal(ctx, hint);
-  return [...stringConstantExternrefInstrs(ctx, hint), { op: "call", funcIdx }];
+  const hintString = hint === "default-symbol" ? "default" : hint;
+  addStringConstantGlobal(ctx, hintString);
+  return [...stringConstantExternrefInstrs(ctx, hintString), { op: "call", funcIdx }];
 }
 
 /**
@@ -102,6 +113,39 @@ export function runtimeToPrimitiveInstrs(ctx: CodegenContext, hint: "string" | "
 export function runtimeToNumberInstrs(ctx: CodegenContext): Instr[] | null {
   const funcIdx = ctx.funcMap.get("__unbox_number");
   return funcIdx === undefined ? null : [{ op: "call", funcIdx }];
+}
+
+/**
+ * (#6998) The out-of-line ToNumber helper for an `$AnyValue` string (tag 5) or
+ * object (tag 6) payload, one per hint, or `null` on a js-host target (or if
+ * ToNumber is missing). Mirrors coerceType's externref → f64 arm: ToPrimitive
+ * runs natively on `--target standalone` (the object runtime owns
+ * `__to_primitive`, as for `emitAnyRelational`); WASI keeps that arm's bare
+ * ToNumber. Call BEFORE building the dispatch: it may flush late-import shifts.
+ */
+export function ensureAnyValuePayloadToNumber(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  hint: "number" | "string" | "default" | undefined,
+): number | null {
+  if (coercionMode(ctx) !== "standalone") return null;
+  const name = `__anyvalue_payload_to_number_${hint ?? "number"}`;
+  const existing = ctx.funcMap.get(name);
+  if (existing !== undefined) return existing;
+  addUnionImports(ctx);
+  const nativeToPrimitive = ctx.standalone;
+  if (nativeToPrimitive) ensureObjectRuntime(ctx);
+  flushLateImportShifts(ctx, fctx);
+  const toPrimitive = (nativeToPrimitive ? runtimeToPrimitiveInstrs(ctx, hint ?? "number") : null) ?? [];
+  const toNumber = runtimeToNumberInstrs(ctx);
+  if (toNumber === null) return null;
+  const anyTypeIdx = ctx.anyValueTypeIdx;
+  const body = anyValuePayloadToNumberBody(anyTypeIdx, [...toPrimitive, ...toNumber]);
+  const typeIdx = addFuncType(ctx, [{ kind: "ref_null", typeIdx: anyTypeIdx }], [{ kind: "f64" }], name);
+  const funcIdx = mintDefinedFunc(ctx);
+  pushDefinedFunc(ctx, funcIdx, { name, typeIdx, locals: [], body, exported: false });
+  ctx.funcMap.set(name, funcIdx);
+  return funcIdx;
 }
 
 /** True when the active mode represents strings as a native `$AnyString` GC ref. */
@@ -638,9 +682,13 @@ export function getExternrefToStringProvider(ctx: CodegenContext): number | unde
  * throws a TypeError; every other value takes `__extern_toString` unchanged
  * (ToPrimitive runs ONCE — `__extern_toString` of the primitive result does not
  * re-enter user code). Falls back to `__extern_toString` outside
- * standalone/wasi or in a module with no `$Symbol` carrier.
+ * standalone/wasi or in a module with no `$Symbol` carrier. `fctx` is null for a
+ * finalize-time caller (#6969's parse arms) with no body to flush.
  */
-export function ensureSpecExternrefToStringProvider(ctx: CodegenContext, fctx: FunctionContext): number | undefined {
+export function ensureSpecExternrefToStringProvider(
+  ctx: CodegenContext,
+  fctx: FunctionContext | null,
+): number | undefined {
   const NAME = "__extern_to_string_spec";
   const existing = ctx.funcMap.get(NAME);
   if (existing !== undefined) return existing;
@@ -649,7 +697,9 @@ export function ensureSpecExternrefToStringProvider(ctx: CodegenContext, fctx: F
   if (getToPrimitiveProvider(ctx) === undefined) return plain;
   addStringConstantGlobal(ctx, "string");
   const throwSym = (): Instr[] =>
-    buildThrowJsErrorInstrs(ctx, "TypeError", "Cannot convert a Symbol value to a string", { flush: fctx });
+    buildThrowJsErrorInstrs(ctx, "TypeError", "Cannot convert a Symbol value to a string", {
+      flush: fctx ?? undefined,
+    });
   const inputThrow = throwSym();
   const primitiveThrow = throwSym();
   const wrapperThrow = throwSym();
@@ -1048,48 +1098,6 @@ function emitAnyEquality(
   }
 
   return { kind: "i32" };
-}
-
-/**
- * #1917 equality finale, slice E6 — the standalone externref-vs-externref
- * loose-equality tail.
- *
- * For two opaque `any` externref operands that were NOT eqref-identical, the
- * standalone/WASI lane (no JS host) routes through the NATIVE §7.2.15
- * IsLooselyEqual instead of the unsatisfiable `__host_loose_eq` import (#2081):
- * box both externrefs to `$AnyValue` via `__any_from_extern` (tag5 string / tag3
- * number / tag4 bool / tag1 null) and call the keystone `__any_eq` helper (whose
- * tag-5 field-4 classifier owns the String⇄Number / proto-identity arms). This
- * is the SAME tag-5-sensitive boxing E3 does for the any/any case, just sourced
- * from two pre-computed externref temps instead of freshly-compiled operands.
- *
- * Returns the instruction SEQUENCE (this caller builds an `Instr[]` for an
- * `if`-arm, it does not emit live), or `null` when the helpers are unavailable so
- * the caller can fall through to its host-import path exactly as before. WRAPPER,
- * not a re-derivation: the classifier stays in `__any_eq`'s body (any-helpers.ts).
- *
- * @param tmpLeft  local index holding the left externref operand.
- * @param tmpRight local index holding the right externref operand.
- * @param negate   append `i32.eqz` for the `!=` form.
- */
-export function emitAnyEqFromExternTemps(
-  ctx: CodegenContext,
-  tmpLeft: number,
-  tmpRight: number,
-  negate: boolean,
-): Instr[] | null {
-  ensureAnyHelpers(ctx);
-  const fromExternIdx = ensureAnyFromExternHelper(ctx);
-  const anyEqIdx = ctx.funcMap.get("__any_eq");
-  if (fromExternIdx === undefined || anyEqIdx === undefined) return null;
-  return [
-    { op: "local.get", index: tmpLeft },
-    { op: "call", funcIdx: fromExternIdx },
-    { op: "local.get", index: tmpRight },
-    { op: "call", funcIdx: fromExternIdx },
-    { op: "call", funcIdx: anyEqIdx },
-    ...(negate ? ([{ op: "i32.eqz" }] satisfies Instr[]) : []),
-  ];
 }
 
 /**

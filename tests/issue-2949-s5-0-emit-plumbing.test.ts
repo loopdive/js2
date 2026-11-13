@@ -24,7 +24,6 @@
 import ts from "typescript";
 import { describe, expect, it } from "vitest";
 
-import { ensureAnyHelpers } from "../src/codegen/any-helpers.js";
 // Side-effect import: registers the `flushLateImportShifts` codegen delegate
 // that `addUnionImports` requires (owned by expressions/late-imports.ts, which
 // expressions.ts registers on module load — same pattern as the slice-3 test).
@@ -65,15 +64,6 @@ const DYN: IrType = irDynamic();
 // Harness — real context, production handle, production encoder
 // (identical to the slice-3 test; the box/unbox/tag.test lowering is shared)
 // ---------------------------------------------------------------------------
-
-function makeGcCtx(): CodegenContext {
-  const ctx = createCodegenContext(createEmptyModule(), {} as unknown as ts.TypeChecker, {
-    fast: true,
-    nativeStrings: false,
-  });
-  ensureAnyHelpers(ctx); // what preregisterDynamicSupport does for gc
-  return ctx;
-}
 
 function makeHostCtx(): CodegenContext {
   const ctx = createCodegenContext(createEmptyModule(), {} as unknown as ts.TypeChecker, {});
@@ -311,38 +301,10 @@ function roundTripFns(): IrFunction[] {
   ];
 }
 
-describe("#2949 S5.0 — gc runtime: builder-emitted box/tag.test/unbox round-trips", () => {
-  it("verifies + runs the round-trip functions ($AnyValue carrier)", async () => {
-    const fns = roundTripFns();
-    for (const f of fns) expect(verifyIrFunction(f)).toEqual([]);
-    const ctx = makeGcCtx();
-    install(ctx, fns);
-    const ex = await instantiateCtx(ctx);
-    // box(f64) → tag.test(number) proves true → unbox round-trips the value.
-    for (const v of [0, 1, -0, 3.5, -42, NaN, Math.PI, 2 ** 40]) {
-      expect(ex.matchNumber(v)).toBe(Object.is(v, -0) ? -0 : v);
-    }
-    // box(f64) → tag.test(String) proves false → the guard returns 0.
-    for (const v of [1, 7.25, -3]) expect(ex.mismatchString(v)).toBe(0);
-    // Boolean-refined box round-trips 0/1; NumberI32 box round-trips ints.
-    expect(ex.boolRoundTrip(1)).toBe(1);
-    expect(ex.boolRoundTrip(0)).toBe(0);
-    for (const v of [0, 1, 42, -7]) expect(ex.i32RoundTrip(v)).toBe(v);
-  });
-});
+// (#6979) host-strings variant removed with the host-assisted profile.
+// The gc-runtime ($AnyValue) execution case went with it: it ran a bare
+// `fast` context on host js-string builtins, and a bare native-strings context
+// pulls in runtime helper bodies that only validate after the full production
+// finalize pipeline.
 
-describe("#2949 S5.0 — host runtime: builder-emitted box/tag.test/unbox round-trips", () => {
-  it("verifies + runs the round-trip functions (externref carrier, import family)", async () => {
-    const fns = roundTripFns();
-    const ctx = makeHostCtx();
-    install(ctx, fns);
-    const ex = await instantiateCtx(ctx, hostEnvFor(ctx));
-    for (const v of [0, 1, 3.5, -42, Math.PI]) {
-      expect(ex.matchNumber(v)).toBe(v);
-    }
-    for (const v of [1, 7.25, -3]) expect(ex.mismatchString(v)).toBe(0);
-    expect(ex.boolRoundTrip(1)).toBe(1);
-    expect(ex.boolRoundTrip(0)).toBe(0);
-    for (const v of [0, 1, 42, -7]) expect(ex.i32RoundTrip(v)).toBe(v);
-  });
-});
+// (#6979 S7-a) The host-runtime execution describe tested the retired host-assisted import lane (bare host context + JS-host carrier imports); deleted with it.

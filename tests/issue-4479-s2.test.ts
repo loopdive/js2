@@ -66,6 +66,11 @@ const LANES: Array<[string, boolean]> = [
  * `it.fails` pins record a standing host-runtime gap, not a regression from
  * this change — and they will start failing loudly the day the host shim
  * learns the names.
+ *
+ * (#7014) Seven of those nine host pins pass on main as of 2026-10-16 (the
+ * issue-tests detector reported them as UNEXPECTED PASS) and are plain `it`
+ * now. Two still fail in the host lane and keep the helper: `__lookupGetter__`
+ * on a missing key, and the non-extensible TypeError.
  */
 const itStandaloneOnly = (standalone: boolean): typeof it | typeof it.fails => (standalone ? it : it.fails);
 
@@ -74,7 +79,7 @@ describe("#4479 slice 2 — Annex B Object.prototype accessor methods", () => {
     describe(lane, () => {
       // ── §B.2.2.2 __defineGetter__ ─────────────────────────────────────────
       // test262: built-ins/Object/prototype/__defineGetter__/define-new.js
-      itStandaloneOnly(standalone)("installs a getter and the §B.2.2.2 attributes", async () => {
+      it("installs a getter and the §B.2.2.2 attributes", async () => {
         const src = `
 var subject: any = {};
 var get: any = function (): number { return 42; };
@@ -90,7 +95,7 @@ export function test(): number {
       // The single-half `[[Get]] specified` flag bit is what makes this hold —
       // specifying both halves would clear the setter.
       // test262: __defineGetter__/define-existing.js
-      itStandaloneOnly(standalone)("redefining the getter preserves the existing setter", async () => {
+      it("redefining the getter preserves the existing setter", async () => {
         const src = `
 var subject: any = {};
 var originalGet: any = function (): number { return 1; };
@@ -128,7 +133,7 @@ export function test(): number {
 
       // ── §B.2.2.4 / §B.2.2.5 the [[Prototype]]-chain walk ──────────────────
       // test262: __lookupGetter__/lookup-own-acsr-w-getter.js
-      itStandaloneOnly(standalone)("__lookupGetter__ finds an own accessor's getter", async () => {
+      it("__lookupGetter__ finds an own accessor's getter", async () => {
         const src = `
 var subject: any = {};
 var get: any = function (): number { return 1; };
@@ -140,7 +145,7 @@ export function test(): number { return subject.__lookupGetter__("target") === g
 
       // test262: __lookupGetter__/lookup-proto-acsr-w-getter.js — the walk must
       // cross TWO links (subject → intermediary → the accessor's holder).
-      itStandaloneOnly(standalone)("__lookupGetter__ walks the prototype chain", async () => {
+      it("__lookupGetter__ walks the prototype chain", async () => {
         const src = `
 var root: any = {};
 var get: any = function (): number { return 1; };
@@ -166,7 +171,7 @@ export function test(): number { return subject.__lookupGetter__("target") === u
       });
 
       // test262: __lookupSetter__/lookup-own-acsr-w-setter.js
-      itStandaloneOnly(standalone)("__lookupSetter__ finds the setter half only", async () => {
+      it("__lookupSetter__ finds the setter half only", async () => {
         const src = `
 var subject: any = {};
 var set: any = function (v: number): void {};
@@ -196,10 +201,8 @@ export function test(): number { return subject.__lookupGetter__("missing") === 
       // `undefined` and calling it threw "called value is not a function" —
       // also a TypeError, also before any `toString`. A rejection-only pin
       // cannot tell "rejected for the right reason" from "not implemented".
-      itStandaloneOnly(standalone)(
-        "throws TypeError for a non-callable getter WITHOUT running ToPropertyKey",
-        async () => {
-          const src = `
+      it("throws TypeError for a non-callable getter WITHOUT running ToPropertyKey", async () => {
+        const src = `
 var subject: any = {};
 var toStringCount: number = 0;
 var key: any = { toString: function (): string { toStringCount = toStringCount + 1; return "k"; } };
@@ -214,16 +217,15 @@ subject.__defineGetter__("ok", function (): number { return 5; });
 if (subject.ok === 5) callableOk = 1;
 export function test(): number { return threw === 1 && toStringCount === 0 && callableOk === 1 ? 1 : 0; }
 `;
-          expect(await run(src, standalone)).toBe(1);
-        },
-      );
+        expect(await run(src, standalone)).toBe(1);
+      });
 
       // test262: __defineGetter__/this-non-obj.js — RequireObjectCoercible.
       // Same non-vacuity concern as above: on the un-fixed base `dg` was
       // `undefined`, so `dg.call(...)` threw a TypeError four times and a
       // rejection-only pin was green. The fifth assertion — a SUCCESSFUL
       // `.call` on a real receiver — is what makes it discriminating.
-      itStandaloneOnly(standalone)("throws TypeError when `this` is null or undefined", async () => {
+      it("throws TypeError when `this` is null or undefined", async () => {
         const src = `
 var dg: any = (Object.prototype as any).__defineGetter__;
 var lg: any = (Object.prototype as any).__lookupGetter__;
@@ -290,7 +292,7 @@ export function test(): number {
    * test262 residuals: __lookup{Getter,Setter}__/lookup-proto-{get,proto}-err.js
    * and __define{Getter,Setter}__/define-abrupt.js — 6 of the 54.
    */
-  it.fails("standalone: a Proxy in the middle of the chain still relays its traps", async () => {
+  it("standalone: a Proxy in the middle of the chain still relays its traps", async () => {
     const src = `
 var root: any = {};
 var get: any = function (): number { return 1; };

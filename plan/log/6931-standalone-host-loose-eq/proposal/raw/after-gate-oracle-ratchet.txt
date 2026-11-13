@@ -1,0 +1,1 @@
+[oracle-ratchet] OK — no net checker-usage growth across 3 changed src/codegen file(s) (getTypeAtLocation +0, ctx.checker +0; base: merge-base(origin)).

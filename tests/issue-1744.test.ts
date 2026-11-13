@@ -20,7 +20,8 @@
  * same characters as the string-roundtrip path, including non-ASCII).
  */
 import { describe, expect, it } from "vitest";
-import binaryen from "binaryen";
+// (#7014) binaryen 132 reads with MVP features unless told otherwise — see the helper.
+import { readBinaryAllFeatures } from "./helpers/binaryen-read.js";
 import { compile } from "../src/index.js";
 
 const STRING_HASH_SOURCE = `
@@ -45,7 +46,7 @@ export function run(n) {
 async function compileToWat(source: string): Promise<{ wat: string; binary: Uint8Array }> {
   const result = await compile(source, { fileName: "t.js", target: "wasi", nativeStrings: true });
   expect(result.success, `Compile failed: ${result.errors?.map((e) => e.message).join("; ")}`).toBe(true);
-  const mod = binaryen.readBinary(result.binary);
+  const mod = readBinaryAllFeatures(result.binary);
   const wat = mod.emitText();
   mod.dispose();
   return { wat, binary: result.binary };

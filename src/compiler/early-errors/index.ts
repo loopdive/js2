@@ -36,7 +36,7 @@ import {
  */
 export function detectEarlyErrors(
   sourceFile: ts.SourceFile,
-  opts?: { moduleGoal?: boolean; scriptGoal?: boolean },
+  opts?: { moduleGoal?: boolean; scriptGoal?: boolean; scriptTopLevel?: boolean },
 ): CompileError[] {
   const ctx = createEarlyErrorContext(sourceFile, opts);
 
@@ -91,7 +91,7 @@ export function detectEarlyErrors(
 export function subtreeHasEarlyError(
   sourceFile: ts.SourceFile,
   node: ts.Node,
-  opts?: { moduleGoal?: boolean; scriptGoal?: boolean },
+  opts?: { moduleGoal?: boolean; scriptGoal?: boolean; scriptTopLevel?: boolean },
 ): boolean {
   const ctx = createEarlyErrorContext(sourceFile, opts);
   runNodeChecks(ctx, node);

@@ -1,0 +1,11 @@
+
+ RUN  v3.2.7 /home/user/js2/.claude/worktrees/agent-a774506d6593a2d93
+
+ ✓ tests/issue-3518-certified-delay-source-admission.test.ts (41 tests) 1124ms
+   ✓ explicit certified native delay source admission > pins the exact existing source and admits one body without losing either original arrow  437ms
+
+ Test Files  1 passed (1)
+      Tests  41 passed (41)
+   Start at  23:09:29
+   Duration  23.98s (transform 15.90s, setup 0ms, collect 22.45s, tests 1.12s, environment 0ms, prepare 61ms)
+

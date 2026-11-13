@@ -91,10 +91,16 @@ describe("#1644 Slice A — bigint i64 brand boxing", () => {
 
 describe("#1644 Slice E1 — standalone bigint externref carrier", () => {
   it("WASI bigint boxes and unboxes through an any-returning function without BigInt host imports", async () => {
+    // `asAny` must really return through the externref carrier. The original
+    // `function asAny(x: bigint): any { return x; }` no longer does: return-type
+    // inference narrows its result to i64 (it can only return a bigint) and the
+    // call is inlined, so no box was emitted and the `$BigInt` pin went red
+    // although nothing regressed. A second, non-bigint return arm keeps the
+    // result genuinely `any`.
     const { value, envImports, wat } = await runWasiNumber(`
-      function asAny(x: bigint): any { return x; }
+      function asAny(x: bigint, keep: boolean): any { return keep ? x : "not a bigint"; }
       export function test(): number {
-        const round: bigint = asAny(10n);
+        const round: bigint = asAny(10n, true);
         return round === 10n ? 1 : 0;
       }
     `);

@@ -90,7 +90,7 @@
  */
 import type { Instr } from "../ir/types.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
-import { buildThrowJsErrorInstrs, usesNativeJsErrors } from "./js-errors.js";
+import { buildThrowJsErrorInstrs } from "./js-errors.js";
 import { ensureReflectIsConstructor } from "./reflect-construct-native.js";
 import { FLAG_INTERNAL, WRAPPER_PRIMITIVE_KEY } from "./object-runtime.js";
 import { stringConstantExternrefInstrs } from "./native-strings.js";
@@ -117,7 +117,6 @@ const armedThrow = new WeakMap<CodegenContext, Instr[]>();
  * Returns `true` when the guard is now armed (no-JS-host lanes only).
  */
 export function armConstructIsConstructorGuard(ctx: CodegenContext, fctx: FunctionContext): boolean {
-  if (!usesNativeJsErrors(ctx)) return false;
   if (armedThrow.has(ctx)) return true;
   // Reserve-then-fill: the predicate is filled over the complete constructible
   // closure table at finalize, so only its stable funcIdx is baked here.

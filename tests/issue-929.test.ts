@@ -7,7 +7,8 @@ async function run(src: string): Promise<unknown> {
   if (!result.success) throw new Error(result.errors[0]?.message ?? "compile error");
   const imports = buildImports(result.imports, undefined, result.stringPool);
   const { instance } = await WebAssembly.instantiate(result.binary, imports);
-  if (typeof (imports as any).setExports === "function") (imports as any).setExports(instance.exports);
+  // (#7014) setInstance: raw setExports(instance.exports) lost data-struct authority in 708ebbd56d (#5337).
+  if (typeof (imports as any).setInstance === "function") (imports as any).setInstance(instance);
   return (instance.exports as any).test?.();
 }
 
@@ -121,7 +122,7 @@ describe("issue-929: Object.defineProperty on wrapper constructors", () => {
     if (!r.success) return;
     const imports = buildImports(r.imports, undefined, r.stringPool);
     const { instance } = await WebAssembly.instantiate(r.binary, imports);
-    if (typeof (imports as any).setExports === "function") (imports as any).setExports(instance.exports);
+    if (typeof (imports as any).setInstance === "function") (imports as any).setInstance(instance);
     expect((instance.exports as any).test()).toBe(1);
   });
 

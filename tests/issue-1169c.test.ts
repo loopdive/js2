@@ -169,14 +169,7 @@ const CASES: Case[] = [
   },
 ];
 
-describe("#1169c — IR slice 3 (host strings)", () => {
-  for (const c of CASES) {
-    it(c.name, async () => {
-      const { legacy, ir } = await dualRun(c.source, c.fn, c.args, { nativeStrings: false });
-      expect(ir).toStrictEqual(legacy);
-    });
-  }
-});
+// (#6979) host-strings variant removed with the host-assisted profile.
 
 // Native-strings: skip string-returning cases (opaque (ref $NativeString)
 // values choke vitest's toStrictEqual).
@@ -213,11 +206,6 @@ const COVERAGE_SOURCES = [
 describe("#1169c — slice 3 functions reach the IR path without errors", () => {
   for (const src of COVERAGE_SOURCES) {
     const label = src.slice(0, 80);
-    it(`host: ${label}`, async () => {
-      const r = await compile(src, { experimentalIR: true, nativeStrings: false });
-      expect(r.success).toBe(true);
-      expect(irFallbacks(r)).toEqual([]);
-    });
     it(`native: ${label}`, async () => {
       const r = await compile(src, { experimentalIR: true, nativeStrings: true });
       expect(r.success).toBe(true);

@@ -44,7 +44,12 @@ import {
   getOrCreateFuncRefWrapperTypes,
   peekFuncRefWrapperTypes,
 } from "./funcref-wrapper-types.js";
-import { emitFuncRefAsClosure } from "./funcref-as-closure.js";
+import {
+  emitFuncRefAsClosure,
+  miniTrampolineFctx,
+  fnMetaAllocOf,
+  emitLazyClosureCacheAccess,
+} from "./funcref-as-closure.js";
 import { normalizeOrdinaryFunctionConstructibility } from "./ordinary-fn-constructibility.js";
 import {
   observeProgramAbiFunctionValue,
@@ -60,6 +65,7 @@ import {
 import { ensureFnMetaSubtype, fnMetaSlot } from "../function-instance-meta.js";
 // (#4440) the METHOD half of the same carrier — class/object-literal members
 import { fnMetaSlotForMemberDecl, fnMetaSlotForMemberName } from "../function-instance-meta-methods.js";
+import { noteFunctionValueInhabitant } from "./closure-type-sources.js"; // (#6913)
 
 /**
  * (#2015) Build the `this`-slot prologue for an object-method trampoline.
@@ -410,6 +416,7 @@ export function emitObjectMethodAsClosure(
   const wrapperTypes = getOrCreateFuncRefWrapperTypes(ctx, userParams, results);
   if (!wrapperTypes) return null;
   const { structTypeIdx, liftedFuncTypeIdx } = wrapperTypes;
+  noteFunctionValueInhabitant(ctx, structTypeIdx, memberDecl); // (#6913)
   // Object-literal methods share the signature wrapper with ordinary
   // functions. A rest method with a simple identifier rest parameter needs an
   // allocation-specific discriminator so `__call_fn_method_N` can materialize
@@ -552,40 +559,6 @@ export function emitObjectMethodAsClosure(
  * indices stay valid; only the per-arg coercion is what could drift, and any
  * coercion the call needs is applied by mirroring the method's param types.
  */
-/**
- * A `FunctionContext` shaped exactly like a func-decl trampoline's WRAPPER
- * signature (`__self` at slot 0, the wrapper's user params at 1..N), so helpers
- * that allocate scratch locals compute indices past the real params and the
- * allocated `localDefs` can be attached to the registered function.
- *
- * `finalizeMethodTrampolines` builds this inline for its coercion temps; the
- * (#4630) async-promise wrap needs the identical thing at REGISTRATION time,
- * where no `FunctionContext` exists yet. Callers assign `body` themselves.
- */
-function miniTrampolineFctx(
-  name: string,
-  wrapperUserParams: readonly ValType[],
-  wrapperResult: ValType | undefined,
-  localDefs: LocalDef[],
-): FunctionContext {
-  return {
-    name,
-    params: [
-      { name: "__self", type: { kind: "anyref" } },
-      ...wrapperUserParams.map((p, i) => ({ name: `__p${i}`, type: p })),
-    ],
-    locals: localDefs,
-    localMap: new Map(),
-    returnType: wrapperResult ?? null,
-    body: [],
-    blockDepth: 0,
-    breakStack: [],
-    continueStack: [],
-    labelMap: new Map(),
-    savedBodies: [],
-  };
-}
-
 export function finalizeMethodTrampolines(ctx: CodegenContext): void {
   for (const t of ctx.pendingMethodTrampolines) {
     // (#1525b / #1809) If the captured methodFuncIdx resolves to an IMPORT at
@@ -885,44 +858,6 @@ export function finalizeMethodTrampolines(ctx: CodegenContext): void {
  * The func-decl caller appends its own `any.convert_extern` + `ref.cast`
  * recovery after this returns.
  */
-/** (#4437) Narrow a singleton's optional metadata pair into the emit argument. */
-function fnMetaAllocOf(singleton: FuncClosureSingleton): { allocStructTypeIdx: number; metaInit: Instr[] } | undefined {
-  return singleton.allocStructTypeIdx !== undefined && singleton.metaInit !== undefined
-    ? { allocStructTypeIdx: singleton.allocStructTypeIdx, metaInit: singleton.metaInit }
-    : undefined;
-}
-
-function emitLazyClosureCacheAccess(
-  fctx: FunctionContext,
-  cacheGlobalIdx: number,
-  trampolineFuncIdx: number,
-  structTypeIdx: number,
-  arity: number,
-  constructible = false,
-  /** (#4437) `$fnmeta` operand + the SUBTYPE to allocate, when the slot exists. */
-  meta?: { allocStructTypeIdx: number; metaInit: Instr[] },
-): void {
-  const initBody: Instr[] = [
-    { op: "ref.func", funcIdx: trampolineFuncIdx },
-    { op: "i32.const", value: arity }, // (#3673) $arity
-    closureBagInitInstr(), // (#4241) $bag
-    ...(constructible ? ([{ op: "i32.const", value: 1 }] satisfies Instr[]) : []),
-    ...(meta ? meta.metaInit : []),
-    { op: "struct.new", typeIdx: meta ? meta.allocStructTypeIdx : structTypeIdx },
-    { op: "extern.convert_any" },
-    { op: "global.set", index: cacheGlobalIdx },
-  ];
-  fctx.body.push({ op: "global.get", index: cacheGlobalIdx });
-  fctx.body.push({ op: "ref.is_null" });
-  fctx.body.push({
-    op: "if",
-    blockType: { kind: "empty" },
-    then: initBody,
-    else: [],
-  });
-  fctx.body.push({ op: "global.get", index: cacheGlobalIdx });
-}
-
 export function emitCachedMethodClosureAccess(
   ctx: CodegenContext,
   fctx: FunctionContext,
@@ -1083,6 +1018,7 @@ export function ensureMethodClosureSingleton(
   const metaSlot = fnMetaSlotForMemberName(ctx, methodName);
   const allocStructTypeIdx = metaSlot ? ensureFnMetaSubtype(ctx, structTypeIdx) : undefined;
   return {
+    constructible: false,
     cacheGlobalIdx,
     trampolineFuncIdx,
     closureStructTypeIdx: structTypeIdx,
@@ -1115,6 +1051,8 @@ export function ensureMethodClosureSingleton(
  * `null` when the signature couldn't be resolved (caller falls back).
  */
 export interface FuncClosureSingleton {
+  /** One owner-derived answer, shared by every singleton reader. */
+  readonly constructible: boolean;
   readonly cacheGlobalIdx: number;
   readonly trampolineFuncIdx: number;
   readonly closureStructTypeIdx: number;
@@ -1162,6 +1100,7 @@ export function ensureFuncClosureSingleton(
     sourceFunctionDeclarationForHandle(ctx, funcIdx) ??
     ctx.funcMapOwnerDecl.get(funcName) ??
     ctx.topLevelFunctionDeclarations.get(funcName);
+  constructible = normalizeOrdinaryFunctionConstructibility(ctx, funcName, constructible, ownerDeclaration);
   const explicitThisParam = hasExplicitThisParameter(ownerDeclaration);
   // The direct FunctionDeclaration ABI deliberately retains TS's pseudo-this
   // slot (#2069), while a JavaScript function value exposes only real formals.
@@ -1201,6 +1140,7 @@ export function ensureFuncClosureSingleton(
     : getOrCreateFuncRefWrapperTypes(ctx, userParams, results);
   if (!wrapperTypes) return null;
   const { structTypeIdx, liftedFuncTypeIdx } = wrapperTypes;
+  noteFunctionValueInhabitant(ctx, structTypeIdx, ownerDeclaration); // (#6913) shared wrapper source
 
   // (#4133) The trampoline and cache were keyed by the BARE function name, so
   // two modules declaring the same top-level name shared one singleton. The
@@ -1386,6 +1326,7 @@ export function ensureFuncClosureSingleton(
   const allocStructTypeIdx = metaSlot ? ensureFnMetaSubtype(ctx, allocBaseIdx) : restAllocIdx;
   const allocInit = metaSlot ? [...restMarkerInit, ...metaSlot.init] : restMarkerInit;
   return {
+    constructible,
     cacheGlobalIdx,
     trampolineFuncIdx,
     closureStructTypeIdx: structTypeIdx,
@@ -1434,7 +1375,7 @@ export function emitCachedFuncClosureExternref(
     trampolineFuncIdx,
     closureStructTypeIdx,
     ctx.closureInfoByTypeIdx.get(closureStructTypeIdx)?.paramTypes.length ?? 0,
-    constructible,
+    singleton.constructible,
     fnMetaAllocOf(singleton),
   );
   return true;
@@ -1451,7 +1392,14 @@ export function emitCachedFuncClosureAccess(
   // how the reading site resolved the name — the cache global is shared, so a
   // site-keyed answer allocates and casts unrelated struct types. See
   // `ordinary-fn-constructibility.ts`.
-  constructible = normalizeOrdinaryFunctionConstructibility(ctx, funcName, constructible);
+  constructible = normalizeOrdinaryFunctionConstructibility(
+    ctx,
+    funcName,
+    constructible,
+    sourceFunctionDeclarationForHandle(ctx, funcIdx) ??
+      ctx.funcMapOwnerDecl.get(funcName) ??
+      ctx.topLevelFunctionDeclarations.get(funcName),
+  );
   const singleton = ensureFuncClosureSingleton(ctx, funcName, funcIdx, constructible);
   // A synthetic-name collision makes the canonical pair unavailable, but
   // legacy value-producing sites still need a closure on the stack (module
@@ -1483,7 +1431,7 @@ export function emitCachedFuncClosureAccess(
     trampolineFuncIdx,
     structTypeIdx,
     ctx.closureInfoByTypeIdx.get(structTypeIdx)?.paramTypes.length ?? 0,
-    constructible,
+    singleton.constructible,
     fnMetaAllocOf(singleton),
   );
   fctx.body.push({ op: "any.convert_extern" });

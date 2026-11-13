@@ -268,7 +268,7 @@ describe("#4492 a builtin prototype in [[Prototype]] position (standalone)", () 
 
   // ── RESIDUALS: measured, still failing, root recorded in the issue file. ──
 
-  it.fails("RESIDUAL a function-valued prototype with no builtin brand remains unsupported", async () => {
+  it("a function-valued prototype with no builtin brand exposes Function.prototype members (was an it.fails residual, #7014)", async () => {
     // This is deliberately distinct from the exact Function() rows above:
     // assigning an arbitrary user function as a prototype still has no
     // Function.prototype companion link in the generic callable path.

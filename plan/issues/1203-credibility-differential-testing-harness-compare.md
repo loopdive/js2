@@ -227,3 +227,23 @@ compiler bugs that need follow-up issues.
    add a third lane that runs the same corpus through wasmtime to validate the
    standalone path.
 5. **SpiderMonkey lane** — out of scope per the issue, file as a backlog item.
+
+## S6 native-first landing handoff (2026-10-18, PR #6672)
+
+The S6 merge-group run exposed one remaining dependency on the pre-S6 implicit
+default. This harness is deliberately the Node-host compatibility lane: its
+contract, imports, deferred module initialization, and committed 116/120 floor
+all describe WasmGC plus JS-host semantic providers. After the public API
+default changed to native-first, `scripts/diff-test.ts` still called
+`compile()` without selecting that lane. The merge candidate therefore
+measured a different provider family and reported nine false delta
+regressions (merge-group run `39155392929`).
+
+Both optimized and unoptimized harness compiles now select
+`semanticProviders: "host-assisted"` explicitly. This does not change or
+weaken the S6 product default; native-first coverage remains owned by the
+standalone, equivalence, provider, and omitted-option lanes. Local replay at
+the exact PR head restored 116/120 matches with zero new regressions, and the
+optimized lane produced the same per-file outcomes. S7 (#6979) must either
+retire this compatibility-only harness lane or replace its measurements before
+deleting the host-assisted provider.

@@ -6,6 +6,7 @@
 import { ts } from "../../ts-api.js";
 import type { Instr, ValType } from "../../ir/types.js";
 import type { FunctionContext, NullGuardFact } from "../context/types.js";
+import { preHoistedBindingIsLive } from "./eager-capture-box.js";
 
 /**
  * Adjust the depth of all entries in the catchRethrowStack by `delta`.
@@ -178,13 +179,51 @@ export function collectSwitchCaseBlockScopedNames(caseBlock: ts.CaseBlock): stri
  * Returns the saved state to restore after the block.
  */
 export function saveBlockScopedShadows(fctx: FunctionContext, block: ts.Block): BlockScopeSave | null {
-  return saveBlockScopedShadowsForNames(fctx, collectBlockScopedNames(block));
+  return saveBlockScopedShadowsForNames(
+    fctx,
+    collectBlockScopedNames(block),
+    blockOwnPreHoistedNames(fctx, block.statements),
+  );
 }
 
-/** Save and hide a known set of block-scoped names. */
+/**
+ * (#6994) The block's own DIRECT `let`/`const`/`using` names whose live
+ * `localMap` entry is that declaration's FUNCTION-ENTRY pre-hoist slot
+ * (`hoistLetConstWithTdz` pass 2 claims a nested block's names at function
+ * level when nothing local holds them yet — e.g. a name that is only a module
+ * global, a module function or a nested function declaration). Such an entry is
+ * not an outer binding: saving it would make the block's exit REINSTALL the
+ * never-assigned slot, so post-block reads of the real outer binding (the
+ * module global / function) hit 0/null instead. Same test as the CaseBlock
+ * path's `preHoistedBindingIsLive` filter (control-flow.ts).
+ */
+export function blockOwnPreHoistedNames(
+  fctx: FunctionContext,
+  stmts: readonly ts.Statement[],
+): ReadonlySet<string> | undefined {
+  const records = fctx.preHoistedLetConstSlots;
+  if (records === undefined || records.size === 0) return undefined;
+  let own: Set<string> | undefined;
+  for (const stmt of stmts) {
+    if (!ts.isVariableStatement(stmt) || !(stmt.declarationList.flags & ts.NodeFlags.BlockScoped)) continue;
+    for (const decl of stmt.declarationList.declarations) {
+      if (!ts.isIdentifier(decl.name)) continue;
+      const record = records.get(decl);
+      if (record && preHoistedBindingIsLive(fctx, decl.name.text, record)) (own ??= new Set()).add(decl.name.text);
+    }
+  }
+  return own;
+}
+
+/**
+ * Save and hide a known set of block-scoped names. A name in `ownPreHoisted`
+ * (see `blockOwnPreHoistedNames`) is hidden like the rest but recorded as
+ * having NO outer binding, so the block's exit forgets it.
+ */
 export function saveBlockScopedShadowsForNames(
   fctx: FunctionContext,
   blockNames: readonly string[],
+  ownPreHoisted?: ReadonlySet<string>,
 ): BlockScopeSave | null {
   if (blockNames.length === 0) return null;
 
@@ -206,11 +245,15 @@ export function saveBlockScopedShadowsForNames(
     savedNullGuardAliases.set(name, fctx.nullGuardAliases?.get(name) ?? null);
     fctx.nullGuardAliases?.delete(name);
     if (!savedBoxedCaptures) savedBoxedCaptures = new Map();
-    savedBoxedCaptures.set(name, fctx.boxedCaptures?.get(name) ?? null);
+    const ownBinding = ownPreHoisted?.has(name) ?? false;
+    savedBoxedCaptures.set(name, ownBinding ? null : (fctx.boxedCaptures?.get(name) ?? null));
     fctx.boxedCaptures?.delete(name);
 
     const existing = fctx.localMap.get(name);
-    if (existing !== undefined) {
+    if (existing !== undefined && ownBinding) {
+      fctx.localMap.delete(name);
+      fctx.tdzFlagLocals?.delete(name);
+    } else if (existing !== undefined) {
       if (!savedLocals) savedLocals = new Map();
       savedLocals.set(name, existing);
       // Remove from localMap so the inner declaration allocates a fresh local

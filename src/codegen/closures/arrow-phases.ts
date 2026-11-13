@@ -15,6 +15,7 @@
  */
 import { NEW_TARGET_LEXICAL_LOCAL, arrowCapturesNewTarget } from "../expressions/new-target-value.js";
 import { ts, forEachChild } from "../../ts-api.js";
+import { isModuleScopeBinding } from "./module-scope-binding.js"; // (#6987)
 import type { ClosureInfo, CodegenContext, FunctionContext } from "../context/types.js";
 import type { Instr, ValType } from "../../ir/types.js";
 import { addFuncType, destructureParamArray, destructureParamObject, getOrRegisterRefCellType } from "../index.js";
@@ -33,7 +34,9 @@ import { closureObservesBindingValue, collectTransitiveCaptureNames } from "../f
 import { valTypesMatch } from "../shared.js";
 import { tryEmitNativeIteratorResultParam } from "../promise-native-iterator-result.js";
 import { materializeHoistedFunctionValueBinding } from "./funcref-as-closure.js";
+import { publishClosureSourceInfo } from "./closure-type-sources.js"; // (#6913)
 import { capturedBindingWriteTest, namesDeclaredInsideClosure } from "./closure-binding-identity.js";
+import { isWithinNode, writeTargetsByName } from "./outer-write-index.js"; // (#6988)
 import { bodyReferencesOwnThis } from "../helpers/body-references-own-this.js";
 // (#4437) per-declaration `name` / §15.1.5 `length` carrier
 import { ensureFnMetaSubtype, fnMetaSlot, registerFnMetaFamily } from "../function-instance-meta.js";
@@ -543,9 +546,29 @@ export function closurePrecedesBindingInitializerStore(
     // that outer function runs, not while the declarator evaluates. The outer
     // function value itself will independently capture this binding at the
     // actual initializer site.
-    if (current !== closure && ts.isFunctionLike(current)) return false;
+    if (current !== closure && ts.isFunctionLike(current)) break;
   }
-  return false;
+  return hoistedVarInitializerFollowsClosure(closure, declaration);
+}
+
+/**
+ * (#6955) `o.f = function () { return dt; }; var dt = 0.1;` — the hoisted `var`
+ * slot still holds its default when the closure is built and the initializer
+ * stores afterwards, so a by-value capture would never see it. Only a `var`
+ * declarator textually after the closure in the SAME frame qualifies (`let`/
+ * `const` take the #1177 TDZ path); every other capture keeps the by-value path.
+ */
+function hoistedVarInitializerFollowsClosure(closure: ts.Node, declaration: ts.VariableDeclaration): boolean {
+  const list = declaration.parent;
+  if (!ts.isVariableDeclarationList(list) || (list.flags & ts.NodeFlags.BlockScoped) !== 0) return false;
+  return declaration.pos >= closure.end && enclosingFrame(closure.parent) === enclosingFrame(list);
+}
+
+function enclosingFrame(node: ts.Node | undefined): ts.Node | undefined {
+  while (node && !ts.isFunctionLike(node) && !ts.isSourceFile(node) && !ts.isClassStaticBlockDeclaration(node)) {
+    node = node.parent;
+  }
+  return node;
 }
 
 /**
@@ -732,47 +755,17 @@ export function planClosureCaptures(
       if (enclosing) {
         const outerBody = ts.isSourceFile(enclosing) ? enclosing : (enclosing as any).body;
         if (outerBody) {
-          // Collect writes in the outer body, excluding the closure body itself
-          const outerWrites = new Set<string>();
-          const writesCapturedBinding = capturedBindingWriteTest(
-            ctx,
-            name,
-            referencedBindingDeclaration(ctx, arrow, name, true),
-          );
-          const collectOuterWrites = (node: ts.Node): void => {
-            // Skip the closure body itself
-            if (node === arrow) return;
-            // Check for assignments
-            if (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
-              if (ts.isIdentifier(node.left) && writesCapturedBinding(node.left)) {
-                outerWrites.add(name);
-              }
-            }
-            if (ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node)) {
-              if (ts.isIdentifier(node.operand) && writesCapturedBinding(node.operand)) {
-                outerWrites.add(name);
-              }
-            }
-            // Compound assignments (+=, -=, etc.)
-            if (
-              ts.isBinaryExpression(node) &&
-              node.operatorToken.kind >= ts.SyntaxKind.PlusEqualsToken &&
-              node.operatorToken.kind <= ts.SyntaxKind.CaretEqualsToken
-            ) {
-              if (ts.isIdentifier(node.left) && writesCapturedBinding(node.left)) {
-                outerWrites.add(name);
-              }
-            }
-            forEachChild(node, collectOuterWrites);
-          };
-          if (ts.isBlock(outerBody)) {
-            for (const stmt of outerBody.statements) {
-              collectOuterWrites(stmt);
-            }
-          } else {
-            collectOuterWrites(outerBody);
-          }
-          if (outerWrites.has(name)) {
+          // Writes in the outer body, excluding the closure body itself.
+          // (#6992) The index holds every write form (`isLexicalBindingWrite`
+          // plus `var` re-declarations); the write test decides which declarators count.
+          const capturedDeclaration = referencedBindingDeclaration(ctx, arrow, name, true);
+          const writesCapturedBinding = capturedBindingWriteTest(ctx, name, capturedDeclaration);
+          const outsideArrow = (id: ts.Identifier): boolean => !isWithinNode(id, arrow);
+          if (
+            writeTargetsByName(outerBody)
+              .get(name)
+              ?.some((id) => outsideArrow(id) && writesCapturedBinding(id))
+          ) {
             writtenInOuter.add(name);
           }
         }
@@ -826,6 +819,9 @@ export function planClosureCaptures(
       // hoisted slot, which is essential for TDZ-through-closure to fire.
       // (#6651 V5) A FREE name has no hoisted slot — the same-spelled local is from a left block.
       if (closureReferencesOnlyUnboundName(ctx, arrow, name)) continue;
+      // (#6987) A MODULE-scope binding is never a block-hoisted slot: a same-spelled
+      // local is a left inline IIFE's parameter (`(function (TypeScript) {…})(…)`).
+      if (isModuleScopeBinding(referencedBindingDeclaration(ctx, arrow, name))) continue;
       for (let i = 0; i < fctx.locals.length; i++) {
         const slot = fctx.locals[i]!;
         if (slot.name === name) {
@@ -1489,7 +1485,7 @@ export function registerClosureBindingInfo(
   };
 
   // Always register by struct type index (for valueOf coercion and anonymous closures)
-  ctx.closureInfoByTypeIdx.set(structTypeIdx, closureInfo);
+  publishClosureSourceInfo(ctx, arrow, closureInfo); // (#6913) merged on a shared wrapper type
 
   const parent = arrow.parent;
   if (ts.isVariableDeclaration(parent) && ts.isIdentifier(parent.name)) {

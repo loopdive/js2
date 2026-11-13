@@ -1,0 +1,23 @@
+
+ RUN  v3.2.7 /home/user/js2/.claude/worktrees/agent-a774506d6593a2d93
+
+ ✓ tests/issue-3518-prepared-native-main-lowering.test.ts > prepared native main operations remain symbolic before physical admission > lowers the original main completely with ordered calls, two real awaits and zero result types 732ms
+ ✓ tests/issue-3518-prepared-native-main-lowering.test.ts > prepared native main operations remain symbolic before physical admission > accepts the export-only original runtime variant with the same main and allocation evidence 82ms
+ ✓ tests/issue-3518-prepared-native-main-lowering.test.ts > prepared native main operations remain symbolic before physical admission > retains ordered logical concatenation when the optional five-part target is absent 47ms
+ ✓ tests/issue-3518-prepared-native-main-lowering.test.ts > prepared native main operations remain symbolic before physical admission > retains an explicit refusal when the console prepared target is missing 41ms
+ ✓ tests/issue-3518-prepared-native-main-lowering.test.ts > prepared native main operations remain symbolic before physical admission > retains an explicit refusal when the number prepared target is missing 25ms
+ ✓ tests/issue-3518-prepared-native-main-lowering.test.ts > prepared native main operations remain symbolic before physical admission > retains an explicit refusal when the clock prepared target is missing 23ms
+ ✓ tests/issue-3518-prepared-native-main-lowering.test.ts > prepared native main operations remain symbolic before physical admission > rejects a contradictory prepared console argument without supplying fake capabilities 5ms
+ ✓ tests/issue-3518-prepared-native-main-lowering.test.ts > prepared native main operations remain symbolic before physical admission > rejects a contradictory prepared console arity without supplying fake capabilities 8ms
+ ✓ tests/issue-3518-prepared-native-main-lowering.test.ts > prepared native main operations remain symbolic before physical admission > rejects a contradictory prepared console method without supplying fake capabilities 5ms
+ ✓ tests/issue-3518-prepared-native-main-lowering.test.ts > prepared native main operations remain symbolic before physical admission > rejects a contradictory prepared number radix without supplying fake capabilities 5ms
+ ✓ tests/issue-3518-prepared-native-main-lowering.test.ts > prepared native main operations remain symbolic before physical admission > rejects a contradictory prepared number receiver without supplying fake capabilities 4ms
+ ✓ tests/issue-3518-prepared-native-main-lowering.test.ts > prepared native main operations remain symbolic before physical admission > rejects a false ambient console proof before lowering its arguments 4ms
+ ✓ tests/issue-3518-prepared-native-main-lowering.test.ts > prepared native main operations remain symbolic before physical admission > rejects a different symbolic callable rather than trusting its compatibility name 4ms
+ ✓ tests/issue-3518-prepared-native-main-lowering.test.ts > prepared native main operations remain symbolic before physical admission > does not activate a host-free target for an ordinary caller without prepared evidence 3ms
+
+ Test Files  1 passed (1)
+      Tests  14 passed (14)
+   Start at  20:07:03
+   Duration  29.77s (transform 19.75s, setup 0ms, collect 28.31s, tests 992ms, environment 0ms, prepare 71ms)
+

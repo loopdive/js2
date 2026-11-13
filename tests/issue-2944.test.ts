@@ -81,7 +81,8 @@ async function runHost(source: string, arg: number, fn: string): Promise<unknown
   expect(result.success, result.errors.map((e) => e.message).join("\n")).toBe(true);
   const imports = buildImports(result.imports, undefined, result.stringPool);
   const { instance } = await WebAssembly.instantiate(result.binary, imports);
-  imports.setExports?.(instance.exports as Record<string, Function>);
+  // (#7014) setInstance: raw setExports(instance.exports) lost data-struct authority in 708ebbd56d (#5337).
+  imports.setInstance?.(instance);
   return (instance.exports as Record<string, (...a: unknown[]) => unknown>)[fn](arg);
 }
 

@@ -1,0 +1,68 @@
+// #6920 r2 byte-identity + IR-path witness probe.
+// Usage: npx tsx .tmp/probe/probe-r2.mts <out.tsv>
+// Columns: fixture, target, sha256, len, success, ir_vs_legacy, scratch, ir_outcomes
+import { createHash } from "node:crypto";
+import { readFileSync, writeFileSync, readdirSync, statSync } from "node:fs";
+import { join, relative } from "node:path";
+import { compile } from "../../src/index.ts";
+import { sources } from "./sources.mjs";
+
+const root = new URL("../..", import.meta.url).pathname;
+const out = process.argv[2]!;
+const all: Record<string, string> = {};
+for (const [k, v] of Object.entries(sources)) all["fixture:" + k] = v as string;
+function walk(dir: string) {
+  for (const e of readdirSync(dir).sort()) {
+    const p = join(dir, e);
+    if (statSync(p).isDirectory()) walk(p);
+    else if (p.endsWith(".ts")) all["example:" + relative(root, p)] = readFileSync(p, "utf8");
+  }
+}
+walk(join(root, "website/playground/examples"));
+const targets: [string, Record<string, unknown>][] = [
+  ["gc", {}],
+  ["standalone", { target: "standalone" }],
+  ["linear", { target: "linear" }],
+];
+type R = {
+  binary?: Uint8Array;
+  wat?: string;
+  success?: boolean;
+  irOutcomes?: readonly { kind: string; displayName: string; unitKind: string }[];
+};
+const sha = (b?: Uint8Array) => (b && b.length ? createHash("sha256").update(b).digest("hex") : "NOBINARY");
+const rows = ["fixture\ttarget\tsha256\tlen\tsuccess\tir_vs_legacy\tscratch\tir_outcomes\ttracking_binary"];
+for (const [name, src] of Object.entries(all)) {
+  for (const [tname, opts] of targets) {
+    try {
+      const on = (await compile(src, opts)) as R;
+      const off = (await compile(src, { ...opts, experimentalIR: false })) as R;
+      const tracked = (await compile(src, { ...opts, trackIrOutcomes: true })) as R;
+      const hOn = sha(on.binary);
+      const differs = hOn === sha(off.binary) ? "same-as-legacy" : "IR-differs";
+      const wat = on.wat ?? "";
+      const scratch =
+        [/\$vec_data_\d+/.test(wat) ? "vec_data" : "", /\$linear_vec_ptr_\d+/.test(wat) ? "linear_vec_ptr" : ""]
+          .filter(Boolean)
+          .join("+") || "-";
+      const outcomes = tracked.irOutcomes ?? [];
+      const outcomeText = name.startsWith("fixture:")
+        ? outcomes
+            .filter((o) => o.unitKind !== "module-init")
+            .map((o) => `${o.displayName}:${o.kind}`)
+            .join(",") || "-"
+        : Object.entries(
+            outcomes.reduce<Record<string, number>>((acc, o) => ((acc[o.kind] = (acc[o.kind] ?? 0) + 1), acc), {}),
+          )
+            .map(([k, n]) => `${k}=${n}`)
+            .join(",") || "-";
+      rows.push(
+        [name, tname, hOn, on.binary?.length ?? 0, on.success, differs, scratch, outcomeText, sha(tracked.binary) === hOn ? "tracked-same" : "tracked-differs"].join("\t"),
+      );
+    } catch (e) {
+      rows.push([name, tname, "THROW", 0, false, "-", "-", String((e as Error).message).split("\n")[0]!.slice(0, 120)].join("\t"));
+    }
+  }
+}
+writeFileSync(out, rows.join("\n") + "\n");
+console.log(`wrote ${rows.length - 1} rows`);

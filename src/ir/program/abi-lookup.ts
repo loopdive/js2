@@ -25,3 +25,29 @@ export interface PreparedComponentAbiLookup {
   bindingIdsForStructuralReference?(key: string): readonly IrBindingId[];
   entries?(): readonly PreparedComponentAbiEntry[];
 }
+
+export interface CanonicalAbiEntry {
+  readonly requested: PreparedComponentAbiEntry;
+  readonly canonical: PreparedComponentAbiEntry;
+}
+
+export type CanonicalAbiResolution =
+  | { readonly kind: "resolved"; readonly entry: CanonicalAbiEntry }
+  | { readonly kind: "missing" }
+  | { readonly kind: "cycle" };
+
+export function canonicalAbiEntry(abi: PreparedComponentAbiLookup, id: IrBindingId): CanonicalAbiResolution {
+  const requested = abi.get(id);
+  if (!requested) return { kind: "missing" };
+  let canonical = requested;
+  const visited = new Set<IrBindingId>();
+  while (canonical.slotPolicy === "alias") {
+    if (visited.has(canonical.id)) return { kind: "cycle" };
+    visited.add(canonical.id);
+    if (!canonical.aliasOf) return { kind: "missing" };
+    const target = abi.get(canonical.aliasOf);
+    if (!target) return { kind: "missing" };
+    canonical = target;
+  }
+  return { kind: "resolved", entry: { requested, canonical } };
+}

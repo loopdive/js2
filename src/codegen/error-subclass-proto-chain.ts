@@ -47,6 +47,7 @@
 import type { Instr, ValType } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
 import { externrefBackedOwnFieldBacking } from "./registry/error-types.js";
+import { BUILTIN_BRAND_TABLE } from "./builtin-brands.js";
 
 export interface ErrorSubclassProtoChainArm {
   /** Instructions to splice into `__extern_get`'s `$Error_struct` string-key block. */
@@ -130,4 +131,51 @@ export function buildErrorSubclassProtoChainArm(
       { op: "if", blockType: { kind: "empty" }, then: rungs },
     ],
   };
+}
+
+/** (#6981) Builtin error prototypes an `$Error_struct` instance can inherit `message` from. */
+const ERROR_FAMILY_PROTO_NAMES = [
+  "Error",
+  "TypeError",
+  "RangeError",
+  "SyntaxError",
+  "URIError",
+  "EvalError",
+  "ReferenceError",
+  "SuppressedError",
+] as const;
+
+/**
+ * (#6981) The intrinsic default of an inherited `message`: §20.5.3.3 makes
+ * %Error.prototype%.message (and each NativeError prototype's) `""`.
+ *
+ * Splice this AFTER the own-field and subclass-prototype consults. It answers
+ * `""` only while EVERY error-family `$NativeProto` global is still null —
+ * a prototype nobody materialized is one nobody wrote, deleted or redefined
+ * `message` on. Once any of them exists the arm steps aside and the ordinary
+ * `__extern_get` walk reads the prototype companion, so
+ * `Error.prototype.message = "x"`, `delete Error.prototype.message` and an
+ * accessor redefinition stay observable exactly as before.
+ *
+ * @param keyIsMessage instrs leaving i32 "key is `message`"
+ * @param emptyString  instrs leaving the native `""` string ref
+ */
+export function intrinsicErrorMessageDefaultArm(
+  ctx: CodegenContext,
+  keyIsMessage: Instr[],
+  emptyString: Instr[],
+): Instr[] {
+  const instrs: Instr[] = [...keyIsMessage];
+  for (const name of ERROR_FAMILY_PROTO_NAMES) {
+    const brand = BUILTIN_BRAND_TABLE[name];
+    const globalIdx = brand === undefined ? undefined : ctx.nativeProtoGlobals?.get(brand);
+    if (globalIdx === undefined) continue;
+    instrs.push({ op: "global.get", index: globalIdx }, { op: "ref.is_null" }, { op: "i32.and" });
+  }
+  instrs.push({
+    op: "if",
+    blockType: { kind: "empty" },
+    then: [...emptyString, { op: "extern.convert_any" }, { op: "return" }],
+  });
+  return instrs;
 }

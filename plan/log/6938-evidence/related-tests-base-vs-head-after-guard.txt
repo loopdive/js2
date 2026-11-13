@@ -1,0 +1,229 @@
+.tmp/6938/rel-head2 {"passed":2356,"failed":1265,"skipped":42} files 238
+  FILE tests/issue-1058-ambient-performance-global.test.ts failed
+  FILE tests/issue-1058-generic-base-node-factory.test.ts failed
+  FILE tests/issue-1058-multifile-generic-callback-registration.test.ts failed
+  FILE tests/issue-1589a.test.ts failed
+  FILE tests/issue-2009.test.ts failed
+  FILE tests/issue-2175-null-proto-toprimitive.test.ts failed
+  FILE tests/issue-2580-m3-protoextend.test.ts failed
+  FILE tests/issue-2660-s2-fnctor-prototype-object.test.ts failed
+  FILE tests/issue-2680.test.ts failed
+  FILE tests/issue-2853.test.ts failed
+  FILE tests/issue-2937.test.ts failed
+  FILE tests/issue-2944.test.ts failed
+  FILE tests/issue-2992-delete-widening.test.ts failed
+  FILE tests/issue-3123.test.ts failed
+  FILE tests/issue-3138.test.ts failed
+  FILE tests/issue-3200.test.ts failed
+  FILE tests/issue-3518-conversion-source-composition.test.ts failed
+  FILE tests/issue-3518-core-nodes-boundary.test.ts failed
+  FILE tests/issue-3518-core-type-boundary.test.ts failed
+  FILE tests/issue-3518-core-type-seam.test.ts failed
+  FILE tests/issue-3518-native-object-get-bodies.test.ts failed
+  FILE tests/issue-3518-native-object-storage-resources.test.ts failed
+  FILE tests/issue-3518-native-object-write-composition.test.ts failed: later-main dependency mismatch: src/codegen/builtin-ctor-value-invoke.ts
+  FILE tests/issue-3518-nested-stackification-policy-evolution.test.ts failed
+  FILE tests/issue-3518-number-prerequisite-policy-evolution.test.ts failed
+  FILE tests/issue-3518-object-runtime-main-composition.test.ts failed: later-main dependency mismatch: src/codegen/builtin-ctor-value-invoke.ts
+  FILE tests/issue-3518-program-data-contract-boundary.test.ts failed
+  FILE tests/issue-3518-prototype-chain-preservation.test.ts failed: prototype chain source mismatch
+  FILE tests/issue-3518-runtime-data-contract-seam.test.ts failed
+  FILE tests/issue-3518-semantic-provider-boundary.test.ts failed
+  FILE tests/issue-3518-symbolic-support-ref.test.ts failed
+  FILE tests/issue-3518-to-primitive-wrapper-forward.test.ts failed
+  FILE tests/issue-3521-r2-withdrawal-telemetry.test.ts failed
+  FILE tests/issue-3523-module-init-discovery-static.test.ts failed
+  FILE tests/issue-3614.test.ts failed
+  FILE tests/issue-3683-direct-calls.test.ts failed
+  FILE tests/issue-3683-numeric-fields.test.ts failed
+  FILE tests/issue-3685-presence-tracked-proven-reads.test.ts failed
+  FILE tests/issue-3719-new-assigned-to-binding.test.ts failed
+  FILE tests/issue-3920-standalone-closed-struct-reflection.test.ts failed
+  FILE tests/issue-3921-alloc-census.test.ts failed
+  FILE tests/issue-4276-instanceof-object-family.test.ts failed
+  FILE tests/issue-4384-moment-js-runtime-body.test.ts failed
+  FILE tests/issue-4464.test.ts failed
+  FILE tests/issue-4480.test.ts failed
+  FILE tests/issue-4484.test.ts failed
+  FILE tests/issue-4492-wave5.test.ts failed
+  FILE tests/issue-4493-object-entries-struct-cast.test.ts failed
+  FILE tests/issue-4504-inherited-set.test.ts failed: Hook timed out in 600000ms.
+  FILE tests/issue-4506.test.ts failed
+  FILE tests/issue-4519.test.ts failed
+  FILE tests/issue-4623.test.ts failed
+  FILE tests/issue-4637.test.ts failed
+  FILE tests/issue-4643.test.ts failed
+  FILE tests/issue-4653.test.ts failed
+  FILE tests/issue-4656.test.ts failed
+  FILE tests/issue-5162-ctor-own-prototype-method.test.ts failed
+  FILE tests/issue-5195-r3-review.test.ts failed
+  FILE tests/issue-5254.test.ts failed
+  FILE tests/issue-5376-accessor-valueof-field-read.test.ts failed
+  FILE tests/issue-6460-standalone-static-spread-arity.test.ts failed
+  FILE tests/issue-743-ctor-sites-in-fixpoint.test.ts failed
+  FILE tests/issue-743-derivation-defaults.test.ts failed
+  FILE tests/issue-743-dts-entrypoint-seeds.test.ts failed
+  FILE tests/issue-820m.test.ts failed
+.tmp/6938/rel-base {"passed":2271,"failed":1273,"skipped":116,"pending":3} files 238
+  FILE tests/issue-1058-ambient-performance-global.test.ts failed
+  FILE tests/issue-1058-generic-base-node-factory.test.ts failed
+  FILE tests/issue-1058-multifile-generic-callback-registration.test.ts failed
+  FILE tests/issue-1589a.test.ts failed
+  FILE tests/issue-2009.test.ts failed
+  FILE tests/issue-2175-null-proto-toprimitive.test.ts failed
+  FILE tests/issue-2580-m3-protoextend.test.ts failed
+  FILE tests/issue-2608-new-this-fnctor-static.test.ts failed
+  FILE tests/issue-2660-s2-fnctor-prototype-object.test.ts failed
+  FILE tests/issue-2680.test.ts failed
+  FILE tests/issue-2853.test.ts failed
+  FILE tests/issue-2937.test.ts failed
+  FILE tests/issue-2944.test.ts failed
+  FILE tests/issue-2992-delete-widening.test.ts failed
+  FILE tests/issue-3123.test.ts failed
+  FILE tests/issue-3138.test.ts failed
+  FILE tests/issue-3200.test.ts failed
+  FILE tests/issue-3429.test.ts failed
+  FILE tests/issue-3518-conversion-source-composition.test.ts failed
+  FILE tests/issue-3518-core-nodes-boundary.test.ts failed
+  FILE tests/issue-3518-core-type-boundary.test.ts failed
+  FILE tests/issue-3518-core-type-seam.test.ts failed
+  FILE tests/issue-3518-native-object-get-bodies.test.ts failed
+  FILE tests/issue-3518-native-object-storage-resources.test.ts failed
+  FILE tests/issue-3518-native-object-write-composition.test.ts failed: later-main dependency mismatch: src/codegen/builtin-ctor-value-invoke.ts
+  FILE tests/issue-3518-nested-stackification-policy-evolution.test.ts failed
+  FILE tests/issue-3518-number-prerequisite-policy-evolution.test.ts failed
+  FILE tests/issue-3518-object-runtime-main-composition.test.ts failed: later-main dependency mismatch: src/codegen/builtin-ctor-value-invoke.ts
+  FILE tests/issue-3518-program-data-contract-boundary.test.ts failed
+  FILE tests/issue-3518-prototype-chain-preservation.test.ts failed: prototype chain source mismatch
+  FILE tests/issue-3518-runtime-data-contract-seam.test.ts failed
+  FILE tests/issue-3518-semantic-provider-boundary.test.ts failed
+  FILE tests/issue-3518-symbolic-support-ref.test.ts failed
+  FILE tests/issue-3518-to-primitive-wrapper-forward.test.ts failed
+  FILE tests/issue-3521-r2-withdrawal-telemetry.test.ts failed
+  FILE tests/issue-3523-module-init-discovery-static.test.ts failed
+  FILE tests/issue-3614.test.ts failed
+  FILE tests/issue-3683-direct-calls.test.ts failed
+  FILE tests/issue-3683-numeric-fields.test.ts failed
+  FILE tests/issue-3685-presence-tracked-proven-reads.test.ts failed
+  FILE tests/issue-3719-new-assigned-to-binding.test.ts failed
+  FILE tests/issue-3920-standalone-closed-struct-reflection.test.ts failed
+  FILE tests/issue-4384-moment-js-runtime-body.test.ts failed
+  FILE tests/issue-4464.test.ts failed
+  FILE tests/issue-4480.test.ts failed
+  FILE tests/issue-4484.test.ts failed
+  FILE tests/issue-4492-wave5.test.ts failed
+  FILE tests/issue-4493-object-entries-struct-cast.test.ts failed
+  FILE tests/issue-4504-inherited-set.test.ts failed: Hook timed out in 600000ms.
+  FILE tests/issue-4506.test.ts failed
+  FILE tests/issue-4519.test.ts failed
+  FILE tests/issue-4623.test.ts failed
+  FILE tests/issue-4637.test.ts failed
+  FILE tests/issue-4653.test.ts failed
+  FILE tests/issue-4656.test.ts failed
+  FILE tests/issue-5162-ctor-own-prototype-method.test.ts failed
+  FILE tests/issue-5195-r3-review.test.ts failed
+  FILE tests/issue-5254.test.ts failed
+  FILE tests/issue-5376-accessor-valueof-field-read.test.ts failed
+  FILE tests/issue-6460-standalone-static-spread-arity.test.ts failed
+  FILE tests/issue-6689-extern-set-decide-fnctor-proto.test.ts failed
+  FILE tests/issue-743-ctor-sites-in-fixpoint.test.ts failed
+  FILE tests/issue-743-derivation-defaults.test.ts failed
+  FILE tests/issue-743-dts-entrypoint-seeds.test.ts failed
+  FILE tests/issue-820m.test.ts failed
+  DIFF tests/issue-1671-trampoline-null-receiver.test.ts :: #1671 object-method trampoline must forward the real receiver real test262 source runs without null-deref: language/expressions/object/dstr/async-gen-meth-dflt-ary-ptrn-rest-id-exhausted.js A= passed B= skipped
+  DIFF tests/issue-2608-new-this-fnctor-static.test.ts :: #2586 — `new this(...)` in an fnctor static method invokes a prototype method with arguments on inline `new this()` A= passed B= failed
+  DIFF tests/issue-2608-new-this-fnctor-static.test.ts :: #2586 — `new this(...)` in an fnctor static method preserves a nested fnctor field through an aliased prototype method A= passed B= failed
+  DIFF tests/issue-2608-new-this-fnctor-static.test.ts :: #2586 — `new this(...)` in an fnctor static method treats a fnctor field assigned by both if/else arms as always present A= passed B= failed
+  DIFF tests/issue-3429.test.ts :: #3429 assert.throws expected-constructor identity no longer leaks wasmClosureDynamicBridge control: assert.throws(TypeError, thrower) already passes (native builtins unaffected) A= passed B= failed
+  DIFF tests/issue-3429.test.ts :: #3429 assert.throws expected-constructor identity no longer leaks wasmClosureDynamicBridge a user-defined constructor's real name substitutes for the bridge name in the failure message A= passed B= failed
+  DIFF tests/issue-3429.test.ts :: #3429 assert.throws expected-constructor identity no longer leaks wasmClosureDynamicBridge a harness-defined constructor (Test262Error) also keeps its real name A= passed B= failed
+  DIFF tests/issue-3429.test.ts :: #3429 assert.throws expected-constructor identity no longer leaks wasmClosureDynamicBridge no-throw case: the expected-constructor name is correct even when nothing is thrown A= passed B= failed
+  DIFF tests/issue-3523-module-init-discovery-static.test.ts :: #3523 gap-6a — a discovery-static module init compiles its direct body once, AFTER the bodies (g) WHY it is off — two runner-faithful files the seam turns from pass to fail A= failed B= passed
+  DIFF tests/issue-3921-alloc-census.test.ts :: #3921 — per-type allocation census leaves the shipped binary byte-identical when disabled A= failed B= passed
+  DIFF tests/issue-4276-instanceof-object-family.test.ts :: #4276 — the upstream files this flipped (standalone) language/expressions/instanceof/S11.8.6_A6_T3.js — `MyFunct instanceof Function` / `instanceof Object` A= failed B= skipped
+  DIFF tests/issue-4276-instanceof-object-family.test.ts :: #4276 — the upstream files this flipped (standalone) built-ins/Object/create/15.2.3.5-2-2.js — `newObj instanceof Object` on an `Object.create` result A= passed B= skipped
+  DIFF tests/issue-4276-instanceof-object-family.test.ts :: #4276 — the upstream files this flipped (standalone) built-ins/Object/create/15.2.3.5-4-2.js — `newObj instanceof Object`, undefined Properties A= passed B= skipped
+  DIFF tests/issue-4276-instanceof-object-family.test.ts :: #4276 — the upstream files this flipped (standalone) built-ins/Object/create/15.2.3.5-4-4.js — `this instanceof Object` inside the Properties accessor A= passed B= skipped
+  DIFF tests/issue-4276-instanceof-object-family.test.ts :: #4276 — the upstream files this flipped (standalone) built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-4-247.js — `desc instanceof Object` A= passed B= skipped
+  DIFF tests/issue-4276-instanceof-object-family.test.ts :: #4276 — wrapper accessor files flipped by the internal brand built-ins/Object/create/15.2.3.5-4-7.js A= passed B= skipped
+  DIFF tests/issue-4276-instanceof-object-family.test.ts :: #4276 — wrapper accessor files flipped by the internal brand built-ins/Object/create/15.2.3.5-4-8.js A= passed B= skipped
+  DIFF tests/issue-4276-instanceof-object-family.test.ts :: #4276 — wrapper accessor files flipped by the internal brand built-ins/Object/create/15.2.3.5-4-9.js A= passed B= skipped
+  DIFF tests/issue-4276-instanceof-object-family.test.ts :: #4276 — wrapper accessor files flipped by the internal brand built-ins/Object/defineProperties/15.2.3.7-2-4.js A= passed B= skipped
+  DIFF tests/issue-4276-instanceof-object-family.test.ts :: #4276 — wrapper accessor files flipped by the internal brand built-ins/Object/defineProperties/15.2.3.7-2-6.js A= passed B= skipped
+  DIFF tests/issue-4276-instanceof-object-family.test.ts :: #4276 — wrapper accessor files flipped by the internal brand built-ins/Object/defineProperties/15.2.3.7-2-8.js A= passed B= skipped
+  DIFF tests/issue-4516-es5-residuals.test.ts :: ES5 standalone residual cluster keeps the host lane valid for built-ins/eval/name.js A= passed B= skipped
+  DIFF tests/issue-4516-es5-residuals.test.ts :: ES5 standalone residual cluster passes the exact residual row language/statements/function/S13.2.2_A11.js A= passed B= skipped
+  DIFF tests/issue-4516-es5-residuals.test.ts :: ES5 standalone residual cluster passes the exact residual row built-ins/Object/S9.9_A6.js A= passed B= skipped
+  DIFF tests/issue-4516-es5-residuals.test.ts :: ES5 standalone residual cluster passes the exact residual row built-ins/Function/15.3.5.4_2-95gs.js A= passed B= skipped
+  DIFF tests/issue-4516-es5-residuals.test.ts :: ES5 standalone residual cluster passes the exact residual row built-ins/Object/defineProperty/15.2.3.6-4-116.js A= passed B= skipped
+  DIFF tests/issue-4516-es5-residuals.test.ts :: ES5 standalone residual cluster passes the exact residual row built-ins/Object/defineProperty/15.2.3.6-4-159.js A= passed B= skipped
+  DIFF tests/issue-4516-es5-residuals.test.ts :: ES5 standalone residual cluster runtime-eval exact rows passes language/statements/with/S12.10_A1.5_T1.js A= skipped B= pending
+  DIFF tests/issue-4516-es5-residuals.test.ts :: ES5 standalone residual cluster runtime-eval exact rows passes annexB/language/eval-code/direct/func-switch-case-eval-func-init.js A= skipped B= pending
+  DIFF tests/issue-4516-es5-residuals.test.ts :: ES5 standalone residual cluster runtime-eval exact rows passes annexB/language/eval-code/direct/func-switch-case-eval-func-existing-var-no-init.js A= skipped B= pending
+  DIFF tests/issue-4516-es5-residuals.test.ts :: ES5 standalone residual cluster keeps a closed object for-in on its static path A= passed B= skipped
+  DIFF tests/issue-4516-es5-residuals.test.ts :: ES5 standalone residual cluster keeps a callable fnctor member working beside the missing-call guard A= passed B= skipped
+  DIFF tests/issue-4516-es5-residuals.test.ts :: ES5 standalone residual cluster declines the synthetic Function self-binding proof after reassignment A= passed B= skipped
+  DIFF tests/issue-4516-es5-residuals.test.ts :: ES5 standalone residual cluster keeps primitive Object coercion on the wrapper path A= passed B= skipped
+  DIFF tests/issue-4516-es5-residuals.test.ts :: ES5 standalone residual cluster keeps ArraySetLength growth absent for an initially dense number array A= passed B= skipped
+  DIFF tests/issue-4516-es5-residuals.test.ts :: ES5 standalone residual cluster does not populate the dynamic getter from an unallocated structural type A= passed B= skipped
+  DIFF tests/issue-4639.test.ts :: #4639 C1 — new String(obj) runs the object's ToString built-ins/String/S15.5.2.1_A1_T10.js — inherited toString on the ctor argument A= passed B= skipped
+  DIFF tests/issue-4639.test.ts :: #4639 C1 — new String(obj) runs the object's ToString argonly-instantiation-function-valued-prototype — arg-only instantiation keeps function-valued prototype identity A= passed B= skipped
+  DIFF tests/issue-4639.test.ts :: #4639 C2 — <Builtin>.<unknownProp> is a read, not a Codegen error built-ins/String/S15.5.3_A2_T2.js — String inherits Function.prototype expando A= passed B= skipped
+  DIFF tests/issue-4639.test.ts :: #4639 C2 — <Builtin>.<unknownProp> is a read, not a Codegen error built-ins/RegExp/S15.10.5_A2_T2.js — RegExp inherits Function.prototype expando A= passed B= skipped
+  DIFF tests/issue-4639.test.ts :: #4639 C2 — <Builtin>.<unknownProp> is a read, not a Codegen error built-ins/RegExp/prototype/exec/S15.10.6.2_A4_T7.js — Math.NaN reads undefined A= passed B= skipped
+  DIFF tests/issue-4639.test.ts :: #4639 C6 — replace with a Function replacement / nullish search built-ins/String/prototype/replace/S15.5.4.11_A1_T6.js — Function() replacement (tier-tolerant) A= passed B= skipped
+  DIFF tests/issue-4639.test.ts :: #4639 C6 — replace with a Function replacement / nullish search built-ins/String/prototype/replace/S15.5.4.11_A1_T1.js — control — plain string replace A= passed B= skipped
+  DIFF tests/issue-4639.test.ts :: #4639 C2 — CANARY: the key on which C2 and #4637's arm MEET builtin-no-brand-prototype — Math/Proxy .prototype reach the C2 arm with key `prototype` A= passed B= skipped
+  DIFF tests/issue-4639.test.ts :: #4639 C2 — CANARY: the key on which C2 and #4637's arm MEET carrier-hasown-prototype-guard — REGRESSION GUARD (green on base) — unfoldable receiver, discriminating answer A= passed B= skipped
+  DIFF tests/issue-4639.test.ts :: #4639 — measured residuals (see the issue's Residuals table) built-ins/String/S15.5.2.1_A1_T11.js — C1 control — function object with own valueOf/toString A= passed B= skipped
+  DIFF tests/issue-4639.test.ts :: #4639 — measured residuals (see the issue's Residuals table) built-ins/String/S15.5.2.1_A1_T8.js — C1 control — replaced Function.prototype.toString A= passed B= skipped
+  DIFF tests/issue-4639.test.ts :: #4639 — measured residuals (see the issue's Residuals table) built-ins/String/prototype/constructor/S15.5.4.1_A1_T2.js — C3 — String prototype constructor is constructable A= passed B= skipped
+  DIFF tests/issue-4639.test.ts :: #4639 — measured residuals (see the issue's Residuals table) built-ins/Object/prototype/constructor/S15.2.4.1_A1_T2.js — C3 — Object prototype constructor is constructable A= passed B= skipped
+  DIFF tests/issue-4639.test.ts :: #4639 — measured residuals (see the issue's Residuals table) built-ins/Error/prototype/constructor/S15.11.4.1_A1_T2.js — C3 — Error prototype constructor is constructable A= passed B= skipped
+  DIFF tests/issue-4639.test.ts :: #4639 — measured residuals (see the issue's Residuals table) built-ins/RegExp/prototype/S15.10.6.1_A1_T2.js — C3 — RegExp counterpart fixed upstream in PR #4867 A= passed B= skipped
+  DIFF tests/issue-4639.test.ts :: #4639 — measured residuals (see the issue's Residuals table) built-ins/RegExp/prototype/global/S15.10.7.2_A9.js — C4 — bounded proto accessor delete A= passed B= skipped
+  DIFF tests/issue-4639.test.ts :: #4639 — measured residuals (see the issue's Residuals table) built-ins/RegExp/prototype/ignoreCase/S15.10.7.3_A9.js — C4 — bounded proto accessor delete A= passed B= skipped
+  DIFF tests/issue-4639.test.ts :: #4639 — measured residuals (see the issue's Residuals table) built-ins/RegExp/prototype/multiline/S15.10.7.4_A9.js — C4 — bounded proto accessor delete A= passed B= skipped
+  DIFF tests/issue-4639.test.ts :: #4639 — measured residuals (see the issue's Residuals table) built-ins/RegExp/S15.10.2.8_A3_T15.js — C5 — dynamic pattern fixed upstream in PR #4882 A= passed B= skipped
+  DIFF tests/issue-4639.test.ts :: #4639 C3 — prototype constructor identity controls builtin-prototype-constructors-direct-and-multihop — direct and immutable multi-hop aliases use the matching builtin constructor A= passed B= skipped
+  DIFF tests/issue-4639.test.ts :: #4639/#4637 — the C1-reachable function-valued-prototype TRAP (cross-lane) fn-proto-argonly-inherited-read-no-trap — inherited read through a function-valued prototype completes (no trap) A= passed B= skipped
+  DIFF tests/issue-4639.test.ts :: #4639/#4637 — the C1-reachable function-valued-prototype TRAP (cross-lane) SUCCESSOR (fixed by #4643): the same shape answers correctly A= passed B= skipped
+  DIFF tests/issue-4643.test.ts :: #4643 — the three-row table (function-valued prototype, arg-only) fn-proto-argonly-inherited-read — W — an inherited read through a function-valued prototype answers the property A= passed B= skipped
+  DIFF tests/issue-4643.test.ts :: #4643 — the three-row table (function-valued prototype, arg-only) fn-proto-argonly-is-prototype-of — C — the instance's chain starts at its constructor's prototype A= passed B= skipped
+  DIFF tests/issue-4643.test.ts :: #4643 — the three-row table (function-valued prototype, arg-only) fn-proto-argonly-get-prototype-of — C+W — getPrototypeOf answers the FUNCTION, never the internal bag A= passed B= skipped
+  DIFF tests/issue-4643.test.ts :: #4643 — the three-row table (function-valued prototype, arg-only) fn-proto-argonly-instanceof-guard — REGRESSION GUARD (green on base) — instanceof unchanged A= passed B= skipped
+  DIFF tests/issue-4643.test.ts :: #4643 — the `.prototype` slot keeps the FUNCTION's identity fn-proto-static-read-identity — GUARD — the static read is the function, not the proto-view A= passed B= skipped
+  DIFF tests/issue-4643.test.ts :: #4643 — the `.prototype` slot keeps the FUNCTION's identity fn-proto-assignment-value — GUARD — `(F.prototype = P)` evaluates to P, not to the stored view A= passed B= skipped
+  DIFF tests/issue-4643.test.ts :: #4643 C — the chain start is not function-specific (OBJECT-valued control) obj-proto-argonly-get-prototype-of — an object-valued prototype was equally unreachable on base A= passed B= skipped
+  DIFF tests/issue-4643.test.ts :: #4643 C — the chain start is not function-specific (OBJECT-valued control) obj-proto-argonly-is-prototype-of — …and equally false A= passed B= skipped
+  DIFF tests/issue-4643.test.ts :: #4643 C — the chain start is not function-specific (OBJECT-valued control) obj-proto-argonly-inherited-read-guard — REGRESSION GUARD (green on base) — the object-valued read still works A= passed B= skipped
+  DIFF tests/issue-4643.test.ts :: #4643 — §20.1.3.3 discrimination (the new first-link compare) chain-start-discrimination — true for the real link, false for a foreign instance, for SELF, and for a stranger A= passed B= skipped
+  DIFF tests/issue-4643.test.ts :: #4643 — measured residuals still fails: fn-proto-argonly-in-operator (`in` has no fnctor chain-start arm (generic: fails for an object-valued prototype too)) A= failed B= skipped
+  DIFF tests/issue-4653.test.ts :: #4653 residuals — measured standalone routes a with-scoped var function initializer through the object environment A= failed B= passed
+  DIFF tests/issue-4653.test.ts :: #4653 residuals — measured standalone captures each redeclared with environment in its function expression A= passed B= failed
+  DIFF tests/issue-4656.test.ts :: #4656 — Function.prototype.bind standalone residuals built-ins/Function/prototype/bind/15.3.4.5-2-6.js A= passed B= skipped
+  DIFF tests/issue-4656.test.ts :: #4656 — Function.prototype.bind standalone residuals built-ins/Function/prototype/bind/15.3.4.5-2-8.js A= passed B= skipped
+  DIFF tests/issue-4656.test.ts :: #4656 — Function.prototype.bind standalone residuals built-ins/Function/prototype/bind/S15.3.4.5_A5.js A= passed B= skipped
+  DIFF tests/issue-4656.test.ts :: #4656 — Function.prototype.bind standalone residuals ordinary-direct-bind A= passed B= skipped
+  DIFF tests/issue-4656.test.ts :: #4656 — Function.prototype.bind standalone residuals ordinary-indirect-bind-apply A= passed B= skipped
+  DIFF tests/issue-5162-ctor-own-prototype-method.test.ts :: #5162 constructor → own prototype method standalone: the same call from another prototype method returns its spec value A= passed B= failed
+  DIFF tests/issue-5254.test.ts :: #5254 original-harness Iterator provisioning does not provision an own Iterator declaration or a raw Test262 body A= passed B= failed
+  DIFF tests/issue-5316-r5-attribute-model.test.ts :: #5316 r5 standalone attribute model + receiver [[Set]] standalone Test262 row: built-ins/Proxy/has/return-false-target-not-extensible.js A= passed B= skipped
+  DIFF tests/issue-5316-r5-attribute-model.test.ts :: #5316 r5 standalone attribute model + receiver [[Set]] standalone Test262 row: built-ins/Proxy/deleteProperty/targetdesc-is-configurable-target-is-not-extensible.js A= passed B= skipped
+  DIFF tests/issue-5316-r5-attribute-model.test.ts :: #5316 r5 standalone attribute model + receiver [[Set]] standalone Test262 row: built-ins/Proxy/getOwnPropertyDescriptor/result-is-undefined-target-is-not-extensible.js A= passed B= skipped
+  DIFF tests/issue-5316-r5-attribute-model.test.ts :: #5316 r5 standalone attribute model + receiver [[Set]] standalone Test262 row: built-ins/Proxy/getOwnPropertyDescriptor/resultdesc-is-not-configurable-targetdesc-is-configurable.js A= passed B= skipped
+  DIFF tests/issue-5316-r5-attribute-model.test.ts :: #5316 r5 standalone attribute model + receiver [[Set]] standalone Test262 row: built-ins/Proxy/getOwnPropertyDescriptor/result-type-is-not-object-nor-undefined.js A= passed B= skipped
+  DIFF tests/issue-5316-r5-attribute-model.test.ts :: #5316 r5 standalone attribute model + receiver [[Set]] standalone Test262 row: built-ins/Proxy/has/return-false-target-prop-exists.js A= passed B= skipped
+  DIFF tests/issue-5316-r5-attribute-model.test.ts :: #5316 r5 standalone attribute model + receiver [[Set]] standalone Test262 row: built-ins/Proxy/has/return-false-target-prop-exists-using-with.js A= passed B= skipped
+  DIFF tests/issue-5316-r5-attribute-model.test.ts :: #5316 r5 standalone attribute model + receiver [[Set]] standalone Test262 row: built-ins/Proxy/deleteProperty/call-parameters.js A= passed B= skipped
+  DIFF tests/issue-5316-r5-attribute-model.test.ts :: #5316 r5 standalone attribute model + receiver [[Set]] standalone Test262 row: built-ins/Proxy/has/return-false-targetdesc-not-configurable.js A= passed B= skipped
+  DIFF tests/issue-5316-r5-attribute-model.test.ts :: #5316 r5 standalone attribute model + receiver [[Set]] standalone Test262 row: built-ins/Proxy/has/return-true-target-prop-exists.js A= passed B= skipped
+  DIFF tests/issue-5316-r5-attribute-model.test.ts :: #5316 r5 standalone attribute model + receiver [[Set]] standalone Test262 row: built-ins/Proxy/has/return-true-without-same-target-prop.js A= passed B= skipped
+  DIFF tests/issue-5316-r5-attribute-model.test.ts :: #5316 r5 standalone attribute model + receiver [[Set]] standalone Test262 row: built-ins/Proxy/getOwnPropertyDescriptor/result-is-undefined.js A= passed B= skipped
+  DIFF tests/issue-5316-r5-attribute-model.test.ts :: #5316 r5 standalone attribute model + receiver [[Set]] standalone Test262 row: built-ins/Proxy/getOwnPropertyDescriptor/result-is-undefined-targetdesc-is-undefined.js A= passed B= skipped
+  DIFF tests/issue-5316-r5-attribute-model.test.ts :: #5316 r5 standalone attribute model + receiver [[Set]] standalone Test262 row: built-ins/Proxy/getOwnPropertyDescriptor/resultdesc-return-configurable.js A= passed B= skipped
+  DIFF tests/issue-5316-r5-attribute-model.test.ts :: #5316 r5 standalone attribute model + receiver [[Set]] standalone Test262 row: built-ins/Proxy/getOwnPropertyDescriptor/call-parameters.js A= passed B= skipped
+  DIFF tests/issue-6689-extern-set-decide-fnctor-proto.test.ts :: #6689 __extern_set_decide tests a fnctor prototype before casting it regime build validates and runs the assembled repro A= passed B= failed
+  DIFF tests/issue-6689-extern-set-decide-fnctor-proto.test.ts :: #6689 __extern_set_decide tests a fnctor prototype before casting it standalone with live dynamic code runs the repro without a trap A= passed B= failed
+  DIFF tests/issue-6689-extern-set-decide-fnctor-proto.test.ts :: #6689 __extern_set_decide tests a fnctor prototype before casting it standalone and default builds of the repro still validate A= passed B= failed
+differences: 96

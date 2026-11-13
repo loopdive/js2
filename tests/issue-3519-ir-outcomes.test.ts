@@ -32,6 +32,16 @@ function terminal(result: Awaited<ReturnType<typeof compile>>): readonly IrObser
   return (result.irOutcomes ?? []).filter((outcome) => outcome.kind !== "non-executable");
 }
 
+/** (#7002) An invariant is surfaced as a non-fatal diagnostic; the compile result matches telemetry-off. */
+function expectInvariantWarning(result: Awaited<ReturnType<typeof compile>>, code: string): void {
+  expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+  expect(
+    result.errors.some(
+      (error) => error.severity === "warning" && error.message.startsWith(`IR outcome invariant [${code}]`),
+    ),
+  ).toBe(true);
+}
+
 function nonExecutable(result: Awaited<ReturnType<typeof compile>>): readonly IrObservedOutcome[] {
   return (result.irOutcomes ?? []).filter((outcome) => outcome.kind === "non-executable");
 }
@@ -141,7 +151,7 @@ describe("#3519 typed IR terminal outcomes", () => {
     const result = await compile(
       `export function find(): number {
         const values = [10, 20, 30];
-        return values.indexOf(20);
+        return values.copyWithin(0, 1).length; // (#7313) lastIndexOf lowers now
       }`,
       { fileName: "array-method-selector.ts", trackIrOutcomes: true },
     );
@@ -342,7 +352,11 @@ export function answer(): number { return 42; }
   });
 
   it("records the compiler-injected timer wrapper as an exact IR terminal", async () => {
-    const result = await compile(`export function delayed(): void { setTimeout(() => {}, 1); }`, {
+    // (#7325) The host-assisted pin is a compile error since #6979. Under the
+    // native profile an arrow callback gets no closure plan (`closure-return-type`),
+    // so the fixture uses a function expression; the ledger contract under test
+    // is profile-independent.
+    const result = await compile(`export function delayed(): void { setTimeout(function () { return; }, 1); }`, {
       fileName: "timer.ts",
       trackIrOutcomes: true,
     });
@@ -491,7 +505,10 @@ export function second(x: number): number { return x + 2; }`,
       }`,
       { fileName: "promise-registration.ts", trackIrOutcomes: true },
     );
-    expect(result.success).toBe(false);
+    // (#7002) Telemetry is observation-only: "not demoted" is the invariant
+    // ROW below plus a surfaced diagnostic. `success` matches the telemetry-off
+    // compile, which keeps the legacy body.
+    expectInvariantWarning(result, "unexpected-internal-throw");
     expect(terminal(result).find((outcome) => outcome.displayName === "delay")).toMatchObject({
       kind: "invariant",
       code: "unexpected-internal-throw",
@@ -509,7 +526,7 @@ export function run(value: number): number { return imported(value); }`,
       "main.ts",
       { trackIrOutcomes: true },
     );
-    expect(result.success).toBe(false);
+    expectInvariantWarning(result, "unexpected-internal-throw"); // (#7002) see the Promise case above
     expect(terminal(result).find((outcome) => outcome.displayName === "run")).toMatchObject({
       kind: "invariant",
       code: "unexpected-internal-throw",

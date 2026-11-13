@@ -60,7 +60,8 @@ const PRECLAIM_CASES: ReadonlyArray<{
   {
     name: "ambient Array method",
     code: "array-method-unsupported",
-    source: `export function test(): number { const values = [1, 2]; return values.indexOf(2); }`,
+    // (#7313) lastIndexOf lowers now; copyWithin has no IR lowering.
+    source: `export function test(): number { const values = [1, 2]; return values.copyWithin(0, 1).length; }`,
   },
   {
     name: "numeric primitive method",

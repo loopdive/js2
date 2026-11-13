@@ -17,18 +17,17 @@
 
 import { ts } from "../ts-api.js";
 import type { ValType, WasmFunction } from "../ir/types.js";
-import type { CodegenContext, FunctionContext } from "./context/types.js";
+import { type CodegenContext, type FunctionContext, hostFreeEnvironment } from "./context/types.js";
 import { addFuncType } from "./registry/types.js";
 import { reportError } from "./context/errors.js";
 import type { AsyncCpsPlan } from "./async-cps.js";
 import { ASYNC_CPS_ENABLED, analyzeAsyncBody } from "./async-cps.js";
 import {
+  awaitOperandProvablySettled,
   emitAsyncFrameStateMachine,
   asyncFnNeedsDrive,
-  asyncFnNeedsHostDrive,
   asyncGenConsumerNeedsDrive,
 } from "./async-frame.js";
-import { isStandalonePromiseActive } from "./async-scheduler.js";
 import { widenAsyncThenableResults } from "./async-thenable-return.js";
 
 /**
@@ -83,42 +82,11 @@ function decideAsyncActivation(
   // awaited operand resolves to a native `$Promise`, a genuinely-suspending
   // async fn is driven by a real resumable `$AsyncFrame`. The result is a real
   // `$Promise` (externref), not a sync value.
-  if (isStandalonePromiseActive(ctx)) {
-    const asyncPlan = analyzeAsyncBody(ctx, decl);
-    // (#2906) Drive-layer eligibility accepts linear MULTI-await bodies, not
-    // just the single canonical await `asyncFnNeedsCps` gates on. For a single
-    // await the verdict is identical, so wasi single-await routing is unchanged.
-    if (asyncFnNeedsDrive(ctx, decl, asyncPlan)) return { lane: "drive", plan: asyncPlan };
-    return null;
-  }
-
-  // (#2865) `--target standalone` with the native-`$Promise` CARRIER gate still
-  // OFF (#2980 — the measured widen decision): activate the drive lane ONLY for
-  // the for-await-over-async-GENERATOR consumer shape. Its every suspension
-  // awaits a promise MINTED by the machine itself (the producer's
-  // `__async_gen_next_<name>` next()-promise — a native `$Promise` on every
-  // lane), so it is carrier-independent. Plain awaits / Promise statics /
-  // boxed-array for-await stay on the legacy path until the carrier widen —
-  // widening those here would be exactly the piecemeal flip #2980 rule 2 declines.
-  if (ctx.standalone === true) {
-    const asyncPlan = analyzeAsyncBody(ctx, decl);
-    if (asyncGenConsumerNeedsDrive(ctx, decl, asyncPlan)) return { lane: "drive", plan: asyncPlan };
-    return null;
-  }
-
-  // JS-host lanes (never both wasi and standalone).
-  if (!ctx.wasi && !ctx.standalone) {
-    const asyncPlan = analyzeAsyncBody(ctx, decl);
-    // (#2967 slices 1/2/3 — ONE engine) The #2906 N-state resume machine
-    // (host settle backend) claims every linear shape it can drive. The legacy
-    // CPS arm that used to sit behind it is DELETED: after slice 2b (concise
-    // arrows + pattern params), phase 3a (cell-aware frame fields) and #3134
-    // (Promise<T> value-slot rep), `asyncFnNeedsHostDrive` accepts the full
-    // single-tail-await population + the former class-2 closures, so the CPS
-    // fallback was unreachable. One engine, two settle backends.
-    if (asyncFnNeedsHostDrive(ctx, decl, asyncPlan)) return { lane: "host-drive", plan: asyncPlan };
-  }
-
+  const asyncPlan = analyzeAsyncBody(ctx, decl);
+  // (#2906) Drive-layer eligibility accepts linear MULTI-await bodies, not
+  // just the single canonical await `asyncFnNeedsCps` gates on. For a single
+  // await the verdict is identical, so wasi single-await routing is unchanged.
+  if (asyncFnNeedsDrive(ctx, decl, asyncPlan)) return { lane: "drive", plan: asyncPlan };
   return null;
 }
 
@@ -190,13 +158,20 @@ function isNestedFunctionScope(node: ts.Node): boolean {
  * function scopes), or `null`. Awaits inside `catch`/`finally` blocks only
  * count when an ENCLOSING `try` block wraps them.
  */
-function findSuspensionInsideTry(decl: ts.FunctionLikeDeclaration): ts.Node | null {
+function findSuspensionInsideTry(
+  decl: ts.FunctionLikeDeclaration,
+  awaitIsHazard: (a: ts.AwaitExpression) => boolean = () => true,
+): ts.Node | null {
   const body = decl.body;
   if (body === undefined) return null;
   let found: ts.Node | null = null;
   const walk = (node: ts.Node, inTry: boolean): void => {
     if (found !== null || isNestedFunctionScope(node)) return;
-    if (inTry && (ts.isAwaitExpression(node) || (ts.isForOfStatement(node) && node.awaitModifier !== undefined))) {
+    if (inTry && ts.isAwaitExpression(node) && awaitIsHazard(node)) {
+      found = node;
+      return;
+    }
+    if (inTry && ts.isForOfStatement(node) && node.awaitModifier !== undefined) {
       found = node;
       return;
     }
@@ -212,17 +187,30 @@ function findSuspensionInsideTry(decl: ts.FunctionLikeDeclaration): ts.Node | nu
   return found;
 }
 
+/** (#6995) A top-level, non-generator async declaration — what the native drive engine can claim. */
+function isNativeDriveEntryPoint(decl: ts.FunctionLikeDeclaration): boolean {
+  return ts.isFunctionDeclaration(decl) && ts.isSourceFile(decl.parent) && decl.asteriskToken === undefined;
+}
+
 /**
  * (#3587) Report the loud-refusal compile error for a declined async
- * function-like whose body genuinely suspends inside a `try`. HOST lane only:
- * the wasi/standalone drive lanes have their own claim/decline programs
- * (#2865/#2867/#2980) and their declined populations are tracked there.
- * No-op when the body cannot really suspend (statically-resolved awaits
+ * function-like whose body genuinely suspends inside a `try`. On the
+ * wasi/standalone drive lanes (#6995) only for the engine's claimable entry
+ * points (top-level declarations). No-op when the body cannot really suspend (statically-resolved awaits
  * cannot reject) or when no suspension sits inside a `try`.
  */
 function reportDeclinedAsyncRejectionHazard(ctx: CodegenContext, decl: ts.FunctionLikeDeclaration): void {
   if (!ASYNC_CPS_ENABLED || decl.body === undefined) return;
-  if (ctx.wasi === true || ctx.standalone === true) return;
+  // (#6995) The native-carrier lanes (standalone/wasi) used to return here, so
+  // the decline was SILENT exactly where it miscompiled. Their drive engine
+  // claims only top-level declarations (closures and nested declarations are
+  // parked in `planAsyncClosureActivation`, methods in #2957), so a decline of
+  // one of those is a SHAPE residue — the same subset this guard covers on the
+  // host lane. The parked population is never claimed at any shape; refusing it
+  // would refuse a population, not a residue (cf. the methods carve-out above),
+  // so it relies on the honest unwrap (`emitStandaloneAwaitUnwrap`
+  // `throwOnRejected`) instead: a settled rejection throws into the `try`.
+  if ((ctx.wasi === true || ctx.standalone === true) && !isNativeDriveEntryPoint(decl)) return;
   const seen = hazardReportedByCtx.get(ctx);
   if (seen?.has(decl)) return;
   const plan = analyzeAsyncBody(ctx, decl);
@@ -239,7 +227,11 @@ function reportDeclinedAsyncRejectionHazard(ctx: CodegenContext, decl: ts.Functi
   // errors trades a latent rejection bug for 402 certain failures. Any future
   // widening has to name a SUBSET (e.g. by decline reason), never the whole
   // population.
-  const hazard = findSuspensionInsideTry(decl);
+  // (#6995) On the native lanes the honest unwrap delivers a SETTLED operand
+  // exactly (value, or a thrown rejection), so only an await whose operand may
+  // still be PENDING is a hazard there. The host lane keeps every await.
+  const nativeLane = ctx.wasi === true || ctx.standalone === true;
+  const hazard = findSuspensionInsideTry(decl, (a) => !nativeLane || !awaitOperandProvablySettled(ctx, a, plan));
   if (hazard === null) return;
   if (seen === undefined) hazardReportedByCtx.set(ctx, new WeakSet([decl]));
   else seen.add(decl);
@@ -255,74 +247,14 @@ function reportDeclinedAsyncRejectionHazard(ctx: CodegenContext, decl: ts.Functi
   );
 }
 
-// ── (#6780) Loud refusal: a declined body must not elide `await <settled>` ──
-//
-// `await null` / `await 1` / `await Promise.resolve()` still yields one
-// microtask turn (§27.7.5.3): the code after the CALL SITE runs before the
-// continuation. The host engine therefore claims such bodies like any other
-// (`asyncFnNeedsHostDrive` has no all-static decline). A body it still declines
-// is declined for its SHAPE (e.g. an await inside a loop), and the synchronous
-// pass-through would run every continuation inline — a silent reordering, so
-// refuse instead.
-//
-// Scope is a NAMED SUBSET, as #6504 round 30 requires of any widening: host
-// lane only; only bodies with no real suspension (real-suspension declines
-// stay on the #3587 `try`-scoped guard above); and only the engine's own
-// claimable entry points — top-level declarations, arrows and function
-// expressions. Nested declarations (policy-declined in
-// nested-declarations.ts) and methods (#2957) run the pass-through for REAL
-// awaits too; refusing only their settled awaits would refuse a population the
-// engine never claims at any operand.
-
-const staticDeclineReportedByCtx = new WeakMap<CodegenContext, WeakSet<ts.Node>>();
-
-function isHostDriveLane(ctx: CodegenContext): boolean {
-  return ctx.wasi !== true && ctx.standalone !== true && !isStandalonePromiseActive(ctx);
-}
-
-function isEngineEntryPoint(decl: ts.FunctionLikeDeclaration): boolean {
-  if (ts.isArrowFunction(decl) || ts.isFunctionExpression(decl)) return true;
-  return ts.isFunctionDeclaration(decl) && ts.isSourceFile(decl.parent);
-}
-
-/** First await of a declined host body whose every await is settled, else `null`. */
-function findElidedSettledAwait(ctx: CodegenContext, decl: ts.FunctionLikeDeclaration): ts.AwaitExpression | null {
-  if (!ASYNC_CPS_ENABLED || decl.body === undefined || !isHostDriveLane(ctx)) return null;
-  if (!isEngineEntryPoint(decl) || decl.asteriskToken !== undefined) return null;
-  const plan = analyzeAsyncBody(ctx, decl);
-  if (plan.awaitPoints.length === 0 || plan.forAwaitPoints.length > 0) return null;
-  if (plan.awaitPoints.some((a) => plan.awaitedStaticallyResolved.get(a) !== true)) return null;
-  return plan.awaitPoints[0]!;
-}
-
-function reportDeclinedSettledAwaitBody(ctx: CodegenContext, decl: ts.FunctionLikeDeclaration): void {
-  const seen = staticDeclineReportedByCtx.get(ctx);
-  if (seen?.has(decl)) return;
-  const elided = findElidedSettledAwait(ctx, decl);
-  if (elided === null) return;
-  if (seen === undefined) staticDeclineReportedByCtx.set(ctx, new WeakSet([decl]));
-  else seen.add(decl);
-  reportError(
-    ctx,
-    elided,
-    "async shape not supported: this `await` has an already-settled operand, but the body's " +
-      "control flow (e.g. an await inside a loop) is a shape the async engine cannot drive yet, " +
-      "and the synchronous fallback would run the continuation BEFORE the caller resumes (an " +
-      "`await` always yields a microtask turn, whatever its operand). Restructure toward canonical " +
-      "awaits — top-level `await x` / `const v = await x` / `return await x` statements, awaits " +
-      "inside if/try — or hoist the await out of the loop (#6780)",
-  );
-}
-
 /**
  * Decline-side guards for an async function-like the engine did NOT claim
- * (#3587 rejection hazard + #6780 elided settled awaits). Each is
+ * (#3587 rejection hazard). It is
  * self-scoping and deduped per declaration, so the IR-selector probe and the
  * body-compile path may both call this.
  */
 export function reportDeclinedAsyncBody(ctx: CodegenContext, decl: ts.FunctionLikeDeclaration): void {
   reportDeclinedAsyncRejectionHazard(ctx, decl);
-  reportDeclinedSettledAwaitBody(ctx, decl);
 }
 
 /**
@@ -340,7 +272,18 @@ function emitAsyncLane(
 ): void {
   switch (decision.lane) {
     case "drive":
-      emitAsyncFrameStateMachine(ctx, fctx, decl, decision.plan);
+      // (#6982) In a JavaScript environment every native await yields a
+      // microtask turn (§27.7.5.3), settled operand or not; the JS value
+      // adapter drains the ring at the host checkpoint. Host-free embedders
+      // keep the synchronous fast path their drain contract relies on.
+      emitAsyncFrameStateMachine(
+        ctx,
+        fctx,
+        decl,
+        decision.plan,
+        false,
+        hostFreeEnvironment(ctx) ? undefined : { alwaysAsyncAwait: true },
+      );
       return;
     case "host-drive":
       emitAsyncFrameStateMachine(ctx, fctx, decl, decision.plan, /*host*/ true);
@@ -387,8 +330,8 @@ export function maybeActivateAsync(
 
 /**
  * Declaration-time wasm result for a top-level function declaration: the
- * #5371 thenable widening, then (#6780) the Promise carrier for an async
- * declaration the HOST engine will drive.
+ * #5371 thenable widening. (#6979) The #6780 Promise carrier for a HOST-driven
+ * async declaration described below went with the host-assisted lane.
  *
  * {@link maybeActivateAsync} rewrites a driven declaration's result to
  * `externref` only when its BODY compiles. A caller compiled earlier — a
@@ -405,12 +348,7 @@ export function widenAsyncDeclarationResults(
   decl: ts.FunctionDeclaration,
   results: ValType[],
 ): ValType[] {
-  const widened = widenAsyncThenableResults(ctx, decl, results);
-  if (!ts.isSourceFile(decl.parent) || decl.asteriskToken !== undefined || !isHostDriveLane(ctx)) return widened;
-  if (widened.length === 1 && widened[0]!.kind === "externref") return widened;
-  const isAsync = decl.modifiers?.some((m) => m.kind === ts.SyntaxKind.AsyncKeyword) === true;
-  if (decideAsyncActivation(ctx, decl, isAsync, /*allowNonDeclaration*/ false)?.lane !== "host-drive") return widened;
-  return [{ kind: "externref" }];
+  return widenAsyncThenableResults(ctx, decl, results);
 }
 
 /**
@@ -455,6 +393,18 @@ export function planAsyncClosureActivation(
   // dispatch loop, so those shapes are simply correct on it. The native
   // `drive` lane stays gated on the asyncGen-consumer exception above.
   if (decision !== null && decision.lane === "host-drive") return decision;
+  // (#6982) Native regime in a JavaScript environment: a closure whose every
+  // await is statically settled used to run inline (await elided); it must
+  // yield like JS, so it takes the drive lane. Bodies with a real suspension
+  // keep their pre-existing lowering (the native-closure park above).
+  if (
+    decision !== null &&
+    decision.lane === "drive" &&
+    !hostFreeEnvironment(ctx) &&
+    decision.plan.awaitPoints.every((a) => decision.plan.awaitedStaticallyResolved.get(a) === true)
+  ) {
+    return decision;
+  }
   return null;
 }
 

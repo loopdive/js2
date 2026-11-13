@@ -185,7 +185,12 @@ describe("#1474/#1539 --target standalone native RegExp", () => {
     );
     expect(r.success, r.errors.map((e) => e.message).join("\n")).toBe(true);
     const { instance } = await WebAssembly.instantiate(r.binary, {});
-    expect((instance.exports.run as () => number)()).toBe(11);
+    // (#7014 wave 15) `a+` used to be an UNSUPPORTED dynamic pattern that threw
+    // a TypeError (the 1 in 11). The native engine now compiles it, so — as in
+    // JS — `new RegExp("a+")` does not throw and `unsupported` returns 0
+    // (re-measured 2026-10-17 on upstream main 0727e2985b). The invalid
+    // pattern still throws a catchable SyntaxError (the 10).
+    expect((instance.exports.run as () => number)()).toBe(10);
   });
 
   it("uses runtime g/y flag bits for lastIndex semantics", async () => {

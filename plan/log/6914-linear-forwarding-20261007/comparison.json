@@ -1,0 +1,8 @@
+{
+  "status": "exact-equality",
+  "cases": 51,
+  "observations": 13,
+  "binariesPerArm": 16,
+  "memoriesPerArm": 10,
+  "provenanceExceptions": ["head", "runtimeSha256"]
+}

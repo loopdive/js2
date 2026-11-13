@@ -1,0 +1,6 @@
+JSON report written to /tmp/equiv-2QRqVc/report.json
+equivalence-gate: 22 failing, 1748 passing, 22 known-failures in baseline.
+equivalence-gate: 225 files (fileCount 223), passingFloor 1740.
+
+✓ No new equivalence regressions.
+EXIT 0

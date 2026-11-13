@@ -39,7 +39,7 @@ import { addFuncType } from "./registry/types.js";
 import { standaloneClassProtoObjectApplies } from "./class-proto-object.js";
 import { emitLazyProtoGet } from "./expressions/extern.js";
 import { resolvePromiseSubclassIdentifier } from "./expressions/promise-subclass.js";
-import { getOrRegisterPromiseType, isStandalonePromiseActive } from "./async-scheduler.js";
+import { getOrRegisterPromiseType } from "./async-scheduler.js";
 import { coerceType, compileExpression, flushLateImportShifts } from "./shared.js";
 import { emitBuiltinConstructorIdentity } from "./builtin-static-globals.js";
 import { ensureExternIsUndefinedImport } from "./expressions/late-imports.js";
@@ -74,7 +74,7 @@ function linkApplies(ctx: CodegenContext, className: string): boolean {
  * path (that parent's constructor has to run).
  */
 export function isStandalonePromiseSuperForwarder(ctx: CodegenContext, className: string, arity: number): boolean {
-  if (ctx.standalone !== true || !isStandalonePromiseActive(ctx) || arity < 1) return false;
+  if (ctx.standalone !== true || arity < 1) return false;
   const parent = ctx.classParentMap.get(className);
   if (parent !== undefined && ctx.classSet.has(parent)) return false;
   return ctx.classBuiltinParentMap.get(className) === "Promise";

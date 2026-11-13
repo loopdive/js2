@@ -1,0 +1,10 @@
+
+ RUN  v3.2.7 /home/user/js2/.claude/worktrees/agent-a774506d6593a2d93
+
+ ✓ tests/issue-6865-lowering-string-operations.test.ts (19 tests) 372ms
+
+ Test Files  1 passed (1)
+      Tests  19 passed (19)
+   Start at  23:06:38
+   Duration  1.81s (transform 388ms, setup 0ms, collect 1.03s, tests 372ms, environment 0ms, prepare 72ms)
+

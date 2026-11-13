@@ -23,7 +23,7 @@
 // intermediate wrapper; `assertFinalAllocProvenance` is the required final
 // wrapper.
 
-import type { AllocSiteRegistry } from "./alloc-registry.js";
+import type { AllocProvenanceLookup } from "./contracts/allocations.js";
 import type { AllocKind, AllocSiteId, IrFunction, IrInstr } from "../core/nodes.js";
 import { IrInvariantError } from "../../shared/contracts/ir-preparation-errors.js";
 
@@ -57,7 +57,7 @@ const ALLOC_INSTR_KIND: Readonly<Record<string, AllocKind>> = {
  * Walk every instr (including nested bodies of if / loops / for-of / try) and
  * check the two provenance invariants against `registry`.
  */
-export function verifyAllocProvenance(func: IrFunction, registry: AllocSiteRegistry): AllocVerifyError[] {
+export function verifyAllocProvenance(func: IrFunction, registry: AllocProvenanceLookup): AllocVerifyError[] {
   const errors: AllocVerifyError[] = [];
 
   const visit = (instr: IrInstr): void => {
@@ -93,7 +93,7 @@ export function verifyAllocProvenance(func: IrFunction, registry: AllocSiteRegis
 
 function checkId(
   func: IrFunction,
-  registry: AllocSiteRegistry,
+  registry: AllocProvenanceLookup,
   alloc: AllocSiteId,
   expectedKind: AllocKind | undefined,
   instrKind: string,
@@ -127,11 +127,11 @@ function checkId(
  * every artifact must pass once after all transforms and before publication or
  * lowering.
  */
-export function assertFinalAllocProvenance(func: IrFunction, registry: AllocSiteRegistry): void {
+export function assertFinalAllocProvenance(func: IrFunction, registry: AllocProvenanceLookup): void {
   assertVerifiedAllocProvenance(func, registry);
 }
 
-function assertVerifiedAllocProvenance(func: IrFunction, registry: AllocSiteRegistry): void {
+function assertVerifiedAllocProvenance(func: IrFunction, registry: AllocProvenanceLookup): void {
   const errors = verifyAllocProvenance(func, registry);
   if (errors.length > 0) {
     const lines = errors.map((e) => `  - [${e.func}] ${e.message}`).join("\n");

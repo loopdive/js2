@@ -21,6 +21,7 @@ import {
 import {
   mergeDynamicInstructionSupport,
   prepareDynamicInstructionSupportForUnits,
+  type PreparedDynamicBoxObserver,
 } from "./prepared-dynamic-support.js";
 import { ProgramAbiInvariantError } from "./program-abi.js";
 import type { ProgramAbiDerivedUnitRecord, ProgramAbiSlotSpace } from "./program-abi.js";
@@ -519,6 +520,7 @@ export function sealDependencyCompletePreparedComponents(
     readonly inventory: IrUnitInventory;
     readonly atomicTerminalPopulation?: boolean;
     readonly callableImports: ReadonlyMap<string, Import>;
+    readonly observeDynamicBoxHelpers?: PreparedDynamicBoxObserver;
     readonly preparedBindingIdsByTerminalUnitId?: ReadonlyMap<IrUnitId, ReadonlySet<IrBindingId>>;
     readonly deferPublication?: boolean;
     readonly preparedModuleCallableAliasDescriptor?: PreparedComponentModuleCallableAliasDescriptor;
@@ -540,6 +542,7 @@ export function prepareDependencyCompletePreparedComponents(
     readonly inventory: IrUnitInventory;
     readonly atomicTerminalPopulation?: boolean;
     readonly callableImports: ReadonlyMap<string, Import>;
+    readonly observeDynamicBoxHelpers?: PreparedDynamicBoxObserver;
     readonly preparedBindingIdsByTerminalUnitId?: ReadonlyMap<IrUnitId, ReadonlySet<IrBindingId>>;
     readonly deferPublication?: boolean;
     readonly preparedModuleCallableAliasDescriptor?: PreparedComponentModuleCallableAliasDescriptor;
@@ -605,7 +608,12 @@ export function prepareDependencyCompletePreparedComponents(
   // producer change, not a precedence question — fail closed.
   const dynamicInstructionSupport = mergeDynamicInstructionSupport(
     input.dynamicInstructionSupport,
-    prepareDynamicInstructionSupportForUnits({ ctx, entries, callableImports: input.callableImports }),
+    prepareDynamicInstructionSupportForUnits({
+      ctx,
+      entries,
+      callableImports: input.callableImports,
+      observeDynamicBoxHelpers: input.observeDynamicBoxHelpers,
+    }),
     (unitId) => {
       throw new IrInvariantError(
         "selection-preparation-mismatch",

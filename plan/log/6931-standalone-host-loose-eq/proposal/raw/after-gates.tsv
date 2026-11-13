@@ -1,0 +1,9 @@
+gate	exit
+typecheck	0
+loc-budget	0
+func-budget	0
+coercion-sites	0
+oracle-ratchet	0
+dead-exports	0
+ir-fallbacks	0
+compiler-boundaries	0

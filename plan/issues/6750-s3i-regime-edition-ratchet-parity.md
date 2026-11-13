@@ -111,3 +111,12 @@ every other edition up. Per-test host-pass → regime-not-pass: **2,459**
 slices: ES5 → #6880 (groups), #6894 (merged into PR #6584), #6898 (the
 #3418 elision re-key); ES2016/ES2023 → #6912 (callable-as-value tail) and
 #6881 (`__js_array_*` leak).
+
+## Checkpoint (2026-10-10, nightly 37910451084 of 10-09 vs host baseline of 10-10)
+
+Regime **42,014** / 48,735 vs host 39,700 (10-07: 41,816). ES2026 +4,309;
+**ES5 −41** (10-07: −90), ES2016 −3, ES2023 −5. Per-test host-pass →
+regime-not-pass: 2,319 (10-07: 2,459). This artifact predates #6881 (#6607),
+#6912 B–D (#6594/#6610/#6611), #6913 (#6612) and #6882 (#6571), all merged
+10-09/10-10, and #6898 (#6588, un-drafted 10-10) — the ES2016/ES2023 rows and
+most of ES5's remainder. Next nightly is the one to score S6 item 2 on.

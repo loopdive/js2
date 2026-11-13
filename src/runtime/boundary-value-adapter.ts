@@ -31,3 +31,33 @@ export function createBoundaryValueAdapter(
       return factories.promise(intent.operation);
   }
 }
+
+/**
+ * (#6980) A JS exception raised inside a boundary operation (a host
+ * `[Symbol.iterator]` / `next` / getter / callback that throws) is a FOREIGN
+ * exception to the module: its `try_table (catch $__exn)` cannot see it, so
+ * `try { const [x] = hostIterable } catch {}` let the error escape. Rethrow it
+ * on the module's own exception tag with the thrown value marshalled like any
+ * other host value; an uncaught one unwraps back to the same JS value at the
+ * export boundary (`normalizeModuleCallbackException`). Module-tag exceptions
+ * (a nested Wasm callback's own throw) and modules without an exported tag
+ * pass through unchanged.
+ */
+export function withModuleTagThrow(
+  fn: Function,
+  callbackState: { getExports: () => Record<string, any> | undefined } | undefined,
+  fromHostValue: (value: unknown, exports: Record<string, any>) => any,
+): Function {
+  return function (this: unknown, ...args: unknown[]) {
+    try {
+      return fn.apply(this, args);
+    } catch (error) {
+      const WasmException = typeof WebAssembly === "undefined" ? undefined : (WebAssembly as any).Exception;
+      if (typeof WasmException !== "function" || error instanceof WasmException) throw error;
+      const exports = callbackState?.getExports();
+      const tag = exports?.__exn_tag;
+      if (!(tag instanceof (WebAssembly as any).Tag)) throw error;
+      throw new WasmException(tag, [fromHostValue(error, exports!)]);
+    }
+  };
+}

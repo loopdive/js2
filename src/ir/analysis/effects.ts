@@ -121,8 +121,12 @@ export function effectsOf(instr: IrInstr, cache: Map<IrInstr, IrEffects> = new M
     case "unbox":
     case "tag.test":
     case "dyn.truthy": // #2949 S5.1 — ToBoolean read on the carrier: pure (no heap/control effect)
-    case "dyn.to_number": // #2949 S5.3 — ToNumber read on the carrier: pure (no heap/control effect)
-    case "dyn.eq": // #2949 S5.2 — equality read over two carriers: pure (no heap/control effect)
+    case "dyn.undefined": // #7104 — the carrier's undefined constant: pure
+    case "dyn.typeof":
+    case "dyn.to_string":
+    case "dyn.json_stringify":
+    case "dyn.object_tag":
+    case "dyn.string_carrier": // #7106 S1c — carrier recovery, no user code
     case "coerce.to_externref":
     case "string.concat":
     case "string.eq":
@@ -156,6 +160,13 @@ export function effectsOf(instr: IrInstr, cache: Map<IrInstr, IrEffects> = new M
     case "vec.set_length":
       fx.writesHeap = true;
       break;
+    // #6921 — loose `==` with an Object operand runs ToPrimitive (§7.2.14
+    // steps 10-11): call-like. Strict `===` (§7.2.15) never enters user code,
+    // so `loose: false` stays pure (#2949 S5.2).
+    case "dyn.eq":
+      fx.readsHeap = instr.loose;
+      fx.writesHeap = instr.loose;
+      break;
     // Call-like: may read AND write arbitrary heap state. `extern.prop` can
     // trigger a host getter; iterator ops advance host iterator state.
     case "call":
@@ -167,6 +178,23 @@ export function effectsOf(instr: IrInstr, cache: Map<IrInstr, IrEffects> = new M
     case "extern.call":
     case "class.new":
     case "fnctor.new":
+    // #7106 S3a — runs an arbitrary user constructor body.
+    case "dyn.construct":
+    // #7106 S1e — reads and clears the __argc/__extras_argv protocol globals.
+    case "dyn.arguments_length":
+    // #7106 S3c — reads the receiver protocol global; runs no user code.
+    case "dyn.current_this":
+    // #7106 — reads the realm's global object; runs no user code.
+    case "dyn.global_object":
+    // #7106 S3c — reads F.prototype (lazily materialised) and walks the chain.
+    case "dyn.instanceof_fn":
+    // #7106 — the generic runtime operator: reads `target.prototype` (an
+    // accessor may run) and throws for a target it finds not callable.
+    case "dyn.instanceof":
+    // #7106 S1i — writes the __argc protocol global the callee prologue reads.
+    case "dyn.publish_argc":
+    // #7106 S1g — a Proxy receiver may run user traps, like member reads.
+    case "dyn.own_property":
     case "extern.new":
     case "extern.prop":
     case "extern.propSet":
@@ -177,6 +205,10 @@ export function effectsOf(instr: IrInstr, cache: Map<IrInstr, IrEffects> = new M
     // #3795 — strict dynamic [[Set]] may invoke accessors/proxy-like runtime
     // hooks and always mutates observable heap state.
     case "dyn.member_set":
+    // #6921 — ToNumber on an Object runs ToPrimitive (§7.1.4 step 1), i.e.
+    // user `valueOf` / `toString` / `@@toPrimitive`, and may throw (also
+    // `+Symbol()`, `+1n`). Call-like until operand-tag refinement exists.
+    case "dyn.to_number":
     case "iter.new":
     case "iter.next":
     case "iter.done":
@@ -471,6 +503,7 @@ export function isSideEffecting(i: IrInstr): boolean {
     i.kind === "class.set" ||
     i.kind === "class.new" ||
     i.kind === "fnctor.new" ||
+    i.kind === "dyn.construct" || // #7106 S3a — the constructor body runs for its effects
     // #3000-E: super(...) runs the parent `_init` (writes parent fields on self);
     // super.method() invokes the parent method body — both arbitrary effects, and
     // super_init is void-result so DCE MUST keep it (and its operands) live via
@@ -485,10 +518,35 @@ export function isSideEffecting(i: IrInstr): boolean {
     // slot.read is pure (load a Wasm local) but always-keep to avoid
     // breaking the for-of body's load/use pattern.
     i.kind === "slot.write" ||
+    // Void vector writes must retain their operand definitions, not only the operation.
+    i.kind === "vec.set" ||
+    i.kind === "vec.set_length" ||
     // #3795: strict dynamic [[Set]] is void-result but its three carrier
     // operands must seed DCE liveness. The generic null-result keep rule
     // preserves only the instruction itself, not the definitions it uses.
     i.kind === "dyn.member_set" ||
+    // #6921: ToNumber (§7.1.4 → ToPrimitive) and loose `==` with an Object
+    // operand (§7.2.14 steps 10-11) run user `valueOf`/`toString` and may
+    // throw, so an unused result must still execute. Strict `dyn.eq`
+    // (§7.2.15) is observation-free and stays droppable.
+    i.kind === "dyn.to_number" ||
+    (i.kind === "dyn.eq" && i.loose) ||
+    // (#7269) The value-producing dyn ops `effectsOf` already calls
+    // call-like, because they run user code or mutate protocol state that an
+    // unused result does not undo. Each must still execute:
+    //   - `dyn.own_property` and `dyn.member_get` run ToPropertyKey on the
+    //     key, Proxy traps and getters;
+    //   - `dyn.instanceof` reads `target.prototype` (an accessor may run) and
+    //     throws for a non-callable target;
+    //   - `dyn.instanceof_fn` walks the value's prototype chain, where a
+    //     Proxy trap may run;
+    //   - `dyn.arguments_length` consumes and clears the published `__argc`.
+    // `dyn.current_this` and `dyn.global_object` only read, and stay droppable.
+    i.kind === "dyn.own_property" ||
+    i.kind === "dyn.member_get" ||
+    i.kind === "dyn.instanceof" ||
+    i.kind === "dyn.instanceof_fn" ||
+    i.kind === "dyn.arguments_length" ||
     i.kind === "forof.vec" ||
     // Slice 6 part 3 (#1182): host-iterator protocol ops mutate iterator
     // state (advance pointer, dispose). DCE must not eliminate them

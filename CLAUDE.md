@@ -2,6 +2,72 @@
 
 TypeScript-to-WebAssembly compiler using WasmGC.
 
+## ⚠ Direction: standalone only — the JS-host lane is being sunset (project-lead decision, 2026-10-10)
+
+**Applies to every session and agent.** All new work targets the two no-host
+targets only:
+
+- **`--target standalone`**: pure WasmGC, no JS host.
+- **The Linear/WASI native backend**: `src/codegen-linear/` and the IR Linear
+  backend.
+
+Consequences:
+
+- **No new JS-host work.** Do not add JS-host IR paths, new host imports, or
+  host-only fast paths. Do not prioritise test262 host-lane (`gc`) results
+  over standalone.
+- **Existing JS-host code stays until it is retired.** Do not delete it
+  opportunistically: removing it needs its own reviewed change. Until then,
+  keep gc output byte-identical when you change shared code.
+- **The "One native semantic core" principle below replaces the older
+  "Dual-mode: JS host optional" one** (#6708).
+
+## ⚠ IR path: code quality comes first (project-lead rule, 2026-10-22)
+
+**Applies to every change under `src/ir/` and to the codegen seams the IR
+calls.** Quality outranks coverage: never take a claim faster at the cost of
+messier code, because the IR is meant to replace the legacy hacks, not
+reproduce them.
+
+What "clean" means here:
+
+- **Modular.** One concern per module, following the IR layering (core,
+  dialects, selection, lowering, backend). A new arm goes next to its
+  siblings, in the same shape: same file layout, same naming, same helper
+  pattern.
+- **No duplication.** Before adding a predicate, wrapper, lowering arm or
+  helper, look for an existing one and extend it. Two arms that differ by a
+  name or a flag become one parameterised arm. Copy-paste is a defect, not a
+  shortcut.
+- **No AI slop.** That means:
+  - no long files or functions (split by concern instead of growing them);
+  - no inconsistent structure between sibling arms;
+  - no defensive branches for cases that cannot occur;
+  - no speculative abstractions with one user;
+  - no dead parameters;
+  - no comments that narrate the code instead of explaining why.
+- **Size budgets are a ceiling, not a target.** A `func-budget-allow:` or
+  `loc-budget-allow:` grant is the exception, and the review must agree that
+  the growth cannot reasonably be split.
+
+How it is enforced:
+
+1. **Design.** Every IR issue's `## Implementation Plan` states the target
+   structure before code is written:
+   - which module the change lives in;
+   - what it reuses, and what duplicate it removes;
+   - an acceptance criterion for code quality, next to the correctness
+     criteria.
+2. **Adversarial review.** Before a PR's hold is released, run a review agent
+   with fresh context. Give it the diff and the plan, not the author's
+   conclusion, and ask it to prove the quality goal was **not** met:
+   duplication, misplaced code, oversized units, inconsistent structure,
+   needless branches. Every finding is fixed or rebutted in the PR before
+   release. Record the review verdict in the PR body.
+3. **Leave it better.** When a change touches duplicated or tangled IR code,
+   fold the duplicate into the shared helper in the same PR, or file the
+   cleanup as its own issue and link it.
+
 ## Answering style
 
 Be concise. Lead with the answer, then only the context needed to act on it.
@@ -116,8 +182,8 @@ node scripts/check-loc-budget.mjs && node scripts/check-func-budget.mjs \
 
 ## Architecture Principles
 
-- **Dual-mode: JS host optional** — the compiler supports two modes: JS host mode (uses host imports for performance/completeness) and standalone mode (pure Wasm, no JS runtime). New features should have Wasm-native implementations for standalone mode; JS host imports are acceptable as a fast path when a JS runtime is available. Don't add new host imports without a standalone fallback.
-- This follows the pattern of #679 (dual string backend) and #682 (dual RegExp backend).
+- **One native semantic core (#6708)** — every environment compiles with the same Wasm-native semantic core (`semanticProviders: "native-first"`, the default since S6). A JS environment adds only the value adapter (boundary wrappers), explicit platform capabilities, and named opt-in accelerators (`wasm:js-string`, host RegExp/Date/Intl — #6978). No new feature may depend on a host semantic import. The S6 `host-assisted` rollback is gone (#6979 S7-a): `semanticProviders: "host-assisted"`/`"auto"` and `nativeStrings: false` on the JS target are compile errors.
+- There is **no JS-host mode** any more, only environments: standalone/WASI (pure Wasm) and a JavaScript environment (same core + value adapter + capabilities + accelerators). The separate JS-host test262 lane was retired on 2026-10-12; its frozen snapshot is published by `scripts/preserve-frozen-host-baseline.mjs` and drawn as a background series on the conformance trend graph (#6979 S7-e). The accelerators are what remains of the old dual backends (#679 strings, #682 RegExp).
 - **Two orthogonal axes in codegen** (see #1527):
   - **Backend lowering**: `src/codegen/` (WasmGC) vs `src/codegen-linear/` (linear memory). These are **alternatives, not one superseding the other** — the choice depends on target (browser/WasmGC vs WASI/linear) and tradeoffs. Both stay.
   - **Front-end**: direct AST→Wasm (legacy, accumulated hacks) vs IR (`src/ir/`, typed representation). IR **replaces the hacks**; it does **not** compete with the backend choice. IR adopts AST node kinds step by step, only for parts that do not yet need to decide between linear and WasmGC lowering. IR-path failures currently demote to a warning channel (#2855 phases this fallback out).
@@ -485,10 +551,12 @@ rejection breakdown.
 - `--optimize` / `-O` — run Binaryen wasm-opt on compiled binary
 - `--wit` — generate WIT interface file for Component Model
 - `--utf8-storage` — dual i8/i16 string storage; implies `nativeStrings` on the WasmGC backend
+- `--host-accelerator <name>` — in a JS environment, use the host engine's implementation for one semantic family (`regexp`, `date`, `intl`; repeatable) instead of the native one (#6978); a compile error with `--target standalone`/`wasi`
 
 `nativeStrings` (WasmGC i16 arrays instead of `wasm:js-string`) is a compile
 option, not a CLI flag: `--standalone` and `--target standalone`/`wasi` turn it
-on, and `--utf8-storage` implies it. `src/cli.ts` (`--help`) is the authority for
+on, and `--utf8-storage` implies it; on the JS target it is always on (`nativeStrings:
+false` there is a compile error since #6979). `src/cli.ts` (`--help`) is the authority for
 the flag list; `scripts/check-claude-md-paths.mjs` fails when a flag named here
 is not parsed there.
 
@@ -854,7 +922,7 @@ The issue frontmatter `status:` field tracks where an issue is, set by whichever
 
 <!-- AUTO:conformance-start -->
 
-**test262 conformance**: 39,376 / 48,232 (81.6 %)
+**test262 conformance**: 39,379 / 48,232 (81.6 %)
 
 <!-- AUTO:conformance-end -->
 

@@ -21,6 +21,7 @@ import {
   BINARYEN_COMPACT_IMPORTS_DISABLE_FLAG,
   BINARYEN_PORTABLE_FEATURE_FLAGS,
 } from "./binaryen-features.js";
+import { mayContainUnsafeTryTable, reshapeUnsafeTryTables, restoreCustomSections } from "./optimize-try-table-shape.js";
 
 // Dynamic imports to avoid vite bundling node-only modules for the browser.
 // These are only used by optimizeWithSystemBinary which only runs in Node.js.
@@ -522,6 +523,9 @@ function optimizeWithBinaryenModule(
       }
     }
 
+    // (#7168) No try_table re-shape here: binaryen.js 132 cannot read
+    // js2wasm GC modules (`readBinary` throws above), so a rewrite hook on
+    // this path would be untested dead code. The CLI path carries it.
     const optimizedBinary = mod.emitBinary();
     return { binary: new Uint8Array(optimizedBinary), optimized: true };
   } finally {
@@ -604,6 +608,25 @@ function resolveWasmOptPath(n: NonNullable<typeof _nodeImports>): string | null 
 const WASM_OPT_DEFAULT_TIMEOUT_MS = 600_000;
 
 /**
+ * (#6985) Keep the compiler's module-init chunks out of Binaryen's FULL
+ * inliner. A large module initializer is deliberately emitted as bounded
+ * `__module_init_chunk_*` helpers (`src/codegen/module-init-chunks.ts`, whose
+ * prefix this pattern mirrors), but each chunk has exactly one caller and
+ * Binaryen's one-caller rule (`-ocimfs`, unlimited by default) inlines every
+ * one of them back. lodash-es then re-optimized a 985 KB `__module_init` in
+ * `inlining-optimizing`, serially: 402 s of the -O4 pipeline, against 72 s
+ * with the chunks kept opaque — the same boundary the in-tree inliner already
+ * draws (`moduleInitInlineBoundary`, `codegen/ir-inline.ts`). Initializers run
+ * once, so the call boundary costs nothing measurable.
+ *
+ * `no-full-inline` rather than `no-inline`: each Binaryen no-inline pass takes
+ * ONE pattern, and `no-inline` is already spent on the cold-constructor hint
+ * (`inline-hints.ts`). Must precede `-O<level>` — these are passes, run in
+ * command order. A module without chunks matches nothing.
+ */
+const MODULE_INIT_CHUNK_NO_INLINE_ARGS = ["--no-full-inline", "--pass-arg=no-full-inline@__module_init_chunk_*"];
+
+/**
  * (#6732) Reduce a failed `wasm-opt` run to the lines a reader can act on.
  * Binaryen's npm `bin/wasm-opt` is an Emscripten build: an abort makes Node
  * echo the offending *source line* — the whole minified 10 MB script, several
@@ -623,6 +646,96 @@ function wasmOptFailure(err: unknown, timeoutMs: number): { text: string; timedO
     .join("\n")
     .trim();
   return { text: text || "unknown error", timedOut: false };
+}
+
+/** (#7168) Ceiling for the `--print` text of an optimized module (≈15× its binary size). */
+const WASM_OPT_PRINT_MAX_BUFFER = 1 << 30;
+
+/**
+ * (#7168) Finish a successful CLI run. When the optimized binary may hold a
+ * `try_table` with a ref block type — which V8 12.4 (Node 22) executes as
+ * `unreachable`, see `optimize-try-table-shape.ts` — print it, re-shape the
+ * text and re-assemble it with no passes. A module without one (pre-scan
+ * miss, or printed text with nothing to rewrite) keeps its bytes exactly.
+ *
+ * Failure policy. The structural pre-scan has no known false positive, so a
+ * hit means the optimized bytes almost certainly trap on Node 22. If the
+ * print OR the re-assembly then fails or times out, ship the unoptimized
+ * input with `warning` set (and `timedOut` on a timeout). That costs size,
+ * but the result is correct on every engine.
+ * `deadline` (ms epoch) bounds both extra runs when the caller's timeout
+ * covers the whole call (#6742).
+ */
+function reshapeOptimizedTryTables(
+  n: NonNullable<typeof _nodeImports>,
+  wasmOptPath: string,
+  tmpDir: string,
+  original: Uint8Array,
+  level: number,
+  featureFlags: string[],
+  preserveNames: boolean,
+  timeoutMs: number,
+  deadline: number | undefined,
+  warning?: string,
+): OptimizeResult {
+  const outputPath = n.join(tmpDir, "output.wasm");
+  const optimized = new Uint8Array(n.readFileSync(outputPath));
+  const ok = (binary: Uint8Array): OptimizeResult => ({ binary, optimized: true, ...(warning ? { warning } : {}) });
+  if (!mayContainUnsafeTryTable(optimized)) return ok(optimized);
+  const budget = () => (deadline === undefined ? timeoutMs : Math.max(1, deadline - Date.now()));
+  const flags = [...featureFlags, ...(preserveNames ? ["-g"] : [])];
+  const unoptimized = (step: string, err: unknown, applied: number): OptimizeResult => {
+    const { text, timedOut } = wasmOptFailure(err, applied);
+    process.stderr.write(
+      `[optimize] try_table re-shape (#7168) ${step} FAILED — shipping UNOPTIMIZED binary (${original.length} bytes). ` +
+        `Cause: ${text.slice(0, 200).trim()}\n`,
+    );
+    return {
+      binary: original,
+      optimized: false,
+      warning:
+        "wasm-opt output holds a try_table that Node 22 (V8 12.4) executes as unreachable, and re-shaping it " +
+        `(#7168) failed at the ${step} step, so the UNOPTIMIZED binary ships: ${text.slice(0, 600).trim()}`,
+      ...(timedOut ? { timedOut } : {}),
+    };
+  };
+  let reshaped: string | null;
+  const printBudget = budget();
+  try {
+    const printed = n.execFileSync(wasmOptPath, [outputPath, "--print", ...flags], {
+      timeout: printBudget,
+      stdio: ["ignore", "pipe", "pipe"],
+      maxBuffer: WASM_OPT_PRINT_MAX_BUFFER,
+    });
+    reshaped = reshapeUnsafeTryTables(printed.toString("utf-8"));
+  } catch (err) {
+    return unoptimized("print", err, printBudget);
+  }
+  if (reshaped === null) return ok(optimized);
+  const watPath = n.join(tmpDir, "reshaped.wat");
+  const outPath = n.join(tmpDir, "reshaped.wasm");
+  const assembleBudget = budget();
+  try {
+    n.writeFileSync(watPath, reshaped);
+    // No passes, but keep the final StackIR stage `-O<level>` ends with, which
+    // re-assembly would otherwise skip (it is what keeps the size delta small).
+    const stackIr = [`--optimize-level=${level}`, "--generate-stack-ir", "--optimize-stack-ir"];
+    n.execFileSync(wasmOptPath, [watPath, "-o", outPath, ...stackIr, ...flags], {
+      timeout: assembleBudget,
+      stdio: ["ignore", "ignore", "pipe"],
+    });
+    return ok(restoreCustomSections(optimized, new Uint8Array(n.readFileSync(outPath))));
+  } catch (err) {
+    return unoptimized("re-assembly", err, assembleBudget);
+  } finally {
+    for (const path of [watPath, outPath]) {
+      try {
+        n.unlinkSync(path);
+      } catch {
+        /* ignore */
+      }
+    }
+  }
 }
 
 function optimizeWithSystemBinary(
@@ -676,7 +789,16 @@ function optimizeWithSystemBinary(
     // must precede `-O<level>`: `--no-inline` is a PASS and binaryen runs
     // passes in command order.
     const hints = inlineHintArgs();
-    const args: string[] = [inputPath, ...hints.pre, `-O${level}`, "-o", outputPath, ...featureFlags, ...hints.post];
+    const args: string[] = [
+      inputPath,
+      ...hints.pre,
+      ...MODULE_INIT_CHUNK_NO_INLINE_ARGS,
+      `-O${level}`,
+      "-o",
+      outputPath,
+      ...featureFlags,
+      ...hints.post,
+    ];
     if (preserveNames) args.push("-g");
     void gc;
     void referenceTypes;
@@ -687,6 +809,20 @@ function optimizeWithSystemBinary(
       stdio: ["ignore", "pipe", "pipe"] as ["ignore", "pipe", "pipe"],
     };
     const firstRunStarted = Date.now();
+    const deadline = timeoutCoversRetry ? firstRunStarted + timeoutMs : undefined;
+    const reshape = (warning?: string): OptimizeResult =>
+      reshapeOptimizedTryTables(
+        n,
+        wasmOptPath,
+        tmpDir,
+        binary,
+        level,
+        [...featureFlags],
+        preserveNames,
+        timeoutMs,
+        deadline,
+        warning,
+      );
     try {
       n.execFileSync(wasmOptPath, args, execOptions);
     } catch (err) {
@@ -711,13 +847,9 @@ function optimizeWithSystemBinary(
         try {
           const retryTimeout = timeoutCoversRetry ? Math.max(1, timeoutMs - (Date.now() - firstRunStarted)) : timeoutMs;
           n.execFileSync(wasmOptPath, [...args, "--skip-pass=flatten"], { ...execOptions, timeout: retryTimeout });
-          const optimizedBinary = n.readFileSync(outputPath);
-          return {
-            binary: new Uint8Array(optimizedBinary),
-            optimized: true,
-            warning:
-              "wasm-opt -O4 omitted Binaryen's unsupported flatten pass for standardized try_table output; all remaining O4 passes completed.",
-          };
+          return reshape(
+            "wasm-opt -O4 omitted Binaryen's unsupported flatten pass for standardized try_table output; all remaining O4 passes completed.",
+          );
         } catch (retryError) {
           // (#6732) The retry's failure is the actionable one: put it first
           // so the 800-char cut below cannot drop it.
@@ -743,8 +875,7 @@ function optimizeWithSystemBinary(
       };
     }
 
-    const optimizedBinary = n.readFileSync(outputPath);
-    return { binary: new Uint8Array(optimizedBinary), optimized: true };
+    return reshape();
   } finally {
     // Cleanup temp files
     try {

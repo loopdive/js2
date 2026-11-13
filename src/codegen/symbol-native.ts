@@ -34,11 +34,6 @@ import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js
  *  grow regardless — see emitSymbolDescStore). */
 const INITIAL_CAP = 128;
 
-/** Select the Wasm-owned Symbol provider independently of the host environment. */
-export function usesNativeSymbolProvider(ctx: CodegenContext): boolean {
-  return ctx.targetProfile.semanticProviders === "native-first";
-}
-
 /**
  * (#2866) Ensure the native `$Symbol` carrier struct and the host-free
  * `__box_symbol(i32 id) -> externref` builder exist. Idempotent. Sets
@@ -133,7 +128,7 @@ export function ensureSymbolCarrier(ctx: CodegenContext): number {
  * the corresponding JavaScript Symbol primitive.
  */
 export function ensureNativeSymbolBoundaryBridge(ctx: CodegenContext): void {
-  if (!usesNativeSymbolProvider(ctx) || !ctx.emitHostBridge || ctx.targetProfile.hostValueInterop === "off") return;
+  if (!ctx.emitHostBridge || ctx.targetProfile.hostValueInterop === "off") return;
 
   ensureNativeStringHelpers(ctx);
   ensureNativeStringBoundaryBridge(ctx);
@@ -1025,7 +1020,7 @@ export function emitSymbolToString(ctx: CodegenContext, fctx: FunctionContext): 
  * byte-identical.
  */
 export function fillSymbolAnyToStringArm(ctx: CodegenContext): void {
-  if (!usesNativeSymbolProvider(ctx) || ctx.symbolTypeIdx < 0) return;
+  if (ctx.symbolTypeIdx < 0) return;
   const helperIdx = ctx.nativeStrHelpers.get("__any_to_string");
   if (helperIdx === undefined) return;
   const fn = definedFuncAt(ctx, helperIdx);

@@ -19,6 +19,8 @@ import type { CompileResult, ImportDescriptor, ImportIntent, ImportPolicy } from
 import { validateExportBoundaryPolicies } from "./boundary-policy.js";
 import type { BoundaryValuePolicy, ExportBoundaryPolicy } from "./boundary-policy.js";
 import { classifyHostImport } from "./host-import-policy.js";
+import { resolveRegExpHostImport } from "./runtime/regexp-host-accelerator.js";
+import * as intlAccel from "./runtime/intl-host-accelerator.js"; // (#6986)
 import {
   createJavaScriptAdapterManifest,
   validateJavaScriptAdapterManifest,
@@ -65,7 +67,7 @@ import { compiledClosureLength } from "./runtime/compiled-closure-length.js"; //
 import { getWasmVecPrototypeMember as vecProtoGet, WASM_VEC_PROTOTYPE_MISS } from "./runtime/wasm-vec-prototype.js";
 import { fnctorInstanceofResult, fnctorOrNative, type FnctorIoHooks } from "./runtime/fnctor-instanceof.js";
 export { buildStringConstants, buildStringConstants16 };
-export { _resetIteratorRuntimeIntrinsicsForRealmIsolation };
+export { _installIteratorHelperPolyfills, _resetIteratorRuntimeIntrinsicsForRealmIsolation };
 // (#6492 r5 / #5967) The test262 worker primes the await-dictionary statics
 // BEFORE its realm-canary snapshot, so the one-time install onto `Promise` is
 // part of the baseline instead of drift that recycles the worker after every
@@ -125,7 +127,11 @@ import {
 } from "./runtime/host-async-imports.js";
 import { markPromiseHandled, PROMISE_INTRINSICS } from "./runtime/promise-intrinsics.js";
 import { createHostImportCallState } from "./runtime/host-import-call-state.js";
-import { createBoundaryValueAdapter, isBoundaryValueImportIntent } from "./runtime/boundary-value-adapter.js";
+import {
+  createBoundaryValueAdapter,
+  isBoundaryValueImportIntent,
+  withModuleTagThrow,
+} from "./runtime/boundary-value-adapter.js";
 import { createInstanceLifecycleAdapter } from "./runtime/instance-lifecycle-adapter.js";
 import {
   installFreshDataStructAssociationToken,
@@ -133,6 +139,8 @@ import {
   sameExportedFunction,
 } from "./runtime/exported-function-identity.js";
 import { resolvePlatformCapabilityImport, wrapConsoleForHost } from "./runtime/console-host-marshal.js"; // (#6685)
+import { readNativeStringMemory } from "./runtime/native-string-memory.js";
+import { closureBridges, declaredHostFunction, marshalPlatformArgs } from "./runtime/platform-arg-marshal.js"; // (#6708/#7095) regime carriers ↔ JS values
 import {
   CLOCK_CAPABILITY_AUTHORITY,
   createCompiledDomCapabilityRuntime,
@@ -159,6 +167,7 @@ import { createObjectCreateClassInstanceRuntime } from "./runtime/object-create-
 import * as classStaticParent from "./runtime/class-static-parent.js";
 const _classParents = classStaticParent.classParentsFor; // (#6790) one registry per instance
 import { getWebHostConstructors } from "./runtime/web-host-constructors.js";
+import { scheduleNativeMicrotaskCheckpoint } from "./runtime/native-microtask-checkpoint.js"; // (#6982)
 import {
   _rerouteStringSymbolMethodPrimitive,
   _makeLegacyRegExpState,
@@ -303,7 +312,10 @@ function _fnctorProtoLookup(
   if (proto === undefined) return undefined;
   let cur: any = proto;
   let guard = 0;
-  while (cur != null && typeof cur === "object" && guard++ < 16) {
+  // (#6944) A cyclic user chain (aliased nested-ctor prototype) ends with `undefined`.
+  const seen = new Set<any>();
+  while (cur != null && typeof cur === "object" && guard++ < 16 && !seen.has(cur)) {
+    seen.add(cur);
     // (#2680) Per ES §10.1.6.2 ToPropertyDescriptor → §7.3.12 HasProperty /
     // §7.3.3 Get (both prototype-inclusive), an inherited attribute must be
     // read. When an ancestor is itself a WasmGC struct (the common case:
@@ -316,7 +328,9 @@ function _fnctorProtoLookup(
     // the native reader.
     const desc = _isWasmStruct(cur) ? _readOwnDescriptor(cur, key, exports) : Object.getOwnPropertyDescriptor(cur, key);
     if (desc) return desc;
-    cur = Object.getPrototypeOf(cur);
+    // (#6944) A struct ancestor (`Derived.prototype = new Inheriter()`) has a null native
+    // prototype; `_structUserProto` resolves its fnctor ctor link / setPrototypeOf record.
+    cur = _structUserProto(cur, exports);
     if (cur === Object.prototype) break;
   }
   return undefined;
@@ -1795,6 +1809,7 @@ const _wasmClosureWrapperSource = new WeakMap<Function, { closure: any; arity: n
 const _wasmClosureDynamicWrapperCache = new WeakMap<object, Function>();
 const _wasmClosureWrapperCache = new WeakMap<object, Map<number, Function>>();
 const _wasmClosureWrapperTargets = new WeakMap<Function, object>();
+closureBridges.configure(_wasmClosureWrapperSource, _wasmClosureWrapperTargets); // (#7098) host-read closure results
 /**
  * (#4771) [[BoundTargetFunction]] of a bound function this module produced.
  * OrdinaryHasInstance §7.3.20 step 2 forwards to the bound target, and a
@@ -4827,7 +4842,8 @@ export function buildCompiledAdapterImports(
   return buildImports(imports, deps, frozenManifest.stringPool, {
     ...options,
     ...authority,
-    ambientCompatibility: options.ambientCompatibility ?? targetProfile.semanticProviders !== "native-first",
+    ambientCompatibility: options.ambientCompatibility ?? targetProfile.semanticProviders === "backend-defined",
+    hostAccelerators: options.hostAccelerators ?? targetProfile.accelerators,
   });
 }
 
@@ -5942,11 +5958,16 @@ function _structFieldWriteback(
  */
 function _lookupDescriptorNoProxy(obj: any, key: PropertyKey): PropertyDescriptor | undefined {
   try {
+    let hops = 0;
     for (let cur = obj; cur != null && (typeof cur === "object" || typeof cur === "function"); ) {
       if (_isUserProxy(cur)) return undefined;
       const d = Object.getOwnPropertyDescriptor(cur, key);
       if (d) return d;
-      cur = Object.getPrototypeOf(cur);
+      // (#6944) Struct nodes resolve their user [[Prototype]]; bounded, the chain may cycle.
+      if (_isWasmStruct(cur)) {
+        if (++hops > 16) break;
+        cur = _structUserProto(cur);
+      } else cur = Object.getPrototypeOf(cur);
     }
   } catch {
     /* opaque handle → no descriptor knowable */
@@ -11507,8 +11528,14 @@ function resolveImport(
     coherentBuiltinRealms.has(globalSandbox!) ? ((globalSandbox![name] as T | undefined) ?? fallback) : fallback;
   if (isBoundaryValueImportIntent(intent)) {
     return createBoundaryValueAdapter(intent, {
-      object: (operation) => _createBoundaryObjectImport(operation, callbackState),
-      callback: (arity) => _createBoundaryCallbackImport(arity, callbackState),
+      object: (operation) =>
+        withModuleTagThrow(
+          _createBoundaryObjectImport(operation, callbackState),
+          callbackState,
+          _nativeDynamicFromHost,
+        ),
+      callback: (arity) =>
+        withModuleTagThrow(_createBoundaryCallbackImport(arity, callbackState), callbackState, _nativeDynamicFromHost),
       promise: (operation) => _createBoundaryPromiseImport(operation, callbackState),
     });
   }
@@ -11755,19 +11782,7 @@ function resolveImport(
           ...(typeof DisposableStack !== "undefined" ? { DisposableStack } : {}),
           ...(typeof AsyncDisposableStack !== "undefined" ? { AsyncDisposableStack } : {}),
           ...(typeof SuppressedError !== "undefined" ? { SuppressedError } : {}),
-          // Intl constructors (#1070)
-          ...(typeof Intl !== "undefined" && typeof Intl.ListFormat !== "undefined"
-            ? { ListFormat: Intl.ListFormat }
-            : {}),
-          ...(typeof Intl !== "undefined" && typeof Intl.NumberFormat !== "undefined"
-            ? { NumberFormat: Intl.NumberFormat }
-            : {}),
-          // (#5355) `Intl.DateTimeFormat` — the host-mirror bridge's constructor.
-          // Registered host-lane only (see extern-declarations.ts); standalone
-          // throws a TypeError instead of reaching any of this.
-          ...(typeof Intl !== "undefined" && typeof Intl.DateTimeFormat !== "undefined"
-            ? { DateTimeFormat: Intl.DateTimeFormat }
-            : {}),
+          ...intlAccel.intlHostConstructors(), // Intl constructors (#1070, #5355; #6986: every class the `intl` accelerator registers)
           // (#1792) node:url — WHATWG URL / URLSearchParams globals (Node 18+ /
           // every browser). Registered as extern-class host constructors so
           // `new URL(...)` / `new URLSearchParams(...)` bind to the real host
@@ -12426,6 +12441,7 @@ function resolveImport(
       }
       // #1644/#2678: spec BigInt-to-i64 and host Date.parse for wasm:js-string externrefs.
       if (name === "__date_parse_host") return (s: any): number => Date.parse(s);
+      if (name.startsWith("__regexp_host_")) return resolveRegExpHostImport(name, instanceState)!; // (#6978)
       if (name === "__bigint_ctor") {
         return (v: any): bigint => {
           // ToPrimitive(value, number). WasmGC structs / proxies need our
@@ -13567,6 +13583,10 @@ assert._isSameValue = isSameValue;
           // object never has `e`; the source struct's shape no longer leaks).
           if (typeof obj === "object" && _isWasmStruct(obj)) {
             if (_wasmStructHasOwn(obj, key, callbackState?.getExports())) return 1;
+            // (#6944) HasProperty §7.3.12 is prototype-inclusive: consult the
+            // fnctor instance→ctor prototype chain (struct ancestors included).
+            if (typeof key === "string" && _fnctorProtoLookup(obj, key, callbackState?.getExports()) !== undefined)
+              return 1;
             return hasStructPrototypeMember(obj, key, _OBJECT_PROTO_KEYS, () => marshalExports(callbackState)) ? 1 : 0;
           }
           // Plain JS object (or host-supplied object) — native HasProperty walks
@@ -13900,15 +13920,6 @@ assert._isSameValue = isSameValue;
       if (name === "__throw_reference_error")
         return (msg: any) => {
           throw new ReferenceError(msg == null ? "" : String(msg));
-        };
-      // (#5247) Export-boundary rethrow: the export wrapper
-      // (codegen/export-throw-boundary.ts) catches its own `__exn` tag and hands
-      // the payload here so this JS frame raises it by identity, instead of the
-      // caller seeing a bare `WebAssembly.Exception`. Deliberately NO coercion
-      // to Error — a compiled `throw { name, message }` must cross unchanged.
-      if (name === "__rethrow_host_exception")
-        return (payload: any): never => {
-          throw payload;
         };
       // __to_primitive: full ToPrimitive per ECMA-262 §7.1.1 (#1090)
       // Takes (externref obj, externref hint_string) → externref primitive
@@ -15430,7 +15441,7 @@ assert._isSameValue = isSameValue;
             // This is what makes `new this(...).m()` resolve like the
             // identifier-constructed `new Parser(...).m()` path does.
             {
-              const protoDesc = _fnctorProtoLookup(obj, method);
+              const protoDesc = _fnctorProtoLookup(obj, method, callbackState?.getExports());
               if (protoDesc) {
                 const resolved = protoDesc.get
                   ? protoDesc.get.call(obj)
@@ -18900,27 +18911,8 @@ assert._isSameValue = isSameValue;
         };
       // Native string marshaling (fast mode)
       if (name === "__str_extern_len") return (s: string) => s.length;
-      if (name === "__str_from_mem") {
-        // Returns a function that reads i16 code units from wasm memory
-        // The memory is bound lazily after instantiation
-        return (ptr: number, len: number) => {
-          const exports = callbackState?.getExports();
-          const mem = exports?.__str_mem as WebAssembly.Memory | undefined;
-          if (!mem) return "";
-          if (len <= 0) return "";
-          const byteLen = len * 2;
-          if (ptr < 0 || ptr + byteLen > mem.buffer.byteLength) return "";
-          const u16 = new Uint16Array(mem.buffer, ptr, len);
-          // Avoid spread for large arrays (stack overflow at ~65k elements)
-          if (len <= 4096) return String.fromCharCode(...u16);
-          const parts: string[] = [];
-          for (let i = 0; i < len; i += 4096) {
-            const chunk = u16.subarray(i, Math.min(i + 4096, len));
-            parts.push(String.fromCharCode(...chunk));
-          }
-          return parts.join("");
-        };
-      }
+      if (name === "__str_from_mem")
+        return (ptr: number, len: number) => readNativeStringMemory(marshalExports(callbackState), ptr, len);
       if (name === "__str_to_mem") {
         return (s: string, ptr: number) => {
           const exports = callbackState?.getExports();
@@ -18940,8 +18932,8 @@ assert._isSameValue = isSameValue;
       // correctly; the miss was that this fallback no-op'd and ignored `deps`.
       // Wire it to the supplied dependency — the natural FFI for embedders.
       const userDep = deps?.[name];
-      if (typeof userDep === "function") return (...args: any[]) => userDep(...args);
-      if (userDep !== undefined) return () => userDep;
+      const bind = typeof userDep === "function" ? (...args: any[]) => userDep(...args) : () => userDep;
+      if (userDep !== undefined) return declaredHostFunction(bind, _nativeDynamicFromHost); // (#7095) marshalled
       // No matching dep → keep the historical no-op. (An earlier revision threw
       // a clear error for a called-but-undepped user-facing ambient name, but
       // the test262 harness legitimately declares ambient functions it does not
@@ -19508,6 +19500,7 @@ export interface BuildImportsOptions extends CompiledCapabilityAuthorityOptions 
    * derives false for native-first modules from their frozen target profile.
    */
   ambientCompatibility?: boolean;
+  hostAccelerators?: readonly import("./target-profile.js").HostAcceleratorFamily[]; // (#6978) admitted by the binder
   /**
    * Runtime implementation for dynamic eval and new Function (#6779).
    *
@@ -19622,7 +19615,7 @@ export function buildImports(
   for (const imp of manifest) {
     if (imp.module !== "env") continue;
     if (options?.ambientCompatibility === false) {
-      const policy = classifyHostImport(imp);
+      const policy = classifyHostImport(imp, undefined, options?.hostAccelerators);
       if (policy.classification === "legacy-semantic" || policy.classification === "unknown") {
         throw new Error(
           `Native-first adapter cannot bind ${imp.module}::${imp.name}: ` +
@@ -19639,6 +19632,7 @@ export function buildImports(
     fn =
       domBinding ??
       clockBinding ??
+      intlAccel.intlLocaleMethodImport(imp, options?.hostAccelerators) ??
       resolveImport(
         imp.intent,
         deps,
@@ -19651,6 +19645,12 @@ export function buildImports(
         hostImportCallState.getCaughtException,
       );
 
+    if (intlAccel.isIntlAcceleratedImport(imp, options?.hostAccelerators)) {
+      const [toHost, fromHost, vector] = [_nativeBoundaryToHost, _nativeDynamicFromHost, _nativeBoundaryVector];
+      fn = intlAccel.marshalIntlHostImport(fn, callbackState, toHost, fromHost, _marshalWasmDateForHost, vector); // (#6986)
+    } else {
+      fn = marshalPlatformArgs(imp, fn, callbackState, _nativePrimitiveToHost, _MISS, _maybeWrapCallableUnknownArity);
+    }
     // DOM containment wrapping
     if (options?.domRoot && !domCapabilityRuntime) {
       if (imp.intent.type === "extern_class") {
@@ -19995,7 +19995,13 @@ export function wrapExports(
             return symbolId;
           }
           if (sig.params[index] === "promise") return _nativeDynamicFromHost(arg, exportsForMarshal);
-          if (sig.params[index] === "dynamic") return _nativeDynamicFromHost(arg, exportsForMarshal);
+          // (#6980) An `any` argument's null is the in-module `ref.null` every
+          // null check tests (and the one `_nativePrimitiveToHost` maps back);
+          // the tag-0 box is only for boundary-object reads, where a raw null
+          // return means "not admitted".
+          if (sig.params[index] === "dynamic") {
+            return arg === null ? null : _nativeDynamicFromHost(arg, exportsForMarshal);
+          }
           return arg;
         });
       }
@@ -20009,6 +20015,7 @@ export function wrapExports(
       let result: any;
       try {
         result = (val as Function).apply(this, marshalled);
+        scheduleNativeMicrotaskCheckpoint(exportsForMarshal); // (#6982)
       } catch (error) {
         const payload = normalizeModuleCallbackException(
           error,

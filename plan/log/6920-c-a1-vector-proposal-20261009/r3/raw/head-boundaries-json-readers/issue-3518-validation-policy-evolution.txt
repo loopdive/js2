@@ -1,0 +1,433 @@
+
+ RUN  v3.2.7 /home/user/js2/.claude/worktrees/agent-a774506d6593a2d93
+
+ × tests/issue-3518-validation-policy-evolution.test.ts > Phase B exact current policy and bounded historical metadata > authenticates all actual rows, complete history, exact B order and reciprocal baseline 15ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-validation-policy-evolution.test.ts > Phase B exact current policy and bounded historical metadata > projects exactly the old56 and actual original9 only after full authentication 4ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-validation-policy-evolution.test.ts > Phase B exact current policy and bounded historical metadata > keeps old history mutants mutable without changing the actual policy or a later read 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-validation-policy-evolution.test.ts > Phase B exact current policy and bounded historical metadata > rejects 'delete' of 'original' 'ir-analysis' entries 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-validation-policy-evolution.test.ts > Phase B exact current policy and bounded historical metadata > rejects 'duplicate' of 'original' 'ir-analysis' entries 12ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-validation-policy-evolution.test.ts > Phase B exact current policy and bounded historical metadata > rejects 'replace' of 'original' 'ir-analysis' entries 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-validation-policy-evolution.test.ts > Phase B exact current policy and bounded historical metadata > rejects 'reorder' of 'original' 'ir-analysis' entries 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-validation-policy-evolution.test.ts > Phase B exact current policy and bounded historical metadata > rejects 'unknown' of 'original' 'ir-analysis' entries 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-validation-policy-evolution.test.ts > Phase B exact current policy and bounded historical metadata > rejects 'delete' of 'new' 'ir-analysis' entries 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-validation-policy-evolution.test.ts > Phase B exact current policy and bounded historical metadata > rejects 'duplicate' of 'new' 'ir-analysis' entries 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-validation-policy-evolution.test.ts > Phase B exact current policy and bounded historical metadata > rejects 'replace' of 'new' 'ir-analysis' entries 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-validation-policy-evolution.test.ts > Phase B exact current policy and bounded historical metadata > rejects 'reorder' of 'new' 'ir-analysis' entries 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-validation-policy-evolution.test.ts > Phase B exact current policy and bounded historical metadata > rejects 'unknown' of 'new' 'ir-analysis' entries 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-validation-policy-evolution.test.ts > Phase B exact current policy and bounded historical metadata > rejects 'delete' of 'original' 'ir-runtime' entries 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-validation-policy-evolution.test.ts > Phase B exact current policy and bounded historical metadata > rejects 'duplicate' of 'original' 'ir-runtime' entries 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-validation-policy-evolution.test.ts > Phase B exact current policy and bounded historical metadata > rejects 'replace' of 'original' 'ir-runtime' entries 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-validation-policy-evolution.test.ts > Phase B exact current policy and bounded historical metadata > rejects 'reorder' of 'original' 'ir-runtime' entries 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-validation-policy-evolution.test.ts > Phase B exact current policy and bounded historical metadata > rejects 'unknown' of 'original' 'ir-runtime' entries 4ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-validation-policy-evolution.test.ts > Phase B exact current policy and bounded historical metadata > rejects 'delete' of 'new' 'ir-runtime' entries 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-validation-policy-evolution.test.ts > Phase B exact current policy and bounded historical metadata > rejects 'duplicate' of 'new' 'ir-runtime' entries 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-validation-policy-evolution.test.ts > Phase B exact current policy and bounded historical metadata > rejects 'replace' of 'new' 'ir-runtime' entries 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-validation-policy-evolution.test.ts > Phase B exact current policy and bounded historical metadata > rejects 'reorder' of 'new' 'ir-runtime' entries 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-validation-policy-evolution.test.ts > Phase B exact current policy and bounded historical metadata > rejects 'unknown' of 'new' 'ir-runtime' entries 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-validation-policy-evolution.test.ts > Phase B exact current policy and bounded historical metadata > rejects 'delete' of 'original' 'ir-program' entries 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-validation-policy-evolution.test.ts > Phase B exact current policy and bounded historical metadata > rejects 'duplicate' of 'original' 'ir-program' entries 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-validation-policy-evolution.test.ts > Phase B exact current policy and bounded historical metadata > rejects 'replace' of 'original' 'ir-program' entries 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-validation-policy-evolution.test.ts > Phase B exact current policy and bounded historical metadata > rejects 'reorder' of 'original' 'ir-program' entries 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-validation-policy-evolution.test.ts > Phase B exact current policy and bounded historical metadata > rejects 'unknown' of 'original' 'ir-program' entries 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-validation-policy-evolution.test.ts > Phase B exact current policy and bounded historical metadata > rejects 'delete' of 'new' 'ir-program' entries 6ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-validation-policy-evolution.test.ts > Phase B exact current policy and bounded historical metadata > rejects 'duplicate' of 'new' 'ir-program' entries 9ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-validation-policy-evolution.test.ts > Phase B exact current policy and bounded historical metadata > rejects 'replace' of 'new' 'ir-program' entries 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-validation-policy-evolution.test.ts > Phase B exact current policy and bounded historical metadata > rejects 'reorder' of 'new' 'ir-program' entries 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-validation-policy-evolution.test.ts > Phase B exact current policy and bounded historical metadata > rejects 'unknown' of 'new' 'ir-program' entries 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-validation-policy-evolution.test.ts > Phase B exact current policy and bounded historical metadata > rejects altered or missing activation at 0 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-validation-policy-evolution.test.ts > Phase B exact current policy and bounded historical metadata > rejects altered or missing activation at 66 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-validation-policy-evolution.test.ts > Phase B exact current policy and bounded historical metadata > rejects altered or missing activation at 74 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-validation-policy-evolution.test.ts > Phase B exact current policy and bounded historical metadata > rejects altered or missing activation at 88 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-validation-policy-evolution.test.ts > Phase B exact current policy and bounded historical metadata > rejects altered or missing activation at 90 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-validation-policy-evolution.test.ts > Phase B exact current policy and bounded historical metadata > rejects altered or missing activation at 91 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-validation-policy-evolution.test.ts > Phase B exact current policy and bounded historical metadata > rejects altered or missing activation at 92 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-validation-policy-evolution.test.ts > Phase B exact current policy and bounded historical metadata > rejects altered or missing activation at 93 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-validation-policy-evolution.test.ts > Phase B exact current policy and bounded historical metadata > rejects reordered B activations and an unknown extra activation 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-validation-policy-evolution.test.ts > Phase B exact current policy and bounded historical metadata > rejects changed current floor ir-analysis 6ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-validation-policy-evolution.test.ts > Phase B exact current policy and bounded historical metadata > rejects changed current floor ir-runtime 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-validation-policy-evolution.test.ts > Phase B exact current policy and bounded historical metadata > rejects changed current floor ir-program 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-validation-policy-evolution.test.ts > Phase B exact current policy and bounded historical metadata > rejects changed current floor native-runtime 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-validation-policy-evolution.test.ts > Phase B exact current policy and bounded historical metadata > rejects broad analysis activation, missing roots, and an unreviewed allowed edge 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-validation-policy-evolution.test.ts > Phase B exact current policy and bounded historical metadata > requires the exact current analysis row at 1141 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-validation-policy-evolution.test.ts > Phase B exact current policy and bounded historical metadata > requires the exact current analysis row at 1145 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-validation-policy-evolution.test.ts > Phase B exact current policy and bounded historical metadata > requires the exact current analysis row at 1137 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-validation-policy-evolution.test.ts > Phase B exact current policy and bounded historical metadata > requires the exact current analysis row at 1138 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-validation-policy-evolution.test.ts > Phase B exact current policy and bounded historical metadata > requires the exact current analysis row at 1135 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-validation-policy-evolution.test.ts > Phase B exact current policy and bounded historical metadata > requires new classification 'src/ir/analysis/alloc-verification.ts' 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-validation-policy-evolution.test.ts > Phase B exact current policy and bounded historical metadata > requires new classification 'src/ir/runtime/verify.ts' 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-validation-policy-evolution.test.ts > Phase B exact current policy and bounded historical metadata > requires new classification 'src/ir/program/allocations.ts' 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-validation-policy-evolution.test.ts > Phase B exact current policy and bounded historical metadata > requires new classification 'src/ir/program/class-layouts.ts' 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-validation-policy-evolution.test.ts > Phase B exact current policy and bounded historical metadata > keeps conservative facade 'src/ir/verify.ts' 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-validation-policy-evolution.test.ts > Phase B exact current policy and bounded historical metadata > keeps conservative facade 'src/ir/verify-alloc.ts' 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-validation-policy-evolution.test.ts > Phase B exact current policy and bounded historical metadata > keeps conservative facade 'src/ir/program-allocations.ts' 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-validation-policy-evolution.test.ts > Phase B exact current policy and bounded historical metadata > keeps conservative facade 'src/ir/program-class-layouts.ts' 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-validation-policy-evolution.test.ts > Phase B exact current policy and bounded historical metadata > checks all existing rows and rereads a previously accepted object after mutation 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-validation-policy-evolution.test.ts > Phase B exact current policy and bounded historical metadata > rejects getter, hidden, symbol, cyclic, sparse and inherited policy data without executing getters 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-validation-policy-evolution.test.ts > Phase B exact current policy and bounded historical metadata > rejects a changed fixed receipt and a before-B or double-projected policy 4ms
+   → Deno post-position main successor: complete raw source profile mismatch
+
+⎯⎯⎯⎯⎯⎯ Failed Tests 63 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/issue-3518-validation-policy-evolution.test.ts > Phase B exact current policy and bounded historical metadata > authenticates all actual rows, complete history, exact B order and reciprocal baseline
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ actual tests/issue-3518-validation-policy-evolution.test.ts:78:45
+ ❯ tests/issue-3518-validation-policy-evolution.test.ts:122:20
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/63]⎯
+
+ FAIL  tests/issue-3518-validation-policy-evolution.test.ts > Phase B exact current policy and bounded historical metadata > projects exactly the old56 and actual original9 only after full authentication
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ actual tests/issue-3518-validation-policy-evolution.test.ts:78:45
+ ❯ tests/issue-3518-validation-policy-evolution.test.ts:151:20
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/63]⎯
+
+ FAIL  tests/issue-3518-validation-policy-evolution.test.ts > Phase B exact current policy and bounded historical metadata > keeps old history mutants mutable without changing the actual policy or a later read
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ actual tests/issue-3518-validation-policy-evolution.test.ts:78:45
+ ❯ tests/issue-3518-validation-policy-evolution.test.ts:178:20
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/63]⎯
+
+ FAIL  tests/issue-3518-validation-policy-evolution.test.ts > Phase B exact current policy and bounded historical metadata > rejects 'delete' of 'original' 'ir-analysis' entries
+ FAIL  tests/issue-3518-validation-policy-evolution.test.ts > Phase B exact current policy and bounded historical metadata > rejects 'duplicate' of 'original' 'ir-analysis' entries
+ FAIL  tests/issue-3518-validation-policy-evolution.test.ts > Phase B exact current policy and bounded historical metadata > rejects 'replace' of 'original' 'ir-analysis' entries
+ FAIL  tests/issue-3518-validation-policy-evolution.test.ts > Phase B exact current policy and bounded historical metadata > rejects 'reorder' of 'original' 'ir-analysis' entries
+ FAIL  tests/issue-3518-validation-policy-evolution.test.ts > Phase B exact current policy and bounded historical metadata > rejects 'unknown' of 'original' 'ir-analysis' entries
+ FAIL  tests/issue-3518-validation-policy-evolution.test.ts > Phase B exact current policy and bounded historical metadata > rejects 'delete' of 'new' 'ir-analysis' entries
+ FAIL  tests/issue-3518-validation-policy-evolution.test.ts > Phase B exact current policy and bounded historical metadata > rejects 'duplicate' of 'new' 'ir-analysis' entries
+ FAIL  tests/issue-3518-validation-policy-evolution.test.ts > Phase B exact current policy and bounded historical metadata > rejects 'replace' of 'new' 'ir-analysis' entries
+ FAIL  tests/issue-3518-validation-policy-evolution.test.ts > Phase B exact current policy and bounded historical metadata > rejects 'reorder' of 'new' 'ir-analysis' entries
+ FAIL  tests/issue-3518-validation-policy-evolution.test.ts > Phase B exact current policy and bounded historical metadata > rejects 'unknown' of 'new' 'ir-analysis' entries
+ FAIL  tests/issue-3518-validation-policy-evolution.test.ts > Phase B exact current policy and bounded historical metadata > rejects 'delete' of 'original' 'ir-runtime' entries
+ FAIL  tests/issue-3518-validation-policy-evolution.test.ts > Phase B exact current policy and bounded historical metadata > rejects 'duplicate' of 'original' 'ir-runtime' entries
+ FAIL  tests/issue-3518-validation-policy-evolution.test.ts > Phase B exact current policy and bounded historical metadata > rejects 'replace' of 'original' 'ir-runtime' entries
+ FAIL  tests/issue-3518-validation-policy-evolution.test.ts > Phase B exact current policy and bounded historical metadata > rejects 'reorder' of 'original' 'ir-runtime' entries
+ FAIL  tests/issue-3518-validation-policy-evolution.test.ts > Phase B exact current policy and bounded historical metadata > rejects 'unknown' of 'original' 'ir-runtime' entries
+ FAIL  tests/issue-3518-validation-policy-evolution.test.ts > Phase B exact current policy and bounded historical metadata > rejects 'delete' of 'new' 'ir-runtime' entries
+ FAIL  tests/issue-3518-validation-policy-evolution.test.ts > Phase B exact current policy and bounded historical metadata > rejects 'duplicate' of 'new' 'ir-runtime' entries
+ FAIL  tests/issue-3518-validation-policy-evolution.test.ts > Phase B exact current policy and bounded historical metadata > rejects 'replace' of 'new' 'ir-runtime' entries
+ FAIL  tests/issue-3518-validation-policy-evolution.test.ts > Phase B exact current policy and bounded historical metadata > rejects 'reorder' of 'new' 'ir-runtime' entries
+ FAIL  tests/issue-3518-validation-policy-evolution.test.ts > Phase B exact current policy and bounded historical metadata > rejects 'unknown' of 'new' 'ir-runtime' entries
+ FAIL  tests/issue-3518-validation-policy-evolution.test.ts > Phase B exact current policy and bounded historical metadata > rejects 'delete' of 'original' 'ir-program' entries
+ FAIL  tests/issue-3518-validation-policy-evolution.test.ts > Phase B exact current policy and bounded historical metadata > rejects 'duplicate' of 'original' 'ir-program' entries
+ FAIL  tests/issue-3518-validation-policy-evolution.test.ts > Phase B exact current policy and bounded historical metadata > rejects 'replace' of 'original' 'ir-program' entries
+ FAIL  tests/issue-3518-validation-policy-evolution.test.ts > Phase B exact current policy and bounded historical metadata > rejects 'reorder' of 'original' 'ir-program' entries
+ FAIL  tests/issue-3518-validation-policy-evolution.test.ts > Phase B exact current policy and bounded historical metadata > rejects 'unknown' of 'original' 'ir-program' entries
+ FAIL  tests/issue-3518-validation-policy-evolution.test.ts > Phase B exact current policy and bounded historical metadata > rejects 'delete' of 'new' 'ir-program' entries
+ FAIL  tests/issue-3518-validation-policy-evolution.test.ts > Phase B exact current policy and bounded historical metadata > rejects 'duplicate' of 'new' 'ir-program' entries
+ FAIL  tests/issue-3518-validation-policy-evolution.test.ts > Phase B exact current policy and bounded historical metadata > rejects 'replace' of 'new' 'ir-program' entries
+ FAIL  tests/issue-3518-validation-policy-evolution.test.ts > Phase B exact current policy and bounded historical metadata > rejects 'reorder' of 'new' 'ir-program' entries
+ FAIL  tests/issue-3518-validation-policy-evolution.test.ts > Phase B exact current policy and bounded historical metadata > rejects 'unknown' of 'new' 'ir-program' entries
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ actual tests/issue-3518-validation-policy-evolution.test.ts:78:45
+ ❯ rejected tests/issue-3518-validation-policy-evolution.test.ts:112:18
+ ❯ tests/issue-3518-validation-policy-evolution.test.ts:197:5
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/63]⎯
+
+ FAIL  tests/issue-3518-validation-policy-evolution.test.ts > Phase B exact current policy and bounded historical metadata > rejects altered or missing activation at 0
+ FAIL  tests/issue-3518-validation-policy-evolution.test.ts > Phase B exact current policy and bounded historical metadata > rejects altered or missing activation at 66
+ FAIL  tests/issue-3518-validation-policy-evolution.test.ts > Phase B exact current policy and bounded historical metadata > rejects altered or missing activation at 74
+ FAIL  tests/issue-3518-validation-policy-evolution.test.ts > Phase B exact current policy and bounded historical metadata > rejects altered or missing activation at 88
+ FAIL  tests/issue-3518-validation-policy-evolution.test.ts > Phase B exact current policy and bounded historical metadata > rejects altered or missing activation at 90
+ FAIL  tests/issue-3518-validation-policy-evolution.test.ts > Phase B exact current policy and bounded historical metadata > rejects altered or missing activation at 91
+ FAIL  tests/issue-3518-validation-policy-evolution.test.ts > Phase B exact current policy and bounded historical metadata > rejects altered or missing activation at 92
+ FAIL  tests/issue-3518-validation-policy-evolution.test.ts > Phase B exact current policy and bounded historical metadata > rejects altered or missing activation at 93
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ actual tests/issue-3518-validation-policy-evolution.test.ts:78:45
+ ❯ tests/issue-3518-validation-policy-evolution.test.ts:224:17
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/63]⎯
+
+ FAIL  tests/issue-3518-validation-policy-evolution.test.ts > Phase B exact current policy and bounded historical metadata > rejects reordered B activations and an unknown extra activation
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ actual tests/issue-3518-validation-policy-evolution.test.ts:78:45
+ ❯ rejected tests/issue-3518-validation-policy-evolution.test.ts:112:18
+ ❯ tests/issue-3518-validation-policy-evolution.test.ts:231:5
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[6/63]⎯
+
+ FAIL  tests/issue-3518-validation-policy-evolution.test.ts > Phase B exact current policy and bounded historical metadata > rejects changed current floor ir-analysis
+ FAIL  tests/issue-3518-validation-policy-evolution.test.ts > Phase B exact current policy and bounded historical metadata > rejects changed current floor ir-runtime
+ FAIL  tests/issue-3518-validation-policy-evolution.test.ts > Phase B exact current policy and bounded historical metadata > rejects changed current floor ir-program
+ FAIL  tests/issue-3518-validation-policy-evolution.test.ts > Phase B exact current policy and bounded historical metadata > rejects changed current floor native-runtime
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ actual tests/issue-3518-validation-policy-evolution.test.ts:78:45
+ ❯ rejected tests/issue-3518-validation-policy-evolution.test.ts:112:18
+ ❯ tests/issue-3518-validation-policy-evolution.test.ts:239:5
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[7/63]⎯
+
+ FAIL  tests/issue-3518-validation-policy-evolution.test.ts > Phase B exact current policy and bounded historical metadata > rejects broad analysis activation, missing roots, and an unreviewed allowed edge
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ actual tests/issue-3518-validation-policy-evolution.test.ts:78:45
+ ❯ rejected tests/issue-3518-validation-policy-evolution.test.ts:112:18
+ ❯ tests/issue-3518-validation-policy-evolution.test.ts:247:5
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[8/63]⎯
+
+ FAIL  tests/issue-3518-validation-policy-evolution.test.ts > Phase B exact current policy and bounded historical metadata > requires the exact current analysis row at 1141
+ FAIL  tests/issue-3518-validation-policy-evolution.test.ts > Phase B exact current policy and bounded historical metadata > requires the exact current analysis row at 1145
+ FAIL  tests/issue-3518-validation-policy-evolution.test.ts > Phase B exact current policy and bounded historical metadata > requires the exact current analysis row at 1137
+ FAIL  tests/issue-3518-validation-policy-evolution.test.ts > Phase B exact current policy and bounded historical metadata > requires the exact current analysis row at 1138
+ FAIL  tests/issue-3518-validation-policy-evolution.test.ts > Phase B exact current policy and bounded historical metadata > requires the exact current analysis row at 1135
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ actual tests/issue-3518-validation-policy-evolution.test.ts:78:45
+ ❯ rejected tests/issue-3518-validation-policy-evolution.test.ts:112:18
+ ❯ tests/issue-3518-validation-policy-evolution.test.ts:258:5
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[9/63]⎯
+
+ FAIL  tests/issue-3518-validation-policy-evolution.test.ts > Phase B exact current policy and bounded historical metadata > requires new classification 'src/ir/analysis/alloc-verification.ts'
+ FAIL  tests/issue-3518-validation-policy-evolution.test.ts > Phase B exact current policy and bounded historical metadata > requires new classification 'src/ir/runtime/verify.ts'
+ FAIL  tests/issue-3518-validation-policy-evolution.test.ts > Phase B exact current policy and bounded historical metadata > requires new classification 'src/ir/program/allocations.ts'
+ FAIL  tests/issue-3518-validation-policy-evolution.test.ts > Phase B exact current policy and bounded historical metadata > requires new classification 'src/ir/program/class-layouts.ts'
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ actual tests/issue-3518-validation-policy-evolution.test.ts:78:45
+ ❯ rejected tests/issue-3518-validation-policy-evolution.test.ts:112:18
+ ❯ tests/issue-3518-validation-policy-evolution.test.ts:269:5
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[10/63]⎯
+
+ FAIL  tests/issue-3518-validation-policy-evolution.test.ts > Phase B exact current policy and bounded historical metadata > keeps conservative facade 'src/ir/verify.ts'
+ FAIL  tests/issue-3518-validation-policy-evolution.test.ts > Phase B exact current policy and bounded historical metadata > keeps conservative facade 'src/ir/verify-alloc.ts'
+ FAIL  tests/issue-3518-validation-policy-evolution.test.ts > Phase B exact current policy and bounded historical metadata > keeps conservative facade 'src/ir/program-allocations.ts'
+ FAIL  tests/issue-3518-validation-policy-evolution.test.ts > Phase B exact current policy and bounded historical metadata > keeps conservative facade 'src/ir/program-class-layouts.ts'
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ actual tests/issue-3518-validation-policy-evolution.test.ts:78:45
+ ❯ rejected tests/issue-3518-validation-policy-evolution.test.ts:112:18
+ ❯ tests/issue-3518-validation-policy-evolution.test.ts:277:5
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[11/63]⎯
+
+ FAIL  tests/issue-3518-validation-policy-evolution.test.ts > Phase B exact current policy and bounded historical metadata > checks all existing rows and rereads a previously accepted object after mutation
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ actual tests/issue-3518-validation-policy-evolution.test.ts:78:45
+ ❯ rejected tests/issue-3518-validation-policy-evolution.test.ts:112:18
+ ❯ tests/issue-3518-validation-policy-evolution.test.ts:282:5
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[12/63]⎯
+
+ FAIL  tests/issue-3518-validation-policy-evolution.test.ts > Phase B exact current policy and bounded historical metadata > rejects getter, hidden, symbol, cyclic, sparse and inherited policy data without executing getters
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ actual tests/issue-3518-validation-policy-evolution.test.ts:78:45
+ ❯ tests/issue-3518-validation-policy-evolution.test.ts:295:15
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[13/63]⎯
+
+ FAIL  tests/issue-3518-validation-policy-evolution.test.ts > Phase B exact current policy and bounded historical metadata > rejects a changed fixed receipt and a before-B or double-projected policy
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ actual tests/issue-3518-validation-policy-evolution.test.ts:78:45
+ ❯ tests/issue-3518-validation-policy-evolution.test.ts:338:15
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[14/63]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  63 failed (63)
+   Start at  22:27:52
+   Duration  1.12s (transform 443ms, setup 0ms, collect 533ms, tests 200ms, environment 0ms, prepare 69ms)
+

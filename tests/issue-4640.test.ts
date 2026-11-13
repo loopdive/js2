@@ -25,9 +25,9 @@
 //        ReferenceError for `++`, a local-carrier concat lane for `+=`), and the
 //        deepest loop body is simply the first place either one executes.
 //
-// The `it.fails` block records residuals MEASURED on this branch with the fix
-// in, each with the owner it belongs to. They are pins, not aspirations: if one
-// starts passing, this file goes red and the residual list is stale.
+// The residual block recorded residuals MEASURED on this branch with the fix
+// in, each with the owner it belongs to, as `it.fails` pins. All of them pass
+// on main as of 2026-10-16 and were promoted to ordinary pins (#7014).
 //
 // ## Why the pins drive `runTest262File`, not a bare `compile()`
 //
@@ -58,14 +58,6 @@ afterEach(async () => {
 
 function pinRow(rel: string, note?: string): void {
   it(`${rel}${note ? ` — ${note}` : ""}`, { timeout: 60_000 }, async () => {
-    const abs = join(__dirname, "..", "test262", "test", rel);
-    const r = await runTest262File(abs, "issue-4640", 30_000, "standalone");
-    expect(`${r.status}: ${r.error ?? ""}`).toBe("pass: ");
-  });
-}
-
-function pinResidual(rel: string, owner: string): void {
-  it.fails(`RESIDUAL ${rel} — ${owner}`, { timeout: 60_000 }, async () => {
     const abs = join(__dirname, "..", "test262", "test", rel);
     const r = await runTest262File(abs, "issue-4640", 30_000, "standalone");
     expect(`${r.status}: ${r.error ?? ""}`).toBe("pass: ");
@@ -103,14 +95,23 @@ describe.skipIf(!TEST262)("#4640 statements/expressions smalls round 3 (standalo
     pinRow("language/statements/return/S12.9_A5.js", "bare `return;` answers undefined, not 0 (#4641)");
   });
 
+  // (#7014) Every row below was an `it.fails` residual; all ten pass on main as
+  // of 2026-10-16 (the issue-tests detector reported them as UNEXPECTED PASS),
+  // so they are ordinary pins now. The owner notes record where each was fixed.
   describe("residuals measured on this branch (each with an owner)", () => {
     // ── D1 remainder: a MEMBER callee, which needs a runtime IsCallable test.
     // Deliberately not attempted here: the member-read lane answers `null` for
     // shapes that are our own gap as often as the program's, so a throw there
     // converts compiler gaps into hard runtime failures. Owner: the call-lane
     // /#4519 member-guard line.
-    pinResidual("language/expressions/call/11.2.3-3_3.js", "callee-ref must throw BEFORE args (#4519 line)");
-    pinResidual("language/expressions/call/11.2.3-3_4.js", "runtime IsCallable on a member callee (#4519 line)");
+    pinRow(
+      "language/expressions/call/11.2.3-3_3.js",
+      "callee-ref must throw BEFORE args (#4519 line) — was an it.fails residual, passes as of #7014",
+    );
+    pinRow(
+      "language/expressions/call/11.2.3-3_4.js",
+      "runtime IsCallable on a member callee (#4519 line) — was an it.fails residual, passes as of #7014",
+    );
     pinRow("language/expressions/call/11.2.3-3_8.js", "runtime IsCallable on `this.bar` (#4519 line)");
 
     // ── Mixed-return functions. This escalation was filed as #4641 and the
@@ -125,28 +126,52 @@ describe.skipIf(!TEST262)("#4640 statements/expressions smalls round 3 (standalo
     // `S8.1_A2_T2` stays a residual: it is the same family read through a
     // DIFFERENT slot (`var x = f(); x === void 0`), i.e. the `number|undefined`
     // LOCAL collapse, which is #3580 S3/S4 and not part of #4641's landing.
-    pinResidual("language/types/undefined/S8.1_A2_T2.js", "void-call result !== `void 0` (#3580 local-slot collapse)");
+    pinRow(
+      "language/types/undefined/S8.1_A2_T2.js",
+      "void-call result !== `void 0` (#3580 local-slot collapse) — was an it.fails residual, passes as of #7014",
+    );
 
     // ── D4. `11.1.5-0-1/2` mint the accessors with `eval("o = {get foo(){…}}")`
     // — the object literal is never seen by this compiler at all, so the family
     // is the runtime-eval lane's, not the object-literal lane's. `S11.1.5_A2`
     // fails only on CHECK#2 (`new Boolean(true)` through a literal property):
     // wrapper-object identity, the #4481 value-identity wall.
-    pinResidual("language/expressions/object/11.1.5-0-1.js", "accessors minted by eval (runtime-eval lane)");
-    pinResidual("language/expressions/object/11.1.5-0-2.js", "accessors minted by eval (runtime-eval lane)");
-    pinResidual("language/expressions/object/S11.1.5_A2.js", "wrapper-object identity (#4481 value-identity)");
+    pinRow(
+      "language/expressions/object/11.1.5-0-1.js",
+      "accessors minted by eval (runtime-eval lane) — was an it.fails residual, passes as of #7014",
+    );
+    pinRow(
+      "language/expressions/object/11.1.5-0-2.js",
+      "accessors minted by eval (runtime-eval lane) — was an it.fails residual, passes as of #7014",
+    );
+    pinRow(
+      "language/expressions/object/S11.1.5_A2.js",
+      "wrapper-object identity (#4481 value-identity) — was an it.fails residual, passes as of #7014",
+    );
 
     // ── D5. `Object.defineProperty(Object.prototype, "x", {get(){return this}})`
     // then `(5).x` in STRICT mode: the getter must receive the UNBOXED primitive
     // as `this`. Same family #4620 named (primitive-`this`), plus the
     // #4491 defineProperty-on-Object.prototype MOP.
-    pinResidual("language/function-code/10.4.3-1-103.js", "primitive `this` in a proto accessor (#4620/#4491)");
-    pinResidual("language/function-code/10.4.3-1-104.js", "primitive `this` in a proto accessor (#4620/#4491)");
-    pinResidual("language/function-code/10.4.3-1-106.js", "primitive `this` in a proto accessor (#4620/#4491)");
+    pinRow(
+      "language/function-code/10.4.3-1-103.js",
+      "primitive `this` in a proto accessor (#4620/#4491) — was an it.fails residual, passes as of #7014",
+    );
+    pinRow(
+      "language/function-code/10.4.3-1-104.js",
+      "primitive `this` in a proto accessor (#4620/#4491) — was an it.fails residual, passes as of #7014",
+    );
+    pinRow(
+      "language/function-code/10.4.3-1-106.js",
+      "primitive `this` in a proto accessor (#4620/#4491) — was an it.fails residual, passes as of #7014",
+    );
 
     // ── A hoisted `var x = true;` read BEFORE its declaration answers `false`,
     // not `undefined`: the hoisted slot is an i32 boolean and its zero value is
     // `false`. Same value-representation wall as the mixed-return rows.
-    pinResidual("language/types/boolean/S8.3_A1_T1.js", "hoisted var reads its type's zero (value-rep)");
+    pinRow(
+      "language/types/boolean/S8.3_A1_T1.js",
+      "hoisted var reads its type's zero (value-rep) — was an it.fails residual, passes as of #7014",
+    );
   });
 });

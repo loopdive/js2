@@ -34,6 +34,11 @@ describe("externref host imports", () => {
       env: {
         console_log_number: () => {},
         console_log_bool: () => {},
+        // (#6492, 3a03d1bd1f) The host lane's canonical `undefined` producer:
+        // the coercion engine registers `__get_undefined` at the UNDEF-SENTINEL
+        // boxing site, and the real provider (`createHostUndefinedImport`)
+        // serves exactly this. A hand-rolled env must serve it too.
+        __get_undefined: () => undefined,
         Host_Widget_new: (x: number) => {
           constructed.push(x);
           return { __widget: true };

@@ -315,7 +315,7 @@ describe("#4653 residuals — measured standalone", () => {
   // in __module_init". The #4264 hoisted-var widening gives the slot an
   // externref, but the closure that the with-routed write installs is never
   // reachable from the outer read.
-  it.fails("(#4653 residual, with-scope) `with(o) { var f = function(){} }` does not trap", async () => {
+  it("(#4653, with-scope) `with(o) { var f = function(){} }` does not trap (was an it.fails residual, #7014)", async () => {
     expect(
       await runScript(`
         p1 = "alert";
@@ -513,7 +513,7 @@ describe("#4653 residuals — measured standalone", () => {
     ).toBe(null);
   });
 
-  it.fails("routes a with-scoped var function initializer through the object environment", async () => {
+  it("routes a with-scoped var function initializer through the object environment", async () => {
     const result = await runTest262File(
       resolve("test262/test/language/statements/function/S13.2.2_A17_T3.js"),
       "issue-4653-residual",

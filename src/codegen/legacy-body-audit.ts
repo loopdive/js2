@@ -183,7 +183,12 @@ export interface IrBodyRouteAudit {
 }
 
 function sourcePosition(node: Node): { file: string; line: number; column: number } {
-  const sourceFile = node.getSourceFile();
+  // (#7002) The recorder is observation-only: a synthesized node (no parent
+  // chain to a SourceFile, or no real position) must yield an unanchored
+  // position, never throw — a throw here turned a successful compile into a
+  // failed one only when `trackIrOutcomes` was on.
+  const sourceFile = node.getSourceFile() as ReturnType<Node["getSourceFile"]> | undefined;
+  if (sourceFile === undefined || node.pos < 0) return { file: sourceFile?.fileName ?? "", line: 0, column: 0 };
   const pos = sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile, false));
   return { file: sourceFile.fileName, line: pos.line + 1, column: pos.character + 1 };
 }
@@ -206,6 +211,18 @@ function outcomeRoute(outcome: IrObservedOutcome | undefined): "ir" | "legacy" |
 interface MutableDirectFunctionBodyReceiptIndex {
   readonly countsByUnitId: Map<IrUnitId, number>;
   readonly classMemberCountsByUnitId: Map<IrUnitId, number>;
+  /**
+   * (#7106) The legacy class identity (`bodyName`) under which a class
+   * member's direct body was first received. A variable-bound class
+   * expression (`var C = class { … }` at module scope) is registered under
+   * BOTH its binding name and a canonical synthetic `__anonClass_N` identity
+   * (`declarations.ts`, "Variable-bound class expressions are registered
+   * under both"), and `compileClassBodies` emits each identity's own ABI
+   * bodies. That second receipt is the designed twin, not a second compile of
+   * the unit: it is recorded here and never counted. A repeat under the SAME
+   * identity still counts (and still reads as a duplicate).
+   */
+  readonly classMemberIdentityByUnitId: Map<IrUnitId, string>;
   readonly moduleInitCountsByUnitId: Map<IrUnitId, number>;
   readonly violations: IrDirectFunctionBodyReceiptViolation[];
   readonly duplicateUnitIds: Set<IrUnitId>;
@@ -343,6 +360,7 @@ export class IrBodyRouteAuditSession {
       indexed = {
         countsByUnitId: new Map(),
         classMemberCountsByUnitId: new Map(),
+        classMemberIdentityByUnitId: new Map(),
         moduleInitCountsByUnitId: new Map(),
         violations: [],
         duplicateUnitIds: new Set(),
@@ -442,6 +460,18 @@ export class IrBodyRouteAuditSession {
     const identity = this.#terminalBodyReceiptIdentity(entry, "class-member");
     if (!identity) return;
     const indexed = this.#directFunctionBodyReceiptIndex(identity.sourceId);
+    // (#7106) The twin identity of a variable-bound class expression — see
+    // `classMemberIdentityByUnitId`. Measured 2026-10-21 on
+    // `language/expressions/class/dstr/private-meth-dflt-obj-ptrn-prop-id.js`
+    // (1,242 of the 1,286 `body-emission-evidence` rows on main): the getter
+    // is received once as `C` and once as `__anonClass_0`, each with its own
+    // `$C_get_method` / `$__anonClass_0_get_method` body and trampoline.
+    const firstIdentity = indexed.classMemberIdentityByUnitId.get(identity.unitId);
+    if (firstIdentity === undefined) {
+      indexed.classMemberIdentityByUnitId.set(identity.unitId, entry.bodyName);
+    } else if (firstIdentity !== entry.bodyName) {
+      return;
+    }
     const count = (indexed.classMemberCountsByUnitId.get(identity.unitId) ?? 0) + 1;
     if (!Number.isSafeInteger(count) || count <= 0) {
       this.#recordDirectFunctionBodyReceiptViolation(

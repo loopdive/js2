@@ -1,0 +1,11 @@
+refactor(ir): #6920 keep vector-representation a value-graph leaf
+
+Inline the one `asVal` projection so the new representation module has
+type-only imports. The lowering value graph then grows by exactly one leaf
+module and one edge (lower-generic -> backend/vector-representation), the
+minimum a shared runtime helper requires.
+
+Model: Claude Opus 5.5 High
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01D4p9zLDnzbUkfbZeVqxjkx
+✓

@@ -27,12 +27,20 @@
  *      prototype chain included, `undefined` when absent. A String wrapper is
  *      a `$Object` whose `length` is exotic (§10.4.3); `__extern_get`'s #6651
  *      C5 arm answers it, and this read demands that arm.
+ *   5b. a user-declared struct (`__is_instance_expando_carrier`: an object
+ *      literal, a class or constructor-function instance, a generator object)
+ *                              → `__get_member_length(recv)` (#7017) — the
+ *      finalize-filled member dispatcher: the shape's own `length` field or
+ *      getter when it has one (the value itself, not ToLength of it), else
+ *      `__extern_get` (expando, prototype chain, `undefined`). Before #7017 a
+ *      closed literal fell to arm 6 and `{ type: "A" }.length` read 0, so every
+ *      `typeof x.length === "number"` deep-equality helper took its array-like
+ *      branch for plain objects.
  *   6. any other carrier       → box(`__extern_length`)     (unchanged value)
- * Arms 1–4 and 6 answer exactly what the numeric lowering did; only arm 5
- * changes, and only for objects whose `length` is not an own/inherited number.
+ * Arms 1–4 and 6 answer exactly what the numeric lowering did.
  *
- * Arm 5 is deliberately NOT "anything else". A vec, a TypedArray view, a
- * closed literal struct or a rest-args array is not a `$Object`;
+ * Arms 5/5b are deliberately NOT "anything else". A vec, a TypedArray view, a
+ * tuple or a rest-args array is neither a `$Object` nor a user-declared struct;
  * `__extern_length` owns those carriers' `length`, and `__extern_get` misses
  * several of them — a length-tracking view over a resizable buffer read its
  * raw -1 sentinel, a detached view its stale length, a rest-args array
@@ -42,10 +50,12 @@ import type { Instr, ValType } from "../../ir/types.js";
 import { allocLocal } from "../context/locals.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
 import { getFuncRefWrapperRootTypeIdx } from "../closures/funcref-wrapper-types.js";
-import { ensureLateImport, flushLateImportShifts } from "../shared.js";
+import { ensureLateImport, flushLateImportShifts, reserveMemberGetDispatchLate } from "../shared.js";
 
 const EXTERNREF: ValType = { kind: "externref" };
 const I32: ValType = { kind: "i32" };
+/** `instance-props.ts`'s carrier predicate, named here to stay out of the import cycle. */
+const IS_INSTANCE_EXPANDO_CARRIER = "__is_instance_expando_carrier";
 
 function ifExtern(cond: Instr[], then: Instr[], otherwise: Instr[]): Instr[] {
   return [...cond, { op: "if", blockType: { kind: "val", type: EXTERNREF }, then, else: otherwise }];
@@ -82,6 +92,12 @@ export function emitStandaloneAnyLengthGet(ctx: CodegenContext, fctx: FunctionCo
   // A String wrapper's `length` is exotic (§10.4.3), not a table entry, so the
   // arm-6 Get needs `__extern_get`'s String-wrapper `length` arm (#6651 C5).
   demandStringWrapperDynamicLength(ctx);
+  // Arm 5b (#7017): the finalize-filled `__get_member_length` dispatcher, for
+  // user-declared struct receivers. Reserved after this function's own imports
+  // (it flushes and mints, so its index is settled) and read back from funcMap
+  // after the flush below.
+  const wantMemberGet = ctx.funcMap.get(IS_INSTANCE_EXPANDO_CARRIER) !== undefined;
+  if (wantMemberGet) reserveMemberGetDispatchLate(ctx, "length", fctx);
   // A fresh copy per use: the late-import shift rewrites `call` operands in
   // place, so one Instr object spliced into two arms would be shifted twice.
   const boxTemplate = coercionInstrs(ctx, I32, EXTERNREF, fctx);
@@ -122,7 +138,21 @@ export function emitStandaloneAnyLengthGet(ctx: CodegenContext, fctx: FunctionCo
     if (fn !== undefined) tests.push([...get(), { op: "call", funcIdx: fn }]);
   }
   const getWanted = tests.flatMap((test, i) => (i === 0 ? test : [...test, { op: "i32.or" } as Instr]));
-  const objectOrLegacy = tests.length === 0 ? legacyLength() : ifExtern(getWanted, plainGet, legacyLength());
+  // Arm 5b / 6: a user-declared struct (object literal, class or constructor-
+  // function instance, generator object) reads `length` through the member
+  // dispatcher: its `length` field or getter when the shape has one, else
+  // `__extern_get` (expando, prototype chain, or `undefined`).
+  const carrierFn = ctx.funcMap.get(IS_INSTANCE_EXPANDO_CARRIER);
+  const memberGetFn = ctx.funcMap.get("__get_member_length");
+  const carrierOrLegacy =
+    carrierFn !== undefined && memberGetFn !== undefined
+      ? ifExtern(
+          [...get(), { op: "call", funcIdx: carrierFn }],
+          [...get(), { op: "call", funcIdx: memberGetFn }],
+          legacyLength(),
+        )
+      : legacyLength();
+  const objectOrLegacy = tests.length === 0 ? carrierOrLegacy : ifExtern(getWanted, plainGet, carrierOrLegacy);
   let chain = ifExtern(nullish, legacyLength(), objectOrLegacy);
 
   // Arm 3: a closure without metadata — its own (possibly redefined) `length`

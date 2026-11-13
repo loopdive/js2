@@ -38,6 +38,13 @@ export function createBoundaryObjectAdapter(
   operation: BoundaryObjectOperation,
   context: BoundaryObjectAdapterContext,
 ): BoundaryImport {
+  const unary =
+    (execute: (obj: any, exports: Record<string, Function>) => any, fallback: null | 0 = null): BoundaryImport =>
+    (obj: any) => {
+      const exports = admittedExports(context, obj);
+      return exports ? execute(obj, exports) : fallback;
+    };
+
   switch (operation) {
     case "get":
       return (obj: any, key: any) => {
@@ -61,10 +68,7 @@ export function createBoundaryObjectAdapter(
         return result ? 2 : 1;
       };
     case "keys":
-      return (obj: any) => {
-        const exports = admittedExports(context, obj);
-        return exports ? context.toNativeVector(Object.keys(obj), exports) : null;
-      };
+      return unary((obj, exports) => context.toNativeVector(Object.keys(obj), exports));
     case "call":
       return (obj: any, key: any, args: any) => {
         const exports = admittedExports(context, obj);
@@ -123,10 +127,7 @@ export function createBoundaryObjectAdapter(
           : 0;
       };
     case "getPrototypeOf":
-      return (obj: any) => {
-        const exports = admittedExports(context, obj);
-        return exports ? context.fromHostValue(Reflect.getPrototypeOf(obj), exports) : null;
-      };
+      return unary((obj, exports) => context.fromHostValue(Reflect.getPrototypeOf(obj), exports));
     case "setPrototypeOf":
       return (obj: any, proto: any) => {
         const exports = admittedExports(context, obj);
@@ -179,9 +180,7 @@ export function createBoundaryObjectAdapter(
     case "getOwnPropertyNames":
     case "getOwnPropertySymbols":
     case "ownKeys":
-      return (obj: any) => {
-        const exports = admittedExports(context, obj);
-        if (!exports) return null;
+      return unary((obj, exports) => {
         const keys =
           operation === "getOwnPropertyNames"
             ? Object.getOwnPropertyNames(obj)
@@ -189,12 +188,9 @@ export function createBoundaryObjectAdapter(
               ? Object.getOwnPropertySymbols(obj)
               : Reflect.ownKeys(obj);
         return context.toNativeVector(keys, exports);
-      };
+      });
     case "isAdmitted":
-      return (obj: any) => {
-        const exports = context.getExports();
-        return exports && context.isAdmitted(obj, exports) ? 1 : 0;
-      };
+      return (obj: any) => (admittedExports(context, obj) ? 1 : 0);
     case "callableKind":
       return (value: any) => {
         const exports = context.getExports();
@@ -212,26 +208,18 @@ export function createBoundaryObjectAdapter(
     case "preventExtensions":
     case "seal":
     case "freeze":
-      return (obj: any) => {
-        const exports = admittedExports(context, obj);
-        if (!exports) return null;
+      return unary((obj) => {
         if (operation === "preventExtensions") Object.preventExtensions(obj);
         else if (operation === "seal") Object.seal(obj);
         else Object.freeze(obj);
         return obj;
-      };
+      });
     case "reflectPreventExtensions":
-      return (obj: any) => {
-        const exports = admittedExports(context, obj);
-        if (!exports) return 0;
-        return Reflect.preventExtensions(obj) ? 2 : 1;
-      };
+      return unary((obj) => (Reflect.preventExtensions(obj) ? 2 : 1), 0);
     case "isExtensible":
     case "isSealed":
     case "isFrozen":
-      return (obj: any) => {
-        const exports = admittedExports(context, obj);
-        if (!exports) return 0;
+      return unary((obj) => {
         const result =
           operation === "isExtensible"
             ? Object.isExtensible(obj)
@@ -239,14 +227,12 @@ export function createBoundaryObjectAdapter(
               ? Object.isSealed(obj)
               : Object.isFrozen(obj);
         return result ? 2 : 1;
-      };
+      }, 0);
     case "forInKeys":
-      return (obj: any) => {
-        const exports = admittedExports(context, obj);
-        if (!exports) return null;
+      return unary((obj, exports) => {
         const keys: string[] = [];
         for (const key in obj) keys.push(key);
         return context.toNativeVector(keys, exports);
-      };
+      });
   }
 }

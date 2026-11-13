@@ -1,0 +1,6 @@
+compiler-boundaries: invalid-inventory (mode=inventory, exit 1)
+  unclassified-module: src/ir/backend/vector-representation.ts
+  unclassified-target: src/ir/backend/vector-representation.ts
+  unclassified-target: src/ir/backend/vector-representation.ts
+  unclassified-target: src/ir/backend/vector-representation.ts
+  unclassified-target: src/ir/backend/vector-representation.ts

@@ -110,17 +110,19 @@ describe("#4484 A — instanceof: the static primitive-RHS fold declines on a re
   // "Right-hand side of 'instanceof' is not an object" on it — a WRONG throw,
   // observable in a `catch`. It must now decline to the runtime path instead.
   //
-  // NOTE this asserts the ABSENCE of the wrong throw, not the spec's `true`:
-  // answering `true` needs the plain-object → `Object.prototype` [[Prototype]]
-  // edge, which is #4480's and is pinned as a residual below.
-  it("does not throw for `(OBJECT = Object, {}) instanceof OBJECT`", async () => {
+  // This used to assert only the ABSENCE of the wrong throw (2 = no throw,
+  // `false`), because answering the spec's `true` needed the plain-object →
+  // `Object.prototype` [[Prototype]] edge (#4480). That edge has landed: main
+  // answers `true` as of 2026-10-16, and the residual pin below for the same
+  // shape passed unexpectedly, so both now assert the spec value (#7014).
+  it("does not throw for `(OBJECT = Object, {}) instanceof OBJECT`, and answers true", async () => {
     expect(
       await runStandalone(`
         let OBJECT: any = 0;
         try { const r = ((OBJECT = Object, {}) as any) instanceof OBJECT; return r ? 1 : 2; }
         catch (e) { return 3; }
       `),
-    ).toBe(2);
+    ).toBe(1);
   });
 });
 
@@ -277,7 +279,7 @@ describe("#4484 — measured residuals (routed, not fixed)", () => {
   // `S11.8.6_A2.4_T1`/`_T4` (dynamic `{} instanceof <Object alias>`),
   // `in/S8.12.6_A2_T1`/`_T2` (`"valueOf" in {}`) and
   // `types/object/S8.6.2_A1`/`_A2`.
-  it.fails("`{} instanceof` a runtime-held Object constructor answers true", async () => {
+  it("`{} instanceof` a runtime-held Object constructor answers true", async () => {
     expect(
       await runStandalone(`
         let OBJECT: any = 0;
@@ -287,7 +289,7 @@ describe("#4484 — measured residuals (routed, not fixed)", () => {
     ).toBe(1);
   });
 
-  it.fails("`Object.getPrototypeOf({})` is `Object.prototype`", async () => {
+  it("`Object.getPrototypeOf({})` is `Object.prototype`", async () => {
     expect(
       await runStandalone(`
         function ind(x: any): any { return x; }

@@ -1,0 +1,13 @@
+
+ RUN  v3.2.7 /home/user/js2/.claude/worktrees/agent-a774506d6593a2d93
+
+ ✓ tests/issue-6418-boundary-verdict-in-log.test.ts > boundary-inventory verdict reaches the job log (#6418) > still writes the report the artifact upload preserves 2ms
+ ✓ tests/issue-6418-boundary-verdict-in-log.test.ts > boundary-inventory verdict reaches the job log (#6418) > never discards or merges stderr into the redirected stdout 0ms
+ ✓ tests/issue-6418-boundary-verdict-in-log.test.ts > boundary-inventory verdict reaches the job log (#6418) > annotates the failure so the park comment points somewhere readable 0ms
+ ✓ tests/issue-6418-boundary-verdict-in-log.test.ts > boundary-inventory verdict reaches the job log (#6418) > keeps the checker's stdout a pure JSON report 0ms
+
+ Test Files  1 passed (1)
+      Tests  4 passed (4)
+   Start at  22:52:47
+   Duration  426ms (transform 37ms, setup 0ms, collect 30ms, tests 4ms, environment 0ms, prepare 88ms)
+

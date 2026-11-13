@@ -1,0 +1,18 @@
+
+ RUN  v3.2.7 /home/user/js2/.claude/worktrees/agent-a774506d6593a2d93
+
+ ✓ tests/backend-contract.test.ts > ModuleAssembler index identity (#3029-S4 invariants) > A3/A5 — a late import never invalidates an earlier handle 2ms
+ ✓ tests/backend-contract.test.ts > ModuleAssembler index identity (#3029-S4 invariants) > A2 — declare/define is two-phase and exactly-once 1ms
+ ✓ tests/backend-contract.test.ts > ModuleAssembler index identity (#3029-S4 invariants) > A4 — finalize is single-shot and freezes mutation 1ms
+ ✓ tests/backend-contract.test.ts > ModuleAssembler index identity (#3029-S4 invariants) > A6 — name lookup returns handles, and globals/types mirror the protocol 0ms
+ ✓ tests/backend-contract.test.ts > five-part contract surface (#3029-S1) > compile-time emitter conformance is banked 0ms
+ ✓ tests/backend-contract.test.ts > five-part contract surface (#3029-S1) > the stub backend assembles all five parts and its emitter drives a foreign sink 1ms
+ ✓ tests/backend-contract.test.ts > five-part contract surface (#3029-S1) > legalityFor wraps the production legality checker per backend 0ms
+ ✓ tests/backend-contract.test.ts > IR interchange contract surface (#3030-T1) > exports the frozen format version 0ms
+ ✓ tests/backend-contract.test.ts > IR interchange contract surface (#3030-T1) > ships a parseable JSON Schema whose frozen tables match the contract 8ms
+
+ Test Files  1 passed (1)
+      Tests  9 passed (9)
+   Start at  20:10:32
+   Duration  715ms (transform 190ms, setup 0ms, collect 246ms, tests 15ms, environment 0ms, prepare 79ms)
+

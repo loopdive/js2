@@ -17,7 +17,6 @@ import {
   resolveBindingElementType,
   undefinedPreservingBindingSourceType,
 } from "../../checker/type-mapper.js";
-import { isStandalonePromiseActive } from "../async-scheduler.js";
 import { reportError, reportErrorNoNode } from "../context/errors.js";
 import { allocLocal, getLocalType } from "../context/locals.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
@@ -381,59 +380,21 @@ export function compileForOfDestructuring(
             // (#3241/#4397) Native semantic providers route to the Wasm-defined
             // __extern_rest_object (exclusion-object ABI). Compatibility mode
             // retains the historical host helper and its CSV-key ABI below.
-            if (ctx.targetProfile.semanticProviders === "native-first") {
-              // The loop element is a CLOSED-shape struct; reify it into an open
-              // `$Object` (#3222 C1) so `__object_keys` enumeration sees the
-              // fields — a bare `extern.convert_any` would yield an EMPTY rest.
-              emitNativeObjectRest(
-                ctx,
-                fctx,
-                () => {
-                  fctx.body.push({ op: "local.get", index: elemLocal });
-                  if (elemType.kind === "ref_null") fctx.body.push({ op: "ref.as_non_null" });
-                  if (!materializeStructAsObject(ctx, fctx, structTypeIdx, { skipInternalFields: true })) {
-                    // Declined — struct ref still on stack; reinterpret as-is.
-                    fctx.body.push({ op: "extern.convert_any" });
-                  }
-                },
-                excludedKeys,
-                restIdx,
-              );
-              continue;
-            }
-            let restObjIdx = ctx.funcMap.get("__extern_rest_object");
-            if (restObjIdx === undefined) {
-              const importsBefore = ctx.numImportFuncs;
-              const restObjType = addFuncType(
-                ctx,
-                [{ kind: "externref" }, { kind: "externref" }],
-                [{ kind: "externref" }],
-              );
-              addImport(ctx, "env", "__extern_rest_object", {
-                kind: "func",
-                typeIdx: restObjType,
-              });
-              shiftLateImportIndices(ctx, fctx, importsBefore, ctx.numImportFuncs - importsBefore);
-              restObjIdx = ctx.funcMap.get("__extern_rest_object");
-            }
-            if (restObjIdx !== undefined) {
-              const excludedStr = excludedKeys.join(",");
-              addStringConstantGlobal(ctx, excludedStr);
-              const excludedStrIdx = ctx.stringGlobalMap.get(excludedStr);
-              if (excludedStrIdx !== undefined) {
+            emitNativeObjectRest(
+              ctx,
+              fctx,
+              () => {
                 fctx.body.push({ op: "local.get", index: elemLocal });
-                fctx.body.push({ op: "extern.convert_any" });
-                // (#51) `addStringConstantGlobal` stores a `-1` sentinel under
-                // nativeStrings (no host string-constant global); a bare
-                // `global.get -1` crashes binary emit ("global index out of
-                // range — -1"). Materialize the excluded-keys string inline via
-                // the dual-mode helper (inline NativeString externref standalone,
-                // host `global.get` under GC).
-                for (const instr of stringConstantExternrefInstrs(ctx, excludedStr)) fctx.body.push(instr);
-                fctx.body.push({ op: "call", funcIdx: restObjIdx });
-                fctx.body.push({ op: "local.set", index: restIdx });
-              }
-            }
+                if (elemType.kind === "ref_null") fctx.body.push({ op: "ref.as_non_null" });
+                if (!materializeStructAsObject(ctx, fctx, structTypeIdx, { skipInternalFields: true })) {
+                  // Declined — struct ref still on stack; reinterpret as-is.
+                  fctx.body.push({ op: "extern.convert_any" });
+                }
+              },
+              excludedKeys,
+              restIdx,
+            );
+            continue;
           }
           continue;
         }

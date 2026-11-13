@@ -1,20 +1,26 @@
 {
   "schemaVersion": 1,
-  "generated": "2026-08-31",
+  "generated": "2026-10-24",
   "lanes": {
     "single-host": {
       "notes": [
         "(#4588) terminal/emitted/irBodyEmitted 37 -> 38, with legacyBodyEmitted/unsupported/invariants remaining 0. The exact compiler-provenanced timer-shim:set-timeout is now a self-owned Prepared terminal in both lanes; its stable UnitId and target-neutral inventory replace the prior unowned-support row.",
-        "(#3523 R4 gap 4) terminalUnitFloor 38 -> 41 and nonExecutableFloor 3, with emitted/irBodyEmitted unchanged at 38. The three entries whose module init has nothing to do (js/async.ts, js/builtins.ts, js/classes.ts) recorded NO outcome row at all; they now record one truthful non-executable row each. The growth is the ledger stopping an under-count by omission, not new units: nonExecutableFloor is a FLOOR so the rows cannot silently vanish again, and the compile-once equation subtracts them because a non-executable init has no body to emit."
+        "(#3523 R4 gap 4) terminalUnitFloor 38 -> 41 and nonExecutableFloor 3, with emitted/irBodyEmitted unchanged at 38. The three entries whose module init has nothing to do (js/async.ts, js/builtins.ts, js/classes.ts) recorded NO outcome row at all; they now record one truthful non-executable row each. The growth is the ledger stopping an under-count by omission, not new units: nonExecutableFloor is a FLOOR so the rows cannot silently vanish again, and the compile-once equation subtracts them because a non-executable init has no body to emit.",
+        "(#6979 S7-a, 2026-10-24, stakeholder decision) Measurement basis changed: the lane compiled under `semanticProviders: \"host-assisted\"`, which S7-a deletes, so it now measures the native regime in a JS environment. Re-banked at emitted/irBodyEmitted 38 -> 26 and legacyBodyEmitted/unsupported 0 -> 12 (select/call-graph-closure 5, body-shape-rejected 3, host-surface-unavailable 3, date-constructor-unsupported 1). Verified on main's own tree with only the profile line removed: identical numbers, so this is not an S7-a code regression. #7103 owns ratcheting the lane back to 38/0 under the regime; this is a floor for the regime from here on, not a declaration that the 12 units are acceptable."
       ],
       "entryFloor": 5,
       "terminalUnitFloor": 41,
-      "emittedFloor": 38,
-      "irBodyEmittedFloor": 38,
+      "emittedFloor": 26,
+      "irBodyEmittedFloor": 26,
       "nonExecutableFloor": 3,
-      "legacyBodyEmittedCeiling": 0,
-      "unsupportedCeiling": 0,
-      "unsupportedByCode": {},
+      "legacyBodyEmittedCeiling": 12,
+      "unsupportedCeiling": 12,
+      "unsupportedByCode": {
+        "select/call-graph-closure": 5,
+        "select/body-shape-rejected": 3,
+        "select/date-constructor-unsupported": 1,
+        "select/host-surface-unavailable": 3
+      },
       "invariantCeiling": 0
     },
     "standalone": {

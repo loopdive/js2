@@ -79,21 +79,6 @@ async function runLinked(source: string): Promise<unknown> {
   return (instance.exports as Record<string, () => unknown>).test!();
 }
 
-/** Host-free lane: compile to standalone and assert zero imports before running. */
-async function runStandalone(source: string): Promise<unknown> {
-  const result = await compile(source, {
-    target: "standalone",
-    fileName: "issue-5355-standalone.ts",
-    skipSemanticDiagnostics: true,
-  });
-  expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
-  const module = new WebAssembly.Module(result.binary);
-  expect(WebAssembly.Module.imports(module)).toEqual([]);
-  const instance = new WebAssembly.Instance(module, {});
-  (instance.exports as { __module_init?: () => void }).__module_init?.();
-  return (instance.exports as Record<string, () => unknown>).test!();
-}
-
 describe("#5355 — Intl.DateTimeFormat host-mirror bridge", () => {
   it("constructs a real object, not an undefined typed `object`", async () => {
     // The narrowest statement of the defect. On base: "object|true|true".
@@ -207,24 +192,23 @@ describe("#5355 — Intl.DateTimeFormat host-mirror bridge", () => {
     ).toBe("1/1/1970");
   });
 
-  it("standalone REFUSES with a catchable TypeError instead of answering undefined", async () => {
+  it("standalone REFUSES at compile time instead of answering undefined", async () => {
     // The declared standalone bound. On base the constructor silently produced
-    // `undefined` (this returned 10) and the first method call then trapped —
-    // a trap is neither catchable nor diagnosable. There is no ICU in pure
-    // Wasm, so refusing is the correct answer, not a placeholder.
-    expect(
-      await runStandalone(`
-        export function test(): number {
-          try { const f = new Intl.DateTimeFormat("en-US"); return (f as any) === undefined ? 10 : 11; }
-          catch (e: any) { return e instanceof TypeError ? 1 : 2; }
-        }
-      `),
-    ).toBe(1);
+    // `undefined` and the first method call then trapped. There is no ICU in pure
+    // Wasm, so refusing is the correct answer; #6986 moved the refusal from a
+    // run-time TypeError to a compile error that names the host accelerator.
+    const result = await compile(
+      `export function test(): number { const f = new Intl.DateTimeFormat("en-US"); return (f as any) === undefined ? 10 : 11; }`,
+      { target: "standalone", fileName: "issue-5355-refuse.ts" },
+    );
+    expect(result.success).toBe(false);
+    expect(result.errors.map((error) => error.message).join("\n")).toContain(
+      "Intl.DateTimeFormat is not available in --target standalone",
+    );
   });
 
   it("leaks no Intl host import into standalone or wasi", async () => {
-    // The #2961 no-leak ratchet: the new bridge must not add to the pre-existing
-    // ListFormat/NumberFormat leak. (Those two are untouched by this issue.)
+    // The #2961 no-leak ratchet: no `Intl_*` import may reach a host-free binary.
     for (const target of ["standalone", "wasi"] as const) {
       const result = await compile(
         `export function test(): string {
@@ -232,9 +216,10 @@ describe("#5355 — Intl.DateTimeFormat host-mirror bridge", () => {
          }`,
         { target, fileName: "issue-5355-leak.ts", skipSemanticDiagnostics: true },
       );
-      expect(result.success).toBe(true);
+      expect(result.success).toBe(false);
       expect(result.imports.map((entry) => entry.name).filter((name) => name.startsWith("Intl_"))).toEqual([]);
       expect(result.errors.filter((error) => error.message.includes("Intl_"))).toEqual([]);
+      expect(result.errors.map((error) => error.message).join("\n")).toContain("--host-accelerator intl");
     }
   });
 });

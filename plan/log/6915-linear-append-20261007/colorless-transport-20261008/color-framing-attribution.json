@@ -1,0 +1,30 @@
+{
+  "executionHead": "1a0584f07f69914482c91e9a82e00ac54aada092",
+  "graphEnvelopes": 38,
+  "prefixes": [
+    {
+      "text": "\u001b[22m\u001b[39m",
+      "hex": "1b5b32326d1b5b33396d"
+    }
+  ],
+  "childReceipt": {
+    "code": 0,
+    "signal": null,
+    "killed": false,
+    "bytes": 44275786,
+    "elapsedMs": 20104,
+    "spawnError": null,
+    "failures": [
+      "AggregateError: evidence decoding failed\n    at runAppendQualification (file:///private/tmp/js2-6915-linear-append-plan-20261007/scripts/hooks/run-linear-append-provenance.mjs:1256:38)\n    at async file:///private/tmp/js2-6915-linear-append-plan-20261007/scripts/hooks/run-linear-append-provenance.mjs:1970:7"
+    ]
+  },
+  "reporter": {
+    "total": 36,
+    "passed": 36,
+    "failed": 0,
+    "skipped": 0
+  },
+  "diagnosticOnlyRecoveredGraphsEqualPlainControl": true,
+  "productionParserUnchangedAndStillRejected": true,
+  "notAcceptance": "Diagnostic removes measured transport bytes only to attribute failure; this does not qualify malformed original input."
+}

@@ -65,17 +65,12 @@ function validateTargetProfileCoherence(profile: CompileTargetProfile): readonly
         `incoherent target profile capability policy '${profile.capabilityPolicy}', expected '${expectedCapabilityPolicy}'`,
       );
     }
-    if (profile.semanticProviders === "host-assisted" && !implicitJsSemanticsAllowed) {
-      diagnostics.push("incoherent target profile host-assisted semantic provider policy");
-    } else if (profile.semanticProviders !== "host-assisted" && profile.semanticProviders !== "native-first") {
-      diagnostics.push("incoherent target profile semantic provider policy");
+    if (profile.semanticProviders !== "native-first") {
+      // (#6979) Also rejects a manifest from a pre-S7 host-assisted build.
+      diagnostics.push(`incoherent target profile semantic provider policy '${String(profile.semanticProviders)}'`);
     }
   }
-  const nativeStringsRequired =
-    profile.target === "standalone" ||
-    profile.target === "wasi" ||
-    profile.strictEnvImportGate ||
-    profile.semanticProviders === "native-first";
+  const nativeStringsRequired = profile.strictEnvImportGate || profile.semanticProviders === "native-first";
   if (profile.nativeStringsRequiredByPolicy !== nativeStringsRequired) {
     diagnostics.push("incoherent target profile native-string policy");
   }
@@ -84,6 +79,10 @@ function validateTargetProfileCoherence(profile: CompileTargetProfile): readonly
       ? profile.hostValueInterop === "required" || profile.hostValueInterop === "off"
       : profile.hostValueInterop === "enabled" || profile.hostValueInterop === "off";
   if (!validHostValueInterop) diagnostics.push("incoherent target profile host-value interop policy");
+  // (#6978) Accelerators exist only for a JS environment.
+  if (profile.accelerators !== undefined && profile.accelerators.length > 0 && profile.environment !== "javascript") {
+    diagnostics.push("incoherent target profile host accelerators");
+  }
   return diagnostics;
 }
 
@@ -180,7 +179,11 @@ export function validateJavaScriptAdapterManifest(manifest: JavaScriptAdapterMan
     }
   }
   for (const descriptor of manifest.imports) {
-    const policy = classifyHostImport(descriptor, manifest.targetProfile.environment);
+    const policy = classifyHostImport(
+      descriptor,
+      manifest.targetProfile.environment,
+      manifest.targetProfile.accelerators,
+    );
     if (policy.classification !== "platform-capability") continue;
     const key = `${descriptor.module}\0${descriptor.name}\0${descriptor.kind}`;
     const owners = capabilityImportOwners.get(key);

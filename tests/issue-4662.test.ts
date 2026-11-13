@@ -149,7 +149,7 @@ describe("#4662 — `++`/`--` on a FUNCTION-environment binding in eval'd / mint
   // reification (the loop counter's cell promotion), not the update operator.
   // Left `it.fails` with that root named so a fix there surfaces here instead of
   // being masked; see `## Residuals` in the issue file.
-  it.fails("RESIDUAL: `for (var i = …)` + direct eval mis-types the reified cell local", async () => {
+  it("`for (var i = …)` + direct eval types the reified cell local (was an it.fails residual, #7014)", async () => {
     expect(
       await run(`var c = 0;
                  for (var i = 0; i < 4; i = i + 1) { eval("c++;"); }

@@ -1,0 +1,144 @@
+
+ RUN  v3.2.7 /home/user/js2/.claude/worktrees/agent-a774506d6593a2d93
+
+ ✓ tests/issue-3518-vector-grow-store-donor.test.ts > independently authenticated string/Error extraction in the vector registry > reconstructs both unchanged original receipts from all eight live factory payloads 116ms
+ ✓ tests/issue-3518-vector-grow-store-donor.test.ts > independently authenticated string/Error extraction in the vector registry > detects changed live createErrorStructType descriptor 78ms
+ ✓ tests/issue-3518-vector-grow-store-donor.test.ts > independently authenticated string/Error extraction in the vector registry > detects changed live createStringDataType descriptor 64ms
+ ✓ tests/issue-3518-vector-grow-store-donor.test.ts > independently authenticated string/Error extraction in the vector registry > detects changed live createAnyStringType descriptor 39ms
+ ✓ tests/issue-3518-vector-grow-store-donor.test.ts > independently authenticated string/Error extraction in the vector registry > detects changed live createNativeStringType descriptor 39ms
+ ✓ tests/issue-3518-vector-grow-store-donor.test.ts > independently authenticated string/Error extraction in the vector registry > detects changed live createConsStringType descriptor 38ms
+ ✓ tests/issue-3518-vector-grow-store-donor.test.ts > independently authenticated string/Error extraction in the vector registry > detects changed live createHashedStringType descriptor 29ms
+ ✓ tests/issue-3518-vector-grow-store-donor.test.ts > independently authenticated string/Error extraction in the vector registry > detects changed live createUtf8StringDataType descriptor 59ms
+ ✓ tests/issue-3518-vector-grow-store-donor.test.ts > independently authenticated string/Error extraction in the vector registry > detects changed live createUtf8StringType descriptor 38ms
+ ✓ tests/issue-3518-vector-grow-store-donor.test.ts > independently authenticated string/Error extraction in the vector registry > rejects changed import source without accepting a new receipt 44ms
+ ✓ tests/issue-3518-vector-grow-store-donor.test.ts > independently authenticated string/Error extraction in the vector registry > rejects changed import kind without accepting a new receipt 38ms
+ ✓ tests/issue-3518-vector-grow-store-donor.test.ts > independently authenticated string/Error extraction in the vector registry > rejects changed layout argument without accepting a new receipt 47ms
+ ✓ tests/issue-3518-vector-grow-store-donor.test.ts > independently authenticated string/Error extraction in the vector registry > rejects changed UTF8 condition without accepting a new receipt 68ms
+ ✓ tests/issue-3518-vector-grow-store-donor.test.ts > independently authenticated string/Error extraction in the vector registry > rejects changed Error cache publication without accepting a new receipt 83ms
+ ✓ tests/issue-3518-vector-grow-store-donor.test.ts > independently authenticated string/Error extraction in the vector registry > rejects a removed canonical factory 42ms
+ ✓ tests/issue-3518-vector-grow-store-donor.test.ts > independently authenticated string/Error extraction in the vector registry > rejects an extra executable statement before the canonical return 37ms
+ ✓ tests/issue-3518-vector-grow-store-donor.test.ts > independently authenticated string/Error extraction in the vector registry > rejects an unbound ctx read that would collide with the layout inverse 34ms
+ ✓ tests/issue-3518-vector-grow-store-donor.test.ts > independently authenticated string/Error extraction in the vector registry > rejects a differently quoted duplicate canonical namespace import 42ms
+ × tests/issue-3518-vector-grow-store-donor.test.ts > independently authenticated prepared registry addition > inverts the exact ordered addition before checking the unchanged historical registry 20ms
+   → expected '93c16b4a1aee91c9d02497bd03b026ddaf3ec…' to be '8e30d0c98c75cb4feb3924050fe02a6e911eb…' // Object.is equality
+ ✓ tests/issue-3518-vector-grow-store-donor.test.ts > independently authenticated prepared registry addition > refuses the missing Instr 7ms
+ ✓ tests/issue-3518-vector-grow-store-donor.test.ts > independently authenticated prepared registry addition > refuses the value import 29ms
+ ✓ tests/issue-3518-vector-grow-store-donor.test.ts > independently authenticated prepared registry addition > refuses the retargeted import 7ms
+ ✓ tests/issue-3518-vector-grow-store-donor.test.ts > independently authenticated prepared registry addition > refuses the renamed Instr 6ms
+ ✓ tests/issue-3518-vector-grow-store-donor.test.ts > independently authenticated prepared registry addition > refuses the duplicate decoded route 10ms
+ ✓ tests/issue-3518-vector-grow-store-donor.test.ts > independently authenticated prepared registry addition > refuses the shadowed Instr binding 16ms
+ ✓ tests/issue-3518-vector-grow-store-donor.test.ts > independently authenticated prepared registry addition > refuses the missing declaration 6ms
+ ✓ tests/issue-3518-vector-grow-store-donor.test.ts > independently authenticated prepared registry addition > refuses the duplicated declaration span 5ms
+ ✓ tests/issue-3518-vector-grow-store-donor.test.ts > independently authenticated prepared registry addition > refuses the wrong brand 5ms
+ ✓ tests/issue-3518-vector-grow-store-donor.test.ts > independently authenticated prepared registry addition > refuses the wrong brand field 11ms
+ ✓ tests/issue-3518-vector-grow-store-donor.test.ts > independently authenticated prepared registry addition > refuses the moved declaration 14ms
+ ✓ tests/issue-3518-vector-grow-store-donor.test.ts > independently authenticated prepared registry addition > refuses edited forward provenance without replacing the original receipts 6ms
+ ✓ tests/issue-3518-vector-grow-store-donor.test.ts > complete donor/registry preservation > retains every declaration and original order in donor 3ms
+ × tests/issue-3518-vector-grow-store-donor.test.ts > complete donor/registry preservation > retains every declaration and original order in registry 42ms
+   → expected [ 'registerStructType', …(31) ] to deeply equal [ 'registerStructType', …(29) ]
+ ✓ tests/issue-3518-vector-grow-store-donor.test.ts > complete donor/registry preservation > preserves donor ensureVecElemSet allocation/cache/publication control flow 19ms
+ ✓ tests/issue-3518-vector-grow-store-donor.test.ts > complete donor/registry preservation > preserves registry getOrRegisterArrayType allocation/cache/publication control flow 11ms
+ ✓ tests/issue-3518-vector-grow-store-donor.test.ts > complete donor/registry preservation > preserves registry getOrRegisterVecBaseType allocation/cache/publication control flow 10ms
+ × tests/issue-3518-vector-grow-store-donor.test.ts > complete donor/registry preservation > preserves registry getOrRegisterVecType allocation/cache/publication control flow 13ms
+   → expected '5a88ad02771b893b7f15aa1bacf3d36ce34d0…' to be 'c5a11ee88d8c7c7d341146708fbf5d9b212f0…' // Object.is equality
+ ✓ tests/issue-3518-vector-grow-store-donor.test.ts > complete donor/registry preservation > pins exact closed-data selection and builder resource forwarding before normalization 8ms
+ ✓ tests/issue-3518-vector-grow-store-donor.test.ts > complete donor/registry preservation > detects live adapter mutation in donor/ensureVecElemSet 9ms
+ ✓ tests/issue-3518-vector-grow-store-donor.test.ts > complete donor/registry preservation > detects live adapter mutation in donor/ensureVecElemSet 9ms
+ ✓ tests/issue-3518-vector-grow-store-donor.test.ts > complete donor/registry preservation > detects live adapter mutation in registry/getOrRegisterVecType 19ms
+ ✓ tests/issue-3518-vector-grow-store-donor.test.ts > complete donor/registry preservation > detects live adapter mutation in registry/getOrRegisterArrayType 21ms
+ ✓ tests/issue-3518-vector-grow-store-donor.test.ts > real legacy adapters retain dense and hole behavior > publishes the exact pure body and preserves cache hits: dense-externref 18ms
+ ✓ tests/issue-3518-vector-grow-store-donor.test.ts > real legacy adapters retain dense and hole behavior > publishes the exact pure body and preserves cache hits: dense-f64 4ms
+ ✓ tests/issue-3518-vector-grow-store-donor.test.ts > real legacy adapters retain dense and hole behavior > publishes the exact pure body and preserves cache hits: hole-global 3ms
+ ✓ tests/issue-3518-vector-grow-store-donor.test.ts > real legacy adapters retain dense and hole behavior > publishes the exact pure body and preserves cache hits: f64-hole 3ms
+ ✓ tests/issue-3518-vector-grow-store-donor.test.ts > real legacy adapters retain dense and hole behavior > keeps hole allocation before tag/signature and publishes function before cache 13ms
+ ✓ tests/issue-3518-vector-grow-store-donor.test.ts > real legacy adapters retain dense and hole behavior > preserves base/array/carrier descriptor and bookkeeping object ownership 4ms
+ ✓ tests/issue-3518-vector-grow-store-donor.test.ts > real legacy adapters retain dense and hole behavior > retains reference element normalization and distinct reference caches 4ms
+ ✓ tests/issue-3518-vector-grow-store-donor.test.ts > real legacy adapters retain dense and hole behavior > retains invalid-carrier and packed-element refusals without allocation 3ms
+ ✓ tests/issue-3518-vector-grow-store-donor.test.ts > real legacy adapters retain dense and hole behavior > retains both untouched sized allocators and their caches 6ms
+ ✓ tests/issue-3518-vector-grow-store-donor.test.ts > independently published generic string-shape forward receipts > authenticates seven ordered shape spans before the unchanged ten-statement inverse 38ms
+ ✓ tests/issue-3518-vector-grow-store-donor.test.ts > independently published generic string-shape forward receipts > rejects semantic changes, removal and duplication of generic-shape-types-and-numeric-adapter after a genuine positive 97ms
+ ✓ tests/issue-3518-vector-grow-store-donor.test.ts > independently published generic string-shape forward receipts > rejects semantic changes, removal and duplication of string-data-return-type after a genuine positive 47ms
+ ✓ tests/issue-3518-vector-grow-store-donor.test.ts > independently published generic string-shape forward receipts > rejects semantic changes, removal and duplication of any-native-cons-wrapper-and-shape-entry after a genuine positive 72ms
+ ✓ tests/issue-3518-vector-grow-store-donor.test.ts > independently published generic string-shape forward receipts > rejects semantic changes, removal and duplication of cons-fields-and-hashed-wrapper-shape after a genuine positive 61ms
+ ✓ tests/issue-3518-vector-grow-store-donor.test.ts > independently published generic string-shape forward receipts > rejects semantic changes, removal and duplication of hashed-parent-and-utf8-data-return-type after a genuine positive 50ms
+ ✓ tests/issue-3518-vector-grow-store-donor.test.ts > independently published generic string-shape forward receipts > rejects semantic changes, removal and duplication of utf8-wrapper-and-shape-entry after a genuine positive 50ms
+ ✓ tests/issue-3518-vector-grow-store-donor.test.ts > independently published generic string-shape forward receipts > rejects semantic changes, removal and duplication of utf8-data-field-and-parent after a genuine positive 48ms
+ ✓ tests/issue-3518-vector-grow-store-donor.test.ts > independently published generic string-shape forward receipts > rejects missing shape-forward evidence without reseeding a historical receipt 19ms
+ ✓ tests/issue-3518-vector-grow-store-donor.test.ts > independently published generic string-shape forward receipts > rejects provenance shape-forward evidence without reseeding a historical receipt 25ms
+ ✓ tests/issue-3518-vector-grow-store-donor.test.ts > independently published generic string-shape forward receipts > rejects span shape-forward evidence without reseeding a historical receipt 17ms
+ ✓ tests/issue-3518-vector-grow-store-donor.test.ts > independently published generic string-shape forward receipts > rejects reordered complete wrapper spans even when each individual span is unchanged 27ms
+ ✓ tests/issue-3518-vector-grow-store-donor.test.ts > independently published generic string-shape forward receipts > rejects removed-shape without filtering away unapproved factory statements 28ms
+ ✓ tests/issue-3518-vector-grow-store-donor.test.ts > independently published generic string-shape forward receipts > rejects duplicate-shape without filtering away unapproved factory statements 32ms
+ ✓ tests/issue-3518-vector-grow-store-donor.test.ts > independently published generic string-shape forward receipts > rejects extra-declaration without filtering away unapproved factory statements 32ms
+ ✓ tests/issue-3518-vector-grow-store-donor.test.ts > independently published generic string-shape forward receipts > retains the historical AST free-ctx collision guard after authenticating the new wrappers 59ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 3 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/issue-3518-vector-grow-store-donor.test.ts > independently authenticated prepared registry addition > inverts the exact ordered addition before checking the unchanged historical registry
+AssertionError: expected '93c16b4a1aee91c9d02497bd03b026ddaf3ec…' to be '8e30d0c98c75cb4feb3924050fe02a6e911eb…' // Object.is equality
+
+Expected: [32m"8e30d0c98c75cb4feb3924050fe02a6e911eb0e9b459391ba2598fcd96b19979"[39m
+Received: [31m"93c16b4a1aee91c9d02497bd03b026ddaf3ecba4b8dacfd02d5417ee752de22b"[39m
+
+ ❯ tests/issue-3518-vector-grow-store-donor.test.ts:598:27
+    596|   it("inverts the exact ordered addition before checking the unchanged…
+    597|     const restored = inversePreparedRegistry(read("registry"));
+    598|     expect(sha(restored)).toBe("8e30d0c98c75cb4feb3924050fe02a6e911eb0…
+       |                           ^
+    599|     verifyLayoutInverse();
+    600|   });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/3]⎯
+
+ FAIL  tests/issue-3518-vector-grow-store-donor.test.ts > complete donor/registry preservation > retains every declaration and original order in registry
+AssertionError: expected [ 'registerStructType', …(31) ] to deeply equal [ 'registerStructType', …(29) ]
+
+[32m- Expected[39m
+[31m+ Received[39m
+
+[33m@@ -3,10 +3,12 @@[39m
+[2m    "addFuncType",[22m
+[2m    "getOrRegisterArrayType",[22m
+[2m    "getOrRegisterVecBaseType",[22m
+[2m    "isVecBaseSubtype",[22m
+[2m    "withSuppressedVecUsage",[22m
+[31m+   "i32FlavourVecs",[39m
+[31m+   "disambiguateI32VecKey",[39m
+[2m    "getOrRegisterVecType",[22m
+[2m    "getOrRegisterHoleyArrayType",[22m
+[2m    "getOrRegisterArgumentsVecType",[22m
+[2m    "isHoleyArrayType",[22m
+[2m    "getOrRegisterSubviewType",[22m
+
+ ❯ tests/issue-3518-vector-grow-store-donor.test.ts:695:36
+    693|           ? s.name?.text
+    694|           : undefined;
+    695|     expect(declarations.map(name)).toEqual(ORIGINAL_DECLARATIONS[key].…
+       |                                    ^
+    696|     for (const receipt of ORIGINAL_DECLARATIONS[key])
+    697|       if (receipt.retained) {
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/3]⎯
+
+ FAIL  tests/issue-3518-vector-grow-store-donor.test.ts > complete donor/registry preservation > preserves registry getOrRegisterVecType allocation/cache/publication control flow
+AssertionError: expected '5a88ad02771b893b7f15aa1bacf3d36ce34d0…' to be 'c5a11ee88d8c7c7d341146708fbf5d9b212f0…' // Object.is equality
+
+Expected: [32m"[7mc[27m5a[7m11ee88d8c7c7d341146708fbf5d9b212f05a0501af93381cb74f2e6282f47[27m"[39m
+Received: [31m"5a[7m88ad02771b893b7f15aa1bacf3d36ce34d09e5db02c822541f2e409b2dfb08[27m"[39m
+
+ ❯ tests/issue-3518-vector-grow-store-donor.test.ts:704:54
+    702|   });
+    703|   it.each(ADAPTER_SHAPES)("preserves %s %s allocation/cache/publicatio…
+    704|     expect(sha(normalizedFunction(read(key), name))).toBe(expected);
+       |                                                      ^
+    705|   });
+    706|   it("pins exact closed-data selection and builder resource forwarding…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/3]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  3 failed | 64 passed (67)
+   Start at  19:43:03
+   Duration  34.47s (transform 22.50s, setup 0ms, collect 31.97s, tests 2.01s, environment 0ms, prepare 79ms)
+

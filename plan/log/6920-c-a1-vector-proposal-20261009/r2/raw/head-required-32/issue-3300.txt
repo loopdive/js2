@@ -1,0 +1,16 @@
+
+ RUN  v3.2.7 /home/user/js2/.claude/worktrees/agent-a774506d6593a2d93
+
+ ✓ tests/issue-3300.test.ts > #3300 shared allocation-policy proof > keeps benchmark artifact identities stable across repeated builds 4ms
+ ✓ tests/issue-3300.test.ts > #3300 shared allocation-policy proof > changes decisions without changing allocation facts, layouts, pointer maps, or ABI provenance 20ms
+ ✓ tests/issue-3300.test.ts > #3300 shared allocation-policy proof > keeps allocations out of function stack storage when aliases escape 3ms
+ ✓ tests/issue-3300.test.ts > #3300 shared allocation-policy proof > preserves the baseline managed decision for non-promoted sites 2ms
+ ✓ tests/issue-3300.test.ts > #3300 shared allocation-policy proof > rejects a Porffor plan whose stack class lacks symbolic frame operations 3ms
+ ✓ tests/issue-3300.test.ts > #3300 shared allocation-policy proof > reclaims promoted linear-Wasm sites per invocation while preserving alias and identity 1141ms
+ ↓ tests/issue-3300.test.ts > #3300 shared allocation-policy proof > executes stack promotion plus arena fallback through Porffor-C without semantic-layout operations
+
+ Test Files  1 passed (1)
+      Tests  6 passed | 1 skipped (7)
+   Start at  19:31:42
+   Duration  33.05s (transform 21.86s, setup 0ms, collect 31.42s, tests 1.17s, environment 0ms, prepare 66ms)
+

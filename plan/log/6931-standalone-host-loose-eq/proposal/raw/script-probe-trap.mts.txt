@@ -1,0 +1,20 @@
+import { writeFileSync } from "fs";
+import { compile } from "../src/index.js";
+import { buildImports, instantiateWasm } from "../src/runtime.js";
+const SRC = process.argv[2] === "legacy"
+ ? `function eqUsed(o: any): number { return o == 1 ? 1 : 0; }
+export function viaStr(): number { return eqUsed("1"); }
+export function exported(o: any): number { return eqUsed(o); }
+export function exportedS(o: any): number { return o == "1" ? 1 : 0; }`
+ : `export function eqUsed(o: any): number { return o == 1 ? 1 : 0; }
+export function eqStr(o: any): number { return o == "1" ? 1 : 0; }`;
+const r = await compile(SRC, { fileName: "t.ts", trackIrOutcomes: true, target: "standalone", emitWat: true });
+if (!r.success) { console.log("FAIL", r.errors); process.exit(1); }
+console.log((r.irOutcomes ?? []).map((u: any) => `${u.displayName}:${u.kind}${u.irBodyEmitted ? "+body" : ""}`).join(" "));
+const imp = buildImports(r.imports, {}, r.stringPool);
+const { instance } = await instantiateWasm(r.binary, imp.env, imp.string_constants);
+const ex: any = instance.exports;
+for (const fn of Object.keys(ex).filter(k => typeof ex[k] === "function" && !k.startsWith("__"))) for (const v of ["1", {}, undefined, true]) {
+  try { console.log(fn, JSON.stringify(v), ex[fn](v)); } catch (e: any) { console.log(fn, JSON.stringify(v), e.message, "\n", String(e.stack).split("\n").slice(1,6).join("\n")); }
+}
+if (process.argv[3]) writeFileSync(process.argv[3], r.wat);

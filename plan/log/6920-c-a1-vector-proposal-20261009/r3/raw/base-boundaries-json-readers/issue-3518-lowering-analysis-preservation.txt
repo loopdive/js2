@@ -1,0 +1,715 @@
+
+ RUN  v3.2.7 /home/user/js2/.claude/worktrees/agent-a774506d6593a2d93
+
+ × tests/issue-3518-lowering-analysis-preservation.test.ts > D1 independent lowering source preservation component > independently replays all four current byte streams from the authentic donors 22ms
+   → expected { bytes: 45359, …(2) } to deeply equal { bytes: 49040, …(2) }
+ × tests/issue-3518-lowering-analysis-preservation.test.ts > D1 independent lowering source preservation component > reconstructs complete authentic 'linear-layout' donor with fresh ordered reads twice 7ms
+   → expected { bytes: 45359, …(2) } to deeply equal { bytes: 49040, …(2) }
+ × tests/issue-3518-lowering-analysis-preservation.test.ts > D1 independent lowering source preservation component > reconstructs complete authentic 'backend-legality' donor with fresh ordered reads twice 6ms
+   → expected { bytes: 45359, …(2) } to deeply equal { bytes: 49040, …(2) }
+ ✓ tests/issue-3518-lowering-analysis-preservation.test.ts > D1 independent lowering source preservation component > refuses nonprimitive 'linear-layout' source before any component reads 2ms
+ ✓ tests/issue-3518-lowering-analysis-preservation.test.ts > D1 independent lowering source preservation component > refuses nonprimitive 'backend-legality' source before any component reads 1ms
+ × tests/issue-3518-lowering-analysis-preservation.test.ts > D1 independent lowering source preservation component > refuses stale authentic predecessor as current 'linear-layout' operand 3ms
+   → expected { bytes: 45359, …(2) } to deeply equal { bytes: 49040, …(2) }
+ × tests/issue-3518-lowering-analysis-preservation.test.ts > D1 independent lowering source preservation component > refuses stale authentic predecessor as current 'backend-legality' operand 3ms
+   → expected { bytes: 45359, …(2) } to deeply equal { bytes: 49040, …(2) }
+ × tests/issue-3518-lowering-analysis-preservation.test.ts > D1 independent lowering source preservation component > refuses supplied 'linear-layout' population mismatch despite healthy physical source 3ms
+   → expected { bytes: 45359, …(2) } to deeply equal { bytes: 49040, …(2) }
+ × tests/issue-3518-lowering-analysis-preservation.test.ts > D1 independent lowering source preservation component > refuses supplied 'backend-legality' population mismatch despite healthy physical source 3ms
+   → expected { bytes: 45359, …(2) } to deeply equal { bytes: 49040, …(2) }
+ × tests/issue-3518-lowering-analysis-preservation.test.ts > D1 independent lowering source preservation component > default 'linear-layout' reader reconstructs independently pinned donor from installed files 3ms
+   → expected { bytes: 45359, …(2) } to deeply equal { bytes: 49040, …(2) }
+ × tests/issue-3518-lowering-analysis-preservation.test.ts > D1 independent lowering source preservation component > default 'backend-legality' reader reconstructs independently pinned donor from installed files 3ms
+   → expected { bytes: 45359, …(2) } to deeply equal { bytes: 49040, …(2) }
+ × tests/issue-3518-lowering-analysis-preservation.test.ts > D1 independent lowering source preservation component > default 'linear-layout' reader refuses missing installed receipt and succeeds after restoration 3ms
+   → expected { bytes: 45359, …(2) } to deeply equal { bytes: 49040, …(2) }
+ × tests/issue-3518-lowering-analysis-preservation.test.ts > D1 independent lowering source preservation component > default 'backend-legality' reader refuses missing installed receipt and succeeds after restoration 3ms
+   → expected { bytes: 45359, …(2) } to deeply equal { bytes: 49040, …(2) }
+ × tests/issue-3518-lowering-analysis-preservation.test.ts > D1 independent lowering source preservation component > refuses changed 'retained planner algorithm' without source projection 3ms
+   → expected { bytes: 45359, …(2) } to deeply equal { bytes: 49040, …(2) }
+ × tests/issue-3518-lowering-analysis-preservation.test.ts > D1 independent lowering source preservation component > refuses changed 'canonical layout readonly' without source projection 3ms
+   → expected { bytes: 45359, …(2) } to deeply equal { bytes: 49040, …(2) }
+ × tests/issue-3518-lowering-analysis-preservation.test.ts > D1 independent lowering source preservation component > refuses changed 'canonical layout import route' without source projection 3ms
+   → expected { bytes: 45359, …(2) } to deeply equal { bytes: 49040, …(2) }
+ × tests/issue-3518-lowering-analysis-preservation.test.ts > D1 independent lowering source preservation component > refuses changed 'retained target adapter' without source projection 3ms
+   → expected { bytes: 45359, …(2) } to deeply equal { bytes: 49040, …(2) }
+ × tests/issue-3518-lowering-analysis-preservation.test.ts > D1 independent lowering source preservation component > refuses changed 'canonical verifier body' without source projection 3ms
+   → expected { bytes: 45359, …(2) } to deeply equal { bytes: 49040, …(2) }
+ × tests/issue-3518-lowering-analysis-preservation.test.ts > D1 independent lowering source preservation component > refuses changed 'canonical verifier import' without source projection 3ms
+   → expected { bytes: 45359, …(2) } to deeply equal { bytes: 49040, …(2) }
+ × tests/issue-3518-lowering-analysis-preservation.test.ts > D1 independent lowering source preservation component > refuses appended and missing 'linear-layout' source fragments 3ms
+   → expected { bytes: 45359, …(2) } to deeply equal { bytes: 49040, …(2) }
+ × tests/issue-3518-lowering-analysis-preservation.test.ts > D1 independent lowering source preservation component > refuses appended and missing 'backend-legality' source fragments 3ms
+   → expected { bytes: 45359, …(2) } to deeply equal { bytes: 49040, …(2) }
+ × tests/issue-3518-lowering-analysis-preservation.test.ts > D1 independent lowering source preservation component > coordinate and topology mutations meet immutable receipt pin for 'linear-layout' 3ms
+   → expected { bytes: 45359, …(2) } to deeply equal { bytes: 49040, …(2) }
+ × tests/issue-3518-lowering-analysis-preservation.test.ts > D1 independent lowering source preservation component > coordinate and topology mutations meet immutable receipt pin for 'backend-legality' 3ms
+   → expected { bytes: 45359, …(2) } to deeply equal { bytes: 49040, …(2) }
+ × tests/issue-3518-lowering-analysis-preservation.test.ts > D1 independent lowering source preservation component > fresh 'linear-layout' capture refuses warm 'missing' of 'tests/helpers/ir-lowering-analysis-re…' and recovers 3ms
+   → expected { bytes: 45359, …(2) } to deeply equal { bytes: 49040, …(2) }
+ × tests/issue-3518-lowering-analysis-preservation.test.ts > D1 independent lowering source preservation component > fresh 'linear-layout' capture refuses warm 'corrupt' of 'tests/helpers/ir-lowering-analysis-re…' and recovers 3ms
+   → expected { bytes: 45359, …(2) } to deeply equal { bytes: 49040, …(2) }
+ × tests/issue-3518-lowering-analysis-preservation.test.ts > D1 independent lowering source preservation component > fresh 'linear-layout' capture refuses warm 'missing' of 'src/ir/analysis/contracts/linear-memo…' and recovers 3ms
+   → expected { bytes: 45359, …(2) } to deeply equal { bytes: 49040, …(2) }
+ × tests/issue-3518-lowering-analysis-preservation.test.ts > D1 independent lowering source preservation component > fresh 'linear-layout' capture refuses warm 'corrupt' of 'src/ir/analysis/contracts/linear-memo…' and recovers 5ms
+   → expected { bytes: 45359, …(2) } to deeply equal { bytes: 49040, …(2) }
+ × tests/issue-3518-lowering-analysis-preservation.test.ts > D1 independent lowering source preservation component > fresh 'backend-legality' capture refuses warm 'missing' of 'tests/helpers/ir-lowering-analysis-re…' and recovers 3ms
+   → expected { bytes: 45359, …(2) } to deeply equal { bytes: 49040, …(2) }
+ × tests/issue-3518-lowering-analysis-preservation.test.ts > D1 independent lowering source preservation component > fresh 'backend-legality' capture refuses warm 'corrupt' of 'tests/helpers/ir-lowering-analysis-re…' and recovers 2ms
+   → expected { bytes: 45359, …(2) } to deeply equal { bytes: 49040, …(2) }
+ × tests/issue-3518-lowering-analysis-preservation.test.ts > D1 independent lowering source preservation component > fresh 'backend-legality' capture refuses warm 'missing' of 'src/ir/backend/legality.ts' and recovers 2ms
+   → expected { bytes: 45359, …(2) } to deeply equal { bytes: 49040, …(2) }
+ × tests/issue-3518-lowering-analysis-preservation.test.ts > D1 independent lowering source preservation component > fresh 'backend-legality' capture refuses warm 'corrupt' of 'src/ir/backend/legality.ts' and recovers 2ms
+   → expected { bytes: 45359, …(2) } to deeply equal { bytes: 49040, …(2) }
+ × tests/issue-3518-lowering-analysis-preservation.test.ts > D1 independent lowering source preservation component > fresh 'backend-legality' capture refuses warm 'missing' of 'src/ir/analysis/backend-legality.ts' and recovers 3ms
+   → expected { bytes: 45359, …(2) } to deeply equal { bytes: 49040, …(2) }
+ × tests/issue-3518-lowering-analysis-preservation.test.ts > D1 independent lowering source preservation component > fresh 'backend-legality' capture refuses warm 'corrupt' of 'src/ir/analysis/backend-legality.ts' and recovers 3ms
+   → expected { bytes: 45359, …(2) } to deeply equal { bytes: 49040, …(2) }
+ × tests/issue-3518-lowering-analysis-preservation.test.ts > D1 independent lowering source preservation component > cached module does not bypass independent implementation missing guard 3ms
+   → expected { bytes: 45359, …(2) } to deeply equal { bytes: 49040, …(2) }
+ × tests/issue-3518-lowering-analysis-preservation.test.ts > D1 independent lowering source preservation component > cached module does not bypass independent implementation corrupt guard 2ms
+   → expected { bytes: 45359, …(2) } to deeply equal { bytes: 49040, …(2) }
+ × tests/issue-3518-lowering-analysis-preservation.test.ts > D1 independent lowering source preservation component > fresh process refuses a valid inert implementation edit before an accepting import 4ms
+   → expected { bytes: 45359, …(2) } to deeply equal { bytes: 49040, …(2) }
+ × tests/issue-3518-lowering-analysis-preservation.test.ts > D1 real guarded application implementation authority > 'h2' refuses cached implementation 'missing' and restores genuine acceptance 130ms
+   → runtime program relocation: length/SHA256: src/ir/program/data.ts
+ × tests/issue-3518-lowering-analysis-preservation.test.ts > D1 real guarded application implementation authority > 'h2' refuses cached implementation 'corrupt' and restores genuine acceptance 80ms
+   → runtime program relocation: length/SHA256: src/ir/program/data.ts
+ × tests/issue-3518-lowering-analysis-preservation.test.ts > D1 real guarded application implementation authority > 'policy-semantic' refuses cached implementation 'missing' and restores genuine acceptance 5ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-lowering-analysis-preservation.test.ts > D1 real guarded application implementation authority > 'policy-semantic' refuses cached implementation 'corrupt' and restores genuine acceptance 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-lowering-analysis-preservation.test.ts > D1 real guarded application implementation authority > 'policy-raw' refuses cached implementation 'missing' and restores genuine acceptance 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-lowering-analysis-preservation.test.ts > D1 real guarded application implementation authority > 'policy-raw' refuses cached implementation 'corrupt' and restores genuine acceptance 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-lowering-analysis-preservation.test.ts > D1 real guarded application implementation authority > h2 fresh preload refuses inert implementation edit through the normal caller 78ms
+   → runtime program relocation: length/SHA256: src/ir/program/data.ts
+ × tests/issue-3518-lowering-analysis-preservation.test.ts > D1 real guarded application implementation authority > policy-semantic fresh preload refuses inert implementation edit through the normal caller 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-lowering-analysis-preservation.test.ts > D1 real guarded application implementation authority > policy-raw fresh preload refuses inert implementation edit through the normal caller 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-lowering-analysis-preservation.test.ts > D1 real guarded application implementation authority > raw application primitive guard wins before a missing helper without coercion 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-lowering-analysis-preservation.test.ts > D1 real guarded application implementation authority > semantic application descriptor guard wins before a missing helper without getter invocation 4ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-lowering-analysis-preservation.test.ts > D1 fixed early-return current-owner bridge > independently proves the current-owner inverse and original API historical contract 3ms
+   → expected { bytes: 45359, …(2) } to deeply equal { bytes: 49040, …(2) }
+ × tests/issue-3518-lowering-analysis-preservation.test.ts > D1 fixed early-return current-owner bridge > current owner full pin refuses wrong insertion and rereads healthy restoration without caching 3ms
+   → expected { bytes: 45359, …(2) } to deeply equal { bytes: 49040, …(2) }
+ × tests/issue-3518-lowering-analysis-preservation.test.ts > D1 fixed early-return current-owner bridge > current owner full pin refuses missing insertion and rereads healthy restoration without caching 3ms
+   → expected { bytes: 45359, …(2) } to deeply equal { bytes: 49040, …(2) }
+ × tests/issue-3518-lowering-analysis-preservation.test.ts > D1 fixed early-return current-owner bridge > current owner full pin refuses extra insertion and rereads healthy restoration without caching 4ms
+   → expected { bytes: 45359, …(2) } to deeply equal { bytes: 49040, …(2) }
+ × tests/issue-3518-lowering-analysis-preservation.test.ts > D1 fixed early-return current-owner bridge > current owner full pin refuses same text wrong coordinate and rereads healthy restoration without caching 3ms
+   → expected { bytes: 45359, …(2) } to deeply equal { bytes: 49040, …(2) }
+ × tests/issue-3518-lowering-analysis-preservation.test.ts > D1 fixed early-return current-owner bridge > current owner full pin refuses old owner and rereads healthy restoration without caching 3ms
+   → expected { bytes: 45359, …(2) } to deeply equal { bytes: 49040, …(2) }
+ × tests/issue-3518-lowering-analysis-preservation.test.ts > D1 fixed early-return current-owner bridge > current owner full pin refuses unrelated same-size edit and rereads healthy restoration without caching 3ms
+   → expected { bytes: 45359, …(2) } to deeply equal { bytes: 49040, …(2) }
+ × tests/issue-3518-lowering-analysis-preservation.test.ts > D1 fixed early-return current-owner bridge > refuses nonprimitive owner data after genuine receipt and adapter reads 3ms
+   → expected { bytes: 45359, …(2) } to deeply equal { bytes: 49040, …(2) }
+ × tests/issue-3518-lowering-analysis-preservation.test.ts > D1 fixed early-return current-owner bridge > current-entry primitive guard refuses a getter before missing authority IO 4ms
+   → expected { bytes: 45359, …(2) } to deeply equal { bytes: 49040, …(2) }
+ × tests/issue-3518-lowering-analysis-preservation.test.ts > D1 fixed early-return current-owner bridge > missing owner is a real authority error and healthy capture does not cache it 3ms
+   → expected { bytes: 45359, …(2) } to deeply equal { bytes: 49040, …(2) }
+
+⎯⎯⎯⎯⎯⎯ Failed Tests 55 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/issue-3518-lowering-analysis-preservation.test.ts > D1 independent lowering source preservation component > independently replays all four current byte streams from the authentic donors
+AssertionError: expected { bytes: 45359, …(2) } to deeply equal { bytes: 49040, …(2) }
+
+[32m- Expected[39m
+[31m+ Received[39m
+
+[2m  {[22m
+[32m-   "bytes": 49040,[39m
+[32m-   "gitBlob": "a44148b86cf60d75a8ebcd9decd2f0fc3a5aad1c",[39m
+[32m-   "sha256": "5f2f5ded3a788e2cc1b70dceb01afe97d249e0e5407e555ced11c5aedb0dbc52",[39m
+[31m+   "bytes": 45359,[39m
+[31m+   "gitBlob": "3db990eb21e3ed216cd798548af6d076e32ed9e1",[39m
+[31m+   "sha256": "08f844117ef1b6e0eb17a87555d00db5be89257e5817ad76322320fa837ae7fc",[39m
+[2m  }[22m
+
+ ❯ pin tests/issue-3518-lowering-analysis-preservation.test.ts:138:25
+    136| }
+    137| function pin(bytes: Buffer, expected: { bytes: number; sha256: string;…
+    138|   expect(hashes(bytes)).toEqual({ bytes: expected.bytes, sha256: expec…
+       |                         ^
+    139| }
+    140| function authenticateImplementation(): void {
+ ❯ fixture tests/issue-3518-lowering-analysis-preservation.test.ts:179:7
+ ❯ tests/issue-3518-lowering-analysis-preservation.test.ts:351:5
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/55]⎯
+
+ FAIL  tests/issue-3518-lowering-analysis-preservation.test.ts > D1 independent lowering source preservation component > reconstructs complete authentic 'linear-layout' donor with fresh ordered reads twice
+ FAIL  tests/issue-3518-lowering-analysis-preservation.test.ts > D1 independent lowering source preservation component > reconstructs complete authentic 'backend-legality' donor with fresh ordered reads twice
+AssertionError: expected { bytes: 45359, …(2) } to deeply equal { bytes: 49040, …(2) }
+
+[32m- Expected[39m
+[31m+ Received[39m
+
+[2m  {[22m
+[32m-   "bytes": 49040,[39m
+[32m-   "gitBlob": "a44148b86cf60d75a8ebcd9decd2f0fc3a5aad1c",[39m
+[32m-   "sha256": "5f2f5ded3a788e2cc1b70dceb01afe97d249e0e5407e555ced11c5aedb0dbc52",[39m
+[31m+   "bytes": 45359,[39m
+[31m+   "gitBlob": "3db990eb21e3ed216cd798548af6d076e32ed9e1",[39m
+[31m+   "sha256": "08f844117ef1b6e0eb17a87555d00db5be89257e5817ad76322320fa837ae7fc",[39m
+[2m  }[22m
+
+ ❯ pin tests/issue-3518-lowering-analysis-preservation.test.ts:138:25
+    136| }
+    137| function pin(bytes: Buffer, expected: { bytes: number; sha256: string;…
+    138|   expect(hashes(bytes)).toEqual({ bytes: expected.bytes, sha256: expec…
+       |                         ^
+    139| }
+    140| function authenticateImplementation(): void {
+ ❯ fixture tests/issue-3518-lowering-analysis-preservation.test.ts:179:7
+ ❯ tests/issue-3518-lowering-analysis-preservation.test.ts:432:5
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/55]⎯
+
+ FAIL  tests/issue-3518-lowering-analysis-preservation.test.ts > D1 independent lowering source preservation component > refuses stale authentic predecessor as current 'linear-layout' operand
+ FAIL  tests/issue-3518-lowering-analysis-preservation.test.ts > D1 independent lowering source preservation component > refuses stale authentic predecessor as current 'backend-legality' operand
+AssertionError: expected { bytes: 45359, …(2) } to deeply equal { bytes: 49040, …(2) }
+
+[32m- Expected[39m
+[31m+ Received[39m
+
+[2m  {[22m
+[32m-   "bytes": 49040,[39m
+[32m-   "gitBlob": "a44148b86cf60d75a8ebcd9decd2f0fc3a5aad1c",[39m
+[32m-   "sha256": "5f2f5ded3a788e2cc1b70dceb01afe97d249e0e5407e555ced11c5aedb0dbc52",[39m
+[31m+   "bytes": 45359,[39m
+[31m+   "gitBlob": "3db990eb21e3ed216cd798548af6d076e32ed9e1",[39m
+[31m+   "sha256": "08f844117ef1b6e0eb17a87555d00db5be89257e5817ad76322320fa837ae7fc",[39m
+[2m  }[22m
+
+ ❯ pin tests/issue-3518-lowering-analysis-preservation.test.ts:138:25
+    136| }
+    137| function pin(bytes: Buffer, expected: { bytes: number; sha256: string;…
+    138|   expect(hashes(bytes)).toEqual({ bytes: expected.bytes, sha256: expec…
+       |                         ^
+    139| }
+    140| function authenticateImplementation(): void {
+ ❯ fixture tests/issue-3518-lowering-analysis-preservation.test.ts:179:7
+ ❯ tests/issue-3518-lowering-analysis-preservation.test.ts:468:5
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/55]⎯
+
+ FAIL  tests/issue-3518-lowering-analysis-preservation.test.ts > D1 independent lowering source preservation component > refuses supplied 'linear-layout' population mismatch despite healthy physical source
+ FAIL  tests/issue-3518-lowering-analysis-preservation.test.ts > D1 independent lowering source preservation component > refuses supplied 'backend-legality' population mismatch despite healthy physical source
+AssertionError: expected { bytes: 45359, …(2) } to deeply equal { bytes: 49040, …(2) }
+
+[32m- Expected[39m
+[31m+ Received[39m
+
+[2m  {[22m
+[32m-   "bytes": 49040,[39m
+[32m-   "gitBlob": "a44148b86cf60d75a8ebcd9decd2f0fc3a5aad1c",[39m
+[32m-   "sha256": "5f2f5ded3a788e2cc1b70dceb01afe97d249e0e5407e555ced11c5aedb0dbc52",[39m
+[31m+   "bytes": 45359,[39m
+[31m+   "gitBlob": "3db990eb21e3ed216cd798548af6d076e32ed9e1",[39m
+[31m+   "sha256": "08f844117ef1b6e0eb17a87555d00db5be89257e5817ad76322320fa837ae7fc",[39m
+[2m  }[22m
+
+ ❯ pin tests/issue-3518-lowering-analysis-preservation.test.ts:138:25
+    136| }
+    137| function pin(bytes: Buffer, expected: { bytes: number; sha256: string;…
+    138|   expect(hashes(bytes)).toEqual({ bytes: expected.bytes, sha256: expec…
+       |                         ^
+    139| }
+    140| function authenticateImplementation(): void {
+ ❯ fixture tests/issue-3518-lowering-analysis-preservation.test.ts:179:7
+ ❯ tests/issue-3518-lowering-analysis-preservation.test.ts:481:5
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/55]⎯
+
+ FAIL  tests/issue-3518-lowering-analysis-preservation.test.ts > D1 independent lowering source preservation component > default 'linear-layout' reader reconstructs independently pinned donor from installed files
+ FAIL  tests/issue-3518-lowering-analysis-preservation.test.ts > D1 independent lowering source preservation component > default 'backend-legality' reader reconstructs independently pinned donor from installed files
+AssertionError: expected { bytes: 45359, …(2) } to deeply equal { bytes: 49040, …(2) }
+
+[32m- Expected[39m
+[31m+ Received[39m
+
+[2m  {[22m
+[32m-   "bytes": 49040,[39m
+[32m-   "gitBlob": "a44148b86cf60d75a8ebcd9decd2f0fc3a5aad1c",[39m
+[32m-   "sha256": "5f2f5ded3a788e2cc1b70dceb01afe97d249e0e5407e555ced11c5aedb0dbc52",[39m
+[31m+   "bytes": 45359,[39m
+[31m+   "gitBlob": "3db990eb21e3ed216cd798548af6d076e32ed9e1",[39m
+[31m+   "sha256": "08f844117ef1b6e0eb17a87555d00db5be89257e5817ad76322320fa837ae7fc",[39m
+[2m  }[22m
+
+ ❯ pin tests/issue-3518-lowering-analysis-preservation.test.ts:138:25
+    136| }
+    137| function pin(bytes: Buffer, expected: { bytes: number; sha256: string;…
+    138|   expect(hashes(bytes)).toEqual({ bytes: expected.bytes, sha256: expec…
+       |                         ^
+    139| }
+    140| function authenticateImplementation(): void {
+ ❯ fixture tests/issue-3518-lowering-analysis-preservation.test.ts:179:7
+ ❯ tests/issue-3518-lowering-analysis-preservation.test.ts:493:5
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/55]⎯
+
+ FAIL  tests/issue-3518-lowering-analysis-preservation.test.ts > D1 independent lowering source preservation component > default 'linear-layout' reader refuses missing installed receipt and succeeds after restoration
+ FAIL  tests/issue-3518-lowering-analysis-preservation.test.ts > D1 independent lowering source preservation component > default 'backend-legality' reader refuses missing installed receipt and succeeds after restoration
+AssertionError: expected { bytes: 45359, …(2) } to deeply equal { bytes: 49040, …(2) }
+
+[32m- Expected[39m
+[31m+ Received[39m
+
+[2m  {[22m
+[32m-   "bytes": 49040,[39m
+[32m-   "gitBlob": "a44148b86cf60d75a8ebcd9decd2f0fc3a5aad1c",[39m
+[32m-   "sha256": "5f2f5ded3a788e2cc1b70dceb01afe97d249e0e5407e555ced11c5aedb0dbc52",[39m
+[31m+   "bytes": 45359,[39m
+[31m+   "gitBlob": "3db990eb21e3ed216cd798548af6d076e32ed9e1",[39m
+[31m+   "sha256": "08f844117ef1b6e0eb17a87555d00db5be89257e5817ad76322320fa837ae7fc",[39m
+[2m  }[22m
+
+ ❯ pin tests/issue-3518-lowering-analysis-preservation.test.ts:138:25
+    136| }
+    137| function pin(bytes: Buffer, expected: { bytes: number; sha256: string;…
+    138|   expect(hashes(bytes)).toEqual({ bytes: expected.bytes, sha256: expec…
+       |                         ^
+    139| }
+    140| function authenticateImplementation(): void {
+ ❯ fixture tests/issue-3518-lowering-analysis-preservation.test.ts:179:7
+ ❯ tests/issue-3518-lowering-analysis-preservation.test.ts:503:5
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[6/55]⎯
+
+ FAIL  tests/issue-3518-lowering-analysis-preservation.test.ts > D1 independent lowering source preservation component > refuses changed 'retained planner algorithm' without source projection
+ FAIL  tests/issue-3518-lowering-analysis-preservation.test.ts > D1 independent lowering source preservation component > refuses changed 'canonical layout readonly' without source projection
+ FAIL  tests/issue-3518-lowering-analysis-preservation.test.ts > D1 independent lowering source preservation component > refuses changed 'canonical layout import route' without source projection
+ FAIL  tests/issue-3518-lowering-analysis-preservation.test.ts > D1 independent lowering source preservation component > refuses changed 'retained target adapter' without source projection
+ FAIL  tests/issue-3518-lowering-analysis-preservation.test.ts > D1 independent lowering source preservation component > refuses changed 'canonical verifier body' without source projection
+ FAIL  tests/issue-3518-lowering-analysis-preservation.test.ts > D1 independent lowering source preservation component > refuses changed 'canonical verifier import' without source projection
+AssertionError: expected { bytes: 45359, …(2) } to deeply equal { bytes: 49040, …(2) }
+
+[32m- Expected[39m
+[31m+ Received[39m
+
+[2m  {[22m
+[32m-   "bytes": 49040,[39m
+[32m-   "gitBlob": "a44148b86cf60d75a8ebcd9decd2f0fc3a5aad1c",[39m
+[32m-   "sha256": "5f2f5ded3a788e2cc1b70dceb01afe97d249e0e5407e555ced11c5aedb0dbc52",[39m
+[31m+   "bytes": 45359,[39m
+[31m+   "gitBlob": "3db990eb21e3ed216cd798548af6d076e32ed9e1",[39m
+[31m+   "sha256": "08f844117ef1b6e0eb17a87555d00db5be89257e5817ad76322320fa837ae7fc",[39m
+[2m  }[22m
+
+ ❯ pin tests/issue-3518-lowering-analysis-preservation.test.ts:138:25
+    136| }
+    137| function pin(bytes: Buffer, expected: { bytes: number; sha256: string;…
+    138|   expect(hashes(bytes)).toEqual({ bytes: expected.bytes, sha256: expec…
+       |                         ^
+    139| }
+    140| function authenticateImplementation(): void {
+ ❯ fixture tests/issue-3518-lowering-analysis-preservation.test.ts:179:7
+ ❯ tests/issue-3518-lowering-analysis-preservation.test.ts:563:5
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[7/55]⎯
+
+ FAIL  tests/issue-3518-lowering-analysis-preservation.test.ts > D1 independent lowering source preservation component > refuses appended and missing 'linear-layout' source fragments
+ FAIL  tests/issue-3518-lowering-analysis-preservation.test.ts > D1 independent lowering source preservation component > refuses appended and missing 'backend-legality' source fragments
+AssertionError: expected { bytes: 45359, …(2) } to deeply equal { bytes: 49040, …(2) }
+
+[32m- Expected[39m
+[31m+ Received[39m
+
+[2m  {[22m
+[32m-   "bytes": 49040,[39m
+[32m-   "gitBlob": "a44148b86cf60d75a8ebcd9decd2f0fc3a5aad1c",[39m
+[32m-   "sha256": "5f2f5ded3a788e2cc1b70dceb01afe97d249e0e5407e555ced11c5aedb0dbc52",[39m
+[31m+   "bytes": 45359,[39m
+[31m+   "gitBlob": "3db990eb21e3ed216cd798548af6d076e32ed9e1",[39m
+[31m+   "sha256": "08f844117ef1b6e0eb17a87555d00db5be89257e5817ad76322320fa837ae7fc",[39m
+[2m  }[22m
+
+ ❯ pin tests/issue-3518-lowering-analysis-preservation.test.ts:138:25
+    136| }
+    137| function pin(bytes: Buffer, expected: { bytes: number; sha256: string;…
+    138|   expect(hashes(bytes)).toEqual({ bytes: expected.bytes, sha256: expec…
+       |                         ^
+    139| }
+    140| function authenticateImplementation(): void {
+ ❯ fixture tests/issue-3518-lowering-analysis-preservation.test.ts:179:7
+ ❯ tests/issue-3518-lowering-analysis-preservation.test.ts:585:5
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[8/55]⎯
+
+ FAIL  tests/issue-3518-lowering-analysis-preservation.test.ts > D1 independent lowering source preservation component > coordinate and topology mutations meet immutable receipt pin for 'linear-layout'
+ FAIL  tests/issue-3518-lowering-analysis-preservation.test.ts > D1 independent lowering source preservation component > coordinate and topology mutations meet immutable receipt pin for 'backend-legality'
+AssertionError: expected { bytes: 45359, …(2) } to deeply equal { bytes: 49040, …(2) }
+
+[32m- Expected[39m
+[31m+ Received[39m
+
+[2m  {[22m
+[32m-   "bytes": 49040,[39m
+[32m-   "gitBlob": "a44148b86cf60d75a8ebcd9decd2f0fc3a5aad1c",[39m
+[32m-   "sha256": "5f2f5ded3a788e2cc1b70dceb01afe97d249e0e5407e555ced11c5aedb0dbc52",[39m
+[31m+   "bytes": 45359,[39m
+[31m+   "gitBlob": "3db990eb21e3ed216cd798548af6d076e32ed9e1",[39m
+[31m+   "sha256": "08f844117ef1b6e0eb17a87555d00db5be89257e5817ad76322320fa837ae7fc",[39m
+[2m  }[22m
+
+ ❯ pin tests/issue-3518-lowering-analysis-preservation.test.ts:138:25
+    136| }
+    137| function pin(bytes: Buffer, expected: { bytes: number; sha256: string;…
+    138|   expect(hashes(bytes)).toEqual({ bytes: expected.bytes, sha256: expec…
+       |                         ^
+    139| }
+    140| function authenticateImplementation(): void {
+ ❯ fixture tests/issue-3518-lowering-analysis-preservation.test.ts:179:7
+ ❯ tests/issue-3518-lowering-analysis-preservation.test.ts:598:5
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[9/55]⎯
+
+ FAIL  tests/issue-3518-lowering-analysis-preservation.test.ts > D1 independent lowering source preservation component > fresh 'linear-layout' capture refuses warm 'missing' of 'tests/helpers/ir-lowering-analysis-re…' and recovers
+ FAIL  tests/issue-3518-lowering-analysis-preservation.test.ts > D1 independent lowering source preservation component > fresh 'linear-layout' capture refuses warm 'corrupt' of 'tests/helpers/ir-lowering-analysis-re…' and recovers
+ FAIL  tests/issue-3518-lowering-analysis-preservation.test.ts > D1 independent lowering source preservation component > fresh 'linear-layout' capture refuses warm 'missing' of 'src/ir/analysis/contracts/linear-memo…' and recovers
+ FAIL  tests/issue-3518-lowering-analysis-preservation.test.ts > D1 independent lowering source preservation component > fresh 'linear-layout' capture refuses warm 'corrupt' of 'src/ir/analysis/contracts/linear-memo…' and recovers
+ FAIL  tests/issue-3518-lowering-analysis-preservation.test.ts > D1 independent lowering source preservation component > fresh 'backend-legality' capture refuses warm 'missing' of 'tests/helpers/ir-lowering-analysis-re…' and recovers
+ FAIL  tests/issue-3518-lowering-analysis-preservation.test.ts > D1 independent lowering source preservation component > fresh 'backend-legality' capture refuses warm 'corrupt' of 'tests/helpers/ir-lowering-analysis-re…' and recovers
+ FAIL  tests/issue-3518-lowering-analysis-preservation.test.ts > D1 independent lowering source preservation component > fresh 'backend-legality' capture refuses warm 'missing' of 'src/ir/backend/legality.ts' and recovers
+ FAIL  tests/issue-3518-lowering-analysis-preservation.test.ts > D1 independent lowering source preservation component > fresh 'backend-legality' capture refuses warm 'corrupt' of 'src/ir/backend/legality.ts' and recovers
+ FAIL  tests/issue-3518-lowering-analysis-preservation.test.ts > D1 independent lowering source preservation component > fresh 'backend-legality' capture refuses warm 'missing' of 'src/ir/analysis/backend-legality.ts' and recovers
+ FAIL  tests/issue-3518-lowering-analysis-preservation.test.ts > D1 independent lowering source preservation component > fresh 'backend-legality' capture refuses warm 'corrupt' of 'src/ir/analysis/backend-legality.ts' and recovers
+AssertionError: expected { bytes: 45359, …(2) } to deeply equal { bytes: 49040, …(2) }
+
+[32m- Expected[39m
+[31m+ Received[39m
+
+[2m  {[22m
+[32m-   "bytes": 49040,[39m
+[32m-   "gitBlob": "a44148b86cf60d75a8ebcd9decd2f0fc3a5aad1c",[39m
+[32m-   "sha256": "5f2f5ded3a788e2cc1b70dceb01afe97d249e0e5407e555ced11c5aedb0dbc52",[39m
+[31m+   "bytes": 45359,[39m
+[31m+   "gitBlob": "3db990eb21e3ed216cd798548af6d076e32ed9e1",[39m
+[31m+   "sha256": "08f844117ef1b6e0eb17a87555d00db5be89257e5817ad76322320fa837ae7fc",[39m
+[2m  }[22m
+
+ ❯ pin tests/issue-3518-lowering-analysis-preservation.test.ts:138:25
+    136| }
+    137| function pin(bytes: Buffer, expected: { bytes: number; sha256: string;…
+    138|   expect(hashes(bytes)).toEqual({ bytes: expected.bytes, sha256: expec…
+       |                         ^
+    139| }
+    140| function authenticateImplementation(): void {
+ ❯ fixture tests/issue-3518-lowering-analysis-preservation.test.ts:179:7
+ ❯ tests/issue-3518-lowering-analysis-preservation.test.ts:634:7
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[10/55]⎯
+
+ FAIL  tests/issue-3518-lowering-analysis-preservation.test.ts > D1 independent lowering source preservation component > cached module does not bypass independent implementation missing guard
+ FAIL  tests/issue-3518-lowering-analysis-preservation.test.ts > D1 independent lowering source preservation component > cached module does not bypass independent implementation corrupt guard
+AssertionError: expected { bytes: 45359, …(2) } to deeply equal { bytes: 49040, …(2) }
+
+[32m- Expected[39m
+[31m+ Received[39m
+
+[2m  {[22m
+[32m-   "bytes": 49040,[39m
+[32m-   "gitBlob": "a44148b86cf60d75a8ebcd9decd2f0fc3a5aad1c",[39m
+[32m-   "sha256": "5f2f5ded3a788e2cc1b70dceb01afe97d249e0e5407e555ced11c5aedb0dbc52",[39m
+[31m+   "bytes": 45359,[39m
+[31m+   "gitBlob": "3db990eb21e3ed216cd798548af6d076e32ed9e1",[39m
+[31m+   "sha256": "08f844117ef1b6e0eb17a87555d00db5be89257e5817ad76322320fa837ae7fc",[39m
+[2m  }[22m
+
+ ❯ pin tests/issue-3518-lowering-analysis-preservation.test.ts:138:25
+    136| }
+    137| function pin(bytes: Buffer, expected: { bytes: number; sha256: string;…
+    138|   expect(hashes(bytes)).toEqual({ bytes: expected.bytes, sha256: expec…
+       |                         ^
+    139| }
+    140| function authenticateImplementation(): void {
+ ❯ fixture tests/issue-3518-lowering-analysis-preservation.test.ts:179:7
+ ❯ tests/issue-3518-lowering-analysis-preservation.test.ts:647:7
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[11/55]⎯
+
+ FAIL  tests/issue-3518-lowering-analysis-preservation.test.ts > D1 independent lowering source preservation component > fresh process refuses a valid inert implementation edit before an accepting import
+AssertionError: expected { bytes: 45359, …(2) } to deeply equal { bytes: 49040, …(2) }
+
+[32m- Expected[39m
+[31m+ Received[39m
+
+[2m  {[22m
+[32m-   "bytes": 49040,[39m
+[32m-   "gitBlob": "a44148b86cf60d75a8ebcd9decd2f0fc3a5aad1c",[39m
+[32m-   "sha256": "5f2f5ded3a788e2cc1b70dceb01afe97d249e0e5407e555ced11c5aedb0dbc52",[39m
+[31m+   "bytes": 45359,[39m
+[31m+   "gitBlob": "3db990eb21e3ed216cd798548af6d076e32ed9e1",[39m
+[31m+   "sha256": "08f844117ef1b6e0eb17a87555d00db5be89257e5817ad76322320fa837ae7fc",[39m
+[2m  }[22m
+
+ ❯ pin tests/issue-3518-lowering-analysis-preservation.test.ts:138:25
+    136| }
+    137| function pin(bytes: Buffer, expected: { bytes: number; sha256: string;…
+    138|   expect(hashes(bytes)).toEqual({ bytes: expected.bytes, sha256: expec…
+       |                         ^
+    139| }
+    140| function authenticateImplementation(): void {
+ ❯ fixture tests/issue-3518-lowering-analysis-preservation.test.ts:179:7
+ ❯ tests/issue-3518-lowering-analysis-preservation.test.ts:662:5
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[12/55]⎯
+
+ FAIL  tests/issue-3518-lowering-analysis-preservation.test.ts > D1 real guarded application implementation authority > 'h2' refuses cached implementation 'missing' and restores genuine acceptance
+ FAIL  tests/issue-3518-lowering-analysis-preservation.test.ts > D1 real guarded application implementation authority > 'h2' refuses cached implementation 'corrupt' and restores genuine acceptance
+Error: runtime program relocation: length/SHA256: src/ir/program/data.ts
+ ❯ fail tests/helpers/ir-runtime-program-relocation.ts:141:9
+    139| }
+    140| const fail = (detail: string): never => {
+    141|   throw new Error(`runtime program relocation: ${detail}`);
+       |         ^
+    142| };
+    143| const same = (a: unknown, b: unknown): boolean => JSON.stringify(a) ==…
+ ❯ assertRuntimeProgramRelocationSource tests/helpers/ir-runtime-program-relocation.ts:256:5
+ ❯ captureC1CurrentPopulation tests/helpers/ir-c1-current-source.ts:860:12
+ ❯ normalApplication tests/issue-3518-lowering-analysis-preservation.test.ts:778:21
+ ❯ tests/issue-3518-lowering-analysis-preservation.test.ts:835:12
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[13/55]⎯
+
+ FAIL  tests/issue-3518-lowering-analysis-preservation.test.ts > D1 real guarded application implementation authority > 'policy-semantic' refuses cached implementation 'missing' and restores genuine acceptance
+ FAIL  tests/issue-3518-lowering-analysis-preservation.test.ts > D1 real guarded application implementation authority > 'policy-semantic' refuses cached implementation 'corrupt' and restores genuine acceptance
+ FAIL  tests/issue-3518-lowering-analysis-preservation.test.ts > D1 real guarded application implementation authority > 'policy-raw' refuses cached implementation 'missing' and restores genuine acceptance
+ FAIL  tests/issue-3518-lowering-analysis-preservation.test.ts > D1 real guarded application implementation authority > 'policy-raw' refuses cached implementation 'corrupt' and restores genuine acceptance
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ applicationInput tests/issue-3518-lowering-analysis-preservation.test.ts:746:17
+ ❯ tests/issue-3518-lowering-analysis-preservation.test.ts:833:19
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[14/55]⎯
+
+ FAIL  tests/issue-3518-lowering-analysis-preservation.test.ts > D1 real guarded application implementation authority > h2 fresh preload refuses inert implementation edit through the normal caller
+Error: runtime program relocation: length/SHA256: src/ir/program/data.ts
+ ❯ fail tests/helpers/ir-runtime-program-relocation.ts:141:9
+    139| }
+    140| const fail = (detail: string): never => {
+    141|   throw new Error(`runtime program relocation: ${detail}`);
+       |         ^
+    142| };
+    143| const same = (a: unknown, b: unknown): boolean => JSON.stringify(a) ==…
+ ❯ assertRuntimeProgramRelocationSource tests/helpers/ir-runtime-program-relocation.ts:256:5
+ ❯ captureC1CurrentPopulation tests/helpers/ir-c1-current-source.ts:860:12
+ ❯ normalApplication tests/issue-3518-lowering-analysis-preservation.test.ts:778:21
+ ❯ tests/issue-3518-lowering-analysis-preservation.test.ts:856:14
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[15/55]⎯
+
+ FAIL  tests/issue-3518-lowering-analysis-preservation.test.ts > D1 real guarded application implementation authority > policy-semantic fresh preload refuses inert implementation edit through the normal caller
+ FAIL  tests/issue-3518-lowering-analysis-preservation.test.ts > D1 real guarded application implementation authority > policy-raw fresh preload refuses inert implementation edit through the normal caller
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ applicationInput tests/issue-3518-lowering-analysis-preservation.test.ts:746:17
+ ❯ tests/issue-3518-lowering-analysis-preservation.test.ts:855:21
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[16/55]⎯
+
+ FAIL  tests/issue-3518-lowering-analysis-preservation.test.ts > D1 real guarded application implementation authority > raw application primitive guard wins before a missing helper without coercion
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ applicationInput tests/issue-3518-lowering-analysis-preservation.test.ts:746:17
+ ❯ tests/issue-3518-lowering-analysis-preservation.test.ts:897:19
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[17/55]⎯
+
+ FAIL  tests/issue-3518-lowering-analysis-preservation.test.ts > D1 real guarded application implementation authority > semantic application descriptor guard wins before a missing helper without getter invocation
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ applicationInput tests/issue-3518-lowering-analysis-preservation.test.ts:746:17
+ ❯ tests/issue-3518-lowering-analysis-preservation.test.ts:919:19
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[18/55]⎯
+
+ FAIL  tests/issue-3518-lowering-analysis-preservation.test.ts > D1 fixed early-return current-owner bridge > independently proves the current-owner inverse and original API historical contract
+AssertionError: expected { bytes: 45359, …(2) } to deeply equal { bytes: 49040, …(2) }
+
+[32m- Expected[39m
+[31m+ Received[39m
+
+[2m  {[22m
+[32m-   "bytes": 49040,[39m
+[32m-   "gitBlob": "a44148b86cf60d75a8ebcd9decd2f0fc3a5aad1c",[39m
+[32m-   "sha256": "5f2f5ded3a788e2cc1b70dceb01afe97d249e0e5407e555ced11c5aedb0dbc52",[39m
+[31m+   "bytes": 45359,[39m
+[31m+   "gitBlob": "3db990eb21e3ed216cd798548af6d076e32ed9e1",[39m
+[31m+   "sha256": "08f844117ef1b6e0eb17a87555d00db5be89257e5817ad76322320fa837ae7fc",[39m
+[2m  }[22m
+
+ ❯ pin tests/issue-3518-lowering-analysis-preservation.test.ts:138:25
+    136| }
+    137| function pin(bytes: Buffer, expected: { bytes: number; sha256: string;…
+    138|   expect(hashes(bytes)).toEqual({ bytes: expected.bytes, sha256: expec…
+       |                         ^
+    139| }
+    140| function authenticateImplementation(): void {
+ ❯ fixture tests/issue-3518-lowering-analysis-preservation.test.ts:179:7
+ ❯ tests/issue-3518-lowering-analysis-preservation.test.ts:945:5
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[19/55]⎯
+
+ FAIL  tests/issue-3518-lowering-analysis-preservation.test.ts > D1 fixed early-return current-owner bridge > current owner full pin refuses wrong insertion and rereads healthy restoration without caching
+ FAIL  tests/issue-3518-lowering-analysis-preservation.test.ts > D1 fixed early-return current-owner bridge > current owner full pin refuses missing insertion and rereads healthy restoration without caching
+ FAIL  tests/issue-3518-lowering-analysis-preservation.test.ts > D1 fixed early-return current-owner bridge > current owner full pin refuses extra insertion and rereads healthy restoration without caching
+ FAIL  tests/issue-3518-lowering-analysis-preservation.test.ts > D1 fixed early-return current-owner bridge > current owner full pin refuses same text wrong coordinate and rereads healthy restoration without caching
+ FAIL  tests/issue-3518-lowering-analysis-preservation.test.ts > D1 fixed early-return current-owner bridge > current owner full pin refuses old owner and rereads healthy restoration without caching
+ FAIL  tests/issue-3518-lowering-analysis-preservation.test.ts > D1 fixed early-return current-owner bridge > current owner full pin refuses unrelated same-size edit and rereads healthy restoration without caching
+AssertionError: expected { bytes: 45359, …(2) } to deeply equal { bytes: 49040, …(2) }
+
+[32m- Expected[39m
+[31m+ Received[39m
+
+[2m  {[22m
+[32m-   "bytes": 49040,[39m
+[32m-   "gitBlob": "a44148b86cf60d75a8ebcd9decd2f0fc3a5aad1c",[39m
+[32m-   "sha256": "5f2f5ded3a788e2cc1b70dceb01afe97d249e0e5407e555ced11c5aedb0dbc52",[39m
+[31m+   "bytes": 45359,[39m
+[31m+   "gitBlob": "3db990eb21e3ed216cd798548af6d076e32ed9e1",[39m
+[31m+   "sha256": "08f844117ef1b6e0eb17a87555d00db5be89257e5817ad76322320fa837ae7fc",[39m
+[2m  }[22m
+
+ ❯ pin tests/issue-3518-lowering-analysis-preservation.test.ts:138:25
+    136| }
+    137| function pin(bytes: Buffer, expected: { bytes: number; sha256: string;…
+    138|   expect(hashes(bytes)).toEqual({ bytes: expected.bytes, sha256: expec…
+       |                         ^
+    139| }
+    140| function authenticateImplementation(): void {
+ ❯ fixture tests/issue-3518-lowering-analysis-preservation.test.ts:179:7
+ ❯ tests/issue-3518-lowering-analysis-preservation.test.ts:966:5
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[20/55]⎯
+
+ FAIL  tests/issue-3518-lowering-analysis-preservation.test.ts > D1 fixed early-return current-owner bridge > refuses nonprimitive owner data after genuine receipt and adapter reads
+AssertionError: expected { bytes: 45359, …(2) } to deeply equal { bytes: 49040, …(2) }
+
+[32m- Expected[39m
+[31m+ Received[39m
+
+[2m  {[22m
+[32m-   "bytes": 49040,[39m
+[32m-   "gitBlob": "a44148b86cf60d75a8ebcd9decd2f0fc3a5aad1c",[39m
+[32m-   "sha256": "5f2f5ded3a788e2cc1b70dceb01afe97d249e0e5407e555ced11c5aedb0dbc52",[39m
+[31m+   "bytes": 45359,[39m
+[31m+   "gitBlob": "3db990eb21e3ed216cd798548af6d076e32ed9e1",[39m
+[31m+   "sha256": "08f844117ef1b6e0eb17a87555d00db5be89257e5817ad76322320fa837ae7fc",[39m
+[2m  }[22m
+
+ ❯ pin tests/issue-3518-lowering-analysis-preservation.test.ts:138:25
+    136| }
+    137| function pin(bytes: Buffer, expected: { bytes: number; sha256: string;…
+    138|   expect(hashes(bytes)).toEqual({ bytes: expected.bytes, sha256: expec…
+       |                         ^
+    139| }
+    140| function authenticateImplementation(): void {
+ ❯ fixture tests/issue-3518-lowering-analysis-preservation.test.ts:179:7
+ ❯ tests/issue-3518-lowering-analysis-preservation.test.ts:1009:5
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[21/55]⎯
+
+ FAIL  tests/issue-3518-lowering-analysis-preservation.test.ts > D1 fixed early-return current-owner bridge > current-entry primitive guard refuses a getter before missing authority IO
+AssertionError: expected { bytes: 45359, …(2) } to deeply equal { bytes: 49040, …(2) }
+
+[32m- Expected[39m
+[31m+ Received[39m
+
+[2m  {[22m
+[32m-   "bytes": 49040,[39m
+[32m-   "gitBlob": "a44148b86cf60d75a8ebcd9decd2f0fc3a5aad1c",[39m
+[32m-   "sha256": "5f2f5ded3a788e2cc1b70dceb01afe97d249e0e5407e555ced11c5aedb0dbc52",[39m
+[31m+   "bytes": 45359,[39m
+[31m+   "gitBlob": "3db990eb21e3ed216cd798548af6d076e32ed9e1",[39m
+[31m+   "sha256": "08f844117ef1b6e0eb17a87555d00db5be89257e5817ad76322320fa837ae7fc",[39m
+[2m  }[22m
+
+ ❯ pin tests/issue-3518-lowering-analysis-preservation.test.ts:138:25
+    136| }
+    137| function pin(bytes: Buffer, expected: { bytes: number; sha256: string;…
+    138|   expect(hashes(bytes)).toEqual({ bytes: expected.bytes, sha256: expec…
+       |                         ^
+    139| }
+    140| function authenticateImplementation(): void {
+ ❯ fixture tests/issue-3518-lowering-analysis-preservation.test.ts:179:7
+ ❯ tests/issue-3518-lowering-analysis-preservation.test.ts:1056:5
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[22/55]⎯
+
+ FAIL  tests/issue-3518-lowering-analysis-preservation.test.ts > D1 fixed early-return current-owner bridge > missing owner is a real authority error and healthy capture does not cache it
+AssertionError: expected { bytes: 45359, …(2) } to deeply equal { bytes: 49040, …(2) }
+
+[32m- Expected[39m
+[31m+ Received[39m
+
+[2m  {[22m
+[32m-   "bytes": 49040,[39m
+[32m-   "gitBlob": "a44148b86cf60d75a8ebcd9decd2f0fc3a5aad1c",[39m
+[32m-   "sha256": "5f2f5ded3a788e2cc1b70dceb01afe97d249e0e5407e555ced11c5aedb0dbc52",[39m
+[31m+   "bytes": 45359,[39m
+[31m+   "gitBlob": "3db990eb21e3ed216cd798548af6d076e32ed9e1",[39m
+[31m+   "sha256": "08f844117ef1b6e0eb17a87555d00db5be89257e5817ad76322320fa837ae7fc",[39m
+[2m  }[22m
+
+ ❯ pin tests/issue-3518-lowering-analysis-preservation.test.ts:138:25
+    136| }
+    137| function pin(bytes: Buffer, expected: { bytes: number; sha256: string;…
+    138|   expect(hashes(bytes)).toEqual({ bytes: expected.bytes, sha256: expec…
+       |                         ^
+    139| }
+    140| function authenticateImplementation(): void {
+ ❯ fixture tests/issue-3518-lowering-analysis-preservation.test.ts:179:7
+ ❯ tests/issue-3518-lowering-analysis-preservation.test.ts:1067:5
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[23/55]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  55 failed | 2 passed (57)
+   Start at  22:49:13
+   Duration  2.19s (transform 550ms, setup 0ms, collect 1.22s, tests 473ms, environment 0ms, prepare 71ms)
+

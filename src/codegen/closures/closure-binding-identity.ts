@@ -39,6 +39,12 @@ export function namesDeclaredInsideClosure(closure: ts.Node): ReadonlySet<string
  * does not; counting it boxed the capture into one cell that every loop
  * iteration's closure then shared. Unknown identity on either side stays a
  * write (the previous, conservative answer).
+ *
+ * A `var` declarator (#6992) is a write only when it re-declares the KNOWN
+ * captured binding — never the binding's own declarator, and never when the
+ * captured declaration is unknown: a nested function expression's implicit
+ * `arguments` has none, and an outer `var arguments = undefined` counted as its
+ * write boxed it (ES5 arguments-object/10.6-6-3,4: `illegal cast`).
  */
 export function capturedBindingWriteTest(
   ctx: CodegenContext,
@@ -47,6 +53,8 @@ export function capturedBindingWriteTest(
 ): (target: ts.Identifier) => boolean {
   return (target) => {
     if (target.text !== name) return false;
+    const declarator = ts.isVariableDeclaration(target.parent) || ts.isBindingElement(target.parent);
+    if (declarator && (capturedDeclaration === undefined || target.parent === capturedDeclaration)) return false;
     if (capturedDeclaration === undefined) return true;
     const written = ctx.oracle.valueDeclarationOf(target);
     return written === undefined || written === capturedDeclaration;

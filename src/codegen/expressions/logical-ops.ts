@@ -13,15 +13,8 @@ import { coerceType, compileExpression, valTypesMatch } from "../shared.js";
 import { defaultValueInstrs } from "../type-coercion.js";
 import { ensureLateImport, flushLateImportShifts } from "./late-imports.js";
 import { nullishJoinCarrier } from "./nullish-join-carrier.js";
-import { usesHostBigIntCarrier } from "../host-bigint-carrier.js";
 
 type MappedArgsInfo = NonNullable<FunctionContext["mappedArgsInfo"]>;
-
-/** Host BigInts must stay in the externref plane through short-circuiting. */
-function hostBigIntExpected(ctx: CodegenContext, expr: ts.Expression): ValType | undefined {
-  if (!usesHostBigIntCarrier(ctx)) return undefined;
-  return ctx.oracle.staticJsTypeOf(expr) === "bigint" ? { kind: "externref" } : undefined;
-}
 
 /**
  * (#6798) Result carrier of a `&&`/`||` whose arms are a boolean and a number.
@@ -92,7 +85,7 @@ export function compileLogicalAnd(
   _expectedType?: ValType,
 ): ValType {
   // JS semantics: a && b → if a is falsy, return a; else return b
-  const leftType = compileExpression(ctx, fctx, expr.left, hostBigIntExpected(ctx, expr.left));
+  const leftType = compileExpression(ctx, fctx, expr.left);
   if (!leftType) {
     ensureI32Condition(fctx, leftType, ctx);
     return { kind: "i32" };
@@ -105,7 +98,7 @@ export function compileLogicalAnd(
 
   // Compile RHS in a side buffer to discover its natural type
   const savedBody = pushBody(fctx);
-  const rightType = compileExpression(ctx, fctx, expr.right, hostBigIntExpected(ctx, expr.right));
+  const rightType = compileExpression(ctx, fctx, expr.right);
   let thenInstrs = fctx.body;
   fctx.body = savedBody;
 
@@ -176,7 +169,7 @@ export function compileLogicalOr(
   _expectedType?: ValType,
 ): ValType {
   // JS semantics: a || b → if a is truthy, return a; else return b
-  const leftType = compileExpression(ctx, fctx, expr.left, hostBigIntExpected(ctx, expr.left));
+  const leftType = compileExpression(ctx, fctx, expr.left);
   if (!leftType) {
     ensureI32Condition(fctx, leftType, ctx);
     return { kind: "i32" };
@@ -189,7 +182,7 @@ export function compileLogicalOr(
 
   // Compile RHS in a side buffer to discover its natural type
   const savedBody = pushBody(fctx);
-  const rightType = compileExpression(ctx, fctx, expr.right, hostBigIntExpected(ctx, expr.right));
+  const rightType = compileExpression(ctx, fctx, expr.right);
   let elseInstrs = fctx.body;
   fctx.body = savedBody;
 
@@ -279,7 +272,7 @@ export function compileNullishCoalescing(
   _expectedType?: ValType,
 ): ValType {
   // Compile LHS and store in temp
-  const leftType = compileExpression(ctx, fctx, expr.left, hostBigIntExpected(ctx, expr.left));
+  const leftType = compileExpression(ctx, fctx, expr.left);
   if (!leftType) {
     reportError(ctx, expr, "Failed to compile nullish coalescing LHS");
     return { kind: "externref" };
@@ -335,7 +328,7 @@ function finishNullishBranch(
 ): ValType {
   // Compile RHS in a side buffer to discover its natural type
   const savedBody = pushBody(fctx);
-  const rhsType = compileExpression(ctx, fctx, expr.right, hostBigIntExpected(ctx, expr.right));
+  const rhsType = compileExpression(ctx, fctx, expr.right);
   let thenInstrs = fctx.body;
   fctx.body = savedBody;
 

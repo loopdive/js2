@@ -591,7 +591,10 @@ describe("#4573 standalone native Promise-delay compile-once ownership", () => {
     process.env.JS2WASM_TEST_INJECT_IR_PROMISE_REGISTRATION_THROW = "1";
     try {
       const injected = await compileDelay(EXACT_DELAY, true, "issue-4573-native-registration-injection.ts");
-      expect(injected.success).toBe(false);
+      // (#7002) Telemetry is observation-only: the invariant ROW is the
+      // fail-closed record; the compile keeps the legacy body, as it does
+      // without `trackIrOutcomes`.
+      expect(injected.success).toBe(true);
       expect(terminalOutcome(injected, "delay")).toMatchObject({
         kind: "invariant",
         code: "unexpected-internal-throw",

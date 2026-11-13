@@ -112,12 +112,15 @@ describe("#2135 capability table — operator family single source", () => {
   it("table sanity: the retired over-claims are exactly defer; the accept set is unchanged otherwise", () => {
     expect(binaryOpCapability(ts.SyntaxKind.PercentToken)).toBe("claim"); // #2945 — __fmod lowering landed
     expect(binaryOpCapability(ts.SyntaxKind.AsteriskAsteriskToken)).toBe("claim"); // #4787 exact numeric subset
-    expect(binaryOpCapability(ts.SyntaxKind.InKeyword)).toBe("defer");
+    // (#5164, ae3f672db4) `in` gained one bounded dynamic-carrier lane and the
+    // comma operator was adopted — both are claim-partial now, by design.
+    expect(binaryOpCapability(ts.SyntaxKind.InKeyword)).toBe("claim-partial");
     expect(binaryOpCapability(ts.SyntaxKind.InstanceOfKeyword)).toBe("defer");
     expect(binaryOpCapability(ts.SyntaxKind.QuestionQuestionToken)).toBe("claim-partial");
     expect(binaryOpCapability(ts.SyntaxKind.PlusToken)).toBe("claim-partial");
     expect(binaryOpCapability(ts.SyntaxKind.MinusToken)).toBe("claim");
-    expect(binaryOpCapability(ts.SyntaxKind.CommaToken)).toBe("defer"); // default: unknown → defer
+    expect(binaryOpCapability(ts.SyntaxKind.CommaToken)).toBe("claim-partial"); // #5164 S1
+    expect(binaryOpCapability(ts.SyntaxKind.AmpersandAmpersandEqualsToken)).toBe("defer"); // default: unknown → defer
     expect(prefixOpCapability(ts.SyntaxKind.ExclamationToken)).toBe("claim");
     expect(prefixOpCapability(ts.SyntaxKind.TildeToken)).toBe("claim-partial");
   });

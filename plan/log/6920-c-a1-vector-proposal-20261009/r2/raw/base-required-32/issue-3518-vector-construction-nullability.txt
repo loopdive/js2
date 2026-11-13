@@ -1,0 +1,16 @@
+
+ RUN  v3.2.7 /home/user/js2/.claude/worktrees/agent-a774506d6593a2d93
+
+ ✓ tests/issue-3518-vector-construction-nullability.test.ts > preserves the unsupported populated spare-capacity refusal 5ms
+ ✓ tests/issue-3518-vector-construction-nullability.test.ts > f64 populated: real lowerer bytes execute; removing only the refinement is invalid 593ms
+ ✓ tests/issue-3518-vector-construction-nullability.test.ts > f64 empty: real lowerer bytes execute; removing only the refinement is invalid 20ms
+ ✓ tests/issue-3518-vector-construction-nullability.test.ts > f64 spare: real lowerer bytes execute; removing only the refinement is invalid 39ms
+ ✓ tests/issue-3518-vector-construction-nullability.test.ts > externref populated: real lowerer bytes execute; removing only the refinement is invalid 16ms
+ ✓ tests/issue-3518-vector-construction-nullability.test.ts > externref empty: real lowerer bytes execute; removing only the refinement is invalid 11ms
+ ✓ tests/issue-3518-vector-construction-nullability.test.ts > externref spare: real lowerer bytes execute; removing only the refinement is invalid 6ms
+
+ Test Files  1 passed (1)
+      Tests  7 passed (7)
+   Start at  20:07:34
+   Duration  27.55s (transform 19.05s, setup 0ms, collect 26.39s, tests 692ms, environment 0ms, prepare 76ms)
+

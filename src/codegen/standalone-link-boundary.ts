@@ -118,6 +118,15 @@ export const LINK_BOUNDARY_EXPORTS = Object.freeze({
   // for the value). This terminal only tells the consumer WHICH answer to
   // produce locally.
   isClassObject: "__js2wasm_link_is_class_object",
+  // (#6882) `key in <provider-owned value>` (§7.3.12 HasProperty). Not
+  // derivable from `memberGet`: that wrapper answers null for a present
+  // property whose value is `undefined`, and it RUNS a getter, which `in` must
+  // not. Answers the host lane's `__boundary_object_has` tri-state (2 = mine
+  // and present, 0 = not mine or absent), so the consumer's existing
+  // `__extern_has` arm shape applies unchanged. Also what makes `for…in` over a
+  // provider value yield its keys: the loop re-checks each key with
+  // `__extern_has` (#2066), so without this every enumerated key was dropped.
+  has: "__js2wasm_link_has",
 } as const);
 
 /** The internal terminal each boundary name wraps, and its signature. */
@@ -161,6 +170,12 @@ const TERMINALS: ReadonlyArray<{ export: string; internal: string; params: ValTy
     export: LINK_BOUNDARY_EXPORTS.isClassObject,
     internal: LINK_BOUNDARY_EXPORTS.isClassObject,
     params: [EXTERNREF],
+    results: [I32],
+  },
+  {
+    export: LINK_BOUNDARY_EXPORTS.has,
+    internal: LINK_BOUNDARY_EXPORTS.has,
+    params: [EXTERNREF, EXTERNREF],
     results: [I32],
   },
 ];
@@ -367,6 +382,30 @@ export function emitStandaloneLinkBoundaryTerminals(ctx: CodegenContext, registe
             { op: "local.get", index: 0 },
             { op: "call", funcIdx: isExtensibleIdx },
           ],
+    );
+  }
+  // (#6882) `__extern_has` already has its body (registered earlier in
+  // `ensureObjectRuntime`), so this is a direct forward, normalised to the
+  // tri-state: "absent" and "not mine" both answer 0, which is sound because
+  // the consumer's continuation for either is its own local answer.
+  const externHas = ctx.funcMap.get("__extern_has");
+  if (externHas !== undefined && !ctx.funcMap.has(LINK_BOUNDARY_EXPORTS.has)) {
+    registerNative(
+      LINK_BOUNDARY_EXPORTS.has,
+      [EXTERNREF, EXTERNREF],
+      [I32],
+      [],
+      [
+        { op: "local.get", index: 0 },
+        { op: "local.get", index: 1 },
+        { op: "call", funcIdx: externHas },
+        {
+          op: "if",
+          blockType: { kind: "val", type: I32 },
+          then: [{ op: "i32.const", value: 2 }],
+          else: [{ op: "i32.const", value: 0 }],
+        },
+      ],
     );
   }
   // (#6625) Reserved with the refusal body ("not one of mine"). Filled at
@@ -615,6 +654,7 @@ export function standaloneLinkBoundaryPeerIndices(ctx: CodegenContext): {
   methodCall?: number;
   getPrototypeOf?: number;
   isExtensible?: number;
+  has?: number;
 } {
   const namespace = peerNamespaces(ctx)[0];
   if (namespace === undefined) return {};
@@ -642,6 +682,7 @@ export function standaloneLinkBoundaryPeerIndices(ctx: CodegenContext): {
     methodCall: ctx.funcMap.get(LINK_BOUNDARY_EXPORTS.methodCall),
     getPrototypeOf: ctx.funcMap.get(LINK_BOUNDARY_EXPORTS.getPrototypeOf),
     isExtensible: ctx.funcMap.get(LINK_BOUNDARY_EXPORTS.isExtensible),
+    has: ctx.funcMap.get(LINK_BOUNDARY_EXPORTS.has),
   };
 }
 
@@ -687,6 +728,42 @@ export function constructBoundaryPairs(ctx: CodegenContext): { callableKind: num
     pairs.push({ callableKind: boundaryKind, construct: boundaryConstruct });
   }
   return pairs;
+}
+
+/**
+ * (#6882) The terminals that exist, in the order given. Replaces the
+ * `boundary ?? peer ?? reverse` picks, which were written when the families
+ * were mutually exclusive: a native-regime module in a JavaScript environment
+ * has the JS boundary AND a wasm peer (consumer) or reverse hop (provider), and
+ * each answers for different values. A module with one family gets a list of
+ * one, so its arms are unchanged.
+ */
+export function definedIdxs(...idxs: (number | undefined)[]): number[] {
+  return idxs.filter((idx): idx is number => idx !== undefined);
+}
+
+/**
+ * (#6882) `__extern_has`'s "not mine — who owns it?" arms (params 0 = recv,
+ * 1 = key): each terminal answers the `__boundary_object_has` tri-state, and
+ * the first one that claims the receiver (non-zero) decides — 2 = present.
+ */
+export function hasTriStateArmsInstrs(terminalIdxs: readonly number[], resultLocal: number): Instr[] {
+  return terminalIdxs.flatMap((funcIdx): Instr[] => [
+    { op: "local.get", index: 0 },
+    { op: "local.get", index: 1 },
+    { op: "call", funcIdx },
+    { op: "local.tee", index: resultLocal },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        { op: "local.get", index: resultLocal },
+        { op: "i32.const", value: 2 },
+        { op: "i32.eq" },
+        { op: "return" },
+      ],
+    },
+  ]);
 }
 
 /**

@@ -114,7 +114,6 @@ import {
   PROMISE_STATE_FULFILLED,
   PROMISE_STATE_PENDING,
   PROMISE_STATE_REJECTED,
-  isStandalonePromiseActive,
   type PromiseExecutorClosures,
 } from "./async-scheduler.js";
 import { aggregateSettleFuncIdx } from "./promise-species-then.js"; // (#5197 r3)
@@ -332,7 +331,6 @@ export function emitStandalonePromiseCustomCapabilityCheck(
   constructorInfo: ClosureInfo,
   constructorSelfTypeIdx: number,
 ): boolean {
-  if (!isStandalonePromiseActive(ctx)) return false;
   if (
     constructorInfo.returnType !== null &&
     constructorInfo.returnType.kind !== "externref" &&
@@ -429,7 +427,6 @@ export function emitStandalonePromiseCustomSettle(
   valueInstrs: Instr[],
   settle: "resolve" | "reject",
 ): boolean {
-  if (!isStandalonePromiseActive(ctx)) return false;
   const runtime = ensureCustomCapabilityRuntime(ctx);
   const wrapperRoot = getFuncRefWrapperRootTypeIdx(ctx);
   const vec = ensureObjVecBuilders(ctx);

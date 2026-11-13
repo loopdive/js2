@@ -136,9 +136,17 @@ describe("report page standalone view — category edition scoping", () => {
     expect(allowed, "standalone view produced no category filter").toBeInstanceOf(Set);
 
     const visible = categories.map((c) => c.name).filter((name) => allowed?.has(name));
-    // The headline symptom.
-    expect(visible).not.toContain("built-ins/Temporal");
-    // …and no other proposal-scope category rides along.
+    // The headline symptom was `built-ins/Temporal` riding along as a proposal.
+    // Temporal reached Stage 4 and is ES2026 since #5173, so the published data
+    // now (correctly) lists it under ES2026 and it is visible. The property
+    // this guards is unchanged: every visible row carries a published edition.
+    for (const name of visible) {
+      expect(
+        Object.keys(map[name] ?? {}).some((ed) => published.has(ed)),
+        `${name} is visible without a published edition`,
+      ).toBe(true);
+    }
+    // …and no proposal-scope category rides along.
     expect(visible).not.toContain("built-ins/AbstractModuleSource");
     // The filter must narrow, not blank the table.
     expect(visible.length).toBeGreaterThan(categories.length / 2);

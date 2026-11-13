@@ -1,4 +1,5 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+import { isPrivatelyCopiedFrozenArray } from "../../../wasm/physical/owned-function-data.js";
 import type { FunctionReservation, PhysicalModuleReservations } from "../../../wasm/physical/module-reservations.js";
 import type { NativeResourceRecipe } from "../../../runtime/wasmgc/values/native-resource-declaration-types.js";
 import { preparedIrDataMismatch } from "../../../ir/program/data.js";
@@ -109,7 +110,7 @@ function captureLiveDefinitions(
       if (Array.isArray(input)) {
         const length = descriptors.length;
         if (
-          proto !== Array.prototype ||
+          (proto !== Array.prototype && !isPrivatelyCopiedFrozenArray(input)) ||
           !length ||
           !Object.hasOwn(length, "value") ||
           length.enumerable ||
@@ -314,7 +315,7 @@ export function fillNativeBigIntNumberResources(
   requireCompletedNativeBigInt(tx, bigint, bigintPlan);
   const definition = deriveDefinition(owner.dependencies);
   const definitions = Object.freeze([structuredClone(definition)]);
-  tx.fillFunction(owner.functions[0]!, definition);
+  tx.fillOwnedFunction(owner.functions[0]!, definition);
   owner.filledDefinitions = Object.freeze(captureLiveDefinitions(owner));
   owner.definitions = definitions;
   owner.filled = true;

@@ -35,11 +35,12 @@ import { join } from "node:path";
 import { compile } from "../src/index.js";
 import { runTest262File } from "./test262-runner.js";
 
-async function runStandalone(source: string): Promise<unknown> {
+async function runStandalone(source: string, extra: { inferModuleStrictArguments?: boolean } = {}): Promise<unknown> {
   const result = await compile(source, {
     target: "standalone",
     allowJs: true,
     skipSemanticDiagnostics: true,
+    ...extra,
   });
   expect(result.success, `Compile failed:\n${result.errors.map((e) => `  L${e.line}: ${e.message}`).join("\n")}`).toBe(
     true,
@@ -59,9 +60,20 @@ describe("#4491 wave-4 — vec identity at a monomorphic parameter", () => {
   // Measured on the campaign base: `0` (the raw backing slot) with the getter
   // never called. Reverting the withdrawal in
   // `declarations/param-return-inference.ts` reproduces it.
+  //
+  // The `arr[1] = 4` write to a getter-only index is a silent no-op only in
+  // SLOPPY code (the propertyHelper shape this reduces is a sloppy test262
+  // script). The source carries `export`, so it compiles as a strict module, and
+  // there the write must throw a TypeError at module init (§10.1.9.2 OrdinarySet
+  // returns false → PutValue throws in strict code) — node throws the same for
+  // this source as an `.mjs`, and the compiler now does too, which surfaced here
+  // as an uncaught exception at instantiate. Compile it as a synthetic-`export`
+  // Script (`inferModuleStrictArguments: false`, #6988) so the read under test
+  // runs in the goal it was measured in.
   it("reads an array-index ACCESSOR through a narrowed parameter", async () => {
     expect(
-      await runStandalone(`
+      await runStandalone(
+        `
         var calls = 0;
         var arr = [];
         function getFunc() { calls = calls + 1; return 3; }
@@ -74,7 +86,9 @@ describe("#4491 wave-4 — vec identity at a monomorphic parameter", () => {
         export function main() {
           return (V === 3 && calls === 2) ? 1 : 0;
         }
-      `),
+      `,
+        { inferModuleStrictArguments: false },
+      ),
     ).toBe(1);
   });
 
@@ -299,7 +313,8 @@ describe("#4491 wave-4 — measured residuals", () => {
   // descriptor. A descriptor that exists while `hasOwnProperty` says the
   // property does not is the #4010 overlay-vs-bag split, now reachable through
   // the integrity path too.
-  it.fails("Object.freeze does not hide an array element from hasOwnProperty", async () => {
+  // PROMOTED from a residual pin (#7014 follow-up): measured passing on main 2026-10-18.
+  it("Object.freeze does not hide an array element from hasOwnProperty", async () => {
     expect(
       await runStandalone(`
         function drop(obj, name) { return delete obj[name]; }
@@ -398,7 +413,8 @@ describe("#4491 wave-4 — measured residuals", () => {
   // only for a receiver the compiler resolved statically; through a dynamic
   // receiver the read misses. (`freeze/15.2.3.9-2-a-12`,
   // `preventExtensions/15.2.3.10-3-5`.)
-  it.fails("a String object's index reads through a dynamic receiver", async () => {
+  // PROMOTED from a residual pin (#7014 follow-up): measured passing on main 2026-10-18.
+  it("a String object's index reads through a dynamic receiver", async () => {
     expect(
       await runStandalone(`
         function readThrough(obj, name) { return obj[name]; }

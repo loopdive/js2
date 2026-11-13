@@ -154,16 +154,16 @@ describe("#5162 constructor → own prototype method", () => {
     expect(await run(src, "standalone")).toBe(expected);
   });
 
-  // XFAIL PINS. Each of these SHOULD return 10. They throw today. When the
-  // `not-in-twin` decline stops being a hard failure in standalone (#4405 or a
-  // successor), these go red — tighten them to `.toBe(10)` rather than deleting.
+  // Former XFAIL PINS, tightened to the spec value: these stopped throwing once
+  // every ordinary fnctor got a runtime prototype (#6949) and its instances a
+  // `[[Prototype]]` ladder (#6951).
   it.each([
     ["method assigned AFTER the constructor (the filed shape)", AFTER],
     ["method assigned BEFORE the constructor", BEFORE],
     ["the write-once `var pp = PP.prototype` idiom", FNCTOR],
     ["two-step `var p = new PP(5); p.v`", TWO_STEP],
-  ])("standalone XFAIL: %s still throws (spec says 10)", async (_name, src) => {
-    expect(await threw(src, "standalone")).toBe(true);
+  ])("standalone: %s returns 10", async (_name, src) => {
+    expect(await run(src, "standalone")).toBe(10);
   });
 
   // Source order is NOT the discriminator — the filed hypothesis, refuted.
@@ -204,11 +204,12 @@ export function test() { var p = new PP(5); return (typeof seen.twice === "funct
     expect(await run(VIA_UNTYPED, "gc")).toBe(1);
   });
 
-  it("standalone XFAIL: the same object resolves `twice` only through the TYPED binding", async () => {
+  it("standalone: the same object resolves `twice` through either binding", async () => {
     expect(await run(VIA_TYPED, "standalone")).toBe(1);
-    // Spec says 1 — `seen` and `p` are the same object. Reads 0 because the
-    // prototype method has no runtime existence in standalone.
-    expect(await run(VIA_UNTYPED, "standalone")).toBe(0);
+    // (#6951) `seen` and `p` are the same object. This read 0 while
+    // `__fnctor_proto_start` was reserved only for modules with a gate-APPROVED
+    // fnctor; every constructed ordinary fnctor now gets the ladder.
+    expect(await run(VIA_UNTYPED, "standalone")).toBe(1);
   });
 
   // A second, INDEPENDENT hole found while measuring, recorded so it is not
@@ -221,8 +222,13 @@ export function test() { var p = new PP(5); return (typeof seen.twice === "funct
 ${PROTO_TWICE}
 export function test() { return new PP(5).v; }`;
 
-  it("XFAIL both lanes: `this.twice.call(this, x)` in a ctor throws (spec says 10)", async () => {
-    expect(await threw(DOT_CALL, "gc")).toBe(true);
-    expect(await threw(DOT_CALL, "standalone")).toBe(true);
+  // (#6970) The gc half was the field auto-register arm minting an own
+  // `$__fnctor_PP.twice` slot for the `this.twice` VALUE read (the "null
+  // receiver read" above); it now reads the prototype member. The standalone
+  // half closed once every ordinary fnctor got a runtime prototype (#6949) and
+  // its instances a `[[Prototype]]` ladder (#6951). Both lanes give the spec 10.
+  it("`this.twice.call(this, x)` in a ctor returns 10 in both lanes (#6970, #6949, #6951)", async () => {
+    expect(await run(DOT_CALL, "gc")).toBe(10);
+    expect(await run(DOT_CALL, "standalone")).toBe(10);
   });
 });

@@ -1,0 +1,2040 @@
+diff --git a/scripts/compiler-boundaries.json b/scripts/compiler-boundaries.json
+index da3dbc17..8dbb11c0 100644
+--- a/scripts/compiler-boundaries.json
++++ b/scripts/compiler-boundaries.json
+@@ -11651,6 +11651,14 @@
+       "owner": "3518-coordinator",
+       "nextBoundary": "Separate pure IR contracts from frontend inventory and physical/backend dependencies."
+     },
++    {
++      "path": "src/ir/backend/vector-representation.ts",
++      "state": "unmigrated",
++      "layer": "mixed-needs-split",
++      "destination": "ir-core",
++      "owner": "3518-coordinator",
++      "nextBoundary": "#6920 A-C1 vector representation policy with type-only imports; consumed by generic lowering, the linear overlay and frontend joins. Certify as pure contract once IR-node and backend-handle type dependencies move to ir-core."
++    },
+     {
+       "path": "src/ir/backend/wasm-int32-coercion.ts",
+       "state": "compatibility-adapter",
+diff --git a/src/ir/array-element-lowering.ts b/src/ir/array-element-lowering.ts
+index c1bea624..ca743cd1 100644
+--- a/src/ir/array-element-lowering.ts
++++ b/src/ir/array-element-lowering.ts
+@@ -15,15 +15,16 @@ import {
+ import { IrFunctionBuilder } from "./builder.js";
+ import { irIntrinsicFuncRef } from "./callable-bindings.js";
+ import type { I32PureNames } from "./i32-pure-bitwise.js";
+-import type { IrVecLowering } from "./lower.js";
++import type { IrVecBackendLowering } from "./lower.js";
++import { irVecGcLowering } from "./backend/vector-representation.js";
+ import { asVal, irTypeEquals, irVal, type IrConst, type IrType, type IrValueId } from "./nodes.js";
+ import { demoteToLegacy, IrInvariantError, IrUnsupportedError } from "./outcomes.js";
+ import type { ValType } from "./types.js";
+ import { irVecElemSetSymbol } from "./vector-runtime.js";
+ 
+ interface ArrayElementResolver {
+-  resolveVec?(valType: ValType): IrVecLowering | null;
+-  resolveVecForElement?(elementValType: ValType): IrVecLowering | null;
++  resolveVec?(valType: ValType): IrVecBackendLowering | null;
++  resolveVecForElement?(elementValType: ValType): IrVecBackendLowering | null;
+   resolveVecOutOfBoundsConst?(elementValType: ValType): IrConst | null;
+   isVecValueExpression?(expression: ts.Expression): boolean;
+   preparedAsyncPromiseVectorLocal?(declaration: ts.VariableDeclaration): boolean;
+@@ -331,7 +332,11 @@ export function annotatedArrayElementValType(
+  * Distinguish a narrowed number[] from another i32-element vector, such as
+  * boolean[]. The representation and the receiver-specific proof must agree.
+  */
+-export function isNarrowedI32Vec(vec: IrVecLowering, receiver: ts.Expression, host: ArrayElementLoweringHost): boolean {
++export function isNarrowedI32Vec(
++  vec: IrVecBackendLowering,
++  receiver: ts.Expression,
++  host: ArrayElementLoweringHost,
++): boolean {
+   return vec.elementValType.kind === "i32" && host.emptyArrayInference.isInt32NarrowedVectorExpression(receiver);
+ }
+ 
+@@ -468,8 +473,11 @@ export function tryLowerVecPush(
+     const nextLength = host.builder.emitBinary("i32.add", lenI32, one, irVal({ kind: "i32" }));
+     host.builder.emitVecSetLength(recv, nextLength);
+   } else {
+-    const symbol =
+-      recvType.kind === "vec" ? irVecElemSetSymbol(recvType.elementType) : `__vec_elem_set_${vec!.vecStructTypeIdx}`;
++    // GC struct-suffixed name only for an authenticated GC handle (#6920).
++    const gc = recvType.kind === "vec" ? null : irVecGcLowering(vec!);
++    const symbol = gc
++      ? `__vec_elem_set_${gc.vecStructTypeIdx}`
++      : irVecElemSetSymbol(recvType.kind === "vec" ? recvType.elementType : irVal(vec!.elementValType));
+     host.builder.emitCall(irIntrinsicFuncRef(symbol), [recv, lenI32, value], null);
+   }
+   if (statementPosition) return null;
+diff --git a/src/ir/backend/contract-conformance.ts b/src/ir/backend/contract-conformance.ts
+index 7d4dc5f7..3f65c203 100644
+--- a/src/ir/backend/contract-conformance.ts
++++ b/src/ir/backend/contract-conformance.ts
+@@ -45,8 +45,7 @@ import type {
+   IrClosureLowering,
+   IrObjectStructLowering,
+   IrRefCellLowering,
+-  IrVecLowering,
+-  LinearVecLowering,
++  IrVecBackendLowering,
+ } from "./handles.js";
+ import type { WasmGcEmitter } from "./wasmgc-emitter.js";
+ import type { LinearEmitter } from "./linear-emitter.js";
+@@ -83,7 +82,7 @@ export type StubSink = string[];
+  */
+ const STUB_KIND: IrBackendKind = "bytecode";
+ 
+-type StubVecLayout = IrVecLowering | LinearVecLowering;
++type StubVecLayout = IrVecBackendLowering;
+ 
+ export class StubEmitter implements BackendEmitter<StubSink> {
+   constructor(readonly backend: IrBackendKind = STUB_KIND) {}
+diff --git a/src/ir/backend/contract.ts b/src/ir/backend/contract.ts
+index c635391a..1fb1401d 100644
+--- a/src/ir/backend/contract.ts
++++ b/src/ir/backend/contract.ts
+@@ -83,6 +83,7 @@ export type {
+   IrObjectStructLowering,
+   IrRefCellLowering,
+   IrUnionLowering,
++  IrVecBackendLowering,
+   IrVecLowering,
+   LinearMemoryFieldLowering,
+   LinearObjectLowering,
+diff --git a/src/ir/backend/emitter.ts b/src/ir/backend/emitter.ts
+index 096e9308..fa997a9a 100644
+--- a/src/ir/backend/emitter.ts
++++ b/src/ir/backend/emitter.ts
+@@ -48,16 +48,17 @@ import type {
+   IrObjectStructLowering,
+   IrRefCellLowering,
+   IrUnionLowering,
+-  IrVecLowering,
+-  LinearVecLowering,
++  IrVecBackendLowering,
+ } from "./handles.js";
+ import type { StringBackendEmitter } from "./string-contract.js";
+ 
+ // #1714: the vec primitives accept either backend's vec-layout handle. WasmGc
+ // uses IrVecLowering (typeIdx-based); Linear uses LinearVecLowering
+ // (offset-based). Each emitter narrows to its own shape. This is the
+-// "widen to a handle union" option from the #1713 spec section 7.
+-type VecLayout = IrVecLowering | LinearVecLowering;
++// "widen to a handle union" option from the #1713 spec section 7; #6920 names
++// the union once (`IrVecBackendLowering`) and generic lowering passes the
++// handle of the representation it resolved for the active backend.
++type VecLayout = IrVecBackendLowering;
+ 
+ /**
+  * Backend-neutral scalar operations used while expanding composite JS
+@@ -131,8 +132,10 @@ export interface BackendEmitter<S = Instr[]> extends StringBackendEmitter<S> {
+    * an empty vec with greater reserved capacity uses `array.new_default`.
+    * Logical length remains N in both cases. Linear uses
+    * `[header][len=N][cap=capacity][e0…eN]`.
+-   * `dataScratchLocal` is a function-local index of the array's ValType,
+-   * allocated lazily by `lower.ts`.
++   * `dataScratchLocal` is a function-local index already declared with the
++   * resolved representation's `newFixedScratchType` (WasmGC `ref_null $arr`,
++   * linear `i32`), allocated lazily by generic lowering before emission; no
++   * caller retypes it after lowering (#6920).
+    */
+   emitVecNewFixed(layout: VecLayout, count: number, capacity: number, dataScratchLocal: number, out: S): void;
+ 
+diff --git a/src/ir/backend/handles.ts b/src/ir/backend/handles.ts
+index 79e6e0b1..6f3c3f73 100644
+--- a/src/ir/backend/handles.ts
++++ b/src/ir/backend/handles.ts
+@@ -181,7 +181,7 @@ export interface LinearRefCellLowering extends IrRefCellLowering {
+  *                           declared type when needed.
+  */
+ export interface IrVecLowering {
+-  /** Backend value carrier (`ref $vec` on WasmGC, `i32` arena pointer on linear). */
++  /** WasmGC value carrier (`ref`/`ref_null $vec`); absent keeps the struct-ref default. */
+   readonly valueType?: ValType;
+   readonly vecStructTypeIdx: number;
+   readonly lengthFieldIdx: number;
+@@ -438,6 +438,9 @@ export interface IrDynamicLowering {
+   emitMemberSet(): readonly Instr[];
+ }
+ 
++/** The existing `i32` member of {@link ValType}; not a separate representation system. */
++export type IrI32ValType = Extract<ValType, { readonly kind: "i32" }>;
++
+ /**
+  * #1714: linear-memory layout handle for a vec (array). Sibling to
+  * {@link IrVecLowering} (the WasmGC handle). The linear backend stores an
+@@ -446,11 +449,13 @@ export interface IrDynamicLowering {
+  * only representation detail the emitter needs is the element ValType (for
+  * stride + load op). Field offsets are fixed by the layout, not per-instance.
+  *
+- * This is the "different handle shape the linear resolver returns" that the
+- * #1713 spec §7 anticipated. The `BackendEmitter` vec methods accept
+- * `IrVecLowering | LinearVecLowering`; each emitter narrows to its own shape.
++ * #6920: a genuine linear handle carries its required i32 pointer carrier and
++ * NO WasmGC struct/array/field indices; the two handle shapes are never
++ * intersected. See {@link IrVecBackendLowering}.
+  */
+ export interface LinearVecLowering {
++  /** Arena pointer carrier for the vector value. */
++  readonly valueType: IrI32ValType;
+   /** Element ValType — drives stride (4 vs 8) and the load op. */
+   readonly elementValType: ValType;
+   readonly linearMemory: {
+@@ -461,3 +466,11 @@ export interface LinearVecLowering {
+     readonly initializeElement: LinearRuntimeOperation;
+   };
+ }
++
++/**
++ * #6920: the raw vector handle a resolver may return — the genuine WasmGC
++ * handle or the genuine linear-memory handle. `BackendEmitter` vec methods
++ * accept this union and each emitter narrows to its own shape; generic
++ * lowering normalizes it through `vector-representation.ts`.
++ */
++export type IrVecBackendLowering = IrVecLowering | LinearVecLowering;
+diff --git a/src/ir/backend/linear-emitter.ts b/src/ir/backend/linear-emitter.ts
+index e52ee7cc..94197039 100644
+--- a/src/ir/backend/linear-emitter.ts
++++ b/src/ir/backend/linear-emitter.ts
+@@ -157,15 +157,9 @@ function notImplemented(method: string): never {
+  */
+ export class LinearEmitter implements BackendEmitter<Instr[]> {
+   readonly backend = "linear" as const;
+-  private readonly vecScratchLocals = new Set<number>();
+ 
+   constructor(private readonly options: LinearEmitterOptions = {}) {}
+ 
+-  /** Absolute local indices whose GC-shaped scratch must become an i32 pointer. */
+-  getVecScratchLocalIndices(): readonly number[] {
+-    return [...this.vecScratchLocals];
+-  }
+-
+   // #1584: sink = Instr[], same as WasmGc (the linear backend also lowers to
+   // the shared `Instr` union). Factory + raw escape hatch are array ops.
+   newSink(): Instr[] {
+@@ -346,8 +340,7 @@ export class LinearEmitter implements BackendEmitter<Instr[]> {
+     const vecNewFuncIdx = resolveRuntimeOperation(linear.linearMemory.allocate);
+     const vecInitF64FuncIdx = resolveRuntimeOperation(linear.linearMemory.initializeElement);
+ 
+-    this.vecScratchLocals.add(dataScratchLocal);
+-
++    // `dataScratchLocal` was declared i32 by generic lowering (#6920).
+     // Stack before: e0 ... eN. Stack after local.set: e0 ... eN, with ptr saved.
+     out.push({ op: "i32.const", value: Math.max(capacity, linear.linearMemory.layout.minimumCapacity) });
+     out.push({ op: "call", funcIdx: vecNewFuncIdx });
+diff --git a/src/ir/backend/linear-integration.ts b/src/ir/backend/linear-integration.ts
+index 4c12da03..ead9dd10 100644
+--- a/src/ir/backend/linear-integration.ts
++++ b/src/ir/backend/linear-integration.ts
+@@ -174,12 +174,12 @@ import type {
+ } from "./linear-ir-coverage.js";
+ import type {
+   IrRefCellLowering,
+-  IrVecLowering,
+   LinearMemoryFieldLowering,
+   LinearObjectLowering,
+   LinearRefCellLowering,
+   LinearVecLowering,
+ } from "./handles.js";
++import { resolveIrVecRepresentation } from "./vector-representation.js";
+ import { readEnv } from "../../env.js";
+ 
+ /** One function routed to the direct path, and its stable bucketed reason. */
+@@ -1600,22 +1600,16 @@ export function compileLinearIrFunctions(
+       continue;
+     }
+     {
+-      const main = consumed.func;
+       const body = consumed.lowered;
+-      const emitter = consumed.emitter as LinearEmitter;
+       requireLinearOwnerPair(owner, body.name);
+-      const vecScratchLocals = new Set(emitter.getVecScratchLocalIndices());
+-      const wasmLocals = body.locals.flatMap((local) =>
++      // Generic lowering declared every local (including vec construction
++      // scratch) with its linear representation; flatten them verbatim.
++      const locals = body.locals.flatMap((local) =>
+         local.slots.map((type, slot) => ({
+           name: slot === 0 ? local.name : `${local.name}$${slot}`,
+           type,
+         })),
+       );
+-      const locals = wasmLocals.map((local, index) => {
+-        const absoluteIndex = main.params.length + index;
+-        if (!vecScratchLocals.has(absoluteIndex)) return local;
+-        return { name: `$linear_vec_ptr_${index}`, type: { kind: "i32" as const } };
+-      });
+       const stackOperations = stackFrameOperations(memoryPlan, name);
+       if (stackOperations) {
+         const markLocal = body.params.flatMap((param) => param.slots).length + locals.length;
+@@ -1912,7 +1906,7 @@ function makeLinearIrResolver(
+     return null;
+   };
+ 
+-  const f64VecHandle = (alloc?: AllocSiteId): IrVecLowering & LinearVecLowering => {
++  const f64VecHandle = (alloc?: AllocSiteId): LinearVecLowering => {
+     const layout = memoryPlan?.layoutForVector(f64IrType) ?? provisionalF64VectorLayout;
+     const allocation = allocationFor(layout.id, alloc);
+     const allocate = plannedOperation(
+@@ -1929,10 +1923,6 @@ function makeLinearIrResolver(
+     );
+     return {
+       valueType: { kind: "i32" },
+-      vecStructTypeIdx: 0,
+-      lengthFieldIdx: 0,
+-      dataFieldIdx: 0,
+-      arrayTypeIdx: 0,
+       elementValType: { kind: "f64" },
+       linearMemory: { allocation, layout, allocate, initializeElement },
+     };
+@@ -2172,10 +2162,10 @@ function makeLinearIrResolver(
+       refCells.set(key, lowering);
+       return lowering;
+     },
+-    resolveVec(valType: ValType): IrVecLowering | null {
++    resolveVec(valType: ValType): LinearVecLowering | null {
+       return valType.kind === "i32" ? f64VecHandle() : null;
+     },
+-    resolveVecForElement(elementValType: ValType, alloc?: AllocSiteId): IrVecLowering | null {
++    resolveVecForElement(elementValType: ValType, alloc?: AllocSiteId): LinearVecLowering | null {
+       return elementValType.kind === "f64" ? f64VecHandle(alloc) : null;
+     },
+     resolveVecValueTypeForElement(elementValType: ValType): ValType | null {
+@@ -2364,7 +2354,15 @@ function linearValueTypeConverter(resolver: IrLowerResolver, funcName: string):
+     backend: "linear",
+     convertType(type: IrType): readonly ValType[] {
+       if (type.kind === "val") return [type.val];
+-      if (type.kind === "string" || type.kind === "vec") return [{ kind: "i32" }];
++      if (type.kind === "string") return [{ kind: "i32" }];
++      if (type.kind === "vec") {
++        const elementValType = asVal(type.elementType) ?? undefined;
++        const carrier = resolveIrVecRepresentation(
++          { backend: "linear", type, elementValType, resolver, where: funcName },
++          "carrier",
++        );
++        if (carrier) return [carrier.valueType];
++      }
+       if (type.kind === "object" && resolver.resolveObject?.(type.shape)) return [{ kind: "i32" }];
+       if (type.kind === "boxed") {
+         const inner = asVal(type.inner);
+diff --git a/src/ir/backend/lower-contracts.ts b/src/ir/backend/lower-contracts.ts
+index 1b7aece8..86cc3482 100644
+--- a/src/ir/backend/lower-contracts.ts
++++ b/src/ir/backend/lower-contracts.ts
+@@ -25,7 +25,7 @@ import type {
+   IrObjectStructLowering,
+   IrRefCellLowering,
+   IrUnionLowering,
+-  IrVecLowering,
++  IrVecBackendLowering,
+ } from "./handles.js";
+ 
+ export type {
+@@ -37,6 +37,7 @@ export type {
+   IrObjectStructLowering,
+   IrRefCellLowering,
+   IrUnionLowering,
++  IrVecBackendLowering,
+   IrVecLowering,
+ } from "./handles.js";
+ 
+@@ -136,8 +137,14 @@ export interface IrLowerResolver {
+    * the typeIdx + field indices + element ValType. Returns `null` when
+    * the type isn't a recognisable vec — caller treats that as a bug
+    * (selector should have rejected the for-of).
++   *
++   * #6920: returns the active backend's genuine raw handle — the WasmGC
++   * `IrVecLowering`, or a linear-memory `LinearVecLowering` whose carrier is
++   * i32 and which carries no GC indices. Generic lowering authenticates the
++   * handle against the active backend (`vector-representation.ts`); a handle
++   * for the other backend is a representation mismatch, never adapted.
+    */
+-  resolveVec?(valType: ValType): IrVecLowering | null;
++  resolveVec?(valType: ValType): IrVecBackendLowering | null;
+   /**
+    * #1804 — resolve (registering if needed) the vec struct for an *element*
+    * ValType, used by `vec.new_fixed` construction where a fresh literal has no
+@@ -145,9 +152,10 @@ export interface IrLowerResolver {
+    * `(ref $vec)`), this get-or-creates the `$arr`/`$vec` types for the element
+    * via the legacy registry so the constructed vec shares identity with the
+    * legacy `compileArrayLiteral` output (===, instanceof Array, the for-of fast
+-   * path). Returns the same `IrVecLowering` shape as `resolveVec`.
++   * path). Returns the same raw handle union as `resolveVec`; a linear
++   * resolver binds the requested `alloc` row when one is supplied.
+    */
+-  resolveVecForElement?(elementValType: ValType, alloc?: AllocSiteId): IrVecLowering | null;
++  resolveVecForElement?(elementValType: ValType, alloc?: AllocSiteId): IrVecBackendLowering | null;
+   /**
+    * Resolve the Wasm value type used for `IrType.string` in the active
+    * backend.
+diff --git a/src/ir/backend/porffor/assembler.ts b/src/ir/backend/porffor/assembler.ts
+index 3a9d6998..bf789e3c 100644
+--- a/src/ir/backend/porffor/assembler.ts
++++ b/src/ir/backend/porffor/assembler.ts
+@@ -31,7 +31,7 @@ import { compareIrIdentity, type IrUnitId } from "../../identity.js";
+ import { IR_VEC_ELEM_SET_PREFIX, parseIrVectorRuntimeElement } from "../../vector-runtime.js";
+ import type { FuncHandle, FuncTypeDef, GlobalHandle, TypeHandle, ValType } from "../../types.js";
+ import type { ModuleAssembler } from "../contract.js";
+-import type { IrVecLowering, LinearMemoryFieldLowering, LinearVecLowering, PlannedObjectLowering } from "../handles.js";
++import type { LinearMemoryFieldLowering, LinearVecLowering, PlannedObjectLowering } from "../handles.js";
+ import {
+   PORFFOR_EFFECT_ENTRIES,
+   PORFFOR_KIND_NAMES,
+@@ -103,7 +103,11 @@ type ControlFrame = { readonly kind: "block" | "loop" | "if"; readonly label: st
+ 
+ const TYPE_ORDINAL = new Map<string, number>(PORFFOR_TYPE_ENTRIES);
+ const EFFECT_ORDINAL = new Map<string, number>(PORFFOR_EFFECT_ENTRIES);
+-/** Linear lowering deliberately exposes its sole supported f64 vec as type 0. */
++/**
++ * Legacy `__vec_elem_set_<n>` compatibility suffix for the sole supported f64
++ * vec. #6920: vector handles no longer carry a GC type index; frontend linear
++ * physical stores use the abstract element-type symbol instead.
++ */
+ const PORFFOR_LINEAR_F64_VEC_TYPE_INDEX = 0;
+ 
+ /**
+@@ -519,11 +523,11 @@ export class PorfforModuleAssembler
+     return lowering;
+   }
+ 
+-  resolveVec(valType: ValType): IrVecLowering | null {
++  resolveVec(valType: ValType): LinearVecLowering | null {
+     return valType.kind === "i32" ? this.f64VecHandle() : null;
+   }
+ 
+-  resolveVecForElement(elementValType: ValType, alloc?: AllocSiteId): IrVecLowering | null {
++  resolveVecForElement(elementValType: ValType, alloc?: AllocSiteId): LinearVecLowering | null {
+     return elementValType.kind === "f64" ? this.f64VecHandle(alloc) : null;
+   }
+ 
+@@ -1288,7 +1292,7 @@ export class PorfforModuleAssembler
+     return allocation;
+   }
+ 
+-  private f64VecHandle(alloc?: AllocSiteId): IrVecLowering & LinearVecLowering {
++  private f64VecHandle(alloc?: AllocSiteId): LinearVecLowering {
+     const plan = this.requireMemoryPlan();
+     const layout = plan.layoutForVector(irVal({ kind: "f64" }));
+     if (!layout) throw new Error("porffor assembler: f64 vector layout is absent from the shared memory plan");
+@@ -1305,10 +1309,6 @@ export class PorfforModuleAssembler
+     );
+     return {
+       valueType: { kind: "i32" },
+-      vecStructTypeIdx: PORFFOR_LINEAR_F64_VEC_TYPE_INDEX,
+-      lengthFieldIdx: 0,
+-      dataFieldIdx: 0,
+-      arrayTypeIdx: 0,
+       elementValType: { kind: "f64" },
+       linearMemory: { allocation, layout, allocate, initializeElement },
+     };
+diff --git a/src/ir/backend/porffor/sink.ts b/src/ir/backend/porffor/sink.ts
+index 3f9dc021..cea0060b 100644
+--- a/src/ir/backend/porffor/sink.ts
++++ b/src/ir/backend/porffor/sink.ts
+@@ -17,7 +17,7 @@ import type {
+   IrClosureLowering,
+   IrObjectStructLowering,
+   IrRefCellLowering,
+-  IrVecLowering,
++  IrVecBackendLowering,
+   LinearVecLowering,
+   PlannedObjectLowering,
+ } from "../handles.js";
+@@ -254,7 +254,7 @@ function irTypeSlot(type: IrType): PorfforValueSlot {
+   }
+ }
+ 
+-type VecLayout = IrVecLowering | LinearVecLowering;
++type VecLayout = IrVecBackendLowering;
+ 
+ function asPlannedObject(layout: IrObjectStructLowering | IrClassLowering): PlannedObjectLowering {
+   if (!("linearMemory" in layout)) {
+diff --git a/src/ir/backend/vector-representation.ts b/src/ir/backend/vector-representation.ts
+new file mode 100644
+index 00000000..2dab587d
+--- /dev/null
++++ b/src/ir/backend/vector-representation.ts
+@@ -0,0 +1,262 @@
++// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
++
++// #6920 — one backend-owned vector representation policy.
++//
++// A resolver returns a raw backend handle (`IrVecBackendLowering`). This module
++// narrows it, rejects a handle that belongs to the other backend, and
++// normalizes it into a discriminated representation whose value carrier, data
++// carrier and construction scratch type all come from the same genuine handle.
++// WasmGC keeps its registered struct/array indices; linear memory carries i32
++// pointers and real layout/operation descriptors with no GC fields.
++//
++// Resolution is demand-specific. `carrier` answers a value-type question only
++// and performs exactly the symbolic lookups the historical type-conversion arm
++// performed (one carrier lookup for a layout-backed GC vec). `operation`
++// returns the complete handle and preserves the historical operation order
++// (carrier, carrier, data array). Folding the two would add GC type lookups
++// to plain type conversion and could change registration/numbering.
++//
++// Pure DATA/contract module: no frontend, legacy context, runtime builder or
++// host import dependencies.
++
++import type { AllocSiteId, IrType, IrTypeRef } from "../nodes.js";
++import type { ValType } from "../types.js";
++import type { IrI32ValType, IrVecBackendLowering, IrVecLowering, LinearVecLowering } from "./handles.js";
++import type { IrBackendKind } from "./legality.js";
++
++export type IrVecRepresentationKind = "wasmgc" | "linear-memory";
++
++/** Complete operation view of one resolved vector representation. */
++export type IrVecRepresentation =
++  | {
++      readonly kind: "wasmgc";
++      readonly valueType: ValType;
++      /** Non-null ref to the genuine data array. */
++      readonly dataType: ValType;
++      /** Nullable ref to that same array — the `vec.new_fixed` data scratch. */
++      readonly newFixedScratchType: ValType;
++      readonly lowering: IrVecLowering;
++    }
++  | {
++      readonly kind: "linear-memory";
++      readonly valueType: IrI32ValType;
++      readonly dataType: IrI32ValType;
++      readonly newFixedScratchType: IrI32ValType;
++      readonly lowering: LinearVecLowering;
++    };
++
++/** Carrier-only view: kind plus value carrier, never a partial operation handle. */
++export type IrVecCarrier =
++  | { readonly kind: "wasmgc"; readonly valueType: ValType }
++  | { readonly kind: "linear-memory"; readonly valueType: IrI32ValType };
++
++export type IrVecResolutionPurpose = "carrier" | "operation";
++
++/** The resolver capabilities vector resolution may consult. */
++export interface IrVecRepresentationResolver {
++  resolveType(ref: IrTypeRef): number;
++  resolveVec?(valType: ValType): IrVecBackendLowering | null;
++  resolveVecForElement?(elementValType: ValType, alloc?: AllocSiteId): IrVecBackendLowering | null;
++}
++
++export interface IrVecResolutionInput {
++  /** The active backend selected by the emitter/converter, never a target spelling. */
++  readonly backend: IrBackendKind;
++  readonly type: IrType;
++  /** Already-converted element ValType for a logical `vec`; ignored otherwise. */
++  readonly elementValType?: ValType;
++  /** Construction allocation site (operation resolution only). */
++  readonly alloc?: AllocSiteId;
++  readonly resolver: IrVecRepresentationResolver;
++  /** Function name used in diagnostics. */
++  readonly where: string;
++}
++
++const i32 = (): IrI32ValType => ({ kind: "i32" });
++
++/** Representation family of a backend; `null` when the backend has no vector representation. */
++export function irVecRepresentationKindForBackend(backend: IrBackendKind): IrVecRepresentationKind | null {
++  if (backend === "wasmgc") return "wasmgc";
++  if (backend === "linear" || backend === "porffor") return "linear-memory";
++  return null;
++}
++
++/** True for a genuine linear-memory handle (no WasmGC indices). */
++export function isLinearVecLowering(handle: IrVecBackendLowering): handle is LinearVecLowering {
++  return "linearMemory" in handle;
++}
++
++/** True for a genuine WasmGC handle (registered struct, no linear plan). */
++export function isWasmGcVecLowering(handle: IrVecBackendLowering): handle is IrVecLowering {
++  return !("linearMemory" in handle) && typeof handle.vecStructTypeIdx === "number";
++}
++
++/** Every field that exists only on the WasmGC handle; a linear handle carries none of them. */
++const GC_ONLY_FIELDS = ["vecStructTypeIdx", "arrayTypeIdx", "lengthFieldIdx", "dataFieldIdx"] as const;
++
++function mismatch(where: string, detail: string): never {
++  throw new Error(`ir/lower: vec representation mismatch: ${detail} (${where})`);
++}
++
++function requireGc(handle: IrVecBackendLowering, where: string): IrVecLowering {
++  if (!isWasmGcVecLowering(handle)) mismatch(where, "wasmgc backend received a non-WasmGC vector handle");
++  return handle;
++}
++
++function requireLinear(
++  handle: IrVecBackendLowering,
++  where: string,
++  element: ValType | undefined,
++  alloc: AllocSiteId | undefined,
++): LinearVecLowering {
++  if (!isLinearVecLowering(handle)) mismatch(where, "linear-memory backend received a non-linear vector handle");
++  for (const gcField of GC_ONLY_FIELDS) {
++    if (gcField in handle) mismatch(where, `linear-memory vector handle carries WasmGC field '${gcField}'`);
++  }
++  if (handle.valueType?.kind !== "i32") mismatch(where, "linear-memory vector handle has no i32 carrier");
++  const memory = handle.linearMemory;
++  if (memory.layout.kind !== "vector") mismatch(where, `linear-memory vector handle has ${memory.layout.kind} layout`);
++  if (element !== undefined && element.kind !== handle.elementValType.kind) {
++    mismatch(where, `linear-memory vector element ${handle.elementValType.kind} does not match ${element.kind}`);
++  }
++  const storage = memory.layout.elementStorage;
++  if (storage !== handle.elementValType.kind) {
++    mismatch(where, `linear-memory vector layout stores ${storage}, handle element is ${handle.elementValType.kind}`);
++  }
++  const allocation = memory.allocation;
++  if (allocation !== undefined) {
++    if (allocation.layoutId !== memory.layout.id) {
++      mismatch(where, `allocation site ${allocation.id as number} belongs to '${allocation.layoutId}'`);
++    }
++    if (alloc !== undefined && allocation.id !== alloc) {
++      mismatch(where, `allocation site ${allocation.id as number} was bound for requested site ${alloc as number}`);
++    }
++  }
++  return handle;
++}
++
++/** WasmGC carrier of a GC handle: its explicit carrier, else the historical struct-ref default. */
++function gcCarrier(handle: IrVecLowering, nullable: boolean): ValType {
++  return handle.valueType ?? { kind: nullable ? "ref_null" : "ref", typeIdx: handle.vecStructTypeIdx };
++}
++
++function gcRepresentation(lowering: IrVecLowering, valueType: ValType): IrVecRepresentation {
++  return {
++    kind: "wasmgc",
++    valueType,
++    dataType: { kind: "ref", typeIdx: lowering.arrayTypeIdx },
++    newFixedScratchType: { kind: "ref_null", typeIdx: lowering.arrayTypeIdx },
++    lowering,
++  };
++}
++
++function linearRepresentation(lowering: LinearVecLowering): IrVecRepresentation {
++  return { kind: "linear-memory", valueType: i32(), dataType: i32(), newFixedScratchType: i32(), lowering };
++}
++
++/**
++ * Value carrier of a raw handle for frontend consumers. Linear handles return
++ * their own i32 carrier and never evaluate the GC default; GC handles keep the
++ * historical `handle.valueType ?? (ref|ref_null $vec)` rule.
++ */
++export function irVecHandleCarrier(handle: IrVecBackendLowering, nullable: boolean): ValType {
++  if (isLinearVecLowering(handle)) return handle.valueType;
++  return gcCarrier(handle, nullable);
++}
++
++/** Data-region carrier of a raw handle: GC `(ref $array)`, linear i32 element base. */
++export function irVecHandleDataType(handle: IrVecBackendLowering): ValType {
++  if (isLinearVecLowering(handle)) return i32();
++  return { kind: "ref", typeIdx: handle.arrayTypeIdx };
++}
++
++/** Narrow a raw handle to the genuine WasmGC handle, or `null` for a linear handle. */
++export function irVecGcLowering(handle: IrVecBackendLowering): IrVecLowering | null {
++  return isWasmGcVecLowering(handle) ? handle : null;
++}
++
++/**
++ * Outer representation preflight, shared by every vector resolution path. It
++ * rejects an incompatible outer representation (a WasmGC-prepared layout on a
++ * linear-memory backend) BEFORE the caller converts the element type, so no
++ * element or GC symbolic lookup runs for a vector that cannot be represented.
++ * Returns `null` when the backend has no vector representation at all.
++ */
++export function preflightIrVecRepresentation(
++  backend: IrBackendKind,
++  type: IrType,
++  where: string,
++): IrVecRepresentationKind | null {
++  const kind = irVecRepresentationKindForBackend(backend);
++  if (kind === null) return null;
++  // Rule 4: a prepared GC layout cannot be adapted onto linear memory.
++  if (type.kind === "vec" && type.layout && kind !== "wasmgc") {
++    mismatch(where, `${backend} backend received a WasmGC-prepared vector layout`);
++  }
++  return kind;
++}
++
++export function resolveIrVecRepresentation(
++  input: IrVecResolutionInput,
++  purpose: "operation",
++): IrVecRepresentation | null;
++export function resolveIrVecRepresentation(input: IrVecResolutionInput, purpose: "carrier"): IrVecCarrier | null;
++/**
++ * The single vector resolution algorithm (#6920 rules 1–6). Returns `null`
++ * when the active resolver has no representation for the type (callers keep
++ * their established "resolver cannot lower" failures) and throws on a backend
++ * mismatch before any vector primitive or GC symbolic lookup is attempted.
++ */
++export function resolveIrVecRepresentation(
++  input: IrVecResolutionInput,
++  purpose: IrVecResolutionPurpose,
++): IrVecRepresentation | IrVecCarrier | null {
++  const { backend, type, resolver, where } = input;
++  const kind = preflightIrVecRepresentation(backend, type, where);
++  if (kind === null) return null;
++  if (type.kind === "vec") {
++    const element = input.elementValType;
++    if (!element) return null;
++    if (type.layout) {
++      // Rule 1 (the preflight already proved the backend is WasmGC): symbolic lookups in their historical order.
++      const refKind = type.nullable ? "ref_null" : "ref";
++      if (purpose === "carrier") {
++        return { kind: "wasmgc", valueType: { kind: refKind, typeIdx: resolver.resolveType(type.layout.carrierType) } };
++      }
++      const valueType: ValType = { kind: refKind, typeIdx: resolver.resolveType(type.layout.carrierType) };
++      const lowering: IrVecLowering = {
++        valueType,
++        vecStructTypeIdx: resolver.resolveType(type.layout.carrierType),
++        lengthFieldIdx: type.layout.lengthFieldIndex,
++        dataFieldIdx: type.layout.dataFieldIndex,
++        arrayTypeIdx: resolver.resolveType(type.layout.dataType),
++        elementValType: element,
++      };
++      return gcRepresentation(lowering, valueType);
++    }
++    // Rules 2/3: layout-free logical vec through the genuine element resolver.
++    const alloc = purpose === "operation" ? input.alloc : undefined;
++    const raw = resolver.resolveVecForElement?.(element, alloc) ?? null;
++    if (!raw) return null;
++    if (kind === "wasmgc") {
++      const gc = requireGc(raw, where);
++      const valueType = gcCarrier(gc, type.nullable === true);
++      return purpose === "carrier" ? { kind, valueType } : gcRepresentation(gc, valueType);
++    }
++    const linear = requireLinear(raw, where, element, alloc);
++    return purpose === "carrier" ? { kind, valueType: i32() } : linearRepresentation(linear);
++  }
++  // Rule 5: physical compatibility route.
++  // (Inline `asVal`: this module stays a value-graph leaf with type-only imports.)
++  if (type.kind !== "val") return null;
++  const valType = type.val;
++  const raw = resolver.resolveVec?.(valType) ?? null;
++  if (!raw) return null;
++  if (kind === "wasmgc") {
++    const gc = requireGc(raw, where);
++    return purpose === "carrier" ? { kind, valueType: valType } : gcRepresentation(gc, valType);
++  }
++  const linear = requireLinear(raw, where, undefined, undefined);
++  if (valType.kind !== "i32") mismatch(where, `linear-memory vector carried by ${valType.kind}`);
++  return purpose === "carrier" ? { kind, valueType: i32() } : linearRepresentation(linear);
++}
+diff --git a/src/ir/backend/wasm-lowering.ts b/src/ir/backend/wasm-lowering.ts
+index 38c559aa..fd17be68 100644
+--- a/src/ir/backend/wasm-lowering.ts
++++ b/src/ir/backend/wasm-lowering.ts
+@@ -26,7 +26,7 @@ export function wasmValueTypeConverter(
+ ): TypeConverter<ValType> {
+   return {
+     backend,
+-    convertType: (type: IrType): readonly ValType[] => [lowerIrTypeToValType(type, resolver, funcName)],
++    convertType: (type: IrType): readonly ValType[] => [lowerIrTypeToValType(type, resolver, funcName, backend)],
+   };
+ }
+ 
+diff --git a/src/ir/from-ast.ts b/src/ir/from-ast.ts
+index 8b4d8b92..5ad521bf 100644
+--- a/src/ir/from-ast.ts
++++ b/src/ir/from-ast.ts
+@@ -197,7 +197,8 @@ import {
+ } from "./capability.js";
+ import type { IrStandaloneDomOperation } from "./dom-capability.js";
+ import { IR_CONSOLE_METHODS, IR_CONSOLE_SINK_APPEND_FN, IR_NUMBER_TO_STRING_NATIVE_FN } from "./host-free-runtime.js";
+-import type { IrLowerResolver, IrVecLowering } from "./lower.js";
++import type { IrLowerResolver, IrVecBackendLowering } from "./lower.js";
++import { irVecGcLowering, irVecHandleCarrier, irVecHandleDataType } from "./backend/vector-representation.js";
+ import {
+   allocateLiftedFunctionArtifact,
+   type IrDerivedUnitProvenance,
+@@ -288,7 +289,7 @@ import {
+ import { readEnv } from "../env.js";
+ 
+ interface ResolvedIrVecType {
+-  readonly lowering: IrVecLowering;
++  readonly lowering: IrVecBackendLowering;
+   readonly elementType: IrType;
+   readonly valueType: ValType;
+ }
+@@ -318,8 +319,7 @@ function resolveIrVecType(
+     if (!lowering) return null;
+     const backendValueType =
+       cx.resolver?.resolveVecValueTypeForElement?.(elementValType) ??
+-      lowering.valueType ??
+-      ({ kind: type.nullable ? "ref_null" : "ref", typeIdx: lowering.vecStructTypeIdx } as ValType);
++      irVecHandleCarrier(lowering, type.nullable === true);
+     const valueType =
+       (backendValueType.kind === "ref" || backendValueType.kind === "ref_null") && type.nullable
+         ? ({ kind: "ref_null", typeIdx: backendValueType.typeIdx } as ValType)
+@@ -350,12 +350,17 @@ function resolveIrSlotRepresentation(
+   return storageType ? { storageType, bindingType: irVal(storageType), asType: type } : null;
+ }
+ 
+-function vecElemSetProviderSymbol(type: IrType, vec: IrVecLowering): string {
+-  return type.kind === "vec" ? irVecElemSetSymbol(type.elementType) : `__vec_elem_set_${vec.vecStructTypeIdx}`;
++// GC struct-suffixed names only for an authenticated GC handle (#6920).
++function vecElemSetProviderSymbol(type: IrType, vec: IrVecBackendLowering): string {
++  const gc = type.kind === "vec" ? null : irVecGcLowering(vec);
++  if (gc) return `__vec_elem_set_${gc.vecStructTypeIdx}`;
++  return irVecElemSetSymbol(type.kind === "vec" ? type.elementType : irVal(vec.elementValType));
+ }
+ 
+-function vecNewSizedProviderSymbol(type: IrType, vec: IrVecLowering): string {
+-  return type.kind === "vec" ? irVecNewSizedSymbol(type.elementType) : `__vec_new_sized_${vec.vecStructTypeIdx}`;
++function vecNewSizedProviderSymbol(type: IrType, vec: IrVecBackendLowering): string {
++  const gc = type.kind === "vec" ? null : irVecGcLowering(vec);
++  if (gc) return `__vec_new_sized_${gc.vecStructTypeIdx}`;
++  return irVecNewSizedSymbol(type.kind === "vec" ? type.elementType : irVal(vec.elementValType));
+ }
+ 
+ function unsupportedVoidCallExpression(detail: string): never {
+@@ -559,13 +564,13 @@ export interface IrFromAstResolver extends PreparedAsyncFromAstResolver {
+     readonly get: string;
+     readonly has: string;
+   } | null;
+-  resolveVec?(valType: ValType): IrVecLowering | null;
++  resolveVec?(valType: ValType): IrVecBackendLowering | null;
+   /**
+    * #1804 — register-or-recover the vec struct for an element ValType so
+    * `lowerArrayLiteral` can type a constructed `vec.new_fixed`'s result SSA
+-   * value as `{ kind: "ref", typeIdx: vecStructTypeIdx }`.
++   * value as `{ kind: "ref", typeIdx: vecStructTypeIdx }` (linear: i32, #6920).
+    */
+-  resolveVecForElement?(elementValType: ValType): IrVecLowering | null;
++  resolveVecForElement?(elementValType: ValType): IrVecBackendLowering | null;
+   /**
+    * Backend value representation for a vec constructed from `elementValType`.
+    * WasmGC omits this and keeps the registered `(ref $vec)` default; linear
+@@ -5436,10 +5441,7 @@ function lowerArrayLiteral(expr: ts.ArrayLiteralExpression, cx: LowerCtx, hint:
+         `ir/from-ast: resolver cannot register vec for empty literal (${cx.funcName})`,
+       );
+     }
+-    const vecValueType =
+-      cx.resolver?.resolveVecValueTypeForElement?.(elemVT) ??
+-      vec.valueType ??
+-      ({ kind: "ref", typeIdx: vec.vecStructTypeIdx } as ValType);
++    const vecValueType = cx.resolver?.resolveVecValueTypeForElement?.(elemVT) ?? irVecHandleCarrier(vec, false);
+     const vecResultType = hint.kind === "vec" ? irVec(hintElemIr, false) : irVal(vecValueType);
+     const countedPush = canonicalCountedPushPlanForLiteral(expr, cx.checker);
+     if (countedPush) {
+@@ -5611,10 +5613,7 @@ function lowerArrayLiteral(expr: ts.ArrayLiteralExpression, cx: LowerCtx, hint:
+       `ir/from-ast: resolver cannot register vec for array literal (${cx.funcName})`,
+     );
+   }
+-  const vecValueType =
+-    cx.resolver?.resolveVecValueTypeForElement?.(elemVT) ??
+-    vec.valueType ??
+-    ({ kind: "ref", typeIdx: vec.vecStructTypeIdx } as ValType);
++  const vecValueType = cx.resolver?.resolveVecValueTypeForElement?.(elemVT) ?? irVecHandleCarrier(vec, false);
+   const resultType =
+     elemVT.kind === "f64" || elemVT.kind === "i32" || storedElementType.kind === "string"
+       ? irVec(storedElementType, false)
+@@ -12135,7 +12134,7 @@ function lowerForOfVec(
+   const valTy = resolvedVec?.valueType ?? asVal(iterableType);
+   if (resolvedVec) {
+     elemValType = resolvedVec.lowering.elementValType;
+-    dataValType = { kind: "ref", typeIdx: resolvedVec.lowering.arrayTypeIdx };
++    dataValType = irVecHandleDataType(resolvedVec.lowering);
+   } else {
+     if (!valTy) {
+       demoteToLegacy(
+diff --git a/src/ir/lower-generic.ts b/src/ir/lower-generic.ts
+index 19a33484..55961894 100644
+--- a/src/ir/lower-generic.ts
++++ b/src/ir/lower-generic.ts
+@@ -47,7 +47,11 @@ import type { IrLowerResolver, IrLoweredBody, IrLoweredSignature } from "./backe
+ import { emitStringOperation, type StringOperationContext } from "./lowering/string-operations.js";
+ import type { TypeConverter } from "./backend/contract.js";
+ import { type IrBackendKind, verifyIrBackendLegality } from "./backend/legality.js";
+-import type { IrVecLowering } from "./backend/handles.js";
++import {
++  type IrVecRepresentation,
++  preflightIrVecRepresentation,
++  resolveIrVecRepresentation,
++} from "./backend/vector-representation.js";
+ import {
+   emitWasmInt32Coercion,
+   emitWasmMathClz32,
+@@ -342,6 +346,8 @@ export function lowerIrFunctionBody<S, Slot>(
+    * resultType. Used by `box` / `unbox` / `tag.test` lowering to find the
+    * union / boxed struct type for the operand.
+    */
++  // #6920: every composite type question uses the active backend's representation.
++  const toValType = (t: IrType): ValType => lowerIrTypeToValType(t, resolver, func.name, emitter.backend);
+   const typeOf = (v: IrValueId): IrType => {
+     const paramT = paramTypeOf.get(v);
+     if (paramT) return paramT;
+@@ -731,7 +737,7 @@ export function lowerIrFunctionBody<S, Slot>(
+       const idx = func.params.length + locals.length;
+       locals.push({
+         name: `$ir${instr.result}`,
+-        type: lowerIrTypeToValType(instr.resultType, resolver, func.name),
++        type: toValType(instr.resultType),
+         logicalType: instr.resultType,
+       });
+       localIdx.set(instr.result, idx);
+@@ -840,18 +846,20 @@ export function lowerIrFunctionBody<S, Slot>(
+   // first await in the function; reused across subsequent awaits.
+   let awaitScratchPromiseIdx: number | null = null;
+   let rejectedScratchPromiseIdx: number | null = null;
+-  // #1804 — scratch locals for `vec.new_fixed`: one per (array typeIdx) to stash
+-  // the `array.new_fixed` data ref while the length is pushed below it for the
+-  // (length, data) struct.new field order. Keyed by arrayTypeIdx so distinct
+-  // element types get distinctly-typed data locals; reused across literals.
+-  const vecNewFixedDataScratch = new Map<number, number>();
+-  const ensureVecDataScratch = (arrayTypeIdx: number): number => {
+-    const existing = vecNewFixedDataScratch.get(arrayTypeIdx);
++  // #1804 — `vec.new_fixed` scratch (GC data ref / linear arena pointer). #6920:
++  // declared with the representation's `newFixedScratchType` at first use, keyed
++  // by representation + full ValType: one `$vec_data_<arrayTypeIdx>` per GC
++  // array; linear memory reuses one i32.
++  const vecNewFixedDataScratch = new Map<string, number>();
++  const ensureVecDataScratch = (vec: IrVecRepresentation): number => {
++    const type = vec.newFixedScratchType;
++    const key = `${vec.kind}:${type.kind}:${"typeIdx" in type ? type.typeIdx : ""}`;
++    const existing = vecNewFixedDataScratch.get(key);
+     if (existing !== undefined) return existing;
+     const idx = func.params.length + locals.length;
+-    const type: ValType = { kind: "ref_null", typeIdx: arrayTypeIdx };
+-    locals.push({ name: `$vec_data_${arrayTypeIdx}`, type, logicalType: { kind: "val", val: type } });
+-    vecNewFixedDataScratch.set(arrayTypeIdx, idx);
++    const name = vec.kind === "wasmgc" ? `$vec_data_${vec.lowering.arrayTypeIdx}` : `$linear_vec_ptr_${locals.length}`;
++    locals.push({ name, type, logicalType: { kind: "val", val: type } });
++    vecNewFixedDataScratch.set(key, idx);
+     return idx;
+   };
+   const vecElementScratch = new Map<string, number>();
+@@ -947,28 +955,12 @@ export function lowerIrFunctionBody<S, Slot>(
+     }
+   };
+ 
+-  const resolveVecType = (type: IrType, alloc?: AllocSiteId): IrVecLowering | null => {
+-    if (type.kind === "vec") {
+-      const elementValType = lowerIrTypeToValType(type.elementType, resolver, func.name);
+-      if (type.layout) {
+-        return {
+-          valueType: {
+-            kind: type.nullable ? "ref_null" : "ref",
+-            typeIdx: resolver.resolveType(type.layout.carrierType),
+-          },
+-          vecStructTypeIdx: resolver.resolveType(type.layout.carrierType),
+-          lengthFieldIdx: type.layout.lengthFieldIndex,
+-          dataFieldIdx: type.layout.dataFieldIndex,
+-          arrayTypeIdx: resolver.resolveType(type.layout.dataType),
+-          elementValType,
+-        };
+-      }
+-      // Transitional IR fixtures may predate final Program-ABI preparation.
+-      // Production prepared components fail closed on the missing layout.
+-      return resolver.resolveVecForElement?.(elementValType, alloc) ?? null;
+-    }
+-    const valType = asVal(type);
+-    return valType ? (resolver.resolveVec?.(valType) ?? null) : null;
++  // #6920: every vector arm receives the one representation resolved for the active backend.
++  const resolveVecType = (type: IrType, alloc?: AllocSiteId): IrVecRepresentation | null => {
++    if (preflightIrVecRepresentation(emitter.backend, type, func.name) === null) return null;
++    const request = { backend: emitter.backend, type, alloc, resolver, where: func.name };
++    const elementValType = type.kind === "vec" ? toValType(type.elementType) : undefined;
++    return resolveIrVecRepresentation({ ...request, elementValType }, "operation");
+   };
+ 
+   // #3733 — best-effort constant-value peek, same defensive shape as
+@@ -1212,7 +1204,7 @@ export function lowerIrFunctionBody<S, Slot>(
+         // result type reaches the emitter exactly as it did before.
+         const nullVecType =
+           instr.value.kind === "null" && instr.resultType?.kind === "vec"
+-            ? ({ kind: "val", val: lowerIrTypeToValType(instr.resultType, resolver, func.name) } as IrType)
++            ? ({ kind: "val", val: toValType(instr.resultType) } as IrType)
+             : null;
+         emitter.emitConst(nullVecType ? { ...instr, resultType: nullVecType } : instr, func.name, out);
+         return;
+@@ -1564,7 +1556,7 @@ export function lowerIrFunctionBody<S, Slot>(
+         if (instr.resultType === null) {
+           throw new Error(`ir/lower: IrInstrIf without resultType (${func.name})`);
+         }
+-        const armResultType = lowerIrTypeToValType(instr.resultType, resolver, func.name);
++        const armResultType = toValType(instr.resultType);
+         const blockType: BlockType = { kind: "val", type: armResultType };
+ 
+         // Helper: emit a body buffer using the same SSA-materialisation
+@@ -1656,7 +1648,7 @@ export function lowerIrFunctionBody<S, Slot>(
+             // Verifier R1 backstop — a re-box is provably redundant.
+             throw new Error(`ir/lower: box operand is already dynamic (${func.name})`);
+           }
+-          const fromVal = lowerIrTypeToValType(operandIr, resolver, func.name);
++          const fromVal = toValType(operandIr);
+           emitValue(instr.value, out);
+           // The target's tag refinement (if the producer proved a partition)
+           // becomes the boxing hint — e.g. a Boolean-refined i32 boxes as a
+@@ -2317,7 +2309,7 @@ export function lowerIrFunctionBody<S, Slot>(
+         const vec = resolveVecType(typeOf(instr.vec));
+         if (!vec) throw new Error(`ir/lower: resolver cannot lower vec for vec.len (${func.name})`);
+         emitValue(instr.vec, out);
+-        emitter.emitVecLen(vec, out);
++        emitter.emitVecLen(vec.lowering, out);
+         // JS length is f64; certified internal counted loops retain the physical i32.
+         if (instr.integer !== true) emitter.emitUnary("f64.convert_i32_s", out);
+         return;
+@@ -2327,19 +2319,19 @@ export function lowerIrFunctionBody<S, Slot>(
+         if (!vec) throw new Error(`ir/lower: resolver cannot lower vec for vec.get (${func.name})`);
+         // Stack: dataArray, index → element
+         emitValue(instr.vec, out);
+-        emitter.emitVecDataPtr(vec, out);
++        emitter.emitVecDataPtr(vec.lowering, out);
+         emitValue(instr.index, out);
+-        emitter.emitElemGet(vec, out);
++        emitter.emitElemGet(vec.lowering, out);
+         return;
+       }
+       case "vec.set": {
+         const vec = resolveVecType(typeOf(instr.vec));
+         if (!vec) throw new Error(`ir/lower: resolver cannot lower vec for vec.set (${func.name})`);
+         emitValue(instr.vec, out);
+-        emitter.emitVecDataPtr(vec, out);
++        emitter.emitVecDataPtr(vec.lowering, out);
+         emitValue(instr.index, out);
+         emitValue(instr.newValue, out);
+-        emitter.emitElemSet(vec, ensureVecElementScratch(vec.elementValType), out);
++        emitter.emitElemSet(vec.lowering, ensureVecElementScratch(vec.lowering.elementValType), out);
+         return;
+       }
+       case "vec.set_length": {
+@@ -2347,12 +2339,12 @@ export function lowerIrFunctionBody<S, Slot>(
+         if (!vec) throw new Error(`ir/lower: resolver cannot lower vec for vec.set_length (${func.name})`);
+         emitValue(instr.vec, out);
+         emitValue(instr.length, out);
+-        emitter.emitVecSetLength(vec, out);
++        emitter.emitVecSetLength(vec.lowering, out);
+         return;
+       }
+       case "vec.new_fixed": {
+         // #1804 — build a fixed-length vec from its element SSA values.
+-        lowerIrTypeToValType(instr.elementType, resolver, func.name);
++        toValType(instr.elementType);
+         const vec = resolveVecType(
+           instr.resultType ?? { kind: "vec", elementType: instr.elementType, nullable: false },
+           instr.alloc,
+@@ -2364,8 +2356,8 @@ export function lowerIrFunctionBody<S, Slot>(
+         // wrap in the vec struct via a scratch local for the (length, data)
+         // field order.
+         for (const el of instr.elements) emitValue(el, out);
+-        const dataScratch = ensureVecDataScratch(vec.arrayTypeIdx);
+-        emitter.emitVecNewFixed(vec, instr.elements.length, instr.capacity ?? instr.elements.length, dataScratch, out);
++        const capacity = instr.capacity ?? instr.elements.length;
++        emitter.emitVecNewFixed(vec.lowering, instr.elements.length, capacity, ensureVecDataScratch(vec), out);
+         return;
+       }
+       // Slice 7a/7b (#1169f): generator ops.
+@@ -2531,12 +2523,12 @@ export function lowerIrFunctionBody<S, Slot>(
+ 
+         // length = vec.length
+         wasmOut.push({ op: "local.get", index: slotWasmIdx(instr.vecSlot) });
+-        emitter.emitVecLen(vec, out);
++        emitter.emitVecLen(vec.lowering, out);
+         wasmOut.push({ op: "local.set", index: slotWasmIdx(instr.lengthSlot) });
+ 
+         // data = vec.data
+         wasmOut.push({ op: "local.get", index: slotWasmIdx(instr.vecSlot) });
+-        emitter.emitVecDataPtr(vec, out);
++        emitter.emitVecDataPtr(vec.lowering, out);
+         wasmOut.push({ op: "local.set", index: slotWasmIdx(instr.dataSlot) });
+ 
+         // counter = 0
+@@ -2578,7 +2570,7 @@ export function lowerIrFunctionBody<S, Slot>(
+         });
+         // `loopBody` is an Instr[] sub-buffer; the arm has asserted S = Instr[]
+         // (via requireInstrSink) so the cast to S is sound (#1584 §2a).
+-        emitter.emitElemGet(vec, loopBody as unknown as S);
++        emitter.emitElemGet(vec.lowering, loopBody as unknown as S);
+         loopBody.push({
+           op: "local.set",
+           index: slotWasmIdx(instr.elementSlot),
+@@ -3988,7 +3980,13 @@ function memberValType(t: IrType, funcName: string): ValType {
+   return v;
+ }
+ 
+-export function lowerIrTypeToValType(t: IrType, resolver: IrLowerResolver, funcName: string): ValType {
++/** `backend` selects the vector representation (#6920); WasmGC for explicitly GC callers. */
++export function lowerIrTypeToValType(
++  t: IrType,
++  resolver: IrLowerResolver,
++  funcName: string,
++  backend: IrBackendKind = "wasmgc",
++): ValType {
+   if (t.kind === "support-ref") {
+     const typeIdx = resolver.resolveType(t.ref);
+     if (!Number.isSafeInteger(typeIdx) || typeIdx < 0)
+@@ -4014,16 +4012,16 @@ export function lowerIrTypeToValType(t: IrType, resolver: IrLowerResolver, funcN
+     return sty;
+   }
+   if (t.kind === "vec") {
+-    const elementValType = lowerIrTypeToValType(t.elementType, resolver, funcName);
+-    if (t.layout) {
+-      return {
+-        kind: t.nullable ? "ref_null" : "ref",
+-        typeIdx: resolver.resolveType(t.layout.carrierType),
+-      };
++    if (preflightIrVecRepresentation(backend, t, funcName) === null) {
++      throw new Error(`ir/lower: resolver cannot lower vec IrType (${funcName})`);
+     }
+-    const vec = resolver.resolveVecForElement?.(elementValType);
+-    if (!vec) throw new Error(`ir/lower: resolver cannot lower vec IrType (${funcName})`);
+-    return vec.valueType ?? { kind: t.nullable ? "ref_null" : "ref", typeIdx: vec.vecStructTypeIdx };
++    const elementValType = lowerIrTypeToValType(t.elementType, resolver, funcName, backend);
++    const carrier = resolveIrVecRepresentation(
++      { backend, type: t, elementValType, resolver, where: funcName },
++      "carrier",
++    );
++    if (!carrier) throw new Error(`ir/lower: resolver cannot lower vec IrType (${funcName})`);
++    return carrier.valueType;
+   }
+   if (t.kind === "object") {
+     // Object IrTypes always lower to a (ref $struct) — mutability of the
+diff --git a/src/ir/lower.ts b/src/ir/lower.ts
+index 30aa8a9b..7c2429d4 100644
+--- a/src/ir/lower.ts
++++ b/src/ir/lower.ts
+@@ -18,5 +18,6 @@ export type {
+   IrObjectStructLowering,
+   IrRefCellLowering,
+   IrUnionLowering,
++  IrVecBackendLowering,
+   IrVecLowering,
+ } from "./backend/lower-contracts.js";
+diff --git a/tests/issue-3299.test.ts b/tests/issue-3299.test.ts
+index b0b4144d..ae28fc6b 100644
+--- a/tests/issue-3299.test.ts
++++ b/tests/issue-3299.test.ts
+@@ -25,12 +25,7 @@ import {
+   type IrType,
+ } from "../src/ir/index.js";
+ import { LinearEmitter } from "../src/ir/backend/linear-emitter.js";
+-import type {
+-  IrVecLowering,
+-  LinearMemoryFieldLowering,
+-  LinearObjectLowering,
+-  LinearVecLowering,
+-} from "../src/ir/backend/handles.js";
++import type { LinearMemoryFieldLowering, LinearObjectLowering, LinearVecLowering } from "../src/ir/backend/handles.js";
+ import { PORFFOR_KIND_NAMES, porfforRendererOutputText, type PorfforNode } from "../src/ir/backend/porffor/compat.js";
+ import { lowerIrModuleToPorffor } from "../src/ir/backend/porffor/integration.js";
+ import { loadOptionalPorffor } from "../src/ir/backend/porffor/loader.js";
+@@ -342,21 +337,12 @@ async function instantiateLinearProof(
+     });
+     const params = body.params.flatMap((param) => [...param.slots]);
+     const results = body.results.flatMap((result) => [...result]);
+-    const vecScratch = new Set(emitter.getVecScratchLocalIndices());
++    // #6920: generic lowering declares the vec construction scratch as i32; locals are used verbatim.
+     const lowered: WasmFunction = {
+       name: body.name,
+       typeIdx: internFuncType(wasm, { kind: "func", params, results }),
+       locals: body.locals.flatMap((local) =>
+-        local.slots.map((type, slot) => {
+-          const index =
+-            params.length +
+-            body.locals.slice(0, body.locals.indexOf(local)).reduce((n, item) => n + item.slots.length, 0) +
+-            slot;
+-          return {
+-            name: slot === 0 ? local.name : `${local.name}$${slot}`,
+-            type: vecScratch.has(index) ? ({ kind: "i32" } as const) : type,
+-          };
+-        }),
++        local.slots.map((type, slot) => ({ name: slot === 0 ? local.name : `${local.name}$${slot}`, type })),
+       ),
+       body: body.body,
+       exported: body.exported,
+@@ -385,14 +371,11 @@ function linearResolver(wasm: WasmModule, plan: LinearMemoryPlan, objectHelperId
+     if (!found) throw new Error(`missing planned operation for site ${allocation.id as number}`);
+     return found;
+   };
+-  const vec = (alloc?: AllocSiteId): IrVecLowering & LinearVecLowering => {
++  const vec = (alloc?: AllocSiteId): LinearVecLowering => {
+     const layout = plan.layoutForVector(F64)!;
+     const allocation = allocationFor(layout.id, alloc);
+     return {
+-      vecStructTypeIdx: 0,
+-      lengthFieldIdx: 0,
+-      dataFieldIdx: 0,
+-      arrayTypeIdx: 0,
++      valueType: { kind: "i32" },
+       elementValType: { kind: "f64" },
+       linearMemory: {
+         allocation,
+@@ -451,10 +434,10 @@ function linearResolver(wasm: WasmModule, plan: LinearMemoryPlan, objectHelperId
+         },
+       };
+     },
+-    resolveVec(valType: ValType): IrVecLowering | null {
++    resolveVec(valType: ValType): LinearVecLowering | null {
+       return valType.kind === "i32" ? vec() : null;
+     },
+-    resolveVecForElement(elementValType: ValType, alloc?: AllocSiteId): IrVecLowering | null {
++    resolveVecForElement(elementValType: ValType, alloc?: AllocSiteId): LinearVecLowering | null {
+       return elementValType.kind === "f64" ? vec(alloc) : null;
+     },
+   };
+diff --git a/tests/issue-3518-lowering-cycle.test.ts b/tests/issue-3518-lowering-cycle.test.ts
+index 11b3b3c9..6f105f73 100644
+--- a/tests/issue-3518-lowering-cycle.test.ts
++++ b/tests/issue-3518-lowering-cycle.test.ts
+@@ -196,6 +196,7 @@ describe("lowering cycle separation", () => {
+     const graph = valueClosure();
+     // Exact 549b value graph plus the frozen D1 legality analysis owner.
+     // Compatibility forwards preserve identities; pin every edge occurrence.
++    // #6920 A-C1 successor of the 33-module / 13-generic-out-edge pin: + type-only leaf vector-representation.ts.
+     expect(graph.modules).toEqual([
+       "src/backend/wasmgc/lowering/dynamic-scratch.ts",
+       "src/backend/wasmgc/lowering/wasm-int32-coercion.ts",
+@@ -204,6 +205,7 @@ describe("lowering cycle separation", () => {
+       "src/ir/analysis/effects.ts",
+       "src/ir/analysis/nested-stackification.ts",
+       "src/ir/backend/legality.ts",
++      "src/ir/backend/vector-representation.ts",
+       "src/ir/backend/wasm-int32-coercion.ts",
+       "src/ir/backend/wasm-math-minmax.ts",
+       "src/ir/callable-bindings.ts",
+@@ -238,6 +240,7 @@ describe("lowering cycle separation", () => {
+       "src/ir/analysis/backend-legality.ts -> src/ir/core/types.ts",
+       "src/ir/core/types.ts -> src/ir/core/tag-refinement.ts",
+       "src/ir/core/types.ts -> src/ir/core/binding-key-primitives.ts",
++      "src/ir/lower-generic.ts -> src/ir/backend/vector-representation.ts",
+       "src/ir/lower-generic.ts -> src/ir/backend/wasm-int32-coercion.ts",
+       "src/ir/backend/wasm-int32-coercion.ts -> src/backend/wasmgc/lowering/wasm-int32-coercion.ts",
+       "src/ir/lower-generic.ts -> src/ir/backend/wasm-math-minmax.ts",
+@@ -271,7 +274,7 @@ describe("lowering cycle separation", () => {
+       "src/ir/core/string-runtime.ts -> src/ir/core/string-callables.ts",
+     ]);
+     expect(graph.modules).toContain("src/shared/contracts/identity-values.ts");
+-    expect(graph.edges.filter((edge) => edge.startsWith(genericPath + " -> "))).toHaveLength(13);
++    expect(graph.edges.filter((edge) => edge.startsWith(genericPath + " -> "))).toHaveLength(14);
+   });
+ 
+   it.each(forbidden)("rejects an injected reverse edge through a barrel to %s", (target) => {
+diff --git a/tests/issue-6920-vector-representation.test.ts b/tests/issue-6920-vector-representation.test.ts
+new file mode 100644
+index 00000000..8129c873
+--- /dev/null
++++ b/tests/issue-6920-vector-representation.test.ts
+@@ -0,0 +1,824 @@
++// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
++//
++// #6920 — generic vector representation contract.
++//
++// One vector intent (two fixed f64 literals, set/get/len and a primitive `if`)
++// lowers through the real generic lowerer and BOTH genuine emitters. The
++// representation is resolved once per backend: WasmGC keeps its registered
++// struct/array handle and `ref_null $array` construction scratch; linear memory
++// carries a genuine i32 handle with no GC fields, and its construction scratch
++// is declared i32 by the lowerer itself — the assembled function uses the
++// lowered locals verbatim (no post-lowering retyping). Mismatched handles are
++// rejected before any vector primitive is emitted or any GC symbolic type is
++// looked up. These are low-level contract tests; they do not claim native
++// public program support.
++
++import { describe, expect, it } from "vitest";
++
++import { addArrayRuntime, addLinearIrVecRuntime, addRuntime } from "../src/codegen-linear/runtime.js";
++import { emitBinary } from "../src/emit/binary.js";
++import {
++  defaultOperationsForLayout,
++  type LinearAllocationSitePlan,
++  type LinearMemoryPlan,
++  type LinearRuntimeOperation,
++} from "../src/ir/analysis/linear-memory-plan.js";
++import type { IrVecBackendLowering, IrVecLowering, LinearVecLowering } from "../src/ir/backend/handles.js";
++import { LinearEmitter } from "../src/ir/backend/linear-emitter.js";
++import { resolveIrVecRepresentation } from "../src/ir/backend/vector-representation.js";
++import { wasmValueTypeConverter } from "../src/ir/backend/wasm-lowering.js";
++import { WasmGcEmitter } from "../src/ir/backend/wasmgc-emitter.js";
++import { irSupportTypeRef } from "../src/ir/core/type-references.js";
++import { irSupportRef } from "../src/ir/core/types.js";
++import { createIrSourceId } from "../src/ir/identity.js";
++import {
++  AllocSiteRegistry,
++  IrFunctionBuilder,
++  irVal,
++  planLinearMemory,
++  verifyIrBackendLegality,
++  verifyIrFunction,
++  type AllocSiteId,
++  type IrFunction,
++  type IrLowerResolver,
++  type IrType,
++  type IrTypeRef,
++} from "../src/ir/index.js";
++import { lowerIrFunctionBody, lowerIrTypeToValType } from "../src/ir/lower.js";
++import { projectIrFunctionSignatureWithConverter } from "../src/ir/lower-generic.js";
++import type { FuncTypeDef, Instr, ValType, WasmFunction, WasmModule } from "../src/ir/types.js";
++import { createTestIrFunctionIdentityFactory } from "./helpers/ir-identities.js";
++
++const identities = createTestIrFunctionIdentityFactory("issue-6920-vector-representation");
++const F64: IrType = irVal({ kind: "f64" });
++const I32: IrType = irVal({ kind: "i32" });
++const VEC_F64: IrType = { kind: "vec", elementType: F64, nullable: false };
++const VEC_I32: IrType = { kind: "vec", elementType: I32, nullable: false };
++
++/** JS oracle for {@link vectorIntent}. */
++function oracle(a: number, b: number, index: number): number {
++  const v = [a, b, a];
++  const w = [b, a];
++  v[1] = 9;
++  const selected = index >= 0 && index < v.length ? v[index]! : 0;
++  return selected + v.length * 100 + w[0]! * 1000 + w.length * 10000;
++}
++
++function vectorIntent(): { func: IrFunction; allocations: AllocSiteRegistry } {
++  const allocations = new AllocSiteRegistry();
++  const fn = new IrFunctionBuilder(identities.next("run"), [F64], true, allocations);
++  const a = fn.addParam("a", F64);
++  const b = fn.addParam("b", F64);
++  const index = fn.addParam("index", I32);
++  fn.openBlock();
++  const v = fn.emitVecNewFixed([a, b, a], F64, VEC_F64);
++  const w = fn.emitVecNewFixed([b, a], F64, VEC_F64);
++  const one = fn.emitConst({ kind: "i32", value: 1 }, I32);
++  const nine = fn.emitConst({ kind: "f64", value: 9 }, F64);
++  fn.emitVecSet(v, one, nine);
++  const lengthV = fn.emitVecLen(v);
++  const lengthI32 = fn.emitUnary("i32.trunc_sat_f64_s", lengthV, I32);
++  const inBounds = fn.emitBinary("i32.lt_u", index, lengthI32, I32);
++  let found!: ReturnType<IrFunctionBuilder["emitVecGet"]>;
++  const foundBody = fn.collectBodyInstrs(() => {
++    found = fn.emitVecGet(v, index, F64);
++  });
++  let missing!: ReturnType<IrFunctionBuilder["emitConst"]>;
++  const missingBody = fn.collectBodyInstrs(() => {
++    missing = fn.emitConst({ kind: "f64", value: 0 }, F64);
++  });
++  const selected = fn.emitIfElse({
++    cond: inBounds,
++    then: foundBody,
++    thenValue: found,
++    else: missingBody,
++    elseValue: missing,
++    resultType: F64,
++  });
++  const zero = fn.emitConst({ kind: "i32", value: 0 }, I32);
++  const w0 = fn.emitVecGet(w, zero, F64);
++  const lengthW = fn.emitVecLen(w);
++  const hundred = fn.emitConst({ kind: "f64", value: 100 }, F64);
++  const thousand = fn.emitConst({ kind: "f64", value: 1000 }, F64);
++  const tenThousand = fn.emitConst({ kind: "f64", value: 10000 }, F64);
++  const lengthScore = fn.emitBinary("f64.mul", lengthV, hundred, F64);
++  const wScore = fn.emitBinary("f64.mul", w0, thousand, F64);
++  const wLengthScore = fn.emitBinary("f64.mul", lengthW, tenThousand, F64);
++  const partial = fn.emitBinary("f64.add", selected, lengthScore, F64);
++  const partial2 = fn.emitBinary("f64.add", partial, wScore, F64);
++  const result = fn.emitBinary("f64.add", partial2, wLengthScore, F64);
++  fn.terminate({ kind: "return", values: [result] });
++  const func = fn.finish();
++  expect(verifyIrFunction(func)).toEqual([]);
++  return { func, allocations };
++}
++
++function vecNewFixedAllocs(func: IrFunction): AllocSiteId[] {
++  return func.blocks.flatMap((block) =>
++    block.instrs.flatMap((instr) => (instr.kind === "vec.new_fixed" && instr.alloc !== undefined ? [instr.alloc] : [])),
++  );
++}
++
++function flatOps(body: readonly Instr[]): Instr[] {
++  return body.flatMap((instr) => {
++    const nested = instr as { body?: readonly Instr[]; then?: readonly Instr[]; else?: readonly Instr[] };
++    return [instr, ...flatOps(nested.body ?? []), ...flatOps(nested.then ?? []), ...flatOps(nested.else ?? [])];
++  });
++}
++
++function baseModule(memory: boolean): WasmModule {
++  return {
++    types: [],
++    imports: [],
++    functions: [],
++    exports: [],
++    tables: [],
++    elements: [],
++    globals: [],
++    tags: [],
++    stringPool: [],
++    externClasses: [],
++    nodeBuiltinModules: new Set(),
++    stringLiteralValues: new Map(),
++    asyncFunctions: new Set(),
++    declaredFuncRefs: [],
++    funcOrdinalToPosition: [],
++    memories: memory ? [] : [],
++    dataSegments: [],
++  } as unknown as WasmModule;
++}
++
++function internFuncType(wasm: WasmModule, type: FuncTypeDef): number {
++  const index = wasm.types.length;
++  wasm.types.push({ ...type, name: `$t6920_${index}` });
++  return index;
++}
++
++function functionIndex(wasm: WasmModule, name: string): number {
++  const index = wasm.functions.findIndex((func) => func.name === name);
++  if (index < 0) throw new Error(`missing linear runtime function ${name}`);
++  return wasm.imports.filter((entry) => entry.desc.kind === "func").length + index;
++}
++
++function runtimeOperation(wasm: WasmModule, operation: LinearRuntimeOperation): number {
++  if (operation.family === "vector" && operation.operation === "resolve-forwarding")
++    return functionIndex(wasm, "__arr_resolve");
++  if (operation.family === "vector" && operation.operation === "allocate") return functionIndex(wasm, "__arr_new");
++  if (operation.family === "vector" && operation.operation === "initialize-element") {
++    return functionIndex(wasm, "__linear_ir_vec_init_f64");
++  }
++  throw new Error(`unsupported runtime operation ${JSON.stringify(operation)}`);
++}
++
++interface RecordingLinearResolver extends IrLowerResolver {
++  readonly handles: LinearVecLowering[];
++  readonly requestedAllocs: (AllocSiteId | undefined)[];
++  readonly typeLookups: IrTypeRef[];
++}
++
++/** A genuine linear resolver: real layout/operation descriptors, no GC fields. */
++function linearResolver(wasm: WasmModule, plan: LinearMemoryPlan): RecordingLinearResolver {
++  const handles: LinearVecLowering[] = [];
++  const requestedAllocs: (AllocSiteId | undefined)[] = [];
++  const typeLookups: IrTypeRef[] = [];
++  const handle = (alloc?: AllocSiteId): LinearVecLowering => {
++    const layout = plan.layoutForVector(F64)!;
++    let allocation: LinearAllocationSitePlan | undefined;
++    if (alloc !== undefined) {
++      allocation = plan.allocation(alloc);
++      if (!allocation || allocation.layoutId !== layout.id) throw new Error(`no planned row ${alloc as number}`);
++    }
++    const operations = allocation?.operations ?? defaultOperationsForLayout(layout);
++    const find = (op: string) =>
++      operations.find((candidate) => candidate.family === "vector" && candidate.operation === op)!;
++    const lowering: LinearVecLowering = {
++      valueType: { kind: "i32" },
++      elementValType: { kind: "f64" },
++      linearMemory: { allocation, layout, allocate: find("allocate"), initializeElement: find("initialize-element") },
++    };
++    handles.push(lowering);
++    return lowering;
++  };
++  return {
++    handles,
++    requestedAllocs,
++    typeLookups,
++    resolveFunc: () => {
++      throw new Error("no calls");
++    },
++    resolveGlobal: () => {
++      throw new Error("no globals");
++    },
++    resolveType: (ref: IrTypeRef) => {
++      typeLookups.push(ref);
++      throw new Error("linear memory has no symbolic GC types");
++    },
++    internFuncType: (type: FuncTypeDef) => internFuncType(wasm, type),
++    resolveVec: (valType: ValType) => (valType.kind === "i32" ? handle() : null),
++    resolveVecForElement: (element: ValType, alloc?: AllocSiteId) => {
++      if (element.kind !== "f64") return null;
++      requestedAllocs.push(alloc);
++      return handle(alloc);
++    },
++  };
++}
++
++/** A GC module with registered f64/i32 data arrays and their vec structs. */
++function gcModule(): { wasm: WasmModule; f64: IrVecLowering; i32: IrVecLowering } {
++  const wasm = baseModule(false);
++  const vec = (element: ValType, name: string): IrVecLowering => {
++    const arrayTypeIdx = wasm.types.length;
++    wasm.types.push({ kind: "array", name: `$arr_${name}`, element, mutable: true });
++    const vecStructTypeIdx = wasm.types.length;
++    wasm.types.push({
++      kind: "struct",
++      name: `$vec_${name}`,
++      fields: [
++        { name: "length", type: { kind: "i32" }, mutable: true },
++        { name: "data", type: { kind: "ref", typeIdx: arrayTypeIdx }, mutable: true },
++      ],
++    });
++    return { vecStructTypeIdx, lengthFieldIdx: 0, dataFieldIdx: 1, arrayTypeIdx, elementValType: element };
++  };
++  return { wasm, f64: vec({ kind: "f64" }, "f64"), i32: vec({ kind: "i32" }, "i32") };
++}
++
++function gcResolver(wasm: WasmModule, handles: Record<string, IrVecLowering>): IrLowerResolver {
++  return {
++    resolveFunc: () => {
++      throw new Error("no calls");
++    },
++    resolveGlobal: () => {
++      throw new Error("no globals");
++    },
++    resolveType: () => {
++      throw new Error("layout-free fixture has no symbolic types");
++    },
++    internFuncType: (type: FuncTypeDef) => internFuncType(wasm, type),
++    resolveVec: (valType: ValType) =>
++      Object.values(handles).find(
++        (handle) =>
++          (valType.kind === "ref" || valType.kind === "ref_null") && valType.typeIdx === handle.vecStructTypeIdx,
++      ) ?? null,
++    resolveVecForElement: (element: ValType) => handles[element.kind] ?? null,
++  };
++}
++
++function assemble(
++  wasm: WasmModule,
++  resolver: IrLowerResolver,
++  lowered: ReturnType<typeof lowerIrFunctionBody<Instr[], ValType>>,
++): WasmFunction {
++  const params = lowered.params.flatMap((param) => [...param.slots]);
++  const results = lowered.results.flatMap((result) => [...result]);
++  return {
++    name: lowered.name,
++    typeIdx: resolver.internFuncType({ kind: "func", params, results }),
++    // Verbatim: every lowered local keeps the type generic lowering declared.
++    locals: lowered.locals.flatMap((local) =>
++      local.slots.map((type, slot) => ({ name: slot === 0 ? local.name : `${local.name}$${slot}`, type })),
++    ),
++    body: lowered.body,
++    exported: true,
++  };
++}
++
++async function instantiate(wasm: WasmModule, fn: WasmFunction): Promise<(a: number, b: number, i: number) => number> {
++  const index = wasm.imports.filter((entry) => entry.desc.kind === "func").length + wasm.functions.length;
++  wasm.functions.push(fn);
++  wasm.exports.push({ name: "run", desc: { kind: "func", index } });
++  const { instance } = await WebAssembly.instantiate(emitBinary(wasm), {});
++  return instance.exports.run as (a: number, b: number, i: number) => number;
++}
++
++const CASES: [number, number, number][] = [
++  [1.5, -2.25, 0],
++  [1.5, -2.25, 1],
++  [4, 5, 2],
++  [4, 5, 3],
++  [4, 5, -1],
++];
++
++describe("#6920 vector representation — same intent through both genuine backends", () => {
++  it("linear memory: genuine i32 handles, i32 scratch declared before assembly, correct results", async () => {
++    const { func, allocations } = vectorIntent();
++    expect(verifyIrBackendLegality(func, "linear")).toEqual([]);
++    const plan = planLinearMemory({ functions: [func] }, allocations);
++    const wasm = baseModule(true);
++    addRuntime(wasm);
++    addArrayRuntime(wasm);
++    addLinearIrVecRuntime(wasm);
++    const resolver = linearResolver(wasm, plan);
++    const emitter = new LinearEmitter({ resolveRuntimeOperation: (operation) => runtimeOperation(wasm, operation) });
++    const lowered = lowerIrFunctionBody(func, resolver, emitter, wasmValueTypeConverter("linear", resolver, func.name));
++
++    // Genuine handles only: an i32 carrier and no WasmGC indices.
++    expect(resolver.handles.length).toBeGreaterThan(0);
++    for (const handle of resolver.handles) {
++      expect(handle.valueType).toEqual({ kind: "i32" });
++      for (const gcField of ["vecStructTypeIdx", "arrayTypeIdx", "lengthFieldIdx", "dataFieldIdx"]) {
++        expect(gcField in handle, gcField).toBe(false);
++      }
++    }
++    expect(resolver.typeLookups).toEqual([]);
++
++    // Construction requested each literal's own allocation row; the rows are distinct.
++    const allocs = vecNewFixedAllocs(func);
++    expect(allocs).toHaveLength(2);
++    expect(new Set(allocs).size).toBe(2);
++    expect(resolver.requestedAllocs.filter((alloc) => alloc !== undefined)).toEqual(allocs);
++    const bound = resolver.handles.flatMap((handle) =>
++      handle.linearMemory.allocation ? [handle.linearMemory.allocation.id] : [],
++    );
++    expect(bound).toEqual(allocs);
++
++    // One reused i32 construction scratch (keyed by representation + type, not site).
++    const scratch = lowered.locals.filter((local) => local.name.startsWith("$linear_vec_ptr_"));
++    expect(scratch).toHaveLength(1);
++    expect(scratch[0]!.slots).toEqual([{ kind: "i32" }]);
++    // Every lowered slot is a linear scalar; no reference carrier survives.
++    const allSlots = [...lowered.params, ...lowered.locals].flatMap((value) => [...value.slots]);
++    expect(allSlots.every((slot) => slot.kind === "i32" || slot.kind === "f64" || slot.kind === "i64")).toBe(true);
++
++    const ops = flatOps(lowered.body).map((instr) => instr.op);
++    for (const gcOp of ["struct.new", "struct.get", "array.new_fixed", "array.get", "array.set", "ref.as_non_null"]) {
++      expect(ops, gcOp).not.toContain(gcOp);
++    }
++    const arrNew = functionIndex(wasm, "__arr_new");
++    const calls = flatOps(lowered.body).filter(
++      (instr): instr is Extract<Instr, { op: "call" }> => instr.op === "call" && instr.funcIdx === arrNew,
++    );
++    expect(calls).toHaveLength(2);
++    expect(ops).toContain("f64.load");
++    expect(ops).toContain("f64.store");
++
++    const lockedLocals = JSON.stringify(lowered.locals.map((local) => [local.name, local.slots]));
++    const run = await instantiate(wasm, assemble(wasm, resolver, lowered));
++    // Assembly consumed the locals verbatim — nothing retyped them afterwards.
++    expect(JSON.stringify(lowered.locals.map((local) => [local.name, local.slots]))).toBe(lockedLocals);
++    for (const [a, b, i] of CASES) expect(run(a, b, i), `run(${a}, ${b}, ${i})`).toBe(oracle(a, b, i));
++  });
++
++  it("WasmGC: genuine GC handle, ref_null $array scratch shared by both literals, correct results", async () => {
++    const { func } = vectorIntent();
++    const { wasm, f64, i32 } = gcModule();
++    const resolver = gcResolver(wasm, { f64, i32 });
++    const lowered = lowerIrFunctionBody(
++      func,
++      resolver,
++      new WasmGcEmitter(resolver),
++      wasmValueTypeConverter("wasmgc", resolver, func.name),
++    );
++    const scratch = lowered.locals.filter((local) => local.name.startsWith("$vec_data_"));
++    expect(scratch.map((local) => [local.name, local.slots])).toEqual([
++      [`$vec_data_${f64.arrayTypeIdx}`, [{ kind: "ref_null", typeIdx: f64.arrayTypeIdx }]],
++    ]);
++    // SSA vector values carry the registered struct ref.
++    expect(lowered.locals.some((local) => local.slots[0]!.kind === "ref")).toBe(true);
++    const scratchIdx = lowered.params.length + lowered.locals.indexOf(scratch[0]!);
++    // The historical GC construction sequence, unchanged.
++    const body = flatOps(lowered.body);
++    const start = body.findIndex((instr) => instr.op === "array.new_fixed");
++    expect(body.slice(start, start + 6)).toEqual([
++      { op: "array.new_fixed", typeIdx: f64.arrayTypeIdx, length: 3 },
++      { op: "local.set", index: scratchIdx },
++      { op: "i32.const", value: 3 },
++      { op: "local.get", index: scratchIdx },
++      { op: "ref.as_non_null" },
++      { op: "struct.new", typeIdx: f64.vecStructTypeIdx },
++    ]);
++    expect(body.filter((instr) => instr.op === "array.new_fixed")).toHaveLength(2);
++    const run = await instantiate(wasm, assemble(wasm, resolver, lowered));
++    for (const [a, b, i] of CASES) expect(run(a, b, i), `run(${a}, ${b}, ${i})`).toBe(oracle(a, b, i));
++  });
++
++  it("WasmGC: distinct element arrays get distinct scratch; empty reserved capacity keeps array.new_default", () => {
++    const fn = new IrFunctionBuilder(identities.next("mixed"), [F64], true);
++    const a = fn.addParam("a", F64);
++    fn.openBlock();
++    const one = fn.emitConst({ kind: "i32", value: 1 }, I32);
++    const f = fn.emitVecNewFixed([a, a], F64, VEC_F64);
++    const n = fn.emitVecNewFixed([one], I32, VEC_I32);
++    const empty = fn.emitVecNewFixed([], F64, VEC_F64, 4);
++    const lenF = fn.emitVecLen(f);
++    const lenN = fn.emitVecLen(n);
++    const lenE = fn.emitVecLen(empty);
++    const sum = fn.emitBinary("f64.add", fn.emitBinary("f64.add", lenF, lenN, F64), lenE, F64);
++    fn.terminate({ kind: "return", values: [sum] });
++    const func = fn.finish();
++    const { wasm, f64, i32 } = gcModule();
++    const resolver = gcResolver(wasm, { f64, i32 });
++    const lowered = lowerIrFunctionBody(
++      func,
++      resolver,
++      new WasmGcEmitter(resolver),
++      wasmValueTypeConverter("wasmgc", resolver, func.name),
++    );
++    expect(
++      lowered.locals.filter((local) => local.name.startsWith("$vec_data_")).map((local) => [local.name, local.slots]),
++    ).toEqual([
++      [`$vec_data_${f64.arrayTypeIdx}`, [{ kind: "ref_null", typeIdx: f64.arrayTypeIdx }]],
++      [`$vec_data_${i32.arrayTypeIdx}`, [{ kind: "ref_null", typeIdx: i32.arrayTypeIdx }]],
++    ]);
++    const body = flatOps(lowered.body);
++    const def = body.findIndex((instr) => instr.op === "array.new_default");
++    expect(body[def - 1]).toEqual({ op: "i32.const", value: 4 });
++    expect(body[def]).toEqual({ op: "array.new_default", typeIdx: f64.arrayTypeIdx });
++  });
++});
++
++describe("#6920 vector representation — converter coherence", () => {
++  it("projects vector parameters and results to each backend's carrier", () => {
++    const fn = new IrFunctionBuilder(identities.next("passthrough"), [VEC_F64], true);
++    const v = fn.addParam("v", VEC_F64);
++    fn.openBlock();
++    fn.terminate({ kind: "return", values: [v] });
++    const func = fn.finish();
++    const { wasm, f64, i32 } = gcModule();
++    const gc = gcResolver(wasm, { f64, i32 });
++    const gcSignature = projectIrFunctionSignatureWithConverter(
++      func,
++      gc,
++      new WasmGcEmitter(gc),
++      wasmValueTypeConverter("wasmgc", gc, func.name),
++    );
++    expect(gcSignature.params[0]!.slots).toEqual([{ kind: "ref", typeIdx: f64.vecStructTypeIdx }]);
++    expect(gcSignature.results[0]).toEqual([{ kind: "ref", typeIdx: f64.vecStructTypeIdx }]);
++
++    const { allocations } = vectorIntent();
++    const plan = planLinearMemory({ functions: [vectorIntent().func] }, allocations);
++    const linearWasm = baseModule(true);
++    const linear = linearResolver(linearWasm, plan);
++    const linearSignature = projectIrFunctionSignatureWithConverter(
++      func,
++      linear,
++      new LinearEmitter(),
++      wasmValueTypeConverter("linear", linear, func.name),
++    );
++    expect(linearSignature.params[0]!.slots).toEqual([{ kind: "i32" }]);
++    expect(linearSignature.results[0]).toEqual([{ kind: "i32" }]);
++    expect(linear.typeLookups).toEqual([]);
++  });
++
++  it("lowerIrTypeToValType threads the backend through nested element conversion", () => {
++    const { allocations, func } = vectorIntent();
++    const plan = planLinearMemory({ functions: [func] }, allocations);
++    const linear = linearResolver(baseModule(true), plan);
++    expect(lowerIrTypeToValType(VEC_F64, linear, "f", "linear")).toEqual({ kind: "i32" });
++    const { wasm, f64, i32 } = gcModule();
++    const gc = gcResolver(wasm, { f64, i32 });
++    // Historical default stays WasmGC for explicitly GC callers.
++    expect(lowerIrTypeToValType(VEC_F64, gc, "f")).toEqual({ kind: "ref", typeIdx: f64.vecStructTypeIdx });
++    expect(lowerIrTypeToValType({ ...VEC_F64, nullable: true }, gc, "f")).toEqual({
++      kind: "ref_null",
++      typeIdx: f64.vecStructTypeIdx,
++    });
++  });
++});
++
++describe("#6920 vector representation — carrier-only vs operation resolution", () => {
++  const sourceId = createIrSourceId({ kind: "entry", order: 0, sourceKey: "issue-6920.ts" });
++  const carrierRef = irSupportTypeRef(sourceId, "vector-carrier:vec<f64>", "__vec_f64");
++  const dataRef = irSupportTypeRef(sourceId, "vector-data:vec<f64>", "__arr_f64");
++  const layoutVec: IrType = {
++    kind: "vec",
++    elementType: F64,
++    nullable: true,
++    layout: { carrierType: carrierRef, dataType: dataRef, lengthFieldIndex: 0, dataFieldIndex: 1 },
++  };
++  const recording = (): { resolver: IrLowerResolver; lookups: string[] } => {
++    const lookups: string[] = [];
++    const resolver: IrLowerResolver = {
++      resolveFunc: () => 0,
++      resolveGlobal: () => 0,
++      internFuncType: () => 0,
++      resolveType: (ref: IrTypeRef) => {
++        lookups.push(ref === carrierRef ? "carrier" : ref === dataRef ? "data" : "other");
++        return ref === carrierRef ? 11 : 10;
++      },
++      resolveVecForElement: () => {
++        throw new Error("a prepared layout must not consult the element compatibility route");
++      },
++    };
++    return { resolver, lookups };
++  };
++
++  it("carrier resolution performs exactly one carrier lookup and no data-array lookup", () => {
++    const { resolver, lookups } = recording();
++    expect(lowerIrTypeToValType(layoutVec, resolver, "f")).toEqual({ kind: "ref_null", typeIdx: 11 });
++    expect(lookups).toEqual(["carrier"]);
++  });
++
++  it("operation resolution preserves the historical carrier, carrier, data order", () => {
++    const { resolver, lookups } = recording();
++    const representation = resolveIrVecRepresentation(
++      { backend: "wasmgc", type: layoutVec, elementValType: { kind: "f64" }, resolver, where: "f" },
++      "operation",
++    );
++    expect(lookups).toEqual(["carrier", "carrier", "data"]);
++    expect(representation).toEqual({
++      kind: "wasmgc",
++      valueType: { kind: "ref_null", typeIdx: 11 },
++      dataType: { kind: "ref", typeIdx: 10 },
++      newFixedScratchType: { kind: "ref_null", typeIdx: 10 },
++      lowering: {
++        valueType: { kind: "ref_null", typeIdx: 11 },
++        vecStructTypeIdx: 11,
++        lengthFieldIdx: 0,
++        dataFieldIdx: 1,
++        arrayTypeIdx: 10,
++        elementValType: { kind: "f64" },
++      },
++    });
++  });
++});
++
++describe("#6920 vector representation — mismatches fail at the resolution boundary", () => {
++  const plan = (() => {
++    const { func, allocations } = vectorIntent();
++    return { func, plan: planLinearMemory({ functions: [func] }, allocations) };
++  })();
++  const genuineLinear = (alloc?: AllocSiteId): LinearVecLowering => {
++    const layout = plan.plan.layoutForVector(F64)!;
++    const allocation = alloc === undefined ? undefined : plan.plan.allocation(alloc);
++    const operations = allocation?.operations ?? defaultOperationsForLayout(layout);
++    const find = (op: string) =>
++      operations.find((candidate) => candidate.family === "vector" && candidate.operation === op)!;
++    return {
++      valueType: { kind: "i32" },
++      elementValType: { kind: "f64" },
++      linearMemory: { allocation, layout, allocate: find("allocate"), initializeElement: find("initialize-element") },
++    };
++  };
++  const gcHandle: IrVecLowering = {
++    vecStructTypeIdx: 1,
++    lengthFieldIdx: 0,
++    dataFieldIdx: 1,
++    arrayTypeIdx: 0,
++    elementValType: { kind: "f64" },
++  };
++  const resolverFor = (handle: IrVecBackendLowering | null, lookups: unknown[] = []) => ({
++    resolveType: (ref: IrTypeRef) => {
++      lookups.push(ref);
++      return 0;
++    },
++    resolveVec: () => handle,
++    resolveVecForElement: () => handle,
++  });
++  const operation = (
++    backend: "wasmgc" | "linear" | "porffor",
++    handle: IrVecBackendLowering | null,
++    type: IrType = VEC_F64,
++    alloc?: AllocSiteId,
++    lookups: unknown[] = [],
++  ) =>
++    resolveIrVecRepresentation(
++      { backend, type, elementValType: { kind: "f64" }, alloc, resolver: resolverFor(handle, lookups), where: "f" },
++      "operation",
++    );
++  const [firstAlloc, secondAlloc] = vecNewFixedAllocs(plan.func);
++
++  it("positive controls: genuine handles resolve for their own backend", () => {
++    const linear = operation("linear", genuineLinear(firstAlloc), VEC_F64, firstAlloc);
++    expect(linear).toMatchObject({
++      kind: "linear-memory",
++      valueType: { kind: "i32" },
++      dataType: { kind: "i32" },
++      newFixedScratchType: { kind: "i32" },
++    });
++    expect(operation("porffor", genuineLinear())?.kind).toBe("linear-memory");
++    expect(operation("wasmgc", gcHandle)).toMatchObject({
++      kind: "wasmgc",
++      newFixedScratchType: { kind: "ref_null", typeIdx: 0 },
++      dataType: { kind: "ref", typeIdx: 0 },
++    });
++    // Physical compatibility route: linear recognizes its i32 carrier.
++    expect(
++      resolveIrVecRepresentation(
++        { backend: "linear", type: I32, resolver: resolverFor(genuineLinear()), where: "f" },
++        "operation",
++      )?.kind,
++    ).toBe("linear-memory");
++  });
++
++  it("linear rejects a GC handle, an intersection handle and a GC layout before symbolic lookup", () => {
++    const lookups: unknown[] = [];
++    expect(() => operation("linear", gcHandle, VEC_F64, undefined, lookups)).toThrow(/vec representation mismatch/);
++    const intersection = { ...gcHandle, ...genuineLinear() } as IrVecBackendLowering;
++    expect(() => operation("linear", intersection)).toThrow(/carries WasmGC field 'vecStructTypeIdx'/);
++    const sourceId = createIrSourceId({ kind: "entry", order: 0, sourceKey: "issue-6920-mismatch.ts" });
++    const layoutVec: IrType = {
++      ...VEC_F64,
++      layout: {
++        carrierType: irSupportTypeRef(sourceId, "vector-carrier", "__c"),
++        dataType: irSupportTypeRef(sourceId, "vector-data", "__d"),
++        lengthFieldIndex: 0,
++        dataFieldIndex: 1,
++      },
++    } as IrType;
++    expect(() => operation("linear", genuineLinear(), layoutVec, undefined, lookups)).toThrow(
++      /WasmGC-prepared vector layout/,
++    );
++    expect(lookups).toEqual([]);
++  });
++
++  it("linear rejects each single GC-only field grafted onto the genuine handle", () => {
++    // Positive control first: the genuine handle itself is accepted.
++    expect(operation("linear", genuineLinear())?.kind).toBe("linear-memory");
++    const lengthOnly = { ...genuineLinear(), lengthFieldIdx: 0 } as unknown as IrVecBackendLowering;
++    expect(() => operation("linear", lengthOnly)).toThrow(/carries WasmGC field 'lengthFieldIdx'/);
++    const dataOnly = { ...genuineLinear(), dataFieldIdx: 1 } as unknown as IrVecBackendLowering;
++    expect(() => operation("linear", dataOnly)).toThrow(/carries WasmGC field 'dataFieldIdx'/);
++    const structOnly = { ...genuineLinear(), vecStructTypeIdx: 0 } as unknown as IrVecBackendLowering;
++    expect(() => operation("linear", structOnly)).toThrow(/carries WasmGC field 'vecStructTypeIdx'/);
++    const arrayOnly = { ...genuineLinear(), arrayTypeIdx: 0 } as unknown as IrVecBackendLowering;
++    expect(() => operation("linear", arrayOnly)).toThrow(/carries WasmGC field 'arrayTypeIdx'/);
++  });
++
++  it("WasmGC rejects a linear handle", () => {
++    expect(() => operation("wasmgc", genuineLinear())).toThrow(/wasmgc backend received a non-WasmGC vector handle/);
++  });
++
++  it("linear rejects a wrong carrier, element, layout geometry and allocation row", () => {
++    const wrongCarrier = { ...genuineLinear(), valueType: { kind: "f64" } } as unknown as LinearVecLowering;
++    expect(() => operation("linear", wrongCarrier)).toThrow(/no i32 carrier/);
++    const wrongElement = { ...genuineLinear(), elementValType: { kind: "i32" } } as LinearVecLowering;
++    expect(() => operation("linear", wrongElement)).toThrow(/does not match f64/);
++    const real = genuineLinear();
++    const wrongStorage = {
++      ...real,
++      linearMemory: { ...real.linearMemory, layout: { ...real.linearMemory.layout, elementStorage: "i32" } },
++    } as LinearVecLowering;
++    expect(() => operation("linear", wrongStorage)).toThrow(/layout stores i32/);
++    expect(firstAlloc).not.toBe(secondAlloc);
++    expect(() => operation("linear", genuineLinear(firstAlloc), VEC_F64, secondAlloc)).toThrow(
++      /was bound for requested site/,
++    );
++    expect(() =>
++      resolveIrVecRepresentation(
++        { backend: "linear", type: F64, resolver: resolverFor(genuineLinear()), where: "f" },
++        "operation",
++      ),
++    ).toThrow(/carried by f64/);
++  });
++
++  it("missing capability stays an unsupported (null) result for the caller's established failure", () => {
++    expect(operation("linear", null)).toBeNull();
++    expect(operation("wasmgc", null)).toBeNull();
++    expect(operation("bytecode" as "linear", genuineLinear())).toBeNull();
++  });
++
++  it("generic lowering fails before emitting any vector primitive on a mismatched handle", () => {
++    const { func } = vectorIntent();
++    const emitted: string[] = [];
++    const emitter = new LinearEmitter({
++      resolveRuntimeOperation: () => {
++        emitted.push("runtime");
++        return 0;
++      },
++    });
++    const resolver: IrLowerResolver = {
++      resolveFunc: () => 0,
++      resolveGlobal: () => 0,
++      resolveType: () => {
++        emitted.push("resolveType");
++        return 0;
++      },
++      internFuncType: () => 0,
++      resolveVec: () => gcHandle,
++      resolveVecForElement: () => gcHandle,
++    };
++    expect(() =>
++      lowerIrFunctionBody(func, resolver, emitter, wasmValueTypeConverter("linear", resolver, func.name)),
++    ).toThrow(/vec representation mismatch/);
++    expect(emitted).toEqual([]);
++  });
++});
++
++describe("#6920 vector representation — outer preflight precedes element conversion", () => {
++  const sourceId = createIrSourceId({ kind: "entry", order: 0, sourceKey: "issue-6920-preflight.ts" });
++  const supportElement = irSupportRef(irSupportTypeRef(sourceId, "vector-element", "__elem"), false);
++  // Linear vec whose OUTER IrType carries a GC layout and whose element is a
++  // ref-typed support type: converting the element first would call resolveType.
++  const gcLayoutVec: IrType = {
++    kind: "vec",
++    elementType: supportElement,
++    nullable: false,
++    layout: {
++      carrierType: irSupportTypeRef(sourceId, "vector-carrier", "__c"),
++      dataType: irSupportTypeRef(sourceId, "vector-data", "__d"),
++      lengthFieldIndex: 0,
++      dataFieldIndex: 1,
++    },
++  };
++  const counting = (): { resolver: IrLowerResolver; calls: string[] } => {
++    const calls: string[] = [];
++    const fail = (name: string) => (): never => {
++      calls.push(name);
++      throw new Error(`unexpected ${name}`);
++    };
++    return {
++      calls,
++      resolver: {
++        resolveFunc: fail("resolveFunc"),
++        resolveGlobal: fail("resolveGlobal"),
++        internFuncType: fail("internFuncType"),
++        resolveType: fail("resolveType"),
++        resolveVec: fail("resolveVec"),
++        resolveVecForElement: fail("resolveVecForElement"),
++      },
++    };
++  };
++
++  it("public converter: lowerIrTypeToValType / wasmValueTypeConverter reject with zero resolver calls", () => {
++    const direct = counting();
++    expect(() => lowerIrTypeToValType(gcLayoutVec, direct.resolver, "f", "linear")).toThrow(
++      /linear backend received a WasmGC-prepared vector layout/,
++    );
++    expect(direct.calls).toEqual([]);
++    const converter = counting();
++    expect(() => wasmValueTypeConverter("linear", converter.resolver, "f").convertType(gcLayoutVec)).toThrow(
++      /linear backend received a WasmGC-prepared vector layout/,
++    );
++    expect(converter.calls).toEqual([]);
++    const porffor = counting();
++    expect(() => lowerIrTypeToValType(gcLayoutVec, porffor.resolver, "f", "porffor")).toThrow(
++      /porffor backend received a WasmGC-prepared vector layout/,
++    );
++    expect(porffor.calls).toEqual([]);
++  });
++
++  const opaqueConverter = {
++    backend: "linear" as const,
++    // Carries a vec as an opaque i32 so parameter projection performs no vector
++    // resolution; only the body's `vec.len` reaches `resolveVecType`.
++    convertType: (type: IrType): readonly ValType[] =>
++      type.kind === "vec" ? [{ kind: "i32" }] : [(type as { val: ValType }).val],
++  };
++  const vecLenOf = (name: string, paramType: IrType): IrFunction => {
++    const fn = new IrFunctionBuilder(identities.next(name), [F64], true);
++    const v = fn.addParam("v", paramType);
++    fn.openBlock();
++    const length = fn.emitVecLen(v);
++    fn.terminate({ kind: "return", values: [length] });
++    return fn.finish();
++  };
++
++  it("generic body route: an f64 vec with an outer GC layout is rejected by the shared preflight, zero calls", () => {
++    const f64LayoutVec: IrType = { ...gcLayoutVec, elementType: F64 } as IrType;
++    const func = vecLenOf("preflightF64", f64LayoutVec);
++    // Backend legality admits f64 vec elements, so lowering reaches resolveVecType.
++    expect(verifyIrBackendLegality(func, "linear")).toEqual([]);
++    const { resolver, calls } = counting();
++    expect(() => lowerIrFunctionBody(func, resolver, new LinearEmitter(), opaqueConverter)).toThrow(
++      /linear backend received a WasmGC-prepared vector layout/,
++    );
++    expect(calls).toEqual([]);
++  });
++
++  it("generic body route: the support-ref-element GC-layout vec never reaches a resolver call", () => {
++    // Linear legality rejects non-f64 vec elements before lowering starts, so the
++    // body route cannot even reach element conversion; the zero-call record is
++    // the observable guarantee on this route.
++    const func = vecLenOf("preflightSupport", gcLayoutVec);
++    const { resolver, calls } = counting();
++    expect(() => lowerIrFunctionBody(func, resolver, new LinearEmitter(), opaqueConverter)).toThrow(
++      /linear backend (legality failed|received a WasmGC-prepared vector layout)/,
++    );
++    expect(calls).toEqual([]);
++  });
++
++  it("GC positives keep the carrier-only and operation lookup order", () => {
++    const sourceRef = createIrSourceId({ kind: "entry", order: 0, sourceKey: "issue-6920-gc-order.ts" });
++    const carrierRef = irSupportTypeRef(sourceRef, "vector-carrier:vec<f64>", "__vec_f64");
++    const dataRef = irSupportTypeRef(sourceRef, "vector-data:vec<f64>", "__arr_f64");
++    const layoutF64: IrType = {
++      kind: "vec",
++      elementType: F64,
++      nullable: false,
++      layout: { carrierType: carrierRef, dataType: dataRef, lengthFieldIndex: 0, dataFieldIndex: 1 },
++    };
++    const lookups: string[] = [];
++    const resolver: IrLowerResolver = {
++      resolveFunc: () => 0,
++      resolveGlobal: () => 0,
++      internFuncType: () => 0,
++      resolveType: (ref: IrTypeRef) => {
++        lookups.push(ref === carrierRef ? "carrier" : ref === dataRef ? "data" : "other");
++        return ref === carrierRef ? 7 : 6;
++      },
++    };
++    expect(wasmValueTypeConverter("wasmgc", resolver, "f").convertType(layoutF64)).toEqual([
++      { kind: "ref", typeIdx: 7 },
++    ]);
++    expect(lookups).toEqual(["carrier"]);
++    lookups.length = 0;
++    expect(
++      resolveIrVecRepresentation(
++        { backend: "wasmgc", type: layoutF64, elementValType: { kind: "f64" }, resolver, where: "f" },
++        "operation",
++      )?.kind,
++    ).toBe("wasmgc");
++    expect(lookups).toEqual(["carrier", "carrier", "data"]);
++  });
++});

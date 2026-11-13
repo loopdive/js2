@@ -19,6 +19,87 @@
  */
 import type { Instr, ValType } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
+import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
+import type { buildThrowJsErrorInstrs } from "./js-errors.js";
+import { addFuncType } from "./registry/types.js";
+
+/** (#6931) The deliberate standalone refusal for loose equality on a host value. */
+const STANDALONE_HOST_EQ_MESSAGE = "Cannot compare a host JavaScript value with == in a standalone module";
+
+/**
+ * (#6931) `__standalone_host_eq_guard(x: externref) -> externref` — identity on
+ * a Wasm-native value, a deliberate TypeError on a HOST value.
+ *
+ * A standalone module has no host imports, so it cannot inspect a value the
+ * embedder passed in raw: a JS string, object, `undefined`, `true` or a heap
+ * number all internalize to the same opaque non-`eq` anyref. §7.2.15 loose
+ * equality needs ToPrimitive / StringToNumber on exactly those values, so every
+ * answer would be a guess (`"1" == 1` is true, `{} == 1` is false — the module
+ * cannot tell them apart). Before this guard `__any_from_extern` filed them as
+ * tag-5 "strings" and `__str_to_number` trapped `illegal cast`, or the guarded
+ * string compare answered a silent `0`.
+ *
+ * "Host value" ≡ non-null externref whose internalized anyref is not `eq`. Every
+ * standalone carrier — `$AnyValue`, `$AnyString`, number/boolean boxes, i31,
+ * structs, arrays — is `eq`; null is native null. Returns undefined (no guard)
+ * off the standalone TARGET (environment "none"), so gc / wasi / native-first
+ * in a JavaScript environment are unchanged.
+ */
+function ensureStandaloneHostEqGuard(
+  ctx: CodegenContext,
+  buildThrow: typeof buildThrowJsErrorInstrs,
+): number | undefined {
+  // Key on the TARGET, not `ctx.standalone`: that flag is the native semantic
+  // regime, also true for `semanticProviders: "native-first"` in a JavaScript
+  // environment, where host values are readable and must not be refused.
+  if (ctx.targetProfile.target !== "standalone") return undefined;
+  const name = "__standalone_host_eq_guard";
+  const existing = ctx.funcMap.get(name);
+  if (existing !== undefined) return existing;
+  // Register the in-module TypeError constructor + message BEFORE minting, so
+  // the guard's own handle is not interleaved with the constructor's.
+  const throwInstrs = buildThrow(ctx, "TypeError", STANDALONE_HOST_EQ_MESSAGE);
+  const typeIdx = addFuncType(ctx, [{ kind: "externref" }], [{ kind: "externref" }], name);
+  const funcIdx = mintDefinedFunc(ctx);
+  const returnArg: Instr[] = [{ op: "local.get", index: 0 }, { op: "return" }];
+  pushDefinedFunc(ctx, funcIdx, {
+    name,
+    typeIdx,
+    locals: [],
+    body: [
+      { op: "local.get", index: 0 },
+      { op: "ref.is_null" },
+      { op: "if", blockType: { kind: "empty" }, then: returnArg },
+      { op: "local.get", index: 0 },
+      { op: "any.convert_extern" },
+      { op: "ref.test", typeIdx: -19 }, // eq
+      { op: "if", blockType: { kind: "empty" }, then: structuredClone(returnArg) },
+      ...throwInstrs,
+    ],
+    exported: false,
+  });
+  ctx.funcMap.set(name, funcIdx);
+  return funcIdx;
+}
+
+/** (#6931) Run `$AnyValue` operand `opIdx`'s externval (field 4) through the guard. */
+function anyOperandHostGuard(anyTypeIdx: number, guardIdx: number, opIdx: number): Instr[] {
+  return [
+    { op: "local.get", index: opIdx },
+    { op: "ref.is_null" },
+    { op: "i32.eqz" },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        { op: "local.get", index: opIdx },
+        { op: "struct.get", typeIdx: anyTypeIdx, fieldIdx: 4 },
+        { op: "call", funcIdx: guardIdx },
+        { op: "drop" },
+      ],
+    },
+  ];
+}
 
 /** The `ensureAnyHelpers` `addHelper` closure, threaded in as a callback. */
 type AddHelper = (
@@ -43,8 +124,25 @@ export function registerAnyEqHelpers(
   strToNumIdx: number,
   tag5ToNumber: (opIdx: number) => Instr[],
   tag5ValueEqThen: () => Instr[],
+  // (#6931) injected so this module keeps type-only imports (import-cycle ratchet)
+  buildThrow: typeof buildThrowJsErrorInstrs,
 ): void {
-  registerAnyLooseEqHelper(addHelper, anyRefNull, anyTypeIdx, toF64Idx, strToNumIdx, tag5ToNumber, tag5ValueEqThen);
+  // (#6931) Standalone only: refuse a host value before any loose-eq arm reads it.
+  const guardIdx = ensureStandaloneHostEqGuard(ctx, buildThrow);
+  const hostGuard: Instr[] =
+    guardIdx === undefined
+      ? []
+      : [...anyOperandHostGuard(anyTypeIdx, guardIdx, 0), ...anyOperandHostGuard(anyTypeIdx, guardIdx, 1)];
+  registerAnyLooseEqHelper(
+    addHelper,
+    anyRefNull,
+    anyTypeIdx,
+    toF64Idx,
+    strToNumIdx,
+    tag5ToNumber,
+    tag5ValueEqThen,
+    hostGuard,
+  );
   registerAnyStrictEqAndComparisonHelpers(ctx, addHelper, anyRefNull, anyTypeIdx, toF64Idx, tag5ValueEqThen);
 }
 
@@ -57,6 +155,7 @@ function registerAnyLooseEqHelper(
   strToNumIdx: number,
   tag5ToNumber: (opIdx: number) => Instr[],
   tag5ValueEqThen: () => Instr[],
+  hostGuard: Instr[],
 ): void {
   // __any_eq(a, b) -> i32
   // Same tag: compare values. Different tag: return 0.
@@ -65,6 +164,7 @@ function registerAnyLooseEqHelper(
     [anyRefNull, anyRefNull],
     [{ kind: "i32" }],
     [
+      ...hostGuard, // (#6931) standalone: deliberate TypeError on a host operand
       // Fast path: if both refs point to the same AnyValue struct, they are equal.
       { op: "local.get", index: 0 },
       { op: "local.get", index: 1 },

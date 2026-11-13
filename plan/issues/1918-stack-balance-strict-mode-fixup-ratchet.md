@@ -136,6 +136,25 @@ pre-existing failures in `tests/stack-balance.test.ts` (try/catch/finally) and
 the 4 pre-existing `tests/equivalence/` IR-path "duplicate SSA def" failures
 reproduce identically on `origin/main` source, so they are not introduced here.
 
+### 2026-10-18 native-first default rebank (#6708)
+
+S6 changed the omitted semantic-provider policy, so this default-profile
+corpus began measuring provider code that had previously been exercised only
+when native-first was selected explicitly. A same-tree policy A/B reproduced
+the prior baseline under explicit host-assisted (`drop-excess=0`,
+`default-value-lossy=43`, `call-arg-coerce=1`) and the new result under
+explicit native-first (`11`, `57`, `1248`); all other buckets stayed zero.
+The latter counts were therefore inherited native-provider repairs, not new
+repair sites introduced by the default flip.
+
+The documented `--update` flow rebanked the ratchet to the native-first
+totals. This does **not** certify those fixups as correct: 11 drops, 57 lossy
+defaults and 1,248 argument coercions are now the Phase 2 burn-down floor.
+CI continues to reject any bucket increase, and future native-provider work
+should use `--update-on-decrease` to bank every reduction. Pinning the probe
+to host-assisted would have hidden the codegen path users now receive by
+default and would become vacuous when S7 removes that profile.
+
 ### Deferred to follow-up (Phase 2)
 
 Burn down the top buckets at the producing emitter and, once a kind hits zero,

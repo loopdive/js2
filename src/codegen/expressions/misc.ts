@@ -21,10 +21,10 @@ import {
 import type { InnerResult } from "../shared.js";
 import { coerceType, compileExpression, ensureLateImport, flushLateImportShifts, valTypesMatch } from "../shared.js";
 import { evaluateConstantCondition } from "../statements/control-flow.js";
-import { usesHostBigIntCarrier } from "../host-bigint-carrier.js";
 import { nearestDeclaredStructCommonAncestor } from "../struct-hierarchy-layout.js";
 // (#5271 step 5, B3) A constant fold must not erase a TDZ throw.
 import { analyzeTdzAccess, topLevelConstInitializedBeforeAnyUserCode } from "./identifiers.js";
+import { bindingIsSingleAssignment } from "../single-assignment-binding.js";
 
 // Re-export for backward compatibility — these helpers now live in property-access.ts.
 export { getIteratorResultValueType, isGeneratorIteratorResultLike, resolveStructName, resolveStructNameForExpr };
@@ -44,16 +44,11 @@ function compileConditionalExpression(
   expr: ts.ConditionalExpression,
   expectedType?: ValType,
 ): ValType | null {
-  const hostBigIntExpected = (branch: ts.Expression): ValType | undefined => {
-    if (!usesHostBigIntCarrier(ctx)) return undefined;
-    return ctx.oracle.staticJsTypeOf(branch) === "bigint" ? { kind: "externref" } : undefined;
-  };
-
   // Constant-folding: if the condition is a compile-time constant, emit only the taken branch.
   const constResult = evaluateConstantCondition(expr.condition);
   if (constResult !== undefined) {
     const branch = constResult ? expr.whenTrue : expr.whenFalse;
-    return compileExpression(ctx, fctx, branch, hostBigIntExpected(branch));
+    return compileExpression(ctx, fctx, branch);
   }
 
   const condType = compileExpression(ctx, fctx, expr.condition);
@@ -65,7 +60,7 @@ function compileConditionalExpression(
   }
 
   const savedBody = pushBody(fctx);
-  const thenResultType = compileExpression(ctx, fctx, expr.whenTrue, hostBigIntExpected(expr.whenTrue));
+  const thenResultType = compileExpression(ctx, fctx, expr.whenTrue);
   // If the then-branch is void (no value on stack), push a default value
   // so the ternary has a consistent result. JS treats void as undefined → NaN for numbers.
   if (!thenResultType) {
@@ -80,7 +75,7 @@ function compileConditionalExpression(
   // function after the else branch pulled in a helper.
   fctx.savedBodies.push(thenInstrs);
   fctx.body = [];
-  const elseResultType = compileExpression(ctx, fctx, expr.whenFalse, hostBigIntExpected(expr.whenFalse));
+  const elseResultType = compileExpression(ctx, fctx, expr.whenFalse);
   if (!elseResultType) {
     fctx.body.push({ op: "f64.const", value: NaN });
   }
@@ -521,15 +516,17 @@ export function tryStaticToNumber(
     if (ts.isStringLiteral(obj) || ts.isNoSubstitutionTemplateLiteral(obj)) {
       return obj.text.length;
     }
-    // Also resolve through const variables: const s = "hello"; s.length → 5
+    // Also resolve through a binding whose value IS its initializer:
+    // `const s = "hello"; s.length` → 5. (#7097) Only a `const`, or a
+    // `let`/`var` that is never written after its initializer: the arm used to
+    // take any variable's initializer, so `let s = "a"; s += "bc"; s.length * 10`
+    // folded to 10 on every direct-AST function (every async function).
     if (ts.isIdentifier(obj)) {
-      const sym = ctx.checker.getSymbolAtLocation(obj);
-      const decl = sym?.valueDeclaration;
-      if (decl && ts.isVariableDeclaration(decl) && decl.initializer) {
-        const init = decl.initializer;
-        if (ts.isStringLiteral(init) || ts.isNoSubstitutionTemplateLiteral(init)) {
-          return init.text.length;
-        }
+      const init =
+        ctx.oracle.constInitializerOf(obj) ??
+        (bindingIsSingleAssignment(ctx, obj) ? ctx.oracle.variableInitializerOf(obj) : undefined);
+      if (init && (ts.isStringLiteral(init) || ts.isNoSubstitutionTemplateLiteral(init))) {
+        return init.text.length;
       }
     }
   }

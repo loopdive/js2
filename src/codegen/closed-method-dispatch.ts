@@ -47,7 +47,8 @@ import {
   undefinedExternInstrs,
 } from "./any-helpers.js";
 import { collectClosureBaseWrapperTypeIdxs } from "./closure-classifier.js"; // (#3125) IsCallable arms
-import type { CodegenContext, OptionalParamInfo } from "./context/types.js";
+import type { CodegenContext, OptionalParamInfo, RestParamInfo } from "./context/types.js";
+import { restDispatchInfo, restVecArgInstrs } from "./object-model/closed-dispatch-rest-arm.js"; // (#7021)
 import { classMemberFuncKey } from "./class-member-keys.js";
 import {
   DYN_ARRAY_PRODUCER_METHODS,
@@ -70,7 +71,8 @@ import { addFuncType, getOrRegisterVecBaseType } from "./registry/types.js";
 import { addUnionImportsViaRegistry } from "./shared.js";
 import { ensureArgcGlobal } from "./statements/nested-declarations.js"; // (#3673 round 13) direct-call argc preset
 import { CLOSURE_ARITY_FIELD_IDX, getFuncRefWrapperRootTypeIdx } from "./closures/funcref-wrapper-types.js"; // (#3673 round 13) under-application gate
-import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#1916 S2 read chokepoint / S3b stable-regime minting)
+import { definedFuncAt, mintDefinedFunc, ownedHelperHandle, pushDefinedFunc } from "./func-space.js"; // (#1916 S2 read chokepoint / S3b stable-regime minting)
+import { dataViewAccessorFn } from "../shared/contracts/native-buffer-adapters.js";
 import { wrapClosureCallFastArm } from "./closure-call-fast.js"; // (#4185) closure-receiver fast `.call` arm
 import { buildFnctorArrayHofTargetTest } from "./fnctor-array-prototype.js";
 import { reserveVecMethodHelper, resolveVecHostBridgeHelper } from "./vec-access-exports.js";
@@ -602,6 +604,8 @@ type MethodEntry = {
   hostDynamic: boolean;
   /** (#6693) Standalone stand-ins for omitted formals, by param index. */
   absentPads: Map<number, Instr[]> | null;
+  /** (#7021) Rest ABI the fixed-arity arm packs extra arguments into. */
+  restAbi?: RestParamInfo;
 };
 
 /**
@@ -657,17 +661,21 @@ function collectMethodEntries(ctx: CodegenContext, methodName: string, exactArit
       return type?.kind === "f64"; // the one lane with an absence sentinel
     };
     let absentPads: Map<number, Instr[]> | null = null;
+    // (#7021) With a rest formal only the formals before it are positional; `buildEntryArm` packs the rest.
+    const rest = exactArity !== null ? restDispatchInfo(ctx, fullName, paramTypes) : null;
+    const positional = rest ? paramTypes.slice(0, rest.restIndex) : paramTypes;
     if (exactArity !== null) {
       const covered =
-        paramTypes.length >= exactArity &&
-        (hostDynamic || paramTypes.slice(exactArity).every((type, i) => canSynthesizeOmitted(exactArity + i, type)));
+        (rest !== null || paramTypes.length >= exactArity) &&
+        (hostDynamic || positional.slice(exactArity).every((type, i) => canSynthesizeOmitted(exactArity + i, type)));
       // (#6693) Standalone JS call arity: pad omitted formals, drop extras.
-      if (!covered) absentPads = standaloneDispatchArityPads(ctx, fullName, paramTypes, optionalParams, exactArity);
+      if (!covered) absentPads = standaloneDispatchArityPads(ctx, fullName, positional, optionalParams, exactArity);
       if (!covered && !absentPads) continue;
     }
     if (funcType.params.length < 1) continue;
     const resultType: ValType = funcType.results.length > 0 ? funcType.results[0]! : { kind: "externref" };
     entries.push({ structName, typeIdx, funcIdx, paramTypes, resultType, optionalParams, hostDynamic, absentPads });
+    if (rest) entries[entries.length - 1]!.restAbi = rest; // (#7021)
   }
   return entries;
 }
@@ -737,6 +745,11 @@ function buildEntryArm(
   ];
   for (let a = 0; a < entry.paramTypes.length; a++) {
     const want = entry.paramTypes[a] ?? { kind: "externref" };
+    if (entry.restAbi?.restIndex === a && providedArity !== null) {
+      const coerce = (elem: ValType) => externArgCoercionInstrs(ci, elem, false, allowObjectCoercion);
+      arm.push(...restVecArgInstrs(entry.restAbi, providedArity, pushArg, coerce));
+      continue;
+    }
     const missing = providedArity !== null && a >= providedArity;
     if (missing) {
       const opt = entry.optionalParams.find((candidate) => candidate.index === a);
@@ -793,6 +806,21 @@ function buildEntryArm(
  * method funcs are registered, and after `addUnionImports` (so
  * `__box_number`/`__box_boolean` exist). No-op when nothing was reserved.
  */
+/**
+ * (#6962) `∨ ref.test $__fnctor_*` terms for the #2903 iterator arms' "not an
+ * iterator" test: a raw `new F()` carrier is a plain object whose methods live
+ * on `F.prototype` (reached via `__extern_method_call`), never an iterator —
+ * else Octane splay's `splayTree.find(key)` ran `__iter_hof_find` → undefined.
+ */
+function fnctorNotIterTest(ctx: CodegenContext, anyLocalIdx: number): Instr[] {
+  const test: Instr[] = [];
+  for (const [name, typeIdx] of ctx.structMap) {
+    if (!name.startsWith("__fnctor_")) continue;
+    test.push({ op: "local.get", index: anyLocalIdx }, { op: "ref.test", typeIdx }, { op: "i32.or" });
+  }
+  return test;
+}
+
 export function fillClosedMethodDispatch(ctx: CodegenContext): void {
   const mod = ctx.mod;
   const ci: CoerceIdxs = buildCoerceIdxs(ctx);
@@ -1001,6 +1029,7 @@ export function fillClosedMethodDispatch(ctx: CodegenContext): void {
             { op: "i32.or" },
           );
         }
+        notIterTest.push(...fnctorNotIterTest(ctx, anyLocalIdx)); // (#6962)
         current = [
           ...notIterTest,
           {
@@ -1072,6 +1101,7 @@ export function fillClosedMethodDispatch(ctx: CodegenContext): void {
             { op: "i32.or" },
           );
         }
+        notIterTest.push(...fnctorNotIterTest(ctx, anyLocalIdx)); // (#6962)
         current = [
           ...notIterTest,
           {
@@ -1763,7 +1793,7 @@ export function fillClosedMethodDispatch(ctx: CodegenContext): void {
     // still wins); a `$__dv_window` can never match a closed-struct arm, so the
     // relative order is behavior-neutral there. Standalone/wasi only.
     {
-      const dvHelperIdx = ctx.funcMap.get(`__dv_m_${methodName}`);
+      const dvHelperIdx = ownedHelperHandle(ctx, dataViewAccessorFn(methodName));
       if ((ctx.standalone || ctx.wasi) && dvHelperIdx !== undefined && ctx.dvWindowTypeIdx >= 0) {
         // Helper signature: recv + (get → offset, le | set → offset, value, le).
         const helperArgs = methodName.startsWith("get") ? 2 : 3;

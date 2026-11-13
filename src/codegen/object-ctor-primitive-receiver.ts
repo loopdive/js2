@@ -191,17 +191,6 @@ export function objectCoercionObjectArgumentOf(
   return isObjectLikeFact(ctx.oracle.typeFactOf(argument)) ? argument : undefined;
 }
 
-/** The BigInt argument wrapped by an ambient `Object(value)` coercion. */
-export function objectCoercionBigIntArgumentOf(
-  ctx: CodegenContext,
-  recvExpr: ts.Expression,
-): ts.Expression | undefined {
-  const producer = traceToProducer(ctx, recvExpr);
-  if (producer === undefined) return undefined;
-  const argument = objectCoercionArgument(ctx, producer);
-  return argument !== undefined && ctx.oracle.staticJsTypeOf(argument) === "bigint" ? argument : undefined;
-}
-
 /** Whether a TypeOracle fact proves a value is already an object identity. */
 export function isObjectLikeFact(fact: TypeFact): boolean {
   if (fact.kind === "union") return fact.parts.length > 0 && fact.parts.every(isObjectLikeFact);

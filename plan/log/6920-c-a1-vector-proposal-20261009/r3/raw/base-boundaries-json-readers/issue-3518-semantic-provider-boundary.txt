@@ -1,0 +1,1412 @@
+
+ RUN  v3.2.7 /home/user/js2/.claude/worktrees/agent-a774506d6593a2d93
+
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > pins the original 70 modules plus seven Promise/vector and five string/error owners without relaxing historical policy 24ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > loads the complete actual canonical type-and-value closure 7ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > refuses an omitted current remainder leaf at both actual import sites and restores a fresh healthy graph 5ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects bypass of the actual input-to-source-map-validator dependency 5ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects delete corruption of the independently pinned twelve-record prefix 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects reorder corruption of the independently pinned twelve-record prefix 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects layer corruption of the independently pinned twelve-record prefix 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects entries corruption of the independently pinned twelve-record prefix 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects minimum corruption of the independently pinned twelve-record prefix 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects extra corruption of the independently pinned twelve-record prefix 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects a changed primitive composition record 81 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects a changed primitive composition record 82 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects a changed primitive composition record 83 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects a changed primitive composition record 84 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects changed merged invocation record 85 4ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects changed merged invocation record 86 4ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects changed merged invocation record 87 7ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects changed source contract activation 88 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects changed source contract activation 89 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects changed source contract activation 90 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ ✓ tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > keeps the actual declaration contract erased and model-only 20ms
+ ✓ tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects declaration-contract coupling: import { extra } from "../../../wasm/model/instructions.js"; 12ms
+ ✓ tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects declaration-contract coupling: import type { Extra } from "../../../wasm/physical/module-reservations.js"; 11ms
+ ✓ tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects declaration-contract coupling: export type Extra = import("../../../wasm/physical/module-reservations.js").TypeReservation; 14ms
+ ✓ tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects declaration-contract coupling: export const runtimeValue = 1; 16ms
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects 'delete' corruption of formatter activation record +0 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects 'reorder' corruption of formatter activation record +0 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects 'layer' corruption of formatter activation record +0 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects 'entries' corruption of formatter activation record +0 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects 'minimum' corruption of formatter activation record +0 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects 'delete' corruption of formatter activation record 1 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects 'reorder' corruption of formatter activation record 1 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects 'layer' corruption of formatter activation record 1 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects 'entries' corruption of formatter activation record 1 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects 'minimum' corruption of formatter activation record 1 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects 'delete' corruption of formatter activation record 2 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects 'reorder' corruption of formatter activation record 2 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects 'layer' corruption of formatter activation record 2 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects 'entries' corruption of formatter activation record 2 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects 'minimum' corruption of formatter activation record 2 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects delete corruption of the new activation records 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects reorder corruption of the new activation records 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects layer corruption of the new activation records 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects entries corruption of the new activation records 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects minimum corruption of the new activation records 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects 'delete' corruption of the 'published backend' activation record 4ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects 'reorder' corruption of the 'published backend' activation record 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects 'layer' corruption of the 'published backend' activation record 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects 'entries' corruption of the 'published backend' activation record 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects 'minimum' corruption of the 'published backend' activation record 5ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects 'delete' corruption of the 'published demand' activation record 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects 'reorder' corruption of the 'published demand' activation record 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects 'layer' corruption of the 'published demand' activation record 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects 'entries' corruption of the 'published demand' activation record 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects 'minimum' corruption of the 'published demand' activation record 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects 'delete' corruption of the 'refreshed parent' activation record 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects 'reorder' corruption of the 'refreshed parent' activation record 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects 'layer' corruption of the 'refreshed parent' activation record 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects 'entries' corruption of the 'refreshed parent' activation record 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects 'minimum' corruption of the 'refreshed parent' activation record 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects 'delete' corruption of original prerequisite activation records at +0 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects 'reorder' corruption of original prerequisite activation records at +0 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects 'layer' corruption of original prerequisite activation records at +0 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects 'entries' corruption of original prerequisite activation records at +0 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects 'minimum' corruption of original prerequisite activation records at +0 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects 'delete' corruption of original prerequisite activation records at 2 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects 'reorder' corruption of original prerequisite activation records at 2 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects 'layer' corruption of original prerequisite activation records at 2 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects 'entries' corruption of original prerequisite activation records at 2 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects 'minimum' corruption of original prerequisite activation records at 2 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects 'delete' corruption of original prerequisite activation records at 9 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects 'reorder' corruption of original prerequisite activation records at 9 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects 'layer' corruption of original prerequisite activation records at 9 7ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects 'entries' corruption of original prerequisite activation records at 9 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects 'minimum' corruption of original prerequisite activation records at 9 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects an upward runtime dependency from the native string/value aggregate 4ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects deleting src/ir/core/intrinsic-contracts.ts and its classification 4ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects deleting src/ir/core/intrinsics.ts and its classification 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects deleting src/ir/core/callable-bindings.ts and its classification 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects deleting src/ir/analysis/effects.ts and its classification 6ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects deleting src/ir/analysis/intrinsics.ts and its classification 6ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects deleting src/ir/analysis/async-plan.ts and its classification 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects deleting src/ir/runtime/host-capabilities.ts and its classification 4ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects deleting src/ir/runtime/async-providers.ts and its classification 4ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects deleting src/ir/runtime/callable-declarations.ts and its classification 4ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects deleting src/ir/runtime/manifest.ts and its classification 4ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects deleting src/ir/runtime/async-attachment.ts and its classification 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects deleting src/ir/runtime/intrinsic-verification.ts and its classification 4ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects deleting src/wasm/model/module-records.ts and its classification 4ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects deleting src/wasm/physical/function-types.ts and its classification 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects deleting src/wasm/physical/module-reservations.ts and its classification 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects deleting src/runtime/wasmgc/promise/settlement-bodies.ts and its classification 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects deleting src/runtime/wasmgc/async/frame-engine.ts and its classification 4ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects deleting src/runtime/wasmgc/async/native-await.ts and its classification 4ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects deleting src/wasm/physical/exception-control.ts and its classification 4ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects deleting src/runtime/wasmgc/promise/delay-bodies.ts and its classification 7ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects deleting src/runtime/wasmgc/promise/combinator-bodies.ts and its classification 4ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects deleting src/wasm/physical/type-layout.ts and its classification 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects deleting src/ir/core/async-callables.ts and its classification 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects deleting src/ir/runtime/native-async-callables.ts and its classification 4ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects deleting src/ir/core/vector-runtime.ts and its classification 4ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects deleting src/ir/runtime/vector-callables.ts and its classification 4ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects deleting src/ir/program/native-vector-resources.ts and its classification 4ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects deleting src/runtime/wasmgc/values/vector-grow-store.ts and its classification 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects deleting src/backend/wasmgc/resources/native-vectors.ts and its classification 4ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects deleting src/runtime/wasmgc/promise/resolution-bodies.ts and its classification 4ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects deleting src/runtime/wasmgc/promise/thenable-bodies.ts and its classification 6ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects deleting src/ir/program/native-promise-resources.ts and its classification 4ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects deleting src/backend/wasmgc/resources/native-promises.ts and its classification 4ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects deleting src/runtime/wasmgc/values/string-layouts.ts and its classification 4ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects deleting src/runtime/wasmgc/values/string-literal-bodies.ts and its classification 5ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects deleting src/runtime/wasmgc/values/error-bodies.ts and its classification 4ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects deleting src/backend/wasmgc/resources/native-string-literals.ts and its classification 4ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects deleting src/backend/wasmgc/resources/native-errors.ts and its classification 4ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects deleting src/ir/program/native-value-resources.ts and its classification 4ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects deleting src/runtime/wasmgc/values/primitive-layouts.ts and its classification 4ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects deleting src/runtime/wasmgc/values/number-bodies.ts and its classification 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects deleting src/backend/wasmgc/resources/native-values.ts and its classification 4ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects deleting src/wasm/model/instruction-walk.ts and its classification 7ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects deleting src/runtime/wasmgc/values/string-number-grammar.ts and its classification 4ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects deleting src/runtime/wasmgc/values/decimal-scale-bodies.ts and its classification 4ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects deleting src/runtime/wasmgc/values/string-number-bodies.ts and its classification 4ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects deleting src/runtime/wasmgc/values/string-flatten-bodies.ts and its classification 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects deleting src/runtime/wasmgc/values/string-utf8-decode-bodies.ts and its classification 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects deleting src/backend/wasmgc/resources/native-string-number.ts and its classification 4ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects deleting src/backend/wasmgc/resources/native-string-flatten.ts and its classification 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects deleting src/ir/program/native-string-value-demands.ts and its classification 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects deleting src/runtime/wasmgc/values/argument-vector-bodies.ts and its classification 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects deleting src/backend/wasmgc/resources/native-argument-vectors.ts and its classification 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects deleting src/runtime/wasmgc/values/closure-layouts.ts and its classification 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects deleting src/backend/wasmgc/resources/native-closures.ts and its classification 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects deleting src/runtime/wasmgc/values/native-resource-declaration-types.ts and its classification 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects deleting src/backend/wasmgc/resources/native-resource-declarations.ts and its classification 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects deleting src/backend/wasmgc/program/native-string-values.ts and its classification 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects deleting src/frontend/builtins/contracts.ts and its classification 6ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects deleting src/ir/core/type-references.ts and its classification 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects deleting src/ir/program/runtime-support.ts and its classification 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects deleting src/ir/program/formatter-support.ts and its classification 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/ir/core/intrinsic-contracts.ts 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/ir/core/intrinsics.ts 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/ir/core/callable-bindings.ts 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/ir/analysis/effects.ts 6ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/ir/analysis/intrinsics.ts 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/ir/analysis/async-plan.ts 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/ir/runtime/host-capabilities.ts 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/ir/runtime/async-providers.ts 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/ir/runtime/callable-declarations.ts 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/ir/runtime/manifest.ts 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/ir/runtime/async-attachment.ts 4ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/ir/runtime/intrinsic-verification.ts 5ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/wasm/model/module-records.ts 4ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/wasm/physical/function-types.ts 4ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/wasm/physical/module-reservations.ts 4ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/runtime/wasmgc/promise/settlement-bodies.ts 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/runtime/wasmgc/async/frame-engine.ts 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/runtime/wasmgc/async/native-await.ts 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/wasm/physical/exception-control.ts 4ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/runtime/wasmgc/promise/delay-bodies.ts 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/runtime/wasmgc/promise/combinator-bodies.ts 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/wasm/physical/type-layout.ts 4ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/ir/core/async-callables.ts 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/ir/runtime/native-async-callables.ts 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/ir/core/vector-runtime.ts 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/ir/runtime/vector-callables.ts 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/ir/program/native-vector-resources.ts 7ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/runtime/wasmgc/values/vector-grow-store.ts 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/backend/wasmgc/resources/native-vectors.ts 4ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/runtime/wasmgc/promise/resolution-bodies.ts 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/runtime/wasmgc/promise/thenable-bodies.ts 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/ir/program/native-promise-resources.ts 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/backend/wasmgc/resources/native-promises.ts 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/runtime/wasmgc/values/string-layouts.ts 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/runtime/wasmgc/values/string-literal-bodies.ts 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/runtime/wasmgc/values/error-bodies.ts 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/backend/wasmgc/resources/native-string-literals.ts 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/backend/wasmgc/resources/native-errors.ts 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/ir/program/native-value-resources.ts 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/runtime/wasmgc/values/primitive-layouts.ts 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/runtime/wasmgc/values/number-bodies.ts 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/backend/wasmgc/resources/native-values.ts 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/wasm/model/instruction-walk.ts 4ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/runtime/wasmgc/values/string-number-grammar.ts 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/runtime/wasmgc/values/decimal-scale-bodies.ts 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/runtime/wasmgc/values/string-number-bodies.ts 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/runtime/wasmgc/values/string-flatten-bodies.ts 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/runtime/wasmgc/values/string-utf8-decode-bodies.ts 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/backend/wasmgc/resources/native-string-number.ts 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/backend/wasmgc/resources/native-string-flatten.ts 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/ir/program/native-string-value-demands.ts 6ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/runtime/wasmgc/values/argument-vector-bodies.ts 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/backend/wasmgc/resources/native-argument-vectors.ts 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/runtime/wasmgc/values/closure-layouts.ts 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/backend/wasmgc/resources/native-closures.ts 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/runtime/wasmgc/values/native-resource-declaration-types.ts 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/backend/wasmgc/resources/native-resource-declarations.ts 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/backend/wasmgc/program/native-string-values.ts 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/ir/core/type-references.ts 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/ir/program/runtime-support.ts 5ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/ir/program/formatter-support.ts 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects a backend implementation dependency from the frontend formatter contract 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unknownEdges from src/ir/core/intrinsic-contracts.ts instead of treating it as closed 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unknownEdges from src/ir/core/intrinsics.ts instead of treating it as closed 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unknownEdges from src/ir/core/callable-bindings.ts instead of treating it as closed 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unknownEdges from src/ir/analysis/effects.ts instead of treating it as closed 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unknownEdges from src/ir/analysis/intrinsics.ts instead of treating it as closed 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unknownEdges from src/ir/analysis/async-plan.ts instead of treating it as closed 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unknownEdges from src/ir/runtime/host-capabilities.ts instead of treating it as closed 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unknownEdges from src/ir/runtime/async-providers.ts instead of treating it as closed 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unknownEdges from src/ir/runtime/callable-declarations.ts instead of treating it as closed 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unknownEdges from src/ir/runtime/manifest.ts instead of treating it as closed 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unknownEdges from src/ir/runtime/async-attachment.ts instead of treating it as closed 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unknownEdges from src/ir/runtime/intrinsic-verification.ts instead of treating it as closed 5ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unknownEdges from src/wasm/model/module-records.ts instead of treating it as closed 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unknownEdges from src/wasm/physical/function-types.ts instead of treating it as closed 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unknownEdges from src/wasm/physical/module-reservations.ts instead of treating it as closed 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unknownEdges from src/runtime/wasmgc/promise/settlement-bodies.ts instead of treating it as closed 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unknownEdges from src/runtime/wasmgc/async/frame-engine.ts instead of treating it as closed 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unknownEdges from src/runtime/wasmgc/async/native-await.ts instead of treating it as closed 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unknownEdges from src/wasm/physical/exception-control.ts instead of treating it as closed 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unknownEdges from src/runtime/wasmgc/promise/delay-bodies.ts instead of treating it as closed 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unknownEdges from src/runtime/wasmgc/promise/combinator-bodies.ts instead of treating it as closed 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unknownEdges from src/wasm/physical/type-layout.ts instead of treating it as closed 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unknownEdges from src/ir/core/async-callables.ts instead of treating it as closed 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unknownEdges from src/ir/runtime/native-async-callables.ts instead of treating it as closed 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unknownEdges from src/ir/core/vector-runtime.ts instead of treating it as closed 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unknownEdges from src/ir/runtime/vector-callables.ts instead of treating it as closed 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unknownEdges from src/ir/program/native-vector-resources.ts instead of treating it as closed 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unknownEdges from src/runtime/wasmgc/values/vector-grow-store.ts instead of treating it as closed 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unknownEdges from src/backend/wasmgc/resources/native-vectors.ts instead of treating it as closed 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unknownEdges from src/runtime/wasmgc/promise/resolution-bodies.ts instead of treating it as closed 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unknownEdges from src/runtime/wasmgc/promise/thenable-bodies.ts instead of treating it as closed 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unknownEdges from src/ir/program/native-promise-resources.ts instead of treating it as closed 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unknownEdges from src/backend/wasmgc/resources/native-promises.ts instead of treating it as closed 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unknownEdges from src/runtime/wasmgc/values/string-layouts.ts instead of treating it as closed 5ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unknownEdges from src/runtime/wasmgc/values/string-literal-bodies.ts instead of treating it as closed 6ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unknownEdges from src/runtime/wasmgc/values/error-bodies.ts instead of treating it as closed 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unknownEdges from src/backend/wasmgc/resources/native-string-literals.ts instead of treating it as closed 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unknownEdges from src/backend/wasmgc/resources/native-errors.ts instead of treating it as closed 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unknownEdges from src/ir/program/native-value-resources.ts instead of treating it as closed 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unknownEdges from src/runtime/wasmgc/values/primitive-layouts.ts instead of treating it as closed 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unknownEdges from src/runtime/wasmgc/values/number-bodies.ts instead of treating it as closed 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unknownEdges from src/backend/wasmgc/resources/native-values.ts instead of treating it as closed 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unknownEdges from src/wasm/model/instruction-walk.ts instead of treating it as closed 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unknownEdges from src/runtime/wasmgc/values/string-number-grammar.ts instead of treating it as closed 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unknownEdges from src/runtime/wasmgc/values/decimal-scale-bodies.ts instead of treating it as closed 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unknownEdges from src/runtime/wasmgc/values/string-number-bodies.ts instead of treating it as closed 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unknownEdges from src/runtime/wasmgc/values/string-flatten-bodies.ts instead of treating it as closed 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unknownEdges from src/runtime/wasmgc/values/string-utf8-decode-bodies.ts instead of treating it as closed 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unknownEdges from src/backend/wasmgc/resources/native-string-number.ts instead of treating it as closed 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unknownEdges from src/backend/wasmgc/resources/native-string-flatten.ts instead of treating it as closed 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unknownEdges from src/ir/program/native-string-value-demands.ts instead of treating it as closed 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unknownEdges from src/runtime/wasmgc/values/argument-vector-bodies.ts instead of treating it as closed 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unknownEdges from src/backend/wasmgc/resources/native-argument-vectors.ts instead of treating it as closed 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unknownEdges from src/runtime/wasmgc/values/closure-layouts.ts instead of treating it as closed 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unknownEdges from src/backend/wasmgc/resources/native-closures.ts instead of treating it as closed 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unknownEdges from src/runtime/wasmgc/values/native-resource-declaration-types.ts instead of treating it as closed 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unknownEdges from src/backend/wasmgc/resources/native-resource-declarations.ts instead of treating it as closed 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unknownEdges from src/backend/wasmgc/program/native-string-values.ts instead of treating it as closed 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unknownEdges from src/frontend/builtins/contracts.ts instead of treating it as closed 6ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unknownEdges from src/ir/core/type-references.ts instead of treating it as closed 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unknownEdges from src/ir/program/runtime-support.ts instead of treating it as closed 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unknownEdges from src/ir/program/formatter-support.ts instead of treating it as closed 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unresolvedEdges from src/ir/core/intrinsic-contracts.ts instead of treating it as closed 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unresolvedEdges from src/ir/core/intrinsics.ts instead of treating it as closed 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unresolvedEdges from src/ir/core/callable-bindings.ts instead of treating it as closed 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unresolvedEdges from src/ir/analysis/effects.ts instead of treating it as closed 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unresolvedEdges from src/ir/analysis/intrinsics.ts instead of treating it as closed 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unresolvedEdges from src/ir/analysis/async-plan.ts instead of treating it as closed 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unresolvedEdges from src/ir/runtime/host-capabilities.ts instead of treating it as closed 5ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unresolvedEdges from src/ir/runtime/async-providers.ts instead of treating it as closed 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unresolvedEdges from src/ir/runtime/callable-declarations.ts instead of treating it as closed 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unresolvedEdges from src/ir/runtime/manifest.ts instead of treating it as closed 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unresolvedEdges from src/ir/runtime/async-attachment.ts instead of treating it as closed 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unresolvedEdges from src/ir/runtime/intrinsic-verification.ts instead of treating it as closed 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unresolvedEdges from src/wasm/model/module-records.ts instead of treating it as closed 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unresolvedEdges from src/wasm/physical/function-types.ts instead of treating it as closed 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unresolvedEdges from src/wasm/physical/module-reservations.ts instead of treating it as closed 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unresolvedEdges from src/runtime/wasmgc/promise/settlement-bodies.ts instead of treating it as closed 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unresolvedEdges from src/runtime/wasmgc/async/frame-engine.ts instead of treating it as closed 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unresolvedEdges from src/runtime/wasmgc/async/native-await.ts instead of treating it as closed 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unresolvedEdges from src/wasm/physical/exception-control.ts instead of treating it as closed 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unresolvedEdges from src/runtime/wasmgc/promise/delay-bodies.ts instead of treating it as closed 6ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unresolvedEdges from src/runtime/wasmgc/promise/combinator-bodies.ts instead of treating it as closed 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unresolvedEdges from src/wasm/physical/type-layout.ts instead of treating it as closed 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unresolvedEdges from src/ir/core/async-callables.ts instead of treating it as closed 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unresolvedEdges from src/ir/runtime/native-async-callables.ts instead of treating it as closed 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unresolvedEdges from src/ir/core/vector-runtime.ts instead of treating it as closed 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unresolvedEdges from src/ir/runtime/vector-callables.ts instead of treating it as closed 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unresolvedEdges from src/ir/program/native-vector-resources.ts instead of treating it as closed 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unresolvedEdges from src/runtime/wasmgc/values/vector-grow-store.ts instead of treating it as closed 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unresolvedEdges from src/backend/wasmgc/resources/native-vectors.ts instead of treating it as closed 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unresolvedEdges from src/runtime/wasmgc/promise/resolution-bodies.ts instead of treating it as closed 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unresolvedEdges from src/runtime/wasmgc/promise/thenable-bodies.ts instead of treating it as closed 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unresolvedEdges from src/ir/program/native-promise-resources.ts instead of treating it as closed 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unresolvedEdges from src/backend/wasmgc/resources/native-promises.ts instead of treating it as closed 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unresolvedEdges from src/runtime/wasmgc/values/string-layouts.ts instead of treating it as closed 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unresolvedEdges from src/runtime/wasmgc/values/string-literal-bodies.ts instead of treating it as closed 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unresolvedEdges from src/runtime/wasmgc/values/error-bodies.ts instead of treating it as closed 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unresolvedEdges from src/backend/wasmgc/resources/native-string-literals.ts instead of treating it as closed 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unresolvedEdges from src/backend/wasmgc/resources/native-errors.ts instead of treating it as closed 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unresolvedEdges from src/ir/program/native-value-resources.ts instead of treating it as closed 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unresolvedEdges from src/runtime/wasmgc/values/primitive-layouts.ts instead of treating it as closed 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unresolvedEdges from src/runtime/wasmgc/values/number-bodies.ts instead of treating it as closed 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unresolvedEdges from src/backend/wasmgc/resources/native-values.ts instead of treating it as closed 9ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unresolvedEdges from src/wasm/model/instruction-walk.ts instead of treating it as closed 13ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unresolvedEdges from src/runtime/wasmgc/values/string-number-grammar.ts instead of treating it as closed 5ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unresolvedEdges from src/runtime/wasmgc/values/decimal-scale-bodies.ts instead of treating it as closed 5ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unresolvedEdges from src/runtime/wasmgc/values/string-number-bodies.ts instead of treating it as closed 4ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unresolvedEdges from src/runtime/wasmgc/values/string-flatten-bodies.ts instead of treating it as closed 4ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unresolvedEdges from src/runtime/wasmgc/values/string-utf8-decode-bodies.ts instead of treating it as closed 4ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unresolvedEdges from src/backend/wasmgc/resources/native-string-number.ts instead of treating it as closed 4ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unresolvedEdges from src/backend/wasmgc/resources/native-string-flatten.ts instead of treating it as closed 4ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unresolvedEdges from src/ir/program/native-string-value-demands.ts instead of treating it as closed 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unresolvedEdges from src/runtime/wasmgc/values/argument-vector-bodies.ts instead of treating it as closed 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unresolvedEdges from src/backend/wasmgc/resources/native-argument-vectors.ts instead of treating it as closed 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unresolvedEdges from src/runtime/wasmgc/values/closure-layouts.ts instead of treating it as closed 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unresolvedEdges from src/backend/wasmgc/resources/native-closures.ts instead of treating it as closed 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unresolvedEdges from src/runtime/wasmgc/values/native-resource-declaration-types.ts instead of treating it as closed 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unresolvedEdges from src/backend/wasmgc/resources/native-resource-declarations.ts instead of treating it as closed 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unresolvedEdges from src/backend/wasmgc/program/native-string-values.ts instead of treating it as closed 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unresolvedEdges from src/frontend/builtins/contracts.ts instead of treating it as closed 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unresolvedEdges from src/ir/core/type-references.ts instead of treating it as closed 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unresolvedEdges from src/ir/program/runtime-support.ts instead of treating it as closed 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unresolvedEdges from src/ir/program/formatter-support.ts instead of treating it as closed 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects a runtime dependency on the historical facade from src/ir/core/intrinsic-contracts.ts 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects a runtime dependency on the historical facade from src/ir/core/intrinsics.ts 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects a runtime dependency on the historical facade from src/ir/core/callable-bindings.ts 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects a runtime dependency on the historical facade from src/ir/analysis/effects.ts 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects a runtime dependency on the historical facade from src/ir/analysis/intrinsics.ts 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects a runtime dependency on the historical facade from src/ir/analysis/async-plan.ts 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects a runtime dependency on the historical facade from src/ir/runtime/host-capabilities.ts 10ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects a runtime dependency on the historical facade from src/ir/runtime/async-providers.ts 5ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects a runtime dependency on the historical facade from src/ir/runtime/callable-declarations.ts 4ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects a runtime dependency on the historical facade from src/ir/runtime/manifest.ts 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects a runtime dependency on the historical facade from src/ir/runtime/async-attachment.ts 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects a runtime dependency on the historical facade from src/ir/runtime/intrinsic-verification.ts 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects compiler dependency syntax from src/ir/core/intrinsics.ts 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects compiler dependency syntax from src/ir/analysis/intrinsics.ts 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects compiler dependency syntax from src/ir/runtime/intrinsic-verification.ts 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects backend-wasmgc dependency syntax from src/ir/core/intrinsics.ts 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects backend-wasmgc dependency syntax from src/ir/analysis/intrinsics.ts 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects backend-wasmgc dependency syntax from src/ir/runtime/intrinsic-verification.ts 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects wasm-physical dependency syntax from src/ir/core/intrinsics.ts 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects wasm-physical dependency syntax from src/ir/analysis/intrinsics.ts 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects wasm-physical dependency syntax from src/ir/runtime/intrinsic-verification.ts 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects ir-program dependency syntax from src/ir/core/intrinsics.ts 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects ir-program dependency syntax from src/ir/analysis/intrinsics.ts 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects ir-program dependency syntax from src/ir/runtime/intrinsic-verification.ts 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects runtime provider dependencies from semantic analysis/effects 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects runtime provider dependencies from semantic analysis/intrinsics 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects runtime provider dependencies from semantic analysis/async-plan 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects whole-group deletion of ir-core despite policy demotion 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects whole-group deletion of ir-analysis despite policy demotion 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects whole-group deletion of ir-runtime despite policy demotion 6ms
+   → Deno post-position main successor: complete raw source profile mismatch
+
+⎯⎯⎯⎯⎯⎯ Failed Tests 349 ⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > pins the original 70 modules plus seven Promise/vector and five string/error owners without relaxing historical policy
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ policy tests/issue-3518-semantic-provider-boundary.test.ts:505:39
+ ❯ tests/issue-3518-semantic-provider-boundary.test.ts:1312:15
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/349]⎯
+
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > loads the complete actual canonical type-and-value closure
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ policy tests/issue-3518-semantic-provider-boundary.test.ts:505:39
+ ❯ fixture tests/issue-3518-semantic-provider-boundary.test.ts:1003:13
+ ❯ tests/issue-3518-semantic-provider-boundary.test.ts:1448:30
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/349]⎯
+
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > refuses an omitted current remainder leaf at both actual import sites and restores a fresh healthy graph
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ policy tests/issue-3518-semantic-provider-boundary.test.ts:505:39
+ ❯ fixture tests/issue-3518-semantic-provider-boundary.test.ts:1003:13
+ ❯ tests/issue-3518-semantic-provider-boundary.test.ts:1452:15
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/349]⎯
+
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects bypass of the actual input-to-source-map-validator dependency
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ policy tests/issue-3518-semantic-provider-boundary.test.ts:505:39
+ ❯ fixture tests/issue-3518-semantic-provider-boundary.test.ts:1003:13
+ ❯ tests/issue-3518-semantic-provider-boundary.test.ts:1480:15
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/349]⎯
+
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects delete corruption of the independently pinned twelve-record prefix
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects reorder corruption of the independently pinned twelve-record prefix
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects layer corruption of the independently pinned twelve-record prefix
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects entries corruption of the independently pinned twelve-record prefix
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects minimum corruption of the independently pinned twelve-record prefix
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects extra corruption of the independently pinned twelve-record prefix
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ policy tests/issue-3518-semantic-provider-boundary.test.ts:505:39
+ ❯ tests/issue-3518-semantic-provider-boundary.test.ts:1511:68
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/349]⎯
+
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects a changed primitive composition record 81
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects a changed primitive composition record 82
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects a changed primitive composition record 83
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects a changed primitive composition record 84
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ policy tests/issue-3518-semantic-provider-boundary.test.ts:505:39
+ ❯ tests/issue-3518-semantic-provider-boundary.test.ts:1528:66
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[6/349]⎯
+
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects changed merged invocation record 85
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects changed merged invocation record 86
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects changed merged invocation record 87
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ policy tests/issue-3518-semantic-provider-boundary.test.ts:505:39
+ ❯ tests/issue-3518-semantic-provider-boundary.test.ts:1537:66
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[7/349]⎯
+
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects changed source contract activation 88
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects changed source contract activation 89
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects changed source contract activation 90
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ policy tests/issue-3518-semantic-provider-boundary.test.ts:505:39
+ ❯ tests/issue-3518-semantic-provider-boundary.test.ts:1546:66
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[8/349]⎯
+
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects 'delete' corruption of formatter activation record +0
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects 'reorder' corruption of formatter activation record +0
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects 'layer' corruption of formatter activation record +0
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects 'entries' corruption of formatter activation record +0
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects 'minimum' corruption of formatter activation record +0
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects 'delete' corruption of formatter activation record 1
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects 'reorder' corruption of formatter activation record 1
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects 'layer' corruption of formatter activation record 1
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects 'entries' corruption of formatter activation record 1
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects 'minimum' corruption of formatter activation record 1
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects 'delete' corruption of formatter activation record 2
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects 'reorder' corruption of formatter activation record 2
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects 'layer' corruption of formatter activation record 2
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects 'entries' corruption of formatter activation record 2
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects 'minimum' corruption of formatter activation record 2
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ policy tests/issue-3518-semantic-provider-boundary.test.ts:505:39
+ ❯ tests/issue-3518-semantic-provider-boundary.test.ts:1594:95
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[9/349]⎯
+
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects delete corruption of the new activation records
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects reorder corruption of the new activation records
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects layer corruption of the new activation records
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects entries corruption of the new activation records
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects minimum corruption of the new activation records
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ policy tests/issue-3518-semantic-provider-boundary.test.ts:505:39
+ ❯ tests/issue-3518-semantic-provider-boundary.test.ts:1612:97
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[10/349]⎯
+
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects 'delete' corruption of the 'published backend' activation record
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects 'reorder' corruption of the 'published backend' activation record
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects 'layer' corruption of the 'published backend' activation record
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects 'entries' corruption of the 'published backend' activation record
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects 'minimum' corruption of the 'published backend' activation record
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects 'delete' corruption of the 'published demand' activation record
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects 'reorder' corruption of the 'published demand' activation record
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects 'layer' corruption of the 'published demand' activation record
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects 'entries' corruption of the 'published demand' activation record
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects 'minimum' corruption of the 'published demand' activation record
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects 'delete' corruption of the 'refreshed parent' activation record
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects 'reorder' corruption of the 'refreshed parent' activation record
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects 'layer' corruption of the 'refreshed parent' activation record
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects 'entries' corruption of the 'refreshed parent' activation record
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects 'minimum' corruption of the 'refreshed parent' activation record
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ policy tests/issue-3518-semantic-provider-boundary.test.ts:505:39
+ ❯ tests/issue-3518-semantic-provider-boundary.test.ts:1643:95
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[11/349]⎯
+
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects 'delete' corruption of original prerequisite activation records at +0
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects 'reorder' corruption of original prerequisite activation records at +0
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects 'layer' corruption of original prerequisite activation records at +0
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects 'entries' corruption of original prerequisite activation records at +0
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects 'minimum' corruption of original prerequisite activation records at +0
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects 'delete' corruption of original prerequisite activation records at 2
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects 'reorder' corruption of original prerequisite activation records at 2
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects 'layer' corruption of original prerequisite activation records at 2
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects 'entries' corruption of original prerequisite activation records at 2
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects 'minimum' corruption of original prerequisite activation records at 2
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects 'delete' corruption of original prerequisite activation records at 9
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects 'reorder' corruption of original prerequisite activation records at 9
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects 'layer' corruption of original prerequisite activation records at 9
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects 'entries' corruption of original prerequisite activation records at 9
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects 'minimum' corruption of original prerequisite activation records at 9
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ policy tests/issue-3518-semantic-provider-boundary.test.ts:505:39
+ ❯ tests/issue-3518-semantic-provider-boundary.test.ts:1663:95
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[12/349]⎯
+
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects an upward runtime dependency from the native string/value aggregate
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ policy tests/issue-3518-semantic-provider-boundary.test.ts:505:39
+ ❯ fixture tests/issue-3518-semantic-provider-boundary.test.ts:1003:13
+ ❯ tests/issue-3518-semantic-provider-boundary.test.ts:1680:15
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[13/349]⎯
+
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects deleting src/ir/core/intrinsic-contracts.ts and its classification
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects deleting src/ir/core/intrinsics.ts and its classification
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects deleting src/ir/core/callable-bindings.ts and its classification
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects deleting src/ir/analysis/effects.ts and its classification
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects deleting src/ir/analysis/intrinsics.ts and its classification
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects deleting src/ir/analysis/async-plan.ts and its classification
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects deleting src/ir/runtime/host-capabilities.ts and its classification
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects deleting src/ir/runtime/async-providers.ts and its classification
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects deleting src/ir/runtime/callable-declarations.ts and its classification
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects deleting src/ir/runtime/manifest.ts and its classification
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects deleting src/ir/runtime/async-attachment.ts and its classification
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects deleting src/ir/runtime/intrinsic-verification.ts and its classification
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects deleting src/wasm/model/module-records.ts and its classification
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects deleting src/wasm/physical/function-types.ts and its classification
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects deleting src/wasm/physical/module-reservations.ts and its classification
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects deleting src/runtime/wasmgc/promise/settlement-bodies.ts and its classification
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects deleting src/runtime/wasmgc/async/frame-engine.ts and its classification
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects deleting src/runtime/wasmgc/async/native-await.ts and its classification
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects deleting src/wasm/physical/exception-control.ts and its classification
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects deleting src/runtime/wasmgc/promise/delay-bodies.ts and its classification
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects deleting src/runtime/wasmgc/promise/combinator-bodies.ts and its classification
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects deleting src/wasm/physical/type-layout.ts and its classification
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects deleting src/ir/core/async-callables.ts and its classification
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects deleting src/ir/runtime/native-async-callables.ts and its classification
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects deleting src/ir/core/vector-runtime.ts and its classification
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects deleting src/ir/runtime/vector-callables.ts and its classification
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects deleting src/ir/program/native-vector-resources.ts and its classification
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects deleting src/runtime/wasmgc/values/vector-grow-store.ts and its classification
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects deleting src/backend/wasmgc/resources/native-vectors.ts and its classification
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects deleting src/runtime/wasmgc/promise/resolution-bodies.ts and its classification
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects deleting src/runtime/wasmgc/promise/thenable-bodies.ts and its classification
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects deleting src/ir/program/native-promise-resources.ts and its classification
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects deleting src/backend/wasmgc/resources/native-promises.ts and its classification
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects deleting src/runtime/wasmgc/values/string-layouts.ts and its classification
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects deleting src/runtime/wasmgc/values/string-literal-bodies.ts and its classification
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects deleting src/runtime/wasmgc/values/error-bodies.ts and its classification
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects deleting src/backend/wasmgc/resources/native-string-literals.ts and its classification
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects deleting src/backend/wasmgc/resources/native-errors.ts and its classification
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects deleting src/ir/program/native-value-resources.ts and its classification
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects deleting src/runtime/wasmgc/values/primitive-layouts.ts and its classification
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects deleting src/runtime/wasmgc/values/number-bodies.ts and its classification
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects deleting src/backend/wasmgc/resources/native-values.ts and its classification
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects deleting src/wasm/model/instruction-walk.ts and its classification
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects deleting src/runtime/wasmgc/values/string-number-grammar.ts and its classification
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects deleting src/runtime/wasmgc/values/decimal-scale-bodies.ts and its classification
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects deleting src/runtime/wasmgc/values/string-number-bodies.ts and its classification
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects deleting src/runtime/wasmgc/values/string-flatten-bodies.ts and its classification
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects deleting src/runtime/wasmgc/values/string-utf8-decode-bodies.ts and its classification
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects deleting src/backend/wasmgc/resources/native-string-number.ts and its classification
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects deleting src/backend/wasmgc/resources/native-string-flatten.ts and its classification
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects deleting src/ir/program/native-string-value-demands.ts and its classification
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects deleting src/runtime/wasmgc/values/argument-vector-bodies.ts and its classification
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects deleting src/backend/wasmgc/resources/native-argument-vectors.ts and its classification
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects deleting src/runtime/wasmgc/values/closure-layouts.ts and its classification
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects deleting src/backend/wasmgc/resources/native-closures.ts and its classification
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects deleting src/runtime/wasmgc/values/native-resource-declaration-types.ts and its classification
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects deleting src/backend/wasmgc/resources/native-resource-declarations.ts and its classification
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects deleting src/backend/wasmgc/program/native-string-values.ts and its classification
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects deleting src/frontend/builtins/contracts.ts and its classification
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects deleting src/ir/core/type-references.ts and its classification
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects deleting src/ir/program/runtime-support.ts and its classification
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects deleting src/ir/program/formatter-support.ts and its classification
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ policy tests/issue-3518-semantic-provider-boundary.test.ts:505:39
+ ❯ fixture tests/issue-3518-semantic-provider-boundary.test.ts:1003:13
+ ❯ tests/issue-3518-semantic-provider-boundary.test.ts:1714:15
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[14/349]⎯
+
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/ir/core/intrinsic-contracts.ts
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/ir/core/intrinsics.ts
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/ir/core/callable-bindings.ts
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/ir/analysis/effects.ts
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/ir/analysis/intrinsics.ts
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/ir/analysis/async-plan.ts
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/ir/runtime/host-capabilities.ts
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/ir/runtime/async-providers.ts
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/ir/runtime/callable-declarations.ts
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/ir/runtime/manifest.ts
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/ir/runtime/async-attachment.ts
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/ir/runtime/intrinsic-verification.ts
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/wasm/model/module-records.ts
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/wasm/physical/function-types.ts
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/wasm/physical/module-reservations.ts
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/runtime/wasmgc/promise/settlement-bodies.ts
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/runtime/wasmgc/async/frame-engine.ts
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/runtime/wasmgc/async/native-await.ts
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/wasm/physical/exception-control.ts
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/runtime/wasmgc/promise/delay-bodies.ts
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/runtime/wasmgc/promise/combinator-bodies.ts
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/wasm/physical/type-layout.ts
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/ir/core/async-callables.ts
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/ir/runtime/native-async-callables.ts
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/ir/core/vector-runtime.ts
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/ir/runtime/vector-callables.ts
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/ir/program/native-vector-resources.ts
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/runtime/wasmgc/values/vector-grow-store.ts
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/backend/wasmgc/resources/native-vectors.ts
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/runtime/wasmgc/promise/resolution-bodies.ts
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/runtime/wasmgc/promise/thenable-bodies.ts
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/ir/program/native-promise-resources.ts
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/backend/wasmgc/resources/native-promises.ts
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/runtime/wasmgc/values/string-layouts.ts
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/runtime/wasmgc/values/string-literal-bodies.ts
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/runtime/wasmgc/values/error-bodies.ts
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/backend/wasmgc/resources/native-string-literals.ts
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/backend/wasmgc/resources/native-errors.ts
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/ir/program/native-value-resources.ts
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/runtime/wasmgc/values/primitive-layouts.ts
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/runtime/wasmgc/values/number-bodies.ts
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/backend/wasmgc/resources/native-values.ts
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/wasm/model/instruction-walk.ts
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/runtime/wasmgc/values/string-number-grammar.ts
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/runtime/wasmgc/values/decimal-scale-bodies.ts
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/runtime/wasmgc/values/string-number-bodies.ts
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/runtime/wasmgc/values/string-flatten-bodies.ts
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/runtime/wasmgc/values/string-utf8-decode-bodies.ts
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/backend/wasmgc/resources/native-string-number.ts
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/backend/wasmgc/resources/native-string-flatten.ts
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/ir/program/native-string-value-demands.ts
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/runtime/wasmgc/values/argument-vector-bodies.ts
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/backend/wasmgc/resources/native-argument-vectors.ts
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/runtime/wasmgc/values/closure-layouts.ts
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/backend/wasmgc/resources/native-closures.ts
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/runtime/wasmgc/values/native-resource-declaration-types.ts
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/backend/wasmgc/resources/native-resource-declarations.ts
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/backend/wasmgc/program/native-string-values.ts
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/ir/core/type-references.ts
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/ir/program/runtime-support.ts
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects an aliased frontend type dependency from src/ir/program/formatter-support.ts
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ policy tests/issue-3518-semantic-provider-boundary.test.ts:505:39
+ ❯ fixture tests/issue-3518-semantic-provider-boundary.test.ts:1003:13
+ ❯ tests/issue-3518-semantic-provider-boundary.test.ts:1747:15
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[15/349]⎯
+
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects a backend implementation dependency from the frontend formatter contract
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ policy tests/issue-3518-semantic-provider-boundary.test.ts:505:39
+ ❯ fixture tests/issue-3518-semantic-provider-boundary.test.ts:1003:13
+ ❯ tests/issue-3518-semantic-provider-boundary.test.ts:1759:15
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[16/349]⎯
+
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unknownEdges from src/ir/core/intrinsic-contracts.ts instead of treating it as closed
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unknownEdges from src/ir/core/intrinsics.ts instead of treating it as closed
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unknownEdges from src/ir/core/callable-bindings.ts instead of treating it as closed
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unknownEdges from src/ir/analysis/effects.ts instead of treating it as closed
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unknownEdges from src/ir/analysis/intrinsics.ts instead of treating it as closed
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unknownEdges from src/ir/analysis/async-plan.ts instead of treating it as closed
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unknownEdges from src/ir/runtime/host-capabilities.ts instead of treating it as closed
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unknownEdges from src/ir/runtime/async-providers.ts instead of treating it as closed
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unknownEdges from src/ir/runtime/callable-declarations.ts instead of treating it as closed
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unknownEdges from src/ir/runtime/manifest.ts instead of treating it as closed
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unknownEdges from src/ir/runtime/async-attachment.ts instead of treating it as closed
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unknownEdges from src/ir/runtime/intrinsic-verification.ts instead of treating it as closed
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unknownEdges from src/wasm/model/module-records.ts instead of treating it as closed
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unknownEdges from src/wasm/physical/function-types.ts instead of treating it as closed
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unknownEdges from src/wasm/physical/module-reservations.ts instead of treating it as closed
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unknownEdges from src/runtime/wasmgc/promise/settlement-bodies.ts instead of treating it as closed
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unknownEdges from src/runtime/wasmgc/async/frame-engine.ts instead of treating it as closed
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unknownEdges from src/runtime/wasmgc/async/native-await.ts instead of treating it as closed
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unknownEdges from src/wasm/physical/exception-control.ts instead of treating it as closed
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unknownEdges from src/runtime/wasmgc/promise/delay-bodies.ts instead of treating it as closed
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unknownEdges from src/runtime/wasmgc/promise/combinator-bodies.ts instead of treating it as closed
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unknownEdges from src/wasm/physical/type-layout.ts instead of treating it as closed
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unknownEdges from src/ir/core/async-callables.ts instead of treating it as closed
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unknownEdges from src/ir/runtime/native-async-callables.ts instead of treating it as closed
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unknownEdges from src/ir/core/vector-runtime.ts instead of treating it as closed
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unknownEdges from src/ir/runtime/vector-callables.ts instead of treating it as closed
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unknownEdges from src/ir/program/native-vector-resources.ts instead of treating it as closed
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unknownEdges from src/runtime/wasmgc/values/vector-grow-store.ts instead of treating it as closed
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unknownEdges from src/backend/wasmgc/resources/native-vectors.ts instead of treating it as closed
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unknownEdges from src/runtime/wasmgc/promise/resolution-bodies.ts instead of treating it as closed
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unknownEdges from src/runtime/wasmgc/promise/thenable-bodies.ts instead of treating it as closed
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unknownEdges from src/ir/program/native-promise-resources.ts instead of treating it as closed
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unknownEdges from src/backend/wasmgc/resources/native-promises.ts instead of treating it as closed
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unknownEdges from src/runtime/wasmgc/values/string-layouts.ts instead of treating it as closed
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unknownEdges from src/runtime/wasmgc/values/string-literal-bodies.ts instead of treating it as closed
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unknownEdges from src/runtime/wasmgc/values/error-bodies.ts instead of treating it as closed
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unknownEdges from src/backend/wasmgc/resources/native-string-literals.ts instead of treating it as closed
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unknownEdges from src/backend/wasmgc/resources/native-errors.ts instead of treating it as closed
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unknownEdges from src/ir/program/native-value-resources.ts instead of treating it as closed
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unknownEdges from src/runtime/wasmgc/values/primitive-layouts.ts instead of treating it as closed
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unknownEdges from src/runtime/wasmgc/values/number-bodies.ts instead of treating it as closed
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unknownEdges from src/backend/wasmgc/resources/native-values.ts instead of treating it as closed
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unknownEdges from src/wasm/model/instruction-walk.ts instead of treating it as closed
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unknownEdges from src/runtime/wasmgc/values/string-number-grammar.ts instead of treating it as closed
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unknownEdges from src/runtime/wasmgc/values/decimal-scale-bodies.ts instead of treating it as closed
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unknownEdges from src/runtime/wasmgc/values/string-number-bodies.ts instead of treating it as closed
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unknownEdges from src/runtime/wasmgc/values/string-flatten-bodies.ts instead of treating it as closed
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unknownEdges from src/runtime/wasmgc/values/string-utf8-decode-bodies.ts instead of treating it as closed
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unknownEdges from src/backend/wasmgc/resources/native-string-number.ts instead of treating it as closed
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unknownEdges from src/backend/wasmgc/resources/native-string-flatten.ts instead of treating it as closed
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unknownEdges from src/ir/program/native-string-value-demands.ts instead of treating it as closed
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unknownEdges from src/runtime/wasmgc/values/argument-vector-bodies.ts instead of treating it as closed
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unknownEdges from src/backend/wasmgc/resources/native-argument-vectors.ts instead of treating it as closed
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unknownEdges from src/runtime/wasmgc/values/closure-layouts.ts instead of treating it as closed
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unknownEdges from src/backend/wasmgc/resources/native-closures.ts instead of treating it as closed
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unknownEdges from src/runtime/wasmgc/values/native-resource-declaration-types.ts instead of treating it as closed
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unknownEdges from src/backend/wasmgc/resources/native-resource-declarations.ts instead of treating it as closed
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unknownEdges from src/backend/wasmgc/program/native-string-values.ts instead of treating it as closed
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unknownEdges from src/frontend/builtins/contracts.ts instead of treating it as closed
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unknownEdges from src/ir/core/type-references.ts instead of treating it as closed
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unknownEdges from src/ir/program/runtime-support.ts instead of treating it as closed
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unknownEdges from src/ir/program/formatter-support.ts instead of treating it as closed
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unresolvedEdges from src/ir/core/intrinsic-contracts.ts instead of treating it as closed
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unresolvedEdges from src/ir/core/intrinsics.ts instead of treating it as closed
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unresolvedEdges from src/ir/core/callable-bindings.ts instead of treating it as closed
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unresolvedEdges from src/ir/analysis/effects.ts instead of treating it as closed
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unresolvedEdges from src/ir/analysis/intrinsics.ts instead of treating it as closed
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unresolvedEdges from src/ir/analysis/async-plan.ts instead of treating it as closed
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unresolvedEdges from src/ir/runtime/host-capabilities.ts instead of treating it as closed
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unresolvedEdges from src/ir/runtime/async-providers.ts instead of treating it as closed
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unresolvedEdges from src/ir/runtime/callable-declarations.ts instead of treating it as closed
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unresolvedEdges from src/ir/runtime/manifest.ts instead of treating it as closed
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unresolvedEdges from src/ir/runtime/async-attachment.ts instead of treating it as closed
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unresolvedEdges from src/ir/runtime/intrinsic-verification.ts instead of treating it as closed
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unresolvedEdges from src/wasm/model/module-records.ts instead of treating it as closed
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unresolvedEdges from src/wasm/physical/function-types.ts instead of treating it as closed
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unresolvedEdges from src/wasm/physical/module-reservations.ts instead of treating it as closed
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unresolvedEdges from src/runtime/wasmgc/promise/settlement-bodies.ts instead of treating it as closed
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unresolvedEdges from src/runtime/wasmgc/async/frame-engine.ts instead of treating it as closed
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unresolvedEdges from src/runtime/wasmgc/async/native-await.ts instead of treating it as closed
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unresolvedEdges from src/wasm/physical/exception-control.ts instead of treating it as closed
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unresolvedEdges from src/runtime/wasmgc/promise/delay-bodies.ts instead of treating it as closed
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unresolvedEdges from src/runtime/wasmgc/promise/combinator-bodies.ts instead of treating it as closed
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unresolvedEdges from src/wasm/physical/type-layout.ts instead of treating it as closed
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unresolvedEdges from src/ir/core/async-callables.ts instead of treating it as closed
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unresolvedEdges from src/ir/runtime/native-async-callables.ts instead of treating it as closed
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unresolvedEdges from src/ir/core/vector-runtime.ts instead of treating it as closed
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unresolvedEdges from src/ir/runtime/vector-callables.ts instead of treating it as closed
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unresolvedEdges from src/ir/program/native-vector-resources.ts instead of treating it as closed
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unresolvedEdges from src/runtime/wasmgc/values/vector-grow-store.ts instead of treating it as closed
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unresolvedEdges from src/backend/wasmgc/resources/native-vectors.ts instead of treating it as closed
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unresolvedEdges from src/runtime/wasmgc/promise/resolution-bodies.ts instead of treating it as closed
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unresolvedEdges from src/runtime/wasmgc/promise/thenable-bodies.ts instead of treating it as closed
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unresolvedEdges from src/ir/program/native-promise-resources.ts instead of treating it as closed
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unresolvedEdges from src/backend/wasmgc/resources/native-promises.ts instead of treating it as closed
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unresolvedEdges from src/runtime/wasmgc/values/string-layouts.ts instead of treating it as closed
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unresolvedEdges from src/runtime/wasmgc/values/string-literal-bodies.ts instead of treating it as closed
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unresolvedEdges from src/runtime/wasmgc/values/error-bodies.ts instead of treating it as closed
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unresolvedEdges from src/backend/wasmgc/resources/native-string-literals.ts instead of treating it as closed
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unresolvedEdges from src/backend/wasmgc/resources/native-errors.ts instead of treating it as closed
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unresolvedEdges from src/ir/program/native-value-resources.ts instead of treating it as closed
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unresolvedEdges from src/runtime/wasmgc/values/primitive-layouts.ts instead of treating it as closed
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unresolvedEdges from src/runtime/wasmgc/values/number-bodies.ts instead of treating it as closed
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unresolvedEdges from src/backend/wasmgc/resources/native-values.ts instead of treating it as closed
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unresolvedEdges from src/wasm/model/instruction-walk.ts instead of treating it as closed
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unresolvedEdges from src/runtime/wasmgc/values/string-number-grammar.ts instead of treating it as closed
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unresolvedEdges from src/runtime/wasmgc/values/decimal-scale-bodies.ts instead of treating it as closed
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unresolvedEdges from src/runtime/wasmgc/values/string-number-bodies.ts instead of treating it as closed
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unresolvedEdges from src/runtime/wasmgc/values/string-flatten-bodies.ts instead of treating it as closed
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unresolvedEdges from src/runtime/wasmgc/values/string-utf8-decode-bodies.ts instead of treating it as closed
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unresolvedEdges from src/backend/wasmgc/resources/native-string-number.ts instead of treating it as closed
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unresolvedEdges from src/backend/wasmgc/resources/native-string-flatten.ts instead of treating it as closed
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unresolvedEdges from src/ir/program/native-string-value-demands.ts instead of treating it as closed
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unresolvedEdges from src/runtime/wasmgc/values/argument-vector-bodies.ts instead of treating it as closed
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unresolvedEdges from src/backend/wasmgc/resources/native-argument-vectors.ts instead of treating it as closed
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unresolvedEdges from src/runtime/wasmgc/values/closure-layouts.ts instead of treating it as closed
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unresolvedEdges from src/backend/wasmgc/resources/native-closures.ts instead of treating it as closed
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unresolvedEdges from src/runtime/wasmgc/values/native-resource-declaration-types.ts instead of treating it as closed
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unresolvedEdges from src/backend/wasmgc/resources/native-resource-declarations.ts instead of treating it as closed
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unresolvedEdges from src/backend/wasmgc/program/native-string-values.ts instead of treating it as closed
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unresolvedEdges from src/frontend/builtins/contracts.ts instead of treating it as closed
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unresolvedEdges from src/ir/core/type-references.ts instead of treating it as closed
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unresolvedEdges from src/ir/program/runtime-support.ts instead of treating it as closed
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > reports unresolvedEdges from src/ir/program/formatter-support.ts instead of treating it as closed
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ policy tests/issue-3518-semantic-provider-boundary.test.ts:505:39
+ ❯ fixture tests/issue-3518-semantic-provider-boundary.test.ts:1003:13
+ ❯ tests/issue-3518-semantic-provider-boundary.test.ts:1810:17
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[17/349]⎯
+
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects a runtime dependency on the historical facade from src/ir/core/intrinsic-contracts.ts
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects a runtime dependency on the historical facade from src/ir/core/intrinsics.ts
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects a runtime dependency on the historical facade from src/ir/core/callable-bindings.ts
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects a runtime dependency on the historical facade from src/ir/analysis/effects.ts
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects a runtime dependency on the historical facade from src/ir/analysis/intrinsics.ts
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects a runtime dependency on the historical facade from src/ir/analysis/async-plan.ts
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects a runtime dependency on the historical facade from src/ir/runtime/host-capabilities.ts
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects a runtime dependency on the historical facade from src/ir/runtime/async-providers.ts
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects a runtime dependency on the historical facade from src/ir/runtime/callable-declarations.ts
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects a runtime dependency on the historical facade from src/ir/runtime/manifest.ts
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects a runtime dependency on the historical facade from src/ir/runtime/async-attachment.ts
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects a runtime dependency on the historical facade from src/ir/runtime/intrinsic-verification.ts
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ policy tests/issue-3518-semantic-provider-boundary.test.ts:505:39
+ ❯ fixture tests/issue-3518-semantic-provider-boundary.test.ts:1003:13
+ ❯ tests/issue-3518-semantic-provider-boundary.test.ts:1819:15
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[18/349]⎯
+
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects compiler dependency syntax from src/ir/core/intrinsics.ts
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects compiler dependency syntax from src/ir/analysis/intrinsics.ts
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects compiler dependency syntax from src/ir/runtime/intrinsic-verification.ts
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects backend-wasmgc dependency syntax from src/ir/core/intrinsics.ts
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects backend-wasmgc dependency syntax from src/ir/analysis/intrinsics.ts
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects backend-wasmgc dependency syntax from src/ir/runtime/intrinsic-verification.ts
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects wasm-physical dependency syntax from src/ir/core/intrinsics.ts
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects wasm-physical dependency syntax from src/ir/analysis/intrinsics.ts
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects wasm-physical dependency syntax from src/ir/runtime/intrinsic-verification.ts
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects ir-program dependency syntax from src/ir/core/intrinsics.ts
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects ir-program dependency syntax from src/ir/analysis/intrinsics.ts
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects ir-program dependency syntax from src/ir/runtime/intrinsic-verification.ts
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ policy tests/issue-3518-semantic-provider-boundary.test.ts:505:39
+ ❯ fixture tests/issue-3518-semantic-provider-boundary.test.ts:1003:13
+ ❯ tests/issue-3518-semantic-provider-boundary.test.ts:1842:19
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[19/349]⎯
+
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects runtime provider dependencies from semantic analysis/effects
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects runtime provider dependencies from semantic analysis/intrinsics
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects runtime provider dependencies from semantic analysis/async-plan
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ policy tests/issue-3518-semantic-provider-boundary.test.ts:505:39
+ ❯ fixture tests/issue-3518-semantic-provider-boundary.test.ts:1003:13
+ ❯ tests/issue-3518-semantic-provider-boundary.test.ts:1858:17
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[20/349]⎯
+
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects whole-group deletion of ir-core despite policy demotion
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects whole-group deletion of ir-analysis despite policy demotion
+ FAIL  tests/issue-3518-semantic-provider-boundary.test.ts > semantic verification and provider ownership boundary > rejects whole-group deletion of ir-runtime despite policy demotion
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ policy tests/issue-3518-semantic-provider-boundary.test.ts:505:39
+ ❯ fixture tests/issue-3518-semantic-provider-boundary.test.ts:1003:13
+ ❯ tests/issue-3518-semantic-provider-boundary.test.ts:1872:17
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[21/349]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  349 failed | 5 passed (354)
+   Start at  22:52:08
+   Duration  2.86s (transform 511ms, setup 0ms, collect 1.21s, tests 1.20s, environment 0ms, prepare 73ms)
+

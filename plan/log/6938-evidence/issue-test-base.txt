@@ -1,0 +1,108 @@
+
+ RUN  v3.2.7 /home/user/js2/.claude/worktrees/agent-a510ffd37560d1243
+
+ ❯ tests/issue-6938-fnctor-instance-anon-struct.test.ts (11 tests | 5 failed) 7642ms
+   × #6938 fnctor instance type never becomes a phantom anon struct > r11: member store through an unpinned Packet receiver (gc + standalone) 1542ms
+     → undefined
+   × #6938 fnctor instance type never becomes a phantom anon struct > r15: richards addTo loop, kind-routed queues (gc + standalone) 316ms
+     → undefined
+   × #6938 fnctor instance type never becomes a phantom anon struct > ctor-level @param {Packet} on Packet's own link field (gc + standalone) 240ms
+     → gc: expected 2 to be 23 // Object.is equality
+   ✓ #6938 fnctor instance type never becomes a phantom anon struct > method call on an unpinned, annotation-typed approved fnctor receiver  1287ms
+   × #6938 fnctor instance type never becomes a phantom anon struct > method call on an unpinned, inference-typed approved fnctor receiver 1080ms
+     → standalone: expected +0 to be 11 // Object.is equality
+   × #6938 fnctor instance type never becomes a phantom anon struct > no __anon struct carrying a fnctor's prototype method names is registered 148ms
+     → gc: expected [ Array(1) ] to deeply equal []
+   ✓ #6938 negative controls > r11 without the declaration-level JSDoc  701ms
+   ✓ #6938 negative controls > r11 without the method-level JSDoc  630ms
+   ✓ #6938 negative controls > non-fnctor anon-struct param: stores through an annotated object-literal type still work 245ms
+   ✓ #6938 negative controls > a class named Packet keeps its own struct  524ms
+   ✓ #6938 negative controls > fnctor instances passed through annotated params keep their fields  926ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 5 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/issue-6938-fnctor-instance-anon-struct.test.ts > #6938 fnctor instance type never becomes a phantom anon struct > r11: member store through an unpinned Packet receiver (gc + standalone)
+{
+  constructor: 'Function<Exception>',
+  getArg: 'Function<getArg>',
+  is: 'Function<is>',
+  stacks: []
+}
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/5]⎯
+
+ FAIL  tests/issue-6938-fnctor-instance-anon-struct.test.ts > #6938 fnctor instance type never becomes a phantom anon struct > r15: richards addTo loop, kind-routed queues (gc + standalone)
+{
+  constructor: 'Function<Exception>',
+  getArg: 'Function<getArg>',
+  is: 'Function<is>',
+  stacks: []
+}
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/5]⎯
+
+ FAIL  tests/issue-6938-fnctor-instance-anon-struct.test.ts > #6938 fnctor instance type never becomes a phantom anon struct > ctor-level @param {Packet} on Packet's own link field (gc + standalone)
+AssertionError: gc: expected 2 to be 23 // Object.is equality
+
+- Expected
++ Received
+
+- 23
++ 2
+
+ ❯ expectAllLanes tests/issue-6938-fnctor-instance-anon-struct.test.ts:56:44
+     54|   expect(nodeOracle(src)).toBe(expected);
+     55|   for (const lane of ["gc", "standalone"] as const) {
+     56|     expect(await runLane(src, lane), lane).toBe(expected);
+       |                                            ^
+     57|   }
+     58| }
+ ❯ tests/issue-6938-fnctor-instance-anon-struct.test.ts:205:5
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/5]⎯
+
+ FAIL  tests/issue-6938-fnctor-instance-anon-struct.test.ts > #6938 fnctor instance type never becomes a phantom anon struct > method call on an unpinned, inference-typed approved fnctor receiver
+AssertionError: standalone: expected +0 to be 11 // Object.is equality
+
+- Expected
++ Received
+
+- 11
++ 0
+
+ ❯ expectAllLanes tests/issue-6938-fnctor-instance-anon-struct.test.ts:56:44
+     54|   expect(nodeOracle(src)).toBe(expected);
+     55|   for (const lane of ["gc", "standalone"] as const) {
+     56|     expect(await runLane(src, lane), lane).toBe(expected);
+       |                                            ^
+     57|   }
+     58| }
+ ❯ tests/issue-6938-fnctor-instance-anon-struct.test.ts:213:5
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/5]⎯
+
+ FAIL  tests/issue-6938-fnctor-instance-anon-struct.test.ts > #6938 fnctor instance type never becomes a phantom anon struct > no __anon struct carrying a fnctor's prototype method names is registered
+AssertionError: gc: expected [ Array(1) ] to deeply equal []
+
+- Expected
++ Received
+
+- []
++ [
++   "  (type $__anon_0 (struct (field $link (mut externref)) (field $id (mut externref)) (field $addTo (mut externref))))",
++ ]
+
+ ❯ tests/issue-6938-fnctor-instance-anon-struct.test.ts:229:53
+    227|         .split("\n")
+    228|         .filter((l) => /\(type \$__anon_\d+ \(struct/.test(l) && /\$ad…
+    229|       expect(anonWithAddTo, String(target ?? "gc")).toEqual([]);
+       |                                                     ^
+    230|     }
+    231|   });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/5]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  5 failed | 6 passed (11)
+   Start at  07:45:39
+   Duration  44.24s (transform 25.99s, setup 0ms, collect 36.01s, tests 7.64s, environment 0ms, prepare 75ms)
+

@@ -457,10 +457,15 @@ export function emitOwnShadowGuardedMethodRead(
  * dispatcher byte-identical.
  */
 export function noteOwnShadowDispatchCandidate(ctx: CodegenContext, anchor: ts.Node, methodName: string): void {
-  if (ctx.standalone || ctx.wasi) return;
   if (methodName.startsWith("__priv_") || methodName.startsWith("@@") || methodName.startsWith("__cmdyn$")) return;
   if (!fileMayInstallOwnCallableMember(anchor, methodName)) return;
-  if (ensureLateImport(ctx, "__hasOwnProperty", [EXTERNREF, EXTERNREF], [I32]) === undefined) return;
+  // (#7021) Standalone / WASI: the object runtime's NATIVE `__hasOwnProperty`
+  // and `__extern_method_call` already see an own slot written onto a class
+  // instance (the instance expando bag) — no import. The fill guards only when
+  // both natives exist, so a module without them keeps its arms unchanged.
+  if (!ctx.standalone && !ctx.wasi) {
+    if (ensureLateImport(ctx, "__hasOwnProperty", [EXTERNREF, EXTERNREF], [I32]) === undefined) return;
+  }
   addStringConstantGlobal(ctx, methodName);
   (ctx.ownShadowDispatchNames ??= new Set<string>()).add(methodName);
 }

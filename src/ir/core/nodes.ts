@@ -27,6 +27,20 @@ import type {
   IrInstrDynMemberSet,
   IrInstrDynToNumber,
   IrInstrDynTruthy,
+  IrInstrDynUndefined,
+  IrInstrDynTypeof,
+  IrInstrDynToString,
+  IrInstrDynJsonStringify,
+  IrInstrDynObjectTag,
+  IrInstrDynConstruct,
+  IrInstrDynStringCarrier,
+  IrInstrDynArgumentsLength,
+  IrInstrDynCurrentThis,
+  IrInstrDynGlobalObject,
+  IrInstrDynInstanceOfFunction,
+  IrInstrDynInstanceOf,
+  IrInstrDynPublishArgc,
+  IrInstrDynOwnProperty,
   IrInstrExternCall,
   IrInstrExternNew,
   IrInstrExternProp,
@@ -1642,6 +1656,20 @@ export type {
   IrInstrAsyncReturn,
   IrInstrAsyncThrow,
   IrInstrDynTruthy,
+  IrInstrDynUndefined,
+  IrInstrDynTypeof,
+  IrInstrDynToString,
+  IrInstrDynJsonStringify,
+  IrInstrDynObjectTag,
+  IrInstrDynConstruct,
+  IrInstrDynStringCarrier,
+  IrInstrDynArgumentsLength,
+  IrInstrDynCurrentThis,
+  IrInstrDynGlobalObject,
+  IrInstrDynInstanceOfFunction,
+  IrInstrDynInstanceOf,
+  IrInstrDynPublishArgc,
+  IrInstrDynOwnProperty,
   IrInstrDynToNumber,
   IrInstrDynEq,
   IrInstrDynMemberGet,
@@ -1683,6 +1711,20 @@ export type IrInstr =
   | IrInstrUnbox
   | IrInstrTagTest
   | IrInstrDynTruthy
+  | IrInstrDynUndefined
+  | IrInstrDynTypeof
+  | IrInstrDynToString
+  | IrInstrDynJsonStringify
+  | IrInstrDynObjectTag
+  | IrInstrDynConstruct
+  | IrInstrDynStringCarrier
+  | IrInstrDynArgumentsLength
+  | IrInstrDynCurrentThis
+  | IrInstrDynGlobalObject
+  | IrInstrDynInstanceOfFunction
+  | IrInstrDynInstanceOf
+  | IrInstrDynPublishArgc
+  | IrInstrDynOwnProperty
   | IrInstrDynToNumber
   | IrInstrDynEq
   | IrInstrDynMemberGet
@@ -1781,6 +1823,21 @@ export interface IrSlotDef {
   readonly index: number;
   readonly name: string;
   readonly type: ValType;
+  /**
+   * (#7291) A `let s = ""` owned-append builder: its writes are only the
+   * empty initializer and `s + rhs` owned appends (the verifier holds the
+   * producer to that), so a backend may keep it as buffer locals.
+   */
+  readonly stringBuilder?: IrStringBuilderRole;
+}
+
+export interface IrStringBuilderRole {
+  /**
+   * (#1761) The loop appends at most `unitsPerIter` units on each of
+   * `ceil(bound)` iterations; the f64 `boundSlot` holds the bound, written
+   * before the builder, so the buffer is sized once and never grows.
+   */
+  readonly presize?: { readonly boundSlot: number; readonly unitsPerIter: number };
 }
 
 // ---------------------------------------------------------------------------
@@ -2042,6 +2099,20 @@ export function forEachNestedBuffer(instr: IrInstr, fn: (buffer: readonly IrInst
     case "unbox":
     case "tag.test":
     case "dyn.truthy":
+    case "dyn.undefined":
+    case "dyn.typeof":
+    case "dyn.to_string":
+    case "dyn.json_stringify":
+    case "dyn.object_tag":
+    case "dyn.construct":
+    case "dyn.string_carrier":
+    case "dyn.arguments_length":
+    case "dyn.current_this":
+    case "dyn.global_object":
+    case "dyn.instanceof_fn":
+    case "dyn.instanceof":
+    case "dyn.publish_argc":
+    case "dyn.own_property":
     case "dyn.to_number":
     case "dyn.eq":
     case "dyn.member_get":
@@ -2211,6 +2282,20 @@ export function mapNestedBuffers(
     case "unbox":
     case "tag.test":
     case "dyn.truthy":
+    case "dyn.undefined":
+    case "dyn.typeof":
+    case "dyn.to_string":
+    case "dyn.json_stringify":
+    case "dyn.object_tag":
+    case "dyn.construct":
+    case "dyn.string_carrier":
+    case "dyn.arguments_length":
+    case "dyn.current_this":
+    case "dyn.global_object":
+    case "dyn.instanceof_fn":
+    case "dyn.instanceof":
+    case "dyn.publish_argc":
+    case "dyn.own_property":
     case "dyn.to_number":
     case "dyn.eq":
     case "dyn.member_get":
@@ -2314,12 +2399,32 @@ export function directUses(instr: IrInstr): readonly IrValueId[] {
       return [instr.condition, instr.whenTrue, instr.whenFalse];
     case "if":
       return [instr.cond, instr.thenValue, instr.elseValue];
+    case "dyn.undefined":
+      return [];
     case "box":
     case "unbox":
     case "tag.test":
     case "dyn.truthy":
+    case "dyn.typeof":
+    case "dyn.to_string":
+    case "dyn.json_stringify":
+    case "dyn.object_tag":
+    case "dyn.string_carrier":
     case "dyn.to_number":
       return [instr.value];
+    case "dyn.construct":
+      return [instr.callee, ...instr.args];
+    case "dyn.arguments_length":
+    case "dyn.current_this":
+    case "dyn.global_object":
+    case "dyn.publish_argc":
+      return [];
+    case "dyn.instanceof_fn":
+      return [instr.value];
+    case "dyn.instanceof":
+      return [instr.value, instr.target];
+    case "dyn.own_property":
+      return [instr.receiver, instr.key];
     case "dyn.eq":
     case "string.concat":
     case "string.eq":
@@ -2454,6 +2559,21 @@ export function directUses(instr: IrInstr): readonly IrValueId[] {
       void _exhaustive;
       return [];
     }
+  }
+}
+
+/** The SSA values a block's terminator consumes. */
+export function collectTerminatorUses(block: IrBlock): readonly IrValueId[] {
+  const t = block.terminator;
+  switch (t.kind) {
+    case "return":
+      return t.values;
+    case "br":
+      return t.branch.args;
+    case "br_if":
+      return [t.condition, ...t.ifTrue.args, ...t.ifFalse.args];
+    case "unreachable":
+      return [];
   }
 }
 

@@ -45,6 +45,12 @@
 import type { BackendEmitter, BackendI32BitwiseOp } from "./backend/emitter.js";
 import type { IrLowerResolver, IrLoweredBody, IrLoweredSignature } from "./backend/lower-contracts.js";
 import { emitStringOperation, type StringOperationContext } from "./lowering/string-operations.js";
+import {
+  createStringBuilderLowering,
+  tryEmitStringBuilderLength,
+  tryEmitStringBuilderRead,
+  tryEmitStringBuilderWrite,
+} from "./lowering/string-builder.js";
 import type { TypeConverter } from "./backend/contract.js";
 import { type IrBackendKind, verifyIrBackendLegality } from "./backend/legality.js";
 import type { IrVecLowering } from "./backend/handles.js";
@@ -60,6 +66,7 @@ import {
   type IrBlock,
   type IrFuncRef,
   type IrFunction,
+  type IrGlobalRef,
   type IrInstr,
   type IrInstrIntrinsic,
   type IrIntrinsicBackendComposite,
@@ -68,6 +75,7 @@ import {
   type IrType,
   type IrValueId,
   asVal,
+  collectTerminatorUses,
   forEachInstrDeep,
   forEachNestedBuffer,
 } from "./nodes.js";
@@ -1041,6 +1049,11 @@ export function lowerIrFunctionBody<S, Slot>(
     locals.push({ name: `${name}_${idx}`, type, logicalType: { kind: "val", val: type } });
     return idx;
   };
+  const stringBuilderCx = createStringBuilderLowering(slotDefs, emitter, slotWasmIdx, allocScratchLocal, {
+    emitValue: (value, out) => emitValue(value, out),
+    inlineDef: (value) =>
+      paramIdx.has(value) || needsLocal.has(value) || anchorEager.has(value) ? undefined : defBy.get(value),
+  });
 
   /**
    * Emit a nested buffer as a statement sequence with the standard SSA
@@ -1196,6 +1209,31 @@ export function lowerIrFunctionBody<S, Slot>(
 
   const stringOperationContext: StringOperationContext<S> = { emitter, emitValue };
 
+  /**
+   * (#7252, #7106 lever S2) A module slot whose legacy ValType is narrower
+   * than the IR value it holds, adapted by (slot ValType, IR type): a class
+   * instance's `(ref null $C)` slot reads as the class's non-null ref, as
+   * legacy reads it; a typed reference slot behind a dynamic value on an
+   * externref carrier (#1914's match vector) reads through `extern.convert_any`
+   * and is written back through `any.convert_extern` and `ref.cast null`.
+   */
+  const emitModuleSlotAdapter = (
+    target: IrGlobalRef,
+    value: IrType | null,
+    direction: "read" | "write",
+    out: S,
+  ): void => {
+    if (value?.kind === "class") {
+      if (direction === "read") emitter.pushRaw(out, { op: "ref.as_non_null" }); // pushraw-ok(#7252): `(ref null $C)` slot, as legacy reads it
+      return;
+    }
+    if (value?.kind !== "dynamic" || resolver.resolveDynamic?.()?.kind !== "externref") return;
+    const slot = resolver.resolveGlobalType?.(target);
+    if (slot?.kind !== "ref_null") return;
+    if (direction === "read") emitter.emitToExternref(out);
+    else emitter.emitFromExternref({ kind: "val", val: slot }, out);
+  };
+
   const emitInstrTree = (instr: IrInstr, out: S): void => {
     switch (instr.kind) {
       case "const": {
@@ -1208,13 +1246,13 @@ export function lowerIrFunctionBody<S, Slot>(
         // physical carrier first. Without this the emitter throws "cannot
         // materialize null for IrType 'vec'" — a plain `Error`, so an untyped
         // INVARIANT and therefore a hard compile error, for a claim that is
-        // otherwise fully lowerable. Scoped to `vec`: every other non-`val`
-        // result type reaches the emitter exactly as it did before.
-        const nullVecType =
-          instr.value.kind === "null" && instr.resultType?.kind === "vec"
+        // otherwise fully lowerable.
+        // (#7106) A `dynamic` null resolves the same way, to the lane's carrier.
+        const nullCarrierType =
+          instr.value.kind === "null" && (instr.resultType?.kind === "vec" || instr.resultType?.kind === "dynamic")
             ? ({ kind: "val", val: lowerIrTypeToValType(instr.resultType, resolver, func.name) } as IrType)
             : null;
-        emitter.emitConst(nullVecType ? { ...instr, resultType: nullVecType } : instr, func.name, out);
+        emitter.emitConst(nullCarrierType ? { ...instr, resultType: nullCarrierType } : instr, func.name, out);
         return;
       }
       case "fnctor.new": {
@@ -1411,9 +1449,11 @@ export function lowerIrFunctionBody<S, Slot>(
       }
       case "global.get":
         emitter.emitGlobalGet(resolver.resolveGlobal(instr.target), out);
+        emitModuleSlotAdapter(instr.target, instr.resultType, "read", out);
         return;
       case "global.set":
         emitValue(instr.value, out);
+        emitModuleSlotAdapter(instr.target, typeOf(instr.value), "write", out);
         emitter.emitGlobalSet(resolver.resolveGlobal(instr.target), out);
         return;
       case "binary": {
@@ -1810,6 +1850,231 @@ export function lowerIrFunctionBody<S, Slot>(
         emitter.emitBinary("i32.eq", out);
         return;
       }
+      case "dyn.undefined": {
+        // #7104 — the carrier's `undefined` value; no operands. The op sequence
+        // comes from the `IrDynamicLowering` handle so each lane pushes exactly
+        // the representation legacy's `emitUndefined` pushes.
+        const dyn = resolver.resolveDynamicLowering?.();
+        if (!dyn) {
+          throw new Error(
+            `ir/lower: resolver cannot lower dyn.undefined (resolveDynamicLowering missing/null) (${func.name})`,
+          );
+        }
+        // pushraw-ok(#7104): same opaque Instr[] contract as emitBox
+        for (const op of dyn.emitUndefined()) emitter.pushRaw(out, op);
+        return;
+      }
+      case "dyn.typeof": {
+        // #7104 — typeof over the boxed-any carrier via the lane's `__typeof`.
+        const valueIrType = typeOf(instr.value);
+        if (valueIrType.kind !== "dynamic") {
+          throw new Error(`ir/lower: dyn.typeof operand must be dynamic, got ${valueIrType.kind} (${func.name})`);
+        }
+        const dyn = resolver.resolveDynamicLowering?.();
+        if (!dyn) {
+          throw new Error(
+            `ir/lower: resolver cannot lower dyn.typeof (resolveDynamicLowering missing/null) (${func.name})`,
+          );
+        }
+        emitValue(instr.value, out);
+        // pushraw-ok(#7104): same opaque Instr[] contract as emitBox
+        for (const op of dyn.emitTypeof()) emitter.pushRaw(out, op);
+        return;
+      }
+      case "dyn.to_string": {
+        // #7106 S1 — ToString over the boxed-any carrier via the lane's `__extern_toString`.
+        const valueIrType = typeOf(instr.value);
+        if (valueIrType.kind !== "dynamic") {
+          throw new Error(`ir/lower: dyn.to_string operand must be dynamic, got ${valueIrType.kind} (${func.name})`);
+        }
+        const dyn = resolver.resolveDynamicLowering?.();
+        if (!dyn) {
+          throw new Error(
+            `ir/lower: resolver cannot lower dyn.to_string (resolveDynamicLowering missing/null) (${func.name})`,
+          );
+        }
+        emitValue(instr.value, out);
+        // pushraw-ok(#7106): same opaque Instr[] contract as emitBox
+        for (const op of dyn.emitToString()) emitter.pushRaw(out, op);
+        return;
+      }
+      case "dyn.json_stringify": {
+        // #7106 S1b — JSON.stringify over the boxed-any carrier via the native codec root.
+        const valueIrType = typeOf(instr.value);
+        if (valueIrType.kind !== "dynamic") {
+          throw new Error(
+            `ir/lower: dyn.json_stringify operand must be dynamic, got ${valueIrType.kind} (${func.name})`,
+          );
+        }
+        const dyn = resolver.resolveDynamicLowering?.();
+        if (!dyn) {
+          throw new Error(
+            `ir/lower: resolver cannot lower dyn.json_stringify (resolveDynamicLowering missing/null) (${func.name})`,
+          );
+        }
+        emitValue(instr.value, out);
+        // pushraw-ok(#7106): same opaque Instr[] contract as emitBox
+        for (const op of dyn.emitJsonStringify()) emitter.pushRaw(out, op);
+        return;
+      }
+      case "dyn.object_tag": {
+        // #7106 S1c — Object.prototype.toString.call over the boxed-any carrier.
+        const valueIrType = typeOf(instr.value);
+        if (valueIrType.kind !== "dynamic") {
+          throw new Error(`ir/lower: dyn.object_tag operand must be dynamic, got ${valueIrType.kind} (${func.name})`);
+        }
+        const dyn = resolver.resolveDynamicLowering?.();
+        if (!dyn) {
+          throw new Error(
+            `ir/lower: resolver cannot lower dyn.object_tag (resolveDynamicLowering missing/null) (${func.name})`,
+          );
+        }
+        emitValue(instr.value, out);
+        // pushraw-ok(#7106): same opaque Instr[] contract as emitBox
+        for (const op of dyn.emitObjectToStringTag(dynamicScratch.toNumber)) emitter.pushRaw(out, op);
+        return;
+      }
+      case "dyn.own_property": {
+        // #7106 S1g — receiver then key, both carriers, then the provider call.
+        for (const [label, operand] of [
+          ["receiver", instr.receiver],
+          ["key", instr.key],
+        ] as const) {
+          const t = typeOf(operand);
+          if (t.kind !== "dynamic") {
+            throw new Error(`ir/lower: dyn.own_property ${label} must be dynamic, got ${t.kind} (${func.name})`);
+          }
+        }
+        const dynOwn = resolver.resolveDynamicLowering?.();
+        if (!dynOwn) {
+          throw new Error(
+            `ir/lower: resolver cannot lower dyn.own_property (resolveDynamicLowering missing/null) (${func.name})`,
+          );
+        }
+        emitValue(instr.receiver, out);
+        emitValue(instr.key, out);
+        // pushraw-ok(#7106): same opaque Instr[] contract as emitBox
+        for (const op of dynOwn.emitOwnPropertyTest(instr.test)) emitter.pushRaw(out, op);
+        return;
+      }
+      case "dyn.arguments_length": {
+        // #7106 S1e — the invocation's actual argument count, legacy's prologue.
+        const dyn = resolver.resolveDynamicLowering?.();
+        if (!dyn) {
+          throw new Error(
+            `ir/lower: resolver cannot lower dyn.arguments_length (resolveDynamicLowering missing/null) (${func.name})`,
+          );
+        }
+        // pushraw-ok(#7106): same opaque Instr[] contract as emitBox
+        for (const op of dyn.emitArgumentsLength(instr.formals)) emitter.pushRaw(out, op);
+        return;
+      }
+      case "dyn.current_this": {
+        // #7106 S3c — the invocation's `this`, legacy's receiver ladder.
+        const dyn = resolver.resolveDynamicLowering?.();
+        if (!dyn) {
+          throw new Error(
+            `ir/lower: resolver cannot lower dyn.current_this (resolveDynamicLowering missing/null) (${func.name})`,
+          );
+        }
+        // pushraw-ok(#7106): same opaque Instr[] contract as emitBox
+        for (const op of dyn.emitCurrentThis(instr.strict)) emitter.pushRaw(out, op);
+        return;
+      }
+      case "dyn.global_object": {
+        // #7106 — the realm's global object (legacy's `emitNativeGlobalThisObject`).
+        const dyn = resolver.resolveDynamicLowering?.();
+        if (!dyn) {
+          throw new Error(
+            `ir/lower: resolver cannot lower dyn.global_object (resolveDynamicLowering missing/null) (${func.name})`,
+          );
+        }
+        // pushraw-ok(#7106): same opaque Instr[] contract as emitBox
+        for (const op of dyn.emitGlobalObject()) emitter.pushRaw(out, op);
+        return;
+      }
+      case "dyn.instanceof_fn": {
+        // #7106 S3c — OrdinaryHasInstance against F's per-function prototype.
+        const dyn = resolver.resolveDynamicLowering?.();
+        if (!dyn) {
+          throw new Error(
+            `ir/lower: resolver cannot lower dyn.instanceof_fn (resolveDynamicLowering missing/null) (${func.name})`,
+          );
+        }
+        emitValue(instr.value, out);
+        // pushraw-ok(#7106): same opaque Instr[] contract as emitBox
+        for (const op of dyn.emitInstanceOfFunction(instr.target.name)) emitter.pushRaw(out, op);
+        return;
+      }
+      case "dyn.instanceof": {
+        // #7106 — legacy's generic runtime operator over two carriers.
+        const dyn = resolver.resolveDynamicLowering?.();
+        if (!dyn) {
+          throw new Error(
+            `ir/lower: resolver cannot lower dyn.instanceof (resolveDynamicLowering missing/null) (${func.name})`,
+          );
+        }
+        emitValue(instr.value, out);
+        emitValue(instr.target, out);
+        // pushraw-ok(#7106): same opaque Instr[] contract as emitBox
+        for (const op of dyn.emitInstanceOf()) emitter.pushRaw(out, op);
+        return;
+      }
+      case "dyn.publish_argc": {
+        // #7106 S1i — the call site's argument count, legacy's `emitSetArgc`.
+        const dyn = resolver.resolveDynamicLowering?.();
+        if (!dyn) {
+          throw new Error(
+            `ir/lower: resolver cannot lower dyn.publish_argc (resolveDynamicLowering missing/null) (${func.name})`,
+          );
+        }
+        // pushraw-ok(#7106): same opaque Instr[] contract as emitBox
+        for (const op of dyn.emitPublishArgc(instr.count)) emitter.pushRaw(out, op);
+        return;
+      }
+      case "dyn.string_carrier": {
+        // #7106 S1c — checked native-string carrier recovery, legacy's return ladder.
+        const valueIrType = typeOf(instr.value);
+        if (valueIrType.kind !== "dynamic") {
+          throw new Error(
+            `ir/lower: dyn.string_carrier operand must be dynamic, got ${valueIrType.kind} (${func.name})`,
+          );
+        }
+        const dyn = resolver.resolveDynamicLowering?.();
+        if (!dyn) {
+          throw new Error(
+            `ir/lower: resolver cannot lower dyn.string_carrier (resolveDynamicLowering missing/null) (${func.name})`,
+          );
+        }
+        emitValue(instr.value, out);
+        // pushraw-ok(#7106): same opaque Instr[] contract as emitBox
+        for (const op of dyn.emitStringCarrier()) emitter.pushRaw(out, op);
+        return;
+      }
+      case "dyn.construct": {
+        // #7106 S3a — `new <dynamic callee>(<dynamic args>)` through the lane's
+        // ordinary-[[Construct]] driver; callee then args, source order.
+        for (const [label, operand] of [
+          ["callee", instr.callee] as const,
+          ...instr.args.map((a, i) => [`arg${i}`, a] as const),
+        ]) {
+          const t = typeOf(operand);
+          if (t.kind !== "dynamic") {
+            throw new Error(`ir/lower: dyn.construct ${label} must be dynamic, got ${t.kind} (${func.name})`);
+          }
+        }
+        const dyn = resolver.resolveDynamicLowering?.();
+        if (!dyn) {
+          throw new Error(
+            `ir/lower: resolver cannot lower dyn.construct (resolveDynamicLowering missing/null) (${func.name})`,
+          );
+        }
+        emitValue(instr.callee, out);
+        for (const arg of instr.args) emitValue(arg, out);
+        // pushraw-ok(#7106): same opaque Instr[] contract as emitBox
+        for (const op of dyn.emitConstruct(instr.args.length)) emitter.pushRaw(out, op);
+        return;
+      }
       case "dyn.truthy": {
         // #2949 S5.1 — ToBoolean on a boxed-any carrier. The operand MUST be
         // dynamic (verifier enforces); the op sequence comes from the
@@ -1931,14 +2196,17 @@ export function lowerIrFunctionBody<S, Slot>(
         emitValue(instr.key, out);
         emitValue(instr.value, out);
         // pushraw-ok(#3795): backend-provided dynamic store sequence is rejected by non-Wasm backend legality
-        for (const op of dyn.emitMemberSet()) emitter.pushRaw(out, op);
+        for (const op of dyn.emitMemberSet(instr.sloppy === true)) emitter.pushRaw(out, op);
         return;
       }
+      case "string.len":
+        if (stringBuilderCx && tryEmitStringBuilderLength(instr.value, stringBuilderCx, out)) return;
+        emitStringOperation(instr, stringOperationContext, out);
+        return;
       case "string.const":
       case "string.concat":
       case "string.repeat":
       case "string.eq":
-      case "string.len":
       case "string.char_at":
       case "string.char_code_at":
         emitStringOperation(instr, stringOperationContext, out);
@@ -2305,10 +2573,12 @@ export function lowerIrFunctionBody<S, Slot>(
       }
       // Slice 6 (#1169e): slot / vec / for-of ops.
       case "slot.read": {
+        if (stringBuilderCx && tryEmitStringBuilderRead(instr.slotIndex, stringBuilderCx, out)) return;
         emitter.emitLocalGet(slotWasmIdx(instr.slotIndex), out);
         return;
       }
       case "slot.write": {
+        if (stringBuilderCx && tryEmitStringBuilderWrite(instr.slotIndex, instr.value, stringBuilderCx, out)) return;
         emitValue(instr.value, out);
         emitter.emitLocalSet(slotWasmIdx(instr.slotIndex), out);
         return;
@@ -2642,7 +2912,10 @@ export function lowerIrFunctionBody<S, Slot>(
           (opTy.kind === "val" && opTy.val.kind === "externref") ||
           opTy.kind === "extern" ||
           opTy.kind === "callable" ||
-          (opTy.kind === "string" && resolver.resolveString?.()?.kind === "externref");
+          (opTy.kind === "string" && resolver.resolveString?.()?.kind === "externref") ||
+          // (#7106 S3a) the boxed-any carrier on the host strategy IS externref
+          // (`IrDynamicLowering.carrier`); only the `$AnyValue` carrier converts.
+          (opTy.kind === "dynamic" && resolver.resolveDynamicLowering?.()?.carrier.kind === "externref");
         if (!alreadyExternref) {
           emitter.emitToExternref(out);
         }
@@ -2941,9 +3214,14 @@ export function lowerIrFunctionBody<S, Slot>(
             ? allocScratchLocal("$finally_ran", { kind: "i32" })
             : undefined;
         const emitGuardedFinally = (target: Instr[]): void => {
-          const runFinally: Instr[] = finallyRanSlot === undefined ? target : [];
+          if (finallyRanSlot === undefined) {
+            emitBodyBuffer(instr.finallyBody!, target);
+            return;
+          }
+          const runFinally: Instr[] = [];
+          ctrlStack.push({ kind: "plain" }); // (#7106) the guard `if` below is one more Wasm label
           emitBodyBuffer(instr.finallyBody!, runFinally);
-          if (finallyRanSlot === undefined) return;
+          ctrlStack.pop();
           emitter.emitLocalGet(finallyRanSlot, target as unknown as S);
           emitter.emitIf({ kind: "empty" }, [] as unknown as S, runFinally as unknown as S, target as unknown as S);
         };
@@ -3220,6 +3498,11 @@ export function lowerIrFunctionBody<S, Slot>(
         return;
       }
       case "extern.regex": {
+        // (#7106 lever R) A host-free lane constructs it in-module.
+        if (instr.provider) {
+          emitter.emitCall(resolver.resolveFunc(instr.provider), out);
+          return;
+        }
         // Mirror the legacy `compileRegExpLiteral` pattern (see
         // `src/codegen/typeof-delete.ts:158`):
         //   <emit pattern as string literal>
@@ -3443,9 +3726,9 @@ export function lowerIrFunctionBody<S, Slot>(
         //     mirrors `emitStandaloneAwaitUnwrap` (expressions.ts) EXACTLY;
         //     keep the two in lockstep. `ref.test $Promise` discriminates: a
         //     non-`$Promise` externref (plain value / null / non-native
-        //     thenable) passes through unchanged; a `$Promise` yields its
-        //     `value` field regardless of state (pending → null — the AG0
-        //     synchronous-settlement model). Genuine suspension is the ONE
+        //     thenable) passes through unchanged; a REJECTED `$Promise`
+        //     throws its reason (#6995); any other yields its `value` field
+        //     (pending → null — the AG0 synchronous-settlement model). Genuine suspension is the ONE
         //     engine's job; engine-activated fns are never IR-claimed
         //     (`asyncEngineClaims` gate in select.ts), so this arm only ever
         //     sees the sync-model population.
@@ -3496,6 +3779,7 @@ export function lowerIrFunctionBody<S, Slot>(
           blockType: { kind: "val", type: { kind: "externref" } as ValType },
           then: [
             ...handled,
+            ...rejectedAwaitThrow(awaitScratchPromiseIdx, promiseTypeIdx, resolver.ensureExnTag?.(), func.name),
             { op: "local.get", index: awaitScratchPromiseIdx },
             { op: "any.convert_extern" },
             { op: "ref.cast", typeIdx: promiseTypeIdx },
@@ -3705,12 +3989,32 @@ function collectIrUses(instr: IrInstr): readonly IrValueId[] {
       return [instr.cond];
     case "raw.wasm":
       return [];
+    case "dyn.undefined":
+      return [];
     case "box":
     case "unbox":
     case "tag.test":
     case "dyn.truthy":
+    case "dyn.typeof":
+    case "dyn.to_string":
+    case "dyn.json_stringify":
+    case "dyn.object_tag":
+    case "dyn.string_carrier":
     case "dyn.to_number":
       return [instr.value];
+    case "dyn.construct":
+      return [instr.callee, ...instr.args];
+    case "dyn.arguments_length":
+    case "dyn.current_this":
+    case "dyn.global_object":
+    case "dyn.publish_argc":
+      return [];
+    case "dyn.instanceof":
+      return [instr.value, instr.target];
+    case "dyn.instanceof_fn":
+      return [instr.value];
+    case "dyn.own_property":
+      return [instr.receiver, instr.key];
     case "dyn.eq":
       return [instr.lhs, instr.rhs];
     case "dyn.member_get":
@@ -3945,20 +4249,6 @@ export function collectForOfBodyUses(body: readonly IrInstr[]): IrValueId[] {
     }
   }
   return uses;
-}
-
-function collectTerminatorUses(block: IrBlock): readonly IrValueId[] {
-  const t = block.terminator;
-  switch (t.kind) {
-    case "return":
-      return t.values;
-    case "br":
-      return t.branch.args;
-    case "br_if":
-      return [t.condition, ...t.ifTrue.args, ...t.ifFalse.args];
-    case "unreachable":
-      return [];
-  }
 }
 
 /**
@@ -4244,4 +4534,36 @@ function emitJsToInt32<S>(
   // Stack: [f64_in_range]
   emitter.emitNumericConversion("i32.trunc_sat_f64_u", out);
   // Stack: [i32]
+}
+
+/**
+ * (#6995) The honest-unwrap half of the native-carrier `await` arm — mirrors
+ * `emitStandaloneAwaitUnwrap`'s `throwOnRejected` (src/codegen/async-value-sink-unwrap.ts):
+ * `if ($Promise.state == REJECTED) throw $exn($Promise.value)`, so a rejection
+ * reaches the enclosing `try` instead of being read as the fulfilled value.
+ */
+function rejectedAwaitThrow(
+  scratchIdx: number,
+  promiseTypeIdx: number,
+  exnTag: number | undefined,
+  fn: string,
+): Instr[] {
+  if (exnTag === undefined) throw new Error(`ir/lower: resolver cannot resolve __exn tag for await (${fn}) (#6995)`);
+  const asPromise: Instr[] = [
+    { op: "local.get", index: scratchIdx },
+    { op: "any.convert_extern" },
+    { op: "ref.cast", typeIdx: promiseTypeIdx },
+  ];
+  // $Promise field 0 = `state` (2 = REJECTED, settlement-bodies.ts); field 1 = `value`.
+  return [
+    ...asPromise,
+    { op: "struct.get", typeIdx: promiseTypeIdx, fieldIdx: 0 },
+    { op: "i32.const", value: 2 },
+    { op: "i32.eq" },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [...asPromise, { op: "struct.get", typeIdx: promiseTypeIdx, fieldIdx: 1 }, { op: "throw", tagIdx: exnTag }],
+    },
+  ];
 }

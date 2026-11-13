@@ -6,7 +6,9 @@ import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { runtimeEvalStateMayShadowBinding } from "./direct-eval-environment.js";
 import { resolvesToAmbientGlobal } from "./expressions/non-constructable.js";
 import { emitThrowReferenceError } from "./js-errors.js";
+import { reportError } from "./context/errors.js";
 import { BUILTIN_CLASS_NAMES } from "./expressions/builtin-class-names.js";
+import { BUILTIN_STATIC_METHOD_ARITY } from "./builtin-fn-meta.js";
 
 /**
  * (#6664) Browser (lib.dom) globals that a host-free `--target standalone`
@@ -98,6 +100,9 @@ const STANDALONE_UNPROVIDED_DOM_CLASSES: ReadonlySet<string> = new Set([
   "CSSRuleList",
   "CSSStyleDeclaration",
   "MediaQueryList",
+  // (#7025) `document.implementation` — React's test shim builds its
+  // server-integration containers with `createHTMLDocument("")`.
+  "DOMImplementation",
 ]);
 
 /** Host-free and not a certified DOM-capability module (#4576). */
@@ -170,7 +175,22 @@ export function isHostResolvedBuiltinReceiver(
   if (!ts.isIdentifier(receiver) || !BUILTIN_CLASS_NAMES.has(receiver.text)) return false;
   if (!ctx.standalone) return true;
   if (receiver.text === "Buffer") return false;
-  return !(methodName === "captureStackTrace" && STANDALONE_ERROR_CONSTRUCTORS.has(receiver.text));
+  if (methodName === "captureStackTrace" && STANDALONE_ERROR_CONSTRUCTORS.has(receiver.text)) return false;
+  return !isBuiltinCarrierExpandoCall(ctx, receiver, methodName);
+}
+
+/**
+ * (#1472 raytrace) `Object.extend(d, s)` / `Math.foo()` on standalone: a name
+ * with no modelled static is an EXPANDO on the carrier value, not a host
+ * builtin. The caller must capture the method (`[[Get]]`) BEFORE evaluating
+ * the arguments (§13.3.6.1), which the generic `__extern_method_call` bridge
+ * does not — it resolves the name after them.
+ */
+export function isBuiltinCarrierExpandoCall(ctx: CodegenContext, receiver: ts.Expression, methodName: string): boolean {
+  if (!ctx.standalone || !ts.isIdentifier(receiver) || !BUILTIN_CLASS_NAMES.has(receiver.text)) return false;
+  if (receiver.text === "Buffer") return false;
+  if (methodName === "captureStackTrace" && STANDALONE_ERROR_CONSTRUCTORS.has(receiver.text)) return false;
+  return BUILTIN_STATIC_METHOD_ARITY[receiver.text]?.[methodName] === undefined;
 }
 
 /**
@@ -249,4 +269,22 @@ export function tryEmitStandalonePerformanceNow(
   if (!resolvesToAmbientGlobal(ctx, receiver)) return undefined;
   fctx.body.push({ op: "f64.const", value: 0 });
   return { kind: "f64" };
+}
+
+/**
+ * (#6843) A `declare function` / `declare class` in a package's declaration
+ * file (a `.d.ts` module under `node_modules/`) is a module export whose body
+ * is not in the program, not a free host global. On a host-free standalone
+ * module it must not become an `env.<name>` import or an `env.<Class>_*`
+ * extern class: a use throws instead. Reports a warning and
+ * returns true when the caller must skip the stub's registration.
+ */
+export function skipStandalonePackageStub(ctx: CodegenContext, sourceFile: ts.SourceFile, id: ts.Identifier): boolean {
+  if (!ctx.standalone || !sourceFile.isDeclarationFile || !ts.isExternalModule(sourceFile)) return false;
+  if (!/(^|[\\/])node_modules[\\/]/.test(sourceFile.fileName) || ctx.linkedPackageBindings.has(id.text)) return false;
+  const message =
+    `standalone (#6843): "${id.text}" is declared only by the package declaration file ${sourceFile.fileName}; ` +
+    `its implementation is not part of the program, so a use throws instead of importing it from env`;
+  reportError(ctx, id, message, "warning");
+  return true;
 }

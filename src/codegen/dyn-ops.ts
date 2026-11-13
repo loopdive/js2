@@ -3,17 +3,26 @@
 // Representation-neutral runtime helpers used by IR dynamic operations.
 
 import type { Instr, ValType } from "../ir/types.js";
-import { ensureAnyFromExternHelper, ensureAnyHelpers, ensureAnyToExternHelper } from "./any-helpers.js";
+import {
+  ensureAnyFromExternHelper,
+  ensureAnyHelpers,
+  ensureAnyToExternHelper,
+  ensureExternStrictEqHelper,
+} from "./any-helpers.js";
+import { ensureExternLooseEqHelper } from "./helpers/loose-equality-to-primitive.js";
 import type { CodegenContext } from "./context/types.js";
 import { jsValueBoundary } from "./context/types.js";
-import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
+import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
+import { makeHelperFctx, reservePlaceholder } from "./helpers/reserved-helper-funcs.js";
+import { emitAnyAddFromExternTemps } from "./native-addition.js";
 import {
   ensureNativeStringHelpers,
   nativeStringLiteralInstrs,
   stringConstantExternrefInstrs,
 } from "./native-strings.js";
 import { i32ArrayLiteralInstrs } from "./native-regex.js";
-import { ensureObjectRuntime } from "./object-runtime.js";
+import { ensureObjectRuntime, reserveApplyClosure } from "./object-runtime.js";
+import { emitWasiErrorConstructor } from "./registry/error-types.js";
 import { addStringConstantGlobal } from "./registry/imports.js";
 import { addFuncType } from "./registry/types.js";
 import { RE_FLAG_G } from "./regex/bytecode.js";
@@ -27,6 +36,9 @@ export const IR_DYN_GT_FN = "__ir_dyn_gt";
 export const IR_DYN_GE_FN = "__ir_dyn_ge";
 export const IR_DYN_METHOD_CALL_0_FN = "__ir_dyn_method_call_0";
 export const IR_DYN_METHOD_CALL_1_FN = "__ir_dyn_method_call_1";
+export const IR_DYN_CALL_BOX_FN = "__ir_dyn_call_box";
+export const IR_DYN_CALL_VALUE_FN = "__ir_dyn_call_value";
+export const IR_DYN_CALL_ARGUMENT_FN = "__ir_dyn_call_argument";
 export const IR_DYN_STRING_REPLACE_FN = "__ir_dyn_string_replace";
 
 export type IrDynamicRuntimeNeed =
@@ -37,7 +49,8 @@ export type IrDynamicRuntimeNeed =
   | "ge"
   | "method-call-0"
   | "method-call-1"
-  | "string-replace";
+  | "string-replace"
+  | "member-call";
 
 type RelNeed = "lt" | "le" | "gt" | "ge";
 
@@ -115,38 +128,24 @@ function ensureDynamicAdd(ctx: CodegenContext, carrier: ValType): void {
     return;
   }
 
-  if (ctx.targetProfile.semanticProviders !== "native-first") {
-    const hostAdd = ensureLateImport(ctx, "__host_add", [carrier, carrier], [carrier]);
-    flushLateImportShifts(ctx, null);
-    const settled = ctx.funcMap.get("__host_add") ?? hostAdd;
-    if (settled === undefined) throw new Error("dyn-ops: __host_add unavailable");
-    ctx.funcMap.set(IR_DYN_ADD_FN, settled);
-    return;
+  // (#7223) The externref carrier takes the same §13.15.3 dispatch binary `+`
+  // emits (`emitAnyAddFromExternTemps`: ToPrimitive(default) — user `valueOf`
+  // before `toString`, `Symbol.toPrimitive`, a Symbol operand throws TypeError —
+  // then concat or numeric add). `__any_add` reads only the `$AnyValue` tag, so a
+  // boxed object reached it as "[object Object]" without calling `valueOf`.
+  if (ctx.funcMap.has(IR_DYN_ADD_FN)) return;
+  if (ctx.nativeStrings && ctx.anyStrTypeIdx >= 0) ensureObjectRuntime(ctx); // `__to_primitive`, as `emitAnyAdd`
+  const fctx = makeHelperFctx(IR_DYN_ADD_FN, "lhs", carrier);
+  fctx.params.push({ name: "rhs", type: carrier });
+  const funcIdx = reservePlaceholder(ctx, IR_DYN_ADD_FN, [carrier, carrier], IR_DYN_ADD_FN);
+  if (emitAnyAddFromExternTemps(ctx, fctx, 0, 1).kind === "f64") {
+    ensureLateImport(ctx, "__box_number", [{ kind: "f64" }], [{ kind: "externref" }]);
+    flushLateImportShifts(ctx, fctx);
+    fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__box_number")! });
   }
-
-  ensureAnyHelpers(ctx);
-  const honest = ensureAnyFromExternHelper(ctx, { forceHonest: true });
-  const toExtern = ensureAnyToExternHelper(ctx);
-  const anyAdd = ctx.funcMap.get("__any_add");
-  if (honest === undefined || toExtern === undefined || anyAdd === undefined) {
-    throw new Error(
-      `dyn-ops: standalone dynamic add dependencies unavailable (fromExtern=${honest !== undefined}, toExtern=${toExtern !== undefined}, anyAdd=${anyAdd !== undefined})`,
-    );
-  }
-  addHelper(
-    ctx,
-    IR_DYN_ADD_FN,
-    [carrier, carrier],
-    [carrier],
-    [
-      { op: "local.get", index: 0 },
-      { op: "call", funcIdx: honest },
-      { op: "local.get", index: 1 },
-      { op: "call", funcIdx: honest },
-      { op: "call", funcIdx: anyAdd },
-      { op: "call", funcIdx: toExtern },
-    ],
-  );
+  const helper = definedFuncAt(ctx, ctx.funcMap.get(IR_DYN_ADD_FN) ?? funcIdx)!;
+  helper.locals = fctx.locals;
+  helper.body = fctx.body;
 }
 
 function ensureDynamicRel(ctx: CodegenContext, carrier: ValType, op: RelNeed): void {
@@ -159,27 +158,6 @@ function ensureDynamicRel(ctx: CodegenContext, carrier: ValType, op: RelNeed): v
   }
 
   const i32: ValType = { kind: "i32" };
-  if (ctx.targetProfile.semanticProviders !== "native-first") {
-    const hostCompare = ensureLateImport(ctx, "__host_compare", [carrier, carrier], [i32]);
-    flushLateImportShifts(ctx, null);
-    const settled = ctx.funcMap.get("__host_compare") ?? hostCompare;
-    if (settled === undefined) throw new Error("dyn-ops: __host_compare unavailable");
-    addHelper(
-      ctx,
-      relName(op),
-      [carrier, carrier],
-      [i32],
-      [
-        { op: "local.get", index: 0 },
-        { op: "local.get", index: 1 },
-        { op: "call", funcIdx: settled },
-        { op: "local.set", index: 2 },
-        ...compareSignBody(op, 2),
-      ],
-      [{ name: "cmp", type: i32 }],
-    );
-    return;
-  }
 
   ensureAnyHelpers(ctx);
   ensureNativeStringHelpers(ctx);
@@ -331,19 +309,10 @@ function ensureDynamicCallBoundaryExtern(ctx: CodegenContext): number {
 
 function ensureDynamicMethodCall(ctx: CodegenContext, carrier: ValType, arity: 0 | 1): void {
   const externref: ValType = { kind: "externref" };
-  const nativeSemanticProviders = ctx.targetProfile.semanticProviders === "native-first";
-  const arrayNewName = nativeSemanticProviders ? "__objvec_new" : "__js_array_new";
-  const arrayPushName = nativeSemanticProviders ? "__objvec_push" : "__js_array_push";
+  const arrayNewName = "__objvec_new";
+  const arrayPushName = "__objvec_push";
 
-  if (nativeSemanticProviders) {
-    ensureObjectRuntime(ctx);
-  } else {
-    ensureLateImport(ctx, arrayNewName, [], [externref]);
-    ensureLateImport(ctx, arrayPushName, [externref, externref], []);
-    ensureLateImport(ctx, "__extern_method_call", [externref, externref, externref], [externref]);
-    if (ctx.fast) ensureLateImport(ctx, "__extern_get", [externref, externref], [externref]);
-    flushLateImportShifts(ctx, null);
-  }
+  ensureObjectRuntime(ctx);
 
   const arrayNew = ctx.funcMap.get(arrayNewName);
   const arrayPush = ctx.funcMap.get(arrayPushName);
@@ -357,32 +326,28 @@ function ensureDynamicMethodCall(ctx: CodegenContext, carrier: ValType, arity: 0
   let keyToExtern: number | undefined;
   let argumentToExtern: number | undefined;
   let resultFromExtern: number | undefined;
-  if (nativeSemanticProviders) {
-    if (ctx.fast) {
-      const rawExtern = ensureDynamicCallBoundaryExtern(ctx);
-      receiverToExtern = rawExtern;
-      keyToExtern = rawExtern;
-      argumentToExtern = ensureAnyToExternHelper(ctx);
-      resultFromExtern = ensureAnyFromExternHelper(ctx, { forceHonest: true });
-      if (argumentToExtern === undefined || resultFromExtern === undefined) {
-        throw new Error("dyn-ops: fast standalone method-call carrier bridge unavailable");
-      }
-    } else if (ctx.standalone || ctx.wasi) {
-      // Host-free externref carriers still pass through the canonical AnyValue
-      // classifier used by the established standalone path. In native-first
-      // JS, however, an externref may be a raw JS-owned boundary object; keep
-      // that identity untouched so the per-instance boundary adapter can
-      // recognise it.
-      const rawExtern = ensureDynamicCallBoundaryExtern(ctx);
-      receiverToExtern = rawExtern;
-      keyToExtern = rawExtern;
-      fromExtern = ensureAnyFromExternHelper(ctx, { forceHonest: true });
-      if (fromExtern === undefined) {
-        throw new Error("dyn-ops: standalone method-call classifier unavailable");
-      }
+  if (ctx.fast) {
+    const rawExtern = ensureDynamicCallBoundaryExtern(ctx);
+    receiverToExtern = rawExtern;
+    keyToExtern = rawExtern;
+    argumentToExtern = ensureAnyToExternHelper(ctx);
+    resultFromExtern = ensureAnyFromExternHelper(ctx, { forceHonest: true });
+    if (argumentToExtern === undefined || resultFromExtern === undefined) {
+      throw new Error("dyn-ops: fast standalone method-call carrier bridge unavailable");
     }
-  } else if (ctx.fast) {
-    throw new Error("dyn-ops: fast host dynamic method calls are not enabled");
+  } else if (ctx.standalone || ctx.wasi) {
+    // Host-free externref carriers still pass through the canonical AnyValue
+    // classifier used by the established standalone path. In native-first
+    // JS, however, an externref may be a raw JS-owned boundary object; keep
+    // that identity untouched so the per-instance boundary adapter can
+    // recognise it.
+    const rawExtern = ensureDynamicCallBoundaryExtern(ctx);
+    receiverToExtern = rawExtern;
+    keyToExtern = rawExtern;
+    fromExtern = ensureAnyFromExternHelper(ctx, { forceHonest: true });
+    if (fromExtern === undefined) {
+      throw new Error("dyn-ops: standalone method-call classifier unavailable");
+    }
   }
 
   const argsLocal = 2 + arity;
@@ -603,6 +568,76 @@ function ensureDynamicStringReplace(ctx: CodegenContext, carrier: ValType): void
   );
 }
 
+/** Carrier projection only. The IR body retains Get/argument/IsCallable/Call order. */
+function ensureDynamicMemberCallSupport(ctx: CodegenContext, carrier: ValType): void {
+  if (ctx.targetProfile.semanticProviders !== "native-first") throw new Error("native member-call support unavailable");
+  ensureObjectRuntime(ctx);
+  reserveApplyClosure(ctx);
+  const ext: ValType = { kind: "externref" };
+  ensureLateImport(ctx, "__is_callable", [ext], [{ kind: "i32" }]);
+  emitWasiErrorConstructor(ctx, "TypeError", 1);
+  flushLateImportShifts(ctx, null);
+  const honest = ensureAnyFromExternHelper(ctx, { forceHonest: true });
+  const fromExtern = !ctx.fast && (ctx.standalone || ctx.wasi) ? honest : undefined;
+  const raw = ctx.fast || ctx.standalone || ctx.wasi ? ensureDynamicCallBoundaryExtern(ctx) : undefined;
+  const arg = ctx.fast ? ensureAnyToExternHelper(ctx) : undefined;
+  if (
+    (!ctx.fast && (ctx.standalone || ctx.wasi) && fromExtern === undefined) ||
+    ((ctx.fast || ctx.standalone || ctx.wasi) && raw === undefined) ||
+    (ctx.fast && arg === undefined)
+  ) {
+    throw new Error("native member-call carrier projection unavailable");
+  }
+  addHelper(
+    ctx,
+    IR_DYN_CALL_VALUE_FN,
+    [carrier],
+    [ext],
+    [
+      { op: "local.get", index: 0 },
+      ...(fromExtern === undefined ? [] : [{ op: "call", funcIdx: fromExtern } satisfies Instr]),
+      ...(raw === undefined ? [] : [{ op: "call", funcIdx: raw } satisfies Instr]),
+    ],
+  );
+  if (ctx.fast && honest === undefined) throw new Error("honest function carrier classifier unavailable");
+  addHelper(
+    ctx,
+    IR_DYN_CALL_BOX_FN,
+    [ext],
+    [carrier],
+    [
+      { op: "local.get", index: 0 },
+      ...(ctx.fast && honest !== undefined ? [{ op: "call", funcIdx: honest } satisfies Instr] : []),
+    ],
+  );
+  addHelper(
+    ctx,
+    IR_DYN_CALL_ARGUMENT_FN,
+    [carrier],
+    [ext],
+    [{ op: "local.get", index: 0 }, ...(arg === undefined ? [] : [{ op: "call", funcIdx: arg } satisfies Instr])],
+  );
+}
+
+/**
+ * The externref-carrier providers of `dyn.eq`: `__extern_strict_eq` for
+ * `===` / `!==`, `__extern_loose_eq` for `==` / `!=` (#2949 S5.2, #7194).
+ * Registered before Phase 3 so no emit can shift a function index.
+ *
+ * Not an `IrDynamicRuntimeNeed`: those are discovered from runtime-symbol
+ * references and registered by `ensureIrDynamicRuntime` before the carrier's
+ * union-import family, on every carrier. `dyn.eq` is an op, its providers
+ * exist only on the externref carrier, and they register after that family;
+ * folding them into the need set would reorder function indices and move
+ * JavaScript-environment bytes. The strict call is `===`'s own provider on
+ * every lane; that the host-free loose provider also needs it (for two
+ * Objects) is that provider's dependency, not a second registration of it.
+ */
+export function ensureIrDynamicEqualityRuntime(ctx: CodegenContext): void {
+  ensureExternStrictEqHelper(ctx);
+  ensureExternLooseEqHelper(ctx);
+}
+
 export function ensureIrDynamicRuntime(ctx: CodegenContext, needs: ReadonlySet<IrDynamicRuntimeNeed>): void {
   if (needs.size === 0) return;
   if (ctx.fast) ensureAnyHelpers(ctx);
@@ -615,4 +650,47 @@ export function ensureIrDynamicRuntime(ctx: CodegenContext, needs: ReadonlySet<I
   if (needs.has("method-call-0")) ensureDynamicMethodCall(ctx, carrier, 0);
   if (needs.has("method-call-1")) ensureDynamicMethodCall(ctx, carrier, 1);
   if (needs.has("string-replace")) ensureDynamicStringReplace(ctx, carrier);
+  if (needs.has("member-call")) ensureDynamicMemberCallSupport(ctx, carrier);
+}
+
+/** Exact symbolic demand of the dynamic runtime this module owns. */
+export function irDynamicRuntimeNeedForSymbol(symbol: string): IrDynamicRuntimeNeed | undefined {
+  switch (symbol) {
+    case IR_DYN_ADD_FN:
+      return "add";
+    case IR_DYN_LT_FN:
+      return "lt";
+    case IR_DYN_LE_FN:
+      return "le";
+    case IR_DYN_GT_FN:
+      return "gt";
+    case IR_DYN_GE_FN:
+      return "ge";
+    case IR_DYN_CALL_BOX_FN:
+    case IR_DYN_CALL_VALUE_FN:
+    case IR_DYN_CALL_ARGUMENT_FN:
+      return "member-call";
+    case IR_DYN_METHOD_CALL_0_FN:
+      return "method-call-0";
+    case IR_DYN_METHOD_CALL_1_FN:
+      return "method-call-1";
+    case IR_DYN_STRING_REPLACE_FN:
+      return "string-replace";
+  }
+  return undefined;
+}
+
+/** Observe only the actual function-object call helpers, after reservation. */
+export function observeIrFunctionObjectCallProviders(observe: (symbol: string) => void): void {
+  for (const symbol of [
+    IR_DYN_CALL_BOX_FN,
+    IR_DYN_CALL_VALUE_FN,
+    IR_DYN_CALL_ARGUMENT_FN,
+    "__objvec_new",
+    "__objvec_push",
+    "__apply_closure",
+    "__is_callable",
+    "__new_TypeError",
+  ])
+    observe(symbol);
 }

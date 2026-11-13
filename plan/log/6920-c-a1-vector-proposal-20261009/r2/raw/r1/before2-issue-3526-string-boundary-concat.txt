@@ -1,0 +1,12 @@
+
+ RUN  v3.2.7 /home/user/js2/.claude/worktrees/agent-a774506d6593a2d93
+
+ ✓ tests/issue-3526-string-boundary-concat.test.ts (27 tests) 2066ms
+   ✓ #3526 F2-S5 end-to-end behaviour is unchanged > binds the host lane's existing wasm:js-string.concat builtin for BOTH modes, in the same position  950ms
+   ✓ #3526 F2-S5 end-to-end behaviour is unchanged > calls the mode's native helper on every native-strings lane, with no wasm:js-string import  615ms
+
+ Test Files  1 passed (1)
+      Tests  27 passed (27)
+   Start at  23:15:59
+   Duration  27.78s (transform 17.96s, setup 0ms, collect 25.30s, tests 2.07s, environment 0ms, prepare 64ms)
+

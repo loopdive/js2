@@ -767,6 +767,40 @@ export function getOrRegisterResizableAbType(ctx: CodegenContext): number {
 }
 
 /**
+ * (#7011) Get or register `$__sab` — the native `SharedArrayBuffer` carrier, a
+ * WasmGC SUBTYPE of the ArrayBuffer backing vec `$__vec_i32_byte`:
+ *   `{length: i32 (mut), data: (ref $__arr_i32_byte) (mut), maxByteLength: i32, growable: i32}`.
+ *
+ * Being a subtype keeps every existing byte consumer (TypedArray/DataView
+ * construction, element codecs, `byteLength`) working unchanged on a shared
+ * buffer; the subtype identity IS IsSharedArrayBuffer (`ref.test $__sab`). The
+ * fourth field keeps the shape distinct from `$__resizable_ab` (three fields,
+ * same supertype), which would otherwise canonicalize to the same type.
+ * Memoized through `structMap` (no context field); same supertype-first
+ * ordering discipline as `getOrRegisterResizableAbType`.
+ */
+export function getOrRegisterSabType(ctx: CodegenContext): number {
+  const existing = ctx.structMap.get("__sab");
+  if (existing !== undefined) return existing;
+  const bufVecTypeIdx = getOrRegisterVecType(ctx, "i32_byte", { kind: "i8" });
+  const arrTypeIdx = getArrTypeIdxFromVec(ctx, bufVecTypeIdx);
+  const idx = ctx.mod.types.length;
+  const fields = [
+    { name: "length", type: { kind: "i32" as const }, mutable: true },
+    { name: "data", type: { kind: "ref" as const, typeIdx: arrTypeIdx }, mutable: true },
+    // `__`-prefixed: struct field names surface as dynamic `__sget_<name>`
+    // properties; the spec accessors live on SharedArrayBuffer.prototype.
+    { name: "__maxByteLength", type: { kind: "i32" as const }, mutable: false },
+    { name: "__growable", type: { kind: "i32" as const }, mutable: false },
+  ];
+  ctx.mod.types.push({ kind: "struct", name: "__sab", superTypeIdx: bufVecTypeIdx, fields });
+  ctx.structMap.set("__sab", idx);
+  ctx.typeIdxToStructName.set(idx, "__sab");
+  ctx.structFields.set("__sab", fields);
+  return idx;
+}
+
+/**
  * Get or register the template vec struct type for tagged template string arrays.
  */
 export function getOrRegisterTemplateVecType(ctx: CodegenContext): number {

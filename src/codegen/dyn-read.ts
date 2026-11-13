@@ -56,6 +56,7 @@ import { collectClosureBaseWrapperTypeIdxs as closureBaseWrapperTypeIdxs } from 
 import { buildThrowJsErrorInstrs } from "./js-errors.js";
 import { boxToAny } from "./value-tags.js";
 import { readEnv } from "../env.js";
+import { runtimeEvalSharedValueDecode } from "./global-environment.js";
 
 // `$AnyValue` tag constants (mirror any-helpers.ts box helpers).
 const TAG_NULL = 0;
@@ -548,6 +549,20 @@ const AV_REF = 3;
 const AV_EXT = 4;
 
 /**
+ * (#7106 A2b) When values may cross the runtime-eval boundary, a property read
+ * can return the provider's canonical carrier (an object built by eval code
+ * holds them). `__dyn_member_get` decodes it right after `__extern_get`, as
+ * every legacy read site does (`runtimeEvalSharedValueUnwrapInstrs`);
+ * caller-owned values pass through unchanged. Both helper bodies take 2 params.
+ */
+function dynMemberReadDecode(ctx: CodegenContext) {
+  const readLocals: { name: string; type: ValType }[] = [];
+  const decodeRead =
+    ctx.runtimeEvalGlobalFunctionBindings === true ? runtimeEvalSharedValueDecode(ctx, readLocals, 2) : [];
+  return { decodeRead, readLocals };
+}
+
+/**
  * (#3053 U0) Register the unified dynamic-reader carrier primitive
  * `__dyn_member_get` (+ the internal `__carrier_recv_to_extern` peel in gc/
  * standalone). Idempotent and **gated on `ctx.usesDynMemberGet`** — a no-op
@@ -636,6 +651,7 @@ export function ensureDynMemberGet(ctx: CodegenContext): void {
   // deps (`__extern_get`, honest classifier, `__box_number`/`__box_boolean`) are
   // ensured at preregister time for the fast path (preregisterDynamicSupport);
   // the self-guards below stay as the finalize-late backstop.
+  const { decodeRead, readLocals } = dynMemberReadDecode(ctx);
   if (ctx.fast) {
     // ── gc carrier = (ref null $AnyValue) (fast: standalone OR host-js-string) ─
     const anyIdx = ctx.anyValueTypeIdx;
@@ -793,9 +809,10 @@ export function ensureDynMemberGet(ctx: CodegenContext): void {
       { op: "local.get", index: 1 },
       { op: "call", funcIdx: anyToExternIdx },
       { op: "call", funcIdx: externGetIdx },
+      ...decodeRead,
       { op: "call", funcIdx: honestIdx },
     ];
-    const dmgIdx = addHelper("__dyn_member_get", [anyRefNull, anyRefNull], [anyRefNull], dmgBody);
+    const dmgIdx = addHelper("__dyn_member_get", [anyRefNull, anyRefNull], [anyRefNull], dmgBody, readLocals);
     if (dmgIdx === undefined) {
       ctx.dynMemberGetHelpersEmitted = false;
       ctx.usesDynMemberGet = false;
@@ -851,8 +868,9 @@ export function ensureDynMemberGet(ctx: CodegenContext): void {
     { op: "call", funcIdx: peelHostIdx },
     { op: "local.get", index: 1 },
     { op: "call", funcIdx: externGetIdx },
+    ...decodeRead,
   ];
-  const dmgHostIdx = addHelper("__dyn_member_get", [externref, externref], [externref], dmgHostBody);
+  const dmgHostIdx = addHelper("__dyn_member_get", [externref, externref], [externref], dmgHostBody, readLocals);
   if (dmgHostIdx === undefined) {
     ctx.dynMemberGetHelpersEmitted = false;
     ctx.usesDynMemberGet = false;
@@ -1017,6 +1035,42 @@ export function ensureDynMemberSet(ctx: CodegenContext): void {
     emitDynMemberSetNullishSelfTest(ctx);
     emitDynMemberSetPrivateNameSelfTest(ctx);
   }
+}
+
+/**
+ * (#7106 S3c) The sloppy twin `__dyn_member_set_sloppy(recv,key,value) -> ()`
+ * on the externref carrier: the same receiver peel and key canonicalisation as
+ * `__dyn_member_set`, then legacy's sloppy `__extern_set`, which ignores a
+ * failed `[[Set]]` (§6.2.5.6 step 6.d) where the strict helper throws. Returns
+ * false when the lane has no such store (the fast `$AnyValue` carrier).
+ */
+export function ensureDynMemberSetSloppy(ctx: CodegenContext): boolean {
+  if (ctx.funcMap.has("__dyn_member_set_sloppy")) return true;
+  if (ctx.fast) return false;
+  ensureDynMemberSet(ctx);
+  const peelIdx = ctx.funcMap.get("__carrier_recv_to_extern");
+  const sloppySetIdx = ctx.funcMap.get("__extern_set");
+  if (peelIdx === undefined || sloppySetIdx === undefined) return false;
+  const toPropertyKeyIdx = ctx.standalone || ctx.wasi ? ctx.funcMap.get("__to_property_key") : undefined;
+  const externref: ValType = { kind: "externref" };
+  const typeIdx = addFuncType(ctx, [externref, externref, externref], [], "__dyn_member_set_sloppy");
+  const funcIdx = mintDefinedFunc(ctx);
+  pushDefinedFunc(ctx, funcIdx, {
+    name: "__dyn_member_set_sloppy",
+    typeIdx,
+    locals: [],
+    body: [
+      { op: "local.get", index: 0 },
+      { op: "call", funcIdx: peelIdx },
+      { op: "local.get", index: 1 },
+      ...(toPropertyKeyIdx === undefined ? [] : [{ op: "call", funcIdx: toPropertyKeyIdx } satisfies Instr]),
+      { op: "local.get", index: 2 },
+      { op: "call", funcIdx: sloppySetIdx },
+    ],
+    exported: false,
+  } as never);
+  ctx.funcMap.set("__dyn_member_set_sloppy", funcIdx);
+  return true;
 }
 
 /**

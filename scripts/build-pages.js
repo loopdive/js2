@@ -451,6 +451,98 @@ if (test262RunsStandaloneEditionsIndexSource) {
   );
 }
 
+// IR measurements have their own namespace. Missing files mean unmeasured;
+// neither a legacy snapshot nor an IR-first hybrid run is a replacement.
+const measuredIrData = (data, target) => {
+  if (data?.compilerPath !== "ir" || data.requestedCompilerPath !== "ir" || data.measurementState !== "measured")
+    return false;
+  if (target && data.mode?.target !== target) return false;
+  const counts = [
+    "attemptedCases",
+    "completedCases",
+    "skippedCases",
+    "compileErrorCases",
+    "compileTimeoutCases",
+    "verifiedExecutionCases",
+    "unverifiedExecutionCases",
+  ];
+  if (!counts.every((key) => Number.isSafeInteger(data[key]) && data[key] >= 0)) return false;
+  const nonSkipped = data.completedCases - data.skippedCases;
+  if (
+    data.attemptedCases <= 0 ||
+    nonSkipped <= 0 ||
+    data.verifiedExecutionCases + data.unverifiedExecutionCases !== nonSkipped ||
+    data.compileErrorCases + data.compileTimeoutCases > data.unverifiedExecutionCases
+  )
+    return false;
+  if (data.compilerPathVerified === true)
+    return (
+      data.executionCompilerPath === "ir" && data.verifiedExecutionCases > 0 && data.unverifiedExecutionCases === 0
+    );
+  return data.compilerPathVerified === false && ["unknown", "mixed"].includes(data.executionCompilerPath);
+};
+// The category and per-file edition maps classify test files by frontmatter,
+// so one measured lane's copy serves both; every other artifact is one lane's.
+const irArtifactTarget = (relativePath) =>
+  /test262-(category|file)-editions\.json$/.test(relativePath)
+    ? undefined
+    : relativePath.includes("standalone")
+      ? "standalone"
+      : "gc";
+for (const relativePath of [
+  "test262-ir-status.json",
+  "test262-standalone-ir-status.json",
+  "test262-ir-report.json",
+  "test262-standalone-ir-report.json",
+  "ir/test262-editions.json",
+  "ir/test262-standalone-editions.json",
+  "ir/test262-category-editions.json",
+  "ir/test262-file-editions.json",
+  "ir/test262-categories.json",
+  "ir/test262-standalone-categories.json",
+  "ir/feature-examples.json",
+  "ir/feature-examples-standalone.json",
+  "ir/runs/index.json",
+  "ir/runs/standalone-index.json",
+  "ir/runs/editions-index.json",
+  "ir/runs/standalone-editions-index.json",
+]) {
+  const statusName = relativePath.includes("standalone")
+    ? "test262-standalone-ir-status.json"
+    : "test262-ir-status.json";
+  const statusSource = resolvePreferredFileOrNull(
+    join(BENCHMARKS_RESULTS_DIR, statusName),
+    join(PUBLIC_BENCH, statusName),
+  );
+  if (
+    !relativePath.endsWith("-status.json") &&
+    statusSource &&
+    JSON.parse(readFileSync(statusSource, "utf8")).state === "unavailable"
+  ) {
+    // An explicit absence wins over an old bundled score for the same lane.
+    rmSync(join(PAGES_DIST, "benchmarks", "results", relativePath), { force: true });
+    rmSync(join(PLAYGROUND_BENCHMARKS_RESULTS_DIR, relativePath), { force: true });
+    continue;
+  }
+  const source = resolvePreferredFileOrNull(
+    join(BENCHMARKS_RESULTS_DIR, relativePath),
+    join(PUBLIC_BENCH, relativePath),
+  );
+  if (!source) continue;
+  const data = JSON.parse(readFileSync(source, "utf8"));
+  const unavailable = relativePath.endsWith("-status.json") && data.state === "unavailable";
+  if (
+    data.compilerPath !== "ir" ||
+    (unavailable
+      ? data.compilerPathVerified !== false || typeof data.reason !== "string" || !data.reason
+      : !measuredIrData(data, irArtifactTarget(relativePath)))
+  ) {
+    throw new Error(`IR Test262 artifact lacks explicit path provenance: ${source}`);
+  }
+  copyFile(source, join(PAGES_DIST, "benchmarks", "results", relativePath));
+  copyFile(source, join(PLAYGROUND_BENCHMARKS_RESULTS_DIR, relativePath));
+}
+
 const equivTests = buildEquivTests();
 writeJson(join(PLAYGROUND_DATA_DIR, "equiv-tests.json"), equivTests);
 writeJson(join(PLAYGROUND_APP_DATA_DIR, "equiv-tests.json"), equivTests);

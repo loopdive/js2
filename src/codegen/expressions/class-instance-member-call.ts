@@ -44,15 +44,12 @@ import type { Instr, ValType } from "../../ir/types.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
 import { allocLocal } from "../context/locals.js";
 import { stringConstantExternrefInstrs } from "../native-strings.js";
-import { ensureObjVecBuilders, reserveApplyClosure } from "../object-runtime.js";
+import { applyClosureAdmitsCall, ensureObjVecBuilders, reserveApplyClosure } from "../object-runtime.js";
 import { addStringConstantGlobal } from "../registry/imports.js";
 import { coerceType, compileExpression } from "../shared.js";
 import { flushLateImportShifts } from "./late-imports.js";
 
 const EXTERNREF: ValType = { kind: "externref" };
-
-/** `fillApplyClosure` dispatches arities 0..8 (see `stored-member-closure-call.ts`). */
-const APPLY_CLOSURE_MAX_ARITY = 8;
 
 /** The static member name and receiver of `R.name(…)` / `R["name"](…)`, or undefined. */
 function memberCallShape(expr: ts.CallExpression): { recv: ts.Expression; name: string } | undefined {
@@ -88,8 +85,7 @@ export function tryEmitClassInstanceMemberCall(
   if (!ctx.standalone && !ctx.wasi) return undefined;
   const shape = memberCallShape(expr);
   if (shape === undefined) return undefined;
-  if (expr.arguments.some((arg) => ts.isSpreadElement(arg))) return undefined;
-  if (expr.arguments.length > APPLY_CLOSURE_MAX_ARITY) return undefined;
+  if (!applyClosureAdmitsCall(expr)) return undefined;
   if (!receiverIsUserClassInstance(ctx, shape.recv)) return undefined;
 
   // Reserve every helper BEFORE compiling anything (#1839/#117/#1886).

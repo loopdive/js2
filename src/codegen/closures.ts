@@ -19,14 +19,18 @@ import { widenJsDefaultGuessSlot } from "./js-default-param-type-guess.js";
  */
 
 import { ts, forEachChild } from "../ts-api.js";
+import { isLexicalBindingWrite } from "../shared/binding-writes.js";
 import { isVoidType, unwrapPromiseType, isPromiseType } from "../checker/type-mapper.js";
 import type { FieldDef, Instr, LocalDef, StructTypeDef, ValType } from "../ir/types.js";
-import { isStandalonePromiseActive } from "./async-scheduler.js"; // (#2867 Gap 1) native-$Promise carrier gate
-import { emitEagerAsyncPromiseWrap, parkedAsyncClosureWrapsPromise } from "./async-eager-promise.js"; // (#4630)
+import {
+  emitEagerAsyncPromiseWrap,
+  parkedAsyncClosureWrapsPromise,
+  wrapEagerAsyncClosureRejection,
+} from "./async-eager-promise.js"; // (#4630)
 import { widenAsyncThenableResult } from "./async-thenable-return.js"; // (#5371)
 import { restPatternParamSlot } from "./resolved-rest-param.js"; // (#6774 S7)
 import { hoistParameterEvalVars } from "./expressions/eval-param-scope-hoist.js"; // (#6774 S7)
-import { applyNullableElemParamOverride } from "./array-hof-nullable-elem-param.js"; // (#6602) nullable vec element at the HOF callback boundary
+import { hofElemParamType } from "./array-hof-nullable-elem-param.js"; // (#6602) nullable vec element at the HOF callback boundary
 import { definedFuncAt, funcSignatureOf, mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#1916 S2 read chokepoint / S3b stable-regime minting)
 import { pushProgramAbiNestedCallable, pushProgramAbiTypedThisTwin } from "./program-abi-source-callable-planning.js";
 import { inLiveShiftRange } from "../emit/resolve-layout.js"; // (#1916 S3b) manual import-shift must skip stable handles
@@ -54,7 +58,6 @@ import type { ClosureInfo, CodegenContext, FunctionContext } from "./context/typ
 import {
   addFuncType,
   destructureParamObject,
-  addGeneratorImports,
   ensureExnTag,
   ensureStructForType,
   getArrTypeIdxFromVec,
@@ -147,6 +150,7 @@ import {
   isNativeGeneratorCandidate,
   registerNativeGenerator,
 } from "./generators-native.js";
+import { refuseEagerGeneratorBuffer } from "./generator-eager-refusal.js";
 import { isGeneratorMethodWithYieldKey, namedFunctionOwnNameShadow } from "./generators-native-ast-scan.js"; // (#6651 A7, A10)
 import type { NativeGeneratorInfo } from "./context/types.js";
 // (#3270) Extracted closure subsystems. Re-exported below so external importers
@@ -201,9 +205,10 @@ function emitClosureDefaultReturnValue(
     // (#4630) The parked-async `$Promise` promotion settles the implicit
     // `undefined` completion the same way an explicit `return` does.
     if (fctx.eagerAsyncPromiseReturn === true) emitEagerAsyncPromiseWrap(ctx, fctx);
-    return;
+  } else {
+    emitDefaultReturnValue(fctx, returnType, alreadyHasValue);
   }
-  emitDefaultReturnValue(fctx, returnType, alreadyHasValue);
+  wrapEagerAsyncClosureRejection(ctx, fctx);
 }
 import { spliceNullGuarded, emitDefaultReturnValue } from "./closures/param-emit-helpers.js";
 import type { ArrowClosureCapture } from "./closures/arrow-phases.js";
@@ -429,38 +434,10 @@ export function collectParamDefaultReferences(
  * names shadowed by nested function scopes are not collected.
  */
 export function collectWrittenIdentifiers(node: ts.Node, names: Set<string>, shadowed?: ReadonlySet<string>): void {
-  if (ts.isBinaryExpression(node)) {
-    const op = node.operatorToken.kind;
-    // Assignment operators
-    if (
-      op === ts.SyntaxKind.EqualsToken ||
-      op === ts.SyntaxKind.PlusEqualsToken ||
-      op === ts.SyntaxKind.MinusEqualsToken ||
-      op === ts.SyntaxKind.AsteriskEqualsToken ||
-      op === ts.SyntaxKind.SlashEqualsToken ||
-      op === ts.SyntaxKind.PercentEqualsToken ||
-      op === ts.SyntaxKind.AmpersandEqualsToken ||
-      op === ts.SyntaxKind.BarEqualsToken ||
-      op === ts.SyntaxKind.CaretEqualsToken ||
-      op === ts.SyntaxKind.LessThanLessThanEqualsToken ||
-      op === ts.SyntaxKind.GreaterThanGreaterThanEqualsToken ||
-      op === ts.SyntaxKind.GreaterThanGreaterThanGreaterThanEqualsToken ||
-      op === ts.SyntaxKind.AsteriskAsteriskEqualsToken ||
-      op === ts.SyntaxKind.BarBarEqualsToken ||
-      op === ts.SyntaxKind.AmpersandAmpersandEqualsToken ||
-      op === ts.SyntaxKind.QuestionQuestionEqualsToken
-    ) {
-      if (ts.isIdentifier(node.left)) {
-        if (!shadowed || !shadowed.has(node.left.text)) names.add(node.left.text);
-      }
-    }
-  } else if (ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node)) {
-    const op = node.operator;
-    if (op === ts.SyntaxKind.PlusPlusToken || op === ts.SyntaxKind.MinusMinusToken) {
-      if (ts.isIdentifier(node.operand)) {
-        if (!shadowed || !shadowed.has(node.operand.text)) names.add(node.operand.text);
-      }
-    }
+  // (#6992) Any assignment operator, `++`/`--`, destructuring targets and
+  // for-in/for-of heads — the shared `isLexicalBindingWrite` contract.
+  if (ts.isIdentifier(node) && isLexicalBindingWrite(node)) {
+    if (!shadowed || !shadowed.has(node.text)) names.add(node.text);
   }
   if (isFunctionScopeBoundary(node)) {
     const merged = new Set<string>(shadowed ?? []);
@@ -2101,11 +2078,7 @@ export function computeClosureWrapperSig(
             // nullability lie. Any other pair is returned unchanged, so no
             // other callback shape can move a byte. `map` never reaches here:
             // its unconditional override above already fired.
-            applyNullableElemParamOverride(
-              resolveWasmType(ctx, paramType),
-              ctx.arrayHofNullableElemParamOverride,
-              runtimeIndex,
-            );
+            hofElemParamType(ctx, resolveWasmType(ctx, paramType), runtimeIndex, arrow);
     // JSDoc optional parameters (for example `@param {number=} size`) are
     // commonly exported from JavaScript modules and called from a different
     // source file. The local call-site scan cannot see those callers, so a
@@ -2250,7 +2223,7 @@ export function computeClosureWrapperSig(
     if (isAsync) {
       retType = unwrapPromiseType(retType, ctx.checker);
     }
-    if (!isAsync && isStandalonePromiseActive(ctx) && isPromiseType(retType)) {
+    if (!isAsync && isPromiseType(retType)) {
       closureReturnType = { kind: "externref" };
     }
     if (closureReturnType === null && !isVoidType(retType) && !(retType.flags & ts.TypeFlags.Never)) {
@@ -3215,8 +3188,8 @@ export function compileLiftedClosureBody(
   // (#3164) Native generator FUNCTION EXPRESSION (standalone/wasi). When the
   // extended candidate gate admits the fn-expr (zero/identifier params, no
   // `this`/`arguments`/self-name/capture — the same gate
-  // `sourceNeedsGeneratorHostImports` consulted, so the `__gen_*` host imports
-  // were NOT registered for it), register it under the lifted closure name with
+  // `isNativeGeneratorCandidate` applies everywhere; a rejected fn-expr is a
+  // #7010 compile error on host-free builds), register it under the lifted closure name with
   // the `__self` param threaded as a leading synthetic capture: the state
   // struct's param fields then align 1:1 with the lifted wasm params
   // (`local.get 0..n` in the factory), and the resume prelude rehydrates the
@@ -3313,6 +3286,9 @@ export function compileLiftedClosureBody(
     compileNativeGeneratorFunction(ctx, liftedFctx, arrow, nativeGenExprInfo);
     liftedFctx.body.push({ op: "extern.convert_any" });
     conciseBodyHasValue = true;
+  } else if (isGenerator && ts.isBlock(body) && refuseEagerGeneratorBuffer(ctx, liftedFctx, arrow)) {
+    // (#7010) No host-free lowering for this generator expression — refused.
+    conciseBodyHasValue = true;
   } else if (isGenerator && ts.isBlock(body)) {
     // Generator function expression: eagerly evaluate body, collect yields
     // into a buffer, then wrap with __create_generator.
@@ -3345,16 +3321,6 @@ export function compileLiftedClosureBody(
       runtimeParameters(arrow).length === 0 && // (#3359) a TS `this` param is not a runtime arg
       !(ts.isBlock(body) && closureBodyUsesArguments(body)) &&
       !genBodyReferencesThis(body);
-    // (#3164) Defensive: in a no-JS-host target the eager-buffer path needs the
-    // `__gen_*` host imports, which the pre-scan (`sourceNeedsGeneratorHostImports`)
-    // skips when it classifies every generator as native. If this fn-expr was
-    // admitted by the pre-scan but the emit-time registration bailed (a
-    // candidate/plan desync), baking an undefined funcIdx would produce an
-    // INVALID module — late-register the import bundle instead (idempotent,
-    // shift-safe; the IR path does the same mid-emission).
-    if ((ctx.standalone || ctx.wasi) && !ctx.funcMap.has("__gen_create_buffer")) {
-      addGeneratorImports(ctx, { allowNoJsHost: true });
-    }
     const genOuterBody = liftedFctx.body;
     const eagerSeq: Instr[] = [];
     if (genLazyEligible) liftedFctx.body = eagerSeq;
@@ -3733,10 +3699,8 @@ export function compileArrowAsClosure(
   // the env param is untouched — richer shapes stay on the legacy path via the
   // predicate gate.
   const asyncDecision = isAsync && !isGenerator ? planAsyncClosureActivation(ctx, arrow, /*isAsync*/ true) : null;
-  // (#4630) A PARKED async closure with a void unwrapped result gets an
-  // `externref` `$Promise` result instead — see async-eager-promise.ts. Without
-  // it a dynamically-dispatched `testFunc()` yields `undefined` and every
-  // `.then` on it throws the §27.2.5.4 non-Promise-receiver TypeError.
+  // (#4630/#6995) Parked void async closures settle completion and rejection
+  // into a native Promise (async-eager-promise.ts), including value calls.
   let eagerAsyncPromiseWrap = false;
   if (asyncDecision) {
     closureReturnType = { kind: "externref" };
@@ -3745,11 +3709,8 @@ export function compileArrowAsClosure(
       closureReturnType = { kind: "externref" };
       eagerAsyncPromiseWrap = true;
     }
-    // (#3587/#6780) Declined async arrow/fn-expr with a suspension inside a `try`
-    // or only settled awaits: refuse loudly instead of silently compiling the
-    // legacy pass-through (lost rejections / inline continuations). Still reported for
-    // the #4630 wrap — the wrap settles the COMPLETION value, it does not make
-    // the parked pass-through deliver awaited rejections.
+    // (#3587/#6780/#6995) Report declined await hazards independently of the
+    // completion wrapper; Promise promotion cannot provide frame suspension.
     reportDeclinedAsyncBody(ctx, arrow);
   }
   // (#4648) NOTE — a DECLINED (await-free) async closure does NOT get the

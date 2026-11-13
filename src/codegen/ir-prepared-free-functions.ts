@@ -4,6 +4,7 @@ import {
   irDirectCallLoweringPlanEquals,
   type IrDirectCallLoweringPlan,
   type IrHostVoidCallbackLoweringPlan,
+  type IrTopLevelFunctionValueLoweringPlan,
   type IrIntegrationLoweringPlans,
 } from "../ir/ast-lowering-plans.js";
 import { requireValidPreparedCountedStringAppendReceipt } from "../ir/counted-string-append-provenance.js";
@@ -17,8 +18,8 @@ import { IrInvariantError } from "../ir/outcomes.js";
 import type { IrR2Withdrawal, IrR2WithdrawalReason } from "../ir/r2-withdrawal.js";
 import {
   buildIrLegacyUnitProjection,
+  requireIrPlanningOwnerUnitId,
   type IrLegacyUnitProjection,
-  type IrPlanningIdentityContext,
 } from "../ir/planning-identity.js";
 import type { IrPromiseDelayLoweringPlan, IrPromiseDelayLoweringPlans } from "../ir/promise-delay-lowering.js";
 import { constructorHasIrSafeReceiverSemantics, type IrSelection } from "../ir/select.js";
@@ -39,46 +40,33 @@ import {
 import { addFuncType, getOrRegisterVecType } from "./registry/types.js";
 import { collectLocalCallEdgesByIdentity } from "./ir-first-gate.js";
 import * as irOverlayIdentity from "./ir-overlay-identity.js";
+import { runtimeEvalPushPublishesCachedFunctionValues } from "./expressions/runtime-eval-provider.js";
 import { timerShimOutsideCaller } from "./ir-timer-shim-planning.js";
 import { closeIrBlockedComponentByIdentity } from "./ir-overlay-finalize.js";
 import { applyIrFinalContextFunctionUnitIds, type IrOverlayPreparationPlan } from "./ir-overlay-preparation.js";
 import {
   buildIrRequestedFunctionSkipProjection,
+  identifierIsRuntimeFunctionValueReference,
+  sameDeclarationSite,
+  containsTopLevelFunctionValueReference,
   computeIrFirstSkipUnitIds,
   mergeIrIntegrationReports,
   preparedIrBodyRouting,
   type IrExactBodyClaim,
   type IrExactFunctionClaim,
+  type IrFirstSkipIdentityInput,
 } from "./ir-overlay-safety.js";
 import { containsUnplannedNestedExecutableSyntax } from "./ir-prepared-nested-executable-syntax.js";
+import { applyArgArrayTypeErrorMaterializesReceiver } from "./apply-arglist-typeerror.js";
 import { prepareImplicitConstructorSupports } from "./ir-plain-implicit-constructors.js";
+import { hasPreparedFunctionObjectReference } from "./ir-imported-call-planning.js";
 import type { PreparedCallableBoundaryCandidate } from "../ir/prepared-callable-boundary.js";
 
 /** Preserve the inherited compile-once allowlist for owners not prepared early. */
-export function computePreparedInheritedIrFirstSkipUnitIds(input: {
-  readonly sourceFile: ts.SourceFile;
-  readonly identityContext: IrPlanningIdentityContext;
-  readonly safeFunctionUnitIds: ReadonlySet<IrUnitId>;
-  readonly claimsByUnitId: ReadonlyMap<IrUnitId, IrExactFunctionClaim>;
-  readonly overridesByUnitId: ReadonlyMap<
-    IrUnitId,
-    { readonly params: readonly IrType[]; readonly returnType: IrType | null }
-  >;
-  readonly potentiallyBlockedOwnerUnitIds: ReadonlySet<IrUnitId>;
-  readonly generatorsSkippable: boolean;
-  readonly fast: boolean;
-}): Set<IrUnitId> {
-  const requestedSkipUnitIds = new Set(
-    computeIrFirstSkipUnitIds({
-      sourceFile: input.sourceFile,
-      identityContext: input.identityContext,
-      safeFunctionUnitIds: input.safeFunctionUnitIds,
-      claimsByUnitId: input.claimsByUnitId,
-      overridesByUnitId: input.overridesByUnitId,
-      potentiallyBlockedOwnerUnitIds: input.potentiallyBlockedOwnerUnitIds,
-      generatorsSkippable: input.generatorsSkippable,
-    }),
-  );
+export function computePreparedInheritedIrFirstSkipUnitIds(
+  input: IrFirstSkipIdentityInput & { readonly fast: boolean },
+): Set<IrUnitId> {
+  const requestedSkipUnitIds = new Set(computeIrFirstSkipUnitIds(input));
   // Keep the inherited fast route to its annotation-proven boolean subset.
   // Numeric scalars have a separate pre-body admission below, where the final
   // IR override is compared with the allocated callable slot before ownership
@@ -459,46 +447,6 @@ function prepareClassConstructorSupports(ctx: CodegenContext, classShapes: Reado
   }
 }
 
-function identifierIsRuntimeFunctionValueReference(identifier: ts.Identifier): boolean {
-  const parent = identifier.parent;
-  if (!parent) return false;
-  if (ts.isCallExpression(parent) && parent.expression === identifier) return false;
-  // The direct owner already lowers an immediately invoked `.call` / `.apply`
-  // without retaining a generic runtime function value. Preparing singleton
-  // support for this receiver alone would keep the JS-string bridge and the
-  // whole generic closure surface alive in an otherwise tiny optimized module.
-  if (
-    ts.isPropertyAccessExpression(parent) &&
-    parent.expression === identifier &&
-    (parent.name.text === "call" || parent.name.text === "apply") &&
-    ts.isCallExpression(parent.parent) &&
-    parent.parent.expression === parent
-  ) {
-    return false;
-  }
-  if (
-    ((ts.isFunctionDeclaration(parent) ||
-      ts.isFunctionExpression(parent) ||
-      ts.isClassDeclaration(parent) ||
-      ts.isClassExpression(parent) ||
-      ts.isMethodDeclaration(parent) ||
-      ts.isGetAccessorDeclaration(parent) ||
-      ts.isSetAccessorDeclaration(parent)) &&
-      parent.name === identifier) ||
-    (ts.isVariableDeclaration(parent) && parent.name === identifier) ||
-    (ts.isParameter(parent) && parent.name === identifier) ||
-    ((ts.isPropertyAccessExpression(parent) || ts.isPropertyAssignment(parent)) && parent.name === identifier) ||
-    (ts.isBindingElement(parent) && (parent.name === identifier || parent.propertyName === identifier)) ||
-    (ts.isLabeledStatement(parent) && parent.label === identifier) ||
-    ((ts.isBreakStatement(parent) || ts.isContinueStatement(parent)) && parent.label === identifier) ||
-    ts.isImportSpecifier(parent) ||
-    ts.isExportSpecifier(parent)
-  ) {
-    return false;
-  }
-  return true;
-}
-
 function topLevelFunctionUnitsByName(
   sourceFile: ts.SourceFile,
   identityPlan: irOverlayIdentity.IrOverlayIdentityPlan,
@@ -521,22 +469,6 @@ function topLevelFunctionUnitsByName(
   return byName;
 }
 
-/**
- * The checker oracle can retain a declaration node from a sibling Program
- * snapshot while selection walks the structurally identical current source.
- * Compare the stable source site as well as object identity so incremental
- * compilation cannot silently lose an otherwise exact declaration match.
- */
-function sameDeclarationSite(left: ts.Declaration, right: ts.Declaration): boolean {
-  if (left === right) return true;
-  return (
-    left.kind === right.kind &&
-    left.pos === right.pos &&
-    left.end === right.end &&
-    left.getSourceFile().fileName === right.getSourceFile().fileName
-  );
-}
-
 function identifierResolvesToDeclaration(
   ctx: CodegenContext,
   identifier: ts.Identifier,
@@ -546,6 +478,20 @@ function identifierResolvesToDeclaration(
   return resolved !== undefined && sameDeclarationSite(resolved, declaration);
 }
 
+/** Keep the ordinary .call/.apply scanner exclusion; this arm actually reads the receiver. */
+function identifierIsApplyArgArrayTypeErrorReceiver(ctx: CodegenContext, identifier: ts.Identifier): boolean {
+  const access = identifier.parent;
+  if (!ts.isPropertyAccessExpression(access) || access.expression !== identifier || access.questionDotToken)
+    return false;
+  const call = access.parent;
+  return (
+    ts.isCallExpression(call) &&
+    call.expression === access &&
+    call.questionDotToken === undefined &&
+    applyArgArrayTypeErrorMaterializesReceiver(ctx, call, access)
+  );
+}
+
 function collectTopLevelFunctionValueTargets(
   ctx: CodegenContext,
   sourceFile: ts.SourceFile,
@@ -553,16 +499,30 @@ function collectTopLevelFunctionValueTargets(
     string,
     readonly { readonly declaration: ts.FunctionDeclaration; readonly unitId: IrUnitId }[]
   >,
+  includeApplyArgArrayTypeErrorReceivers = false,
 ): ReadonlySet<IrUnitId> {
   const targets = new Set<IrUnitId>();
   const visit = (node: ts.Node): void => {
-    if (ts.isIdentifier(node) && identifierIsRuntimeFunctionValueReference(node)) {
-      const declaration = ctx.oracle.valueDeclarationOf(node);
-      const exact =
-        declaration === undefined
-          ? undefined
-          : (unitsByName.get(node.text) ?? []).find((unit) => sameDeclarationSite(unit.declaration, declaration));
-      if (exact) targets.add(exact.unitId);
+    if (ts.isIdentifier(node)) {
+      const ordinaryReference = identifierIsRuntimeFunctionValueReference(node);
+      const applyReceiver =
+        includeApplyArgArrayTypeErrorReceivers &&
+        !ordinaryReference &&
+        identifierIsApplyArgArrayTypeErrorReceiver(ctx, node);
+      if (ordinaryReference || applyReceiver) {
+        const declaration = ctx.oracle.valueDeclarationOf(node);
+        const exact =
+          declaration === undefined
+            ? undefined
+            : (unitsByName.get(node.text) ?? []).find((unit) => sameDeclarationSite(unit.declaration, declaration));
+        if (
+          exact &&
+          (ordinaryReference ||
+            (ctx.runtimeEvalGlobalFunctionBindings !== true &&
+              !ctx.reassignedFunctionDeclarations?.has(exact.declaration)))
+        )
+          targets.add(exact.unitId);
+      }
     }
     ts.forEachChild(node, visit);
   };
@@ -604,35 +564,11 @@ export function collectPreparedTopLevelFunctionValueTargetUnitIds(
   sourceFile: ts.SourceFile,
   identityPlan: irOverlayIdentity.IrOverlayIdentityPlan,
 ): ReadonlySet<IrUnitId> {
-  return collectTopLevelFunctionValueTargets(ctx, sourceFile, topLevelFunctionUnitsByName(sourceFile, identityPlan));
-}
-
-function containsTopLevelFunctionValueReference(
-  ctx: CodegenContext,
-  declaration: ts.FunctionLikeDeclaration,
-  unitsByName: ReadonlyMap<
-    string,
-    readonly { readonly declaration: ts.FunctionDeclaration; readonly unitId: IrUnitId }[]
-  >,
-): boolean {
-  if (!declaration.body) return false;
-  let found = false;
-  const visit = (node: ts.Node): void => {
-    if (found) return;
-    if (ts.isIdentifier(node) && identifierIsRuntimeFunctionValueReference(node)) {
-      const valueDeclaration = ctx.oracle.valueDeclarationOf(node);
-      if (
-        valueDeclaration !== undefined &&
-        (unitsByName.get(node.text) ?? []).some((unit) => sameDeclarationSite(unit.declaration, valueDeclaration))
-      ) {
-        found = true;
-        return;
-      }
-    }
-    ts.forEachChild(node, visit);
-  };
-  visit(declaration.body);
-  return found;
+  const unitsByName = topLevelFunctionUnitsByName(sourceFile, identityPlan);
+  // (#7106 A1) The runtime-eval push publishes every function value after seal.
+  if (ctx.runtimeEvalGlobalFunctionBindings === true && runtimeEvalPushPublishesCachedFunctionValues(ctx))
+    return new Set([...unitsByName.values()].flatMap((units) => units.map((unit) => unit.unitId)));
+  return collectTopLevelFunctionValueTargets(ctx, sourceFile, unitsByName, true);
 }
 
 /**
@@ -1431,6 +1367,30 @@ export function finalizeR3PreparedOwnerPopulation(input: {
   };
 }
 
+/** Preserve the admission short circuit and the refusal-only fast-name rescan. */
+function firstR2PreparedOwnerAdmissionFailure(
+  admissionPredicates: readonly (readonly [IrR2WithdrawalReason, () => boolean])[],
+): IrR2WithdrawalReason | undefined {
+  const firstFailing = admissionPredicates.find(([, rejects]) => rejects());
+  if (firstFailing) {
+    // (#5282) The DECISION above is untouched, so the prepared set is
+    // byte-identical; only the NAME moves. `fast-signature-unproven` is entry
+    // zero and its guard subsumes every later predicate, so in a fast lane it
+    // answered for refusals it does not describe — one object-parameter unit
+    // read `fast-signature-unproven` fast and `param-signature-unstable`
+    // plain. The unit is ALREADY refused here, so running the remaining
+    // predicates cannot admit it; it can only find the reason that fits. No
+    // later predicate firing means the fast proof was the sole objection.
+    let reason = firstFailing[0];
+    if (reason === "fast-signature-unproven") {
+      const specific = admissionPredicates.slice(1).find(([, rejects]) => rejects());
+      if (specific) reason = specific[0];
+    }
+    return reason;
+  }
+  return undefined;
+}
+
 /**
  * R2/R3 prepare only components whose free-function and class-member contracts
  * have one backend-stable Program ABI projection: scalars, strings, selected
@@ -1442,6 +1402,7 @@ export function finalizeR3PreparedOwnerPopulation(input: {
  * that owner.
  */
 export function selectR2PreparedOwnerComponents(input: {
+  readonly topLevelFunctionValues?: ReadonlyMap<ts.Identifier, IrTopLevelFunctionValueLoweringPlan>;
   readonly ctx: CodegenContext;
   readonly sourceFile: ts.SourceFile;
   readonly selectedLegacyNames: ReadonlySet<string>;
@@ -1476,6 +1437,8 @@ export function selectR2PreparedOwnerComponents(input: {
   /** Source-qualified callable boundaries pending final IR/support certification. */
   readonly pendingCallableBoundaryCandidates: ReadonlyMap<IrUnitId, PreparedCallableBoundaryCandidate>;
 } {
+  const sourceOwnerUnitId = (node: ts.Node): IrUnitId =>
+    requireIrPlanningOwnerUnitId(input.identityPlan.identityContext, node);
   const withdrawals = new Map<IrUnitId, IrR2Withdrawal>();
   // First-wins: the reason that actually removed the unit is the first one
   // reached, never a later iteration's.
@@ -1551,7 +1514,17 @@ export function selectR2PreparedOwnerComponents(input: {
       ["direct-caller-activation-target", () => directCallerActivationTargets.has(unitId)],
       [
         "function-value-reference",
-        () => containsTopLevelFunctionValueReference(input.ctx, claim.declaration, functionUnitsByName),
+        () =>
+          containsTopLevelFunctionValueReference(input.ctx, claim.declaration, functionUnitsByName, (identifier) =>
+            hasPreparedFunctionObjectReference(
+              input.ctx,
+              identifier,
+              input.topLevelFunctionValues?.get(identifier),
+              input.identityPlan,
+              unitId,
+              sourceOwnerUnitId,
+            ),
+          ),
       ],
       [
         "param-signature-unstable",
@@ -1563,22 +1536,9 @@ export function selectR2PreparedOwnerComponents(input: {
         () => !r2SignatureMatchesAllocatedSlot(input.ctx, unitId, override, signatureOptions),
       ],
     ];
-    const firstFailing = admissionPredicates.find(([, rejects]) => rejects());
-    if (firstFailing) {
-      // (#5282) The DECISION above is untouched, so the prepared set is
-      // byte-identical; only the NAME moves. `fast-signature-unproven` is entry
-      // zero and its guard subsumes every later predicate, so in a fast lane it
-      // answered for refusals it does not describe — one object-parameter unit
-      // read `fast-signature-unproven` fast and `param-signature-unstable`
-      // plain. The unit is ALREADY refused here, so running the remaining
-      // predicates cannot admit it; it can only find the reason that fits. No
-      // later predicate firing means the fast proof was the sole objection.
-      let reason = firstFailing[0];
-      if (reason === "fast-signature-unproven") {
-        const specific = admissionPredicates.slice(1).find(([, rejects]) => rejects());
-        if (specific) reason = specific[0];
-      }
-      record(unitId, "admission", reason);
+    const admissionFailure = firstR2PreparedOwnerAdmissionFailure(admissionPredicates);
+    if (admissionFailure !== undefined) {
+      record(unitId, "admission", admissionFailure);
       continue;
     }
     freeFunctionCandidates.add(unitId);

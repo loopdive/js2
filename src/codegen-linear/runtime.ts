@@ -16,6 +16,9 @@ import {
   linkedMallocPrologue,
 } from "./linked-arena.js";
 import { isLinearStringLiteralCacheGlobal } from "./string-literals.js";
+import { checkedArrayAllocationSize, checkedArrayCapacityDoubling } from "./runtime/array-allocation.js";
+import { buildArrayForwardingResolverBody } from "./runtime/arrays/forwarding-resolver.js";
+import { linearStringSliceBoundInstrs } from "./runtime/string-slice.js";
 import { buildLinearCharCodeAtBody } from "./runtime/strings/char-code-at.js";
 
 /**
@@ -797,32 +800,9 @@ export function addUint8ArrayRuntime(mod: WasmModule): void {
  */
 function ensureArrayResolveRuntime(mod: WasmModule): void {
   if (mod.functions.some((f) => f.name === "__arr_resolve")) return;
-  addRuntimeFunc(mod, "__arr_resolve", [{ kind: "i32" }], [{ kind: "i32" }], [], () => [
-    {
-      op: "block",
-      blockType: { kind: "empty" },
-      body: [
-        {
-          op: "loop",
-          blockType: { kind: "empty" },
-          body: [
-            // If this is not a forwarding record, break.
-            { op: "local.get", index: 0 },
-            { op: "i32.load8_u", align: 0, offset: LINEAR_ARRAY_FORWARDING.tagOffset },
-            { op: "i32.const", value: LINEAR_ARRAY_FORWARDING.tag },
-            { op: "i32.ne" },
-            { op: "br_if", depth: 1 },
-            // ptr = forwarding replacement pointer
-            { op: "local.get", index: 0 },
-            { op: "i32.load", align: 2, offset: LINEAR_ARRAY_FORWARDING.pointerOffset },
-            { op: "local.set", index: 0 },
-            { op: "br", depth: 0 },
-          ],
-        },
-      ],
-    },
-    { op: "local.get", index: 0 },
-  ]);
+  addRuntimeFunc(mod, "__arr_resolve", [{ kind: "i32" }], [{ kind: "i32" }], [], () =>
+    buildArrayForwardingResolverBody(LINEAR_ARRAY_FORWARDING),
+  );
 }
 
 /**
@@ -859,12 +839,8 @@ export function addArrayRuntime(mod: WasmModule): void {
     [{ kind: "i32" }],
     [],
     (local1Idx) => [
-      // Allocate: 16 + cap*8
-      { op: "i32.const", value: 16 },
-      { op: "local.get", index: 0 }, // cap
-      { op: "i32.const", value: 8 },
-      { op: "i32.mul" },
-      { op: "i32.add" },
+      // Check the unsigned capacity before computing the allocation byte size.
+      ...checkedArrayAllocationSize(0),
       { op: "call", funcIdx: mallocIdx },
       { op: "local.set", index: local1Idx },
       // Store tag byte 0x01 (Array) at ptr+0
@@ -908,12 +884,11 @@ export function addArrayRuntime(mod: WasmModule): void {
         { op: "local.get", index: 0 },
         { op: "i32.load", align: 2, offset: 8 },
         { op: "local.set", index: lenLocal },
-        // newCap = *(ptr+12) * 2
+        // Check the old capacity before doubling can wrap or exceed the byte bound.
         { op: "local.get", index: 0 },
         { op: "i32.load", align: 2, offset: 12 },
-        { op: "i32.const", value: 2 },
-        { op: "i32.mul" },
         { op: "local.set", index: newCapLocal },
+        ...checkedArrayCapacityDoubling(newCapLocal),
         // if newCap < minCap: newCap = minCap
         { op: "local.get", index: newCapLocal },
         { op: "local.get", index: 1 },
@@ -940,12 +915,8 @@ export function addArrayRuntime(mod: WasmModule): void {
           ],
           else: [],
         },
-        // newPtr = __malloc(16 + newCap*8)
-        { op: "i32.const", value: 16 },
-        { op: "local.get", index: newCapLocal },
-        { op: "i32.const", value: 8 },
-        { op: "i32.mul" },
-        { op: "i32.add" },
+        // Check the selected capacity, including minCap, before allocation.
+        ...checkedArrayAllocationSize(newCapLocal),
         { op: "call", funcIdx: mallocIdx },
         { op: "local.set", index: newPtrLocal },
         // Header: tag 0x01 (Array), len, newCap
@@ -2226,8 +2197,8 @@ export function addStringRuntime(mod: WasmModule): void {
   );
 
   // __str_slice(str: i32, start: i32, end: i32) → i32
-  // Extract substring [start, end) from str. Returns new string pointer.
-  // extra locals: newLen, ptr, i
+  // Normalize signed bounds to byte intervals; ASCII indices match UTF-16.
+  // extra locals: newLen, ptr, i, byteLength, magnitude
   addRuntimeFunc(
     mod,
     "__str_slice",
@@ -2238,24 +2209,27 @@ export function addStringRuntime(mod: WasmModule): void {
       const newLenLocal = firstLocalIdx;
       const ptrLocal = firstLocalIdx + 1;
       const iLocal = firstLocalIdx + 2;
+      const byteLengthLocal = firstLocalIdx + 3;
+      const magnitudeLocal = firstLocalIdx + 4;
       return [
-        // newLen = end - start
+        { op: "local.get", index: 0 },
+        { op: "i32.load", align: 2, offset: 8 },
+        { op: "local.set", index: byteLengthLocal },
+        ...linearStringSliceBoundInstrs(1, byteLengthLocal, magnitudeLocal),
+        { op: "local.set", index: 1 },
+        ...linearStringSliceBoundInstrs(2, byteLengthLocal, magnitudeLocal),
+        { op: "local.set", index: 2 },
+        // newLen = end > start ? end - start : 0 (normalized unsigned bounds)
         { op: "local.get", index: 2 },
         { op: "local.get", index: 1 },
-        { op: "i32.sub" },
-        { op: "local.set", index: newLenLocal },
-        // Clamp: if newLen < 0, set to 0
-        { op: "local.get", index: newLenLocal },
-        { op: "i32.const", value: 0 },
-        { op: "i32.lt_s" },
+        { op: "i32.gt_u" },
         {
           op: "if",
-          blockType: { kind: "empty" },
-          then: [
-            { op: "i32.const", value: 0 },
-            { op: "local.set", index: newLenLocal },
-          ],
+          blockType: { kind: "val", type: { kind: "i32" } },
+          then: [{ op: "local.get", index: 2 }, { op: "local.get", index: 1 }, { op: "i32.sub" }],
+          else: [{ op: "i32.const", value: 0 }],
         },
+        { op: "local.set", index: newLenLocal },
         // ptr = malloc(12 + newLen)
         { op: "i32.const", value: 12 },
         { op: "local.get", index: newLenLocal },
@@ -2310,7 +2284,7 @@ export function addStringRuntime(mod: WasmModule): void {
         { op: "local.get", index: ptrLocal },
       ];
     },
-    3,
+    5,
   );
 
   // __str_index_of(str: i32, sep: i32, fromIdx: i32) → i32 (-1 if not found)

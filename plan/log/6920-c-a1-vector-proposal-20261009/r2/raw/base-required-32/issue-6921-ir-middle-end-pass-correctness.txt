@@ -1,0 +1,30 @@
+
+ RUN  v3.2.7 /home/user/js2/.claude/worktrees/agent-a774506d6593a2d93
+
+ ✓ tests/issue-6921-ir-middle-end-pass-correctness.test.ts > #6921 D1 — inlined callee slots are remapped into the caller > t10: helper with a mutable let does not clobber the caller's let (gc) 874ms
+ ✓ tests/issue-6921-ir-middle-end-pass-correctness.test.ts > #6921 D1 — inlined callee slots are remapped into the caller > t11: helper reassigning its parameter compiles and runs (gc) 88ms
+ ✓ tests/issue-6921-ir-middle-end-pass-correctness.test.ts > #6921 D1 — inlined callee slots are remapped into the caller > two inlined copies of one slot-bearing helper get separate slots (gc) 75ms
+ ✓ tests/issue-6921-ir-middle-end-pass-correctness.test.ts > #6921 D1 — inlined callee slots are remapped into the caller > negative control: a slot-free helper is still inlined (gc) 55ms
+ ✓ tests/issue-6921-ir-middle-end-pass-correctness.test.ts > #6921 D1 — inlined callee slots are remapped into the caller > negative control: t12 loop caller (inliner does not enter it) (gc) 65ms
+ ✓ tests/issue-6921-ir-middle-end-pass-correctness.test.ts > #6921 D1 — inlined callee slots are remapped into the caller > t10: helper with a mutable let does not clobber the caller's let (standalone) 201ms
+ ✓ tests/issue-6921-ir-middle-end-pass-correctness.test.ts > #6921 D1 — inlined callee slots are remapped into the caller > t11: helper reassigning its parameter compiles and runs (standalone) 130ms
+ ✓ tests/issue-6921-ir-middle-end-pass-correctness.test.ts > #6921 D1 — inlined callee slots are remapped into the caller > two inlined copies of one slot-bearing helper get separate slots (standalone) 104ms
+ ✓ tests/issue-6921-ir-middle-end-pass-correctness.test.ts > #6921 D1 — inlined callee slots are remapped into the caller > negative control: a slot-free helper is still inlined (standalone) 88ms
+ ✓ tests/issue-6921-ir-middle-end-pass-correctness.test.ts > #6921 D1 — inlined callee slots are remapped into the caller > negative control: t12 loop caller (inliner does not enter it) (standalone) 95ms
+ ✓ tests/issue-6921-ir-middle-end-pass-correctness.test.ts > #6921 D2 — ToNumber / loose == run user code (gc host objects) > t9 tonum: unused +o still calls valueOf exactly once 95ms
+ ✓ tests/issue-6921-ir-middle-end-pass-correctness.test.ts > #6921 D2 — ToNumber / loose == run user code (gc host objects) > t9 eqq: unused o == 1 still calls valueOf exactly once 42ms
+ ✓ tests/issue-6921-ir-middle-end-pass-correctness.test.ts > #6921 D2 — ToNumber / loose == run user code (gc host objects) > t9 tonum: a throwing valueOf propagates 44ms
+ ✓ tests/issue-6921-ir-middle-end-pass-correctness.test.ts > #6921 D2 — ToNumber / loose == run user code (gc host objects) > t9 twice: (+o) + (+o) calls valueOf twice (GVN off) 41ms
+ ✓ tests/issue-6921-ir-middle-end-pass-correctness.test.ts > #6921 D2 — ToNumber / loose == run user code (gc host objects) > t9 twice: GVN does not merge the two ToNumber calls (JS2WASM_IR_GVN=1) 47ms
+ ✓ tests/issue-6921-ir-middle-end-pass-correctness.test.ts > #6921 D2 — ToNumber / loose == run user code (gc host objects) > GVN liveness control: the stubbed env reaches compile (poison changes a pure duplicate) 40ms
+ ✓ tests/issue-6921-ir-middle-end-pass-correctness.test.ts > #6921 D2 — ToNumber / loose == run user code (gc host objects) > standalone: tonum / eqq / twice stay IR-emitted and keep their base results 528ms
+ ✓ tests/issue-6921-ir-middle-end-pass-correctness.test.ts > #6921 D2 — effect classification and deadCode (pass level) > effectsOf: strict dyn.eq and dyn.truthy pure; dyn.to_number and loose dyn.eq not 1ms
+ ✓ tests/issue-6921-ir-middle-end-pass-correctness.test.ts > #6921 D2 — effect classification and deadCode (pass level) > deadCode keeps an unused dyn.to_number and an unused loose dyn.eq 2ms
+ ✓ tests/issue-6921-ir-middle-end-pass-correctness.test.ts > #6921 D2 — effect classification and deadCode (pass level) > negative control: deadCode still removes an unused strict dyn.eq and dyn.truthy 0ms
+ ✓ tests/issue-6921-ir-middle-end-pass-correctness.test.ts > #6921 D1 — composed #5748 guard: asyncRuntime attachment (pass level) > inlines the ordinary callee but keeps the call to an asyncRuntime-attached one 1ms
+
+ Test Files  1 passed (1)
+      Tests  21 passed (21)
+   Start at  20:01:12
+   Duration  35.53s (transform 22.94s, setup 0ms, collect 32.36s, tests 2.62s, environment 0ms, prepare 86ms)
+

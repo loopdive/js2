@@ -9,7 +9,7 @@
 // walk-until-found shape and have no dependency on `CodegenContext`.
 
 import { ts, forEachChild } from "../ts-api.js";
-import { directArrayProtoIteratorAssignment } from "./array-proto-iterator-override-ast.js";
+import { sourceWritesPrototype } from "../shared/intrinsic-prototype-writes.js";
 import type { TypeOracle } from "../checker/oracle.js";
 import { isStrictContext } from "./helpers/is-strict-function.js";
 import { TYPED_ARRAY_NAMES } from "./index.js";
@@ -59,6 +59,15 @@ function scanMemberDeletes(
   let anyDelete = false;
   const receiverNames = new Set<string>();
   const builtinPrototypeMembers = new Set<string>();
+  /** `X.prototype` receiver → `X.prototype.<member>` in `builtinPrototypeMembers`. */
+  function recordBuiltinPrototypeMember(receiver: ts.Expression, member: string): void {
+    if (
+      ts.isPropertyAccessExpression(receiver) &&
+      receiver.name.text === "prototype" &&
+      ts.isIdentifier(receiver.expression)
+    )
+      builtinPrototypeMembers.add(`${receiver.expression.text}.prototype.${member}`);
+  }
   function walk(node: ts.Node): void {
     // Short-circuit only when the names are not wanted — otherwise the walk
     // must run to completion to see every deleted-from receiver.
@@ -69,15 +78,8 @@ function scanMemberDeletes(
         anyDelete = true;
         const receiver = target.expression;
         if (collectReceivers && ts.isIdentifier(receiver)) receiverNames.add(receiver.text);
-        if (collectReceivers && ts.isPropertyAccessExpression(target) && ts.isPropertyAccessExpression(receiver)) {
-          const prototype = receiver;
-          if (
-            prototype.name.text === "prototype" &&
-            ts.isIdentifier(prototype.expression) &&
-            ts.isIdentifier(target.name)
-          ) {
-            builtinPrototypeMembers.add(`${prototype.expression.text}.prototype.${target.name.text}`);
-          }
+        if (collectReceivers && ts.isPropertyAccessExpression(target) && ts.isIdentifier(target.name)) {
+          recordBuiltinPrototypeMember(receiver, target.name.text);
         }
         if (!collectReceivers) return;
       }
@@ -97,6 +99,10 @@ function scanMemberDeletes(
       anyDelete = true;
       const receiver = node.arguments[0];
       if (collectReceivers && ts.isIdentifier(receiver)) receiverNames.add(receiver.text);
+      const key = node.arguments[1];
+      // (#7304) `Reflect.deleteProperty(X.prototype, "m")` removes the same member as `delete X.prototype.m`.
+      if (collectReceivers && receiver && key && ts.isStringLiteralLike(key))
+        recordBuiltinPrototypeMember(receiver, key.text);
       if (!collectReceivers) return;
     }
     forEachChild(node, walk);
@@ -743,13 +749,11 @@ export function sourceContainsWithStatement(sourceFile: ts.SourceFile): boolean 
 
 /**
  * (#1719 S1) Whole-program pre-scan for the `ITER_OVERRIDDEN` brand of the
- * array object-value representation track. Returns true iff the source may
- * monkeypatch `Array.prototype`'s iterator surface, i.e. it contains:
- *   (i)  an assignment `Array.prototype[Symbol.iterator] = …` or
- *        `Array.prototype.values = …` (any element/property access whose
- *        object is `Array.prototype`), OR
- *   (ii) `Object.defineProperty(Array.prototype, …)` /
- *        `Object.defineProperties(Array.prototype, …)`.
+ * array object-value representation track: true iff the source may
+ * monkeypatch `Array.prototype` — a member `=` assignment or `delete`, or
+ * `Object.defineProperty`/`defineProperties` on it (`sourceWritesPrototype`,
+ * the narrow question of the walk the IR's destructuring readers also use,
+ * #7106).
  *
  * When this returns false (the overwhelming common case), the array
  * destructuring / spread / for-of fast paths are provably unaffected by any
@@ -758,91 +762,98 @@ export function sourceContainsWithStatement(sourceFile: ts.SourceFile): boolean 
  * reflection + host `GetIterator` so the override's `@@iterator` is observed
  * (§7.4.2 GetIterator, §8.5.2 IteratorBindingInitialization).
  *
- * Reused verbatim from the dev-a `issue-1719-impl` scaffolding (the front-end
- * half the architecture spec endorses keeping). Conservative by design: it
- * over-approximates (a false positive only costs the S2 slow path, never
- * correctness) and never under-approximates a literal `Array.prototype` LHS.
+ * Conservative by design: it over-approximates (a false positive only costs
+ * the S2 slow path, never correctness) and never under-approximates a literal
+ * `Array.prototype` LHS.
  */
 export function sourceOverridesArrayIterator(sourceFile: ts.SourceFile): boolean {
-  let found = false;
-  // Strip `as`/`!`/type-assertion/paren wrappers so `(Array.prototype as any)[…]`
-  // and `(Array.prototype)[…]` match the same as the bare form.
-  function unwrap(e: ts.Expression): ts.Expression {
-    let cur = e;
-    while (
-      ts.isParenthesizedExpression(cur) ||
-      ts.isAsExpression(cur) ||
-      ts.isNonNullExpression(cur) ||
-      ts.isTypeAssertionExpression(cur)
-    ) {
-      cur = ts.isParenthesizedExpression(cur)
-        ? cur.expression
-        : ts.isAsExpression(cur)
-          ? cur.expression
-          : ts.isNonNullExpression(cur)
-            ? cur.expression
-            : (cur as ts.TypeAssertion).expression;
-    }
-    return cur;
-  }
-  // `e` is the object being assigned INTO: match `Array.prototype[...]`
-  // (element access) or `Array.prototype.values` (property access).
-  function isArrayProtoLHS(e: ts.Expression): boolean {
-    if (ts.isPropertyAccessExpression(e) || ts.isElementAccessExpression(e)) {
-      const obj = unwrap(e.expression);
-      return (
-        ts.isPropertyAccessExpression(obj) &&
-        obj.name.text === "prototype" &&
-        ts.isIdentifier(obj.expression) &&
-        obj.expression.text === "Array"
-      );
-    }
-    return false;
-  }
-  function walk(node: ts.Node): void {
-    if (found) return;
-    // Exact direct assignment statements share the same AST-only predicate as
-    // the CPR write arm and checkpoint-2's bounded generator admission seam.
-    if (directArrayProtoIteratorAssignment(node) !== undefined) {
-      found = true;
+  return sourceWritesPrototype(sourceFile, "Array");
+}
+
+/**
+ * (#6957) Builtin namespaces whose static members a program can patch
+ * (`Math.random = fn`). Only these are scanned — they are the #4199 plain
+ * namespace singletons whose carrier is seeded with every modelled method.
+ */
+const PATCHABLE_NAMESPACES: ReadonlySet<string> = new Set(["Math", "JSON", "Reflect"]);
+
+const patchedMembersCache = new WeakMap<ts.SourceFile, ReadonlyMap<string, ReadonlySet<string>>>();
+
+function stripWrappers(expr: ts.Expression): ts.Expression {
+  let e = expr;
+  while (ts.isParenthesizedExpression(e) || ts.isAsExpression(e) || ts.isNonNullExpression(e)) e = e.expression;
+  return e;
+}
+
+/**
+ * (#6957) Every `<Math|JSON|Reflect>.<name>` the program WRITES — assignment
+ * (`=` and compound), `++`/`--`, `delete`, and the literal-key element spelling
+ * `Math["random"] = …`. Keyed namespace → member names. Purely syntactic: a
+ * write through a locally shadowed `Math` is also collected, which only costs
+ * that member the (still correct) dynamic carrier path at global call sites —
+ * each consumer re-checks that ITS receiver is the ambient global.
+ *
+ * Cached per `SourceFile`; callers gate on standalone so host/gc compiles never
+ * pay the walk (the #3437 harness compile-work budget meters gc compiles).
+ */
+export function patchedBuiltinStaticMembers(sourceFile: ts.SourceFile): ReadonlyMap<string, ReadonlySet<string>> {
+  const cached = patchedMembersCache.get(sourceFile);
+  if (cached) return cached;
+  const found = new Map<string, Set<string>>();
+  const note = (target: ts.Expression): void => {
+    const lhs = stripWrappers(target);
+    let receiver: ts.Expression;
+    let name: string;
+    if (ts.isPropertyAccessExpression(lhs) && !ts.isPrivateIdentifier(lhs.name)) {
+      receiver = lhs.expression;
+      name = lhs.name.text;
+    } else if (ts.isElementAccessExpression(lhs) && ts.isStringLiteralLike(stripWrappers(lhs.argumentExpression))) {
+      receiver = lhs.expression;
+      name = (stripWrappers(lhs.argumentExpression) as ts.StringLiteralLike).text;
+    } else {
       return;
     }
-    // (i) assignment: Array.prototype[Symbol.iterator] = … / Array.prototype.values = …
+    const base = stripWrappers(receiver);
+    if (!ts.isIdentifier(base) || !PATCHABLE_NAMESPACES.has(base.text)) return;
+    let names = found.get(base.text);
+    if (!names) found.set(base.text, (names = new Set()));
+    names.add(name);
+  };
+  function walk(node: ts.Node): void {
     if (
       ts.isBinaryExpression(node) &&
-      node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
-      isArrayProtoLHS(node.left)
+      node.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
+      node.operatorToken.kind <= ts.SyntaxKind.LastAssignment
     ) {
-      found = true;
-      return;
-    }
-    // (iii) (#5154) `delete Array.prototype[Symbol.iterator]` — removing the
-    // method is as much an override of the iterator surface as replacing it,
-    // and §7.4.2 then requires a TypeError at every array-iteration site.
-    if (ts.isDeleteExpression(node) && isArrayProtoLHS(unwrap(node.expression))) {
-      found = true;
-      return;
-    }
-    // (ii) Object.defineProperty(Array.prototype, …) / Object.defineProperties(Array.prototype, …)
-    if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression)) {
-      const callee = node.expression;
-      const arg0 = node.arguments[0];
-      if (
-        ts.isIdentifier(callee.expression) &&
-        callee.expression.text === "Object" &&
-        (callee.name.text === "defineProperty" || callee.name.text === "defineProperties") &&
-        arg0 !== undefined &&
-        ts.isPropertyAccessExpression(arg0) &&
-        arg0.name.text === "prototype" &&
-        ts.isIdentifier(arg0.expression) &&
-        arg0.expression.text === "Array"
-      ) {
-        found = true;
-        return;
-      }
+      note(node.left);
+    } else if (
+      (ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node)) &&
+      (node.operator === ts.SyntaxKind.PlusPlusToken || node.operator === ts.SyntaxKind.MinusMinusToken)
+    ) {
+      note(node.operand);
+    } else if (ts.isDeleteExpression(node)) {
+      note(node.expression);
     }
     forEachChild(node, walk);
   }
   walk(sourceFile);
+  patchedMembersCache.set(sourceFile, found);
   return found;
+}
+
+/**
+ * (#6957) Has the program patched `<ns>.<name>` in any of its source files?
+ * Standalone only — the host lane keeps its static lowering byte-for-byte, and
+ * so does every standalone program that never writes the member.
+ */
+export function isPatchedBuiltinStaticMember(
+  ctx: { readonly standalone?: boolean; readonly callableSourceFiles?: readonly ts.SourceFile[] },
+  ns: string,
+  name: string,
+): boolean {
+  if (!ctx.standalone || !PATCHABLE_NAMESPACES.has(ns)) return false;
+  for (const sourceFile of ctx.callableSourceFiles ?? []) {
+    if (patchedBuiltinStaticMembers(sourceFile).get(ns)?.has(name)) return true;
+  }
+  return false;
 }

@@ -125,19 +125,14 @@ import {
   type IrPlanningIdentityInvariantCode,
 } from "../planning-identity.js";
 import { buildIrUnitTypeMap, projectIrUnitTypeMapToLegacy, type LatticeType } from "../propagate.js";
-import {
-  makeIrArrayExpressionPredicate,
-  makeIrAmbientBindingPredicate,
-  makeIrDeclaredPrimitiveExpressionClassifier,
-  makeIrPrimitiveExpressionClassifier,
-  makeIrRegExpExpressionPredicate,
-} from "../module-bindings.js";
+import { makeIrCheckerSelectionOptions, makeIrAmbientBindingPredicate } from "../module-bindings.js";
 import {
   effectiveIrParamTypeNode,
   effectiveIrReturnTypeNode,
   irClosureSignatureFromFunctionTypeNode,
 } from "../select.js";
 import { planIrCompilationByIdentity, projectIrSelectionToLegacy } from "../select-identity.js";
+import { stringMethodPlan as planStringMethod } from "../string-method-surface.js";
 import { buildIrRecursiveTypeEvidence } from "../type-evidence.js";
 import { classifyIrFailure, IrInvariantError, IrUnsupportedError, type IrPreparationFailure } from "../outcomes.js";
 import type { FuncTypeDef, Instr, ValType, WasmFunction } from "../types.js";
@@ -671,14 +666,12 @@ function planLinearIrOverlay(
       experimentalIR: true,
       trackFallbacks: true,
       recursiveTypeEvidence,
-      classifyPrimitiveExpression: makeIrPrimitiveExpressionClassifier(ctx.checker),
-      classifyDeclaredPrimitiveExpression: makeIrDeclaredPrimitiveExpressionClassifier(ctx.checker),
-      isArrayExpression: makeIrArrayExpressionPredicate(ctx.checker),
-      isRegExpExpression: makeIrRegExpExpressionPredicate(ctx.checker),
+      ...makeIrCheckerSelectionOptions(ctx.checker),
       isAmbientBinding: makeIrAmbientBindingPredicate(ctx.checker),
       supportsSymbolicMathHelpers: false,
       supportsNumberToString: ctx.mod.functions.some((func) => func.name === "number_toString"),
       supportsLiteralStringReplace: false,
+      backendTargetProfile: { backend: "linear" },
       planCountedStringAppend: (loop) => planCountedStringAppend({ checker: ctx.checker, oracle }, loop),
     },
     propagated,
@@ -2009,22 +2002,8 @@ function makeLinearIrResolver(
     hasHostNumberToString(): boolean {
       return ctx.mod.functions.some((func) => func.name === "number_toString");
     },
-    stringMethodPlan(method: string) {
-      if (method === "charCodeAt") {
-        return {
-          funcName: LINEAR_IR_STRING_CHAR_CODE_AT_FN,
-          indexArgRep: "i32" as const,
-          padOmitted: "charcode-zero" as const,
-        };
-      }
-      if (method === "slice") {
-        return {
-          funcName: "__str_slice",
-          indexArgRep: "i32" as const,
-          padOmitted: "native-slice-len" as const,
-        };
-      }
-      return null;
+    stringMethodPlan(method: string, argCount: number) {
+      return planStringMethod("linear", method, argCount);
     },
     emitStringConst(value: string, alloc?: AllocSiteId): readonly Instr[] {
       const plan = memoryPlan;

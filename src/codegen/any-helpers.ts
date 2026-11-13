@@ -18,6 +18,7 @@ import { addFuncType } from "./registry/types.js";
 import { addStringImportsDelegate, registerEnsureAnyHelpers } from "./shared.js";
 import { registerAnyBoxHelpers, registerAnyUnboxHelpers } from "./any-boxing-helpers.js";
 import { registerAnyEqHelpers } from "./any-eq-helpers.js";
+import { buildThrowJsErrorInstrs } from "./js-errors.js";
 import { buildAnyTag5ExternProjection } from "./any-to-extern-projection.js";
 import { buildFastStrictEqDispatch } from "./extern-eq-fast.js";
 import { bigIntCarrierEqInstrs } from "./bigint-wide.js";
@@ -89,6 +90,18 @@ export function emitUndefinedSingleton(ctx: CodegenContext, fctx: FunctionContex
   }
   fctx.body.push({ op: "global.get", index: ctx.undefinedGlobalIdx });
   return true;
+}
+
+/**
+ * (#7104) The gc `$AnyValue` carrier's `undefined` (tag 1): the reserved
+ * `$undefined` global where `ensureAnyValueType` reserved one, otherwise the
+ * same initializer inline. Used by the IR `dyn.undefined` lowering on the gc
+ * dynamic strategy.
+ */
+export function undefinedAnyValueInstrs(ctx: CodegenContext): Instr[] {
+  ensureAnyValueType(ctx);
+  if (ctx.undefinedGlobalIdx !== undefined) return [{ op: "global.get", index: ctx.undefinedGlobalIdx }];
+  return buildUndefinedInitializer(ctx.anyValueTypeIdx);
 }
 
 /**
@@ -521,7 +534,6 @@ export function isAnyValue(type: ValType, ctx: CodegenContext): boolean {
 }
 
 export function ensureAnyFromExternHelper(ctx: CodegenContext, opts?: { forceHonest?: boolean }): number | undefined {
-  if (ctx.targetProfile.semanticProviders !== "native-first") return undefined;
   if (ctx.nativeBoxNumberTypeIdx < 0 || ctx.nativeBoxBooleanTypeIdx < 0) return undefined;
 
   // (#3037 CS1b) The reader-carrier consumers need an ALWAYS-honest classifier
@@ -791,7 +803,6 @@ export function emitPrimitiveUnionExternToAny(
  * otherwise (caller keeps the host import).
  */
 export function ensureExternStrictEqHelper(ctx: CodegenContext): number | undefined {
-  if (ctx.targetProfile.semanticProviders !== "native-first") return undefined;
   const existing = ctx.funcMap.get("__extern_strict_eq");
   if (existing !== undefined) return existing;
   const fromExternIdx = ensureAnyFromExternHelper(ctx);
@@ -928,45 +939,6 @@ export function ensureExternStrictEqHelper(ctx: CodegenContext): number | undefi
 }
 
 /**
- * Native standalone `(externref, externref) -> i32` loose equality. Each
- * carrier is classified by the shared externref-to-AnyValue helper and the
- * existing `__any_eq` body owns the complete IsLooselyEqual dispatch.
- */
-export function ensureExternLooseEqHelper(ctx: CodegenContext): number | undefined {
-  if (ctx.targetProfile.semanticProviders !== "native-first") return undefined;
-  const existing = ctx.funcMap.get("__extern_loose_eq");
-  if (existing !== undefined) return existing;
-  const fromExternIdx = ensureAnyFromExternHelper(ctx);
-  ensureAnyHelpers(ctx);
-  const anyEqIdx = ctx.funcMap.get("__any_eq");
-  if (fromExternIdx === undefined || anyEqIdx === undefined) return undefined;
-
-  const typeIdx = addFuncType(
-    ctx,
-    [{ kind: "externref" }, { kind: "externref" }],
-    [{ kind: "i32" }],
-    "__extern_loose_eq",
-  );
-  const funcIdx = mintDefinedFunc(ctx);
-  pushDefinedFunc(ctx, funcIdx, {
-    name: "__extern_loose_eq",
-    typeIdx,
-    locals: [],
-    body: [
-      { op: "local.get", index: 0 },
-      { op: "call", funcIdx: fromExternIdx },
-      { op: "local.get", index: 1 },
-      { op: "call", funcIdx: fromExternIdx },
-      { op: "call", funcIdx: anyEqIdx },
-    ],
-    exported: false,
-  });
-  ctx.funcMap.set("__extern_loose_eq", funcIdx);
-  ctx.anyHelpers.set("__extern_loose_eq", funcIdx);
-  return funcIdx;
-}
-
-/**
  * (#1461/#54) Native standalone `(externref, externref) -> i32` SameValueZero
  * (§7.2.11) over two boxed externref values — the pure-Wasm replacement for the
  * `__same_value_zero` host import in the array-like `includes` search arm.
@@ -977,7 +949,6 @@ export function ensureExternLooseEqHelper(ctx: CodegenContext): number | undefin
  * f64 self-inequality (`x !== x`).
  */
 export function ensureExternSameValueZeroHelper(ctx: CodegenContext): number | undefined {
-  if (ctx.targetProfile.semanticProviders !== "native-first") return undefined;
   const existing = ctx.funcMap.get("__extern_same_value_zero");
   if (existing !== undefined) return existing;
   const strictEqExternIdx = ensureExternStrictEqHelper(ctx);
@@ -1047,7 +1018,7 @@ export function ensureExternSameValueZeroHelper(ctx: CodegenContext): number | u
 
 export function ensureAnyToExternHelper(ctx: CodegenContext): number | undefined {
   // Fast JS-host builds also need to project `$AnyValue` at typed boundaries.
-  if (ctx.targetProfile.semanticProviders !== "native-first" && !ctx.fast) return undefined;
+
   if (ctx.anyValueTypeIdx < 0) return undefined;
 
   const existing = ctx.funcMap.get("__any_to_extern");
@@ -1214,7 +1185,7 @@ export function ensureAnyHelpers(ctx: CodegenContext): void {
   // Mirrors the static-type lowering at binary-ops.ts:881-889; deliberately NOT
   // `parseFloat` (Number("0xff")=255 but parseFloat("0xff")=NaN — §7.1.4.1).
   let strToNumIdx = -1;
-  if (ctx.targetProfile.semanticProviders === "native-first" && ctx.nativeStrings && ctx.anyStrTypeIdx >= 0) {
+  if (ctx.nativeStrings && ctx.anyStrTypeIdx >= 0) {
     if (!ctx.funcMap.has("__str_to_number")) {
       emitNativeParseNumber(ctx, new Set(["__str_to_number"]));
     }
@@ -1235,7 +1206,7 @@ export function ensureAnyHelpers(ctx: CodegenContext): void {
   let externToStringIdx = -1;
   let anyToStringIdx = -1;
   let strConcatIdx = -1;
-  if (ctx.targetProfile.semanticProviders === "native-first" && ctx.nativeStrings && ctx.anyStrTypeIdx >= 0) {
+  if (ctx.nativeStrings && ctx.anyStrTypeIdx >= 0) {
     ensureNativeStringHelpers(ctx);
     ensureObjectRuntime(ctx); // registers native __extern_toString + __to_primitive
     anyToStringIdx = ensureAnyToStringHelper(ctx); // (anyref AnyValue) → ref $AnyString, tag-dispatched
@@ -1258,7 +1229,7 @@ export function ensureAnyHelpers(ctx: CodegenContext): void {
   // gate as the concat arm (helpers idempotent).
   let nativeStrFlattenIdx = -1;
   let nativeStrEqualsIdx = -1;
-  if (ctx.targetProfile.semanticProviders === "native-first" && ctx.nativeStrings && ctx.anyStrTypeIdx >= 0) {
+  if (ctx.nativeStrings && ctx.anyStrTypeIdx >= 0) {
     ensureNativeStringHelpers(ctx);
     nativeStrFlattenIdx = ctx.nativeStrHelpers.get("__str_flatten") ?? -1;
     nativeStrEqualsIdx = ctx.nativeStrHelpers.get("__str_equals") ?? -1;
@@ -1351,7 +1322,7 @@ export function ensureAnyHelpers(ctx: CodegenContext): void {
   // classifying without a string arm would send equal-content distinct
   // strings into the object `ref.eq` arm (wrong false).
   const tag5ValueEqThen = (): Instr[] => {
-    if (!ctx.tag5ValueEqClassifier || ctx.targetProfile.semanticProviders !== "native-first") {
+    if (!ctx.tag5ValueEqClassifier) {
       return tag5StringEqThen();
     }
     if (!canNativeStrEq && ctx.anyStrTypeIdx >= 0) return tag5StringEqThen();
@@ -2075,7 +2046,17 @@ export function ensureAnyHelpers(ctx: CodegenContext): void {
   // decompose this god-function. Byte-identical: registered in the same order
   // with the same bodies; the tag-5 coercion/equality closures are threaded in
   // so their captured environment is unchanged.
-  registerAnyEqHelpers(ctx, addHelper, anyRefNull, anyTypeIdx, toF64Idx, strToNumIdx, tag5ToNumber, tag5ValueEqThen);
+  registerAnyEqHelpers(
+    ctx,
+    addHelper,
+    anyRefNull,
+    anyTypeIdx,
+    toF64Idx,
+    strToNumIdx,
+    tag5ToNumber,
+    tag5ValueEqThen,
+    buildThrowJsErrorInstrs,
+  );
 
   // __any_neg(a) -> ref $AnyValue
   // Negate numeric value: tag 2 → negate i32, tag 3 → negate f64

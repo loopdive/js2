@@ -1,0 +1,11 @@
+// Probe-only vitest config: extends the repo config but includes .tmp/probe-*.test.ts.
+import { defineConfig, mergeConfig } from "vitest/config";
+import base from "../vitest.config.ts";
+
+export default mergeConfig(
+  base,
+  defineConfig({
+    test: { include: [".tmp/probe-*.test.ts"], exclude: [] },
+  }),
+  false,
+);

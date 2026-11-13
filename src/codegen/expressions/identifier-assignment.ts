@@ -4,6 +4,7 @@ import { ts } from "../../ts-api.js";
 import type { ValType } from "../../ir/types.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
 import { allocLocal, getLocalType } from "../context/locals.js";
+import { emitConditionalCaptureBoxRepair } from "../closures/conditional-capture-box.js";
 import { localGlobalIdx } from "../registry/imports.js";
 import { coerceType, compileExpression, valTypesMatch } from "../shared.js";
 import { emitTdzCheckAtGlobal } from "../statements/tdz.js";
@@ -252,6 +253,13 @@ export function tryEmitForOfIdentifierWrite(
   valueType: ValType,
 ): boolean {
   if (emitPutValueTargetGuard(ctx, fctx, id, false)) return true;
+  // (#6992) A closure-boxed head: the lowering read the value into a scratch
+  // local (`forOfIdentifierHeadLocal`); store it through the cell.
+  const localIdx = fctx.localMap.get(id.text);
+  if (localIdx !== undefined && localIdx !== valueLocal && boxedCaptureCellOf(fctx, id.text, localIdx)) {
+    fctx.body.push({ op: "local.get", index: valueLocal });
+    return emitBoxedCaptureWriteFromStack(ctx, fctx, id.text, localIdx, valueType);
+  }
   if (!fctx.moduleInitChunk) return false;
   const moduleGlobalIdx = currentSourceModuleGlobalIndex(ctx, id);
   if (moduleGlobalIdx === undefined) return false;
@@ -290,6 +298,9 @@ export function emitResolvedIdentifierWriteFromStack(
         ? ctx.mod.globals[localGlobalIdx(ctx, currentModuleGlobalIdx)]?.type
         : undefined;
   if (currentLocalIdx === undefined && currentModuleGlobalIdx === undefined) return false;
+  if (currentLocalIdx !== undefined && emitBoxedCaptureWriteFromStack(ctx, fctx, id.text, currentLocalIdx, valueType)) {
+    return true;
+  }
   if (targetType && !valTypesMatch(valueType, targetType)) coerceType(ctx, fctx, valueType, targetType);
   if (currentLocalIdx !== undefined) {
     fctx.body.push({ op: "local.set", index: currentLocalIdx });
@@ -321,6 +332,70 @@ export function emitResolvedIdentifierWriteFromStack(
   if (shadowLocalIdx !== undefined) fctx.body.push({ op: "local.tee", index: shadowLocalIdx });
   // Re-read after coercion/guard helpers: either can settle imports/globals.
   fctx.body.push({ op: "global.set", index: ctx.moduleGlobals.get(id.text)! });
+  return true;
+}
+
+/**
+ * (#6992) The VALUE type an identifier write into `localIdx` stores: the local's
+ * own type, or — when `localIdx` is the ref-cell local of a closure-boxed
+ * binding — the cell's value type. Destructuring lowerings type their default
+ * initializers and coercions from this; the cell's struct type is never a
+ * value a JS assignment produces.
+ */
+export function identifierLocalValueType(fctx: FunctionContext, localIdx: number): ValType | undefined {
+  const type = getLocalType(fctx, localIdx);
+  if ((type?.kind === "ref" || type?.kind === "ref_null") && fctx.boxedCaptures) {
+    for (const [name, boxed] of fctx.boxedCaptures) {
+      if (boxed.refCellTypeIdx === type.typeIdx && fctx.localMap.get(name) === localIdx) return boxed.valType;
+    }
+  }
+  return type;
+}
+
+/** (#6992) The boxed-capture entry for `name` when `localIdx` is its ref-cell local. */
+export function boxedCaptureCellOf(
+  fctx: FunctionContext,
+  name: string,
+  localIdx: number,
+): { refCellTypeIdx: number; valType: ValType } | undefined {
+  const boxed = fctx.boxedCaptures?.get(name);
+  const cellType = getLocalType(fctx, localIdx);
+  if (!boxed || (cellType?.kind !== "ref" && cellType?.kind !== "ref_null")) return undefined;
+  return cellType.typeIdx === boxed.refCellTypeIdx ? boxed : undefined;
+}
+
+/**
+ * (#6992) A destructuring / for-in / for-of target that names a closure-boxed
+ * binding: `localMap` points at the ref-cell local, so a plain `local.set`
+ * would coerce the value INTO the cell slot (a `ref.null` — the write is lost
+ * and later reads trap or see null). Store through the cell instead, exactly
+ * like the boxed `x = v` path (null-guarded, after the conditional-box repair).
+ */
+function emitBoxedCaptureWriteFromStack(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  name: string,
+  cellLocalIdx: number,
+  valueType: ValType,
+): boolean {
+  const boxed = boxedCaptureCellOf(fctx, name, cellLocalIdx);
+  if (!boxed) return false;
+  if (!valTypesMatch(valueType, boxed.valType)) coerceType(ctx, fctx, valueType, boxed.valType);
+  const tmpVal = allocLocal(fctx, `__box_dw_${fctx.locals.length}`, boxed.valType);
+  fctx.body.push({ op: "local.set", index: tmpVal });
+  emitConditionalCaptureBoxRepair(fctx, name, cellLocalIdx);
+  fctx.body.push({ op: "local.get", index: cellLocalIdx });
+  fctx.body.push({ op: "ref.is_null" });
+  fctx.body.push({
+    op: "if",
+    blockType: { kind: "empty" },
+    then: [],
+    else: [
+      { op: "local.get", index: cellLocalIdx },
+      { op: "local.get", index: tmpVal },
+      { op: "struct.set", typeIdx: boxed.refCellTypeIdx, fieldIdx: 0 },
+    ],
+  });
   return true;
 }
 

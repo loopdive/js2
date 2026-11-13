@@ -1,0 +1,359 @@
+{
+  "schemaVersion": 1,
+  "issue": 5385,
+  "measuredAt": "2026-10-18",
+  "repositoryCommit": "730b9841684187e1dc1d8295cbbbfc457aa16e05",
+  "environment": {
+    "platform": "darwin-arm64",
+    "nodeVersion": "v24.4.1",
+    "v8Version": "13.6.233.10-node.17"
+  },
+  "profiles": {
+    "host": {
+      "semanticProviders": "auto",
+      "description": "The pre-S6 JS-host, host-assisted default on the measured commit."
+    },
+    "nativeFirst": {
+      "semanticProviders": "native-first",
+      "description": "The native semantic regime in a JavaScript environment, retaining the JS value boundary."
+    }
+  },
+  "methodology": {
+    "execution": "Profiles and packages were measured sequentially to avoid CPU contention.",
+    "kernelHarness": "scripts/generate-playground-benchmark-sidebar.mjs --kernels-only",
+    "npmHarness": "scripts/generate-npm-compat-report.mjs --perf-only with one package and one lane per process",
+    "optimizationLevel": 4,
+    "measuredRounds": 9,
+    "comparison": "native-first median Wasm runtime divided by host-assisted median Wasm runtime",
+    "blockerThreshold": "A native-first/host-assisted ratio greater than 2.0 on any kernel is a blocker under #6708.",
+    "commands": [
+      "node scripts/generate-playground-benchmark-sidebar.mjs --kernels-only --output=.tmp/5385-perf-host.json",
+      "node scripts/generate-playground-benchmark-sidebar.mjs --kernels-only --semantic-providers=native-first --output=.tmp/5385-perf-native-first.json",
+      "node --experimental-wasm-exnref --import tsx scripts/generate-npm-compat-report.mjs --only <acorn|cookie|redux|hono> --no-write --perf-only --lane js-host --partial-output .tmp/5385-perf-<package>-host.json",
+      "node --experimental-wasm-exnref --import tsx scripts/generate-npm-compat-report.mjs --only <acorn|cookie|redux|hono> --no-write --perf-only --lane js-host-native --partial-output .tmp/5385-perf-<package>-native-first.json"
+    ],
+    "notes": [
+      "Every npm lane reports optimizationRequested=true and optimizationVerified=true.",
+      "Every npm lane's actual checksum matches its native-oracle expected checksum.",
+      "The focused npm reports were written successfully; the generator's unrelated historical-backfill step could not fetch a promisor object because network name resolution was unavailable."
+    ]
+  },
+  "kernels": [
+    {
+      "name": "fib",
+      "path": "examples/benchmarks/fib.ts",
+      "host": {
+        "wasmUs": 2342.666023255813,
+        "wasmStdUs": 6.0744907558811425,
+        "jsUs": 5132.070175438596,
+        "jsStdUs": 199.22596343913472
+      },
+      "nativeFirst": {
+        "wasmUs": 2335.8055503875967,
+        "wasmStdUs": 8.808666431844298,
+        "jsUs": 4957.080698412703,
+        "jsStdUs": 90.69924449029575
+      },
+      "nativeFirstOverHost": 0.9970715104926986,
+      "verdict": "pass"
+    },
+    {
+      "name": "loop",
+      "path": "examples/benchmarks/loop.ts",
+      "host": {
+        "wasmUs": 86.17006735159818,
+        "wasmStdUs": 1.430817187395551,
+        "jsUs": 258.6595060449051,
+        "jsStdUs": 9.57275659890305
+      },
+      "nativeFirst": {
+        "wasmUs": 86.85280607609312,
+        "wasmStdUs": 2.194876842744007,
+        "jsUs": 259.63369845360813,
+        "jsStdUs": 12.351758514205297
+      },
+      "nativeFirstOverHost": 1.007923154123916,
+      "verdict": "pass"
+    },
+    {
+      "name": "string",
+      "path": "examples/benchmarks/string.ts",
+      "host": {
+        "wasmUs": 0.0597534685560656,
+        "wasmStdUs": 0.001606970658023823,
+        "jsUs": 2.2310035518217926,
+        "jsStdUs": 0.05383280415255699
+      },
+      "nativeFirst": {
+        "wasmUs": 1.2177850773224959,
+        "wasmStdUs": 0.013005905980820381,
+        "jsUs": 2.099015463508972,
+        "jsStdUs": 0.03315862636167295
+      },
+      "nativeFirstOverHost": 20.380157114726657,
+      "nativeFirstOverJs": 0.5801696534859482,
+      "verdict": "blocker",
+      "followUpIssue": 7087
+    },
+    {
+      "name": "array",
+      "path": "examples/benchmarks/array.ts",
+      "host": {
+        "wasmUs": 10.554577144313384,
+        "wasmStdUs": 0.10488405936429594,
+        "jsUs": 22.013783482142845,
+        "jsStdUs": 0.878347031119404
+      },
+      "nativeFirst": {
+        "wasmUs": 10.575157995106503,
+        "wasmStdUs": 0.7289141157699891,
+        "jsUs": 24.970011364526997,
+        "jsStdUs": 0.8953164651824587
+      },
+      "nativeFirstOverHost": 1.0019499455555363,
+      "verdict": "pass"
+    }
+  ],
+  "npmCompat": [
+    {
+      "name": "acorn",
+      "sampleOp": "parse(own 226KB dist bundle).body.length",
+      "host": {
+        "status": "measured",
+        "wasmUs": 1826638.7499999981,
+        "wasmStdUs": 54037.600730894206,
+        "compileDurationMs": 10009.137958,
+        "binaryBytes": 378576,
+        "expectedChecksum": 422,
+        "actualChecksum": 422
+      },
+      "nativeFirst": {
+        "status": "measured",
+        "wasmUs": 66317.67499999987,
+        "wasmStdUs": 4491.803689496918,
+        "compileDurationMs": 51939.701583,
+        "binaryBytes": 2079921,
+        "expectedChecksum": 422,
+        "actualChecksum": 422
+      },
+      "nativeFirstOverHost": 0.03630585138960834,
+      "hostOverNativeFirst": 27.543769440047495,
+      "verdict": "native-first-faster"
+    },
+    {
+      "name": "cookie",
+      "sampleOp": "parseCookie(8-pair header); verify a/h",
+      "host": {
+        "status": "measured",
+        "wasmUs": 178.68092536518546,
+        "wasmStdUs": 96.31733138662304,
+        "binaryBytes": 17926,
+        "expectedChecksum": 1,
+        "actualChecksum": 1
+      },
+      "nativeFirst": {
+        "status": "measured",
+        "wasmUs": 17.927987007647396,
+        "wasmStdUs": 1.9024149365448084,
+        "binaryBytes": 177757,
+        "expectedChecksum": 1,
+        "actualChecksum": 1
+      },
+      "nativeFirstOverHost": 0.10033520349755543,
+      "hostOverNativeFirst": 9.96659163624823,
+      "verdict": "native-first-faster"
+    },
+    {
+      "name": "redux",
+      "sampleOp": "dispatch(action) + getState().count",
+      "host": {
+        "status": "measured",
+        "wasmUs": 37.58896588386493,
+        "wasmStdUs": 12.928139780551291,
+        "compileDurationMs": 1694.536416,
+        "binaryBytes": 54411,
+        "expectedChecksum": 7,
+        "actualChecksum": 7
+      },
+      "nativeFirst": {
+        "status": "measured",
+        "wasmUs": 1.830415734104526,
+        "wasmStdUs": 0.0071455671338015005,
+        "compileDurationMs": 8716.861125000001,
+        "binaryBytes": 570993,
+        "expectedChecksum": 7,
+        "actualChecksum": 7
+      },
+      "nativeFirstOverHost": 0.04869555974909733,
+      "hostOverNativeFirst": 20.535753262771294,
+      "verdict": "native-first-faster"
+    },
+    {
+      "name": "hono",
+      "sampleOp": "register route + path.length",
+      "host": {
+        "status": "measured",
+        "wasmUs": 98.73828223350253,
+        "wasmStdUs": 5.494845191693878,
+        "compileDurationMs": 7877.007458,
+        "binaryBytes": 313395,
+        "expectedChecksum": 9,
+        "actualChecksum": 9
+      },
+      "nativeFirst": {
+        "status": "measured",
+        "wasmUs": 2.388210136580529,
+        "wasmStdUs": 0.16837313426816433,
+        "compileDurationMs": 15423.385250000001,
+        "binaryBytes": 737946,
+        "expectedChecksum": 9,
+        "actualChecksum": 9
+      },
+      "nativeFirstOverHost": 0.02418727653102916,
+      "hostOverNativeFirst": 41.34405122946062,
+      "verdict": "native-first-faster"
+    }
+  ],
+  "postFix": {
+    "issue": 7087,
+    "implementationCommit": "5b36f318c5e9a5b1a9e11da6b924d64f5be8d1b2",
+    "measuredAt": "2026-10-18",
+    "rootCause": "The native __str_repeat kernel doubled its rope beyond the requested length and then substring-flattened/copies the complete 5,000-code-unit result. The host provider retained an engine rope and answered length without that copy. Neither profile constant-folded bench_string to 5000.",
+    "fix": "Build the shared native repeat result as an exact-length rope by binary decomposition, preserving the existing normalized-count provider ABI, throwing adapter, counted-loop provenance and JS boundary adapter.",
+    "methodology": {
+      "environment": {
+        "platform": "darwin-arm64",
+        "nodeVersion": "v24.4.1",
+        "v8Version": "13.6.233.10-node.17"
+      },
+      "execution": "Host and native-first kernel profiles, then each native-first npm control, were measured sequentially to avoid CPU contention.",
+      "optimizationLevel": 4,
+      "kernelWarmupRounds": 2,
+      "kernelMeasuredRounds": 9,
+      "commands": [
+        "node --experimental-wasm-stringref --experimental-wasm-custom-descriptors scripts/generate-playground-benchmark-sidebar.mjs --kernels-only --output=.tmp/issue-7087/host-post-fix.json",
+        "node --experimental-wasm-stringref --experimental-wasm-custom-descriptors scripts/generate-playground-benchmark-sidebar.mjs --semantic-providers=native-first --kernels-only --output=.tmp/issue-7087/native-first-post-fix.json",
+        "node --experimental-wasm-exnref --import tsx scripts/generate-npm-compat-report.mjs --only <acorn|cookie|redux|hono> --no-write --perf-only --lane js-host-native --partial-output .tmp/issue-7087/<package>-native-first-post-fix.json"
+      ]
+    },
+    "kernels": [
+      {
+        "name": "fib",
+        "host": {
+          "wasmUs": 2347.6508449612397,
+          "wasmStdUs": 7.672303240397353
+        },
+        "nativeFirst": {
+          "wasmUs": 2340.2684108527123,
+          "wasmStdUs": 5.565771469556822
+        },
+        "nativeFirstOverHost": 0.9968553952030932,
+        "verdict": "pass"
+      },
+      {
+        "name": "loop",
+        "host": {
+          "wasmUs": 86.0569466324201,
+          "wasmStdUs": 0.4657331125644833
+        },
+        "nativeFirst": {
+          "wasmUs": 85.4128626279863,
+          "wasmStdUs": 0.3916806477050364
+        },
+        "nativeFirstOverHost": 0.9925156070527937,
+        "verdict": "pass"
+      },
+      {
+        "name": "string",
+        "host": {
+          "wasmUs": 0.06364867124907446,
+          "wasmStdUs": 0.0010836704981144166,
+          "jsUs": 2.3185047636756457
+        },
+        "nativeFirst": {
+          "wasmUs": 0.09077879813237837,
+          "wasmStdUs": 0.0006993219253779632,
+          "jsUs": 2.325840104580524
+        },
+        "nativeFirstOverHost": 1.4262481266440958,
+        "nativeFirstOverJs": 0.03903054174121009,
+        "result": 5000,
+        "verdict": "pass"
+      },
+      {
+        "name": "array",
+        "host": {
+          "wasmUs": 10.573372388835148,
+          "wasmStdUs": 0.03585600739230677
+        },
+        "nativeFirst": {
+          "wasmUs": 10.53582026425391,
+          "wasmStdUs": 0.09307163519686382
+        },
+        "nativeFirstOverHost": 0.996448425043566,
+        "verdict": "pass"
+      }
+    ],
+    "npmCompatNativeFirstControls": [
+      {
+        "name": "acorn",
+        "wasmUs": 67060.69160000043,
+        "wasmStdUs": 1570.2623311194868,
+        "binaryBytes": 2079921,
+        "compileDurationMs": 52902.988958,
+        "expectedChecksum": 422,
+        "actualChecksum": 422,
+        "optimizationRequested": true,
+        "optimizationVerified": true,
+        "hostOverNativeFirst": 27.238590990015773,
+        "verdict": "measured-checksum-match"
+      },
+      {
+        "name": "cookie",
+        "wasmUs": 19.651354979444605,
+        "wasmStdUs": 2.255597142660782,
+        "binaryBytes": 177757,
+        "expectedChecksum": 1,
+        "actualChecksum": 1,
+        "optimizationRequested": true,
+        "optimizationVerified": true,
+        "hostOverNativeFirst": 9.092549880254385,
+        "verdict": "measured-checksum-match"
+      },
+      {
+        "name": "redux",
+        "wasmUs": 2.067997555733487,
+        "wasmStdUs": 0.04395894832184214,
+        "binaryBytes": 570993,
+        "compileDurationMs": 8883.397542,
+        "expectedChecksum": 7,
+        "actualChecksum": 7,
+        "optimizationRequested": true,
+        "optimizationVerified": true,
+        "hostOverNativeFirst": 18.176504019383476,
+        "verdict": "measured-checksum-match"
+      },
+      {
+        "name": "hono",
+        "wasmUs": 2.703103542415712,
+        "wasmStdUs": 0.34917620066477495,
+        "binaryBytes": 737975,
+        "compileDurationMs": 15815.973333000002,
+        "expectedChecksum": 9,
+        "actualChecksum": 9,
+        "optimizationRequested": true,
+        "optimizationVerified": true,
+        "hostOverNativeFirst": 36.527746970899244,
+        "verdict": "measured-checksum-match"
+      }
+    ],
+    "s6PerformanceBarMet": true,
+    "summary": "The exact-rope native repeat kernel reduces the string delta from 20.38x to 1.426x while all four kernels pass and all four npm controls remain optimized, measured and checksum-correct."
+  },
+  "conclusion": {
+    "performanceEvidenceComplete": true,
+    "s6PerformanceBarMet": true,
+    "summary": "The initial run found one 20.38x string blocker; #7087's post-fix run reduces it to 1.426x. All four kernels now pass the #6708 threshold and all four npm controls remain substantially faster, optimized and checksum-correct under native-first.",
+    "architectureImplication": "The measurements support one native semantic core with JS-host interop retained at the explicit value boundary. wasm:js-string remains useful as a named opt-in accelerator, not as justification for a second implicit semantic/object model."
+  }
+}

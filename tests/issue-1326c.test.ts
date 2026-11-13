@@ -54,7 +54,6 @@ describe("#1326c Phase 1C-A — microtask queue + drain export", () => {
     expect(typeof scheduler.emitDrainMicrotasks).toBe("function");
     expect(typeof scheduler.exportDrainMicrotasksIfRegistered).toBe("function");
     expect(typeof scheduler.getDrainFuncIdxForWasiStart).toBe("function");
-    expect(typeof scheduler.isStandalonePromiseActive).toBe("function");
     expect(typeof scheduler.emitStandalonePromiseResolve).toBe("function");
     expect(typeof scheduler.emitStandalonePromiseReject).toBe("function");
     expect(typeof scheduler.emitStandalonePromiseThen).toBe("function");

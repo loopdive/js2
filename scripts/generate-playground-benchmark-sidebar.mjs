@@ -46,28 +46,25 @@ import { parseArgs } from "node:util";
 import * as ts from "typescript";
 import { buildCompiledImports, compileMulti, instantiateWasm, optimizeBinaryAsync } from "./compiler-bundle.mjs";
 
-// Alternate semantic providers must never overwrite the published default lane.
-// Example: --semantic-providers=native-first --output=.tmp/native-first-perf.json
+// A custom --output never overwrites the published default lane.
+// (#6979) The native regime is the only semantic implementation; the rows keep
+// recording it so older and newer sidebar files stay comparable.
 const { values: options } = parseArgs({
   options: {
-    "semantic-providers": { type: "string", default: "auto" },
     output: { type: "string" },
     "kernels-only": { type: "boolean", default: false },
   },
 });
-const semanticProviders = options["semantic-providers"];
-if (!["auto", "native-first"].includes(semanticProviders)) {
-  throw new Error("--semantic-providers expects auto or native-first");
-}
+const semanticProviders = "native-first";
 if (options["kernels-only"] && !options.output) throw new Error("--kernels-only requires --output");
-const publishDefault = semanticProviders === "auto" && !options.output;
+const publishDefault = !options.output;
 
 const ROOT = resolve(import.meta.dirname, "..");
 const compilerCommit = execFileSync("git", ["rev-parse", "HEAD"], { cwd: ROOT, encoding: "utf8" }).trim();
 const HELPERS_PATH = resolve(ROOT, "website", "playground", "examples", "benchmarks", "helpers.ts");
 const RESULTS_PATH = options.output
   ? resolve(options.output)
-  : resolve(ROOT, "benchmarks", "results", `playground-benchmark-sidebar${publishDefault ? "" : "-native-first"}.json`);
+  : resolve(ROOT, "benchmarks", "results", "playground-benchmark-sidebar.json");
 const PLAYGROUND_PUBLIC_PATH = resolve(
   ROOT,
   "website",
@@ -254,7 +251,6 @@ async function prepareArtifacts(entry) {
       ...(options["kernels-only"] ? {} : { "examples/benchmarks/helpers.ts": HELPERS_SOURCE }),
     },
     entry.path,
-    { semanticProviders },
   );
   if (!result.success) {
     throw new Error(`Compilation failed for ${entry.path}:\n${result.errors.map((e) => e.message).join("\n")}`);

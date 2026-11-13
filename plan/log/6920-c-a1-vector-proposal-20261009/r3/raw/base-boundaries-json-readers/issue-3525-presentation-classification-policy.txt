@@ -1,0 +1,309 @@
+
+ RUN  v3.2.7 /home/user/js2/.claude/worktrees/agent-a774506d6593a2d93
+
+ × tests/issue-3525-presentation-classification-policy.test.ts > fixed prepared presentation classification policy predecessor capture > authenticates independent receipt and full current domain 19ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3525-presentation-classification-policy.test.ts > fixed prepared presentation classification policy predecessor capture > detaches semantic input and replays exact row without retained-field changes 7ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3525-presentation-classification-policy.test.ts > fixed prepared presentation classification policy predecessor capture > refuses genuine predecessor raw domain 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3525-presentation-classification-policy.test.ts > fixed prepared presentation classification policy predecessor capture > refuses genuine predecessor semantic domain 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3525-presentation-classification-policy.test.ts > fixed prepared presentation classification policy predecessor capture > refuses missing added row 7ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3525-presentation-classification-policy.test.ts > fixed prepared presentation classification policy predecessor capture > refuses duplicate added row 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3525-presentation-classification-policy.test.ts > fixed prepared presentation classification policy predecessor capture > refuses extra row schema 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3525-presentation-classification-policy.test.ts > fixed prepared presentation classification policy predecessor capture > refuses wrong added row layer 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3525-presentation-classification-policy.test.ts > fixed prepared presentation classification policy predecessor capture > refuses changed retained edge 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3525-presentation-classification-policy.test.ts > fixed prepared presentation classification policy predecessor capture > refuses changed added row path 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3525-presentation-classification-policy.test.ts > fixed prepared presentation classification policy predecessor capture > refuses changed added row state 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3525-presentation-classification-policy.test.ts > fixed prepared presentation classification policy predecessor capture > refuses changed added row layer 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3525-presentation-classification-policy.test.ts > fixed prepared presentation classification policy predecessor capture > refuses changed added row destination 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3525-presentation-classification-policy.test.ts > fixed prepared presentation classification policy predecessor capture > refuses changed added row owner 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3525-presentation-classification-policy.test.ts > fixed prepared presentation classification policy predecessor capture > refuses changed added row nextBoundary 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3525-presentation-classification-policy.test.ts > fixed prepared presentation classification policy predecessor capture > refuses reordered added row keys 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3525-presentation-classification-policy.test.ts > fixed prepared presentation classification policy predecessor capture > refuses reordered added row position 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3525-presentation-classification-policy.test.ts > fixed prepared presentation classification policy predecessor capture > refuses changed retained neighbor 4ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3525-presentation-classification-policy.test.ts > fixed prepared presentation classification policy predecessor capture > refuses changed retained root 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3525-presentation-classification-policy.test.ts > fixed prepared presentation classification policy predecessor capture > refuses changed retained history 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3525-presentation-classification-policy.test.ts > fixed prepared presentation classification policy predecessor capture > refuses changed retained moves 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3525-presentation-classification-policy.test.ts > fixed prepared presentation classification policy predecessor capture > refuses extra debt row 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3525-presentation-classification-policy.test.ts > fixed prepared presentation classification policy predecessor capture > refuses raw span 0 missing 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3525-presentation-classification-policy.test.ts > fixed prepared presentation classification policy predecessor capture > refuses raw span 0 duplicate 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3525-presentation-classification-policy.test.ts > fixed prepared presentation classification policy predecessor capture > refuses raw span 0 relocated 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3525-presentation-classification-policy.test.ts > fixed prepared presentation classification policy predecessor capture > refuses semantic-equivalent raw whitespace 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3525-presentation-classification-policy.test.ts > fixed prepared presentation classification policy predecessor capture > refuses a valid JSON same-length row field mutation 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3525-presentation-classification-policy.test.ts > fixed prepared presentation classification policy predecessor capture > guards boxed raw before missing authority with positive IO witness 6ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3525-presentation-classification-policy.test.ts > fixed prepared presentation classification policy predecessor capture > guards numeric raw before missing authority with positive IO witness 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3525-presentation-classification-policy.test.ts > fixed prepared presentation classification policy predecessor capture > guards null semantic before missing authority with positive IO witness 5ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3525-presentation-classification-policy.test.ts > fixed prepared presentation classification policy predecessor capture > guards accessor semantic before missing authority with positive IO witness 5ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3525-presentation-classification-policy.test.ts > fixed prepared presentation classification policy predecessor capture > guards symbol semantic before missing authority with positive IO witness 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3525-presentation-classification-policy.test.ts > fixed prepared presentation classification policy predecessor capture > guards hidden semantic before missing authority with positive IO witness 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3525-presentation-classification-policy.test.ts > fixed prepared presentation classification policy predecessor capture > fresh raw refuses tests/helpers/ir-runtime-program-policy-presentation-classification.json missing after success and admits restored authority 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3525-presentation-classification-policy.test.ts > fixed prepared presentation classification policy predecessor capture > fresh semantic refuses tests/helpers/ir-runtime-program-policy-presentation-classification.json missing after success and admits restored authority 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3525-presentation-classification-policy.test.ts > fixed prepared presentation classification policy predecessor capture > fresh raw refuses tests/helpers/ir-runtime-program-policy-presentation-classification.json mutation after success and admits restored authority 5ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3525-presentation-classification-policy.test.ts > fixed prepared presentation classification policy predecessor capture > fresh semantic refuses tests/helpers/ir-runtime-program-policy-presentation-classification.json mutation after success and admits restored authority 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3525-presentation-classification-policy.test.ts > fixed prepared presentation classification policy predecessor capture > fresh raw refuses tests/helpers/ir-runtime-program-policy-evolution.ts missing after success and admits restored authority 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3525-presentation-classification-policy.test.ts > fixed prepared presentation classification policy predecessor capture > fresh semantic refuses tests/helpers/ir-runtime-program-policy-evolution.ts missing after success and admits restored authority 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3525-presentation-classification-policy.test.ts > fixed prepared presentation classification policy predecessor capture > fresh raw refuses tests/helpers/ir-runtime-program-policy-evolution.ts mutation after success and admits restored authority 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3525-presentation-classification-policy.test.ts > fixed prepared presentation classification policy predecessor capture > fresh semantic refuses tests/helpers/ir-runtime-program-policy-evolution.ts mutation after success and admits restored authority 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3525-presentation-classification-policy.test.ts > fixed prepared presentation classification policy predecessor capture > fresh raw refuses tests/helpers/ir-runtime-program-policy-lowering-analysis.json missing after success and admits restored authority 4ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3525-presentation-classification-policy.test.ts > fixed prepared presentation classification policy predecessor capture > fresh semantic refuses tests/helpers/ir-runtime-program-policy-lowering-analysis.json missing after success and admits restored authority 3ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3525-presentation-classification-policy.test.ts > fixed prepared presentation classification policy predecessor capture > fresh raw refuses tests/helpers/ir-runtime-program-policy-lowering-analysis.json mutation after success and admits restored authority 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+ × tests/issue-3525-presentation-classification-policy.test.ts > fixed prepared presentation classification policy predecessor capture > fresh semantic refuses tests/helpers/ir-runtime-program-policy-lowering-analysis.json mutation after success and admits restored authority 2ms
+   → Deno post-position main successor: complete raw source profile mismatch
+
+⎯⎯⎯⎯⎯⎯ Failed Tests 45 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/issue-3525-presentation-classification-policy.test.ts > fixed prepared presentation classification policy predecessor capture > authenticates independent receipt and full current domain
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ raw tests/issue-3525-presentation-classification-policy.test.ts:144:13
+ ❯ tests/issue-3525-presentation-classification-policy.test.ts:358:18
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/45]⎯
+
+ FAIL  tests/issue-3525-presentation-classification-policy.test.ts > fixed prepared presentation classification policy predecessor capture > detaches semantic input and replays exact row without retained-field changes
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ raw tests/issue-3525-presentation-classification-policy.test.ts:144:13
+ ❯ policy tests/issue-3525-presentation-classification-policy.test.ts:152:33
+ ❯ tests/issue-3525-presentation-classification-policy.test.ts:369:19
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/45]⎯
+
+ FAIL  tests/issue-3525-presentation-classification-policy.test.ts > fixed prepared presentation classification policy predecessor capture > refuses genuine predecessor raw domain
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ raw tests/issue-3525-presentation-classification-policy.test.ts:144:13
+ ❯ tests/issue-3525-presentation-classification-policy.test.ts:385:29
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/45]⎯
+
+ FAIL  tests/issue-3525-presentation-classification-policy.test.ts > fixed prepared presentation classification policy predecessor capture > refuses genuine predecessor semantic domain
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ raw tests/issue-3525-presentation-classification-policy.test.ts:144:13
+ ❯ tests/issue-3525-presentation-classification-policy.test.ts:392:41
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/45]⎯
+
+ FAIL  tests/issue-3525-presentation-classification-policy.test.ts > fixed prepared presentation classification policy predecessor capture > refuses missing added row
+ FAIL  tests/issue-3525-presentation-classification-policy.test.ts > fixed prepared presentation classification policy predecessor capture > refuses duplicate added row
+ FAIL  tests/issue-3525-presentation-classification-policy.test.ts > fixed prepared presentation classification policy predecessor capture > refuses extra row schema
+ FAIL  tests/issue-3525-presentation-classification-policy.test.ts > fixed prepared presentation classification policy predecessor capture > refuses wrong added row layer
+ FAIL  tests/issue-3525-presentation-classification-policy.test.ts > fixed prepared presentation classification policy predecessor capture > refuses changed retained edge
+ FAIL  tests/issue-3525-presentation-classification-policy.test.ts > fixed prepared presentation classification policy predecessor capture > refuses changed added row path
+ FAIL  tests/issue-3525-presentation-classification-policy.test.ts > fixed prepared presentation classification policy predecessor capture > refuses changed added row state
+ FAIL  tests/issue-3525-presentation-classification-policy.test.ts > fixed prepared presentation classification policy predecessor capture > refuses changed added row layer
+ FAIL  tests/issue-3525-presentation-classification-policy.test.ts > fixed prepared presentation classification policy predecessor capture > refuses changed added row destination
+ FAIL  tests/issue-3525-presentation-classification-policy.test.ts > fixed prepared presentation classification policy predecessor capture > refuses changed added row owner
+ FAIL  tests/issue-3525-presentation-classification-policy.test.ts > fixed prepared presentation classification policy predecessor capture > refuses changed added row nextBoundary
+ FAIL  tests/issue-3525-presentation-classification-policy.test.ts > fixed prepared presentation classification policy predecessor capture > refuses reordered added row keys
+ FAIL  tests/issue-3525-presentation-classification-policy.test.ts > fixed prepared presentation classification policy predecessor capture > refuses reordered added row position
+ FAIL  tests/issue-3525-presentation-classification-policy.test.ts > fixed prepared presentation classification policy predecessor capture > refuses changed retained neighbor
+ FAIL  tests/issue-3525-presentation-classification-policy.test.ts > fixed prepared presentation classification policy predecessor capture > refuses changed retained root
+ FAIL  tests/issue-3525-presentation-classification-policy.test.ts > fixed prepared presentation classification policy predecessor capture > refuses changed retained history
+ FAIL  tests/issue-3525-presentation-classification-policy.test.ts > fixed prepared presentation classification policy predecessor capture > refuses changed retained moves
+ FAIL  tests/issue-3525-presentation-classification-policy.test.ts > fixed prepared presentation classification policy predecessor capture > refuses extra debt row
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ raw tests/issue-3525-presentation-classification-policy.test.ts:144:13
+ ❯ policy tests/issue-3525-presentation-classification-policy.test.ts:152:33
+ ❯ tests/issue-3525-presentation-classification-policy.test.ts:482:21
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/45]⎯
+
+ FAIL  tests/issue-3525-presentation-classification-policy.test.ts > fixed prepared presentation classification policy predecessor capture > refuses raw span 0 missing
+ FAIL  tests/issue-3525-presentation-classification-policy.test.ts > fixed prepared presentation classification policy predecessor capture > refuses raw span 0 duplicate
+ FAIL  tests/issue-3525-presentation-classification-policy.test.ts > fixed prepared presentation classification policy predecessor capture > refuses raw span 0 relocated
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ raw tests/issue-3525-presentation-classification-policy.test.ts:144:13
+ ❯ tests/issue-3525-presentation-classification-policy.test.ts:492:22
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[6/45]⎯
+
+ FAIL  tests/issue-3525-presentation-classification-policy.test.ts > fixed prepared presentation classification policy predecessor capture > refuses semantic-equivalent raw whitespace
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ raw tests/issue-3525-presentation-classification-policy.test.ts:144:13
+ ❯ tests/issue-3525-presentation-classification-policy.test.ts:508:18
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[7/45]⎯
+
+ FAIL  tests/issue-3525-presentation-classification-policy.test.ts > fixed prepared presentation classification policy predecessor capture > refuses a valid JSON same-length row field mutation
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ raw tests/issue-3525-presentation-classification-policy.test.ts:144:13
+ ❯ tests/issue-3525-presentation-classification-policy.test.ts:516:18
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[8/45]⎯
+
+ FAIL  tests/issue-3525-presentation-classification-policy.test.ts > fixed prepared presentation classification policy predecessor capture > guards boxed raw before missing authority with positive IO witness
+ FAIL  tests/issue-3525-presentation-classification-policy.test.ts > fixed prepared presentation classification policy predecessor capture > guards numeric raw before missing authority with positive IO witness
+ FAIL  tests/issue-3525-presentation-classification-policy.test.ts > fixed prepared presentation classification policy predecessor capture > guards null semantic before missing authority with positive IO witness
+ FAIL  tests/issue-3525-presentation-classification-policy.test.ts > fixed prepared presentation classification policy predecessor capture > guards accessor semantic before missing authority with positive IO witness
+ FAIL  tests/issue-3525-presentation-classification-policy.test.ts > fixed prepared presentation classification policy predecessor capture > guards symbol semantic before missing authority with positive IO witness
+ FAIL  tests/issue-3525-presentation-classification-policy.test.ts > fixed prepared presentation classification policy predecessor capture > guards hidden semantic before missing authority with positive IO witness
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ raw tests/issue-3525-presentation-classification-policy.test.ts:144:13
+ ❯ tests/issue-3525-presentation-classification-policy.test.ts:590:20
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[9/45]⎯
+
+ FAIL  tests/issue-3525-presentation-classification-policy.test.ts > fixed prepared presentation classification policy predecessor capture > fresh raw refuses tests/helpers/ir-runtime-program-policy-presentation-classification.json missing after success and admits restored authority
+ FAIL  tests/issue-3525-presentation-classification-policy.test.ts > fixed prepared presentation classification policy predecessor capture > fresh semantic refuses tests/helpers/ir-runtime-program-policy-presentation-classification.json missing after success and admits restored authority
+ FAIL  tests/issue-3525-presentation-classification-policy.test.ts > fixed prepared presentation classification policy predecessor capture > fresh raw refuses tests/helpers/ir-runtime-program-policy-presentation-classification.json mutation after success and admits restored authority
+ FAIL  tests/issue-3525-presentation-classification-policy.test.ts > fixed prepared presentation classification policy predecessor capture > fresh semantic refuses tests/helpers/ir-runtime-program-policy-presentation-classification.json mutation after success and admits restored authority
+ FAIL  tests/issue-3525-presentation-classification-policy.test.ts > fixed prepared presentation classification policy predecessor capture > fresh raw refuses tests/helpers/ir-runtime-program-policy-evolution.ts missing after success and admits restored authority
+ FAIL  tests/issue-3525-presentation-classification-policy.test.ts > fixed prepared presentation classification policy predecessor capture > fresh semantic refuses tests/helpers/ir-runtime-program-policy-evolution.ts missing after success and admits restored authority
+ FAIL  tests/issue-3525-presentation-classification-policy.test.ts > fixed prepared presentation classification policy predecessor capture > fresh raw refuses tests/helpers/ir-runtime-program-policy-evolution.ts mutation after success and admits restored authority
+ FAIL  tests/issue-3525-presentation-classification-policy.test.ts > fixed prepared presentation classification policy predecessor capture > fresh semantic refuses tests/helpers/ir-runtime-program-policy-evolution.ts mutation after success and admits restored authority
+ FAIL  tests/issue-3525-presentation-classification-policy.test.ts > fixed prepared presentation classification policy predecessor capture > fresh raw refuses tests/helpers/ir-runtime-program-policy-lowering-analysis.json missing after success and admits restored authority
+ FAIL  tests/issue-3525-presentation-classification-policy.test.ts > fixed prepared presentation classification policy predecessor capture > fresh semantic refuses tests/helpers/ir-runtime-program-policy-lowering-analysis.json missing after success and admits restored authority
+ FAIL  tests/issue-3525-presentation-classification-policy.test.ts > fixed prepared presentation classification policy predecessor capture > fresh raw refuses tests/helpers/ir-runtime-program-policy-lowering-analysis.json mutation after success and admits restored authority
+ FAIL  tests/issue-3525-presentation-classification-policy.test.ts > fixed prepared presentation classification policy predecessor capture > fresh semantic refuses tests/helpers/ir-runtime-program-policy-lowering-analysis.json mutation after success and admits restored authority
+Error: Deno post-position main successor: complete raw source profile mismatch
+ ❯ fail tests/helpers/ir-deno-post-position-main-successor.ts:2558:9
+    2556| type Projection = Receipt["mainPredecessor"] | Receipt["denoPredecesso…
+    2557| function fail(detail: string): never {
+    2558|   throw new Error("Deno post-position main successor: " + detail);
+       |         ^
+    2559| }
+    2560| const sha = (value: string | Buffer): string => createHash("sha256").u…
+ ❯ pin tests/helpers/ir-deno-post-position-main-successor.ts:2655:5
+ ❯ beforeRaw tests/helpers/ir-deno-post-position-main-successor.ts:2659:3
+ ❯ captureDenoPostPositionMainPredecessorPolicySource tests/helpers/ir-deno-post-position-main-successor.ts:2721:3
+ ❯ raw tests/issue-3525-presentation-classification-policy.test.ts:144:13
+ ❯ tests/issue-3525-presentation-classification-policy.test.ts:607:24
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[10/45]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  45 failed (45)
+   Start at  22:52:39
+   Duration  1.11s (transform 453ms, setup 0ms, collect 555ms, tests 159ms, environment 0ms, prepare 77ms)
+

@@ -1,0 +1,39 @@
+
+ RUN  v3.2.7 /home/user/js2/.claude/worktrees/agent-a774506d6593a2d93
+
+ ❯ tests/issue-3497-linear-jsdoc-landing-signatures.test.ts (6 tests | 1 failed) 807ms
+   ✓ #3497 — TypeScript-effective JSDoc signatures > claims standard JavaScript number, boolean, and string signatures 22ms
+   ✓ #3497 — TypeScript-effective JSDoc signatures > lowers those effective primitive signatures through the linear IR builder  517ms
+   × #3497 — TypeScript-effective JSDoc signatures > keeps unannotated and any-valued operations on the dynamic rejection path 10ms
+     → expected true to be false // Object.is equality
+   ✓ #3497 — TypeScript-effective JSDoc signatures > does not reinterpret JSDoc unions as primitive signatures 2ms
+   ✓ #3497 — exact landing benchmark sources > IR-compiles the exact fib.js run export and preserves behavior 74ms
+   ✓ #3497 — exact landing benchmark sources > removes return-type-not-resolvable from every annotated landing export 181ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/issue-3497-linear-jsdoc-landing-signatures.test.ts > #3497 — TypeScript-effective JSDoc signatures > keeps unannotated and any-valued operations on the dynamic rejection path
+AssertionError: expected true to be false // Object.is equality
+
+[32m- Expected[39m
+[31m+ Received[39m
+
+[32m- false[39m
+[31m+ true[39m
+
+ ❯ tests/issue-3497-linear-jsdoc-landing-signatures.test.ts:73:67
+     71|     expect(selectJavaScript(unannotated).funcs.has("dynamicAdd")).toBe…
+     72|     expect(fallbackReason(unannotated, "dynamicAdd")).toBe("return-typ…
+     73|     expect(selectJavaScript(explicitAny).funcs.has("dynamicAdd")).toBe…
+       |                                                                   ^
+     74|     expect(fallbackReason(explicitAny, "dynamicAdd")).toBe("param-type…
+     75|   });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 5 passed (6)
+   Start at  22:57:31
+   Duration  25.15s (transform 16.73s, setup 0ms, collect 23.95s, tests 807ms, environment 2ms, prepare 73ms)
+

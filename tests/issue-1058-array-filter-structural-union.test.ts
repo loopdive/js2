@@ -32,7 +32,6 @@ describe("#1058 array filter structural-union callbacks", () => {
         fileName: "issue-1058-array-filter-structural-union.ts",
         target: "gc",
         platform: "node",
-        nativeStrings: false,
         skipSemanticDiagnostics: true,
       },
     );

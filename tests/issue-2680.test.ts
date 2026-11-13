@@ -36,7 +36,8 @@ async function run(prelude: string, body: string): Promise<unknown> {
   expect(result.success, result.errors?.[0]?.message).toBe(true);
   const importObject: any = result.importObject ?? {};
   const { instance } = await WebAssembly.instantiate(result.binary, importObject);
-  importObject.__setExports?.(instance.exports);
+  // (#7014) setInstance: raw setExports(instance.exports) lost data-struct authority in 708ebbd56d (#5337).
+  importObject.__setInstance?.(instance);
   const ex = wrapExports(instance.exports, { signatures: result.exportSignatures });
   return ex.test();
 }

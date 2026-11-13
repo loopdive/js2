@@ -1,0 +1,17 @@
+typecheck exit=0|typecheck exit=0
+loc-budget exit=0|loc-budget exit=0
+loc-budget-base exit=0|loc-budget-base exit=0
+func-budget exit=0|func-budget exit=0
+func-budget-base exit=0|func-budget-base exit=0
+coercion-sites exit=0|coercion-sites exit=0
+oracle-ratchet exit=0|oracle-ratchet exit=0
+dead-exports exit=0|dead-exports exit=0
+ir-fallbacks exit=0|ir-fallbacks exit=0
+compiler-boundaries-inventory-base exit=0|compiler-boundaries-inventory-base exit=0
+compiler-boundaries-inventory-headparent exit=0|compiler-boundaries-inventory-headparent exit=0
+compiler-boundaries-inventory-nobase exit=0|compiler-boundaries-inventory-nobase exit=0
+compiler-boundaries-complete-default exit=1|compiler-boundaries-complete-default exit=1
+lowering-cycle-3518 exit=0|lowering-cycle-3518 exit=0
+issue-3299 exit=0|issue-3299 exit=0
+issue-6920 exit=1|issue-6920 exit=0
+DONE|DONE

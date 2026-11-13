@@ -1,0 +1,22 @@
+
+ RUN  v3.2.7 /home/user/js2/.claude/worktrees/agent-a774506d6593a2d93
+
+ ✓ tests/issue-3525-prepared-linear-early-return.test.ts (17 tests) 57143ms
+   ✓ #3525 genuine prepared Linear early returns > retains all four original application source pins and independent native eight-call oracle  434ms
+   ✓ #3525 genuine prepared Linear early returns > observes the enabled Linear overlay positive control and restores a preexisting switch exactly  605ms
+   ✓ #3525 genuine prepared Linear early returns > executes the complete five-function eight-call application through wasmgc prepared and legacy binaries and helpers  5685ms
+   ✓ #3525 genuine prepared Linear early returns > preserves nested if and loop returns versus fallthrough on wasmgc native and original generated-helper paths  5390ms
+   ✓ #3525 genuine prepared Linear early returns > preserves callee return does not exit caller on wasmgc native and original generated-helper paths  5532ms
+   ✓ #3525 genuine prepared Linear early returns > preserves void early return skips later effects on wasmgc native and original generated-helper paths  5741ms
+   ✓ #3525 genuine prepared Linear early returns > preserves return operand evaluates exactly once on wasmgc native and original generated-helper paths  5897ms
+   ✓ #3525 genuine prepared Linear early returns > executes the complete five-function eight-call application through linear prepared and legacy binaries and helpers  5543ms
+   ✓ #3525 genuine prepared Linear early returns > preserves nested if and loop returns versus fallthrough on linear native and original generated-helper paths  5453ms
+   ✓ #3525 genuine prepared Linear early returns > preserves callee return does not exit caller on linear native and original generated-helper paths  5717ms
+   ✓ #3525 genuine prepared Linear early returns > preserves void early return skips later effects on linear native and original generated-helper paths  5573ms
+   ✓ #3525 genuine prepared Linear early returns > preserves return operand evaluates exactly once on linear native and original generated-helper paths  5566ms
+
+ Test Files  1 passed (1)
+      Tests  17 passed (17)
+   Start at  23:00:58
+   Duration  84.44s (transform 18.68s, setup 0ms, collect 26.86s, tests 57.14s, environment 0ms, prepare 59ms)
+

@@ -247,7 +247,7 @@ describe("#4465 residuals — measured, NOT fixed (each pin fails when its cause
   // R3. An INHERITED `toString` (`Ctor.prototype = protoWithToString`) is not
   // found by `__to_primitive`'s OrdinaryToPrimitive probe. Blocks test262
   // trim/15.5.4.20-2-43.
-  it.fails("R3: an inherited toString is found by ToString(this)", async () => {
+  it("R3: an inherited toString is found by ToString(this)", async () => {
     const src = prog(`var proto = { toString: function () { return "abc"; } };
       var Con = function () {};
       Con.prototype = proto;

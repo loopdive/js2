@@ -3,7 +3,7 @@
 import { describe, expect, it } from "vitest";
 
 import { compile, compileMulti, type CompileOptions, type CompileResult, type ImportDescriptor } from "../src/index.js";
-import { buildImports } from "../src/runtime.js";
+import { buildImports, wrapCompiledExports } from "../src/runtime.js";
 
 const HOST_CALLBACK_SOURCE = `
 export function install(target: EventTarget, sink: HTMLElement, value: number): void {
@@ -25,6 +25,11 @@ async function compileHostCallback(
     ...options,
   });
 }
+
+// The B2 host-bridge shape (`__make_callback` maker + generic closure bridge
+// exports) is the host-assisted lane's crossing; the #7091 platform lane passes
+// the packed closure as a marshalled carrier instead. S7 (#6979) retires the pin.
+const HOST_ASSISTED: CompileOptions = { semanticProviders: "host-assisted" };
 
 function watFunctionBody(wat: string, name: string): string {
   const start = wat.indexOf(`  (func $${name}`);
@@ -82,7 +87,7 @@ describe("#3214 B2 — ambient void host callbacks", () => {
   });
 
   it.each([false, true])("dispatches the IR callback twice (optimize=%s)", async (optimize) => {
-    const result = await compileHostCallback(HOST_CALLBACK_SOURCE, { optimize });
+    const result = await compileHostCallback(HOST_CALLBACK_SOURCE, { ...HOST_ASSISTED, optimize });
     expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
     expect(WebAssembly.validate(result.binary)).toBe(true);
     expect(result.irCompiledFuncs ?? []).toContain("install");
@@ -135,14 +140,17 @@ describe("#3214 B2 — ambient void host callbacks", () => {
   });
 
   it("restores generic closure bridges when the same wrapper has an ordinary allocation", async () => {
-    const result = await compileHostCallback(`
+    const result = await compileHostCallback(
+      `
       export function install(target: EventTarget, sink: HTMLElement): void {
         target.addEventListener("tick", () => { sink.textContent = "exact"; });
       }
       export function getOrdinary(): any {
         return (): void => {};
       }
-    `);
+    `,
+      HOST_ASSISTED,
+    );
 
     expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
     expect(WebAssembly.validate(result.binary)).toBe(true);
@@ -163,7 +171,8 @@ describe("#3214 B2 — ambient void host callbacks", () => {
   });
 
   it("keeps multiple certified callback sites distinct in source order", async () => {
-    const result = await compileHostCallback(`
+    const result = await compileHostCallback(
+      `
       export function install(
         target: EventTarget,
         numberSink: HTMLElement,
@@ -178,7 +187,8 @@ describe("#3214 B2 — ambient void host callbacks", () => {
           textSink.textContent = label;
         });
       }
-    `);
+    `,
+    );
 
     expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
     expect(WebAssembly.validate(result.binary)).toBe(true);
@@ -201,15 +211,9 @@ describe("#3214 B2 — ambient void host callbacks", () => {
     };
     const numberSink = { textContent: "" };
     const textSink = { textContent: "" };
-    (
-      instance.exports.install as (
-        target: object,
-        numberSink: object,
-        textSink: object,
-        value: number,
-        label: string,
-      ) => void
-    )(target, numberSink, textSink, 42, "second");
+    // (#7098) Default profile: the native lane marshals the listeners' results,
+    // and the `label` string crosses through the export adapter.
+    wrapCompiledExports(result, instance).install(target, numberSink, textSink, 42, "second");
 
     expect(eventTypes).toEqual(["number", "text"]);
     expect(listeners).toHaveLength(2);
@@ -341,20 +345,24 @@ describe("#3214 B2 — ambient void host callbacks", () => {
   });
 
   it("demotes when __make_callback resolves to a defined function instead of the exact host import", async () => {
-    const result = await compileHostCallback(`
+    const result = await compileHostCallback(
+      `
       type i32 = number;
       function __make_callback(_id: i32, capture: object): object { return capture; }
       export function install(target: EventTarget, sink: HTMLElement): void {
         target.addEventListener("tick", () => { sink.textContent = "x"; });
       }
-    `);
+    `,
+      HOST_ASSISTED,
+    );
 
     expect(result.irCompiledFuncs ?? []).not.toContain("install");
     expect(result.irPostClaimErrors ?? []).toEqual([]);
   });
 
   it("keeps a potentially final-demoted B2 call component out of the IR-first skip set", async () => {
-    const result = await compileHostCallback(`
+    const result = await compileHostCallback(
+      `
       type i32 = number;
       function __make_callback(_id: i32, capture: object): object { return capture; }
       function install(n: number): number {
@@ -363,7 +371,9 @@ describe("#3214 B2 — ambient void host callbacks", () => {
       }
       export function caller(n: number): number { return install(n); }
       export function independent(n: number): number { return n + 1; }
-    `);
+    `,
+      HOST_ASSISTED,
+    );
 
     expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
     expect(WebAssembly.validate(result.binary)).toBe(true);
@@ -433,6 +443,7 @@ describe("#3214 B2 — ambient void host callbacks", () => {
         experimentalIR: true,
         trackFallbacks: true,
         skipSemanticDiagnostics: true,
+        ...HOST_ASSISTED,
       },
     );
 

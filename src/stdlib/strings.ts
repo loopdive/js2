@@ -204,20 +204,30 @@ export function __sh_str_endsWith(str0: string, suffix0: string, endPos: number)
 
 /**
  * §22.1.3.17 repeat core. Same empty arms as the hand kernel (count <= 0 or
- * empty receiver → ""), then rope-doubling to ≥ sLen·count and one substring
- * view. The `out.length > 0` guard is the overflow exit (see module header).
+ * empty receiver → ""), then binary decomposition builds an exact-length rope.
+ * Keeping the result exact avoids the old overshoot + substring tail, which
+ * flattened the whole rope even when a consumer only needed its length. The
+ * public/provider entrypoints normalize `count` to a bounded integer first.
  */
 const REPEAT_SOURCE = `
 export function __sh_str_repeat(s: string, count: number): string {
   let sLen: number = s.length;
   if (count <= 0) { return ""; }
   if (sLen === 0) { return ""; }
-  let newLen: number = sLen * count;
-  let out: string = s;
-  while (out.length > 0 && out.length < newLen) {
-    out = out + out;
+  let remaining: number = count;
+  let piece: string = s;
+  let out: string = "";
+  while (remaining > 0) {
+    let half: number = Math.floor(remaining / 2);
+    if (remaining - half * 2 === 1) {
+      out = out + piece;
+    }
+    remaining = half;
+    if (remaining > 0) {
+      piece = piece + piece;
+    }
   }
-  return out.substring(0, newLen);
+  return out;
 }
 `;
 

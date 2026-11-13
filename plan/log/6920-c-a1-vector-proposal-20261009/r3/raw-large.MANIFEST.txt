@@ -1,0 +1,10 @@
+./raw/head-gates/compiler-boundaries-complete-default.txt
+./raw/head-gates/compiler-boundaries-inventory-base.txt
+./raw/head-gates/compiler-boundaries-inventory-nobase.txt
+./raw/head-gates/compiler-boundaries-inventory-headparent.txt
+./raw/head-boundaries-json-readers/failing-tests.txt
+./raw/base-gates/compiler-boundaries-complete-default.txt
+./raw/base-gates/compiler-boundaries-inventory-base.txt
+./raw/base-gates/compiler-boundaries-inventory-nobase.txt
+./raw/base-gates/compiler-boundaries-inventory-headparent.txt
+./raw/base-boundaries-json-readers/failing-tests.txt

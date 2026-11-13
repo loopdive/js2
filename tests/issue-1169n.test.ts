@@ -9,7 +9,9 @@
 //
 // Slice 11 scope (`plan/issues/sprints/47/1169n.md`):
 //   - Bitwise ops on f64 operands: `&`, `|`, `^`, `<<`, `>>`, `>>>`
-//   - `delete <expr>` (returns `true`, lowers operand for side effects)
+//   - `delete <expr>` — RETIRED by #7106: the constant-`true` lowering
+//     removed nothing and never threw, so the selector now refuses every
+//     delete and the case below asserts it stays on the direct path.
 //   - `void <expr>` (lowers operand for side effects, result is f64 NaN)
 //
 // Out of scope — selector accepts shape, lowerer throws clean fallback so
@@ -65,6 +67,8 @@ interface Case {
   expectedClaimed: string[];
   /** Names the selector might claim that we expect the lowerer to fall back on. */
   expectedFallback?: string[];
+  /** (#7106) Names the selector must NOT claim. */
+  expectedRefused?: string[];
   /** Entry-point export to call. */
   fn: string;
   /** Args (numbers); empty for nullary entry points. */
@@ -197,12 +201,12 @@ const cases: Case[] = [
     expected: (0xff & 0x0f) | (0x03 << 2), // 15 | 12 = 15 (0x0F) — wait, 12 = 0x0C; 0x0F | 0x0C = 0x0F = 15
   },
   // -----------------------------------------------------------------------
-  // delete — operand is a property access on a (statically-known) object
-  // shape. Result is always `true`. The receiver is lowered for side
-  // effects (inferred from inspection — DCE drops it if pure).
+  // delete — #7106: the IR has no delete operation, so the selector refuses
+  // it and both functions stay legacy (the caller by call-graph closure).
+  // The legacy/IR parity half of the case still runs.
   // -----------------------------------------------------------------------
   {
-    name: "delete obj.prop returns true (boolean → number coercion)",
+    name: "delete obj.prop stays on the direct path (boolean → number coercion)",
     source: `
       function deletePropAsNumber(): number {
         // Object literal with a single field, then delete it. The IR
@@ -219,7 +223,8 @@ const cases: Case[] = [
         return deletePropAsNumber();
       }
     `,
-    expectedClaimed: ["deletePropAsNumber", "test"],
+    expectedClaimed: [],
+    expectedRefused: ["deletePropAsNumber"],
     fn: "test",
     expected: 1,
   },
@@ -232,6 +237,9 @@ describe("#1169n — IR Phase 4 Slice 11: missing binary/unary operators", () =>
         const sel = selectionFor(c.source);
         for (const name of c.expectedClaimed) {
           expect(sel.has(name), `expected '${name}' to be claimed; got: ${[...sel].join(", ")}`).toBe(true);
+        }
+        for (const name of c.expectedRefused ?? []) {
+          expect(sel.has(name), `expected '${name}' to stay legacy; got: ${[...sel].join(", ")}`).toBe(false);
         }
       });
 

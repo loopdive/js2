@@ -1,0 +1,2 @@
+JSON report written to /home/user/js2/.claude/worktrees/agent-a774506d6593a2d93/.tmp/proposal-out-r2/raw/head-6920-results.json
+exit=0

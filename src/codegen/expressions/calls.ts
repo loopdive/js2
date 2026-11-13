@@ -33,9 +33,14 @@ import {
 import type { Instr, ValType } from "../../ir/types.js";
 import { compileHostFreeCryptoCall, isHostFreeCryptoCall, marshalRegimeCryptoUuid } from "./standalone-crypto.js";
 import { tryStandaloneQueueMicrotaskCall } from "./standalone-queue-microtask.js";
-import { tryStandaloneHostFreeCall } from "./standalone-dynamic-code.js"; // (#6675/#6676) timers, Function(src)
+import {
+  emitRefusedDynamicFunction,
+  isRuntimeEvalProviderAbsent,
+  tryStandaloneHostFreeCall,
+} from "./standalone-dynamic-code.js"; // (#6675/#6676) timers, Function(src); (#6956) refused eval
 import { compileArrayMethodCall, compileArrayPrototypeCall, resolveArrayInfo } from "../array-methods.js";
 import { emitGlobalThisGopdFold } from "../dyn-read.js"; // (#2984)
+import { tryCompileIntlLocaleMethodCall } from "../helpers/host-intl-locale.js"; // (#6986)
 import { tryEmitNullishReceiverCall } from "../nullish-receiver-coercible.js"; // (#4484 B) §7.3.2 on a syntactic null/undefined receiver
 import { tryEmitDynamicGeneratorFunction } from "../generator-function-dynamic.js"; // (#6651 A9)
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "../func-space.js"; // (#1916 S3b) stable-regime minting
@@ -90,8 +95,6 @@ import {
   getDrainFuncIdxForWasiStart,
   getOrRegisterPromiseType,
   getRunLoopNowFuncIdx,
-  isStandalonePromiseActive,
-  isStandaloneThenChainNativeActive,
   isStdinReactorActive,
   type StandalonePromiseThenCallback,
 } from "../async-scheduler.js";
@@ -326,6 +329,7 @@ import { methodBodyUsesSuper } from "../generators-native-ast-scan.js"; // (#665
 // (#2193 PR-B) reflective `m.call(thisArg, …)` on a `$NativeProto` member-closure value.
 import {
   ensureArrayBufferNativeProtoGlue,
+  ensureSharedArrayBufferNativeProtoGlue,
   ensureArrayNativeProtoGlue,
   ensureDataViewNativeProtoGlue,
   ensureDateNativeProtoGlue,
@@ -361,7 +365,10 @@ import {
   ensureStandaloneNativeMethodClosure,
   getNativeProtoBuiltinGlue,
 } from "../native-proto.js";
-import { ensureRuntimeEvalAotCallableCarrierTypes } from "../runtime-eval-callable.js";
+import {
+  ensureRuntimeEvalAotCallableCarrierTypes,
+  tryRuntimeEvalRebindCarrierIntrinsic,
+} from "../runtime-eval-callable.js";
 import { RUNTIME_EVAL_AOT_CALLABLE_BRAND_A, RUNTIME_EVAL_AOT_CALLABLE_BRAND_B } from "../runtime-eval-boundary.js";
 import { wrapperProtoSyntacticMember } from "../wrapper-proto-dynamic-demand.js"; // (#4619)
 import { resolveDefaultExpressionImportGlobal } from "../default-expression-import-global.js";
@@ -393,7 +400,6 @@ import {
 import { tryCompileNodeFsCall, tryCompileNodeProcessCall } from "../node-fs-api.js";
 import { tryCompileDenoStdioCall } from "../deno-api.js";
 import { tryCompileRawWasiCall } from "../raw-wasi-api.js";
-import { tryEmitPromiseSubclassReceiver } from "./promise-subclass.js";
 import { tryEmitStandalonePromiseStaticCallTypeError } from "./promise-static-call-typeerror.js";
 import {
   emitStandalonePromiseCombinator,
@@ -433,8 +439,7 @@ import { compileOptionalCallExpression } from "./calls-optional.js";
 import { compileOptionalDirectCall, isLoweringOptionalDirectCallDynamically } from "./calls-optional-direct.js";
 import {
   emitStandaloneDirectEvalRuntime,
-  emitStandaloneIndirectEvalRuntime,
-  emitStandaloneGlobalScriptEvalRuntime,
+  emitStandaloneGlobalEvalRuntime,
   ensureRuntimeEvalCallableCarrier,
   isGlobalFunctionIdentifier,
   isFunctionCtorImmediateCall,
@@ -554,7 +559,6 @@ import {
   ensureTaDynFillHelper,
   ensureTaDynReverseHelper,
   getOrRegisterDvWindowType,
-  isDataViewAccessor,
 } from "../dataview-native.js";
 import {
   getLinearU8Buffer,
@@ -653,17 +657,6 @@ function sourceHasBindCall(sf: ts.SourceFile): boolean {
   return found;
 }
 
-/**
- * Select the Wasm-owned Function.prototype.bind provider.
- *
- * Native-first JavaScript targets use the same `$__bound_fn` carrier as
- * standalone/WASI. Only a bound target that is itself an admitted caller-owned
- * JavaScript function crosses the explicit callback boundary when invoked.
- */
-export function usesNativeFunctionBindProvider(ctx: CodegenContext): boolean {
-  return noJsHost(ctx) || ctx.targetProfile.semanticProviders === "native-first";
-}
-
 function sourceCreatesProxy(sf: ts.SourceFile): boolean {
   const cached = sourceCreatesProxyCache.get(sf);
   if (cached !== undefined) return cached;
@@ -726,7 +719,6 @@ function sourceCreatesProxy(sf: ts.SourceFile): boolean {
  */
 export function compileObjectAssignArg(ctx: CodegenContext, fctx: FunctionContext, arg: ts.Expression): void {
   if (
-    (ctx.targetProfile.semanticProviders === "native-first" || ctx.standalone) &&
     ts.isObjectLiteralExpression(arg) &&
     arg.properties.every(
       (p) => ts.isPropertyAssignment(p) || ts.isShorthandPropertyAssignment(p) || ts.isSpreadAssignment(p),
@@ -1574,8 +1566,11 @@ export function emitReflectiveNativeProtoClosureCall(
   // externrefs with null, so use the canonical standalone undefined singleton
   // for ArrayBuffer members; their shared helper applies the corresponding
   // runtime predicate. Other builtin families retain their existing ABI.
-  const arrayBufferUndefinedPad =
-    getNativeProtoBuiltinGlue(ctx, brand)?.name === "ArrayBuffer" ? undefinedExternInstrs(ctx) : undefined;
+  const arrayBufferUndefinedPad = ["ArrayBuffer", "SharedArrayBuffer"].includes(
+    getNativeProtoBuiltinGlue(ctx, brand)?.name ?? "",
+  ) // (#7011)
+    ? undefinedExternInstrs(ctx)
+    : undefined;
   // `String.prototype.normalize` has an optional form parameter even though
   // its public `.length` is 0. Its closure body must distinguish an omitted
   // form (and written `undefined`) from explicit `null`: only the former
@@ -2354,100 +2349,6 @@ export function emitIterableArg(ctx: CodegenContext, fctx: FunctionContext, argE
 }
 
 /**
- * (#1632a) Static-resolve the name of a function-like expression for the
- * `__bind_function` nameHint argument. Returns "" when no static name is
- * available (anonymous function, complex expression). The host falls back to
- * the wrapped callable's own `.name` when the hint is empty.
- *
- * Per spec §15.2.5 / NamedEvaluation: a named function expression
- * `function namedFn(){}` keeps its inner name even when bound to a different
- * identifier (`const fn = function namedFn(){}`); the inner name wins.
- */
-function resolveStaticFunctionName(ctx: CodegenContext, expr: ts.Expression): string {
-  let cursor: ts.Expression = expr;
-  while (
-    ts.isParenthesizedExpression(cursor) ||
-    ts.isAsExpression(cursor) ||
-    ts.isTypeAssertionExpression(cursor) ||
-    ts.isSatisfiesExpression(cursor) ||
-    ts.isNonNullExpression(cursor)
-  ) {
-    cursor = (cursor as ts.AsExpression | ts.ParenthesizedExpression).expression;
-  }
-  if (ts.isIdentifier(cursor)) {
-    // Look through `const fn = function namedFn(){}` to prefer the inner name
-    // (named function expression) over the binding identifier.
-    const sym = ctx.checker.getSymbolAtLocation(cursor);
-    const decl = sym?.valueDeclaration;
-    if (decl && (ts.isVariableDeclaration(decl) || ts.isBindingElement(decl)) && decl.initializer) {
-      let init: ts.Expression = decl.initializer;
-      while (ts.isParenthesizedExpression(init)) init = init.expression;
-      if (ts.isFunctionExpression(init) && init.name) return init.name.text;
-    }
-    return cursor.text;
-  }
-  if (ts.isPropertyAccessExpression(cursor)) return cursor.name.text;
-  // Named function expression: `(function namedFn(){}).bind(...)`
-  if (ts.isFunctionExpression(cursor) && cursor.name) return cursor.name.text;
-  return "";
-}
-
-/**
- * (#1632a) Static-resolve the declared parameter count of a function-like
- * expression for the `__bind_function` lengthHint. Returns -1 when no static
- * arity is available; the host falls back to the wrapped callable's `.length`.
- *
- * Spec §20.2.4.2: `Function.prototype.length` is the count of formal parameters
- * before the first default-valued, rest, or destructured parameter.
- */
-function resolveStaticFunctionLength(ctx: CodegenContext, expr: ts.Expression): number {
-  let cursor: ts.Expression = expr;
-  while (
-    ts.isParenthesizedExpression(cursor) ||
-    ts.isAsExpression(cursor) ||
-    ts.isTypeAssertionExpression(cursor) ||
-    ts.isSatisfiesExpression(cursor) ||
-    ts.isNonNullExpression(cursor)
-  ) {
-    cursor = (cursor as ts.AsExpression | ts.ParenthesizedExpression).expression;
-  }
-  // Inline function expression / arrow — read parameters directly.
-  if (ts.isFunctionExpression(cursor) || ts.isArrowFunction(cursor)) {
-    return countSpecLength(cursor.parameters);
-  }
-  // Try the TS checker's call signatures.
-  const tsType = ctx.checker.getTypeAtLocation(cursor);
-  const sigs = tsType?.getCallSignatures?.() ?? [];
-  if (sigs.length > 0) {
-    const sig = sigs[0]!;
-    const decl = sig.getDeclaration?.();
-    if (decl && decl.parameters) {
-      return countSpecLength(decl.parameters);
-    }
-    // Fallback: signature parameter count (less precise — counts optional/rest).
-    const minArity = (sig as unknown as { minArgumentCount?: number }).minArgumentCount;
-    if (typeof minArity === "number") return minArity;
-    return sig.parameters.length;
-  }
-  return -1;
-}
-
-function countSpecLength(params: ts.NodeArray<ts.ParameterDeclaration>): number {
-  let count = 0;
-  for (const p of params) {
-    // Skip the TypeScript `this` pseudo-parameter — it's not part of
-    // Function.prototype.length per spec.
-    if (ts.isIdentifier(p.name) && p.name.text === "this") continue;
-    // Stop at first default, rest, or optional — per spec.
-    if (p.questionToken !== undefined) break;
-    if (p.dotDotDotToken !== undefined) break;
-    if (p.initializer !== undefined) break;
-    count++;
-  }
-  return count;
-}
-
-/**
  * (#3767) Conservative syntax-only proof that the receiver supplied to
  * `Function.prototype.bind.call(receiver, ...)` cannot have [[Call]].
  *
@@ -2516,7 +2417,7 @@ function tryCompileIndirectFunctionBindCall(
   const fnExpr = expr.arguments[0]!;
   // ES5 §15.3.4.5 step 2 / current §20.2.3.2 step 2: IsCallable(Target)
   // false must throw TypeError. Outer-call arguments are evaluated first.
-  if (usesNativeFunctionBindProvider(ctx) && isStaticallyNonCallableBindTarget(ctx, fctx, fnExpr)) {
+  if (isStaticallyNonCallableBindTarget(ctx, fctx, fnExpr)) {
     for (const arg of expr.arguments) {
       const argType = compileExpression(ctx, fctx, arg);
       if (argType !== null) fctx.body.push({ op: "drop" });
@@ -2600,7 +2501,6 @@ export function compileFunctionBind(
   propAccess: ts.PropertyAccessExpression,
 ): InnerResult | undefined {
   const externRef: ValType = { kind: "externref" };
-  const i32Ty: ValType = { kind: "i32" };
 
   // (#3140/#4397) Native semantic provider: mint the native
   // `$__bound_fn` carrier {target, thisArg, boundArgs}. Replaces the #1632a
@@ -2609,125 +2509,28 @@ export function compileFunctionBind(
   // ctor and every makeCtorArg-style test failed at the harness level).
   // Evaluation order per §20.2.3.2: target (receiver), then thisArg, then
   // partials — each exactly once, into externref locals.
-  if (usesNativeFunctionBindProvider(ctx)) {
-    const recvType = compileExpression(ctx, fctx, propAccess.expression, externRef);
-    if (recvType === null) {
-      fctx.body.push({ op: "ref.null.extern" });
-    } else if (recvType.kind !== "externref") {
-      coerceType(ctx, fctx, recvType, externRef);
-    }
-    const targetLocal = allocLocal(fctx, `__bindfn_tgt_${fctx.locals.length}`, externRef);
-    fctx.body.push({ op: "local.set", index: targetLocal });
-    const argLocals: number[] = [];
-    for (const arg of expr.arguments) {
-      const src = ts.isSpreadElement(arg) ? arg.expression : arg;
-      const t = compileExpression(ctx, fctx, src, externRef);
-      if (t === null) {
-        fctx.body.push({ op: "ref.null.extern" });
-      } else if (t.kind !== "externref") {
-        coerceType(ctx, fctx, t, externRef);
-      }
-      const aLocal = allocLocal(fctx, `__bindfn_arg_${fctx.locals.length}`, externRef);
-      fctx.body.push({ op: "local.set", index: aLocal });
-      argLocals.push(aLocal);
-    }
-    emitBoundFnValueFromLocals(ctx, fctx, targetLocal, argLocals[0], argLocals.slice(1));
-    return externRef;
-  }
-
-  // Static hints from the receiver expression (host falls back when -1 / "").
-  const targetName = resolveStaticFunctionName(ctx, propAccess.expression);
-  const targetLength = resolveStaticFunctionLength(ctx, propAccess.expression);
-
-  // 1. Push target externref.
   const recvType = compileExpression(ctx, fctx, propAccess.expression, externRef);
   if (recvType === null) {
     fctx.body.push({ op: "ref.null.extern" });
   } else if (recvType.kind !== "externref") {
-    fctx.body.push({ op: "extern.convert_any" });
+    coerceType(ctx, fctx, recvType, externRef);
   }
-
-  // 2. Push thisArg externref (or ref.null.extern when omitted).
-  const args = expr.arguments;
-  if (args.length >= 1) {
-    const t = compileExpression(ctx, fctx, args[0]!, externRef);
+  const targetLocal = allocLocal(fctx, `__bindfn_tgt_${fctx.locals.length}`, externRef);
+  fctx.body.push({ op: "local.set", index: targetLocal });
+  const argLocals: number[] = [];
+  for (const arg of expr.arguments) {
+    const src = ts.isSpreadElement(arg) ? arg.expression : arg;
+    const t = compileExpression(ctx, fctx, src, externRef);
     if (t === null) {
       fctx.body.push({ op: "ref.null.extern" });
     } else if (t.kind !== "externref") {
-      fctx.body.push({ op: "extern.convert_any" });
+      coerceType(ctx, fctx, t, externRef);
     }
-  } else {
-    fctx.body.push({ op: "ref.null.extern" });
+    const aLocal = allocLocal(fctx, `__bindfn_arg_${fctx.locals.length}`, externRef);
+    fctx.body.push({ op: "local.set", index: aLocal });
+    argLocals.push(aLocal);
   }
-
-  // 3. Build argsArray as a JS Array of partial args (args[1..]).
-  const arrNewIdx = ensureLateImport(ctx, "__js_array_new", [], [externRef]);
-  const arrPushIdx = ensureLateImport(ctx, "__js_array_push", [externRef, externRef], []);
-  flushLateImportShifts(ctx, fctx);
-  const arrNewResolvedIdx = ctx.funcMap.get("__js_array_new") ?? arrNewIdx;
-  const arrPushResolvedIdx = ctx.funcMap.get("__js_array_push") ?? arrPushIdx;
-  if (arrNewResolvedIdx === undefined || arrPushResolvedIdx === undefined) {
-    // Late-import setup failed (very unusual). Bail to identity-bind for safety.
-    fctx.body.push({ op: "drop" }); // drop thisArg
-    return externRef;
-  }
-  fctx.body.push({ op: "call", funcIdx: arrNewResolvedIdx });
-  const argsArrayLocal = allocLocal(fctx, `__bind_args_${fctx.locals.length}`, externRef);
-  fctx.body.push({ op: "local.set", index: argsArrayLocal });
-  for (let i = 1; i < args.length; i++) {
-    fctx.body.push({ op: "local.get", index: argsArrayLocal });
-    const argExpr = args[i]!;
-    if (ts.isSpreadElement(argExpr)) {
-      // Spread in bind partials is rare — coerce the spread argument to
-      // externref and let the host accept it as a single value. Real spread
-      // handling would need iterable expansion at compile time.
-      const t = compileExpression(ctx, fctx, argExpr.expression, externRef);
-      if (t === null) {
-        fctx.body.push({ op: "ref.null.extern" });
-      } else if (t.kind !== "externref") {
-        fctx.body.push({ op: "extern.convert_any" });
-      }
-    } else {
-      const t = compileExpression(ctx, fctx, argExpr, externRef);
-      if (t === null) {
-        fctx.body.push({ op: "ref.null.extern" });
-      } else if (t.kind !== "externref") {
-        fctx.body.push({ op: "extern.convert_any" });
-      }
-    }
-    fctx.body.push({ op: "call", funcIdx: arrPushResolvedIdx });
-  }
-  fctx.body.push({ op: "local.get", index: argsArrayLocal });
-
-  // 4. Push nameHint (string externref or ref.null.extern).
-  if (targetName) {
-    fctx.body.push(...stringConstantExternrefInstrs(ctx, targetName));
-  } else {
-    fctx.body.push({ op: "ref.null.extern" });
-  }
-
-  // 5. Push lengthHint i32 (-1 = unknown).
-  fctx.body.push({ op: "i32.const", value: targetLength });
-
-  // 6. Call __bind_function. Result is externref.
-  const bindIdx = ensureLateImport(
-    ctx,
-    "__bind_function",
-    [externRef, externRef, externRef, externRef, i32Ty],
-    [externRef],
-  );
-  flushLateImportShifts(ctx, fctx);
-  const bindResolvedIdx = ctx.funcMap.get("__bind_function") ?? bindIdx;
-  if (bindResolvedIdx === undefined) {
-    // Should not happen in host mode — drop the staged args and degrade.
-    fctx.body.push({ op: "drop" }); // length hint
-    fctx.body.push({ op: "drop" }); // name hint
-    fctx.body.push({ op: "drop" }); // args array
-    fctx.body.push({ op: "drop" }); // thisArg
-    // Leave receiver on the stack as identity-bind fallback.
-    return externRef;
-  }
-  fctx.body.push({ op: "call", funcIdx: bindResolvedIdx });
+  emitBoundFnValueFromLocals(ctx, fctx, targetLocal, argLocals[0], argLocals.slice(1));
   return externRef;
 }
 
@@ -3268,35 +3071,6 @@ export function emitDynamicSpreadCall(
     return expectedType;
   }
   return externRef;
-}
-
-/**
- * (#1116b) Resolve a Promise-combinator `thisArg`/receiver that names a
- * Wasm-compiled `class X extends Promise`.
- *
- * Such a class is externref-backed (#1366a/b): its instances are real host
- * Promises (built via `__new_Promise`), but the class *identifier itself* has
- * no class-object singleton global, so `compileExpression(MyPromise)` yields
- * `null`/opaque — and `Promise.all.call(MyPromise, iter)` then throws
- * `[object Object] is not a constructor` in V8. The fix: resolve the
- * identifier to a real JS-callable Promise subclass synthesized (and cached)
- * by the `__promise_subclass_ctor` host import, keyed on the class name.
- *
- * Returns true if it emitted a JS-constructor externref for `argExpr`; false
- * if the caller should fall back to plain `compileExpression`.
- */
-export function resolvePromiseSubclassThisArg(
-  ctx: CodegenContext,
-  fctx: FunctionContext,
-  argExpr: ts.Expression,
-): boolean {
-  // (#2623 Slice B) Unified with the value-read path: both the combinator
-  // `thisArg` receiver here and a bare-identifier read-as-value in
-  // `identifiers.ts` now go through the same cached `__promise_subclass_ctor`
-  // singleton, so the constructor the user observes IS the one used to build
-  // the subclassed promise (one object, not two). Detection (parent-chain
-  // walk, standalone gate) + emission live in `promise-subclass.ts`.
-  return tryEmitPromiseSubclassReceiver(ctx, fctx, argExpr);
 }
 
 /**
@@ -4682,7 +4456,7 @@ export function tryEmitInlineDynamicCall(
   ensureFuncValueWrappersRegistered(ctx, expr.getSourceFile());
 
   const arity = expr.arguments.length;
-  const hostCallPlan = planHostCallFallback(arity, ctx.targetProfile.semanticProviders === "native-first");
+  const hostCallPlan = planHostCallFallback(arity, true);
 
   // Pre-filter candidates: formal-param count must be able to satisfy the
   // call arity (>= arity — missing trailing args are padded with `undefined`,
@@ -4770,14 +4544,11 @@ export function tryEmitInlineDynamicCall(
   // never grow the arm (byte-identical, the #2175 S0 discipline). Host lane is
   // untouched: a host proxy is a host externref whose [[Call]] belongs to the
   // K1 inbound-marshalling keystone, not this dispatch.
-  const wantProxyArm =
-    (ctx.standalone === true || ctx.targetProfile.semanticProviders === "native-first") &&
-    (ctx.funcMap.has("__proxy_create") || sourceCreatesProxy(expr.getSourceFile()));
+  const wantProxyArm = ctx.funcMap.has("__proxy_create") || sourceCreatesProxy(expr.getSourceFile());
   // (#3140) A `$__bound_fn` (native Function.prototype.bind carrier) may reach a
   // bare dynamic call (`bound(...)`) — add an unwrap arm when a bind site minted
   // the carrier in this module.
-  const wantBoundArm =
-    usesNativeFunctionBindProvider(ctx) && (ctx.boundFnTypeIdx >= 0 || sourceHasBindCall(expr.getSourceFile()));
+  const wantBoundArm = ctx.boundFnTypeIdx >= 0 || sourceHasBindCall(expr.getSourceFile());
   // (#3177 slice 3) §23.2.5.1 step 1: CALLING a TypedArray-constructor VALUE
   // without `new` (undefined NewTarget) must throw TypeError — `TA(1)` inside
   // `assert.throws(TypeError, …)` is the undefined-newtarget-throws corpus
@@ -6962,6 +6733,11 @@ function tryRuntimeEvalApplyCallableIntrinsic(
   fctx: FunctionContext,
   expr: ts.CallExpression,
 ): InnerResult | undefined {
+  const rebound = tryRuntimeEvalRebindCarrierIntrinsic(ctx, fctx, expr, (arg) => {
+    const type = compileExpression(ctx, fctx, arg, { kind: "externref" });
+    if (type && type.kind !== "externref") coerceType(ctx, fctx, type, { kind: "externref" });
+  });
+  if (rebound !== undefined) return rebound;
   if (
     (!ctx.standalone && !ctx.wasi) ||
     ctx.runtimeEvalCallableBoundaryEnabled !== true ||
@@ -7583,6 +7359,53 @@ function tryRuntimeEvalInterpretedBoundaryIntrinsic(
   return externref;
 }
 
+/**
+ * (#6956) `eval(x)` in a standalone module compiled with
+ * `runtimeEvalProvider: false`. PerformEval (§19.2.1.1) returns a non-String
+ * `x` unchanged and only consults HostEnsureCanCompileStrings for a String,
+ * so the refusal is the same catchable EvalError `Function(src)` throws, but
+ * raised only when `x` is a native string at run time (a host string handed
+ * in across the zero-import boundary is opaque and passes through). All
+ * arguments are evaluated first, in order; nothing is imported.
+ */
+function emitRefusedEvalCall(ctx: CodegenContext, fctx: FunctionContext, args: readonly ts.Expression[]): ValType {
+  const externref: ValType = { kind: "externref" };
+  if (args.length === 0) {
+    emitUndefined(ctx, fctx);
+    return externref;
+  }
+  const srcType = compileExpression(ctx, fctx, args[0]!);
+  if (srcType === null) emitUndefined(ctx, fctx);
+  else if (srcType.kind !== "externref") coerceType(ctx, fctx, srcType, externref);
+  const srcLocal = allocLocal(fctx, `__eval_src_${fctx.locals.length}`, externref);
+  fctx.body.push({ op: "local.set", index: srcLocal });
+  for (let i = 1; i < args.length; i++) {
+    if (compileExpression(ctx, fctx, args[i]!) !== null) fctx.body.push({ op: "drop" });
+  }
+  if (ctx.anyStrTypeIdx >= 0) {
+    const outerBody = fctx.body;
+    const refuseArm: Instr[] = [];
+    ctx.liveBodies.add(refuseArm);
+    fctx.savedBodies.push(outerBody);
+    fctx.body = refuseArm;
+    try {
+      emitRefusedDynamicFunction(ctx, fctx, []);
+    } finally {
+      fctx.savedBodies.pop();
+      fctx.body = outerBody;
+      ctx.liveBodies.delete(refuseArm);
+    }
+    outerBody.push(
+      { op: "local.get", index: srcLocal },
+      { op: "any.convert_extern" },
+      { op: "ref.test", typeIdx: ctx.anyStrTypeIdx },
+      { op: "if", blockType: { kind: "empty" }, then: refuseArm },
+    );
+  }
+  fctx.body.push({ op: "local.get", index: srcLocal });
+  return externref;
+}
+
 function compileCallExpression(
   ctx: CodegenContext,
   fctx: FunctionContext,
@@ -7618,6 +7441,10 @@ function compileCallExpression(
   // Syntactic receivers only (see the module header).
   {
     const r = tryEmitNullishReceiverCall(ctx, fctx, expr);
+    if (r !== undefined) return r;
+  }
+  {
+    const r = tryCompileIntlLocaleMethodCall(ctx, fctx, expr); // (#6986) `intl` accelerator: host locale methods
     if (r !== undefined) return r;
   }
 
@@ -7849,7 +7676,7 @@ function compileCallExpression(
     ts.isIdentifier(globalScriptEvalCallee) &&
     globalScriptEvalCallee.text === "__js2wasm_global_script_eval"
   ) {
-    const runtimeScriptEval = emitStandaloneGlobalScriptEvalRuntime(ctx, fctx, expr.arguments);
+    const runtimeScriptEval = emitStandaloneGlobalEvalRuntime(ctx, fctx, "__runtime_script_eval", expr.arguments);
     if (runtimeScriptEval !== undefined) return runtimeScriptEval;
   }
   // Test262's `$262.evalScript` is a host-facing global-Script entry, not an
@@ -7863,7 +7690,7 @@ function compileCallExpression(
     ts.isIdentifier(expr.expression.expression) &&
     expr.expression.expression.text === "$262"
   ) {
-    const runtimeScriptEval = emitStandaloneGlobalScriptEvalRuntime(ctx, fctx, expr.arguments);
+    const runtimeScriptEval = emitStandaloneGlobalEvalRuntime(ctx, fctx, "__runtime_script_eval", expr.arguments);
     if (runtimeScriptEval !== undefined) return runtimeScriptEval;
   }
   // eval(...) — first try static inlining (#1163): if the source argument is
@@ -7897,17 +7724,19 @@ function compileCallExpression(
       if (inlined !== undefined) return inlined;
       const spreadEval = tryCompileStandaloneEvalSpread(ctx, fctx, expr); // (#6774 S18)
       if (spreadEval !== undefined) return spreadEval;
+      // (#6956) No provider: refuse in-module instead of importing js2wasm:runtime-eval.
+      if (isRuntimeEvalProviderAbsent(ctx)) return emitRefusedEvalCall(ctx, fctx, expr.arguments);
       // #2928/#2929 — direct eval adds live caller cells to indirect eval's global environment.
       const runtimeEval =
         evalKind === "direct"
           ? directEvalRunsAtScriptGlobal(expr, ctx)
-            ? emitStandaloneIndirectEvalRuntime(ctx, fctx, expr.arguments)
+            ? emitStandaloneGlobalEvalRuntime(ctx, fctx, "__runtime_indirect_eval", expr.arguments)
             : ctx.directEvalMode === "reified-host"
               ? emitStandaloneDirectEvalRuntime(ctx, fctx, expr)
               : ctx.standalone && ensureRuntimeEvalCallableCarrier(ctx, fctx)
                 ? emitStandaloneDirectEvalRuntime(ctx, fctx, expr)
                 : undefined
-          : emitStandaloneIndirectEvalRuntime(ctx, fctx, expr.arguments);
+          : emitStandaloneGlobalEvalRuntime(ctx, fctx, "__runtime_indirect_eval", expr.arguments);
       if (runtimeEval !== undefined) return runtimeEval;
       // (#2960) WASI (until its linker grows the provider), or a standalone
       // route that could not materialize its runtime ABI: refuse the
@@ -11012,6 +10841,8 @@ export function nativeProtoBrandForInterface(ctx: CodegenContext, ifaceName: str
   if (ifaceName === "String") return ensureStringNativeProtoGlue(ctx); // (#2875)
   if (ifaceName === "DataView") return ensureDataViewNativeProtoGlue(ctx); // (#3173)
   if (ifaceName === "ArrayBuffer") return ensureArrayBufferNativeProtoGlue(ctx); // (#1595)
+  if (ifaceName === "SharedArrayBuffer" && (ctx.standalone || ctx.wasi))
+    return ensureSharedArrayBufferNativeProtoGlue(ctx); // (#7011)
   if (ifaceName === "Date") return ensureDateNativeProtoGlue(ctx); // (#3219)
   return undefined;
 }

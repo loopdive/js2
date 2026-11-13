@@ -8,7 +8,7 @@
 // via funcMap. It returns `undefined` when the callee is not one of these
 // identifier cases, so the caller in calls.ts continues its dispatch chain.
 // Moved verbatim: the emitted Wasm is byte-identical.
-import { guardedExternRefResultBridge } from "./dispatch-extern-result-bridge.js";
+import { liveResultBridge, liveResultBridgeable } from "./dispatch-extern-result-bridge.js";
 import { ts } from "../../ts-api.js";
 import { widenJsDefaultGuessSlot } from "../js-default-param-type-guess.js";
 import {
@@ -18,7 +18,6 @@ import {
   pushBoxedTdzFlagRef,
   recordLiftedCaptureBox,
 } from "../closures/capture-source-slot.js";
-import { usesHostBigIntCarrier } from "../host-bigint-carrier.js";
 import { compileStringConversionArgument } from "../string-conversion-argument.js";
 import { emitBigIntCtorCarrier } from "../bigint-wide-parse.js";
 import { emitI64ToStringCall } from "../bigint-string-context.js";
@@ -75,7 +74,7 @@ import {
 } from "../statements/nested-declarations.js";
 import { parameterMayBeOmitted } from "../declarations.js";
 import { emitStringExternResultFlatten, emitStringRefResultFlatten } from "../string-materialize.js";
-import { compileStringLiteral, emitBoolToString, emitNativeStringToHostExternref } from "../string-ops.js";
+import { compileStringLiteral, emitBoolToString } from "../string-ops.js";
 import { usesNativeNumberFormat } from "../number-format-native.js";
 import { emitSymbolToString } from "../symbol-native.js";
 import { resolveGlobalParseBuiltin } from "../global-builtin-resolution.js";
@@ -84,6 +83,7 @@ import { resolveVariadicBuiltinStaticPlainAlias } from "../builtin-static-plain-
 import { bindingMayReceiveHostCallable } from "../analysis/mixed-assignment-carrier.js";
 import { ensureStandaloneBuiltinStaticMethodClosure } from "../builtin-value-read.js";
 import { localBindingShadowsCapturingFunction } from "../function-declaration-observation.js";
+import { blockBindingShadowsNestedDeclaration } from "../function-declaration-observation.js"; // (#6994)
 import { genericIdentityReturnParamIndex, genericStructFactoryCall } from "../generic-struct-factory.js";
 import { isUnaliasedNodeFsImportBinding, standaloneDependencyNodeFsThrowMessage } from "../node-fs-binding-identity.js";
 import { compileDiscardedArgument } from "./inline-iife-arguments.js";
@@ -102,6 +102,7 @@ import {
   vecFromExternFuncIdx,
 } from "../type-coercion.js";
 import { compileAnnexBEscapeCall } from "../annexb-escape-call.js"; // (#3064 / #4556)
+import { ensureHostFreeCallableResultHelper, hostFreeCallableResultBridge } from "./callable-result-unbox.js"; // (#7080)
 import { annexBDeclaringRange } from "../annexb-cancel.js";
 import { URI_DECODE_MASK, URI_ENCODE_MASK } from "../uri-encoding-native.js";
 import { ensureWasiWriteFileStringsHelper } from "../wasi.js";
@@ -151,7 +152,6 @@ import {
   resolveClosureInfoFromLocal,
   tryEmitArrayToStringNative,
   tryEmitInlineDynamicCall,
-  usesNativeFunctionBindProvider,
 } from "./calls.js";
 import {
   appendArgcSetupFromExtras,
@@ -1046,7 +1046,6 @@ function compileBoundIdentifierCall(
         // path; a real string (externref / native ref) keeps the existing
         // passthrough, and a dynamic externref wrapper object is left to the
         // (separate, deferred) wrapper substrate.
-        const nativeParse = ctx.targetProfile.semanticProviders === "native-first" || ctx.standalone || ctx.wasi;
         const arg0TsType = ctx.checker.getTypeAtLocation(arg0);
         const arg0Type = compileExpression(ctx, fctx, arg0);
         // A statically-typed `null`/`undefined`/`void` arg lowers to an externref
@@ -1058,50 +1057,16 @@ function compileBoundIdentifierCall(
           (arg0TsType.flags & (ts.TypeFlags.Null | ts.TypeFlags.Undefined | ts.TypeFlags.Void)) !== 0 &&
           (arg0TsType.flags & ts.TypeFlags.Any) === 0;
         const isScalarArg = !arg0Type || arg0Type.kind === "i32" || arg0Type.kind === "f64" || arg0Type.kind === "i64";
-        if (nativeParse && (isScalarArg || isStaticNullish)) {
+        if (isScalarArg || isStaticNullish) {
           const strType = emitToString(ctx, fctx, arg0Type, arg0TsType, "string");
           // emitToString returns a native `ref $AnyString` (native modes) — the
           // helper wants an externref, so convert via `extern.convert_any`.
           if (strType.kind !== "externref") {
             coerceType(ctx, fctx, strType, { kind: "externref" });
           }
-        } else if (
-          // (#3912) NATIVE STRING → HOST IMPORT. `fast` is the one config with a
-          // JS host AND native strings, so `nativeParse` is false (the host
-          // `env.parseInt` is used) while the argument is a `ref $AnyString`.
-          // The generic `coerceType(..., externref)` below only widens the GC
-          // ref (`extern.convert_any`), handing the host an opaque WasmGC struct
-          // — V8 throws `Cannot convert object to primitive value`. Marshal the
-          // code units out instead, exactly as console.log's string arm does.
-          //
-          // This cell is broken on `main` TODAY for every native string:
-          // `parseInt("42")` with a plain LITERAL traps under `fast`. #3912 only
-          // makes it reachable from one more producer, because `n.toString()`
-          // stops accidentally returning a host string. Fixing it here keeps
-          // #3912 a strict improvement; the general native→host argument
-          // boundary (`Number(s)`, `JSON.stringify(s)`) is tracked separately.
-          !nativeParse &&
-          ctx.nativeStrings &&
-          arg0Type !== null &&
-          (arg0Type.kind === "ref" || arg0Type.kind === "ref_null") &&
-          isStringType(arg0TsType) &&
-          emitNativeStringToHostExternref(ctx, fctx)
-        ) {
-          // marshalled in the condition — nothing further to emit
         } else if (arg0Type && arg0Type.kind !== "externref") {
-          // Host mode (or a native-string ref) — preserve the original boxing,
-          // which keeps boolean identity so the host `String(true)` → "true".
-          if (
-            arg0Type.kind === "i32" &&
-            (arg0.kind === ts.SyntaxKind.TrueKeyword || arg0.kind === ts.SyntaxKind.FalseKeyword)
-          ) {
-            // Boolean literal: box as boolean so String(true) → "true"
-            addUnionImports(ctx);
-            const boxIdx = ctx.funcMap.get("__box_boolean");
-            if (boxIdx !== undefined) fctx.body.push({ op: "call", funcIdx: boxIdx });
-          } else {
-            coerceType(ctx, fctx, arg0Type, { kind: "externref" });
-          }
+          // A native-string ref — widen it to the helper's externref.
+          coerceType(ctx, fctx, arg0Type, { kind: "externref" });
         }
         if (funcName === "parseInt") {
           if (expr.arguments.length >= 2) {
@@ -1228,8 +1193,7 @@ function compileBoundIdentifierCall(
       }
 
       const arg0 = expr.arguments[0]!;
-      const hostBigIntArg = usesHostBigIntCarrier(ctx) && ctx.oracle.staticJsTypeOf(arg0) === "bigint";
-      const argType = compileExpression(ctx, fctx, arg0, hostBigIntArg ? { kind: "externref" } : undefined);
+      const argType = compileExpression(ctx, fctx, arg0, undefined);
       // Native-string ref (WasmGC AnyString/NativeString) → §7.1.4.1
       // StringToNumber. The generic ToNumber engine (coerceType "number") has no
       // string-struct case and silently yields 0 in standalone (#1688), so this
@@ -1301,8 +1265,7 @@ function compileBoundIdentifierCall(
       }
 
       const bigintArg = expr.arguments[0]!;
-      const hostBigIntArg = usesHostBigIntCarrier(ctx) && ctx.oracle.staticJsTypeOf(bigintArg) === "bigint";
-      const argType = compileExpression(ctx, fctx, bigintArg, hostBigIntArg ? { kind: "externref" } : undefined);
+      const argType = compileExpression(ctx, fctx, bigintArg, undefined);
       if (argType?.kind === "i32") {
         fctx.body.push({ op: "i64.extend_i32_s" });
         return { kind: "i64", bigint: true };
@@ -1318,13 +1281,7 @@ function compileBoundIdentifierCall(
       if (argType && argType.kind !== "externref") {
         coerceType(ctx, fctx, argType, { kind: "externref" }, "default");
       }
-      if (usesHostBigIntCarrier(ctx)) {
-        const ctorRefIdx = ctx.funcMap.get("__bigint_ctor_ref");
-        if (ctorRefIdx !== undefined) {
-          fctx.body.push({ op: "call", funcIdx: ctorRefIdx });
-          return { kind: "externref" };
-        }
-      }
+
       // (#6656) A reference result keeps a value past 64 bits exact.
       if (emitBigIntCtorCarrier(ctx, fctx, expectedType)) return { kind: "externref" };
       const ctorIdx = ctx.funcMap.get("__bigint_ctor");
@@ -1549,8 +1506,7 @@ function compileBoundIdentifierCall(
         return { kind: "i32" };
       }
       const boolArg = expr.arguments[0]!;
-      const hostBigIntArg = usesHostBigIntCarrier(ctx) && ctx.oracle.staticJsTypeOf(boolArg) === "bigint";
-      const argType = compileExpression(ctx, fctx, boolArg, hostBigIntArg ? { kind: "externref" } : undefined);
+      const argType = compileExpression(ctx, fctx, boolArg, undefined);
       // void / undefined → always false
       if (argType === null) {
         fctx.body.push({ op: "i32.const", value: 0 });
@@ -1754,7 +1710,9 @@ function compileBoundIdentifierCall(
           break;
         }
       }
-      isOutOfScopeNestedBinding = !visible;
+      // (#6994) Lexical precedence: an in-scope block `let`/`const` of that name shadows it too.
+      isOutOfScopeNestedBinding =
+        !visible || blockBindingShadowsNestedDeclaration(ctx, expr.expression, nestedOwnerDecl);
     }
 
     const locallyShadowsFunction = localBindingShadowsCapturingFunction(ctx, fctx, expr.expression);
@@ -1946,19 +1904,14 @@ function compileBoundIdentifierCall(
       // function, the dynamic dispatch's miss uses the admitted callback
       // boundary rather than a semantic host fallback.
       if (isKnownVariable && calleeIsBoundFunctionVar(ctx.oracle, expr.expression)) {
-        if (usesNativeFunctionBindProvider(ctx)) {
-          const nativeCall = tryEmitInlineDynamicCall(
-            ctx,
-            fctx,
-            expr,
-            true,
-            !boundFunctionTargetIsDefinitelyCompiled(ctx.oracle, expr.expression),
-          );
-          if (nativeCall !== null) return nativeCall;
-        } else {
-          const hostCall = emitBoundFunctionCall(ctx, fctx, expr);
-          if (hostCall !== null) return hostCall;
-        }
+        const nativeCall = tryEmitInlineDynamicCall(
+          ctx,
+          fctx,
+          expr,
+          true,
+          !boundFunctionTargetIsDefinitelyCompiled(ctx.oracle, expr.expression),
+        );
+        if (nativeCall !== null) return nativeCall;
       }
       const storedCarrierCall = tryCompileStoredStandaloneCarrierCall(ctx, fctx, expr, isKnownVariable);
       if (storedCarrierCall !== undefined) return storedCarrierCall;
@@ -2552,6 +2505,7 @@ function compileBoundIdentifierCall(
             addUnionImports(ctx);
             flushLateImportShifts(ctx, fctx);
           }
+          ensureHostFreeCallableResultHelper(ctx, fctx, expectedReturn); // (#7080)
           const dispatchBridgePlan = (
             from: ValType,
             to: ValType,
@@ -2747,7 +2701,8 @@ function compileBoundIdentifierCall(
                 canExportCandidateReferenceResult(info.funcTypeIdx),
               ) === null &&
               !declaredRefSubtypeOf(info.returnType, expectedReturn) &&
-              !canProjectImplementationReturn(info.returnType, expectedReturn)
+              !canProjectImplementationReturn(info.returnType, expectedReturn) &&
+              !liveResultBridgeable(ctx, info.returnType, expectedReturn) // (#7025)
             ) {
               paramsMatch = false;
             }
@@ -3494,7 +3449,9 @@ function compileBoundIdentifierCall(
                     canExportCandidateReferenceResult(fc.funcTypeIdx),
                   );
                   const guardedRefBridge =
-                    bridge ?? guardedExternRefResultBridge(ctx, fctx, fc.returnType!, expectedReturn!);
+                    bridge ??
+                    liveResultBridge(ctx, fctx, fc.returnType!, expectedReturn!) ??
+                    hostFreeCallableResultBridge(ctx, fc.returnType!, expectedReturn!); // (#7080)
                   if (guardedRefBridge !== null) {
                     fcCallBody.push(...guardedRefBridge);
                   } else {

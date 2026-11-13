@@ -60,6 +60,48 @@ export function test262HarnessProviderCacheDir({ root, env = process.env, script
 }
 
 /**
+ * (#3451/#6930) The compile options of a linked-harness provider. The worker and
+ * the pre-warm step both call this, so they ask for the same cache key.
+ *
+ * It must match the body's option set (`compileHarnessLinkedBody`), or the pair
+ * disagrees about the ABI it shares. (#6723 D4) Both sides carry the harness's
+ * `hostBridge: "always"`. (#6979) Both compile under the native regime, the
+ * only semantic implementation, so no policy option is spelled.
+ *
+ * @param {string | undefined} target
+ */
+export function harnessProviderCompileOptions(target) {
+  return {
+    hostBridge: "always",
+    allowJs: true,
+    emitWat: false,
+    skipSemanticDiagnostics: true,
+    ...(target ? { target } : {}),
+  };
+}
+
+/**
+ * (#6930) The provider cache directory. The worker and the pre-warm step both
+ * call this, so a pre-warmed provider lands where the worker reads it.
+ *
+ * @param {{ root?: string, env?: Record<string, string | undefined> }} [opts]
+ */
+export function test262HarnessProviderLaneCacheDir({ root, env = process.env } = {}) {
+  return test262HarnessProviderCacheDir({ root, env });
+}
+
+/**
+ * (#6930) The worker's in-process memo key for one provider: target and the
+ * prefix text.
+ *
+ * @param {string} harnessPrefix
+ * @param {string | undefined} target
+ */
+export function harnessProviderMemoKey(harnessPrefix, target) {
+  return [target ?? "host", harnessPrefix.length, harnessPrefix].join("\u0000");
+}
+
+/**
  * (#6723 P1/P2) Which oracle a test262 run uses. Host lane: `fast` / `linked`
  * as before. A non-host lane (standalone, wasi, linear) is honest UNLESS it is
  * the standalone target, the mode is `linked`, AND `TEST262_STANDALONE_LINKED=1`

@@ -57,6 +57,8 @@ export interface IrPromiseDelayLoweringPlans {
 }
 
 export interface ExactClosureLoweringOptions {
+  /** Exact same-source RHS ABI; absent for every generic closure/callback path. */
+  readonly functionMemberClosure?: import("./function-member-closure-plan.js").IrFunctionMemberClosurePlan;
   readonly orderedReadonlyCaptures?: readonly string[];
   readonly expectedLiftedName?: string;
   readonly expectedLiftedTarget?: IrFuncRef;

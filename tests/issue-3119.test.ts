@@ -161,15 +161,22 @@ describe("#3119 — post-hoc o[Symbol.iterator]=fn drives the iteration protocol
     ).toBe(0);
   });
 
-  it("non-callable @@iterator value degrades to the legacy path (no hang)", async () => {
-    // Spec: TypeError (§7.4.3) — deferred refinement. Must not spin or yield.
+  it("non-callable @@iterator value throws the spec TypeError (no hang)", async () => {
+    // Spec: TypeError (§7.4.3 GetIteratorFromMethod — `5` is not callable).
+    // When pinned, that refinement was deferred and the spread degraded to the
+    // legacy path (length 0), which the pin recorded; standalone now throws
+    // the TypeError, as node does. Must still not spin or yield.
     expect(
       await runStandalone(`export function test(): number {
         const o: any = {};
         o[Symbol.iterator] = 5;
-        const a = [...o];
-        return a.length;
+        try {
+          const a = [...o];
+          return a.length;
+        } catch (e) {
+          return e instanceof TypeError ? -1 : -2;
+        }
       }`),
-    ).toBe(0);
+    ).toBe(-1);
   });
 });

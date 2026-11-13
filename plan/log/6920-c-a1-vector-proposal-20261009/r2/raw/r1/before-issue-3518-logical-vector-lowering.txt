@@ -1,0 +1,50 @@
+
+ RUN  v3.2.7 /home/user/js2/.claude/worktrees/agent-a774506d6593a2d93
+
+ ❯ tests/issue-3518-logical-vector-lowering.test.ts (24 tests | 1 failed) 715ms
+   ✓ source-bound logical vectors without physical resolution > retains a nullable declaration and non-null literal/immutable reads with one real allocation  529ms
+   × source-bound logical vectors without physical resolution > retains receiver → length → effectful argument → growth → returned length exactly once 20ms
+     → expected 2 to be less than 1
+   ✓ source-bound logical vectors without physical resolution > does not mistake an effectful counted push for the pure fixed-capacity optimization 24ms
+   ✓ source-bound logical vectors without physical resolution > preserves the existing pure counted-push proof on its own positive control 10ms
+   ✓ source-bound logical vectors without physical resolution > keeps safe unsigned bounds checks and the {"kind":"val","val":{"kind":"f64"}} OOB carrier 7ms
+   ✓ source-bound logical vectors without physical resolution > keeps safe unsigned bounds checks and the {"kind":"val","val":{"kind":"externref"}} OOB carrier 6ms
+   ✓ source-bound logical vectors without physical resolution > retains the proven counted-loop fast read without unchecked fallback elsewhere 10ms
+   ✓ source-bound logical vectors without physical resolution > keeps Promise.all's operand carrier separate from its nullable awaited vector 24ms
+   ✓ source-bound logical vectors without physical resolution > rejects the missing parameter fact without invoking a physical resolver 8ms
+   ✓ source-bound logical vectors without physical resolution > rejects the missing declaration fact without invoking a physical resolver 5ms
+   ✓ source-bound logical vectors without physical resolution > rejects the missing literal fact without invoking a physical resolver 5ms
+   ✓ source-bound logical vectors without physical resolution > rejects the missing read fact without invoking a physical resolver 5ms
+   ✓ source-bound logical vectors without physical resolution > rejects the missing parenthesized fact without invoking a physical resolver 11ms
+   ✓ source-bound logical vectors without physical resolution > rejects empty source facts 4ms
+   ✓ source-bound logical vectors without physical resolution > rejects foreign source facts 6ms
+   ✓ source-bound logical vectors without physical resolution > rejects nested source facts 6ms
+   ✓ source-bound logical vectors without physical resolution > rejects name source facts 4ms
+   ✓ source-bound logical vectors without physical resolution > rejects scalar-result source facts 5ms
+   ✓ source-bound logical vectors without physical resolution > rejects layout source facts 3ms
+   ✓ source-bound logical vectors without physical resolution > rejects element source facts 4ms
+   ✓ source-bound logical vectors without physical resolution > rejects nullable-literal source facts 4ms
+   ✓ source-bound logical vectors without physical resolution > rejects nullable-read source facts 5ms
+   ✓ source-bound logical vectors without physical resolution > rejects override source facts 3ms
+   ✓ source-bound logical vectors without physical resolution > keeps absent-option historical behavior distinct from an enabled empty map 6ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/issue-3518-logical-vector-lowering.test.ts > source-bound logical vectors without physical resolution > retains receiver → length → effectful argument → growth → returned length exactly once
+AssertionError: expected 2 to be less than 1
+ ❯ tests/issue-3518-logical-vector-lowering.test.ts:159:34
+    157|     const length = rows.find((row) => row.kind === "vec.len")!;
+    158|     expect(rows.indexOf(calls[0]!)).toBeLessThan(rows.indexOf(length));
+    159|     expect(rows.indexOf(length)).toBeLessThan(rows.indexOf(calls[1]!));
+       |                                  ^
+    160|     expect(rows.indexOf(calls[1]!)).toBeLessThan(rows.indexOf(calls[2]…
+    161|     expect(rows.at(-1)).toMatchObject({ kind: "binary", op: "f64.add" …
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 23 passed (24)
+   Start at  22:31:52
+   Duration  23.36s (transform 15.45s, setup 0ms, collect 22.24s, tests 715ms, environment 0ms, prepare 67ms)
+

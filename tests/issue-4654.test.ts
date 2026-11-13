@@ -440,7 +440,7 @@ describe("#4654 residuals — RegExp reflection through a dynamic receiver", () 
   // NOT seeded into the proto companion; see the "ACCESSORS ARE DELIBERATELY NOT
   // SEEDED IN THIS SLICE" record). `.source` answers through a separate arm,
   // which is why it works and these do not.
-  it.fails("`.flags` through a dynamic receiver answers the flags string", async () => {
+  it("`.flags` through a dynamic receiver answers the flags string", async () => {
     // Measured on this branch: RuntimeError "dereferencing a null pointer" —
     // an UNCATCHABLE trap, i.e. strictly worse than a wrong value.
     expect(

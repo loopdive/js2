@@ -1,0 +1,11 @@
+
+ RUN  v3.2.7 /home/user/js2/.claude/worktrees/agent-a774506d6593a2d93
+
+ ✓ tests/issue-3518-prepared-native-main-lowering.test.ts (14 tests) 853ms
+   ✓ prepared native main operations remain symbolic before physical admission > lowers the original main completely with ordered calls, two real awaits and zero result types  601ms
+
+ Test Files  1 passed (1)
+      Tests  14 passed (14)
+   Start at  22:32:17
+   Duration  22.30s (transform 15.06s, setup 0ms, collect 21.07s, tests 853ms, environment 0ms, prepare 53ms)
+

@@ -111,6 +111,7 @@ describe("BindingElement null guard (#821)", () => {
     const imports = buildImports(result);
     try {
       const { instance } = await WebAssembly.instantiate(result.binary, imports);
+      imports.setInstance?.(instance); // (#6708) binds the runtime-filled imports
       const exports = instance.exports as Record<string, Function>;
       expect(exports.test()).toBe(30);
     } catch (e: any) {

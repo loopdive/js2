@@ -1,0 +1,2 @@
+
+LOC budget gate: OK — no unallowed growth in 3 changed src file(s) (base: merge-base(origin), net +78 LOC).

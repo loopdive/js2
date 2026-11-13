@@ -35,12 +35,7 @@ export function prepareNativePromiseNumberBoundary(ctx: CodegenContext): void {
 
 /** Publish the boundary only for the standalone native semantic-provider lane. */
 export function prepareStandaloneNativePromiseNumberBoundary(ctx: CodegenContext): void {
-  if (
-    ctx.standalone &&
-    ctx.nativeStrings &&
-    ctx.targetProfile.semanticProviders === "native-first" &&
-    ctx.targetProfile.environment === "none"
-  ) {
+  if (ctx.standalone && ctx.nativeStrings && ctx.targetProfile.environment === "none") {
     prepareNativePromiseNumberBoundary(ctx);
   }
 }

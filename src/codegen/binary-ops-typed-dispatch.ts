@@ -11,21 +11,23 @@
  */
 import { addStringConstantGlobal } from "./registry/imports.js"; // (#6774 S19)
 import { ts } from "../ts-api.js";
-import { isBooleanType, isNumberType, isStringType, isWrapperObjectType } from "../checker/type-mapper.js";
+import type { TypeFact } from "../checker/oracle.js";
+import { emitUndefined } from "./expressions/late-imports.js";
+import { isInertUndefinedLiteral } from "./void-undefined-operand.js";
+import { foldVoidOperandEquality } from "./equality-void-operand.js";
+import { isBooleanType, isNumberType, isStringType } from "../checker/type-mapper.js";
 import type { Instr, ValType } from "../ir/types.js";
-import { ensureAnyFromExternHelper, undefinedSingletonActive } from "./any-helpers.js";
+import { ensureAnyFromExternHelper, ensureExternStrictEqHelper, undefinedSingletonActive } from "./any-helpers.js";
 import { reportError } from "./context/errors.js";
 import { allocTempLocal, releaseTempLocal } from "./context/locals.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
-import { ensureLateImport } from "./expressions/late-imports.js";
 import { ensureNativeStringHelpers, stringConstantExternrefInstrs } from "./native-strings.js";
 import { redundantFlattenCall } from "./lazy-str-flatten.js"; // (#4157) caller-side flatten elision
 import { emitNativeParseNumber } from "./parse-number-native.js";
 import { ensureObjectRuntime } from "./object-runtime.js";
-import { addStringImports, addUnionImports } from "./index.js";
+import { addUnionImports, compileExpression } from "./index.js";
 import type { InnerResult } from "./shared.js";
 import { coerceType, ensureAnyHelpers, flushLateImportShifts } from "./shared.js";
-import { emitAnyEqFromExternTemps, emitHostEqualityFromStack } from "./coercion-engine.js";
 import {
   compileBooleanBinaryOp,
   compileI32BinaryOp,
@@ -33,7 +35,289 @@ import {
   compileNumericBinaryOp,
 } from "./binary-ops.js";
 import { equalityOperandHasStaleStaticType } from "./strict-eq-stale-type.js";
-import { emitLooseScalarVsReferenceEquality, emitReferenceEqualityFromStack } from "./strict-eq-reference-arm.js";
+import { identityEqualityFlags } from "./helpers/loose-eq-object-identity.js"; // (#6997)
+import { externLooseEqInstrs, prepareExternLooseEq } from "./helpers/loose-equality-to-primitive.js";
+
+/**
+ * (#1930) Keep the nullish AnyValue gate on the oracle side of the checker
+ * boundary.  This mirrors `isHeterogeneousPrimitiveUnion` without exposing a
+ * `ts.Type`: nullable heterogeneous bindings are the only unions whose
+ * non-null parts must retain distinct primitive tags.
+ */
+export function isOracleHeterogeneousPrimitiveUnion(fact: TypeFact): boolean {
+  if (fact.kind !== "union" || fact.parts.length < 2) return false;
+  const primitiveKinds = new Set<TypeFact["kind"]>();
+  for (const part of fact.parts) {
+    if (part.kind !== "number" && part.kind !== "string" && part.kind !== "boolean") return false;
+    primitiveKinds.add(part.kind);
+  }
+  return primitiveKinds.size >= 2;
+}
+
+export function sourceDeclarationOfIdentifier(
+  ctx: CodegenContext,
+  expression: ts.Expression,
+): ts.Declaration | undefined {
+  if (!ts.isIdentifier(expression)) return undefined;
+  return ctx.oracle.valueDeclarationOf(expression);
+}
+
+export function isRealmUndefinedIdentifier(ctx: CodegenContext, expression: ts.Expression): boolean {
+  if (!ts.isIdentifier(expression) || expression.text !== "undefined") return false;
+  const declaration = sourceDeclarationOfIdentifier(ctx, expression);
+  return declaration === undefined || declaration.getSourceFile().isDeclarationFile;
+}
+
+/** #3585: consume only the already-emitted Map result; decline leaves its stack untouched. */
+export function tryEmitNativeMapGetLiteralNullishEquality(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expr: ts.BinaryExpression,
+  nonNullExpr: ts.Expression,
+  nonNullTsType: ts.Type,
+  valType: ValType | null,
+  rightIsNullish: boolean,
+  strict: boolean,
+  negate: boolean,
+): ValType | undefined {
+  // #3585: the native Map.get producer returns raw anyref. This observer
+  // has emitted ONLY that nonliteral operand; materialize the inert literal
+  // and order both values before calling the existing native equality provider.
+  const nullishLiteral = rightIsNullish ? expr.right : expr.left;
+  const mapGetLiteralIsNull = nullishLiteral.kind === ts.SyntaxKind.NullKeyword;
+  const mapGetLiteralIsUndefined =
+    isRealmUndefinedIdentifier(ctx, nullishLiteral) ||
+    (ts.isVoidExpression(nullishLiteral) && isInertUndefinedLiteral(nullishLiteral));
+  if (
+    valType?.kind === "anyref" &&
+    (ctx.standalone === true || ctx.wasi === true) &&
+    ctx.nativeStrings &&
+    ctx.targetProfile.semanticProviders === "native-first" &&
+    undefinedSingletonActive(ctx) &&
+    (mapGetLiteralIsNull || mapGetLiteralIsUndefined) &&
+    isDirectOracleClassifiedMapGet(ctx, nonNullExpr) &&
+    prepareNativeMapGetEquality(ctx, fctx, strict)
+  ) {
+    const mapValue = allocTempLocal(fctx, valType);
+    fctx.body.push({ op: "local.set", index: mapValue });
+    if (rightIsNullish) fctx.body.push({ op: "local.get", index: mapValue });
+    if (mapGetLiteralIsNull) fctx.body.push({ op: "ref.null.extern" });
+    else emitUndefined(ctx, fctx);
+    if (!rightIsNullish) fctx.body.push({ op: "local.get", index: mapValue });
+    const literalType: ValType = { kind: "externref" };
+    const result = emitPreparedNativeMapGetEqualityFromStack(
+      ctx,
+      fctx,
+      rightIsNullish ? valType : literalType,
+      rightIsNullish ? literalType : valType,
+      rightIsNullish ? nonNullTsType : undefined,
+      rightIsNullish ? undefined : nonNullTsType,
+      strict,
+      negate,
+    );
+    releaseTempLocal(fctx, mapValue);
+    return result;
+  }
+  return undefined;
+}
+
+/** #3585: reserve the existing providers before operand compilation or static string dispatch. */
+export function tryCompileEarlyNativeMapGetEquality(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expr: ts.BinaryExpression,
+  leftTsType: ts.Type,
+  rightTsType: ts.Type,
+): InnerResult | undefined {
+  const op = expr.operatorToken.kind;
+  const isEqOp = op === ts.SyntaxKind.EqualsEqualsToken || op === ts.SyntaxKind.EqualsEqualsEqualsToken;
+  const isNeqOp = op === ts.SyntaxKind.ExclamationEqualsToken || op === ts.SyntaxKind.ExclamationEqualsEqualsToken;
+  const isStrictEqOp = op === ts.SyntaxKind.EqualsEqualsEqualsToken;
+  const isStrictNeqOp = op === ts.SyntaxKind.ExclamationEqualsEqualsToken;
+  // #3585: claim a positively classified native Map.get equality before
+  // static string/AnyValue dispatch can consume it or impose a string hint.
+  // The producer owns the value carrier; a user-defined class Map declines
+  // through the oracle, rather than being admitted by its spelling.
+  if (
+    (isEqOp || isNeqOp) &&
+    (ctx.standalone === true || ctx.wasi === true) &&
+    ctx.nativeStrings &&
+    ctx.targetProfile.semanticProviders === "native-first" &&
+    (isDirectOracleClassifiedMapGet(ctx, expr.left) || isDirectOracleClassifiedMapGet(ctx, expr.right)) &&
+    prepareNativeMapGetEquality(ctx, fctx, isStrictEqOp || isStrictNeqOp)
+  ) {
+    // Reserve providers first, then evaluate each original operand exactly
+    // once in source order. Do not coerce a Map result to a string based on
+    // the other operand's static type. Coercion/rebinding stays in the
+    // existing native from-stack boundary below.
+    let leftType = compileExpression(ctx, fctx, expr.left);
+    let rightType = compileExpression(ctx, fctx, expr.right);
+    if (!leftType || !rightType) {
+      const folded = foldVoidOperandEquality(ctx, fctx, op, leftType, rightType, leftTsType, rightTsType);
+      if (folded === null || "kind" in folded) return folded;
+      ({ left: leftType, right: rightType } = folded);
+    }
+    return emitPreparedNativeMapGetEqualityFromStack(
+      ctx,
+      fctx,
+      leftType,
+      rightType,
+      leftTsType,
+      rightTsType,
+      isStrictEqOp || isStrictNeqOp,
+      isNeqOp,
+    );
+  }
+
+  return undefined;
+}
+
+/**
+ * Strip type-only wrappers before identifying the direct oracle-classified Map.get result
+ * whose physical `anyref` carrier needs the #3585 equality boundary.
+ */
+function unwrapDirectMapGetOperand(expression: ts.Expression): ts.Expression {
+  while (
+    ts.isParenthesizedExpression(expression) ||
+    ts.isAsExpression(expression) ||
+    ts.isTypeAssertionExpression(expression) ||
+    ts.isSatisfiesExpression(expression) ||
+    ts.isNonNullExpression(expression)
+  ) {
+    expression = (
+      expression as
+        | ts.ParenthesizedExpression
+        | ts.AsExpression
+        | ts.TypeAssertion
+        | ts.SatisfiesExpression
+        | ts.NonNullExpression
+    ).expression;
+  }
+  return expression;
+}
+
+/**
+ * The oracle-classified Map call path is the only producer this leaf repairs. Matching
+ * the receiver through the oracle boundary (rather than
+ * its spelling alone) keeps a user-defined `class Map` and unrelated `.get()`
+ * methods on their existing lowering paths, while retaining ordinary aliases
+ * whose receiver type is classified as `Map`.
+ */
+export function isDirectOracleClassifiedMapGet(ctx: CodegenContext, operand: ts.Expression): boolean {
+  const expression = unwrapDirectMapGetOperand(operand);
+  if (!ts.isCallExpression(expression) || !ts.isPropertyAccessExpression(expression.expression)) return false;
+  const access = expression.expression;
+  if (access.name.text !== "get") return false;
+  // The oracle returns undefined for incomplete/unknown provenance, which is
+  // intentionally a decline rather than a claim for an arbitrary `.get()`.
+  return ctx.oracle.builtinReceiverOf(access.expression) === "Map";
+}
+
+/**
+ * Prepare only the existing native equality providers. No operand is consumed
+ * on decline, and no retired host-reference fallback is introduced.
+ */
+export function prepareNativeMapGetEquality(ctx: CodegenContext, fctx: FunctionContext, strict: boolean): boolean {
+  addUnionImports(ctx);
+  ensureAnyHelpers(ctx);
+  const prepared = strict ? ensureExternStrictEqHelper(ctx) !== undefined : prepareExternLooseEq(ctx);
+  if (!prepared) return false;
+  flushLateImportShifts(ctx, fctx);
+  return !strict || ctx.funcMap.has("__extern_strict_eq");
+}
+
+/**
+ * Consume an already-emitted operand pair (right on top) after preparation.
+ * Keep scalar brands and raw Map carriers; the existing native provider owns
+ * guarded AnyValue recovery and equality. This never recompiles either operand.
+ */
+export function emitPreparedNativeMapGetEqualityFromStack(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  leftType: ValType,
+  rightType: ValType,
+  leftTsType: ts.Type | undefined,
+  rightTsType: ts.Type | undefined,
+  strict: boolean,
+  negate: boolean,
+): ValType {
+  const brandScalar = (type: ValType, tsType: ts.Type | undefined): ValType => {
+    if (type.kind !== "i32" || type.boolean === true || type.symbol === true) return type;
+    // The materialized nullish literal is externref and needs no checker type.
+    if (!tsType) throw new Error("Native Map equality scalar type metadata missing");
+    if (isBooleanType(tsType)) return { kind: "i32", boolean: true };
+    if ((tsType.flags & ts.TypeFlags.ESSymbolLike) !== 0) return { kind: "i32", symbol: true };
+    return type;
+  };
+  const right = brandScalar(rightType, rightTsType);
+  const left = brandScalar(leftType, leftTsType);
+  const rTmp = allocTempLocal(fctx, { kind: "externref" });
+  if (right.kind !== "externref") coerceType(ctx, fctx, right, { kind: "externref" });
+  fctx.body.push({ op: "local.set", index: rTmp });
+  const lTmp = allocTempLocal(fctx, { kind: "externref" });
+  if (left.kind !== "externref") coerceType(ctx, fctx, left, { kind: "externref" });
+  fctx.body.push({ op: "local.set", index: lTmp });
+  // Coercion can register late imports. Resolve the canonical provider only
+  // after settling those shifts, rather than keeping its provisional index.
+  flushLateImportShifts(ctx, fctx);
+  if (strict) {
+    const funcIdx = ctx.funcMap.get("__extern_strict_eq");
+    if (funcIdx === undefined) throw new Error("Prepared native Map.get strict equality provider missing");
+    fctx.body.push({ op: "local.get", index: lTmp }, { op: "local.get", index: rTmp }, { op: "call", funcIdx });
+  } else {
+    fctx.body.push(...externLooseEqInstrs(ctx, lTmp, rTmp)); // (#7194) the one loose-equality definition
+  }
+  if (negate) fctx.body.push({ op: "i32.eqz" });
+  releaseTempLocal(fctx, lTmp);
+  releaseTempLocal(fctx, rTmp);
+  return { kind: "i32" };
+}
+
+/**
+ * #3585 — dispatch only a direct oracle-classified Map.get raw-anyref result
+ * through the existing native equality providers. Other anyref producers
+ * stay on their established paths until they carry their own representation
+ * proof.
+ */
+function tryCompileDirectOracleMapGetEquality(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expr: ts.BinaryExpression,
+  op: ts.SyntaxKind,
+  leftType: ValType,
+  rightType: ValType,
+  leftTsType: ts.Type,
+  rightTsType: ts.Type,
+  isLooseEq: boolean,
+  isLooseNeq: boolean,
+  isNeqOp: boolean,
+): InnerResult | undefined {
+  const strictMapGetEquality =
+    op === ts.SyntaxKind.EqualsEqualsEqualsToken || op === ts.SyntaxKind.ExclamationEqualsEqualsToken;
+  const oracleMapGetAnyref =
+    (leftType.kind === "anyref" && isDirectOracleClassifiedMapGet(ctx, expr.left)) ||
+    (rightType.kind === "anyref" && isDirectOracleClassifiedMapGet(ctx, expr.right));
+  if (
+    !oracleMapGetAnyref ||
+    (ctx.standalone !== true && ctx.wasi !== true) ||
+    !ctx.nativeStrings ||
+    ctx.targetProfile.semanticProviders !== "native-first" ||
+    (!strictMapGetEquality && !isLooseEq && !isLooseNeq)
+  ) {
+    return undefined;
+  }
+  if (!prepareNativeMapGetEquality(ctx, fctx, strictMapGetEquality)) return undefined;
+  return emitPreparedNativeMapGetEqualityFromStack(
+    ctx,
+    fctx,
+    leftType,
+    rightType,
+    leftTsType,
+    rightTsType,
+    strictMapGetEquality,
+    isNeqOp,
+  );
+}
 
 /**
  * Type-directed dispatch for a binary expression whose operands have already
@@ -60,6 +344,21 @@ export function compileTypedBinaryDispatch(
   arithI32WithToInt32Wrap: boolean,
   bitwiseI32: boolean,
 ): InnerResult {
+  const directMapGetEquality = tryCompileDirectOracleMapGetEquality(
+    ctx,
+    fctx,
+    expr,
+    op,
+    leftType,
+    rightType,
+    leftTsType,
+    rightTsType,
+    isLooseEq,
+    isLooseNeq,
+    isNeqOp,
+  );
+  if (directMapGetEquality) return directMapGetEquality;
+
   // ── Struct ref valueOf coercion (#138/#139) ──
   // When operands are struct refs (objects with valueOf), coerce them to f64
   // before performing numeric/comparison/equality operations.
@@ -69,8 +368,7 @@ export function compileTypedBinaryDispatch(
     const rightIsRef = rightType.kind === "ref" || rightType.kind === "ref_null";
     if (leftIsRef || rightIsRef) {
       // Strict equality: reference identity comparison (no valueOf coercion)
-      const isStrictEq = op === ts.SyntaxKind.EqualsEqualsEqualsToken;
-      const isStrictNeq = op === ts.SyntaxKind.ExclamationEqualsEqualsToken;
+      const [isStrictEq, isStrictNeq] = identityEqualityFlags(ctx, op, leftType, rightType, leftTsType, rightTsType);
       if (isStrictEq || isStrictNeq) {
         if (leftIsRef && rightIsRef) {
           // (#2742) Native strings are structs, but JS String strict equality
@@ -438,8 +736,7 @@ export function compileTypedBinaryDispatch(
       // f64 path below, which `__str_to_number`s the string operand → NaN →
       // wrong `false` (the `"x" == new String("x")` residual). So permit a
       // string-ref-vs-wrapper pairing through the externref box.
-      const nativeEqualityProvider = ctx.targetProfile.semanticProviders === "native-first";
-      const wrapperOverStringAllowed = nativeEqualityProvider && wrapperEquality;
+      const wrapperOverStringAllowed = wrapperEquality;
       if (
         isLooseEqNeq &&
         (!wrapperEquality || wrapperOverStringAllowed) &&
@@ -655,17 +952,12 @@ export function compileTypedBinaryDispatch(
   // For strict equality (===, !==), cross-type comparisons always return false/true (#296).
   if ((leftType.kind === "externref" || rightType.kind === "externref") && (isEqOp || isNeqOp)) {
     const isStrict = op === ts.SyntaxKind.EqualsEqualsEqualsToken || op === ts.SyntaxKind.ExclamationEqualsEqualsToken;
-    const isStrictNeq = op === ts.SyntaxKind.ExclamationEqualsEqualsToken;
     // A for-in target and a representation-widened module binding both carry
     // runtime tags that can disagree with TypeScript's initializer-derived
     // type. Do not constant-fold equality from that stale type; compare the
     // actual boxed value.
     const leftHasStaleType = equalityOperandHasStaleStaticType(ctx, fctx, expr.left);
     const rightHasStaleType = equalityOperandHasStaleStaticType(ctx, fctx, expr.right);
-    const leftIsString = !leftHasStaleType && isStringType(leftTsType);
-    const rightIsString = !rightHasStaleType && isStringType(rightTsType);
-    const leftIsNumber = !leftHasStaleType && isNumberType(leftTsType);
-    const rightIsNumber = !rightHasStaleType && isNumberType(rightTsType);
     const leftIsBool = !leftHasStaleType && isBooleanType(leftTsType);
     const rightIsBool = !rightHasStaleType && isBooleanType(rightTsType);
 
@@ -692,8 +984,7 @@ export function compileTypedBinaryDispatch(
     //      references that are not identical are not `===`.
     // This needs no host import and never feeds an externref into an f64/i32
     // helper (acceptance criteria #1776).
-    const nativeEqualityProvider = ctx.targetProfile.semanticProviders === "native-first";
-    if (nativeEqualityProvider && (leftType.kind === "externref" || rightType.kind === "externref")) {
+    if (leftType.kind === "externref" || rightType.kind === "externref") {
       const EQ_HEAP = -19; // WasmGC `eq` abstract heap type (signed LEB 0x6d)
       // (#1910 R1) §7.2.13 IsLooselyEqual steps 11-12 — the Object↔primitive arm
       // is LOOSE-only (strict `===` never coerces, §7.2.16). Register the native
@@ -795,7 +1086,7 @@ export function compileTypedBinaryDispatch(
           { op: "call", funcIdx: toPrimIdx },
           { op: "local.set", index: externLocal },
         ];
-        fctx.body.push(
+        const reduce: Instr[] = [
           // lIsObj XOR rIsObj  ≡  lIsObj !== rIsObj
           { op: "local.get", index: lTmp },
           { op: "call", funcIdx: typeofObject },
@@ -807,7 +1098,8 @@ export function compileTypedBinaryDispatch(
             blockType: { kind: "empty" },
             then: [...reduceOperand(lTmp), ...reduceOperand(rTmp)],
           },
-        );
+        ];
+        fctx.body.push(...unlessBothI31(ctx.standalone, lTmp, rTmp, reduce)); // (#6973)
       }
 
       // (#2081) LOOSE null/undefined arm (§7.2.15 steps 2-3): `null == undefined`
@@ -1171,431 +1463,63 @@ export function compileTypedBinaryDispatch(
               },
             ]
           : coreEqInstrs;
-      for (const ins of eqInstrs) fctx.body.push(ins);
+      fctx.body.push(...i31EqualityFastPath(ctx.standalone, lTmp, rTmp, eqInstrs)); // (#6973)
       if (isNeqOp) fctx.body.push({ op: "i32.eqz" });
       releaseTempLocal(fctx, rTmp);
       releaseTempLocal(fctx, lTmp);
       return { kind: "i32" };
     }
-
-    if (!nativeEqualityProvider && (leftHasStaleType || rightHasStaleType)) {
-      return emitHostEqualityFromStack(ctx, fctx, leftType, rightType, isStrict, isNeqOp);
-    }
-
-    // Wrapper object semantics (#1111): `new Number(n)`, `new String(s)`,
-    // `new Boolean(b)` are OBJECTS (typeof x === "object"), not primitives.
-    // Strict equality between a wrapper and any primitive is always false.
-    // Equality between two wrappers is reference identity.
-    // Route through JS host == / === with NO numeric fallback so the answer
-    // matches JS spec exactly (the numeric fallback below is only safe when
-    // both operands are boxed primitives, not when either is a real JS object).
-    const leftIsWrapper = isWrapperObjectType(leftTsType);
-    const rightIsWrapper = isWrapperObjectType(rightTsType);
-    if (leftIsWrapper || rightIsWrapper) {
-      // (#5357) The lane-aware reference arm; a scalar side is boxed by brand.
-      return emitReferenceEqualityFromStack(ctx, fctx, leftType, rightType, leftTsType, rightTsType, isStrict, isNeqOp);
-    }
-
-    // Strict equality: different JS types → always false (===) or true (!==)
-    if (isStrict) {
-      const leftJsKind = leftIsString ? "string" : leftIsNumber ? "number" : leftIsBool ? "boolean" : "other";
-      const rightJsKind = rightIsString ? "string" : rightIsNumber ? "number" : rightIsBool ? "boolean" : "other";
-      if (leftJsKind !== "other" && rightJsKind !== "other" && leftJsKind !== rightJsKind) {
-        fctx.body.push({ op: "drop" });
-        fctx.body.push({ op: "drop" });
-        fctx.body.push({ op: "i32.const", value: isStrictNeq ? 1 : 0 });
-        return { kind: "i32" };
-      }
-    }
-
-    // (#1986/#1987) Strict equality where exactly one side is an `any`-typed
-    // externref and the other is a known primitive (number / boolean) — or both
-    // sides are externref `any`. The numeric fallback further down unboxes the
-    // externref to f64 via ToNumber (null→0, false→0, "1"→1) and emits f64.eq,
-    // which makes `===` behave LOOSER than `==` (`null === 0` → true). Per §7.2.16
-    // IsStrictlyEqual must short-circuit to false on a type mismatch with no
-    // coercion. Route through `__host_eq` (JS `===`) instead — it gets the spec
-    // exactly right, including +0 === -0 (true) and NaN !== NaN. JS-host only; the
-    // native-first path is handled above by the tag-dispatch block.
-    // Strings keep their dedicated `wasm:js-string equals` path below. A
-    // boolean-typed side is routed by the #5357 arm at the tail instead (it
-    // used to be excluded here because the brand-blind `coerceType` boxed a
-    // Boolean as a JS number; the reference arm now boxes by brand).
-    // (#3154 / task #90) A statically-SYMBOL i32 operand is branded so the box
-    // preserves the JS tag (`__box_symbol`, identity-stable) — the brand-blind
-    // fallthrough boxed the HANDLE via `__box_number`, so
-    // `anyElem === moduleScopedSymbol` was always false.
-    if (isStrict && !nativeEqualityProvider && !leftIsString && !rightIsString && !leftIsBool && !rightIsBool) {
-      return emitReferenceEqualityFromStack(ctx, fctx, leftType, rightType, leftTsType, rightTsType, true, isNeqOp);
-    }
-
-    const eitherIsString = leftIsString || rightIsString;
-    const bothAreStrings = leftIsString && rightIsString;
-    // (#1134) For LOOSE equality where exactly ONE side is a string and the
-    // other is a primitive, route through `__host_loose_eq` instead of
-    // `wasm:js-string equals`. The wasm equals does strict string===string
-    // and never coerces — it silently returns false for `1 == "1"`,
-    // `255 == "0xff"`, `0 == ""`, etc.
-    if (eitherIsString && !isStrict && !bothAreStrings) {
-      if (rightType.kind !== "externref") {
-        coerceType(ctx, fctx, rightType, { kind: "externref" });
-      }
-      if (leftType.kind !== "externref") {
-        const tmpR = allocTempLocal(fctx, { kind: "externref" });
-        fctx.body.push({ op: "local.set", index: tmpR });
-        coerceType(ctx, fctx, leftType, { kind: "externref" });
-        fctx.body.push({ op: "local.get", index: tmpR });
-        releaseTempLocal(fctx, tmpR);
-      }
-      const hostIdx = ensureLateImport(
-        ctx,
-        "__host_loose_eq",
-        [{ kind: "externref" }, { kind: "externref" }],
-        [{ kind: "i32" }],
-      );
-      flushLateImportShifts(ctx, fctx);
-      const finalHostIdx = ctx.funcMap.get("__host_loose_eq") ?? hostIdx;
-      if (finalHostIdx !== undefined) {
-        fctx.body.push({ op: "call", funcIdx: finalHostIdx });
-        if (isNeqOp) fctx.body.push({ op: "i32.eqz" });
-        return { kind: "i32" };
-      }
-    }
-    if (eitherIsString) {
-      // Both strings (or strict equality where one is string): use
-      // `wasm:js-string equals` — fast string-string compare.
-      if (rightType.kind !== "externref") {
-        coerceType(ctx, fctx, rightType, { kind: "externref" });
-      }
-      if (leftType.kind !== "externref") {
-        const tmpR = allocTempLocal(fctx, { kind: "externref" });
-        fctx.body.push({ op: "local.set", index: tmpR });
-        coerceType(ctx, fctx, leftType, { kind: "externref" });
-        fctx.body.push({ op: "local.get", index: tmpR });
-        releaseTempLocal(fctx, tmpR);
-      }
-      addStringImports(ctx);
-      const equalsIdx = ctx.jsStringImports.get("equals");
-      if (equalsIdx !== undefined) {
-        fctx.body.push({ op: "call", funcIdx: equalsIdx });
-        if (isNeqOp) fctx.body.push({ op: "i32.eqz" });
-        return { kind: "i32" };
-      }
-    }
-
-    // Reference identity fast-path for externref equality.
-    // When both operands are externref (e.g. objects stored as any), check if they
-    // are the same GC reference before falling back to numeric unboxing.
-    // This fixes `var a = {}; var b = a; a === b` which was incorrectly returning false
-    // because numeric unboxing of objects produces NaN, and NaN !== NaN.
-    // Uses any.convert_extern to get anyref, then ref.test/ref.cast to eqref for ref.eq.
-    // The eq abstract heap type is encoded as -19 in signed LEB128 (= 0x6d).
-    const EQ_HEAP_TYPE = -19;
-    if (
-      leftType.kind === "externref" &&
-      rightType.kind === "externref" &&
-      !leftIsString &&
-      !rightIsString &&
-      !leftIsNumber &&
-      !rightIsNumber &&
-      !leftIsBool &&
-      !rightIsBool
-    ) {
-      // Save both externrefs to temp locals for potential reuse in numeric fallback
-      const tmpRight = allocTempLocal(fctx, { kind: "externref" });
-      const tmpLeft = allocTempLocal(fctx, { kind: "externref" });
-      fctx.body.push({ op: "local.set", index: tmpRight });
-      fctx.body.push({ op: "local.set", index: tmpLeft });
-
-      // Convert left to anyref and test if it's an eqref (GC ref)
-      fctx.body.push({ op: "local.get", index: tmpLeft });
-      fctx.body.push({ op: "any.convert_extern" });
-      const tmpAnyLeft = allocTempLocal(fctx, { kind: "anyref" });
-      fctx.body.push({ op: "local.tee", index: tmpAnyLeft });
-      fctx.body.push({ op: "ref.test", typeIdx: EQ_HEAP_TYPE });
-      fctx.body.push({
-        op: "if",
-        blockType: { kind: "val", type: { kind: "i32" } },
-        then: [
-          // Left is eqref-compatible — check right too
-          { op: "local.get", index: tmpRight },
-          { op: "any.convert_extern" },
-          ...(() => {
-            const tmpAnyRight = allocTempLocal(fctx, { kind: "anyref" });
-            const instrs: Instr[] = [
-              { op: "local.tee", index: tmpAnyRight },
-              { op: "ref.test", typeIdx: EQ_HEAP_TYPE },
-              {
-                op: "if",
-                blockType: { kind: "val", type: { kind: "i32" } },
-                then: [
-                  // Both are eqref — cast and compare with ref.eq
-                  { op: "local.get", index: tmpAnyLeft },
-                  { op: "ref.cast", typeIdx: EQ_HEAP_TYPE },
-                  { op: "local.get", index: tmpAnyRight },
-                  { op: "ref.cast", typeIdx: EQ_HEAP_TYPE },
-                  { op: "ref.eq" },
-                ],
-                else: [
-                  // Right is not eqref. For STRICT equality (===), a GC eqref
-                  // and a non-eqref host externref cannot be ===, so 0 is
-                  // definitive. For LOOSE equality (==), JS coercion may still
-                  // make them equal — e.g. `0 == -0` where the i31ref +0 is
-                  // eqref and the HeapNumber -0 is not. Push -1 sentinel so
-                  // the outer `if (i32.ne result -1)` branches into the host
-                  // fallback (`__host_loose_eq`) which calls JS `==`. (#1134)
-                  { op: "i32.const", value: isStrict ? 0 : -1 },
-                ],
-              },
-            ];
-            releaseTempLocal(fctx, tmpAnyRight);
-            return instrs;
-          })(),
-        ],
-        else: [
-          // Left is not eqref — fall through to numeric / host comparison
-          // by pushing -1 as sentinel to indicate "not handled"
-          { op: "i32.const", value: -1 },
-        ],
-      });
-      releaseTempLocal(fctx, tmpAnyLeft);
-
-      // Check if the identity comparison produced a definitive result (0 or 1)
-      // vs the sentinel -1 (meaning we need numeric fallback)
-      const identityResult = allocTempLocal(fctx, { kind: "i32" });
-      fctx.body.push({ op: "local.tee", index: identityResult });
-      fctx.body.push({ op: "i32.const", value: -1 });
-      fctx.body.push({ op: "i32.ne" });
-      fctx.body.push({
-        op: "if",
-        blockType: { kind: "val", type: { kind: "i32" } },
-        then: [
-          // Identity check produced 0 or 1 — use it directly
-          // For != / !==, negate
-          { op: "local.get", index: identityResult },
-          ...(isNeqOp ? ([{ op: "i32.eqz" }] satisfies Instr[]) : []),
-        ],
-        else: ((): Instr[] => {
-          // Host equality fallback — two host externrefs (e.g. functions
-          // like `Array === Array`) are not WasmGC eqrefs, so ref.eq cannot
-          // compare them. For strict equality, `__host_eq` calls JS `===`.
-          // For loose equality, `__host_loose_eq` calls JS `==` which
-          // handles null==undefined and type coercion per §7.2.15. (#1065, #1134)
-          addUnionImports(ctx);
-          if (isStrict) {
-            // Strict equality: __host_eq (JS ===) for reference identity.
-            // If that returns false, fall through to numeric unboxing for
-            // boxed numbers that differ in identity but have the same value. (#1065)
-            //
-            // (#1383) Gate the numeric-unbox fallback on a runtime typeof
-            // check — only fire it when BOTH operands are typeof === "number".
-            // The fallback was load-bearing for genuinely-different-identity
-            // boxed numbers (V8 sometimes returns different externref ids for
-            // numerically-equal JS numbers), but it incorrectly succeeded for
-            // cross-type strict comparisons too: `null === 0` produced
-            // `__unbox_number(null) === 0`, `__unbox_number(0) === 0`, true.
-            // Spec §7.2.16 says strict equality between values of different
-            // types is always false.
-            //
-            // Earlier PR #272 tried to drop the fallback entirely and caused
-            // -12 net test262 — the fallback was masking unrelated mismatches
-            // (boolean / undefined externrefs that also happen to land in
-            // the externref-vs-externref path). Gating with a typeof check
-            // preserves the load-bearing same-type case AND fixes the
-            // cross-type leak.
-            const hostEqIdx = ensureLateImport(
-              ctx,
-              "__host_eq",
-              [{ kind: "externref" }, { kind: "externref" }],
-              [{ kind: "i32" }],
-            );
-            flushLateImportShifts(ctx, fctx);
-            const finalHostEqIdx = ctx.funcMap.get("__host_eq") ?? hostEqIdx;
-            const typeofNumIdx = ctx.funcMap.get("__typeof_number")!;
-            const unboxIdx = ctx.funcMap.get("__unbox_number")!;
-            return [
-              { op: "local.get", index: tmpLeft },
-              { op: "local.get", index: tmpRight },
-              { op: "call", funcIdx: finalHostEqIdx! },
-              {
-                op: "if",
-                blockType: { kind: "val", type: { kind: "i32" } },
-                then: [{ op: "i32.const", value: isNeqOp ? 0 : 1 }],
-                else: [
-                  // Both operands must be JS numbers for the numeric-unbox
-                  // fallback to be sound. Otherwise host_eq's `false` is
-                  // definitive (cross-type strict equality is always false).
-                  { op: "local.get", index: tmpLeft },
-                  { op: "call", funcIdx: typeofNumIdx },
-                  { op: "local.get", index: tmpRight },
-                  { op: "call", funcIdx: typeofNumIdx },
-                  { op: "i32.and" },
-                  {
-                    op: "if",
-                    blockType: { kind: "val", type: { kind: "i32" } },
-                    then: [
-                      // Both numbers: numeric-unbox compare is safe and
-                      // recovers same-value-different-identity cases.
-                      { op: "local.get", index: tmpLeft },
-                      { op: "call", funcIdx: unboxIdx },
-                      { op: "local.get", index: tmpRight },
-                      { op: "call", funcIdx: unboxIdx },
-                      { op: isEqOp ? "f64.eq" : "f64.ne" },
-                    ],
-                    else: [
-                      // Cross-type or non-number: host_eq's false is final.
-                      { op: "i32.const", value: isNeqOp ? 1 : 0 },
-                    ],
-                  },
-                ],
-              },
-            ];
-          } else {
-            // Loose equality fallback for two externref `any` operands that are
-            // not eqref-identical.
-            //
-            // (#2081) The native semantic provider must not use
-            // `__host_loose_eq`; in standalone/WASI it is also unsatisfiable. It
-            // previously leaked into the module and made
-            // `("1" as any) == (1 as any)` either fail instantiation or return a
-            // wrong `false` (ref-identity never coerces string⇄number). Route
-            // through the NATIVE IsLooselyEqual instead: box both externrefs to
-            // `$AnyValue` (`__any_from_extern` → tag5 string / tag3 number / tag4
-            // bool / tag1 null) and call `__any_eq`, whose §7.2.15 arms
-            // (incl. the String⇄Number arm added in this PR) implement the spec
-            // coercion natively. Compatibility mode keeps `__host_loose_eq`
-            // (JS `==`) unchanged.
-            // (#1917 E6) The standalone native IsLooselyEqual tail — box both
-            // externrefs to `$AnyValue` and call the keystone `__any_eq` — is the
-            // same tag-5-sensitive dispatch the coercion engine owns for E3, so it
-            // lives in `emitAnyEqFromExternTemps`. `null` ⇒ helpers unavailable
-            // (should not happen) → fall through to the host import below.
-            const nativeEqualityProvider = ctx.targetProfile.semanticProviders === "native-first";
-            if (nativeEqualityProvider) {
-              const nativeLooseEq = emitAnyEqFromExternTemps(ctx, tmpLeft, tmpRight, isNeqOp);
-              if (nativeLooseEq !== null) {
-                return nativeLooseEq;
-              }
-            }
-            // Loose equality: __host_loose_eq (JS ==) handles all coercion
-            // rules including null==undefined per §7.2.15. The result is
-            // definitive — no numeric fallback needed. (#1134)
-            const hostLooseEqIdx = ensureLateImport(
-              ctx,
-              "__host_loose_eq",
-              [{ kind: "externref" }, { kind: "externref" }],
-              [{ kind: "i32" }],
-            );
-            flushLateImportShifts(ctx, fctx);
-            const finalHostLooseEqIdx = ctx.funcMap.get("__host_loose_eq") ?? hostLooseEqIdx;
-            return [
-              { op: "local.get", index: tmpLeft },
-              { op: "local.get", index: tmpRight },
-              { op: "call", funcIdx: finalHostLooseEqIdx! },
-              ...(isNeqOp ? ([{ op: "i32.eqz" }] satisfies Instr[]) : []),
-            ];
-          }
-        })(),
-      });
-      releaseTempLocal(fctx, identityResult);
-      releaseTempLocal(fctx, tmpRight);
-      releaseTempLocal(fctx, tmpLeft);
-      return { kind: "i32" };
-    }
-
-    // (#5357) Every STRICT pair that reaches this point has a statically-Boolean
-    // side — number / string / `any` pairs were routed above — and the ToNumber
-    // collapse below cannot decide §7.2.16 step 1 for it: it answered
-    // `Number(null) === Number(false)` (true) for a nullish reference and
-    // `Number(1) === Number(true)` (true) for a reference holding `1`. Box the
-    // Boolean by brand and compare in the lane's reference arm. A reference
-    // that is statically numeric never gets here with a Boolean side (the
-    // Type()-disjoint fold above answers it), so the numeric fast path below
-    // is untouched for the number-typed references it exists for.
-    if (isStrict && (leftIsBool || rightIsBool)) {
-      return emitReferenceEqualityFromStack(ctx, fctx, leftType, rightType, leftTsType, rightTsType, true, isNeqOp);
-    }
-
-    addUnionImports(ctx);
-    const unboxIdx = ctx.funcMap.get("__unbox_number")!;
-    // (#5357) LOOSE, one scalar against a reference that is not statically
-    // numeric: `null` / `undefined` loosely equal only each other (§7.2.15
-    // steps 2-3), but the collapse read `Number(null)` as `0`, so `null == 0`
-    // and `null == false` answered `true`. Decide the nullish case first; a
-    // non-nullish reference keeps the ToNumber comparison, which IS steps 5-10.
-    const scalarSide = leftType.kind === "externref" ? rightType : leftType;
-    const referenceIsStaticNumber = leftType.kind === "externref" ? leftIsNumber : rightIsNumber;
-    if (
-      !isStrict &&
-      (leftType.kind === "externref") !== (rightType.kind === "externref") &&
-      (scalarSide.kind === "f64" || scalarSide.kind === "i32") &&
-      !referenceIsStaticNumber
-    ) {
-      return emitLooseScalarVsReferenceEquality(fctx, leftType, rightType, unboxIdx, isNeqOp);
-    }
-    // Coerce/unbox right side (top of stack) to f64
-    if (rightType.kind === "externref") {
-      fctx.body.push({ op: "call", funcIdx: unboxIdx });
-    } else if (rightType.kind === "i32") {
-      fctx.body.push({ op: "f64.convert_i32_s" });
-    }
-    // Coerce/unbox left side (below right on stack) to f64
-    if (leftType.kind === "externref") {
-      const tmpR = allocTempLocal(fctx, { kind: "f64" });
-      fctx.body.push({ op: "local.set", index: tmpR });
-      fctx.body.push({ op: "call", funcIdx: unboxIdx });
-      fctx.body.push({ op: "local.get", index: tmpR });
-      releaseTempLocal(fctx, tmpR);
-    } else if (leftType.kind === "i32") {
-      const tmpR = allocTempLocal(fctx, { kind: "f64" });
-      fctx.body.push({ op: "local.set", index: tmpR });
-      fctx.body.push({ op: "f64.convert_i32_s" });
-      fctx.body.push({ op: "local.get", index: tmpR });
-      releaseTempLocal(fctx, tmpR);
-    }
-    fctx.body.push({ op: isEqOp ? "f64.eq" : "f64.ne" });
-    return { kind: "i32" };
-  }
-
-  // ── Fallback: coerce remaining type mismatches to f64 for numeric ops ──
-  // When operand types don't match any specific path above (e.g. ref + externref,
-  // i64 + externref, or other ambiguous combos), try to coerce both to f64.
-  if (isNumericOp) {
-    // Coerce right operand (top of stack) to f64
-    if (rightType.kind === "externref") {
-      coerceType(ctx, fctx, rightType, { kind: "f64" }, "number");
-    } else if (rightType.kind === "i32") {
-      fctx.body.push({ op: "f64.convert_i32_s" });
-    } else if (rightType.kind === "i64") {
-      fctx.body.push({ op: "f64.convert_i64_s" });
-    } else if (rightType.kind === "ref" || rightType.kind === "ref_null") {
-      coerceType(ctx, fctx, rightType, { kind: "f64" });
-    }
-    // Coerce left operand (below right on stack) — save right to local
-    if (
-      leftType.kind === "externref" ||
-      leftType.kind === "i32" ||
-      leftType.kind === "i64" ||
-      leftType.kind === "ref" ||
-      leftType.kind === "ref_null"
-    ) {
-      const tmpR = allocTempLocal(fctx, { kind: "f64" });
-      fctx.body.push({ op: "local.set", index: tmpR });
-      if (leftType.kind === "externref") {
-        coerceType(ctx, fctx, leftType, { kind: "f64" }, "number");
-      } else if (leftType.kind === "i32") {
-        fctx.body.push({ op: "f64.convert_i32_s" });
-      } else if (leftType.kind === "i64") {
-        fctx.body.push({ op: "f64.convert_i64_s" });
-      } else if (leftType.kind === "ref" || leftType.kind === "ref_null") {
-        coerceType(ctx, fctx, leftType, { kind: "f64" });
-      }
-      fctx.body.push({ op: "local.get", index: tmpR });
-      releaseTempLocal(fctx, tmpR);
-    }
-    return compileNumericBinaryOp(ctx, fctx, op, expr);
   }
 
   reportError(ctx, expr, `Unsupported binary operator for type`);
   return null;
+}
+
+/** WasmGC `i31` abstract heap type. */
+const I31_HEAP = -20;
+
+/** `a` and `b` (externref locals) are both i31-boxed. */
+function bothI31(a: number, b: number): Instr[] {
+  return [
+    { op: "local.get", index: a },
+    { op: "any.convert_extern" },
+    { op: "ref.test", typeIdx: I31_HEAP },
+    { op: "local.get", index: b },
+    { op: "any.convert_extern" },
+    { op: "ref.test", typeIdx: I31_HEAP },
+    { op: "i32.and" },
+  ];
+}
+
+/**
+ * (#6973 stage 2) Equality of two externref locals: when both are i31-boxed they
+ * are two integral Numbers (an i31 is only ever a Number in this runtime, and
+ * never -0 or NaN, which stay `$BoxedNumber`), so `==` and `===` are both
+ * integer equality. Deltablue's `this.direction == Direction.FORWARD` otherwise
+ * ran the ToPrimitive / nullish / typeof cascade — about ten helper calls.
+ * `slow` (the full cascade) answers every other pair. Standalone only.
+ */
+function i31EqualityFastPath(standalone: boolean, a: number, b: number, slow: Instr[]): Instr[] {
+  if (!standalone) return slow;
+  const i31Of = (local: number): Instr[] => [
+    { op: "local.get", index: local },
+    { op: "any.convert_extern" },
+    { op: "ref.cast", typeIdx: I31_HEAP },
+    { op: "i31.get_s" },
+  ];
+  return [
+    ...bothI31(a, b),
+    {
+      op: "if",
+      blockType: { kind: "val", type: { kind: "i32" } },
+      then: [...i31Of(a), ...i31Of(b), { op: "i32.eq" }],
+      else: slow,
+    },
+  ];
+}
+
+/** (#6973 stage 2) Run `instrs` (the loose-equality ToPrimitive step) unless both operands are i31 Numbers. */
+function unlessBothI31(standalone: boolean, a: number, b: number, instrs: Instr[]): Instr[] {
+  if (!standalone) return instrs;
+  return [...bothI31(a, b), { op: "i32.eqz" }, { op: "if", blockType: { kind: "empty" }, then: instrs }];
 }

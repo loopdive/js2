@@ -19,12 +19,13 @@ import { describe, expect, it } from "vitest";
 import {
   CHILD_PERF_LANES,
   childLaneFailureDiagnostic,
-  JS_HOST_NATIVE_PERF_LANE,
+  JS_HOST_PERF_LANE,
   resolveNativeFirstPerfLane,
   STANDALONE_PERF_LANES,
 } from "../scripts/lib/npm-compat-perf.mjs";
 import { laneBudgetOverrun } from "../scripts/lib/npm-compat-opt-budget.mjs";
 
+// (#6979) The JS-host lane is the native regime; its child lane is `js-host`.
 // A real V8 heap exhaustion, the way a lane child dies on a graph too big for it.
 function oomChild() {
   const child = spawnSync(
@@ -51,11 +52,11 @@ describe("#6851 a host-blocked package's native-first lane runs in a bounded chi
       },
       inChild: (lane: string) => {
         childLanes.push(lane);
-        return { status: "compile-error", diagnostic: "js-host-native lane exceeded the 120000ms harness budget" };
+        return { status: "compile-error", diagnostic: "js-host lane exceeded the 120000ms harness budget" };
       },
     });
-    expect(childLanes).toEqual(["js-host-native"]);
-    expect(blocked.diagnostic).toMatch(/^js-host-native lane exceeded/);
+    expect(childLanes).toEqual(["js-host"]);
+    expect(blocked.diagnostic).toMatch(/^js-host lane exceeded/);
 
     let inProcess = 0;
     const unblocked = await resolveNativeFirstPerfLane({
@@ -72,16 +73,16 @@ describe("#6851 a host-blocked package's native-first lane runs in a bounded chi
     expect(unblocked.status).toBe("ok");
   });
 
-  it("the child lane table maps js-host-native to the jsHostNative record on the js-host placement", () => {
-    expect(JS_HOST_NATIVE_PERF_LANE).toEqual({
-      lane: "js-host-native",
-      key: "jsHostNative",
+  it("the child lane table maps js-host to the jsHost record on the js-host placement", () => {
+    expect(JS_HOST_PERF_LANE).toEqual({
+      lane: "js-host",
+      key: "jsHost",
       placement: "js-host",
       inputMode: "runtime-dynamic",
     });
     expect(CHILD_PERF_LANES.map((entry) => entry.lane)).toEqual([
       ...STANDALONE_PERF_LANES.map((entry) => entry.lane),
-      "js-host-native",
+      "js-host",
     ]);
     for (const entry of CHILD_PERF_LANES.slice(0, STANDALONE_PERF_LANES.length)) {
       expect(entry.placement).toBe("standalone");
@@ -92,21 +93,21 @@ describe("#6851 a host-blocked package's native-first lane runs in a bounded chi
     const child = oomChild();
     expect(child.output).toMatch(/heap out of memory|Reached heap limit/);
     // Anti-vacuity: the pre-fix text for a real OOM names nothing actionable.
-    const legacy = legacyChildDiagnostic("js-host-native", child);
+    const legacy = legacyChildDiagnostic("js-host", child);
     expect(legacy).not.toMatch(/heap/i);
 
-    const diagnostic = childLaneFailureDiagnostic("js-host-native", child);
+    const diagnostic = childLaneFailureDiagnostic("js-host", child);
     expect(diagnostic).toMatch(
-      /^js-host-native lane ran out of JS heap compiling the package graph \(V8: JavaScript heap out of memory; child exit /,
+      /^js-host lane ran out of JS heap compiling the package graph \(V8: JavaScript heap out of memory; child exit /,
     );
   });
 
-  it("keeps the plain-exit text; a js-host-native overrun names its codegen phase", () => {
+  it("keeps the plain-exit text; a js-host overrun names its codegen phase", () => {
     expect(childLaneFailureDiagnostic("standalone-static", { status: 1, output: "boom\nError: real reason\n" })).toBe(
       "standalone-static lane child exited 1: Error: real reason",
     );
-    expect(laneBudgetOverrun("js-host-native", 120_000, { phase: "codegen", atMs: 4100 }).diagnostic).toBe(
-      "js-host-native lane exceeded the 120000ms harness budget during codegen (started at 4100 ms) (compile-budget)",
+    expect(laneBudgetOverrun("js-host", 120_000, { phase: "codegen", atMs: 4100 }).diagnostic).toBe(
+      "js-host lane exceeded the 120000ms harness budget during codegen (started at 4100 ms) (compile-budget)",
     );
   });
 
@@ -124,6 +125,6 @@ describe("#6851 a host-blocked package's native-first lane runs in a bounded chi
     const perfFn = body.slice(0, body.indexOf("\n}\n"));
     expect(perfFn).toContain("resolveNativeFirstPerfLane(");
     expect(perfFn).toMatch(/inChild: \(lane\) => perfLaneInChild\(name, lane,/);
-    expect(perfFn).not.toMatch(/nativeFirstPerfLane\(\(\) => runHost\("js-host-native"\)\)/);
+    expect(perfFn).not.toMatch(/nativeFirstPerfLane\(\(\) => runHost\("js-host"\)\)/);
   });
 });

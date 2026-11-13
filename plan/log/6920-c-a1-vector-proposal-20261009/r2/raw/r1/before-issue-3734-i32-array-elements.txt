@@ -1,0 +1,11 @@
+
+ RUN  v3.2.7 /home/user/js2/.claude/worktrees/agent-a774506d6593a2d93
+
+ ✓ tests/issue-3734-i32-array-elements.test.ts (30 tests) 3739ms
+   ✓ #3734 — i32 array elements (shape) > the array.ts benchmark gets an i32 element vector and widens on read  812ms
+
+ Test Files  1 passed (1)
+      Tests  30 passed (30)
+   Start at  22:35:37
+   Duration  29.67s (transform 17.82s, setup 0ms, collect 25.56s, tests 3.74s, environment 0ms, prepare 53ms)
+

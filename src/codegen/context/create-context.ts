@@ -29,8 +29,7 @@ import type { CodegenContext, CodegenOptions } from "./types.js";
 import { readEnv } from "../../env.js";
 
 function selectNativeRegExpEngine(targetProfile: CompileTargetProfile) {
-  return targetProfile.target === "standalone" ||
-    (targetProfile.environment === "javascript" && targetProfile.semanticProviders === "native-first")
+  return targetProfile.target === "standalone" || targetProfile.environment === "javascript"
     ? nativeLiteralRegExpEngineConfig()
     : null;
 }

@@ -42,13 +42,11 @@ export function emitBuiltinPromiseConstructOnNull(
   arguments_: readonly number[],
   services: {
     readonly emitStandalonePromiseFromExecutorValue: typeof import("../promise-executor.js").emitStandalonePromiseFromExecutorValue;
-    readonly isStandalonePromiseActive: typeof import("../async-scheduler.js").isStandalonePromiseActive;
     readonly reserveBuiltinConstructorIdentityGlobal: typeof import("../builtin-static-globals.js").reserveBuiltinConstructorIdentityGlobal;
   },
 ): void {
-  const { emitStandalonePromiseFromExecutorValue, isStandalonePromiseActive, reserveBuiltinConstructorIdentityGlobal } =
-    services;
-  if (!isStandalonePromiseActive(ctx)) return;
+  const { emitStandalonePromiseFromExecutorValue, reserveBuiltinConstructorIdentityGlobal } = services;
+
   // Function compilation can precede the initializer that materializes the
   // carrier. Reserve the canonical slot now; a later value read fills it.
   const global = reserveBuiltinConstructorIdentityGlobal(ctx, "Promise");

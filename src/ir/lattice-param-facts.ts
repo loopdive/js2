@@ -31,6 +31,7 @@
 //     later reads are outside the proven fact.
 
 import { ts, forEachChild } from "../ts-api.js";
+import { identifierWritesOf, skipOuterExpressions } from "../shared/binding-writes.js";
 
 import type { IrDirectCallLoweringPlan } from "./ast-lowering-plans.js";
 import { asVal, type IrType } from "./nodes.js";
@@ -49,73 +50,103 @@ function peelParens(e: ts.Expression): ts.Expression {
   return e;
 }
 
+interface IdentifierWriteSite {
+  readonly target: ts.Identifier;
+  /** The node performing the write (`identifierWritesOf`'s argument). */
+  readonly node: ts.Node;
+}
+
+interface WriteIndex {
+  /**
+   * A direct `eval` may write any name under the root. A `with` body needs no
+   * flag: its writes are identifier writes in the index, and they resolve to
+   * no declaration, which a resolving query counts as a write.
+   */
+  readonly dynamicScope: boolean;
+  readonly byName: ReadonlyMap<string, readonly IdentifierWriteSite[]>;
+}
+
+const writeIndexes = new WeakMap<ts.Node, WriteIndex>();
+
 /**
- * Every name written ANYWHERE inside `root`, including nested function bodies
- * (deliberately unlike from-ast's `collectMutatedLetNamesFromBlock`, which
- * stops at nested-function boundaries because it governs outer-scope slot
- * allocation). Used only to EXCLUDE parameters from
- * {@link collectLatticeParamFacts}: a parameter reassigned by a nested closure
- * still invalidates the fixpoint's incoming-value fact for outer reads that
- * follow the closure's invocation, so the exclusion must see through function
- * boundaries. Over-approximation (a nested function's own shadowing local
- * write drops an unrelated outer fact) is conservative and therefore safe.
+ * Every identifier write ANYWHERE inside `root`, nested function bodies
+ * included, as `identifierWritesOf` defines a write: assignments (plain,
+ * compound, logical, destructuring), `++`/`--`, for-in/of heads and `var`
+ * initializers. Member writes are not variable writes. Built once per root:
+ * the parameter facts and every `localIsRewritten` query read the same index.
  *
- * Write forms collected: plain/compound assignment to an identifier,
- * destructuring-assignment targets (`[n] = …`, `({ x: n } = …)`, shorthand
- * `({ n } = …)`), pre/postfix `++`/`--`, and a `for (n of/in …)` head that
- * rebinds an existing identifier. Member writes (`obj.n = …`) are NOT
- * variable writes and are deliberately not collected.
+ * Nested bodies are deliberately included (unlike from-ast's
+ * `collectMutatedLetNamesFromBlock`): a binding written by a nested closure is
+ * still written for reads that follow the closure's invocation.
  */
-function collectWrittenNamesIncludingNested(root: ts.Node): Set<string> {
-  const written = new Set<string>();
-  const addTargets = (target: ts.Expression): void => {
-    const t = peelParens(target);
-    if (ts.isIdentifier(t)) {
-      written.add(t.text);
-      return;
-    }
-    if (ts.isArrayLiteralExpression(t)) {
-      for (const el of t.elements) {
-        if (ts.isOmittedExpression(el)) continue;
-        if (ts.isSpreadElement(el)) addTargets(el.expression);
-        else if (ts.isBinaryExpression(el) && el.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
-          addTargets(el.left); // defaulted destructuring target `[n = 1] = …`
-        } else addTargets(el);
-      }
-      return;
-    }
-    if (ts.isObjectLiteralExpression(t)) {
-      for (const prop of t.properties) {
-        if (ts.isPropertyAssignment(prop)) addTargets(prop.initializer);
-        else if (ts.isShorthandPropertyAssignment(prop)) written.add(prop.name.text);
-        else if (ts.isSpreadAssignment(prop)) addTargets(prop.expression);
-      }
-    }
-    // PropertyAccess / ElementAccess targets write a property, not a variable.
-  };
+function writeIndexOf(root: ts.Node): WriteIndex {
+  const cached = writeIndexes.get(root);
+  if (cached) return cached;
+  let dynamicScope = false;
+  const byName = new Map<string, IdentifierWriteSite[]>();
   const visit = (node: ts.Node): void => {
-    if (ts.isBinaryExpression(node)) {
-      const op = node.operatorToken.kind;
-      if (
-        op === ts.SyntaxKind.EqualsToken ||
-        (op >= ts.SyntaxKind.PlusEqualsToken && op <= ts.SyntaxKind.CaretEqualsToken)
-      ) {
-        addTargets(node.left);
-      }
+    if (ts.isCallExpression(node)) {
+      const callee = skipOuterExpressions(node.expression);
+      if (ts.isIdentifier(callee) && callee.text === "eval") dynamicScope = true;
     }
-    if (ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node)) {
-      const op = node.operator;
-      if (op === ts.SyntaxKind.PlusPlusToken || op === ts.SyntaxKind.MinusMinusToken) {
-        addTargets(node.operand);
-      }
-    }
-    if ((ts.isForOfStatement(node) || ts.isForInStatement(node)) && !ts.isVariableDeclarationList(node.initializer)) {
-      addTargets(node.initializer as ts.Expression);
+    for (const { target } of identifierWritesOf(node)) {
+      const sites = byName.get(target.text);
+      if (sites) sites.push({ target, node });
+      else byName.set(target.text, [{ target, node }]);
     }
     forEachChild(node, visit);
   };
   visit(root);
-  return written;
+  const index = { dynamicScope, byName };
+  writeIndexes.set(root, index);
+  return index;
+}
+
+/**
+ * (#7106) Is the local `declaration` written after it is declared, anywhere in
+ * its function (nested functions included)? A destructured declaration counts
+ * as written. (#7283) A function declaration's binding is checked the same way.
+ *
+ * (#7306) The writes are `identifierWritesOf`'s: assignments, updates,
+ * for-in/of heads and repeated `var` initializers; a direct `eval` fails
+ * closed. With `resolve`, a same-name write counts only when it resolves to
+ * this binding or to nothing (a write inside `with`); without it, every
+ * same-name write counts.
+ */
+export function localIsRewritten(
+  declaration: ts.VariableDeclaration | ts.FunctionDeclaration,
+  resolve?: (identifier: ts.Identifier) => ts.Declaration | undefined,
+): boolean {
+  if (declaration.name === undefined || !ts.isIdentifier(declaration.name)) return true;
+  const name = declaration.name;
+  const identity = resolve?.(name);
+  if (resolve && !identity) return true;
+  const writesBinding = (target: ts.Identifier): boolean => {
+    if (!resolve) return true;
+    const written = resolve(target);
+    return !written || written === identity || sameVarScopedBinding(written, identity!);
+  };
+  const index = writeIndexOf(varScopeOf(declaration));
+  if (index.dynamicScope) return true;
+  return (index.byName.get(name.text) ?? []).some(({ target, node }) => node !== declaration && writesBinding(target));
+}
+
+function varScopeOf(node: ts.Node): ts.Node {
+  return ts.findAncestor(node.parent, (parent) => ts.isFunctionLike(parent) || ts.isSourceFile(parent))!;
+}
+
+function isVarScoped(node: ts.Declaration): boolean {
+  return (
+    ts.isFunctionDeclaration(node) ||
+    (ts.isVariableDeclaration(node) &&
+      ts.isVariableDeclarationList(node.parent) &&
+      (node.parent.flags & ts.NodeFlags.BlockScoped) === 0)
+  );
+}
+
+/** `var` and function declarations of one name in one function scope are one binding. */
+function sameVarScopedBinding(a: ts.Declaration, b: ts.Declaration): boolean {
+  return isVarScoped(a) && isVarScoped(b) && varScopeOf(a) === varScopeOf(b);
 }
 
 /**
@@ -136,12 +167,13 @@ export function collectLatticeParamFacts(
   resolvedParams: readonly { name: string; type: IrType }[],
 ): LatticeParamFacts | undefined {
   if (!fn.body || fn.parameters.length === 0) return undefined;
-  const written = collectWrittenNamesIncludingNested(fn.body);
+  const writes = writeIndexOf(fn.body);
+  if (writes.dynamicScope) return undefined; // a direct `eval` may write any parameter
   const facts = new Map<ts.ParameterDeclaration, "number" | "string">();
   for (let i = 0; i < fn.parameters.length; i++) {
     const astParam = fn.parameters[i]!;
     if (!ts.isIdentifier(astParam.name)) continue; // pattern params bind leaves, not the param itself
-    if (written.has(astParam.name.text)) continue;
+    if (writes.byName.has(astParam.name.text)) continue;
     const resolved = resolvedParams[i]?.type;
     if (!resolved) continue;
     if (asVal(resolved)?.kind === "f64") facts.set(astParam, "number");

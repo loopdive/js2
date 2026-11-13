@@ -72,6 +72,7 @@ import { ts, forEachChild } from "../ts-api.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import type { Instr, LocalDef, ValType } from "../ir/types.js";
 import { resolveEnclosingFnctorOwner, resolveLiftedMethodThisStruct } from "./fnctor-escape-gate.js";
+import { fieldTypedFnctorClass } from "./fnctor-fast-get.js"; // (#6973 stage 2)
 import { foreignReturnFunctionNames } from "./fnctor-foreign-return.js"; // (#2071)
 import { allocLocal } from "./context/locals.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
@@ -1737,7 +1738,18 @@ export function tryEmitDirectTwinCall(
       thisLocalIdx = undefined; // compile `this` from `__current_this`
       guardedReceiver = true;
     } else {
-      const provenClass = provenReceiverClass(ctx, fctx, propAccess.expression);
+      // (#6973 stage 2) …or `this.<field>` inside a typed twin, whose slot type is the proof.
+      const recv = propAccess.expression;
+      const provenClass =
+        provenReceiverClass(ctx, fctx, recv) ??
+        (ts.isPropertyAccessExpression(recv) &&
+        recv.expression.kind === ts.SyntaxKind.ThisKeyword &&
+        !recv.questionDotToken &&
+        ts.isIdentifier(recv.name) &&
+        fctx.typedThisStructName !== undefined &&
+        fctx.typedThisLocalIdx !== undefined
+          ? fieldTypedFnctorClass(ctx, fctx.typedThisStructName, recv.name.text)
+          : undefined);
       if (provenClass === undefined) return undefined;
       const proven = `__fnctor_${provenClass}`;
       const provenIdx = ctx.structMap.get(proven);
@@ -1881,6 +1893,27 @@ export function tryEmitDirectTwinCall(
   // not the declaration's `externref`. Every consumer coerces from this, so a
   // stale answer here is the one way this slice could miscompile.
   return callResult ?? VOID_RESULT;
+}
+
+/**
+ * (#6973 stage 2) AND "receiver (param 0) has no own expando bag" into the i32
+ * on the stack. A guarded receiver is only INFERRED to be an instance whose
+ * method resolves to the prototype twin; an own expando (`o.m = f`, stored in
+ * the carrier `$bag`) shadows it (§10.1.8.1), so a receiver with a bag takes the
+ * legacy dispatcher. `[]` without the bag helper.
+ */
+function noOwnExpandoBag(ctx: CodegenContext): Instr[] {
+  const bagLookupIdx = ctx.funcMap.get("__closure_bag_lookup");
+  if (bagLookupIdx === undefined) return [];
+  // Asked only once the shape test passed: the lookup casts its argument.
+  return [
+    {
+      op: "if",
+      blockType: { kind: "val", type: { kind: "i32" } },
+      then: [{ op: "local.get", index: 0 }, { op: "call", funcIdx: bagLookupIdx }, { op: "ref.is_null" }],
+      else: [{ op: "i32.const", value: 0 }],
+    },
+  ];
 }
 
 /** Box one native value already on the stack up to `externref`. */
@@ -2117,6 +2150,7 @@ export function fillDirectCallTrampolines(ctx: CodegenContext): void {
         { op: "local.get", index: 0 },
         { op: "any.convert_extern" },
         { op: "ref.test", typeIdx: t.fnctorStructTypeIdx },
+        ...noOwnExpandoBag(ctx),
         {
           op: "if",
           blockType: resultType === undefined ? { kind: "empty" } : { kind: "val", type: resultType },
@@ -2157,6 +2191,7 @@ export function fillDirectCallTrampolines(ctx: CodegenContext): void {
           { op: "any.convert_extern" },
           { op: "ref.test", typeIdx: t.fnctorStructTypeIdx },
           { op: "i32.and" },
+          ...noOwnExpandoBag(ctx),
         );
       }
       arm.push(...hasUsableSelf, {

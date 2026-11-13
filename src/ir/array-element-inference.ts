@@ -4,9 +4,8 @@ import type { TypeFact, TypeOracle } from "../checker/oracle.js";
 import { forEachChild, ts } from "../ts-api.js";
 import type { ValType } from "./types.js";
 
-type SupportedElementKind = "number";
 type ConcreteElementKind =
-  | SupportedElementKind
+  | "number"
   | "boolean"
   | "string"
   | "bigint"
@@ -22,7 +21,7 @@ export type EmptyArrayInferenceRejection = "mixed" | "escaping" | "unresolved";
 export type EmptyArrayInferenceResult =
   | {
       readonly kind: "resolved";
-      readonly elementKind: SupportedElementKind;
+      readonly elementKind: "number";
       readonly elementValType: ValType;
       /**
        * (#3734) True when every value that can ever be stored into this
@@ -31,6 +30,18 @@ export type EmptyArrayInferenceResult =
        * while reads widen back to `f64`. `elementValType` is `i32` iff set.
        */
       readonly int32Narrowed: boolean;
+      readonly aliases: readonly string[];
+      readonly evidence: readonly ConcreteElementKind[];
+    }
+  | {
+      /**
+       * (#7122) Every store is a proven `string`. The element carrier is the
+       * backend's string representation, so it is chosen by the lowering
+       * (`resolveString`), never here; a backend without one demotes.
+       */
+      readonly kind: "resolved";
+      readonly elementKind: "string";
+      readonly int32Narrowed: false;
       readonly aliases: readonly string[];
       readonly evidence: readonly ConcreteElementKind[];
     }
@@ -85,8 +96,8 @@ export type ExactInt32Proof = (expression: ts.Expression) => boolean;
  * may-alias graph is deliberately conservative: a conflicting branch,
  * reassignment, or escape rejects the narrow vector instead of guessing.
  *
- * The result carries only the one vector element representation supported by
- * this slice (`number` -> f64). Allocation and layout stay outside this pass;
+ * The result carries the element families supported so far: `number` (f64,
+ * or i32 when narrowed) and `string` (the backend string carrier, #7124). Allocation and layout stay outside this pass;
  * `from-ast` still creates the ordinary `vec.new_fixed` allocation through the
  * shared allocation registry and LinearMemoryPlan.
  */
@@ -319,20 +330,24 @@ export function inferEmptyArrayElementTypes(
       ? { kind: "rejected", reason: "escaping", aliases: aliasNames, evidence }
       : group.concrete.size > 1
         ? { kind: "rejected", reason: "mixed", aliases: aliasNames, evidence }
-        : group.invalidJoin || group.concrete.size !== 1 || !group.concrete.has("number")
+        : group.invalidJoin || group.concrete.size !== 1
           ? { kind: "rejected", reason: "unresolved", aliases: aliasNames, evidence }
-          : {
-              kind: "resolved",
-              elementKind: "number",
-              // (#3734) `int32Stores` survives only when the escape closure
-              // above ALSO held, so a narrowed group is one whose complete set
-              // of stores is visible in this function body and individually
-              // proven exact-int32.
-              elementValType: group.int32Stores ? { kind: "i32" } : { kind: "f64" },
-              int32Narrowed: group.int32Stores,
-              aliases: aliasNames,
-              evidence,
-            };
+          : group.concrete.has("string")
+            ? { kind: "resolved", elementKind: "string", int32Narrowed: false, aliases: aliasNames, evidence }
+            : !group.concrete.has("number")
+              ? { kind: "rejected", reason: "unresolved", aliases: aliasNames, evidence }
+              : {
+                  kind: "resolved",
+                  elementKind: "number",
+                  // (#3734) `int32Stores` survives only when the escape closure
+                  // above ALSO held, so a narrowed group is one whose complete set
+                  // of stores is visible in this function body and individually
+                  // proven exact-int32.
+                  elementValType: group.int32Stores ? { kind: "i32" } : { kind: "f64" },
+                  int32Narrowed: group.int32Stores,
+                  aliases: aliasNames,
+                  evidence,
+                };
     results.set(root, result);
   }
 
@@ -597,6 +612,8 @@ function isValueIdentifier(identifier: ts.Identifier): boolean {
   return true;
 }
 
+const READ_OR_PUSH_METHODS: ReadonlySet<string> = new Set(["push", "indexOf", "includes", "join"]);
+
 function isSafeAliasUse(expression: ts.Expression): boolean {
   let current: ts.Expression = expression;
   for (;;) {
@@ -624,7 +641,13 @@ function isSafeAliasUse(expression: ts.Expression): boolean {
     if (ts.isElementAccessExpression(parent) && parent.expression === current) return true;
     if (ts.isPropertyAccessExpression(parent) && parent.expression === current) {
       if (parent.name.text === "length") return true;
-      return parent.name.text === "push" && ts.isCallExpression(parent.parent) && parent.parent.expression === parent;
+      // (#7108) indexOf / includes / join only READ the elements, so like
+      // `push` they neither escape the vector nor add element evidence.
+      return (
+        READ_OR_PUSH_METHODS.has(parent.name.text) &&
+        ts.isCallExpression(parent.parent) &&
+        parent.parent.expression === parent
+      );
     }
     return false;
   }

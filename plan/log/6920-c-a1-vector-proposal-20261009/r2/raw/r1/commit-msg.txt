@@ -1,0 +1,30 @@
+refactor(ir): #6920 generic vector representation contract (private A-C1 proposal)
+
+Resolve every IR vector once into a discriminated backend representation
+instead of manufacturing GC-shaped handles for linear memory.
+
+- handles.ts: LinearVecLowering is a genuine linear handle with a required
+  i32 carrier and no GC indices; IrVecBackendLowering names the raw union.
+- vector-representation.ts (new, pure): one resolution helper with explicit
+  carrier vs operation purpose, backend-mismatch rejection (GC layout or GC
+  handle on linear, linear handle on GC, intersection handles, wrong carrier/
+  element/geometry/allocation row), and frontend carrier/data helpers.
+- lower-contracts.ts: resolveVec/resolveVecForElement return the raw union.
+- lower-generic.ts: resolveVecType delegates to the helper; vec.new_fixed
+  scratch is declared from newFixedScratchType (GC $vec_data_<arr> per array
+  unchanged; linear one i32 local); lowerIrTypeToValType takes the active
+  backend and every internal call passes emitter.backend.
+- linear-integration.ts / porffor assembler: genuine linear handles; the
+  linear converter uses shared carrier resolution; the post-lowering
+  scratch-local rewrite and LinearEmitter scratch bookkeeping are deleted.
+- from-ast.ts / array-element-lowering.ts: shared union, carrier/data
+  helpers, GC struct-suffixed runtime names only for authenticated GC
+  handles.
+
+GC and standalone binaries are byte-identical on the 29-source probe
+(16 vector fixtures + all playground examples); linear binaries too.
+
+Model: Claude Opus 5.5 High
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01D4p9zLDnzbUkfbZeVqxjkx
+✓

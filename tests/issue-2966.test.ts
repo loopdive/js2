@@ -132,7 +132,7 @@ describe("#2966 standalone any-param closure call results through `+`", () => {
   // suite is honest now and flips loudly when #2106 S1 lands. The BOXED
   // (tag-5 null-externval) sibling of this seam IS fixed — see
   // tests/issue-3135.test.ts.
-  it.fails("undefined result + 1 stays NaN-like (blocked on #2106 S1)", async () => {
+  it("undefined result + 1 stays NaN-like (fixed with #2106 S1; promoted from it.fails, #7014)", async () => {
     expect(
       await runStandalone(`export function test(): number {
         const u: any = function () { return undefined; };

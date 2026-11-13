@@ -93,12 +93,17 @@ describe("#2861 slice 4 — a shadowing local wins over the ctor fold", () => {
   });
 });
 
-describe("#2861 slice 4 — namespaces still refuse (out of scope, #2860)", () => {
-  it("Math.length refuses loudly (Math is not a function; .length is undefined)", async () => {
-    const r = await compile(`export function test(): number { const v: any = Math.length; return 0; }`, {
-      target: "standalone",
-    });
-    expect(r.success).toBe(false);
+describe("#2861 slice 4 — namespace .length reads (#2860)", () => {
+  // (#7014 wave 15) This used to pin a compile REFUSAL while namespace value
+  // reads were out of scope. Standalone now compiles the read, and it answers
+  // exactly what JS does — Math is not a function, so `Math.length` is
+  // undefined (re-measured 2026-10-17 on upstream main 0727e2985b).
+  it("Math.length reads undefined (Math is not a function)", async () => {
+    expect(
+      await runStandalone(
+        `export function test(): number { const v: any = Math.length; return v === undefined ? 1 : 0; }`,
+      ),
+    ).toBe(1);
   });
 });
 

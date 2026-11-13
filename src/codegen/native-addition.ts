@@ -14,10 +14,17 @@ import { resolveStructNameForExpr, resolveStructName } from "./property-access.j
 import { compileExpression, coerceType, flushLateImportShifts } from "./shared.js";
 import { addUnionImports } from "./index.js";
 import { ensureObjectRuntime } from "./object-runtime.js";
-import { ensureLateImport } from "./expressions/late-imports.js";
+import { emitUndefined, ensureLateImport } from "./expressions/late-imports.js";
 import { buildThrowJsErrorInstrs, noJsHost } from "./expressions/helpers.js";
 import { collectConcatOperands } from "./native-batched-concat.js";
-import { compileStringBinaryOp } from "./string-ops.js";
+import {
+  compileNativeConcatOperand,
+  compileStringBinaryOp,
+  tryThrowOnSymbolStringCoercion,
+  valueExprTsType,
+} from "./string-ops.js";
+import { nativeStringLiteralInstrs } from "./native-string-literals.js";
+import { emitExternrefSlotToAnyStr } from "./native-string-slot-bridge.js";
 import { readEnv } from "../env.js";
 
 // (#3753 S2) An `any`-typed operand the whole-program fixpoint already PROVED
@@ -110,10 +117,7 @@ export function admitsAnyAdditionOperands(
   left: ts.Type,
   right: ts.Type,
 ): boolean {
-  if (
-    ctx.anyValueTypeIdx < 0 ||
-    (ctx.targetProfile.semanticProviders === "native-first" && ctx.nativeStrings && ctx.anyStrTypeIdx >= 0)
-  ) {
+  if (ctx.anyValueTypeIdx < 0 || (ctx.nativeStrings && ctx.anyStrTypeIdx >= 0)) {
     // The earlier AnyValue arm uses the whole-program numeric proof only for
     // nonnegative indices; keep that admission unchanged.
     const usesGroundedProof = ctx.anyValueTypeIdx >= 0;
@@ -197,6 +201,8 @@ interface DeferredAddOperand {
   readonly rawType: ValType;
   readonly targetLocal: number;
   readonly callableText?: string;
+  /** (#7014) Reduce through the typed STRING-hint dispatch (toString-only struct). */
+  readonly stringHint?: boolean;
 }
 
 function saveDeferredAddOperand(
@@ -204,12 +210,35 @@ function saveDeferredAddOperand(
   rawType: ValType,
   deferred: DeferredAddOperand[],
   callableText?: string,
+  stringHint?: boolean,
 ): number {
   const rawLocal = allocTempLocal(fctx, rawType);
   const targetLocal = allocTempLocal(fctx, { kind: "externref" });
   fctx.body.push({ op: "local.set", index: rawLocal });
-  deferred.push({ rawLocal, rawType, targetLocal, callableText });
+  deferred.push({ rawLocal, rawType, targetLocal, callableText, ...(stringHint ? { stringHint } : {}) });
   return targetLocal;
+}
+
+/**
+ * (#7014, #4429) An object-literal struct whose only user ToPrimitive method is
+ * a `toString` closure FIELD. Its §7.1.1 default-hint answer IS its string-hint
+ * answer: `valueOf` resolves to %Object.prototype.valueOf%, which returns the
+ * object, so OrdinaryToPrimitive proceeds to `toString`. Reducing it through the
+ * typed string-hint dispatch keeps `this` bound to the struct; the status-quo
+ * externref path materialised a `$Object` copy whose method trampoline then read
+ * a NULL `__current_this` and trapped ("dereferencing a null pointer").
+ */
+function structHasOnlyUserToString(ctx: CodegenContext, name: string | undefined): boolean {
+  if (name === undefined || ctx.classSet.has(name)) return false;
+  const fields = ctx.structFields.get(name);
+  if (!fields) return false;
+  const isClosure = (t: ValType): boolean => t.kind === "ref" || t.kind === "ref_null" || t.kind === "eqref";
+  let hasToString = false;
+  for (const f of fields) {
+    if ((f.name === "valueOf" || f.name === "@@toPrimitive") && isClosure(f.type)) return false;
+    if (f.name === "toString" && isClosure(f.type)) hasToString = true;
+  }
+  return hasToString;
 }
 
 function emitAddOperand(
@@ -219,8 +248,7 @@ function emitAddOperand(
   deferred: DeferredAddOperand[],
   callableText?: string,
 ): number | null {
-  const noJsHost = ctx.targetProfile.semanticProviders === "native-first";
-  if (noJsHost && callableText !== undefined) {
+  if (callableText !== undefined) {
     // Match the existing concat operand's physical-carrier check. Evaluate the
     // original expression once, even when its callable has no closure carrier;
     // defer its established NativeFunction rendering until both sides exist.
@@ -258,8 +286,8 @@ function emitAddOperand(
     fctx.body.push({ op: "local.set", index: srcTmp });
     return srcTmp;
   }
-  let structName = noJsHost ? resolveStructNameForExpr(ctx, fctx, inner) : undefined;
-  if (noJsHost && structName === undefined && ts.isIdentifier(inner)) {
+  let structName = resolveStructNameForExpr(ctx, fctx, inner);
+  if (structName === undefined && ts.isIdentifier(inner)) {
     const localIdx = fctx.localMap.get(inner.text);
     const localType =
       localIdx === undefined
@@ -306,12 +334,22 @@ function emitAddOperand(
       }
     }
   }
-  if (noJsHost && structHasStaticNumericToPrimitive(ctx, structName)) {
+  if (structHasStaticNumericToPrimitive(ctx, structName)) {
     const opType = compileExpression(ctx, fctx, inner);
     if (!opType) return null;
     // Save the physical value without invoking user conversion. Both source
     // expressions must finish before either operand's ToPrimitive runs.
     return saveDeferredAddOperand(fctx, opType, deferred);
+  }
+  // The native-first provider regime, not the host axis: `{target:"gc",
+  // strictNoHostImports:true, nativeStrings:true}` is native-first while
+  // `ctx.standalone`/`ctx.wasi` are both false, and it keeps this string-hint
+  // conversion (#6979 S7-a review). Not constant by type: the linear target
+  // resolves "backend-defined", though it never enters this backend.
+  if (ctx.targetProfile.semanticProviders === "native-first" && structHasOnlyUserToString(ctx, structName)) {
+    const opType = compileExpression(ctx, fctx, inner);
+    if (!opType) return null;
+    return saveDeferredAddOperand(fctx, opType, deferred, undefined, true);
   }
 
   // Status-quo path: externref hint keeps runtime strings boxed for §13.15.3.
@@ -333,7 +371,9 @@ function finishDeferredAddOperand(ctx: CodegenContext, fctx: FunctionContext, op
     fctx.body.push(...stringConstantExternrefInstrs(ctx, operand.callableText));
   } else {
     fctx.body.push({ op: "local.get", index: rawLocal });
-    if (rawType.kind === "ref" || rawType.kind === "ref_null") {
+    if (operand.stringHint && (rawType.kind === "ref" || rawType.kind === "ref_null")) {
+      coerceType(ctx, fctx, rawType, { kind: "externref" }, "string");
+    } else if (rawType.kind === "ref" || rawType.kind === "ref_null") {
       coerceType(ctx, fctx, rawType, { kind: "f64" }, "default");
       addUnionImports(ctx);
       const boxIdx = ctx.funcMap.get("__box_number");
@@ -371,8 +411,6 @@ export function emitAnyAdd(
   expr: ts.BinaryExpression,
   callableText?: readonly [string | undefined, string | undefined],
 ): ValType {
-  const noJsHost = ctx.targetProfile.semanticProviders === "native-first";
-
   // #1988: in standalone/WASI the §13.15.3 string-vs-numeric decision must be
   // made on the ToPrimitive(default) results, not the raw operands — an object
   // or array reduces (valueOf→toString) to a STRING, which forces string
@@ -382,7 +420,7 @@ export function emitAnyAdd(
   // does cannot desync the current function body. It registers only defined
   // funcs (no import shift) and is idempotent, so this is a no-op when the
   // object runtime is already present.
-  if (noJsHost && ctx.nativeStrings && ctx.anyStrTypeIdx >= 0) {
+  if (ctx.nativeStrings && ctx.anyStrTypeIdx >= 0) {
     ensureObjectRuntime(ctx);
   }
 
@@ -423,26 +461,7 @@ export function emitAnyAddFromExternTemps(
   rTmp: number,
   deferred: readonly DeferredAddOperand[] = [],
 ): ValType {
-  const noJsHost = ctx.targetProfile.semanticProviders === "native-first";
-
   // ── JS-host: JS `+` via __host_add ──
-  if (!noJsHost) {
-    fctx.body.push({ op: "local.get", index: lTmp });
-    fctx.body.push({ op: "local.get", index: rTmp });
-    releaseTempLocal(fctx, rTmp);
-    releaseTempLocal(fctx, lTmp);
-    const hostIdx = ensureLateImport(
-      ctx,
-      "__host_add",
-      [{ kind: "externref" }, { kind: "externref" }],
-      [{ kind: "externref" }],
-    );
-    flushLateImportShifts(ctx, fctx);
-    const finalIdx = ctx.funcMap.get("__host_add") ?? hostIdx;
-    if (finalIdx === undefined) throw new Error("Missing import after ensureLateImport: __host_add");
-    fctx.body.push({ op: "call", funcIdx: finalIdx });
-    return { kind: "externref" };
-  }
 
   // ── Standalone / WASI: build §13.15.3 in-module ──
   // Requires native-string support for the concat arm; otherwise fall back.
@@ -718,4 +737,78 @@ export function compileStringBinaryOpWithNativeAddition(
   };
   // Return the runtime representation, not the type asserted on the source.
   return emitAnyAdd(ctx, fctx, expr, [callableText(expr.left, leftType), callableText(expr.right, rightType)]);
+}
+
+/**
+ * (#7214) `slot += rhs` where the slot holds a native string and its current
+ * value (of `slotType`) is already on the stack — the `string + rhs` dispatch of
+ * {@link compileStringBinaryOpWithNativeAddition} with the left operand already
+ * evaluated, so the receiver is read once. A primitive-producing `rhs` takes the
+ * native concat; anything else takes the ToPrimitive(default) `+` dispatch, so
+ * `valueOf` runs first and a Symbol throws. Leaves a `ref $AnyString`. Requires
+ * native strings; every lane has no JS host since #6979, which is the
+ * `compileNativeConcatOperand` precondition.
+ */
+export function emitNativeStringSlotPlus(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  target: ts.Expression,
+  rhs: ts.Expression,
+  slotType: ValType,
+): boolean {
+  // An empty slot of a field typed `T | undefined` (e.g. `f?: string`) holds
+  // `undefined`, which the plain read surfaces as such.
+  const { nullable, undefinable } = ctx.oracle.nullabilityOf(target);
+  const emptyIsUndefined = slotType.kind === "ref_null" && undefinable && !nullable;
+  if (isPrimitiveConcatProducer(rhs, ctx, fctx)) {
+    const concatIdx = ctx.nativeStrHelpers.get("__str_concat");
+    if (concatIdx === undefined) return false;
+    if (emptyIsUndefined) {
+      const slotTmp = allocTempLocal(fctx, slotType);
+      fctx.body.push({ op: "local.tee", index: slotTmp }, { op: "ref.is_null" });
+      fctx.body.push({
+        op: "if",
+        blockType: { kind: "val", type: { kind: "ref", typeIdx: ctx.anyStrTypeIdx } },
+        then: nativeStringLiteralInstrs(ctx, "undefined"),
+        else: [{ op: "local.get", index: slotTmp }, { op: "ref.as_non_null" }],
+      });
+      releaseTempLocal(fctx, slotTmp);
+    } else if (!compileNativeConcatOperand(ctx, fctx, target, false, slotType)) {
+      return false;
+    }
+    // §7.1.17: a statically Symbol-typed operand throws (its slot holds an id).
+    if (!tryThrowOnSymbolStringCoercion(ctx, fctx, rhs) && !compileNativeConcatOperand(ctx, fctx, rhs)) return false;
+    fctx.body.push({ op: "call", funcIdx: concatIdx });
+    return true;
+  }
+  ensureObjectRuntime(ctx);
+  // Left as an externref: an empty slot is `null`, or `undefined` per its type.
+  const slotTmp = allocTempLocal(fctx, slotType);
+  const lTmp = allocTempLocal(fctx, { kind: "externref" });
+  fctx.body.push({ op: "local.set", index: slotTmp });
+  if (emptyIsUndefined) emitUndefined(ctx, fctx);
+  else fctx.body.push({ op: "ref.null.extern" });
+  fctx.body.push({ op: "local.set", index: lTmp });
+  fctx.body.push({ op: "local.get", index: slotTmp }, { op: "ref.is_null" }, { op: "i32.eqz" });
+  fctx.body.push({
+    op: "if",
+    blockType: { kind: "empty" },
+    then: [{ op: "local.get", index: slotTmp }, { op: "extern.convert_any" }, { op: "local.set", index: lTmp }],
+    else: [],
+  });
+  releaseTempLocal(fctx, slotTmp);
+  const rhsType = valueExprTsType(ctx, rhs);
+  const rhsText = callableToStringLiteral(rhsType);
+  const deferred: DeferredAddOperand[] = [];
+  const callableText =
+    rhsText !== undefined && !admitsObjectAddition(ctx, rhsType, rhsType, rhs, rhs) ? rhsText : undefined;
+  const rTmp = emitAddOperand(ctx, fctx, rhs, deferred, callableText);
+  if (rTmp === null) {
+    releaseTempLocal(fctx, lTmp);
+    return false;
+  }
+  if (emitAnyAddFromExternTemps(ctx, fctx, lTmp, rTmp, deferred).kind !== "externref") return false;
+  // ToString of the sum (already a string unless an empty slot met a number).
+  emitExternrefSlotToAnyStr(ctx, fctx);
+  return true;
 }

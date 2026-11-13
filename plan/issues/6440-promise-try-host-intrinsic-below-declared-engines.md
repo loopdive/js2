@@ -1,17 +1,32 @@
 ---
 id: 6440
 title: "`Promise.try` is lowered to a host intrinsic the declared `engines: node >=20` floor does not have"
-status: ready
+status: done
 sprint: current
 created: 2026-09-13
-updated: 2026-09-13
+completed: 2026-09-13
 priority: medium
 horizon: s
 feasibility: easy
 task_type: bug
 area: runtime
 goal: correctness
+loc-budget-allow:
+  - src/runtime.ts
+func-budget-allow:
+  - src/runtime.ts::buildImports
 ---
+<!--
+  2026-09-13, #6440: `src/runtime.ts` grows by +1 line (`buildImports` +1) —
+  one extra `globalSandbox: options?.globalSandbox` field on the existing
+  `installAmbientCompatibility({...})` call site, wiring the new
+  `Promise.try` polyfill install through it. `src/runtime.ts` is at the
+  #4401 ceiling; the actual polyfill logic lives in the new
+  `src/runtime/promise-try-polyfill.ts` module, not here — the naive version
+  of this wiring (constructing the constructor list inline) added 7 lines and
+  was moved into the new module instead (see ## Resolution below).
+-->
+
 
 ## Problem
 
@@ -75,3 +90,38 @@ mismatch implicit:
 ## Dispatch
 
 **sonnet** — runtime-only, fully specified (exact spec steps, install site, realm plumbing, test shape), no codegen or ordering hazards; the only judgement call (option 1) is already made above.
+
+## Resolution
+
+Implemented as planned, with two adjustments made during implementation:
+
+- The constructor-list de-dupe (`[Promise, globalSandbox?.Promise]` minus
+  duplicates) was moved into the new module as `_promiseTryTargets`, exported
+  from `src/runtime/promise-try-polyfill.ts` and called from
+  `installAmbientCompatibility` (`src/runtime/compatibility-adapter.ts`) rather
+  than at the `src/runtime.ts` call site, per the plan's own fallback
+  ("if the LOC gate trips, move the constructor-list construction into the
+  new module") — the naive version added 7 lines to `buildImports` and tripped
+  both the LOC and function budget gates; the moved version adds exactly 1
+  line (`globalSandbox: options?.globalSandbox`) to the existing
+  `installAmbientCompatibility({...})` call site.
+- `plan/audit/host-import-policy-baseline.json`'s `maximumRuntimeTsLines`
+  (19735 → 19736) and `maximumOwnedAdapterLines` (819 → 824, matching the new
+  `promise-try-polyfill.ts` module counted as owned-adapter surface) were
+  bumped to the merged values, following the existing per-PR-bump precedent
+  for that file (e.g. commit `95cbc7239b`, "host-import runtimeTsLines ceiling
+  to the merged 19735") — this file is a tracked migration ceiling under
+  `plan/audit/`, not one of the `scripts/*-baseline.json` ratchet files main
+  alone refreshes.
+- `scripts/compiler-boundaries.json` classifies the new
+  `src/runtime/promise-try-polyfill.ts` module (owned runtime adapter,
+  alongside `iterator-polyfills.ts` / `legacy-regexp.ts`).
+
+Verified: `.tmp/probe-6440.mts` reproduces the Node 22 failure on the base
+commit (`try is not a function`) and passes after the fix (`hits: 1`).
+`tests/issue-6440-promise-try-polyfill.test.ts` (5 cases, host-version
+independent via a `node:vm` sandbox with `Promise.try` deleted) and the
+un-skipped `Promise.try` row in
+`tests/issue-2637-b2-ctor-closure-registration.test.ts` both fail on the
+pre-fix source and pass on the fix (checked both ways). No dogfood package
+calls `Promise.try`; no test262/dogfood movement expected or observed.

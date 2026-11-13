@@ -31,7 +31,7 @@
  * version or a date. Two runs with the same ORACLE_VERSION are guaranteed to
  * apply identical verdict logic, so their rows are directly comparable.
  */
-export const ORACLE_VERSION = 14;
+export const ORACLE_VERSION = 16;
 
 /**
  * Append-only log of what each oracle version means. Newest last.
@@ -389,6 +389,35 @@ export const ORACLE_VERSION_HISTORY: ReadonlyArray<{ version: number; note: stri
       "`scripts/run-test262-vitest.sh` does not set `TEST262_ORACLE_MODE`, so a " +
       "local verdict is the AUDIT lane's, not CI's — export " +
       "`TEST262_ORACLE_MODE=linked` to reproduce a CI verdict.",
+  },
+  {
+    version: 15,
+    note:
+      "#6656 explicit compiler-path request and measurement identity. Runners " +
+      "and workers validate the requested legacy/IR policy; unavailable IR " +
+      "must refuse instead of falling through to legacy compilation. Results " +
+      "and artifacts retain compiler-path identity separately from backend, " +
+      "target and harness; unverified IR data stays unmeasured. This epoch " +
+      "records that selection/measurement contract, not an executed IR score " +
+      "or a measured reclassification count. Historical v14 artifacts, " +
+      "measurements and original failures remain preserved; default legacy " +
+      "verdict classification and the independent fast-oracle revision remain unchanged.",
+  },
+  {
+    version: 16,
+    note:
+      "#6804 owned prepared-frontend negative verdicts. Explicit IR execute " +
+      "requests now report pass for parse/early SyntaxError negatives only " +
+      "when the prepared frontend supplies matching owned rejection evidence " +
+      "and a validated frontend report. The previous strict-IR worker arm " +
+      "reported compile_error for those frontend failures. Frontend rejection " +
+      "still cannot satisfy runtime negatives; unsupported IR remains a refusal. " +
+      "Separate IR " +
+      "artifact paths do not replace the oracle identity used by the result " +
+      "comparator, so this verdict change advances the shared version. " +
+      "Historical results and failures are preserved; no measured flip count, " +
+      "baseline rewrite or regression allowance is asserted. Default legacy " +
+      "verdict logic and the independent fast-oracle revision are unchanged.",
   },
 ];
 

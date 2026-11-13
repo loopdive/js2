@@ -33,9 +33,15 @@ export function test(): number { return __r; }
 
 describe("#4165 — builtin fn name/length writable gate", () => {
   it("write to live builtin .name no-ops; delete then reports absent (the regressed cycle)", async () => {
+    // The source is a MODULE (it exports `test`), so it is strict: the write to
+    // the non-writable `name` throws a TypeError (§10.1.9 / PutValue) rather
+    // than silently no-op'ing, and once the store path honoured `writable:false`
+    // that throw escaped module init. Catch it — the property this pins (the
+    // write does not land, `name` stays an own, deletable property with no
+    // stale bag shadow) is the same in both modes.
     const mask = await run(`
       var f: any = Object.defineProperty;
-      f.name = "clobber";
+      try { f.name = "clobber"; } catch (e) {}
       __r += (f.name === "defineProperty" ? 1 : 0) * 1;   // write no-oped
       __r += (f.hasOwnProperty("name") ? 1 : 0) * 2;      // still an own prop
       __r += ((delete f.name) ? 1 : 0) * 4;               // configurable -> delete succeeds

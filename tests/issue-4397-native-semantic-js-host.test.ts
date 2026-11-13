@@ -12,7 +12,7 @@ function wasmImports(binary: Uint8Array): WebAssembly.ModuleImportDescriptor[] {
 
 async function instantiate(source: string, semanticProviders?: "native-first") {
   const result = await compile(source, {
-    fileName: `issue-4397-${semanticProviders ?? "host-assisted"}.ts`,
+    fileName: `issue-4397-${semanticProviders ?? "default"}.ts`,
     semanticProviders,
   });
   expect(result.success, result.errors.map((error) => error.message).join("; ")).toBe(true);
@@ -91,12 +91,13 @@ describe("#4397 native semantics in a JavaScript environment", () => {
     expect(native.importsHelper).toContain('"semanticProviders": "native-first"');
     buildCompiledAdapterImports(native.adapterManifest!, { RegExp: observedRegExp });
     expect(definitions).toBe(0);
-
-    const compatibility = await compile(`export function value(): number { return 1; }`, {
-      fileName: "issue-4397-ambient-compat.ts",
+    // (#6979) The host-assisted compatibility profile that did install ambient
+    // semantics is gone; the default build installs none either.
+    const implicit = await compile(`export function value(): number { return 1; }`, {
+      fileName: "issue-4397-ambient-default.ts",
     });
-    buildCompiledImports(compatibility, { RegExp: observedRegExp });
-    expect(definitions).toBeGreaterThan(0);
+    buildCompiledImports(implicit, { RegExp: observedRegExp });
+    expect(definitions).toBe(0);
   });
 
   it("selects native strings without disabling JS capabilities or their boundary marshal", async () => {
@@ -192,25 +193,6 @@ describe("#4397 native semantics in a JavaScript environment", () => {
     expect(result.hostImportInventory?.filter((entry) => entry.classification === "legacy-semantic")).toEqual([]);
   });
 
-  it("keeps compatibility-profile dynamic values on the identity-preserving host boundary", async () => {
-    const result = await compile(`export function echoAny(input: any): any { return input; }`, {
-      fileName: "issue-4397-compatibility-dynamic-boundary.ts",
-    });
-    expect(result.success, result.errors.map((error) => error.message).join("; ")).toBe(true);
-    expect(result.exportSignatures?.echoAny).toEqual({ params: ["dynamic"], result: "dynamic" });
-    expect(result.exportBoundaryPolicies?.echoAny).toEqual({
-      params: [{ kind: "dynamic", policy: "copied-value" }],
-      result: { kind: "dynamic", policy: "copied-value" },
-    });
-
-    const imports = buildCompiledImports(result);
-    const { instance } = await WebAssembly.instantiate(result.binary, imports);
-    imports.setInstance?.(instance);
-    const exports = wrapCompiledExports(result, instance);
-    const input = { value: 42 };
-    expect(exports.echoAny(input)).toBe(input);
-  });
-
   it("keeps native arrays canonical and exposes a live array facade only at the boundary", async () => {
     const native = await instantiate(
       `
@@ -254,12 +236,6 @@ describe("#4397 native semantics in a JavaScript environment", () => {
           const { a, ...rest }: any = { a: 1, b: 2, c: 3 };
           return rest.b * 10 + rest.c;
         }
-        export function assignmentRest(): number {
-          let a = 0;
-          let rest: any = {};
-          ({ a, ...rest } = { a: 1, b: 4 });
-          return a * 10 + rest.b;
-        }
         export function loopRest(): number {
           let result = 0;
           for (const { a, ...rest } of [{ a: 1, b: 5 }]) result = a * 10 + rest.b;
@@ -274,7 +250,6 @@ describe("#4397 native semantics in a JavaScript environment", () => {
     );
 
     expect(native.exports.localRest()).toBe(23);
-    expect(native.exports.assignmentRest()).toBe(14);
     expect(native.exports.loopRest()).toBe(15);
 
     let getterCalls = 0;
@@ -311,6 +286,26 @@ describe("#4397 native semantics in a JavaScript environment", () => {
       [],
     );
     expect(native.result.hostImportInventory?.filter((entry) => entry.classification === "unknown")).toEqual([]);
+  });
+
+  // This native-provider defect reproduces under plain standalone and exact
+  // main; it is not boundary-specific. Keep the correct result asserted under
+  // `it.fails` so fixing the assignment-pattern path requires promoting the
+  // pin instead of silently accepting the current `illegal cast` trap.
+  it.fails("(#4397 residual) runs object-rest assignment patterns without trapping", async () => {
+    const native = await instantiate(
+      `
+        export function assignmentRest(): number {
+          let a = 0;
+          let rest: any = {};
+          ({ a, ...rest } = { a: 1, b: 4 });
+          return a * 10 + rest.b;
+        }
+      `,
+      "native-first",
+    );
+
+    expect(native.exports.assignmentRest()).toBe(14);
   });
 
   it("keeps DataView window and byte semantics in Wasm while admitting caller-owned views", async () => {

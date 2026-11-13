@@ -1,0 +1,6 @@
+# 2026-10-10 Octane box2d.js (+ base.js), gc host lane, triage driver shape (.tmp/oct-repro.mjs), head of #6940
+# base (main 01e4888aae): INVALID — __closure_879 extern.convert_any[0] expected anyref, found global.get of type i32
+box2d [gc] compile 97977ms success=true
+VALID
+# run: instantiate + octane_run(1) — new first failure, NOT #6940 scope
+gc: RUNTIME: Object.defineProperty called on non-object   (host import via src/runtime.ts, during __module_init_chunk_5)

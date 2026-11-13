@@ -3,7 +3,7 @@ id: 3518
 title: "IR-only default and direct front-end retirement"
 status: in-progress
 created: 2026-07-21
-updated: 2026-10-04
+updated: 2026-10-15
 priority: critical
 feasibility: hard
 reasoning_effort: medium
@@ -740,8 +740,11 @@ it is not an IR-only policy flip.
 - [ ] `pnpm run check:ir-only` passes on the authoritative playground,
       equivalence-inline, cross-backend, multi-source, class, module-init,
       async, fast, standalone, and WASI matrices with complete unit accounting.
-- [ ] Full merge-group Test262 is net-non-negative in JS-host and standalone;
-      no shard may omit IR outcome or fatal `result.errors` data.
+- [ ] Full IR standalone Test262 is net-non-negative against the admitted
+      standalone comparison; no shard may omit IR outcome or fatal
+      `result.errors` data. Per the project-lead direction of 2026-10-19, no
+      new JS-host Test262 runs are computed. Its historical chart results and
+      actual source/date identities remain intact.
 - [ ] Every supported source unit is represented in one `PreparedIrProgram`
       before backend emission; no class/module/M0 exception remains.
 - [ ] WasmGC and linear consume the same IR and `ProgramAbiMap`; their only
@@ -6817,3 +6820,61 @@ The first normal commit attempt completed all 17 changed-root suites: 2646 passe
 The original frozen caller cohort subsequently completed 2254/2254 across 13 suites with all 26 collection/ordinary children exiting0, exact ordered names (including duplicate occurrences), clean error channels and all2314 input custody rows restored. Its attribution remains pre-normalization ca11, not the final formatted epoch. The earlier .tmp Prettier check was partially ignored and is not a 30-file coverage claim: actual lint-staged formatted all26TS+4JSON, and 30 independent stdin formatting operations over real target paths returned nonempty byte-identical staged output. The unique C1 test scalar changed only quote rendering; AST-decoded authority data and all other test bytes remain identical.
 
 Canonical fdb116928b5861fd628abfde95da5e3deb91f689 is now integrated. Its delta contains nine benchmark artifacts and issue6651 documentation; all31 owned IR paths, 103 authenticated C1 inputs and both1969/2314 custody domains remain unchanged. Independent reconciliation SHA2569df5899daade37d1646c9740e27c877f5625de0580491928cd121baa8934ca51. A fresh complete17-PR census confirms allfour qualified D1 claims remain held, no duplicate D1 ref and no overlap with the four production paths; existing shared metadata intersections remain recorded. Normal signed commit retry, pre-push checks and protected main delivery are still pending. Legacy retirement and complete IR parity remain unproved.
+
+
+### Finite cloud timeout takeover (2026-10-10)
+
+The user explicitly authorized taking over the two blocked timeout and metadata
+areas. This continuation changes only the changed-issue-test job timeout from
+40 to 120 minutes, its explanatory comment and its exact workflow assertion.
+The other three timeout assertions remain at 40 minutes. The original command
+and outcome-archive block is unchanged (SHA256
+`88b8799e3e5ed5fb00676b1848252b3281d0a61580905e1f033bda1e9c980872`).
+The selector/workflow suite passes 54/54 on canonical base
+`dca6a41a470fe4eebbe1154f3b2c55eb04f350ec`.
+
+This addresses the reported 40-minute job cancellations; it does not resolve
+PR6606's newer quality failure at head
+`a702598e98fc635b62eff030988577004e29f3e2`: the first changed-root suite
+passed 479/486 tests, with seven individual probe/test timeouts and 15 later
+files not run. Preserve that failure and the remaining Session A integration
+ownership. PR6626 remains draft and unmerged; all other coordination holds,
+fixtures, legacy sources and full-equivalence requirements remain in force.
+The attempted new continuation claim was not published. A Git dry-run push
+returned HTTP403, permission denied to ttraenkler; no protected delivery is
+claimed from local work.
+
+## Audit 2026-10-15 — measured IR coverage at test262 scale (lead session, main `5586e2d5`)
+
+Numbers measured in-container with `trackIrOutcomes: true`, `target: "standalone"`, deterministic stride samples of `test262/test` plus the playground corpus. Issue [#7002](7002-ir-gate-integrity-telemetry-stride-ledger.md) turns this into a recurring ledger.
+
+| Measure (stride 40: 1,353 files, 1,793 terminal units) | Value |
+|---|---|
+| IR-emitted units | 57 (3 %) |
+| Legacy-emitted units | 1,605 (90 %) |
+| Emitted by both (compile-twice) | 13 |
+| Invariant outcomes | 70 (24/25 in the stride-120 crosstab are `duplicate-direct-function-body-receipt`) |
+| Files with no telemetry rows | 193 |
+| `select:body-shape-rejected` share of rejections | 1,234 / 1,634 (the playground baseline reports this bucket as 0) |
+| IR-first on vs off (670 files): success divergences / binaries differing | 0 / 2 |
+
+Stride 120 by unit kind: functions 43/138 IR-emitted, class members 11/135 (+24 invariants), module-init 3/392. The 5-file `check:ir-only` lane reads READY at 38/38 on the same main.
+
+Effort direction since 2026-09-08: 352 commits touched `src/codegen`, 20 touched `src/ir`; codegen grew 1.2 MB / 104 files in the first two weeks of October, IR 0.19 MB / 18 files. Issues closed under `ir-full-coverage`: July 40, August 39, September 9, October 1.
+
+Correctness defects found in the IR lane by the same audit: [#7000](7000-ir-devirtualised-method-call-base-receiver.md) (static devirtualisation), [#7001](7001-ir-string-result-externref-invalid-wasm.md) (string result accepts externref → invalid Wasm on native-string lanes; parity cascade misses inlined callers), [#7003](7003-ir-closure-call-exact-func-type-cast.md) (closure.call exact-type cast). Two observations without their own issue: `propagate.ts` is closed-world over visible call sites (nested functions, methods and module code are not in `buildCallGraph`; the iteration cap returns a non-fixpoint without widening) and is kept sound today only by the integration-time typeIdx parity check against legacy inference — retiring legacy makes that a live miscompile; `runtime/verify.ts` skips every nominal family (`class.*`, `object.*`, `closure.*`, `refcell.*`, `iter.*`, `extern.*`) as resolver-typed, which is where #7000/#7001 live. Value-representation gaps seen on both lanes (uninitialised typed class fields read as 0, `a[1.5]`/holes read elements instead of `undefined`, optional `number` params/fields carry `undefined` as a NaN sentinel that only some readers decode) belong to the #745/#2949 value-rep track.
+
+
+### 2026-10-19 — IR standalone CI measurement and historical Host charts
+
+The project lead requests new Test262 measurements only for IR standalone. Stop future JS Host Test262 computation and retain its existing chart history and actual source/date labels. Existing legacy standalone comparison gates remain unchanged.
+
+This change adds a separate weekly Monday/full-corpus 102-shard measurement and explicit manual IR standalone dispatch. Original harness/fixtures and completeness checks remain authoritative. Missing or partial strict compiler APIs are refused before compilation and reported as unavailable; there is no direct compiler fallback or manufactured IR score. Completed failing compilations/timeouts remain downloadable measurements, with requested-path and verified-execution counts kept separate.
+
+The Pages workflow consumes the existing Actions artifact flow with read-only Actions access, source SHA/main repository checks and a successful complete IR producer job. Unavailable transport carries its actual reason and suppresses old scores. No new credentialed Git publisher or workflow dispatch is added. Host canary/differential jobs and unused Host provider warming are disabled; historical datasets are not rewritten.
+
+Validation on a clean branch from upstream main f089b81216f8b349c97476f46d3b6a9ffef93f8d: 56/56 Node metadata/consumer controls, package TypeScript check, source LOC/function/coercion/oracle gates and shell/worker syntax pass. The dead-export audit passes its preservation contract; its existing strict moved-runtime closure remains uncertified because two dynamic imports are unknown. Saved genuine IR report assembly retained all three compilation failures and zero verified executions, with historical Host bytes unchanged. Full compiler-dependent Pages generation and a full GitHub corpus run are still required after landing.
+
+Separate private compiler validation (not adopted by this CI-only change): the same three original upstream files first completed with three compilation errors, then with three compilation timeouts over six actual attempts after two narrow initial startup-polyfill guards. Both runs have zero verified IR executions and are not full-corpus conformance results. All prior evidence is retained. This does not close the IR migration acceptance criteria.
+
+Clean-main release control: the actual same-three-file harness completed all three verdicts with explicit missing instantiatePreparedArtifact transport refusals (0 ms compiler time). The real report builder returned measurementState unavailable and zero verified executions. This is a route-availability control, not an IR conformance score.

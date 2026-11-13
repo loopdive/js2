@@ -1,56 +1,17 @@
 import { describe, it, expect } from "vitest";
 import { compile, type CompileResult } from "../src/index.js";
-import { buildStringConstants } from "../src/runtime.js";
+import { buildImports as buildHostImports } from "../src/runtime.js";
 
-function buildImports(result: CompileResult): WebAssembly.Imports {
-  const env: Record<string, Function> = {
-    console_log_number: () => {},
-    console_log_string: () => {},
-    console_log_bool: () => {},
-    Math_sin: Math.sin,
-    Math_cos: Math.cos,
-    Math_tan: Math.tan,
-    Math_asin: Math.asin,
-    Math_acos: Math.acos,
-    Math_atan: Math.atan,
-    Math_atan2: Math.atan2,
-    Math_exp: Math.exp,
-    Math_log: Math.log,
-    Math_log2: Math.log2,
-    Math_log10: Math.log10,
-    Math_pow: Math.pow,
-    Math_random: Math.random,
-    Math_acosh: Math.acosh,
-    Math_asinh: Math.asinh,
-    Math_atanh: Math.atanh,
-    Math_cbrt: Math.cbrt,
-    Math_expm1: Math.expm1,
-    Math_log1p: Math.log1p,
-    number_toString: (v: number) => String(v),
-    __typeof_number: (v: unknown) => (typeof v === "number" ? 1 : 0),
-    __typeof_string: (v: unknown) => (typeof v === "string" ? 1 : 0),
-    __typeof_boolean: (v: unknown) => (typeof v === "boolean" ? 1 : 0),
-    __typeof: (v: unknown) => typeof v,
-    __is_truthy: (v: unknown) => (v ? 1 : 0),
-    parseFloat: (s: any) => parseFloat(String(s)),
-    string_compare: (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0),
-    __unbox_number: (v: unknown) => Number(v),
-    __unbox_boolean: (v: unknown) => (v ? 1 : 0),
-    __box_number: (v: number) => v,
-    __box_boolean: (v: number) => Boolean(v),
-    __make_callback: () => null,
-  };
-  return {
-    env,
-    "wasm:js-string": {
-      concat: (a: string, b: string) => a + b,
-      length: (s: string) => s.length,
-      equals: (a: string, b: string) => (a === b ? 1 : 0),
-      substring: (s: string, start: number, end: number) => s.substring(start, end),
-      charCodeAt: (s: string, i: number) => s.charCodeAt(i),
-    },
-    string_constants: buildStringConstants(result.stringPool),
-  } as WebAssembly.Imports;
+// (#7029) This file used to hand-roll the host `env`, listing only the imports
+// its programs needed when it was written. The JS-host lane has since grown
+// real-semantics imports for the same programs (`__register_prototype` for
+// every class, 5ff86e89f5 #5347; real `TypeError` instances via
+// `__new_TypeError`, #3287; `__get_undefined`, `__call_function_N`, ...), and
+// each one turned a passing test into an instantiate-time LinkError. Link
+// against the production resolver instead: it is the import contract the
+// compiler actually emits against.
+function buildImports(result: CompileResult) {
+  return buildHostImports(result.imports, undefined, result.stringPool);
 }
 
 async function compileToWasm(source: string) {
@@ -60,7 +21,9 @@ async function compileToWasm(source: string) {
       `Compile failed:\n${result.errors.map((e) => `  L${e.line}: ${e.message}`).join("\n")}\nWAT:\n${result.wat}`,
     );
   }
-  const { instance } = await WebAssembly.instantiate(result.binary, buildImports(result));
+  const imports = buildImports(result);
+  const { instance } = await WebAssembly.instantiate(result.binary, imports as WebAssembly.Imports);
+  imports.setExports?.(instance.exports as Record<string, Function>);
   return instance.exports as Record<string, Function>;
 }
 

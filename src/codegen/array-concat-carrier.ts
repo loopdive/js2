@@ -78,7 +78,7 @@ import { tracesToProxyValue } from "./proxy-value-provenance.js"; // (#6651 H6)
  * a lane with nothing to gain.
  */
 export function concatMustConsultPrototypeChain(ctx: CodegenContext): boolean {
-  return ctx.targetProfile.semanticProviders === "native-first" && ctx.protoIndexDirty === true;
+  return ctx.protoIndexDirty === true;
 }
 
 /**
@@ -126,7 +126,7 @@ export function concatMustConsultPrototypeChain(ctx: CodegenContext): boolean {
  * delegates to `env::__array_concat_any`, which performs the Get itself.
  */
 export function concatMustConsultIsConcatSpreadable(ctx: CodegenContext): boolean {
-  return ctx.targetProfile.semanticProviders === "native-first" && ctx.isConcatSpreadableDirty === true;
+  return ctx.isConcatSpreadableDirty === true;
 }
 
 /**
@@ -140,7 +140,7 @@ export function concatMustConsultIsConcatSpreadable(ctx: CodegenContext): boolea
  * positive costs the fast path, never an answer.
  */
 export function concatOperandMayBeProxy(ctx: CodegenContext, call: ts.CallExpression): boolean {
-  if (ctx.targetProfile.semanticProviders !== "native-first" || !ctx.proxyDirty) return false;
+  if (!ctx.proxyDirty) return false;
   const callee = unwrap(call.expression);
   const operands = [...(ts.isPropertyAccessExpression(callee) ? [callee.expression] : []), ...call.arguments];
   return operands.some((operand) => !ts.isSpreadElement(operand) && tracesToProxyValue(ctx, operand));
@@ -211,7 +211,7 @@ function receiverIsArrayShaped(ctx: CodegenContext, receiver: ts.Expression): bo
  */
 export function concatCallYieldsDynamicCarrier(ctx: CodegenContext, expr: ts.Expression | undefined): boolean {
   if (expr === undefined) return false;
-  if (ctx.targetProfile.semanticProviders !== "native-first") return false;
+
   const call = unwrap(expr);
   if (!ts.isCallExpression(call)) return false;
   const callee = call.expression;

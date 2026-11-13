@@ -1,0 +1,14 @@
+
+ RUN  v3.2.7 /home/user/js2/.claude/worktrees/agent-a774506d6593a2d93
+
+ ✓ tests/issue-3518-identity-foundation-boundary.test.ts > identity foundation extraction > preserves the single implementation and exact pre-extraction serialized IDs 3ms
+ ✓ tests/issue-3518-identity-foundation-boundary.test.ts > identity foundation extraction > retains invalid ordinal refusals through both import paths 2ms
+ ✓ tests/issue-3518-identity-foundation-boundary.test.ts > identity foundation extraction > uses the compatibility identities in real inventory, IR builder and prepared ABI consumers 16ms
+ ✓ tests/issue-3518-identity-foundation-boundary.test.ts > identity foundation extraction > keeps distinct brands rejected by the actual TypeScript checker 101ms
+ ✓ tests/issue-3518-identity-foundation-boundary.test.ts > identity foundation extraction > checks the real nonempty foundation and rejects a type-only edge back to old identity 1193ms
+
+ Test Files  1 passed (1)
+      Tests  5 passed (5)
+   Start at  22:24:28
+   Duration  3.61s (transform 999ms, setup 0ms, collect 1.91s, tests 1.32s, environment 0ms, prepare 66ms)
+

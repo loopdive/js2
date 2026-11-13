@@ -243,6 +243,9 @@ jobs:
       # eval-shaped spellings (moment); the refusal provider builds in seconds
       # and lets those modules instantiate. Calls into it throw, so a package
       # that really evaluates code still reports a runtime error.
+      - name: Build compiler bundle (the provider build loads it; #6749)
+        run: pnpm run build:compiler-bundle
+
       - name: Prebuild the runtime-eval refusal provider (#6749)
         env:
           JS2WASM_EVAL_ENGINE: interpreter
@@ -302,6 +305,9 @@ jobs:
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+
+      - name: Build compiler bundle (the provider build loads it; #6749)
+        run: pnpm run build:compiler-bundle
 
       - name: Prebuild the runtime-eval refusal provider (#6749)
         env:

@@ -10,11 +10,10 @@ import {
   emitAnyAdd,
   numericAnyOperand,
 } from "./native-addition.js";
-export { emitAnyAdd, emitAnyAddFromExternTemps } from "./native-addition.js";
-import { expressionHasWidenedPropertyType } from "./strict-eq-stale-type.js";
+export { emitAnyAdd, emitAnyAddFromExternTemps, emitNativeStringSlotPlus } from "./native-addition.js";
+import { expressionHasWidenedStaticType } from "./strict-eq-stale-type.js";
 import { isInertUndefinedLiteral } from "./void-undefined-operand.js"; // (#6604)
 import { ts } from "../ts-api.js";
-import type { TypeFact } from "../checker/oracle.js";
 import {
   getNullablePrimitiveInfo,
   isBigIntType,
@@ -27,12 +26,7 @@ import {
 } from "../checker/type-mapper.js";
 import type { Instr, ValType } from "../ir/types.js";
 import { emitWasmInt32Coercion } from "../ir/backend/wasm-int32-coercion.js";
-import {
-  ensureAnyFromExternHelper,
-  ensureExternStrictEqHelper,
-  isAnyValue,
-  undefinedSingletonActive,
-} from "./any-helpers.js";
+import { ensureAnyFromExternHelper, ensureExternStrictEqHelper, isAnyValue } from "./any-helpers.js";
 import { reportError } from "./context/errors.js";
 import { allocLocal, allocTempLocal, releaseTempLocal } from "./context/locals.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
@@ -53,13 +47,18 @@ import { ensureNativeStringHelpers } from "./native-strings.js";
 import { emitNewTargetClassId, getOrAssignClassNewTargetId } from "./new-target.js"; // (#2023)
 import { compileLogicalAnd, compileLogicalOr, compileNullishCoalescing } from "./expressions/logical-ops.js";
 import { tryStaticToNumber } from "./expressions/misc.js";
+import { prepareSymbolToNumberGuard, symbolThrowArm } from "./tonumber-fast-paths.js";
 import { emitNativeParseNumber } from "./parse-number-native.js";
 import { ensureObjectRuntime } from "./object-runtime.js";
 import { admitsObjectAddition, emitObjectAdd } from "./addition-to-primitive.js";
-import { admitsObjectRelational, reduceRelationalOperandsToPrimitive } from "./relational-to-primitive.js";
+import {
+  admitsAnyRelational,
+  admitsObjectRelational,
+  compileRelationalOperands,
+  reduceRelationalOperandsToPrimitive,
+} from "./relational-to-primitive.js";
 // (#4491 T4) §13.15.3 `+` over object operands.
 import { admitsObjectAdd } from "./add-to-primitive.js";
-import { emitHostArrayCarrierBinary, hostArrayCarrierBinaryArm } from "./host-carrier-to-primitive.js"; // (#6788)
 import { addStringImports, addUnionImports, resolveWasmType } from "./index.js";
 import { isI32CompatibleOperand, nativeTypeOfExpression } from "./native-type-annotations.js";
 import type { InnerResult } from "./shared.js";
@@ -68,14 +67,16 @@ import { isLogicalAssignNamedEvalNameRead } from "./property-access.js";
 import { compileNullishObservedExpression } from "./property-nullish-read.js";
 import { foldVoidOperandEquality } from "./equality-void-operand.js";
 import { emitHoistedCharCodeAtRead, matchHoistedCharRead } from "./string-ops.js";
-import {
-  emitAnyEqFromExternTemps,
-  emitLooseEq,
-  emitStrictEq,
-  ensureExternrefToNumberProvider,
-} from "./coercion-engine.js";
+import { emitLooseEq, emitStrictEq, ensureExternrefToNumberProvider } from "./coercion-engine.js";
 import { compileInstanceOf, compileTypeofComparison } from "./typeof-delete.js";
-import { compileTypedBinaryDispatch } from "./binary-ops-typed-dispatch.js";
+import {
+  compileTypedBinaryDispatch,
+  isOracleHeterogeneousPrimitiveUnion,
+  sourceDeclarationOfIdentifier,
+  isRealmUndefinedIdentifier,
+  tryCompileEarlyNativeMapGetEquality,
+  tryEmitNativeMapGetLiteralNullishEquality,
+} from "./binary-ops-typed-dispatch.js";
 import { foldTypeDisjointThenPromote } from "./strict-eq-type-disjoint.js";
 import {
   bothOperandsAreBigIntCarriers,
@@ -85,39 +86,10 @@ import {
 import { compileInOperator } from "./binary-ops-in.js";
 import { moduleGlobalIsDynamicButStaticallyPrimitive } from "./declarations/heterogeneous-scalar-var-widening.js";
 import { emitIsUndefF64 } from "./value-tags.js";
-import { hasStaticBigIntOperand, usesHostBigIntCarrier } from "./host-bigint-carrier.js";
+import { hasStaticBigIntOperand } from "./host-bigint-carrier.js";
 import { emitStandaloneAnyBigIntBinary } from "./bigint-any-operand.js"; // (#5383) host-free any op bigint
-import { objectCoercionBigIntArgumentOf } from "./object-ctor-primitive-receiver.js";
 import { emitUninitialisedFieldStrictNullish, readsUninitialisedFieldSlot } from "./uninitialised-field-undefined.js"; // (#5312)
 import { readsUndefinedHoldingVariable } from "./undefined-holding-variable.js"; // (#1058)
-
-/**
- * (#1930) Keep the nullish AnyValue gate on the oracle side of the checker
- * boundary.  This mirrors `isHeterogeneousPrimitiveUnion` without exposing a
- * `ts.Type`: nullable heterogeneous bindings are the only unions whose
- * non-null parts must retain distinct primitive tags.
- */
-function isOracleHeterogeneousPrimitiveUnion(fact: TypeFact): boolean {
-  if (fact.kind !== "union" || fact.parts.length < 2) return false;
-  const primitiveKinds = new Set<TypeFact["kind"]>();
-  for (const part of fact.parts) {
-    if (part.kind !== "number" && part.kind !== "string" && part.kind !== "boolean") return false;
-    primitiveKinds.add(part.kind);
-  }
-  return primitiveKinds.size >= 2;
-}
-
-function sourceDeclarationOfIdentifier(ctx: CodegenContext, expression: ts.Expression): ts.Declaration | undefined {
-  if (!ts.isIdentifier(expression)) return undefined;
-  const symbol = ctx.checker.getSymbolAtLocation(expression);
-  return symbol?.valueDeclaration ?? symbol?.declarations?.[0];
-}
-
-function isRealmUndefinedIdentifier(ctx: CodegenContext, expression: ts.Expression): boolean {
-  if (!ts.isIdentifier(expression) || expression.text !== "undefined") return false;
-  const declaration = sourceDeclarationOfIdentifier(ctx, expression);
-  return declaration === undefined || declaration.getSourceFile().isDeclarationFile;
-}
 
 /**
  * An optional boolean has an i32 ABI, so its local alone cannot distinguish an
@@ -580,46 +552,6 @@ export function bigIntHostBinopOpcode(op: ts.SyntaxKind): number | undefined {
   }
 }
 
-/** Evaluate both operands left-to-right and delegate a BigInt operation to JS. */
-function emitHostBigIntOperation(
-  ctx: CodegenContext,
-  fctx: FunctionContext,
-  expr: ts.BinaryExpression,
-  opcode?: number,
-  negateEquality = false,
-): ValType | null {
-  const externref: ValType = { kind: "externref" };
-  const leftType = compileExpression(ctx, fctx, expr.left, externref);
-  if (!leftType) return null;
-  if (leftType.kind !== "externref") coerceType(ctx, fctx, leftType, externref);
-  const leftTmp = allocTempLocal(fctx, externref);
-  fctx.body.push({ op: "local.set", index: leftTmp });
-
-  const rightType = compileExpression(ctx, fctx, expr.right, externref);
-  if (!rightType) {
-    releaseTempLocal(fctx, leftTmp);
-    return null;
-  }
-  if (rightType.kind !== "externref") coerceType(ctx, fctx, rightType, externref);
-  const rightTmp = allocTempLocal(fctx, externref);
-  fctx.body.push({ op: "local.set", index: rightTmp });
-
-  const importName = opcode === undefined ? "__host_eq" : "__host_bigint_binop";
-  const params: ValType[] = opcode === undefined ? [externref, externref] : [{ kind: "i32" }, externref, externref];
-  const imported = ensureLateImport(ctx, importName, params, [opcode === undefined ? { kind: "i32" } : externref]);
-  flushLateImportShifts(ctx, fctx);
-  const finalIdx = ctx.funcMap.get(importName) ?? imported;
-  if (finalIdx === undefined) throw new Error(`Missing import after ensureLateImport: ${importName}`);
-
-  if (opcode !== undefined) fctx.body.push({ op: "i32.const", value: opcode });
-  fctx.body.push({ op: "local.get", index: leftTmp }, { op: "local.get", index: rightTmp });
-  releaseTempLocal(fctx, rightTmp);
-  releaseTempLocal(fctx, leftTmp);
-  fctx.body.push({ op: "call", funcIdx: finalIdx });
-  if (negateEquality) fctx.body.push({ op: "i32.eqz" });
-  return opcode === undefined ? { kind: "i32", boolean: true } : externref;
-}
-
 /**
  * (#3688) An identifier whose value physically cannot be `undefined`: the
  * global `NaN`/`Infinity`, or a binding held in an f64/i32/i64 local slot
@@ -722,7 +654,7 @@ export function compileBinaryExpression(
     [expr.left, expr.right].some(
       (operand) =>
         (ts.isIdentifier(operand) && fctx.rawArgumentsParamNames?.has(operand.text)) ||
-        expressionHasWidenedPropertyType(ctx, operand),
+        expressionHasWidenedStaticType(ctx, operand),
     )
   ) {
     return emitAnyAdd(ctx, fctx, expr);
@@ -920,17 +852,14 @@ export function compileBinaryExpression(
     // there would move bytes for an answer that is already right. Standalone
     // has no such fallback: it compares the carriers structurally and reports
     // `void 0 !== undefined` as TRUE, which is the defect this fixes.
-    const voidUndefinedIsLiteral = ctx.targetProfile.semanticProviders === "native-first";
-    const rightIsUndefinedId =
-      voidUndefinedIsLiteral && isInertUndefinedLiteral(expr.right)
-        ? true
-        : ts.isIdentifier(expr.right) && expr.right.text === "undefined";
+    const rightIsUndefinedId = isInertUndefinedLiteral(expr.right)
+      ? true
+      : ts.isIdentifier(expr.right) && expr.right.text === "undefined";
     const rightIsNullish = rightIsNullKeyword || rightIsUndefinedId;
     const leftIsNullKeyword = expr.left.kind === ts.SyntaxKind.NullKeyword;
-    const leftIsUndefinedId =
-      voidUndefinedIsLiteral && isInertUndefinedLiteral(expr.left)
-        ? true
-        : ts.isIdentifier(expr.left) && expr.left.text === "undefined";
+    const leftIsUndefinedId = isInertUndefinedLiteral(expr.left)
+      ? true
+      : ts.isIdentifier(expr.left) && expr.left.text === "undefined";
     const leftIsNullish = leftIsNullKeyword || leftIsUndefinedId;
     // A declaration binding whose element type is a heterogeneous primitive
     // union is physically a nullable `$AnyValue`.  Do not consume its
@@ -987,6 +916,18 @@ export function compileBinaryExpression(
       // assigns, are excluded inside the predicate.
       const isUninitialisedFieldSlot = readsUninitialisedFieldSlot(ctx, nonNullExpr);
       const valType = compileNullishObservedExpression(ctx, fctx, nonNullExpr);
+      const nativeMapNullish = tryEmitNativeMapGetLiteralNullishEquality(
+        ctx,
+        fctx,
+        expr,
+        nonNullExpr,
+        nonNullTsType,
+        valType,
+        rightIsNullish,
+        isStrictEqOp || isStrictNeqOp,
+        isNeqOp,
+      );
+      if (nativeMapNullish !== undefined) return nativeMapNullish;
       if (valType === null) {
         // Void expression (e.g. void function call) compared to null/undefined:
         // void returns undefined, so undefined == undefined/null is true (loose)
@@ -1159,6 +1100,9 @@ export function compileBinaryExpression(
   const leftTsType = ctx.checker.getTypeAtLocation(expr.left);
   const rightTsType = ctx.checker.getTypeAtLocation(expr.right);
 
+  const nativeMapEquality = tryCompileEarlyNativeMapGetEquality(ctx, fctx, expr, leftTsType, rightTsType);
+  if (nativeMapEquality !== undefined) return nativeMapEquality;
+
   // ── Constant folding: emit a single constant when both operands are compile-time known ──
   {
     // (#4491 T4) …but NEVER for a `+` whose operands the §13.15.3 object arm
@@ -1176,21 +1120,6 @@ export function compileBinaryExpression(
       fctx.body.push({ op: "f64.const", value: folded });
       return { kind: "f64" };
     }
-  }
-
-  // `Object(2n)` is typed as `any`, so an operation whose other operand is an
-  // object has no checker-visible BigInt side. Keep it out of the f64 deferred
-  // ToNumeric path: the JS host must unwrap both objects before deciding
-  // whether this is valid BigInt arithmetic or a mixed-type TypeError.
-  const boxedBigIntOpcode = bigIntHostBinopOpcode(op);
-  if (
-    usesHostBigIntCarrier(ctx) &&
-    ctx.anyValueTypeIdx < 0 &&
-    boxedBigIntOpcode !== undefined &&
-    (objectCoercionBigIntArgumentOf(ctx, expr.left) !== undefined ||
-      objectCoercionBigIntArgumentOf(ctx, expr.right) !== undefined)
-  ) {
-    return emitHostBigIntOperation(ctx, fctx, expr, boxedBigIntOpcode);
   }
 
   // §13.15.2 evaluates both ExponentiationExpression operands before either
@@ -1321,8 +1250,7 @@ export function compileBinaryExpression(
       // native `__str_to_number` scanner is §7.1.4.1 StringToNumber (NaN for a
       // non-numeric string, 0 for empty), and `f64.eq` reproduces +0===-0 and
       // NaN≠NaN — so `"1"==1`, `0==""`, `false==""`, `"x"==1` all match Node.
-      const nativeSemantics = ctx.targetProfile.semanticProviders === "native-first";
-      if (nativeSemantics && ctx.nativeStrings && ctx.anyStrTypeIdx >= 0) {
+      if (ctx.nativeStrings && ctx.anyStrTypeIdx >= 0) {
         // Ensure the native StringToNumber scanner exists. Its signature is
         // `(externref) -> f64`; it converts the externref back to ref $AnyString
         // internally (any.convert_extern + ref.cast).
@@ -1733,8 +1661,6 @@ export function compileBinaryExpression(
     return emitObjectAdd(ctx, fctx, expr);
   }
   // (#6788) JS-host twin for an ARRAY operand — see host-carrier-to-primitive.ts.
-  const hostCarrierArm = hostArrayCarrierBinaryArm(ctx, expr, leftTsType, rightTsType);
-  if (hostCarrierArm !== undefined) return emitHostArrayCarrierBinary(ctx, fctx, expr, hostCarrierArm);
   if (
     !wrapperEquality &&
     isStringType(leftTsType) &&
@@ -1777,31 +1703,6 @@ export function compileBinaryExpression(
     // the standalone i64 lowering. This is also necessary for accumulators:
     // computing a wide host result and then storing it in an i64 local would
     // otherwise lose the high bits before the next iteration.
-    if (leftIsBigInt && rightIsBigInt && usesHostBigIntCarrier(ctx)) {
-      const isEq =
-        op === ts.SyntaxKind.EqualsEqualsToken ||
-        op === ts.SyntaxKind.EqualsEqualsEqualsToken ||
-        op === ts.SyntaxKind.ExclamationEqualsToken ||
-        op === ts.SyntaxKind.ExclamationEqualsEqualsToken;
-      const isNeq = op === ts.SyntaxKind.ExclamationEqualsToken || op === ts.SyntaxKind.ExclamationEqualsEqualsToken;
-      const isRelational =
-        op === ts.SyntaxKind.LessThanToken ||
-        op === ts.SyntaxKind.LessThanEqualsToken ||
-        op === ts.SyntaxKind.GreaterThanToken ||
-        op === ts.SyntaxKind.GreaterThanEqualsToken;
-
-      if (isRelational) {
-        return emitAnyRelational(ctx, fctx, expr, op);
-      }
-
-      // Keep the historical i64 extension for BigInt `>>>`. JavaScript itself
-      // rejects that operator for BigInt, but the compiler's existing contract
-      // (and standalone lane) defines it as an unsigned i64 shift.
-      const hostOpcode =
-        op === ts.SyntaxKind.GreaterThanGreaterThanGreaterThanToken ? undefined : bigIntHostBinopOpcode(op);
-      if (isEq) return emitHostBigIntOperation(ctx, fctx, expr, undefined, isNeq);
-      if (hostOpcode !== undefined) return emitHostBigIntOperation(ctx, fctx, expr, hostOpcode);
-    }
 
     // Mixed BigInt + Number/String: comparison and equality operators (#227, #228, #295)
     if (leftIsBigInt !== rightIsBigInt) {
@@ -1870,36 +1771,6 @@ export function compileBinaryExpression(
       // and its f64 conversion also loses integer precision. Let JavaScript
       // perform the exact abstract equality / relational algorithm whenever a
       // host is available.
-      if (usesHostBigIntCarrier(ctx) && (isLooseEq || isLooseNeq || isComparison)) {
-        if (isComparison) {
-          return emitAnyRelational(ctx, fctx, expr, op);
-        }
-        const externref: ValType = { kind: "externref" };
-        const leftType = compileExpression(ctx, fctx, expr.left, externref);
-        if (!leftType) return null;
-        if (leftType.kind !== "externref") coerceType(ctx, fctx, leftType, externref);
-        const leftTmp = allocTempLocal(fctx, externref);
-        fctx.body.push({ op: "local.set", index: leftTmp });
-        const rightType = compileExpression(ctx, fctx, expr.right, externref);
-        if (!rightType) {
-          releaseTempLocal(fctx, leftTmp);
-          return null;
-        }
-        if (rightType.kind !== "externref") coerceType(ctx, fctx, rightType, externref);
-        const rightTmp = allocTempLocal(fctx, externref);
-        fctx.body.push({ op: "local.set", index: rightTmp });
-        const imported = ensureLateImport(ctx, "__host_loose_eq", [externref, externref], [{ kind: "i32" }]);
-        flushLateImportShifts(ctx, fctx);
-        const finalIdx = ctx.funcMap.get("__host_loose_eq") ?? imported;
-        if (finalIdx === undefined) throw new Error("Missing import after ensureLateImport: __host_loose_eq");
-        fctx.body.push({ op: "local.get", index: leftTmp });
-        fctx.body.push({ op: "local.get", index: rightTmp });
-        releaseTempLocal(fctx, rightTmp);
-        releaseTempLocal(fctx, leftTmp);
-        fctx.body.push({ op: "call", funcIdx: finalIdx });
-        if (isLooseNeq) fctx.body.push({ op: "i32.eqz" });
-        return { kind: "i32", boolean: true };
-      }
 
       // #1827 — BigInt × Number loose (in)equality must use EXACT
       // mathematical-value equality, not an f64 collapse. `f64.convert_i64_s`
@@ -2055,20 +1926,13 @@ export function compileBinaryExpression(
       // (`anyValueTypeIdx < 0`), mirroring emitAnyAdd's host-import ABI rule.
       // Standalone/WASI has no JS host, so it keeps the throw (existing
       // limitation — a native ToNumeric reduction is the follow-up slice).
-      const noJsHost3481 = !usesHostBigIntCarrier(ctx);
       const nonBigIntTsType = leftIsBigInt ? rightTsType : leftTsType;
-      const nonBigIntIsObjectish =
-        (nonBigIntTsType.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown | ts.TypeFlags.Object)) !== 0;
       const hostBinopCode = bigIntHostBinopOpcode(op);
-      if (!noJsHost3481 && ctx.anyValueTypeIdx < 0 && nonBigIntIsObjectish && hostBinopCode !== undefined) {
-        return emitHostBigIntOperation(ctx, fctx, expr, hostBinopCode);
-      }
+
       // (#5383) …and its host-free twin for an `any`/`unknown` operand.
-      const native = noJsHost3481
-        ? emitStandaloneAnyBigIntBinary(ctx, fctx, expr, leftIsBigInt, nonBigIntTsType, hostBinopCode, () =>
-            compileI64BinaryOp(ctx, fctx, op, expr),
-          )
-        : undefined;
+      const native = emitStandaloneAnyBigIntBinary(ctx, fctx, expr, leftIsBigInt, nonBigIntTsType, hostBinopCode, () =>
+        compileI64BinaryOp(ctx, fctx, op, expr),
+      );
       if (native !== undefined) return native;
       // Compile both sides for side effects, drop their values, then throw.
       const lt = compileExpression(ctx, fctx, expr.left);
@@ -2178,18 +2042,14 @@ export function compileBinaryExpression(
   // ToNumber both sides, so `("a" as any) < ("b" as any)` yielded `false`.
   // Route to the runtime-dispatched compare before the f64 hint is applied.
   //
-  // Two arms, deliberately gated differently — see relational-to-primitive.ts:
-  //  - ANY arm: unchanged, including its `anyValueTypeIdx < 0` exclusion.
-  //  - OBJECT arm (§7.2.12): standalone only, and NOT subject to that exclusion
-  //    (the AnyValue helpers do not in fact own this shape). #1374's host
-  //    comparator hazard cannot recur there — no host operator is involved.
+  // Two arms, gated in relational-to-primitive.ts: ANY (`any`/`unknown`, plus
+  // string-mixed unions without a JS host — #6999) and OBJECT (§7.2.12, no host
+  // only). #1374's host comparator hazard cannot recur without a host operator.
   if (isRelational) {
-    const leftIsAnyish = (leftTsType.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0;
-    const rightIsAnyish = (rightTsType.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0;
-    const anyArm = ctx.anyValueTypeIdx < 0 && (leftIsAnyish || rightIsAnyish);
+    const anyArm = admitsAnyRelational(ctx, leftTsType, rightTsType);
     const objArm = admitsObjectRelational(ctx, leftTsType, rightTsType);
     if ((anyArm || objArm) && !isBigIntType(leftTsType) && !isBigIntType(rightTsType)) {
-      return emitAnyRelational(ctx, fctx, expr, op);
+      return emitAnyRelational(ctx, fctx, expr, op, anyArm);
     }
   }
 
@@ -2741,25 +2601,29 @@ export function emitAnyRelational(
   fctx: FunctionContext,
   expr: ts.BinaryExpression,
   op: ts.SyntaxKind,
+  numericShortcut = false, // (#6999) host-free any-arm: two Wasm numbers skip the cascade
 ): ValType {
-  const noJsHost = ctx.targetProfile.semanticProviders === "native-first";
   // Registered before the operands compile, so its setup cannot desync funcIdxs.
-  if (noJsHost && ctx.nativeStrings && ctx.anyStrTypeIdx >= 0) ensureObjectRuntime(ctx);
+  if (ctx.nativeStrings && ctx.anyStrTypeIdx >= 0) {
+    ensureObjectRuntime(ctx);
+    prepareSymbolToNumberGuard(ctx, fctx);
+  }
 
   // Compile both operands to externref temps (keep runtime strings boxed).
-  const lType = compileExpression(ctx, fctx, expr.left, { kind: "externref" });
-  if (!lType) return { kind: "i32" };
-  if (lType.kind !== "externref") coerceType(ctx, fctx, lType, { kind: "externref" });
-  const lTmp = allocTempLocal(fctx, { kind: "externref" });
-  fctx.body.push({ op: "local.set", index: lTmp });
-  const rType = compileExpression(ctx, fctx, expr.right, { kind: "externref" });
-  if (!rType) {
-    releaseTempLocal(fctx, lTmp);
-    return { kind: "i32" };
-  }
-  if (rType.kind !== "externref") coerceType(ctx, fctx, rType, { kind: "externref" });
-  const rTmp = allocTempLocal(fctx, { kind: "externref" });
-  fctx.body.push({ op: "local.set", index: rTmp });
+  // (#6982) A class instance with `[Symbol.toPrimitive]` stays raw until step 1.
+  // Provider regime, not host axis: the strict-gc profile is native-first with
+  // `ctx.standalone`/`ctx.wasi` false and keeps the shortcut (#6979 S7-a review).
+  const operands = compileRelationalOperands(
+    ctx,
+    fctx,
+    expr,
+    op,
+    numericShortcut && ctx.targetProfile.semanticProviders === "native-first",
+  );
+  if (operands === null) return { kind: "i32" };
+  const { l, r } = operands;
+  const lTmp = l.tmp;
+  const rTmp = r.tmp;
 
   // Map a -1/0/1/2 `cmp` (or an f64 comparison) to the operator's boolean result.
   // The `2` (incomparable) sentinel must make ALL four operators yield 0, so we
@@ -2796,27 +2660,6 @@ export function emitAnyRelational(
   };
 
   // ── JS-host: __host_compare → -1/0/1/2 ──
-  if (!noJsHost) {
-    fctx.body.push({ op: "local.get", index: lTmp });
-    fctx.body.push({ op: "local.get", index: rTmp });
-    const hostIdx = ensureLateImport(
-      ctx,
-      "__host_compare",
-      [{ kind: "externref" }, { kind: "externref" }],
-      [{ kind: "i32" }],
-    );
-    flushLateImportShifts(ctx, fctx);
-    const finalIdx = ctx.funcMap.get("__host_compare") ?? hostIdx;
-    if (finalIdx === undefined) throw new Error("Missing import after ensureLateImport: __host_compare");
-    fctx.body.push({ op: "call", funcIdx: finalIdx });
-    const cmpTmp = allocTempLocal(fctx, { kind: "i32" });
-    fctx.body.push({ op: "local.set", index: cmpTmp });
-    mapCmpToOp(cmpTmp);
-    releaseTempLocal(fctx, cmpTmp);
-    releaseTempLocal(fctx, rTmp);
-    releaseTempLocal(fctx, lTmp);
-    return { kind: "i32" };
-  }
 
   // ── Standalone / WASI: §7.2.13 in-module ──
   // both strings → lexicographic __str_compare; else ToNumber both + f64 compare.
@@ -2824,7 +2667,7 @@ export function emitAnyRelational(
     ensureNativeStringHelpers(ctx);
     addUnionImports(ctx);
     // §7.2.12 step 1 — the arm below must be chosen from the PRIMITIVES.
-    reduceRelationalOperandsToPrimitive(ctx, fctx, lTmp, rTmp);
+    reduceRelationalOperandsToPrimitive(ctx, fctx, lTmp, rTmp, l.raw, r.raw);
     const typeofStr = ctx.funcMap.get("__typeof_string");
     const unboxNum = ctx.funcMap.get("__unbox_number");
     const strCompare = ctx.nativeStrHelpers.get("__str_compare");
@@ -2843,9 +2686,11 @@ export function emitAnyRelational(
       const rf = allocTempLocal(fctx, { kind: "f64" });
       const numSign: Instr[] = [
         { op: "local.get", index: lTmp },
+        ...symbolThrowArm(ctx, lTmp),
         { op: "call", funcIdx: unboxNum },
         { op: "local.set", index: lf },
         { op: "local.get", index: rTmp },
+        ...symbolThrowArm(ctx, rTmp),
         { op: "call", funcIdx: unboxNum },
         { op: "local.set", index: rf },
         // (l < r) ? -1 : (l > r ? 1 : (l == r ? 0 : 2))

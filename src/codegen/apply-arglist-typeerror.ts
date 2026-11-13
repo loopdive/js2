@@ -78,6 +78,18 @@ function isCallableReceiver(ctx: CodegenContext, receiver: ts.Expression): boole
   return fact.kind === "builtin" && fact.name === "Function";
 }
 
+/** The canonical apply arm evaluates a runtime receiver before throwing. */
+export function applyArgArrayTypeErrorMaterializesReceiver(
+  ctx: CodegenContext,
+  expr: ts.CallExpression,
+  propAccess: ts.PropertyAccessExpression,
+): boolean {
+  if (propAccess.name.text !== "apply") return false;
+  if (expr.arguments.length !== 2) return false;
+  if (!isCallableReceiver(ctx, propAccess.expression)) return false;
+  return isThrowingArgArrayFact(ctx.oracle.typeFactOf(expr.arguments[1]!));
+}
+
 /**
  * Emit the §20.2.3.1 step-4 TypeError for `f.apply(thisArg, <primitive>)`, or
  * return undefined to leave the call to the existing lowerings.
@@ -88,13 +100,8 @@ export function tryEmitApplyArgArrayTypeError(
   expr: ts.CallExpression,
   propAccess: ts.PropertyAccessExpression,
 ): ValType | undefined {
-  if (propAccess.name.text !== "apply") return undefined;
-  if (expr.arguments.length !== 2) return undefined;
-  // The receiver must be a FUNCTION — see narrowing note 1 above. A plain
-  // object owning an `apply` member reaches this same dispatch site.
-  if (!isCallableReceiver(ctx, propAccess.expression)) return undefined;
+  if (!applyArgArrayTypeErrorMaterializesReceiver(ctx, expr, propAccess)) return undefined;
   const argArray = expr.arguments[1]!;
-  if (!isThrowingArgArrayFact(ctx.oracle.typeFactOf(argArray))) return undefined;
 
   // Spec order: receiver, thisArg, argArray — all evaluated, then the throw.
   const recvType = compileExpression(ctx, fctx, propAccess.expression);

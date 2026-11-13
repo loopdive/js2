@@ -33,6 +33,7 @@
 
 import type { AllocSiteRegistry } from "./alloc-registry.js";
 import { ALLOC_NAMESPACES } from "./alloc-registry.js";
+import { allocationEvidenceRule, allocationEvidenceOperand } from "./allocation-evidence/effect-rules.js";
 import type { IrBlock, IrBlockId, IrFunction, IrInstr, IrTerminator, IrValueId } from "../core/nodes.js";
 import {
   AccessSet,
@@ -253,11 +254,18 @@ function applyInstrEffect(
       touch(state, instr.cell, allocOf, null, "read");
       break;
     case "vec.get":
-      touch(state, instr.vec, allocOf, null, "read");
-      break;
     case "vec.len":
-      touch(state, instr.vec, allocOf, null, "read");
+    case "vec.set": {
+      const rule = allocationEvidenceRule(instr);
+      if (rule.kind !== "effects") throw new Error("allocation rule mismatch: ownership vector effect");
+      for (let index = 0; index < rule.ownership.length; index++) {
+        const event = rule.ownership[index]!;
+        const value = allocationEvidenceOperand(instr, event.operand);
+        if (event.op === "escape") markEscaped(state, value, allocOf);
+        else touch(state, value, allocOf, null, event.op);
+      }
       break;
+    }
     case "string.len":
       touch(state, instr.value, allocOf, null, "read");
       break;
@@ -280,10 +288,6 @@ function applyInstrEffect(
       // A ref cell is the canonical escape channel for a mutable capture.
       touch(state, instr.cell, allocOf, null, "write");
       markEscaped(state, instr.value, allocOf);
-      break;
-    case "vec.set":
-      touch(state, instr.vec, allocOf, null, "write");
-      markEscaped(state, instr.newValue, allocOf);
       break;
     case "global.set":
       markEscaped(state, instr.value, allocOf);

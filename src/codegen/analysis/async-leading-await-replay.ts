@@ -32,8 +32,19 @@
 // conditional / short-circuit arm, an optional chain, a binding default) is
 // declined — it is not "first", it is conditional, and the CFG hoister owns
 // those shapes.
+//
+// (#7094) A `let`/`var` local of the awaiting function is also admitted when
+// nothing can write it between the pre-await read and the resumption: no
+// nested function / class scope references it (so no other code can run a
+// write during the suspension) and the awaited operand neither names it nor
+// calls `eval`. Its value is spilled across the suspension like every local,
+// so the post-resume read observes exactly the pre-await value. This is what
+// `r += await p` and `r = r + await p` need — the compound target is read
+// before the right operand (§13.15.2), and declining dropped the function to
+// the pass-through that added the Promise OBJECT instead of its value.
 
-import { ts } from "../../ts-api.js";
+import { forEachChild, ts } from "../../ts-api.js";
+import { isNestedFunctionScope } from "../async-cps-ast.js";
 
 /**
  * Ambient bindings a program does not reassign in practice. Reading one before
@@ -86,8 +97,57 @@ function isImmutableBinding(id: ts.Identifier, checker: ts.TypeChecker): boolean
   );
 }
 
+function isScopeBoundary(node: ts.Node): boolean {
+  return isNestedFunctionScope(node) || ts.isClassLike(node) || ts.isClassStaticBlockDeclaration(node);
+}
+
+function enclosingScope(node: ts.Node): ts.Node | undefined {
+  let current = node.parent;
+  while (current !== undefined && !isScopeBoundary(current)) current = current.parent;
+  return current;
+}
+
+/**
+ * Does `root` name `eval` anywhere, or name `symbol` (with `nestedOnly`: only
+ * inside a function / class scope nested below `root`)?
+ */
+function referencesSymbol(root: ts.Node, symbol: ts.Symbol, checker: ts.TypeChecker, nestedOnly: boolean): boolean {
+  let found = false;
+  const walk = (node: ts.Node, nested: boolean): void => {
+    if (found) return;
+    const inNested = nested || isScopeBoundary(node);
+    if (ts.isIdentifier(node)) {
+      if (node.text === "eval" || ((inNested || !nestedOnly) && checker.getSymbolAtLocation(node) === symbol)) {
+        found = true;
+      }
+      return;
+    }
+    forEachChild(node, (child) => walk(child, inNested));
+  };
+  forEachChild(root, (child) => walk(child, false));
+  return found;
+}
+
+/**
+ * (#7094) Is `id` a `let`/`var` local of the function that awaits `awaitNode`
+ * that nothing can write between its pre-await read and the resumption?
+ */
+function isSuspensionStableLocal(id: ts.Identifier, awaitNode: ts.AwaitExpression, checker: ts.TypeChecker): boolean {
+  const symbol = checker.getSymbolAtLocation(id);
+  const declarations = symbol?.getDeclarations() ?? [];
+  if (symbol === undefined || declarations.length !== 1) return false;
+  const decl = declarations[0]!;
+  if (!ts.isVariableDeclaration(decl) || !ts.isIdentifier(decl.name) || !ts.isVariableDeclarationList(decl.parent)) {
+    return false; // a catch binding is a VariableDeclaration too
+  }
+  const scope = enclosingScope(decl);
+  if (scope === undefined || scope !== enclosingScope(awaitNode) || !isNestedFunctionScope(scope)) return false;
+  if (referencesSymbol(scope, symbol, checker, true)) return false;
+  return !referencesSymbol(awaitNode, symbol, checker, false);
+}
+
 /** May `expr`, evaluated before the suspension, be evaluated again after it? */
-function isReplaySafeOperand(expr: ts.Expression, checker: ts.TypeChecker): boolean {
+function isReplaySafeOperand(expr: ts.Expression, checker: ts.TypeChecker, awaitNode: ts.AwaitExpression): boolean {
   let e = expr;
   while (ts.isParenthesizedExpression(e)) e = e.expression;
   switch (e.kind) {
@@ -100,7 +160,7 @@ function isReplaySafeOperand(expr: ts.Expression, checker: ts.TypeChecker): bool
     case ts.SyntaxKind.NullKeyword:
       return true;
   }
-  if (ts.isIdentifier(e)) return isImmutableBinding(e, checker);
+  if (ts.isIdentifier(e)) return isImmutableBinding(e, checker) || isSuspensionStableLocal(e, awaitNode, checker);
   // `JSON.parse` — a plain read off a stable ambient namespace.
   if (ts.isPropertyAccessExpression(e) && e.questionDotToken === undefined && ts.isIdentifier(e.expression)) {
     const base = e.expression;
@@ -114,8 +174,8 @@ function isReplaySafeOperand(expr: ts.Expression, checker: ts.TypeChecker): bool
   return false;
 }
 
-function allReplaySafe(exprs: readonly ts.Node[], checker: ts.TypeChecker): boolean {
-  return exprs.every((x) => ts.isExpression(x) && isReplaySafeOperand(x, checker));
+function allReplaySafe(exprs: readonly ts.Node[], checker: ts.TypeChecker, awaitNode: ts.AwaitExpression): boolean {
+  return exprs.every((x) => ts.isExpression(x) && isReplaySafeOperand(x, checker, awaitNode));
 }
 
 /**
@@ -176,7 +236,18 @@ function operandsBefore(parent: ts.Node, child: ts.Node): readonly ts.Node[] | n
       // `x = <…await…>`: resolving a plain identifier reference has no effect.
       return parent.right === child && ts.isIdentifier(parent.left) ? [] : null;
     }
-    if (op >= ts.SyntaxKind.FirstAssignment && op <= ts.SyntaxKind.LastAssignment) return null;
+    if (op >= ts.SyntaxKind.FirstAssignment && op <= ts.SyntaxKind.LastAssignment) {
+      // (#7094) `x op= <…await…>`: the target's value is read before the right
+      // operand. Logical assignments may skip the right operand entirely.
+      if (
+        op === ts.SyntaxKind.AmpersandAmpersandEqualsToken ||
+        op === ts.SyntaxKind.BarBarEqualsToken ||
+        op === ts.SyntaxKind.QuestionQuestionEqualsToken
+      ) {
+        return null;
+      }
+      return parent.right === child && ts.isIdentifier(parent.left) ? [parent.left] : null;
+    }
     return parent.left === child ? [] : [parent.left];
   }
   if (ts.isArrayLiteralExpression(parent)) {
@@ -242,8 +313,36 @@ export function isLeadingReplaySafeAwait(
     const parent = current.parent;
     if (parent === undefined) return false;
     const before = operandsBefore(parent, current);
-    if (before === null || !allReplaySafe(before, checker)) return false;
+    if (before === null || !allReplaySafe(before, checker, awaitNode)) return false;
     current = parent;
   }
   return true;
+}
+
+/**
+ * (#7094) The bare identifiers a leading-await replay re-reads after the
+ * resumption: the pre-await operands on the path from `awaitNode` up to its
+ * statement. They lexically PRECEDE the await, so the whole-remainder liveness
+ * walk (`collectReferencedAfter`) misses them, and a local read only there was
+ * not spilled — `const k = 10; return k + await p` resumed with `k` reset to 0.
+ * Purely syntactic and a superset of what replay admits (an extra spill is only
+ * a frame field); empty when the chain cannot be replayed at all.
+ */
+export function replayPreAwaitReads(awaitNode: ts.AwaitExpression): readonly string[] {
+  const out: string[] = [];
+  let current: ts.Node = awaitNode;
+  for (;;) {
+    const parent: ts.Node | undefined = current.parent;
+    if (parent === undefined) return [];
+    if (ts.isExpressionStatement(parent) || ts.isReturnStatement(parent)) return out;
+    if (ts.isVariableDeclaration(parent)) return parent.initializer === current ? out : [];
+    const before = operandsBefore(parent, current);
+    if (before === null) return [];
+    for (const operand of before) {
+      let e = operand;
+      while (ts.isParenthesizedExpression(e)) e = e.expression;
+      if (ts.isIdentifier(e)) out.push(e.text);
+    }
+    current = parent;
+  }
 }

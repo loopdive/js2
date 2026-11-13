@@ -154,6 +154,12 @@ export function evaluateBudget(
 
 async function measureCompileWork(callSites: number): Promise<number> {
   const source = buildRepresentativeAssembly(callSites);
+  // (#6708) Native-first lazily initializes provider data on the first compile
+  // in a process. The test262 workers compile thousands of files per process,
+  // while this gate is specifically a per-file source-scan regression guard.
+  // Warm that one-time setup outside the meter so the budget represents the
+  // repeated harness compile path and remains deterministic run-to-run.
+  await compile(source, { fileName: "harness-budget-warmup.ts" });
   enableForEachChildMeter();
   try {
     // The assembly may not compile cleanly (as the real harness does not) — the

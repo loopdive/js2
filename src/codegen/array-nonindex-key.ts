@@ -60,8 +60,9 @@ import {
   skipTransparentExpressions,
 } from "./shared.js";
 import { resolveConstantExpression } from "./literals.js";
-import { tryEmitStaticI32Expression } from "./i32-static-range-expr.js";
+import { isRangeProvenArrayIndex, tryEmitStaticI32Expression } from "./i32-static-range-expr.js";
 import { highArrayIndexLiteralI32 } from "./vec-sparse-index.js";
+import { arrayIndexOfKey, isArrayIndexNumber, literalElementKey, MAX_I32_INDEX } from "../shared/array-index-key.js";
 import { TYPED_ARRAY_NAMES } from "./index.js";
 import { VEC_PROP_GET, VEC_PROP_SET } from "./vec-props.js";
 import { emitToNumber } from "./coercion-engine.js";
@@ -122,25 +123,23 @@ export function isDynamicPropertyKeyExpression(
   // Constant numeric expressions and simple variable indices stay on their
   // existing dense path.
   if (keyFact.kind === "number") {
-    return ts.isBinaryExpression(inner) && typeof resolveConstantExpression(ctx, inner) !== "number";
+    if (!ts.isBinaryExpression(inner) || typeof resolveConstantExpression(ctx, inner) === "number") return false;
+    // (#7014) A range-proven index (`arr[i % 2]`, `arr[i + 1]` over a counted
+    // loop) cannot leave i32 or be non-integral, so the exactness concern above
+    // does not apply. Routing it to the runtime property-key lane (11bbf2a791)
+    // crossed the JS boundary on the host lane for a plain element read, and
+    // without wired exports returned `undefined` ("illegal cast" in the
+    // `string-derived-length-fast-path` host-string pin).
+    return !isRangeProvenArrayIndex(ctx, inner);
   }
   // A literal ordinary name (for example `"[object Object]"`) is also a
   // property key, not a numeric index. Numeric spellings and the historical
   // named-key constants are handled by their dedicated routes first.
-  return ts.isStringLiteral(inner) && !isArrayIndexString(inner.text) && !isNamedNumericOrBooleanSpelling(inner.text);
-}
-
-/** 2^32 − 1 — the exclusive upper bound on array indices (§10.4.2.2). */
-const MAX_ARRAY_INDEX_EXCLUSIVE = 4294967295;
-
-/**
- * `true` when `n`'s property key (`ToString(n)`) is an array index.
- *
- * `-0` counts: `ToString(-0)` is `"0"`, and `0` is an index. `Number.isInteger`
- * accepts `-0` and `-0 >= 0` holds, so the plain arithmetic is already right.
- */
-function isArrayIndexNumber(n: number): boolean {
-  return Number.isInteger(n) && n >= 0 && n < MAX_ARRAY_INDEX_EXCLUSIVE;
+  return (
+    ts.isStringLiteral(inner) &&
+    arrayIndexOfKey(inner.text) === undefined &&
+    !isNamedNumericOrBooleanSpelling(inner.text)
+  );
 }
 
 /**
@@ -185,7 +184,9 @@ function isUnshadowedGlobal(fctx: FunctionContext, name: string): boolean {
 function resolveNumericKey(ctx: CodegenContext, fctx: FunctionContext, raw: ts.Expression): number | undefined {
   const key = skipTransparentExpressions(raw);
 
-  if (ts.isNumericLiteral(key)) return Number(key.text);
+  // A numeric literal (under unary `+`/`-`) and the unshadowed `NaN` / `Infinity`.
+  const literal = literalElementKey(key, (id) => !isUnshadowedGlobal(fctx, id.text))?.value;
+  if (typeof literal === "number") return literal;
 
   if (ts.isPrefixUnaryExpression(key)) {
     const inner = resolveNumericKey(ctx, fctx, key.operand);
@@ -193,11 +194,6 @@ function resolveNumericKey(ctx: CodegenContext, fctx: FunctionContext, raw: ts.E
     if (key.operator === ts.SyntaxKind.MinusToken) return -inner;
     if (key.operator === ts.SyntaxKind.PlusToken) return inner;
     return undefined;
-  }
-
-  if (ts.isIdentifier(key) && isUnshadowedGlobal(fctx, key.text)) {
-    if (key.text === "NaN") return NaN;
-    if (key.text === "Infinity") return Infinity;
   }
 
   if (
@@ -229,18 +225,6 @@ function resolveNumericKey(ctx: CodegenContext, fctx: FunctionContext, raw: ts.E
 
   const constVal = resolveConstantExpression(ctx, key);
   return typeof constVal === "number" ? constVal : undefined;
-}
-
-/**
- * `true` when the STRING key `k` is an array index — i.e.
- * `ToString(ToUint32(k)) === k` and `ToUint32(k) !== 2^32 − 1`, verbatim
- * §10.4.2.2. `>>> 0` is ToUint32, and it makes every near-miss spelling fall
- * out correctly: `"00"` → `"0" !== "00"`, `"4294967296"` → `"0"`, `"-1"` →
- * `"4294967295"`, `"1.1"` → `"1"`, `""` → `"0"`.
- */
-function isArrayIndexString(k: string): boolean {
-  const u = Number(k) >>> 0;
-  return String(u) === k && u !== MAX_ARRAY_INDEX_EXCLUSIVE;
 }
 
 /**
@@ -304,21 +288,12 @@ export function nonArrayIndexNumericKey(
   // `true as any` must decide identically to the bare `true` the equivalent JS
   // writes.
   const inner = skipTransparentExpressions(key);
-  if (inner.kind === ts.SyntaxKind.TrueKeyword) return "true";
-  if (inner.kind === ts.SyntaxKind.FalseKeyword) return "false";
-  // (#4556) `null` / `undefined` element keys. ToPropertyKey(null) is the
-  // STRING `"null"`, not index 0 — but the vec lane coerced them to i32 and
-  // wrote element 0 (`x[null] = 0` made `x[0]` 0 and `x["null"]` undefined;
-  // test262 `built-ins/Array/S15.4_A1.1_T5`). Same failure shape as the
-  // boolean-literal arm directly above, same fix.
-  if (inner.kind === ts.SyntaxKind.NullKeyword) return "null";
-  if (
-    inner.kind === ts.SyntaxKind.UndefinedKeyword ||
-    ts.isVoidExpression(inner) ||
-    (ts.isIdentifier(inner) && inner.text === "undefined" && isUnshadowedGlobal(fctx, "undefined"))
-  ) {
-    return "undefined";
-  }
+  // `true` / `false`, and (#4556) `null` / `undefined` / `void …`: the key is
+  // the STRING `"true"`, `"null"`, …, never index 1 or 0. The vec lane coerced
+  // them to i32 and wrote a real element (`x[null] = 0` made `x[0]` 0 and
+  // `x["null"]` undefined; test262 `built-ins/Array/S15.4_A1.1_T5`).
+  const literal = literalElementKey(inner, (id) => !isUnshadowedGlobal(fctx, id.text));
+  if (literal !== undefined && typeof literal.value !== "number") return String(literal.value);
   // (#4556) `new Boolean(<const>)` — the wrapper twin of the `new Number` /
   // `new String` arms in the key resolvers: ToPropertyKey runs ToPrimitive
   // first, so the key is `"true"` / `"false"` (`S15.4_A1.1_T6`).
@@ -349,7 +324,7 @@ export function nonArrayIndexNumericKey(
 
   const n = resolveNumericKey(ctx, fctx, key);
   if (n !== undefined) {
-    if (isArrayIndexNumber(n)) return allowHighArrayIndex && n > 0x7fffffff ? String(n) : undefined;
+    if (isArrayIndexNumber(n)) return allowHighArrayIndex && n > MAX_I32_INDEX ? String(n) : undefined;
     // `String(n)` IS ECMAScript `ToString(Number)` for every finite and
     // non-finite double, including `"1e+21"` and `"-Infinity"`.
     return String(n);
@@ -357,10 +332,8 @@ export function nonArrayIndexNumericKey(
 
   const s = resolveStringKey(ctx, fctx, key);
   if (s === undefined || !isNamedNumericOrBooleanSpelling(s)) return undefined;
-  if (isArrayIndexString(s)) {
-    const n = Number(s);
-    return allowHighArrayIndex && n > 0x7fffffff ? s : undefined;
-  }
+  const index = arrayIndexOfKey(s);
+  if (index !== undefined) return allowHighArrayIndex && index > MAX_I32_INDEX ? s : undefined;
   return s;
 }
 
@@ -426,10 +399,10 @@ export function arrayIndexConstantKey(
   const isWrapper = wrapperArg !== undefined && (ts.isStringLiteral(wrapperArg) || ts.isNumericLiteral(wrapperArg));
   if (!ts.isStringLiteral(inner) && !isWrapper) return undefined;
 
-  if (ts.isStringLiteral(inner)) return isArrayIndexString(inner.text) ? Number(inner.text) : undefined;
+  if (ts.isStringLiteral(inner)) return arrayIndexOfKey(inner.text);
   // `new String("2")` is a string key; `new Number(2)` a numeric one.
   if (ts.isStringLiteral(wrapperArg!)) {
-    return isArrayIndexString(wrapperArg!.text) ? Number(wrapperArg!.text) : undefined;
+    return arrayIndexOfKey(wrapperArg!.text);
   }
   const n = Number((wrapperArg as ts.NumericLiteral).text);
   return isArrayIndexNumber(n) ? n : undefined;
@@ -491,12 +464,17 @@ export function emitDynamicVecElementGet(
   recvType: ValType,
   key: ts.Expression,
   compile: (expr: ts.Expression, hint?: ValType) => ValType | null,
+  numberAtRuntime = false,
 ): ValType | null {
   const recvLocal = allocLocal(fctx, `__dynkey_recv_${fctx.locals.length}`, recvType);
   fctx.body.push({ op: "local.set", index: recvLocal });
   fctx.body.push({ op: "local.get", index: recvLocal });
   fctx.body.push({ op: "extern.convert_any" });
   const keyFact = ctx.oracle.typeFactOf(key);
+  if (numberAtRuntime && ctx.standalone && (keyFact.kind === "any" || keyFact.kind === "unknown")) {
+    const branched = emitNumberOrKeyVecGet(ctx, fctx, key, compile);
+    if (branched !== undefined) return branched;
+  }
   // Numeric expressions can use the indexed helper directly. It formats the
   // f64 key canonically for the overlay read, avoiding a string round-trip
   // that would otherwise lose the sparse-tail distinction at i32.max.
@@ -519,6 +497,75 @@ export function emitDynamicVecElementGet(
     return EXTERNREF;
   }
   fctx.body.push({ op: "call", funcIdx: getIdx });
+  return EXTERNREF;
+}
+
+/**
+ * (#6973 stage 2) `vec[key]` with an untyped key: a key that is a Number at
+ * runtime takes `__extern_get_idx` (which formats the f64 canonically itself),
+ * anything else the ToPropertyKey + `__extern_get` route. Deltablue's
+ * `OrderedCollection.at(index)` otherwise stringified every index and
+ * `__extern_get` parsed it back. ToPropertyKey of a Number is ToString, so the
+ * two arms agree by construction. Receiver (externref) is on the stack.
+ */
+function emitNumberOrKeyVecGet(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  key: ts.Expression,
+  compile: (expr: ts.Expression, hint?: ValType) => ValType | null,
+): ValType | null | undefined {
+  const getIdx = ensureLateImport(ctx, "__extern_get_idx", [EXTERNREF, { kind: "f64" }], [EXTERNREF]);
+  const getKey = ensureLateImport(ctx, "__extern_get", [EXTERNREF, EXTERNREF], [EXTERNREF]);
+  flushLateImportShifts(ctx, fctx);
+  const isNum = ctx.funcMap.get("__typeof_number");
+  const unbox = ctx.funcMap.get("__unbox_number");
+  const tpk = ctx.funcMap.get("__to_property_key");
+  if ([getIdx, getKey, isNum, unbox, tpk].includes(undefined)) return undefined;
+  const recv = allocLocal(fctx, `__dynkey_r_${fctx.locals.length}`, EXTERNREF);
+  fctx.body.push({ op: "local.set", index: recv });
+  const keyResult = compile(key, EXTERNREF);
+  if (!keyResult) return null;
+  if (keyResult.kind !== "externref") coerceType(ctx, fctx, keyResult, EXTERNREF);
+  const k = allocLocal(fctx, `__dynkey_k_${fctx.locals.length}`, EXTERNREF);
+  const n = allocLocal(fctx, `__dynkey_n_${fctx.locals.length}`, { kind: "f64" });
+  fctx.body.push(
+    { op: "local.set", index: k },
+    { op: "local.get", index: k },
+    { op: "call", funcIdx: isNum! },
+    {
+      op: "if",
+      blockType: { kind: "val", type: { kind: "i32" } },
+      // …and a non-negative integer value: anything else keeps the key route.
+      then: [
+        { op: "local.get", index: k },
+        { op: "call", funcIdx: unbox! },
+        { op: "local.tee", index: n },
+        { op: "local.get", index: n },
+        { op: "f64.trunc" },
+        { op: "f64.eq" },
+        { op: "local.get", index: n },
+        { op: "f64.const", value: 0 },
+        { op: "f64.ge" },
+        { op: "i32.and" },
+      ],
+      else: [{ op: "i32.const", value: 0 }],
+    },
+    {
+      op: "if",
+      blockType: { kind: "val", type: EXTERNREF },
+      then: [
+        { op: "local.get", index: recv },
+        { op: "local.get", index: n },
+        { op: "call", funcIdx: getIdx! },
+      ],
+      else: [
+        { op: "local.get", index: recv },
+        { op: "local.get", index: k },
+        { op: "call", funcIdx: tpk! },
+        { op: "call", funcIdx: getKey! },
+      ],
+    },
+  );
   return EXTERNREF;
 }
 

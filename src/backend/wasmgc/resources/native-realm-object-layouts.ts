@@ -287,6 +287,8 @@ export function requireCompletedNativeRealmObjectLayouts(
     )
   )
     fail("noncanonical anchor or initializer completion");
+  // Canonical comparison can invoke a Proxy trap after an earlier anchor was checked.
+  tx.assertCompletedReservation(pack.sourceInitializer);
   return pack;
 }
 

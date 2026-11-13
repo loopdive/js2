@@ -43,7 +43,7 @@ import { ensureCurrentThisGlobal } from "./statements/nested-declarations.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#1916 S2/S3) positional-read chokepoint + stable-regime minting
 import { nativeStringLiteralInstrs } from "./native-string-literals.js"; // (#4629) dyn-dispatch fill key compares
 import { getWellKnownSymbolId } from "./literals.js"; // (#4629) @@iterator id
-import { ensureSymbolCarrier, usesNativeSymbolProvider } from "./symbol-native.js"; // (#5267 A-2) symbol keys box as symbols, not ids
+import { ensureSymbolCarrier } from "./symbol-native.js"; // (#5267 A-2) symbol keys box as symbols, not ids
 import { ensureNativeIteratorRuntime, ITER_FAMILY_MAP, ITER_FAMILY_SET } from "./iterator-native.js"; // (#5267 B-2) live collection iterator records; (#6484 S1) family tags
 import { getClosureFuncSelfTypeIdx, getOrCreateFuncRefWrapperTypes } from "./closures/funcref-wrapper-types.js"; // (#4629) iterator closure singleton
 
@@ -1521,7 +1521,7 @@ function coerceArgToAnyref(ctx: CodegenContext, fctx: FunctionContext, t: ValTyp
         // The brand is only set under the native provider (literals.ts:2619),
         // which is exactly where `ensureSymbolCarrier` is legal; it mints a
         // DEFINED function, so registering it here shifts no baked index.
-        if (ctx.funcMap.get("__box_symbol") === undefined && usesNativeSymbolProvider(ctx)) ensureSymbolCarrier(ctx);
+        if (ctx.funcMap.get("__box_symbol") === undefined) ensureSymbolCarrier(ctx);
         const boxSymIdx = ctx.funcMap.get("__box_symbol");
         if (boxSymIdx !== undefined) {
           fctx.body.push({ op: "call", funcIdx: boxSymIdx });

@@ -93,6 +93,10 @@ import { emitArraySpliceProtoMemberBody, isArraySpliceVariadicMember } from "./a
 import { emitArrayProtoIteratorMemberBody } from "./array-proto-iterator-value.js"; // (#6651 RS1)
 import { emitArrayLikeNativeMemberBody } from "./array-like-native.js";
 import { emitArrayFillProtoMemberBody, isArrayFillVariadicMember } from "./array/array-fill-proto-value.js";
+import { emitArraySearchProtoMemberBody, isArraySearchVariadicMember } from "./array/array-search-proto-value.js"; // (#6912)
+import { emitArrayGenericValueMemberBody } from "./array/array-generic-value-bodies.js"; // (#6912)
+import { emitArrayCopyMethodMemberBody, isArrayCopyMethodVariadicMember } from "./array/array-copy-methods-value.js"; // (#6912)
+import { emitArraySortMemberBody, isArraySortVariadicMember } from "./array/array-sort-value.js"; // (#6912)
 // (#4119) The shared member-body tail: `Object.prototype.toString`'s real
 // §20.1.3.6 runtime classifier, and the graceful catchable-TypeError refusal for
 // every `(brand, member)` whose native body is not wired yet. Aliased to the
@@ -160,7 +164,7 @@ import { emitSymbolProtoToStringBody } from "./symbol-proto-tostring.js"; // (#4
 import { emitNumberProtoFormatBody } from "./number-proto-format.js";
 import { emitDateProtoToPrimitiveBody } from "./date-proto-to-primitive.js"; // (#5156)
 import { emitDateProtoToJsonBody } from "./date-proto-to-json.js"; // (#6775 S8)
-import { ensureSymbolCarrier, usesNativeSymbolProvider } from "./symbol-native.js";
+import { ensureSymbolCarrier } from "./symbol-native.js";
 import { primitiveCarrierTestInstrs } from "./object-model/primitive-carrier-test.js"; // (#6651 V10a)
 import {
   emitStandalonePromiseFinally,
@@ -173,6 +177,7 @@ import {
 // vararg `then` dispatcher the thenable-assimilation job already uses.
 import { reserveClosedMethodDispatchVararg } from "./closed-method-dispatch.js";
 import { ARRAY_PROTO_SYMBOL_DATA_PROPS } from "./array/array-unscopables.js"; // (#6771 S5)
+import { emitSabProtoMemberBody, sabProtoMemberParamSlots } from "./buffers/shared-array-buffer.js"; // (#7011)
 // (#6651 E4) Real §23.2.2.1/§23.2.2.2 bodies for the `%TypedArray%` statics.
 import {
   emitTaStaticFromOfBody,
@@ -650,9 +655,15 @@ const PROTO_METHOD_LENGTH: Readonly<Record<string, number>> = Object.assign(
     every: 1,
     fill: 1,
     forEach: 1,
+    // (#6912) §23.1.3.22 / .27 — pop() and shift() take no arguments.
+    pop: 0,
     push: 1,
     reduce: 1,
     reverse: 0,
+    shift: 0,
+    // (#6912) §23.1.3.33 / .35 — toReversed(), toSpliced(start, skipCount, ...items).
+    toReversed: 0,
+    toSpliced: 2,
     slice: 2,
     splice: 2,
     unshift: 1,
@@ -1007,6 +1018,12 @@ function emitArrayProtoMemberBody(ctx: CodegenContext, fctx: FunctionContext, me
   // (undefined) outside standalone or on a missing dep, keeping the refusal below.
   const rs1IterBody = emitArrayProtoIteratorMemberBody(ctx, fctx, member);
   if (rs1IterBody !== undefined) return rs1IterBody;
+  const searchBody = // (#6912) indexOf/lastIndexOf/includes, then pop/shift/toString
+    emitArraySearchProtoMemberBody(ctx, fctx, member) ??
+    emitArrayGenericValueMemberBody(ctx, fctx, member) ??
+    emitArrayCopyMethodMemberBody(ctx, fctx, member) ??
+    emitArraySortMemberBody(ctx, fctx, member);
+  if (searchBody !== undefined) return searchBody;
   if (member !== "slice") {
     // Other Array.prototype members: their *FromVecLocal cores land in PR-C; until
     // then, a reflective call degrades to a catchable TypeError, not a compile error.
@@ -2215,7 +2232,7 @@ function emitErrorProtoToStringBody(ctx: CodegenContext, fctx: FunctionContext):
   // The reflective callee can be compiled before its argument expression. Make
   // the native carrier available at body-mint time so the later `Symbol()`
   // argument is still recognized by this already-emitted `ref.test` arm.
-  const symbolTypeIdx = usesNativeSymbolProvider(ctx) ? ensureSymbolCarrier(ctx) : -1;
+  const symbolTypeIdx = ensureSymbolCarrier(ctx);
   ensureLateImport(ctx, "__typeof_object", [{ kind: "externref" }], [{ kind: "i32" }]);
   ensureLateImport(ctx, "__typeof_function", [{ kind: "externref" }], [{ kind: "i32" }]);
   flushLateImportShifts(ctx, fctx);
@@ -2474,7 +2491,7 @@ function emitPromiseProtoCatchBody(ctx: CodegenContext, fctx: FunctionContext): 
   ) {
     return null;
   }
-  if (usesNativeSymbolProvider(ctx)) ensureSymbolCarrier(ctx); // (#6651 V10a) the primitive-`this` test below
+  ensureSymbolCarrier(ctx); // (#6651 V10a) the primitive-`this` test below
   const promiseTypeIdx = getOrRegisterPromiseType(ctx);
   const argsLocal = allocLocal(fctx, `__pcatch_args_${fctx.locals.length}`, { kind: "externref" });
 
@@ -2672,6 +2689,10 @@ function makeGlue(
       (name === "Array" && isArrayReduceVariadicMember(ctx, member)) ||
       (name === "Array" && isArraySpliceVariadicMember(ctx, member)) || // (#6701)
       (name === "Array" && isArrayFillVariadicMember(ctx, member)) ||
+      (name === "Array" &&
+        (isArraySearchVariadicMember(ctx, member) ||
+          isArrayCopyMethodVariadicMember(ctx, member) ||
+          isArraySortVariadicMember(ctx, member))) || // (#6912)
       (name === "Array" &&
       (member === "join" ||
         member === "push" ||
@@ -2904,6 +2925,12 @@ export function ensureArrayNativeProtoGlue(ctx: CodegenContext): number | undefi
   return brand;
 }
 
+/** (#4765) Spec `length` of `Array.prototype.<member>` — the Array glue's own answer — or `undefined` for a non-member. */
+export function arrayProtoMethodSpecLength(member: string): number | undefined {
+  if (member.startsWith("@@") || !(ARRAY_PROTO_METHODS as readonly string[]).includes(member)) return undefined;
+  return PROTO_METHOD_LENGTH[member] ?? 1;
+}
+
 /**
  * (#6651 V10b) Demand the `Array.prototype` companion for a DYNAMIC
  * `<vec>[Symbol.iterator]` value read on the host-free lane.
@@ -3028,12 +3055,17 @@ export function ensurePromiseNativeProtoGlue(ctx: CodegenContext): number | unde
   if (brand === undefined) return undefined;
   if (!getNativeProtoBuiltinGlue(ctx, brand)) {
     // (#5197 Slice C) `catch`'s generic arm calls `__call_m_then_vararg`.
-    // RESERVE it here, before the glue exists: the member-closure factory emits
+    // RESERVE it on registration, before the glue exists (a provisional
+    // selection-time query skips it, #7294): the member-closure factory emits
     // each body TWICE (a probe for the result type, then the committed
     // emission), and minting a function inside either would shift funcidxs
     // under a body already being written.
-    if (ctx.standalone === true || ctx.wasi === true) reserveClosedMethodDispatchVararg(ctx, "then");
-    registerNativeProtoBuiltin(ctx, makeGlue(ctx, brand, "Promise", PROMISE_PROTO_METHODS, "Promise"));
+    registerNativeProtoBuiltin(ctx, {
+      ...makeGlue(ctx, brand, "Promise", PROMISE_PROTO_METHODS, "Promise"),
+      onRegister: (c) => {
+        if (c.standalone === true || c.wasi === true) reserveClosedMethodDispatchVararg(c, "then");
+      },
+    });
   }
   return brand;
 }
@@ -3299,16 +3331,17 @@ export function ensureSharedArrayBufferNativeProtoGlue(ctx: CodegenContext): num
   const brand = getBuiltinBrand(ctx, "SharedArrayBuffer");
   if (brand === undefined) return undefined;
   if (!getNativeProtoBuiltinGlue(ctx, brand)) {
-    registerNativeProtoBuiltin(
-      ctx,
-      makeGlueWithGetters(
-        brand,
-        "SharedArrayBuffer",
-        SHAREDARRAYBUFFER_PROTO_METHODS,
-        SHAREDARRAYBUFFER_PROTO_GETTERS,
-        SHAREDARRAYBUFFER_PROTO_METHOD_LENGTH,
-      ),
+    const glue = makeGlueWithGetters(
+      brand,
+      "SharedArrayBuffer",
+      SHAREDARRAYBUFFER_PROTO_METHODS,
+      SHAREDARRAYBUFFER_PROTO_GETTERS,
+      SHAREDARRAYBUFFER_PROTO_METHOD_LENGTH,
     );
+    // (#7011) Real reflective member bodies: the native provider's helpers.
+    glue.memberParamSlots = sabProtoMemberParamSlots;
+    glue.emitMemberBody = (c, fctx, member) => emitSabProtoMemberBody(c, fctx, member);
+    registerNativeProtoBuiltin(ctx, glue);
   }
   return brand;
 }

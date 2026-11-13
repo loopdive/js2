@@ -1,3 +1,4 @@
+import ts from "typescript";
 import { installableReceiverInstrs } from "./helpers/undefined-receiver.js";
 import { buildClosureResultBoxing } from "./closures/result-boxing.js";
 import { classifyClosureDispatchRest } from "./closures/closure-dispatch-rest.js";
@@ -67,6 +68,7 @@ import { buildObjectGetBody } from "../runtime/wasmgc/values/object-get-bodies.j
  */
 import { buildVariadicBuiltinApplyArm } from "./apply-closure-variadic-builtin.js"; // (#6701)
 import { buildRestOnlyApply } from "./closures/rest-only-apply.js";
+import { withApplyTail } from "./closures/apply-extras-tail.js";
 import {
   buildObjectPropertyKeyPrefix,
   prependObjectKeyCoercion,
@@ -112,6 +114,7 @@ import {
   stringConstantExternrefInstrs,
 } from "./native-strings.js";
 import { REGEXP_MATCH_VEC_STRUCT } from "./native-regex.js";
+import { objectProtoNameMissInstrs, registerInHelperNatives } from "./object-proto-name-in.js";
 import { emitNativeNumberFormat } from "./number-format-native.js";
 import { emitNativeParseNumber } from "./parse-number-native.js";
 import { buildThrowJsErrorInstrs, noJsHost } from "./js-errors.js"; // (#4221) absent-callee TypeError
@@ -126,6 +129,7 @@ import {
   getOrRegisterVecType,
   isVecBaseSubtype,
 } from "./registry/types.js";
+import { assignEnumerationArmTags, classArmTags, enumerationArmTagGuard } from "./class-arm-tag-guard.js"; // (#7158)
 import { buildClosureRefTestArms } from "./closure-classifier.js"; // (#3140) __bind_dyn callable gate
 import * as bc from "./builtin-ctor-callable.js"; // (#4394/#4656) constructor [[Call]] arms
 import { buildApplyClosureArityWidening, buildTransferredCharAtApplyArm } from "./closure-exports.js"; // (#3592) under-application widening
@@ -153,8 +157,14 @@ import { reserveClosurePropHelpers } from "./closure-props.js"; // (#3468 C-core
 import { reserveClosurePrototypeEdge } from "./closure-prototype-edge.js"; // (#2660 M3) function-value → prototype-object edge
 import { reserveProtoFunctionValue } from "./proto-function-value.js"; // (#4637 A1) function value in a [[Prototype]] slot
 import { buildFnctorMissingMethodDispatch } from "./fnctor-missing-method-dispatch.js";
+import {
+  fillFnctorStructProtoForwarders,
+  fnctorStructProtoReentry,
+  reserveFnctorStructProtoHelpers,
+} from "./fnctor-struct-proto-hop.js"; // (#6944) struct-valued [[Prototype]] links
 // (#4230 L1) the #3251 overlay companion as a THIRD key source for the vec key walks
 import { buildOverlayPushKeys, buildVecOverlayHasArm, reserveVecOverlayPushKeys } from "./vec-overlay-keys.js";
+import { allowedCarriers, externSetStoreCarrierSet, recordExternSetStoreCarriers } from "./vec-overlay-carriers.js"; // (#6963)
 // (#6485) `__extern_has`'s numeric-key delegation — §13.10.1 ToPropertyKey.
 import { buildVecNumericKeyGetArm, buildVecNumericKeyHasArm } from "./vec-numeric-key-presence.js";
 // (#4194) instance expando substrate — composes AROUND the #3537/#3468 arms and
@@ -182,9 +192,9 @@ import {
 // (#3537) array ($Vec) expando side table — composes AROUND the #3468 closure
 // arms (vec test first, unchanged closure arm as fallthrough).
 import { captureVecOrClosureReadBinding, buildVecOrClosurePropSetMissArm, reserveVecPropHelpers } from "./vec-props.js";
-import { ensureSymbolCarrier, usesNativeSymbolProvider } from "./symbol-native.js";
+import { ensureSymbolCarrier } from "./symbol-native.js";
 import { ensureVecElemSet } from "./vec-elem-set.js";
-import { SPARSE_INDEX_CEILING } from "./vec-sparse-index.js";
+import { SPARSE_INDEX_CEILING } from "../shared/array-index-key.js";
 // (#4160) prototype-index store — reserve + registration-time consult builders
 // (all resolve to `undefined` unless `ctx.standalone && ctx.protoIndexDirty`).
 import {
@@ -217,6 +227,8 @@ import {
 } from "./any-helpers.js";
 import { reserveClassToPrimitive } from "./class-to-primitive.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#1916 S2/S3) positional-read chokepoint + stable-regime minting
+import { fnctorProtoLinkInstrs, fnctorProtoStartNeeded } from "./fnctor-identity-fields.js"; // (#6951 G3) [[Prototype]] snapshot
+import { unshiftFnctorFastGetArm } from "./fnctor-fast-get.js"; // (#6973) fnctor-instance read fast arm
 import { emitSelfHostedFunc } from "./stdlib-selfhost.js"; // (#3160) self-hosted object-runtime slice
 import { SELF_HOSTED_OBJECT_RUNTIME } from "../stdlib/object-runtime.js"; // (#3160) TS-source builtins
 import { buildObjectDescriptorHelpers } from "./object-runtime-descriptors.js";
@@ -276,6 +288,7 @@ import {
   protoLinkSetWalkArm,
   withProtoLinkNull,
 } from "./object-runtime-proxy-chain.js"; // (#6766) a Proxy as [[Prototype]]
+import { fillStructProtoLinkArms } from "./object-model/struct-proto-link.js"; // (#7009)
 import { ensureArgcGlobal, ensureCurrentThisGlobal } from "./statements/nested-declarations.js";
 import { buildLazyNativeProtoGetInstrs, flushPendingNativeProtoSeeders, getBuiltinBrand } from "./native-proto.js";
 import { applyUndefinedInstrs } from "./apply-closure-args.js";
@@ -298,7 +311,9 @@ import { backedBoundsGuard, canonicalIndexDigitStep } from "./vec-index-domain.j
 import { buildVecIndexKeyPush, reserveVecIndexEnumerable } from "./vec-index-enumerable.js"; // (#4491) overlay-aware key flags
 import { fillHostArrayCarrierPredicate } from "./host-array-carrier.js"; // (#4649) js-host late-bound carrier test
 import {
+  definedIdxs,
   emitStandaloneLinkBoundaryTerminals,
+  hasTriStateArmsInstrs,
   methodCallForwardArmInstrs,
   standaloneLinkBoundaryPeerIndex,
   standaloneLinkBoundaryPeerIndices,
@@ -320,6 +335,7 @@ import type {
   ToPrimitiveMethodLiterals,
   ToPrimitiveSymbolBindings,
 } from "../runtime/wasmgc/values/to-primitive-method-bodies.js";
+import { collectTupleArrayCarrierTypeIdxs } from "./array/tuple-array-carrier.js"; // (#7020)
 
 const restOnlyApplyServices = {
   get classifyClosureDispatchRest() {
@@ -1038,7 +1054,6 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
   // that were not admitted by this module instance. Register the pair before
   // any native helper body captures function indices.
   const boundaryObjectInterop =
-    ctx.targetProfile.semanticProviders === "native-first" &&
     ctx.targetProfile.environment === "javascript" &&
     ctx.targetProfile.hostValueInterop !== "off" &&
     !ctx.strictNoHostImports;
@@ -1170,6 +1185,8 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
     // ladder (`object-integrity-carrier.ts`) only by structural accident, so
     // only the owning module can answer `Object.isExtensible` for it.
     isExtensible: peerIsExtensibleIdx,
+    // (#6882) …and the HasProperty twin, which `in` and `for…in` need.
+    has: peerHasIdx,
   } = standaloneLinkBoundaryPeerIndices(ctx);
   // (#5383 S17 / #6600) The same question asked from the other side: a PROVIDER
   // handed a carrier its consumer owns. Registered in this window, next to the
@@ -1181,9 +1198,10 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
   // (#5383 S17) `__extern_has`'s boundary arm, in the tri-state the host lane's
   // import already speaks (0 = not mine · 2 = mine and present). The reverse hop
   // answers the same tri-state on purpose, so the arm — and its local-index
-  // arithmetic — is unchanged; only which index it calls differs, and the two
-  // are mutually exclusive (a JS-host module never has a wasm peer).
-  const hasBoundaryOrReverseIdx = boundaryObjectHasIdx ?? reversePeerHasIdx;
+  // arithmetic — is unchanged; only which index it calls differs. (#6882) The
+  // peer `has` terminal speaks it too, and a native-regime module in a JS
+  // environment has the boundary AND a peer or reverse hop: all are asked.
+  const hasArmIdxs = definedIdxs(peerHasIdx, boundaryObjectHasIdx, reversePeerHasIdx);
   const boundaryObjectGetOwnPropertyDescriptorIdx = boundaryObjectInterop
     ? ctx.funcMap.get("__boundary_object_get_own_property_descriptor")
     : undefined;
@@ -1219,19 +1237,16 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
   // idempotent. Register BEFORE the helper bodies bake their `call` funcIdx.
   // (`number_toString` also upgrades __extern_toString's boxed-number arm from
   // "[object Object]" to the real decimal, which is spec-correct.)
-  const objArrayLikeArms = ctx.targetProfile.semanticProviders === "native-first" || ctx.standalone;
-  if (objArrayLikeArms) {
-    emitNativeNumberFormat(ctx, new Set(["number_toString"]));
-    // (#3183) `__str_to_number` (§7.1.4.1 StringToNumber) is the scanner the
-    // finalize-time `$__vec_base` arms of `__extern_get`/`__extern_has` use to
-    // turn a string element key ("0".."n-1", from a for-in loop or a computed
-    // `arr[k]` with a string `k`) into the numeric index they delegate on. It is
-    // otherwise emitted on demand, so register it eagerly here (a DEFINED func —
-    // no import shift) to give the arms a stable, shift-maintained funcIdx at
-    // finalize; dead-elimination prunes it when no arm references it.
-    emitNativeParseNumber(ctx, new Set(["__str_to_number"]));
-    addUnionImportsViaRegistry(ctx);
-  }
+  emitNativeNumberFormat(ctx, new Set(["number_toString"]));
+  // (#3183) `__str_to_number` (§7.1.4.1 StringToNumber) is the scanner the
+  // finalize-time `$__vec_base` arms of `__extern_get`/`__extern_has` use to
+  // turn a string element key ("0".."n-1", from a for-in loop or a computed
+  // `arr[k]` with a string `k`) into the numeric index they delegate on. It is
+  // otherwise emitted on demand, so register it eagerly here (a DEFINED func —
+  // no import shift) to give the arms a stable, shift-maintained funcIdx at
+  // finalize; dead-elimination prunes it when no arm references it.
+  emitNativeParseNumber(ctx, new Set(["__str_to_number"]));
+  addUnionImportsViaRegistry(ctx);
 
   const anyStrTypeIdx = ctx.anyStrTypeIdx;
   const nativeStrTypeIdx = ctx.nativeStrTypeIdx;
@@ -1246,7 +1261,7 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
   // `symbolTypeIdx` stays -1 when not registered, and every symbol branch below
   // is guarded on `symbolKeysEnabled` (idx >= 0) so the string-only key path is
   // byte-unchanged when symbols are absent from the type space.
-  const symbolTypeIdx = usesNativeSymbolProvider(ctx) ? ensureSymbolCarrier(ctx) : -1;
+  const symbolTypeIdx = ensureSymbolCarrier(ctx);
   const symbolKeysEnabled = symbolTypeIdx >= 0;
 
   // --- 1. Register the three struct/array types. ---
@@ -1660,7 +1675,7 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
   // standalone-only: in gc/host mode the host `__extern_*` JS imports own these
   // paths and ToPropertyKey the key themselves, so registering this helper there
   // would only shift funcMap indices — host output stays byte-identical.
-  if (ctx.standalone) {
+  if (ctx.standalone || ctx.wasi) {
     const numToStringIdx = ctx.funcMap.get("number_toString")!;
     const unboxNumberIdx = ctx.funcMap.get("__unbox_number")!;
     const boxNumTypeIdx = ctx.nativeBoxNumberTypeIdx;
@@ -1702,7 +1717,7 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
     const body: Instr[] = buildObjectHashBody({
       ...keyResources,
       hashedStrTypeIdx: ctx.hashedStrTypeIdx,
-      nativeFirst: !symbolKeysEnabled && ctx.targetProfile.semanticProviders === "native-first",
+      nativeFirst: !symbolKeysEnabled,
     });
     registerNative(
       "__obj_hash",
@@ -1908,16 +1923,19 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
   // `$Object`. Reserve a tiny classifier before `__extern_get` bakes its call
   // index; finalize fills the complete ref.test/global.get ladder after all
   // fnctor structs and prototype globals are known.
-  const fnctorProtoStartIdx =
-    ctx.standalone && (ctx.fnctorEscapeGate?.approvedNames.size ?? 0) > 0
-      ? registerNative(
-          "__fnctor_proto_start",
-          [{ kind: "externref" }],
-          [{ kind: "externref" }],
-          [{ name: "any", type: { kind: "anyref" } }],
-          [{ op: "ref.null.extern" }],
-        )
-      : undefined;
+  const fnctorProtoStartIdx = fnctorProtoStartNeeded(ctx) // (#6951) every constructed fnctor
+    ? registerNative(
+        "__fnctor_proto_start",
+        [{ kind: "externref" }],
+        [{ kind: "externref" }],
+        [{ name: "any", type: { kind: "anyref" } }],
+        [{ op: "ref.null.extern" }],
+      )
+    : undefined;
+  const fnctorStructProto =
+    fnctorProtoStartIdx === undefined
+      ? undefined
+      : reserveFnctorStructProtoHelpers(registerNative, fnctorProtoStartIdx, objectTypeIdx);
 
   // (#3673 round 9b) Table generation for the per-key prototype-lookup cache
   // (see the `$HashedString` cacheGen/cacheOwner/cacheEntry fields). Bumped
@@ -1976,8 +1994,9 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
                 { op: "local.get", index: 0 },
                 { op: "call", funcIdx: fnctorProtoStartIdx! },
                 { op: "local.tee", index: 4 },
-                { op: "ref.is_null" },
-                { op: "i32.eqz" },
+                // (#6944) a struct-valued link is not cacheable: test, not cast.
+                { op: "any.convert_extern" },
+                { op: "ref.test", typeIdx: objectTypeIdx },
                 {
                   op: "if",
                   blockType: { kind: "empty" },
@@ -2128,6 +2147,7 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
       hashedStringTypeIdx: HSTR,
       bfnGetMetaIdx,
       fnctorProtoStartIdx,
+      fnctorStructProto,
       objectTerminalAllowsImplicitProtoIdx,
       templateRaw: templateRawReadBinding,
       boundaryGet,
@@ -3794,7 +3814,7 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
     const nullProtoRootLocal =
       objectProtoIndexHasMiss === undefined
         ? undefined
-        : 4 + (hasBoundaryOrReverseIdx !== undefined ? 1 : 0) + (fnctorProtoStartIdx === undefined ? 0 : 1);
+        : 4 + (hasArmIdxs.length > 0 ? 1 : 0) + (fnctorProtoStartIdx === undefined ? 0 : 1);
     const body: Instr[] = [
       // (#4491) §10.4.3 String-exotic own properties (`length` + the canonical
       // indices) are DERIVED from the wrapper's [[PrimitiveValue]], so the
@@ -3829,24 +3849,7 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
         op: "if",
         blockType: { kind: "empty" },
         then: [
-          ...(hasBoundaryOrReverseIdx !== undefined
-            ? ([
-                { op: "local.get", index: 0 },
-                { op: "local.get", index: 1 },
-                { op: "call", funcIdx: hasBoundaryOrReverseIdx },
-                { op: "local.tee", index: 4 },
-                {
-                  op: "if",
-                  blockType: { kind: "empty" },
-                  then: [
-                    { op: "local.get", index: 4 },
-                    { op: "i32.const", value: 2 },
-                    { op: "i32.eq" },
-                    { op: "return" },
-                  ],
-                },
-              ] satisfies Instr[])
-            : []),
+          ...hasTriStateArmsInstrs(hasArmIdxs, 4),
           // own carrier-bag hit → present (1)…
           ...(ctx.funcMap.get("__carrier_bag_has") !== undefined
             ? ([
@@ -3870,16 +3873,22 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
             : ([
                 { op: "local.get", index: 0 },
                 { op: "call", funcIdx: fnctorProtoStartIdx },
-                { op: "local.tee", index: 4 + (hasBoundaryOrReverseIdx !== undefined ? 1 : 0) },
-                { op: "ref.is_null" },
-                { op: "i32.eqz" },
+                { op: "local.set", index: 4 + (hasArmIdxs.length > 0 ? 1 : 0) },
+                // (#6944) a `new G()` struct link: `link.[[HasProperty]](key)`.
+                ...fnctorStructProtoReentry(fnctorStructProto!.ok, 4 + (hasArmIdxs.length > 0 ? 1 : 0), [
+                  { op: "local.get", index: 1 },
+                  { op: "call", funcIdx: fnctorStructProto!.has },
+                ]),
+                { op: "local.get", index: 4 + (hasArmIdxs.length > 0 ? 1 : 0) },
+                { op: "any.convert_extern" },
+                { op: "ref.test", typeIdx: objectTypeIdx },
                 {
                   op: "if",
                   blockType: { kind: "empty" },
                   then: [
                     {
                       op: "local.get",
-                      index: 4 + (hasBoundaryOrReverseIdx !== undefined ? 1 : 0),
+                      index: 4 + (hasArmIdxs.length > 0 ? 1 : 0),
                     },
                     { op: "any.convert_extern" },
                     { op: "ref.cast", typeIdx: objectTypeIdx },
@@ -4019,13 +4028,21 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
       [
         { name: "o", type: objRefNull },
         { name: "any", type: { kind: "anyref" } },
-        ...(hasBoundaryOrReverseIdx !== undefined ? [{ name: "boundaryHas", type: { kind: "i32" } as ValType }] : []),
+        ...(hasArmIdxs.length > 0 ? [{ name: "boundaryHas", type: { kind: "i32" } as ValType }] : []),
         ...(fnctorProtoStartIdx === undefined ? [] : [{ name: "fnctorProto", type: { kind: "externref" } as ValType }]),
         ...(nullProtoRootLocal === undefined
           ? []
           : ([{ name: "nullProtoRoot", type: objRefNull }] as { name: string; type: ValType }[])),
       ],
       body,
+    );
+  }
+  if (fnctorStructProto !== undefined) {
+    fillFnctorStructProtoForwarders(
+      ctx,
+      fnctorStructProto,
+      ctx.funcMap.get("__reflect_get_receiver")!,
+      ctx.funcMap.get("__extern_has")!,
     );
   }
 
@@ -4127,6 +4144,7 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
         blockType: { kind: "empty" },
         then: [{ op: "i32.const", value: 1 }, { op: "return" }],
       },
+      ...objectProtoNameMissInstrs(registerInHelperNatives(ctx, registerNative, strFlattenIdx, strEqualsIdx)),
       { op: "local.get", index: 2 },
       { op: "ref.test", typeIdx: objectTypeIdx },
       {
@@ -4145,8 +4163,9 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
             { op: "local.get", index: 0 },
             { op: "call", funcIdx: fnctorProtoStartIdx },
             { op: "local.tee", index: 3 },
-            { op: "ref.is_null" },
-            { op: "i32.eqz" },
+            // (#6944) test, not null-check: a struct link keeps the permissive answer.
+            { op: "any.convert_extern" },
+            { op: "ref.test", typeIdx: objectTypeIdx },
             {
               op: "if",
               blockType: { kind: "empty" },
@@ -4159,9 +4178,7 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
               ],
             },
           ] satisfies Instr[])),
-      // The compiler selected this helper only for one of the fixed
-      // Object.prototype names. Non-`$Object`/non-fnctor receivers retain the
-      // prior permissive constant rather than gaining a new runtime miss.
+      // Any other receiver keeps the permissive implicit-terminal answer (see #7304 for its gaps).
       { op: "i32.const", value: 1 },
     ];
   }
@@ -4214,8 +4231,9 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
     // and fill it in post-processing. `$__vec_base` is the shared supertype with
     // `length` at field 0 (#2186) — one `ref.test` detects every element kind.
     const arrayLikeReduce = reserveArgumentsLengthBrand(ctx) !== undefined;
-    const vecBaseTypeIdx = arrayLikeReduce ? getOrRegisterVecBaseType(ctx) : -1;
-    const arrayToPrimIdx = arrayLikeReduce ? reserveArrayToPrimitiveString(ctx) : -1;
+    const vecReduce = arrayLikeReduce || ctx.wasi === true; // (#7153) WASI: the vec arm alone, no arguments/class arms
+    const vecBaseTypeIdx = vecReduce ? getOrRegisterVecBaseType(ctx) : -1;
+    const arrayToPrimIdx = vecReduce ? reserveArrayToPrimitiveString(ctx) : -1;
     // (#6651 E3) …and the OWN-property OrdinaryToPrimitive step in front of it:
     // §7.1.1 step 2 (`@@toPrimitive`) and §7.1.1.1's valueOf/toString cascade
     // never ran for a vec carrier, so an own method on an Array or a TypedArray
@@ -4304,13 +4322,13 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
       error: ctx.errorStructTypeIdx,
     };
     const array =
-      arrayLikeReduce && vecBaseTypeIdx >= 0 && arrayToPrimIdx >= 0
+      vecReduce && vecBaseTypeIdx >= 0 && arrayToPrimIdx >= 0
         ? {
             vecBaseTypeIdx,
             arrayToPrimIdx,
             vecOwnToPrimIdx,
             classToPrimIdx,
-            arguments: captureArgumentsToPrimitiveBindings(ctx, stringExtern),
+            arguments: arrayLikeReduce ? captureArgumentsToPrimitiveBindings(ctx, stringExtern) : undefined,
           }
         : undefined;
     // This lookup/reservation occurs AFTER the selected arguments literals.
@@ -4476,7 +4494,7 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
     propMapRef,
     // (#6617) The two are mutually exclusive by construction — a JS-host module
     // never has a wasm peer — so ONE arm serves both lanes, exactly as
-    // `hasBoundaryOrReverseIdx` does for `__extern_has`.
+    // `hasArmIdxs` does for `__extern_has`.
     boundaryObjectGetPrototypeIdx: boundaryObjectGetPrototypeIdx ?? peerGetPrototypeOfIdx,
     // (#6748) …except in a native-regime module in a JS environment, which has
     // both: the wasm peer is asked first.
@@ -5173,7 +5191,7 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
 
   buildObjectEnumerationHelpers(ctx, {
     registerNative,
-    objArrayLikeArms,
+    objArrayLikeArms: true,
     symbolTypeIdx,
     anyStrTypeIdx,
     propEntryTypeIdx,
@@ -5199,8 +5217,12 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
     // the identical "non-null means a real answer" contract. The three are
     // mutually exclusive by construction — a module is a JS-host module, or a
     // standalone consumer, or a standalone provider — so no lane grows an arm.
-    boundaryObjectKeysIdx: boundaryObjectKeysIdx ?? peerObjectKeysIdx ?? reversePeerKeysIdx,
-    boundaryObjectForInKeysIdx: boundaryObjectForInKeysIdx ?? peerObjectKeysIdx ?? reversePeerKeysIdx,
+    // (#6882) …except a native-regime module in a JavaScript environment, which
+    // has the JS boundary AND its peer (consumer) or reverse hop (provider):
+    // each answers for different values, so all are asked — peer, boundary,
+    // reverse — instead of the first one that exists.
+    boundaryObjectKeysIdxs: definedIdxs(peerObjectKeysIdx, boundaryObjectKeysIdx, reversePeerKeysIdx),
+    boundaryObjectForInKeysIdxs: definedIdxs(peerObjectKeysIdx, boundaryObjectForInKeysIdx, reversePeerKeysIdx),
     FLAG_ENUMERABLE,
     FLAG_TOMBSTONE,
   });
@@ -5374,6 +5396,8 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
       const ARG0 = 6;
       const ARG1 = 7;
       const ARGSANY = 8;
+      const CI = 9; // (#7086) concat loop index
+      const CACC = 10; // (#7086) concat accumulator
       // argc/arg0/arg1 from the $ObjVec args carrier (null-safe: argc 0).
       const loadArgs: Instr[] = [
         { op: "i32.const", value: 0 },
@@ -5427,6 +5451,69 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
         ...nativeStringLiteralInstrs(ctx, lit),
         { op: "ref.eq" },
       ];
+      // (#7086) concat(...args) → recv + ToString(arg0) + ToString(arg1) + …
+      // (§22.1.3.5). `concat` is also an Array member, so an `any` receiver's
+      // call goes through the closed dispatcher, whose `$__vec_base` arm owns
+      // the array case and leaves a STRING receiver here — where no arm
+      // answered and the resolved callee (no String.prototype read on a
+      // primitive) threw "called value is not a function". hono's
+      // `getFilePath` does `filename.concat(defaultDocument)`.
+      const stringConcatArm = (): Instr[] => {
+        const concatIdx = ctx.nativeStrHelpers.get("__str_concat");
+        const toStrIdx = ctx.funcMap.get("__extern_toString");
+        if (concatIdx === undefined || toStrIdx === undefined) return [];
+        return [
+          ...nameEq("concat"),
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: [
+              ...loadArgs,
+              { op: "local.get", index: 3 },
+              { op: "ref.cast", typeIdx: ctx.anyStrTypeIdx },
+              { op: "local.set", index: CACC },
+              { op: "i32.const", value: 0 },
+              { op: "local.set", index: CI },
+              {
+                op: "block",
+                blockType: { kind: "empty" },
+                body: [
+                  {
+                    op: "loop",
+                    blockType: { kind: "empty" },
+                    body: [
+                      { op: "local.get", index: CI },
+                      { op: "local.get", index: ARGC },
+                      { op: "i32.ge_s" },
+                      { op: "br_if", depth: 1 },
+                      { op: "local.get", index: CACC },
+                      { op: "ref.as_non_null" },
+                      { op: "local.get", index: ARGSANY },
+                      { op: "ref.cast", typeIdx: objVecTypeIdx },
+                      { op: "struct.get", typeIdx: objVecTypeIdx, fieldIdx: 1 },
+                      { op: "local.get", index: CI },
+                      { op: "array.get", typeIdx: objVecArrTypeIdx },
+                      { op: "call", funcIdx: toStrIdx },
+                      { op: "any.convert_extern" },
+                      { op: "ref.cast", typeIdx: ctx.anyStrTypeIdx },
+                      { op: "call", funcIdx: concatIdx },
+                      { op: "local.set", index: CACC },
+                      { op: "local.get", index: CI },
+                      { op: "i32.const", value: 1 },
+                      { op: "i32.add" },
+                      { op: "local.set", index: CI },
+                      { op: "br", depth: 0 },
+                    ],
+                  },
+                ],
+              },
+              { op: "local.get", index: CACC },
+              { op: "extern.convert_any" },
+              { op: "return" },
+            ],
+          },
+        ];
+      };
       return [
         { op: "local.get", index: 3 }, // any (recv)
         { op: "ref.test", typeIdx: ctx.anyStrTypeIdx },
@@ -5514,6 +5601,7 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
                     { op: "return" },
                   ],
                 },
+                ...stringConcatArm(),
               ],
             },
           ],
@@ -5531,6 +5619,9 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
             { name: "arg0", type: { kind: "externref" } },
             { name: "arg1", type: { kind: "externref" } },
             { name: "argsAny", type: { kind: "anyref" } },
+            // (#7086) string `concat` loop index + accumulator (locals 9-10).
+            { name: "concatI", type: { kind: "i32" } },
+            { name: "concatAcc", type: { kind: "ref_null", typeIdx: ctx.anyStrTypeIdx } },
           ]
         : [{ name: "any", type: { kind: "anyref" } }];
 
@@ -5648,6 +5739,7 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
 
   ensureProxyRuntime(ctx, types, registerNative);
   fillProtoLinkArms(ctx, types, registerNative); // (#6766) per-hop Proxy arms in the prototype walkers
+  fillStructProtoLinkArms(ctx, types, registerNative); // (#7009) per-hop fnctor-struct arms
 
   // (#4749) Fill Object.assign's standalone Proxy-source CopyDataProperties
   // arm now that descriptor helpers and Proxy dispatch front-guards exist.
@@ -5676,11 +5768,7 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
   // objects through the existing identity-cached host proxy. Export only the
   // narrow MOP surface that proxy needs at the boundary; semantic operations
   // remain in Wasm and standalone/WASI gain no JS-facing exports or imports.
-  if (
-    ctx.targetProfile.semanticProviders === "native-first" &&
-    ctx.targetProfile.environment === "javascript" &&
-    ctx.targetProfile.hostValueInterop !== "off"
-  ) {
+  if (ctx.targetProfile.environment === "javascript" && ctx.targetProfile.hostValueInterop !== "off") {
     ensureNativeStringBoundaryBridge(ctx);
     if (!ctx.funcMap.has("__object_is_native_open")) {
       registerNative(
@@ -5766,7 +5854,7 @@ export function ensureNativeProxyRuntime(ctx: CodegenContext): ObjectRuntimeType
 
 /** (#6686) Admitted-object callable classifier for `__is_callable`/`typeof` (adds an import). */
 export function ensureBoundaryCallableKind(ctx: CodegenContext): void {
-  if (ctx.targetProfile.semanticProviders === "native-first" && jsValueBoundary(ctx) && !ctx.strictNoHostImports) {
+  if (jsValueBoundary(ctx) && !ctx.strictNoHostImports) {
     ensureLateImport(ctx, "__boundary_object_callable_kind", [{ kind: "externref" }], [{ kind: "i32" }]);
     flushLateImportShifts(ctx, null);
   }
@@ -6235,6 +6323,19 @@ export function ensureExternRestObject(ctx: CodegenContext): number {
 }
 
 /**
+ * (#6959) Call-site admission for `__apply_closure`. The bridge dispatches
+ * 0..8 per arm and, since #6655, every n > 8 through the module's top minted
+ * `__call_fn_method_<top>`; an n with no dispatcher answers the undefined
+ * sentinel, which is exactly what a declining arm's graceful fallback
+ * produces. Admitting any non-spread argc is therefore monotone: it can only
+ * turn a silent `undefined` into a real invocation. Spread calls lower through
+ * `standalone-dynamic-spread-call.ts` instead.
+ */
+export function applyClosureAdmitsCall(expr: ts.CallExpression): boolean {
+  return !expr.arguments.some((a) => ts.isSpreadElement(a));
+}
+
+/**
  * (#1888 Slice 1) Reserve the `__apply_closure(externref fn, externref recv,
  * externref args) -> externref` arity-bridge funcIdx with a placeholder
  * `unreachable` body, registered in `funcMap`. The real body (an arity switch
@@ -6536,17 +6637,34 @@ export function fillApplyClosure(ctx: CodegenContext): void {
   // An unmatched callee is not lost: the dispatcher's own terminal is the
   // linked-peer apply on the standalone lane, the same destination the
   // fall-through `armUnsupported` has.
-  if (applyClosureTopArity > APPLY_CLOSURE_MAX_ARITY) {
+  //
+  // (#6959) n > 8 into an ORDINARY closure (declared 0..8) is over-application
+  // (§7.3.14: extras are ignored). The above-cap dispatcher carries only
+  // above-cap closures, so such a callee must go to the highest ordinary
+  // dispatcher, which admits every closure up to its arity. `-1` (not a
+  // closure) is huge unsigned and keeps the existing route.
+  let ordinaryTop = APPLY_CLOSURE_MAX_ARITY;
+  while (ordinaryTop >= 0 && callMethod(ordinaryTop) === undefined) ordinaryTop--;
+  let aboveCap = applyClosureTopArity > APPLY_CLOSURE_MAX_ARITY ? buildArm(applyClosureTopArity) : undefined;
+  if (widen.length > 0 && ordinaryTop >= 0) {
+    aboveCap = [
+      { op: "local.get", index: declaredArityLocal },
+      { op: "i32.const", value: ordinaryTop },
+      { op: "i32.le_u" },
+      {
+        op: "if",
+        blockType: { kind: "val", type: { kind: "externref" } },
+        then: withApplyTail(ctx, buildArm(ordinaryTop), ordinaryTop, 2, 3), // (#6959 review) args past top
+        else: aboveCap ?? armUnsupported,
+      },
+    ];
+  }
+  if (aboveCap !== undefined) {
     dispatch = [
       { op: "local.get", index: 3 },
       { op: "i32.const", value: APPLY_CLOSURE_MAX_ARITY },
       { op: "i32.gt_s" },
-      {
-        op: "if",
-        blockType: { kind: "val", type: { kind: "externref" } },
-        then: buildArm(applyClosureTopArity),
-        else: dispatch,
-      },
+      { op: "if", blockType: { kind: "val", type: { kind: "externref" } }, then: aboveCap, else: dispatch },
     ];
   }
   for (let n = APPLY_CLOSURE_MAX_ARITY; n >= 0; n--) {
@@ -7175,9 +7293,7 @@ export function fillBindDynHelper(ctx: CodegenContext): void {
     ...buildClosureRefTestArms(ctx, ANY, mintArm),
   ];
   const jsBoundaryFallback =
-    ctx.targetProfile.semanticProviders === "native-first" &&
-    ctx.targetProfile.environment === "javascript" &&
-    ctx.targetProfile.hostValueInterop !== "off";
+    ctx.targetProfile.environment === "javascript" && ctx.targetProfile.hostValueInterop !== "off";
   if (jsBoundaryFallback && methodCallIdx !== undefined) {
     body.push(
       { op: "local.get", index: 0 },
@@ -7276,7 +7392,8 @@ export function fillExternIsArray(ctx: CodegenContext): void {
   const fn = definedFuncAt(ctx, funcIdx);
   if (!fn) return;
 
-  const carrierTypeIdxs = collectStandaloneArrayCarrierTypeIdxs(ctx);
+  // (#7020) + tuple structs: a TS tuple is a JS array (host-free lane only).
+  const carrierTypeIdxs = [...collectStandaloneArrayCarrierTypeIdxs(ctx), ...collectTupleArrayCarrierTypeIdxs(ctx)];
   const anyLocal = 1;
   const body: Instr[] = [
     { op: "local.get", index: 0 },
@@ -7557,8 +7674,16 @@ interface ExternGetIdxBodyParams {
   externGetIdx: number;
   /** (#6651 H6) `$Proxy` type: its indexed read is the same `Get(O, ToString(i))`. */
   proxyTypeIdx?: number;
+  /** (#7082) `$AnyString`: a String exotic object's integer-indexed read
+   *  (§10.4.3) is the same `Get(O, ToString(i))`, which `__extern_get` serves. */
+  anyStrTypeIdx?: number;
   /** Pre-built per-`__vec_<k>` dispatch arms (empty at registration time). */
   vecArms: Instr[];
+  /** (#6981) A JS-environment native regime admits host objects through the
+   *  export boundary: a non-null value that is no native carrier is read with
+   *  the same `Get(O, ToString(i))` as the `$Object` arm, whose `__extern_get`
+   *  owns the boundary-object fallback. False keeps the historical miss. */
+  foreignIndexedGet?: boolean;
   /** (#2106 S1) Factory for the miss ("index absent") result instrs. A FACTORY
    *  — not a shared array — because the miss appears in several branches and
    *  shared Instr objects get double-remapped by the finalize walks (see
@@ -7580,6 +7705,27 @@ interface ExternGetIdxBodyParams {
  * The typed-vec arms sit BEFORE the `$ObjVec` test because a `__vec_<k>` is not
  * a `$ObjVec`; placing them first keeps the `$ObjVec` fast path unchanged.
  */
+/** (#6981) The `foreignIndexedGet` arm: non-null → `__extern_get(v, ToString(i))`. */
+function foreignIndexedGetInstrs(p: ExternGetIdxBodyParams): Instr[] {
+  if (!p.foreignIndexedGet || !p.objArrayLikeArms) return [];
+  return [
+    { op: "local.get", index: 2 },
+    { op: "ref.is_null" },
+    { op: "i32.eqz" },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        { op: "local.get", index: 0 },
+        { op: "local.get", index: 1 },
+        { op: "call", funcIdx: p.numberToStringIdx },
+        { op: "call", funcIdx: p.externGetIdx },
+        { op: "return" },
+      ],
+    },
+  ];
+}
+
 export function buildExternGetIdxBody(p: ExternGetIdxBodyParams): Instr[] {
   const { objArrayLikeArms, objectTypeIdx, objVecTypeIdx, objVecArrTypeIdx } = p;
   const objIdxArm: Instr[] = objArrayLikeArms
@@ -7591,6 +7737,13 @@ export function buildExternGetIdxBody(p: ExternGetIdxBodyParams): Instr[] {
           : ([
               { op: "local.get", index: 2 },
               { op: "ref.test", typeIdx: p.proxyTypeIdx },
+              { op: "i32.or" },
+            ] satisfies Instr[])),
+        ...(p.anyStrTypeIdx === undefined
+          ? []
+          : ([
+              { op: "local.get", index: 2 },
+              { op: "ref.test", typeIdx: p.anyStrTypeIdx },
               { op: "i32.or" },
             ] satisfies Instr[])),
         {
@@ -7625,7 +7778,7 @@ export function buildExternGetIdxBody(p: ExternGetIdxBodyParams): Instr[] {
     {
       op: "if",
       blockType: { kind: "empty" },
-      then: [...p.missInstrs(), { op: "return" }],
+      then: [...foreignIndexedGetInstrs(p), ...p.missInstrs(), { op: "return" }],
     },
     // vec = cast<$ObjVec>(any) ; i = i32(idx)
     { op: "local.get", index: 2 },
@@ -8333,7 +8486,7 @@ export function fillConcatNativeHoleArms(ctx: CodegenContext): void {
  * all previously-baked call indices remain stable.
  */
 export function fillClosedStructHasOwnArms(ctx: CodegenContext): void {
-  if (!ctx.standalone || ctx.anyStrTypeIdx < 0) return;
+  if (!noJsHost(ctx) || ctx.anyStrTypeIdx < 0) return;
   const flattenIdx = ctx.nativeStrHelpers.get("__str_flatten");
   const equalsIdx = ctx.nativeStrHelpers.get("__str_equals");
   if (flattenIdx === undefined || equalsIdx === undefined) return;
@@ -8352,6 +8505,8 @@ export function fillClosedStructHasOwnArms(ctx: CodegenContext): void {
      * base words at fixed indices regardless of where the VALUE went.
      */
     shapeRange?: { shapeFieldIdx: number; stampLo: number; stampCount: number };
+    /** (#7200) `__tag` guard against a same-layout twin class (`classArmTags`). */
+    classTags?: number[];
   };
   const byField = new Map<string, Entry[]>();
   for (const [structName, fields] of ctx.structFields) {
@@ -8360,6 +8515,7 @@ export function fillClosedStructHasOwnArms(ctx: CodegenContext): void {
     if (typeIdx === undefined) continue;
     const shapeFieldIdx = fields.findIndex((field) => field?.name === "$shape");
     const shapeId = ctx.shapeIdByStructName.get(structName);
+    const tagged = ((tags) => (tags ? { classTags: tags } : {}))(classArmTags(ctx, structName)); // (#7200)
     for (const field of fields) {
       if (field?.name === undefined || isInternalStructFieldName(ctx, structName, field.name)) continue;
       const presenceSlot = presenceSlotOf(fields, field.name);
@@ -8386,6 +8542,7 @@ export function fillClosedStructHasOwnArms(ctx: CodegenContext): void {
         typeIdx,
         ...(presenceSlot ? { presenceSlot } : {}),
         ...(shapeFieldIdx >= 0 && shapeId !== undefined ? { shapeFieldIdx, shapeId } : {}),
+        ...tagged,
       });
     }
     // (#3927) The split moved these names off the main struct, so the loop above
@@ -8403,6 +8560,7 @@ export function fillClosedStructHasOwnArms(ctx: CodegenContext): void {
         typeIdx,
         cold,
         ...(shapeFieldIdx >= 0 && shapeId !== undefined ? { shapeFieldIdx, shapeId } : {}),
+        ...tagged,
       });
     }
     // (#3927 per-type layouts) The split moved the flow-grown union names off
@@ -8421,6 +8579,7 @@ export function fillClosedStructHasOwnArms(ctx: CodegenContext): void {
         typeIdx,
         presenceSlot: layoutField.presenceSlot,
         ...(shapeRange ? { shapeRange } : {}),
+        ...tagged,
       });
     }
   }
@@ -8495,6 +8654,7 @@ export function fillClosedStructHasOwnArms(ctx: CodegenContext): void {
           { op: "local.get", index: 0 },
           { op: "any.convert_extern" },
           { op: "ref.test", typeIdx: entry.typeIdx },
+          ...enumerationArmTagGuard(entry.typeIdx, entry.classTags), // (#7200) a twin passes `ref.test`
           {
             op: "if",
             blockType: { kind: "empty" },
@@ -8647,6 +8807,9 @@ type EnumShapeEntry = {
    * stamps instead of enumerating the wrong name list.
    */
   shapeRange?: { shapeFieldIdx: number; stampLo: number; stampCount: number };
+  /** (#7158) Nominal `__tag` guard inputs; see `assignEnumerationArmTags`. */
+  classTags?: number[];
+  structName?: string;
 };
 
 /**
@@ -8666,7 +8829,7 @@ type EnumShapeEntry = {
  * the NAMES from presence words is not possible — a presence word holds bits,
  * not names, and unconditionally-assigned fields have no presence bit at all.)
  */
-function collectClosedStructEnumerationEntries(ctx: CodegenContext): EnumShapeEntry[] {
+function collectClosedStructEnumerationEntries(ctx: CodegenContext, emptyTypeIdxs?: number[]): EnumShapeEntry[] {
   const entries: EnumShapeEntry[] = [];
   for (const [structName, fields] of ctx.structFields) {
     if (isSyntheticStructName(structName)) continue;
@@ -8703,19 +8866,27 @@ function collectClosedStructEnumerationEntries(ctx: CodegenContext): EnumShapeEn
         byName.set(layoutField.name, { name: layoutField.name, presenceSlot: layoutField.presenceSlot });
       }
     }
-    if (byName.size === 0) continue;
+    // (#7149) A shape with no enumerable own field (`class C { #x = 1 }`) has
+    // no arm, but it is still an ordinary object: the caller's classifier
+    // needs it so JSON.stringify answers `{}`, not `null`.
+    if (byName.size === 0) {
+      emptyTypeIdxs?.push(typeIdx);
+      continue;
+    }
 
     const orderedNames = orderNamesByInsertion(ctx, structName, [...byName.keys()]);
     const shapeFieldIdx = fields.findIndex((field) => field?.name === "$shape");
     const shapeId = ctx.shapeIdByStructName.get(structName);
     const shapeRange = fnctorLayoutShapeRangeFor(ctx, structName);
     entries.push({
+      structName,
       typeIdx,
       fields: orderedNames.map((name) => byName.get(name)!),
       ...(shapeFieldIdx >= 0 && shapeId !== undefined ? { shapeFieldIdx, shapeId } : {}),
       ...(shapeRange ? { shapeRange } : {}),
     });
   }
+  assignEnumerationArmTags(ctx, entries);
   return entries;
 }
 
@@ -8821,6 +8992,7 @@ function buildClosedStructEnumerationArms(
       { op: "local.get", index: 0 },
       { op: "any.convert_extern" },
       { op: "ref.test", typeIdx: entry.typeIdx },
+      ...enumerationArmTagGuard(entry.typeIdx, entry.classTags),
       { op: "if", blockType: { kind: "empty" }, then: exactThen },
     );
   }
@@ -8828,7 +9000,7 @@ function buildClosedStructEnumerationArms(
 }
 
 export function fillClosedStructOwnPropertyNamesArms(ctx: CodegenContext): void {
-  if (!ctx.standalone) return;
+  if (!noJsHost(ctx)) return;
   const targets = ["__getOwnPropertyNames"]
     .map((name) => ctx.mod.functions.find((candidate) => candidate.name === name))
     .filter((f): f is NonNullable<typeof f> => f !== undefined);
@@ -8913,15 +9085,17 @@ export function fillClosedStructOwnPropertyNamesArms(ctx: CodegenContext): void 
  * standalone, so their dynamically-routed closed structs need these arms too.
  */
 export function fillClosedStructEnumerationArms(ctx: CodegenContext): void {
-  if (ctx.targetProfile.semanticProviders !== "native-first" && !ctx.standalone) return;
   const objVecNewIdx = ctx.funcMap.get("__objvec_new");
   const objVecPushIdx = ctx.funcMap.get("__objvec_push");
   if (objVecNewIdx === undefined || objVecPushIdx === undefined) return;
 
-  const entries = collectClosedStructEnumerationEntries(ctx);
-  if (entries.length === 0) return;
+  const emptyTypeIdxs: number[] = [];
+  const entries = collectClosedStructEnumerationEntries(ctx, emptyTypeIdxs);
+  const allocatedTypes = allocatedStructTypeIndices(ctx.mod);
+  const emptyAllocated = emptyTypeIdxs.filter((typeIdx) => allocatedTypes.has(typeIdx));
+  if (entries.length === 0 && emptyAllocated.length === 0) return;
 
-  for (const name of ["__object_keys", "__object_keys_forin"]) {
+  for (const name of entries.length === 0 ? [] : ["__object_keys", "__object_keys_forin"]) {
     const fn = ctx.mod.functions.find((candidate) => candidate.name === name);
     if (!fn) continue;
     // `(externref obj) -> externref`: one param, so the first appended local
@@ -8961,13 +9135,13 @@ export function fillClosedStructEnumerationArms(ctx: CodegenContext): void {
   if (closedAssignSourceClassifier) {
     const seenTypeIdxs = new Set<number>();
     const body: Instr[] = [];
-    for (const entry of entries) {
-      if (seenTypeIdxs.has(entry.typeIdx)) continue;
-      seenTypeIdxs.add(entry.typeIdx);
+    for (const typeIdx of [...entries.map((entry) => entry.typeIdx), ...emptyAllocated]) {
+      if (seenTypeIdxs.has(typeIdx)) continue;
+      seenTypeIdxs.add(typeIdx);
       body.push(
         { op: "local.get", index: 0 },
         { op: "any.convert_extern" },
-        { op: "ref.test", typeIdx: entry.typeIdx },
+        { op: "ref.test", typeIdx },
         {
           op: "if",
           blockType: { kind: "empty" },
@@ -8987,7 +9161,7 @@ export function fillClosedStructEnumerationArms(ctx: CodegenContext): void {
  * reports the physical field.
  */
 export function fillClosedStructExternGetArms(ctx: CodegenContext): void {
-  if (!ctx.standalone || ctx.anyStrTypeIdx < 0) return;
+  if (!noJsHost(ctx) || ctx.anyStrTypeIdx < 0) return;
   const inheritedSetGetMissActive = inheritedSetAnyDirty(ctx);
   const fn = ctx.mod.functions.find((candidate) => candidate.name === "__extern_get");
   const flattenIdx = ctx.nativeStrHelpers.get("__str_flatten");
@@ -9519,6 +9693,8 @@ export function fillFnctorPrototypeDispatchArms(ctx: CodegenContext): void {
   const protoStartFn = protoStartIdx === undefined ? undefined : definedFuncAt(ctx, protoStartIdx);
   if (protoStartFn) {
     const protoArms: Instr[] = [];
+    // (#6951 G3) local 2: the instance's construction-time snapshot.
+    const snapshotSlot = 2;
     for (const [fnctorName, protoGlobalIdx] of ctx.fnctorPrototypeObject) {
       const typeIdx = ctx.structMap.get(`__fnctor_${fnctorName}`);
       if (typeIdx === undefined) continue;
@@ -9528,10 +9704,17 @@ export function fillFnctorPrototypeDispatchArms(ctx: CodegenContext): void {
         {
           op: "if",
           blockType: { kind: "empty" },
-          then: [{ op: "global.get", index: protoGlobalIdx }, { op: "return" }],
+          then: [
+            ...fnctorProtoLinkInstrs(ctx, fnctorName, typeIdx, protoGlobalIdx, snapshotSlot, [
+              { op: "local.get", index: 1 },
+              { op: "ref.cast", typeIdx },
+            ]),
+            { op: "return" },
+          ],
         },
       );
     }
+    if (protoStartFn.locals.length < 2) protoStartFn.locals.push({ name: "__snap", type: { kind: "externref" } });
     protoStartFn.body = [
       { op: "local.get", index: 0 },
       { op: "any.convert_extern" },
@@ -9557,15 +9740,21 @@ export function fillFnctorPrototypeDispatchArms(ctx: CodegenContext): void {
   // key/entry locals are appended once below.
   const HSTR = ctx.hashedStrTypeIdx;
   const objTypes = ctx.objectRuntimeTypes;
-  const inlineCacheReady = HSTR >= 0 && objTypes !== undefined;
+  const hasOwnIdxForCache = ctx.funcMap.get("__hasOwnProperty");
+  const inlineCacheReady = HSTR >= 0 && objTypes !== undefined && hasOwnIdxForCache !== undefined;
   let khLocal = -1;
   let entryLocal = -1;
+  let protoLocal = -1;
   if (inlineCacheReady) {
     khLocal = 3 + fn.locals.length;
     entryLocal = khLocal + 1;
+    protoLocal = khLocal + 2;
     fn.locals.push(
       { name: "__mc_kh", type: { kind: "ref_null", typeIdx: HSTR } },
       { name: "__mc_entry", type: { kind: "ref_null", typeIdx: objTypes.propEntryTypeIdx } },
+      // (#6951 G3) the receiver's [[Prototype]] link — its construction-time
+      // snapshot, not the live global — which the cache owner must match.
+      { name: "__mc_proto", type: { kind: "externref" } },
     );
   }
   // (#3673 round 21) props-array type for the per-object staleness cast.
@@ -9586,9 +9775,21 @@ export function fillFnctorPrototypeDispatchArms(ctx: CodegenContext): void {
     const cacheTry: Instr[] =
       inlineCacheReady && propMapIdxForCache !== undefined
         ? [
+            // (#6951 G3) The owner check runs against THIS receiver's link, and
+            // only when that link is an `$Object` (a dynamic `F.prototype = v`
+            // can install any value; the slow path below handles the rest).
+            ...fnctorProtoLinkInstrs(ctx, fnctorName, typeIdx, protoGlobalIdx, protoLocal, [
+              { op: "local.get", index: 0 },
+              { op: "any.convert_extern" },
+              { op: "ref.cast", typeIdx },
+            ]),
+            { op: "local.tee", index: protoLocal },
+            { op: "any.convert_extern" },
+            { op: "ref.test", typeIdx: objTypes!.objectTypeIdx },
             { op: "local.get", index: 1 },
             { op: "any.convert_extern" },
             { op: "ref.test", typeIdx: HSTR },
+            { op: "i32.and" },
             {
               op: "if",
               blockType: { kind: "empty" },
@@ -9598,6 +9799,7 @@ export function fillFnctorPrototypeDispatchArms(ctx: CodegenContext): void {
                 { op: "ref.cast", typeIdx: HSTR },
                 { op: "local.tee", index: khLocal },
                 { op: "struct.get", typeIdx: HSTR, fieldIdx: 4 }, // populated flag
+                ...receiverHasNoOwnKeyGuard(ctx, hasOwnIdxForCache!), // (#6946) own method shadows the cached proto one
                 {
                   op: "if",
                   blockType: { kind: "empty" },
@@ -9607,13 +9809,13 @@ export function fillFnctorPrototypeDispatchArms(ctx: CodegenContext): void {
                     { op: "ref.as_non_null" },
                     { op: "struct.get", typeIdx: HSTR, fieldIdx: 5 }, // cacheOwner
                     { op: "ref.cast", typeIdx: objTypes!.objectTypeIdx },
-                    { op: "global.get", index: protoGlobalIdx },
+                    { op: "local.get", index: protoLocal },
                     { op: "any.convert_extern" },
                     { op: "ref.cast", typeIdx: objTypes!.objectTypeIdx },
                     { op: "ref.eq" },
                     // (#3673 round 21) per-object staleness: proto.props must be
                     // the SAME array as at population (a grow replaces it).
-                    { op: "global.get", index: protoGlobalIdx },
+                    { op: "local.get", index: protoLocal },
                     { op: "any.convert_extern" },
                     { op: "ref.cast", typeIdx: objTypes!.objectTypeIdx },
                     { op: "struct.get", typeIdx: objTypes!.objectTypeIdx, fieldIdx: 1 }, // props
@@ -9669,7 +9871,16 @@ export function fillFnctorPrototypeDispatchArms(ctx: CodegenContext): void {
         op: "if",
         blockType: { kind: "empty" },
         then: [
-          ...cacheTry,
+          // (#6944) `G.prototype = new F()` stores a struct link the cache
+          // below would `ref.cast` to `$Object`: only an `$Object` link caches.
+          ...(cacheTry.length === 0
+            ? []
+            : ([
+                { op: "global.get", index: protoGlobalIdx },
+                { op: "any.convert_extern" },
+                { op: "ref.test", typeIdx: objTypes!.objectTypeIdx },
+                { op: "if", blockType: { kind: "empty" }, then: cacheTry },
+              ] satisfies Instr[])),
           { op: "local.get", index: 0 },
           { op: "local.get", index: 1 },
           { op: "call", funcIdx: externGetIdx },
@@ -9891,7 +10102,36 @@ export function unshiftExternGetStringExoticArm(ctx: CodegenContext): void {
  * entry flags) confines hits to receivers of that same class. MUST be called
  * LAST among the `__extern_get` body fills.
  */
+/**
+ * (#6946) AND "receiver (param 0) has no own `key` (param 1)" into the i32 on
+ * the stack — the guard both prototype-cache hit arms need before answering from
+ * the prototype (§10.1.8.1 OrdinaryGet consults own storage first). Only reached
+ * for fnctor receivers, whose own expandos live in the carrier `$bag`
+ * (#4194/#4241): `__closure_bag_lookup` is a per-carrier `struct.get`, so the
+ * common no-expando receiver pays one call + null test and keeps the hit; a
+ * receiver WITH a bag skips the cache for the exact slow path. Without that
+ * helper, fall back to the full `__hasOwnProperty` predicate.
+ */
+function receiverHasNoOwnKeyGuard(ctx: CodegenContext, hasOwnIdx: number): Instr[] {
+  const bagLookupIdx = ctx.funcMap.get("__closure_bag_lookup");
+  if (bagLookupIdx !== undefined)
+    return [
+      { op: "local.get", index: 0 },
+      { op: "call", funcIdx: bagLookupIdx },
+      { op: "ref.is_null" },
+      { op: "i32.and" },
+    ];
+  return [
+    { op: "local.get", index: 0 },
+    { op: "local.get", index: 1 },
+    { op: "call", funcIdx: hasOwnIdx },
+    { op: "i32.eqz" },
+    { op: "i32.and" },
+  ];
+}
+
 export function unshiftExternGetProtoCacheArm(ctx: CodegenContext): void {
+  unshiftFnctorFastGetArm(ctx); // (#6973) BEFORE the cache arm, which must stay the prefix
   if (!ctx.standalone || ctx.hashedStrTypeIdx < 0) return;
   const HSTR = ctx.hashedStrTypeIdx;
   const protoStartIdx = ctx.funcMap.get("__fnctor_proto_start");
@@ -9900,6 +10140,9 @@ export function unshiftExternGetProtoCacheArm(ctx: CodegenContext): void {
   const { objectTypeIdx, propEntryTypeIdx } = objTypes;
   const fn = ctx.mod.functions.find((candidate) => candidate.name === "__extern_get");
   if (!fn || !fn.locals.some((l) => l.name === "kh")) return;
+  // (#6946) Own-shadow guard for fnctor receivers; no own-presence probe, no cache.
+  const hasOwnIdx = ctx.funcMap.get("__hasOwnProperty");
+  if (hasOwnIdx === undefined) return;
   // (#3673 round 21) props-array type for the per-object staleness cast.
   const objDefForArm = ctx.mod.types[objectTypeIdx];
   const propMapIdxForArm =
@@ -9952,8 +10195,16 @@ export function unshiftExternGetProtoCacheArm(ctx: CodegenContext): void {
                 { op: "local.get", index: 0 },
                 { op: "call", funcIdx: protoStartIdx },
                 { op: "local.tee", index: 7 },
-                { op: "ref.is_null" },
-                { op: "i32.eqz" },
+                // (#6944) a struct link is never a cache owner: test, not null-check.
+                { op: "any.convert_extern" },
+                { op: "ref.test", typeIdx: objectTypeIdx },
+                // (#6946) §10.1.8.1 OrdinaryGet consults OWN storage first: a
+                // fnctor receiver that has since gained an own `key` (an expando
+                // `this.v = x` shadowing an inherited default already cached for
+                // the class) must not take the prototype hit. The cache's
+                // staleness tracking is per OWNER (the prototype), so a write on
+                // the receiver never invalidates it — check the receiver here.
+                ...receiverHasNoOwnKeyGuard(ctx, hasOwnIdx),
                 {
                   op: "if",
                   blockType: { kind: "empty" },
@@ -10478,6 +10729,59 @@ export function fillDynamicForinVecArms(ctx: CodegenContext): void {
 }
 
 /**
+ * (#6963) Finalize the element-store key canonicaliser `__elem_store_key(obj,
+ * key)` reserved by `emitElementStoreKeyOnce` (computed-member-reference.ts),
+ * whose reserved body is `__to_property_key(key)`. Prepend: a NON-NEGATIVE
+ * i31 key on one of the JS-array carriers the descriptor overlay serves
+ * (`allowedCarriers` — never a TypedArray view or another `$__vec_base`
+ * subtype — that also has a numeric store arm in `__extern_set`, so never
+ * `$ObjVec`) is returned unchanged, so the store reaches the overlay's i31
+ * front door and this function's numeric arm without a number→string→index
+ * round trip. Such a key's ToPropertyKey is its decimal string and has no
+ * side effects; every other shape keeps the string canonicalisation.
+ */
+function fillElemStoreKeyArm(ctx: CodegenContext): void {
+  const fn = ctx.mod.functions.find((f) => f.name === "__elem_store_key");
+  if (!fn) return;
+  const stored = externSetStoreCarrierSet(ctx);
+  const carriers = allowedCarriers(ctx).filter((c) => stored.has(c.vecTypeIdx));
+  if (carriers.length === 0) return;
+  const carrierTest: Instr[] = [];
+  carriers.forEach((c, i) => {
+    carrierTest.push(
+      { op: "local.get", index: 0 },
+      { op: "any.convert_extern" },
+      { op: "ref.test", typeIdx: c.vecTypeIdx },
+    );
+    if (i > 0) carrierTest.push({ op: "i32.or" });
+  });
+  fn.body.unshift(
+    { op: "local.get", index: 1 },
+    { op: "any.convert_extern" },
+    { op: "ref.test", typeIdx: -20 },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        { op: "local.get", index: 1 },
+        { op: "any.convert_extern" },
+        { op: "ref.cast", typeIdx: -20 },
+        { op: "i31.get_s" },
+        { op: "i32.const", value: 0 },
+        { op: "i32.ge_s" },
+        ...carrierTest,
+        { op: "i32.and" },
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: [{ op: "local.get", index: 1 }, { op: "return" }],
+        },
+      ],
+    },
+  );
+}
+
+/**
  * (#3190) Finalize-time `$__vec_base` write arms for the standalone dynamic
  * STORE helper `__extern_set`. The write-side sibling of `fillExternGetIdxVecArms`
  * (#2190, the read fill).
@@ -10650,9 +10954,11 @@ export function fillExternSetVecArms(ctx: CodegenContext): void {
           { op: "return" },
         ];
 
+  const storeCarrierIdxs: number[] = [];
   for (const { typeIdx, arrTypeIdx, elemType } of carriers) {
     const unbox = unboxExternrefToVecElement(ctx, elemType);
     if (unbox === null) continue; // unsupported element kind → store no-op (as before)
+    storeCarrierIdxs.push(typeIdx);
     // Build fresh instruction objects for each control-flow arm. Reusing one
     // array here would share type-index-bearing nodes between `then`/`else`,
     // which later remap/finalize passes are allowed to mutate in place.
@@ -10697,6 +11003,8 @@ export function fillExternSetVecArms(ctx: CodegenContext): void {
     );
   }
   if (carrierArms.length === 0) return; // no writable carriers → leave body untouched
+  recordExternSetStoreCarriers(ctx, storeCarrierIdxs);
+  fillElemStoreKeyArm(ctx);
 
   fn.locals.push(
     { name: "__vec_set_any", type: { kind: "anyref" } },

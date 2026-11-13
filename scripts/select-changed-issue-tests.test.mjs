@@ -23,7 +23,6 @@ const pinned = [
   "tests/issue-1128-dstr-tdz.test.ts",
   "tests/issue-1528-closure-construct.test.ts",
   "tests/issue-1712-capture-closure-dispatch.test.ts",
-  "tests/issue-2637-b2-ctor-closure-registration.test.ts",
   "tests/issue-3036-late-microtask-closure.test.ts",
   "tests/issue-3520-closure-host-bridge-abi.test.ts",
   "tests/issue-6419-closure-area-red-on-main.test.ts",
@@ -253,7 +252,8 @@ test("workflow keeps fatal pins, exact per-file flags/heaps, isolated checkout, 
   assert.match(changed, /id: tests\n        continue-on-error: true/);
   assert.match(changed, /TEST_OUTCOME: \$\{\{ steps\.tests\.outcome \}\}/);
   assert.match(changed, /\*\) echo "::error::Changed issue test did not execute"; exit 1/);
-  for (const text of [fatal, select, changed, gate]) assert.match(text, /timeout-minutes: 40/);
+  for (const text of [fatal, select, gate]) assert.match(text, /^    timeout-minutes: 40$/m);
+  assert.match(changed, /^    timeout-minutes: 120$/m);
   assert.match(gate, /needs: \[changes, issue-tests-pinned, issue-tests-select, issue-tests-changed\]/);
   assert.match(
     gate,

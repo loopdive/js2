@@ -497,6 +497,14 @@ export function __runtime_eval_is_aot_callable(_callee: JSValue): boolean {
   return false;
 }
 
+/** Re-target a caller's membrane hook carrier at `obj`. Node execution has no
+ * module seam and returns `obj`; standalone compilation lowers this private
+ * intrinsic to a fresh canonical carrier that copies the hook's trampolines,
+ * so a property read on it runs in the module that owns `obj`. */
+export function __runtime_eval_rebind_carrier(_hook: JSValue, obj: JSValue): JSValue {
+  return obj;
+}
+
 /** Return one stable, structurally canonical provider→AOT function marker.
  * Reusing the marker is required for `f === f` and for aliases of one Annex B
  * function that cross the boundary through different binding cells. */

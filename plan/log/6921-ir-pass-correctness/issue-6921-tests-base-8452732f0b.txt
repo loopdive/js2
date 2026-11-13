@@ -1,0 +1,234 @@
+
+ RUN  v3.2.7 /home/user/js2/.claude/worktrees/agent-a57ccb2b08eee85cb
+
+ ❯ tests/issue-6921-ir-middle-end-pass-correctness.test.ts (20 tests | 12 failed) 3033ms
+   × #6921 D1 — inlined callee slots are remapped into the caller > t10: helper with a mutable let does not clobber the caller's let (gc) 995ms
+     → expected 6007 to be 105007 // Object.is equality
+   × #6921 D1 — inlined callee slots are remapped into the caller > t11: helper reassigning its parameter compiles and runs (gc) 113ms
+     → compile failed (gc): Codegen error: IR path failed for main: post-inline verify: slot.write slot index 0 out of bounds (function has 0 slots); slot.read slot index 0 out of bounds (function has 0 slots); slot.write slot index 0 out of bounds (function has 0 slots); slot.read slot index 0 out of bounds (function has 0 slots) [IR-FALLBACK] | IR-first (#2138): post-inline verify: slot.write slot index 0 out of bounds (function has 0 slots); slot.read slot index 0 out of bounds (function has 0 slots); slot.write slot index 0 out of bounds (function has 0 slots); slot.read slot index 0 out of bounds (function has 0 slots) [verifier-failure; ir-unit:v1:ir-source%3Av1%3A0000000000000000%3Aentry%3Aissue-6921.ts:root:top-level-function:0000000000000001]
+   × #6921 D1 — inlined callee slots are remapped into the caller > two inlined copies of one slot-bearing helper get separate slots (gc) 76ms
+     → expected 20721 to be 14721 // Object.is equality
+   ✓ #6921 D1 — inlined callee slots are remapped into the caller > negative control: a slot-free helper is still inlined (gc) 50ms
+   ✓ #6921 D1 — inlined callee slots are remapped into the caller > negative control: t12 loop caller (inliner does not enter it) (gc) 62ms
+   × #6921 D1 — inlined callee slots are remapped into the caller > t10: helper with a mutable let does not clobber the caller's let (standalone) 191ms
+     → expected 6007 to be 105007 // Object.is equality
+   × #6921 D1 — inlined callee slots are remapped into the caller > t11: helper reassigning its parameter compiles and runs (standalone) 128ms
+     → compile failed (standalone): Codegen error: IR path failed for main: post-inline verify: slot.write slot index 0 out of bounds (function has 0 slots); slot.read slot index 0 out of bounds (function has 0 slots); slot.write slot index 0 out of bounds (function has 0 slots); slot.read slot index 0 out of bounds (function has 0 slots) [IR-FALLBACK] | IR-first (#2138): post-inline verify: slot.write slot index 0 out of bounds (function has 0 slots); slot.read slot index 0 out of bounds (function has 0 slots); slot.write slot index 0 out of bounds (function has 0 slots); slot.read slot index 0 out of bounds (function has 0 slots) [verifier-failure; ir-unit:v1:ir-source%3Av1%3A0000000000000000%3Aentry%3Aissue-6921.ts:root:top-level-function:0000000000000001]
+   × #6921 D1 — inlined callee slots are remapped into the caller > two inlined copies of one slot-bearing helper get separate slots (standalone) 140ms
+     → expected 20721 to be 14721 // Object.is equality
+   ✓ #6921 D1 — inlined callee slots are remapped into the caller > negative control: a slot-free helper is still inlined (standalone) 117ms
+   ✓ #6921 D1 — inlined callee slots are remapped into the caller > negative control: t12 loop caller (inliner does not enter it) (standalone) 127ms
+   × #6921 D2 — ToNumber / loose == run user code (gc host objects) > t9 tonum: unused +o still calls valueOf exactly once 120ms
+     → expected { result: 1, calls: +0 } to deeply equal { result: 1, calls: 1 }
+   × #6921 D2 — ToNumber / loose == run user code (gc host objects) > t9 eqq: unused o == 1 still calls valueOf exactly once 50ms
+     → expected { result: 1, calls: +0 } to deeply equal { result: 1, calls: 1 }
+   × #6921 D2 — ToNumber / loose == run user code (gc host objects) > t9 tonum: a throwing valueOf propagates 57ms
+     → expected undefined to be 'boom' // Object.is equality
+   ✓ #6921 D2 — ToNumber / loose == run user code (gc host objects) > t9 twice: (+o) + (+o) calls valueOf twice (GVN off) 50ms
+   × #6921 D2 — ToNumber / loose == run user code (gc host objects) > t9 twice: GVN does not merge the two ToNumber calls (JS2WASM_IR_GVN=1) 63ms
+     → expected { result: 20, calls: 1 } to deeply equal { result: 20, calls: 2 }
+   ✓ #6921 D2 — ToNumber / loose == run user code (gc host objects) > GVN liveness control: the stubbed env reaches compile (poison changes a pure duplicate) 53ms
+   ✓ #6921 D2 — ToNumber / loose == run user code (gc host objects) > standalone: tonum / eqq / twice stay IR-emitted and keep their base results  632ms
+   × #6921 D2 — effect classification and deadCode (pass level) > effectsOf: strict dyn.eq and dyn.truthy pure; dyn.to_number and loose dyn.eq not 3ms
+     → expected true to be false // Object.is equality
+   × #6921 D2 — effect classification and deadCode (pass level) > deadCode keeps an unused dyn.to_number and an unused loose dyn.eq 2ms
+     → to_number: expected 1 to be 2 // Object.is equality
+   ✓ #6921 D2 — effect classification and deadCode (pass level) > negative control: deadCode still removes an unused strict dyn.eq and dyn.truthy 1ms
+
+⎯⎯⎯⎯⎯⎯ Failed Tests 12 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/issue-6921-ir-middle-end-pass-correctness.test.ts > #6921 D1 — inlined callee slots are remapped into the caller > t10: helper with a mutable let does not clobber the caller's let (gc)
+ FAIL  tests/issue-6921-ir-middle-end-pass-correctness.test.ts > #6921 D1 — inlined callee slots are remapped into the caller > t10: helper with a mutable let does not clobber the caller's let (standalone)
+AssertionError: expected 6007 to be 105007 // Object.is equality
+
+[32m- Expected[39m
+[31m+ Received[39m
+
+[32m- 105007[39m
+[31m+ 6007[39m
+
+ ❯ tests/issue-6921-ir-middle-end-pass-correctness.test.ts:216:31
+    214|       const { exports, units, wat } = await compileRun(T10, target, tr…
+    215|       expectIrEmitted(units, "g", "main");
+    216|       expect(exports.main!()).toBe(expected);
+       |                               ^
+    217|       // The fix remaps rather than refusing to inline: `main` keeps n…
+    218|       expect(watFunc(wat, "main")).not.toMatch(/\bcall\b/);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/12]⎯
+
+ FAIL  tests/issue-6921-ir-middle-end-pass-correctness.test.ts > #6921 D1 — inlined callee slots are remapped into the caller > t11: helper reassigning its parameter compiles and runs (gc)
+Error: compile failed (gc): Codegen error: IR path failed for main: post-inline verify: slot.write slot index 0 out of bounds (function has 0 slots); slot.read slot index 0 out of bounds (function has 0 slots); slot.write slot index 0 out of bounds (function has 0 slots); slot.read slot index 0 out of bounds (function has 0 slots) [IR-FALLBACK] | IR-first (#2138): post-inline verify: slot.write slot index 0 out of bounds (function has 0 slots); slot.read slot index 0 out of bounds (function has 0 slots); slot.write slot index 0 out of bounds (function has 0 slots); slot.read slot index 0 out of bounds (function has 0 slots) [verifier-failure; ir-unit:v1:ir-source%3Av1%3A0000000000000000%3Aentry%3Aissue-6921.ts:root:top-level-function:0000000000000001]
+ ❯ compileRun tests/issue-6921-ir-middle-end-pass-correctness.test.ts:145:11
+    143|   });
+    144|   if (!result.success) {
+    145|     throw new Error(`compile failed (${target}): ${result.errors.map((…
+       |           ^
+    146|   }
+    147|   const imports = buildImports(result.imports, {}, result.stringPool);
+ ❯ tests/issue-6921-ir-middle-end-pass-correctness.test.ts:223:34
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/12]⎯
+
+ FAIL  tests/issue-6921-ir-middle-end-pass-correctness.test.ts > #6921 D1 — inlined callee slots are remapped into the caller > two inlined copies of one slot-bearing helper get separate slots (gc)
+ FAIL  tests/issue-6921-ir-middle-end-pass-correctness.test.ts > #6921 D1 — inlined callee slots are remapped into the caller > two inlined copies of one slot-bearing helper get separate slots (standalone)
+AssertionError: expected 20721 to be 14721 // Object.is equality
+
+[32m- Expected[39m
+[31m+ Received[39m
+
+[32m- 14721[39m
+[31m+ 20721[39m
+
+ ❯ tests/issue-6921-ir-middle-end-pass-correctness.test.ts:233:31
+    231|       const { exports, units, wat } = await compileRun(TWO_SITES, targ…
+    232|       expectIrEmitted(units, "g", "main");
+    233|       expect(exports.main!()).toBe(expected);
+       |                               ^
+    234|       expect(watFunc(wat, "main")).not.toMatch(/\bcall\b/);
+    235|     });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/12]⎯
+
+ FAIL  tests/issue-6921-ir-middle-end-pass-correctness.test.ts > #6921 D1 — inlined callee slots are remapped into the caller > t11: helper reassigning its parameter compiles and runs (standalone)
+Error: compile failed (standalone): Codegen error: IR path failed for main: post-inline verify: slot.write slot index 0 out of bounds (function has 0 slots); slot.read slot index 0 out of bounds (function has 0 slots); slot.write slot index 0 out of bounds (function has 0 slots); slot.read slot index 0 out of bounds (function has 0 slots) [IR-FALLBACK] | IR-first (#2138): post-inline verify: slot.write slot index 0 out of bounds (function has 0 slots); slot.read slot index 0 out of bounds (function has 0 slots); slot.write slot index 0 out of bounds (function has 0 slots); slot.read slot index 0 out of bounds (function has 0 slots) [verifier-failure; ir-unit:v1:ir-source%3Av1%3A0000000000000000%3Aentry%3Aissue-6921.ts:root:top-level-function:0000000000000001]
+ ❯ compileRun tests/issue-6921-ir-middle-end-pass-correctness.test.ts:145:11
+    143|   });
+    144|   if (!result.success) {
+    145|     throw new Error(`compile failed (${target}): ${result.errors.map((…
+       |           ^
+    146|   }
+    147|   const imports = buildImports(result.imports, {}, result.stringPool);
+ ❯ tests/issue-6921-ir-middle-end-pass-correctness.test.ts:223:34
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/12]⎯
+
+ FAIL  tests/issue-6921-ir-middle-end-pass-correctness.test.ts > #6921 D2 — ToNumber / loose == run user code (gc host objects) > t9 tonum: unused +o still calls valueOf exactly once
+AssertionError: expected { result: 1, calls: +0 } to deeply equal { result: 1, calls: 1 }
+
+[32m- Expected[39m
+[31m+ Received[39m
+
+[2m  {[22m
+[32m-   "calls": 1,[39m
+[31m+   "calls": 0,[39m
+[2m    "result": 1,[22m
+[2m  }[22m
+
+ ❯ tests/issue-6921-ir-middle-end-pass-correctness.test.ts:259:47
+    257|     const { exports, units } = await compileRun(T9, "gc");
+    258|     expectIrEmitted(units, "tonum");
+    259|     expect(observe((o) => exports.tonum!(o))).toEqual(observe((o) => n…
+       |                                               ^
+    260|   });
+    261| 
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/12]⎯
+
+ FAIL  tests/issue-6921-ir-middle-end-pass-correctness.test.ts > #6921 D2 — ToNumber / loose == run user code (gc host objects) > t9 eqq: unused o == 1 still calls valueOf exactly once
+AssertionError: expected { result: 1, calls: +0 } to deeply equal { result: 1, calls: 1 }
+
+[32m- Expected[39m
+[31m+ Received[39m
+
+[2m  {[22m
+[32m-   "calls": 1,[39m
+[31m+   "calls": 0,[39m
+[2m    "result": 1,[22m
+[2m  }[22m
+
+ ❯ tests/issue-6921-ir-middle-end-pass-correctness.test.ts:266:45
+    264|     const { exports, units } = await compileRun(T9, "gc");
+    265|     expectIrEmitted(units, "eqq");
+    266|     expect(observe((o) => exports.eqq!(o))).toEqual(observe((o) => nod…
+       |                                             ^
+    267|   });
+    268| 
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[6/12]⎯
+
+ FAIL  tests/issue-6921-ir-middle-end-pass-correctness.test.ts > #6921 D2 — ToNumber / loose == run user code (gc host objects) > t9 tonum: a throwing valueOf propagates
+AssertionError: expected undefined to be 'boom' // Object.is equality
+
+[32m- Expected:[39m 
+"boom"
+
+[31m+ Received:[39m 
+undefined
+
+ ❯ tests/issue-6921-ir-middle-end-pass-correctness.test.ts:274:67
+    272|     const expected = thrownMessage(() => node.tonum!(throwingObject())…
+    273|     expect(expected).toBe("boom");
+    274|     expect(thrownMessage(() => exports.tonum!(throwingObject()))).toBe…
+       |                                                                   ^
+    275|   });
+    276| 
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[7/12]⎯
+
+ FAIL  tests/issue-6921-ir-middle-end-pass-correctness.test.ts > #6921 D2 — ToNumber / loose == run user code (gc host objects) > t9 twice: GVN does not merge the two ToNumber calls (JS2WASM_IR_GVN=1)
+AssertionError: expected { result: 20, calls: 1 } to deeply equal { result: 20, calls: 2 }
+
+[32m- Expected[39m
+[31m+ Received[39m
+
+[2m  {[22m
+[32m-   "calls": 2,[39m
+[31m+   "calls": 1,[39m
+[2m    "result": 20,[22m
+[2m  }[22m
+
+ ❯ tests/issue-6921-ir-middle-end-pass-correctness.test.ts:289:47
+    287|     const { exports, units } = await compileRun(T9, "gc");
+    288|     expectIrEmitted(units, "twice");
+    289|     expect(observe((o) => exports.twice!(o))).toEqual(observe((o) => n…
+       |                                               ^
+    290|   });
+    291| 
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[8/12]⎯
+
+ FAIL  tests/issue-6921-ir-middle-end-pass-correctness.test.ts > #6921 D2 — effect classification and deadCode (pass level) > effectsOf: strict dyn.eq and dyn.truthy pure; dyn.to_number and loose dyn.eq not
+AssertionError: expected true to be false // Object.is equality
+
+[32m- Expected[39m
+[31m+ Received[39m
+
+[32m- false[39m
+[31m+ true[39m
+
+ ❯ tests/issue-6921-ir-middle-end-pass-correctness.test.ts:348:77
+    346|     expect(effectsArePure(effectsOf(firstInstr(unusedDynOp("strict_eq"…
+    347|     expect(effectsArePure(effectsOf(firstInstr(unusedDynOp("truthy")))…
+    348|     expect(effectsArePure(effectsOf(firstInstr(unusedDynOp("to_number"…
+       |                                                                             ^
+    349|     expect(effectsArePure(effectsOf(firstInstr(unusedDynOp("loose_eq")…
+    350|   });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[9/12]⎯
+
+ FAIL  tests/issue-6921-ir-middle-end-pass-correctness.test.ts > #6921 D2 — effect classification and deadCode (pass level) > deadCode keeps an unused dyn.to_number and an unused loose dyn.eq
+AssertionError: to_number: expected 1 to be 2 // Object.is equality
+
+[32m- Expected[39m
+[31m+ Received[39m
+
+[32m- 2[39m
+[31m+ 1[39m
+
+ ❯ tests/issue-6921-ir-middle-end-pass-correctness.test.ts:357:39
+    355|       expect(instrCount(fn), emit).toBe(2);
+    356|       const after = deadCode(fn);
+    357|       expect(instrCount(after), emit).toBe(2);
+       |                                       ^
+    358|       expect(
+    359|         after.blocks[0]!.instrs.map((i) => i.kind),
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[10/12]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  12 failed | 8 passed (20)
+   Start at  22:01:55
+   Duration  38.40s (transform 25.17s, setup 0ms, collect 34.80s, tests 3.03s, environment 0ms, prepare 82ms)
+

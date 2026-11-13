@@ -151,6 +151,16 @@ export function buildObjectSameValueBody(resources: ObjectSameValueResources): I
         { op: "call", funcIdx: unboxNumIdx },
         { op: "i64.reinterpret_f64" },
         { op: "i64.eq" },
+        // Every NaN payload/sign denotes the same Number value for SameValue.
+        ...[0, 1].flatMap((index): Instr[] => [
+          { op: "local.get", index },
+          { op: "call", funcIdx: unboxNumIdx },
+          { op: "local.get", index },
+          { op: "call", funcIdx: unboxNumIdx },
+          { op: "f64.ne" },
+        ]),
+        { op: "i32.and" },
+        { op: "i32.or" },
       ],
       else: elseArm,
     },

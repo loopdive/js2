@@ -8,18 +8,9 @@
 // loop, so a callback that writes, deletes or truncates `srcArr` was invisible
 // (`Array.prototype.filter` 15.4.4.20-9-{2,3,4}).
 
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import { compile } from "../src/index.js";
 import { buildImports } from "../src/runtime.js";
-
-const previous = process.env.JS2WASM_NATIVE_REGIME_JS;
-beforeAll(() => {
-  process.env.JS2WASM_NATIVE_REGIME_JS = "1";
-});
-afterAll(() => {
-  if (previous === undefined) Reflect.deleteProperty(process.env, "JS2WASM_NATIVE_REGIME_JS");
-  else process.env.JS2WASM_NATIVE_REGIME_JS = previous;
-});
 
 /** The eval is never executed; its provider imports only need to link. */
 function stubRuntimeEval(binary: Uint8Array, imports: Record<string, any>): void {

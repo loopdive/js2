@@ -115,6 +115,35 @@ Order by kind, cheapest and most diagnostic first:
 - [ ] Each B-item fix has a focused test with the exact diverging value.
 - [ ] #6708's evidence item 3 can be ticked with the run id.
 
+## 2026-10-18 — S6 candidate checkpoint
+
+The current aggregate finally contains fresh evidence for every original row,
+but its Lit `jsHostNative` value predates the complete #6672 candidate and is
+still `runtime-error`. The exact S6 head was therefore remeasured with the
+focused `--perf-only --lane js-host` path after merging main through
+`50a1734711`. Every package that currently measures on `jsHost` also measured
+under the S6 default at O4 and matched its oracle checksum:
+
+| package | expected | actual | status |
+| --- | ---: | ---: | --- |
+| acorn | 422 | 422 | measured |
+| clsx | 7 | 7 | measured |
+| cookie | 1 | 1 | measured |
+| hono | 9 | 9 | measured |
+| lit | 7 | 7 | measured |
+| marked | 75 | 75 | measured |
+| moment | 10 | 10 | measured |
+| prettier | 49 | 49 | measured |
+| react | 8 | 8 | measured |
+| redux | 7 | 7 | measured |
+| uuid | 2 | 2 | measured |
+
+Moment used the keyed QuickJS provider after its artifact/adapter pair passed
+the build script's canaries. These were focused fragments outside the repo,
+not hand-committed dashboard data. Keep this issue open until the post-merge
+CI refresh publishes the same rows and provides the run id required above;
+that publication is also S7 #6979 entry condition 4.
+
 ## Progress — 2026-10-06 (part A, Fable lane; spawn gate blocked at load 27–33)
 
 Starting state re-derived from `benchmarks/results/npm-compat.json`

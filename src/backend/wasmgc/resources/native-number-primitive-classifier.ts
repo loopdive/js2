@@ -1,4 +1,5 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+import { isPrivatelyCopiedFrozenArray } from "../../../wasm/physical/owned-function-data.js";
 import type { Instr, LocalDef } from "../../../wasm/model/instructions.js";
 import type { FunctionReservation, PhysicalModuleReservations } from "../../../wasm/physical/module-reservations.js";
 import type { NativeResourceRecipe } from "../../../runtime/wasmgc/values/native-resource-declaration-types.js";
@@ -143,7 +144,7 @@ function captureLiveDefinitions(
       if (Array.isArray(input)) {
         const length = descriptors.length;
         if (
-          proto !== Array.prototype ||
+          (proto !== Array.prototype && !isPrivatelyCopiedFrozenArray(input)) ||
           !length ||
           !Object.hasOwn(length, "value") ||
           length.enumerable ||
@@ -390,7 +391,7 @@ export function fillNativeNumberPrimitiveClassifierResources(
   requireCompletedDependencies(tx, d);
   const definitions = deriveDefinitions(d, pack);
   const expectedDefinitions = Object.freeze(structuredClone(definitions));
-  owner.functions.forEach((token, index) => tx.fillFunction(token, definitions[index]!));
+  owner.functions.forEach((token, index) => tx.fillOwnedFunction(token, definitions[index]!));
   owner.filledDefinitions = Object.freeze(captureLiveDefinitions(owner));
   owner.definitions = expectedDefinitions;
   owner.filled = true;

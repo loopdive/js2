@@ -449,6 +449,25 @@ export function identifierIsWrittenTo(
   name: string,
   sameBinding?: (id: ts.Identifier) => boolean,
 ): boolean {
+  if (sameBinding) return someBindingWrite(file, (id) => id.text === name && sameBinding(id));
+  // Parsed files are immutable, so the name-only answer is one walk per file
+  // however many names a large initializer asks about.
+  let names = writtenNamesByFile.get(file);
+  if (names === undefined) {
+    const written = new Set<string>();
+    someBindingWrite(file, (id) => {
+      written.add(id.text);
+      return false;
+    });
+    writtenNamesByFile.set(file, (names = written));
+  }
+  return names.has(name);
+}
+
+const writtenNamesByFile = new WeakMap<ts.SourceFile, ReadonlySet<string>>();
+
+/** Whether `accept` holds for some identifier reference in `file` that is a binding write. */
+function someBindingWrite(file: ts.SourceFile, accept: (id: ts.Identifier) => boolean): boolean {
   const contains = (root: ts.Node, candidate: ts.Node): boolean =>
     candidate.pos >= root.pos && candidate.end <= root.end;
   /** False for the spelling-only positions described above. */
@@ -503,7 +522,7 @@ export function identifierIsWrittenTo(
   let found = false;
   const visit = (node: ts.Node): void => {
     if (found) return;
-    if (ts.isIdentifier(node) && node.text === name && isReference(node) && (sameBinding?.(node) ?? true)) {
+    if (ts.isIdentifier(node) && isReference(node)) {
       for (let parent: ts.Node | undefined = node.parent; parent; parent = parent.parent) {
         if (
           ts.isBinaryExpression(parent) &&
@@ -511,7 +530,7 @@ export function identifierIsWrittenTo(
           parent.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
           parent.operatorToken.kind <= ts.SyntaxKind.LastAssignment
         ) {
-          if (isBindingWritePath(node, parent.left)) {
+          if (isBindingWritePath(node, parent.left) && accept(node)) {
             found = true;
             return;
           }
@@ -522,14 +541,14 @@ export function identifierIsWrittenTo(
           contains(parent.operand, node) &&
           (parent.operator === ts.SyntaxKind.PlusPlusToken || parent.operator === ts.SyntaxKind.MinusMinusToken)
         ) {
-          if (isBindingWritePath(node, parent.operand)) {
+          if (isBindingWritePath(node, parent.operand) && accept(node)) {
             found = true;
             return;
           }
           break;
         }
         if ((ts.isForInStatement(parent) || ts.isForOfStatement(parent)) && contains(parent.initializer, node)) {
-          if (isBindingWritePath(node, parent.initializer)) {
+          if (isBindingWritePath(node, parent.initializer) && accept(node)) {
             found = true;
             return;
           }

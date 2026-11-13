@@ -7,7 +7,6 @@ import { allocLocal } from "./context/locals.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { ensureObjVecBuilders, reserveBindDynHelper } from "./object-runtime.js";
 import { undefinedExternInstrs } from "./any-helpers.js";
-import { noJsHost } from "./expressions/helpers.js";
 import type { InnerResult } from "./shared.js";
 import { coerceType, compileExpression } from "./shared.js";
 
@@ -31,8 +30,7 @@ export function tryCompileIndirectFunctionBindApplyCall(
     propAccess.expression.expression.name.text !== "prototype" ||
     !ts.isIdentifier(propAccess.expression.expression.expression) ||
     propAccess.expression.expression.expression.text !== "Function" ||
-    expr.arguments.length < 1 ||
-    !(noJsHost(ctx) || ctx.targetProfile.semanticProviders === "native-first")
+    expr.arguments.length < 1
   ) {
     return undefined;
   }

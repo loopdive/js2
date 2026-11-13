@@ -130,3 +130,18 @@ flip all three together.
   #1243/#1271/#1336/#1630 vs the corpus failure suggests these were validated on
   a narrower path (typed objects / specific test262 shapes) than the idiomatic
   untyped object literals the corpus uses — confirm regression vs current main.
+
+## S6 provider-lane handoff (2026-10-18, PR #6672)
+
+The regression helpers in `tests/issue-2796.test.ts` explicitly exercise the
+JS-host deferred-init and start-section behavior documented above, but their
+`compile()` calls still relied on the old implicit host default. S6 made an
+omitted selection native-first, which changed those tests' provider family and
+caused the host start-section string control to fail for an unrelated reason.
+
+All three host-path compile sites now select
+`semanticProviders: "host-assisted"`. The assertions and expected behavior are
+unchanged, and the combined #2787/#2796 focused suite passes 7/7. Native-first
+object enumeration/copy behavior remains covered by its own S6/standalone
+lanes; this normalization preserves #2796 as a test of the host boundary it
+actually documents.

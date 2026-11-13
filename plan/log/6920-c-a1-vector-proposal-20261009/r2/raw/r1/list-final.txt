@@ -1,0 +1,11 @@
+tests/ir-vec-new-fixed.test.ts
+tests/ir-vec-two-backend.test.ts
+tests/issue-2956.test.ts
+tests/issue-3299.test.ts
+tests/issue-3482-direct-porffor-js2-ir-ab.test.ts
+tests/issue-3501-empty-array-element-inference.test.ts
+tests/issue-3518-lowering-cycle.test.ts
+tests/issue-6893-linear-cabi-array-forwarding.test.ts
+tests/issue-6893-linear-ir-read-forwarding.test.ts
+tests/issue-6920-vector-representation.test.ts
+tests/issue-6921-ir-middle-end-pass-correctness.test.ts

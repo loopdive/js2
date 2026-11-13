@@ -1,11 +1,19 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
 import { ts } from "../ts-api.js";
+import { isTopLevelVarList } from "../shared/var-declaration-lists.js";
+import { bindingDeclarationList } from "./binding-pattern-plan.js";
+
+/**
+ * The explicit providers that own an externref module slot: the standalone
+ * DOM component (#4576) and the native `ArrayBuffer` surface (#7274).
+ */
+export type IrModuleExternCapability = "dom" | "native-buffer";
 
 /** Opaque externref whose producer and uses belong to one explicit provider. */
 export interface IrModuleCapabilityExternValueKind {
   readonly kind: "capability-extern";
-  readonly capability: "dom";
+  readonly capability: IrModuleExternCapability;
   readonly className: string;
 }
 
@@ -37,10 +45,22 @@ export type IrModuleBindingValueKind =
   // legacy slot is resolved against the ACTIVE backend's carrier in
   // `resolveModuleBindingGlobal`, so a lane whose allocation disagrees fails
   // the storage-agreement check there rather than silently reinterpreting it.
-  | { readonly kind: "string" };
+  | { readonly kind: "string" }
+  // (#7252) A script `var` that only ever holds instances of ONE top-level
+  // class: legacy stores it in a `(ref null $Class)` slot (`scriptVarHome`'s
+  // `class-instance` home), and the IR reads it as that class's `class` value.
+  | { readonly kind: "class-instance"; readonly classDeclaration: ts.ClassDeclaration }
+  // (#7292) A script `var` whose one write is a string array literal: legacy
+  // stores it in the native-string vec slot (`scriptVarHome`'s `vec` home), and
+  // the IR reads it as that vec. A number vec is not admitted: its unproven
+  // element read answers `NaN` where JS answers `undefined`.
+  | { readonly kind: "vec"; readonly element: "string" }
+  // (#7106 lever S2) A script `var` legacy stores in #1914's `exec` match-result
+  // slot (`(ref null $__regexp_match_vec)`); the IR reads it as a dynamic value.
+  | { readonly kind: "regexp-match" };
 
 export interface IrModuleCapabilityExternCertification {
-  readonly capability: "dom";
+  readonly capability: IrModuleExternCapability;
   readonly className: string;
 }
 
@@ -55,9 +75,61 @@ export type IrModuleCapabilityExternResolver = (
   writeValue?: ts.Expression,
 ) => IrModuleCapabilityExternCertification | undefined;
 
+/** (#7274) A script var certified as native-`ArrayBuffer` storage. */
+export function isIrModuleNativeBufferValueKind(valueKind: IrModuleBindingValueKind): boolean {
+  return valueKind.kind === "capability-extern" && valueKind.capability === "native-buffer";
+}
+
+/**
+ * The capability a binding's global is ABI-pinned to: only the DOM
+ * provider's slots are required capability globals (#4576); a native-buffer
+ * slot is ordinary module storage.
+ */
+export function abiPinnedCapability(valueKind: IrModuleBindingValueKind): "dom" | undefined {
+  return valueKind.kind === "capability-extern" && valueKind.capability === "dom" ? "dom" : undefined;
+}
+
+/** A provider that owns externref module slots (the DOM plan, the native-buffer plan). */
+export interface IrModuleCapabilityProvider {
+  readonly moduleBinding: IrModuleCapabilityExternResolver;
+  /** True when a read of one of its vars hands the handle to the provider's own operation. */
+  readonly consumesHandle?: (node: ts.Identifier) => boolean;
+}
+
+/**
+ * (#7274) The module-binding resolver options for every provider present.
+ * The first provider that certifies a declaration answers; both planning
+ * sites (selection, lowering) build their options here so they agree.
+ */
+export function capabilityExternBindingOptions(...providers: readonly (IrModuleCapabilityProvider | undefined)[]): {
+  readonly resolveCapabilityExternBinding?: IrModuleCapabilityExternResolver;
+  readonly consumesCapabilityHandle?: (node: ts.Identifier) => boolean;
+} {
+  const present = providers.filter((p): p is IrModuleCapabilityProvider => p !== undefined);
+  if (present.length === 0) return {};
+  return {
+    resolveCapabilityExternBinding: (declaration, writeValue) => {
+      for (const provider of present) {
+        const certified = provider.moduleBinding(declaration, writeValue);
+        if (certified) return certified;
+      }
+      return undefined;
+    },
+    consumesCapabilityHandle: (node) => present.some((provider) => provider.consumesHandle?.(node) === true),
+  };
+}
+
 /** True for either carrier of a builtin `Map` module binding (#4461). */
 export function isIrModuleMapValueKind(valueKind: IrModuleBindingValueKind): boolean {
   return valueKind.kind === "native-map" || (valueKind.kind === "extern" && valueKind.className === "Map");
+}
+
+/**
+ * A typed struct handle — (#7252) a class instance or (#7292) a vec: its uses
+ * are the class or vec arms', neither scalar nor extern-like.
+ */
+export function isIrModuleStructValueKind(valueKind: IrModuleBindingValueKind): boolean {
+  return valueKind.kind === "class-instance" || valueKind.kind === "vec";
 }
 
 /**
@@ -90,6 +162,41 @@ export function isIrModuleReferenceValueKind(valueKind: IrModuleBindingValueKind
     valueKind.kind === "native-map" ||
     valueKind.kind === "string"
   );
+}
+
+/**
+ * The carrier codegen allocated as a SCRIPT `var`'s sole-home `__mod_<name>`
+ * slot (`scriptVarHome`, `src/codegen/index.ts`). The resolver's value kind
+ * follows from this carrier together with the checker type:
+ *   - `dynamic`: `externref` off fast mode, exactly `resolveIrDynamicCarrierType`;
+ *   - `string`: `(ref null $AnyString)`, the native-string carrier;
+ *   - `typed`: an `f64` or `i32` slot; only a `number` / `boolean` checker type
+ *     binds (an `i32` slot also holds a `Symbol`, which stays refused);
+ *   - (#7252) `class-instance`: a `(ref null $Class)` slot of a user class
+ *     struct; only a binding every write of which constructs that class binds;
+ *   - (#7292) `vec`: the native-string vec slot; only a binding whose one write
+ *     is a string array literal binds;
+ *   - (#7106 lever S2) `regexp-match`: #1914's `exec` match-result slot, bound
+ *     only when the IR's one write is the declaration's `.exec(…)` initializer.
+ * Any other slot (another vector, an object struct, `$Map`, `externref` in
+ * fast mode) is no home: no value kind's storage is exactly that carrier.
+ */
+export type IrScriptVarHome = "dynamic" | "string" | "typed" | "class-instance" | "vec" | "regexp-match";
+
+/**
+ * (#7106 lever L2) The home a script `var` keeps given where it is declared. A
+ * declaration nested in a branch, loop body, `switch` case or `catch` may never
+ * run, so its slot can be read unwritten. Only the dynamic carrier (`undefined`)
+ * and a typed scalar (its zero, legacy's own answer) read that as legacy does;
+ * every other home (string, class instance, regexp match, …) reads as a written
+ * value, so it needs a top-level declaration. Every home goes through here.
+ */
+export function reachableScriptVarHome(
+  declaration: ts.VariableDeclaration | ts.BindingElement,
+  home: IrScriptVarHome | undefined,
+): IrScriptVarHome | undefined {
+  if (home === undefined || home === "dynamic" || home === "typed") return home;
+  return isTopLevelVarList(bindingDeclarationList(declaration)) ? home : undefined;
 }
 
 export function isCapabilityExternKind(

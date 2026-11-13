@@ -92,3 +92,64 @@ describe("build-test262-report.mjs — #106 standard vs proposal split", () => {
     expect(full).toBeLessThan(std);
   });
 });
+
+/**
+ * Fallback-free pass metric: a pass counts as `ir_only_pass` only when its
+ * compile recorded an IR route census with zero legacy bodies; rows without a
+ * census are neither counted nor measured, and every fallback code is ranked
+ * by the number of tests that still take a legacy body for it.
+ */
+describe("build-test262-report.mjs — fallback-free (IR-only) passes", () => {
+  let tmpDir: string;
+  let report: ReturnType<typeof JSON.parse>;
+
+  beforeAll(() => {
+    tmpDir = mkdtempSync(join(tmpdir(), "build-test262-report-ir-"));
+    const jsonl = join(tmpDir, "results.jsonl");
+    const out = join(tmpDir, "report.json");
+    const base = { scope: "standard", scope_official: true, strict: "both", category: "language" };
+    const records = [
+      { file: "test/language/a.js", status: "pass", ir_units: 3, ir_legacy_units: 0, ...base },
+      {
+        file: "test/language/b.js",
+        status: "pass",
+        ir_units: 3,
+        ir_legacy_units: 2,
+        ir_fallback_codes: [{ code: "unsupported:select:eval", count: 2 }],
+        ...base,
+      },
+      {
+        file: "test/language/c.js",
+        status: "fail",
+        ir_units: 1,
+        ir_legacy_units: 1,
+        ir_fallback_codes: [{ code: "unsupported:select:eval", count: 1 }],
+        ...base,
+      },
+      { file: "test/language/d.js", status: "pass", ...base }, // no census (older row)
+    ];
+    writeFileSync(jsonl, records.map((r) => JSON.stringify(r)).join("\n"));
+    execSync(`node scripts/build-test262-report.mjs --input ${jsonl} --output ${out} --target standalone`, {
+      cwd: process.cwd(),
+      stdio: "pipe",
+    });
+    report = JSON.parse(readFileSync(out, "utf-8"));
+  });
+
+  afterAll(() => {
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("counts fallback-free passes separately, over the full denominator", () => {
+    expect(report.summary.pass).toBe(3);
+    expect(report.summary.ir_only_pass).toBe(1);
+    expect(report.summary.ir_measured).toBe(3);
+    expect(report.summary.ir_only_pass_pct).toBe(25);
+  });
+
+  it("ranks fallback codes by the tests that still take a legacy body", () => {
+    expect(report.ir_fallback_codes).toEqual([
+      { code: "unsupported:select:eval", tests: 2, units: 3, passing_tests: 1 },
+    ]);
+  });
+});

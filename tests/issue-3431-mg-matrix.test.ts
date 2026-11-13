@@ -58,14 +58,12 @@ describe("#3431 gen-test262-mg-matrix", () => {
 
   it("target/result-prefix pairs match the static matrix's existing convention", () => {
     const matrix = buildMergeGroupMatrix();
-    const jsHost = matrix.find((e) => e.target_name === "js-host")!;
+    expect(matrix.some((e) => e.target_name === "js-host")).toBe(false);
     const standalone = matrix.find((e) => e.target_name === "standalone")!;
     // Must match the `target:` list in test262-sharded.yml's static
     // (pull_request/push/workflow_dispatch) matrix so TEST262_TARGET /
     // TEST262_RESULT_PREFIX resolve identically and merge-report's artifact
     // globs (test262-js-host-shard-*, test262-standalone-shard-*) still hit.
-    expect(jsHost.test262_target).toBe("gc");
-    expect(jsHost.result_prefix).toBe("test262");
     expect(standalone.test262_target).toBe("standalone");
     expect(standalone.result_prefix).toBe("test262-standalone");
   });
@@ -74,20 +72,8 @@ describe("#3431 gen-test262-mg-matrix", () => {
     const matrix = buildMergeGroupMatrix();
     expect(matrix).toHaveLength(102);
     expect(matrix.length).toBe(MERGE_GROUP_RUNNER_CAPACITY - MERGE_GROUP_RESERVED_RUNNERS);
-    // #3914 — the lane split tracks the MEASURED per-lane `Run shard` work
-    // ratio, which is 1.03 as of merge_group runs 31870031833 / 31872537807 /
-    // 31873778381 (2026-08-15). It has drifted at every measurement, so this
-    // asserts the constants stay mutually consistent rather than pinning a
-    // number forever: whoever re-derives the ratio updates both sides together.
-    // Drift history: 2.13 (run 29807524490) -> 1.835 (run 30631849709,
-    // 2026-07-31) -> 1.318 (2026-08-14, the #4157 tuned-defaults flip grew
-    // standalone work ~40 % while js-host stayed flat — an ESTIMATE) -> 1.03
-    // (#4441, 2026-08-15, measured: that estimate overshot, and js-host had
-    // itself gotten cheaper — see the derivation in
-    // scripts/gen-test262-mg-matrix.mjs) -> 0.215 (2026-09-28, measured after
-    // the #3451 linked-harness flip made js-host ~4x cheaper; standalone
-    // still compiles the whole assembly per row).
-    expect(JS_HOST_CHUNKS / STANDALONE_CHUNKS).toBeCloseTo(20 / 82, 2);
+    expect(JS_HOST_CHUNKS).toBe(0);
+    expect(STANDALONE_CHUNKS).toBe(102);
   });
 });
 
@@ -95,17 +81,17 @@ describe("per-lane merge_group matrix (single-lane runs)", () => {
   // The `changes` job drops a lane whose results the queued diff provably
   // cannot move (see scripts/test262-paths-match.sh --target). These pin the
   // two properties that make that safe.
-  it("emits only the requested lane", () => {
+  it("never revives the retired host lane, including a legacy host-only request", () => {
     const hostOnly = buildMergeGroupMatrix({ host: true, standalone: false });
-    expect(hostOnly).toHaveLength(JS_HOST_CHUNKS);
-    expect(hostOnly.every((e) => e.target_name === "js-host")).toBe(true);
+    expect(hostOnly).toHaveLength(STANDALONE_CHUNKS);
+    expect(hostOnly.every((e) => e.target_name === "standalone")).toBe(true);
 
     const standaloneOnly = buildMergeGroupMatrix({ host: false, standalone: true });
     expect(standaloneOnly).toHaveLength(STANDALONE_CHUNKS);
     expect(standaloneOnly.every((e) => e.target_name === "standalone")).toBe(true);
   });
 
-  it("keeps the surviving lane's partition IDENTICAL to a full two-lane run", () => {
+  it("keeps the active lane partition identical for every legacy selection", () => {
     // Load-bearing: a single-lane run's results are diffed against a baseline
     // produced by two-lane runs. assignBalancedChunk is a pure function of
     // (chunk_index, chunk_total), so the freed runners must NOT be spent
@@ -122,7 +108,7 @@ describe("per-lane merge_group matrix (single-lane runs)", () => {
     }
   });
 
-  it("defaults to both lanes, and fail-safes an empty selection back to both", () => {
+  it("defaults and fail-safes to standalone", () => {
     const both = buildMergeGroupMatrix();
     expect(buildMergeGroupMatrix({})).toEqual(both);
     // An empty matrix is a workflow-level error in GitHub Actions, not a

@@ -1,0 +1,6 @@
+{
+  "extends": "../../../tsconfig.ts7.json",
+  "compilerOptions": { "rootDir": "../../..", "noEmit": true },
+  "include": ["../../../src/**/*.ts", "../../../tests/issue-6899-linear-string-slice-bounds.test.ts"],
+  "exclude": ["../../../node_modules", "../../../dist", "../../../website"]
+}

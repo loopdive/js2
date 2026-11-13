@@ -17,6 +17,8 @@ import { ts } from "../ts-api.js";
 import { closeIrBlockedComponentByIdentity } from "./ir-overlay-finalize.js";
 import { collectLocalCallEdgesByIdentity, irFirstBodyIsProvenLowerable, type ValueDomain } from "./ir-first-gate.js";
 
+import type { CodegenContext } from "./context/types.js";
+
 export interface IrExactFunctionClaim {
   readonly unitId: IrUnitId;
   readonly legacyName: string;
@@ -322,6 +324,8 @@ export interface IrFirstSkipIdentityInput {
   >;
   readonly potentiallyBlockedOwnerUnitIds: ReadonlySet<IrUnitId>;
   readonly generatorsSkippable: boolean;
+  /** The lane's `number-to-string` capability, which the IR-first gate's `+` reads. */
+  readonly numberToString: boolean;
 }
 
 /** Exact-ID IR-first allowlist, caller fixpoint, and late-feature closure. */
@@ -400,7 +404,16 @@ export function computeIrFirstSkipUnitIds(input: IrFirstSkipIdentityInput): Read
     const fn = claim.declaration;
     if (fn.asteriskToken && !input.generatorsSkippable) continue;
     const signature = signatureDomains(fn, override);
-    if (signature && irFirstBodyIsProvenLowerable(fn, claimedArity, signature.paramDomains, signature.returnDomain)) {
+    if (
+      signature &&
+      irFirstBodyIsProvenLowerable(
+        fn,
+        claimedArity,
+        signature.paramDomains,
+        signature.returnDomain,
+        input.numberToString,
+      )
+    ) {
       skip.add(unitId);
     }
   }
@@ -438,4 +451,90 @@ export function computeIrFirstSkipUnitIds(input: IrFirstSkipIdentityInput): Read
   );
   for (const unitId of skip) if (!retained.has(unitId)) skip.delete(unitId);
   return skip;
+}
+
+export function identifierIsRuntimeFunctionValueReference(identifier: ts.Identifier): boolean {
+  const parent = identifier.parent;
+  if (!parent) return false;
+  if (ts.isCallExpression(parent) && parent.expression === identifier) return false;
+  // The direct owner already lowers an immediately invoked `.call` / `.apply`
+  // without retaining a generic runtime function value. Preparing singleton
+  // support for this receiver alone would keep the JS-string bridge and the
+  // whole generic closure surface alive in an otherwise tiny optimized module.
+  if (
+    ts.isPropertyAccessExpression(parent) &&
+    parent.expression === identifier &&
+    (parent.name.text === "call" || parent.name.text === "apply") &&
+    ts.isCallExpression(parent.parent) &&
+    parent.parent.expression === parent
+  ) {
+    return false;
+  }
+  if (
+    ((ts.isFunctionDeclaration(parent) ||
+      ts.isFunctionExpression(parent) ||
+      ts.isClassDeclaration(parent) ||
+      ts.isClassExpression(parent) ||
+      ts.isMethodDeclaration(parent) ||
+      ts.isGetAccessorDeclaration(parent) ||
+      ts.isSetAccessorDeclaration(parent)) &&
+      parent.name === identifier) ||
+    (ts.isVariableDeclaration(parent) && parent.name === identifier) ||
+    (ts.isParameter(parent) && parent.name === identifier) ||
+    ((ts.isPropertyAccessExpression(parent) || ts.isPropertyAssignment(parent)) && parent.name === identifier) ||
+    (ts.isBindingElement(parent) && (parent.name === identifier || parent.propertyName === identifier)) ||
+    (ts.isLabeledStatement(parent) && parent.label === identifier) ||
+    ((ts.isBreakStatement(parent) || ts.isContinueStatement(parent)) && parent.label === identifier) ||
+    ts.isImportSpecifier(parent) ||
+    ts.isExportSpecifier(parent)
+  ) {
+    return false;
+  }
+  return true;
+}
+
+/**
+ * The checker oracle can retain a declaration node from a sibling Program
+ * snapshot while selection walks the structurally identical current source.
+ * Compare the stable source site as well as object identity so incremental
+ * compilation cannot silently lose an otherwise exact declaration match.
+ */
+export function sameDeclarationSite(left: ts.Declaration, right: ts.Declaration): boolean {
+  if (left === right) return true;
+  return (
+    left.kind === right.kind &&
+    left.pos === right.pos &&
+    left.end === right.end &&
+    left.getSourceFile().fileName === right.getSourceFile().fileName
+  );
+}
+
+export function containsTopLevelFunctionValueReference(
+  ctx: CodegenContext,
+  declaration: ts.FunctionLikeDeclaration,
+  unitsByName: ReadonlyMap<
+    string,
+    readonly { readonly declaration: ts.FunctionDeclaration; readonly unitId: IrUnitId }[]
+  >,
+  preparedReference?: (identifier: ts.Identifier) => boolean,
+): boolean {
+  if (!declaration.body) return false;
+  let found = false;
+  const visit = (node: ts.Node): void => {
+    if (found) return;
+    if (ts.isIdentifier(node) && identifierIsRuntimeFunctionValueReference(node)) {
+      const valueDeclaration = ctx.oracle.valueDeclarationOf(node);
+      if (
+        valueDeclaration !== undefined &&
+        (unitsByName.get(node.text) ?? []).some((unit) => sameDeclarationSite(unit.declaration, valueDeclaration)) &&
+        preparedReference?.(node) !== true
+      ) {
+        found = true;
+        return;
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(declaration.body);
+  return found;
 }

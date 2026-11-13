@@ -6,7 +6,16 @@ import { buildImports } from "../src/runtime.js";
 type Target = "gc" | "standalone";
 
 async function run(source: string, target: Target): Promise<{ value: unknown; envImports: string[] }> {
-  const result = await compile(source, { target, skipSemanticDiagnostics: true });
+  // (88d8444b72, #6676) Standalone: `Object.getPrototypeOf(Function)` reifies
+  // the `Function` VALUE, which by default imports the linked
+  // `js2wasm:runtime-eval` provider (a reified Function may be called with a
+  // dynamic source). This lane instantiates import-free, so it opts out; with
+  // no provider, dynamic `Function(src)` throws in-module instead.
+  const result = await compile(source, {
+    target,
+    skipSemanticDiagnostics: true,
+    ...(target === "standalone" ? { runtimeEvalProvider: false } : {}),
+  });
   expect(result.success, result.errors.map((e) => `L${e.line}: ${e.message}`).join("\n")).toBe(true);
   expect(WebAssembly.validate(result.binary)).toBe(true);
 

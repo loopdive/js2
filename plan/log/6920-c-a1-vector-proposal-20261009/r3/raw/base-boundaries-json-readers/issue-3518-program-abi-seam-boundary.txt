@@ -1,0 +1,20 @@
+
+ RUN  v3.2.7 /home/user/js2/.claude/worktrees/agent-a774506d6593a2d93
+
+ ✓ tests/issue-3518-program-abi-seam-boundary.test.ts > program ABI seam boundaries > loads only the canonical closure and executes a nonempty data-only ABI lifecycle in a fresh process 324ms
+ ✓ tests/issue-3518-program-abi-seam-boundary.test.ts > program ABI seam boundaries > checks six actual clean modules with D0 while retaining the legacy debt 1133ms
+ ✓ tests/issue-3518-program-abi-seam-boundary.test.ts > program ABI seam boundaries > D0 rejects a type-only import back edge from the actual ABI module 1142ms
+ ✓ tests/issue-3518-program-abi-seam-boundary.test.ts > program ABI seam boundaries > D0 rejects a type query back edge from the actual ABI module 1147ms
+ ✓ tests/issue-3518-program-abi-seam-boundary.test.ts > program ABI seam boundaries > D0 rejects a old ABI barrel back edge from the actual ABI module 1154ms
+ ✓ tests/issue-3518-program-abi-seam-boundary.test.ts > program ABI seam boundaries > D0 rejects a path alias back edge from the actual ABI module 1080ms
+ ✓ tests/issue-3518-program-abi-seam-boundary.test.ts > program ABI seam boundaries > D0 rejects a dynamic import back edge from the actual ABI module 1125ms
+ ✓ tests/issue-3518-program-abi-seam-boundary.test.ts > program ABI seam boundaries > D0 follows a new barrel into the old compatibility module 576ms
+ ✓ tests/issue-3518-program-abi-seam-boundary.test.ts > program ABI seam boundaries > D0 resolves symlinks to their forbidden target 616ms
+ ✓ tests/issue-3518-program-abi-seam-boundary.test.ts > program ABI seam boundaries > D0 cannot pass a nonliteral import 599ms
+ ✓ tests/issue-3518-program-abi-seam-boundary.test.ts > program ABI seam boundaries > D0 cannot pass a unresolved import 616ms
+
+ Test Files  1 passed (1)
+      Tests  11 passed (11)
+   Start at  22:49:26
+   Duration  9.97s (transform 56ms, setup 0ms, collect 55ms, tests 9.51s, environment 0ms, prepare 68ms)
+

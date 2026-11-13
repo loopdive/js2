@@ -4,18 +4,9 @@
 // objects, JS callables are called through the boundary adapter, and compiled
 // objects handed back into a closure export are unwrapped from their facade.
 
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import { compile } from "../src/index.js";
 import { buildCompiledImports, wrapCompiledExports } from "../src/runtime.js";
-
-const previous = process.env.JS2WASM_NATIVE_REGIME_JS;
-beforeAll(() => {
-  process.env.JS2WASM_NATIVE_REGIME_JS = "1";
-});
-afterAll(() => {
-  if (previous === undefined) Reflect.deleteProperty(process.env, "JS2WASM_NATIVE_REGIME_JS");
-  else process.env.JS2WASM_NATIVE_REGIME_JS = previous;
-});
 
 async function instantiateRegime(source: string) {
   const result = await compile(source, { fileName: "issue-6686.ts", semanticProviders: "native-first" });

@@ -135,6 +135,44 @@ export function isBuiltinTypeName(name: string): name is BuiltinTypeName {
 }
 
 /**
+ * The Error-family constructors whose instances are a native `$Error_struct`
+ * carrying the constructor's `$tag` (field 0).
+ */
+export const ERROR_FAMILY_CTOR_NAMES = [
+  "Error",
+  "TypeError",
+  "RangeError",
+  "SyntaxError",
+  "URIError",
+  "EvalError",
+  "ReferenceError",
+  "AggregateError",
+  // (#3234) SuppressedError is an Error subclass (BUILTIN_PARENT). Included so
+  // `instanceof SuppressedError` matches its own tag, and `instanceof Error`
+  // also matches a native SuppressedError (built by the dispose driver).
+  "SuppressedError",
+] as const;
+
+/**
+ * #1473 — Build the set of `$Error_struct` `$tag` values compatible with an
+ * `instanceof <ctorName>` test in no-JS-host mode. For `instanceof Error` this
+ * is every Error subtype tag; for `instanceof TypeError` it is TypeError's own
+ * tag plus any descendant (none today). Mirrors `isBuiltinSubtype` over the
+ * error portion of the BUILTIN_TYPE_TAGS registry. Shared by the name-based
+ * `instanceof` path (identifiers.ts) and, since #7120, the generic runtime
+ * operator's Error-family probe (native-dynamic-instanceof.ts).
+ */
+export function collectErrorInstanceOfTags(ctorName: string): number[] {
+  const tags: number[] = [];
+  for (const n of ERROR_FAMILY_CTOR_NAMES) {
+    if (isBuiltinSubtype(n, ctorName)) {
+      tags.push(BUILTIN_TYPE_TAGS[n]);
+    }
+  }
+  return tags;
+}
+
+/**
  * Returns true if `child` is `parent` or transitively a built-in subclass of
  * `parent` (per the registry's BUILTIN_PARENT chain). Used to statically
  * decide e.g. `new TypeError() instanceof Error` → true.

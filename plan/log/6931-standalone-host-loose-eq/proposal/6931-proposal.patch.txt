@@ -1,0 +1,338 @@
+diff --git a/src/codegen/any-eq-helpers.ts b/src/codegen/any-eq-helpers.ts
+index b1dc00d0..3e01af0c 100644
+--- a/src/codegen/any-eq-helpers.ts
++++ b/src/codegen/any-eq-helpers.ts
+@@ -19,6 +19,80 @@
+  */
+ import type { Instr, ValType } from "../ir/types.js";
+ import type { CodegenContext } from "./context/types.js";
++import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
++import { buildThrowJsErrorInstrs } from "./js-errors.js";
++import { addFuncType } from "./registry/types.js";
++
++/** (#6931) The deliberate standalone refusal for loose equality on a host value. */
++const STANDALONE_HOST_EQ_MESSAGE = "Cannot compare a host JavaScript value with == in a standalone module";
++
++/**
++ * (#6931) `__standalone_host_eq_guard(x: externref) -> externref` — identity on
++ * a Wasm-native value, a deliberate TypeError on a HOST value.
++ *
++ * A standalone module has no host imports, so it cannot inspect a value the
++ * embedder passed in raw: a JS string, object, `undefined`, `true` or a heap
++ * number all internalize to the same opaque non-`eq` anyref. §7.2.15 loose
++ * equality needs ToPrimitive / StringToNumber on exactly those values, so every
++ * answer would be a guess (`"1" == 1` is true, `{} == 1` is false — the module
++ * cannot tell them apart). Before this guard `__any_from_extern` filed them as
++ * tag-5 "strings" and `__str_to_number` trapped `illegal cast`, or the guarded
++ * string compare answered a silent `0`.
++ *
++ * "Host value" ≡ non-null externref whose internalized anyref is not `eq`. Every
++ * standalone carrier — `$AnyValue`, `$AnyString`, number/boolean boxes, i31,
++ * structs, arrays — is `eq`; null is native null. Returns undefined (no guard)
++ * off the standalone target, so gc / wasi / native-first-in-JS are unchanged.
++ */
++export function ensureStandaloneHostEqGuard(ctx: CodegenContext): number | undefined {
++  if (ctx.standalone !== true) return undefined;
++  const name = "__standalone_host_eq_guard";
++  const existing = ctx.funcMap.get(name);
++  if (existing !== undefined) return existing;
++  // Register the in-module TypeError constructor + message BEFORE minting, so
++  // the guard's own handle is not interleaved with the constructor's.
++  const throwInstrs = buildThrowJsErrorInstrs(ctx, "TypeError", STANDALONE_HOST_EQ_MESSAGE);
++  const typeIdx = addFuncType(ctx, [{ kind: "externref" }], [{ kind: "externref" }], name);
++  const funcIdx = mintDefinedFunc(ctx);
++  const returnArg: Instr[] = [{ op: "local.get", index: 0 }, { op: "return" }];
++  pushDefinedFunc(ctx, funcIdx, {
++    name,
++    typeIdx,
++    locals: [],
++    body: [
++      { op: "local.get", index: 0 },
++      { op: "ref.is_null" },
++      { op: "if", blockType: { kind: "empty" }, then: returnArg },
++      { op: "local.get", index: 0 },
++      { op: "any.convert_extern" },
++      { op: "ref.test", typeIdx: -19 }, // eq
++      { op: "if", blockType: { kind: "empty" }, then: structuredClone(returnArg) },
++      ...throwInstrs,
++    ],
++    exported: false,
++  });
++  ctx.funcMap.set(name, funcIdx);
++  return funcIdx;
++}
++
++/** (#6931) Run `$AnyValue` operand `opIdx`'s externval (field 4) through the guard. */
++function anyOperandHostGuard(anyTypeIdx: number, guardIdx: number, opIdx: number): Instr[] {
++  return [
++    { op: "local.get", index: opIdx },
++    { op: "ref.is_null" },
++    { op: "i32.eqz" },
++    {
++      op: "if",
++      blockType: { kind: "empty" },
++      then: [
++        { op: "local.get", index: opIdx },
++        { op: "struct.get", typeIdx: anyTypeIdx, fieldIdx: 4 },
++        { op: "call", funcIdx: guardIdx },
++        { op: "drop" },
++      ],
++    },
++  ];
++}
+ 
+ /** The `ensureAnyHelpers` `addHelper` closure, threaded in as a callback. */
+ type AddHelper = (
+@@ -44,7 +118,22 @@ export function registerAnyEqHelpers(
+   tag5ToNumber: (opIdx: number) => Instr[],
+   tag5ValueEqThen: () => Instr[],
+ ): void {
+-  registerAnyLooseEqHelper(addHelper, anyRefNull, anyTypeIdx, toF64Idx, strToNumIdx, tag5ToNumber, tag5ValueEqThen);
++  // (#6931) Standalone only: refuse a host value before any loose-eq arm reads it.
++  const guardIdx = ensureStandaloneHostEqGuard(ctx);
++  const hostGuard: Instr[] =
++    guardIdx === undefined
++      ? []
++      : [...anyOperandHostGuard(anyTypeIdx, guardIdx, 0), ...anyOperandHostGuard(anyTypeIdx, guardIdx, 1)];
++  registerAnyLooseEqHelper(
++    addHelper,
++    anyRefNull,
++    anyTypeIdx,
++    toF64Idx,
++    strToNumIdx,
++    tag5ToNumber,
++    tag5ValueEqThen,
++    hostGuard,
++  );
+   registerAnyStrictEqAndComparisonHelpers(ctx, addHelper, anyRefNull, anyTypeIdx, toF64Idx, tag5ValueEqThen);
+ }
+ 
+@@ -57,6 +146,7 @@ function registerAnyLooseEqHelper(
+   strToNumIdx: number,
+   tag5ToNumber: (opIdx: number) => Instr[],
+   tag5ValueEqThen: () => Instr[],
++  hostGuard: Instr[],
+ ): void {
+   // __any_eq(a, b) -> i32
+   // Same tag: compare values. Different tag: return 0.
+@@ -65,6 +155,7 @@ function registerAnyLooseEqHelper(
+     [anyRefNull, anyRefNull],
+     [{ kind: "i32" }],
+     [
++      ...hostGuard, // (#6931) standalone: deliberate TypeError on a host operand
+       // Fast path: if both refs point to the same AnyValue struct, they are equal.
+       { op: "local.get", index: 0 },
+       { op: "local.get", index: 1 },
+diff --git a/src/codegen/binary-ops-typed-dispatch.ts b/src/codegen/binary-ops-typed-dispatch.ts
+index 8a54555e..fab606e8 100644
+--- a/src/codegen/binary-ops-typed-dispatch.ts
++++ b/src/codegen/binary-ops-typed-dispatch.ts
+@@ -25,7 +25,7 @@ import { ensureObjectRuntime } from "./object-runtime.js";
+ import { addStringImports, addUnionImports } from "./index.js";
+ import type { InnerResult } from "./shared.js";
+ import { coerceType, ensureAnyHelpers, flushLateImportShifts } from "./shared.js";
+-import { emitAnyEqFromExternTemps, emitHostEqualityFromStack } from "./coercion-engine.js";
++import { emitAnyEqFromExternTemps, emitHostEqualityFromStack, guardHostEqOperand } from "./coercion-engine.js";
+ import {
+   compileBooleanBinaryOp,
+   compileI32BinaryOp,
+@@ -732,7 +732,7 @@ export function compileTypedBinaryDispatch(
+       // against a `boolean` literal (#2605). Boxing booleans as booleans makes the
+       // "both typeof boolean → unbox i32, compare" arm fire correctly.
+       const boxOperandToExternref = (operandType: ValType, isBoolOperand: boolean, isSymbolOperand: boolean): void => {
+-        if (operandType.kind === "externref") return;
++        if (guardHostEqOperand(ctx, fctx, operandType, isLoose)) return; // externref: nothing to box (#6931)
+         if (operandType.kind === "i32" && isBoolOperand) {
+           // addUnionImports (already called above) installs __box_boolean.
+           const boxBoolIdx = ctx.funcMap.get("__box_boolean");
+diff --git a/src/codegen/coercion-engine.ts b/src/codegen/coercion-engine.ts
+index 48f0bc43..57112bbf 100644
+--- a/src/codegen/coercion-engine.ts
++++ b/src/codegen/coercion-engine.ts
+@@ -36,6 +36,7 @@ import type { Instr, ValType, WasmFunction } from "../ir/types.js";
+ import type { TypeFact } from "../checker/oracle.js";
+ import { ts } from "../ts-api.js";
+ import { ensureAnyFromExternHelper, ensureExternStrictEqHelper } from "./any-helpers.js";
++import { ensureStandaloneHostEqGuard } from "./any-eq-helpers.js";
+ import { boxToAny, emitIsUndefF64 } from "./value-tags.js";
+ import { allocTempLocal, releaseTempLocal } from "./context/locals.js";
+ import type { CodegenContext, FunctionContext } from "./context/types.js";
+@@ -1092,6 +1093,26 @@ export function emitAnyEqFromExternTemps(
+   ];
+ }
+ 
++/**
++ * (#6931) Loose-equality operand guard for the externref cascade in
++ * `compileTypedBinaryDispatch`. Returns whether the operand is already an
++ * externref (nothing left to box). For such an operand on the stack, loose
++ * equality on standalone emits `call __standalone_host_eq_guard` (identity on a
++ * native value, deliberate TypeError on a host value — see any-eq-helpers.ts).
++ * Strict equality and other targets emit nothing.
++ */
++export function guardHostEqOperand(
++  ctx: CodegenContext,
++  fctx: FunctionContext,
++  operandType: ValType,
++  isLoose: boolean,
++): boolean {
++  if (operandType.kind !== "externref") return false;
++  const guardIdx = isLoose ? ensureStandaloneHostEqGuard(ctx) : undefined;
++  if (guardIdx !== undefined) fctx.body.push({ op: "call", funcIdx: guardIdx });
++  return true;
++}
++
+ /**
+  * Emit a string literal in the active mode. `compileStringLiteral` is already
+  * mode-agnostic (a native `$AnyString` constant in native/standalone mode, an
+diff --git a/tests/issue-6931-standalone-host-loose-eq.test.ts b/tests/issue-6931-standalone-host-loose-eq.test.ts
+new file mode 100644
+index 00000000..1e800db5
+--- /dev/null
++++ b/tests/issue-6931-standalone-host-loose-eq.test.ts
+@@ -0,0 +1,146 @@
++// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
++/**
++ * #6931 — loose `==` on a HOST value passed into an `any` parameter.
++ *
++ * A standalone module has no host imports, so it cannot inspect a raw JS value
++ * (string, object, `undefined`, `true`, a heap number): all of them reach Wasm
++ * as the same opaque non-`eq` reference. §7.2.15 needs ToPrimitive /
++ * StringToNumber on exactly those values, so standalone refuses them with a
++ * deliberate TypeError instead of trapping `illegal cast` (IR path, via
++ * `__str_to_number`) or silently answering `0` (legacy cascade). Values the
++ * module can read — i31-range integers, null, its own boxes — still compare
++ * exactly as Node does. On gc every input matches Node.
++ */
++import { describe, expect, it } from "vitest";
++import ts from "typescript";
++import { compile } from "../src/index.js";
++import { buildImports, instantiateWasm } from "../src/runtime.js";
++
++const MESSAGE = "TypeError: Cannot compare a host JavaScript value with == in a standalone module";
++
++// IR path: every function here is IR-emitted on both targets (asserted below).
++const IR_SRC = `export function eqUsed(o: any): number { return o == 1 ? 1 : 0; }
++export function eqStr(o: any): number { return o == "1" ? 1 : 0; }
++export function neUsed(o: any): number { return o != 1 ? 1 : 0; }
++`;
++// Legacy path: on standalone the selector sends eqUsed / exported to the
++// legacy lowering (the externref cascade in compileTypedBinaryDispatch).
++const LEGACY_SRC = `function eqUsed(o: any): number { return o == 1 ? 1 : 0; }
++export function viaStr(): number { return eqUsed("1"); }
++export function viaBool(): number { return eqUsed(true); }
++export function viaObj(): number { return eqUsed({ valueOf() { return 1; } }); }
++export function viaUndef(): number { return eqUsed(undefined); }
++export function exported(o: any): number { return eqUsed(o); }
++`;
++const CATCH_SRC = `export function tryEq(o: any): number {
++  try { return o == 1 ? 1 : 0; } catch (e) { return e instanceof TypeError ? 2 : 3; }
++}
++`;
++
++const NATIVE_INPUTS: [string, () => unknown][] = [
++  ["1", () => 1],
++  ["5", () => 5],
++  ["null", () => null],
++];
++const HOST_INPUTS: [string, () => unknown][] = [
++  ["1.5", () => 1.5],
++  ['"1"', () => "1"],
++  ['"x"', () => "x"],
++  ["{}", () => ({})],
++  ["{valueOf:()=>1}", () => ({ valueOf: () => 1 })],
++  ["undefined", () => undefined],
++  ["true", () => true],
++];
++
++function nodeOracle(src: string): Record<string, (...a: unknown[]) => unknown> {
++  const js = ts.transpileModule(src, {
++    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
++  }).outputText;
++  const exports: Record<string, (...a: unknown[]) => unknown> = {};
++  new Function("exports", js)(exports);
++  return exports;
++}
++
++async function build(src: string, target: "gc" | "standalone") {
++  const r = await compile(src, {
++    fileName: "issue-6931.ts",
++    trackIrOutcomes: true,
++    ...(target === "standalone" ? { target } : {}),
++  });
++  expect(r.success, r.success ? undefined : r.errors.map((e) => e.message).join("\n")).toBe(true);
++  const imp = buildImports(r.imports, {}, r.stringPool);
++  const { instance } = await instantiateWasm(r.binary, imp.env, imp.string_constants);
++  (imp as { setExports?: (e: unknown) => void }).setExports?.(instance.exports);
++  const kinds = new Map((r.irOutcomes ?? []).map((u) => [u.displayName, `${u.kind}${u.irBodyEmitted ? "+body" : ""}`]));
++  return { r, ex: instance.exports as Record<string, any>, kinds };
++}
++
++/** The deliberate refusal: a Wasm exception carrying the native TypeError, rendered in-module. */
++function expectHostRefusal(ex: Record<string, any>, call: () => unknown): void {
++  let caught: unknown;
++  try {
++    call();
++  } catch (e) {
++    caught = e;
++  }
++  expect(caught, "expected a deliberate throw").toBeDefined();
++  expect(caught).not.toBeInstanceOf(WebAssembly.RuntimeError);
++  expect(caught).toBeInstanceOf(WebAssembly.Exception);
++  const payload = (caught as WebAssembly.Exception).getArg(ex.__exn_tag, 0);
++  const len = ex.__exn_render_prepare(payload) as number;
++  let rendered = "";
++  for (let i = 0; i < len; i++) rendered += String.fromCharCode(ex.__exn_render_char(i));
++  expect(rendered).toBe(MESSAGE);
++}
++
++describe("#6931 standalone loose == on a host value in an `any` parameter", () => {
++  for (const target of ["gc", "standalone"] as const) {
++    it(`IR path stays IR-emitted on ${target}`, async () => {
++      const { kinds } = await build(IR_SRC, target);
++      for (const fn of ["eqUsed", "eqStr", "neUsed"]) expect(kinds.get(fn)).toBe("emitted+body");
++    });
++  }
++
++  it("gc: IR and legacy sources match Node for every input", async () => {
++    for (const [src, fns] of [
++      [IR_SRC, ["eqUsed", "eqStr", "neUsed"]],
++      [LEGACY_SRC, ["exported"]],
++    ] as const) {
++      const node = nodeOracle(src);
++      const { ex } = await build(src, "gc");
++      for (const fn of fns)
++        for (const [label, mk] of [...NATIVE_INPUTS, ...HOST_INPUTS]) {
++          expect(ex[fn](mk()), `${fn}(${label})`).toBe(node[fn]!(mk()));
++        }
++    }
++  });
++
++  it("standalone IR path: native inputs match Node, host inputs throw the deliberate TypeError", async () => {
++    const node = nodeOracle(IR_SRC);
++    const { r, ex } = await build(IR_SRC, "standalone");
++    expect(r.imports).toHaveLength(0);
++    for (const fn of ["eqUsed", "eqStr", "neUsed"]) {
++      for (const [label, mk] of NATIVE_INPUTS) expect(ex[fn](mk()), `${fn}(${label})`).toBe(node[fn]!(mk()));
++      for (const [, mk] of HOST_INPUTS) expectHostRefusal(ex, () => ex[fn](mk()));
++    }
++  });
++
++  it("standalone legacy path: same decision as the IR path", async () => {
++    const node = nodeOracle(LEGACY_SRC);
++    const { r, ex, kinds } = await build(LEGACY_SRC, "standalone");
++    expect(r.imports).toHaveLength(0);
++    expect(kinds.get("eqUsed")).toBe("unsupported");
++    expect(kinds.get("exported")).toBe("unsupported");
++    // Source-created values never reach the guard: unchanged, match Node.
++    for (const fn of ["viaStr", "viaBool", "viaObj", "viaUndef"]) expect(ex[fn](), fn).toBe(node[fn]!());
++    for (const [label, mk] of NATIVE_INPUTS) expect(ex.exported(mk()), `exported(${label})`).toBe(node.exported!(mk()));
++    for (const [, mk] of HOST_INPUTS) expectHostRefusal(ex, () => ex.exported(mk()));
++  });
++
++  it("standalone: the refusal is a catchable TypeError inside the module", async () => {
++    const { ex } = await build(CATCH_SRC, "standalone");
++    expect(ex.tryEq(1)).toBe(1);
++    expect(ex.tryEq(5)).toBe(0);
++    for (const [label, mk] of HOST_INPUTS) expect(ex.tryEq(mk()), `tryEq(${label})`).toBe(2);
++  });
++});

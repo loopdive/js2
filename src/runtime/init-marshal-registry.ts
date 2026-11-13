@@ -20,25 +20,7 @@ export interface MarshalExportSource {
   getStartExports?: () => Record<string, Function> | undefined;
 }
 
-/**
- * Wire ABI: the ARRAY POSITION is the id `__register_init_export` receives.
- * Append only — an id is permanent. Keep in lock-step with
- * `INIT_MARSHAL_HELPERS` in `src/codegen/init-marshal-helpers.ts`.
- */
-export const INIT_MARSHAL_HELPER_NAMES: readonly string[] = [
-  "__vec_len",
-  "__vec_get",
-  "__is_vec",
-  "__dv_byte_len",
-  "__dv_byte_get",
-  "__ab_max_len",
-  // (#5208) The Date carrier's classifier + reader. Same window, same reason:
-  // both are EXPORTS, so during the start section a compiled `Date` handed to a
-  // host call could not even be RECOGNISED as one and fell through to the
-  // generic struct proxy.
-  "__\0js2_is_date",
-  "__\0js2_date_value",
-];
+export { INIT_MARSHAL_HELPER_NAMES } from "../shared/contracts/init-marshal-helpers.js";
 
 /**
  * Exports usable for compiled→host MARSHALLING right now: the real export

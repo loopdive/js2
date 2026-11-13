@@ -19,7 +19,8 @@
  *   3. Validity — the emitted binary instantiates.
  */
 import { describe, expect, it } from "vitest";
-import binaryen from "binaryen";
+// (#7014) binaryen 132 reads with MVP features unless told otherwise — see the helper.
+import { readBinaryAllFeatures } from "./helpers/binaryen-read.js";
 import { compile } from "../src/index.js";
 import { pinPerfFlags } from "./helpers/pin-perf-flags.js";
 
@@ -34,7 +35,7 @@ pinPerfFlags({ JS2WASM_IR_INLINE: "0" });
 async function compileNative(source: string): Promise<{ wat: string; emittedWat: string; binary: Uint8Array }> {
   const result = await compile(source, { fileName: "t.js", target: "wasi", nativeStrings: true, emitWat: true });
   expect(result.success, `Compile failed: ${result.errors?.map((e) => e.message).join("; ")}`).toBe(true);
-  const mod = binaryen.readBinary(result.binary);
+  const mod = readBinaryAllFeatures(result.binary);
   const wat = mod.emitText();
   mod.dispose();
   return { wat, emittedWat: result.wat ?? "", binary: result.binary };
@@ -155,6 +156,42 @@ describe("#1761 — presize string-build buffer from static trip count", () => {
     expect((exports.run as () => number)()).toBe(15);
   });
 
+  it("sizes a fractional bound by the loop's real trip count, ceil(bound) (#7291)", async () => {
+    // `i < 2.5` runs 3 times; truncating the bound to 2 overflowed the buffer.
+    const { wat, binary } = await compileNative(`
+      export function run(n) {
+        let s = "";
+        for (let i = 0; i < n; i++) { s += "abc"; }
+        return s.length;
+      }
+    `);
+    expect(growCalls(wat)).toBe(0);
+    const run = (await instantiate(binary)).run as (n: number) => number;
+    for (const n of [2.5, 0.5, 1e-9, 3, 0, -1, Number.NaN]) {
+      expect(run(n), `run(${n})`).toBe(3 * Math.max(0, Math.ceil(n) || 0));
+    }
+  });
+
+  it("does not presize a bound a closure can change while the loop runs (#7291)", async () => {
+    const { binary } = await compileNative(`
+      export function run(n) {
+        const bump = () => { n = n + 1; };
+        let s = "";
+        for (let i = 0; i < n; i++) { s += "a"; if (i < 2) bump(); }
+        return s.length;
+      }
+    `);
+    const run = (await instantiate(binary)).run as (n: number) => number;
+    for (const [n, length] of [
+      [3, 5],
+      [2.5, 5],
+      [0.5, 3],
+      [0, 0],
+    ]) {
+      expect(run(n!), `run(${n})`).toBe(length);
+    }
+  });
+
   it("preserves non-ASCII / surrogate-pair appends byte-for-byte under presize", async () => {
     // Single-char charAt over a static alphabet with an astral code point.
     // charAt is code-unit-indexed, so a verbatim i16 copy must match JS.
@@ -235,4 +272,91 @@ describe("#1761 — presize string-build buffer from static trip count", () => {
     expect(run(-5)).toBe(0);
     expect(run(7)).toBe(7);
   });
+});
+
+/**
+ * (#7291 review B1/B2) A presize is the loop's exact trip count, so it is
+ * sound only when nothing but the loop's own `i++` writes the counter and
+ * nothing writes the bound while the loop runs. Each case writes one of them
+ * in a way the analysis must see. Both routes (untyped `.js` = legacy, typed
+ * `.ts` = IR) must give node's answer and must NOT presize.
+ */
+describe("#7291 presize only with a proven trip count", () => {
+  const CASES: Record<string, string> = {
+    "the body resets the counter": `let done = false; let s = "";
+  for (let i = 0; i < n; i++) { s += "abc"; if (!done && i === 1) { done = true; i = -3; } }`,
+    "a closure in the body resets the counter": `let done = false; let s = "";
+  for (let i = 0; i < n; i++) { s += "a"; const back = (): void => { if (!done && i === 1) { done = true; i = -2; } }; back(); }`,
+    "array destructuring writes the bound": `let s = "";
+  for (let i = 0; i < n; i++) { s += "a"; if (i === 0) [n] = [5]; }`,
+    "object destructuring writes the bound": `let s = "";
+  for (let i = 0; i < n; i++) { s += "a"; if (i === 0) ({ n } = { n: 5 }); }`,
+    "a direct eval writes the bound": `let s = "";
+  for (let i = 0; i < n; i++) { s += "a"; if (i === 0) eval("n = 5"); }`,
+    "a parenthesized eval writes the bound": `let s = "";
+  for (let i = 0; i < n; i++) { s += "a"; if (i === 0) (eval)("n = 5"); }`,
+    "a with block writes the bound": `let s = "";
+  for (let i = 0; i < n; i++) { s += "a"; if (i === 0) { with ({}) { n = 5; } } }`,
+    "a for-of target writes the bound": `let s = "";
+  for (let i = 0; i < n; i++) { s += "a"; if (i === 0) { for (n of [5]) {} } }`,
+  };
+  const MODULE_BOUND = `let m = 0;
+function grow(): void { if (m < 6) m++; }
+export function run(n: number): number {
+  m = n;
+  let s = "";
+  for (let i = 0; i < m; i++) { s += "a"; grow(); }
+  return s.length;
+}`;
+  const sources = Object.entries(CASES).map(([title, body]): [string, string] => [
+    title,
+    `export function run(n: number): number {\n  ${body}\n  return s.length;\n}`,
+  ]);
+  sources.push(["a top-level function writes a module-level bound", MODULE_BOUND]);
+  sources.push([
+    "a class field initializer writes a module-level bound",
+    // Only the field writes \`m\` (a function write would already refuse), and
+    // module state carries across calls identically in Wasm and in node.
+    `let m = 2;
+class K { x = (m = 5); }
+export function run(n: number): number {
+  let s = "";
+  for (let i = 0; i < m; i++) { s += "a"; if (i === n - n) new K(); }
+  return s.length;
+}`,
+  ]);
+  // A module \`let\` assigned a fraction is a separate legacy bug (#7300 item 6).
+  const integerBoundsOnly = new Set([
+    "a top-level function writes a module-level bound",
+    "a class field initializer writes a module-level bound",
+  ]);
+  // TypeScript rejects \`with\`; the case runs on the legacy (.js) route only.
+  const jsOnly = new Set(["a with block writes the bound"]);
+  const PRESIZE = /__sb_bound_|\$slot_\w+\$bound/;
+
+  for (const [title, ts] of sources) {
+    const js = ts.replace(/: (number|void)/g, "");
+    const reference = new Function(`${js.replace(/export /g, "")}; return run;`)() as (n: number) => number;
+    for (const [route, fileName, source] of [
+      ["legacy", "t.js", js],
+      ["IR", "t.ts", ts],
+    ] as const) {
+      if (route === "IR" && jsOnly.has(title)) continue;
+      for (const target of ["standalone", "wasi"] as const) {
+        it(`${title} [${route}, ${target}]`, async () => {
+          const result = await compile(source, { fileName, target, nativeStrings: true });
+          expect(result.success, result.errors.map((e) => e.message).join("; ")).toBe(true);
+          expect(result.wat).not.toMatch(PRESIZE);
+          const { instance } = await WebAssembly.instantiate(
+            result.binary,
+            target === "wasi" ? { wasi_snapshot_preview1: new Proxy({}, { get: () => () => 0 }) } : {},
+          );
+          const run = instance.exports.run as (n: number) => number;
+          for (const n of integerBoundsOnly.has(title) ? [3, 2, 0] : [3, 2, 2.5, 0]) {
+            expect(run(n), `run(${n})`).toBe(reference(n));
+          }
+        });
+      }
+    }
+  }
 });

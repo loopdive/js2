@@ -274,7 +274,7 @@ describe("#4506 — controls that must not move", () => {
 });
 
 describe("#4506 — measured residuals", () => {
-  it.fails("runs a non-empty constructor body against an `$Object` receiver", async () => {
+  it("runs a non-empty constructor body against an `$Object` receiver", async () => {
     // `language/expressions/in/S8.12.6_A2_T2`. `Robin` is escape-gate-approved
     // and its binding slot is now externref, but the lowering still requires an
     // EMPTY body — running a real constructor body with `this` bound to the
@@ -346,7 +346,7 @@ describe("#4506 — measured residuals", () => {
     ).toBe(1);
   });
 
-  it.fails("links `F.prototype`'s own [[Prototype]] to %Object.prototype%", async () => {
+  it("links `F.prototype`'s own [[Prototype]] to %Object.prototype%", async () => {
     // The auto-minted prototype object is created with `__new_plain_object`
     // and left with a null `$proto` (#3976 recorded the same gap for class
     // prototypes and deferred it). So the instance's chain stops one link

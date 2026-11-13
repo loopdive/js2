@@ -20,6 +20,9 @@ async function run(source: string): Promise<{ ok: boolean; result?: any; error?:
     const imports = buildImports(r.imports, undefined, r.stringPool);
     const mod = new WebAssembly.Module(r.binary);
     const inst = new WebAssembly.Instance(mod, imports);
+    // (#7014) The documented host wiring (buildImports → setInstance). `(C as any).put(…)`
+    // now dispatches through the host runtime, which needs the instance wired.
+    imports.setInstance?.(inst);
     const ret = (inst.exports as any).test?.();
     return { ok: true, result: ret };
   } catch (e: any) {

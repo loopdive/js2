@@ -117,7 +117,7 @@ describe("#3135 open-any dispatch `undefined + number` is NaN, not '[object Obje
   //    `__to_primitive`/`__unbox_number`, whose null arm reads 0 — the
   //    null-vs-undefined collapse means they cannot answer NaN without the
   //    #2106 S1 producer+consumer sweep. Both fail identically on main. ──
-  it.fails("direct closure call: undefined + 5 is NaN (blocked on #2106 S1)", async () => {
+  it("direct closure call: undefined + 5 is NaN", async () => {
     expect(
       await runStandalone(`
         export function run(): number {
@@ -128,7 +128,7 @@ describe("#3135 open-any dispatch `undefined + number` is NaN, not '[object Obje
     ).toBe(1);
   });
 
-  it.fails("any-closure undefined RESULT + 1 is NaN (blocked on #2106 S1; #2966's red twin)", async () => {
+  it("any-closure undefined RESULT + 1 is NaN (#2966's twin)", async () => {
     expect(
       await runStandalone(`
         export function run(): number {

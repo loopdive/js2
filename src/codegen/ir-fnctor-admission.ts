@@ -18,7 +18,6 @@ import type {
   LatticeType,
 } from "../ir/propagate.js";
 import type { IrPlanningIdentityContext } from "../ir/planning-identity.js";
-import type { IrSourceId } from "../ir/identity.js";
 import {
   collectIrFnctorArgumentProjections,
   proveIrFnctorInputConstructorSyntax,
@@ -49,8 +48,7 @@ export function irFnctorArgumentProjectionRouteIsActive(
     ctx.standalone === true &&
     ctx.nativeStrings === true &&
     ctx.wasi === false &&
-    ctx.fast === false &&
-    ctx.targetProfile.semanticProviders === "native-first"
+    ctx.fast === false
   );
 }
 

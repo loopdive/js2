@@ -1,0 +1,160 @@
+base: files=136 {"failed":155,"passed":1242,"skipped":276}
+head: files=136 {"failed":154,"passed":1243,"skipped":276}
+DIFF failed -> passed  tests/issue-2929-annexb-eval-lifecycle.test.ts :: #2929 Annex-B eval binding lifecycle keeps host literal indirect Annex-B eval on the established compile-away path
+differing tests: 1
+failing at base (pre-existing, 155):
+  tests/es5-function-call-apply-null.test.ts :: ES5 Function.call/apply constructor-expression semantics passes the exact Test262 row built-ins/Function/prototype/apply/S15.3.4.3_A8_T6.js
+  tests/es5-function-call-apply-null.test.ts :: ES5 Function.call/apply constructor-expression semantics passes the exact Test262 row built-ins/Function/prototype/call/S15.3.4.4_A7_T6.js
+  tests/es5-function-call-apply-null.test.ts :: ES5 Function.call/apply constructor-expression semantics passes the exact Test262 row built-ins/Function/prototype/apply/S15.3.4.3_A8_T3.js
+  tests/es5-function-call-apply-null.test.ts :: ES5 Function.call/apply constructor-expression semantics passes the exact Test262 row built-ins/Function/prototype/apply/S15.3.4.3_A8_T4.js
+  tests/es5-function-call-apply-null.test.ts :: ES5 Function.call/apply constructor-expression semantics passes the exact Test262 row built-ins/Function/prototype/apply/S15.3.4.3_A8_T5.js
+  tests/es5-function-call-apply-null.test.ts :: ES5 Function.call/apply constructor-expression semantics passes the exact Test262 row built-ins/Function/prototype/call/S15.3.4.4_A7_T3.js
+  tests/es5-function-call-apply-null.test.ts :: ES5 Function.call/apply constructor-expression semantics passes the exact Test262 row built-ins/Function/prototype/call/S15.3.4.4_A7_T4.js
+  tests/es5-function-call-apply-null.test.ts :: ES5 Function.call/apply constructor-expression semantics passes the exact Test262 row built-ins/Function/prototype/call/S15.3.4.4_A7_T5.js
+  tests/es5-function-callee-with.test.ts :: ES5 §13.2.2_A18 arguments.callee in with passes the exact Test262 row language/statements/function/S13.2.2_A18_T1.js
+  tests/es5-function-callee-with.test.ts :: ES5 §13.2.2_A18 arguments.callee in with passes the exact Test262 row language/statements/function/S13.2.2_A18_T2.js
+  tests/issue-2552-annexb-phase2.test.ts :: #2552 Phase 2 — case-B outer-binding lifecycle (observed) bare READ of F before its block → undefined, NOT ReferenceError (var binding exists)
+  tests/issue-2552-annexb-phase2.test.ts :: #2552 Phase 2 — case-B outer-binding lifecycle (observed) bare READ of F after its block ran → the function value (outer binding holds it)
+  tests/issue-2552-annexb-phase2.test.ts :: #2552 Phase 2 — repeated block declarations update the live outer binding gc: each declaration contributes its own function object
+  tests/issue-2552-annexb-phase2.test.ts :: #2552 Phase 2 — repeated block declarations update the live outer binding standalone: each declaration contributes its own function object
+  tests/issue-2663-unscopables.test.ts :: #2663 Slice 4 — with @@unscopables HasBinding a false-valued @@unscopables entry does NOT block (object property wins)
+  tests/issue-2663-unscopables.test.ts :: #2663 Slice 4 — with @@unscopables HasBinding an empty @@unscopables object does not block any name
+  tests/issue-2663-unscopables.test.ts :: #2663 Slice 4 — with @@unscopables HasBinding a non-object @@unscopables (string) is ignored — own property wins
+  tests/issue-2663-unscopables.test.ts :: #2663 Slice 4 — with @@unscopables HasBinding @@unscopables only blocks the named property, not siblings
+  tests/issue-2663.test.ts :: #2663 Slice 1 — dynamic with READ nested with: inner object shadows the outer for a shared name
+  tests/issue-2663.test.ts :: #2663 Slice 1 — dynamic with READ the `with` target is computed by a call expression
+  tests/issue-2663.test.ts :: #2663 Slice 2 — dynamic with WRITE inner-object write shadows the outer for a shared name
+  tests/issue-2900.test.ts :: #2900 — fixture lane defers top-level init the target test passes — and fails without the defer
+  tests/issue-2900.test.ts :: #2900 — fixture lane defers top-level init deferring emits exactly one __module_init export (the #2835/#2839 park)
+  tests/issue-2928-direct-eval-state-pool.test.ts :: #2928 — compact caller-owned direct-eval state pool does not let the ambient Object miss arm poison the fallback after eval delete
+  tests/issue-2928-direct-eval-state-pool.test.ts :: #2928 — compact caller-owned direct-eval state pool stores an AOT callable carrier that a later provider entry can invoke
+  tests/issue-2929-annexb-eval-lifecycle.test.ts :: #2929 Annex-B eval binding lifecycle keeps host literal indirect Annex-B eval on the established compile-away path
+  tests/issue-3017-function-poison-pill.test.ts :: #3017 — Function poison-pill semantics host: a strict constructor poisons its sloppy callee
+  tests/issue-3017-function-poison-pill.test.ts :: #3017 — Function poison-pill semantics host: a strict anonymous constructor poisons its sloppy callee
+  tests/issue-3017-function-poison-pill.test.ts :: #3017 — Function poison-pill semantics standalone: a strict constructor poisons its sloppy callee
+  tests/issue-3017-function-poison-pill.test.ts :: #3017 — Function poison-pill semantics standalone: a strict anonymous constructor poisons its sloppy callee
+  tests/issue-3017-function-poison-pill.test.ts :: #3017 — Function poison-pill semantics passes the canonical strict-immediate-caller row in both lanes
+  tests/issue-3017-function-poison-pill.test.ts :: #3017 — Function poison-pill semantics keeps a strict direct-eval caller hidden from its sloppy callee
+  tests/issue-3017-function-poison-pill.test.ts :: #3017 — Function poison-pill semantics keeps a direct-eval strict caller observable from its sloppy callee
+  tests/issue-3017-function-poison-pill.test.ts :: #3017 — Function poison-pill semantics keeps the strict-grandparent/non-strict-immediate-caller control green
+  tests/issue-3365.test.ts :: <suite>
+  tests/issue-3370.test.ts :: #3370 literal Test262 project-runner oracle assembles the same source variants as test262.fyi
+  tests/issue-3370.test.ts :: #3370 literal Test262 project-runner oracle does not erase a failing undefined guard
+  tests/issue-3370.test.ts :: #3370 literal Test262 project-runner oracle keeps the same failure in the unified CI worker
+  tests/issue-3370.test.ts :: #3370 literal Test262 project-runner oracle does not turn a wrong-phase negative into a pass
+  tests/issue-3370.test.ts :: #3370 literal Test262 project-runner oracle matches 50/50 in the unified CI worker, including strict reruns
+  tests/issue-3418.test.ts :: <suite>
+  tests/issue-3632-eval-early-errors.test.ts :: #3632 folded eval Script early errors 'host' preserves valid sloppy names and Script-local control targets
+  tests/issue-3632-eval-early-errors.test.ts :: #3632 folded eval Script early errors 'standalone' preserves valid sloppy names and Script-local control targets
+  tests/issue-4206-with-closure-ir.test.ts :: #4206 with-environment closure IR contract selects, lowers, and executes the closed-object closure slice through IR
+  tests/issue-4206-with-closure-ir.test.ts :: #4206 with-environment closure IR contract selects only ordinary synchronous function expressions
+  tests/issue-4384-merge-group-regressions.test.ts :: #4384 merge-group regression coverage uses remapped capture slots only for opted-in frames
+  tests/issue-4515-wave5.test.ts :: #4515 wave-5 — §13 completion value: the forms that RESET V a break inside an if carries `undefined` out of the loop
+  tests/issue-4515-wave5.test.ts :: #4515 wave-5 — §13 completion value: the forms that RESET V a do-while still reports the last value-producing statement that ran
+  tests/issue-4515-wave5.test.ts :: #4515 wave-5 — measured residuals (owners named) instanceof with a comma-assigned builtin RHS (#2916 Slice B / #2660 M3)
+  tests/issue-4515-wave5.test.ts :: #4515 wave-5 — measured residuals (owners named) arguments.length is a writable own property (#4491)
+  tests/issue-4515-wave5.test.ts :: #4515 wave-5 — measured residuals (owners named) a hoisted var read before its initializer is undefined (#4204)
+  tests/issue-4515-wave5.test.ts :: #4515 wave-5 — measured residuals (owners named) the catch binding does not leak past its block
+  tests/issue-4654.test.ts :: #4654 residuals — RegExp reflection through a dynamic receiver `.flags` through a dynamic receiver answers the flags string
+  tests/issue-4668.test.ts :: #4668 — number/boolean primitive receivers walk the wrapper prototype chain CONTROL — a CALL on a primitive receiver keeps the call lowering's this-binding
+  tests/issue-4755-module-lexical-assignment-tdz.test.ts :: #4755 dynamic-with precomputed writer routing — gc keeps a HasBinding hit on the object without consulting the uninitialized module lexical
+  tests/issue-4755-module-lexical-assignment-tdz.test.ts :: #4755 dynamic-with precomputed writer routing — standalone keeps a HasBinding hit on the object without consulting the uninitialized module lexical
+  tests/issue-4755-module-lexical-assignment-tdz.test.ts :: #4755 dynamic-with precomputed writer routing — standalone evaluates the HasBinding miss RHS once before the guarded module-lexical throw
+  tests/issue-4755-module-lexical-assignment-tdz.test.ts :: #4755 direct assignment identity controls — standalone keeps a declaration-file ambient collision on its global-environment storage
+  tests/issue-4755-module-lexical-assignment-tdz.test.ts :: #4755 direct assignment identity controls — standalone keeps a genuinely unresolvable collision on the strict GlobalEnvironmentRecord route
+  tests/issue-5253.test.ts :: #5253 — retain guaranteed top-level TDZ reads passes the exact standalone Test262 row language/statements/const/global-use-before-initialization-in-prior-statement.js
+  tests/issue-5253.test.ts :: #5253 — retain guaranteed top-level TDZ reads passes the exact standalone Test262 row language/statements/let/global-use-before-initialization-in-prior-statement.js
+  tests/issue-5253.test.ts :: #5253 — retain guaranteed top-level TDZ reads leaves the 'block-local forward lexical read (#51…' control outside the direct top-level lexical proof
+  tests/issue-5313-with-scan-gating.test.ts :: #5313 harness compile-work budget drops below the pre-#5313 figure and holds the banked budget
+  tests/issue-5738-destructuring-iterator-order.test.ts :: strict unresolved array assignment iterator ordering js-host: original array-elem-iter-thrw-close-skip.js
+  tests/issue-5738-destructuring-iterator-order.test.ts :: strict unresolved array assignment iterator ordering js-host: original array-elem-put-unresolvable-strict.js
+  tests/issue-5738-destructuring-iterator-order.test.ts :: strict unresolved array assignment iterator ordering js-host: original array-elem-iter-nrml-close-skip.js
+  tests/issue-5738-destructuring-iterator-order.test.ts :: strict unresolved array assignment iterator ordering standalone: original array-elem-iter-thrw-close-skip.js
+  tests/issue-5738-destructuring-iterator-order.test.ts :: strict unresolved array assignment iterator ordering standalone: original array-elem-put-unresolvable-strict.js
+  tests/issue-5738-destructuring-iterator-order.test.ts :: strict unresolved array assignment iterator ordering standalone: original array-elem-iter-nrml-close-skip.js
+  tests/issue-6491-r2-real-early-errors.test.ts :: #6491 r2 — the same rules fire on the LINKED body-only unit rejects a module-goal violation and accepts its legal sibling
+  tests/issue-6491-r2-real-early-errors.test.ts :: #6491 r2 — the same rules fire on the LINKED body-only unit rejects `class let {}` on the linked unit too
+  tests/issue-6492-r4-linked-iterator-binding.test.ts :: #6492 r4 — linked lane carries the %Iterator% binding stratum adds the binding to the linked body exactly when the honest assembly adds it
+  tests/issue-6492-r4-linked-iterator-binding.test.ts :: #6492 r4 — linked lane carries the %Iterator% binding stratum keeps bodyLineOffset exact so body error lines still map
+  tests/issue-6492-r4-linked-iterator-binding.test.ts :: #6492 r4 — linked lane carries the %Iterator% binding stratum `typeof Iterator` is 'function' in the linked lane (was 'undefined')
+  tests/issue-6492-r4-linked-iterator-binding.test.ts :: #6492 r4 — linked lane carries the %Iterator% binding stratum `class T extends Iterator` subclasses the intrinsic in the linked lane
+  tests/issue-6492-r4b-iterator-binding-statics.test.ts :: #6492 r4b — the binding carries the intrinsic's statics `Iterator.from` is the intrinsic's, and `extends Iterator` still works
+  tests/issue-6492-r4d-linked-order-rows.test.ts :: #6492 r4d — proxy traps across the linked module seam fires a provider-minted handler's trap in the linked lane
+  tests/issue-6492-r4d-linked-order-rows.test.ts :: #6492 r4d — proxy traps across the linked module seam keeps the trap's OWN module as its dispatch module (no self-recursion)
+  tests/issue-6492-r4d-linked-order-rows.test.ts :: #6492 r4d — proxy traps across the linked module seam leaves a body-local handler alone
+  tests/issue-6492-r4d-linked-order-rows.test.ts :: #6492 r4d — top-level destructuring assignment reaches the reader passes in the linked lane
+  tests/issue-6492-r4d-linked-order-rows.test.ts :: #6492 r4d — top-level destructuring assignment reaches the reader does not regress the honest lane
+  tests/issue-6492-r4d-linked-order-rows.test.ts :: #6492 r4d — top-level destructuring assignment reaches the reader assigns through a destructuring assignment with no helper involved
+  tests/issue-6492-r6-cross-module-host-throw.test.ts :: #6492 r6 — a host-thrown error keeps its value across the linked boundary the provider's assert.throws sees the object for a HOST-thrown error
+  tests/issue-6492-r6-cross-module-host-throw.test.ts :: #6492 r6 — a host-thrown error keeps its value across the linked boundary …and the TDZ shape the corpus rows use
+  tests/issue-6492-r6-cross-module-host-throw.test.ts :: #6492 r6 — a host-thrown error keeps its value across the linked boundary the WASM-thrown twin was already correct and stays correct
+  tests/issue-6492-r6-lib-globals-ambient-callables.test.ts :: #6492 r6 — the lib-globals gate admits the ambient callable globals indirect eval no longer traps in the linked lane
+  tests/issue-6492-r6-lib-globals-ambient-callables.test.ts :: #6492 r6 — the lib-globals gate admits the ambient callable globals an ambient callable global read as a VALUE is not null in the linked lane
+  tests/issue-6492-r6-undef-sentinel-canonical-undefined.test.ts :: #6492 r6 — an UNDEF-SENTINEL f64 boxes to `undefined`, not `null` resolves the real `undefined` producer at an explicit-undefined element read
+  tests/issue-6492-r6-undef-sentinel-canonical-undefined.test.ts :: #6492 r6 — an UNDEF-SENTINEL f64 boxes to `undefined`, not `null` does the same through a for-await destructuring head (the corpus shape)
+  tests/issue-6504-optional-chain-shortcircuit.test.ts :: #6504 r32 — an optional element access that short-circuits yields undefined, not 0 the verdict channel reports a real top-level failure (control)
+  tests/issue-6504-optional-chain-shortcircuit.test.ts :: #6504 r32 — an optional element access that short-circuits yields undefined, not 0 `undefined?.[0]` is undefined
+  tests/issue-6504-optional-chain-shortcircuit.test.ts :: #6504 r32 — an optional element access that short-circuits yields undefined, not 0 `null?.[0]` is undefined
+  tests/issue-6504-optional-chain-shortcircuit.test.ts :: #6504 r32 — an optional element access that short-circuits yields undefined, not 0 a short-circuit in a NUMERIC consumer is NaN, not 0
+  tests/issue-6504-optional-chain-shortcircuit.test.ts :: #6504 r32 — an optional element access that short-circuits yields undefined, not 0 the optional PROPERTY form stays correct (it always was)
+  tests/issue-6504-optional-chain-shortcircuit.test.ts :: #6504 r32 — an optional element access that short-circuits yields undefined, not 0 a NON-nullish base still performs the read
+  tests/issue-6504-optional-chain-shortcircuit.test.ts :: #6504 r32 — an optional element access that short-circuits yields undefined, not 0 the short-circuit does not evaluate the index expression
+  tests/issue-6504-spilled-call-await.test.ts :: #6504 — await in a call argument, resolved through the spill continuation the verdict channel reports a real failure (control)
+  tests/issue-6504-spilled-call-await.test.ts :: #6504 — await in a call argument, resolved through the spill continuation the value is the thenable's RESOLVED value, not the thenable
+  tests/issue-6504-spilled-call-await.test.ts :: #6504 — await in a call argument, resolved through the spill continuation the CALLEE is the one read before the suspension, even when `then` reassigns it
+  tests/issue-6504-spilled-call-await.test.ts :: #6504 — await in a call argument, resolved through the spill continuation the RECEIVER is evaluated exactly once, before the suspension
+  tests/issue-6504-spilled-call-await.test.ts :: #6504 — await in a call argument, resolved through the spill continuation arguments evaluate left-to-right ACROSS the suspension
+  tests/issue-6504-spilled-call-await.test.ts :: #6504 — await in a call argument, resolved through the spill continuation a MUTABLE identifier callee is read before the suspension too
+  tests/issue-6504-spilled-call-await.test.ts :: #6504 — await in a call argument, resolved through the spill continuation a rejected await propagates the reason instead of calling the spilled callee
+  tests/issue-6504-spilled-call-await.test.ts :: #6504 — await in a call argument, resolved through the spill continuation an await inside an INDEX operand spills the base and indexes on resume
+  tests/issue-6504-spilled-call-await.test.ts :: #6504 — await in a call argument, resolved through the spill continuation an await inside an ARRAY LITERAL element keeps the earlier elements' order
+  tests/issue-6504-spilled-call-await.test.ts :: #6504 — await in a call argument, resolved through the spill continuation an await as a BINARY operand spills the left side once, before the suspension
+  tests/issue-6504-spilled-call-await.test.ts :: #6504 — await in a call argument, resolved through the spill continuation an optional chain with a non-nullish base decides the short-circuit BEFORE suspending
+  tests/issue-6504-spilled-call-await.test.ts :: #6504 — await in a call argument, resolved through the spill continuation a base whose nullishness is not syntactically settled is REFUSED, not guessed
+  tests/issue-6504-spilled-call-await.test.ts :: #6504 — await in a call argument, resolved through the spill continuation try/catch ACROSS the await is deliberately NOT in this round's scope
+  tests/issue-6651-sg1-generator-singletons.test.ts :: #6651 SG1 · residuals pinned in their current (spec-WRONG) state PINNED WRONG — `yield *` before a newline emits INVALID Wasm
+  tests/issue-671-with-w1.test.ts :: #671 W1 — pre-allocation capture refusal declines a for-in target consumer that W1 does not yet route through the open MOP
+  tests/issue-671-with-w1.test.ts :: #671 W1 — direct DeleteBinding readback flips an authentic ES5 function-context DeleteBinding control on the host lane
+  tests/issue-6723-standalone-linked-errors.test.ts :: #6723 D4 — the standalone linked provider sees the body's error constructors assert.throws(TypeError) accepts a TypeError the body's runtime threw
+  tests/issue-6723-standalone-linked-errors.test.ts :: #6723 D4 — the standalone linked provider sees the body's error constructors assert.throws(TypeError) accepts `throw new TypeError()` from the body
+  tests/issue-6723-standalone-linked-errors.test.ts :: #6723 D4 — the standalone linked provider sees the body's error constructors assert.throws(ReferenceError) accepts an unresolvable reference from the body
+  tests/issue-6723-standalone-linked-errors.test.ts :: #6723 D4 — the standalone linked provider sees the body's error constructors assert.throws(Test262Error) accepts `throw new Test262Error()` from the body
+  tests/issue-6723-standalone-linked-errors.test.ts :: #6723 D4 — the standalone linked provider sees the body's error constructors the body and the provider agree on the constructor objects
+  tests/issue-6723-standalone-linked-errors.test.ts :: #6723 D4 — the standalone linked provider sees the body's error constructors a WRONG constructor is still reported
+  tests/issue-6723-standalone-linked-harness.test.ts :: #6723 D1 — the default include-set builds a standalone provider links separately and the consumer reports no host imports
+  tests/issue-6723-standalone-linked-harness.test.ts :: #6723 D2 — a linked standalone body sees the harness bindings runs verifyProperty + testWithTypedArrayConstructors through the provider
+  tests/issue-6723-standalone-linked-harness.test.ts :: #6723 D3 — a forced fallback keeps the strict variant strict compiles the honest assembly and passes
+  tests/issue-6723-standalone-linked-harness.test.ts :: #6723 D3 — a forced fallback keeps the strict variant strict the pre-#6723 reconstruction (prefix + bodySource) runs the row sloppy
+  tests/issue-6723-standalone-linked-print.test.ts :: #6723 D4 — the standalone linked provider's print reaches the drain an async body's $DONE completion marker is observed
+  tests/issue-6723-standalone-linked-print.test.ts :: #6723 D4 — the standalone linked provider's print reaches the drain a sync print from the provider reaches the drain
+  tests/issue-6723-standalone-linked-print.test.ts :: #6723 D4 — the standalone linked provider's print reaches the drain without hostBridge the provider publishes no stdout sink
+  tests/issue-6757-linked-closure-dispatch-bounce.test.ts :: #6757 — a body-minted closure called by the linked harness runs through the module that minted it instead of overflowing the stack
+  tests/issue-6757-linked-closure-dispatch-bounce.test.ts :: #6757 — a body-minted closure called by the linked harness still reports a real mismatch from the body-minted validator
+  tests/issue-6834-module-self-import-graph.test.ts :: #6834 discovery admits the untouched original language/module-code/eval-export-dflt-expr-gen-anon.js without an entry fixture
+  tests/issue-6834-module-self-import-graph.test.ts :: #6834 discovery admits the untouched original language/module-code/eval-export-dflt-expr-gen-named.js without an entry fixture
+  tests/issue-6834-module-self-import-graph.test.ts :: #6834 discovery admits the untouched original language/module-code/instn-named-bndng-dflt-gen-anon.js without an entry fixture
+  tests/issue-6834-module-self-import-graph.test.ts :: #6834 discovery admits the untouched original language/module-code/instn-named-bndng-dflt-gen-named.js without an entry fixture
+  tests/issue-6834-module-self-import-graph.test.ts :: #6834 discovery admits the untouched original language/module-code/instn-named-bndng-gen.js without an entry fixture
+  tests/issue-6834-module-self-import-graph.test.ts :: #6834 discovery leaves namespace and real fixture graphs on their existing route
+  tests/issue-6834-module-self-import-graph.test.ts :: #6834 discovery attaches empty graphs to literal FYI assemblies without rewriting originals
+  tests/issue-6834-module-self-import-graph.test.ts :: #6834 execution executes non-generator FYI controls in gc
+  tests/issue-6834-module-self-import-graph.test.ts :: #6834 execution executes non-generator FYI controls in standalone
+  tests/issue-6834-module-self-import-graph.test.ts :: #6834 execution forwards the explicit unified-pool flag in gc
+  tests/issue-6834-module-self-import-graph.test.ts :: #6834 execution forwards the explicit unified-pool flag in standalone
+  tests/issue-6834-module-self-import-graph.test.ts :: #6834 execution does not activate omitted, false, malformed, or forged requests
+  tests/issue-6834-module-self-import-graph.test.ts :: #6834 execution declines a missing FYI flag rather than inferring a graph from its empty map
+  tests/issue-6834-module-self-import-graph.test.ts :: #6834 execution supports a CommonJS worker entry dynamically loading the maintained ESM worker
+  tests/issue-833-html-like-comments.test.ts :: #833 — Annex B HTML-like comments passes the seven exact-current Test262 compile-error cases (undefined)
+  tests/issue-833-html-like-comments.test.ts :: #833 — Annex B HTML-like comments passes the seven exact-current Test262 compile-error cases (standalone)
+  tests/issue-968-capture-cell-slot-identity.test.ts :: #968 native capture-cell slot identity unchanged case14 parameter and block shadows across activations
+  tests/issue-968-capture-cell-slot-identity.test.ts :: #968 native capture-cell slot identity outer let and inner let retain different live cells
+  tests/issue-968-capture-cell-slot-identity.test.ts :: #968 native capture-cell slot identity outer var and inner let retain different live cells
+  tests/issue-968-capture-cell-slot-identity.test.ts :: #968 native capture-cell slot identity sibling shadow blocks retain independent cells
+  tests/issue-968-capture-cell-slot-identity.test.ts :: #968 native capture-cell slot identity three nested same-spelled bindings retain three values
+  tests/issue-968-capture-cell-slot-identity.test.ts :: #968 native capture-cell slot identity captured loop-head bindings are fresh per iteration
+  tests/issue-968-capture-cell-slot-identity.test.ts :: #968 native capture-cell slot identity untaken conditional capture preserves the later write
+  tests/issue-968-capture-cell-slot-identity.test.ts :: #968 native capture-cell slot identity two readers of one binding share the existing live cell
+  tests/issue-968-capture-cell-slot-identity.test.ts :: #968 native capture-cell slot identity write-only closure and sibling reader share one binding
+  tests/issue-968-capture-cell-slot-identity.test.ts :: #968 native capture-cell slot identity null undefined and false stay distinct across shadow cells
+  tests/issue-968-capture-cell-slot-identity.test.ts :: #968 native capture-cell slot identity source names with an ordinary boxed prefix can still shadow
+  tests/issue-968-capture-cell-slot-identity.test.ts :: #968 native capture-cell slot identity interleaved activations preserve thrown identity and write order

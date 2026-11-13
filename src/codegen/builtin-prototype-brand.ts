@@ -111,6 +111,7 @@ import { buildThrowJsErrorInstrs, emitThrowTypeError, noJsHost } from "./js-erro
 import { compileExpression, ensureLateImport, flushLateImportShifts } from "./shared.js"; // (#4556)
 import { coerceType } from "./type-coercion.js";
 import { identifierIsWrittenTo } from "./native-ordinary-instanceof.js"; // (#6651 A13)
+import { ensureObjectRuntime } from "./object-runtime.js";
 
 /** WasmGC `none` bottom heap type (signed LEB −18) — `ref.null none`, the
  *  canonical `anyref` null (mirrors receiver-brand.ts / map-runtime.ts). */
@@ -830,8 +831,17 @@ export function tryBorrowedPrototypeNullishThisThrow(
   // getter never ran. Route argument 1 of the two key-taking methods through
   // `__to_property_key` and drop THAT instead.
   const coercesKeyFirst = ctor === "Object" && (method === "hasOwnProperty" || method === "propertyIsEnumerable");
+  // Standalone owns ToPropertyKey natively: `ensureObjectRuntime` registers the
+  // in-module `__to_property_key` (defined funcs only — no import shift, and
+  // idempotent). Without it the late-import fallback below minted
+  // `env::__to_property_key`, a host import a standalone module can never be
+  // linked against (#4076 rows, since 6cf0f5555c). Host lanes keep the import.
+  if (coercesKeyFirst && ctx.standalone && ctx.nativeStrings && ctx.anyStrTypeIdx >= 0) {
+    ensureObjectRuntime(ctx);
+  }
   const toPropertyKeyIdx = coercesKeyFirst
-    ? ensureLateImport(ctx, "__to_property_key", [{ kind: "externref" }], [{ kind: "externref" }])
+    ? (ctx.funcMap.get("__to_property_key") ??
+      ensureLateImport(ctx, "__to_property_key", [{ kind: "externref" }], [{ kind: "externref" }]))
     : undefined;
   for (const [index, arg] of expr.arguments.entries()) {
     if (coercesKeyFirst && index === 1 && toPropertyKeyIdx !== undefined) {

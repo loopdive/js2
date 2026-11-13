@@ -1,6 +1,10 @@
 #!/usr/bin/env node
 
-import { parseTest262SemanticProviders } from "./test262-lane.mjs";
+import {
+  parseTest262CompilerPath,
+  requireTest262CompilerPath,
+  summarizeTest262CompilerPaths,
+} from "./test262-compiler-path.mjs";
 import { createReadStream, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { createInterface } from "node:readline";
@@ -32,6 +36,7 @@ function parseArgs(argv) {
     baselineSha: "",
     baselineGeneratedAt: "",
     target: "",
+    compilerPath: undefined,
     maxUnclassifiedRootCauses: undefined,
     fileEditions: DEFAULT_FILE_EDITIONS,
   };
@@ -48,6 +53,13 @@ function parseArgs(argv) {
       args.baselineSha = argv[++i] || "";
     } else if (arg === "--baseline-generated-at") {
       args.baselineGeneratedAt = argv[++i] || "";
+    } else if (arg === "--compiler-path") {
+      const value = argv[++i];
+      if (!value) throw new Error("--compiler-path requires legacy or ir");
+      args.compilerPath = parseTest262CompilerPath(value);
+    } else if (arg === "--eval-engine") {
+      args.evalEngine = argv[++i];
+      if (!["quickjs", "interpreter"].includes(args.evalEngine)) throw new Error("Invalid requested eval engine");
     } else if (arg === "--target") {
       args.target = argv[++i] || "";
     } else if (arg === "--file-editions") {
@@ -85,6 +97,12 @@ function createCounts() {
     // v4 oracle every standalone `pass` is host-free, so this equals `pass`.
     // The gc/js-host lane still computes it as informational metadata.
     host_free_pass: 0,
+    // Passes whose compile emitted every terminal unit from the IR — zero
+    // direct (legacy) bodies. The honest "IR path" number on the hybrid route.
+    ir_only_pass: 0,
+    // Rows that carried an IR route census at all (older rows have none), so
+    // the percentage has a true denominator.
+    ir_measured: 0,
   };
 }
 
@@ -101,6 +119,11 @@ function buildSummary(counter, target) {
     host_free_pass: hostFreePass,
     // Raw host-satisfied passes have no standalone meaning and are omitted.
     ...(target === "standalone" ? {} : { leaky_pass: (counter.pass ?? 0) - hostFreePass }),
+    ir_only_pass: counter.ir_only_pass ?? 0,
+    ir_measured: counter.ir_measured ?? 0,
+    // Separate percentage: fallback-free passes over ALL tests, not over
+    // measured rows, so it reads against the same denominator as `pass`.
+    ir_only_pass_pct: counter.total > 0 ? Math.round(((counter.ir_only_pass ?? 0) / counter.total) * 1000) / 10 : 0,
     stale: 0,
   };
 }
@@ -981,11 +1004,15 @@ function buildStandaloneRootCauseMap(records, maxUnclassified, fileEditions) {
 async function main() {
   const args = parseArgs(process.argv.slice(2));
   const target = inferTarget(args);
+  if (args.compilerPath !== undefined) requireTest262CompilerPath(args.compilerPath);
+  const compilerPathRows = [];
 
   const statuses = createCounts();
   const officialStatuses = createCounts();
   const strictCounts = createCounts();
   const categories = new Map();
+  // Fallback reason code → { tests, units, passing_tests } across every row.
+  const irFallbackCodes = new Map();
   const errorCategories = new Map();
   const skipReasons = new Map();
   // #1853 — hard-error stability bucket (malformed_wasm / missing_test_export),
@@ -1034,9 +1061,22 @@ async function main() {
   for await (const line of rl) {
     if (!line.trim()) continue;
     const record = JSON.parse(line);
-    const rowProviders = parseTest262SemanticProviders(record.semantic_providers);
-    if (semanticProviders !== undefined && semanticProviders !== rowProviders) {
-      throw new Error("Cannot merge test262 rows from different semantic providers");
+    compilerPathRows.push({
+      compilerPath: record.compilerPath,
+      executionCompilerPath: record.executionCompilerPath,
+      compilerPathVerified: record.compilerPathVerified,
+      configuredCompilerPath: record.configuredCompilerPath,
+      status: record.status,
+      compilerAttempts: record.compilerAttempts,
+      preparedExecutionReport: record.preparedExecutionReport,
+      frontendPathVerified: record.frontendPathVerified,
+      preparedFrontendReport: record.preparedFrontendReport,
+      compilerPathFailureKind: record.compilerPathFailureKind,
+    });
+    // (#6979) Rows from the removed host-assisted control lane cannot be merged.
+    const rowProviders = record.semantic_providers ?? "auto";
+    if (rowProviders !== "auto") {
+      throw new Error(`Cannot merge test262 rows from the removed semantic-provider lane ${rowProviders}`);
     }
     semanticProviders = rowProviders;
     if (typeof record.oracle_version === "number") {
@@ -1070,11 +1110,13 @@ async function main() {
     );
   }
 
+  const normalizedCompilerCases = [];
   for (const rawRecord of recordsByFile.values()) {
     // Defense in depth for old JSONL or alternate runners: a host-satisfied
     // result can never contribute a standalone pass, even if it arrived with
     // the legacy `status: "pass"` verdict.
     const record = normalizeStandaloneVerdict(rawRecord, target);
+    normalizedCompilerCases.push(record);
     const status = record.status;
     const scope = record.scope ?? "standard";
     const scopeOfficial = record.scope_official ?? scope !== "proposal";
@@ -1093,10 +1135,28 @@ async function main() {
     // correction ("N previously-counted passes are vacuous") without inflating
     // the genuine-fail bucket's interpretation.
     const isVacuous = record.vacuous === true;
+    // Fallback-free pass: the compile's IR ledger shows zero legacy bodies.
+    const irMeasured = typeof record.ir_units === "number";
+    const irOnlyPass = status === "pass" && irMeasured && record.ir_legacy_units === 0;
+    const bumpIr = (counter) => {
+      if (irMeasured) counter.ir_measured = (counter.ir_measured ?? 0) + 1;
+      if (irOnlyPass) counter.ir_only_pass = (counter.ir_only_pass ?? 0) + 1;
+    };
+    if (Array.isArray(record.ir_fallback_codes)) {
+      for (const entry of record.ir_fallback_codes) {
+        if (!entry || typeof entry.code !== "string") continue;
+        const bucket = irFallbackCodes.get(entry.code) ?? { code: entry.code, tests: 0, units: 0, passing_tests: 0 };
+        bucket.tests++;
+        bucket.units += Number(entry.count) || 0;
+        if (status === "pass") bucket.passing_tests++;
+        irFallbackCodes.set(entry.code, bucket);
+      }
+    }
 
     statuses.total++;
     statuses[status] = (statuses[status] ?? 0) + 1;
     if (hostFreePass) statuses.host_free_pass = (statuses.host_free_pass ?? 0) + 1;
+    bumpIr(statuses);
     if (isVacuous) statuses.vacuous = (statuses.vacuous ?? 0) + 1;
 
     if (!scopeCounts.has(scope)) scopeCounts.set(scope, createCounts());
@@ -1104,15 +1164,18 @@ async function main() {
     scopeCounter.total++;
     scopeCounter[status] = (scopeCounter[status] ?? 0) + 1;
     if (hostFreePass) scopeCounter.host_free_pass = (scopeCounter.host_free_pass ?? 0) + 1;
+    bumpIr(scopeCounter);
 
     if (scopeOfficial) {
       officialStatuses.total++;
       officialStatuses[status] = (officialStatuses[status] ?? 0) + 1;
       if (hostFreePass) officialStatuses.host_free_pass = (officialStatuses.host_free_pass ?? 0) + 1;
+      bumpIr(officialStatuses);
       if (strict !== "no") {
         strictCounts.total++;
         strictCounts[status] = (strictCounts[status] ?? 0) + 1;
         if (hostFreePass) strictCounts.host_free_pass = (strictCounts.host_free_pass ?? 0) + 1;
+        bumpIr(strictCounts);
       }
     }
 
@@ -1121,6 +1184,7 @@ async function main() {
     categoryCounter.total++;
     categoryCounter[status] = (categoryCounter[status] ?? 0) + 1;
     if (hostFreePass) categoryCounter.host_free_pass = (categoryCounter.host_free_pass ?? 0) + 1;
+    bumpIr(categoryCounter);
 
     if (record.error_category) {
       errorCategories.set(record.error_category, (errorCategories.get(record.error_category) ?? 0) + 1);
@@ -1152,7 +1216,18 @@ async function main() {
   const officialSummaryBuilt = buildSummary(officialStatuses, target);
   const fullSummaryBuilt = buildSummary(statuses, target);
 
+  // Preserve every input row's route contradictions, but count completed cases
+  // from the same worst-status, normalized per-file population as the report.
+  const pathHistory = summarizeTest262CompilerPaths(compilerPathRows, args.compilerPath);
+  const caseIdentity = summarizeTest262CompilerPaths(normalizedCompilerCases, args.compilerPath);
+  const allExecutionsVerified = pathHistory.compilerPathVerified && caseIdentity.compilerPathVerified;
   const report = {
+    ...caseIdentity,
+    compilerPath: pathHistory.compilerPath,
+    configuredCompilerPath: pathHistory.configuredCompilerPath,
+    compilerPathVerified: allExecutionsVerified,
+    executionCompilerPath: allExecutionsVerified ? "ir" : "unknown",
+    measurementState: pathHistory.measurementState === "unavailable" ? "unavailable" : caseIdentity.measurementState,
     timestamp: new Date().toISOString(),
     baseline_generated_at: args.baselineGeneratedAt || new Date().toISOString(),
     baseline_sha: args.baselineSha || "",
@@ -1165,6 +1240,8 @@ async function main() {
     mode: {
       target,
       semantic_providers: semanticProviders ?? "auto",
+      ...(args.evalEngine ? { eval_engine_requested: args.evalEngine } : {}),
+      ...(args.compilerPath === "ir" ? { runtime_eval_provider: "unsupported-strict-native" } : {}),
       include_proposals: args.includeProposals ? 1 : 0,
       label: args.includeProposals ? "official test262 + proposals" : "official test262 (default scope)",
     },
@@ -1181,6 +1258,9 @@ async function main() {
     official_summary: officialSummaryBuilt,
     full_summary: fullSummaryBuilt,
     strict_summary: buildSummary(strictCounts, target),
+    // The IR-path backlog, ranked: every fallback reason with the number of
+    // tests (and terminal units) that still take a legacy body for it.
+    ir_fallback_codes: [...irFallbackCodes.values()].sort((a, b) => b.tests - a.tests || a.code.localeCompare(b.code)),
     scope_summaries: Object.fromEntries(
       [...scopeCounts.entries()]
         .sort(([a], [b]) => a.localeCompare(b))
@@ -1231,9 +1311,24 @@ async function main() {
   // report and avoids the indirection of "fetch report.json then read
   // .categories". Same schema as `report.categories`.
   const outputDir = args.output.replace(/[^/\\]+$/, "");
-  const categoriesFile = target === "standalone" ? "test262-standalone-categories.json" : "test262-categories.json";
+  const categoryPrefix = target === "standalone" ? "test262-standalone" : "test262";
+  const categoriesFile = `${categoryPrefix}${report.compilerPath === "ir" ? "-ir" : ""}-categories.json`;
   const categoriesPath = outputDir + categoriesFile;
   const categoriesPayload = {
+    compilerPath: report.compilerPath,
+    compilerPathVerified: report.compilerPathVerified,
+    executionCompilerPath: report.executionCompilerPath,
+    configuredCompilerPath: report.configuredCompilerPath,
+    ...(report.requestedCompilerPath === undefined ? {} : { requestedCompilerPath: report.requestedCompilerPath }),
+    measurementState: report.measurementState,
+    attemptedCases: report.attemptedCases,
+    completedCases: report.completedCases,
+    skippedCases: report.skippedCases,
+    compileErrorCases: report.compileErrorCases,
+    compileTimeoutCases: report.compileTimeoutCases,
+    verifiedExecutionCases: report.verifiedExecutionCases,
+    verifiedFrontendCases: report.verifiedFrontendCases,
+    unverifiedExecutionCases: report.unverifiedExecutionCases,
     timestamp: report.timestamp,
     baseline_generated_at: report.baseline_generated_at,
     baseline_sha: report.baseline_sha,

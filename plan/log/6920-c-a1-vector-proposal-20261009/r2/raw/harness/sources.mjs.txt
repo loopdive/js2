@@ -1,0 +1,18 @@
+export const sources = {
+  fixedF64: `export function run(a: number, b: number): number { const v = [a, b, 3]; return v[0] + v[1] + v[2] + v.length; }`,
+  repeatedLiterals: `export function run(a: number): number { const x = [a, 1]; const y = [2, a, 3]; const z = [a]; return x[0] + y[1] + z[0] + x.length + y.length + z.length; }`,
+  distinctElems: `export function run(a: number): number { const x = [a, 1]; const s = ["p", "q"]; const b = [true, false]; return x[1] + s.length + (b[0] ? 1 : 0); }`,
+  i32Elems: `export function run(n: number): number { const arr: number[] = []; for (let i = 0; i < n; i++) arr.push(i | 0); let s = 0; for (let i = 0; i < arr.length; i++) s = (s + arr[i]) | 0; return s; }`,
+  emptyLiteral: `export function run(n: number): number { const arr: number[] = []; for (let i = 0; i < n; i++) arr.push(i * 2); return arr.length; }`,
+  emptyReserved: `export function run(): number { const arr: number[] = []; arr.push(1); arr.push(2); arr.push(3); return arr[2]; }`,
+  forOf: `export function run(a: number): number { const v = [a, a * 2, a * 3]; let s = 0; for (const x of v) s += x; return s; }`,
+  forOfParam: `function sum(v: number[]): number { let s = 0; for (const x of v) s += x; return s; } export function run(a: number): number { return sum([a, 2, 3]); }`,
+  nullableVec: `function pick(f: boolean): number[] | null { return f ? [1, 2] : null; } export function run(): number { const v = pick(true); return v ? v.length : -1; }`,
+  nestedVec: `export function run(): number { const m = [[1, 2], [3, 4]]; let s = 0; for (const r of m) for (const x of r) s += x; return s; }`,
+  vecSet: `export function run(i: number): number { const v = [4, 5, 6]; v[1] = 9; return (i >= 0 && i < v.length ? v[i] : 0) + v.length * 100; }`,
+  primitiveIf: `export function run(a: number, b: number): number { const values = [a, b]; return a > b ? values[0] : values[1] + values.length; }`,
+  native: `export function run(a: number, b: number): number { const values = [a, b]; return values[0] + values[1] + values.length; }`,
+  stringVec: `export function run(): number { const s = ["a", "bb", "ccc"]; let n = 0; for (const x of s) n += x.length; return n; }`,
+  closureVec: `export function run(a: number): number { const f = (v: number[]) => v[0] + v.length; return f([a, 1]); }`,
+  multiF64Linear: `export function run(a: number): number { const x = [a, 1]; const y = x; const z = [a, 2, 3]; y[0] = 7; return x[0] + z[2] + x.length + z.length; }`,
+};

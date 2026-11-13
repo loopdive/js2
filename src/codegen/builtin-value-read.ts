@@ -63,6 +63,8 @@ import {
 } from "./array-object-proto.js";
 import { emitLazyNativeProtoGet, getBuiltinBrand, getNativeProtoBuiltinGlue } from "./native-proto.js";
 import { resolveStandaloneProtoMemberValueClosure } from "./native-proto-value-read.js";
+// (#7294) Re-exported for the IR bridge (`src/ir/integration.ts`), so it adds no new ir -> codegen edge.
+export { builtinProtoMemberProvided, ensureBuiltinProtoMemberFunc } from "./native-proto-value-read.js";
 import { tryEmitOverriddenProtoMemberRead } from "./object-model/object-proto-to-locale-string.js";
 import { emitBuiltinProtoConstructorValue } from "./builtin-proto-constructor.js";
 import {
@@ -76,6 +78,8 @@ import { emitJsonStringifyValue } from "./json-codec-native.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { ensureExtrasArgvGlobal } from "./statements/nested-declarations.js";
 import { getArrTypeIdxFromVec } from "./registry/types.js";
+import { emitInlineMathFunctions } from "./math-helpers.js"; // (#6957)
+import { isPatchedBuiltinStaticMember } from "./source-scan-predicates.js"; // (#6957)
 import { emitMathValueReadBody, prepareMathValueRead } from "./math-value-read.js"; // (#4565, #5383)
 import { ensureHostArrayCarrierPredicate } from "./host-array-carrier.js"; // (#4649)
 import {
@@ -90,14 +94,8 @@ import {
   emitStandalonePromiseReject,
   emitStandalonePromiseResolve,
   ensurePromiseSettleFunctions,
-  isStandalonePromiseActive,
 } from "./async-scheduler.js";
-import {
-  ensureNativeSymbolBoundaryBridge,
-  ensureSymbolCarrier,
-  ensureSymbolRegistry,
-  usesNativeSymbolProvider,
-} from "./symbol-native.js";
+import { ensureNativeSymbolBoundaryBridge, ensureSymbolCarrier, ensureSymbolRegistry } from "./symbol-native.js";
 import { emitExternrefSlotToAnyStr } from "./native-string-slot-bridge.js";
 import { emitNativeReflectTargetGuard } from "./reflect-target-guard.js";
 import { sourceShadowsGlobalName } from "./source-function-members.js"; // (#5194 review F2)
@@ -270,11 +268,22 @@ function tryEmitBuiltinNamespaceConstantValue(
   builtinName: string,
   propName: string,
 ): ValType | undefined {
+  const value = builtinNamespaceConstantValue(builtinName, propName);
+  if (value === undefined) return undefined;
+  fctx.body.push({ op: "f64.const", value });
+  return { kind: "f64" };
+}
+
+/**
+ * (#7106) The numeric value of `<Math|Number>.<prop>` — the one table behind
+ * legacy's dot read, its reflective read and the IR's fold
+ * (`irAmbientNamespaceConstant`); undefined for any other pair. Own keys only:
+ * `Math["constructor"]` is not a constant.
+ */
+export function builtinNamespaceConstantValue(builtinName: string, propName: string): number | undefined {
   const table =
     builtinName === "Math" ? MATH_CONSTANT_VALUES : builtinName === "Number" ? NUMBER_CONSTANT_VALUES : undefined;
-  if (!table || !(propName in table)) return undefined;
-  fctx.body.push({ op: "f64.const", value: table[propName]! });
-  return { kind: "f64" };
+  return table !== undefined && Object.hasOwn(table, propName) ? table[propName] : undefined;
 }
 
 /**
@@ -1003,12 +1012,17 @@ function tryCompileStandaloneBuiltinProtoIteratorRead(
  */
 const BOOLEAN_PREDICATE_RESULT: ValType = { kind: "i32", boolean: true };
 
+const PATCHED_MATH_RANDOM = "#6957 patched Math.random";
+
 export function ensureStandaloneBuiltinStaticMethodClosure(
   ctx: CodegenContext,
   builtinName: string,
   propName: string,
-  _expr?: ts.PropertyAccessExpression,
+  expr?: ts.PropertyAccessExpression,
 ): { type: { kind: "ref"; typeIdx: number }; funcIdx: number } | null {
+  // (#6957) A patched member's source VALUE read (only that site passes `expr`)
+  // declines to the carrier [[Get]]; seeding and other callers keep the closure.
+  if (expr && isPatchedBuiltinStaticMember(ctx, builtinName, propName)) return null;
   const key = `${builtinName}.${propName}`;
   let paramTypes: ValType[];
   let returnType: ValType | null;
@@ -1016,7 +1030,7 @@ export function ensureStandaloneBuiltinStaticMethodClosure(
   // they reify with a catchable-TypeError body instead of returning null.
   let genericThrowBody = false;
 
-  switch (key) {
+  switch (key === "Math.random" && isPatchedBuiltinStaticMember(ctx, "Math", "random") ? PATCHED_MATH_RANDOM : key) {
     case "Array.isArray":
       paramTypes = [{ kind: "externref" }];
       returnType = BOOLEAN_PREDICATE_RESULT;
@@ -1138,12 +1152,6 @@ export function ensureStandaloneBuiltinStaticMethodClosure(
     // the same native registry / scheduler used by direct calls.
     case "Symbol.for":
     case "Symbol.keyFor":
-      if (!usesNativeSymbolProvider(ctx)) {
-        paramTypes = [{ kind: "externref" }];
-        returnType = { kind: "externref" };
-        genericThrowBody = true;
-        break;
-      }
       ensureObjectRuntime(ctx);
       ensureNativeSymbolBoundaryBridge(ctx);
       ensureSymbolCarrier(ctx);
@@ -1153,12 +1161,6 @@ export function ensureStandaloneBuiltinStaticMethodClosure(
       break;
     case "Promise.resolve":
     case "Promise.reject":
-      if (!isStandalonePromiseActive(ctx)) {
-        paramTypes = [{ kind: "externref" }];
-        returnType = { kind: "externref" };
-        genericThrowBody = true;
-        break;
-      }
       // Register the whole settle substrate before the closure function is
       // minted. The emitters below then append instructions only, avoiding a
       // mid-body function-index registration hazard.
@@ -1313,6 +1315,11 @@ export function ensureStandaloneBuiltinStaticMethodClosure(
     case "Date.now":
       paramTypes = [];
       returnType = { kind: "f64" };
+      break;
+    // (#6957) The `Math_random` kernel as `() -> f64` — the carrier seed a
+    // patching program calls before its override; others keep the generic body.
+    case PATCHED_MATH_RANDOM:
+      [paramTypes, returnType] = [[], { kind: "f64" }];
       break;
     default: {
       // (#2984 Phase 3) Any OTHER standard builtin static method — the
@@ -1774,6 +1781,9 @@ export function ensureStandaloneBuiltinStaticMethodClosure(
       );
     } else if (key === "Date.now") {
       emitStandaloneDateNowValue(ctx, closureFctx);
+    } else if (key === "Math.random" && !genericThrowBody) {
+      if (!ctx.funcMap.has("Math_random")) emitInlineMathFunctions(ctx, new Set(["random"]));
+      closureFctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("Math_random")! });
     } else if (genericThrowBody && builtinName === "Math" && emitMathValueReadBody(ctx, closureFctx, propName)) {
       // (#4565; supersedes the #4491 wave-4 lane G arm, same defect) — the
       // upstream module mints the `Math_<fn>` kernel late itself, so it needs

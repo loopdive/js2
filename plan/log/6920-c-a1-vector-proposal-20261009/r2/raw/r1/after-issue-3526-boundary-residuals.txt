@@ -1,0 +1,12 @@
+
+ RUN  v3.2.7 /home/user/js2/.claude/worktrees/agent-a774506d6593a2d93
+
+ ✓ tests/issue-3526-boundary-residuals.test.ts (26 tests) 1454ms
+   ✓ #3526 F1-S4 the front-end reads no lane fact > lowers the strict-undefined arm to the provider-free intrinsic  483ms
+   ✓ #3526 F1-S4 end-to-end behaviour is unchanged > uses the host-free Wasm function on standalone, with no env import  332ms
+
+ Test Files  1 passed (1)
+      Tests  26 passed (26)
+   Start at  22:51:24
+   Duration  26.86s (transform 17.58s, setup 0ms, collect 24.99s, tests 1.45s, environment 0ms, prepare 78ms)
+

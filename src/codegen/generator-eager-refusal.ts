@@ -37,12 +37,13 @@
  *     `.return()` of a for-of `break` / destructuring close. Those stay with
  *     #1687, whose real fix (resumable eager-lane generators) retires this gate.
  *
- * Standalone / WASI are out of scope here, as for #3587: their non-candidate
- * generators already need the `__gen_*` host shim and are tracked by #680.
+ * Standalone / WASI / the native regime are out of scope here, as for #3587:
+ * since #7010 their non-candidate generators are refused outright
+ * ({@link refuseEagerGeneratorBuffer}).
  */
 import { ts } from "../ts-api.js";
 import { reportError } from "./context/errors.js";
-import type { CodegenContext } from "./context/types.js";
+import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { isNativeGeneratorCandidate, type GeneratorDecl } from "./generators-native.js";
 import { isFunctionLikeScope } from "./generators-native-ast-scan.js";
 
@@ -231,4 +232,32 @@ export function reportEagerGeneratorAbruptResumptions(ctx: CodegenContext, sourc
     ts.forEachChild(node, visit);
   };
   ts.forEachChild(sourceFile, visit);
+}
+
+/**
+ * (#7010) The eager host-buffer lowering has no host-free implementation: it
+ * needs `__gen_create_buffer` / `__create_generator` /
+ * `__create_async_generator`, which no standalone, WASI, or native-regime
+ * (`semanticProviders: "native-first"`) build can satisfy. Every generator that
+ * neither the native #680 state machine nor the async-generator drive claims
+ * used to fall to that buffer anyway — a silent host dependency the module
+ * could never instantiate without a JS shim. It is now a compile error at the
+ * generator. Returns `true` when it refused; the caller's arm is then done,
+ * with a `ref.null.extern` in place of the generator object (the same stack
+ * effect as the buffer epilogue) so the function body stays well-typed.
+ */
+export function refuseEagerGeneratorBuffer(ctx: CodegenContext, fctx: FunctionContext, decl: ts.Node): boolean {
+  if (!(ctx.standalone || ctx.wasi)) return false;
+  const isAsync =
+    ts.canHaveModifiers(decl) && ts.getModifiers(decl)?.some((m) => m.kind === ts.SyntaxKind.AsyncKeyword);
+  reportError(
+    ctx,
+    decl,
+    `generator-no-host-free-lowering: this ${isAsync ? "async " : ""}generator has no host-free lowering yet ` +
+      `(#7010). Neither the native generator state machine (#680) nor the ${isAsync ? "async-generator drive" : "nested-yield planner"} ` +
+      "accepts its body shape, and the eager host buffer (__gen_*) is not available on standalone, WASI or " +
+      "native-regime builds. Compile for the JS host, or keep each yield/await in a top-level statement of the body",
+  );
+  fctx.body.push({ op: "ref.null.extern" });
+  return true;
 }

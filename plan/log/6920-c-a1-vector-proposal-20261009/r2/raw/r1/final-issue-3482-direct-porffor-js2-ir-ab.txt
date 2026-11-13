@@ -1,0 +1,10 @@
+
+ RUN  v3.2.7 /home/user/js2/.claude/worktrees/agent-a774506d6593a2d93
+
+ ✓ tests/issue-3482-direct-porffor-js2-ir-ab.test.ts (4 tests | 2 skipped) 10ms
+
+ Test Files  1 passed (1)
+      Tests  2 passed | 2 skipped (4)
+   Start at  23:24:18
+   Duration  561ms (transform 127ms, setup 0ms, collect 145ms, tests 10ms, environment 0ms, prepare 64ms)
+
