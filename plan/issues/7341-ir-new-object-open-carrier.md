@@ -466,6 +466,25 @@ the own-property probe. Only its expected detail changed.
   `new Object()` file refused #7335's define as `expr-object-static-untrusted`
   once #7212 moved defines into the statics table.
 
+### Measurements after step B
+
+Base: `origin/main` `5b1f4794bb` (with #7212), exported into the scratchpad.
+Head: this branch at `27c915dfcc`, exported. Same census tool, flags and
+1,173-file population as below.
+
+- **Census:** 23 gained, exactly the 23 S1 prototype files; 0 lost; 0
+  post-claim errors on both trees; no compile-error difference.
+  - Routing changed only in the 23 gained files.
+  - 298 of the 300 sample files are IR-only on both trees.
+- **Refusal labels:**
+  - `expr-new-object-argument`: 16;
+  - `expr-new-object-home`: 14;
+  - `expr-void-carrier-compare`: the same three files as before
+    (`language/expressions/void/S11.4.2_A4_T1..3`). They are legacy on both
+    trees.
+- **gc bytes:** 391/391 identical to main (13 playground examples + 378
+  test262 files).
+
 ### Measurements (re-run after the review fixes)
 
 Base: `origin/main` `34ce67984a`, exported into the scratchpad. Head: this
