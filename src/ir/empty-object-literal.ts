@@ -13,6 +13,7 @@
  */
 
 import { ts } from "../ts-api.js";
+import { isPrimitiveLiteral } from "./descriptor-literal.js";
 import { referencesNamed } from "./dynamic-home-uses.js";
 import { OBJECT_PROTOTYPE_KEYS } from "./realm-keys.js";
 
@@ -66,7 +67,8 @@ export function emptyObjectLiteralBinding(
  * #7128 S1 — is `reference` an open-carrier use?
  *
  *   - U1: the target of an `Object.defineProperty` STATEMENT (its result would
- *     alias the carrier) with an `openCarrierDefinePlan`;
+ *     alias the carrier) that `isLiteralDefine` says the lane lowers with
+ *     literal keys and descriptors (`definesLiteralsOnly`, `descriptor-literal.ts`);
  *   - U2: a named read `o.k` whose key `Object.prototype` does not own and
  *     whose consumer is `isProvenReadConsumer`'s strict comparison. The IR reader
  *     (`__dyn_member_get`) answers undefined for an inherited key, where legacy
@@ -79,16 +81,11 @@ export function emptyObjectLiteralBinding(
  */
 export function isOpenCarrierUse(
   reference: ts.Identifier,
-  isAmbientDefineProperty: (call: ts.CallExpression) => boolean,
+  isLiteralDefine: (call: ts.CallExpression) => boolean,
 ): boolean {
   const parent = reference.parent;
   if (ts.isCallExpression(parent)) {
-    return (
-      parent.arguments[0] === reference &&
-      ts.isExpressionStatement(parent.parent) &&
-      isAmbientDefineProperty(parent) &&
-      openCarrierDefinePlan(parent) !== null
-    );
+    return parent.arguments[0] === reference && ts.isExpressionStatement(parent.parent) && isLiteralDefine(parent);
   }
   return (
     ts.isPropertyAccessExpression(parent) &&
@@ -151,72 +148,41 @@ function declaresUndefined(file: ts.SourceFile): boolean {
   return found;
 }
 
-/** The ToPropertyDescriptor fields of a data descriptor (§6.2.5.5). */
-const DATA_DESCRIPTOR_FIELDS: ReadonlySet<string> = new Set(["value", "writable", "enumerable", "configurable"]);
-
-/** One field of a literal data descriptor, in source order. */
-export interface DataDescriptorField {
-  readonly name: string;
-  readonly initializer: ts.Expression;
-}
-
-/** A U1 define: its static property key and the descriptor fields in source order. */
-export interface OpenCarrierDefinePlan {
-  readonly key: string;
-  readonly fields: readonly DataDescriptorField[];
-}
+const inKeysByUnit = new WeakMap<ts.Node, boolean>();
 
 /**
- * The U1 plan of `Object.defineProperty(target, key, descriptor)`, or null.
- * The key is a string or numeric literal (the scanner already canonicalised the
- * numeric text, so it is the ToPropertyKey string); the descriptor is
- * {@link literalDataDescriptorFields}.
+ * Every `in` under the enclosing unit of `expr` (its function, or the source
+ * file for `<module-init>`), nested functions included, has a string-literal
+ * key that `%Object.prototype%` does not own: an own-key probe, which the
+ * native `in` answers for a fresh open `$Object` exactly as legacy does. The
+ * IR's native `in` (`__extern_has`) does not reach that object's implicit
+ * `%Object.prototype%` terminal, while legacy's fixed-name helper answers it
+ * for exactly the receivers it knows to be one (#7142 review). Read wherever
+ * the IR builds such an object: the #7280 carrier, `Object.create`'s result.
  */
-export function openCarrierDefinePlan(call: ts.CallExpression): OpenCarrierDefinePlan | null {
-  const [, key, descriptor] = call.arguments;
-  if (call.arguments.length !== 3 || !(ts.isStringLiteral(key!) || ts.isNumericLiteral(key!))) return null;
-  const fields = literalDataDescriptorFields(descriptor!);
-  return fields === null ? null : { key: key.text, fields };
-}
-
-/**
- * The properties of an object literal whose every member is a
- * `name: initializer` assignment with a distinct identifier or string-literal
- * name, in source order; else null. Shared by the descriptor parser below and
- * the #7276 `Object.create` descriptor map (`ir/object-create-call.ts`).
- */
-export function staticNamedProperties(literal: ts.Expression): readonly DataDescriptorField[] | null {
-  if (!ts.isObjectLiteralExpression(literal)) return null;
-  const properties: DataDescriptorField[] = [];
-  for (const property of literal.properties) {
-    if (!ts.isPropertyAssignment(property) || !(ts.isIdentifier(property.name) || ts.isStringLiteral(property.name))) {
-      return null;
+export function unitInKeysAreOwnOnly(expr: ts.Node): boolean {
+  let unit: ts.Node = expr.getSourceFile();
+  for (let node: ts.Node | undefined = expr.parent; node; node = node.parent) {
+    if (ts.isFunctionLike(node)) {
+      unit = node;
+      break;
     }
-    const name = property.name.text;
-    if (properties.some((field) => field.name === name)) return null;
-    properties.push({ name, initializer: property.initializer });
   }
-  return properties;
-}
-
-/**
- * The fields of an inline data descriptor whose values are number, string or
- * boolean literals; null for any other descriptor. Source order is then
- * unobservable, as no getter runs.
- */
-export function literalDataDescriptorFields(descriptor: ts.Expression): readonly DataDescriptorField[] | null {
-  const fields = staticNamedProperties(descriptor);
-  const literal = fields?.every(
-    ({ name, initializer }) => DATA_DESCRIPTOR_FIELDS.has(name) && isPrimitiveLiteral(initializer),
-  );
-  return literal === true ? fields : null;
-}
-
-function isPrimitiveLiteral(expr: ts.Expression): boolean {
-  return (
-    ts.isNumericLiteral(expr) ||
-    ts.isStringLiteral(expr) ||
-    expr.kind === ts.SyntaxKind.TrueKeyword ||
-    expr.kind === ts.SyntaxKind.FalseKeyword
-  );
+  let answer = inKeysByUnit.get(unit);
+  if (answer === undefined) {
+    answer = true;
+    const visit = (node: ts.Node): void => {
+      if (
+        ts.isBinaryExpression(node) &&
+        node.operatorToken.kind === ts.SyntaxKind.InKeyword &&
+        !(ts.isStringLiteral(node.left) && !OBJECT_PROTOTYPE_KEYS.has(node.left.text))
+      ) {
+        answer = false;
+      }
+      if (answer) ts.forEachChild(node, visit);
+    };
+    ts.forEachChild(unit, visit);
+    inKeysByUnit.set(unit, answer);
+  }
+  return answer;
 }

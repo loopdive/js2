@@ -32,7 +32,8 @@ export interface DynamicHomeQuery {
   readonly resolve: ((id: ts.Identifier) => IrLegacyModuleBindingIdentity | undefined) | null;
   /** #7280's declaration half: the dynamic module slot holds legacy's open `$Object`. */
   readonly isCarrier: (decl: ts.VariableDeclaration) => boolean;
-  readonly isAmbientDefineProperty: (call: ts.CallExpression) => boolean;
+  /** #7128's U1 define: `Object.defineProperty` with a literal key and descriptor, as the lane lowers it. */
+  readonly isLiteralDefine: (call: ts.CallExpression) => boolean;
 }
 
 /** `id` reads a #7280 dynamic-home carrier whose every use is served. */
@@ -124,7 +125,7 @@ function openObjectPolicy(query: DynamicHomeQuery): ServedUsePolicy {
     servesMemberCall: (call) => ownPropertyCallMethod(call) !== undefined,
     servesMemberRead: () => true,
     servesReference: (use, reference) => {
-      if (use === reference && isOpenCarrierUse(reference, query.isAmbientDefineProperty)) return true;
+      if (use === reference && isOpenCarrierUse(reference, query.isLiteralDefine)) return true;
       const parent = use.parent;
       if (ts.isBinaryExpression(parent)) {
         const op = parent.operatorToken.kind;

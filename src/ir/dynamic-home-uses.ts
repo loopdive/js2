@@ -83,7 +83,7 @@ function isPlainAssignmentTarget(target: ts.Expression): boolean {
 }
 
 /** The write sits in `<module-init>` or a top-level function, the code whose strictness lowering is told. */
-function writerKnowsItsStrictness(node: ts.Node): boolean {
+export function writerKnowsItsStrictness(node: ts.Node): boolean {
   const owner = ts.findAncestor(node.parent, ts.isFunctionLike);
   return owner === undefined || (ts.isFunctionDeclaration(owner) && ts.isSourceFile(owner.parent));
 }
