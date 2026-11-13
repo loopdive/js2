@@ -22,8 +22,11 @@
 // `shiftLateImportIndices` pass is a no-op for every body produced here.
 // That's the whole point of the symbolic-ref design — spec #1131 §1.2.
 
-import { isStoredStaticAliasProvider, storedStaticAliasProviderImport } from "./stored-static-alias-providers.js";
-import type { StoredStaticAliasProvider } from "./uncurried-object-alias.js";
+import {
+  isObjectRuntimeProvider,
+  objectRuntimeProviderImport,
+  type ObjectRuntimeProvider,
+} from "./stored-static-alias-providers.js";
 import {
   nativeConsoleOutputAvailable,
   ensureIrNativeConsoleProvider,
@@ -9356,8 +9359,8 @@ function preregisterDynamicSupport(
   const ownPropertyTests = new Set<"hasOwnProperty" | "propertyIsEnumerable">();
   // (#7106 propertyHelper) a dynamic delete calls its strictness's wrapper.
   const dynDeleteStrictness = new Set<boolean>();
-  // (#7106 propertyHelper, #7272) the stored-static aliases' object-runtime providers.
-  const storedStaticProviders = new Set<StoredStaticAliasProvider>();
+  // (#7106 propertyHelper, #7272, #7338) the stored-static aliases' and `Object` statics' object-runtime providers.
+  const storedStaticProviders = new Set<ObjectRuntimeProvider>();
   const primitiveWrapperConstructors = new Set<"Boolean" | "Number" | "String">();
   const dynamicRuntimeNeeds = new Set<IrDynamicRuntimeNeed>();
   for (const entry of fns) {
@@ -9441,7 +9444,7 @@ function preregisterDynamicSupport(
             if (methodWrapper !== undefined) dynamicMethodCallWrappers.set(symbol, methodWrapper);
             const borrowWrapper = parseIrArrayPrototypeBorrowHelperName(symbol);
             if (borrowWrapper !== undefined) arrayPrototypeBorrowWrappers.set(symbol, borrowWrapper);
-            if (isStoredStaticAliasProvider(symbol)) storedStaticProviders.add(symbol);
+            if (isObjectRuntimeProvider(symbol)) storedStaticProviders.add(symbol);
             if (isIrNativeBufferRuntimeSymbol(symbol)) nativeBufferAdapters.add(symbol); // (#7274)
             switch (symbol) {
               case "__extern_set_strict":
@@ -9591,7 +9594,7 @@ function preregisterDynamicSupport(
   }
   if (storedStaticProviders.size > 0 && !ctx.fast) {
     for (const symbol of storedStaticProviders) {
-      const { params, results } = storedStaticAliasProviderImport(symbol);
+      const { params, results } = objectRuntimeProviderImport(symbol);
       ensureLateImport(ctx, symbol, [...params], [...results]);
     }
     flushLateImportShifts(ctx, null);

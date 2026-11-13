@@ -235,6 +235,7 @@ describe("#4396 target policy normalization", () => {
       target: "standalone",
       allowHostImports: false,
       fast: undefined,
+      nativeRegimeInJs: true,
     });
 
     // (#6979) The S6 kill switch is gone: the environment no longer matters.
