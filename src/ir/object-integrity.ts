@@ -239,6 +239,11 @@ function sourceIntegrityFacts(sourceFile: ts.SourceFile): SourceIntegrityFacts {
   return facts;
 }
 
+/** The source shows no route to `Object` or its statics ({@link SourceIntegrityFacts.objectStaticsPristine}). */
+export function objectStaticsArePristine(sourceFile: ts.SourceFile): boolean {
+  return sourceIntegrityFacts(sourceFile).objectStaticsPristine;
+}
+
 function isEs5IntrinsicObject(expr: ts.Expression, isAmbientBinding: (node: ts.Identifier) => boolean): boolean {
   const target = unwrapExpression(expr);
   if (ts.isIdentifier(target)) {

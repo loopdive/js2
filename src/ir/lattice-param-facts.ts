@@ -105,7 +105,8 @@ function writeIndexOf(root: ts.Node): WriteIndex {
 /**
  * (#7106) Is the local `declaration` written after it is declared, anywhere in
  * its function (nested functions included)? A destructured declaration counts
- * as written. (#7283) A function declaration's binding is checked the same way.
+ * as written. (#7283) A function declaration's binding is checked the same way,
+ * and (#7338) so is a parameter, whose scope is its own function.
  *
  * (#7306) The writes are `identifierWritesOf`'s: assignments, updates,
  * for-in/of heads and repeated `var` initializers; a direct `eval` fails
@@ -114,7 +115,7 @@ function writeIndexOf(root: ts.Node): WriteIndex {
  * same-name write counts.
  */
 export function localIsRewritten(
-  declaration: ts.VariableDeclaration | ts.FunctionDeclaration,
+  declaration: ts.VariableDeclaration | ts.FunctionDeclaration | ts.ParameterDeclaration,
   resolve?: (identifier: ts.Identifier) => ts.Declaration | undefined,
 ): boolean {
   if (declaration.name === undefined || !ts.isIdentifier(declaration.name)) return true;
