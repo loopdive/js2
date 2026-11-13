@@ -57,20 +57,10 @@ export function irTypeIsBoolean(t: IrType): boolean {
  * not a capability gap.
  */
 export function lowerBooleanToString(builder: IrFunctionBuilder, value: IrValueId): IrValueId {
-  let whenTrue!: IrValueId;
-  const thenBody = builder.collectBodyInstrs(() => {
-    whenTrue = builder.emitStringConst("true");
-  });
-  let whenFalse!: IrValueId;
-  const elseBody = builder.collectBodyInstrs(() => {
-    whenFalse = builder.emitStringConst("false");
-  });
-  return builder.emitIfElse({
-    cond: value,
-    then: thenBody,
-    thenValue: whenTrue,
-    else: elseBody,
-    elseValue: whenFalse,
-    resultType: builder.typeOf(whenTrue),
-  });
+  return builder.emitIfElseValue(
+    value,
+    () => builder.emitStringConst("true"),
+    () => builder.emitStringConst("false"),
+    { kind: "string" },
+  );
 }

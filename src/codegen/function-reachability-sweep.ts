@@ -95,7 +95,7 @@ export function functionSweepEnabled(ctx: CodegenContext): boolean {
 }
 
 /** Position in `mod.functions` of a function handle, or -1 (import / unresolvable). */
-function definedPosition(mod: WasmModule, numImportFuncs: number, h: unknown): number {
+export function definedPosition(mod: WasmModule, numImportFuncs: number, h: unknown): number {
   if (typeof h !== "number" || Number.isNaN(h)) return -1;
   if (h >= STABLE_FUNC_BASE) {
     const pos = mod.funcOrdinalToPosition[h - STABLE_FUNC_BASE];

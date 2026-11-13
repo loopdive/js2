@@ -81,16 +81,25 @@ export function coercionMode(ctx: CodegenContext): CoercionMode {
  * Build the shared runtime ToPrimitive call for a value already on the stack.
  * Raw runtime bodies do not have an AST expression for `emitToString`, so this
  * is their narrow entry point into the coercion engine instead of spelling the
- * helper lookup and hint ABI at each call site.
+ * helper lookup and hint ABI at each call site. `"default"` is the runtime's
+ * null hint, which rejects a Symbol result for the ToNumber / ToString that
+ * follows; `"default-symbol"` is the explicit string (#6774 S19), which keeps
+ * it for loose equality to compare (#7194). Both are the spec's "default";
+ * the pair is not renamed because `"default"` also names the
+ * `__anyvalue_payload_to_number_default` helper, so a rename moves bytes.
  */
-export function runtimeToPrimitiveInstrs(ctx: CodegenContext, hint: "string" | "number" | "default"): Instr[] | null {
+export function runtimeToPrimitiveInstrs(
+  ctx: CodegenContext,
+  hint: "string" | "number" | "default" | "default-symbol",
+): Instr[] | null {
   const funcIdx = ctx.funcMap.get("__to_primitive");
   if (funcIdx === undefined) return null;
   if (hint === "default") {
     return [{ op: "ref.null.extern" }, { op: "call", funcIdx }];
   }
-  addStringConstantGlobal(ctx, hint);
-  return [...stringConstantExternrefInstrs(ctx, hint), { op: "call", funcIdx }];
+  const hintString = hint === "default-symbol" ? "default" : hint;
+  addStringConstantGlobal(ctx, hintString);
+  return [...stringConstantExternrefInstrs(ctx, hintString), { op: "call", funcIdx }];
 }
 
 /**

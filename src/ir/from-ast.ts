@@ -45,7 +45,9 @@ import {
 import { lowerNativeConsoleLine } from "./console-lowering.js";
 import { boxNativeInKey, lowerNativeIn } from "./native-in.js";
 import * as functionObjects from "./function-object-lowering.js";
-import { expressionIsDefinitelyBoolean, unwrapTypeErasedExpression } from "./select-expression-structure.js";
+import { expressionIsDefinitelyBoolean } from "./select-expression-structure.js";
+import { skipTransparentExpressions, unwrapTypeErasedExpression } from "../shared/transparent-expressions.js";
+import { constBindingNumber, isStaticArrayIndex, staticElementKey } from "../shared/array-index-key.js";
 import { IR_STRING_COMPARE_FN } from "./runtime-symbols.js";
 import {
   staticStringMethodArgument,
@@ -245,6 +247,8 @@ import {
   emitForwardingAwareLinearVecLen,
   emitSafeNarrowedI32VecGet,
   emitSafeVecGet,
+  emitUndefinedAwareVecGet,
+  emitVecIndex,
   inferredEmptyArrayVecHint,
   isNarrowedI32Vec,
   lowerNarrowedI32Element as lowerNarrowedI32ElementWith,
@@ -5154,22 +5158,14 @@ function lowerExprUnchecked(expr: ts.Expression, cx: LowerCtx, hint: IrType): Ir
     return lowerTypeOf(expr, cx);
   }
   if (expr.kind === ts.SyntaxKind.NullKeyword) {
-    // Bare `null` composes only when the consuming context is reference-
-    // shaped (externref / ref_null), because IR Phase 1 has no nullable
-    // union: a `null` flowing into an f64/i32 hint would mismatch the
-    // consumer's Wasm type at validation. The optional-chaining null arm
-    // and the `??` lowering both pass a reference-shaped hint here.
-    //
-    // `=== null` / `!== null` never reach this branch — `tryFoldNullCompare`
-    // intercepts them before operand recursion (the fold is purely static
-    // because there's no runtime null value to compare against).
-    // The null const's `ty` must be a `val`-kind externref/ref_null so the
-    // lowerer emits `ref.null.extern` / `ref.null T` (see lower.ts "null").
-    // An `extern` className hint is null-compatible at the Wasm level
-    // (opaque externref), so we materialize a plain `externref` null for it.
-    if (nullValueAdmissible(irOperandFamily(hint, expr))) {
-      const ty = hint.kind === "extern" ? irVal({ kind: "externref" }) : hint;
-      return cx.builder.emitConst({ kind: "null", ty }, ty);
+    // Null needs a reference-shaped constant; scalar f64/i32 contexts remain
+    // refused. Externref dynamic carriers use that same null reference, distinct
+    // from undefined's singleton. The box preserves its known Null partition.
+    const dynamicNull = hint.kind === "dynamic" && cx.resolver?.dynamicCarrierIsExternref?.() === true;
+    if (dynamicNull || nullValueAdmissible(irOperandFamily(hint, expr))) {
+      const ty = dynamicNull || hint.kind === "extern" ? irVal({ kind: "externref" }) : hint;
+      const value = cx.builder.emitConst({ kind: "null", ty }, ty);
+      return dynamicNull ? cx.builder.emitBox(value, irDynamic(JS_TAG_IDS.Null)) : value;
     }
     // (#7106) On a lane whose dynamic carrier is externref, JS `null` is that
     // carrier's null, exactly legacy's `ref.null.extern` (`undefined` is the
@@ -5207,7 +5203,7 @@ function lowerExprUnchecked(expr: ts.Expression, cx: LowerCtx, hint: IrType): Ir
     return closure;
   }
   if (ts.isElementAccessExpression(expr)) {
-    return lowerElementAccess(expr, cx);
+    return lowerElementAccess(expr, cx, hint);
   }
   // Slice 12 (#1169o) — `ArrayLiteralExpression` is selector-accepted
   // for shape but the IR doesn't yet emit `vec.new_fixed`. Throw clean
@@ -6032,23 +6028,12 @@ function lowerExactDynamicPrimitiveTypeof(
   const tagFor = (family: IrPrimitiveExpressionFamily) =>
     family === "number" ? JS_TAG_IDS.NumberF64 : family === "boolean" ? JS_TAG_IDS.Boolean : JS_TAG_IDS.String;
   const labelFor = (family: IrPrimitiveExpressionFamily): string => (family === "boolean" ? "boolean" : family);
-  const cond = cx.builder.emitTagTest(inner, tagFor(families[0]));
-  let whenTrue!: IrValueId;
-  const thenBody = cx.builder.collectBodyInstrs(() => {
-    whenTrue = cx.builder.emitStringConst(labelFor(families[0]));
-  });
-  let whenFalse!: IrValueId;
-  const elseBody = cx.builder.collectBodyInstrs(() => {
-    whenFalse = cx.builder.emitStringConst(labelFor(families[1]));
-  });
-  return cx.builder.emitIfElse({
-    cond,
-    then: thenBody,
-    thenValue: whenTrue,
-    else: elseBody,
-    elseValue: whenFalse,
-    resultType: { kind: "string" },
-  });
+  return cx.builder.emitIfElseValue(
+    cx.builder.emitTagTest(inner, tagFor(families[0])),
+    () => cx.builder.emitStringConst(labelFor(families[0])),
+    () => cx.builder.emitStringConst(labelFor(families[1])),
+    { kind: "string" },
+  );
 }
 
 /**
@@ -6224,28 +6209,14 @@ function lowerOptionalExternPropertyAccess(
   // contract: condition lives in the outer scope).
   const cond = cx.builder.emitRefIsNull(recv);
 
-  // Build the "null arm": emit a `ref.null.extern` matching the result
-  // type. `collectBodyInstrs` re-routes builder emits into the arm's
-  // buffer; the SSA value defined inside the callback becomes `thenValue`.
-  let thenValue!: IrValueId;
-  const thenBody = cx.builder.collectBodyInstrs(() => {
-    thenValue = cx.builder.emitConst({ kind: "null", ty: resultType }, resultType);
-  });
-
-  // Build the "non-null arm": emit the actual extern-property access.
-  let elseValue!: IrValueId;
-  const elseBody = cx.builder.collectBodyInstrs(() => {
-    elseValue = cx.builder.emitExternProp(importPrefix, propName, recv, resultType);
-  });
-
-  return cx.builder.emitIfElse({
+  // The null arm yields a `ref.null.extern` of the result type; the other
+  // arm reads the extern property.
+  return cx.builder.emitIfElseValue(
     cond,
-    then: thenBody,
-    thenValue,
-    else: elseBody,
-    elseValue,
+    () => cx.builder.emitConst({ kind: "null", ty: resultType }, resultType),
+    () => cx.builder.emitExternProp(importPrefix, propName, recv, resultType),
     resultType,
-  });
+  );
 }
 
 /**
@@ -6931,6 +6902,16 @@ function isProvenInBoundsIr(expr: ts.ElementAccessExpression, cx: LowerCtx): boo
   return cx.safeIndexedArrays.has(expr.expression.text + ":" + expr.argumentExpression.text);
 }
 
+/** (#7106) An element key lowered once (`lowerElementIndex`), shared by the read and the write. */
+interface ElementSlot {
+  /** The i32 vec index (`emitVecIndex`); negative for a key that names no element. */
+  readonly index: IrValueId;
+  /** The counted-loop proof (`isProvenInBoundsIr`): read and write unchecked. */
+  readonly proven: boolean;
+  /** The key is an array index spelled as a literal or held by a `const`, so `index` is non-negative. */
+  readonly staticIndex: boolean;
+}
+
 /** `recv.<propName>` through the dynamic reader, the name boxed as a string key. */
 function dynamicNamedPropertyRead(recv: IrValueId, propName: string, cx: LowerCtx): IrValueId {
   const key = cx.builder.emitBox(cx.builder.emitStringConst(propName), irDynamic(JS_TAG_IDS.String));
@@ -6977,11 +6958,79 @@ function boxDynamicStoreOperand(value: IrValueId, expr: ts.Expression, cx: Lower
 }
 
 /**
- * Lower an element access whose argument is a string literal — sugar
- * for property access on a known shape. Numeric / computed keys are
- * out of slice 2's scope and throw, so the function falls back to
- * legacy.
+ * (#7106) Lower an element access's key ONCE to its vec index (`emitVecIndex`:
+ * negative for a key that names no element), together with the counted-loop
+ * proof that lets the caller read or write unchecked. The key needs no runtime
+ * exactness test when that proof holds, it is int32-valued (`isI32PureExprIR`),
+ * or it is a static array index: a literal, or a `const` bound to one through
+ * the oracle (`constBindingNumber`; `staticElementKey` says why not the
+ * literal type). An index past the i32 range saturates either way, so its
+ * write traps in the grow-store, as on main. The selector already refused a
+ * key that names a property (`isLegacyOnlyVecKey`).
  */
+function lowerElementIndex(
+  access: ts.ElementAccessExpression,
+  cx: LowerCtx,
+  rejectKey: (detail: string) => never,
+): ElementSlot {
+  const key = lowerExpr(access.argumentExpression, cx, IR_F64);
+  const keyType = cx.builder.typeOf(key);
+  const scalar = asVal(keyType)?.kind;
+  if (scalar !== "f64" && scalar !== "i32") rejectKey(`index must be number or bool (got ${describeIrType(keyType)})`);
+  const proven = isProvenInBoundsIr(access, cx);
+  const oracle = cx.oracle;
+  const staticIndex = isStaticArrayIndex(
+    staticElementKey(
+      skipTransparentExpressions(access.argumentExpression),
+      (id) => cx.scope.has(id.text),
+      oracle && ((inner) => constBindingNumber(inner, oracle)),
+    ),
+  );
+  const integral =
+    proven || staticIndex || isI32PureExprIR(access.argumentExpression, cx.i32PureNames, cx.provenCharReads);
+  return { index: emitVecIndex(key, integral, cx), proven, staticIndex };
+}
+
+/**
+ * (#7106) The write tail of an element store or compound: an unchecked
+ * `vec.set` under the counted-loop proof, else the grow-store helper — the
+ * branded sparse carrier's (`IR_HOLEY_ARRAY_ELEM_SET`) or the vec's. The
+ * helper name embeds the vec STRUCT typeIdx; the lower-time resolver
+ * intercepts the prefix and materializes it on demand (name-based resolution —
+ * funcIdx-shift safe by construction). A negative index skips the store: it
+ * names no element (a non-index key, or a negative int32 key such as
+ * `a[i - 1]` at `i = 0`), and the helper would trap on it. A static index
+ * (`lowerElementIndex`) is a value known exactly, never negative, so it needs
+ * no test.
+ */
+function emitElementWrite(
+  lhs: ts.ElementAccessExpression,
+  recv: IrValueId,
+  vec: IrVecLowering,
+  slot: ElementSlot,
+  value: IrValueId,
+  cx: LowerCtx,
+): void {
+  if (slot.proven) {
+    cx.builder.emitVecSet(recv, slot.index, value);
+    return;
+  }
+  const provider =
+    cx.resolver?.isHoleyArrayElementStore?.(lhs) === true
+      ? IR_HOLEY_ARRAY_ELEM_SET
+      : vecElemSetProviderSymbol(cx.builder.typeOf(recv), vec);
+  const store = (): void => {
+    cx.builder.emitCall(irIntrinsicFuncRef(provider), [recv, slot.index, value], null);
+  };
+  if (slot.staticIndex) {
+    store();
+    return;
+  }
+  const zero = cx.builder.emitConst({ kind: "i32", value: 0 }, IR_I32);
+  const nonNegative = cx.builder.emitBinary("i32.ge_s", slot.index, zero, IR_BOOL);
+  cx.builder.emitIfStmt({ cond: nonNegative, then: cx.builder.collectBodyInstrs(store), else: [] });
+}
+
 /**
  * (#2856 C2) Lower an element STORE `arr[i] = v;` in statement position —
  * the write dual of `lowerElementAccess`'s vec arm. Dispatches to the
@@ -7077,20 +7126,9 @@ function lowerElementStore(lhs: ts.ElementAccessExpression, rhs: ts.Expression, 
       `ir/from-ast: element store into '${elem.kind}' vec not in IR scope (${cx.funcName})`,
     );
   }
-  // Index — the same f64-lower + trunc_sat discipline as the read path.
-  const idxRaw = lowerExpr(lhs.argumentExpression, cx, irVal({ kind: "f64" }));
-  const idxTy = asVal(cx.builder.typeOf(idxRaw));
-  let idxI32: IrValueId;
-  if (idxTy?.kind === "i32") {
-    idxI32 = idxRaw;
-  } else if (idxTy?.kind === "f64") {
-    idxI32 = cx.builder.emitUnary("i32.trunc_sat_f64_s", idxRaw, irVal({ kind: "i32" }));
-  } else {
-    demoteToLegacy(
-      "element-store-unsupported",
-      `ir/from-ast: element-store index must be number or bool in ${cx.funcName}`,
-    );
-  }
+  const slot = lowerElementIndex(lhs, cx, (detail) =>
+    demoteToLegacy("element-store-unsupported", `ir/from-ast: element-store ${detail} in ${cx.funcName}`),
+  );
   // Value — lower with the element-type hint, then coerce. Invariant W for a
   // narrowed vector: emit the exact i32 DIRECTLY, never by truncating an
   // already-lowered f64 (the #3741 rule — a truncation saturates where the
@@ -7098,11 +7136,7 @@ function lowerElementStore(lhs: ts.ElementAccessExpression, rhs: ts.Expression, 
   if (narrowedI32) {
     const narrowVal = lowerNarrowedI32Element(rhs, cx);
     const result = cx.builder.emitUnary("f64.convert_i32_s", narrowVal, IR_F64);
-    if (isProvenInBoundsIr(lhs, cx)) {
-      cx.builder.emitVecSet(recv, idxI32, narrowVal);
-      return result;
-    }
-    cx.builder.emitCall(irIntrinsicFuncRef(vecElemSetProviderSymbol(recvType, vec)), [recv, idxI32, narrowVal], null);
+    emitElementWrite(lhs, recv, vec, slot, narrowVal, cx);
     return result;
   }
   const valRaw = lowerExpr(rhs, cx, irVal(elem));
@@ -7120,18 +7154,7 @@ function lowerElementStore(lhs: ts.ElementAccessExpression, rhs: ts.Expression, 
   } else {
     val = coerceToExpectedExtern(valRaw, elem, cx, `element-store value`);
   }
-  // The helper name embeds the vec STRUCT typeIdx; the lower-time resolver
-  // intercepts the prefix and materializes the helper on demand (name-based
-  // resolution — funcIdx-shift safe by construction).
-  if (isProvenInBoundsIr(lhs, cx)) {
-    cx.builder.emitVecSet(recv, idxI32, val);
-    return valRaw;
-  }
-  const provider =
-    cx.resolver?.isHoleyArrayElementStore?.(lhs) === true
-      ? IR_HOLEY_ARRAY_ELEM_SET
-      : vecElemSetProviderSymbol(recvType, vec);
-  cx.builder.emitCall(irIntrinsicFuncRef(provider), [recv, idxI32, val], null);
+  emitElementWrite(lhs, recv, vec, slot, val, cx);
   return valRaw;
 }
 
@@ -7227,25 +7250,13 @@ function lowerElementCompound(
     );
   }
   // (2) Index — ONCE; the same i32 SSA id feeds the read and the write.
-  const idxRaw = lowerExpr(lhs.argumentExpression, cx, IR_F64);
-  const idxTy = asVal(cx.builder.typeOf(idxRaw));
-  let idxI32: IrValueId;
-  if (idxTy?.kind === "i32") {
-    idxI32 = idxRaw;
-  } else if (idxTy?.kind === "f64") {
-    idxI32 = cx.builder.emitUnary("i32.trunc_sat_f64_s", idxRaw, irVal({ kind: "i32" }));
-  } else {
-    throw new IrUnsupportedError(
-      "element-store-unsupported",
-      "build",
-      `ir/from-ast: compound element index must be number or bool in ${cx.funcName}`,
-    );
-  }
+  const slot = lowerElementIndex(lhs, cx, (detail) =>
+    demoteToLegacy("element-store-unsupported", `ir/from-ast: compound element ${detail} in ${cx.funcName}`),
+  );
   // (3) READ — strictly before the RHS.
-  const proven = isProvenInBoundsIr(lhs, cx);
-  const oldValue = proven
-    ? cx.builder.emitVecGet(recv, idxI32, resolvedVec.elementType)
-    : emitSafeVecGet(recv, idxI32, vec.elementValType, cx);
+  const oldValue = slot.proven
+    ? cx.builder.emitVecGet(recv, slot.index, resolvedVec.elementType)
+    : emitSafeVecGet(recv, slot.index, vec.elementValType, cx);
   if (asVal(cx.builder.typeOf(oldValue))?.kind !== "f64") {
     throw new IrUnsupportedError(
       "element-store-unsupported",
@@ -7262,24 +7273,14 @@ function lowerElementCompound(
       `ir/from-ast: compound element write RHS must be f64 (got ${describeIrType(cx.builder.typeOf(rhsValue))}) in ${cx.funcName}`,
     );
   }
-  // (5) binop — `++`/`--` has no RHS node — then (6) the store tail: the
-  // same fast/provider fork `lowerElementStore` uses, keyed off the SAME
-  // bounds proof as the read.
-  const result = emitNumberBinary(op, oldValue, rhsValue, lhs, rhs, cx);
-  if (proven) {
-    cx.builder.emitVecSet(recv, idxI32, result);
-    return;
-  }
-  const provider =
-    cx.resolver?.isHoleyArrayElementStore?.(lhs) === true
-      ? IR_HOLEY_ARRAY_ELEM_SET
-      : vecElemSetProviderSymbol(recvType, vec);
-  cx.builder.emitCall(irIntrinsicFuncRef(provider), [recv, idxI32, result], null);
+  // (5) binop — `++`/`--` has no RHS node — then (6) the store tail, keyed
+  // off the SAME slot (index and bounds proof) as the read.
+  emitElementWrite(lhs, recv, vec, slot, emitNumberBinary(op, oldValue, rhsValue, lhs, rhs, cx), cx);
 }
 
-function lowerElementAccess(expr: ts.ElementAccessExpression, cx: LowerCtx): IrValueId {
+function lowerElementAccess(expr: ts.ElementAccessExpression, cx: LowerCtx, hint: IrType): IrValueId {
   if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== expr)
-    return withNodeSourceSite(cx, expr, () => lowerElementAccess(expr, cx));
+    return withNodeSourceSite(cx, expr, () => lowerElementAccess(expr, cx, hint));
   // #2713 — `a?.[i]` carries a `questionDotToken`: on a `null`/`undefined`
   // receiver the access must short-circuit to `undefined`, not index it.
   // The element-access lowering below ignores the token and emits an
@@ -7302,13 +7303,12 @@ function lowerElementAccess(expr: ts.ElementAccessExpression, cx: LowerCtx): IrV
   const recvType = cx.builder.typeOf(recv);
   if (cx.logicalVectorTypes !== undefined && recvType.kind === "vec") {
     requireLogicalVector(expr.expression, cx);
-    const raw = lowerExpr(arg, cx, IR_F64);
-    const scalar = asVal(cx.builder.typeOf(raw));
-    if (!scalar || (scalar.kind !== "f64" && scalar.kind !== "i32")) {
-      logicalVectorMismatch(cx.funcName, "index must have the existing numeric/bool representation");
+    const { index, proven } = lowerElementIndex(expr, cx, (detail) => logicalVectorMismatch(cx.funcName, detail));
+    // (#7106) The same undefined-aware read as the physical arm below.
+    if (hint.kind === "dynamic" && asVal(recvType.elementType)?.kind === "f64") {
+      return emitUndefinedAwareVecGet(recv, index, { proven, narrowedI32: false }, cx);
     }
-    const index = scalar.kind === "i32" ? raw : cx.builder.emitUnary("i32.trunc_sat_f64_s", raw, IR_I32);
-    if (isProvenInBoundsIr(expr, cx)) return cx.builder.emitVecGet(recv, index, recvType.elementType);
+    if (proven) return cx.builder.emitVecGet(recv, index, recvType.elementType);
     // No backend default lookup: retain the existing numeric NaN / externref
     // null out-of-bounds carriers using the layout-free vector element type.
     return emitSafeVecGet(recv, index, asVal(recvType.elementType)!, { builder: cx.builder, funcName: cx.funcName });
@@ -7331,8 +7331,8 @@ function lowerElementAccess(expr: ts.ElementAccessExpression, cx: LowerCtx): IrV
 
   // Slice 12 (#1169o) — dynamic element access on a vec receiver.
   // The receiver's ValType must resolve to a vec via the resolver; the
-  // index is lowered as f64 (JS Number) and truncated to i32 for the
-  // backend `vec.get`.
+  // key becomes the i32 vec index once (`lowerElementIndex`, -1 for a key
+  // that names no element).
   //
   // (#2766 — hybrid prove-then-specialize) The read is FAST (an unchecked
   // `vec.get`/`array.get`, which traps on OOB) ONLY when the index is *proven*
@@ -7362,33 +7362,9 @@ function lowerElementAccess(expr: ts.ElementAccessExpression, cx: LowerCtx): IrV
     if (resolvedVec) {
       const vec = resolvedVec.lowering;
       const scalarVecReceiver = resolvedVec.valueType.kind === "i32" && vectorExpression;
-      // Lower the index expression as f64 (JS Number semantics), then
-      // truncate to i32 via the new `i32.trunc_sat_f64_s` IrUnop (slice
-      // 12). Saturation handles NaN→0 and out-of-range values, matching
-      // what test262's typical `arr[i]` patterns expect (i is always a
-      // valid array index for IR-claimable functions).
-      const idxF64 = lowerExpr(arg, cx, irVal({ kind: "f64" }));
-      const idxF64Type = cx.builder.typeOf(idxF64);
-      const idxValTy = asVal(idxF64Type);
-      if (!idxValTy) {
-        demoteToLegacy(
-          "element-access-unsupported",
-          `ir/from-ast: element-access index has unexpected IrType ${describeIrType(idxF64Type)} in ${cx.funcName}`,
-        );
-      }
-      let idxI32: IrValueId;
-      if (idxValTy.kind === "i32") {
-        // Already i32 (e.g. a comparison or bool result — unusual but
-        // possible for compound expressions). Use directly.
-        idxI32 = idxF64;
-      } else if (idxValTy.kind === "f64") {
-        idxI32 = cx.builder.emitUnary("i32.trunc_sat_f64_s", idxF64, irVal({ kind: "i32" }));
-      } else {
-        demoteToLegacy(
-          "element-access-unsupported",
-          `ir/from-ast: element-access index must be number or bool (got ${idxValTy.kind}) in ${cx.funcName}`,
-        );
-      }
+      const { index: idxI32, proven } = lowerElementIndex(expr, cx, (detail) =>
+        demoteToLegacy("element-access-unsupported", `ir/from-ast: element-access ${detail} in ${cx.funcName}`),
+      );
       const elemIr = resolvedVec.elementType;
       if (scalarVecReceiver && cx.emptyArrayInference.isResolvedVectorExpression(expr.expression)) {
         // The direct linear runtime historically uses a backend-specific zero
@@ -7397,7 +7373,7 @@ function lowerElementAccess(expr: ts.ElementAccessExpression, cx: LowerCtx): IrV
         // silently pick one representation: until shared IR has an explicit
         // undefined carrier, only lower reads covered by the existing counted-
         // loop bounds proof.
-        if (!isProvenInBoundsIr(expr, cx)) {
+        if (!proven) {
           demoteToLegacy(
             "element-access-unsupported",
             `ir/from-ast: inferred linear vector read is not proven in bounds (${cx.funcName})`,
@@ -7415,8 +7391,13 @@ function lowerElementAccess(expr: ts.ElementAccessExpression, cx: LowerCtx): IrV
       // linear lane) never reaches here: that lane cannot register an i32 vec,
       // so `isNarrowedI32Vec` is false for it by construction.
       const narrowedI32 = isNarrowedI32Vec(vec, expr.expression, cx);
+      // (#7106) A consumer that observes `undefined` (a dynamic hint) gets it
+      // for an out-of-range or hole read; the numeric reads below answer NaN.
+      if (hint.kind === "dynamic" && (narrowedI32 || vec.elementValType.kind === "f64")) {
+        return emitUndefinedAwareVecGet(recv, idxI32, { proven, narrowedI32 }, cx);
+      }
       // FAST path — proven in-bounds (counted-loop proof) → unchecked read.
-      if (isProvenInBoundsIr(expr, cx)) {
+      if (proven) {
         const raw = cx.builder.emitVecGet(recv, idxI32, elemIr);
         return narrowedI32 ? cx.builder.emitUnary("f64.convert_i32_s", raw, IR_F64) : raw;
       }
@@ -13993,30 +13974,15 @@ function lowerConvertedMixedConditional(proof: ExactMixedPrimitiveWrapperProof, 
 
     const branchScope = new Map(cx.scope);
     const thenCx: LowerCtx = { ...cx, scope: new Map(branchScope) };
-    let whenTrue!: IrValueId;
-    const thenBody = cx.builder.collectBodyInstrs(() => {
-      whenTrue = convertMixedPrimitiveArm(proof.conditional.whenTrue, proof.mixed.whenTrue, proof.kind, "then", thenCx);
-    });
     const elseCx: LowerCtx = { ...cx, scope: new Map(branchScope) };
-    let whenFalse!: IrValueId;
-    const elseBody = cx.builder.collectBodyInstrs(() => {
-      whenFalse = convertMixedPrimitiveArm(
-        proof.conditional.whenFalse,
-        proof.mixed.whenFalse,
-        proof.kind,
-        "else",
-        elseCx,
-      );
-    });
-    joinScopeStringEncodingFacts(cx.scope, [thenCx.scope, elseCx.scope]);
-    return cx.builder.emitIfElse({
+    const value = cx.builder.emitIfElseValue(
       cond,
-      then: thenBody,
-      thenValue: whenTrue,
-      else: elseBody,
-      elseValue: whenFalse,
-      resultType: proof.kind === "String" ? { kind: "string" } : irVal({ kind: "f64" }),
-    });
+      () => convertMixedPrimitiveArm(proof.conditional.whenTrue, proof.mixed.whenTrue, proof.kind, "then", thenCx),
+      () => convertMixedPrimitiveArm(proof.conditional.whenFalse, proof.mixed.whenFalse, proof.kind, "else", elseCx),
+      proof.kind === "String" ? { kind: "string" } : irVal({ kind: "f64" }),
+    );
+    joinScopeStringEncodingFacts(cx.scope, [thenCx.scope, elseCx.scope]);
+    return value;
   } catch (error) {
     if (error instanceof IrInvariantError) throw error;
     throw new IrInvariantError(
@@ -15035,29 +15001,20 @@ function lowerInstanceOf(expr: ts.BinaryExpression, cx: LowerCtx): IrValueId {
     const lt = cx.builder.typeOf(lhs);
     const resultType = irVal({ kind: "i32" });
     if (lt.kind === "dynamic") {
-      const isObject = cx.builder.emitTagTest(lhs, JS_TAG_IDS.Object);
-      let whenObject!: IrValueId;
-      const thenBody = cx.builder.collectBodyInstrs(() => {
-        const payload = cx.builder.emitUnbox(lhs, JS_TAG_IDS.Object);
-        const result = cx.builder.emitCall(irRuntimeFuncRef(wrapperPlan.funcName), [payload], resultType);
-        if (result === null) {
-          // invariant (producer-promise): a compiler-support/runtime helper declared non-void returned no SSA value — #4502.
-          throw new Error(`ir/from-ast: ${wrapperPlan.funcName} produced no result in ${cx.funcName}`);
-        }
-        whenObject = result;
-      });
-      let whenNotObject!: IrValueId;
-      const elseBody = cx.builder.collectBodyInstrs(() => {
-        whenNotObject = cx.builder.emitConst({ kind: "i32", value: 0 }, resultType);
-      });
-      return cx.builder.emitIfElse({
-        cond: isObject,
-        then: thenBody,
-        thenValue: whenObject,
-        else: elseBody,
-        elseValue: whenNotObject,
+      return cx.builder.emitIfElseValue(
+        cx.builder.emitTagTest(lhs, JS_TAG_IDS.Object),
+        () => {
+          const payload = cx.builder.emitUnbox(lhs, JS_TAG_IDS.Object);
+          const result = cx.builder.emitCall(irRuntimeFuncRef(wrapperPlan.funcName), [payload], resultType);
+          if (result === null) {
+            // invariant (producer-promise): a compiler-support/runtime helper declared non-void returned no SSA value — #4502.
+            throw new Error(`ir/from-ast: ${wrapperPlan.funcName} produced no result in ${cx.funcName}`);
+          }
+          return result;
+        },
+        () => cx.builder.emitConst({ kind: "i32", value: 0 }, resultType),
         resultType,
-      });
+      );
     }
     const lv = asVal(lt);
     if (lt.kind === "string" || lt.kind === "object" || lt.kind === "closure" || lt.kind === "class") {

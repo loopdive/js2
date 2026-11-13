@@ -68,8 +68,6 @@ import { nativeBufferSurfaceCapability } from "./capability.js";
 import {
   ensureAnyHelpers,
   ensureAnyValueType,
-  ensureExternLooseEqHelper,
-  ensureExternStrictEqHelper,
   resolveIrDynamicCarrierType,
   undefinedAnyValueInstrs,
   undefinedExternInstrs,
@@ -77,6 +75,7 @@ import {
 import { ensureDynMemberGet, ensureDynMemberSet, ensureDynMemberSetSloppy } from "../codegen/dyn-read.js"; // (#3053 U1) / (#3795)
 import { ensureDateCivilHelper } from "../codegen/expressions/builtins.js";
 import {
+  ensureIrDynamicEqualityRuntime,
   ensureIrDynamicRuntime,
   irDynamicRuntimeNeedForSymbol,
   observeIrFunctionObjectCallProviders,
@@ -346,10 +345,8 @@ export { exactPreparedUnitCallableBindingId } from "./prepared-callable-resoluti
 import { prepareIrVectorSupport } from "./prepared-vector-support.js";
 import { makeIrArrayElementFamilyClassifier } from "./array-methods/selection.js";
 import {
-  makeIrArrayExpressionPredicate,
-  makeIrDeclaredPrimitiveExpressionClassifier,
+  makeIrCheckerSelectionOptions,
   makeIrModuleBindingResolver,
-  makeIrPrimitiveExpressionClassifier,
   makeIrRegExpExpressionPredicate,
   capabilityExternBindingOptions,
   abiPinnedCapability,
@@ -2575,11 +2572,7 @@ export function compileIrPathFunctions(
     moduleBindingOptions,
     moduleBindingIdentityContext,
   );
-  const classifyPrimitiveExpression = makeIrPrimitiveExpressionClassifier(ctx.checker);
-  const classifyDeclaredPrimitiveExpression = makeIrDeclaredPrimitiveExpressionClassifier(ctx.checker);
-  const isArrayExpression = makeIrArrayExpressionPredicate(ctx.checker);
   const classifyArrayElementFamily = makeIrArrayElementFamilyClassifier(ctx.checker, ctx.oracle);
-  const isRegExpExpression = makeIrRegExpExpressionPredicate(ctx.checker);
   const isAmbientStringBinding = makeAmbientStringBindingPredicate(ctx.checker);
   const declarationsByName = collectIntegrationFunctionDeclarations(integrationSourceFiles);
   const { implicitParamUsesNumericVecAbi, effectiveOverride } = makeMultiSourceOverrideResolvers({
@@ -2604,12 +2597,9 @@ export function compileIrPathFunctions(
       ...(resolveHostVoidCallback ? { hostVoidCallbacks: resolveHostVoidCallback } : {}),
       ...(supportsDateSnapshots ? { hostDateSnapshots: makeIrHostDateSnapshotResolver(ctx.checker) } : {}),
       resolveModuleBinding: moduleBindingResolver,
-      classifyPrimitiveExpression,
-      classifyDeclaredPrimitiveExpression,
+      ...makeIrCheckerSelectionOptions(ctx.checker),
       jsonParseFoldsAtCompileTime: (call: ts.CallExpression) => jsonParseTextFoldsAtCompileTime(ctx, call),
-      isArrayExpression,
       classifyArrayElementFamily,
-      isRegExpExpression,
       nativeRegExpCompiles: standaloneStaticRegExpCompiles, // (#7106 lever R)
       isAmbientStringBinding,
       isHoleyArrayConstructor: (expr) => ctx.holeyArrayConstructorNodes.has(expr),
@@ -9802,10 +9792,7 @@ function preregisterDynamicSupport(
     // Register the selected family up-front so no emit can trigger a shift
     // (#329/#2078), exactly like `addUnionImports` above. Both are idempotent;
     // only fired when a host module actually carries a dyn.eq.
-    if (usesEq) {
-      ensureExternStrictEqHelper(ctx);
-      ensureExternLooseEqHelper(ctx);
-    }
+    if (usesEq) ensureIrDynamicEqualityRuntime(ctx);
   }
   // #3053 U1 — a `dyn.member_get` present in any IR body needs the unified
   // reader primitive `__dyn_member_get` (#3053 U0) REGISTERED up-front so the

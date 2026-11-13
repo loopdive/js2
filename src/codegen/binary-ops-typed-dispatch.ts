@@ -36,6 +36,7 @@ import {
 } from "./binary-ops.js";
 import { equalityOperandHasStaleStaticType } from "./strict-eq-stale-type.js";
 import { identityEqualityFlags } from "./helpers/loose-eq-object-identity.js"; // (#6997)
+import { externLooseEqInstrs, prepareExternLooseEq } from "./helpers/loose-equality-to-primitive.js";
 
 /**
  * (#1930) Keep the nullish AnyValue gate on the oracle side of the checker
@@ -217,12 +218,10 @@ export function isDirectOracleClassifiedMapGet(ctx: CodegenContext, operand: ts.
 export function prepareNativeMapGetEquality(ctx: CodegenContext, fctx: FunctionContext, strict: boolean): boolean {
   addUnionImports(ctx);
   ensureAnyHelpers(ctx);
-  const provisionalIdx = strict ? ensureExternStrictEqHelper(ctx) : ensureAnyFromExternHelper(ctx);
-  if (provisionalIdx === undefined) return false;
+  const prepared = strict ? ensureExternStrictEqHelper(ctx) !== undefined : prepareExternLooseEq(ctx);
+  if (!prepared) return false;
   flushLateImportShifts(ctx, fctx);
-  return strict
-    ? ctx.funcMap.has("__extern_strict_eq")
-    : ctx.funcMap.has("__any_from_extern") && ctx.funcMap.has("__any_eq");
+  return !strict || ctx.funcMap.has("__extern_strict_eq");
 }
 
 /**
@@ -264,21 +263,7 @@ export function emitPreparedNativeMapGetEqualityFromStack(
     if (funcIdx === undefined) throw new Error("Prepared native Map.get strict equality provider missing");
     fctx.body.push({ op: "local.get", index: lTmp }, { op: "local.get", index: rTmp }, { op: "call", funcIdx });
   } else {
-    const fromExternIdx = ctx.funcMap.get("__any_from_extern");
-    const anyEqIdx = ctx.funcMap.get("__any_eq");
-    if (fromExternIdx === undefined || anyEqIdx === undefined) {
-      throw new Error("Prepared native Map.get loose equality providers missing");
-    }
-    // The existing native extern-loose provider uses this same conversion
-    // sequence. Emit it here so the original guest-direct __any_eq contract
-    // does not depend on a wrapper being inlined by a later optimizer.
-    fctx.body.push(
-      { op: "local.get", index: lTmp },
-      { op: "call", funcIdx: fromExternIdx },
-      { op: "local.get", index: rTmp },
-      { op: "call", funcIdx: fromExternIdx },
-      { op: "call", funcIdx: anyEqIdx },
-    );
+    fctx.body.push(...externLooseEqInstrs(ctx, lTmp, rTmp)); // (#7194) the one loose-equality definition
   }
   if (negate) fctx.body.push({ op: "i32.eqz" });
   releaseTempLocal(fctx, lTmp);

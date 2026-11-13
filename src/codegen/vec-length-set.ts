@@ -44,6 +44,7 @@
  * Standalone only (`ctx.externGetIdxReserved`); host output untouched.
  */
 import type { Instr, WasmFunction } from "../ir/types.js";
+import { SPARSE_INDEX_CEILING } from "../shared/array-index-key.js";
 import type { CodegenContext } from "./context/types.js";
 import {
   ARGUMENTS_LENGTH_ABSENT_FIELD,
@@ -330,7 +331,7 @@ export function fillVecLengthDynamicArms(ctx: CodegenContext): void {
                   // GROW (n ≤ 16M): per-carrier realloc, the static path's
                   // allocation guard; huge valid lengths update the field only.
                   { op: "local.get", index: lN },
-                  { op: "f64.const", value: 16777216 },
+                  { op: "f64.const", value: SPARSE_INDEX_CEILING },
                   { op: "f64.le" },
                   { op: "if", blockType: { kind: "empty" }, then: growArms },
                   ...fillArms,
