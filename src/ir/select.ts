@@ -104,6 +104,7 @@ import {
   type EmptyObjectLiteralBinding,
 } from "./empty-object-literal.js";
 import { objectCreateDescriptorMap } from "./object-create-call.js";
+import { producesCarrier, type CarrierLeaves } from "./analysis/carrier-expression.js";
 import * as dynamicHome from "./dynamic-home-open-object.js";
 import { selectWithEnvironmentClosures } from "./with-environment.js";
 // (#1373b C-1) Pure-syntactic async helpers from the LEAF module (safe for
@@ -4051,8 +4052,6 @@ function dynamicUsesAreMoveOnly(
         isDynShaped(op) &&
         (e.operator === ts.SyntaxKind.PlusPlusToken || e.operator === ts.SyntaxKind.MinusMinusToken)
       ) {
-        // (#7338) A carrier's member has no read-modify-write (`isPhase1MutableMemberTarget`).
-        if (ts.isPropertyAccessExpression(unwrap(op)) || ts.isElementAccessExpression(unwrap(op))) return false;
         return currentDynamicRuntimeBuildable && scanExpr(op, true);
       }
       return scanExpr(op, false);
@@ -4582,6 +4581,8 @@ function identifierUpdateRefusal(
   if (currentModuleBindingResolver?.(id) && !currentSubjectIsModuleInit) return { arm: "module-update", node: expr };
   if (!scope.has(id.text)) return { arm: "incdec-scope", node: id };
   if (projectionBindingMutationIsUnsupported(id.text, expr)) return { arm: "incdec-projection", node: expr };
+  // (#7338) `v++` writes a number back: only a carrier's home takes the carrier it reads.
+  if (!holdsCarrier(id) && lowersToCarrier(id)) return { arm: "incdec-carrier", node: expr };
   return undefined;
 }
 
@@ -8274,7 +8275,7 @@ function expressionIsModuleExternAccessChain(expr: ts.Expression): boolean {
 
 function moduleExternPropertyWriteIsProven(left: ts.PropertyAccessExpression, right: ts.Expression): boolean {
   // (#7338) A store into a dynamic module binding is `dyn.member_set`, which is told its writer's code strictness.
-  if (moduleBinding(left.expression)?.valueKind.kind === "dynamic") return dynamicHome.writerKnowsItsStrictness(left);
+  if (holdsCarrier(left.expression)) return dynamicHome.writerKnowsItsStrictness(left);
   if (!expressionIsModuleExternAccessChain(left.expression)) return true;
   return currentModuleBindingResolver?.externValueIsPassable(right) === true;
 }
@@ -9068,30 +9069,59 @@ function selectorObjectStaticPlan(expr: ts.CallExpression): objectStatics.Object
 }
 
 /**
- * (#7338) What from-ast lowers to the dynamic carrier, whatever the checker
- * types it (its `expressionProducesDynamic`, for the values a selector can
- * name): a dynamic module binding, a local initialised with an admitted
- * `Object` static's result, such a result, a member read on any of these, or
- * a `+` / conditional over them. A dynamic parameter is the carrier too, but
- * the move-only scan judges each of its uses, so it is not repeated here.
+ * (#7338) A carrier this PR's table introduces, by `producesCarrier`'s one
+ * definition of how a carrier flows (from-ast reads the same walker): an
+ * admitted `Object` static's result, or a binding initialised with one. A
+ * carrier from elsewhere (a dynamic parameter or script var) keeps main's
+ * rules: the move-only scan and the module-binding resolver judge its uses.
  */
 function lowersToCarrier(expression: ts.Expression): boolean {
-  const e = unwrapPhase1Parens(expression);
-  if (ts.isIdentifier(e)) {
-    if (moduleBinding(e)?.valueKind.kind === "dynamic") return true;
-    const initializer = unannotatedLocal(e)?.initializer;
-    return (
-      initializer !== undefined && ts.isCallExpression(unwrapPhase1Parens(initializer)) && lowersToCarrier(initializer)
-    );
-  }
-  if (ts.isPropertyAccessExpression(e) || ts.isElementAccessExpression(e)) return lowersToCarrier(e.expression);
-  if (ts.isCallExpression(e)) return selectorObjectStaticPlan(e)?.kind === "call";
-  if (ts.isConditionalExpression(e)) return lowersToCarrier(e.whenTrue) && lowersToCarrier(e.whenFalse);
-  return isCarrierAddition(e, lowersToCarrier);
+  return producesCarrier(expression, TABLE_CARRIER_LEAVES);
 }
 
-/** (#7338) `id` is a carrier's only home: a dynamic module binding. A carrier written anywhere else has no lowering. */
-function holdsCarrier(id: ts.Identifier): boolean {
+const carrierBindingsInProgress = new Set<ts.Node>();
+
+const TABLE_CARRIER_LEAVES: CarrierLeaves = {
+  // A function local or a dynamic module home holds what its initializer answers.
+  binding: (node) => {
+    if (!ts.isIdentifier(node)) return false;
+    const declaration = unannotatedLocal(node) ?? (holdsCarrier(node) ? moduleBinding(node)?.declaration : undefined);
+    if (declaration === undefined || !ts.isVariableDeclaration(declaration) || !declaration.initializer) return false;
+    // On the table's lane a #7280 dynamic home's `{}` is the object its defines extend (#7335's define is the table's).
+    const tableLane = currentSelectionOptions?.supportsBackendCapability?.("native-object-statics") === true;
+    if (tableLane && isDynamicHomeOpenCarrierDeclaration(declaration)) return true;
+    if (carrierBindingsInProgress.has(declaration)) return false;
+    carrierBindingsInProgress.add(declaration);
+    try {
+      return lowersToCarrier(declaration.initializer);
+    } finally {
+      carrierBindingsInProgress.delete(declaration);
+    }
+  },
+  // An admitted static answers the carrier; #7335's own-property test on a dynamic home answers a boolean.
+  call: (call) => {
+    if (selectorObjectStaticPlan(call)?.kind === "call") return true;
+    return dynamicHomeOwnPropertyMethod(call) === undefined ? undefined : false;
+  },
+};
+
+/** (#7338) A static's operand crosses as a carrier, so any carrier qualifies: a dynamic home or parameter too. */
+const OPERAND_CARRIER_LEAVES: CarrierLeaves = {
+  ...TABLE_CARRIER_LEAVES,
+  binding: (node) =>
+    holdsCarrier(node) ||
+    (ts.isIdentifier(node) && currentDynamicParamNames.has(node.text)) ||
+    TABLE_CARRIER_LEAVES.binding(node),
+};
+
+/**
+ * (#7338) Where a carrier may be WRITTEN: a dynamic module binding, whose
+ * global is the carrier. A function local holds a carrier only as its own
+ * initializer (from-ast types the slot from it, so `var d = <static>` is
+ * fine); a later write or update of a carrier into any other variable has no
+ * lowering, since that variable's storage was typed from something else.
+ */
+function holdsCarrier(id: ts.Expression): boolean {
   return moduleBinding(id)?.valueKind.kind === "dynamic";
 }
 
@@ -9656,6 +9686,7 @@ function selectorPrimitiveWrapperOrGenericBinary(
   }
   // A carrier compared with `null` (strictly) or with the global `undefined` never reaches
   // `lowerBinary`'s family rule: the fold, or the carrier equality (`tryLowerDynamicEq`), lowers it.
+  // `void 0` is no such identifier: it lowers to the f64 sentinel, which the family rule judges.
   const foldedCompare =
     isEquality &&
     carrierOperand &&
@@ -9690,6 +9721,7 @@ function binaryOperandFamily(
   const candidate = unwrapPhase1Parens(operand);
   if (
     lowersToCarrier(candidate) ||
+    holdsCarrier(candidate) ||
     isCarrierAddition(candidate, (side) => selectorCarrierValue(side, scope, localClasses))
   )
     return "dynamic";
@@ -9732,6 +9764,7 @@ function selectorCarrierValue(
   const e = unwrapPhase1Parens(expression);
   return (
     lowersToCarrier(e) ||
+    holdsCarrier(e) ||
     selectorPrimitiveWrapperConstruction(e, scope, localClasses) !== null ||
     isCarrierAddition(e, (side) => selectorCarrierValue(side, scope, localClasses))
   );
@@ -13882,8 +13915,7 @@ function isPhase1ObjectStatic(
     if (!openCarrier && !isPhase1Expr(value, scope, localClasses)) return false;
     const carried = openCarrier
       ? enclosingProjectionOwner(value) === currentSelectionSubject
-      : lowersToCarrier(value) ||
-        (ts.isIdentifier(value) && currentDynamicParamNames.has(value.text)) ||
+      : producesCarrier(value, OPERAND_CARRIER_LEAVES) ||
         (concreteOperandBoxesOntoCarrier(value) && !isRewrittenParameter(value));
     return carried || shapeNo("expr-object-static-operand", value);
   });

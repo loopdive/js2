@@ -171,28 +171,34 @@ const VALUE_USES: Record<string, string> = {
   "defined target's field into a script var": `var o = {}; var r = Object.defineProperty(o, 'p', { value: 1 }).p; if (r !== 1) { throw "x"; }`,
   "reassigned parameter as the target": `function f(n) { n = n + 1; Object.defineProperty(n, 'x', { value: 1 }); } try { f(1); throw "no"; } catch (e) { if (!(e instanceof TypeError)) { throw "type"; } }`,
   "descriptor field plus one, compared": `var o = {}; Object.defineProperty(o, 'p', { value: 1 }); if (Object.getOwnPropertyDescriptor(o, 'p').value + 1 !== 2) { throw "x"; }`,
-  "home read into a script var": `var o = {}; Object.defineProperty(o, 'p', { value: 1 }); var r = o.p; if (r !== 1) { throw "x"; }`,
   // A carrier's member under `++` / `--` (#7212 review R1): no read-modify-write lowers on the carrier.
   "postfix ++ on a descriptor field": `function f(o) { var d = Object.getOwnPropertyDescriptor(o, 'p'); d.value++; return d.value; } var o = {}; Object.defineProperty(o, 'p', { value: 1 }); if (f(o) !== 2) { throw "x"; }`,
   "prefix ++ on a created field": `function f() { var o = Object.create({}, { a: { value: 1, writable: true } }); ++o.a; return o.a; } if (f() !== 2) { throw "x"; }`,
   "postfix -- on a created field": `function f() { var o = Object.create({}, { a: { value: 1, writable: true } }); o.a--; return o.a; } if (f() !== 0) { throw "x"; }`,
   "prefix -- on a descriptor field": `function f(o) { var d = Object.getOwnPropertyDescriptor(o, 'p'); --d.value; return d.value; } var o = {}; Object.defineProperty(o, 'p', { value: 1 }); if (f(o) !== 0) { throw "x"; }`,
-  "postfix ++ on a dynamic parameter's field": `function f(d) { d.value++; return d.value; } var o = {}; o.value = 1; if (f(o) !== 2) { throw "x"; }`,
   // A carrier into a numeric compound, and a carrier against `void` (#7212 review round 3).
   "numeric var -= a descriptor field": `var o = {}; Object.defineProperty(o, 'p', { value: 4 }); var y = 10; y -= Object.getOwnPropertyDescriptor(o, 'p').value; if (y !== 6) { throw "x"; }`,
   "numeric var *= a descriptor field": `var o = {}; Object.defineProperty(o, 'p', { value: 4 }); var y = 10; y *= Object.getOwnPropertyDescriptor(o, 'p').value; if (y !== 40) { throw "x"; }`,
   "numeric var <<= a descriptor field": `var o = {}; Object.defineProperty(o, 'p', { value: 4 }); var y = 1; y <<= Object.getOwnPropertyDescriptor(o, 'p').value; if (y !== 16) { throw "x"; }`,
   "numeric var += a descriptor field": `var o = {}; Object.defineProperty(o, 'p', { value: 4 }); var y = 10; y += Object.getOwnPropertyDescriptor(o, 'p').value; if (y !== 14) { throw "x"; }`,
-  "numeric var -= a home read": `var o = {}; Object.defineProperty(o, 'p', { value: 4 }); var y = 10; y -= o.p; if (y !== 6) { throw "x"; }`,
-  "numeric var += a home read": `var o = {}; Object.defineProperty(o, 'p', { value: 4 }); var y = 10; y += o.p; if (y !== 14) { throw "x"; }`,
   "descriptor field != void 0": `var o = {}; Object.defineProperty(o, 'a', { value: null }); if (Object.getOwnPropertyDescriptor(o, 'a').value != void 0) { throw "x"; }`,
   "void 0 == descriptor field": `var o = {}; Object.defineProperty(o, 'a', { value: 1 }); if (void 0 == Object.getOwnPropertyDescriptor(o, 'a').value) { throw "x"; }`,
   "descriptor field == void f()": `function f() { return 1; } var o = {}; Object.defineProperty(o, 'a', { value: 1 }); if (Object.getOwnPropertyDescriptor(o, 'a').value == void f()) { throw "x"; }`,
   "void f() != descriptor field": `function f() { return 1; } var o = {}; Object.defineProperty(o, 'a', { value: null }); if (void f() != Object.getOwnPropertyDescriptor(o, 'a').value) { throw "x"; }`,
-  // A dynamic home's member read is the carrier too (#7212 review S1).
-  "home read compared loosely with null": `var o = {}; Object.defineProperty(o, 'p', { value: 1 }); if (o.p == null) { throw "x"; }`,
-  "home read assigned to a numeric script var": `var o = {}; Object.defineProperty(o, 'p', { value: 1 }); var r = 0; r = o.p; if (r !== 1) { throw "x"; }`,
   "descriptor field assigned to a numeric script var": `var o = {}; Object.defineProperty(o, 'p', { value: 1 }); var r = 0; r = Object.getOwnPropertyDescriptor(o, 'p').value; if (r !== 1) { throw "x"; }`,
+  // Every way a carrier flows (`producesCarrier`), wrapping a table result (#7212 review round 4).
+  "kind: parentheses": `var o = {}; Object.defineProperty(o, 'p', { value: 4 }); var y = 10; y -= ((Object.getOwnPropertyDescriptor(o, 'p').value)); if (y !== 6) { throw "x"; }`,
+  "kind: member read": `var o = {}; Object.defineProperty(o, 'p', { value: 4 }); var y = 10; y -= Object.getOwnPropertyDescriptor(o, 'p').value; if (y !== 6) { throw "x"; }`,
+  "kind: element read": `var o = {}; Object.defineProperty(o, 'p', { value: 4 }); var y = 10; y -= Object.getOwnPropertyDescriptor(o, 'p')['value']; if (y !== 6) { throw "x"; }`,
+  "kind: method call on it": `var o = {}; Object.defineProperty(o, 'p', { value: 4 }); var y = 10; y -= Object.getOwnPropertyDescriptor(o, 'p').value.valueOf(); if (y !== 6) { throw "x"; }`,
+  "kind: comma right side": `var o = {}; Object.defineProperty(o, 'p', { value: 4 }); var y = 10; y -= (0, Object.getOwnPropertyDescriptor(o, 'p').value); if (y !== 6) { throw "x"; }`,
+  "kind: assignment right side": `var o = {}; Object.defineProperty(o, 'p', { value: 4 }); var y = 10; var t; y -= (t = Object.getOwnPropertyDescriptor(o, 'p').value); if (y !== 6) { throw "x"; }`,
+  "kind: conditional arms": `var o = {}; Object.defineProperty(o, 'p', { value: 4 }); var y = 10; y -= (o ? Object.getOwnPropertyDescriptor(o, 'p').value : Object.getOwnPropertyDescriptor(o, 'p').value); if (y !== 6) { throw "x"; }`,
+  "kind: addition": `var o = {}; Object.defineProperty(o, 'p', { value: 4 }); var y = 10; y -= Object.getOwnPropertyDescriptor(o, 'p').value + 0; if (y !== 6) { throw "x"; }`,
+  "kind: local initialised from it": `function f(o) { var y = 10; var d = Object.getOwnPropertyDescriptor(o, 'p'); y -= d.value; return y; } var o = {}; Object.defineProperty(o, 'p', { value: 4 }); if (f(o) !== 6) { throw "x"; }`,
+  "kind: script var initialised from it": `var o = {}; Object.defineProperty(o, 'p', { value: 4 }); var y = 10; var d = Object.getOwnPropertyDescriptor(o, 'p'); y -= d.value; if (y !== 6) { throw "x"; }`,
+  "comma operand compared loosely with null": `var o = {}; if ((0, Object.getOwnPropertyDescriptor(o, 'p')) == null) {} else { throw "x"; }`,
+  "update of a local initialised from a field": `function f(o) { var v = Object.getOwnPropertyDescriptor(o, 'p').value; v++; return v; } var o = {}; Object.defineProperty(o, 'p', { value: 4 }); if (f(o) !== 5) { throw "x"; }`,
 };
 
 describe("#7338 — Object statics through the dynamic carrier", () => {
@@ -252,6 +258,19 @@ describe("#7338 — Object statics through the dynamic carrier", () => {
       expect(row).toMatchObject({ kind: "unsupported", stage: "select", irBodyEmitted: false });
       expect(row?.detail).toContain(detail);
       expect(await run(ir, "standalone")).toBe(await run(await build(source, "standalone", false), "standalone"));
+    });
+  }
+
+  // (#7212 review K1) A plain dynamic script var under a loose `null` compare is not this table's carrier:
+  // its routing, and the JS environment's bytes, stay main's.
+  for (const op of ["==", "!="]) {
+    it(`routes a statics-free loose null compare as main does (${op})`, async () => {
+      const source = `var n; function g() { n = 3; } function h() { return n ${op} null; } g(); if (h()${op === "==" ? "" : " !== true"}) { throw "x"; }`;
+      for (const lane of ["standalone", "gc"] as const) {
+        const ir = await build(source, lane);
+        expect(outcome(ir, "h")?.stage, lane).not.toBe("select");
+        expect(outcome(ir, "<module-init>")?.irBodyEmitted, lane).toBe(true);
+      }
     });
   }
 

@@ -14,12 +14,13 @@ area: ir
 goal: ir-full-coverage
 related: [7106, 7128, 7280, 7335, 7189]
 loc-budget-allow:
-  # 2026-11-12 (#7338, PR #7212 review rounds 1-3), +86 net: one `lowersToCarrier` predicate and its readers
-  # (operand family, module-binding writes, member read-modify-writes), the strict-only `null` compare and the
-  # written-parameter refusal, so no carrier use is claimed and then demoted; the JS environment's create hook.
+  # 2026-11-13 (#7338, PR #7212 review rounds 1-4), +118 net: the selector's leaves for the shared carrier walker
+  # (`producesCarrier`) and their readers (operand family, carrier-home writes, member and identifier updates), the
+  # loose-`null` guard and the written-parameter refusal, so no table carrier is claimed and then demoted; the JS
+  # environment's create hook.
   - src/ir/select.ts
-  # 2026-11-12 (#7338, PR #7212 review round 1), +23 net: from-ast's carrier test reads the same plan, and the JS
-  # environment's `Object.create` hook stays beside the table hook.
+  # 2026-11-13 (#7338, PR #7212 review rounds 1-4), +16 net: from-ast's carrier leaves read the same plan and the
+  # shared walker, and the JS environment's `Object.create` hook stays beside the table hook.
   - src/ir/from-ast.ts
   # 2026-11-12 (#7338, review nit), +3 net: the provider type is imported by name instead of `Parameters<…>[0]`.
   - src/ir/integration.ts
@@ -390,35 +391,45 @@ and `Object/prototype/15.2.3.1.js` (`Object` passed as a value, refused as
   plan refuses reaching it is an `IrInvariantError`. Every operand crosses
   through one `lowerCarrierOperand`, which the stored aliases, the dynamic
   delete key and #7335's own-property call share.
-- **What lowers to the carrier is one selector predicate**, `lowersToCarrier`,
-  the selector's twin of from-ast's `expressionProducesDynamic` (which reads
-  the same plan): a dynamic module binding, a local initialised with an
-  admitted static's result, such a result, a member read on any of these, or
-  a `+` / conditional over them. Its readers:
-  - the operand family (`binaryOperandFamily`), so `+`, the relationals and
-    the equalities judge the carrier the value is. A carrier compared with
-    `null` is admitted only strictly (`tryFoldNullCompare` is the only fold;
-    a loose one types `null` as f64; its own guard, `expr-carrier-loose-null`);
-    with the global `undefined` it is the carrier equality. `void <expr>` is
-    not that identifier: from-ast's carrier equality has no `void` arm, so a
-    carrier against `void 0` goes through the family rule and is refused;
-  - writes: a carrier's only home is a dynamic module binding (`holdsCarrier`,
-    one definition). Its callers: module-binding `=` (`moduleBindingTakes`),
-    the `var` initialiser, the identifier compound (`y -= <carrier>` on a
-    numeric `y` is refused as `compound-carrier-operand`; a dynamic `y` keeps
-    #7210's `compoundWriteAdmissible`, which now reads the carrier through the
-    operand family, so #7210's `readsDynamicScriptVar` is gone) and the
-    carrier `+`'s consumer (`carrierValueConsumed`);
+- **How a carrier flows through an expression has one definition**,
+  `producesCarrier` (`src/ir/analysis/carrier-expression.ts`): through
+  parentheses, a member or element read, a method call on it, the right side
+  of a comma or an `=` assignment, a conditional whose arms are both carriers,
+  and a `+` with a carrier operand. Both sides call it and supply only the
+  leaves: from-ast's `expressionProducesDynamic` (bindings it lowered as the
+  carrier, calls that answer one, a claimed mixed conditional, a fresh
+  wrapper's `+`), and the selector's `lowersToCarrier`, whose leaves are the
+  carriers this PR introduces: an admitted static's result, and a function
+  local or dynamic module home whose initializer is one. A plain dynamic
+  parameter or script var is not one of them, so its routing stays main's
+  (the move-only scan and the module-binding resolver judge it); the
+  operand check of a static's own values reads a wider leaf set
+  (`OPERAND_CARRIER_LEAVES`: also dynamic homes and parameters), since those
+  values cross as carriers whatever their source. Its readers:
+  - the operand family (`binaryOperandFamily`, where a dynamic module binding
+    read is also "dynamic", as in round 3), so `+`, the relationals and the
+    equalities judge the carrier the value is. A table carrier compared
+    loosely with `null` is refused by its own guard (`expr-carrier-loose-null`,
+    keyed on `lowersToCarrier`, so a statics-free `n == null` routes as on
+    main); a strict `null` compare and one with the global `undefined` are
+    folded or lowered as the carrier equality. `void 0` is no such identifier:
+    it lowers to the f64 sentinel, which the family rule judges and refuses;
+  - writes: a carrier's only written home is a dynamic module binding
+    (`holdsCarrier`, one definition). A function local holds a carrier only
+    as its own initializer, since from-ast types its slot from it. Callers:
+    module-binding `=` (`moduleBindingTakes`), the `var` initialiser, the
+    identifier compound (`y -= <carrier>` on a numeric `y` is refused as
+    `compound-carrier-operand`), the identifier update (`v++` on a local
+    initialised from a carrier is refused as `incdec-carrier`), the carrier
+    `+`'s consumer (`carrierValueConsumed`) and the dynamic-home member store
+    (`moduleExternPropertyWriteIsProven`). main's `readsDynamic` in the
+    move-only scan is a pre-existing third spelling, left as it is;
   - member read-modify-writes (`isPhase1MutableMemberTarget`, shared by
     `o.p += v` and `++` / `--`): `lowerPropertyCompound` and the element
-    compound take object / class / vec receivers only, so a carrier's member
-    is refused (`member-compound-dynamic-receiver`). The move-only scan's
-    `++` / `--` arm refuses the same for a dynamic parameter's member, which
-    it judges itself.
-  A dynamic parameter is left to the move-only scan, which judges each of its
-  uses; folding it into the predicate refused shapes main lowers correctly
-  (`d !== isTrue(d)` in #7283's verifyProperty chain, lever O's integrity
-  rows).
+    compound take object / class / vec receivers only, so a table carrier's
+    member is refused (`member-compound-dynamic-receiver`).
+  The test file has one row per way `producesCarrier` carries a value,
+  wrapping a table result.
 - `src/ir/object-create-call.ts` stays: it is the JS environment's #7276
   `Object.create({}, { <literal data descriptors> })`, unchanged in output,
   asked before the table on both sides and admitted off the table's lane only.
@@ -433,10 +444,12 @@ and `Object/prototype/15.2.3.1.js` (`Object` passed as a value, refused as
   boxable concrete" loop are one `scanCarrierArguments` call each.
 - Size: `object-statics.ts` 191 lines, `descriptor-literal.ts` 124,
   `object-create-call.ts` 180 → 110, `empty-object-literal.ts` 197.
-  Net against main `34ce67984a`: `select.ts` +86, `from-ast.ts` +23,
-  `integration.ts` +3, granted above. Round 3 folded #7210's
-  `readsDynamicScriptVar` and the three copies of the carrier-home rule into
-  `lowersToCarrier` / `holdsCarrier` (−6 against round 2's +92).
+  `analysis/carrier-expression.ts` 53. Net against main `34ce67984a`:
+  `select.ts` +118, `from-ast.ts` +16, `integration.ts` +3, granted above.
+  Round 3 folded #7210's `readsDynamicScriptVar` and the three copies of the
+  carrier-home rule (+86). Round 4 moved the flow rules into the shared
+  walker (from-ast −7) but added the selector's two leaf sets, the
+  table-only scoping and the `v++` refusal (select +32).
 
 ### Differences from the plan
 
@@ -491,10 +504,14 @@ and `Object/prototype/15.2.3.1.js` (`Object` passed as a value, refused as
      (`moduleExternPropertyWriteIsProven`);
    - a dynamic module home initialised with a non-empty object literal
      (`vardecl-module-value-flow`);
-   - the `lowersToCarrier` readers above. They also refuse shapes that
-     failed after the claim on main with no static in them: `var r = o.p`,
-     `var r = o.p + 1`, `r = o.p`, `o.p == null` on a dynamic home, and
-     `d.value++` on a dynamic parameter or a stored-alias result;
+   - the `lowersToCarrier` readers above, for table carriers only. Rounds 2
+     and 3 also refused statics-free shapes that fail after the claim on main
+     (`var r = o.p`, `r = o.p`, `o.p == null` on a dynamic home, `d.value++`
+     on a dynamic parameter). Round 4 withdrew that: a select refusal can drag
+     a caller out through the call-graph closure where main's post-claim
+     demotion does not (`function h() { return n == null; }` took
+     `<module-init>` with it, and moved the JS environment's bytes), so those
+     shapes keep main's routing;
    - a parameter written anywhere in its function as a static's value
      (`n = n + 1; Object.defineProperty(n, …)`): the lattice's write index
      (`localIsRewritten`, now also over parameters) gives it no fact, so

@@ -12052,6 +12052,14 @@
       "nextBoundary": "Key the shared operand / write admissibility predicates on an IR operator enum instead of the TS SyntaxKind so the module leaves the frontend wrapper."
     },
     {
+      "path": "src/ir/analysis/carrier-expression.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "7338",
+      "nextBoundary": "TypeScript-AST walker of how a dynamic carrier flows through an expression, shared by the selector and from-ast with per-side leaves (#7338); moves with the frontend inventory split."
+    },
+    {
       "path": "src/ir/analysis/string-evidence.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",

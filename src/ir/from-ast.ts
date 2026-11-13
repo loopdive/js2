@@ -70,7 +70,6 @@ import {
   booleanReadAsNumber,
   compoundWriteAdmissible,
   incrementSlotAdmissible,
-  isCarrierAddition,
   isEqualityOperator,
   isNumberBinaryOperator,
   isNumberCompoundAssignOperator,
@@ -95,6 +94,7 @@ import {
   type OperandFamily,
   type PrimitiveProof,
 } from "./analysis/operand-admissibility.js"; // (#7144)
+import { producesCarrier } from "./analysis/carrier-expression.js";
 import { IR_CLOSURE_UNDEFINED } from "./core/closure-invocation-callables.js";
 import {
   fixedClosureParameters,
@@ -15094,46 +15094,39 @@ function peelParensExpr(e: ts.Expression): ts.Expression {
   return inner;
 }
 
+/** from-ast's carrier leaves (`producesCarrier`): the bindings it lowered as the carrier, the calls that answer one. */
 function expressionProducesDynamic(expr: ts.Expression, cx: LowerCtx): boolean {
-  const candidate = peelParensExpr(expr);
-  // (#7106 Stage 4) A `this` bound through `dyn.current_this` is the carrier.
-  if (candidate.kind === ts.SyntaxKind.ThisKeyword) {
-    const binding = cx.scope.get("this");
-    return binding?.kind === "local" && binding.type.kind === "dynamic";
-  }
-  if (ts.isIdentifier(candidate)) {
-    const binding = cx.scope.get(candidate.text);
-    if (!binding) return false;
-    if (binding.kind === "local" || binding.kind === "moduleGlobal") return binding.type.kind === "dynamic";
-    if (binding.kind === "slot") return (binding.asType ?? binding.type).kind === "dynamic";
-    return false;
-  }
-  if (ts.isPropertyAccessExpression(candidate) || ts.isElementAccessExpression(candidate)) {
-    return expressionProducesDynamic(candidate.expression, cx);
-  }
-  if (ts.isCallExpression(candidate)) {
-    if (ts.isIdentifier(candidate.expression)) {
-      // (#7106 Stage 4) A call THROUGH a dynamic binding (`format(actual)`)
-      // returns whatever the called value returns: the carrier.
-      if (cx.scope.has(candidate.expression.text)) return expressionProducesDynamic(candidate.expression, cx);
-      return cx.calleeTypes?.get(candidate.expression.text)?.returnType?.kind === "dynamic";
-    }
-    if (!ts.isPropertyAccessExpression(candidate.expression)) return false;
-    // (#7338) An admitted `Object` static answers the carrier.
-    if (objectStaticPlanOf(candidate, cx)?.kind === "call") return true;
-    // (#7106 lever R2) A host-free `re.exec(s)` answers the match array or null as the carrier.
-    const regExpCall = nativeRegExpCarrierCall(candidate, cx);
-    if (regExpCall) return REGEXP_CARRIER_METHODS[regExpCall.method].result === "dynamic";
-    return expressionProducesDynamic(candidate.expression.expression, cx);
-  }
-  // (#7066) A claimed #5092 mixed-primitive conditional lowers to the carrier (`lowerConditional`).
-  if (ts.isConditionalExpression(candidate)) {
-    return (
-      (expressionProducesDynamic(candidate.whenTrue, cx) && expressionProducesDynamic(candidate.whenFalse, cx)) ||
-      mixedPrimitiveConditionalClaim(candidate, cx) !== null
-    );
-  }
-  return isCarrierAddition(candidate, (operand) => addsAsCarrier(operand, cx));
+  return producesCarrier(expr, {
+    binding: (node) => {
+      if (!ts.isIdentifier(node)) {
+        // (#7106 Stage 4) A `this` bound through `dyn.current_this` is the carrier.
+        const self = cx.scope.get("this");
+        return self?.kind === "local" && self.type.kind === "dynamic";
+      }
+      const binding = cx.scope.get(node.text);
+      if (binding?.kind === "local" || binding?.kind === "moduleGlobal") return binding.type.kind === "dynamic";
+      return binding?.kind === "slot" && (binding.asType ?? binding.type).kind === "dynamic";
+    },
+    call: (call) => {
+      if (ts.isIdentifier(call.expression)) {
+        // (#7106 Stage 4) A call THROUGH a dynamic binding (`format(actual)`)
+        // returns whatever the called value returns: the carrier.
+        if (cx.scope.has(call.expression.text)) return expressionProducesDynamic(call.expression, cx);
+        return cx.calleeTypes?.get(call.expression.text)?.returnType?.kind === "dynamic";
+      }
+      if (!ts.isPropertyAccessExpression(call.expression)) return false;
+      // (#7338) An admitted `Object` static answers the carrier.
+      if (objectStaticPlanOf(call, cx)?.kind === "call") return true;
+      // (#7335) A dynamic home's own-property test answers a boolean.
+      if (admittedOwnPropertyCallMethod(call) !== undefined) return false;
+      // (#7106 lever R2) A host-free `re.exec(s)` answers the match array or null as the carrier.
+      const regExpCall = nativeRegExpCarrierCall(call, cx);
+      return regExpCall ? REGEXP_CARRIER_METHODS[regExpCall.method].result === "dynamic" : undefined;
+    },
+    // (#7066) A claimed #5092 mixed-primitive conditional lowers to the carrier (`lowerConditional`).
+    conditional: (conditional) => mixedPrimitiveConditionalClaim(conditional, cx) !== null,
+    addsAsCarrier: (operand) => primitiveWrapperConstructorName(operand, cx) !== null,
+  });
 }
 
 /** A `+` operand that adds as the carrier: a dynamic value, or a fresh wrapper's ToPrimitive. */
