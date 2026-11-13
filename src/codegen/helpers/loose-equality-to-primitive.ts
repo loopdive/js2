@@ -30,7 +30,7 @@
  * compares instead of rejecting.
  *
  * Host-free lanes only: every lane test here is `hostFreeEnvironment(ctx)`,
- * not `ctx.standalone` (the native regime, which is also on in a JavaScript
+ * not the native-regime flag (that one is also on in a JavaScript
  * environment). There the reduction's runtime functions would be new host
  * imports, so the provider keeps its unreduced body and its bytes.
  */

@@ -520,8 +520,13 @@ S2 and S3 are still open; the issue stays `in-progress`.
   in the provider:
   - **An Error.** `__to_primitive` hands the native error struct back
     unchanged by design: its consumers render it through `__any_to_string`.
-    So `e == "Error: m"` is `false`, `e == 1` traps, and a user `valueOf` on
-    an error is ignored.
+    The reduction therefore leaves an Error unreduced, and an Error's own
+    `valueOf` / `toString` are ignored. All of this is the same as main
+    (measured 2026-11-12):
+    - `e == "Error: m"` is `false`;
+    - `e == 1` traps;
+    - `e.valueOf = function () { return 7; }; f(e, 7)` traps;
+    - `e.toString = function () { return "q"; }; f(e, "q")` is `false`.
   - **The keyed collections.** `Map`, `Set` and `WeakMap` have no
     ToPrimitive arm: `new Map() == 2` traps.
 
