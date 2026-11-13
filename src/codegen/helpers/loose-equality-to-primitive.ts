@@ -29,9 +29,10 @@
  * the null hint, it keeps a Symbol `@@toPrimitive` result, which step 11 then
  * compares instead of rejecting.
  *
- * Host-free lanes only. In a JavaScript environment the reduction's runtime
- * functions would be new host imports, so there the provider keeps its
- * unreduced body and its bytes.
+ * Host-free lanes only: every lane test here is `hostFreeEnvironment(ctx)`,
+ * not `ctx.standalone` (the native regime, which is also on in a JavaScript
+ * environment). There the reduction's runtime functions would be new host
+ * imports, so the provider keeps its unreduced body and its bytes.
  */
 import type { Instr, ValType, WasmFunction } from "../../ir/types.js";
 import { ensureAnyFromExternHelper, ensureExternStrictEqHelper } from "../any-helpers.js";
@@ -180,15 +181,6 @@ function unreducedLooseEqInstrs(ctx: CodegenContext, left: number, right: number
 }
 
 /**
- * The one lane decision: on a host-free lane loose equality is the reducing
- * provider; in a JavaScript environment it is the unreduced sequence, because
- * the reduction's runtime functions would be new host imports there.
- */
-function reducesObjects(ctx: CodegenContext): boolean {
-  return hostFreeEnvironment(ctx);
-}
-
-/**
  * Register the `(externref, externref) -> i32` provider `__extern_loose_eq`.
  * Every runtime function it calls is registered before the first index is
  * read (#3219). The reduction is provisional: its ToPrimitive call is the only
@@ -199,7 +191,7 @@ function reducesObjects(ctx: CodegenContext): boolean {
 export function ensureExternLooseEqHelper(ctx: CodegenContext): number | undefined {
   const existing = ctx.funcMap.get(PROVIDER);
   if (existing !== undefined) return existing;
-  const reduces = reducesObjects(ctx);
+  const reduces = hostFreeEnvironment(ctx);
   if (reduces) {
     ensureLooseEqualityToPrimitive(ctx);
     ensureExternStrictEqHelper(ctx);
@@ -234,14 +226,16 @@ export function ensureExternLooseEqHelper(ctx: CodegenContext): number | undefin
  * provider is unavailable. Flush late-import shifts before emitting.
  */
 export function prepareExternLooseEq(ctx: CodegenContext): boolean {
-  return reducesObjects(ctx)
+  return hostFreeEnvironment(ctx)
     ? ensureExternLooseEqHelper(ctx) !== undefined
     : ensureAnyFromExternHelper(ctx) !== undefined && ctx.funcMap.has("__any_eq");
 }
 
 /** `left == right` over two externref locals, after `prepareExternLooseEq`. */
 export function externLooseEqInstrs(ctx: CodegenContext, left: number, right: number): Instr[] {
-  const instrs = reducesObjects(ctx) ? providerCallInstrs(ctx, left, right) : unreducedLooseEqInstrs(ctx, left, right);
+  const instrs = hostFreeEnvironment(ctx)
+    ? providerCallInstrs(ctx, left, right)
+    : unreducedLooseEqInstrs(ctx, left, right);
   if (instrs === undefined) throw new Error("loose equality provider was not prepared");
   return instrs;
 }

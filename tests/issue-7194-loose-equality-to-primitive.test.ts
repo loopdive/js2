@@ -334,44 +334,33 @@ describe("#7194 — the reduction costs nothing where no Object can exist", () =
   }
 });
 
-describe("#7194 — residuals outside the provider (pending: these flip when fixed)", () => {
+describe("#7194 — residuals outside the provider (pinned at today's wrong answer)", () => {
+  // Each row asserts the WRONG answer the module gives today, so it fails —
+  // and must be updated to node's answer — the day the residual is fixed.
+  // A compile error or any other failure fails it too.
   const SOURCE = `function f(a, b) { return a == b; }\nf("x", 1); f(1, "x");
 export function errorAgainstItsString() { var e = new Error("m"); return f(e, "Error: m") ? 1 : 0; }
 export function dateAgainstNumber() { var d = new Date(5); return f(d, 5) ? 1 : 0; }
 export function mapAgainstNumber() { return f(new Map(), 2) ? 1 : 0; }`;
 
+  async function exportsOf(target: Target): Promise<Record<string, () => number>> {
+    return (await instantiate(await compileJs(SOURCE, target), target)).exports as Record<string, () => number>;
+  }
+
   // `__to_primitive` has no arm for the keyed-collection structs (Map, Set,
-  // WeakMap): the collection comes back unreduced and `__any_eq` traps, as on main.
-  it.fails(
-    "standalone: a Map against a number answers false without trapping",
-    async () => {
-      const result = await compileJs(SOURCE, "standalone");
-      const exports = (await instantiate(result, "standalone")).exports as Record<string, () => number>;
-      expect(answer(exports.mapAgainstNumber!)).toBe("0");
-    },
-    120_000,
-  );
+  // WeakMap): the collection comes back unreduced and `__any_eq` traps. Node: false.
+  it("standalone: a Map against a number traps (node: false)", async () => {
+    expect(answer((await exportsOf("standalone")).mapAgainstNumber!)).toBe("trap");
+  }, 120_000);
 
   // `__to_primitive` hands the native error struct back unchanged (its consumers
-  // render it through `__any_to_string`), so the reduction leaves an Object.
-  it.fails(
-    "standalone: an Error equals its Error.prototype.toString string",
-    async () => {
-      const result = await compileJs(SOURCE, "standalone");
-      const exports = (await instantiate(result, "standalone")).exports as Record<string, () => number>;
-      expect(answer(exports.errorAgainstItsString!)).toBe("1");
-    },
-    120_000,
-  );
+  // render it through `__any_to_string`), so the reduction leaves an Object. Node: true.
+  it("standalone: an Error against its Error.prototype.toString string is false (node: true)", async () => {
+    expect(answer((await exportsOf("standalone")).errorAgainstItsString!)).toBe("0");
+  }, 120_000);
 
-  // WASI's `__to_primitive` has no Date arm: the Date comes back unreduced and `__any_eq` traps.
-  it.fails(
-    "wasi: a Date against a number answers false without trapping",
-    async () => {
-      const result = await compileJs(SOURCE, "wasi");
-      const exports = (await instantiate(result, "wasi")).exports as Record<string, () => number>;
-      expect(answer(exports.dateAgainstNumber!)).toBe("0");
-    },
-    120_000,
-  );
+  // WASI's `__to_primitive` has no Date arm: the Date comes back unreduced and `__any_eq` traps. Node: false.
+  it("wasi: a Date against a number traps (node: false)", async () => {
+    expect(answer((await exportsOf("wasi")).dateAgainstNumber!)).toBe("trap");
+  }, 120_000);
 });

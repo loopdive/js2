@@ -484,10 +484,17 @@ S2 and S3 are still open; the issue stays `in-progress`.
     place, and keeps the reduction only if `moduleCanHoldObject`
     (`helpers/module-object-liveness.ts`) says a live body or global creates
     an Object. Every Object on WasmGC is a `struct.new` of a type that is
-    not a primitive carrier. The runtime's own error constructors count only
-    if their result can be caught or used other than by an immediate
-    `throw`. The analysis errs toward keeping the reduction. Only a body is
-    swapped, so no index moves.
+    not a primitive carrier. The carrier list is the one
+    `object-model/primitive-carrier-test.ts` already used for the #6651
+    runtime test (round-2 review): one base list, plus a named extension for
+    allocations (the concrete string forms, BigInt, `$AnyValue`); the runtime
+    test's bytes are unchanged. The runtime's own error constructors count
+    only if their result can be caught, used other than by an immediate
+    `throw`, or reached by an indirect call (`call_ref` / `call_indirect`
+    count as keeping it). Both scans use the shared
+    `walkInstructionDag` / `walkChildren`, catch bodies included. The
+    analysis errs toward keeping the reduction. Only a body is swapped, so no
+    index moves.
 
     The liveness module imports nothing from the codegen import cycle. That
     keeps `program-abi-finalization.ts`, which calls it, out of the SCC: the
@@ -519,7 +526,7 @@ S2 and S3 are still open; the issue stays `in-progress`.
     ToPrimitive arm: `new Map() == 2` traps.
 
   Fixing either is a runtime ToPrimitive change, not part of the hint path.
-  Both are pinned as `it.fails` rows that flip when fixed.
+  Both are pinned at their current wrong answer (`"0"` or `"trap"`); those rows fail, and get updated to the node answer, when the residual is fixed.
 - Pre-existing on every lane and untouched: a Symbol compared with a number
   traps inside `__any_eq` (`Symbol() == 1`).
 - **Other copies of loose equality that skip the reduction (S3 scope):**
@@ -538,7 +545,7 @@ S2 and S3 are still open; the issue stays `in-progress`.
 - Tests: `tests/issue-7194-loose-equality-to-primitive.test.ts` (17 rows). Besides
   the rows below, five pin the cost: a module with no Object keeps
   `__to_primitive` dead; modules creating `{}`, `[2]`, a closure or a Date
-  keep it live and answer as node. Three `it.fails` rows pin the residuals:
+  keep it live and answer as node. Three rows pin the residuals at their current wrong answer:
   an Error, a Map, and a WASI Date. The original rows are:
   - the matrix as one module against node: standalone IR (every cell);
     standalone legacy (the one-carrier cells); WASI IR (every cell except a
