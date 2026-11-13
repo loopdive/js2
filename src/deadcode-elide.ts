@@ -51,6 +51,7 @@
 import { forEachChild, ts } from "./ts-api.js";
 import { PositionMap } from "./position-map.js";
 import { subtreeHasEarlyError } from "./compiler/early-errors/index.js"; // (#4464)
+import { isInertFunctionMention } from "./shared/function-mention.js";
 
 export interface DeadBindingElisionResult {
   source: string;
@@ -69,35 +70,6 @@ interface Candidate {
 }
 
 /**
- * `Function.prototype.<name>` where `<name>` is a statically-known key other
- * than `constructor` — the receiver-uncurry idiom test262's propertyHelper.js
- * opens with (`Function.prototype.call.bind(...)`). The value escaping such a
- * chain is an ordinary prototype method, never the `Function` constructor, so
- * it cannot later receive computed source. Counting it as an unknown dynamic
- * identifier revived EVERY dropped harness binding — including the
- * `$262.evalScript` shim, whose own computed `eval` then poisoned the whole
- * module into runtime-eval carrier mode (and linked the interpreter provider)
- * for every propertyHelper-including test. Mirrors
- * `isFunctionPrototypeMethodChain` in `src/ir/runtime-eval-boundary-plan.ts` —
- * keep the two in sync.
- */
-function isFunctionPrototypeMethodReceiver(identifier: ts.Identifier): boolean {
-  if (identifier.text !== "Function") return false;
-  const proto = identifier.parent;
-  if (!ts.isPropertyAccessExpression(proto) || proto.expression !== identifier) return false;
-  if (proto.name.text !== "prototype") return false;
-  const member = proto.parent;
-  if (ts.isPropertyAccessExpression(member) && member.expression === proto) {
-    return member.name.text !== "constructor";
-  }
-  if (ts.isElementAccessExpression(member) && member.expression === proto) {
-    const key = member.argumentExpression;
-    return ts.isStringLiteralLike(key) && key.text !== "constructor";
-  }
-  return false;
-}
-
-/**
  * (#4621 family H) True when this `eval` / `Function` identifier sits in a
  * position that is NOT a reference to a binding — a member NAME or an object /
  * class member KEY. `e.eval()`, `{ eval: fn }`, `class C { eval() {} }` and
@@ -109,9 +81,10 @@ function isFunctionPrototypeMethodReceiver(identifier: ts.Identifier): boolean {
  * an unknown dynamic position survives, so one property named `eval` anywhere
  * in the file resurrects the whole dead harness prelude — including the
  * `$262.evalScript` shim, whose own computed `eval` then poisons the module into
- * runtime-eval carrier mode. That is the failure this module's own doc comment
- * at `isFunctionPrototypeMethodReceiver` describes for `Function.prototype.*`;
- * the member-name case is the same bug one position over. Measured on
+ * runtime-eval carrier mode. That is the failure `isInertFunctionMention`
+ * (`src/shared/function-mention.ts`) prevents for `Function.prototype.*` and
+ * the other inert `Function` uses; the member-name case is the same bug one
+ * position over. Measured on
  * `language/statements/{try/S12.14_A18_T6, throw/S12.13_A2_T6}`: with the
  * module in carrier mode, a top-level `myObj.i = 6` routes through the global
  * environment record, whose realm object was never seeded, so the receiver
@@ -331,7 +304,7 @@ export function elideDeadTopLevelBindings(
       if (
         (node.text === "eval" || node.text === "Function") &&
         !handledDynamicIdentifiers.has(pos) &&
-        !isFunctionPrototypeMethodReceiver(node) &&
+        !isInertFunctionMention(node) &&
         !isNonReferenceEvalMention(node)
       ) {
         // An escaped/aliased evaluator may later receive computed source. This

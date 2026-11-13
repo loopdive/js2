@@ -92,7 +92,12 @@ export function isUnshadowedLibBinding(
 
 /** (#7274) `undefined` read as the global value: nothing in the file declares the name. */
 export function isUnshadowedUndefined(node: ts.Expression): boolean {
-  return ts.isIdentifier(node) && node.text === "undefined" && !declaredNames(node.getSourceFile()).has("undefined");
+  return ts.isIdentifier(node) && node.text === "undefined" && isUndeclaredInFile(node);
+}
+
+/** Nothing in `node`'s file declares its name, so the read is of the global (a syntactic test, no checker). */
+export function isUndeclaredInFile(node: ts.Identifier): boolean {
+  return !declaredNames(node.getSourceFile()).has(node.text);
 }
 
 const declaredNamesCache = new WeakMap<ts.SourceFile, ReadonlySet<string>>();
