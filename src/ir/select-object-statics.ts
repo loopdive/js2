@@ -5,13 +5,17 @@
  * may be written (`holdsCarrier`), and the admission of a static's values. It
  * reads the selector's live state through {@link ObjectStaticSelectorState}.
  *
- * A table carrier is what the table introduces and nothing else, so code
- * without a table call routes exactly as it did before the table: an admitted
- * static's result; a binding initialised with one; on the table's lane a
- * #7280 dynamic home (`var o = {}`), the object the table's defines extend;
- * and a call to a user function that returns one or is passed one, which can
- * therefore answer it (`function id(x) { return x; }`). How it flows through
- * an expression is `producesCarrier`'s one definition, shared with from-ast.
+ * A table carrier is what the table introduces and nothing else, so a file
+ * without a call the table admits routes exactly as it did before the table:
+ * an admitted static's result; a binding initialised with one; and a #7280
+ * dynamic home (`var o = {}`) that an admitted call takes, the object the
+ * table's defines extend. How one flows through an expression is
+ * `producesCarrier`'s one definition, shared with from-ast.
+ *
+ * A table result does not leave the unit that made it through a call boundary
+ * (`escapesUnit`): no function returns one and no source function is passed
+ * one, so no call to a user function answers one and nothing has to predict
+ * what a callee returns.
  */
 
 import { ts } from "../ts-api.js";
@@ -57,7 +61,7 @@ export interface ObjectStaticSelector {
   readonly plan: (call: ts.CallExpression) => objectStatics.ObjectStaticPlan | undefined;
   readonly isLiteralDefine: (call: ts.CallExpression) => boolean;
   readonly lowersToCarrier: (expression: ts.Expression) => boolean;
-  /** `node`'s file calls some `Object.x(…)`, so the table may make code reachable that was not before. */
+  /** `node`'s unit (its top-level function or class, else the module's code) holds a call the table admits. */
   readonly tableMayReach: (node: ts.Node) => boolean;
   readonly holdsCarrier: (expression: ts.Expression) => boolean;
   /**
@@ -72,75 +76,48 @@ export interface ObjectStaticSelector {
     nullCompare: boolean,
     isUndefined: (side: ts.Expression) => boolean,
   ) => "refused" | "folded" | undefined;
-  /** `<carrier>?.p` / `?.[k]` / `?.()`: from-ast has no optional chain on a table carrier. */
-  readonly chainsOptionallyOnCarrier: (expression: ts.Expression) => boolean;
+  /**
+   * Refuses (through `refuse`) a use from-ast has no lowering for: `<carrier>?.p` / `?.[k]` / `?.()`
+   * on a table carrier (`expr-carrier-optional-chain`), and a table result that leaves its unit
+   * (`expr-carrier-escapes-unit`, `escapesUnit`).
+   */
+  readonly admitsCarrierUse: (expression: ts.Expression, refuse: (detail: string, node: ts.Node) => false) => boolean;
   readonly moduleBindingTakes: (id: ts.Identifier, value: ts.Expression) => boolean;
   /** `Object.<static>(…)` or the JS environment's #7276 create, admitted; undefined for any other call. */
   readonly admit: (call: ts.CallExpression, rules: ObjectStaticValueRules) => boolean | undefined;
 }
 
-type FunctionLike = ts.FunctionDeclaration | ts.FunctionExpression | ts.ArrowFunction;
-
-/** Per source file: each function a call by name may reach, every call by name, and every `Object.x(id, …)` by `id`. */
-interface CallIndex {
-  readonly functions: ReadonlyMap<string, readonly FunctionLike[]>;
-  readonly calls: ReadonlyMap<string, readonly ts.CallExpression[]>;
-  readonly objectCallsOn: ReadonlyMap<string, readonly ts.CallExpression[]>;
-  /** The file calls some `Object.x(…)`: without one there is no table carrier, and nothing routes differently. */
-  readonly callsObject: boolean;
+/** The unit a node belongs to: its top-level function or class, else the module's own code. */
+function unitOf(node: ts.Node): ts.Node {
+  let top = node;
+  while (!ts.isSourceFile(top.parent)) top = top.parent;
+  return ts.isFunctionDeclaration(top) || ts.isClassDeclaration(top) ? top : top.parent;
 }
 
-const callIndexes = new WeakMap<ts.SourceFile, CallIndex>();
+/** Per source file, every `Object.<name>(…)` call by its unit; the lane's plan says which the table admits. */
+const objectCallIndexes = new WeakMap<ts.SourceFile, ReadonlyMap<ts.Node, readonly ts.CallExpression[]>>();
 
-function callIndexOf(file: ts.SourceFile): CallIndex {
-  let index = callIndexes.get(file);
+function objectCallsByUnit(file: ts.SourceFile): ReadonlyMap<ts.Node, readonly ts.CallExpression[]> {
+  const index = objectCallIndexes.get(file);
   if (index !== undefined) return index;
-  const functions = new Map<string, FunctionLike[]>();
-  const calls = new Map<string, ts.CallExpression[]>();
-  const objectCallsOn = new Map<string, ts.CallExpression[]>();
-  let callsObject = false;
-  const add = <T>(map: Map<string, T[]>, name: string, value: T) => map.set(name, [...(map.get(name) ?? []), value]);
+  const byUnit = new Map<ts.Node, ts.CallExpression[]>();
   const visit = (node: ts.Node): void => {
-    if (ts.isFunctionDeclaration(node) && node.name) add(functions, node.name.text, node);
     if (
-      ts.isVariableDeclaration(node) &&
-      ts.isIdentifier(node.name) &&
-      node.initializer &&
-      (ts.isFunctionExpression(node.initializer) || ts.isArrowFunction(node.initializer))
+      ts.isCallExpression(node) &&
+      ts.isPropertyAccessExpression(node.expression) &&
+      ts.isIdentifier(node.expression.expression) &&
+      node.expression.expression.text === "Object"
     ) {
-      add(functions, node.name.text, node.initializer);
-    }
-    if (ts.isCallExpression(node)) {
-      const [target] = node.arguments;
-      const callee = node.expression;
-      callsObject ||=
-        ts.isPropertyAccessExpression(callee) &&
-        ts.isIdentifier(callee.expression) &&
-        callee.expression.text === "Object";
-      if (ts.isIdentifier(node.expression)) add(calls, node.expression.text, node);
-      else if (target && ts.isIdentifier(target) && ts.isPropertyAccessExpression(node.expression)) {
-        add(objectCallsOn, target.text, node);
-      }
+      const unit = unitOf(node);
+      const calls = byUnit.get(unit);
+      if (calls) calls.push(node);
+      else byUnit.set(unit, [node]);
     }
     ts.forEachChild(node, visit);
   };
   visit(file);
-  index = { functions, calls, objectCallsOn, callsObject };
-  callIndexes.set(file, index);
-  return index;
-}
-
-/** The return expressions of `fn`'s own body (nested functions excluded); an arrow's expression body is one. */
-function returnedExpressions(fn: FunctionLike): ts.Expression[] {
-  if (fn.body === undefined) return [];
-  if (!ts.isBlock(fn.body)) return [fn.body];
-  const returned: ts.Expression[] = [];
-  const visit = (node: ts.Node): void => {
-    if (ts.isReturnStatement(node) && node.expression) returned.push(node.expression);
-    if (!ts.isFunctionLike(node)) ts.forEachChild(node, visit);
-  };
-  ts.forEachChild(fn.body, visit);
-  return returned;
+  objectCallIndexes.set(file, byUnit);
+  return byUnit;
 }
 
 export function createObjectStaticSelector(state: ObjectStaticSelectorState): ObjectStaticSelector {
@@ -153,66 +130,84 @@ export function createObjectStaticSelector(state: ObjectStaticSelectorState): Ob
 
   const holdsCarrier = (expression: ts.Expression) => state.moduleBinding(expression)?.valueKind.kind === "dynamic";
 
+  /** Whether the lane's plan admits one of a unit's (or the file's) `Object.<name>(…)` calls, per lane. */
+  const tableGates = new WeakMap<ts.Node, { readonly lane: string; readonly admits: boolean }>();
+  const admitsTableCall = (key: ts.Node, calls: () => readonly ts.CallExpression[]): boolean => {
+    const lane = `${state.supports("native-object-statics")}:${state.dynamicCodeMayRun()}`;
+    const known = tableGates.get(key);
+    if (known?.lane === lane) return known.admits;
+    const admits = calls().some((call) => plan(call)?.kind === "call");
+    tableGates.set(key, { lane, admits });
+    return admits;
+  };
+  const fileCallsTable = (file: ts.SourceFile) =>
+    admitsTableCall(file.endOfFileToken, () => [...objectCallsByUnit(file).values()].flat());
+  const unitCallsTable = (node: ts.Node) => {
+    const unit = unitOf(node);
+    return admitsTableCall(unit, () => objectCallsByUnit(node.getSourceFile()).get(unit) ?? []);
+  };
+
+  /** A #7280 dynamic home that an admitted table call takes: the object the table's defines extend. */
+  const takenByTable = (declaration: ts.Declaration): boolean =>
+    [...objectCallsByUnit(declaration.getSourceFile()).values()].some((calls) =>
+      calls.some((call) => {
+        const [target] = call.arguments;
+        return (
+          target !== undefined &&
+          state.moduleBinding(target)?.declaration === declaration &&
+          plan(call)?.kind === "call"
+        );
+      }),
+    );
+
   /**
-   * One query's answers, so each binding, function and callee name is judged once: a key met
-   * again while its own answer is pending (a cycle) answers no carrier.
+   * `visited`: the declarations whose initializer is being judged; met again (a cycle), one answers
+   * no carrier. `homes`: whether a dynamic home a table call takes counts, as it does for its
+   * consumers; it is main's carrier already, so where it goes across a call is main's too.
    */
-  type Answers = Map<ts.Node | string, boolean | undefined>;
-  const answer = (answers: Answers, key: ts.Node | string, compute: () => boolean): boolean => {
-    if (answers.has(key)) return answers.get(key) === true;
-    answers.set(key, undefined);
-    const result = compute();
-    answers.set(key, result);
-    return result;
-  };
-
-  /** A call by name whose callee returns a table carrier or is passed one, and so can answer it. */
-  const callsCarrierFunction = (call: ts.CallExpression, answers: Answers): boolean => {
-    if (!ts.isIdentifier(call.expression)) return false;
-    const index = callIndexOf(call.getSourceFile());
-    const name = call.expression.text;
-    return answer(answers, name, () => {
-      const returns = (index.functions.get(name) ?? []).some((fn) =>
-        returnedExpressions(fn).some((returned) => carrier(returned, answers)),
-      );
-      const passed = (index.calls.get(name) ?? []).some((site) =>
-        site.arguments.some((argument) => carrier(argument, answers)),
-      );
-      return returns || passed;
-    });
-  };
-
-  const tableLeaves = (answers: Answers): CarrierLeaves => ({
+  const tableLeaves = (visited: Set<ts.Declaration>, homes: boolean): CarrierLeaves => ({
     // A function local or a dynamic module home holds what its initializer answers.
     binding: (node) => {
       if (!ts.isIdentifier(node)) return false;
       const declaration =
         state.unannotatedLocal(node) ?? (holdsCarrier(node) ? state.moduleBinding(node)?.declaration : undefined);
       if (declaration === undefined || !ts.isVariableDeclaration(declaration) || !declaration.initializer) return false;
-      // A #7280 dynamic home a table call takes is the object the table's defines extend.
-      const takenByTable = () =>
-        (callIndexOf(node.getSourceFile()).objectCallsOn.get(node.text) ?? []).some(
-          (call) => plan(call)?.kind === "call",
-        );
-      if (state.isDynamicHomeOpenCarrier(declaration) && takenByTable()) return true;
-      return answer(answers, declaration, () => carrier(declaration.initializer!, answers));
+      if (homes && state.isDynamicHomeOpenCarrier(declaration) && takenByTable(declaration)) return true;
+      if (visited.has(declaration)) return false;
+      visited.add(declaration);
+      return producesCarrier(declaration.initializer, tableLeaves(visited, homes));
     },
-    // An admitted static answers the carrier, and so does a user function that can return one;
-    // #7335's own-property test on a dynamic home answers a boolean.
-    call: (call) => {
-      if (plan(call)?.kind === "call" || callsCarrierFunction(call, answers)) return true;
-      return state.isOwnPropertyTest(call) ? false : undefined;
-    },
+    // An admitted static answers the carrier; #7335's own-property test on a dynamic home a boolean.
+    call: (call) => (plan(call)?.kind === "call" ? true : state.isOwnPropertyTest(call) ? false : undefined),
   });
 
-  const carrier = (expression: ts.Expression, answers: Answers): boolean =>
-    producesCarrier(expression, tableLeaves(answers));
-  const lowersToCarrier = (expression: ts.Expression) =>
-    callIndexOf(expression.getSourceFile()).callsObject && carrier(expression, new Map());
+  const carrier = (expression: ts.Expression, homes: boolean) =>
+    fileCallsTable(expression.getSourceFile()) && producesCarrier(expression, tableLeaves(new Set(), homes));
+  const lowersToCarrier = (expression: ts.Expression) => carrier(expression, true);
+
+  /**
+   * A table result (a static's answer, or a binding initialised with one) leaves the unit that made
+   * it only where the IR binds a type across a call: returned from a function, or passed to a source
+   * function called by name. Refusing both keeps every user function's parameters and result off the
+   * table, so no call answers a table result.
+   */
+  const escapesUnit = (expression: ts.Expression): boolean => {
+    const parent = expression.parent;
+    const returned =
+      (ts.isReturnStatement(parent) && parent.expression === expression) ||
+      (ts.isArrowFunction(parent) && parent.body === expression);
+    const passed =
+      ts.isCallExpression(parent) &&
+      parent.expression !== expression &&
+      ts.isIdentifier(parent.expression) &&
+      !state.isAmbientBinding(parent.expression) &&
+      !state.isLibOnlyBinding(parent.expression);
+    return (returned || passed) && carrier(expression, false);
+  };
 
   /** A static's value crosses as a carrier, so any carrier qualifies: a dynamic home or parameter too. */
   const isCarrierValue = (value: ts.Expression): boolean => {
-    const leaves = tableLeaves(new Map());
+    const leaves = tableLeaves(new Set(), true);
     return producesCarrier(value, {
       ...leaves,
       binding: (node) =>
@@ -244,7 +239,7 @@ export function createObjectStaticSelector(state: ObjectStaticSelectorState): Ob
     plan,
     isLiteralDefine: (call) => objectStatics.isLiteralDefine(plan(call)),
     lowersToCarrier,
-    tableMayReach: (node) => callIndexOf(node.getSourceFile()).callsObject,
+    tableMayReach: unitCallsTable,
     holdsCarrier,
     compareVerdict: (expr, nullCompare, isUndefined) => {
       const sides = [expr.left, expr.right];
@@ -252,10 +247,13 @@ export function createObjectStaticSelector(state: ObjectStaticSelectorState): Ob
       if (nullCompare) return nullComparisonFolds(expr.operatorToken.kind, "dynamic") ? "folded" : "refused";
       return sides.some(isUndefined) ? "folded" : undefined;
     },
-    chainsOptionallyOnCarrier: (e) =>
-      (ts.isPropertyAccessExpression(e) || ts.isElementAccessExpression(e) || ts.isCallExpression(e)) &&
-      e.questionDotToken !== undefined &&
-      lowersToCarrier(e.expression),
+    admitsCarrierUse: (e, refuse) => {
+      const chained = ts.isPropertyAccessExpression(e) || ts.isElementAccessExpression(e) || ts.isCallExpression(e);
+      if (chained && e.questionDotToken !== undefined && lowersToCarrier(e.expression)) {
+        return refuse("expr-carrier-optional-chain", e);
+      }
+      return !escapesUnit(e) || refuse("expr-carrier-escapes-unit", e);
+    },
     // A carrier goes only into its home; a function local holds one only as its own initializer.
     moduleBindingTakes: (id, value) =>
       state.moduleBindingMatches(id, value) && (holdsCarrier(id) || !lowersToCarrier(value)),

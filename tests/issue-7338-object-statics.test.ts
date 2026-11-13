@@ -85,7 +85,7 @@ const CLAIMED: Record<string, string> = {
   "a non-configurable redefine throws": `var o = {}; Object.defineProperty(o, "p", { value: 1 }); ${THROWS('Object.defineProperty(o, "p", { value: 2 });')}`,
   "a primitive target throws": `${THROWS('Object.defineProperty(true, "foo", {});')} ${THROWS('Object.defineProperty(undefined, "foo", {});')} ${THROWS('Object.defineProperty(5, "foo", {});')}`,
   "a primitive target throws inside a function": `function f() { Object.defineProperty("s", "foo", {}); } ${THROWS("f();")}`,
-  "a parameter target": `function f(t) { Object.defineProperty(t, "q", { value: 5 }); return Object.getOwnPropertyDescriptor(t, "q"); } var o = {}; var d = f(o); if (o.q !== 5 || d.value !== 5) { throw "param"; }`,
+  "a parameter target": `function f(t) { Object.defineProperty(t, "q", { value: 5 }); } var o = {}; f(o); var d = Object.getOwnPropertyDescriptor(o, "q"); if (o.q !== 5 || d.value !== 5) { throw "param"; }`,
   "descriptor of a nullish target throws": `${THROWS('Object.getOwnPropertyDescriptor(undefined, "foo");')} ${THROWS('Object.getOwnPropertyDescriptor(null, "foo");')}`,
   "descriptor of a primitive target": `if (Object.getOwnPropertyDescriptor(true, "foo") !== undefined) { throw "primitive"; }`,
   "names of a nullish target throw": `function f() { Object.getOwnPropertyNames(null); } ${THROWS("f();")} ${THROWS("Object.getOwnPropertyNames(undefined);")}`,
@@ -199,11 +199,15 @@ const VALUE_USES: Record<string, string> = {
   "kind: script var initialised from it": `var o = {}; Object.defineProperty(o, 'p', { value: 4 }); var y = 10; var d = Object.getOwnPropertyDescriptor(o, 'p'); y -= d.value; if (y !== 6) { throw "x"; }`,
   "comma operand compared loosely with null": `var o = {}; if ((0, Object.getOwnPropertyDescriptor(o, 'p')) == null) {} else { throw "x"; }`,
   "update of a local initialised from a field": `function f(o) { var v = Object.getOwnPropertyDescriptor(o, 'p').value; v++; return v; } var o = {}; Object.defineProperty(o, 'p', { value: 4 }); if (f(o) !== 5) { throw "x"; }`,
-  // A table result through a user function, and `?.` on one (#7212 review round 5).
+  // A table result through a user function (refused where it leaves its unit), and `?.` on one (#7212 rounds 5, 6).
   "through a user function: returned, into -=": `function g(o) { return Object.getOwnPropertyDescriptor(o, 'p').value; } var o = {}; Object.defineProperty(o, 'p', { value: 4, writable: true }); var y = 10; y -= g(o); if (y !== 6) { throw "x"; }`,
   "through a user function: returned, local ++": `function g(o) { return Object.getOwnPropertyDescriptor(o, 'p').value; } function f(o) { var v = g(o); v++; return v; } var o = {}; Object.defineProperty(o, 'p', { value: 4, writable: true }); if (f(o) !== 5) { throw "x"; }`,
   "through a user function: returned descriptor, member ++": `function g(o) { return Object.getOwnPropertyDescriptor(o, 'p'); } function f(o) { var d = g(o); d.value++; return d.value; } var o = {}; Object.defineProperty(o, 'p', { value: 4, writable: true }); if (f(o) !== 5) { throw "x"; }`,
-  // (`y -= id(<table result>)` is left out: `id` itself demotes on a typeIdx parity mismatch there, as on main.)
+  // (`y -= id(<table result>)`: the call is refused at select, but `id` itself demotes on a typeIdx parity
+  // mismatch there, as on main; the refusal is the "passed to a source function" row below.)
+  "through a user function: names returned": `function f(x) { return Object.getOwnPropertyNames(x); } var o = {}; Object.defineProperty(o, 'p', { value: 1 }); if (f(o).length !== 1) { throw "x"; }`,
+  "through a user function: names returned from a local": `function f(x) { var n = Object.getOwnPropertyNames(x); return n; } var o = {}; Object.defineProperty(o, 'p', { value: 1 }); if (f(o).length !== 1) { throw "x"; }`,
+  "through a user function: returned from an arrow": `var f = (o) => Object.getOwnPropertyDescriptor(o, 'p'); var o = {}; Object.defineProperty(o, 'p', { value: 1 }); if (f(o).value !== 1) { throw "x"; }`,
   "through a user function: passed through, loose null": `function id(x) { return x; } var o = {}; if (id(Object.getOwnPropertyDescriptor(o, 'p')) == null) {} else { throw "x"; }`,
   "through a user function: passed through, member ++": `function id(x) { return x; } function f(o) { var d = id(Object.getOwnPropertyDescriptor(o, 'p')); d.value++; return d.value; } var o = {}; Object.defineProperty(o, 'p', { value: 4, writable: true }); if (f(o) !== 5) { throw "x"; }`,
   "optional chain on a table result": `function f(o) { return Object.getOwnPropertyDescriptor(o, 'p')?.value; } var o = {}; Object.defineProperty(o, 'p', { value: 4, writable: true }); if (f(o) !== 4) { throw "x"; }`,
@@ -281,6 +285,51 @@ describe("#7338 — Object statics through the dynamic carrier", () => {
       }
     });
   }
+
+  // (#7212 review round 6) A table carrier does not leave its unit through a call boundary: the unit
+  // that returns or passes one is refused, and a function only some other unit passes one keeps main's routing.
+  for (const [name, { source, unit }] of Object.entries({
+    returned: { source: `function g(o) { return Object.getOwnPropertyDescriptor(o, 'p'); } g({});`, unit: "g" },
+    "returned from a local": {
+      source: `function g(o) { var n = Object.getOwnPropertyNames(o); return n; } g({});`,
+      unit: "g",
+    },
+    "passed to a source function": {
+      source: `function sq(x) { return x * x; } function u(o) { return sq(Object.getOwnPropertyDescriptor(o, 'p').value); } u({});`,
+      unit: "u",
+    },
+  })) {
+    it(`refuses a table carrier that leaves its unit: ${name}`, async () => {
+      const ir = await build(source, "standalone");
+      expect(ir.irPostClaimErrors ?? []).toEqual([]);
+      expect(outcome(ir, unit)).toMatchObject({ stage: "select", irBodyEmitted: false });
+      expect(outcome(ir, unit)?.detail).toContain("expr-carrier-escapes-unit");
+    });
+  }
+
+  for (const [name, use] of Object.entries({ "+": "var a = sq(3) + 1;", "++": "var a = sq(3); a++;" })) {
+    it(`keeps a function some other unit passes a table result on main's routing (${name})`, async () => {
+      const program = `function sq(x) { return x * x; } function f() { ${use} return a; } if (f() !== 10) { throw "x"; }`;
+      const tail = ` function u(o) { return sq(Object.getOwnPropertyDescriptor(o, 'p').value); }`;
+      const ir = await build(program + tail, "standalone");
+      expect(ir.irPostClaimErrors ?? []).toEqual([]);
+      expect(outcome(ir, "f")?.irBodyEmitted).toBe(true);
+      expect(outcome(ir, "<module-init>")?.irBodyEmitted).toBe(true);
+      expect(outcome(await build(program, "standalone"), "f")?.irBodyEmitted).toBe(true);
+    });
+  }
+
+  // `Object.keys` is no table static: a file calling only it routes as one without it.
+  it("leaves a file whose only Object call the table does not admit on main's routing", async () => {
+    const program = `var o = { a: 1 }; function g() { o = 5; } g(); if (o !== 5) { throw "x"; }`;
+    const route = (ir: Awaited<ReturnType<typeof build>>) =>
+      (ir.irOutcomes ?? []).filter((row) => row.displayName !== "u");
+    const plain = await build(program, "standalone");
+    const keys = await build(program + ` function u(x) { return Object.keys(x); }`, "standalone");
+    expect(JSON.stringify(route(keys).map((row) => [row.displayName, row.stage, row.detail]))).toBe(
+      JSON.stringify(route(plain).map((row) => [row.displayName, row.stage, row.detail])),
+    );
+  });
 
   it("leaves a shadowed Object to the program's own binding", async () => {
     const source = `var calls = 0; var Object = { defineProperty: function () { calls = calls + 1; } }; var o = {}; Object.defineProperty(o, "p", { value: 3 }); if (calls !== 1 || o.p !== undefined) { throw "shadow"; }`;

@@ -12277,7 +12277,7 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
   const nativeBuffer = phase1NativeBufferVerdict(expr, scope, localClasses);
   if (nativeBuffer !== undefined) return nativeBuffer;
   if (!phase1ScriptVarVecReadAdmitted(expr, scope)) return false;
-  if (objectStaticSelector.chainsOptionallyOnCarrier(expr)) return shapeNo("expr-carrier-optional-chain", expr);
+  if (!objectStaticSelector.admitsCarrierUse(expr, shapeNo)) return false;
   if (
     (expressionTouchesModuleExtern(expr) || expressionTouchesModuleMapGetAlias(expr)) &&
     !moduleExternConsumerIsProven(expr, scope)
