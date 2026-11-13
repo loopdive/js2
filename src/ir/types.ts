@@ -131,6 +131,13 @@ export interface WasmModule {
    * that dereference baked handles only have `mod`.
    */
   strictDroppedHostImports?: { module: string; name: string }[];
+  /**
+   * (#6979) `env` imports registered for an ambient `declare function` the
+   * embedder supplies (user source or a non-ECMAScript lib such as the DOM).
+   * The import manifest gives them the `declared_function` intent, which the
+   * host-import policy classifies as an explicit platform capability.
+   */
+  declaredFunctionImports?: Set<string>;
 }
 
 /** TS-level kind hint for a single export parameter or result (#1700). */

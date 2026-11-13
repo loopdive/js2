@@ -57,10 +57,9 @@ import { ts } from "../ts-api.js";
 import type { Instr, ValType } from "../ir/types.js";
 import { allocLocal } from "./context/locals.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
-import { noJsHost } from "./js-errors.js";
 import { ensureNativeArrayFromIterN } from "./iterator-native.js";
 import { ensureObjectRuntime } from "./object-runtime.js";
-import { compileExpression, elemGetOp, ensureLateImport, flushLateImportShifts, unpackedElemType } from "./shared.js";
+import { compileExpression, elemGetOp, flushLateImportShifts, unpackedElemType } from "./shared.js";
 import {
   buildVecFromExternMaterializer,
   coerceType,
@@ -182,13 +181,6 @@ function prepareSpreadExpansion(ctx: CodegenContext, fctx: FunctionContext, stor
     ensureObjectRuntime(ctx);
     ensureNativeArrayFromIterN(ctx);
     materializerName = "__array_from_iter_n";
-  } else if (!noJsHost(ctx)) {
-    ensureLateImport(ctx, "__extern_length", [{ kind: "externref" }], [{ kind: "f64" }]);
-    ensureLateImport(ctx, "__extern_get_idx", [{ kind: "externref" }, { kind: "f64" }], [{ kind: "externref" }]);
-    // ArgumentListEvaluation uses GetIterator, so a non-callable or missing
-    // @@iterator is a TypeError rather than Array.from's array-like fallback.
-    ensureLateImport(ctx, "__array_from_iter_strict", [{ kind: "externref" }], [{ kind: "externref" }]);
-    materializerName = "__array_from_iter_strict";
   }
   if (materializerName === undefined) return undefined;
   // A ref/ref_null destination element (a nested vec) cannot be produced by the

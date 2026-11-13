@@ -37,7 +37,8 @@ const cases: ReadonlyArray<readonly [string, TargetProfileInput, ReturnType<type
       semanticProviders: "native-first",
       hostValueInterop: "required",
       strictEnvImportGate: true,
-      nativeRegime: false,
+      // (#6979 S7-b) the strict gc build runs on the native regime too
+      nativeRegime: true,
       nativeStringsRequiredByPolicy: true,
     },
   ],
@@ -182,16 +183,16 @@ describe("#4396 target policy normalization", () => {
     );
   });
 
-  it("keeps the #4401 publication contract for an explicit native-first spelling only", async () => {
-    // A user-declared host function is an explicit embedder capability the
-    // classifier cannot name (`unknown`). The default compiles it; only the
-    // explicit native-first contract (#4401) refuses to publish it.
+  it("publishes a user-declared host function under the universal #4401/#6979 gate", async () => {
+    // A user-declared host function is an explicit embedder capability
+    // (`declared_function`, #6979), so the gate — which now applies to every
+    // WasmGC profile — publishes it whether or not native-first is spelled out.
     const source =
       "declare function hostTick(n: number): number;\nexport function run(): number { return hostTick(1); }";
-    const implicit = await compile(source, {});
-    expect(implicit.success, implicit.errors.map((error) => error.message).join("; ")).toBe(true);
-    const explicit = await compile(source, { semanticProviders: "native-first" });
-    expect(explicit.success).toBe(false);
+    for (const options of [{}, { semanticProviders: "native-first" as const }]) {
+      const result = await compile(source, options);
+      expect(result.success, result.errors.map((error) => error.message).join("; ")).toBe(true);
+    }
   });
 
   it("normalizes the internal codegen boolean projection through the same resolver", () => {
@@ -207,9 +208,11 @@ describe("#4396 target policy normalization", () => {
   it("projects IR capability policy without conflating it with JS value interop", () => {
     const strictJs = resolveCompileTargetProfile({ strictNoHostImports: true });
     expect(strictJs.hostValueInterop).toBe("required");
+    // (#6979 S7-b) the strict gc build lowers on the native regime, so the IR
+    // sees standalone provider facts, as for the ambient JS environment.
     expect(projectIrBackendTargetProfile(strictJs, { fast: true })).toEqual({
       backend: "wasmgc",
-      target: "gc",
+      target: "standalone",
       allowHostImports: false,
       fast: true,
     });
@@ -278,7 +281,7 @@ describe("#4396 target policy normalization", () => {
         expect(result.success, result.errors.map((error) => error.message).join("; ")).toBe(true);
       }
       expect(implicit.binary).toEqual(nativeFirst.binary);
-      expect(implicit.hostImportSummary?.byClassification["legacy-semantic"]).toBe(0);
+      expect(implicit.hostImportSummary?.byClassification.unknown).toBe(0);
       expect(implicit.hostImportSummary?.byClassification.unknown).toBe(0);
     }
   });

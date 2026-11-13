@@ -25,9 +25,7 @@ import type { ts } from "../ts-api.js";
 import type { Instr, ValType } from "../ir/types.js";
 import type { CodegenContext, ClosureInfo, FunctionContext } from "./context/types.js";
 import { allocLocal } from "./context/locals.js";
-import { addStringConstantGlobal } from "./registry/imports.js";
 import { buildThrowJsErrorInstrs } from "./js-errors.js";
-import { stringConstantExternrefInstrs } from "./native-strings.js";
 import { ensureObjVecBuilders } from "./object-runtime.js";
 import { coercionInstrs } from "./type-coercion.js";
 import { compileExpression, ensureLateImport, flushLateImportShifts, VOID_RESULT } from "./shared.js";
@@ -269,13 +267,10 @@ export function emitArrayLikeHofArm(
       // sparse-hole concern (that defers `map` to a follow-up slice).
       let arrNewIdx: number | undefined;
       let arrPushIdx: number | undefined;
-      if (ctx.standalone || ctx.wasi) {
+      {
         const builders = ensureObjVecBuilders(ctx);
         arrNewIdx = builders.newIdx;
         arrPushIdx = builders.pushIdx;
-      } else {
-        arrNewIdx = ensureLateImport(ctx, "__js_array_new", [], [{ kind: "externref" }]);
-        arrPushIdx = ensureLateImport(ctx, "__js_array_push", [{ kind: "externref" }, { kind: "externref" }], []);
       }
       if (arrNewIdx === undefined || arrPushIdx === undefined) return undefined;
       flushLateImportShifts(ctx, fctx);
@@ -326,30 +321,12 @@ export function emitArrayLikeHofArm(
       // not this dense array-like walk). Host/gc mode keeps the JS-array builder
       // (it surfaces a real JS Array on the boundary). This removed `map` from
       // `STANDALONE_UNSUPPORTED_ARRAY_LIKE_METHODS` (#2036 S6 step-2, last entry).
-      const nativeBuilder = ctx.standalone || ctx.wasi;
-      let arrNewIdx: number | undefined;
-      let arrPushIdx: number | undefined; // native $ObjVec push (standalone)
-      let arrSetIdx: number | undefined; // host index-keyed set (gc/host)
-      if (nativeBuilder) {
-        const builders = ensureObjVecBuilders(ctx);
-        arrNewIdx = builders.newIdx;
-        arrPushIdx = builders.pushIdx;
-      } else {
-        arrNewIdx = ensureLateImport(ctx, "__js_array_new", [], [{ kind: "externref" }]);
-        arrSetIdx = ensureLateImport(
-          ctx,
-          "__extern_set",
-          [{ kind: "externref" }, { kind: "externref" }, { kind: "externref" }],
-          [],
-        );
-      }
-      // Used for numeric callback results and (host path) array index / length keys.
+      const builders = ensureObjVecBuilders(ctx);
+      const arrNewIdx: number | undefined = builders.newIdx;
+      const arrPushIdx: number | undefined = builders.pushIdx; // native $ObjVec push
+      // Used for numeric callback results.
       const mapBoxIdx = ensureLateImport(ctx, "__box_number", [{ kind: "f64" }], [{ kind: "externref" }]);
-      if (
-        arrNewIdx === undefined ||
-        mapBoxIdx === undefined ||
-        (nativeBuilder ? arrPushIdx === undefined : arrSetIdx === undefined)
-      ) {
+      if (arrNewIdx === undefined || mapBoxIdx === undefined || arrPushIdx === undefined) {
         return undefined;
       }
       flushLateImportShifts(ctx, fctx);
@@ -373,36 +350,13 @@ export function emitArrayLikeHofArm(
                 : []; // externref: already right type
       fctx.body.push({ op: "call", funcIdx: arrNewIdx });
       fctx.body.push({ op: "local.set", index: resultTmp });
-      // Host JS-array path needs an explicit `.length` set (the $ObjVec builder
-      // tracks length intrinsically via push, so the native path skips it).
-      if (!nativeBuilder) {
-        addStringConstantGlobal(ctx, "length");
-        fctx.body.push(
-          { op: "local.get", index: resultTmp },
-          ...stringConstantExternrefInstrs(ctx, "length"),
-          { op: "local.get", index: lenTmp },
-          { op: "f64.convert_i32_s" },
-          { op: "call", funcIdx: mapBoxIdx },
-          { op: "call", funcIdx: arrSetIdx! },
-        );
-      }
-      // Per-element store: native → `__objvec_push(result, mapped)` (sequential =
-      // index-correct for the dense walk); host → `__extern_set(result, box(i),
-      // mapped)` (index-keyed).
-      const storeMapped: Instr[] = nativeBuilder
-        ? [
-            { op: "local.get", index: resultTmp },
-            { op: "local.get", index: mappedTmp },
-            { op: "call", funcIdx: arrPushIdx! },
-          ]
-        : [
-            { op: "local.get", index: resultTmp },
-            { op: "local.get", index: iTmp },
-            { op: "f64.convert_i32_s" },
-            { op: "call", funcIdx: mapBoxIdx },
-            { op: "local.get", index: mappedTmp },
-            { op: "call", funcIdx: arrSetIdx! },
-          ];
+      // Per-element store: `__objvec_push(result, mapped)` (sequential =
+      // index-correct for the dense walk).
+      const storeMapped: Instr[] = [
+        { op: "local.get", index: resultTmp },
+        { op: "local.get", index: mappedTmp },
+        { op: "call", funcIdx: arrPushIdx },
+      ];
       fctx.body.push({
         op: "block",
         blockType: { kind: "empty" },
@@ -412,7 +366,12 @@ export function emitArrayLikeHofArm(
             blockType: { kind: "empty" },
             body: [
               ...exitIfDone,
-              ...(nativeBuilder ? positionalMapGate(ctx, hasIdxCheck, resultTmp, arrPushIdx!) : gatedBody)([
+              ...positionalMapGate(
+                ctx,
+                hasIdxCheck,
+                resultTmp,
+                arrPushIdx,
+              )([
                 ...loadElem,
                 ...withThisInstalled(callClosure),
                 ...mapReturnToExternref,

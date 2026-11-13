@@ -2,7 +2,6 @@
 // Direct public-API unit contracts. Injected conversion services do not establish
 // compiler carrier provenance, full IR equivalence or parent #5748 acceptance.
 import { randomUUID, webcrypto } from "node:crypto";
-import { runInNewContext } from "node:vm";
 import { describe, expect, it } from "vitest";
 import {
   createBoundaryObjectAdapter,
@@ -10,15 +9,9 @@ import {
   type BoundaryObjectOperation,
 } from "../src/runtime/boundary-object-adapter.js";
 import {
-  isCompatibilitySemanticIntent,
-  resolveCompatibilitySemanticImport,
-  type CompatibilitySemanticAdapterContext,
-} from "../src/runtime/compatibility-semantic-adapter.js";
-import {
   resolvePlatformCapabilityImport,
   type PlatformCapabilityAdapterContext,
 } from "../src/runtime/platform-capability-adapter.js";
-import type { ImportIntent } from "../src/index.js";
 
 function exportView(): Record<string, Function> {
   const module = new WebAssembly.Module(new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0]));
@@ -284,223 +277,10 @@ describe("#5748 unary adapter admission preserves actual effects", () => {
   });
 });
 
-const numericOperations = [
-  [0, "+", 9],
-  [1, "-", 3],
-  [2, "*", 18],
-  [3, "/", 2],
-  [4, "%", 0],
-  [5, "**", 216],
-  [6, "&", 2],
-  [7, "|", 7],
-  [8, "^", 5],
-  [9, "<<", 48],
-  [10, ">>", 0],
-  [11, ">>>", 0],
-] as const;
-const primitiveContext: CompatibilitySemanticAdapterContext = {
-  strictEqual: (left, right) => left === right,
-  isWasmStruct: () => false,
-  toPrimitive: () => {
-    throw new Error("primitive operands must not convert");
-  },
-  createProxy: (target, handler) => new Proxy(target as object, handler as ProxyHandler<object>),
-};
-function bigintCall(context = primitiveContext): (...args: any[]) => any {
-  const call = resolveCompatibilitySemanticImport({ type: "host_bigint_binop" }, context);
-  expect(typeof call).toBe("function");
-  return call as (...args: any[]) => any;
-}
-
-describe("#5748 compatibility operator dispatch", () => {
-  it.each(numericOperations)("number opcode %s retains actual JS %s", (opcode, operator, expected) => {
-    const oracle = runInNewContext(`left ${operator} right`, { left: 6, right: 3 });
-    expect(oracle).toBe(expected);
-    expect(bigintCall()(opcode, 6, 3)).toBe(oracle);
-  });
-  it.each(numericOperations)("BigInt opcode %s retains actual JS %s or TypeError", (opcode, operator) => {
-    const call = bigintCall();
-    if (opcode === 11) {
-      const oracle = capture(() => runInNewContext(`left ${operator} right`, { left: 6n, right: 3n }));
-      expect(oracle.threw).toBe(true);
-      expect((oracle.value as Error).name).toBe("TypeError");
-      const actual = capture(() => call(opcode, 6n, 3n));
-      expect(actual.threw).toBe(true);
-      expect(actual.value).toBeInstanceOf(TypeError);
-    } else {
-      const oracle = runInNewContext(`left ${operator} right`, { left: 6n, right: 3n });
-      expect(typeof oracle).toBe("bigint");
-      expect(call(opcode, 6n, 3n)).toBe(oracle);
-    }
-  });
-  it.each(numericOperations)("mixed operands retain native TypeError for opcode %s", (opcode, operator) => {
-    const call = bigintCall();
-    const oracle = capture(() => runInNewContext(`left ${operator} right`, { left: 6n, right: 3 }));
-    expect(oracle.threw).toBe(true);
-    expect((oracle.value as Error).name).toBe("TypeError");
-    const actual = capture(() => call(opcode, 6n, 3));
-    expect(actual.threw).toBe(true);
-    expect(actual.value).toBeInstanceOf(TypeError);
-  });
-
-  const coercionSentinel = new Error("opcode must not coerce");
-  const invalidOpcodes = [
-    -1,
-    12,
-    NaN,
-    Infinity,
-    -Infinity,
-    0.5,
-    "0",
-    {
-      valueOf: () => {
-        throw coercionSentinel;
-      },
-    },
-    Symbol("opcode"),
-    0n,
-  ];
-  it.each(invalidOpcodes.map((opcode, index) => [index, opcode] as const))(
-    "invalid opcode case %s converts both operands before the original default diagnostic",
-    (_index, opcode) => {
-      const left = {};
-      const right = {};
-      const events: string[] = [];
-      const context: CompatibilitySemanticAdapterContext = {
-        ...primitiveContext,
-        // Trusted service injection tests callback ordering, not Wasm ownership.
-        isWasmStruct: (value) => value === left || value === right,
-        toPrimitive: (value, hint) => {
-          events.push(`${value === left ? "L" : "R"}:${hint}`);
-          return value === left ? 6 : 3;
-        },
-      };
-      const call = bigintCall(context);
-      const actual = capture(() => call(opcode, left, right));
-      expect(actual.threw).toBe(true);
-      expect(actual.value).toBeInstanceOf(TypeError);
-      expect((actual.value as Error).message).toBe("Cannot mix BigInt and other types, use explicit conversions");
-      expect(events).toEqual(["L:number", "R:number"]);
-    },
-  );
-  it("negative zero retains addition and the default hint", () => {
-    const left = {};
-    const right = {};
-    const hints: string[] = [];
-    const call = bigintCall({
-      ...primitiveContext,
-      isWasmStruct: () => true,
-      toPrimitive: (value, hint) => {
-        hints.push(hint);
-        return value === left ? 6 : 3;
-      },
-    });
-    expect(call(-0, left, right)).toBe(9);
-    expect(hints).toEqual(["default", "default"]);
-  });
-  it.each(["left", "right"] as const)("retains %s conversion failure before invalid-opcode handling", (side) => {
-    const left = {};
-    const right = {};
-    const sentinel = new Error(side);
-    const events: string[] = [];
-    const call = bigintCall({
-      ...primitiveContext,
-      isWasmStruct: () => true,
-      toPrimitive: (value) => {
-        const name = value === left ? "left" : "right";
-        events.push(name);
-        if (name === side) throw sentinel;
-        return 6;
-      },
-    });
-    const actual = capture(() => call(12, left, right));
-    expect(actual.threw).toBe(true);
-    expect(actual.value).toBe(sentinel);
-    expect(events).toEqual(side === "left" ? ["left"] : ["left", "right"]);
-  });
-  it("prototype-added invalid numeric slots are never admitted", () => {
-    const originalMinus = Object.getOwnPropertyDescriptor(Array.prototype, "-1");
-    const originalTwelve = Object.getOwnPropertyDescriptor(Array.prototype, "12");
-    const poison = new Error("invalid table slot was read");
-    const call = bigintCall();
-    let minus: ReturnType<typeof capture>;
-    let twelve: ReturnType<typeof capture>;
-    let valid: unknown;
-    try {
-      Object.defineProperty(Array.prototype, "-1", {
-        configurable: true,
-        get: () => {
-          throw poison;
-        },
-      });
-      Object.defineProperty(Array.prototype, "12", {
-        configurable: true,
-        get: () => {
-          throw poison;
-        },
-      });
-      minus = capture(() => call(-1, 6, 3));
-      twelve = capture(() => call(12, 6, 3));
-      valid = call(0, 6, 3);
-    } finally {
-      if (originalMinus) Object.defineProperty(Array.prototype, "-1", originalMinus);
-      else Reflect.deleteProperty(Array.prototype, "-1");
-      if (originalTwelve) Object.defineProperty(Array.prototype, "12", originalTwelve);
-      else Reflect.deleteProperty(Array.prototype, "12");
-    }
-    expect(valid).toBe(9);
-    for (const outcome of [minus!, twelve!]) {
-      expect(outcome.threw).toBe(true);
-      expect(outcome.value).toBeInstanceOf(TypeError);
-      expect((outcome.value as Error).message).toBe("Cannot mix BigInt and other types, use explicit conversions");
-    }
-  });
-});
-
-const semanticTypes = [
-  "string_literal",
-  "await",
-  "host_eq",
-  "host_loose_eq",
-  "host_add",
-  "host_bigint_binop",
-  "host_compare",
-  "same_value_zero",
-  "date_new",
-  "date_method",
-  "proxy_create",
-] as const;
-describe("#5748 semantic intent classification", () => {
-  it.each(semanticTypes)("retains %s membership", (type) => {
-    expect(isCompatibilitySemanticIntent({ type } as ImportIntent)).toBe(true);
-  });
-  it("reads the type getter exactly once", () => {
-    let reads = 0;
-    const intent = Object.defineProperty({}, "type", {
-      get: () => {
-        reads++;
-        return "await";
-      },
-    });
-    expect(isCompatibilitySemanticIntent(intent as ImportIntent)).toBe(true);
-    expect(reads).toBe(1);
-  });
-  const foreignTypes = [
-    undefined,
-    null,
-    1,
-    {
-      toString: () => {
-        throw new Error("must not coerce");
-      },
-    },
-    Symbol("type"),
-  ];
-  it.each(foreignTypes.map((type, index) => [index, type] as const))(
-    "rejects foreign runtime type case %s without coercion",
-    (_index, type) => expect(isCompatibilitySemanticIntent({ type } as unknown as ImportIntent)).toBe(false),
-  );
-});
+// (#6979 S7-b) The "compatibility operator dispatch" and "semantic intent
+// classification" contracts covered the host_* / string_literal / await /
+// proxy_create compatibility providers, deleted with the host-semantic lane.
+// `resolveCompatibilitySemanticImport` now binds only the `date` accelerator.
 
 function platformContext(deps?: Record<string, any>): PlatformCapabilityAdapterContext {
   return { deps, getNodeRequire: () => undefined, wrapWasmClosure: () => null, wrapUnknownCallable: (value) => value };

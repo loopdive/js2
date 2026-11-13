@@ -100,8 +100,6 @@ import { genericCallbackResultDeclaration } from "./generic-callback-result.js";
 import { genericStructFactorySourceResultAbi } from "./generic-struct-factory.js";
 import { noJsHost } from "./js-errors.js";
 import {
-  addArrayIteratorImports,
-  addForInImports,
   addGeneratorImports,
   addIteratorImports,
   addStringImports,

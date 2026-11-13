@@ -75,7 +75,6 @@ import {
 import { parameterMayBeOmitted } from "../declarations.js";
 import { emitStringExternResultFlatten, emitStringRefResultFlatten } from "../string-materialize.js";
 import { compileStringLiteral, emitBoolToString } from "../string-ops.js";
-import { usesNativeNumberFormat } from "../number-format-native.js";
 import { emitSymbolToString } from "../symbol-native.js";
 import { resolveGlobalParseBuiltin } from "../global-builtin-resolution.js";
 import { resolveBuiltinStaticBindingAlias } from "../builtin-static-globals.js";
@@ -124,7 +123,6 @@ import { resolveDefaultExpressionImportGlobal } from "../default-expression-impo
 import { emitTdzCheckAtGlobal } from "../statements/tdz.js";
 import { buildThrowJsErrorInstrs } from "../js-errors.js";
 import { tryEmitUndeclaredCalleeReferenceError } from "./undeclared-callee.js"; // undeclared-identifier call → ReferenceError
-import { tryEmitLinkedProviderFreeGlobalCall } from "./linked-free-global-call.js"; // (#6492 r9) provider free callee → live realm lookup
 import { compileInternalCallArgument } from "./internal-call-argument.js";
 import { isSloppyImplicitGlobalBinding } from "./implicit-global-binding.js"; // (#3966) callee stored on the realm global
 import { tryEmitNullishIdentifierCalleeTypeError } from "./stored-member-closure-call.js"; // (#4640 D1)
@@ -138,16 +136,10 @@ import { tryCompileNodeBuiltinMemberCall } from "../host-method-args.js"; // (#6
 import { isModuleInitChunkFunctionContext } from "../module-init-chunks.js";
 import { paramUndefinedTypeIsDefaultArtifact } from "../destructuring-params.js";
 import {
-  calleeIsCapabilityCtorParam,
-  calleeIsPromiseExecutorParam,
-  calleeIsLinkedProviderParam,
-  calleeMayBeHostCallable,
   appendForwardedOptionalArgcOverride,
   compileCallExpression,
   emitBareCallReceiverReset,
   ensureFuncValueWrappersRegistered,
-  emitBoundFunctionCall,
-  emitDynamicSpreadCall,
   PATH_BASED_FS_FNS,
   resolveClosureInfoFromLocal,
   tryEmitArrayToStringNative,
@@ -272,7 +264,7 @@ function tryEmitGenericIdentityResult(
  * the same operation now agree on their result type.
  */
 function emitStringBuiltinNumberResult(ctx: CodegenContext, fctx: FunctionContext): ValType {
-  if (ctx.nativeStrings && ctx.nativeStrTypeIdx >= 0 && ctx.anyStrTypeIdx >= 0 && usesNativeNumberFormat(ctx)) {
+  if (ctx.nativeStrings && ctx.nativeStrTypeIdx >= 0 && ctx.anyStrTypeIdx >= 0) {
     fctx.body.push({ op: "any.convert_extern" });
     fctx.body.push({ op: "ref.cast", typeIdx: ctx.anyStrTypeIdx });
     return { kind: "ref", typeIdx: ctx.anyStrTypeIdx };
@@ -1935,24 +1927,6 @@ function compileBoundIdentifierCall(
           return emitRuntimeEvalInterpretedCallableAdapter(ctx, fctx);
         }
       }
-      // (#1528/#56) Promise-combinator executor params are host functions, so
-      // their narrow capability-constructor lane also routes via Reflect.apply.
-      if (isKnownVariable && !ctx.standalone && !noJsHost(ctx) && calleeIsCapabilityCtorParam(ctx, expr.expression)) {
-        const hostCall = emitBoundFunctionCall(ctx, fctx, expr);
-        if (hostCall !== null) return hostCall;
-      }
-
-      // A dynamically stored callable invoked with `fn(...args)` must expand
-      // the Wasm rest vector before crossing into the JS host.  The typed
-      // closure-dispatch ladder has no runtime-arity representation and would
-      // otherwise pass the vector itself as argument zero (Stylelint's
-      // ruleMessages produced `"baz,2,hoohah"` this way).  The helper retains
-      // the callee identity and invokes either a Wasm closure or a host
-      // function through the shared __call_function adapter.
-      if (isKnownVariable && hasSpreadArg && !noJsHost(ctx)) {
-        const spreadCall = emitDynamicSpreadCall(ctx, fctx, expr, expectedType);
-        if (spreadCall !== null) return spreadCall;
-      }
       // (#6646, #5383 S68) The HOST-FREE twin of the arm immediately above.
       // Its header claimed the standalone lane "retains its native ObjVec /
       // call_ref lowering, where the vector … can be expanded without a host
@@ -2972,10 +2946,10 @@ function compileBoundIdentifierCall(
           // variable (acorn's `var hasOwn = Object.hasOwn || function(…){…}`),
           // a bound function, a closure with a foreign struct layout, or the
           // standalone runtime-eval callback marker (`var alias = eval`). The
-          // struct.get below would trap "dereferencing a null pointer". Host
-          // mode routes through `__call_function`; standalone/WASI routes
+          // struct.get below would trap "dereferencing a null pointer". It routes
           // through the native `__apply_closure` classifier, which owns the
-          // structurally canonical runtime-eval callback arm.
+          // structurally canonical runtime-eval callback arm (the host
+          // `__call_function` arm is retired, #6979).
           // Eligibility excludes i64/v128-typed params/returns (no boxing rule).
           const boxableKind = (t: ValType | null): boolean =>
             t === null ||
@@ -2984,82 +2958,25 @@ function compileBoundIdentifierCall(
             t.kind === "i32" ||
             t.kind === "ref" ||
             t.kind === "ref_null";
-          const hostCallFallback =
-            rawCalleeLocal !== undefined &&
-            !ctx.standalone &&
-            !ctx.wasi &&
-            boxableKind(expectedReturn) &&
-            matchedClosureInfo.paramTypes.every((t) => boxableKind(t)) &&
-            // (#1941) Only emit the host-call arm for callees that can actually
-            // be a foreign (non-wasm-closure) callable — a JS variable holding a
-            // host builtin (`Object.hasOwn || fn`). Pure local closures /
-            // function params are always wrapped into the closure struct, so the
-            // arm would be dead code and only serve to pull host imports
-            // (__js_array_new/…) into otherwise self-contained modules.
-            // (#2028) ALSO emit it for a Promise-executor `resolve`/`reject`
-            // parameter — those arrive as host JS functions and must dispatch
-            // through __call_function, not the closure-struct call_ref path
-            // (which traps on the null cast). Narrowly gated to Promise-executor
-            // params so the #1941 dual-mode guarantee for ordinary callable
-            // params is preserved.
-            (calleeMayBeHostCallable(ctx, expr.expression) ||
-              calleeIsPromiseExecutorParam(ctx, expr.expression) ||
-              // (#6490) A callable param of a separately-linked PROVIDER can
-              // hold a consumer-module closure, whose struct belongs to the
-              // consumer's type group; the guarded cast here nulls and the
-              // dispatch traps un-catchably. Linker-only flag, so ordinary
-              // single-module compiles are byte-identical.
-              calleeIsLinkedProviderParam(ctx, expr.expression) ||
-              // Captures explicitly marked as host-bound callback values stay
-              // externref by design. They may be real JS functions after a
-              // compiled method crosses the host boundary (Jest's Prompt
-              // callbacks are this shape), so retain the raw value and use
-              // the callable host arm when the Wasm-closure cast misses.
-              fctx.captureExternrefNames?.has(funcName) === true);
           const runtimeApplyFallback =
             rawCalleeLocal !== undefined &&
             (ctx.standalone || ctx.wasi) &&
             ctx.runtimeEvalCallableBoundaryEnabled === true &&
             boxableKind(expectedReturn) &&
             matchedClosureInfo.paramTypes.every((t) => boxableKind(t));
-          // NB: capability-ctor `executor` params (#1528/#56 class-ctor arm) are
-          // UNTYPED (`any`, no call signatures) so they never reach this
-          // callable-param dispatch — they are routed earlier through the
-          // `__call_function` host helper (see the calleeIsCapabilityCtorParam
-          // early-return alongside the bound-function path above).
 
           let fallbackInstrs: Instr[] | null = null;
           let dispatchOuterBody: Instr[] | null = null;
-          if (hostCallFallback || runtimeApplyFallback) {
+          if (runtimeApplyFallback) {
             // Ensure all fallback imports BEFORE detaching buffers so the index
             // shifts land while every buffer is reachable by the shifters.
             let arrNew: number | undefined;
             let arrPush: number | undefined;
             let callFn: number | undefined;
-            if (hostCallFallback) {
-              const arrNewIdx = ensureLateImport(ctx, "__js_array_new", [], [{ kind: "externref" }]);
-              const arrPushIdx = ensureLateImport(
-                ctx,
-                "__js_array_push",
-                [{ kind: "externref" }, { kind: "externref" }],
-                [],
-              );
-              const callFnIdx = ensureLateImport(
-                ctx,
-                "__call_function",
-                [{ kind: "externref" }, { kind: "externref" }, { kind: "externref" }],
-                [{ kind: "externref" }],
-              );
-              flushLateImportShifts(ctx, fctx);
-              arrNew = ctx.funcMap.get("__js_array_new") ?? arrNewIdx;
-              arrPush = ctx.funcMap.get("__js_array_push") ?? arrPushIdx;
-              callFn = ctx.funcMap.get("__call_function") ?? callFnIdx;
-            } else {
-              const builders = ensureObjVecBuilders(ctx);
-              arrNew = builders.newIdx;
-              arrPush = builders.pushIdx;
-              callFn = reserveApplyClosure(ctx);
-            }
+            const builders = ensureObjVecBuilders(ctx);
+            arrNew = builders.newIdx;
+            arrPush = builders.pushIdx;
+            callFn = reserveApplyClosure(ctx);
             if (arrNew !== undefined && arrPush !== undefined && callFn !== undefined) {
               // Build the fallback arm in a detached buffer parked in savedBodies
               // (late-import/global shifters walk savedBodies — #1712 blocker 1).
@@ -3497,7 +3414,7 @@ function compileBoundIdentifierCall(
           // (#1712/#2928) Assemble the foreign-callable fallback split: the funcref
           // dispatch emitted above went into a detached buffer; wrap both arms
           // in an `if` on "cast failed but raw callee non-null".
-          if ((hostCallFallback || runtimeApplyFallback) && fallbackInstrs && dispatchOuterBody) {
+          if (runtimeApplyFallback && fallbackInstrs && dispatchOuterBody) {
             const dispatchInstrs = fctx.body;
             fctx.body = dispatchOuterBody;
             fctx.savedBodies.pop(); // fallbackInstrs
@@ -3628,18 +3545,6 @@ function compileBoundIdentifierCall(
           fctx.body.push({ op: "call", funcIdx: resolvedBridgeIdx });
           return { kind: "externref" };
         }
-      }
-
-      // (#6492 round 9) A linked PROVIDER resolves a free callee through the
-      // realm's global object FIRST, and only throws when the property is
-      // genuinely absent — §9.1.1.4, and the shape the test262 harness needs
-      // for `$DONE(err)`. Declines for every non-provider unit, so the
-      // ReferenceError arm below is unchanged everywhere else. Must come
-      // before that arm, which is unconditional once it decides the name is
-      // undeclared.
-      if (declaration === undefined && !implicitCallee && !isRuntimeEvalGlobal) {
-        const freeGlobal = tryEmitLinkedProviderFreeGlobalCall(ctx, fctx, expr, funcName);
-        if (freeGlobal !== undefined) return freeGlobal;
       }
 
       // §6.2.5.5 GetValue on an unresolvable Reference — both lanes. See
