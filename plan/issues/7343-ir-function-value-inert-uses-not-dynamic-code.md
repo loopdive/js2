@@ -160,9 +160,10 @@ Code quality:
 
 ## S1 result (2026-11-13)
 
-Built as planned, with the differences below. Measured against main
-`e2eae68fc5` (the branch base), standalone, original harness, one process at
-a time.
+Built as planned, with the differences below. Measured with the branch
+merged with main `34e285a3f4` (after #7338) and that tree as the base,
+standalone, original harness, one process at a time. The numbers are the
+same as against the branch base `e2eae68fc5`.
 
 Population: the 249 ES5 files of `es5-map-1111` that are not IR-only and
 whose test body mentions `Function` outside a call or `new`.
