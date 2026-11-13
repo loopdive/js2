@@ -341,9 +341,9 @@ Both slices landed together. Measured by real compile (no stubs) over the
 2,600-file set plus the 157 files that were already IR-only on main and use a
 table static, a stored alias or propertyHelper (2,757 files), standalone,
 original harness, `JS2WASM_IR_SHAPE_DIAG=1 JS2WASM_IR_MODULE_INIT_ALL_REJECTS=1`,
-against main. Last measured after review round 6, against main `34ce67984a`'s
-`src/` (unchanged through `66cac1d835`); the same numbers as against
-`af39ceaf08` and `d9dd218bbf` before.
+against main. Last measured after review round 6, with the branch merged
+with main `58a005450a` and that commit's tree as the base; the same numbers
+as against `34ce67984a`, `af39ceaf08` and `d9dd218bbf` before.
 
 | | files |
 |---|---|
