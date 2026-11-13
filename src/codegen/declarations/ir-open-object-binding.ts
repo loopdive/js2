@@ -30,9 +30,16 @@ function irOpenObjectBinding(ctx: CodegenContext, decl: ts.VariableDeclaration):
   );
 }
 
-/** The selector's `isOpenObjectBinding` option: present only where the IR lowers an open carrier. */
+/**
+ * The selector's `isOpenObjectBinding` option, and (#7340) the lane fact
+ * `dynamicHomeCarrierLane` as its own option: present only where the IR lowers
+ * an open carrier.
+ */
 export function irOpenObjectSelectionOption(ctx: CodegenContext): {
   readonly isOpenObjectBinding?: (decl: ts.VariableDeclaration) => boolean;
+  readonly dynamicHomeCarrierLane?: boolean;
 } {
-  return irOpenObjectCarrierAvailable(ctx) ? { isOpenObjectBinding: (decl) => irOpenObjectBinding(ctx, decl) } : {};
+  return irOpenObjectCarrierAvailable(ctx)
+    ? { isOpenObjectBinding: (decl) => irOpenObjectBinding(ctx, decl), dynamicHomeCarrierLane: true }
+    : {};
 }

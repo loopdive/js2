@@ -431,6 +431,135 @@ Code quality:
   to read; both call the plan function.
 - No loc or func budget grant. `check:dead-exports` clean.
 
+## S1 — implementation notes (2026-11-13, branch `claude/7340-ir-primitive-wrappers`)
+
+S2 and S3 are not started; the issue stays `in-progress`.
+
+### What was built
+
+- **`src/ir/wrapper-construction.ts`** owns the lever. It holds:
+  - the three-row table;
+  - the one recognizer `ambientWrapperRow` / `wrapperConstruction`;
+  - the position, `wrapperConsumer`;
+  - the store admission, `wrapperStoreRefusal`;
+  - the lowering, `emitWrapperConstruction` / `boxWrapper`;
+  - the one `__to_primitive` spelling, `emitToPrimitive`.
+- **The argument rule** `wrapperArgumentAdmissible(own, family)` is in
+  `analysis/operand-admissibility.ts`. The selector asks it over its proven
+  family (`admissibleArgument`); from-ast asks it over the family it lowered.
+- **Duplicates removed:**
+  - select.ts's recognizer and operand rule now call the module;
+  - from-ast's `primitiveWrapperConstructorName` is gone;
+  - the lowering's argument conversion and native call moved to the module;
+  - the unary numeric route and `freshWrapperToDynamic` share
+    `emitToPrimitive`.
+- **Sizes:** `select.ts` net 0 lines; `from-ast.ts` net −32. No LOC or
+  function-budget grant.
+- **The lane is its own selection option.** `dynamicHomeCarrierLane` is set
+  in `irOpenObjectSelectionOption` beside `isOpenObjectBinding` (raw
+  standalone only, #7335 finding 5), plus the two capabilities by name. The
+  JS environment and WASI never admit the store.
+
+### Deviations from the plan, and why
+
+1. **The store also proves the var's uses.** Hard rule: every position a
+   wrapper reaches is claimed and correct, or refused at select — never
+   claimed and then withdrawn. The plan admitted the store and let every use
+   take the dynamic arms. Measured on a 293-cell position matrix (4 rows ×
+   73 positions, each against node), several arms withdraw after the claim
+   or answer wrong.
+
+   So `everyUseIsServed` refuses the store (`expr-new-wrapper-use`) unless
+   every reference to the name, anywhere in the file, is on an allow-list:
+   - a store into it;
+   - a binary operand, except a loose comparison with `null`;
+   - a prefix-operator or `typeof` operand;
+   - a condition;
+   - a named member read that is not called and whose value is not stored
+     into a binding.
+
+   Refused (each pinned in `tests/issue-7340.test.ts`):
+
+   | use | reason |
+   |---|---|
+   | element read | `s[0]` of a String wrapper answers wrong |
+   | `void w` | withdrawn: undefined-compare on f64 |
+   | `w == null` | withdrawn: bare null |
+   | `switch (w)` | withdrawn: switch discriminant |
+   | `var n = w.length` | withdrawn: typed global initializer |
+   | a method call, call argument, alias, template | hands the object on |
+   | `for…in`, `in`, `instanceof`, `delete` | not served |
+
+2. **The realm check is stricter for the store than for the old operand
+   position.** The store requires `isUnshadowedLibBinding` (lib-only, nothing
+   in the file declares the name, a parameter included). It also requires that
+   no source write of the name exists (`String = f`), and no
+   `eval` / `Function` / `with`.
+
+   The ToPrimitive-operand position keeps main's checker-identity test, so no
+   unit main lowers is lost. Main's operand path accepts a script's
+   `function String` (the checker reports lib declarations only); that
+   pre-existing gap is noted, not changed.
+3. **Yield.** The 28 S1 files of the plan gain 19, not 26:
+   - 7 `built-ins/String/15.5.5.5.2-*` files read `s[i]`. The element read is
+     refused (wrong answer, above).
+   - `void/S11.4.2_A4_T{1,2}` are refused (`void`). The plan also did not gain
+     these two.
+4. **No `expr-new-wrapper-position` arm.** The selector applies the lever only
+   to a construction in store position (`storedWrapperConstruction`). Any
+   other construction keeps main's arm, e.g. `expr-new-ctor-unknown` for an
+   operand `new String()`. `tests/issue-7106-lever-sr.test.ts` pins that arm.
+   A first cut refused those as `expr-new-wrapper-position`. They were still
+   refused, but the arm name changed, and that test caught it.
+
+### Measured (standalone unless named; base `origin/main` `64752e92aa`, 2026-11-13)
+
+- **The 873-file population:**
+  - 19 files become IR-only, 0 are lost, and there are 0 post-claim errors.
+  - 20 files changed unit routing: the 19, plus 1 that gains a unit but not
+    the whole file. All 20 pass on both trees
+    (`run-test262-paths.mts --standalone`).
+  - The 19:
+    - `built-ins/String/S15.5.2.1_A1_T3`;
+    - `grouping/S11.1.6_A3_T{1,2}`;
+    - the eight postfix/prefix increment and decrement `A3_T{1,2}` files;
+    - `statements/for/12.6.3_2-3-a-ii-{2,4,5,6,7,8,9,10}`.
+- **IR-only on main:** a seeded sample of 500 of the 1,505 files
+  (census 2026-11-11). Routing is identical, 497 IR-only on both trees, none
+  lost.
+- **Wrapper-free inputs:** unit routing is identical in all of them, 786 from
+  the population and 431 of the sample.
+- **Unrelated wrapper:** 150 wrapper-free files with an appended never-called
+  `function __unrelated7340() { var q = new Number(1); return q; }`. Routing
+  of every original unit equals main's.
+- **JS environment (default target):** every third population file (291) is
+  byte-identical.
+- **Position matrix:** 4 rows × up to 73 positions = 293 cells, each against
+  node.
+  - On main, 0 are IR-claimed. On the branch, 133 are claimed and all 133
+    pass, with 0 post-claim errors.
+  - Claimed positions: arithmetic, relational and bitwise operands; `+`;
+    `===` / `!==` / `==` / `!=` against a primitive, `undefined`, itself or
+    another wrapper; unary `-` / `+`; `if (w)`; `typeof` / `.length` /
+    `.constructor` / `.toString` / `.valueOf` reads compared strictly; a
+    member store then read; `w++` / `w--` then compare; a top-level function
+    reading the var; reassignment.
+  - Every other position is refused at select.
+  - 2 cells fail, `new String` under `switch`. They are legacy on both trees
+    and fail on main too.
+
+### Fold after #7212/#7214
+
+- #7212's `producesCarrier` / `lowersToCarrier` and #7214's
+  `emitOpenCarrierObject` / `admittedOpenCarrierHome` answer "is this a
+  carrier value / home" for objects. `wrapperConsumer` +
+  `wrapperStoreRefusal`'s home test are the wrapper's version: fold them into
+  that definition once both land.
+- #7214's refusals `expr-carrier-loose-null` and `switch-disc-carrier`, and
+  its void rule, are the general form of this module's `isLooseNullTest`,
+  `switch` and `void` exclusions. Once they refuse at select for any carrier,
+  those exclusions become redundant and should go.
+
 ## Risks and unverified assumptions
 
 - **gc byte-identity was not measured.** The prototype has no lane gate. See

@@ -192,6 +192,7 @@ import { matchRegExpCarrierCall, staticRegExpPair } from "../shared/regexp-stati
 import { regExpMatchReadValueAdmitted, regExpMatchUseAdmitted } from "./regexp-match-uses.js";
 import type { IrFallbackReason } from "../shared/contracts/ir-preparation-failure.js";
 import { plannedClosureOperandRefusal } from "./select-planned-closure-operands.js";
+import * as wrapper from "./wrapper-construction.js";
 import {
   staticStringMethodArgument,
   staticStringNumber,
@@ -892,6 +893,8 @@ export interface IrSelectionOptions extends IrAsyncSelectionOptions {
    * externref slot with no widened struct? Absent → no open-carrier literal.
    */
   readonly isOpenObjectBinding?: (decl: ts.VariableDeclaration) => boolean;
+  /** (#7340) The lane runs #7280's dynamic-home carrier arms (raw standalone). Absent → it does not. */
+  readonly dynamicHomeCarrierLane?: boolean;
   /**
    * The backend that builds the selection (`IrBackendTargetProfile.backend`):
    * a string method is claimed only where its plan exists. Absent: WasmGC.
@@ -9368,9 +9371,11 @@ function ambientTypeofIdentifierTag(
   return tag;
 }
 
+/** The selector's binding facts for the wrapper recognizer (`wrapper-construction.ts`). */
+const WRAPPER_AMBIENCE = { isAmbient: selectorSeesAmbientBinding, isAmbientString: selectorSeesAmbientStringBinding };
+
 function selectorSeesAmbientWrapperConstructor(node: ts.Identifier): boolean {
-  if (node.text !== "Number" && node.text !== "String" && node.text !== "Boolean") return false;
-  return node.text === "String" ? selectorSeesAmbientStringBinding(node) : selectorSeesAmbientBinding(node);
+  return wrapper.ambientWrapperRow(node, WRAPPER_AMBIENCE) !== undefined;
 }
 
 interface ExactMixedPrimitiveWrapperCall {
@@ -9434,21 +9439,9 @@ function selectorPrimitiveWrapperConstruction(
   scope: ReadonlySet<string>,
   localClasses: ReadonlySet<string>,
 ): ts.NewExpression | null {
-  const candidate = unwrapPhase1Parens(expression);
-  if (
-    !ts.isNewExpression(candidate) ||
-    !ts.isIdentifier(candidate.expression) ||
-    !selectorSeesAmbientWrapperConstructor(candidate.expression) ||
-    candidate.arguments?.length !== 1 ||
-    ts.isSpreadElement(candidate.arguments[0]!)
-  ) {
-    return null;
-  }
-  const argument = candidate.arguments[0]!;
-  const expectedFamily =
-    candidate.expression.text === "Boolean" ? "boolean" : candidate.expression.text === "Number" ? "number" : "string";
-  if (obviousSelectorValueFamily(argument, scope) !== expectedFamily) return null;
-  return isPhase1Expr(argument, scope, localClasses) ? candidate : null;
+  const construction = wrapper.wrapperConstruction(unwrapPhase1Parens(expression), WRAPPER_AMBIENCE);
+  const argument = wrapper.admissibleArgument(construction, (a) => obviousSelectorValueFamily(a, scope) ?? "unknown");
+  return argument !== undefined && isPhase1Expr(argument, scope, localClasses) ? construction!.expr : null;
 }
 
 /**
@@ -12050,6 +12043,13 @@ function phase1NewExpression(
     if (!hostDateSnapshot) {
       return capabilityNo("date-constructor-unsupported", "expr-new-date-snapshot-shape", expr);
     }
+  }
+  const stored = isLocalClass ? undefined : wrapper.storedWrapperConstruction(expr, WRAPPER_AMBIENCE);
+  if (stored !== undefined) {
+    const family = (argument: ts.Expression) => obviousSelectorValueFamily(argument, scope) ?? "unknown";
+    const refusal = wrapper.wrapperStoreRefusal(stored, currentSelectionOptions, currentModuleBindingResolver, family);
+    if (refusal !== undefined) return capabilityNo("constructor-resolution-unsupported", refusal, expr);
+    return isPhase1Expr(stored.argument!, scope, localClasses);
   }
   if (!isLocalClass && !isKnownExternClass(ctorName)) {
     return capabilityNo("constructor-resolution-unsupported", "expr-new-ctor-unknown", expr.expression);
