@@ -157,3 +157,71 @@ Code quality:
 6. The predicate is a flat list of position arms, without flag parameters;
    `deadcode-elide.ts` and `runtime-eval-boundary-plan.ts` do not grow.
 7. A fresh-context adversarial review records its verdict in the PR body.
+
+## S1 result (2026-11-13)
+
+Built as planned, with the differences below. Measured against main
+`e2eae68fc5` (the branch base), standalone, original harness, one process at
+a time.
+
+Population: the 249 ES5 files of `es5-map-1111` that are not IR-only and
+whose test body mentions `Function` outside a call or `new`.
+
+| | files |
+| --- | --- |
+| gained (IR-only now) | 9 |
+| lost | 0 |
+| units newly legacy | 0 (legacy units 995 → 751) |
+| new compile errors | 0 |
+| post-claim errors | 1 → 1 (the same file) |
+| routing changed | 42 |
+
+Gained: `Object/getOwnPropertyDescriptor/15.2.3.3-4-35`, `-36`, `-37`, `-38`;
+`Object/isExtensible/15.2.3.13-2-14`; `Object/isFrozen/15.2.3.12-3-4`, `-5`;
+`Object/isSealed/15.2.3.11-4-4`, `-5`.
+
+Verdicts of the 42 routing-changed files: all pass on this branch under
+`scripts/run-test262-paths.mts --standalone` with no eval provider, and on
+the default (JS environment) target. All 42 pass in the CI standalone
+baseline. Locally, main fails all 42 only because the QuickJS provider is
+not built here.
+
+### Differences from the plan
+
+1. **An equality operand is NOT inert.** An equality compares identities,
+   and only a provider-linked module keeps ONE `%Function%` (#4442).
+   Measured with the arm in: `var f = function () {}; f.constructor ===
+   Function` answered `false` on standalone once the module was
+   provider-free. #4442's "keeps a bare `Function` read on the provider
+   route" test caught it. The arm is dropped, and the equality form is a
+   must-stay-a-site test row.
+2. **JS-environment (gc) output is NOT byte-identical on the 42
+   routing-changed files** (it is on the 200-file sample without a
+   `Function` mention). Dead-binding elision runs for the JS environment's
+   native regime as well (`compiler.ts`, `targetProfile.nativeRegime`), and
+   the boundary plan serves both targets. So the dropped shim and the
+   missing `intrinsic-value` site change gc output exactly as they change
+   standalone. All 42 pass on the gc target without a provider. Keeping gc
+   identical would need a target-dependent answer from the one predicate,
+   which the plan rules out (no flag parameters). This needs a decision
+   (criterion 4).
+3. **The runtime-eval boundary plan keeps its own bare-`Function.prototype`
+   excusal** (`isBareFunctionPrototypeValue`). Elision never shared it:
+   computed source could reach the prototype's constructor there. So
+   `Object.getOwnPropertyDescriptor(Function.prototype, "constructor")`,
+   `Object.defineProperty(Function.prototype, …)` used as a value, and a
+   computed key stay elision sites. In the boundary plan they are not sites,
+   exactly as on main.
+4. **Elision gains the boundary plan's wrapper and destructure handling** of
+   the method chain (`(Function.prototype).call`,
+   `const { call } = Function.prototype`), which it lacked. This is the same
+   sound argument, now in one place.
+5. **Shadowing is syntactic**: `Function` and `Object` are the ambient
+   globals when nothing in the file declares either name
+   (`isUndeclaredInFile`, `shared/ambient-intrinsics.ts`). Elision runs
+   before any checker exists. The method-chain arm keeps main's behaviour
+   (no shadowing test).
+
+S2 (the `Function("return this;")()` fold) is not built; whether it pays is
+open (3 sole-blocker files in the 600-file sample). The issue stays
+in-progress for it.

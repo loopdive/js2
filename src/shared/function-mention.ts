@@ -12,17 +12,20 @@
  *     destructure of `Function.prototype`, with no `constructor` key: the value
  *     is an ordinary prototype method (`Function.prototype.call.bind(…)`, the
  *     receiver-uncurry idiom test262's propertyHelper.js opens with);
- *   - `Function` or `Function.prototype` used only for its identity or its
- *     shape, with `Function` and `Object` the ambient globals (nothing in the
- *     file declares either name): the right operand of `instanceof`, an
- *     equality operand, the operand of `typeof`, the first argument of
- *     `Object.isSealed` / `isFrozen` / `isExtensible`, of
- *     `Object.getPrototypeOf` (for `Function.prototype`, whose answer is
- *     `%Object.prototype%`), of `Object.getOwnPropertyDescriptor`, or of a
- *     discarded `Object.defineProperty` statement, the last two with a literal
- *     key other than `"constructor"`.
+ *   - `Function` or `Function.prototype` whose value is only inspected, with
+ *     `Function` and `Object` the ambient globals (nothing in the file
+ *     declares either name): the right operand of `instanceof`, the operand of
+ *     `typeof`, the first argument of `Object.isSealed` / `isFrozen` /
+ *     `isExtensible`, of `Object.getPrototypeOf` (for `Function.prototype`,
+ *     whose answer is `%Object.prototype%`), of
+ *     `Object.getOwnPropertyDescriptor`, or of a discarded
+ *     `Object.defineProperty` statement, the last two with a literal key other
+ *     than `"constructor"`.
  * Every other position is a site: a call or `new`, a stored or passed value,
- * a `constructor` key.
+ * a `constructor` key, and an equality operand. An equality compares
+ * identities, and only the provider-linked module keeps ONE `%Function%`
+ * (#4442): without the provider, `(function () {}).constructor === Function`
+ * answers false.
  */
 
 import { ts } from "../ts-api.js";
@@ -70,19 +73,12 @@ function readsPrototypeMethod(prototype: ts.Expression): boolean {
   return false;
 }
 
-/** `value` (`Function`, or `Function.prototype` when `isPrototype`) is used only for its identity or shape. */
+/** `value` (`Function`, or `Function.prototype` when `isPrototype`) is only inspected. */
 function isInertPosition(value: ts.Expression, isPrototype: boolean): boolean {
   const use = value.parent;
   if (ts.isTypeOfExpression(use)) return true;
   if (ts.isBinaryExpression(use)) {
-    const operator = use.operatorToken.kind;
-    if (operator === ts.SyntaxKind.InstanceOfKeyword) return use.right === value;
-    return (
-      operator === ts.SyntaxKind.EqualsEqualsToken ||
-      operator === ts.SyntaxKind.ExclamationEqualsToken ||
-      operator === ts.SyntaxKind.EqualsEqualsEqualsToken ||
-      operator === ts.SyntaxKind.ExclamationEqualsEqualsToken
-    );
+    return use.operatorToken.kind === ts.SyntaxKind.InstanceOfKeyword && use.right === value;
   }
   if (!ts.isCallExpression(use) || use.arguments[0] !== value) return false;
   const query = objectStaticName(use);

@@ -17,8 +17,6 @@ const SHIM = "var deadShim = function (s) { return eval(s); };\n";
 
 const INERT: Record<string, string> = {
   "instanceof right operand": "var o = {}; var r = o instanceof Function;",
-  "strict equality operand": "var f = function () {}; var r = f === Function;",
-  "loose inequality operand": "var f = function () {}; var r = Function != f;",
   "typeof operand": "var r = typeof Function;",
   "Object.isSealed": "var r = Object.isSealed(Function);",
   "Object.isFrozen": "var r = Object.isFrozen(Function);",
@@ -38,6 +36,9 @@ const SITES: Record<string, string> = {
   "Function.apply": 'var f = Function.apply(this, ["return 1;"]);',
   "Function.prototype.constructor": "var C = Function.prototype.constructor;",
   "stored value": "var F = Function;",
+  // An equality compares identities: only the provider-linked module keeps ONE `%Function%` (#4442).
+  "strict equality operand": "var f = function () {}; var r = f.constructor === Function;",
+  "loose inequality operand": "var f = function () {}; var r = Function != f;",
   "shadowed Object": "var Object = { isSealed: function (x) { return x; } }; var r = Object.isSealed(Function);",
   "shadowed Function": "var r = Object.isSealed(Function); function Function() {}",
   "Object.getPrototypeOf of Function": "var r = Object.getPrototypeOf(Function);",
