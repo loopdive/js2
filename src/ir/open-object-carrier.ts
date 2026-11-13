@@ -11,6 +11,7 @@
 import type { IrFunctionBuilder } from "./builder.js";
 import { irRuntimeFuncRef } from "./callable-bindings.js";
 import { irDynamic, irVal, type IrType, type IrValueId } from "./nodes.js";
+import type { OwnPropertyTest } from "./core/dialect/js.js";
 import type { ObjectStaticCall } from "./object-statics.js";
 import {
   emitThrowTypeErrorIf,
@@ -94,32 +95,54 @@ export function emitObjectRuntimeCall(
 
 /**
  * #7338 — an admitted `Object.<static>(…)` (`object-statics.ts`) over its
- * values, each a `dynamic` carrier, and its definitions, all evaluated before
- * (every argument is, before the static's first step):
+ * values, each lowered to a `dynamic` carrier by its thunk, and its
+ * definitions, all evaluated before (every argument is, before the static's
+ * first step):
  *   - the row's demand on the first value (an Object, or not nullish),
  *     where its helper does not make it;
  *   - the row's helper over the values, when it has one;
  *   - each definition, on the object the static answers: the helper's
  *     result, or the first value of a static that only defines.
  * Answers that object as a `dynamic` carrier.
+ *
+ * (#7339) An own-property test row (`R.<name>(k)`) reads its method from the
+ * receiver first, so the receiver's nullish test runs before the key is
+ * evaluated (§13.3.6.1 evaluates the member, then the arguments). It answers
+ * the test's boolean.
  */
 export function emitObjectStaticCall(
   builder: IrFunctionBuilder,
-  call: Pick<ObjectStaticCall, "name" | "provider" | "requires">,
-  operands: readonly IrValueId[],
-  definitions: readonly ObjectStaticDefinitionValues[],
+  call: Pick<ObjectStaticCall, "name" | "provider" | "requires" | "test">,
+  operands: readonly (() => IrValueId)[],
+  definitions: () => readonly ObjectStaticDefinitionValues[],
 ): IrValueId {
-  const first = operands[0]!;
+  const first = operands[0]!();
+  if (!call.test) {
+    const rest = operands.slice(1).map((operand) => operand());
+    const defined = definitions();
+    emitFirstValueDemand(builder, call, first);
+    const values = [first, ...rest];
+    const answer =
+      call.provider === undefined ? first : emitObjectRuntimeCall(builder, call.provider, values, irDynamic());
+    if (defined.length > 0) {
+      const object = builder.emitCoerceToExternref(answer);
+      for (const definition of defined) emitOpenCarrierDefine(builder, object, definition);
+    }
+    return answer;
+  }
+  emitFirstValueDemand(builder, call, first);
+  return builder.emitDynOwnProperty(first, operands[1]!(), call.name as OwnPropertyTest);
+}
+
+/** The row's TypeError for a first value that is not an Object, or is `undefined` / `null`. */
+function emitFirstValueDemand(
+  builder: IrFunctionBuilder,
+  call: Pick<ObjectStaticCall, "name" | "requires">,
+  first: IrValueId,
+): void {
   if (call.requires === "object") {
     emitThrowTypeErrorUnlessObject(builder, first, `Object.${call.name} called on non-object`);
   } else if (call.requires === "coercible") {
     emitThrowTypeErrorIfNullish(builder, first, "Cannot convert undefined or null to object");
   }
-  const answer =
-    call.provider === undefined ? first : emitObjectRuntimeCall(builder, call.provider, operands, irDynamic());
-  if (definitions.length > 0) {
-    const object = builder.emitCoerceToExternref(answer);
-    for (const definition of definitions) emitOpenCarrierDefine(builder, object, definition);
-  }
-  return answer;
 }

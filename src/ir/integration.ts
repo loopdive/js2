@@ -22,6 +22,7 @@
 // `shiftLateImportIndices` pass is a no-op for every body produced here.
 // That's the whole point of the symbolic-ref design — spec #1131 §1.2.
 
+import type { OwnPropertyTest } from "./core/dialect/js.js";
 import {
   isObjectRuntimeProvider,
   objectRuntimeProviderImport,
@@ -9461,7 +9462,7 @@ function preregisterDynamicSupport(
   // (#7106 S1i) `dyn.publish_argc` calls the caller-side argc wrapper.
   let usesDynPublishArgc = false;
   // (#7106 S1g) `dyn.own_property` calls the lane's own-property providers.
-  const ownPropertyTests = new Set<"hasOwnProperty" | "propertyIsEnumerable">();
+  const ownPropertyTests = new Set<OwnPropertyTest>();
   // (#7106 propertyHelper) a dynamic delete calls its strictness's wrapper.
   const dynDeleteStrictness = new Set<boolean>();
   // (#7106 propertyHelper, #7272, #7338) the stored-static aliases' and `Object` statics' object-runtime providers.
@@ -10219,7 +10220,7 @@ export function makeDynamicLowering(ctx: CodegenContext): IrDynamicLowering | nu
       }
       return [{ op: "i32.const", value: count } as Instr, callImport(IR_PUBLISH_ARGC_HELPER)];
     },
-    emitOwnPropertyTest(test: "hasOwnProperty" | "propertyIsEnumerable"): readonly Instr[] {
+    emitOwnPropertyTest(test: OwnPropertyTest): readonly Instr[] {
       // (#7106 S1g) receiver + key already on the stack as externref.
       if (!ctx.standalone && !ctx.wasi) {
         throw new Error("ir/integration: dyn.own_property needs the host-free own-property providers (#7106 S1g)");

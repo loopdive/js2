@@ -335,9 +335,7 @@ import {
   peelAssignmentChain,
   IR_MATH_METHOD_TABLE,
   admittedEmptyLiteralIsOpenCarrier,
-  admittedOwnPropertyCallMethod,
 } from "./select.js";
-import type { OwnPropertyMethod } from "./dynamic-home-open-object.js";
 import type { DescriptorDefinition } from "./descriptor-literal.js";
 import { lowerObjectCreateDescriptorMapCall } from "./object-create-call.js";
 import { objectStaticCallPlan, type ObjectStaticCapability, type ObjectStaticPlan } from "./object-statics.js";
@@ -7725,8 +7723,6 @@ function functionObjectLoweringHost(cx: LowerCtx): functionObjects.FunctionObjec
 function lowerCall(expr: ts.CallExpression, cx: LowerCtx, statementPosition = false): IrValueId | null {
   if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== expr)
     return withNodeSourceSite(cx, expr, () => lowerCall(expr, cx, statementPosition));
-  const ownPropertyMethod = admittedOwnPropertyCallMethod(expr);
-  if (ownPropertyMethod !== undefined) return lowerOwnPropertyMethodCall(expr, ownPropertyMethod, cx);
   if (cx.resolver?.preparedObjectCreateCall?.(expr) === "null") {
     if (!isDirectObjectCreateNullCall(expr))
       throw new IrInvariantError(
@@ -8305,17 +8301,6 @@ function lowerCarrierOperand(argument: ts.Expression, callName: string, cx: Lowe
     );
   }
   return boxed;
-}
-
-/**
- * (#7335) `o.hasOwnProperty(k)` / `o.propertyIsEnumerable(k)` on a
- * selector-certified dynamic-home open object: both operands as carriers, then
- * the lane's own-property provider, as the uncurried aliases lower.
- */
-function lowerOwnPropertyMethodCall(expr: ts.CallExpression, method: OwnPropertyMethod, cx: LowerCtx): IrValueId {
-  const receiver = (expr.expression as ts.PropertyAccessExpression).expression;
-  const object = lowerCarrierOperand(receiver, method, cx);
-  return cx.builder.emitDynOwnProperty(object, lowerCarrierOperand(expr.arguments[0]!, method, cx), method);
 }
 
 /**
@@ -9392,13 +9377,15 @@ function tryLowerObjectStaticCall(expr: ts.CallExpression, cx: LowerCtx): IrValu
     );
   }
   const { name, operands, definitions } = plan.call;
-  const values = operands.map((operand) =>
-    operand.kind === "object"
-      ? cx.builder.emitBox(emitNewPlainObject(cx.builder, irVal({ kind: "externref" })), irDynamic())
-      : lowerCarrierOperand(operand.expr, name, cx),
+  const values = operands.map(
+    (operand) => () =>
+      operand.kind === "object"
+        ? cx.builder.emitBox(emitNewPlainObject(cx.builder, irVal({ kind: "externref" })), irDynamic())
+        : lowerCarrierOperand(operand.expr, name, cx),
   );
-  const defined = definitions.map((definition) => lowerDescriptorDefinition(definition, name, cx));
-  return emitObjectStaticCall(cx.builder, plan.call, values, defined);
+  return emitObjectStaticCall(cx.builder, plan.call, values, () =>
+    definitions.map((definition) => lowerDescriptorDefinition(definition, name, cx)),
+  );
 }
 
 /** (#7276) The JS environment's `Object.create({}, { <literal data descriptors> })`, behind the selector's plan. */
@@ -15115,10 +15102,9 @@ function expressionProducesDynamic(expr: ts.Expression, cx: LowerCtx): boolean {
         return cx.calleeTypes?.get(call.expression.text)?.returnType?.kind === "dynamic";
       }
       if (!ts.isPropertyAccessExpression(call.expression)) return false;
-      // (#7338) An admitted `Object` static answers the carrier.
-      if (objectStaticPlanOf(call, cx)?.kind === "call") return true;
-      // (#7335) A dynamic home's own-property test answers a boolean.
-      if (admittedOwnPropertyCallMethod(call) !== undefined) return false;
+      // (#7338) An admitted `Object` static answers the carrier; (#7339) an own-property test a boolean.
+      const plan = objectStaticPlanOf(call, cx);
+      if (plan?.kind === "call") return !plan.call.test;
       // (#7106 lever R2) A host-free `re.exec(s)` answers the match array or null as the carrier.
       const regExpCall = nativeRegExpCarrierCall(call, cx);
       return regExpCall ? REGEXP_CARRIER_METHODS[regExpCall.method].result === "dynamic" : undefined;
