@@ -1,5 +1,5 @@
 {
-  "timestamp": "2026-11-12T17:21:57.900Z",
+  "timestamp": "2026-11-13T17:14:20.523Z",
   "benchmarks": [
     {
       "name": "fib",
@@ -2833,6 +2833,16 @@
             "operation": "forInKeys"
           },
           "paramCount": 1
+        },
+        {
+          "module": "env",
+          "name": "__register_init_export",
+          "kind": "func",
+          "intent": {
+            "type": "builtin",
+            "name": "__register_init_export"
+          },
+          "paramCount": 2
         }
       ],
       "stringPool": [

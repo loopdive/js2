@@ -41,7 +41,8 @@ export type IrBackendTargetCapability =
   | "planned-closure-direct-call"
   | "native-dynamic-loose-equality"
   | "dynamic-method-call-wrapper"
-  | "native-global-function-call";
+  | "native-global-function-call"
+  | "native-object-statics";
 
 /**
  * The target facts needed by pre-claim capability checks. Keep this smaller
@@ -54,6 +55,14 @@ export interface IrBackendTargetProfile {
   readonly allowHostImports: boolean;
   /** Legacy fast-array storage has a distinct ABI not yet represented in IR. */
   readonly fast?: boolean;
+  /**
+   * (#7338) A JS environment under the native-first policy, projected as
+   * standalone. Read only by a capability measured on the host-free target
+   * alone, so that the JS environment's output does not move with it. Retired
+   * with that capability's split: when the JS environment adopts the statics
+   * table and `object-create-call.ts` folds into it.
+   */
+  readonly nativeRegimeInJs?: true;
 }
 
 /**
@@ -77,6 +86,7 @@ export function projectIrBackendTargetProfile(
     allowHostImports:
       profile.environment === "javascript" && profile.capabilityPolicy === "ambient-js" && !nativeRegimeInJs,
     fast: options.fast,
+    ...(nativeRegimeInJs ? { nativeRegimeInJs: true as const } : {}),
   });
 }
 
@@ -164,6 +174,16 @@ export function supportsIrBackendTargetCapability(
       // native `__extern_is_array` — the provider legacy's `Array.isArray`
       // arm uses on standalone only (WASI keeps its inline `ref.test` chain).
       return profile.backend === "wasmgc" && profile.fast !== true && profile.target === "standalone";
+    case "native-object-statics":
+      // (#7338) The `Object` statics table (`ir/object-statics.ts`): the
+      // native object runtime's helpers and a member read that answers for an
+      // open `$Object`, measured on host-free standalone only.
+      return (
+        profile.backend === "wasmgc" &&
+        profile.fast !== true &&
+        profile.target === "standalone" &&
+        profile.nativeRegimeInJs !== true
+      );
     case "host-dynamic-method-call":
       // (#7117) `recv.m(…)` on a dynamic receiver through the generic
       // `__ir_dyn_method_call_N` → `__extern_method_call`. The host lane binds
