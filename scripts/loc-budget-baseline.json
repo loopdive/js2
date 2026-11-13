@@ -1,7 +1,7 @@
 {
   "generated": "2026-11-13",
   "threshold": 1500,
-  "totalCeiling": 1063873,
+  "totalCeiling": 1064616,
   "files": {
     "src/codegen-linear/index.ts": 5791,
     "src/codegen-linear/runtime.ts": 4195,
@@ -99,9 +99,9 @@
     "src/ir/backend/porffor/assembler.ts": 1516,
     "src/ir/builder.ts": 2315,
     "src/ir/core/nodes.ts": 2599,
-    "src/ir/from-ast.ts": 17597,
+    "src/ir/from-ast.ts": 17613,
     "src/ir/identity.ts": 1517,
-    "src/ir/integration.ts": 11079,
+    "src/ir/integration.ts": 11082,
     "src/ir/lower-generic.ts": 4569,
     "src/ir/module-bindings.ts": 2927,
     "src/ir/prepared-component-dependencies.ts": 1793,
@@ -112,7 +112,7 @@
     "src/ir/runtime/manifest.ts": 2412,
     "src/ir/runtime/verify.ts": 3164,
     "src/ir/select-identity.ts": 1655,
-    "src/ir/select.ts": 14697,
+    "src/ir/select.ts": 14726,
     "src/package-linker.ts": 2136,
     "src/runtime.ts": 20214,
     "src/runtime/iterator-polyfills.ts": 1516
