@@ -439,114 +439,158 @@ S2 and S3 are not started; the issue stays `in-progress`.
 
 - **`src/ir/wrapper-construction.ts`** owns the lever. It holds:
   - the three-row table;
-  - the one recognizer `ambientWrapperRow` / `wrapperConstruction`;
-  - the position, `wrapperConsumer`;
-  - the store admission, `wrapperStoreRefusal`;
+  - the one recognizer, `ambientWrapperRow` / `wrapperConstruction`;
+  - the position, `wrapperConsumer` / `storedWrapperConstruction`;
+  - the store admission, `wrapperStoreRefusal`: lane, home, realm,
+    argument, uses;
+  - the wrapper's allow-list for the shared uses scan, `wrapperPolicy`;
   - the lowering, `emitWrapperConstruction` / `boxWrapper`;
   - the one `__to_primitive` spelling, `emitToPrimitive`.
-- **The argument rule** `wrapperArgumentAdmissible(own, family)` is in
-  `analysis/operand-admissibility.ts`. The selector asks it over its proven
-  family (`admissibleArgument`); from-ast asks it over the family it lowered.
+- **`src/ir/dynamic-home-uses.ts`** is the one uses scan for a value on the
+  dynamic module home. It holds:
+  - the reference walk, `referencesNamed`, which `empty-object-literal.ts`
+    also uses;
+  - the member screen: no optional or inherited key, no call, no tag; and
+    plain stores only where the writer's strictness is known.
+
+  Two consumers each supply only an allow-list (`ServedUsePolicy`):
+  - #7335's open object, `dynamic-home-open-object.ts`;
+  - this lever's wrapper.
 - **Duplicates removed:**
-  - select.ts's recognizer and operand rule now call the module;
+  - select.ts's recognizer and operand rule call the module;
   - from-ast's `primitiveWrapperConstructorName` is gone;
-  - the lowering's argument conversion and native call moved to the module;
   - the unary numeric route and `freshWrapperToDynamic` share
-    `emitToPrimitive`.
-- **Sizes:** `select.ts` net 0 lines; `from-ast.ts` net −32. No LOC or
+    `emitToPrimitive`;
+  - #7335's private scan (its `isServedUse`, `isPlainAssignmentTarget` and
+    `writerKnowsItsStrictness`) moved into the shared module, unchanged in
+    behaviour.
+- **The lane** is derived, not a new option. The store is admitted only where
+  the lane supplies `isOpenObjectBinding` (#7280's raw-standalone carrier
+  lane) and both capabilities are present by name. The JS environment and
+  WASI never admit it.
+- **The argument rule** is plain family equality on both sides. The selector
+  checks the family it proves; from-ast checks the family it lowered.
+- **`src/shared/intrinsic-prototype-writes.ts`** also tracks `Number` and
+  `Boolean` as patchable intrinsics. No other consumer asks about them.
+- **Sizes:** `select.ts` net −2 lines; `from-ast.ts` net −33. No LOC or
   function-budget grant.
-- **The lane is its own selection option.** `dynamicHomeCarrierLane` is set
-  in `irOpenObjectSelectionOption` beside `isOpenObjectBinding` (raw
-  standalone only, #7335 finding 5), plus the two capabilities by name. The
-  JS environment and WASI never admit the store.
 
 ### Deviations from the plan, and why
 
 1. **The store also proves the var's uses.** Hard rule: every position a
    wrapper reaches is claimed and correct, or refused at select — never
    claimed and then withdrawn. The plan admitted the store and let every use
-   take the dynamic arms. Measured on a 293-cell position matrix (4 rows ×
-   73 positions, each against node), several arms withdraw after the claim
-   or answer wrong.
+   take the dynamic arms; measured against node, several uses withdraw after
+   the claim or answer wrong.
 
-   So `everyUseIsServed` refuses the store (`expr-new-wrapper-use`) unless
-   every reference to the name, anywhere in the file, is on an allow-list:
-   - a store into it;
-   - a binary operand, except a loose comparison with `null`;
-   - a prefix-operator or `typeof` operand;
-   - a condition;
-   - a named member read that is not called and whose value is not stored
-     into a binding.
+   So the selector refuses the store (`expr-new-wrapper-use`) unless every
+   reference to the name, anywhere in the file, comes after the construction
+   and is one of:
+   - a store into it (a declaration, `=`, `++`, a compound assignment);
+   - an operand of an arithmetic, bitwise or equality operator, except a loose
+     comparison with `null`;
+   - a Number or Boolean wrapper's relational operand against a numeric
+     literal;
+   - a prefix-operator or `typeof` operand, or a condition;
+   - a plain member store.
 
    Refused (each pinned in `tests/issue-7340.test.ts`):
 
    | use | reason |
    |---|---|
+   | every member read (`.length`, `.valueOf`, `.constructor`, `.zz`) | `__dyn_member_get` answers neither a String wrapper's own `length` nor an inherited member. The realm catalog has no `String`/`Number`/`Boolean.prototype` key list to screen by. |
+   | a String wrapper's relational operand; any wrapper's relational against a non-literal | the dynamic relational (#2949 S5.P, numeric-abstract) tests for strings before ToPrimitive and does not ToNumber a string, so `new String("a") < "b"` and `new Number(1) < "9"` answer wrong |
+   | a use before the store | it reads `undefined`; `var r = n + 1; var n = new Number(5)` failed after the claim |
    | element read | `s[0]` of a String wrapper answers wrong |
-   | `void w` | withdrawn: undefined-compare on f64 |
-   | `w == null` | withdrawn: bare null |
-   | `switch (w)` | withdrawn: switch discriminant |
-   | `var n = w.length` | withdrawn: typed global initializer |
-   | a method call, call argument, alias, template | hands the object on |
+   | `void w`, `w == null`, `switch (w)` | withdrawn after the claim |
+   | a method call, call argument, alias, template, return | hands the object on |
    | `for…in`, `in`, `instanceof`, `delete` | not served |
 
 2. **The realm check is stricter for the store than for the old operand
-   position.** The store requires `isUnshadowedLibBinding` (lib-only, nothing
-   in the file declares the name, a parameter included). It also requires that
-   no source write of the name exists (`String = f`), and no
-   `eval` / `Function` / `with`.
+   position.** The store requires all of:
+   - `isUnshadowedLibBinding`: lib-only, nothing in the file declares the
+     name, a parameter included;
+   - no source write of the name (`String = f`);
+   - no patch of the wrapper's prototype or `Object.prototype`;
+   - no reflective route, and no `eval` / `Function` / `with`.
 
    The ToPrimitive-operand position keeps main's checker-identity test, so no
-   unit main lowers is lost. Main's operand path accepts a script's
-   `function String` (the checker reports lib declarations only); that
-   pre-existing gap is noted, not changed.
-3. **Yield.** The 28 S1 files of the plan gain 19, not 26:
-   - 7 `built-ins/String/15.5.5.5.2-*` files read `s[i]`. The element read is
-     refused (wrong answer, above).
-   - `void/S11.4.2_A4_T{1,2}` are refused (`void`). The plan also did not gain
-     these two.
-4. **No `expr-new-wrapper-position` arm.** The selector applies the lever only
-   to a construction in store position (`storedWrapperConstruction`). Any
-   other construction keeps main's arm, e.g. `expr-new-ctor-unknown` for an
-   operand `new String()`. `tests/issue-7106-lever-sr.test.ts` pins that arm.
-   A first cut refused those as `expr-new-wrapper-position`. They were still
-   refused, but the arm name changed, and that test caught it.
+   unit main lowers is lost.
+3. **Yield: 10 of the plan's 28 S1 files.**
+   - Gained: `grouping/S11.1.6_A3_T{1,2}` and
+     `statements/for/12.6.3_2-3-a-ii-{2,4,5,6,7,8,9,10}`.
+   - Lost to the review fixes, against the first cut's 19:
+     - the 8 postfix/prefix increment/decrement `A3_T{1,2}` files. Each file
+       first uses the same name for a primitive (`var x = false; x++; …`)
+       before it stores the wrapper, so the reference precedes the store.
+     - `String/S15.5.2.1_A1_T3` reads `__str.constructor`, a member read.
+   - Never gained: the 7 `String/15.5.5.5.2-*` files (element read) and
+     `void/S11.4.2_A4_T{1,2}` (`void`).
+4. **No `expr-new-wrapper-position` arm.** The selector applies the lever
+   only to a construction in store position. Any other construction keeps
+   main's arm, e.g. `expr-new-ctor-unknown` for an operand `new String()`,
+   which `tests/issue-7106-lever-sr.test.ts` pins.
 
-### Measured (standalone unless named; base `origin/main` `64752e92aa`, 2026-11-13)
+### Why the first cut's matrix missed the wrong answers
+
+The first cut's 293-cell matrix compiled each cell inside the assembled
+test262 harness. With the harness linked in, `s.length` on a String wrapper
+answers 3. Bare, it does not: the member read's answer depends on unrelated
+program content. The cells were real and the oracle was sound; a deliberately
+wrong expected value failed in that harness too. The harness hid the bug.
+
+From now on the tests and the matrix compile bare programs. The
+claimed-row tests also run harnessed.
+
+### Pre-existing on main, not changed here (filed below)
+
+A top-level function that reads a dynamic script var holding a wrapper is
+claimed on main on its own, whatever `<module-init>` does. Examples:
+- `var s = new String("abc"); function f() { return s.length; }`;
+- `function f() { return s < "b"; }`.
+
+Its answers are wrong in the same cells on main and on this branch. Some of
+those functions also hit post-claim errors there: `return s.length` fails to
+verify (`return[0] type dynamic …`), and `w == null` fails with `bare 'null'`.
+
+This lever's select refusal only governs `<module-init>`. Fixing `f` needs
+the same use screen applied to function units that read a dynamic home. That
+is a separate change: see "Follow-up: functions reading a dynamic home"
+under Risks.
+
+### Measured (standalone unless named; base `origin/main` `ea0bf546f4`, final code, 2026-11-13)
 
 - **The 873-file population:**
-  - 19 files become IR-only, 0 are lost, and there are 0 post-claim errors.
-  - 20 files changed unit routing: the 19, plus 1 that gains a unit but not
-    the whole file. All 20 pass on both trees
+  - 10 files become IR-only, 0 are lost, and 0 units main lowers are lost.
+  - 0 post-claim errors.
+  - Routing changes in exactly those 10 files. All 10 pass on both trees
     (`run-test262-paths.mts --standalone`).
-  - The 19:
-    - `built-ins/String/S15.5.2.1_A1_T3`;
-    - `grouping/S11.1.6_A3_T{1,2}`;
-    - the eight postfix/prefix increment and decrement `A3_T{1,2}` files;
-    - `statements/for/12.6.3_2-3-a-ii-{2,4,5,6,7,8,9,10}`.
-- **IR-only on main:** a seeded sample of 500 of the 1,505 files
-  (census 2026-11-11). Routing is identical, 497 IR-only on both trees, none
-  lost.
-- **Wrapper-free inputs:** unit routing is identical in all of them, 786 from
-  the population and 431 of the sample.
-- **Unrelated wrapper:** 150 wrapper-free files with an appended never-called
-  `function __unrelated7340() { var q = new Number(1); return q; }`. Routing
-  of every original unit equals main's.
+- **IR-only on main:** a seeded sample of 500 of the 1,505 files. Routing
+  is identical; 497 are IR-only on both trees.
+- **Wrapper-free inputs:** unit routing is identical in every wrapper-free
+  file of the population and the sample.
+- **Unrelated wrapper:** 150 wrapper-free files with an appended
+  never-called `function __unrelated7340() { var q = new Number(1); return
+  q; }`. Routing of every unit equals main's.
 - **JS environment (default target):** every third population file (291) is
   byte-identical.
-- **Position matrix:** 4 rows × up to 73 positions = 293 cells, each against
-  node.
-  - On main, 0 are IR-claimed. On the branch, 133 are claimed and all 133
-    pass, with 0 post-claim errors.
-  - Claimed positions: arithmetic, relational and bitwise operands; `+`;
-    `===` / `!==` / `==` / `!=` against a primitive, `undefined`, itself or
-    another wrapper; unary `-` / `+`; `if (w)`; `typeof` / `.length` /
-    `.constructor` / `.toString` / `.valueOf` reads compared strictly; a
-    member store then read; `w++` / `w--` then compare; a top-level function
-    reading the var; reassignment.
-  - Every other position is refused at select.
-  - 2 cells fail, `new String` under `switch`. They are legacy on both trees
-    and fail on main too.
+- **Position matrix, bare programs, each against node:**
+  - 1,176 programs:
+    - the reviewer's 140 distinct programs (`w1`–`w4`, `wall`);
+    - 1,036 generated cells: 4 rows × 73 uses × {before the store, after
+      it, in a function called after it, in a function returning the
+      value}.
+  - On the branch, 459 programs have `<module-init>` claimed. All 459 answer
+    as node does, with 0 `<module-init>` post-claim errors. Of the claimed
+    cells, 0 are "before the store".
+  - On main, 3 programs are claimed, all of them wrapper-free or with the
+    wrapper outside store position.
+  - Every program that answers wrong or hits a post-claim error does so
+    identically on main (94, all from units main already claims).
+  - No unit main lowers is lost.
+  - The reviewer's blocking cases 1–5 are now refused at select. Case 6 and
+    the function-unit relational cells come from `f`, which main claims
+    (above).
 
 ### Fold after #7212/#7214
 
@@ -561,6 +605,25 @@ S2 and S3 are not started; the issue stays `in-progress`.
   those exclusions become redundant and should go.
 
 ## Risks and unverified assumptions
+
+- **Follow-up: functions reading a dynamic home (found in the #7340 S1
+  review; pre-existing on main `ea0bf546f4`).** A top-level function that
+  reads a script var holding a primitive wrapper is claimed on its own and
+  answers wrong, or fails after the claim:
+  - `function f() { return s.length; }` fails to verify;
+  - `s < "b"` and `typeof s.valueOf` answer wrong;
+  - `w == null` hits `bare 'null'`.
+
+  The use screen in `src/ir/dynamic-home-uses.ts` applies only to the unit
+  that stores the value. The fix is to ask the same screen for function units
+  that read a dynamic home. It needs its own issue; it is not part of this
+  lever.
+- **The dynamic relational does not apply ToPrimitive.** `__ir_dyn_lt` & co.
+  (`src/codegen/dyn-ops.ts`) test for strings before ToPrimitive, and their
+  ToNumber does not convert a string. On main this is reachable only through
+  the function-unit gap above. The selector's #2949 S5.P scan otherwise
+  admits a dynamic relational only against a proven number. Fixing it changes
+  shared runtime bytes, so S1 refuses the operand instead.
 
 - **gc byte-identity was not measured.** The prototype has no lane gate. See
   "JS environment".
