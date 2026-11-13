@@ -28,7 +28,8 @@
 import ts from "typescript";
 import { describe, expect, it } from "vitest";
 
-import { ensureAnyHelpers, ensureExternLooseEqHelper, ensureExternStrictEqHelper } from "../src/codegen/any-helpers.js";
+import { ensureAnyHelpers, ensureExternStrictEqHelper } from "../src/codegen/any-helpers.js";
+import { ensureExternLooseEqHelper } from "../src/codegen/helpers/loose-equality-to-primitive.js";
 // Side-effect import: registers the `flushLateImportShifts` codegen delegate
 // that `addUnionImports` requires (same pattern as the S5.0 / S5.1 tests).
 import "../src/codegen/expressions.js";
