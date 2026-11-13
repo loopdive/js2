@@ -96,22 +96,34 @@ export function outermostParenthesized(expr: ts.Expression): ts.Expression {
   return node;
 }
 
-const dynamicScopeCache = new WeakMap<ts.Node, boolean>();
+const dynamicScopeCache = new WeakMap<ts.Node, { readonly withStatement: boolean; readonly directEval: boolean }>();
 
-/** `with` anywhere, or a direct `eval(...)` identifier call, in the subtree: names resolve outside checker identity. */
-export function hasDynamicScope(root: ts.Node): boolean {
+function dynamicScopeOf(root: ts.Node): { readonly withStatement: boolean; readonly directEval: boolean } {
   const cached = dynamicScopeCache.get(root);
   if (cached !== undefined) return cached;
-  let found = false;
+  let withStatement = false;
+  let directEval = false;
   const visit = (n: ts.Node): void => {
-    if (found) return;
-    if (ts.isWithStatement(n)) found = true;
-    if (ts.isCallExpression(n) && ts.isIdentifier(n.expression) && n.expression.text === "eval") found = true;
+    if (withStatement && directEval) return;
+    if (ts.isWithStatement(n)) withStatement = true;
+    if (ts.isCallExpression(n) && ts.isIdentifier(n.expression) && n.expression.text === "eval") directEval = true;
     ts.forEachChild(n, visit);
   };
   visit(root);
-  dynamicScopeCache.set(root, found);
-  return found;
+  const scope = { withStatement, directEval };
+  dynamicScopeCache.set(root, scope);
+  return scope;
+}
+
+/** `with` anywhere, or a direct `eval(...)` identifier call, in the subtree: names resolve outside checker identity. */
+export function hasDynamicScope(root: ts.Node): boolean {
+  const scope = dynamicScopeOf(root);
+  return scope.withStatement || scope.directEval;
+}
+
+/** `with` anywhere in the subtree: a name may resolve to an object's property, outside every declaration. */
+export function hasWithStatement(root: ts.Node): boolean {
+  return dynamicScopeOf(root).withStatement;
 }
 
 /**

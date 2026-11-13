@@ -22,11 +22,20 @@ const INERT: Record<string, string> = {
   "Object.isFrozen": "var r = Object.isFrozen(Function);",
   "Object.isExtensible": "var r = Object.isExtensible(Function.prototype);",
   "Object.getPrototypeOf of Function.prototype": "var r = Object.getPrototypeOf(Function.prototype);",
-  "Object.getOwnPropertyDescriptor, literal key": 'var d = Object.getOwnPropertyDescriptor(Function, "prototype");',
-  "Object.getOwnPropertyDescriptor of Function.prototype":
-    'var d = Object.getOwnPropertyDescriptor(Function.prototype, "call");',
-  "Object.defineProperty statement":
+  // The descriptor pairs that hold neither `%Function%` nor `%Function.prototype%` (function-mention.ts).
+  'descriptor of Function "length"': 'var d = Object.getOwnPropertyDescriptor(Function, "length");',
+  'descriptor of Function "name"': 'var d = Object.getOwnPropertyDescriptor(Function, "name");',
+  "descriptor of a key Function does not own": 'var d = Object.getOwnPropertyDescriptor(Function, "zz");',
+  'descriptor of Function.prototype "call"': 'var d = Object.getOwnPropertyDescriptor(Function.prototype, "call");',
+  'descriptor of Function.prototype "apply"': 'var d = Object.getOwnPropertyDescriptor(Function.prototype, "apply");',
+  'descriptor of Function.prototype "bind"': 'var d = Object.getOwnPropertyDescriptor(Function.prototype, "bind");',
+  'descriptor of Function.prototype "toString"':
+    'var d = Object.getOwnPropertyDescriptor(Function.prototype, "toString");',
+  'descriptor of Function.prototype "length"': 'var d = Object.getOwnPropertyDescriptor(Function.prototype, "length");',
+  "Object.defineProperty statement on Function.prototype":
     'Object.defineProperty(Function.prototype, "prop", { value: 1, configurable: true });',
+  "Object.defineProperty statement on Function":
+    'Object.defineProperty(Function, "prop", { value: 1, configurable: true });',
   "prototype method chain": "var call = Function.prototype.call;",
 };
 
@@ -42,17 +51,29 @@ const SITES: Record<string, string> = {
   "shadowed Object": "var Object = { isSealed: function (x) { return x; } }; var r = Object.isSealed(Function);",
   "shadowed Function": "var r = Object.isSealed(Function); function Function() {}",
   "Object.getPrototypeOf of Function": "var r = Object.getPrototypeOf(Function);",
-};
-
-/**
- * Each keeps the elision pre-pass's site; the boundary plan excuses a bare `Function.prototype` value
- * before and after this issue (`isBareFunctionPrototypeValue`: its `.constructor` is served by the
- * self-contained `%Function%` arm), so there it is not an `intrinsic-value` site on main either.
- */
-const PROTOTYPE_VALUE_SITES: Record<string, string> = {
-  'descriptor of "constructor"': 'var d = Object.getOwnPropertyDescriptor(Function.prototype, "constructor");',
+  // Review B1 (PR #7231): a descriptor whose value is `%Function.prototype%` reaches `%Function%`.
+  'descriptor of Function "prototype", value\'s constructor called':
+    'var P = Object.getOwnPropertyDescriptor(Function, "prototype").value; var f = P.constructor("return 7;");',
+  'descriptor of Function "prototype", constructor read':
+    'var d = Object.getOwnPropertyDescriptor(Function, "prototype"); var g = d.value.constructor;',
+  'descriptor of Function.prototype "constructor"':
+    'var d = Object.getOwnPropertyDescriptor(Function.prototype, "constructor");',
   "Object.defineProperty as a value": 'var r = Object.defineProperty(Function.prototype, "prop", { value: 1 });',
   "computed key": 'var k = "call"; var d = Object.getOwnPropertyDescriptor(Function.prototype, k);',
+  // Review S2: the bare `Function.prototype` value is a site for both readers now.
+  "bare Function.prototype value": "var P = Function.prototype;",
+  // Review S1: a written `Object` or static may hand `%Function%` to the program's own code.
+  "Object reassigned": "Object = { isSealed: function (F) { return F; } }; var r = Object.isSealed(Function);",
+  "static assigned": "Object.isSealed = function (F) { return F; }; var r = Object.isSealed(Function);",
+  "static assigned through globalThis":
+    "globalThis.Object.isSealed = function (F) { return F; }; var r = Object.isSealed(Function);",
+  "getOwnPropertyDescriptor assigned":
+    'Object.getOwnPropertyDescriptor = function (F) { return { value: F }; }; var d = Object.getOwnPropertyDescriptor(Function, "length");',
+  "static assigned through an alias":
+    'var O = Object; O["isFrozen"] = function (F) { return F; }; var r = Object.isFrozen(Function);',
+  "static defined":
+    'Object.defineProperty(Object, "isSealed", { value: function (F) { return F; } }); var r = Object.isSealed(Function);',
+  "with statement": "with ({}) { var r = Object.isSealed(Function); }",
 };
 
 /** Whether the elision pre-pass keeps the dead shim, i.e. it saw a dynamic-code position. */
@@ -83,13 +104,6 @@ describe("#7343 — a Function value in an inert position is not dynamic code", 
     it(`stays a site: ${name}`, () => {
       expect(keepsShim(body)).toBe(true);
       expect(boundarySite(body)).toBe(true);
-    });
-  }
-
-  for (const [name, body] of Object.entries(PROTOTYPE_VALUE_SITES)) {
-    it(`stays an elision site: ${name}`, () => {
-      expect(keepsShim(body)).toBe(true);
-      expect(boundarySite(body)).toBe(false);
     });
   }
 });

@@ -7,7 +7,7 @@
 import type { TypeOracle } from "../checker/oracle.js";
 import { forEachChild, ts } from "../ts-api.js";
 import { identifierWritesOf, isStoreTarget } from "../shared/binding-writes.js";
-import { isInertFunctionMention, prototypeRead } from "../shared/function-mention.js";
+import { isInertFunctionMention } from "../shared/function-mention.js";
 
 export type IrRuntimeEvalSiteKind =
   | "direct-eval"
@@ -44,7 +44,7 @@ export interface IrRuntimeEvalSite {
    *
    * Recorded here rather than re-derived by a second scanner precisely because
    * the classification has non-obvious carve-outs (`isDirectCalleeIntrinsicValue`,
-   * `isInertFunctionMention`, `isBareFunctionPrototypeValue`) whose cost is
+   * `isInertFunctionMention`) whose cost is
    * measured in the comments below; a copy of them would drift.
    */
   readonly intrinsicName?: "eval" | "Function";
@@ -276,27 +276,6 @@ function stringArguments(args: readonly ts.Expression[] | undefined): { literalS
   return { literalSource: args.map((arg) => arg.text).join("\n"), unknown: false };
 }
 
-/**
- * The BARE `Function.prototype` VALUE (stored, passed on), which only this plan
- * excuses beyond `isInertFunctionMention`: the proto object itself is not
- * eval-capable, and its `.constructor` read is served by the self-contained
- * `%Function%` arm (function-intrinsic-carrier.ts) exactly like
- * `<fn>.constructor`. Before this, storing the value linked the provider ABI,
- * and a module whose imports were stubbed threw during `__module_init` while
- * seeding the companion's `constructor`. Dead-binding elision keeps it a
- * dynamic-code position: computed source could still reach the proto's
- * constructor there. A member read or a destructure of it is no bare value.
- */
-function isBareFunctionPrototypeValue(identifier: ts.Identifier): boolean {
-  const prototype = prototypeRead(identifier);
-  const use = prototype?.parent;
-  return (
-    use !== undefined &&
-    !((ts.isPropertyAccessExpression(use) || ts.isElementAccessExpression(use)) && use.expression === prototype) &&
-    !(ts.isVariableDeclaration(use) && use.initializer === prototype && ts.isObjectBindingPattern(use.name))
-  );
-}
-
 function isDirectCalleeIntrinsicValue(identifier: ts.Identifier): boolean {
   const parent = identifier.parent;
   if (
@@ -458,8 +437,7 @@ function visitRuntimeEvalSites(root: ts.Node, oracle: TypeOracle | undefined, si
       // receiver position (`eval.call(null, src)` is a real indirect eval), and
       // `.constructor` chains stay escapes because `Function.prototype.constructor`
       // IS the eval-capable constructor.
-      const isInert = isInertFunctionMention(node) || isBareFunctionPrototypeValue(node);
-      if (!isMemberName && !isInert) {
+      if (!isMemberName && !isInertFunctionMention(node)) {
         sink.site(node, "intrinsic-value", "required", undefined, node.text as "eval" | "Function");
         sink.source(undefined);
       }

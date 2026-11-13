@@ -226,3 +226,93 @@ not built here.
 S2 (the `Function("return this;")()` fold) is not built; whether it pays is
 open (3 sole-blocker files in the 600-file sample). The issue stays
 in-progress for it.
+
+## Review round 1 (PR #7231, 2026-11-13) — findings and fixes
+
+Fixed by the senior developer who took over the branch. Measured on the
+branch merged with main `5b1f4794bb`, standalone, one process at a time.
+
+**B1 (wrong answer): fixed.** `Object.getOwnPropertyDescriptor(Function,
+"prototype")` yields `%Function.prototype%`, and that object's own
+`constructor` is `%Function%`.
+
+The rule is now stated over what the result can hold. A mention is inert
+when no value it yields is `%Function%` or `%Function.prototype%`. An
+ordinary function value is allowed, because its inherited `constructor`
+reaches `%Function%` the way every function in the program does.
+
+The descriptor pairs that qualify, each pinned in
+`tests/issue-7343-function-inert-uses.test.ts`:
+
+| receiver | inert keys | why |
+| --- | --- | --- |
+| `Function` | every key except `"prototype"` and `"constructor"` | `length` and `name` hold a number and a string; any other key has no own descriptor |
+| `Function.prototype` | every key except `"constructor"` | `call` / `apply` / `bind` / `toString` and the `caller` / `arguments` thrower are ordinary functions; the rest are a number or a string |
+
+Both reviewer repros are "stays a site" rows. A source write cannot put
+either intrinsic under another key without a `Function` mention that is
+itself a site, so the descriptor rule needs no key-write screen.
+
+**S1 (writes ignored): fixed.** `Object` must be unpatched as well as
+undeclared: no literal-route write of `Object` or of the static being
+called. The screen reuses `sourceWritesMemberNamed`
+(`shared/intrinsic-prototype-writes.ts`) and adds no third mechanism. It
+covers:
+- `Object = …`;
+- `Object.isSealed = f`;
+- `globalThis.Object.isSealed = f`;
+- an alias's `O["isFrozen"] = f`;
+- `Object.defineProperty(Object, "isSealed", …)`;
+- `delete`.
+
+It also refuses any `with` statement, through a new `hasWithStatement`
+that shares `hasDynamicScope`'s single cached walk in
+`shared/binding-writes.ts`.
+
+Two coarser screens were measured and rejected, because test262's own
+`$262` prelude stores `globalThis` and `globalThis.Object`:
+- `sourceMayPatchPrototype(…, "Object")` and `sourceMayWriteGlobalObject`
+  are true in every assembled test, so the yield dropped from 9 to 0;
+- `hasDynamicScope` is true in every test, because of the
+  `$262.evalScript` shim's `eval`, and `sourceNamesReflectiveRoute` fires on
+  `getPrototypeOf` itself.
+
+What the screen does not catch:
+- A write under a computed name is outside the boundary, as it is for the
+  object statics (`objectStaticsArePristine`, #3776).
+- A direct `eval` could patch either intrinsic, but it is a site of its own
+  in both readers.
+
+**S2: dropped `isBareFunctionPrototypeValue`.** The bare
+`Function.prototype` value is now a site in both readers.
+- On the 249-file population, routing with the excusal and without it is
+  identical, file for file (`PROBE_KEEP_BARE` A/B).
+- The reviewer's `s03` (`var P = Function.prototype;
+  P.constructor("return 7;")`) now passes. It fails on main.
+
+**S3: done.** The flag parameter is gone. There are two flat entry arms,
+`isInertFunctionUse` and `isInertPrototypeUse`, over the shared
+`isInspected` / `describesKey` / `objectStaticCalledOn`.
+
+### Re-measured (main `5b1f4794bb`)
+
+| | files |
+| --- | --- |
+| gained (IR-only now) | 9 (the same 9 as before the review) |
+| lost | 0 |
+| units newly legacy | 0 (legacy units 995 → 756; it was 751 before the review: B1 and S2 keep 5 more units legacy) |
+| new compile errors | 0 |
+| post-claim errors | 1 → 1 (the same file) |
+| routing changed | 41 (42 before the review) |
+
+- **Verdicts:** the 41 routing-changed files pass on both trees,
+  standalone, with the interpreter eval provider built per tree
+  (`JS2WASM_EVAL_ENGINE=interpreter TEST262_FULL_RUNTIME_EVAL=1`).
+- **The reviewer's 29 probes:**
+  - main passes 17, the branch 18;
+  - no probe passes on main and fails on the branch;
+  - the one flip is `s03`, from fail to pass;
+  - the 11 still failing fail on main too: r02/r03/r04, r10–r14, r17,
+    r22, s02.
+- **gc (JS environment):** byte-identical on the 200-file sample without a
+  `Function` mention.
