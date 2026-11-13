@@ -424,17 +424,20 @@ and `Object/prototype/15.2.3.1.js` (`Object` passed as a value, refused as
   and it let `return Object.getOwnPropertyNames(x)` claim and then withdraw
   on the vec / externref result).
 
-  Leaf sets, after that: one per side, read three ways on the selector's.
-  from-ast's are what it lowered. The table's are the three above
-  (`tableLeaves`), read whole by the consumers (`lowersToCarrier`) and without
-  the taken dynamic home by `escapesUnit` (the reason is above). A static's
-  own values (`isCarrierValue`) read the table's leaves plus main's dynamic
-  bindings (a dynamic module binding, a dynamic parameter), because the
-  question there is different: not "did the table make this a carrier" but
-  "does this value already cross as one, so no boxing is needed"; main's
-  dynamic values do. Folding that into `tableLeaves` would make every main
-  dynamic binding a table carrier for the consumers, which is the round-4
-  regression (K1).
+  Leaf sets, after that: from-ast's are what it lowered. The selector has
+  one named set per question, each built from the same parts (the
+  initialised binding, the admitted static call):
+  - `resultLeaves`, the table's results, for `escapesUnit` (a taken dynamic
+    home is main's carrier, so where it goes across a call is main's);
+  - `carrierLeaves`, results plus the taken home, for the consumers
+    (`lowersToCarrier`);
+  - `valueLeaves`, carriers plus main's dynamic bindings (a dynamic module
+    binding, a dynamic parameter), for a static's own values
+    (`isCarrierValue`): there the question is not "did the table make this a
+    carrier" but "does this value already cross as one, so no boxing is
+    needed", and main's dynamic values do. Folding them into
+    `carrierLeaves` would make every main dynamic binding a table carrier
+    for the consumers, which is the round-4 regression (K1).
 
   The table is reached only through a call the lane's plan admits. A file
   without one (no `Object.x(…)`, only `Object.keys` / `Object.freeze` or
@@ -592,6 +595,23 @@ taken. On the probes it refuses 34 programs' units that round 5 claimed
 (none of them IR on main): 23 under (a), among them the functions that
 return a `defineProperty` / `defineProperties` / `create` /
 `getOwnPropertyDescriptor` result, and 11 under (b).
+
+### Review round 7: MET
+
+Two should-fix items closed before release, behaviour unchanged (probe
+routing and JS-environment bytes identical to round 6):
+
+- the leaf sets are one named factory per question (`resultLeaves`,
+  `carrierLeaves`, `valueLeaves`) over shared parts, replacing a boolean
+  `homes` switch and a spread override;
+- the per-file table gate has its own cache keyed by the source file (no
+  `endOfFileToken` stand-in), and the file's `Object.<name>(…)` calls are
+  indexed once, flat and by unit, so `takenByTable` does not rebuild a list
+  per query.
+
+Accepted residual risk: `escapesUnit` looks only at the immediate parent
+(`return <x>`, an arrow body, `f(<x>)`). A wrapped form (`return (c ? x :
+y)`, `f((0, x))`) is caught by other refusals today, not by this rule.
 
 ### What blocks the touched files now
 

@@ -94,12 +94,18 @@ function unitOf(node: ts.Node): ts.Node {
   return ts.isFunctionDeclaration(top) || ts.isClassDeclaration(top) ? top : top.parent;
 }
 
-/** Per source file, every `Object.<name>(…)` call by its unit; the lane's plan says which the table admits. */
-const objectCallIndexes = new WeakMap<ts.SourceFile, ReadonlyMap<ts.Node, readonly ts.CallExpression[]>>();
+/** A source file's `Object.<name>(…)` calls, all and by unit; the lane's plan says which the table admits. */
+interface ObjectCallIndex {
+  readonly all: readonly ts.CallExpression[];
+  readonly byUnit: ReadonlyMap<ts.Node, readonly ts.CallExpression[]>;
+}
 
-function objectCallsByUnit(file: ts.SourceFile): ReadonlyMap<ts.Node, readonly ts.CallExpression[]> {
-  const index = objectCallIndexes.get(file);
-  if (index !== undefined) return index;
+const objectCallIndexes = new WeakMap<ts.SourceFile, ObjectCallIndex>();
+
+function objectCallsOf(file: ts.SourceFile): ObjectCallIndex {
+  const known = objectCallIndexes.get(file);
+  if (known !== undefined) return known;
+  const all: ts.CallExpression[] = [];
   const byUnit = new Map<ts.Node, ts.CallExpression[]>();
   const visit = (node: ts.Node): void => {
     if (
@@ -108,6 +114,7 @@ function objectCallsByUnit(file: ts.SourceFile): ReadonlyMap<ts.Node, readonly t
       ts.isIdentifier(node.expression.expression) &&
       node.expression.expression.text === "Object"
     ) {
+      all.push(node);
       const unit = unitOf(node);
       const calls = byUnit.get(unit);
       if (calls) calls.push(node);
@@ -116,8 +123,24 @@ function objectCallsByUnit(file: ts.SourceFile): ReadonlyMap<ts.Node, readonly t
     ts.forEachChild(node, visit);
   };
   visit(file);
-  objectCallIndexes.set(file, byUnit);
-  return byUnit;
+  const index = { all, byUnit };
+  objectCallIndexes.set(file, index);
+  return index;
+}
+
+/**
+ * A cache of one answer per key, kept with the lane it was taken on: the plan reads the lane
+ * (capability, dynamic code), so an answer holds only for that lane.
+ */
+function laneAnswers<K extends object>(): (key: K, lane: string, compute: () => boolean) => boolean {
+  const answers = new WeakMap<K, { readonly lane: string; readonly answer: boolean }>();
+  return (key, lane, compute) => {
+    const known = answers.get(key);
+    if (known?.lane === lane) return known.answer;
+    const answer = compute();
+    answers.set(key, { lane, answer });
+    return answer;
+  };
 }
 
 export function createObjectStaticSelector(state: ObjectStaticSelectorState): ObjectStaticSelector {
@@ -130,60 +153,82 @@ export function createObjectStaticSelector(state: ObjectStaticSelectorState): Ob
 
   const holdsCarrier = (expression: ts.Expression) => state.moduleBinding(expression)?.valueKind.kind === "dynamic";
 
-  /** Whether the lane's plan admits one of a unit's (or the file's) `Object.<name>(…)` calls, per lane. */
-  const tableGates = new WeakMap<ts.Node, { readonly lane: string; readonly admits: boolean }>();
-  const admitsTableCall = (key: ts.Node, calls: () => readonly ts.CallExpression[]): boolean => {
-    const lane = `${state.supports("native-object-statics")}:${state.dynamicCodeMayRun()}`;
-    const known = tableGates.get(key);
-    if (known?.lane === lane) return known.admits;
-    const admits = calls().some((call) => plan(call)?.kind === "call");
-    tableGates.set(key, { lane, admits });
-    return admits;
-  };
-  const fileCallsTable = (file: ts.SourceFile) =>
-    admitsTableCall(file.endOfFileToken, () => [...objectCallsByUnit(file).values()].flat());
+  const lane = () => `${state.supports("native-object-statics")}:${state.dynamicCodeMayRun()}`;
+  const admitsAny = (calls: readonly ts.CallExpression[]) => calls.some((call) => plan(call)?.kind === "call");
+  /** The file holds a call the lane's plan admits. */
+  const fileAnswers = laneAnswers<ts.SourceFile>();
+  const fileCallsTable = (file: ts.SourceFile) => fileAnswers(file, lane(), () => admitsAny(objectCallsOf(file).all));
+  /** `node`'s unit holds a call the lane's plan admits. */
+  const unitAnswers = laneAnswers<ts.Node>();
   const unitCallsTable = (node: ts.Node) => {
     const unit = unitOf(node);
-    return admitsTableCall(unit, () => objectCallsByUnit(node.getSourceFile()).get(unit) ?? []);
+    return unitAnswers(unit, lane(), () => admitsAny(objectCallsOf(node.getSourceFile()).byUnit.get(unit) ?? []));
   };
 
   /** A #7280 dynamic home that an admitted table call takes: the object the table's defines extend. */
   const takenByTable = (declaration: ts.Declaration): boolean =>
-    [...objectCallsByUnit(declaration.getSourceFile()).values()].some((calls) =>
-      calls.some((call) => {
-        const [target] = call.arguments;
-        return (
-          target !== undefined &&
-          state.moduleBinding(target)?.declaration === declaration &&
-          plan(call)?.kind === "call"
-        );
-      }),
-    );
+    objectCallsOf(declaration.getSourceFile()).all.some((call) => {
+      const [target] = call.arguments;
+      return (
+        target !== undefined && state.moduleBinding(target)?.declaration === declaration && plan(call)?.kind === "call"
+      );
+    });
 
+  /** The declaration a function local or a dynamic module home reads, when it has an initializer. */
+  const initializedDeclaration = (node: ts.Identifier | ts.ThisExpression): ts.VariableDeclaration | undefined => {
+    if (!ts.isIdentifier(node)) return undefined;
+    const declaration =
+      state.unannotatedLocal(node) ?? (holdsCarrier(node) ? state.moduleBinding(node)?.declaration : undefined);
+    return declaration !== undefined && ts.isVariableDeclaration(declaration) && declaration.initializer
+      ? declaration
+      : undefined;
+  };
   /**
-   * `visited`: the declarations whose initializer is being judged; met again (a cycle), one answers
-   * no carrier. `homes`: whether a dynamic home a table call takes counts, as it does for its
-   * consumers; it is main's carrier already, so where it goes across a call is main's too.
+   * The binding holds what its initializer answers under `leaves`. `visited`: the declarations
+   * whose initializer is being judged; met again (a cycle), one answers no carrier.
    */
-  const tableLeaves = (visited: Set<ts.Declaration>, homes: boolean): CarrierLeaves => ({
-    // A function local or a dynamic module home holds what its initializer answers.
+  const holdsInitializer = (
+    declaration: ts.VariableDeclaration,
+    visited: Set<ts.Declaration>,
+    leaves: (visited: Set<ts.Declaration>) => CarrierLeaves,
+  ): boolean => {
+    if (visited.has(declaration)) return false;
+    visited.add(declaration);
+    return producesCarrier(declaration.initializer!, leaves(visited));
+  };
+  // An admitted static answers the carrier; #7335's own-property test on a dynamic home a boolean.
+  const staticCall: CarrierLeaves["call"] = (call) =>
+    plan(call)?.kind === "call" ? true : state.isOwnPropertyTest(call) ? false : undefined;
+
+  /** The table's results: a static's answer, and a binding initialised with one. */
+  const resultLeaves = (visited: Set<ts.Declaration>): CarrierLeaves => ({
     binding: (node) => {
-      if (!ts.isIdentifier(node)) return false;
-      const declaration =
-        state.unannotatedLocal(node) ?? (holdsCarrier(node) ? state.moduleBinding(node)?.declaration : undefined);
-      if (declaration === undefined || !ts.isVariableDeclaration(declaration) || !declaration.initializer) return false;
-      if (homes && state.isDynamicHomeOpenCarrier(declaration) && takenByTable(declaration)) return true;
-      if (visited.has(declaration)) return false;
-      visited.add(declaration);
-      return producesCarrier(declaration.initializer, tableLeaves(visited, homes));
+      const declaration = initializedDeclaration(node);
+      return declaration !== undefined && holdsInitializer(declaration, visited, resultLeaves);
     },
-    // An admitted static answers the carrier; #7335's own-property test on a dynamic home a boolean.
-    call: (call) => (plan(call)?.kind === "call" ? true : state.isOwnPropertyTest(call) ? false : undefined),
+    call: staticCall,
+  });
+  /** The table's carriers, as its consumers read them: its results, and a dynamic home a table call takes. */
+  const carrierLeaves = (visited: Set<ts.Declaration>): CarrierLeaves => ({
+    binding: (node) => {
+      const declaration = initializedDeclaration(node);
+      if (declaration === undefined) return false;
+      if (state.isDynamicHomeOpenCarrier(declaration) && takenByTable(declaration)) return true;
+      return holdsInitializer(declaration, visited, carrierLeaves);
+    },
+    call: staticCall,
+  });
+  /** A static's own values, which cross as carriers: the table's carriers, and main's dynamic bindings and parameters. */
+  const valueLeaves = (visited: Set<ts.Declaration>): CarrierLeaves => ({
+    binding: (node) =>
+      holdsCarrier(node) ||
+      (ts.isIdentifier(node) && state.isDynamicParam(node)) ||
+      carrierLeaves(visited).binding(node),
+    call: staticCall,
   });
 
-  const carrier = (expression: ts.Expression, homes: boolean) =>
-    fileCallsTable(expression.getSourceFile()) && producesCarrier(expression, tableLeaves(new Set(), homes));
-  const lowersToCarrier = (expression: ts.Expression) => carrier(expression, true);
+  const lowersToCarrier = (expression: ts.Expression) =>
+    fileCallsTable(expression.getSourceFile()) && producesCarrier(expression, carrierLeaves(new Set()));
 
   /**
    * A table result (a static's answer, or a binding initialised with one) leaves the unit that made
@@ -202,18 +247,16 @@ export function createObjectStaticSelector(state: ObjectStaticSelectorState): Ob
       ts.isIdentifier(parent.expression) &&
       !state.isAmbientBinding(parent.expression) &&
       !state.isLibOnlyBinding(parent.expression);
-    return (returned || passed) && carrier(expression, false);
+    // A dynamic home a table call takes is main's carrier already: where it goes across a call is main's.
+    return (
+      (returned || passed) &&
+      fileCallsTable(expression.getSourceFile()) &&
+      producesCarrier(expression, resultLeaves(new Set()))
+    );
   };
 
   /** A static's value crosses as a carrier, so any carrier qualifies: a dynamic home or parameter too. */
-  const isCarrierValue = (value: ts.Expression): boolean => {
-    const leaves = tableLeaves(new Set(), true);
-    return producesCarrier(value, {
-      ...leaves,
-      binding: (node) =>
-        holdsCarrier(node) || (ts.isIdentifier(node) && state.isDynamicParam(node)) || leaves.binding(node),
-    });
-  };
+  const isCarrierValue = (value: ts.Expression): boolean => producesCarrier(value, valueLeaves(new Set()));
 
   const admit = (call: ts.CallExpression, rules: ObjectStaticValueRules): boolean | undefined => {
     // The JS environment's #7276 create applies only off the table's lane, so at most one of the two answers.
