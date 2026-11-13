@@ -1,6 +1,9 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import type { Instr } from "../../../wasm/model/instructions.js";
-import { LINEAR_STRING_LENGTH_OFFSET, LINEAR_STRING_ELEMENTS_OFFSET } from "../../../ir/analysis/linear-memory-plan.js";
+import {
+  LINEAR_STRING_LENGTH_OFFSET,
+  LINEAR_STRING_ELEMENTS_OFFSET,
+} from "../../../shared/contracts/linear-memory-layout.js";
 
 /** Build fresh decoder instructions using the caller-resolved ASCII helper and five i32 locals. */
 export function buildLinearCharCodeAtBody(asciiFuncIdx: number, firstLocalIdx: number): Instr[] {
