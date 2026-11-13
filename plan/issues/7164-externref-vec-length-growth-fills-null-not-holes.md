@@ -300,3 +300,24 @@ with none of those is byte-identical, except where `origin/main` folded an
 `indexOf` / `includes` / `lastIndexOf` to a constant: round 7's IOF set has
 17 search programs with no growth, and the 3 that change are the 3 that
 `origin/main` answered wrongly.
+
+## Follow-up: compound update on a vec carrier of another type (2026-11-13)
+
+**Problem.** `g.length += k` on a `const g: any[]` that holds only strings
+emitted an invalid module on every lane. The binding's carrier is a string
+vec. `tryCompileArrayLengthUpdate` declines that carrier, and the generic
+struct compound path in `operator-assignment.ts` then read the declared
+`any[]` vec layout off the string vec.
+
+**How it showed up.** 46 programs of this issue's leak sweep hit it
+(setups `clearThenGrow` and `shrinkThenPlusEq`). The sweep counts a module
+that does not compile as "cannot leak", so it never failed. The one
+`Array.of` row hid it behind the `env::__js_array_new` strict refusal.
+
+**Fix.** `refuseForeignVecCarrierCompound` (`array-length-define.ts`) now
+refuses that receiver with a sticky diagnostic. Every one of those
+programs is a clean compile error instead of an invalid module.
+
+**Tests.** `tests/issue-7164-vec-carrier-compound-refusal.test.ts` pins the
+refusal on all three lanes, and the neighbouring shapes that still compile
+and run.

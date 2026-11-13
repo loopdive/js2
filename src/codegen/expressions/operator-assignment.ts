@@ -8,7 +8,7 @@
  * `=` assignment and destructuring stay in assignment.ts.
  */
 import type { StringBuilderSlots } from "../../backend/wasmgc/lowering/wasm-string-builder.js";
-import { tryCompileArrayLengthUpdate } from "../array-length-define.js"; // (#7164)
+import { refuseForeignVecCarrierCompound, tryCompileArrayLengthUpdate } from "../array-length-define.js"; // (#7164)
 import { ts, forEachChild } from "../../ts-api.js";
 import { isBooleanType, isStringType } from "../../checker/type-mapper.js";
 import type { FieldDef, Instr, StructTypeDef, ValType } from "../../ir/types.js";
@@ -2753,10 +2753,10 @@ function compilePropertyCompoundAssignment(
       return null;
     }
   }
+  if (refuseForeignVecCarrierCompound(ctx, fctx, target, objResult, structTypeIdx)) return null;
   const objTmp = allocLocal(fctx, `__cmpd_obj_${fctx.locals.length}`, objResult);
   fctx.body.push({ op: "local.set", index: objTmp });
 
-  // Read current value: obj.prop
   fctx.body.push({ op: "local.get", index: objTmp });
   fctx.body.push({ op: "struct.get", typeIdx: structTypeIdx, fieldIdx });
 
