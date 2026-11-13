@@ -245,8 +245,7 @@ import {
   isStrictEqualityOperator,
   isTypedBinaryOperator,
   mayBeElementRead,
-  isUndefinedCompareOperand,
-  voidEquality,
+  voidCarrierEqualityUnlowered,
   wrapperComparisonIsIdentity,
   type AdditiveLane,
   nativeI32OperandsAdmissible,
@@ -9831,36 +9830,15 @@ function isSelectableNumberCompound(
   return carrierLeafReads(expr.right, moduleBinding).length === 0 || shapeNo("compound-carrier-leaf", expr.right);
 }
 
-/**
- * An equality between a `void` and the carrier: from-ast's f64 `undefined` sentinel has no lowering
- * against the carrier or an `undefined` test. `void <carrier>` is refused against `undefined`, a
- * `void`, the carrier, or (loosely) `null`; any `void` loosely against the carrier. A strict compare
- * with `void 0`, a number or `null` lowers, and a non-carrier `void` keeps main's route.
- */
+/** `void e` beside the carrier where from-ast has no lowering (`voidCarrierEqualityUnlowered`). */
 function isPhase1VoidExpression(
   expr: ts.VoidExpression,
   scope: ReadonlySet<string>,
   localClasses: ReadonlySet<string>,
 ): boolean {
-  const equality = voidEquality(expr);
-  if (equality !== undefined && voidCarrierEqualityUnlowered(expr, equality.other, equality.loose, scope))
+  if (voidCarrierEqualityUnlowered(expr, readsCarrier, (name) => scope.has(name)))
     return capabilityNo("operand-coercion-unsupported", "expr-void-carrier-compare", expr);
   return isPhase1Expr(expr.expression, scope, localClasses);
-}
-
-function voidCarrierEqualityUnlowered(
-  expr: ts.VoidExpression,
-  other: ts.Expression,
-  loose: boolean,
-  scope: ReadonlySet<string>,
-): boolean {
-  if (!readsCarrier(expr.expression)) return loose && readsCarrier(other);
-  return (
-    isUndefinedCompareOperand(other, (name) => scope.has(name)) ||
-    ts.isVoidExpression(other) ||
-    readsCarrier(other) ||
-    (loose && other.kind === ts.SyntaxKind.NullKeyword)
-  );
 }
 
 /** A dynamic script var's read, or a `+` with one as an operand: the carrier from-ast lowers it to. */

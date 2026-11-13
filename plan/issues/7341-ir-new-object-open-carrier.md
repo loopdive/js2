@@ -401,10 +401,10 @@ for `new Object()`.
 
 | shape | main | now |
 |---|---|---|
-| `o.p++`, `o.p += 1`, `o["p"]++` on a carrier | from-ast: "compound property/element write on dynamic" | `member-compound-carrier-receiver` (`isPhase1MutableMemberTarget`) |
-| `o == null`, `null != o`, `o.p != null` | from-ast: "bare 'null' in non-reference context" | `expr-carrier-loose-null` (`nullComparisonFolds(op, "dynamic")`) |
+| `o.p++`, `o.p += 1`, `o["p"]++` on a carrier | from-ast: "compound property/element write on dynamic" | `member-compound-dynamic-receiver` (#7212's arm in `isPhase1MutableMemberTarget`) |
+| `o == null`, `null != o`, `o.p != null` | from-ast: "bare 'null' in non-reference context" | `expr-carrier-loose-null` (#7212's `compareVerdict`) |
 | `switch (o)`, `switch (o.k)` on a carrier | from-ast: "switch disc must lower to i32/f64" | `switch-disc-carrier` (`isPhase1SwitchStatement`) |
-| `void o.p !== undefined`, `void o != undefined` (a carrier operand) | from-ast: "undefined-compare on f64 not in IR scope" / "matching operand types" | `expr-void-undefined-compare` (the `void` arm, `isPhase1VoidExpression`; predicate `voidValueComparedWithUndefined` in `analysis/operand-admissibility.ts`) |
+| `void o.p !== undefined`, `void o != undefined`, and the step-B mixed shapes below | from-ast: "undefined-compare on f64 not in IR scope" / "matching operand types" / "bare 'null'" | `expr-void-carrier-compare` (the `void` arm, `isPhase1VoidExpression`; `voidEquality` in `analysis/operand-admissibility.ts`) |
 
 On ordinary code these rules only flip claims that main withdrew after the
 claim.
@@ -423,32 +423,17 @@ Shared helpers:
 - Its users are the planned-closure arm, the generic binary arm and
   `tryFoldNullCompare` in from-ast, which had its own inline copy.
 
-Carrier-read helpers (`select.ts`):
+Carrier-read helper (after step B): `readsCarrier` in `select-object-statics.ts`.
 
-- `isDynamicScriptVarRead` is the one leaf, a read of a dynamic script var.
-  It replaces the spellings of `moduleBinding(e)?.valueKind.kind === "dynamic"`
-  this branch touched.
-  - Follow-up, left alone because they predate this branch: the inline
-    `valueKind.kind === "dynamic"` tests on other binding values in
-    `select.ts` (`moduleBinding?.`, `directModuleBinding?.`, `binding.`,
-    `currentModuleBindingResolver?.(…)?.`; six sites).
-- `readsScriptVarCarrier(e, via)` follows either `+` operands (`"addition"`,
-  the compound-RHS rule) or member reads (`"member"`, the refusals above).
-
-Fold plan with PR #7212, which lands first:
-
-- #7212's `lowersToCarrier` is a superset of `readsScriptVarCarrier`. It has
-  the same member-chain walk, plus static results, carrier locals,
-  conditionals and a carrier `+`.
-- #7212's `member-compound-dynamic-receiver` refusal sits in the same spot of
-  `isPhase1MutableMemberTarget`, with the wider predicate.
-- #7212 also adds a loose-null refusal in the generic binary arm
-  (`nullishCompare ? !nullComparisonFolds(binOp, "dynamic")`, reason
-  `expr-binary-operand-families`).
-- Once #7212 is on main, this branch merges main. It then deletes
-  `readsScriptVarCarrier` and `member-compound-carrier-receiver` in favour of
-  #7212's, and keeps one loose-null arm with one detail code. The
-  `nullComparedOperand` guard of this branch is the shape that stays.
+- It is #7212's `producesCarrier` over one more leaf set, `openObjectLeaves`:
+  the table's carriers plus every #7280 dynamic home (`{}`, `new Object()`;
+  legacy's `isOpenObjectBinding` decides the home).
+- A plain dynamic script var (`var n; n = 3`) is not an open object, so its
+  routing stays main's, as #7212 review K1 requires.
+- It keys the member-compound, switch, `void` and loose-null rules. The loose
+  null rule is #7212's one arm (`compareVerdict`); this branch's second arm is
+  deleted. `readsScriptVarCarrier` and `isDynamicScriptVarRead` are deleted;
+  the latter was #7212's `holdsCarrier`.
 
 One sibling test row changed: #7335's "parenthesized loose equality"
 (`(o) == null` on a `{}` carrier) is now refused by the loose-null arm before
@@ -456,40 +441,30 @@ the own-property probe. Only its expected detail changed.
 
 ### Still open
 
-- **Pending #7194** (loose equality of the carrier with a primitive skips
-  ToPrimitive). These inputs are claimed and answer wrong today, exactly as
-  `{}` does on main:
-  - `var o = new Object(); o == 1` traps (illegal cast);
-  - `o == true` traps;
-  - `o == "[object Object]"` answers false.
-
-  `tests/issue-7341-new-object-open-carrier.test.ts` pins today's answers
-  ("PENDING_7194") so the #7194 fix flips them visibly. After that fix they
-  must accept only the JS answer or a select refusal. No measured file reaches
-  them.
 - Found while probing, not caused here and not fixed: `typeof void x` on a
   dynamic script var answers wrong in the IR (same on main).
+- #7194 landed on main: `o == 1`, `o == true` and `o == "[object Object]"`
+  now answer as JS, so those rows moved from "pending" to the claimed set.
 
-### Still open (step B, after PR #7212 is on main)
+### Step B (done, after PR #7212 landed)
 
-Mixed carrier expressions that are still claimed and then withdrawn. Each one
-needs #7212's recursive `lowersToCarrier`:
-
-- `switch (o.k + 1)`
-- `switch ((0, o.k))`
-- `void o.p == null`
-- `void o.p === o.q`
-- `void o.p !== void 0`
-- `o.p == void 0`
-
-Planned with them:
-
-- `readsScriptVarCarrier`'s two modes are replaced by `lowersToCarrier`.
-- The two loose-null refusals become #7212's `expr-carrier-loose-null`
-  (keyed on `lowersToCarrier`, plus `compound-carrier-operand`); this branch's
-  refusals are dropped in its favour.
-- `member-compound-carrier-receiver` gives way to #7212's
-  `member-compound-dynamic-receiver`.
+- The six mixed rows are refused at select, never claimed and withdrawn:
+  - `switch (o.k + 1)` and `switch ((0, o.k))` by `switch-disc-carrier`, once
+    the rule reads the carrier through `producesCarrier`;
+  - `void o.p == null`, `void o.p === o.q`, `void o.p !== void 0` and
+    `o.p == void 0` by `expr-void-carrier-compare`.
+- The `void` rule was measured shape by shape (`[scratch]/shepherd/void-probe.mts`).
+  - from-ast has no lowering for: `void <carrier>` against `undefined`,
+    another `void`, the carrier, or (loosely) `null`; and any `void` loosely
+    against the carrier.
+  - It does lower these, which stay claimed: strict compares with `void 0`, a
+    number or `null`; `<carrier> == undefined`.
+- A non-carrier `void a == null` still fails at build, as on main. It keeps
+  main's route (the round-2 rule).
+- `objectStaticsArePristine` (`object-integrity.ts`) no longer counts the
+  callee of `new Object(…)` as a route to a static. Otherwise every
+  `new Object()` file refused #7335's define as `expr-object-static-untrusted`
+  once #7212 moved defines into the statics table.
 
 ### Measurements (re-run after the review fixes)
 
