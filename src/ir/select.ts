@@ -110,6 +110,7 @@ import {
 } from "./empty-object-literal.js";
 import { createObjectStaticSelector } from "./select-object-statics.js";
 import * as dynamicHome from "./dynamic-home-open-object.js";
+import { writerKnowsItsStrictness } from "./dynamic-home-uses.js";
 import { selectWithEnvironmentClosures } from "./with-environment.js";
 // (#1373b C-1) Pure-syntactic async helpers from the LEAF module (safe for
 // ir/* — async-static.ts imports only ts-api, so no codegen/index cycle).
@@ -198,6 +199,7 @@ import { matchRegExpCarrierCall, staticRegExpPair } from "../shared/regexp-stati
 import { regExpMatchReadValueAdmitted, regExpMatchUseAdmitted } from "./regexp-match-uses.js";
 import type { IrFallbackReason } from "../shared/contracts/ir-preparation-failure.js";
 import { plannedClosureOperandRefusal } from "./select-planned-closure-operands.js";
+import * as wrapper from "./wrapper-construction.js";
 import {
   staticStringMethodArgument,
   staticStringNumber,
@@ -8283,7 +8285,7 @@ function expressionIsModuleExternAccessChain(expr: ts.Expression): boolean {
 
 function moduleExternPropertyWriteIsProven(left: ts.PropertyAccessExpression, right: ts.Expression): boolean {
   // (#7338) A store into a dynamic module binding is `dyn.member_set`, which is told its writer's code strictness.
-  if (holdsCarrier(left.expression) && tableMayReach(left)) return dynamicHome.writerKnowsItsStrictness(left);
+  if (holdsCarrier(left.expression) && tableMayReach(left)) return writerKnowsItsStrictness(left);
   if (!expressionIsModuleExternAccessChain(left.expression)) return true;
   return currentModuleBindingResolver?.externValueIsPassable(right) === true;
 }
@@ -9384,9 +9386,11 @@ function ambientTypeofIdentifierTag(
   return tag;
 }
 
+/** The selector's binding facts for the wrapper recognizer (`wrapper-construction.ts`). */
+const WRAPPER_AMBIENCE = { isAmbient: selectorSeesAmbientBinding, isAmbientString: selectorSeesAmbientStringBinding };
+
 function selectorSeesAmbientWrapperConstructor(node: ts.Identifier): boolean {
-  if (node.text !== "Number" && node.text !== "String" && node.text !== "Boolean") return false;
-  return node.text === "String" ? selectorSeesAmbientStringBinding(node) : selectorSeesAmbientBinding(node);
+  return wrapper.ambientWrapperRow(node, WRAPPER_AMBIENCE) !== undefined;
 }
 
 interface ExactMixedPrimitiveWrapperCall {
@@ -9450,21 +9454,9 @@ function selectorPrimitiveWrapperConstruction(
   scope: ReadonlySet<string>,
   localClasses: ReadonlySet<string>,
 ): ts.NewExpression | null {
-  const candidate = unwrapPhase1Parens(expression);
-  if (
-    !ts.isNewExpression(candidate) ||
-    !ts.isIdentifier(candidate.expression) ||
-    !selectorSeesAmbientWrapperConstructor(candidate.expression) ||
-    candidate.arguments?.length !== 1 ||
-    ts.isSpreadElement(candidate.arguments[0]!)
-  ) {
-    return null;
-  }
-  const argument = candidate.arguments[0]!;
-  const expectedFamily =
-    candidate.expression.text === "Boolean" ? "boolean" : candidate.expression.text === "Number" ? "number" : "string";
-  if (obviousSelectorValueFamily(argument, scope) !== expectedFamily) return null;
-  return isPhase1Expr(argument, scope, localClasses) ? candidate : null;
+  const construction = wrapper.wrapperConstruction(unwrapPhase1Parens(expression), WRAPPER_AMBIENCE);
+  const argument = wrapper.admissibleArgument(construction, (a) => obviousSelectorValueFamily(a, scope) ?? "unknown");
+  return argument !== undefined && isPhase1Expr(argument, scope, localClasses) ? construction!.expr : null;
 }
 
 /**
@@ -12096,6 +12088,13 @@ function phase1NewExpression(
   if (isRealmObjectConstruction(expr, selectorSeesLibOnlyBinding)) {
     if (!hasNoConstructorArguments(expr)) return shapeNo("expr-new-object-argument", expr);
     return isDynamicHomeOpenCarrier(expr) || shapeNo("expr-new-object-home", expr);
+  }
+  const stored = isLocalClass ? undefined : wrapper.storedWrapperConstruction(expr, WRAPPER_AMBIENCE);
+  if (stored !== undefined) {
+    const family = (argument: ts.Expression) => obviousSelectorValueFamily(argument, scope) ?? "unknown";
+    const refusal = wrapper.wrapperStoreRefusal(stored, currentSelectionOptions, currentModuleBindingResolver, family);
+    if (refusal !== undefined) return capabilityNo("constructor-resolution-unsupported", refusal, expr);
+    return isPhase1Expr(stored.argument!, scope, localClasses);
   }
   if (!isLocalClass && !isKnownExternClass(ctorName)) {
     return capabilityNo("constructor-resolution-unsupported", "expr-new-ctor-unknown", expr.expression);

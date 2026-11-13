@@ -20,6 +20,7 @@ import {
 } from "../shared/intrinsic-prototype-writes.js";
 import { ts } from "../ts-api.js";
 import { isPrimitiveLiteral } from "./descriptor-literal.js";
+import { referencesNamed } from "./dynamic-home-uses.js";
 import { OBJECT_PROTOTYPE_KEYS } from "./realm-keys.js";
 
 /** An empty object value in either spelling. */
@@ -114,17 +115,7 @@ export function emptyObjectBinding(
   const decl = expr.parent;
   if (owner === undefined || !ts.isVariableDeclaration(decl) || decl.initializer !== expr) return undefined;
   if (decl.type !== undefined || !ts.isIdentifier(decl.name)) return undefined;
-  const name = decl.name;
-  const references: ts.Identifier[] = [];
-  const visit = (node: ts.Node): void => {
-    if (ts.isIdentifier(node)) {
-      if (node.text === name.text && node !== name) references.push(node);
-      return;
-    }
-    ts.forEachChild(node, visit);
-  };
-  ts.forEachChild(owner, visit);
-  return { value: expr, decl, name, references };
+  return { value: expr, decl, name: decl.name, references: referencesNamed(decl.name, owner) };
 }
 
 /**

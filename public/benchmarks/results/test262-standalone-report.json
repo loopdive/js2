@@ -4,17 +4,17 @@
   "executionCompilerPath": "unknown",
   "configuredCompilerPath": "hybrid",
   "measurementState": "measured",
-  "attemptedCases": 57705,
+  "attemptedCases": 57701,
   "completedCases": 48735,
   "skippedCases": 114,
   "compileErrorCases": 1401,
-  "compileTimeoutCases": 21,
+  "compileTimeoutCases": 18,
   "verifiedExecutionCases": 0,
   "verifiedFrontendCases": 0,
   "unverifiedExecutionCases": 48621,
-  "timestamp": "2026-11-13T18:15:05.549Z",
-  "baseline_generated_at": "2026-11-13T18:15:05.549Z",
-  "baseline_sha": "73239fdc1e331768150e1c5271a6e165dd8e5f9d",
+  "timestamp": "2026-11-13T21:05:34.254Z",
+  "baseline_generated_at": "2026-11-13T21:05:34.254Z",
+  "baseline_sha": "7dca7048c192994c553a905b6676aa54257893e0",
   "oracle_version": 16,
   "mode": {
     "target": "standalone",
@@ -24,30 +24,30 @@
   },
   "summary": {
     "total": 48232,
-    "pass": 42455,
+    "pass": 42458,
     "fail": 4492,
     "compile_error": 1246,
-    "compile_timeout": 21,
+    "compile_timeout": 18,
     "skip": 18,
-    "compilable": 46947,
-    "host_free_pass": 42455,
-    "ir_only_pass": 2317,
+    "compilable": 46950,
+    "host_free_pass": 42458,
+    "ir_only_pass": 2367,
     "ir_measured": 39011,
-    "ir_only_pass_pct": 4.8,
+    "ir_only_pass_pct": 4.9,
     "stale": 0,
     "by_category": {
       "standard": {
         "total": 47146,
-        "pass": 41412,
+        "pass": 41415,
         "fail": 4463,
         "compile_error": 1232,
-        "compile_timeout": 21,
+        "compile_timeout": 18,
         "skip": 18,
-        "compilable": 45875,
-        "host_free_pass": 41412,
-        "ir_only_pass": 2293,
+        "compilable": 45878,
+        "host_free_pass": 41415,
+        "ir_only_pass": 2343,
         "ir_measured": 37932,
-        "ir_only_pass_pct": 4.9,
+        "ir_only_pass_pct": 5,
         "stale": 0,
         "label": "ECMAScript current standard"
       },
@@ -83,31 +83,31 @@
       },
       "official": {
         "total": 48232,
-        "pass": 42455,
+        "pass": 42458,
         "fail": 4492,
         "compile_error": 1246,
-        "compile_timeout": 21,
+        "compile_timeout": 18,
         "skip": 18,
-        "compilable": 46947,
-        "host_free_pass": 42455,
-        "ir_only_pass": 2317,
+        "compilable": 46950,
+        "host_free_pass": 42458,
+        "ir_only_pass": 2367,
         "ir_measured": 39011,
-        "ir_only_pass_pct": 4.8,
+        "ir_only_pass_pct": 4.9,
         "stale": 0,
         "label": "standard + annex_b (default)"
       },
       "full": {
         "total": 48735,
-        "pass": 42691,
+        "pass": 42694,
         "fail": 4508,
         "compile_error": 1401,
-        "compile_timeout": 21,
+        "compile_timeout": 18,
         "skip": 114,
-        "compilable": 47199,
-        "host_free_pass": 42691,
-        "ir_only_pass": 2317,
+        "compilable": 47202,
+        "host_free_pass": 42694,
+        "ir_only_pass": 2367,
         "ir_measured": 39020,
-        "ir_only_pass_pct": 4.8,
+        "ir_only_pass_pct": 4.9,
         "stale": 0,
         "label": "standard + annex_b + proposals"
       }
@@ -115,52 +115,52 @@
   },
   "official_summary": {
     "total": 48232,
-    "pass": 42455,
+    "pass": 42458,
     "fail": 4492,
     "compile_error": 1246,
-    "compile_timeout": 21,
+    "compile_timeout": 18,
     "skip": 18,
-    "compilable": 46947,
-    "host_free_pass": 42455,
-    "ir_only_pass": 2317,
+    "compilable": 46950,
+    "host_free_pass": 42458,
+    "ir_only_pass": 2367,
     "ir_measured": 39011,
-    "ir_only_pass_pct": 4.8,
+    "ir_only_pass_pct": 4.9,
     "stale": 0
   },
   "full_summary": {
     "total": 48735,
-    "pass": 42691,
+    "pass": 42694,
     "fail": 4508,
     "compile_error": 1401,
-    "compile_timeout": 21,
+    "compile_timeout": 18,
     "skip": 114,
-    "compilable": 47199,
-    "host_free_pass": 42691,
-    "ir_only_pass": 2317,
+    "compilable": 47202,
+    "host_free_pass": 42694,
+    "ir_only_pass": 2367,
     "ir_measured": 39020,
-    "ir_only_pass_pct": 4.8,
+    "ir_only_pass_pct": 4.9,
     "stale": 0
   },
   "strict_summary": {
     "total": 45721,
-    "pass": 40083,
+    "pass": 40086,
     "fail": 4400,
     "compile_error": 1199,
-    "compile_timeout": 21,
+    "compile_timeout": 18,
     "skip": 18,
-    "compilable": 44483,
-    "host_free_pass": 40083,
-    "ir_only_pass": 2295,
+    "compilable": 44486,
+    "host_free_pass": 40086,
+    "ir_only_pass": 2345,
     "ir_measured": 36596,
-    "ir_only_pass_pct": 5,
+    "ir_only_pass_pct": 5.1,
     "stale": 0
   },
   "ir_fallback_codes": [
     {
       "code": "unsupported:select:body-shape-rejected",
-      "tests": 30984,
-      "units": 53190,
-      "passing_tests": 25945
+      "tests": 32290,
+      "units": 54549,
+      "passing_tests": 27173
     },
     {
       "code": "unsupported:select:param-type-not-resolvable",
@@ -176,9 +176,9 @@
     },
     {
       "code": "unsupported:select:operand-coercion-unsupported",
-      "tests": 4587,
-      "units": 4593,
-      "passing_tests": 3712
+      "tests": 4591,
+      "units": 4597,
+      "passing_tests": 3716
     },
     {
       "code": "unsupported:select:class-member-unsupported",
@@ -211,16 +211,10 @@
       "passing_tests": 1362
     },
     {
-      "code": "unsupported:select:call-resolution-unsupported",
-      "tests": 1610,
-      "units": 1617,
-      "passing_tests": 1514
-    },
-    {
       "code": "unsupported:select:constructor-resolution-unsupported",
-      "tests": 1570,
-      "units": 2048,
-      "passing_tests": 1395
+      "tests": 1598,
+      "units": 2076,
+      "passing_tests": 1423
     },
     {
       "code": "unsupported:select:async-generator",
@@ -254,15 +248,15 @@
     },
     {
       "code": "unsupported:select:regexp-constructor-unsupported",
-      "tests": 435,
-      "units": 435,
-      "passing_tests": 405
+      "tests": 443,
+      "units": 443,
+      "passing_tests": 413
     },
     {
       "code": "unsupported:select:host-surface-unavailable",
-      "tests": 412,
-      "units": 413,
-      "passing_tests": 186
+      "tests": 415,
+      "units": 416,
+      "passing_tests": 189
     },
     {
       "code": "unsupported:select:param-shape-rejected",
@@ -272,15 +266,21 @@
     },
     {
       "code": "unsupported:select:error-constructor-unsupported",
-      "tests": 258,
-      "units": 524,
-      "passing_tests": 103
+      "tests": 263,
+      "units": 529,
+      "passing_tests": 108
     },
     {
       "code": "unsupported:select:destructuring-param-complex",
       "tests": 153,
       "units": 172,
       "passing_tests": 153
+    },
+    {
+      "code": "unsupported:select:call-resolution-unsupported",
+      "tests": 142,
+      "units": 149,
+      "passing_tests": 137
     },
     {
       "code": "unsupported:select:class-projection-unsupported",
@@ -308,9 +308,9 @@
     },
     {
       "code": "unsupported:select:date-constructor-unsupported",
-      "tests": 73,
-      "units": 73,
-      "passing_tests": 73
+      "tests": 82,
+      "units": 82,
+      "passing_tests": 82
     },
     {
       "code": "unsupported:build:method-call-unsupported",
@@ -494,16 +494,16 @@
     },
     "standard": {
       "total": 47146,
-      "pass": 41412,
+      "pass": 41415,
       "fail": 4463,
       "compile_error": 1232,
-      "compile_timeout": 21,
+      "compile_timeout": 18,
       "skip": 18,
-      "compilable": 45875,
-      "host_free_pass": 41412,
-      "ir_only_pass": 2293,
+      "compilable": 45878,
+      "host_free_pass": 41415,
+      "ir_only_pass": 2343,
       "ir_measured": 37932,
-      "ir_only_pass_pct": 4.9,
+      "ir_only_pass_pct": 5,
       "stale": 0
     }
   },
@@ -1051,7 +1051,7 @@
       "skip": 0,
       "total": 3411,
       "host_free_pass": 3344,
-      "ir_only_pass": 255,
+      "ir_only_pass": 295,
       "ir_measured": 3411
     },
     {
@@ -1252,13 +1252,13 @@
     {
       "name": "built-ins/Temporal",
       "path": "built-ins/Temporal",
-      "pass": 4483,
+      "pass": 4486,
       "fail": 101,
       "compile_error": 0,
-      "compile_timeout": 19,
+      "compile_timeout": 16,
       "skip": 0,
       "total": 4603,
-      "host_free_pass": 4483,
+      "host_free_pass": 4486,
       "ir_only_pass": 0,
       "ir_measured": 0
     },
@@ -1506,7 +1506,7 @@
       "skip": 18,
       "total": 11102,
       "host_free_pass": 9598,
-      "ir_only_pass": 507,
+      "ir_only_pass": 509,
       "ir_measured": 8912
     },
     {
@@ -1714,7 +1714,7 @@
       "skip": 0,
       "total": 9347,
       "host_free_pass": 8243,
-      "ir_only_pass": 192,
+      "ir_only_pass": 200,
       "ir_measured": 7823
     },
     {
@@ -1768,8 +1768,8 @@
   },
   "root_cause_map": {
     "target": "standalone",
-    "total_non_pass_non_skip": 5930,
-    "classified": 5930,
+    "total_non_pass_non_skip": 5927,
+    "classified": 5927,
     "unclassified_threshold": 0,
     "has_edition_breakdown": true,
     "buckets": [
@@ -1802,8 +1802,8 @@
         },
         "sample_files": [
           "test/language/expressions/dynamic-import/syntax/valid/top-level-import-source-empty-str-is-valid-assign-expr.js",
-          "test/language/expressions/dynamic-import/syntax/valid/nested-async-gen-await-import-source-empty-str-is-valid-assign-expr.js",
           "test/language/expressions/dynamic-import/catch/nested-async-function-import-source-specifier-tostring-abrupt-rejects.js",
+          "test/language/expressions/dynamic-import/syntax/valid/nested-async-gen-await-import-source-empty-str-is-valid-assign-expr.js",
           "test/language/expressions/dynamic-import/catch/nested-async-arrow-function-await-import-source-specifier-tostring-abrupt-rejects.js",
           "test/language/expressions/dynamic-import/syntax/valid/nested-async-function-import-source-script-code-valid.js"
         ],
@@ -1821,14 +1821,14 @@
           "#661"
         ],
         "label": "Temporal proposal/polyfill gap",
-        "count": 120,
+        "count": 117,
         "statuses": {
           "pass": 0,
           "fail": 101,
           "compile_error": 0,
-          "compile_timeout": 19,
+          "compile_timeout": 16,
           "skip": 0,
-          "total": 120,
+          "total": 117,
           "host_free_pass": 0,
           "ir_only_pass": 0,
           "ir_measured": 0
@@ -1841,21 +1841,21 @@
           "illegal_cast": 1
         },
         "by_edition": {
-          "ES2026": 120
+          "ES2026": 117
         },
         "sample_files": [
           "test/built-ins/Temporal/Duration/prototype/round/roundingincrement-days-large.js",
           "test/built-ins/Temporal/PlainMonthDay/from/argument-string-calendar-case-insensitive.js",
-          "test/built-ins/Temporal/Duration/prototype/round/valid-increments.js",
           "test/built-ins/Temporal/Duration/prototype/subtract/precision-no-floating-point-loss.js",
-          "test/built-ins/Temporal/PlainDate/prototype/toLocaleString/return-string.js"
+          "test/built-ins/Temporal/PlainDate/prototype/toLocaleString/return-string.js",
+          "test/built-ins/Temporal/PlainYearMonth/from/argument-string-calendar-case-insensitive.js"
         ],
         "sample_signatures": [
           "assertion_fail:Test262Error: round to 1e8-# days with plain relativeTo: days result: Expected SameValue(«#», «#») to be true",
           "range_error:RangeError: MM-DD format is only valid with iso8601 calendar",
-          "compile_timeout:timeout (10s)",
           "assertion_fail:Test262Error: duration1.subtract(duration2): days result: Expected SameValue(«#», «#») to be true",
-          "range_error:RangeError: Intl.DateTimeFormat is unavailable under --target standalone (no ICU data in pure Wasm) (option dateStyle)"
+          "range_error:RangeError: Intl.DateTimeFormat is unavailable under --target standalone (no ICU data in pure Wasm) (option dateStyle)",
+          "range_error:RangeError: YYYY-MM format is only valid with iso8601 calendar"
         ]
       },
       {

@@ -11,11 +11,11 @@
  *     installed.
  * Both stand only on a binding that holds that one object throughout, with
  * every reference a consumer that cannot hand it to code that installs one
- * ({@link isServedUse}). An allow-list, because a deny-list of the uses that
+ * (`openObjectPolicy`). An allow-list, because a deny-list of the uses that
  * escape has to anticipate every spelling of them.
  */
 
-import { bindingIsUniqueAndNeverWritten, isStoreTarget, outermostParenthesized } from "../shared/binding-writes.js";
+import { bindingIsUniqueAndNeverWritten } from "../shared/binding-writes.js";
 import {
   sourceMayPatchPrototype,
   sourceNamesReflectiveRoute,
@@ -28,6 +28,7 @@ import {
   isOpenCarrierUse,
   type EmptyObjectExpression,
 } from "./empty-object-literal.js";
+import { isServedUse, type ServedUsePolicy } from "./dynamic-home-uses.js";
 import type { IrLegacyModuleBindingIdentity } from "./module-bindings.js";
 import { OBJECT_PROTOTYPE_KEYS } from "./realm-keys.js";
 
@@ -100,21 +101,21 @@ function everyUseIsServed(
     const name = decl.name as ts.Identifier;
     const file = decl.getSourceFile();
     const binding = emptyObjectBinding(value, file);
+    const policy = openObjectPolicy(query);
     served =
       bindingIsUniqueAndNeverWritten(name, decl) &&
       !sourceWritesMemberNamed(file, name.text) &&
       !sourceMayPatchPrototype(file, "Object") &&
       !sourceNamesReflectiveRoute(file) &&
       binding !== undefined &&
-      binding.references.every((reference) => isServedUse(reference, query));
+      binding.references.every((reference) => isServedUse(reference, policy));
     servedByDeclaration.set(decl, served);
   }
   return served;
 }
 
 /**
- * One reference the dynamic operations serve, judged on its outermost
- * parenthesized form:
+ * The open object's allow-list for the shared scan (`isServedUse`):
  *   - `o.<key>` read, not called, where `Object.prototype` does not own `<key>` (the
  *     reader does not reach an inherited member: #7128's U2 key screen), or a
  *     plain `o.<key> = v` in `<module-init>` or a top-level function, whose
@@ -126,29 +127,21 @@ function everyUseIsServed(
  * condition, and a call argument, through which other code could install an
  * own `hasOwnProperty` under a key no scan sees (`g(o, "has" + "Own…")`).
  */
-function isServedUse(reference: ts.Identifier, query: DynamicHomeQuery): boolean {
-  const use = outermostParenthesized(reference);
-  const parent = use.parent;
-  if (ts.isPropertyAccessExpression(parent) && parent.expression === use) {
-    if (ts.isCallExpression(parent.parent) && ownPropertyCallMethod(parent.parent) !== undefined) return true;
-    if (parent.questionDotToken !== undefined || OBJECT_PROTOTYPE_KEYS.has(parent.name.text)) return false;
-    // `o.m()` / ``o.m`…` `` hands `o` to arbitrary code as `this`, which could install an own method.
-    const member = outermostParenthesized(parent);
-    const user = member.parent;
-    if (
-      (ts.isCallExpression(user) && user.expression === member) ||
-      (ts.isTaggedTemplateExpression(user) && user.tag === member)
-    )
-      return false;
-    if (!isStoreTarget(parent) && !ts.isDeleteExpression(user)) return true;
-    return isPlainAssignmentTarget(parent) && writerKnowsItsStrictness(parent);
-  }
-  if (use === reference && isOpenCarrierUse(reference, query.isLiteralDefine)) return true;
-  if (ts.isBinaryExpression(parent)) {
-    const op = parent.operatorToken.kind;
-    return op === ts.SyntaxKind.EqualsEqualsEqualsToken || op === ts.SyntaxKind.ExclamationEqualsEqualsToken;
-  }
-  return ts.isTypeOfExpression(parent);
+function openObjectPolicy(query: DynamicHomeQuery): ServedUsePolicy {
+  return {
+    unreadableKeys: OBJECT_PROTOTYPE_KEYS,
+    servesMemberCall: (call) => ownPropertyCallMethod(call) !== undefined,
+    servesMemberRead: () => true,
+    servesReference: (use, reference) => {
+      if (use === reference && isOpenCarrierUse(reference, query.isLiteralDefine)) return true;
+      const parent = use.parent;
+      if (ts.isBinaryExpression(parent)) {
+        const op = parent.operatorToken.kind;
+        return op === ts.SyntaxKind.EqualsEqualsEqualsToken || op === ts.SyntaxKind.ExclamationEqualsEqualsToken;
+      }
+      return ts.isTypeOfExpression(parent);
+    },
+  };
 }
 
 /** `o.hasOwnProperty(k)` / `o.propertyIsEnumerable(k)` with one plain argument, the method never replaced. */
@@ -186,20 +179,4 @@ function methodIsOnlyRead(file: ts.SourceFile, method: OwnPropertyMethod): boole
     readOnlyMethodsByFile.set(file, readOnly);
   }
   return readOnly.has(method);
-}
-
-/** `target = v`: a plain assignment, not compound, logical or destructuring. */
-function isPlainAssignmentTarget(target: ts.Expression): boolean {
-  const user = outermostParenthesized(target).parent;
-  return (
-    ts.isBinaryExpression(user) &&
-    user.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
-    user.left === outermostParenthesized(target)
-  );
-}
-
-/** The write sits in `<module-init>` or a top-level function, the code whose strictness lowering is told. */
-export function writerKnowsItsStrictness(node: ts.Node): boolean {
-  const owner = ts.findAncestor(node.parent, ts.isFunctionLike);
-  return owner === undefined || (ts.isFunctionDeclaration(owner) && ts.isSourceFile(owner.parent));
 }

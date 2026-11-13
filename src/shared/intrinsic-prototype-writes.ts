@@ -39,7 +39,7 @@
 import { forEachChild, ts } from "../ts-api.js";
 import { isBindingSiteName, isStoreTarget, skipOuterExpressions } from "./binding-writes.js";
 
-export type PatchableIntrinsic = "Array" | "Function" | "Object" | "RegExp" | "String";
+export type PatchableIntrinsic = "Array" | "Boolean" | "Function" | "Number" | "Object" | "RegExp" | "String";
 
 interface PrototypeUse {
   readonly writes: Set<PatchableIntrinsic>;
@@ -54,7 +54,15 @@ interface PrototypeUse {
   dynamicCode: boolean;
 }
 
-const PATCHABLE: ReadonlySet<string> = new Set<PatchableIntrinsic>(["Array", "Function", "Object", "RegExp", "String"]);
+const PATCHABLE: ReadonlySet<string> = new Set<PatchableIntrinsic>([
+  "Array",
+  "Boolean",
+  "Function",
+  "Number",
+  "Object",
+  "RegExp",
+  "String",
+]);
 
 /** Names the global object goes by: the standard one and the hosts' (`$262.global` included). */
 const GLOBAL_OBJECT_NAMES: ReadonlySet<string> = new Set(["globalThis", "self", "window", "global"]);
