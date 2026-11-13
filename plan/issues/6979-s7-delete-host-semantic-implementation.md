@@ -502,7 +502,8 @@ What is left, and why:
   - The host-executor arm of the IR Promise-delay lowering. It is unreachable:
     `supportsHostPromiseDelay` is always false, so no plan takes that
     projection. Deleting it needs a new source-map donor for
-    `tests/issue-3525-prepared-source-map-data.test.ts`; that is a follow-up.
+    `tests/issue-3525-prepared-source-map-data.test.ts`; that is #7344, with
+    the host generator lowering and the `"strict-no-host"` runtime target.
   - The `setupArrayCallback` bridge lookup (`array-methods.ts`). It is live as a
     refusal: `[1, 2].forEach("x" as any)` reaches it and fails to compile with
     "Missing __call_1_f64 import for forEach" on every target.
