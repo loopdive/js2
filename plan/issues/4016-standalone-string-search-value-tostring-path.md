@@ -34,7 +34,7 @@ standalone-arms-allow:
   # static-receiver ABI fallback or a read-time type-name replacement.
   - src/codegen/expressions/extern.ts
 import-cycles-allow:
-  - largestSccSize: 730 # 2026-11-05 (#4016): one shared staged split coercion owner joins the existing codegen SCC; direct and reflective split reuse the same provider preflight and exact ToUint32 emission
+  - largestSccSize: 733 # 2026-11-13 (#4016, replacement for PR #6206): restated after merging main, whose own SCC is now 732; the same one file (the shared staged split coercion owner) joins it. 2026-11-05: one shared staged split coercion owner joins the existing codegen SCC; direct and reflective split reuse the same provider preflight and exact ToUint32 emission
 loc-budget-allow:
   - src/codegen/regexp-standalone.ts
   - src/codegen/string-ops.ts
