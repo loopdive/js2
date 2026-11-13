@@ -37,7 +37,7 @@ import {
   _resetIteratorRuntimeIntrinsicsForRealmIsolation,
 } from "./runtime/iterator-polyfills.js";
 import { buildStringConstants, buildStringConstants16 } from "./runtime/string-constants.js";
-import { marshalExports, type MarshalExportSource } from "./runtime/init-marshal-registry.js"; // (#5193, #5202)
+import { marshalExports, resolveInitExportImport, type MarshalExportSource } from "./runtime/init-marshal-registry.js"; // (#5193, #5202)
 import { createLinkedProviderMirrorOwnership } from "./runtime/linked-provider-mirror-ownership.js";
 import { createCrossModuleStructOwners } from "./runtime/cross-module-struct-owners.js";
 import { linkedClosureDispatch } from "./runtime/linked-closure-dispatch.js";
@@ -3955,6 +3955,8 @@ function resolveImport(
       if (cryptoImport) return cryptoImport;
       const stringMemory = resolveStringMemoryImport(name, callbackState);
       if (stringMemory) return stringMemory;
+      const initExport = resolveInitExportImport(name, callbackState);
+      if (initExport) return initExport;
       return resolveDeclaredFunctionImport(name, deps); // a hand-built manifest's ambient name
     }
     // (#4394) `intent.constructible` is set only by `__make_callback_ctor`, the

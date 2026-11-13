@@ -20,7 +20,9 @@ export interface MarshalExportSource {
   getStartExports?: () => Record<string, Function> | undefined;
 }
 
-export { INIT_MARSHAL_HELPER_NAMES } from "../shared/contracts/init-marshal-helpers.js";
+import { INIT_MARSHAL_HELPER_NAMES } from "../shared/contracts/init-marshal-helpers.js";
+
+export { INIT_MARSHAL_HELPER_NAMES };
 
 /**
  * Exports usable for compiled→host MARSHALLING right now: the real export
@@ -55,4 +57,36 @@ export function classDispatchExportName(csv: unknown, index: number): string | u
     _classDispatchNameLists.set(csv, names);
   }
   return names[index];
+}
+
+/** The lifecycle hook the start-section registrations write to. */
+type StartExportSink = { registerStartExport?: (name: string, fn: Function) => void };
+
+/**
+ * The providers of the start-section registrations, or `undefined` when
+ * `name` is neither. `__register_init_export(id, fn)` (#5193) hands over one
+ * of the fixed {@link INIT_MARSHAL_HELPER_NAMES}; `__register_init_class_export
+ * (namesCsv, index, fn)` (#5202) one class-method dispatch export. A funcref
+ * crossing into JS is the identical function the export later yields, so this
+ * is a timing shim, not a second ABI. Unknown ids and indices are ignored, so
+ * an older runtime tolerates a newer module.
+ */
+export function resolveInitExportImport(
+  name: string,
+  callbackState: MarshalExportSource | undefined,
+): Function | undefined {
+  const sink = callbackState as StartExportSink | undefined;
+  if (name === "__register_init_export") {
+    return (id: number, fn: Function): void => {
+      const helperName = INIT_MARSHAL_HELPER_NAMES[id];
+      if (helperName !== undefined) sink?.registerStartExport?.(helperName, fn);
+    };
+  }
+  if (name === "__register_init_class_export") {
+    return (namesCsv: unknown, index: number, fn: Function): void => {
+      const exportName = classDispatchExportName(namesCsv, index);
+      if (exportName !== undefined) sink?.registerStartExport?.(exportName, fn);
+    };
+  }
+  return undefined;
 }
