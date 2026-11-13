@@ -199,6 +199,14 @@ const VALUE_USES: Record<string, string> = {
   "kind: script var initialised from it": `var o = {}; Object.defineProperty(o, 'p', { value: 4 }); var y = 10; var d = Object.getOwnPropertyDescriptor(o, 'p'); y -= d.value; if (y !== 6) { throw "x"; }`,
   "comma operand compared loosely with null": `var o = {}; if ((0, Object.getOwnPropertyDescriptor(o, 'p')) == null) {} else { throw "x"; }`,
   "update of a local initialised from a field": `function f(o) { var v = Object.getOwnPropertyDescriptor(o, 'p').value; v++; return v; } var o = {}; Object.defineProperty(o, 'p', { value: 4 }); if (f(o) !== 5) { throw "x"; }`,
+  // A table result through a user function, and `?.` on one (#7212 review round 5).
+  "through a user function: returned, into -=": `function g(o) { return Object.getOwnPropertyDescriptor(o, 'p').value; } var o = {}; Object.defineProperty(o, 'p', { value: 4, writable: true }); var y = 10; y -= g(o); if (y !== 6) { throw "x"; }`,
+  "through a user function: returned, local ++": `function g(o) { return Object.getOwnPropertyDescriptor(o, 'p').value; } function f(o) { var v = g(o); v++; return v; } var o = {}; Object.defineProperty(o, 'p', { value: 4, writable: true }); if (f(o) !== 5) { throw "x"; }`,
+  "through a user function: returned descriptor, member ++": `function g(o) { return Object.getOwnPropertyDescriptor(o, 'p'); } function f(o) { var d = g(o); d.value++; return d.value; } var o = {}; Object.defineProperty(o, 'p', { value: 4, writable: true }); if (f(o) !== 5) { throw "x"; }`,
+  // (`y -= id(<table result>)` is left out: `id` itself demotes on a typeIdx parity mismatch there, as on main.)
+  "through a user function: passed through, loose null": `function id(x) { return x; } var o = {}; if (id(Object.getOwnPropertyDescriptor(o, 'p')) == null) {} else { throw "x"; }`,
+  "through a user function: passed through, member ++": `function id(x) { return x; } function f(o) { var d = id(Object.getOwnPropertyDescriptor(o, 'p')); d.value++; return d.value; } var o = {}; Object.defineProperty(o, 'p', { value: 4, writable: true }); if (f(o) !== 5) { throw "x"; }`,
+  "optional chain on a table result": `function f(o) { return Object.getOwnPropertyDescriptor(o, 'p')?.value; } var o = {}; Object.defineProperty(o, 'p', { value: 4, writable: true }); if (f(o) !== 4) { throw "x"; }`,
 };
 
 describe("#7338 — Object statics through the dynamic carrier", () => {

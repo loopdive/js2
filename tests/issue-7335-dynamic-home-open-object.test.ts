@@ -95,8 +95,7 @@ const CLAIMED: Record<string, string> = {
 const REFUSED: Record<string, { readonly source: string; readonly detail: string }> = {
   "inherited method read": {
     source: `var o = {}; if (o.hasOwnProperty !== Object.prototype.hasOwnProperty) { throw "inherited"; }`,
-    // (#7338) The home is the table's carrier: its member read is judged against a method value first.
-    detail: "operand-coercion-unsupported",
+    detail: "expr-module-scalar-method",
   },
   "parenthesized inherited read": {
     source: `var o = {}; if ((o).toString === undefined) { throw "inherited"; }`,
@@ -104,8 +103,7 @@ const REFUSED: Record<string, { readonly source: string; readonly detail: string
   },
   "parenthesized loose equality": {
     source: `var o = {}; if ((o) == null) { throw "null"; }`,
-    // (#7338) The home is the table's carrier, compared loosely with `null`: `expr-carrier-loose-null`.
-    detail: "operand-coercion-unsupported",
+    detail: "expr-module-scalar-method",
   },
   alias: {
     source: `var o = {}; var p = o; if (p.toString === undefined) { throw "alias"; }`,
