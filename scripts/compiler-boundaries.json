@@ -1879,6 +1879,14 @@
     {
       "path": "src/codegen-linear/runtime/arrays/README.md",
       "reason": "Linear array runtime body documentation; not implementation or type code."
+    },
+    {
+      "path": "src/codegen-linear/runtime/README.md",
+      "reason": "Linear runtime body documentation; not implementation or type code."
+    },
+    {
+      "path": "src/codegen-linear/runtime/strings/README.md",
+      "reason": "Linear string runtime body documentation; not implementation or type code."
     }
   ],
   "moves": [
@@ -2886,6 +2894,11 @@
     },
     {
       "path": "src/codegen-linear/runtime/string-slice.ts",
+      "state": "unmigrated",
+      "layer": "legacy-linear"
+    },
+    {
+      "path": "src/codegen-linear/runtime/strings/char-code-at.ts",
       "state": "unmigrated",
       "layer": "legacy-linear"
     },
