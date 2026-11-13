@@ -1,8 +1,8 @@
 {
-  "generatedAt": "2026-11-13T06:26:18.423Z",
+  "generatedAt": "2026-11-13T08:33:28.764Z",
   "measuredRange": {
-    "oldest": "2026-11-11T09:34:14.314Z",
-    "newest": "2026-11-13T06:25:20.558Z"
+    "oldest": "2026-11-13T05:44:50.802Z",
+    "newest": "2026-11-13T08:32:34.081Z"
   },
   "correctness": {
     "definition": {
@@ -148,10 +148,30 @@
   "refresh": {
     "status": "partial",
     "stalePackages": [
-      "lit",
-      "react-dom"
+      "acorn",
+      "axios",
+      "clsx",
+      "cookie",
+      "eslint",
+      "hono",
+      "jest",
+      "jsdom",
+      "lodash",
+      "lodash-es",
+      "marked",
+      "moment",
+      "prettier",
+      "react",
+      "redux",
+      "styled-components",
+      "stylelint",
+      "tailwindcss",
+      "three",
+      "typescript",
+      "uuid",
+      "webpack"
     ],
-    "freshCount": 22,
+    "freshCount": 2,
     "totalCount": 24
   },
   "packages": [
@@ -962,7 +982,12 @@
         "scannedFiles": 20,
         "externalDependencies": []
       },
-      "weeklyDownloads": 275892096
+      "weeklyDownloads": 275892096,
+      "refresh": {
+        "status": "stale",
+        "reason": "measurement worker did not produce a partial report",
+        "lastMeasuredAt": "2026-11-13T05:45:34.340Z"
+      }
     },
     {
       "name": "typescript",
@@ -2668,7 +2693,12 @@
           "source-map-support"
         ]
       },
-      "weeklyDownloads": 250686863
+      "weeklyDownloads": 250686863,
+      "refresh": {
+        "status": "stale",
+        "reason": "measurement worker did not produce a partial report",
+        "lastMeasuredAt": "2026-11-13T06:25:20.558Z"
+      }
     },
     {
       "name": "acorn",
@@ -3247,7 +3277,12 @@
         "scannedFiles": 1,
         "externalDependencies": []
       },
-      "weeklyDownloads": 240886853
+      "weeklyDownloads": 240886853,
+      "refresh": {
+        "status": "stale",
+        "reason": "measurement worker did not produce a partial report",
+        "lastMeasuredAt": "2026-11-13T05:49:41.474Z"
+      }
     },
     {
       "name": "cookie",
@@ -3781,7 +3816,12 @@
         "scannedFiles": 1,
         "externalDependencies": []
       },
-      "weeklyDownloads": 173435452
+      "weeklyDownloads": 173435452,
+      "refresh": {
+        "status": "stale",
+        "reason": "measurement worker did not produce a partial report",
+        "lastMeasuredAt": "2026-11-13T05:45:12.545Z"
+      }
     },
     {
       "name": "lodash",
@@ -4467,7 +4507,12 @@
         "scannedFiles": 1,
         "externalDependencies": []
       },
-      "weeklyDownloads": 164859858
+      "weeklyDownloads": 164859858,
+      "refresh": {
+        "status": "stale",
+        "reason": "measurement worker did not produce a partial report",
+        "lastMeasuredAt": "2026-11-13T05:50:27.219Z"
+      }
     },
     {
       "name": "react",
@@ -5924,7 +5969,12 @@
         "scannedFiles": 3,
         "externalDependencies": []
       },
-      "weeklyDownloads": 162687688
+      "weeklyDownloads": 162687688,
+      "refresh": {
+        "status": "stale",
+        "reason": "measurement worker did not produce a partial report",
+        "lastMeasuredAt": "2026-11-13T05:47:39.015Z"
+      }
     },
     {
       "name": "eslint",
@@ -6462,7 +6512,12 @@
           "node:worker_threads"
         ]
       },
-      "weeklyDownloads": 152308132
+      "weeklyDownloads": 152308132,
+      "refresh": {
+        "status": "stale",
+        "reason": "measurement worker did not produce a partial report",
+        "lastMeasuredAt": "2026-11-13T05:50:24.740Z"
+      }
     },
     {
       "name": "react-dom",
@@ -6472,11 +6527,11 @@
       "shape": "cjs-project",
       "compile": {
         "success": false,
-        "durationMs": 2044545,
+        "durationMs": 1675795,
         "timedOut": false,
         "timeoutMs": 120000,
         "errorCount": 0,
-        "binaryBytes": 188015584,
+        "binaryBytes": 188069098,
         "categories": {},
         "error": null
       },
@@ -6511,8 +6566,8 @@
           "implementationInvalidTests": 0,
           "compile": {
             "success": true,
-            "durationMs": 125911,
-            "binaryBytes": 15520302,
+            "durationMs": 103040,
+            "binaryBytes": 15524348,
             "invalidBatches": 0
           },
           "validation": {
@@ -6531,8 +6586,8 @@
           "implementationInvalidTests": 0,
           "compile": {
             "success": false,
-            "durationMs": 291719,
-            "binaryBytes": 14991539,
+            "durationMs": 240700,
+            "binaryBytes": 14994455,
             "invalidBatches": 7
           },
           "validation": {
@@ -6551,8 +6606,8 @@
           "implementationInvalidTests": 0,
           "compile": {
             "success": false,
-            "durationMs": 136648,
-            "binaryBytes": 5983185,
+            "durationMs": 110291,
+            "binaryBytes": 5984463,
             "invalidBatches": 2
           },
           "validation": {
@@ -6571,8 +6626,8 @@
           "implementationInvalidTests": 0,
           "compile": {
             "success": true,
-            "durationMs": 37033,
-            "binaryBytes": 925203,
+            "durationMs": 32223,
+            "binaryBytes": 925565,
             "invalidBatches": 0
           },
           "validation": {
@@ -6595,7 +6650,7 @@
             "status": "fail",
             "passed": 0,
             "total": 3,
-            "error": "Error: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\nError: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\n    at buildImports (/home/runner/work/js2/js2/src/runtime.ts:19638:15)\n    at buildCompiledAdapterImports (/home/runner/work/js2/js2/src/runtime.ts:4841:10)\n    at buildCompiledImports (/home/runner/work/js2/js2/src/runtime.ts:4810:38)\n    at buildProviderImportObject (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:195:17)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:322:29)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1334:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
+            "error": "Error: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\nError: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\n    at buildImports (/home/runner/work/js2/js2/src/runtime.ts:19620:15)\n    at buildCompiledAdapterImports (/home/runner/work/js2/js2/src/runtime.ts:4842:10)\n    at buildCompiledImports (/home/runner/work/js2/js2/src/runtime.ts:4811:38)\n    at buildProviderImportObject (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:195:17)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:322:29)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1334:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
             "tests": [
               {
                 "status": "trapped"
@@ -6632,7 +6687,7 @@
             "status": "fail",
             "passed": 0,
             "total": 44,
-            "error": "Error: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\nError: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\n    at buildImports (/home/runner/work/js2/js2/src/runtime.ts:19638:15)\n    at buildCompiledAdapterImports (/home/runner/work/js2/js2/src/runtime.ts:4841:10)\n    at buildCompiledImports (/home/runner/work/js2/js2/src/runtime.ts:4810:38)\n    at buildProviderImportObject (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:195:17)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:322:29)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1334:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
+            "error": "Error: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\nError: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\n    at buildImports (/home/runner/work/js2/js2/src/runtime.ts:19620:15)\n    at buildCompiledAdapterImports (/home/runner/work/js2/js2/src/runtime.ts:4842:10)\n    at buildCompiledImports (/home/runner/work/js2/js2/src/runtime.ts:4811:38)\n    at buildProviderImportObject (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:195:17)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:322:29)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1334:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
             "tests": [
               {
                 "status": "trapped"
@@ -6783,7 +6838,7 @@
             "status": "fail",
             "passed": 0,
             "total": 1,
-            "error": "Error: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\nError: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\n    at buildImports (/home/runner/work/js2/js2/src/runtime.ts:19638:15)\n    at buildCompiledAdapterImports (/home/runner/work/js2/js2/src/runtime.ts:4841:10)\n    at buildCompiledImports (/home/runner/work/js2/js2/src/runtime.ts:4810:38)\n    at buildProviderImportObject (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:195:17)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:322:29)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1334:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
+            "error": "Error: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\nError: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\n    at buildImports (/home/runner/work/js2/js2/src/runtime.ts:19620:15)\n    at buildCompiledAdapterImports (/home/runner/work/js2/js2/src/runtime.ts:4842:10)\n    at buildCompiledImports (/home/runner/work/js2/js2/src/runtime.ts:4811:38)\n    at buildProviderImportObject (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:195:17)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:322:29)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1334:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
             "tests": [
               {
                 "status": "harness-incompatible"
@@ -6799,7 +6854,7 @@
             "status": "fail",
             "passed": 0,
             "total": 9,
-            "error": "Error: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\nError: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\n    at buildImports (/home/runner/work/js2/js2/src/runtime.ts:19638:15)\n    at buildCompiledAdapterImports (/home/runner/work/js2/js2/src/runtime.ts:4841:10)\n    at buildCompiledImports (/home/runner/work/js2/js2/src/runtime.ts:4810:38)\n    at buildProviderImportObject (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:195:17)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:322:29)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1334:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
+            "error": "Error: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\nError: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\n    at buildImports (/home/runner/work/js2/js2/src/runtime.ts:19620:15)\n    at buildCompiledAdapterImports (/home/runner/work/js2/js2/src/runtime.ts:4842:10)\n    at buildCompiledImports (/home/runner/work/js2/js2/src/runtime.ts:4811:38)\n    at buildProviderImportObject (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:195:17)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:322:29)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1334:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
             "tests": [
               {
                 "status": "trapped"
@@ -6863,7 +6918,7 @@
             "status": "fail",
             "passed": 0,
             "total": 1,
-            "error": "Error: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\nError: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\n    at buildImports (/home/runner/work/js2/js2/src/runtime.ts:19638:15)\n    at buildCompiledAdapterImports (/home/runner/work/js2/js2/src/runtime.ts:4841:10)\n    at buildCompiledImports (/home/runner/work/js2/js2/src/runtime.ts:4810:38)\n    at buildProviderImportObject (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:195:17)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:322:29)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1334:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
+            "error": "Error: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\nError: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\n    at buildImports (/home/runner/work/js2/js2/src/runtime.ts:19620:15)\n    at buildCompiledAdapterImports (/home/runner/work/js2/js2/src/runtime.ts:4842:10)\n    at buildCompiledImports (/home/runner/work/js2/js2/src/runtime.ts:4811:38)\n    at buildProviderImportObject (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:195:17)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:322:29)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1334:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
             "tests": [
               {
                 "status": "trapped"
@@ -6876,7 +6931,7 @@
             "status": "fail",
             "passed": 0,
             "total": 8,
-            "error": "Error: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\nError: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\n    at buildImports (/home/runner/work/js2/js2/src/runtime.ts:19638:15)\n    at buildCompiledAdapterImports (/home/runner/work/js2/js2/src/runtime.ts:4841:10)\n    at buildCompiledImports (/home/runner/work/js2/js2/src/runtime.ts:4810:38)\n    at buildProviderImportObject (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:195:17)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:322:29)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1334:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
+            "error": "Error: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\nError: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\n    at buildImports (/home/runner/work/js2/js2/src/runtime.ts:19620:15)\n    at buildCompiledAdapterImports (/home/runner/work/js2/js2/src/runtime.ts:4842:10)\n    at buildCompiledImports (/home/runner/work/js2/js2/src/runtime.ts:4811:38)\n    at buildProviderImportObject (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:195:17)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:322:29)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1334:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
             "tests": [
               {
                 "status": "harness-incompatible"
@@ -6943,7 +6998,7 @@
             "status": "fail",
             "passed": 0,
             "total": 12,
-            "error": "Error: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\nError: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\n    at buildImports (/home/runner/work/js2/js2/src/runtime.ts:19638:15)\n    at buildCompiledAdapterImports (/home/runner/work/js2/js2/src/runtime.ts:4841:10)\n    at buildCompiledImports (/home/runner/work/js2/js2/src/runtime.ts:4810:38)\n    at buildProviderImportObject (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:195:17)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:322:29)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1334:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
+            "error": "Error: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\nError: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\n    at buildImports (/home/runner/work/js2/js2/src/runtime.ts:19620:15)\n    at buildCompiledAdapterImports (/home/runner/work/js2/js2/src/runtime.ts:4842:10)\n    at buildCompiledImports (/home/runner/work/js2/js2/src/runtime.ts:4811:38)\n    at buildProviderImportObject (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:195:17)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:322:29)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1334:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
             "tests": [
               {
                 "status": "trapped"
@@ -7037,7 +7092,7 @@
             "status": "fail",
             "passed": 0,
             "total": 23,
-            "error": "Error: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\nError: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\n    at buildImports (/home/runner/work/js2/js2/src/runtime.ts:19638:15)\n    at buildCompiledAdapterImports (/home/runner/work/js2/js2/src/runtime.ts:4841:10)\n    at buildCompiledImports (/home/runner/work/js2/js2/src/runtime.ts:4810:38)\n    at buildProviderImportObject (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:195:17)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:322:29)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1334:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
+            "error": "Error: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\nError: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\n    at buildImports (/home/runner/work/js2/js2/src/runtime.ts:19620:15)\n    at buildCompiledAdapterImports (/home/runner/work/js2/js2/src/runtime.ts:4842:10)\n    at buildCompiledImports (/home/runner/work/js2/js2/src/runtime.ts:4811:38)\n    at buildProviderImportObject (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:195:17)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:322:29)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1334:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
             "tests": [
               {
                 "status": "skipped"
@@ -7167,7 +7222,7 @@
             "status": "fail",
             "passed": 0,
             "total": 3,
-            "error": "Error: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\nError: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\n    at buildImports (/home/runner/work/js2/js2/src/runtime.ts:19638:15)\n    at buildCompiledAdapterImports (/home/runner/work/js2/js2/src/runtime.ts:4841:10)\n    at buildCompiledImports (/home/runner/work/js2/js2/src/runtime.ts:4810:38)\n    at buildProviderImportObject (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:195:17)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:322:29)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1334:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
+            "error": "Error: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\nError: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\n    at buildImports (/home/runner/work/js2/js2/src/runtime.ts:19620:15)\n    at buildCompiledAdapterImports (/home/runner/work/js2/js2/src/runtime.ts:4842:10)\n    at buildCompiledImports (/home/runner/work/js2/js2/src/runtime.ts:4811:38)\n    at buildProviderImportObject (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:195:17)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:322:29)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1334:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
             "tests": [
               {
                 "status": "trapped"
@@ -7186,7 +7241,7 @@
             "status": "fail",
             "passed": 0,
             "total": 1,
-            "error": "Error: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\nError: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\n    at buildImports (/home/runner/work/js2/js2/src/runtime.ts:19638:15)\n    at buildCompiledAdapterImports (/home/runner/work/js2/js2/src/runtime.ts:4841:10)\n    at buildCompiledImports (/home/runner/work/js2/js2/src/runtime.ts:4810:38)\n    at buildProviderImportObject (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:195:17)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:322:29)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1334:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
+            "error": "Error: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\nError: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\n    at buildImports (/home/runner/work/js2/js2/src/runtime.ts:19620:15)\n    at buildCompiledAdapterImports (/home/runner/work/js2/js2/src/runtime.ts:4842:10)\n    at buildCompiledImports (/home/runner/work/js2/js2/src/runtime.ts:4811:38)\n    at buildProviderImportObject (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:195:17)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:322:29)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1334:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
             "tests": [
               {
                 "status": "trapped"
@@ -7199,7 +7254,7 @@
             "status": "fail",
             "passed": 0,
             "total": 5,
-            "error": "Error: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\nError: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\n    at buildImports (/home/runner/work/js2/js2/src/runtime.ts:19638:15)\n    at buildCompiledAdapterImports (/home/runner/work/js2/js2/src/runtime.ts:4841:10)\n    at buildCompiledImports (/home/runner/work/js2/js2/src/runtime.ts:4810:38)\n    at buildProviderImportObject (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:195:17)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:322:29)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1334:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
+            "error": "Error: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\nError: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\n    at buildImports (/home/runner/work/js2/js2/src/runtime.ts:19620:15)\n    at buildCompiledAdapterImports (/home/runner/work/js2/js2/src/runtime.ts:4842:10)\n    at buildCompiledImports (/home/runner/work/js2/js2/src/runtime.ts:4811:38)\n    at buildProviderImportObject (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:195:17)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:322:29)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1334:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
             "tests": [
               {
                 "status": "trapped"
@@ -7299,7 +7354,7 @@
             "status": "fail",
             "passed": 0,
             "total": 6,
-            "error": "Error: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\nError: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\n    at buildImports (/home/runner/work/js2/js2/src/runtime.ts:19638:15)\n    at buildCompiledAdapterImports (/home/runner/work/js2/js2/src/runtime.ts:4841:10)\n    at buildCompiledImports (/home/runner/work/js2/js2/src/runtime.ts:4810:38)\n    at buildProviderImportObject (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:195:17)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:322:29)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1334:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
+            "error": "Error: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\nError: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\n    at buildImports (/home/runner/work/js2/js2/src/runtime.ts:19620:15)\n    at buildCompiledAdapterImports (/home/runner/work/js2/js2/src/runtime.ts:4842:10)\n    at buildCompiledImports (/home/runner/work/js2/js2/src/runtime.ts:4811:38)\n    at buildProviderImportObject (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:195:17)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:322:29)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1334:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
             "tests": [
               {
                 "status": "trapped"
@@ -7348,7 +7403,7 @@
             "status": "fail",
             "passed": 0,
             "total": 74,
-            "error": "Error: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\nError: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\n    at buildImports (/home/runner/work/js2/js2/src/runtime.ts:19638:15)\n    at buildCompiledAdapterImports (/home/runner/work/js2/js2/src/runtime.ts:4841:10)\n    at buildCompiledImports (/home/runner/work/js2/js2/src/runtime.ts:4810:38)\n    at buildProviderImportObject (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:195:17)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:322:29)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1334:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
+            "error": "Error: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\nError: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\n    at buildImports (/home/runner/work/js2/js2/src/runtime.ts:19620:15)\n    at buildCompiledAdapterImports (/home/runner/work/js2/js2/src/runtime.ts:4842:10)\n    at buildCompiledImports (/home/runner/work/js2/js2/src/runtime.ts:4811:38)\n    at buildProviderImportObject (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:195:17)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:322:29)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1334:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
             "tests": [
               {
                 "status": "trapped"
@@ -7961,7 +8016,7 @@
             "status": "fail",
             "passed": 0,
             "total": 83,
-            "error": "Error: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\nError: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\n    at buildImports (/home/runner/work/js2/js2/src/runtime.ts:19638:15)\n    at buildCompiledAdapterImports (/home/runner/work/js2/js2/src/runtime.ts:4841:10)\n    at buildCompiledImports (/home/runner/work/js2/js2/src/runtime.ts:4810:38)\n    at buildProviderImportObject (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:195:17)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:322:29)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1334:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
+            "error": "Error: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\nError: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\n    at buildImports (/home/runner/work/js2/js2/src/runtime.ts:19620:15)\n    at buildCompiledAdapterImports (/home/runner/work/js2/js2/src/runtime.ts:4842:10)\n    at buildCompiledImports (/home/runner/work/js2/js2/src/runtime.ts:4811:38)\n    at buildProviderImportObject (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:195:17)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:322:29)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1334:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
             "tests": [
               {
                 "status": "harness-incompatible"
@@ -8238,7 +8293,7 @@
             "status": "fail",
             "passed": 0,
             "total": 31,
-            "error": "Error: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\nError: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\n    at buildImports (/home/runner/work/js2/js2/src/runtime.ts:19638:15)\n    at buildCompiledAdapterImports (/home/runner/work/js2/js2/src/runtime.ts:4841:10)\n    at buildCompiledImports (/home/runner/work/js2/js2/src/runtime.ts:4810:38)\n    at buildProviderImportObject (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:195:17)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:322:29)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1334:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
+            "error": "Error: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\nError: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\n    at buildImports (/home/runner/work/js2/js2/src/runtime.ts:19620:15)\n    at buildCompiledAdapterImports (/home/runner/work/js2/js2/src/runtime.ts:4842:10)\n    at buildCompiledImports (/home/runner/work/js2/js2/src/runtime.ts:4811:38)\n    at buildProviderImportObject (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:195:17)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:322:29)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1334:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
             "tests": [
               {
                 "status": "skipped"
@@ -8443,7 +8498,7 @@
             "status": "fail",
             "passed": 0,
             "total": 11,
-            "error": "Error: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\nError: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\n    at buildImports (/home/runner/work/js2/js2/src/runtime.ts:19638:15)\n    at buildCompiledAdapterImports (/home/runner/work/js2/js2/src/runtime.ts:4841:10)\n    at buildCompiledImports (/home/runner/work/js2/js2/src/runtime.ts:4810:38)\n    at buildProviderImportObject (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:195:17)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:322:29)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1334:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
+            "error": "Error: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\nError: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\n    at buildImports (/home/runner/work/js2/js2/src/runtime.ts:19620:15)\n    at buildCompiledAdapterImports (/home/runner/work/js2/js2/src/runtime.ts:4842:10)\n    at buildCompiledImports (/home/runner/work/js2/js2/src/runtime.ts:4811:38)\n    at buildProviderImportObject (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:195:17)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:322:29)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1334:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
             "tests": [
               {
                 "status": "trapped"
@@ -9020,7 +9075,7 @@
             "status": "fail",
             "passed": 0,
             "total": 7,
-            "error": "Error: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\nError: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\n    at buildImports (/home/runner/work/js2/js2/src/runtime.ts:19638:15)\n    at buildCompiledAdapterImports (/home/runner/work/js2/js2/src/runtime.ts:4841:10)\n    at buildCompiledImports (/home/runner/work/js2/js2/src/runtime.ts:4810:38)\n    at buildProviderImportObject (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:195:17)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:322:29)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1334:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
+            "error": "Error: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\nError: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\n    at buildImports (/home/runner/work/js2/js2/src/runtime.ts:19620:15)\n    at buildCompiledAdapterImports (/home/runner/work/js2/js2/src/runtime.ts:4842:10)\n    at buildCompiledImports (/home/runner/work/js2/js2/src/runtime.ts:4811:38)\n    at buildProviderImportObject (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:195:17)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:322:29)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1334:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
             "tests": [
               {
                 "status": "trapped"
@@ -9111,7 +9166,7 @@
             "status": "fail",
             "passed": 0,
             "total": 3,
-            "error": "Error: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\nError: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\n    at buildImports (/home/runner/work/js2/js2/src/runtime.ts:19638:15)\n    at buildCompiledAdapterImports (/home/runner/work/js2/js2/src/runtime.ts:4841:10)\n    at buildCompiledImports (/home/runner/work/js2/js2/src/runtime.ts:4810:38)\n    at buildProviderImportObject (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:195:17)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:322:29)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1334:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
+            "error": "Error: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\nError: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\n    at buildImports (/home/runner/work/js2/js2/src/runtime.ts:19620:15)\n    at buildCompiledAdapterImports (/home/runner/work/js2/js2/src/runtime.ts:4842:10)\n    at buildCompiledImports (/home/runner/work/js2/js2/src/runtime.ts:4811:38)\n    at buildProviderImportObject (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:195:17)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:322:29)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1334:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
             "tests": [
               {
                 "status": "trapped"
@@ -9223,7 +9278,7 @@
             "status": "fail",
             "passed": 0,
             "total": 3,
-            "error": "Error: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\nError: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\n    at buildImports (/home/runner/work/js2/js2/src/runtime.ts:19638:15)\n    at buildCompiledAdapterImports (/home/runner/work/js2/js2/src/runtime.ts:4841:10)\n    at buildCompiledImports (/home/runner/work/js2/js2/src/runtime.ts:4810:38)\n    at buildProviderImportObject (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:195:17)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:322:29)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1334:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
+            "error": "Error: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\nError: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\n    at buildImports (/home/runner/work/js2/js2/src/runtime.ts:19620:15)\n    at buildCompiledAdapterImports (/home/runner/work/js2/js2/src/runtime.ts:4842:10)\n    at buildCompiledImports (/home/runner/work/js2/js2/src/runtime.ts:4811:38)\n    at buildProviderImportObject (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:195:17)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:322:29)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1334:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
             "tests": [
               {
                 "status": "harness-incompatible"
@@ -9596,7 +9651,7 @@
             "status": "fail",
             "passed": 0,
             "total": 14,
-            "error": "Error: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\nError: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\n    at buildImports (/home/runner/work/js2/js2/src/runtime.ts:19638:15)\n    at buildCompiledAdapterImports (/home/runner/work/js2/js2/src/runtime.ts:4841:10)\n    at buildCompiledImports (/home/runner/work/js2/js2/src/runtime.ts:4810:38)\n    at buildProviderImportObject (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:195:17)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:322:29)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1334:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
+            "error": "Error: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\nError: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\n    at buildImports (/home/runner/work/js2/js2/src/runtime.ts:19620:15)\n    at buildCompiledAdapterImports (/home/runner/work/js2/js2/src/runtime.ts:4842:10)\n    at buildCompiledImports (/home/runner/work/js2/js2/src/runtime.ts:4811:38)\n    at buildProviderImportObject (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:195:17)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:322:29)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1334:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
             "tests": [
               {
                 "status": "trapped"
@@ -9735,7 +9790,7 @@
             "status": "fail",
             "passed": 0,
             "total": 1,
-            "error": "Error: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\nError: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\n    at buildImports (/home/runner/work/js2/js2/src/runtime.ts:19638:15)\n    at buildCompiledAdapterImports (/home/runner/work/js2/js2/src/runtime.ts:4841:10)\n    at buildCompiledImports (/home/runner/work/js2/js2/src/runtime.ts:4810:38)\n    at buildProviderImportObject (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:195:17)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:322:29)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1334:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
+            "error": "Error: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\nError: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\n    at buildImports (/home/runner/work/js2/js2/src/runtime.ts:19620:15)\n    at buildCompiledAdapterImports (/home/runner/work/js2/js2/src/runtime.ts:4842:10)\n    at buildCompiledImports (/home/runner/work/js2/js2/src/runtime.ts:4811:38)\n    at buildProviderImportObject (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:195:17)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:322:29)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1334:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
             "tests": [
               {
                 "status": "harness-incompatible"
@@ -9921,7 +9976,7 @@
             "status": "fail",
             "passed": 0,
             "total": 1,
-            "error": "Error: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\nError: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\n    at buildImports (/home/runner/work/js2/js2/src/runtime.ts:19638:15)\n    at buildCompiledAdapterImports (/home/runner/work/js2/js2/src/runtime.ts:4841:10)\n    at buildCompiledImports (/home/runner/work/js2/js2/src/runtime.ts:4810:38)\n    at buildProviderImportObject (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:195:17)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:322:29)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1334:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
+            "error": "Error: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\nError: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\n    at buildImports (/home/runner/work/js2/js2/src/runtime.ts:19620:15)\n    at buildCompiledAdapterImports (/home/runner/work/js2/js2/src/runtime.ts:4842:10)\n    at buildCompiledImports (/home/runner/work/js2/js2/src/runtime.ts:4811:38)\n    at buildProviderImportObject (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:195:17)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:322:29)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1334:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
             "tests": [
               {
                 "status": "trapped"
@@ -9934,7 +9989,7 @@
             "status": "fail",
             "passed": 0,
             "total": 1,
-            "error": "Error: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\nError: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\n    at buildImports (/home/runner/work/js2/js2/src/runtime.ts:19638:15)\n    at buildCompiledAdapterImports (/home/runner/work/js2/js2/src/runtime.ts:4841:10)\n    at buildCompiledImports (/home/runner/work/js2/js2/src/runtime.ts:4810:38)\n    at buildProviderImportObject (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:195:17)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:322:29)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1334:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
+            "error": "Error: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\nError: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\n    at buildImports (/home/runner/work/js2/js2/src/runtime.ts:19620:15)\n    at buildCompiledAdapterImports (/home/runner/work/js2/js2/src/runtime.ts:4842:10)\n    at buildCompiledImports (/home/runner/work/js2/js2/src/runtime.ts:4811:38)\n    at buildProviderImportObject (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:195:17)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:322:29)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1334:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
             "tests": [
               {
                 "status": "trapped"
@@ -10310,7 +10365,7 @@
             "status": "fail",
             "passed": 0,
             "total": 2,
-            "error": "Error: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\nError: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\n    at buildImports (/home/runner/work/js2/js2/src/runtime.ts:19638:15)\n    at buildCompiledAdapterImports (/home/runner/work/js2/js2/src/runtime.ts:4841:10)\n    at buildCompiledImports (/home/runner/work/js2/js2/src/runtime.ts:4810:38)\n    at buildProviderImportObject (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:195:17)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:322:29)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1334:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
+            "error": "Error: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\nError: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\n    at buildImports (/home/runner/work/js2/js2/src/runtime.ts:19620:15)\n    at buildCompiledAdapterImports (/home/runner/work/js2/js2/src/runtime.ts:4842:10)\n    at buildCompiledImports (/home/runner/work/js2/js2/src/runtime.ts:4811:38)\n    at buildProviderImportObject (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:195:17)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:322:29)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1334:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
             "tests": [
               {
                 "status": "trapped"
@@ -10479,7 +10534,7 @@
             "status": "fail",
             "passed": 0,
             "total": 1,
-            "error": "Error: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\nError: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\n    at buildImports (/home/runner/work/js2/js2/src/runtime.ts:19638:15)\n    at buildCompiledAdapterImports (/home/runner/work/js2/js2/src/runtime.ts:4841:10)\n    at buildCompiledImports (/home/runner/work/js2/js2/src/runtime.ts:4810:38)\n    at buildProviderImportObject (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:195:17)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:322:29)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1334:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
+            "error": "Error: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\nError: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\n    at buildImports (/home/runner/work/js2/js2/src/runtime.ts:19620:15)\n    at buildCompiledAdapterImports (/home/runner/work/js2/js2/src/runtime.ts:4842:10)\n    at buildCompiledImports (/home/runner/work/js2/js2/src/runtime.ts:4811:38)\n    at buildProviderImportObject (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:195:17)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:322:29)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1334:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
             "tests": [
               {
                 "status": "trapped"
@@ -10492,7 +10547,7 @@
             "status": "fail",
             "passed": 0,
             "total": 6,
-            "error": "Error: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\nError: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\n    at buildImports (/home/runner/work/js2/js2/src/runtime.ts:19638:15)\n    at buildCompiledAdapterImports (/home/runner/work/js2/js2/src/runtime.ts:4841:10)\n    at buildCompiledImports (/home/runner/work/js2/js2/src/runtime.ts:4810:38)\n    at buildProviderImportObject (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:195:17)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:322:29)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1334:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
+            "error": "Error: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\nError: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\n    at buildImports (/home/runner/work/js2/js2/src/runtime.ts:19620:15)\n    at buildCompiledAdapterImports (/home/runner/work/js2/js2/src/runtime.ts:4842:10)\n    at buildCompiledImports (/home/runner/work/js2/js2/src/runtime.ts:4811:38)\n    at buildProviderImportObject (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:195:17)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:322:29)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1334:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
             "tests": [
               {
                 "status": "trapped"
@@ -10526,7 +10581,7 @@
             "status": "fail",
             "passed": 0,
             "total": 1,
-            "error": "Error: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\nError: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\n    at buildImports (/home/runner/work/js2/js2/src/runtime.ts:19638:15)\n    at buildCompiledAdapterImports (/home/runner/work/js2/js2/src/runtime.ts:4841:10)\n    at buildCompiledImports (/home/runner/work/js2/js2/src/runtime.ts:4810:38)\n    at buildProviderImportObject (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:195:17)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:322:29)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1334:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
+            "error": "Error: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\nError: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\n    at buildImports (/home/runner/work/js2/js2/src/runtime.ts:19620:15)\n    at buildCompiledAdapterImports (/home/runner/work/js2/js2/src/runtime.ts:4842:10)\n    at buildCompiledImports (/home/runner/work/js2/js2/src/runtime.ts:4811:38)\n    at buildProviderImportObject (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:195:17)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:322:29)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1334:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
             "tests": [
               {
                 "status": "trapped"
@@ -10539,7 +10594,7 @@
             "status": "fail",
             "passed": 0,
             "total": 6,
-            "error": "Error: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\nError: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\n    at buildImports (/home/runner/work/js2/js2/src/runtime.ts:19638:15)\n    at buildCompiledAdapterImports (/home/runner/work/js2/js2/src/runtime.ts:4841:10)\n    at buildCompiledImports (/home/runner/work/js2/js2/src/runtime.ts:4810:38)\n    at buildProviderImportObject (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:195:17)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:322:29)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1334:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
+            "error": "Error: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\nError: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\n    at buildImports (/home/runner/work/js2/js2/src/runtime.ts:19620:15)\n    at buildCompiledAdapterImports (/home/runner/work/js2/js2/src/runtime.ts:4842:10)\n    at buildCompiledImports (/home/runner/work/js2/js2/src/runtime.ts:4811:38)\n    at buildProviderImportObject (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:195:17)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:322:29)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1334:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
             "tests": [
               {
                 "status": "trapped"
@@ -10585,7 +10640,7 @@
             "status": "fail",
             "passed": 0,
             "total": 9,
-            "error": "Error: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\nError: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\n    at buildImports (/home/runner/work/js2/js2/src/runtime.ts:19638:15)\n    at buildCompiledAdapterImports (/home/runner/work/js2/js2/src/runtime.ts:4841:10)\n    at buildCompiledImports (/home/runner/work/js2/js2/src/runtime.ts:4810:38)\n    at buildProviderImportObject (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:195:17)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:322:29)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1334:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
+            "error": "Error: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\nError: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\n    at buildImports (/home/runner/work/js2/js2/src/runtime.ts:19620:15)\n    at buildCompiledAdapterImports (/home/runner/work/js2/js2/src/runtime.ts:4842:10)\n    at buildCompiledImports (/home/runner/work/js2/js2/src/runtime.ts:4811:38)\n    at buildProviderImportObject (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:195:17)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:322:29)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1334:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
             "tests": [
               {
                 "status": "harness-incompatible"
@@ -10676,7 +10731,7 @@
             "status": "fail",
             "passed": 0,
             "total": 4,
-            "error": "Error: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\nError: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\n    at buildImports (/home/runner/work/js2/js2/src/runtime.ts:19638:15)\n    at buildCompiledAdapterImports (/home/runner/work/js2/js2/src/runtime.ts:4841:10)\n    at buildCompiledImports (/home/runner/work/js2/js2/src/runtime.ts:4810:38)\n    at buildProviderImportObject (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:195:17)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:322:29)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1334:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
+            "error": "Error: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\nError: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\n    at buildImports (/home/runner/work/js2/js2/src/runtime.ts:19620:15)\n    at buildCompiledAdapterImports (/home/runner/work/js2/js2/src/runtime.ts:4842:10)\n    at buildCompiledImports (/home/runner/work/js2/js2/src/runtime.ts:4811:38)\n    at buildProviderImportObject (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:195:17)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:322:29)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1334:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
             "tests": [
               {
                 "status": "trapped"
@@ -10698,7 +10753,7 @@
             "status": "fail",
             "passed": 0,
             "total": 2,
-            "error": "Error: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\nError: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\n    at buildImports (/home/runner/work/js2/js2/src/runtime.ts:19638:15)\n    at buildCompiledAdapterImports (/home/runner/work/js2/js2/src/runtime.ts:4841:10)\n    at buildCompiledImports (/home/runner/work/js2/js2/src/runtime.ts:4810:38)\n    at buildProviderImportObject (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:195:17)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:322:29)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1334:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
+            "error": "Error: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\nError: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\n    at buildImports (/home/runner/work/js2/js2/src/runtime.ts:19620:15)\n    at buildCompiledAdapterImports (/home/runner/work/js2/js2/src/runtime.ts:4842:10)\n    at buildCompiledImports (/home/runner/work/js2/js2/src/runtime.ts:4811:38)\n    at buildProviderImportObject (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:195:17)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:322:29)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1334:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
             "tests": [
               {
                 "status": "trapped"
@@ -10714,7 +10769,7 @@
             "status": "fail",
             "passed": 0,
             "total": 29,
-            "error": "Error: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\nError: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\n    at buildImports (/home/runner/work/js2/js2/src/runtime.ts:19638:15)\n    at buildCompiledAdapterImports (/home/runner/work/js2/js2/src/runtime.ts:4841:10)\n    at buildCompiledImports (/home/runner/work/js2/js2/src/runtime.ts:4810:38)\n    at buildProviderImportObject (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:195:17)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:322:29)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1334:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
+            "error": "Error: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\nError: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\n    at buildImports (/home/runner/work/js2/js2/src/runtime.ts:19620:15)\n    at buildCompiledAdapterImports (/home/runner/work/js2/js2/src/runtime.ts:4842:10)\n    at buildCompiledImports (/home/runner/work/js2/js2/src/runtime.ts:4811:38)\n    at buildProviderImportObject (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:195:17)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:322:29)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1334:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
             "tests": [
               {
                 "status": "skipped"
@@ -10925,7 +10980,7 @@
             "status": "fail",
             "passed": 0,
             "total": 5,
-            "error": "Error: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\nError: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\n    at buildImports (/home/runner/work/js2/js2/src/runtime.ts:19638:15)\n    at buildCompiledAdapterImports (/home/runner/work/js2/js2/src/runtime.ts:4841:10)\n    at buildCompiledImports (/home/runner/work/js2/js2/src/runtime.ts:4810:38)\n    at buildProviderImportObject (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:195:17)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:322:29)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1334:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
+            "error": "Error: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\nError: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\n    at buildImports (/home/runner/work/js2/js2/src/runtime.ts:19620:15)\n    at buildCompiledAdapterImports (/home/runner/work/js2/js2/src/runtime.ts:4842:10)\n    at buildCompiledImports (/home/runner/work/js2/js2/src/runtime.ts:4811:38)\n    at buildProviderImportObject (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:195:17)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:322:29)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1334:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
             "tests": [
               {
                 "status": "trapped"
@@ -10978,7 +11033,7 @@
             "status": "fail",
             "passed": 0,
             "total": 54,
-            "error": "Error: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\nError: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\n    at buildImports (/home/runner/work/js2/js2/src/runtime.ts:19638:15)\n    at buildCompiledAdapterImports (/home/runner/work/js2/js2/src/runtime.ts:4841:10)\n    at buildCompiledImports (/home/runner/work/js2/js2/src/runtime.ts:4810:38)\n    at buildProviderImportObject (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:195:17)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:322:29)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1334:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
+            "error": "Error: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\nError: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\n    at buildImports (/home/runner/work/js2/js2/src/runtime.ts:19620:15)\n    at buildCompiledAdapterImports (/home/runner/work/js2/js2/src/runtime.ts:4842:10)\n    at buildCompiledImports (/home/runner/work/js2/js2/src/runtime.ts:4811:38)\n    at buildProviderImportObject (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:195:17)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:322:29)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1334:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
             "tests": [
               {
                 "status": "trapped"
@@ -11150,7 +11205,7 @@
             "status": "fail",
             "passed": 0,
             "total": 4,
-            "error": "Error: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\nError: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\n    at buildImports (/home/runner/work/js2/js2/src/runtime.ts:19638:15)\n    at buildCompiledAdapterImports (/home/runner/work/js2/js2/src/runtime.ts:4841:10)\n    at buildCompiledImports (/home/runner/work/js2/js2/src/runtime.ts:4810:38)\n    at buildProviderImportObject (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:195:17)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:322:29)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1334:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
+            "error": "Error: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\nError: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\n    at buildImports (/home/runner/work/js2/js2/src/runtime.ts:19620:15)\n    at buildCompiledAdapterImports (/home/runner/work/js2/js2/src/runtime.ts:4842:10)\n    at buildCompiledImports (/home/runner/work/js2/js2/src/runtime.ts:4811:38)\n    at buildProviderImportObject (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:195:17)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:322:29)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1334:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
             "tests": [
               {
                 "status": "trapped"
@@ -11187,7 +11242,7 @@
             "status": "fail",
             "passed": 0,
             "total": 2,
-            "error": "Error: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\nError: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\n    at buildImports (/home/runner/work/js2/js2/src/runtime.ts:19638:15)\n    at buildCompiledAdapterImports (/home/runner/work/js2/js2/src/runtime.ts:4841:10)\n    at buildCompiledImports (/home/runner/work/js2/js2/src/runtime.ts:4810:38)\n    at buildProviderImportObject (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:195:17)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:322:29)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1334:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
+            "error": "Error: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\nError: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\n    at buildImports (/home/runner/work/js2/js2/src/runtime.ts:19620:15)\n    at buildCompiledAdapterImports (/home/runner/work/js2/js2/src/runtime.ts:4842:10)\n    at buildCompiledImports (/home/runner/work/js2/js2/src/runtime.ts:4811:38)\n    at buildProviderImportObject (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:195:17)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:322:29)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1334:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
             "tests": [
               {
                 "status": "trapped"
@@ -11203,7 +11258,7 @@
             "status": "fail",
             "passed": 0,
             "total": 9,
-            "error": "Error: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\nError: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\n    at buildImports (/home/runner/work/js2/js2/src/runtime.ts:19638:15)\n    at buildCompiledAdapterImports (/home/runner/work/js2/js2/src/runtime.ts:4841:10)\n    at buildCompiledImports (/home/runner/work/js2/js2/src/runtime.ts:4810:38)\n    at buildProviderImportObject (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:195:17)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:322:29)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1334:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
+            "error": "Error: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\nError: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\n    at buildImports (/home/runner/work/js2/js2/src/runtime.ts:19620:15)\n    at buildCompiledAdapterImports (/home/runner/work/js2/js2/src/runtime.ts:4842:10)\n    at buildCompiledImports (/home/runner/work/js2/js2/src/runtime.ts:4811:38)\n    at buildProviderImportObject (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:195:17)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:322:29)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1334:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
             "tests": [
               {
                 "status": "trapped"
@@ -11488,7 +11543,7 @@
             "status": "fail",
             "passed": 0,
             "total": 3,
-            "error": "Error: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\nError: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\n    at buildImports (/home/runner/work/js2/js2/src/runtime.ts:19638:15)\n    at buildCompiledAdapterImports (/home/runner/work/js2/js2/src/runtime.ts:4841:10)\n    at buildCompiledImports (/home/runner/work/js2/js2/src/runtime.ts:4810:38)\n    at buildProviderImportObject (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:195:17)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:322:29)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1334:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
+            "error": "Error: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\nError: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\n    at buildImports (/home/runner/work/js2/js2/src/runtime.ts:19620:15)\n    at buildCompiledAdapterImports (/home/runner/work/js2/js2/src/runtime.ts:4842:10)\n    at buildCompiledImports (/home/runner/work/js2/js2/src/runtime.ts:4811:38)\n    at buildProviderImportObject (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:195:17)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:322:29)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1334:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
             "tests": [
               {
                 "status": "trapped"
@@ -11525,7 +11580,7 @@
             "status": "fail",
             "passed": 0,
             "total": 32,
-            "error": "Error: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\nError: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\n    at buildImports (/home/runner/work/js2/js2/src/runtime.ts:19638:15)\n    at buildCompiledAdapterImports (/home/runner/work/js2/js2/src/runtime.ts:4841:10)\n    at buildCompiledImports (/home/runner/work/js2/js2/src/runtime.ts:4810:38)\n    at buildProviderImportObject (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:195:17)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:322:29)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1334:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
+            "error": "Error: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\nError: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\n    at buildImports (/home/runner/work/js2/js2/src/runtime.ts:19620:15)\n    at buildCompiledAdapterImports (/home/runner/work/js2/js2/src/runtime.ts:4842:10)\n    at buildCompiledImports (/home/runner/work/js2/js2/src/runtime.ts:4811:38)\n    at buildProviderImportObject (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:195:17)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:322:29)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1334:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
             "tests": [
               {
                 "status": "trapped"
@@ -11673,7 +11728,7 @@
             "status": "fail",
             "passed": 0,
             "total": 1,
-            "error": "Error: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\nError: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\n    at buildImports (/home/runner/work/js2/js2/src/runtime.ts:19638:15)\n    at buildCompiledAdapterImports (/home/runner/work/js2/js2/src/runtime.ts:4841:10)\n    at buildCompiledImports (/home/runner/work/js2/js2/src/runtime.ts:4810:38)\n    at buildProviderImportObject (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:195:17)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:322:29)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1334:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
+            "error": "Error: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\nError: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\n    at buildImports (/home/runner/work/js2/js2/src/runtime.ts:19620:15)\n    at buildCompiledAdapterImports (/home/runner/work/js2/js2/src/runtime.ts:4842:10)\n    at buildCompiledImports (/home/runner/work/js2/js2/src/runtime.ts:4811:38)\n    at buildProviderImportObject (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:195:17)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:322:29)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1334:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
             "tests": [
               {
                 "status": "harness-incompatible"
@@ -11774,7 +11829,7 @@
             "status": "fail",
             "passed": 0,
             "total": 7,
-            "error": "Error: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\nError: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\n    at buildImports (/home/runner/work/js2/js2/src/runtime.ts:19638:15)\n    at buildCompiledAdapterImports (/home/runner/work/js2/js2/src/runtime.ts:4841:10)\n    at buildCompiledImports (/home/runner/work/js2/js2/src/runtime.ts:4810:38)\n    at buildProviderImportObject (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:195:17)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:322:29)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1334:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
+            "error": "Error: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\nError: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\n    at buildImports (/home/runner/work/js2/js2/src/runtime.ts:19620:15)\n    at buildCompiledAdapterImports (/home/runner/work/js2/js2/src/runtime.ts:4842:10)\n    at buildCompiledImports (/home/runner/work/js2/js2/src/runtime.ts:4811:38)\n    at buildProviderImportObject (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:195:17)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:322:29)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1334:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
             "tests": [
               {
                 "status": "trapped"
@@ -11820,7 +11875,7 @@
             "status": "fail",
             "passed": 0,
             "total": 10,
-            "error": "Error: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\nError: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\n    at buildImports (/home/runner/work/js2/js2/src/runtime.ts:19638:15)\n    at buildCompiledAdapterImports (/home/runner/work/js2/js2/src/runtime.ts:4841:10)\n    at buildCompiledImports (/home/runner/work/js2/js2/src/runtime.ts:4810:38)\n    at buildProviderImportObject (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:195:17)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:322:29)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1334:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
+            "error": "Error: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\nError: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\n    at buildImports (/home/runner/work/js2/js2/src/runtime.ts:19620:15)\n    at buildCompiledAdapterImports (/home/runner/work/js2/js2/src/runtime.ts:4842:10)\n    at buildCompiledImports (/home/runner/work/js2/js2/src/runtime.ts:4811:38)\n    at buildProviderImportObject (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:195:17)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:322:29)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1334:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
             "tests": [
               {
                 "status": "trapped"
@@ -11863,7 +11918,7 @@
             "status": "fail",
             "passed": 0,
             "total": 2,
-            "error": "Error: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\nError: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\n    at buildImports (/home/runner/work/js2/js2/src/runtime.ts:19638:15)\n    at buildCompiledAdapterImports (/home/runner/work/js2/js2/src/runtime.ts:4841:10)\n    at buildCompiledImports (/home/runner/work/js2/js2/src/runtime.ts:4810:38)\n    at buildProviderImportObject (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:195:17)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:322:29)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1334:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
+            "error": "Error: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\nError: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\n    at buildImports (/home/runner/work/js2/js2/src/runtime.ts:19620:15)\n    at buildCompiledAdapterImports (/home/runner/work/js2/js2/src/runtime.ts:4842:10)\n    at buildCompiledImports (/home/runner/work/js2/js2/src/runtime.ts:4811:38)\n    at buildProviderImportObject (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:195:17)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:322:29)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1334:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
             "tests": [
               {
                 "status": "harness-incompatible"
@@ -11999,7 +12054,7 @@
             "status": "fail",
             "passed": 0,
             "total": 1,
-            "error": "Error: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\nError: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\n    at buildImports (/home/runner/work/js2/js2/src/runtime.ts:19638:15)\n    at buildCompiledAdapterImports (/home/runner/work/js2/js2/src/runtime.ts:4841:10)\n    at buildCompiledImports (/home/runner/work/js2/js2/src/runtime.ts:4810:38)\n    at buildProviderImportObject (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:195:17)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:322:29)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1334:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
+            "error": "Error: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\nError: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\n    at buildImports (/home/runner/work/js2/js2/src/runtime.ts:19620:15)\n    at buildCompiledAdapterImports (/home/runner/work/js2/js2/src/runtime.ts:4842:10)\n    at buildCompiledImports (/home/runner/work/js2/js2/src/runtime.ts:4811:38)\n    at buildProviderImportObject (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:195:17)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:322:29)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1334:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
             "tests": [
               {
                 "status": "harness-incompatible"
@@ -12123,7 +12178,7 @@
             "status": "fail",
             "passed": 0,
             "total": 2,
-            "error": "Error: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\nError: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\n    at buildImports (/home/runner/work/js2/js2/src/runtime.ts:19638:15)\n    at buildCompiledAdapterImports (/home/runner/work/js2/js2/src/runtime.ts:4841:10)\n    at buildCompiledImports (/home/runner/work/js2/js2/src/runtime.ts:4810:38)\n    at buildProviderImportObject (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:195:17)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:322:29)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1334:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
+            "error": "Error: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\nError: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\n    at buildImports (/home/runner/work/js2/js2/src/runtime.ts:19620:15)\n    at buildCompiledAdapterImports (/home/runner/work/js2/js2/src/runtime.ts:4842:10)\n    at buildCompiledImports (/home/runner/work/js2/js2/src/runtime.ts:4811:38)\n    at buildProviderImportObject (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:195:17)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:322:29)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1334:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
             "tests": [
               {
                 "status": "trapped"
@@ -12139,7 +12194,7 @@
             "status": "fail",
             "passed": 0,
             "total": 1,
-            "error": "Error: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\nError: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\n    at buildImports (/home/runner/work/js2/js2/src/runtime.ts:19638:15)\n    at buildCompiledAdapterImports (/home/runner/work/js2/js2/src/runtime.ts:4841:10)\n    at buildCompiledImports (/home/runner/work/js2/js2/src/runtime.ts:4810:38)\n    at buildProviderImportObject (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:195:17)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:322:29)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1334:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
+            "error": "Error: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\nError: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\n    at buildImports (/home/runner/work/js2/js2/src/runtime.ts:19620:15)\n    at buildCompiledAdapterImports (/home/runner/work/js2/js2/src/runtime.ts:4842:10)\n    at buildCompiledImports (/home/runner/work/js2/js2/src/runtime.ts:4811:38)\n    at buildProviderImportObject (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:195:17)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:322:29)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1334:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
             "tests": [
               {
                 "status": "trapped"
@@ -12158,7 +12213,7 @@
             "status": "fail",
             "passed": 0,
             "total": 9,
-            "error": "Error: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\nError: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\n    at buildImports (/home/runner/work/js2/js2/src/runtime.ts:19638:15)\n    at buildCompiledAdapterImports (/home/runner/work/js2/js2/src/runtime.ts:4841:10)\n    at buildCompiledImports (/home/runner/work/js2/js2/src/runtime.ts:4810:38)\n    at buildProviderImportObject (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:195:17)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:322:29)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1334:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
+            "error": "Error: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\nError: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\n    at buildImports (/home/runner/work/js2/js2/src/runtime.ts:19620:15)\n    at buildCompiledAdapterImports (/home/runner/work/js2/js2/src/runtime.ts:4842:10)\n    at buildCompiledImports (/home/runner/work/js2/js2/src/runtime.ts:4811:38)\n    at buildProviderImportObject (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:195:17)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:322:29)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1334:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
             "tests": [
               {
                 "status": "trapped"
@@ -12210,7 +12265,7 @@
             "status": "fail",
             "passed": 0,
             "total": 29,
-            "error": "Error: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\nError: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\n    at buildImports (/home/runner/work/js2/js2/src/runtime.ts:19638:15)\n    at buildCompiledAdapterImports (/home/runner/work/js2/js2/src/runtime.ts:4841:10)\n    at buildCompiledImports (/home/runner/work/js2/js2/src/runtime.ts:4810:38)\n    at buildProviderImportObject (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:195:17)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:322:29)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1334:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
+            "error": "Error: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\nError: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\n    at buildImports (/home/runner/work/js2/js2/src/runtime.ts:19620:15)\n    at buildCompiledAdapterImports (/home/runner/work/js2/js2/src/runtime.ts:4842:10)\n    at buildCompiledImports (/home/runner/work/js2/js2/src/runtime.ts:4811:38)\n    at buildProviderImportObject (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:195:17)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:322:29)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1334:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
             "tests": [
               {
                 "status": "skipped"
@@ -12328,7 +12383,7 @@
             "status": "fail",
             "passed": 0,
             "total": 8,
-            "error": "Error: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\nError: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\n    at buildImports (/home/runner/work/js2/js2/src/runtime.ts:19638:15)\n    at buildCompiledAdapterImports (/home/runner/work/js2/js2/src/runtime.ts:4841:10)\n    at buildCompiledImports (/home/runner/work/js2/js2/src/runtime.ts:4810:38)\n    at buildProviderImportObject (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:195:17)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:322:29)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1334:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
+            "error": "Error: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\nError: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\n    at buildImports (/home/runner/work/js2/js2/src/runtime.ts:19620:15)\n    at buildCompiledAdapterImports (/home/runner/work/js2/js2/src/runtime.ts:4842:10)\n    at buildCompiledImports (/home/runner/work/js2/js2/src/runtime.ts:4811:38)\n    at buildProviderImportObject (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:195:17)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:322:29)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1334:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
             "tests": [
               {
                 "status": "trapped"
@@ -12478,7 +12533,7 @@
             "status": "fail",
             "passed": 0,
             "total": 2,
-            "error": "Error: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\nError: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\n    at buildImports (/home/runner/work/js2/js2/src/runtime.ts:19638:15)\n    at buildCompiledAdapterImports (/home/runner/work/js2/js2/src/runtime.ts:4841:10)\n    at buildCompiledImports (/home/runner/work/js2/js2/src/runtime.ts:4810:38)\n    at buildProviderImportObject (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:195:17)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:322:29)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1334:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
+            "error": "Error: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\nError: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\n    at buildImports (/home/runner/work/js2/js2/src/runtime.ts:19620:15)\n    at buildCompiledAdapterImports (/home/runner/work/js2/js2/src/runtime.ts:4842:10)\n    at buildCompiledImports (/home/runner/work/js2/js2/src/runtime.ts:4811:38)\n    at buildProviderImportObject (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:195:17)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:322:29)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1334:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
             "tests": [
               {
                 "status": "trapped"
@@ -12605,7 +12660,7 @@
             "status": "fail",
             "passed": 0,
             "total": 1,
-            "error": "Error: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\nError: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\n    at buildImports (/home/runner/work/js2/js2/src/runtime.ts:19638:15)\n    at buildCompiledAdapterImports (/home/runner/work/js2/js2/src/runtime.ts:4841:10)\n    at buildCompiledImports (/home/runner/work/js2/js2/src/runtime.ts:4810:38)\n    at buildProviderImportObject (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:195:17)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:322:29)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1334:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
+            "error": "Error: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\nError: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\n    at buildImports (/home/runner/work/js2/js2/src/runtime.ts:19620:15)\n    at buildCompiledAdapterImports (/home/runner/work/js2/js2/src/runtime.ts:4842:10)\n    at buildCompiledImports (/home/runner/work/js2/js2/src/runtime.ts:4811:38)\n    at buildProviderImportObject (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:195:17)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:322:29)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1334:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
             "tests": [
               {
                 "status": "harness-incompatible"
@@ -12627,7 +12682,7 @@
             "status": "fail",
             "passed": 0,
             "total": 10,
-            "error": "Error: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\nError: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\n    at buildImports (/home/runner/work/js2/js2/src/runtime.ts:19638:15)\n    at buildCompiledAdapterImports (/home/runner/work/js2/js2/src/runtime.ts:4841:10)\n    at buildCompiledImports (/home/runner/work/js2/js2/src/runtime.ts:4810:38)\n    at buildProviderImportObject (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:195:17)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:322:29)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1334:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
+            "error": "Error: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\nError: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\n    at buildImports (/home/runner/work/js2/js2/src/runtime.ts:19620:15)\n    at buildCompiledAdapterImports (/home/runner/work/js2/js2/src/runtime.ts:4842:10)\n    at buildCompiledImports (/home/runner/work/js2/js2/src/runtime.ts:4811:38)\n    at buildProviderImportObject (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:195:17)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:322:29)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1334:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
             "tests": [
               {
                 "status": "trapped"
@@ -12685,7 +12740,7 @@
             "status": "fail",
             "passed": 0,
             "total": 2,
-            "error": "Error: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\nError: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\n    at buildImports (/home/runner/work/js2/js2/src/runtime.ts:19638:15)\n    at buildCompiledAdapterImports (/home/runner/work/js2/js2/src/runtime.ts:4841:10)\n    at buildCompiledImports (/home/runner/work/js2/js2/src/runtime.ts:4810:38)\n    at buildProviderImportObject (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:195:17)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:322:29)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1334:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
+            "error": "Error: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\nError: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\n    at buildImports (/home/runner/work/js2/js2/src/runtime.ts:19620:15)\n    at buildCompiledAdapterImports (/home/runner/work/js2/js2/src/runtime.ts:4842:10)\n    at buildCompiledImports (/home/runner/work/js2/js2/src/runtime.ts:4811:38)\n    at buildProviderImportObject (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:195:17)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:322:29)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1334:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
             "tests": [
               {
                 "status": "trapped"
@@ -12729,64 +12784,64 @@
               "flatten"
             ],
             "optimizationLevel": 4,
-            "compileDurationMs": 13485.754461,
-            "moduleCompileDurationMs": 18.26256899999862,
-            "binaryBytes": 594370,
-            "moduleImportCount": 43,
-            "functionImportCount": 34
+            "compileDurationMs": 10740.633309,
+            "moduleCompileDurationMs": 15.286598999999114,
+            "binaryBytes": 594541,
+            "moduleImportCount": 44,
+            "functionImportCount": 35
           },
           "standalone": {
             "status": "measured",
             "placement": "standalone",
             "inputMode": "compile-time-static",
             "sampleOp": "react-dom package import + text.length",
-            "wasmUs": 0.0011527852252920937,
-            "nodeUs": 0.0005055788268911934,
-            "wasmStdUs": 0.00000833057475207802,
-            "nodeStdUs": 0.000008208129362980262,
-            "ratio": 0.43861807044238466,
-            "ratioStd": 0.008604889445106715,
+            "wasmUs": 0.001355970358032958,
+            "nodeUs": 0.0004402693107594136,
+            "wasmStdUs": 0.000009499787387226432,
+            "nodeStdUs": 0.000004664544548876603,
+            "ratio": 0.3257190814433162,
+            "ratioStd": 0.005122788082392117,
             "ratioSamples": [
-              0.4368303347121944,
-              0.43711079703815453,
-              0.45185966277397616,
-              0.4273841109464775,
-              0.44661893024247923,
-              0.43854441746457606,
-              0.4561717085869946,
-              0.44988568632319587,
-              0.43861807044238466
+              0.3245908428085738,
+              0.33288150827928625,
+              0.33143786971273803,
+              0.3201564656061474,
+              0.31973901556414924,
+              0.3213280208707621,
+              0.3257190814433162,
+              0.33187447979238316,
+              0.3315302809401499
             ],
             "measurementOrder": "alternating-paired",
             "ratioEstimator": "median-of-paired-ratios",
-            "iters": 4369467,
+            "iters": 922206,
             "warmupRounds": 2,
             "measuredRounds": 9,
             "wasmSamplesUs": [
-              0.0011546376251379037,
-              0.0011527852252920937,
-              0.0011552923960755231,
-              0.0011793273641838577,
-              0.001152795981752257,
-              0.0011518587965082456,
-              0.0011519935955571158,
-              0.0011523757932030687,
-              0.001152663013590099
+              0.0013563824134714137,
+              0.001355970358032958,
+              0.0013541128554816462,
+              0.001374420682582208,
+              0.0013765915641395243,
+              0.0013692070968958174,
+              0.0013514843755085542,
+              0.0013522987271822385,
+              0.0013529504253925444
             ],
             "nodeSamplesUs": [
-              0.0005043807402602838,
-              0.0005038948686412356,
-              0.0005220300324960248,
-              0.0005040257770565707,
-              0.0005148605081580216,
-              0.0005051412449161562,
-              0.0005255068867665647,
-              0.0005184373746273998,
-              0.0005055788268911934
+              0.0004402693107594136,
+              0.00045137745796401484,
+              0.00044880428017146954,
+              0.00044002966799150834,
+              0.0004401500315518839,
+              0.00043996460660773485,
+              0.00044020424937564007,
+              0.00044879343660750727,
+              0.0004485440346284856
             ],
-            "compileDurationMs": 26092.277291,
-            "moduleCompileDurationMs": 7.612088999998377,
-            "instantiateDurationMs": 14.530189000000973,
+            "compileDurationMs": 20945.162525,
+            "moduleCompileDurationMs": 13.69485899999927,
+            "instantiateDurationMs": 15.365271999999095,
             "binaryBytes": 956530,
             "moduleImportCount": 0,
             "functionImportCount": 0,
@@ -12804,11 +12859,11 @@
               {
                 "level": 4,
                 "outcome": "optimized",
-                "durationMs": 20323
+                "durationMs": 16224
               }
             ],
             "rawBinaryBytes": 1192510,
-            "optimizeDurationMs": 20324,
+            "optimizeDurationMs": 16224,
             "optimizationOmittedPasses": [
               "flatten"
             ]
@@ -12818,53 +12873,53 @@
             "placement": "standalone",
             "inputMode": "runtime-dynamic",
             "sampleOp": "react-dom package import + text.length",
-            "wasmUs": 0.04600933395829913,
-            "nodeUs": 0.0005042388159268326,
-            "wasmStdUs": 0.0004270761976231969,
-            "nodeStdUs": 0.0000060210666884478705,
-            "ratio": 0.010939014142498935,
-            "ratioStd": 0.00008857443497111756,
+            "wasmUs": 0.03766588877494159,
+            "nodeUs": 0.00044396096397910945,
+            "wasmStdUs": 0.00018207498347166162,
+            "nodeStdUs": 0.0000050106327728417405,
+            "ratio": 0.011774453397745152,
+            "ratioStd": 0.00015366226823921046,
             "ratioSamples": [
-              0.011002052716097364,
-              0.010907082058044469,
-              0.010995550857045363,
-              0.010921149763970517,
-              0.01077364861612419,
-              0.010839511872477356,
-              0.010939014142498935,
-              0.0110901776364384,
-              0.010983769415230986
+              0.011867301149791527,
+              0.011650043132914236,
+              0.011774453397745152,
+              0.011714659757110816,
+              0.011748146513228846,
+              0.011863729197690276,
+              0.011923642797907067,
+              0.011759201003586881,
+              0.012205330726382213
             ],
             "measurementOrder": "alternating-paired",
             "ratioEstimator": "median-of-paired-ratios",
-            "iters": 443756,
+            "iters": 2724458,
             "warmupRounds": 2,
             "measuredRounds": 9,
             "wasmSamplesUs": [
-              0.04583133974527034,
-              0.04600933395829913,
-              0.04588180441503476,
-              0.045918085614614565,
-              0.046849620061480385,
-              0.046263710237165356,
-              0.04606970271951743,
-              0.047071800719317436,
-              0.04590762941796776
+              0.03741044053532833,
+              0.03809892793355614,
+              0.037684524408158296,
+              0.03776799348714532,
+              0.03779674636202857,
+              0.03761411040287609,
+              0.037523459711987166,
+              0.03766588877494159,
+              0.03765252318075663
             ],
             "nodeSamplesUs": [
-              0.0005042388159268326,
-              0.0005018275809191405,
-              0.0005044957138585232,
-              0.0005014782898720259,
-              0.0005047413443413123,
-              0.000501476036380606,
-              0.0005039571295895228,
-              0.0005220346316442592,
-              0.0005042388159268326
+              0.00044396096397910945,
+              0.00044385415374372005,
+              0.00044371467646004954,
+              0.00044243919341068464,
+              0.000444041713984461,
+              0.0004462436198317466,
+              0.00044741633014739175,
+              0.00044292075708328503,
+              0.0004595614981039075
             ],
-            "compileDurationMs": 26225.836930999998,
-            "moduleCompileDurationMs": 9.002552999998443,
-            "instantiateDurationMs": 14.108531999998377,
+            "compileDurationMs": 20816.268734,
+            "moduleCompileDurationMs": 6.105510999997932,
+            "instantiateDurationMs": 15.816155999997136,
             "binaryBytes": 956474,
             "moduleImportCount": 0,
             "functionImportCount": 0,
@@ -12882,11 +12937,11 @@
               {
                 "level": 4,
                 "outcome": "optimized",
-                "durationMs": 20394
+                "durationMs": 16025
               }
             ],
             "rawBinaryBytes": 1192436,
-            "optimizeDurationMs": 20394,
+            "optimizeDurationMs": 16025,
             "optimizationOmittedPasses": [
               "flatten"
             ],
@@ -12895,7 +12950,7 @@
         }
       },
       "knownBugs": [],
-      "measuredAt": "2026-11-11T10:09:09.929Z",
+      "measuredAt": "2026-11-13T08:32:34.081Z",
       "esEdition": {
         "required": 2015,
         "requiredLabel": "ES2015",
@@ -13055,12 +13110,7 @@
           "scheduler"
         ]
       },
-      "weeklyDownloads": 139740993,
-      "refresh": {
-        "status": "stale",
-        "reason": "measurement worker did not produce a partial report",
-        "lastMeasuredAt": "2026-11-11T10:09:09.929Z"
-      }
+      "weeklyDownloads": 139740993
     },
     {
       "name": "prettier",
@@ -13683,7 +13733,12 @@
         "scannedFiles": 1,
         "externalDependencies": []
       },
-      "weeklyDownloads": 117242232
+      "weeklyDownloads": 117242232,
+      "refresh": {
+        "status": "stale",
+        "reason": "measurement worker did not produce a partial report",
+        "lastMeasuredAt": "2026-11-13T05:52:16.032Z"
+      }
     },
     {
       "name": "tailwindcss",
@@ -14302,7 +14357,12 @@
         "scannedFiles": 4,
         "externalDependencies": []
       },
-      "weeklyDownloads": 117155768
+      "weeklyDownloads": 117155768,
+      "refresh": {
+        "status": "stale",
+        "reason": "measurement worker did not produce a partial report",
+        "lastMeasuredAt": "2026-11-13T05:46:12.825Z"
+      }
     },
     {
       "name": "axios",
@@ -16161,7 +16221,12 @@
           "zlib"
         ]
       },
-      "weeklyDownloads": 112353408
+      "weeklyDownloads": 112353408,
+      "refresh": {
+        "status": "stale",
+        "reason": "measurement worker did not produce a partial report",
+        "lastMeasuredAt": "2026-11-13T05:52:29.338Z"
+      }
     },
     {
       "name": "clsx",
@@ -16625,7 +16690,12 @@
         "scannedFiles": 1,
         "externalDependencies": []
       },
-      "weeklyDownloads": 104930549
+      "weeklyDownloads": 104930549,
+      "refresh": {
+        "status": "stale",
+        "reason": "measurement worker did not produce a partial report",
+        "lastMeasuredAt": "2026-11-13T05:44:50.802Z"
+      }
     },
     {
       "name": "jsdom",
@@ -17118,7 +17188,12 @@
         ],
         "graphTruncated": true
       },
-      "weeklyDownloads": 89317829
+      "weeklyDownloads": 89317829,
+      "refresh": {
+        "status": "stale",
+        "reason": "measurement worker did not produce a partial report",
+        "lastMeasuredAt": "2026-11-13T05:56:45.018Z"
+      }
     },
     {
       "name": "marked",
@@ -17705,7 +17780,12 @@
         "scannedFiles": 1,
         "externalDependencies": []
       },
-      "weeklyDownloads": 60496071
+      "weeklyDownloads": 60496071,
+      "refresh": {
+        "status": "stale",
+        "reason": "measurement worker did not produce a partial report",
+        "lastMeasuredAt": "2026-11-13T05:46:27.125Z"
+      }
     },
     {
       "name": "webpack",
@@ -18645,7 +18725,12 @@
         ],
         "graphTruncated": true
       },
-      "weeklyDownloads": 55617769
+      "weeklyDownloads": 55617769,
+      "refresh": {
+        "status": "stale",
+        "reason": "measurement worker did not produce a partial report",
+        "lastMeasuredAt": "2026-11-13T05:53:05.901Z"
+      }
     },
     {
       "name": "hono",
@@ -21198,7 +21283,12 @@
         "scannedFiles": 24,
         "externalDependencies": []
       },
-      "weeklyDownloads": 53123258
+      "weeklyDownloads": 53123258,
+      "refresh": {
+        "status": "stale",
+        "reason": "measurement worker did not produce a partial report",
+        "lastMeasuredAt": "2026-11-13T05:49:52.149Z"
+      }
     },
     {
       "name": "jest",
@@ -24144,7 +24234,12 @@
           "jest-config"
         ]
       },
-      "weeklyDownloads": 46631732
+      "weeklyDownloads": 46631732,
+      "refresh": {
+        "status": "stale",
+        "reason": "measurement worker did not produce a partial report",
+        "lastMeasuredAt": "2026-11-13T05:48:00.954Z"
+      }
     },
     {
       "name": "lodash-es",
@@ -24862,7 +24957,12 @@
         "externalDependencies": [],
         "graphTruncated": true
       },
-      "weeklyDownloads": 42294984
+      "weeklyDownloads": 42294984,
+      "refresh": {
+        "status": "stale",
+        "reason": "measurement worker did not produce a partial report",
+        "lastMeasuredAt": "2026-11-13T05:53:40.919Z"
+      }
     },
     {
       "name": "redux",
@@ -25749,7 +25849,12 @@
         "scannedFiles": 1,
         "externalDependencies": []
       },
-      "weeklyDownloads": 40344956
+      "weeklyDownloads": 40344956,
+      "refresh": {
+        "status": "stale",
+        "reason": "measurement worker did not produce a partial report",
+        "lastMeasuredAt": "2026-11-13T05:46:26.184Z"
+      }
     },
     {
       "name": "moment",
@@ -27161,7 +27266,12 @@
         "scannedFiles": 1,
         "externalDependencies": []
       },
-      "weeklyDownloads": 34294671
+      "weeklyDownloads": 34294671,
+      "refresh": {
+        "status": "stale",
+        "reason": "measurement worker did not produce a partial report",
+        "lastMeasuredAt": "2026-11-13T05:48:35.492Z"
+      }
     },
     {
       "name": "three",
@@ -28739,7 +28849,12 @@
         "scannedFiles": 2,
         "externalDependencies": []
       },
-      "weeklyDownloads": 12487515
+      "weeklyDownloads": 12487515,
+      "refresh": {
+        "status": "stale",
+        "reason": "measurement worker did not produce a partial report",
+        "lastMeasuredAt": "2026-11-13T05:55:18.109Z"
+      }
     },
     {
       "name": "styled-components",
@@ -29463,7 +29578,12 @@
           "stylis"
         ]
       },
-      "weeklyDownloads": 11029759
+      "weeklyDownloads": 11029759,
+      "refresh": {
+        "status": "stale",
+        "reason": "measurement worker did not produce a partial report",
+        "lastMeasuredAt": "2026-11-13T05:47:00.432Z"
+      }
     },
     {
       "name": "stylelint",
@@ -32529,7 +32649,12 @@
           "write-file-atomic"
         ]
       },
-      "weeklyDownloads": 10427988
+      "weeklyDownloads": 10427988,
+      "refresh": {
+        "status": "stale",
+        "reason": "measurement worker did not produce a partial report",
+        "lastMeasuredAt": "2026-11-13T05:51:59.510Z"
+      }
     },
     {
       "name": "lit",
@@ -32539,7 +32664,7 @@
       "shape": "esm-project",
       "compile": {
         "success": false,
-        "durationMs": 14871,
+        "durationMs": 13845,
         "timedOut": false,
         "timeoutMs": 120000,
         "errorCount": 1,
@@ -32547,12 +32672,12 @@
         "categories": {
           "compiler-diagnostic": {
             "count": 1,
-            "sample": "emitted WebAssembly failed validation — WebAssembly.Module(): Compiling function #138:\"y_createRenderRoot\" failed: local.set[0] expected type (ref null 217), found global.get of type i32 @+192393"
+            "sample": "emitted WebAssembly failed validation — WebAssembly.Module(): Compiling function #139:\"y_createRenderRoot\" failed: local.set[0] expected type (ref null 217), found global.get of type i32 @+192452"
           }
         },
         "errors": [
           {
-            "message": "emitted WebAssembly failed validation — WebAssembly.Module(): Compiling function #138:\"y_createRenderRoot\" failed: local.set[0] expected type (ref null 217), found global.get of type i32 @+192393",
+            "message": "emitted WebAssembly failed validation — WebAssembly.Module(): Compiling function #139:\"y_createRenderRoot\" failed: local.set[0] expected type (ref null 217), found global.get of type i32 @+192452",
             "line": 1,
             "column": 1,
             "severity": "error"
@@ -32561,7 +32686,7 @@
       },
       "validation": {
         "validates": false,
-        "firstError": "emitted WebAssembly failed validation — WebAssembly.Module(): Compiling function #138:\"y_createRenderRoot\" failed: local.set[0] expected type (ref null 217), found global.get of type i32 @+192393"
+        "firstError": "emitted WebAssembly failed validation — WebAssembly.Module(): Compiling function #139:\"y_createRenderRoot\" failed: local.set[0] expected type (ref null 217), found global.get of type i32 @+192452"
       },
       "capabilities": {
         "nodeFs": false
@@ -34801,51 +34926,51 @@
             "placement": "js-host",
             "inputMode": "runtime-dynamic",
             "sampleOp": "select one of two runtime-owned callbacks",
-            "wasmUs": 8.772728250180009,
-            "nodeUs": 0.005257391988521795,
-            "wasmStdUs": 0.11101240821234808,
-            "nodeStdUs": 0.0002086198904390569,
-            "ratio": 0.0006029627927627614,
-            "ratioStd": 0.000024917683575082124,
+            "wasmUs": 8.985986896099828,
+            "nodeUs": 0.005244870512957627,
+            "wasmStdUs": 0.08631169292420307,
+            "nodeStdUs": 0.00016385000424919236,
+            "ratio": 0.0005835665159393434,
+            "ratioStd": 0.000014549296585078217,
             "ratioSamples": [
-              0.0006646239202402973,
-              0.0005762710495854593,
-              0.0006029627927627614,
-              0.0006188332460855667,
-              0.0006034656434238194,
-              0.0005940157904587578,
-              0.000598537076546208,
-              0.0006391419349297519,
-              0.0006016223983568674
+              0.0005506848112580446,
+              0.0005830410614811856,
+              0.0006111064741785478,
+              0.0005867065166938347,
+              0.0005903196206746241,
+              0.0005817419476785816,
+              0.0005825986564840099,
+              0.0005835665159393434,
+              0.0005862455906063063
             ],
             "measurementOrder": "alternating-paired",
             "ratioEstimator": "median-of-paired-ratios",
-            "iters": 30506,
+            "iters": 28999,
             "warmupRounds": 2,
             "measuredRounds": 9,
             "wasmSamplesUs": [
-              8.817057824690574,
-              9.102019701043028,
-              8.770476758670208,
-              8.743505113748828,
-              8.696734839048066,
-              8.825152953516758,
-              8.772728250180009,
-              8.818646233527836,
-              8.73869058545796
+              8.985986896099828,
+              8.995713783233905,
+              9.22705276044019,
+              8.936574192213524,
+              8.89998596503347,
+              9.013431428669907,
+              9.014974688782141,
+              8.985782026966556,
+              8.972423049070814
             ],
             "nodeSamplesUs": [
-              0.005860027536431237,
-              0.005245230446467594,
-              0.00528827116026868,
-              0.005410771651706939,
-              0.005248180685332488,
-              0.005242280207602698,
-              0.005250803120197073,
-              0.00563636661715795,
-              0.005257391988521795
+              0.004948446497845996,
+              0.005244870512957627,
+              0.005638711679492041,
+              0.005243146315489616,
+              0.005253836338888035,
+              0.005243491154581772,
+              0.005252112141921831,
+              0.005243801510467244,
+              0.0052600434495721545
             ],
-            "compileDurationMs": 3603.2012509999913,
+            "compileDurationMs": 3489.55627999999,
             "binaryBytes": 72158,
             "moduleImportCount": 17,
             "functionImportCount": 17,
@@ -34870,53 +34995,53 @@
             "reason": "the pinned Lit callback probe currently covers the JS-host lane only"
           }
         },
-        "wasmUs": 8.772728250180009,
-        "nodeUs": 0.005257391988521795,
-        "wasmStdUs": 0.11101240821234808,
-        "nodeStdUs": 0.0002086198904390569,
-        "ratio": 0.0006029627927627614,
-        "ratioStd": 0.000024917683575082124,
+        "wasmUs": 8.985986896099828,
+        "nodeUs": 0.005244870512957627,
+        "wasmStdUs": 0.08631169292420307,
+        "nodeStdUs": 0.00016385000424919236,
+        "ratio": 0.0005835665159393434,
+        "ratioStd": 0.000014549296585078217,
         "ratioSamples": [
-          0.0006646239202402973,
-          0.0005762710495854593,
-          0.0006029627927627614,
-          0.0006188332460855667,
-          0.0006034656434238194,
-          0.0005940157904587578,
-          0.000598537076546208,
-          0.0006391419349297519,
-          0.0006016223983568674
+          0.0005506848112580446,
+          0.0005830410614811856,
+          0.0006111064741785478,
+          0.0005867065166938347,
+          0.0005903196206746241,
+          0.0005817419476785816,
+          0.0005825986564840099,
+          0.0005835665159393434,
+          0.0005862455906063063
         ],
         "measurementOrder": "alternating-paired",
         "ratioEstimator": "median-of-paired-ratios",
-        "iters": 30506,
+        "iters": 28999,
         "warmupRounds": 2,
         "measuredRounds": 9,
         "wasmSamplesUs": [
-          8.817057824690574,
-          9.102019701043028,
-          8.770476758670208,
-          8.743505113748828,
-          8.696734839048066,
-          8.825152953516758,
-          8.772728250180009,
-          8.818646233527836,
-          8.73869058545796
+          8.985986896099828,
+          8.995713783233905,
+          9.22705276044019,
+          8.936574192213524,
+          8.89998596503347,
+          9.013431428669907,
+          9.014974688782141,
+          8.985782026966556,
+          8.972423049070814
         ],
         "nodeSamplesUs": [
-          0.005860027536431237,
-          0.005245230446467594,
-          0.00528827116026868,
-          0.005410771651706939,
-          0.005248180685332488,
-          0.005242280207602698,
-          0.005250803120197073,
-          0.00563636661715795,
-          0.005257391988521795
+          0.004948446497845996,
+          0.005244870512957627,
+          0.005638711679492041,
+          0.005243146315489616,
+          0.005253836338888035,
+          0.005243491154581772,
+          0.005252112141921831,
+          0.005243801510467244,
+          0.0052600434495721545
         ]
       },
       "knownBugs": [],
-      "measuredAt": "2026-11-11T09:34:14.314Z",
+      "measuredAt": "2026-11-13T08:03:55.108Z",
       "esEdition": {
         "required": 2015,
         "requiredLabel": "ES2015",
@@ -34944,12 +35069,7 @@
           "lit-html/is-server.js"
         ]
       },
-      "weeklyDownloads": 6829692,
-      "refresh": {
-        "status": "stale",
-        "reason": "measurement worker did not produce a partial report",
-        "lastMeasuredAt": "2026-11-11T09:34:14.314Z"
-      }
+      "weeklyDownloads": 6829692
     }
   ]
 }
