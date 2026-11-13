@@ -22,6 +22,7 @@ import { isGrowthSwitchedReceiver, lengthUpdateMayMeetFrozenArray } from "./stat
 import { emitVecLengthHoleFill } from "./vec-length-hole-fill.js"; // (#6482 r4)
 import type { Instr, ValType } from "../ir/types.js";
 import { allocLocal } from "./context/locals.js";
+import { reportError } from "./context/errors.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { buildThrowJsErrorInstrs, emitThrowRangeError, emitThrowTypeError } from "./expressions/helpers.js";
 import { resolveWasmType } from "./index.js";
@@ -723,4 +724,38 @@ export function tryCompileArrayLengthUpdate(
     fctx.body.push({ op: "f64.convert_i32_u" });
   }
   return { kind: "f64" };
+}
+
+/**
+ * `x.p op= v` whose receiver compiled to a vec carrier other than the declared
+ * vec type (`const g: any[]` holding only strings is a string vec).
+ * {@link tryCompileArrayLengthUpdate} declines that carrier, and the two vec
+ * types are siblings, so a struct access of the declared layout is invalid Wasm.
+ * Consumes the receiver and reports a sticky refusal: the expression wrapper's
+ * rollback must not turn it into a module that stores a default (#3725).
+ */
+export function refuseForeignVecCarrierCompound(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  target: ts.PropertyAccessExpression,
+  carrier: ValType,
+  declaredTypeIdx: number,
+): boolean {
+  if (
+    (carrier.kind !== "ref" && carrier.kind !== "ref_null") ||
+    carrier.typeIdx === declaredTypeIdx ||
+    getArrTypeIdxFromVec(ctx, carrier.typeIdx) < 0 ||
+    getArrTypeIdxFromVec(ctx, declaredTypeIdx) < 0
+  ) {
+    return false;
+  }
+  fctx.body.push({ op: "drop" });
+  reportError(
+    ctx,
+    target,
+    `Cannot compound-assign '${target.name.text}': the receiver's array carrier is not the declared array type`,
+    "error",
+    { sticky: true },
+  );
+  return true;
 }
