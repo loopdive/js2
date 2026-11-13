@@ -8945,7 +8945,7 @@ function tryLowerConsoleMethodCall(
     cx.resolver?.nativeConsoleOutputAvailable !== undefined
   ) {
     const hostFreeSink = cx.resolver.nativeConsoleOutputAvailable();
-    assertNotDeferred(consoleSurfaceCapability(false, hostFreeSink), `console.${methodName}`, cx.funcName);
+    assertNotDeferred(consoleSurfaceCapability(hostFreeSink), `console.${methodName}`, cx.funcName);
     if (!statementPosition) {
       demoteToLegacy(
         "method-call-unsupported",
@@ -9227,18 +9227,10 @@ function tryLowerNativeMapMethodCall(
 }
 
 /**
- * ES5 Object.defineProperty — an exact ambient static call. (#7338) Every
- * admitted define is lowered by the `Object` statics table before this arm, so
- * a call that reaches it is a selector/lowering drift, not a fallback.
+ * ES5 `Object.defineProperty` that reached from-ast: (#7338) the `Object` statics table lowers every
+ * admitted define and the selector refuses every other one, so this is a drift, not a fallback.
  */
-function lowerObjectDefinePropertyCall(expr: ts.CallExpression, cx: LowerCtx): never {
-  if (expr.arguments.length !== 3 || expr.arguments.some(ts.isSpreadElement)) {
-    throw new IrUnsupportedError(
-      "method-call-unsupported",
-      "build",
-      `ir/from-ast: Object.defineProperty call shape not supported (${cx.funcName})`,
-    );
-  }
+function unadmittedObjectDefineProperty(cx: LowerCtx): never {
   throw new IrInvariantError(
     "selection-preparation-mismatch",
     "build",
@@ -9556,7 +9548,7 @@ function lowerMethodCall(expr: ts.CallExpression, cx: LowerCtx, statementPositio
     methodName === "defineProperty" &&
     isAmbientReceiver(receiverIdentifier, receiverIsDirectModuleBinding, cx)
   ) {
-    return lowerObjectDefinePropertyCall(expr, cx);
+    unadmittedObjectDefineProperty(cx);
   }
 
   // #3787 — exact ambient String.fromCharCode(...). Intercept before receiver

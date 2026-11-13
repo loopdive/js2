@@ -58,10 +58,40 @@ so it is tracked here instead of being left unrecorded.
    (`src/ir/backend/linear-integration.ts`). 18 test files name
    `"strict-no-host"`.
 
-Not part of this issue: `src/codegen/array-methods.ts` still reports
-"Missing __call_1_f64 import for forEach" for
-`[1, 2].forEach("x" as any)`. That path is reachable; it is a refusal whose
-message names a retired import, and the right fix is a runtime `TypeError`.
+4. **The JS-host selection surface and the host capabilities behind it.**
+   Production never selects in JS-host mode now: `irTargetProfile`
+   projects every WasmGC compile with `allowHostImports: false`. The surface
+   still answers for one caller, `scripts/check-ir-fallbacks.ts:229`. It
+   drives the selector with `jsHostExterns: true` and no capability seam, so
+   the IR-fallback gate's baseline measures a mode that production no longer
+   has. Left in place for that reason (PR #7226 review round 2, K1/K2):
+   - the `jsHostExterns` selection option, `jsHostExternsEnabled`
+     (`legacy-caller-policy.ts`), `hostExternCapability`, and the `jsHost`
+     parameter of `domSurfaceCapability` (`capability.ts`);
+   - the `jsHostExterns` parameters of `planIrCalendarResolvers` and
+     `makeCalendarIrSelectionSupport`;
+   - `host-regexp-constructor` (`backend/legality.ts`). It is always false in
+     production, but `hostRegExpUnavailable()` (`select.ts`) treats an absent
+     seam (the gate) as available. Behind it is the `extern.regex` IR op
+     (`builder.ts`, `lower-generic.ts`, `runtime/verify.ts`,
+     `program/runtime-demands.ts`, `prepared-component-dependencies.ts`);
+   - `host-date-snapshot` (`backend/legality.ts`). Its legality answer is
+     always false, but the selector's query is not constant:
+     `src/codegen/index.ts` and `calendar-selection-support.ts` override it
+     with `supportsDateSnapshots` (the standalone clock). Removing it means a
+     dedicated selection option for date snapshots, not a deletion.
+
+Not part of this issue: `[1, 2].forEach("x" as any)` (a non-callable
+callback). Both behaviours are wrong against JS, which throws a catchable
+`TypeError`:
+
+- On main it compiles on all three lanes and imports `env.__call_1_f64`. On
+  gc, running it throws "callable is not a function", which the program's own
+  `try`/`catch` cannot catch. On standalone the module cannot be instantiated
+  host-free.
+- On the S7 chain it is the compile error "Missing __call_1_f64 import for
+  forEach" (`src/codegen/array-methods.ts`).
+
 File it separately if it is picked up.
 
 ## Implementation Plan
@@ -80,6 +110,12 @@ new helper, no new flag.
    backend gen op for a second user before deleting it.
 3. **S3 — `"strict-no-host"`.** Remove the variant and update the tests that
    name it.
+4. **S4 — the JS-host selection surface.** First point the IR-fallback gate
+   at the selector's production mode (no `jsHostExterns`, the real capability
+   seam) and re-baseline it in that PR. Then delete the surface listed in item
+   4 of "What is left", including `host-regexp-constructor` and the
+   `extern.regex` op. Replace `host-date-snapshot` with a dedicated
+   date-snapshot selection option.
 
 ### Constraints
 
