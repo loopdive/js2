@@ -87,7 +87,9 @@ export function coercionMode(ctx: CodegenContext): CoercionMode {
  * helper lookup and hint ABI at each call site. `"default"` is the runtime's
  * null hint, which rejects a Symbol result for the ToNumber / ToString that
  * follows; `"default-symbol"` is the explicit string (#6774 S19), which keeps
- * it for loose equality to compare (#7194).
+ * it for loose equality to compare (#7194). Both are the spec's "default";
+ * the pair is not renamed because `"default"` also names the
+ * `__anyvalue_payload_to_number_default` helper, so a rename moves bytes.
  */
 export function runtimeToPrimitiveInstrs(
   ctx: CodegenContext,

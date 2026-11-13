@@ -623,6 +623,15 @@ function ensureDynamicMemberCallSupport(ctx: CodegenContext, carrier: ValType): 
  * The externref-carrier providers of `dyn.eq`: `__extern_strict_eq` for
  * `===` / `!==`, `__extern_loose_eq` for `==` / `!=` (#2949 S5.2, #7194).
  * Registered before Phase 3 so no emit can shift a function index.
+ *
+ * Not an `IrDynamicRuntimeNeed`: those are discovered from runtime-symbol
+ * references and registered by `ensureIrDynamicRuntime` before the carrier's
+ * union-import family, on every carrier. `dyn.eq` is an op, its providers
+ * exist only on the externref carrier, and they register after that family;
+ * folding them into the need set would reorder function indices and move
+ * JavaScript-environment bytes. The strict call is `===`'s own provider on
+ * every lane; that the host-free loose provider also needs it (for two
+ * Objects) is that provider's dependency, not a second registration of it.
  */
 export function ensureIrDynamicEqualityRuntime(ctx: CodegenContext): void {
   ensureExternStrictEqHelper(ctx);

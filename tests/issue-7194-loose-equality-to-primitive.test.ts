@@ -303,3 +303,75 @@ describe("#7194 — the JavaScript environment keeps its helper body", () => {
     expect(instrs[1]).toMatch(/^call \d+$/);
   }, 120_000);
 });
+
+describe("#7194 — the reduction costs nothing where no Object can exist", () => {
+  /** The module's `__to_primitive` body: a sweep stub (`unreachable`) or the live runtime function. */
+  function toPrimitiveIsLive(wat: string): boolean {
+    const start = wat.indexOf("(func $__to_primitive ");
+    if (start < 0) return false;
+    const body = wat.slice(start, wat.indexOf("\n  (func $", start + 1));
+    return body.split("\n").length > 6;
+  }
+  const source = (value: string) =>
+    `export function f(c: any): number { return c == 2 ? 1 : 0; }\nexport function run(): number { return f(${value}) + f("2"); }`;
+
+  it("standalone: a module whose dynamic values are all primitives keeps ToPrimitive dead", async () => {
+    const result = await compile(source("3"), { fileName: "test.ts", target: "standalone", emitWat: true });
+    expect(toPrimitiveIsLive(result.wat ?? "")).toBe(false);
+    expect(((await instantiate(result, "standalone")).exports.run as () => number)()).toBe(1);
+  }, 120_000);
+
+  for (const value of ["{}", "[2]", "() => 1", "new Date(5)"]) {
+    it(`standalone: a module that creates ${value} keeps the reduction`, async () => {
+      const result = await compile(source(value), { fileName: "test.ts", target: "standalone", emitWat: true });
+      expect(toPrimitiveIsLive(result.wat ?? "")).toBe(true);
+      const js = source(value)
+        .replace(/: any|: number/g, "")
+        .replace(/^export /gm, "");
+      const want = new Function(`${js}\nreturn run();`)() as number;
+      expect(((await instantiate(result, "standalone")).exports.run as () => number)()).toBe(want);
+    }, 120_000);
+  }
+});
+
+describe("#7194 — residuals outside the provider (pending: these flip when fixed)", () => {
+  const SOURCE = `function f(a, b) { return a == b; }\nf("x", 1); f(1, "x");
+export function errorAgainstItsString() { var e = new Error("m"); return f(e, "Error: m") ? 1 : 0; }
+export function dateAgainstNumber() { var d = new Date(5); return f(d, 5) ? 1 : 0; }
+export function mapAgainstNumber() { return f(new Map(), 2) ? 1 : 0; }`;
+
+  // `__to_primitive` has no arm for the keyed-collection structs (Map, Set,
+  // WeakMap): the collection comes back unreduced and `__any_eq` traps, as on main.
+  it.fails(
+    "standalone: a Map against a number answers false without trapping",
+    async () => {
+      const result = await compileJs(SOURCE, "standalone");
+      const exports = (await instantiate(result, "standalone")).exports as Record<string, () => number>;
+      expect(answer(exports.mapAgainstNumber!)).toBe("0");
+    },
+    120_000,
+  );
+
+  // `__to_primitive` hands the native error struct back unchanged (its consumers
+  // render it through `__any_to_string`), so the reduction leaves an Object.
+  it.fails(
+    "standalone: an Error equals its Error.prototype.toString string",
+    async () => {
+      const result = await compileJs(SOURCE, "standalone");
+      const exports = (await instantiate(result, "standalone")).exports as Record<string, () => number>;
+      expect(answer(exports.errorAgainstItsString!)).toBe("1");
+    },
+    120_000,
+  );
+
+  // WASI's `__to_primitive` has no Date arm: the Date comes back unreduced and `__any_eq` traps.
+  it.fails(
+    "wasi: a Date against a number answers false without trapping",
+    async () => {
+      const result = await compileJs(SOURCE, "wasi");
+      const exports = (await instantiate(result, "wasi")).exports as Record<string, () => number>;
+      expect(answer(exports.dateAgainstNumber!)).toBe("0");
+    },
+    120_000,
+  );
+});

@@ -472,21 +472,62 @@ S2 and S3 are still open; the issue stays `in-progress`.
   - a test262-harness module grows by 110–113 bytes (the provider's
     prelude);
   - the `Map.get` module grows by 816 bytes.
-  - A tiny module whose only dynamic operation is `c == 2` grows from 56,865
-    to 93,863 bytes, because the provider now registers the object runtime
-    (`__to_primitive`). Legacy already pays that cost: on main the same
-    module compiled with `experimentalIR: false` is 92,671 bytes.
-- WASI (first measurement): an object literal, an array, the wrappers, `{}`,
-  a Date and a throwing `valueOf` now answer as node. Three residuals are in
-  WASI's runtime, not in equality:
-  - **A function operand still traps.** WASI's `__to_primitive` has no
-    function arm (#7153: vec arm only), so the function comes back
-    unreduced.
-  - **`"" + date` differs from `date.toString()`.** So `d == d.toString()` is
-    `false`.
-  - **A TS object literal read back from a `Map` still traps.**
+  - **A module that can hold no Object pays nothing (review B1).** The
+    provider's `__to_primitive` call is the only edge into the object
+    runtime's ToPrimitive closure. With that edge in place, the #6768
+    function sweep kept ~37 KB alive for a branch that never runs: the
+    reviewer's `f(3) + f("2")` module went from 56,839 to 93,921 bytes
+    unoptimized, and from 7,966 to 56,398 optimized.
+
+    Now the reduction is provisional. `settleObjectPreludes`
+    (finalize, before the sweep) measures liveness with the unreduced body in
+    place, and keeps the reduction only if `moduleCanHoldObject`
+    (`helpers/module-object-liveness.ts`) says a live body or global creates
+    an Object. Every Object on WasmGC is a `struct.new` of a type that is
+    not a primitive carrier. The runtime's own error constructors count only
+    if their result can be caught or used other than by an immediate
+    `throw`. The analysis errs toward keeping the reduction. Only a body is
+    swapped, so no index moves.
+
+    The liveness module imports nothing from the codegen import cycle. That
+    keeps `program-abi-finalization.ts`, which calls it, out of the SCC: the
+    grant stays at 732.
+
+    Result: that module is 56,839 / 7,966 bytes, the same as main. Modules
+    that create `{}`, `[2]`, a closure, a Date, a RegExp, a Map, a class
+    instance or a typed array keep the reduction, measured per shape. Under
+    the sweep, `__to_primitive` is dead on main for every shape here except
+    those that already call it (an object literal with `valueOf`, the
+    wrappers, an Error, a Symbol wrapper).
+- WASI: an object literal, an array, the wrappers and `{}` now answer as
+  node, and so does a throwing `valueOf`. The residuals are in WASI's
+  runtime, not in equality, and each traps exactly as on main:
+  - **A function operand.** WASI's `__to_primitive` has no function arm
+    (#7153: vec arm only), so the function comes back unreduced.
+  - **A Date against a number** (`f(new Date(5), 5)`). WASI's
+    `__to_primitive` has no Date arm. Also, `"" + date` differs from
+    `date.toString()`, so `d == d.toString()` is `false`. The earlier text
+    here said a Date works on WASI; it does not.
+  - **A TS object literal read back from a `Map`.**
+- Residual on standalone, the same on main, in `__to_primitive` rather than
+  in the provider:
+  - **An Error.** `__to_primitive` hands the native error struct back
+    unchanged by design: its consumers render it through `__any_to_string`.
+    So `e == "Error: m"` is `false`, `e == 1` traps, and a user `valueOf` on
+    an error is ignored.
+  - **The keyed collections.** `Map`, `Set` and `WeakMap` have no
+    ToPrimitive arm: `new Map() == 2` traps.
+
+  Fixing either is a runtime ToPrimitive change, not part of the hint path.
+  Both are pinned as `it.fails` rows that flip when fixed.
 - Pre-existing on every lane and untouched: a Symbol compared with a number
   traps inside `__any_eq` (`Symbol() == 1`).
+- **Other copies of loose equality that skip the reduction (S3 scope):**
+  - `emitLooseEq` in `coercion-engine.ts`: legacy `any == any` straight to
+    `__any_eq`.
+  - The `fast` `$AnyValue` handle's `emitLooseEq` in `src/ir/integration.ts`
+    (`callHelper("__any_eq")`). It is reached only under the explicit
+    `fast: true` compile option; no default target sets it.
 - **For S3: the plan's "`__any_eq` reached without the helper" risk is
   real.** With `experimentalIR: false`, a two-parameter
   `function both(c, d) { return c == d; }` traps on main for `both({}, 2)`
@@ -494,7 +535,11 @@ S2 and S3 are still open; the issue stays `in-progress`.
   (`coercion-engine.ts`) straight to `__any_eq`. One-carrier legacy cells
   are correct. `tests/issue-7194-loose-equality-to-primitive.test.ts` covers
   only the one-carrier cells on legacy for that reason.
-- Tests: `tests/issue-7194-loose-equality-to-primitive.test.ts` (9 rows):
+- Tests: `tests/issue-7194-loose-equality-to-primitive.test.ts` (17 rows). Besides
+  the rows below, five pin the cost: a module with no Object keeps
+  `__to_primitive` dead; modules creating `{}`, `[2]`, a closure or a Date
+  keep it live and answer as node. Three `it.fails` rows pin the residuals:
+  an Error, a Map, and a WASI Date. The original rows are:
   - the matrix as one module against node: standalone IR (every cell);
     standalone legacy (the one-carrier cells); WASI IR (every cell except a
     function operand);

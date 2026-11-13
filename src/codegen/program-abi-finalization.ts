@@ -4,6 +4,7 @@ import { planCompilerSupportCallableAbi } from "./compiler-support-abi.js";
 import type { CodegenContext } from "./context/types.js";
 import { eliminateDeadImports } from "./dead-elimination.js";
 import { functionSweepEnabled } from "./function-reachability-sweep.js";
+import { settleObjectPreludes } from "./helpers/module-object-liveness.js";
 import { planProgramAbiCallableImports } from "./program-abi-import-planning.js";
 import { observeStructFieldAccessorAbi } from "./struct-field-accessor-abi.js";
 
@@ -28,6 +29,7 @@ import { observeStructFieldAccessorAbi } from "./struct-field-accessor-abi.js";
  * intrinsic provider owns is never re-claimed.
  */
 export function eliminateDeadLayoutAndPlanProgramAbi(ctx: CodegenContext): void {
+  settleObjectPreludes(ctx); // (#7194) before the sweep decides what is live
   eliminateDeadImports(ctx.mod, ctx, { sweepUnreachableFunctions: functionSweepEnabled(ctx) }); // #6768
   planProgramAbiCallableImports(ctx);
   observeStructFieldAccessorAbi(ctx);
