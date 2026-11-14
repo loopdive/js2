@@ -20,9 +20,8 @@
 
 import { ts } from "../ts-api.js";
 import type { IrBackendTargetCapability } from "./backend/legality.js";
-import { storedObjectStaticRow } from "./object-statics.js";
-
-export type UncurriedObjectAliasMethod = "hasOwnProperty" | "propertyIsEnumerable";
+import type { OwnPropertyTest } from "./nodes.js";
+import { OWN_PROPERTY_TEST_ROW, storedObjectStaticRow } from "./object-statics.js";
 
 /**
  * (#7106 propertyHelper move-only arm) The STORED static form propertyHelper
@@ -89,17 +88,14 @@ const STORED_STATICS: Readonly<
   },
 };
 
-/** The uncurried Object.prototype predicates: two operands, an exact boolean, `dyn.own_property`. */
-const UNCURRIED: CertifiedAliasLowering = { result: "boolean", capability: "native-own-property-test" };
-
 type ObjectAlias =
-  | { readonly form: "uncurried"; readonly method: UncurriedObjectAliasMethod }
+  | { readonly form: "uncurried"; readonly method: OwnPropertyTest }
   | { readonly form: "stored-static"; readonly method: StoredStaticAliasMethod };
 
 /** A call of a certified alias with the arity its native lowering takes, and that lowering. */
 export type CertifiedAliasCall = CertifiedAliasLowering &
   (
-    | { readonly form: "uncurried"; readonly method: UncurriedObjectAliasMethod }
+    | { readonly form: "uncurried"; readonly method: OwnPropertyTest }
     | {
         readonly form: "stored-static";
         readonly method: StoredStaticAliasMethod;
@@ -251,7 +247,7 @@ function storedStaticMethodOfInitializer(init: ts.Expression | undefined): Store
   return STORED_STATICS[known].receiver === init.expression.text ? known : undefined;
 }
 
-function uncurriedObjectMethodOfInitializer(init: ts.Expression | undefined): UncurriedObjectAliasMethod | undefined {
+function uncurriedObjectMethodOfInitializer(init: ts.Expression | undefined): OwnPropertyTest | undefined {
   if (!init || !ts.isCallExpression(init) || init.arguments.length !== 1) return undefined;
   const callee = init.expression;
   // Function.prototype.call.bind(<target>)
@@ -294,7 +290,11 @@ export function certifiedAliasCall(
   if (call.questionDotToken || call.arguments.some(ts.isSpreadElement)) return undefined;
   const alias = objectAliasOf(call.expression, shadowed);
   if (alias === undefined) return undefined;
-  if (alias.form === "uncurried") return call.arguments.length === 2 ? { ...alias, ...UNCURRIED } : undefined;
+  if (alias.form === "uncurried") {
+    // (#7339) The uncurried predicates are the statics table's own-property test rows, the receiver an argument.
+    const { arity, capability } = OWN_PROPERTY_TEST_ROW;
+    return call.arguments.length === arity ? { ...alias, result: "boolean", capability } : undefined;
+  }
   const { arity, result, capability, provider } = STORED_STATICS[alias.method];
   return call.arguments.length === arity ? { ...alias, result, capability, provider } : undefined;
 }

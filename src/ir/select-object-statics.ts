@@ -24,9 +24,15 @@ import { nullComparisonFolds } from "./analysis/operand-admissibility.js";
 import type { IrBackendTargetCapability } from "./backend/legality.js";
 import { localIsRewritten } from "./lattice-param-facts.js";
 import { objectCreateDescriptorMap } from "./object-create-call.js";
+import type { IrPrimitiveExpressionFamily } from "./module-bindings.js";
 import * as objectStatics from "./object-statics.js";
+import { OBJECT_PROTOTYPE_KEYS } from "./realm-keys.js";
+import { outermostParenthesized } from "../shared/binding-writes.js";
 
-type Capability = Extract<IrBackendTargetCapability, "native-object-statics" | "native-dynamic-member-read">;
+type Capability = Extract<
+  IrBackendTargetCapability,
+  "native-object-statics" | "native-own-property-test" | "native-dynamic-member-read"
+>;
 
 /** The selector state the table's admission reads, live. */
 export interface ObjectStaticSelectorState {
@@ -42,9 +48,9 @@ export interface ObjectStaticSelectorState {
   readonly moduleBindingMatches: (id: ts.Identifier, value: ts.Expression) => boolean;
   readonly unannotatedLocal: (id: ts.Identifier) => ts.VariableDeclaration | undefined;
   readonly isDynamicHomeOpenCarrier: (decl: ts.VariableDeclaration) => boolean;
-  /** #7335's own-property test on a dynamic home: it answers a boolean. */
-  readonly isOwnPropertyTest: (call: ts.CallExpression) => boolean;
   readonly isDynamicParam: (id: ts.Identifier) => boolean;
+  /** The checker's primitive family of an expression, which the IR's call-boundary types (the lattice) read. */
+  readonly classifyPrimitive: (expr: ts.Expression) => IrPrimitiveExpressionFamily | undefined;
 }
 
 /** What a static's value admission asks of the selector's current walk. */
@@ -61,6 +67,8 @@ export interface ObjectStaticSelector {
   readonly plan: (call: ts.CallExpression) => objectStatics.ObjectStaticPlan | undefined;
   readonly isLiteralDefine: (call: ts.CallExpression) => boolean;
   readonly lowersToCarrier: (expression: ts.Expression) => boolean;
+  /** (#7339) An admitted own-property test (`R.hasOwnProperty(k)`) that answers the i32 boolean. */
+  readonly answersBoolean: (call: ts.CallExpression) => boolean;
   /** `node`'s unit (its top-level function or class, else the module's code) holds a call the table admits. */
   readonly tableMayReach: (node: ts.Node) => boolean;
   readonly holdsCarrier: (expression: ts.Expression) => boolean;
@@ -94,7 +102,7 @@ function unitOf(node: ts.Node): ts.Node {
   return ts.isFunctionDeclaration(top) || ts.isClassDeclaration(top) ? top : top.parent;
 }
 
-/** A source file's `Object.<name>(…)` calls, all and by unit; the lane's plan says which the table admits. */
+/** A source file's calls spelled as a table row, all and by unit; the lane's plan says which the table admits. */
 interface ObjectCallIndex {
   readonly all: readonly ts.CallExpression[];
   readonly byUnit: ReadonlyMap<ts.Node, readonly ts.CallExpression[]>;
@@ -111,8 +119,7 @@ function objectCallsOf(file: ts.SourceFile): ObjectCallIndex {
     if (
       ts.isCallExpression(node) &&
       ts.isPropertyAccessExpression(node.expression) &&
-      ts.isIdentifier(node.expression.expression) &&
-      node.expression.expression.text === "Object"
+      objectStatics.isTableCallName(node.expression.name.text)
     ) {
       all.push(node);
       const unit = unitOf(node);
@@ -143,35 +150,77 @@ function laneAnswers<K extends object>(): (key: K, lane: string, compute: () => 
   };
 }
 
+/** (#7339) The receivers the selector found to be dynamic homes, for from-ast's plan ({@link selectedDynamicHomeReceiver}). */
+const dynamicHomeReceivers = new WeakSet<ts.Expression>();
+
+/**
+ * (#7339) The selector's answer for a test's receiver, read by from-ast's plan so both sides plan the same
+ * representation, as #7335's arm recorded its admitted calls on main.
+ */
+export function selectedDynamicHomeReceiver(receiver: ts.Expression): boolean {
+  return dynamicHomeReceivers.has(receiver);
+}
+
 export function createObjectStaticSelector(state: ObjectStaticSelectorState): ObjectStaticSelector {
+  /** A script `var o = {}` that legacy keeps as an open `$Object` on the dynamic slot: #7335's receivers on main. */
+  const isDynamicHomeReceiver = (receiver: ts.Expression): boolean => {
+    const declaration = ts.isIdentifier(receiver) ? state.moduleBinding(receiver)?.declaration : undefined;
+    const home =
+      declaration !== undefined &&
+      ts.isVariableDeclaration(declaration) &&
+      declaration.initializer !== undefined &&
+      objectStatics.isEmptyObjectLiteral(declaration.initializer) &&
+      state.isDynamicHomeOpenCarrier(declaration);
+    if (home) dynamicHomeReceivers.add(receiver);
+    else dynamicHomeReceivers.delete(receiver);
+    return home;
+  };
   const plan = (call: ts.CallExpression) =>
     objectStatics.objectStaticCallPlan(call, {
       isAmbientBinding: state.isAmbientBinding,
       dynamicCodeMayRun: state.dynamicCodeMayRun(),
       supportsBackendCapability: state.supports,
+      isDynamicHomeReceiver,
     });
 
   const holdsCarrier = (expression: ts.Expression) => state.moduleBinding(expression)?.valueKind.kind === "dynamic";
 
   const lane = () => `${state.supports("native-object-statics")}:${state.dynamicCodeMayRun()}`;
-  const admitsAny = (calls: readonly ts.CallExpression[]) => calls.some((call) => plan(call)?.kind === "call");
-  /** The file holds a call the lane's plan admits. */
-  const fileAnswers = laneAnswers<ts.SourceFile>();
-  const fileCallsTable = (file: ts.SourceFile) => fileAnswers(file, lane(), () => admitsAny(objectCallsOf(file).all));
-  /** `node`'s unit holds a call the lane's plan admits. */
-  const unitAnswers = laneAnswers<ts.Node>();
-  const unitCallsTable = (node: ts.Node) => {
-    const unit = unitOf(node);
-    return unitAnswers(unit, lane(), () => admitsAny(objectCallsOf(node.getSourceFile()).byUnit.get(unit) ?? []));
+  /** An admitted static: it answers or extends an object. */
+  const objectCall = (call: ts.CallExpression) => plan(call)?.kind === "call";
+  const answersBoolean = (call: ts.CallExpression) => {
+    const admitted = plan(call);
+    return admitted?.kind === "test" && admitted.test.answer === "boolean";
   };
+  /** Whether the file holds a call `matches` accepts, per file and lane. */
+  const fileHolds = (matches: (call: ts.CallExpression) => boolean) => {
+    const answers = laneAnswers<ts.SourceFile>();
+    return (file: ts.SourceFile) => answers(file, lane(), () => objectCallsOf(file).all.some(matches));
+  };
+  /** The file holds an admitted static: the table makes carriers. */
+  const fileCallsTable = fileHolds(objectCall);
+  /** (#7339) The file holds an admitted own-property test. */
+  const fileCallsTest = fileHolds((call) => plan(call)?.kind === "test");
+  /** Whether `node`'s unit holds a call `matches` accepts, per unit and lane. */
+  const unitHolds = (matches: (call: ts.CallExpression) => boolean) => {
+    const answers = laneAnswers<ts.Node>();
+    return (node: ts.Node) => {
+      const unit = unitOf(node);
+      const calls = objectCallsOf(node.getSourceFile()).byUnit.get(unit) ?? [];
+      return answers(unit, lane(), () => calls.some(matches));
+    };
+  };
+  /** A call the lane's plan admits, of any row: the table may make the unit reachable. */
+  const unitCallsTable = unitHolds((call) => {
+    const kind = plan(call)?.kind;
+    return kind === "call" || kind === "test";
+  });
 
   /** A #7280 dynamic home that an admitted table call takes: the object the table's defines extend. */
   const takenByTable = (declaration: ts.Declaration): boolean =>
     objectCallsOf(declaration.getSourceFile()).all.some((call) => {
       const [target] = call.arguments;
-      return (
-        target !== undefined && state.moduleBinding(target)?.declaration === declaration && plan(call)?.kind === "call"
-      );
+      return target !== undefined && state.moduleBinding(target)?.declaration === declaration && objectCall(call);
     });
 
   /** The declaration a function local or a dynamic module home reads, when it has an initializer. */
@@ -196,9 +245,26 @@ export function createObjectStaticSelector(state: ObjectStaticSelectorState): Ob
     visited.add(declaration);
     return producesCarrier(declaration.initializer!, leaves(visited));
   };
-  // An admitted static answers the carrier; #7335's own-property test on a dynamic home a boolean.
-  const staticCall: CarrierLeaves["call"] = (call) =>
-    plan(call)?.kind === "call" ? true : state.isOwnPropertyTest(call) ? false : undefined;
+  /**
+   * An admitted static answers the carrier; (#7339) an own-property test its boolean, boxed onto the carrier except
+   * on a dynamic home (the plan's `answer`, which from-ast reads too).
+   */
+  const staticCall: CarrierLeaves["call"] = (call) => {
+    const admitted = plan(call);
+    if (admitted?.kind === "test") return admitted.test.answer === "dynamic";
+    return admitted?.kind === "call" ? true : undefined;
+  };
+  /**
+   * What may not cross a call boundary: a static's object, and (#7339) a boxed test the checker types `boolean`.
+   * The IR types a call's parameters and a function's result from the checker's types of what crosses (the
+   * lattice), so that boolean would cross as the i32 while the test answers the carrier. Any other test crosses
+   * as main's values do: the i32 where the checker agrees, the carrier where it types the call `any`.
+   */
+  const resultCall: CarrierLeaves["call"] = (call) => {
+    const admitted = plan(call);
+    if (admitted?.kind !== "test") return admitted?.kind === "call" ? true : undefined;
+    return admitted.test.answer === "dynamic" && state.classifyPrimitive(call) === "boolean";
+  };
 
   /** The table's results: a static's answer, and a binding initialised with one. */
   const resultLeaves = (visited: Set<ts.Declaration>): CarrierLeaves => ({
@@ -206,7 +272,7 @@ export function createObjectStaticSelector(state: ObjectStaticSelectorState): Ob
       const declaration = initializedDeclaration(node);
       return declaration !== undefined && holdsInitializer(declaration, visited, resultLeaves);
     },
-    call: staticCall,
+    call: resultCall,
   });
   /** The table's carriers, as its consumers read them: its results, and a dynamic home a table call takes. */
   const carrierLeaves = (visited: Set<ts.Declaration>): CarrierLeaves => ({
@@ -250,9 +316,27 @@ export function createObjectStaticSelector(state: ObjectStaticSelectorState): Ob
     // A dynamic home a table call takes is main's carrier already: where it goes across a call is main's.
     return (
       (returned || passed) &&
-      fileCallsTable(expression.getSourceFile()) &&
+      (fileCallsTable(expression.getSourceFile()) || fileCallsTest(expression.getSourceFile())) &&
       producesCarrier(expression, resultLeaves(new Set()))
     );
+  };
+
+  /**
+   * (#7339) `<carrier>.<key>` read as a value, for a key `%Object.prototype%` owns other than `toString`: the
+   * open `$Object` member read answers the realm's inherited member only for `toString` (main's gap, #7304). The
+   * gap holds with or without a test in the file; refusing it only where the file holds an admitted test is a
+   * deliberate scope limit, not a soundness argument: this PR closes what its tests newly reach and leaves the
+   * statics' units on main's routing, wrong answers included, for #7304. An admitted test's callee is no such read.
+   */
+  const readsInheritedMember = (e: ts.Expression): boolean => {
+    if (!ts.isPropertyAccessExpression(e) || e.name.text === "toString" || !OBJECT_PROTOTYPE_KEYS.has(e.name.text)) {
+      return false;
+    }
+    const call = outermostParenthesized(e).parent;
+    if (ts.isCallExpression(call) && call.expression === outermostParenthesized(e) && plan(call)?.kind === "test") {
+      return false;
+    }
+    return fileCallsTest(e.getSourceFile()) && (holdsCarrier(e.expression) || lowersToCarrier(e.expression));
   };
 
   /** A static's value crosses as a carrier, so any carrier qualifies: a dynamic home or parameter too. */
@@ -267,13 +351,18 @@ export function createObjectStaticSelector(state: ObjectStaticSelectorState): Ob
     if (create !== null) return true;
     const admitted = plan(call);
     if (admitted?.kind === "refused") return rules.refuse(`expr-object-static-${admitted.refusal}`, call);
-    return objectStatics.admittedValues(admitted)?.every((operand) => {
+    const values = objectStatics.admittedValues(admitted);
+    // (#7339) A test's receiver is a value already on the carrier: one the IR types as an array, a string or a
+    // struct would answer for that representation, not for the object legacy builds.
+    const receiver = admitted?.kind === "test" ? admitted.test.receiver : undefined;
+    return values?.every((operand) => {
       let value = operand;
       while (ts.isParenthesizedExpression(value)) value = value.expression;
       if (rules.isUndefinedOrNull(value)) return true;
       const own = rules.openCarrierIsOwn(value);
       if (own === undefined && !rules.isPhase1(value)) return false;
-      const carried = own ?? (isCarrierValue(value) || (rules.boxesOntoCarrier(value) && !isRewrittenParameter(value)));
+      const boxes = operand !== receiver && rules.boxesOntoCarrier(value) && !isRewrittenParameter(value);
+      const carried = own ?? (isCarrierValue(value) || boxes);
       return carried || rules.refuse("expr-object-static-operand", value);
     });
   };
@@ -282,12 +371,19 @@ export function createObjectStaticSelector(state: ObjectStaticSelectorState): Ob
     plan,
     isLiteralDefine: (call) => objectStatics.isLiteralDefine(plan(call)),
     lowersToCarrier,
+    answersBoolean,
     tableMayReach: unitCallsTable,
     holdsCarrier,
     compareVerdict: (expr, nullCompare, isUndefined) => {
       const sides = [expr.left, expr.right];
-      if (!sides.some(lowersToCarrier)) return undefined;
-      if (nullCompare) return nullComparisonFolds(expr.operatorToken.kind, "dynamic") ? "folded" : "refused";
+      const folds = nullComparisonFolds(expr.operatorToken.kind, "dynamic");
+      if (!sides.some(lowersToCarrier)) {
+        // (#7339) A loose `null` compare on a dynamic module binding fails after the claim (main's gap, #7214);
+        // in a program where an own-property test may make units reachable, it is refused instead.
+        const gap = nullCompare && !folds && sides.some(holdsCarrier);
+        return gap && fileCallsTest(expr.getSourceFile()) ? "refused" : undefined;
+      }
+      if (nullCompare) return folds ? "folded" : "refused";
       return sides.some(isUndefined) ? "folded" : undefined;
     },
     admitsCarrierUse: (e, refuse) => {
@@ -295,6 +391,7 @@ export function createObjectStaticSelector(state: ObjectStaticSelectorState): Ob
       if (chained && e.questionDotToken !== undefined && lowersToCarrier(e.expression)) {
         return refuse("expr-carrier-optional-chain", e);
       }
+      if (readsInheritedMember(e)) return refuse("expr-carrier-inherited-member", e);
       return !escapesUnit(e) || refuse("expr-carrier-escapes-unit", e);
     },
     // A carrier goes only into its home; a function local holds one only as its own initializer.

@@ -10,13 +10,17 @@
 
 import type { IrFunctionBuilder } from "./builder.js";
 import { irRuntimeFuncRef } from "./callable-bindings.js";
+import { JS_TAG_IDS } from "./js-tag-domain.js";
 import { irDynamic, irVal, type IrType, type IrValueId } from "./nodes.js";
-import type { ObjectStaticCall } from "./object-statics.js";
+import type { ObjectStaticCall, OwnPropertyTestCall } from "./object-statics.js";
 import {
   emitThrowTypeErrorIf,
   emitThrowTypeErrorIfNullish,
   emitThrowTypeErrorUnlessObject,
 } from "./throw-type-error.js";
+
+/** ToObject's TypeError (§7.1.18) for `undefined` / `null`. */
+const NOT_COERCIBLE = "Cannot convert undefined or null to object";
 
 /** A fresh open-hash `$Object` from `__new_plain_object`, typed `type`. */
 export function emitNewPlainObject(builder: IrFunctionBuilder, type: IrType): IrValueId {
@@ -113,7 +117,7 @@ export function emitObjectStaticCall(
   if (call.requires === "object") {
     emitThrowTypeErrorUnlessObject(builder, first, `Object.${call.name} called on non-object`);
   } else if (call.requires === "coercible") {
-    emitThrowTypeErrorIfNullish(builder, first, "Cannot convert undefined or null to object");
+    emitThrowTypeErrorIfNullish(builder, first, NOT_COERCIBLE);
   }
   const answer =
     call.provider === undefined ? first : emitObjectRuntimeCall(builder, call.provider, operands, irDynamic());
@@ -122,4 +126,22 @@ export function emitObjectStaticCall(
     for (const definition of definitions) emitOpenCarrierDefine(builder, object, definition);
   }
   return answer;
+}
+
+/**
+ * (#7339) An admitted own-property test `R.<name>(k)` (`object-statics.ts`):
+ * the method is read from the receiver first, so the receiver's nullish
+ * TypeError runs before the key is evaluated (§13.3.6.1 evaluates the member,
+ * then the arguments); then `dyn.own_property`. Answers the boolean as the
+ * plan's `answer` says: the i32, or boxed onto the carrier.
+ */
+export function emitOwnPropertyTest(
+  builder: IrFunctionBuilder,
+  test: Pick<OwnPropertyTestCall, "name" | "answer">,
+  receiver: IrValueId,
+  key: () => IrValueId,
+): IrValueId {
+  emitThrowTypeErrorIfNullish(builder, receiver, NOT_COERCIBLE);
+  const answer = builder.emitDynOwnProperty(receiver, key(), test.name);
+  return test.answer === "boolean" ? answer : builder.emitBox(answer, irDynamic(JS_TAG_IDS.Boolean));
 }

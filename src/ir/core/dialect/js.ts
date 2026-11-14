@@ -333,6 +333,7 @@ export interface IrInstrDynOwnProperty extends IrInstrBase {
   readonly kind: "dyn.own_property";
   readonly receiver: IrValueId;
   readonly key: IrValueId;
+  /** The one spelling of the two test names (`OwnPropertyTest` in `nodes.ts` names it). */
   readonly test: "hasOwnProperty" | "propertyIsEnumerable";
 }
 

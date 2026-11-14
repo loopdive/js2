@@ -20,6 +20,7 @@
 // `plan/issues/1713-ir-backend-emitter-trait-seam.md` for that design step.
 // Nothing here changes for Phase 1.
 
+import type { OwnPropertyTest } from "../nodes.js";
 import type { Instr, ValType } from "../types.js";
 import type { JsTag } from "../js-tag.js";
 import type { IrClassMemberKind, IrFuncRef, IrType, IrTypeRef } from "../nodes.js";
@@ -417,7 +418,7 @@ export interface IrDynamicLowering {
    * legacy's lowering of the propertyHelper uncurried aliases. Throws where the
    * `native-own-property-test` capability does not hold.
    */
-  emitOwnPropertyTest(test: "hasOwnProperty" | "propertyIsEnumerable"): readonly Instr[];
+  emitOwnPropertyTest(test: OwnPropertyTest): readonly Instr[];
   /**
    * Carrier on the stack → the partition's payload. Caller must hold a
    * `tag.test` proof (verifier R2); a wasm-null carrier here is a producer

@@ -345,17 +345,17 @@ import {
   peelAssignmentChain,
   IR_MATH_METHOD_TABLE,
   admittedEmptyLiteralIsOpenCarrier,
-  admittedOwnPropertyCallMethod,
 } from "./select.js";
-import type { OwnPropertyMethod } from "./dynamic-home-open-object.js";
 import type { DescriptorDefinition } from "./descriptor-literal.js";
 import { lowerObjectCreateDescriptorMapCall } from "./object-create-call.js";
 import { objectStaticCallPlan, type ObjectStaticCapability, type ObjectStaticPlan } from "./object-statics.js";
+import { selectedDynamicHomeReceiver } from "./select-object-statics.js";
 import { staticPrivateFieldOwner, staticPrivateThisCallClassName } from "./private-member-syntax.js";
 import {
   emitNewPlainObject,
   emitObjectRuntimeCall,
   emitObjectStaticCall,
+  emitOwnPropertyTest,
   type ObjectStaticDefinitionValues,
 } from "./open-object-carrier.js";
 import {
@@ -7683,8 +7683,6 @@ function functionObjectLoweringHost(cx: LowerCtx): functionObjects.FunctionObjec
 function lowerCall(expr: ts.CallExpression, cx: LowerCtx, statementPosition = false): IrValueId | null {
   if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== expr)
     return withNodeSourceSite(cx, expr, () => lowerCall(expr, cx, statementPosition));
-  const ownPropertyMethod = admittedOwnPropertyCallMethod(expr);
-  if (ownPropertyMethod !== undefined) return lowerOwnPropertyMethodCall(expr, ownPropertyMethod, cx);
   if (cx.resolver?.preparedObjectCreateCall?.(expr) === "null") {
     if (!isDirectObjectCreateNullCall(expr))
       throw new IrInvariantError(
@@ -8263,17 +8261,6 @@ function lowerCarrierOperand(argument: ts.Expression, callName: string, cx: Lowe
     );
   }
   return boxed;
-}
-
-/**
- * (#7335) `o.hasOwnProperty(k)` / `o.propertyIsEnumerable(k)` on a
- * selector-certified dynamic-home open object: both operands as carriers, then
- * the lane's own-property provider, as the uncurried aliases lower.
- */
-function lowerOwnPropertyMethodCall(expr: ts.CallExpression, method: OwnPropertyMethod, cx: LowerCtx): IrValueId {
-  const receiver = (expr.expression as ts.PropertyAccessExpression).expression;
-  const object = lowerCarrierOperand(receiver, method, cx);
-  return cx.builder.emitDynOwnProperty(object, lowerCarrierOperand(expr.arguments[0]!, method, cx), method);
 }
 
 /**
@@ -9217,6 +9204,7 @@ function objectStaticPlanOf(expr: ts.CallExpression, cx: LowerCtx): ObjectStatic
     isAmbientBinding: (node) => cx.resolver?.isAmbientBinding?.(node) === true && cx.scope.get(node.text) === undefined,
     dynamicCodeMayRun: cx.resolver?.runtimeEvalMayExecute?.() !== false,
     supportsBackendCapability: (capability) => cx.resolver?.supportsBackendCapability?.(capability) === true,
+    isDynamicHomeReceiver: selectedDynamicHomeReceiver,
   });
 }
 
@@ -9238,8 +9226,10 @@ function lowerDescriptorDefinition(
 /**
  * (#7338) An admitted `Object.<static>(…)` (`object-statics.ts`), behind the
  * selector's plan: every value and definition as a carrier, in source order,
- * then `emitObjectStaticCall`. Null when the call is no table static on this
- * lane, which leaves it to the other arms; a refused one never reaches here.
+ * then `emitObjectStaticCall`; (#7339) an own-property test's receiver, then
+ * `emitOwnPropertyTest`, which lowers its key. Null when the call is no table
+ * row on this lane, which leaves it to the other arms; a refused one never
+ * reaches here.
  */
 function tryLowerObjectStaticCall(expr: ts.CallExpression, cx: LowerCtx): IrValueId | null {
   const plan = objectStaticPlanOf(expr, cx);
@@ -9250,6 +9240,11 @@ function tryLowerObjectStaticCall(expr: ts.CallExpression, cx: LowerCtx): IrValu
       "build",
       `ir/from-ast: Object static refused (${plan.refusal}) after selection admitted it (${cx.funcName})`,
     );
+  }
+  if (plan.kind === "test") {
+    const { name, receiver, key } = plan.test;
+    const object = lowerCarrierOperand(receiver, name, cx);
+    return emitOwnPropertyTest(cx.builder, plan.test, object, () => lowerCarrierOperand(key, name, cx));
   }
   const { name, operands, definitions } = plan.call;
   const values = operands.map((operand) =>
@@ -14969,10 +14964,10 @@ function expressionProducesDynamic(expr: ts.Expression, cx: LowerCtx): boolean {
         return cx.calleeTypes?.get(call.expression.text)?.returnType?.kind === "dynamic";
       }
       if (!ts.isPropertyAccessExpression(call.expression)) return false;
-      // (#7338) An admitted `Object` static answers the carrier.
-      if (objectStaticPlanOf(call, cx)?.kind === "call") return true;
-      // (#7335) A dynamic home's own-property test answers a boolean.
-      if (admittedOwnPropertyCallMethod(call) !== undefined) return false;
+      // (#7338) An admitted `Object` static answers the carrier; (#7339) an own-property test its plan's answer.
+      const plan = objectStaticPlanOf(call, cx);
+      if (plan?.kind === "call") return true;
+      if (plan?.kind === "test") return plan.test.answer === "dynamic";
       // (#7106 lever R2) A host-free `re.exec(s)` answers the match array or null as the carrier.
       const regExpCall = nativeRegExpCarrierCall(call, cx);
       return regExpCall ? REGEXP_CARRIER_METHODS[regExpCall.method].result === "dynamic" : undefined;

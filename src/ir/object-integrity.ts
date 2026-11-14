@@ -3,6 +3,7 @@
 import { isUnshadowedUndefined } from "../shared/ambient-intrinsics.js";
 import { isStoreTarget } from "../shared/binding-writes.js";
 import { isEqualityOperator } from "./analysis/operand-admissibility.js";
+import type { OwnPropertyTest } from "./nodes.js";
 import { forEachChild, ts } from "../ts-api.js";
 
 const ES5_INTRINSIC_OBJECTS: ReadonlySet<string> = new Set([
@@ -93,6 +94,18 @@ interface SourceIntegrityFacts {
   readonly objectStaticsPristine: boolean;
   /** #3776's narrower rule, kept for legacy's adapter: `Object` or `Object.isFrozen` is assigned. */
   readonly isFrozenRebound: boolean;
+  /**
+   * (#7339) The own-property test names the source spells other than as a
+   * member read's name (`"hasOwnProperty"`, `{ hasOwnProperty: f }`, a
+   * binding of that name): each could install an own method of that name.
+   */
+  readonly ownPropertyTestsSpelled: ReadonlySet<string>;
+  /**
+   * (#7339) The prototype operand of every mention of `Object.create`, in
+   * source order; `null` for a mention that is not called directly, so its
+   * prototype is unknown.
+   */
+  readonly createPrototypes: readonly (ts.Expression | null)[];
 }
 
 const sourceIntegrityFactsCache = new WeakMap<ts.SourceFile, SourceIntegrityFacts>();
@@ -162,6 +175,19 @@ function isObservedConstructor(name: ts.Node): boolean {
   );
 }
 
+const OWN_PROPERTY_TESTS: ReadonlySet<string> = new Set<OwnPropertyTest>(["hasOwnProperty", "propertyIsEnumerable"]);
+
+/** What a mention of `Object.create` makes from: its prototype operand, or `null` when it is not called directly. */
+function createdFrom(name: ts.Identifier): ts.Expression | null | undefined {
+  const access = name.parent;
+  if (name.text !== "Object" || !ts.isPropertyAccessExpression(access) || access.name.text !== "create")
+    return undefined;
+  const call = unwrapExpressionParent(access).parent;
+  return ts.isCallExpression(call) && call.expression === unwrapExpressionParent(access)
+    ? (call.arguments[0] ?? null)
+    : null;
+}
+
 /** `Object` passed to an integrity test (`Object.isFrozen(Object)`): a test reads its operand and nothing else. */
 function isIntegrityTestOperand(object: ts.Identifier): boolean {
   const call = object.parent;
@@ -182,7 +208,19 @@ function sourceIntegrityFacts(sourceFile: ts.SourceFile): SourceIntegrityFacts {
   let mayMutate = false;
   let objectStaticsPristine = true;
   let isFrozenRebound = false;
+  const ownPropertyTestsSpelled = new Set<string>();
+  const createPrototypes: (ts.Expression | null)[] = [];
   const visit = (node: ts.Node): void => {
+    if (
+      (ts.isStringLiteralLike(node) ||
+        (ts.isIdentifier(node) && !(ts.isPropertyAccessExpression(node.parent) && node.parent.name === node))) &&
+      OWN_PROPERTY_TESTS.has(node.text)
+    ) {
+      ownPropertyTestsSpelled.add(node.text);
+    }
+    const created = ts.isIdentifier(node) ? createdFrom(node) : undefined;
+    if (created !== undefined) createPrototypes.push(created);
+
     // Treat even taking a reference to an integrity mutator as unsafe. This
     // covers aliases such as `const freeze = Object.freeze; freeze(Boolean)`.
     if (
@@ -234,7 +272,13 @@ function sourceIntegrityFacts(sourceFile: ts.SourceFile): SourceIntegrityFacts {
     forEachChild(node, visit);
   };
   visit(sourceFile);
-  const facts = { mayMutate, objectStaticsPristine, isFrozenRebound };
+  const facts = {
+    mayMutate,
+    objectStaticsPristine,
+    isFrozenRebound,
+    ownPropertyTestsSpelled,
+    createPrototypes,
+  };
   sourceIntegrityFactsCache.set(sourceFile, facts);
   return facts;
 }
@@ -242,6 +286,15 @@ function sourceIntegrityFacts(sourceFile: ts.SourceFile): SourceIntegrityFacts {
 /** The source shows no route to `Object` or its statics ({@link SourceIntegrityFacts.objectStaticsPristine}). */
 export function objectStaticsArePristine(sourceFile: ts.SourceFile): boolean {
   return sourceIntegrityFacts(sourceFile).objectStaticsPristine;
+}
+
+/** (#7339) The facts {@link ownPropertyTestIsPristine} (`object-statics.ts`) reads for `method`. */
+export function ownPropertyTestFacts(
+  sourceFile: ts.SourceFile,
+  method: OwnPropertyTest,
+): { readonly spelled: boolean; readonly createPrototypes: readonly (ts.Expression | null)[] } {
+  const facts = sourceIntegrityFacts(sourceFile);
+  return { spelled: facts.ownPropertyTestsSpelled.has(method), createPrototypes: facts.createPrototypes };
 }
 
 function isEs5IntrinsicObject(expr: ts.Expression, isAmbientBinding: (node: ts.Identifier) => boolean): boolean {
