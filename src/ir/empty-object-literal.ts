@@ -63,13 +63,8 @@ export function isEmptyObjectExpression(
 ): expr is EmptyObjectExpression {
   if (ts.isObjectLiteralExpression(expr)) return expr.properties.length === 0;
   return (
-    ts.isNewExpression(expr) && hasNoConstructorArguments(expr) && isRealmObjectConstruction(expr, isLibOnlyBinding)
+    ts.isNewExpression(expr) && (expr.arguments?.length ?? 0) === 0 && isRealmObjectConstruction(expr, isLibOnlyBinding)
   );
-}
-
-/** `new C()` or `new C`: no argument. */
-export function hasNoConstructorArguments(expr: ts.NewExpression): boolean {
-  return (expr.arguments?.length ?? 0) === 0;
 }
 
 export interface EmptyObjectBinding {

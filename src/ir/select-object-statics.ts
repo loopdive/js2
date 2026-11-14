@@ -18,9 +18,15 @@
  * what a callee returns.
  */
 
+import { outermostParenthesized, stripParens } from "../shared/binding-writes.js";
 import { ts } from "../ts-api.js";
 import { producesCarrier, type CarrierLeaves } from "./analysis/carrier-expression.js";
-import { nullComparisonFolds } from "./analysis/operand-admissibility.js";
+import {
+  isEqualityOperator,
+  isStrictEqualityOperator,
+  isUndefinedCompareOperand,
+  nullComparisonFolds,
+} from "./analysis/operand-admissibility.js";
 import type { IrBackendTargetCapability } from "./backend/legality.js";
 import { localIsRewritten } from "./lattice-param-facts.js";
 import { objectCreateDescriptorMap } from "./object-create-call.js";
@@ -82,6 +88,15 @@ export interface ObjectStaticSelector {
     nullCompare: boolean,
     isUndefined: (side: ts.Expression) => boolean,
   ) => "refused" | "folded" | undefined;
+  /**
+   * An equality between a `void` and a carrier (`readsCarrier`) that from-ast cannot lower: its f64
+   * `undefined` sentinel meets the carrier or an `undefined` test. `void <carrier>` against
+   * `undefined`, a `void`, the carrier, or (loosely) `null`; any `void` loosely against the carrier.
+   * A strict compare with `void 0`, a number or `null` lowers, and a non-carrier `void` keeps main's
+   * route. from-ast refuses these in three places (the null fold, the matching-type check, the
+   * undefined compare), so this is the selector's mirror of them, not a shared fact (#7341).
+   */
+  readonly voidCompareUnlowered: (expr: ts.VoidExpression, isShadowed: (name: string) => boolean) => boolean;
   /**
    * Refuses (through `refuse`) a use from-ast has no lowering for: `<carrier>?.p` / `?.[k]` / `?.()`
    * on a table carrier (`expr-carrier-optional-chain`), and a table result that leaves its unit
@@ -224,12 +239,13 @@ export function createObjectStaticSelector(state: ObjectStaticSelectorState): Ob
     },
     call: staticCall,
   });
-  /** The open objects: the table's carriers, and every #7280 dynamic home (`{}`, #7341's `new Object()`). */
+  /** The open objects: the table's results, and every #7280 dynamic home (`{}`, #7341's `new Object()`). */
   const openObjectLeaves = (visited: Set<ts.Declaration>): CarrierLeaves => ({
     binding: (node) => {
       const declaration = initializedDeclaration(node);
-      if (declaration !== undefined && holdsCarrier(node) && state.isDynamicHomeOpenCarrier(declaration)) return true;
-      return carrierLeaves(visited).binding(node);
+      if (declaration === undefined) return false;
+      if (state.isDynamicHomeOpenCarrier(declaration)) return true;
+      return holdsInitializer(declaration, visited, openObjectLeaves);
     },
     call: staticCall,
   });
@@ -307,6 +323,20 @@ export function createObjectStaticSelector(state: ObjectStaticSelectorState): Ob
       if (nullCompare) return nullComparisonFolds(expr.operatorToken.kind, "dynamic") ? "folded" : "refused";
       return sides.some(isUndefined) ? "folded" : undefined;
     },
+    voidCompareUnlowered: (expr, isShadowed) => {
+      const operand = outermostParenthesized(expr);
+      const parent = operand.parent;
+      if (!ts.isBinaryExpression(parent) || !isEqualityOperator(parent.operatorToken.kind)) return false;
+      const other = stripParens(parent.left === operand ? parent.right : parent.left);
+      const loose = !isStrictEqualityOperator(parent.operatorToken.kind);
+      if (!readsCarrier(expr.expression)) return loose && readsCarrier(other);
+      return (
+        isUndefinedCompareOperand(other, isShadowed) ||
+        ts.isVoidExpression(other) ||
+        readsCarrier(other) ||
+        (loose && other.kind === ts.SyntaxKind.NullKeyword)
+      );
+    },
     admitsCarrierUse: (e, refuse) => {
       const chained = ts.isPropertyAccessExpression(e) || ts.isElementAccessExpression(e) || ts.isCallExpression(e);
       if (chained && e.questionDotToken !== undefined && lowersToCarrier(e.expression)) {
@@ -315,8 +345,11 @@ export function createObjectStaticSelector(state: ObjectStaticSelectorState): Ob
       return !escapesUnit(e) || refuse("expr-carrier-escapes-unit", e);
     },
     // A carrier goes only into its home; a function local holds one only as its own initializer.
+    // (#7341) A dynamic home takes no object literal by assignment: from-ast boxes no struct
+    // onto the dynamic slot (`boxForDynamicModuleStorage`), so it would withdraw the claim.
     moduleBindingTakes: (id, value) =>
-      state.moduleBindingMatches(id, value) && (holdsCarrier(id) || !lowersToCarrier(value)),
+      state.moduleBindingMatches(id, value) &&
+      (holdsCarrier(id) ? !ts.isObjectLiteralExpression(stripParens(value)) : !lowersToCarrier(value)),
     admit,
   };
 }

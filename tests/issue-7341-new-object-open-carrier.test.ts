@@ -157,6 +157,13 @@ const VALUE_USES: Record<string, string> = {
   "a member as a switch discriminant": `var o = new Object(); o.k = 2; switch (o.k) { case 2: break; default: throw "k"; }`,
   "a void member strictly compared with undefined": `var o = new Object(); o.p = 1; if (void o.p !== undefined) { throw "v"; }`,
   "a void member loosely compared with undefined": `var o = new Object(); o.p = 1; if (void o.p != undefined) { throw "v"; }`,
+  // An object literal assigned to the dynamic home (PR #7214 step-B review B1); `{}` and a bare
+  // `var` withdrew after the claim on main too.
+  "an object literal assigned to the var": `var o = new Object(); o.p = 1; o = { p: 2 }; if (o.p !== 2) throw "x";`,
+  "an object literal assigned, bare `new Object`": `var o = new Object; o.p = 1; o = { p: 2 }; if (o.p !== 2) throw "x";`,
+  "an object literal assigned in a function": `var o = new Object(); function g() { o = { p: 2 }; } g(); if (o.p !== 2) throw "x";`,
+  "an object literal assigned to a `{}` var": `var o = {}; o = { p: 2 }; if (o.p !== 2) throw "x";`,
+  "an object literal assigned to a bare var": `var o; o = { p: 2 }; if (o.p !== 2) throw "x";`,
   // Mixed carrier expressions (PR #7214 review R2-S1): the carrier flows through `+`, a comma, or a `void`.
   "a member plus one as a switch discriminant": `var o = new Object(); o.k = 1; switch (o.k + 1) { case 2: break; default: throw "k"; }`,
   "a comma expression as a switch discriminant": `var o = new Object(); o.k = 2; switch ((0, o.k)) { case 2: break; default: throw "k"; }`,

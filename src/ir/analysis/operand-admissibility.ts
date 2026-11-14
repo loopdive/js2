@@ -13,7 +13,7 @@
 // prove before lowering (`plannedClosureOperandFamily`). A family the selector
 // cannot name is `unknown`, which every predicate refuses.
 
-import { outermostParenthesized, skipOuterExpressions, stripParens } from "../../shared/binding-writes.js";
+import { skipOuterExpressions } from "../../shared/binding-writes.js";
 import { ts } from "../../ts-api.js";
 
 /**
@@ -484,31 +484,6 @@ export function nativeI32OperandsAdmissible(
         ? "number"
         : "unknown";
   return binaryOperandsAdmissible(op, family(expr.left), family(expr.right));
-}
-
-/**
- * An equality between a `void` and the carrier (`readsCarrier`) that from-ast cannot lower: its f64
- * `undefined` sentinel meets the carrier or an `undefined` test. `void <carrier>` against `undefined`,
- * a `void`, the carrier, or (loosely) `null`; any `void` loosely against the carrier. A strict compare
- * with `void 0`, a number or `null` lowers, and a non-carrier `void` keeps main's route.
- */
-export function voidCarrierEqualityUnlowered(
-  expr: ts.VoidExpression,
-  readsCarrier: (e: ts.Expression) => boolean,
-  isShadowed: (name: string) => boolean,
-): boolean {
-  const operand = outermostParenthesized(expr);
-  const parent = operand.parent;
-  if (!ts.isBinaryExpression(parent) || !isEqualityOperator(parent.operatorToken.kind)) return false;
-  const other = stripParens(parent.left === operand ? parent.right : parent.left);
-  const loose = !isStrictEqualityOperator(parent.operatorToken.kind);
-  if (!readsCarrier(expr.expression)) return loose && readsCarrier(other);
-  return (
-    isUndefinedCompareOperand(other, isShadowed) ||
-    ts.isVoidExpression(other) ||
-    readsCarrier(other) ||
-    (loose && other.kind === ts.SyntaxKind.NullKeyword)
-  );
 }
 
 /** The operand an equality compares with a direct `null` literal (`null === null`: none to type). */

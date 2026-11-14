@@ -100,7 +100,6 @@ import { objectLiteralDataPropertyName, phase1PropertyName } from "./property-ke
 import {
   emptyObjectBinding,
   isEmptyObjectExpression,
-  hasNoConstructorArguments,
   isOpenCarrierUse,
   isRealmObjectConstruction,
   unitInKeysAreOwnOnly,
@@ -247,7 +246,6 @@ import {
   isStrictEqualityOperator,
   isTypedBinaryOperator,
   mayBeElementRead,
-  voidCarrierEqualityUnlowered,
   wrapperComparisonIsIdentity,
   type AdditiveLane,
   nativeI32OperandsAdmissible,
@@ -9822,13 +9820,13 @@ function isSelectableNumberCompound(
   return carrierLeafReads(expr.right, moduleBinding).length === 0 || shapeNo("compound-carrier-leaf", expr.right);
 }
 
-/** `void e` beside the carrier where from-ast has no lowering (`voidCarrierEqualityUnlowered`). */
+/** `void e` beside the carrier where from-ast has no lowering (`voidCompareUnlowered`). */
 function isPhase1VoidExpression(
   expr: ts.VoidExpression,
   scope: ReadonlySet<string>,
   localClasses: ReadonlySet<string>,
 ): boolean {
-  if (voidCarrierEqualityUnlowered(expr, readsCarrier, (name) => scope.has(name)))
+  if (objectStaticSelector.voidCompareUnlowered(expr, (name) => scope.has(name)))
     return capabilityNo("operand-coercion-unsupported", "expr-void-carrier-compare", expr);
   return isPhase1Expr(expr.expression, scope, localClasses);
 }
@@ -12086,7 +12084,8 @@ function phase1NewExpression(
   }
   // (#7341 S1) `new Object()` on the realm's `Object`: only as a `{}` the dynamic-home admission takes.
   if (isRealmObjectConstruction(expr, selectorSeesLibOnlyBinding)) {
-    if (!hasNoConstructorArguments(expr)) return shapeNo("expr-new-object-argument", expr);
+    // A conservative limit: `new Object(undefined)` / `new Object(null)` would also build a fresh object.
+    if ((expr.arguments?.length ?? 0) > 0) return shapeNo("expr-new-object-argument", expr);
     return isDynamicHomeOpenCarrier(expr) || shapeNo("expr-new-object-home", expr);
   }
   const stored = isLocalClass ? undefined : wrapper.storedWrapperConstruction(expr, WRAPPER_AMBIENCE);
