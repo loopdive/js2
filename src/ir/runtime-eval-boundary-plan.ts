@@ -7,6 +7,7 @@
 import type { TypeOracle } from "../checker/oracle.js";
 import { forEachChild, ts } from "../ts-api.js";
 import { identifierWritesOf, isStoreTarget } from "../shared/binding-writes.js";
+import { isInertFunctionMention } from "../shared/function-mention.js";
 
 export type IrRuntimeEvalSiteKind =
   | "direct-eval"
@@ -43,8 +44,8 @@ export interface IrRuntimeEvalSite {
    *
    * Recorded here rather than re-derived by a second scanner precisely because
    * the classification has non-obvious carve-outs (`isDirectCalleeIntrinsicValue`,
-   * `isFunctionPrototypeMethodChain`) whose cost is measured in the comments
-   * below; a copy of them would drift.
+   * `isInertFunctionMention`) whose cost is
+   * measured in the comments below; a copy of them would drift.
    */
   readonly intrinsicName?: "eval" | "Function";
 }
@@ -275,75 +276,6 @@ function stringArguments(args: readonly ts.Expression[] | undefined): { literalS
   return { literalSource: args.map((arg) => arg.text).join("\n"), unknown: false };
 }
 
-/**
- * `Function.prototype.<name>` where `<name>` is a statically-known key other
- * than `constructor` — e.g. the receiver-uncurry idiom the test262
- * propertyHelper harness opens with (`Function.prototype.call.bind(...)`).
- * The value that escapes such a chain is an ordinary prototype METHOD
- * (`call`, `bind`, `toString`, …), never the `Function` constructor itself,
- * so no dynamic-code capability crosses the runtime-eval boundary. Counting
- * it as an `intrinsic-value` site linked the full interpreter provider (a
- * ~24 MB binary delta) into every propertyHelper-including test262 module
- * AND flipped those modules into the shared-realm carrier representation,
- * where the dynamic-descriptor round-trip loses descriptor fields
- * (harness/verifyProperty-restore-accessor.js and friends). A bare
- * `Function.prototype` value use, a computed member, or `.constructor` all
- * still count as escapes.
- */
-function isFunctionPrototypeMethodChain(identifier: ts.Identifier): boolean {
-  const proto = identifier.parent;
-  if (!ts.isPropertyAccessExpression(proto) || proto.expression !== identifier) return false;
-  if (proto.name.text !== "prototype") return false;
-  // (#5148 checkpoint) Walk out of transparent wrappers so a cast between the
-  // proto read and its member does not defeat the excusal —
-  // `(Function.prototype as any).p = 12` is the same non-escape as
-  // `Function.prototype.p = 12`, but the AsExpression made it an
-  // `intrinsic-value` site, which pulled `js2wasm:runtime-eval` imports into
-  // zero-import standalone modules (the #4563 carrier-walk red).
-  let outer: ts.Node = proto;
-  while (
-    outer.parent !== undefined &&
-    (ts.isParenthesizedExpression(outer.parent) ||
-      ts.isAsExpression(outer.parent) ||
-      ts.isSatisfiesExpression(outer.parent) ||
-      ts.isNonNullExpression(outer.parent) ||
-      ts.isTypeAssertionExpression(outer.parent)) &&
-    outer.parent.expression === outer
-  ) {
-    outer = outer.parent;
-  }
-  const member = outer.parent;
-  if (member !== undefined && ts.isPropertyAccessExpression(member) && member.expression === outer) {
-    return member.name.text !== "constructor";
-  }
-  if (member !== undefined && ts.isElementAccessExpression(member) && member.expression === outer) {
-    const key = unwrapExpression(member.argumentExpression);
-    return ts.isStringLiteralLike(key) && key.text !== "constructor";
-  }
-  // (#5148 checkpoint) A DESTRUCTURE of the proto object — Deno's
-  // `const { bind, call } = Function.prototype` — is the same member-read
-  // family: safe unless it binds `constructor`.
-  if (
-    member !== undefined &&
-    ts.isVariableDeclaration(member) &&
-    member.initializer === outer &&
-    ts.isObjectBindingPattern(member.name)
-  ) {
-    return member.name.elements.every((element) => {
-      const key = element.propertyName ?? element.name;
-      return !(ts.isIdentifier(key) && key.text === "constructor");
-    });
-  }
-  // The BARE `Function.prototype` VALUE (stored, passed on): the proto object
-  // itself is not eval-capable, and its `.constructor` read is served by the
-  // self-contained `%Function%` arm (function-intrinsic-carrier.ts) exactly
-  // like `<fn>.constructor` — there is no bare `Function` read for it to
-  // disagree with when this excusal fires. Before this, storing the value
-  // linked the provider ABI, and a module whose imports were stubbed threw
-  // during `__module_init` while seeding the companion's `constructor`.
-  return true;
-}
-
 function isDirectCalleeIntrinsicValue(identifier: ts.Identifier): boolean {
   const parent = identifier.parent;
   if (
@@ -501,14 +433,11 @@ function visitRuntimeEvalSites(root: ts.Node, oracle: TypeOracle | undefined, si
       const isMemberName =
         (ts.isPropertyAccessExpression(parent) && parent.name === node) ||
         (ts.isElementAccessExpression(parent) && parent.argumentExpression === node);
-      // (#2960/#4394) The predicate deliberately fires only for `Function` —
-      // `eval` stays a site in receiver position (`eval.call(null, src)` is a
-      // real indirect eval), and `.constructor` chains stay escapes because
-      // `Function.prototype.constructor` IS the eval-capable constructor.
-      // This supersedes the broader any-receiver-read carve-out that briefly
-      // held this arm: that version also excused the `.constructor` chain.
-      const isSafePrototypeMethodReceiver = node.text === "Function" && isFunctionPrototypeMethodChain(node);
-      if (!isMemberName && !isSafePrototypeMethodReceiver) {
+      // (#2960/#4394, #7343) Only `Function` is excused — `eval` stays a site in
+      // receiver position (`eval.call(null, src)` is a real indirect eval), and
+      // `.constructor` chains stay escapes because `Function.prototype.constructor`
+      // IS the eval-capable constructor.
+      if (!isMemberName && !isInertFunctionMention(node)) {
         sink.site(node, "intrinsic-value", "required", undefined, node.text as "eval" | "Function");
         sink.source(undefined);
       }

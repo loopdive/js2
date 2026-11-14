@@ -27,3 +27,16 @@ export function skipTransparentExpressions(expr: ts.Expression): ts.Expression {
     cur = next;
   }
 }
+
+/** `expr` with every transparent wrapper (parens, type-erased wrappers) around it: the position its value is used in. */
+export function outermostTransparent(expr: ts.Expression): ts.Expression {
+  let cur = expr;
+  for (;;) {
+    // Only kind guards read `parent`, so a non-expression parent simply wraps nothing.
+    const parent = cur.parent as ts.Expression | undefined;
+    if (parent === undefined) return cur;
+    const inner = ts.isParenthesizedExpression(parent) ? parent.expression : unwrapTypeErasedExpression(parent);
+    if (inner !== cur) return cur;
+    cur = parent;
+  }
+}

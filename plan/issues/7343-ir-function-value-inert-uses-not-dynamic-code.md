@@ -1,7 +1,8 @@
 ---
 id: 7343
 title: "IR: a `Function` value in an inert position is not dynamic code"
-status: ready
+status: in-progress
+assignee: ttraenkler/senior-dev
 sprint: current
 created: 2026-11-13
 updated: 2026-11-13
@@ -156,3 +157,233 @@ Code quality:
 6. The predicate is a flat list of position arms, without flag parameters;
    `deadcode-elide.ts` and `runtime-eval-boundary-plan.ts` do not grow.
 7. A fresh-context adversarial review records its verdict in the PR body.
+
+## S1 result (2026-11-13)
+
+Built as planned, with the differences below. Measured with the branch
+merged with main `34e285a3f4` (after #7338) and that tree as the base,
+standalone, original harness, one process at a time. The numbers are the
+same as against the branch base `e2eae68fc5`.
+
+Population: the 249 ES5 files of `es5-map-1111` that are not IR-only and
+whose test body mentions `Function` outside a call or `new`.
+
+| | files |
+| --- | --- |
+| gained (IR-only now) | 9 |
+| lost | 0 |
+| units newly legacy | 0 (legacy units 995 → 751) |
+| new compile errors | 0 |
+| post-claim errors | 1 → 1 (the same file) |
+| routing changed | 42 |
+
+Gained: `Object/getOwnPropertyDescriptor/15.2.3.3-4-35`, `-36`, `-37`, `-38`;
+`Object/isExtensible/15.2.3.13-2-14`; `Object/isFrozen/15.2.3.12-3-4`, `-5`;
+`Object/isSealed/15.2.3.11-4-4`, `-5`.
+
+Verdicts of the 42 routing-changed files: all pass on this branch under
+`scripts/run-test262-paths.mts --standalone` with no eval provider, and on
+the default (JS environment) target. All 42 pass in the CI standalone
+baseline. Locally, main fails all 42 only because the QuickJS provider is
+not built here.
+
+### Differences from the plan
+
+1. **An equality operand is NOT inert.** An equality compares identities,
+   and only a provider-linked module keeps ONE `%Function%` (#4442).
+   Measured with the arm in: `var f = function () {}; f.constructor ===
+   Function` answered `false` on standalone once the module was
+   provider-free. #4442's "keeps a bare `Function` read on the provider
+   route" test caught it. The arm is dropped, and the equality form is a
+   must-stay-a-site test row.
+2. **JS-environment (gc) output is NOT byte-identical on the 42
+   routing-changed files** (it is on the 200-file sample without a
+   `Function` mention). Dead-binding elision runs for the JS environment's
+   native regime as well (`compiler.ts`, `targetProfile.nativeRegime`), and
+   the boundary plan serves both targets. So the dropped shim and the
+   missing `intrinsic-value` site change gc output exactly as they change
+   standalone. All 42 pass on the gc target without a provider. Keeping gc
+   identical would need a target-dependent answer from the one predicate,
+   which the plan rules out (no flag parameters). This needs a decision
+   (criterion 4).
+3. **The runtime-eval boundary plan keeps its own bare-`Function.prototype`
+   excusal** (`isBareFunctionPrototypeValue`). Elision never shared it:
+   computed source could reach the prototype's constructor there. So
+   `Object.getOwnPropertyDescriptor(Function.prototype, "constructor")`,
+   `Object.defineProperty(Function.prototype, …)` used as a value, and a
+   computed key stay elision sites. In the boundary plan they are not sites,
+   exactly as on main.
+4. **Elision gains the boundary plan's wrapper and destructure handling** of
+   the method chain (`(Function.prototype).call`,
+   `const { call } = Function.prototype`), which it lacked. This is the same
+   sound argument, now in one place.
+5. **Shadowing is syntactic**: `Function` and `Object` are the ambient
+   globals when nothing in the file declares either name
+   (`isUndeclaredInFile`, `shared/ambient-intrinsics.ts`). Elision runs
+   before any checker exists. The method-chain arm keeps main's behaviour
+   (no shadowing test).
+
+S2 (the `Function("return this;")()` fold) is not built; whether it pays is
+open (3 sole-blocker files in the 600-file sample). The issue stays
+in-progress for it.
+
+## Review round 1 (PR #7231, 2026-11-13) — findings and fixes
+
+Fixed by the senior developer who took over the branch. Measured on the
+branch merged with main `5b1f4794bb`, standalone, one process at a time.
+
+**B1 (wrong answer): fixed.** `Object.getOwnPropertyDescriptor(Function,
+"prototype")` yields `%Function.prototype%`, and that object's own
+`constructor` is `%Function%`.
+
+The rule is now stated over what the result can hold. A mention is inert
+when no value it yields is `%Function%` or `%Function.prototype%`. An
+ordinary function value is allowed, because its inherited `constructor`
+reaches `%Function%` the way every function in the program does.
+
+The descriptor pairs that qualify, each pinned in
+`tests/issue-7343-function-inert-uses.test.ts`:
+
+| receiver | inert keys | why |
+| --- | --- | --- |
+| `Function` | every key except `"prototype"` and `"constructor"` | `length` and `name` hold a number and a string; any other key has no own descriptor |
+| `Function.prototype` | every key except `"constructor"` | `call` / `apply` / `bind` / `toString` and the `caller` / `arguments` thrower are ordinary functions; the rest are a number or a string |
+
+Both reviewer repros are "stays a site" rows. A source write cannot put
+either intrinsic under another key without a `Function` mention that is
+itself a site, so the descriptor rule needs no key-write screen.
+
+**S1 (writes ignored): fixed.** `Object` must be unpatched as well as
+undeclared: no literal-route write of `Object` or of the static being
+called. The screen reuses `sourceWritesMemberNamed`
+(`shared/intrinsic-prototype-writes.ts`) and adds no third mechanism. It
+covers:
+- `Object = …`;
+- `Object.isSealed = f`;
+- `globalThis.Object.isSealed = f`;
+- an alias's `O["isFrozen"] = f`;
+- `Object.defineProperty(Object, "isSealed", …)`;
+- `delete`.
+
+It also refuses any `with` statement, through a new `hasWithStatement`
+that shares `hasDynamicScope`'s single cached walk in
+`shared/binding-writes.ts`.
+
+Two coarser screens were measured and rejected, because test262's own
+`$262` prelude stores `globalThis` and `globalThis.Object`:
+- `sourceMayPatchPrototype(…, "Object")` and `sourceMayWriteGlobalObject`
+  are true in every assembled test, so the yield dropped from 9 to 0;
+- `hasDynamicScope` is true in every test, because of the
+  `$262.evalScript` shim's `eval`, and `sourceNamesReflectiveRoute` fires on
+  `getPrototypeOf` itself.
+
+What the screen does not catch:
+- A write under a computed name is outside the boundary, as it is for the
+  object statics (`objectStaticsArePristine`, #3776).
+- A direct `eval` could patch either intrinsic, but it is a site of its own
+  in both readers.
+
+**S2: dropped `isBareFunctionPrototypeValue`.** The bare
+`Function.prototype` value is now a site in both readers.
+- On the 249-file population, routing with the excusal and without it is
+  identical, file for file (`PROBE_KEEP_BARE` A/B).
+- The reviewer's `s03` (`var P = Function.prototype;
+  P.constructor("return 7;")`) now passes. It fails on main.
+
+**S3: done.** The flag parameter is gone. There are two flat entry arms,
+`isInertFunctionUse` and `isInertPrototypeUse`, over the shared
+`isInspected` / `describesKey` / `objectStaticCalledOn`.
+
+### Re-measured (main `5b1f4794bb`)
+
+| | files |
+| --- | --- |
+| gained (IR-only now) | 9 (the same 9 as before the review) |
+| lost | 0 |
+| units newly legacy | 0 (legacy units 995 → 756; it was 751 before the review: B1 and S2 keep 5 more units legacy) |
+| new compile errors | 0 |
+| post-claim errors | 1 → 1 (the same file) |
+| routing changed | 41 (42 before the review) |
+
+- **Verdicts:** the 41 routing-changed files pass on both trees,
+  standalone, with the interpreter eval provider built per tree
+  (`JS2WASM_EVAL_ENGINE=interpreter TEST262_FULL_RUNTIME_EVAL=1`).
+- **The reviewer's 29 probes:**
+  - main passes 17, the branch 18;
+  - no probe passes on main and fails on the branch;
+  - the one flip is `s03`, from fail to pass;
+  - the 11 still failing fail on main too: r02/r03/r04, r10–r14, r17,
+    r22, s02.
+- **gc (JS environment):** byte-identical on the 200-file sample without a
+  `Function` mention.
+
+## Review round 2 (PR #7231, 2026-11-14): MET
+
+Round 2 found no program that passes on main and fails on head; `s03` and
+`t18` newly pass. Two should-fix items were left, plus a nit.
+
+**S1: the comment "a source write cannot put either intrinsic under another
+key without a site" was false. Disposition: the doc now states the real
+limit, pinned by a test (option D).**
+
+Two writes put `%Function%` under a new key with no site:
+- `Function.prototype.k = (function () {}).constructor`, because the member
+  arm treats a write target like a read;
+- `Object.defineProperty(Function.prototype, "k", { value: (function ()
+  {}).constructor })`, a discarded define with a literal key.
+
+A later inert read then hands that value out. Main has the same exposure
+through its `Function.prototype.<member>` excusal. It is harmless only
+because a function value's inherited `.constructor` cannot evaluate source
+in this compiler today.
+
+Tests in `tests/issue-7343-function-inert-uses.test.ts` pin that dependency
+so it cannot rot silently:
+- the `FN_CONSTRUCTOR_EVALUATES` rows: `(function () {}).constructor("return
+  7;")()` throws on standalone and on the default target, and no
+  `js2wasm:runtime-eval` import is linked;
+- the `INERT_TODAY_KNOWN_LIMIT` rows (both counterexamples, plus a store
+  followed by a descriptor read) state today's inert answer.
+
+Stores and `defineProperty` statements stay inert, exactly as on main.
+
+The two sound variants were measured (249-file population, against main
+`9745e46d72`) and rejected. Both send back to the legacy compiler units that
+main lowers on IR, which is not allowed:
+
+| variant | rule | gained | units newly legacy |
+| --- | --- | --- | --- |
+| A | every store into `Function.prototype.<k>`, and every define with a non-literal descriptor, is a site | 9 | **85 units in 17 files** (`Function.prototype.myproperty = 1`, `.property = 12`, `.get = function…`, `.toString = Object.prototype.toString`, …: main excuses them all) |
+| B | a store is inert, but a READ of key k is a site when the file writes any member named k (`sourceWritesMemberNamed`) | **8** | **68 units in 12 files** |
+
+Variant B's losses come from the key screen not knowing the receiver. sta.js
+writes `Test262Error.prototype.toString`, which makes every
+`Function.prototype.toString` read a site:
+- the gained `getOwnPropertyDescriptor/15.2.3.3-4-35`;
+- the `Function/prototype/toString/S15.3.4.2_A*` family;
+- `bind/15.3.4.5-2-2` (`f.bind = …`).
+
+The Variant B patch is kept in the review scratch (`round2-readside.patch`).
+
+**S2: done.** Test rows pin the `Object` write screen's limit (the #3776
+boundary):
+- `Object["is" + "Sealed"] = f` stays inert (not seen);
+- `var O = Object; O.isSealed = f` is a site (seen).
+
+**Nit: done.** `hasWithStatement`'s doc notes that
+`sourceNamesReflectiveRoute` also counts `with` as a reflective route.
+
+## Follow-ups
+
+- **Make stores into `Function` / `Function.prototype` sound without losing
+  units (option C).**
+  - Make the written-key screen receiver-aware: per-intrinsic written-key
+    sets in `src/shared/intrinsic-prototype-writes.ts`, which already tracks
+    `writes` per patchable intrinsic through `prototypeOwner`.
+  - Treat a fresh stored value as harmless: a primitive literal, a function
+    or arrow expression, an object or array literal.
+  - With both, a read of `<k>` is a site only when the file stores a
+    non-fresh value under `<k>` on `Function` / `Function.prototype`.
+  - Not measured. It would avoid both A's and B's losses on this population.
+  - **Required before** a function value's inherited `.constructor` can
+    evaluate source (the `FN_CONSTRUCTOR_EVALUATES` rows flip).
