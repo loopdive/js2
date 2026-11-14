@@ -10,7 +10,6 @@ import type {
   IrRuntimeEvalFunctionAnswers,
   IrRuntimeEvalSite,
 } from "../ir/runtime-eval-boundary-plan.js";
-import { scopeHasDirectEval } from "../ir/lattice-param-facts.js";
 import type { IrSelection } from "../ir/select.js";
 import { forEachChild, ts } from "../ts-api.js";
 import { isBindingReferencePosition } from "../checker/binder.js";
@@ -123,20 +122,13 @@ function evalVisibleBindings(ctx: CodegenContext): ReadonlySet<string> {
  * (#7345) The selector's `runtimeEvalFunctions`. On the standalone lane they are the boundary's own
  * answers: `registerReassignedFunctionGlobals`' set (the one the direct-call side excludes), and A1's
  * `runtimeEvalBoundaryCrossing` where A1 runs (`callableBoundaryRequired`), so selection refuses what
- * preparation would withdraw. Every other lane keeps its earlier answer until it is measured: a
- * function whose scope has a direct `eval` may be rebound, and selection refuses none here.
+ * preparation would withdraw. Every other lane passes none until it is measured, so the selector keeps
+ * its earlier answer there (a direct `eval` in a function's scope may rebind it) and refuses none here.
  */
 export function irRuntimeEvalSelectionOption(ctx: CodegenContext): {
-  readonly runtimeEvalFunctions: IrRuntimeEvalFunctionAnswers;
+  readonly runtimeEvalFunctions?: IrRuntimeEvalFunctionAnswers;
 } {
-  if (ctx.targetProfile.target !== "standalone") {
-    return {
-      runtimeEvalFunctions: {
-        mayRebind: (_, declaration) => scopeHasDirectEval(declaration),
-        crossing: () => undefined,
-      },
-    };
-  }
+  if (ctx.targetProfile.target !== "standalone") return {};
   let evalVisible: ReadonlySet<string> | undefined;
   return {
     runtimeEvalFunctions: {

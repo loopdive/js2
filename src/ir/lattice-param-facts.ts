@@ -115,7 +115,8 @@ function writeIndexOf(root: ts.Node): WriteIndex {
  * same-name write counts.
  *
  * (#7345) Not for a function declaration: whether evaluated code rebinds one
- * is the runtime-eval plan's answer (`IrRuntimeEvalFunctionAnswers.mayRebind`).
+ * is the runtime-eval plan's answer (`IrRuntimeEvalFunctionAnswers.mayRebind`),
+ * and {@link scopeHasDirectEval} only on a lane that has none.
  */
 export function localIsRewritten(
   declaration: ts.VariableDeclaration | ts.FunctionDeclaration | ts.ParameterDeclaration,

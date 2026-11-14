@@ -55,7 +55,7 @@
 //     `localClasses` set drives that exemption.
 
 import { ts, forEachChild } from "../ts-api.js";
-import { localIsRewritten } from "./lattice-param-facts.js";
+import { localIsRewritten, scopeHasDirectEval } from "./lattice-param-facts.js";
 import { isPlannedScriptVarClosure } from "./function-member-closure-plan.js";
 import { exactGlobalEvalStatement } from "../eval-call-shape.js";
 import { collectIrClassInstanceInitializers } from "./class-instance-initializers.js";
@@ -792,7 +792,7 @@ export interface IrSelectionOptions extends IrAsyncSelectionOptions {
    * assumes a pristine realm.
    */
   readonly runtimeEvalMayExecute?: boolean;
-  /** (#7345) The runtime-eval boundary's answers for a top-level function; undefined ⇒ none rebound or refused. */
+  /** (#7345) The runtime-eval boundary's answers for a top-level function, on a lane that measured them. */
   readonly runtimeEvalFunctions?: IrRuntimeEvalFunctionAnswers;
   /**
    * #2952 slice 5 — certify that this exact `for (head in receiver)` source
@@ -14355,11 +14355,15 @@ export function buildLocalCallGraph(
           } else if (
             decls.has(callee) &&
             !localIsRewritten(decls.get(callee)!, closureSignatureFlowHooks.resolveValue) &&
-            currentSelectionOptions?.runtimeEvalFunctions?.mayRebind(node.expression, decls.get(callee)!) !== true
+            !(
+              currentSelectionOptions?.runtimeEvalFunctions?.mayRebind(node.expression, decls.get(callee)!) ??
+              scopeHasDirectEval(decls.get(callee)!)
+            )
           ) {
             // (#7283) A function whose binding is reassigned (`f = …`), or (#7345) that evaluated
             // code may rebind, has no stable direct-call target: from-ast plans no direct call to it,
-            // so a call to it is external, not a graph edge.
+            // so a call to it is external, not a graph edge. A lane without the boundary's answer
+            // assumes a direct `eval` in the function's scope may rebind it.
             callees.get(callerName)!.add(callee);
             callers.get(callee)!.add(callerName);
           } else if (currentSelectionOptions?.fnctorNativeStringBoundary?.(node) === true) {
