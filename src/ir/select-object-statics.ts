@@ -171,13 +171,19 @@ export function createObjectStaticSelector(state: ObjectStaticSelectorState): Ob
   const fileAnswers = laneAnswers<ts.SourceFile>();
   const fileCallsTable = (file: ts.SourceFile) =>
     fileAnswers(file, lane(), () => objectCallsOf(file).all.some(objectCall));
-  /** `node`'s unit holds a call the lane's plan admits, of any row: the table may make the unit reachable. */
-  const unitAnswers = laneAnswers<ts.Node>();
-  const unitCallsTable = (node: ts.Node) => {
-    const unit = unitOf(node);
-    const calls = objectCallsOf(node.getSourceFile()).byUnit.get(unit) ?? [];
-    return unitAnswers(unit, lane(), () => calls.some((call) => plan(call)?.kind === "call"));
+  /** Whether `node`'s unit holds a call `matches` accepts, per unit and lane. */
+  const unitHolds = (matches: (call: ts.CallExpression) => boolean) => {
+    const answers = laneAnswers<ts.Node>();
+    return (node: ts.Node) => {
+      const unit = unitOf(node);
+      const calls = objectCallsOf(node.getSourceFile()).byUnit.get(unit) ?? [];
+      return answers(unit, lane(), () => calls.some(matches));
+    };
   };
+  /** A call the lane's plan admits, of any row: the table may make the unit reachable. */
+  const unitCallsTable = unitHolds((call) => plan(call)?.kind === "call");
+  /** (#7339) An admitted own-property test: a unit the tests, not the statics, made reachable. */
+  const unitCallsTest = unitHolds(isOwnPropertyTest);
 
   /** A #7280 dynamic home that an admitted table call takes: the object the table's defines extend. */
   const takenByTable = (declaration: ts.Declaration): boolean =>
@@ -270,7 +276,8 @@ export function createObjectStaticSelector(state: ObjectStaticSelectorState): Ob
   /**
    * (#7339) `<carrier>.<key>` for a key `%Object.prototype%` owns, read other than as an admitted test's callee:
    * the dynamic member read does not answer the realm's inherited member for an open `$Object` (main's gap,
-   * #7304). Where the table makes the unit reachable, it is refused instead of answered wrong.
+   * #7304). Where an own-property test makes the unit reachable, it is refused instead of answered wrong; a unit
+   * the statics alone reach keeps #7338's routing (`Object.create({}, { toString: … }).toString` is own there).
    */
   const readsInheritedMember = (e: ts.Expression): boolean => {
     if (!ts.isPropertyAccessExpression(e) || !OBJECT_PROTOTYPE_KEYS.has(e.name.text)) return false;
@@ -278,7 +285,7 @@ export function createObjectStaticSelector(state: ObjectStaticSelectorState): Ob
     if (ts.isCallExpression(call) && call.expression === outermostParenthesized(e) && isOwnPropertyTest(call)) {
       return false;
     }
-    return (holdsCarrier(e.expression) || lowersToCarrier(e.expression)) && unitCallsTable(e);
+    return (holdsCarrier(e.expression) || lowersToCarrier(e.expression)) && unitCallsTest(e);
   };
 
   /** A static's value crosses as a carrier, so any carrier qualifies: a dynamic home or parameter too. */
@@ -321,8 +328,8 @@ export function createObjectStaticSelector(state: ObjectStaticSelectorState): Ob
       const folds = nullComparisonFolds(expr.operatorToken.kind, "dynamic");
       if (!sides.some(lowersToCarrier)) {
         // (#7339) A loose `null` compare on a dynamic module binding fails after the claim (main's gap,
-        // #7214); where the table makes the unit reachable, it is refused instead.
-        return nullCompare && !folds && unitCallsTable(expr) && sides.some(holdsCarrier) ? "refused" : undefined;
+        // #7214); where an own-property test makes the unit reachable, it is refused instead.
+        return nullCompare && !folds && unitCallsTest(expr) && sides.some(holdsCarrier) ? "refused" : undefined;
       }
       if (nullCompare) return folds ? "folded" : "refused";
       return sides.some(isUndefined) ? "folded" : undefined;
