@@ -184,29 +184,30 @@ export function selectedDynamicHomeReceiver(receiver: ts.Expression): boolean {
   return dynamicHomeReceivers.has(receiver);
 }
 
+/**
+ * (#7339) A script `var o = {}` or (#7341) `var o = new Object()` that legacy keeps as an open `$Object` on the
+ * dynamic slot: #7335's receivers on main. Recorded for {@link selectedDynamicHomeReceiver}.
+ */
+function isDynamicHomeReceiver(state: ObjectStaticSelectorState, receiver: ts.Expression): boolean {
+  const declaration = ts.isIdentifier(receiver) ? state.moduleBinding(receiver)?.declaration : undefined;
+  const home =
+    declaration !== undefined &&
+    ts.isVariableDeclaration(declaration) &&
+    declaration.initializer !== undefined &&
+    isEmptyObjectExpression(declaration.initializer, state.isLibOnlyBinding) &&
+    state.isDynamicHomeOpenCarrier(declaration);
+  if (home) dynamicHomeReceivers.add(receiver);
+  else dynamicHomeReceivers.delete(receiver);
+  return home;
+}
+
 export function createObjectStaticSelector(state: ObjectStaticSelectorState): ObjectStaticSelector {
-  /**
-   * A script `var o = {}` or (#7341) `var o = new Object()` that legacy keeps as an open `$Object` on the dynamic
-   * slot: #7335's receivers on main.
-   */
-  const isDynamicHomeReceiver = (receiver: ts.Expression): boolean => {
-    const declaration = ts.isIdentifier(receiver) ? state.moduleBinding(receiver)?.declaration : undefined;
-    const home =
-      declaration !== undefined &&
-      ts.isVariableDeclaration(declaration) &&
-      declaration.initializer !== undefined &&
-      isEmptyObjectExpression(declaration.initializer, state.isLibOnlyBinding) &&
-      state.isDynamicHomeOpenCarrier(declaration);
-    if (home) dynamicHomeReceivers.add(receiver);
-    else dynamicHomeReceivers.delete(receiver);
-    return home;
-  };
   const plan = (call: ts.CallExpression) =>
     objectStatics.objectStaticCallPlan(call, {
       isAmbientBinding: state.isAmbientBinding,
       dynamicCodeMayRun: state.dynamicCodeMayRun(),
       supportsBackendCapability: state.supports,
-      isDynamicHomeReceiver,
+      isDynamicHomeReceiver: (receiver) => isDynamicHomeReceiver(state, receiver),
     });
 
   const holdsCarrier = (expression: ts.Expression) => state.moduleBinding(expression)?.valueKind.kind === "dynamic";
@@ -331,13 +332,21 @@ export function createObjectStaticSelector(state: ObjectStaticSelectorState): Ob
     },
     call: openObjectCall,
   });
-  /** (#7339) A boxed test the checker types `boolean`, and a binding initialised with one. */
-  const boxedTestLeaves = (visited: Set<ts.Declaration>): CarrierLeaves => ({
+  /**
+   * (#7339) A boxed test the checker types `boolean` that main did not lower, and a binding initialised with one.
+   * On an open object (`readsCarrier`) main lowered the call already, as the carrier's method call with the same
+   * answer, so its routing stays main's.
+   */
+  const newBoxedTestLeaves = (visited: Set<ts.Declaration>): CarrierLeaves => ({
     binding: (node) => {
       const declaration = initializedDeclaration(node);
-      return declaration !== undefined && holdsInitializer(declaration, visited, boxedTestLeaves);
+      return declaration !== undefined && holdsInitializer(declaration, visited, newBoxedTestLeaves);
     },
-    call: (call) => boxedAgainstChecker(call) || (plan(call) !== undefined ? false : undefined),
+    call: (call) => {
+      const admitted = plan(call);
+      if (admitted?.kind !== "test") return admitted === undefined ? undefined : false;
+      return boxedAgainstChecker(call) && !readsCarrier(admitted.test.receiver);
+    },
   });
   /** A static's own values, which cross as carriers: the table's carriers, and main's dynamic bindings and parameters. */
   const valueLeaves = (visited: Set<ts.Declaration>): CarrierLeaves => ({
@@ -465,7 +474,7 @@ export function createObjectStaticSelector(state: ObjectStaticSelectorState): Ob
       }
       if (readsInheritedMember(e)) return refuse("expr-carrier-inherited-member", e);
       // (#7339) An array literal types its elements from the checker too, so it would hold that boolean as the i32.
-      if (ts.isArrayLiteralExpression(e.parent) && producesCarrier(e, boxedTestLeaves(new Set()))) {
+      if (ts.isArrayLiteralExpression(e.parent) && producesCarrier(e, newBoxedTestLeaves(new Set()))) {
         return refuse("expr-boxed-test-array-element", e);
       }
       return !escapesUnit(e) || refuse("expr-carrier-escapes-unit", e);
