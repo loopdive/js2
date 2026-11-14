@@ -126,7 +126,8 @@ describe("#2961 standalone Test262 passes are always host-free", () => {
   it("rejects imports in the fork worker before it constructs JS runtime imports", () => {
     const worker = readFileSync("scripts/test262-worker.mjs", "utf8");
     const guard = worker.indexOf('if (target === "standalone" && compileMetadata.imports?.length > 0)');
-    const hostSatisfaction = worker.indexOf("const importObj = buildImports", guard);
+    // The import object is built after the guard (`preparedRequest ? undefined : buildImports(…)`).
+    const hostSatisfaction = worker.indexOf("buildImports(", worker.indexOf("const importObj =", guard));
     expect(guard).toBeGreaterThan(-1);
     expect(hostSatisfaction).toBeGreaterThan(guard);
   });
