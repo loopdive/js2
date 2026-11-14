@@ -252,6 +252,7 @@ import {
   type OperandFamily,
   compoundWriteAdmissible,
 } from "./analysis/operand-admissibility.js";
+import { everyYieldedValue } from "./analysis/carrier-expression.js";
 import { isSlotFreeI32IdentityLowered } from "./analysis/i32-slots.js";
 import { selectVecSearchOrJoin, type IrArrayElementFamily } from "./array-methods/selection.js";
 import { selectStaticPredicateCall } from "./static-predicates/selection.js";
@@ -3266,6 +3267,23 @@ function concreteOperandBoxesOntoCarrier(concrete: ts.Expression): boolean {
   );
 }
 
+/**
+ * (#7341) A module binding's write admission. In `<module-init>` a dynamic binding takes only what from-ast
+ * stores on its carrier, however spelled or nested: a carrier, a primitive wrapper (its arm judges the store),
+ * or a scalar that boxes. A function keeps main's route: refusing it drags its IR callers to legacy.
+ */
+function moduleBindingWrite(id: ts.Identifier, value: ts.Expression) {
+  const binding = currentModuleBindingResolver?.(id, value);
+  if (!currentSubjectIsModuleInit || binding?.valueKind.kind !== "dynamic") return binding;
+  const stores = (leaf: ts.Expression) =>
+    objectStaticSelector.isCarrierValue(leaf) ||
+    wrapper.wrapperConstruction(leaf, WRAPPER_AMBIENCE) !== undefined ||
+    concreteOperandBoxesOntoCarrier(leaf) ||
+    ts.isVoidExpression(leaf) ||
+    isUnshadowedUndefinedIdentifier(leaf, new Set());
+  return everyYieldedValue(value, stores) ? binding : undefined;
+}
+
 function concreteDynamicAssignmentOperandIsBuildable(candidate: ts.Expression): boolean {
   if (expressionIsProvenNumber(candidate)) return true;
   if (currentSelectionOptions?.classifyPrimitiveExpression?.(candidate) === "string") return true;
@@ -5919,11 +5937,11 @@ function isPhase1ForUpdateExpr(
       if (currentSubjectIsModuleInit) {
         if (op !== ts.SyntaxKind.EqualsToken && !isSelectableNumberCompound(expr, scope, localClasses)) return false;
         if (!scope.has(expr.left.text)) return false;
-        if (op === ts.SyntaxKind.EqualsToken && !currentModuleBindingResolver?.(expr.left, expr.right)) return false;
+        if (op === ts.SyntaxKind.EqualsToken && !moduleBindingWrite(expr.left, expr.right)) return false;
         return isPhase1Expr(expr.right, scope, localClasses);
       }
       if (op !== ts.SyntaxKind.EqualsToken) return false;
-      if (!currentModuleBindingResolver?.(expr.left, expr.right)) return false;
+      if (!moduleBindingWrite(expr.left, expr.right)) return false;
       return isPhase1Expr(expr.right, scope, localClasses);
     }
     // Plain or compound assignment to an identifier in scope.
@@ -6561,9 +6579,7 @@ function isPhase1Tail(
     }
     if (ts.isBinaryExpression(expr) && ts.isIdentifier(expr.left)) {
       const exactModuleWrite =
-        expr.operatorToken.kind === ts.SyntaxKind.EqualsToken
-          ? currentModuleBindingResolver?.(expr.left, expr.right)
-          : undefined;
+        expr.operatorToken.kind === ts.SyntaxKind.EqualsToken ? moduleBindingWrite(expr.left, expr.right) : undefined;
       if (exactModuleWrite) {
         if (!moduleBindingTakes(expr.left, expr.right)) return shapeNo("tail-module-assign-incompatible", expr);
         return isPhase1Expr(expr.right, scope, localClasses);
@@ -8550,7 +8566,7 @@ function moduleExternConsumerIsProven(expr: ts.Expression, scope: ReadonlySet<st
     if (
       op === ts.SyntaxKind.EqualsToken &&
       ts.isIdentifier(candidate.left) &&
-      currentModuleBindingResolver?.(candidate.left, candidate.right)
+      moduleBindingWrite(candidate.left, candidate.right)
     ) {
       return true;
     }
@@ -9067,7 +9083,7 @@ const objectStaticSelector = createObjectStaticSelector({
   isAmbientBinding: (node) => selectorSeesAmbientBinding(node),
   isLibOnlyBinding: selectorSeesLibOnlyBinding,
   moduleBinding: (expr) => moduleBinding(expr),
-  moduleBindingMatches: (id, value) => currentModuleBindingResolver?.(id, value) !== undefined,
+  moduleBindingMatches: (id, value) => moduleBindingWrite(id, value) !== undefined,
   unannotatedLocal: (id) => unannotatedLocal(id),
   isDynamicHomeOpenCarrier: (decl) => isDynamicHomeOpenCarrierDeclaration(decl),
   isOwnPropertyTest: (call) => dynamicHomeOwnPropertyMethod(call) !== undefined,

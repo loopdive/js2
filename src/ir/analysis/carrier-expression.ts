@@ -45,9 +45,26 @@ export function producesCarrier(expression: ts.Expression, leaves: CarrierLeaves
   if (ts.isConditionalExpression(e)) {
     return (carrier(e.whenTrue) && carrier(e.whenFalse)) || leaves.conditional?.(e) === true;
   }
-  if (ts.isBinaryExpression(e)) {
-    const op = e.operatorToken.kind;
-    if (op === ts.SyntaxKind.CommaToken || op === ts.SyntaxKind.EqualsToken) return carrier(e.right);
-  }
+  if (yieldsRight(e)) return carrier(e.right);
   return isCarrierAddition(e, (operand) => carrier(operand) || leaves.addsAsCarrier?.(operand) === true);
+}
+
+/**
+ * (#7341) Every value `expression` can yield passes `leaf`: a conditional yields either arm, a comma
+ * or an `=` assignment its right side (the flow `producesCarrier` follows), anything else itself.
+ */
+export function everyYieldedValue(expression: ts.Expression, leaf: (value: ts.Expression) => boolean): boolean {
+  let e = expression;
+  while (ts.isParenthesizedExpression(e)) e = e.expression;
+  const each = (inner: ts.Expression) => everyYieldedValue(inner, leaf);
+  if (ts.isConditionalExpression(e)) return each(e.whenTrue) && each(e.whenFalse);
+  if (yieldsRight(e)) return each(e.right);
+  return leaf(e);
+}
+
+/** A comma or an `=` assignment: its value is its right side's. */
+function yieldsRight(e: ts.Expression): e is ts.BinaryExpression {
+  if (!ts.isBinaryExpression(e)) return false;
+  const op = e.operatorToken.kind;
+  return op === ts.SyntaxKind.CommaToken || op === ts.SyntaxKind.EqualsToken;
 }

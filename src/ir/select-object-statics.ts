@@ -103,6 +103,8 @@ export interface ObjectStaticSelector {
    * (`expr-carrier-escapes-unit`, `escapesUnit`).
    */
   readonly admitsCarrierUse: (expression: ts.Expression, refuse: (detail: string, node: ts.Node) => false) => boolean;
+  /** A value already on the carrier: the table's carriers, and main's dynamic bindings and parameters. */
+  readonly isCarrierValue: (expression: ts.Expression) => boolean;
   readonly moduleBindingTakes: (id: ts.Identifier, value: ts.Expression) => boolean;
   /** `Object.<static>(…)` or the JS environment's #7276 create, admitted; undefined for any other call. */
   readonly admit: (call: ts.CallExpression, rules: ObjectStaticValueRules) => boolean | undefined;
@@ -344,17 +346,10 @@ export function createObjectStaticSelector(state: ObjectStaticSelectorState): Ob
       }
       return !escapesUnit(e) || refuse("expr-carrier-escapes-unit", e);
     },
+    isCarrierValue,
     // A carrier goes only into its home; a function local holds one only as its own initializer.
-    // (#7341) A dynamic home takes no object literal by assignment in the module's own code: from-ast
-    // boxes no struct onto the dynamic slot (`boxForDynamicModuleStorage`), so it would withdraw the
-    // claim. Only there: `<module-init>` is the unit refusing costs, while a function refused at
-    // select drags its IR callers to legacy through the call-graph closure, which a withdrawal after
-    // the claim does not. A function-body write keeps main's route.
     moduleBindingTakes: (id, value) =>
-      state.moduleBindingMatches(id, value) &&
-      (holdsCarrier(id)
-        ? !ts.isObjectLiteralExpression(stripParens(value)) || ts.findAncestor(id, ts.isFunctionLike) !== undefined
-        : !lowersToCarrier(value)),
+      state.moduleBindingMatches(id, value) && (holdsCarrier(id) || !lowersToCarrier(value)),
     admit,
   };
 }

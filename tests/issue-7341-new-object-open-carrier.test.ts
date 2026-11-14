@@ -123,7 +123,8 @@ const REFUSED: Record<string, { readonly source: string; readonly unit: string; 
   "an assignment after the declaration": {
     source: `var o; o = new Object(); o.p = 1; if (o.p !== 1) { throw "p"; }`,
     unit: "<module-init>",
-    detail: "expr-new-object-home",
+    // The dynamic binding's write admission (PR #7214 review round 2) refuses it before the construction arm.
+    detail: "body-module-assign-incompatible",
   },
   "an equality operand": {
     source: `if (null === new Object()) { throw "n"; }`,
@@ -163,6 +164,12 @@ const VALUE_USES: Record<string, string> = {
   "an object literal assigned, bare `new Object`": `var o = new Object; o.p = 1; o = { p: 2 }; if (o.p !== 2) throw "x";`,
   "an object literal assigned to a `{}` var": `var o = {}; o = { p: 2 }; if (o.p !== 2) throw "x";`,
   "an object literal assigned to a bare var": `var o; o = { p: 2 }; if (o.p !== 2) throw "x";`,
+  // The same struct or vec by another spelling, nested write or statement (PR #7214 review round 2 B1).
+  "a conditional of object literals assigned": `var c = 1; var o = new Object(); o.p = 1; o = c ? { p: 2 } : { p: 3 }; if (o.p !== 2) throw "x";`,
+  "a comma ending in an object literal assigned": `var o = new Object(); o.p = 1; o = (0, { p: 2 }); if (o.p !== 2) throw "x";`,
+  "an array literal assigned": `var o = new Object(); o.p = 1; o = [1, 2]; if (o[1] !== 2) throw "x";`,
+  "a chained write of an object literal": `var q; var o = new Object(); o.p = 1; o = q = { p: 2 }; if (q.p !== 2) throw "x";`,
+  "an object literal assigned in a labelled if block": `var c = 1; var o = new Object(); o.p = 1; l: if (c) { { o = { p: 2 }; } } if (o.p !== 2) throw "x";`,
   // Mixed carrier expressions (PR #7214 review R2-S1): the carrier flows through `+`, a comma, or a `void`.
   "a member plus one as a switch discriminant": `var o = new Object(); o.k = 1; switch (o.k + 1) { case 2: break; default: throw "k"; }`,
   "a comma expression as a switch discriminant": `var o = new Object(); o.k = 2; switch ((0, o.k)) { case 2: break; default: throw "k"; }`,
@@ -213,6 +220,20 @@ const NON_CARRIER_VOID: Record<string, { readonly source: string; readonly unit:
 const FUNCTION_BODY_LITERAL_WRITE: Record<string, string> = {
   "`new Object()` home": `var o = new Object(); function g() { o = { p: 2 }; } g(); if (o.p !== 2) throw "x";`,
   "`{}` home": `var o = {}; function g() { o = { p: 2 }; } g(); if (o.p !== 2) throw "x";`,
+};
+
+/** Values main's `<module-init>` stores on a dynamic home: the family refusal keeps each claimed. */
+const CARRIER_WRITES: Record<string, string> = {
+  "a number": "5",
+  "a string": "'s'",
+  "a boolean": "true",
+  undefined: "undefined",
+  "void 0": "void 0",
+  "another dynamic var": "d",
+  "a call result": "f()",
+  "a chained number write": "q = 3",
+  "a conditional of strings": "c ? 'a' : 'b'",
+  "a typeof": "typeof c",
 };
 
 describe("#7341 S1 — `new Object()` as the open-object carrier", () => {
@@ -268,6 +289,16 @@ describe("#7341 S1 — `new Object()` as the open-object carrier", () => {
       const ir = await build(source, "standalone");
       expect(outcome(ir, "<module-init>")?.irBodyEmitted).toBe(true);
       expect(outcome(ir, unit)?.detail ?? "").not.toContain("expr-void-carrier-compare");
+      expect(await run(ir, "standalone")).toBe("ok");
+    });
+  }
+
+  for (const [name, value] of Object.entries(CARRIER_WRITES)) {
+    it(`keeps <module-init> claimed for a value the carrier stores: ${name}`, async () => {
+      const source = `var c = 1; var q; var d = {}; var o = new Object(); o.p = 1; function f() { return 1; } if (c) { o = ${value}; } if (typeof o === "symbol") throw "x";`;
+      const ir = await build(source, "standalone");
+      expect(ir.irPostClaimErrors ?? []).toEqual([]);
+      expect(outcome(ir, "<module-init>")?.irBodyEmitted).toBe(true);
       expect(await run(ir, "standalone")).toBe("ok");
     });
   }

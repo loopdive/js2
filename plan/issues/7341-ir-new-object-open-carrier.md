@@ -14,6 +14,11 @@ task_type: implementation
 area: ir
 goal: ir-full-coverage
 related: [7340, 7280, 7194, 7335, 7128, 7295, 7273, 7304, 7106]
+# 2026-11-14 (PR #7214 review round 2 B1): the dynamic module binding's write admission
+# (`moduleBindingWrite`) lives beside the selector's module-binding admission sites; its
+# recursion is split out to analysis/carrier-expression.ts (`everyYieldedValue`), leaving +3.
+loc-budget-allow:
+  - src/ir/select.ts
 ---
 
 # #7341 — IR: `new Object()` as the open-object carrier
