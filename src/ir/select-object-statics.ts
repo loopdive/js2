@@ -24,6 +24,7 @@ import { nullComparisonFolds } from "./analysis/operand-admissibility.js";
 import type { IrBackendTargetCapability } from "./backend/legality.js";
 import { localIsRewritten } from "./lattice-param-facts.js";
 import { objectCreateDescriptorMap } from "./object-create-call.js";
+import type { IrPrimitiveExpressionFamily } from "./module-bindings.js";
 import * as objectStatics from "./object-statics.js";
 import { OBJECT_PROTOTYPE_KEYS } from "./realm-keys.js";
 import { outermostParenthesized } from "../shared/binding-writes.js";
@@ -48,6 +49,8 @@ export interface ObjectStaticSelectorState {
   readonly unannotatedLocal: (id: ts.Identifier) => ts.VariableDeclaration | undefined;
   readonly isDynamicHomeOpenCarrier: (decl: ts.VariableDeclaration) => boolean;
   readonly isDynamicParam: (id: ts.Identifier) => boolean;
+  /** The checker's primitive family of an expression, which the IR's call-boundary types (the lattice) read. */
+  readonly classifyPrimitive: (expr: ts.Expression) => IrPrimitiveExpressionFamily | undefined;
 }
 
 /** What a static's value admission asks of the selector's current walk. */
@@ -251,10 +254,16 @@ export function createObjectStaticSelector(state: ObjectStaticSelectorState): Ob
     if (admitted?.kind === "test") return admitted.test.answer === "dynamic";
     return admitted?.kind === "call" ? true : undefined;
   };
-  /** A table result is a static's object: a test's boolean, boxed or not, crosses a call as main's values do. */
+  /**
+   * What may not cross a call boundary: a static's object, and (#7339) a boxed test the checker types `boolean`.
+   * The IR types a call's parameters and a function's result from the checker's types of what crosses (the
+   * lattice), so that boolean would cross as the i32 while the test answers the carrier. Any other test crosses
+   * as main's values do: the i32 where the checker agrees, the carrier where it types the call `any`.
+   */
   const resultCall: CarrierLeaves["call"] = (call) => {
-    const kind = plan(call)?.kind;
-    return kind === "call" ? true : kind === "test" ? false : undefined;
+    const admitted = plan(call);
+    if (admitted?.kind !== "test") return admitted?.kind === "call" ? true : undefined;
+    return admitted.test.answer === "dynamic" && state.classifyPrimitive(call) === "boolean";
   };
 
   /** The table's results: a static's answer, and a binding initialised with one. */
@@ -307,7 +316,7 @@ export function createObjectStaticSelector(state: ObjectStaticSelectorState): Ob
     // A dynamic home a table call takes is main's carrier already: where it goes across a call is main's.
     return (
       (returned || passed) &&
-      fileCallsTable(expression.getSourceFile()) &&
+      (fileCallsTable(expression.getSourceFile()) || fileCallsTest(expression.getSourceFile())) &&
       producesCarrier(expression, resultLeaves(new Set()))
     );
   };

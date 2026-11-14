@@ -121,8 +121,14 @@ const REFUSED: Record<string, { readonly source: string; readonly detail: string
     detail: UNTRUSTED,
   },
   "an array receiver": {
-    source: "function t() { var a = [1]; return a.hasOwnProperty(0); } var r = t();",
+    source: "function t() { var a = [1]; return a.hasOwnProperty(0) === true; } var r = t();",
     detail: "expr-object-static-operand",
+  },
+  // The boxed boolean of a call the checker types `boolean` does not cross a call boundary (`escapesUnit`).
+  "a local static result's test returned": {
+    source:
+      "function t() { var x = Object.defineProperty({}, 'a', { value: 1 }); return x.hasOwnProperty('a'); } var r = t();",
+    detail: "expr-carrier-escapes-unit",
   },
   "two arguments": {
     source: `${DEFINE} function t() { return o.hasOwnProperty('p', 1); } var r = t();`,

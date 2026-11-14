@@ -9064,6 +9064,7 @@ const objectStaticSelector = createObjectStaticSelector({
   unannotatedLocal: (id) => unannotatedLocal(id),
   isDynamicHomeOpenCarrier: (decl) => isDynamicHomeOpenCarrierDeclaration(decl),
   isDynamicParam: (id) => currentDynamicParamNames.has(id.text),
+  classifyPrimitive: (expr) => currentSelectionOptions?.classifyPrimitiveExpression?.(expr),
 });
 const { lowersToCarrier, tableMayReach, holdsCarrier, moduleBindingTakes } = objectStaticSelector;
 
