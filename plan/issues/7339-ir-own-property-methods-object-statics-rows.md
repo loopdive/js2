@@ -407,3 +407,106 @@ Code quality:
   would need no proof, but the native member read does not reach an open
   `$Object`'s implicit `%Object.prototype%` (the key screen in
   `isServedUse`; #7304 is the same gap for `in`).
+
+## S1 result (2026-11-14)
+
+Built on main with #7338's review shape (`select-object-statics.ts`: the three
+leaf sets, `admitsCarrierUse`, the escape rule, the admitted-call gate).
+Measured with the branch merged with main `281b60192d` (after #7221 and
+#7226) and that tree as the base, standalone, original harness,
+`JS2WASM_IR_SHAPE_DIAG=1 JS2WASM_IR_MODULE_INIT_ALL_REJECTS=1`, one process
+at a time.
+
+Population: the 777 ES5 files of `es5-map-1111` that carry an own-property
+label (`expr-module-scalar-method(.hasOwnProperty)` 702,
+`expr-array-method-not-lowerable(.hasOwnProperty)` 77, overlapping), plus the
+41 IR-only files whose test body calls an own-property test: 818 files.
+
+| | files |
+| --- | --- |
+| gained (IR-only now) | 53 (35 `defineProperty`, 10 `create`, 5 `getOwnPropertyDescriptor`, 3 `defineProperties`) |
+| lost | 0 |
+| units newly legacy | 0 (legacy units 1,261 → 1,208) |
+| new compile errors | 0 |
+| post-claim errors | 0 (0 on main) |
+| routing changed | 53 (the gained files) |
+
+- **#7338's 2,757-file set:** 40 gained, 0 files lost, 0 units newly legacy,
+  0 new compile errors, 0 post-claim errors.
+- **Verdicts:** the 53 routing-changed files all pass under
+  `scripts/run-test262-paths.mts --standalone` on this branch and on main, and
+  all 53 pass in the CI standalone baseline.
+- **JS-environment (gc) bytes:** identical on 445 files. They are the 53
+  routing-changed files, every fourth population file, and 200 blocked ES5
+  files that do not mention either method.
+- **Probe matrix:** 39 bare programs, run against node (`hop7339/matrix.json`
+  in the review scratch). The receivers are a dynamic home, a descriptor
+  result, an `Object.create` result, an object literal, an array, a function,
+  a primitive wrapper, a string primitive, a built-in constructor,
+  `null` / `undefined`, and a dynamic parameter. The keys are literal,
+  computed, number, inherited, non-enumerable and accessor.
+  - The rest are an own or patched `hasOwnProperty` (on the object, in a
+    literal, defined, under a computed key, on `Object.prototype`),
+    `Object.create(null)`, `Object.prototype.hasOwnProperty.call` and two
+    arguments.
+  - 15 claimed on this branch against 9 on main; none of main's is lost, and
+    every claimed one answers as node does.
+  - 10 programs answer differently from node in legacy itself, which is a
+    legacy bug; they stay refused (IR equals legacy).
+
+S1 gains 53, against the 58 this plan predicted for S1 on a different base
+(the #7338 head) and a different population (1,392 files). The shortfall was
+not explained file by file.
+
+### Differences from the plan
+
+1. **Lane.** The test rows need the table's lane (`native-object-statics`)
+   as well as `native-own-property-test`. A JS environment's native regime
+   has `native-own-property-test`, so with that capability alone the rows ran
+   there and changed gc output on 13 files. On WASI no script `var o = {}` is
+   an open `$Object` (measured), so #7335's arm never ran there either.
+2. **`JSON`.** The trust fact's item 4 allows `typeof JSON` and
+   `JSON.stringify`: every test's assert.js formats values with
+   `JSON.stringify`, and the plan's rule refused all 42 files that are
+   IR-only on main. `JSON.parse` and any other `JSON` use still distrust.
+3. **Two gap rules where a test makes a unit reachable.** #7335's allow-list
+   also kept out two shapes main gets wrong. Both are refused at select in a
+   unit holding an admitted own-property test; a unit the statics alone reach
+   keeps #7338's routing.
+   - A read of an `Object.prototype` key on a carrier answers a different
+     value: the dynamic read does not return the realm's inherited member
+     (#7304). Refused as `expr-carrier-inherited-member`.
+   - A loose `null` compare on a dynamic module binding is claimed and then
+     demoted (#7214). Refused by the compare verdict.
+
+   Without them, programs main refused were claimed and answered wrong or
+   demoted after the claim (`var o = {}; if (o.hasOwnProperty !==
+   Object.prototype.hasOwnProperty) …`).
+4. **The unit index lists calls by row name**, `Object.<static>` and
+   `R.<test>`. The file gate (does the table make carriers?) counts only rows
+   that answer or extend an object.
+5. **Evaluation order is the row's `test` flag**, not a `guard:` field:
+   `emitObjectStaticCall` takes operand and definition thunks; a test row
+   lowers the receiver, tests it, then lowers the key.
+6. **The names have one definition:** `IrInstrDynOwnProperty.test`, named
+   `OwnPropertyTest` in `ir/nodes.ts`. The IR dialect gate allows neither a
+   dialect import outside `core/nodes.ts` nor a non-instruction declaration
+   in the dialect.
+7. **After #7221 (#7340)** the uses scan is `dynamic-home-uses.ts`, shared
+   with the primitive wrapper. `dynamic-home-open-object.ts` lost its last
+   export and is deleted. `ServedUsePolicy.servesMemberCall`, which only the
+   wrapper still implemented (as `() => false`), is dropped.
+8. **Size:** `select.ts` −42 net, `from-ast.ts` −14. `builder.ts` and
+   `integration.ts` are +1 each for the `OwnPropertyTest` import, granted
+   above. The plan asked for no grant at all.
+9. **S2** (built-in constructors as receivers) is not built.
+   `Number.hasOwnProperty(…)` stays refused (`expr-ident-not-in-scope`).
+
+### Not verified
+
+- The shortfall against the plan's 58 has no file-by-file account.
+- The trust fact is checked on assembled, elided sources only through the
+  census. 63 population files are refused as `untrusted`; their reasons were
+  not broken down.
+- WASI and the JS environment: by lane, nothing changes there. Measured only
+  as gc bytes on 445 files, and with a three-program WASI probe.
