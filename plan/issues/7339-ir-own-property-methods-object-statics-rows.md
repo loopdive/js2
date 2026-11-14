@@ -529,6 +529,9 @@ PR #7234 at `8db70d18aa` was reviewed NOT MET. Each finding and what was done:
 
 ### Design decision: the answer follows the call's static type
 
+Superseded in review round 2 (below): the representation is main's for the
+receiver, not the checker's type of the call.
+
 A test's result representation follows the checker's static type of the call,
 which is what every consumer's proof reads. It is decided once, in
 `objectStaticCallPlan`, as the test plan's `answer`:
@@ -571,12 +574,18 @@ stays, with two changes:
   `%Object.prototype%` but `toString`);
 - it is gated by the program fact.
 
+The program-fact condition is a deliberate **scope limit**, not a soundness
+argument. The #7304 gap exists with or without a test in the file. This PR
+refuses the read only where its own tests newly make units reachable, and
+leaves the statics' units on main's routing, wrong answers included. The
+loose-`null` rule is limited the same way.
+
 **Residual.** In a file with an admitted test, a unit that reads such a key as
 a value from a carrier is refused. Main claims some of these units and answers
 them wrong, for example the reviewer's `valueOf` and `hasOwnProperty`
 variants. Head keeps them legacy. In the probes, 3 of them now answer
-correctly, and in the other 3 legacy is wrong too. In a file with no admitted test, main's wrong answers are
-unchanged. The fix is the member read (#7304), not this table.
+correctly, and in the other 3 legacy is wrong too. In a file with no admitted
+test, main's wrong answers are unchanged. The fix is the member read (#7304), not this table.
 
 ### Measurements (branch at `b70ba8df6b`, main `8e2a65b374`, whose `src/` equals `281b60192d`)
 
@@ -603,3 +612,96 @@ Every run used one process at a time.
     and so is legacy's.
 - **Probe matrix (39 programs):** 16 claimed whole against 9 on main; every
   claimed one answers as node does.
+
+## Review round 2: NOT MET → fixes (2026-11-14)
+
+PR #7234 at `5b63e3addf` was reviewed NOT MET with one blocker, B1′.
+
+- **B1′.** A test on a receiver main lowered as a dynamic method call still
+  answered the plain i32 when the checker typed the call `boolean`. Consumers
+  from-ast cannot lower for an i32 then met it (`== 1`, `=== 1`, `== 'true'`,
+  `+ 1`, `.constructor`).
+- **Should-fix.** B2's file-level condition is documented as a scope limit
+  (above).
+- **Nit.** from-ast no longer builds a primitive classifier per call: the plan
+  needs none (below).
+
+### Design decision (refines round 1): main's representation for the receiver
+
+The answer is the representation main gave the same call. It is decided once,
+as the test plan's `answer`, from the receiver kind:
+
+- **i32 boolean** only on a #7280 dynamic home: a script
+  `var o = {}` or (#7341) `var o = new Object()` on the dynamic slot that
+  legacy keeps as an open `$Object`. These are the receivers #7335's arm
+  answered as the i32 on main.
+- **Boxed onto the carrier** on every other receiver, whatever the checker
+  says. This covers a local or parameter, a table result held in a local,
+  `var o; o = …`, an `Object.create` result, and everything newly admitted.
+  That is what main's dynamic method call produced.
+
+The selector decides the receiver kind (`isDynamicHomeReceiver`,
+`select-object-statics.ts`) and records it. from-ast's plan reads the record
+(`selectedDynamicHomeReceiver`), so both sides plan the same answer, as
+#7335's arm recorded its admitted calls on main. The plan asks the checker
+nothing.
+
+### Where a boxed boolean meets the checker's types
+
+The IR still types some slots from the checker. A boxed test the checker
+types `boolean` would land there as the i32, so it is refused at select:
+
+- **A call's parameters and a function's result** (the lattice):
+  `assert(desc.hasOwnProperty('value'))` was claimed and then withdrawn.
+  `escapesUnit` now refuses it in any file that holds a table call or a test.
+  Cost: 3 `defineProperties` files that round 1 gained with the i32 (census
+  53 → 50).
+- **An array literal's elements**: refused as `expr-boxed-test-array-element`,
+  but only where main did not lower the call. On an open object (#7341's
+  `readsCarrier`), main lowered it already as the carrier's method call with
+  the same answer, so its routing stays main's. That includes main's
+  post-claim error (`k/dploc:arr`); refusing it there would drag
+  `<module-init>` out.
+- **A boxed test is no open object.** #7341's open-object leaves took it for
+  one, and refused `b.constructor` on it as an inherited-member read. A test
+  answers a boolean: no object, boxed or not.
+
+Object literal fields, conditional arms and template substitutions holding a
+boxed test are withdrawn after the claim on main and on head alike. These are
+main's gaps for any dynamic method call result.
+
+### Merge with #7214 (#7341, `new Object()` homes)
+
+- `dynamic-home-open-object.ts` stays deleted. #7341's change to it (a
+  `new Object()` home) is folded into the dynamic-home receiver through
+  #7341's `isEmptyObjectExpression`.
+- `compareVerdict` uses #7341's `readsCarrier` for the carrier compare. The
+  #7339 loose-`null` rule covers the other dynamic module bindings.
+- `readsInheritedMember` asks `readsCarrier` instead of `lowersToCarrier`.
+
+### Measurements
+
+Branch `ecb26514cc` against main `08b2e8433a` (after #7214). One process at a
+time.
+
+| | result |
+| --- | --- |
+| Census 818 | 50 gained (53 in round 1), 0 lost, 0 units newly legacy, 0 compile errors, 0 post-claim errors |
+| #7338's 2,757-file set | 39 gained, 0 lost, 0 units newly legacy, 0 post-claim errors |
+| #7341's 23 gained files | all 23 IR-only on head, 0 post-claim errors |
+| Verdicts | the 50 routing-changed files all pass, here and in the CI standalone baseline |
+| gc bytes | identical on 445 files, the reviewer's `gc.json` (364) and `r2gc.json` (357) |
+| Related test files (7106 aliases, 7128, 7276, 7280, 7335, 7338, 7339, 7341) | 443/443 pass |
+
+Reviewer case sets `a2`, `b2`, `c2`, `d`, `e`, the `r2-*` sets (`k`, `k2`,
+`l`, `l2`, `m`), and `f`–`j`, `n`–`q`, head vs main:
+
+- **Post-claim errors:** none on head that main lacks. Main has 4 that head
+  does not.
+- **Units lost:** only units main answers wrong. These are the `l2`
+  inherited-member rows with a test in the file (all 14 throw on main) and
+  `e/inh2-test`. The `l` rows are the same programs without the output check.
+- **a2:** no unit lost against main. Round 1 claimed 21 `a2` units that are
+  now boxed and refused: `var o = {}; o.a = 1` (no dynamic home) and a
+  descriptor result in a script var, returned from `t`. Main refuses them
+  too, so the cost is against round 1, not main.
