@@ -9,6 +9,7 @@
 import { describe, expect, it } from "vitest";
 import { compile } from "../src/index.js";
 import { buildImports } from "../src/runtime.js";
+import { jsFacingExports } from "./helpers/compile.js";
 
 interface HostRun {
   test: () => unknown;
@@ -22,7 +23,7 @@ async function runHost(src: string): Promise<HostRun> {
   const { instance } = await WebAssembly.instantiate(r.binary!, imports as unknown as WebAssembly.Imports);
   imports.setExports?.(instance.exports as Record<string, Function>);
   (instance.exports as { __module_init?: () => void }).__module_init?.();
-  return instance.exports as unknown as HostRun;
+  return jsFacingExports(r, instance) as unknown as HostRun; // (#6979 S7-f) the embedder-facing view
 }
 
 const drain = () => new Promise((res) => setTimeout(res, 15));
@@ -92,20 +93,22 @@ export function test(): number {
     expect(ex.getLog()).toBe("[1,false][reject]");
   });
 
-  it("yield* await <array> in a static async-gen class method stays correct (control)", async () => {
-    const ex = await runHost(`
-let log: string = "";
-export function getLog(): string { return log; }
-class C {
+  // (#6979 S7-f, #7010) This control rode the eager async-generator host
+  // buffer, which is retired. The shape has no host-free lowering yet, so it is
+  // a compile-time refusal now rather than a `__gen_*` fallback.
+  it("yield* await <array> in a static async-gen class method is refused, not host-buffered", async () => {
+    const r = await compile(
+      `class C {
   static async * m(value: any) { yield * await value; }
 }
 export function test(): number {
-  C.m([1]).next().then((v: any) => { log = "value=" + v.value + ",done=" + v.done; });
+  C.m([1]).next();
   return 0;
 }
-`);
-    ex.test();
-    await drain();
-    expect(ex.getLog()).toBe("value=1,done=false");
+`,
+      { fileName: "test.ts" },
+    );
+    expect(r.success).toBe(false);
+    expect(r.errors?.[0]?.message ?? "").toContain("generator-no-host-free-lowering");
   });
 });

@@ -43,7 +43,6 @@ const EXTERNREF: ValType = { kind: "externref" };
 export function ensureStandaloneRegExpCarrierExecHelper(ctx: CodegenContext): number | undefined {
   const existing = ctx.funcMap.get(STANDALONE_REGEXP_CARRIER_EXEC_HELPER);
   if (existing !== undefined) return existing;
-  if (!ctx.standalone) return undefined;
 
   ensureNativeStringHelpers(ctx);
   ensureRegexSearch(ctx);

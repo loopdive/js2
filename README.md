@@ -13,7 +13,7 @@ Conformance is measured on the standalone path and auto-updates on every merge t
 
 <!-- AUTO:conformance-standalone-start -->
 
-**standalone (host-free) test262 conformance**: 42,463 / 48,232 (88.0 %)
+**standalone (host-free) test262 conformance**: 42,470 / 48,232 (88.1 %)
 
 <!-- AUTO:conformance-standalone-end -->
 

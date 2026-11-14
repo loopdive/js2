@@ -55,7 +55,6 @@
 import { ts } from "../ts-api.js";
 import type { CodegenContext } from "./context/types.js";
 import { isBuiltinTypeName } from "./builtin-tags.js";
-import { noJsHost } from "./js-errors.js";
 
 /** `undefined` = not yet scanned; `null` = scanned and disqualified. */
 type SpellingSources = Map<string, string | null>;
@@ -171,7 +170,6 @@ export function resolveBuiltinCtorAssignedAliasName(
   rhs: ts.Expression,
   currentName: string | undefined,
 ): string | undefined {
-  if (!noJsHost(ctx)) return undefined;
   if (currentName !== undefined && isBuiltinTypeName(currentName)) return undefined;
   if (!ts.isIdentifier(rhs)) return undefined;
   // A LOCAL binding of this spelling is a different value entirely; the scan is

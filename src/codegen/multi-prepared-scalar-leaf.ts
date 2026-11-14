@@ -661,14 +661,7 @@ function resolveExactCandidate(
   input: MultiPreparedScalarLeafCandidateInput,
 ): MultiPreparedScalarLeafCandidateEvidence | undefined {
   const { ctx, declaration, plan, safeSelection, safety, sourceFile } = input;
-  if (
-    !ctx.standalone ||
-    ctx.fast ||
-    ctx.wasi ||
-    declaration.parent !== sourceFile ||
-    !declaration.name ||
-    !declaration.body
-  ) {
+  if (ctx.fast || ctx.wasi || declaration.parent !== sourceFile || !declaration.name || !declaration.body) {
     return undefined;
   }
   const legacyName = declaration.name.text;
@@ -725,7 +718,6 @@ function resolveExactFunctionValueCandidate<Plan extends MultiPreparedFunctionVa
     }
     return undefined;
   };
-  if (!ctx.standalone) return reject("not standalone");
   if (ctx.fast) return reject("fast");
   if (ctx.wasi) return reject("WASI");
   if (declaration.parent !== sourceFile) return reject("not a source child");

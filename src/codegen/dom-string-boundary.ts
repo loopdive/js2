@@ -66,7 +66,7 @@ function publishFamily(
  * retains the flat string; the char call reads UTF-16 code units from it.
  */
 export function emitStandaloneDomStringBoundary(ctx: CodegenContext): void {
-  if (!ctx.requiresStandaloneDomCapability || !ctx.standalone || !ctx.nativeStrings || allocations.has(ctx)) return;
+  if (!ctx.requiresStandaloneDomCapability || !ctx.nativeStrings || allocations.has(ctx)) return;
   ensureNativeStringHelpers(ctx);
   const flattenIdx = ctx.nativeStrHelpers.get("__str_flatten");
   const anyStringTypeIdx = ctx.anyStrTypeIdx;

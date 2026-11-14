@@ -54,7 +54,7 @@
  *
  * Host mode is untouched. `__object_is*` are host imports there and the bag
  * substrates are standalone/wasi-only (`reserveVecPropHelpers` /
- * `reserveClosurePropHelpers` are gated on `ctx.standalone || ctx.wasi`), so
+ * `reserveClosurePropHelpers` are gated on the no-JS-host lanes), so
  * {@link registerIntegrityResolvers} returns `undefined` and both emitters
  * reproduce their previous bodies byte-for-byte.
  */
@@ -62,7 +62,6 @@ import type { Instr, ValType } from "../ir/types.js";
 import { ts } from "../ts-api.js";
 import type { CodegenContext } from "./context/types.js";
 import { ensureLateImport } from "./expressions/late-imports.js";
-import { noJsHost } from "./js-errors.js";
 // FLAG_TOMBSTONE is read only INSIDE functions, so the object-runtime <-> this
 // module import cycle never touches an uninitialised binding.
 import { FLAG_TOMBSTONE } from "./object-runtime.js";
@@ -560,7 +559,6 @@ export function ensureIntegrityPredicate(
 }
 
 export function provenJsObject(ctx: CodegenContext, arg: ts.Expression): boolean {
-  if (!noJsHost(ctx)) return false;
   const tag = ctx.oracle.staticJsTypeOf(arg);
   if (tag !== "object" && tag !== "function") return false;
   const nullability = ctx.oracle.nullabilityOf(arg);

@@ -208,7 +208,7 @@ function writeOnceOwnerOf(ctx: CodegenContext, fn: ts.FunctionLikeDeclaration): 
  * Every clause is a hard requirement, and each failure mode is "miss a
  * monomorphization candidate", never "wrong lowering":
  *
- *  - `ctx.standalone` — the twin's win is the unboxed native field lane, which
+ *  - the regime flag — the twin's win is the unboxed native field lane, which
  *    only exists in the host-free representation.
  *  - S1 write-once verdict for THIS arrow node, under the SAME fnctor the
  *    `this`-struct pin resolved to (a method slot that can be reassigned could
@@ -237,7 +237,6 @@ export function admitTypedThisTwin(
 ): { structName: string; structTypeIdx: number } | undefined {
   noteStats();
   if (!typedThisEnabled()) return undefined;
-  if (!ctx.standalone) return undefined;
   const { thisStructName } = opts;
   if (thisStructName === undefined) return undefined;
   if (opts.captureCount !== 0) return undefined;
@@ -1016,7 +1015,7 @@ export function recordDirectCallGeneric(
   params: ValType[],
   results: ValType[],
 ): number | undefined {
-  if (!ctx.standalone || !directCallsEnabled()) return undefined;
+  if (!directCallsEnabled()) return undefined;
   if (!ts.isFunctionExpression(arrow) || arrow.name || arrow.asteriskToken) return undefined;
   if (arrow.modifiers?.some((m) => m.kind === ts.SyntaxKind.AsyncKeyword)) return undefined;
   if (!arrow.body || !ts.isBlock(arrow.body)) return undefined;
@@ -1101,7 +1100,7 @@ export function refinedTwinReturnType(
   // `JS2WASM_NUMERIC_TWINS=0` restores the externref twin ABI byte-for-byte,
   // which is what makes the A/B differential for this slice possible.
   if (readEnv("JS2WASM_NUMERIC_TWINS") === "0") return undefined;
-  if (!ctx.standalone || !directCallLoweringEnabled()) return undefined;
+  if (!directCallLoweringEnabled()) return undefined;
   // Only worth doing — and only SOUND to do — when the declared result is the
   // boxed one. Anything else is already a native type the body agrees with.
   if (declared === null || declared.kind !== "externref") return undefined;
@@ -1171,7 +1170,7 @@ export function refinedTwinParamTypes(
   declared: readonly ValType[],
 ): ValType[] | undefined {
   if (!paramUnboxAbiEnabled()) return undefined;
-  if (!ctx.standalone || !directCallLoweringEnabled()) return undefined;
+  if (!directCallLoweringEnabled()) return undefined;
   // The trampoline's legacy arm re-boxes every native parameter on the way to
   // the dynamic dispatcher (`boxToExternref`), so decline before anything is
   // minted when the helper is unresolvable — the same discipline the return
@@ -1441,7 +1440,7 @@ export function tryEmitProvenReceiverFieldGet(
   expr: ts.PropertyAccessExpression,
   propName: string,
 ): ValType | undefined {
-  if (!provenFieldsEnabled() || !ctx.standalone) return undefined;
+  if (!provenFieldsEnabled()) return undefined;
   // `this` is #3683 S2's, with a strictly stronger proof — never take it here.
   if (expr.expression.kind === ts.SyntaxKind.ThisKeyword) return undefined;
   if (ts.isPrivateIdentifier(expr.name)) return undefined;
@@ -1528,7 +1527,7 @@ export function tryEmitProvenReceiverFieldGet(
   // A clear flow-presence bit is a logical own-property miss. In an active
   // inherited-descriptor module, route it to the dynamic getter so a fnctor
   // prototype can supply the value rather than inlining `undefined`.
-  if (ctx.standalone && inheritedSetAffectsKey(ctx, propName) && presenceSlot !== undefined) {
+  if (inheritedSetAffectsKey(ctx, propName) && presenceSlot !== undefined) {
     noteProvenReceiver(`inherited-presence:${cls}.${propName}`);
     return undefined;
   }
@@ -1705,7 +1704,7 @@ export function tryEmitDirectTwinCall(
   propAccess: ts.PropertyAccessExpression,
   deps: DirectCallDeps,
 ): ValType | typeof VOID_RESULT | undefined {
-  if (!directCallsEnabled() || !ctx.standalone) return undefined;
+  if (!directCallsEnabled()) return undefined;
   if (ts.isPrivateIdentifier(propAccess.name)) return undefined;
 
   // Three admission routes to the SAME trampoline machinery:

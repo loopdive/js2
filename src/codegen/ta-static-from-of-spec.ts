@@ -188,7 +188,6 @@ export function buildTaFromMapfnCallableGate(ctx: CodegenContext, mapfnLocal: nu
  * `ensureStandaloneNativeMethodClosure` is a cache hit.
  */
 export function taStaticFromOfSingletonInstrs(ctx: CodegenContext, member: string): Instr[] | undefined {
-  if (!ctx.standalone) return undefined;
   if (member !== "from" && member !== "of") return undefined;
   const brand = getBuiltinBrand(ctx, "%TypedArray%");
   if (brand === undefined) return undefined;
@@ -211,7 +210,7 @@ export function taStaticFromOfReflectiveCallNeedsExternref(
   ctx: CodegenContext,
   initializer: ts.Expression | undefined,
 ): boolean {
-  if (!ctx.standalone || !initializer || !ts.isCallExpression(initializer)) return false;
+  if (!initializer || !ts.isCallExpression(initializer)) return false;
   const callee = initializer.expression;
   if (!ts.isPropertyAccessExpression(callee) || (callee.name.text !== "call" && callee.name.text !== "apply")) {
     return false;

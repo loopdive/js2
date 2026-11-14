@@ -146,17 +146,17 @@ export function buildStandardTryTable(blockType: BlockType, body: Instr[], handl
   return { op: "block", blockType, body: nested };
 }
 
-/** Preserve legacy host output while selecting standardized EH for no-JS-host targets. */
+/**
+ * Lower tagged catch clauses (externref payload) to standardized EH. (#6979
+ * S7-f) The `{ wasi, standalone }` target and its legacy `try` arm are gone:
+ * every emitter is the native regime, which always takes `try_table`.
+ */
 export function buildTargetTaggedTry(
-  target: { wasi: boolean; standalone: boolean },
   blockType: BlockType,
   body: Instr[],
   catches: { tagIdx: number; body: Instr[] }[],
   catchAll?: Instr[],
 ): Instr {
-  if (!target.wasi && !target.standalone) {
-    return { op: "try", blockType, body, catches, ...(catchAll === undefined ? {} : { catchAll }) };
-  }
   return buildStandardTryTable(
     blockType,
     body,

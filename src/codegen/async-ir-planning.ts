@@ -15,7 +15,7 @@ import {
   staticPromiseResolveSettledExpr,
   unwrapPromiseTypeNode,
 } from "../ir/async-static.js";
-import { irImportFuncRef, irIntrinsicFuncRef, irRuntimeFuncRef } from "../ir/callable-bindings.js";
+import { irIntrinsicFuncRef, irRuntimeFuncRef } from "../ir/callable-bindings.js";
 import { irVal, irVec } from "../ir/nodes.js";
 import { IrInvariantError } from "../ir/outcomes.js";
 import type { IrPromiseDelayResolver } from "../ir/promise-delay.js";
@@ -764,7 +764,7 @@ function isExactStandaloneNativeAsyncFamilyOwner(
 }
 
 function preparedIrAsyncSourceCanSuspendOnTarget(ctx: CodegenContext, fn: ts.FunctionDeclaration): boolean {
-  return sourceAsyncCanSuspend(ctx, fn) && (!ctx.standalone || isExactStandaloneNativeAsyncFamilyOwner(ctx, fn));
+  return sourceAsyncCanSuspend(ctx, fn) && isExactStandaloneNativeAsyncFamilyOwner(ctx, fn);
 }
 
 /** Exact awaited Promise.all node owned by the certified continuation shape. */
@@ -1365,7 +1365,7 @@ export function prepareAsyncCallableAbi(
   const usesPromiseAbi =
     ctx.programAbiSession !== undefined &&
     !ctx.wasi &&
-    (!ctx.standalone || ctx.nativeStrings) &&
+    ctx.nativeStrings &&
     !fn.typeParameters?.length &&
     ts.isSourceFile(fn.parent) &&
     shape !== null &&
@@ -1409,7 +1409,7 @@ export function prepareIrAsyncSelectionOptions(
     // standalone native `$Promise` runtime. WASI remains outside this slice.
     canPrepareSuspendingAsync: (fn) =>
       !ctx.wasi &&
-      (!ctx.standalone || ctx.nativeStrings) &&
+      ctx.nativeStrings &&
       ts.isFunctionDeclaration(fn) &&
       preparedIrAsyncSourceCanSuspendOnTarget(ctx, fn),
     preparedAsyncPromiseVectorLocal: (declaration) => isPreparedIrPromiseVectorLocal(ctx, declaration),
@@ -1436,26 +1436,14 @@ export function preparedIrAsyncFromAstResolver(
   return {
     preparedAsyncPromiseVectorLocal: (declaration) => isPreparedIrPromiseVectorLocal(ctx, declaration),
     preparedAsyncPromiseAllPlan: (call) => {
-      if (ctx.standalone && !ctx.wasi && ctx.nativeStrings && isPreparedIrPromiseAllCall(ctx, call)) {
+      if (!ctx.wasi && ctx.nativeStrings && isPreparedIrPromiseAllCall(ctx, call)) {
         return {
           target: irRuntimeFuncRef(IR_ASYNC_PROMISE_ALL_NATIVE_FN),
           argumentType: irVec(irVal({ kind: "externref" }), true),
           resultType: irVec(irVal({ kind: "f64" }), true),
         };
       }
-      if (
-        ctx.wasi ||
-        ctx.standalone ||
-        ctx.strictNoHostImports ||
-        !ctx.funcMap.has("Promise_all") ||
-        !isPreparedIrPromiseAllCall(ctx, call)
-      ) {
-        return null;
-      }
-      return {
-        target: irImportFuncRef("env", "Promise_all"),
-        resultType: irVec(irVal({ kind: "f64" }), true),
-      };
+      return null;
     },
     preparedAsyncAwaitSite: (awaitExpression) => preparedIrAsyncAwaitSite(ctx, awaitExpression),
     preparedAsyncThenableResultType: (call) =>
@@ -1479,7 +1467,7 @@ export function collectPreparedIrAsyncOwners(
 ): ReadonlySet<IrUnitId> {
   assertPreparedIrAsyncPromiseOwnersCurrent(ctx);
   const owners = new Set<IrUnitId>();
-  if (ctx.wasi || (ctx.standalone && !ctx.nativeStrings)) return owners;
+  if (ctx.wasi || !ctx.nativeStrings) return owners;
   for (const claim of identityPlan.functionClaims) {
     if (!selectedFunctions.has(claim.legacyName)) continue;
     assertPreparedIrAsyncPromiseOwnerCurrent(ctx, claim.declaration);

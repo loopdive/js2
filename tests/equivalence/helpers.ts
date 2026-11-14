@@ -134,56 +134,8 @@ export function buildImports(
     __extern_slice: (arr: any, start: number) => (Array.isArray(arr) ? arr.slice(start) : []),
     JSON_stringify: (v: any) => JSON.stringify(v),
     JSON_parse: (s: any) => JSON.parse(s),
-    // Generator support: buffer management and generator creation
-    __gen_create_buffer: () => [] as any[],
-    __gen_push_f64: (buf: any[], v: number) => {
-      buf.push(v);
-    },
-    __gen_push_i32: (buf: any[], v: number) => {
-      buf.push(v);
-    },
-    __gen_push_ref: (buf: any[], v: any) => {
-      buf.push(v);
-    },
-    // (#2035) Stash the generator's `return` value on the buffer instead of
-    // pushing it as a yielded element; surfaced once as the terminal result.
-    __gen_set_return: (buf: any, v: any) => {
-      if (buf != null) {
-        Object.defineProperty(buf, "__genReturn", { value: v, writable: true, enumerable: false, configurable: true });
-      }
-    },
-    __create_generator: (buf: any[]) => {
-      let index = 0;
-      let retDone = false;
-      const retVal = (buf as any)?.__genReturn;
-      return {
-        next() {
-          if (index < buf.length) {
-            return { value: buf[index++], done: false };
-          }
-          // Terminal result carries the return value exactly once. (#2035)
-          if (!retDone) {
-            retDone = true;
-            return { value: retVal, done: true };
-          }
-          return { value: undefined, done: true };
-        },
-        return(value: any) {
-          index = buf.length;
-          retDone = true;
-          return { value, done: true };
-        },
-        [Symbol.iterator]() {
-          return this;
-        },
-      };
-    },
-    __gen_next: (gen: any) => gen.next(),
-    __gen_return: (gen: any, val: any) => gen.return(val),
-    __gen_throw: (gen: any, err: any) => gen.throw(err),
-    __gen_result_value: (result: any) => result.value,
-    __gen_result_value_f64: (result: any) => Number(result.value),
-    __gen_result_done: (result: any) => (result.done ? 1 : 0),
+    // (#6979 S7-f, #7010) The `__gen_*` / `__create_generator` eager-buffer
+    // stubs are gone with the runtime provider: no compile emits those names.
     // Iterator protocol: host-delegated iteration for non-array types
     __iterator: (obj: any) => obj[Symbol.iterator](),
     __async_iterator: (obj: any) => {

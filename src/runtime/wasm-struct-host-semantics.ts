@@ -2,7 +2,6 @@
 /** Small host-side value/descriptor rules for opaque WasmGC structs. */
 
 export const NO_GENERATED_FIELD = Symbol("no-generated-field");
-export const PRIMITIVE_STRING_UNDEFINED = Symbol("primitive-string-undefined");
 const CONFIGURABLE_FLAG = 4;
 
 /** Return whether a failed native assignment is a sloppy-mode no-op. */
@@ -25,54 +24,8 @@ export function hasUserCallableSidecarProps(
   );
 }
 
-export function ownKeysResult(
-  name: string,
-  result: any,
-  state: any,
-  materialize: (value: any, state: any) => any,
-): any {
-  return name === "ownKeys" ? materialize(result, state) : result;
-}
-
 type CallbackState = { getExports: () => Record<string, Function> | undefined };
 const callableOwners = new WeakMap<Function, CallbackState>();
-const PRIMITIVE_STRING_INTRINSICS: Readonly<Record<string, Function | undefined>> = Object.freeze({
-  charAt: String.prototype.charAt,
-  charCodeAt: String.prototype.charCodeAt,
-  codePointAt: String.prototype.codePointAt,
-  endsWith: String.prototype.endsWith,
-  includes: String.prototype.includes,
-  indexOf: String.prototype.indexOf,
-  lastIndexOf: String.prototype.lastIndexOf,
-  localeCompare: String.prototype.localeCompare,
-  normalize: String.prototype.normalize,
-  padEnd: String.prototype.padEnd,
-  padStart: String.prototype.padStart,
-  repeat: String.prototype.repeat,
-  slice: String.prototype.slice,
-  startsWith: String.prototype.startsWith,
-  substr: String.prototype.substr,
-  substring: String.prototype.substring,
-  toLowerCase: String.prototype.toLowerCase,
-  toUpperCase: String.prototype.toUpperCase,
-  toString: String.prototype.toString,
-  trim: String.prototype.trim,
-  trimEnd: String.prototype.trimEnd,
-  trimLeft: String.prototype.trimLeft,
-  trimRight: String.prototype.trimRight,
-  trimStart: String.prototype.trimStart,
-  valueOf: String.prototype.valueOf,
-});
-
-export function masksField(
-  sidecar: Record<PropertyKey, unknown> | undefined,
-  key: PropertyKey,
-  flags: number | undefined,
-  hasBackingField: boolean,
-  accessorFlag: number,
-): boolean {
-  return !!sidecar && key in sidecar ? true : flags !== undefined && (!!(flags & accessorFlag) || !hasBackingField);
-}
 
 export function readField(
   getter: unknown,
@@ -84,10 +37,6 @@ export function readField(
   if (hasBackingField === false || typeof getter !== "function") return NO_GENERATED_FIELD;
   const value = getter(receiver);
   return value !== undefined && value !== null ? value : hasBackingField ? value : NO_GENERATED_FIELD;
-}
-
-export function ordinaryFields(fields: readonly string[] | null): boolean {
-  return fields !== null && !fields.includes("__tag");
 }
 
 export function recordCallableOwner(callable: Function, owner: CallbackState | undefined): void {
@@ -198,65 +147,4 @@ export function unboxSymbol(cache: Map<number, symbol>, value: unknown): number 
   while (cache.has(id)) id--;
   cache.set(id, value);
   return id;
-}
-
-/**
- * Skip generic WasmGC/closure marshaling for dynamic calls on primitive
- * strings while preserving dynamic String.prototype lookup.
- */
-export function tryPrimitiveStringMethod(
-  receiver: any,
-  method: string,
-  args: any[],
-  isWasmStruct: (value: any) => boolean,
-  apply: (fn: Function, receiver: any, args: any[]) => any,
-): any {
-  if (typeof receiver !== "string" || !Array.isArray(args)) return undefined;
-  const intrinsic = PRIMITIVE_STRING_INTRINSICS[method];
-  // RegExp protocol methods, closure-valued patches, and unknown names retain
-  // the full bridge. Intrinsic identity keeps String.prototype monkey-patches
-  // observable without allocating a result wrapper on every successful call.
-  if (intrinsic === undefined) return undefined;
-  const fn = (receiver as unknown as Record<string, any>)[method];
-  if (fn !== intrinsic) return undefined;
-  for (let i = 0; i < args.length; i++) {
-    const arg = args[i];
-    if (arg !== null && (typeof arg === "object" || typeof arg === "function") && isWasmStruct(arg)) return undefined;
-  }
-  const value = apply(fn, receiver, args);
-  return value === undefined ? PRIMITIVE_STRING_UNDEFINED : value;
-}
-
-/** Preserve IsCallable for WasmGC replacement callbacks before ToString. */
-export function deferStringReplacementArg(
-  value: any,
-  callbackState: { getExports: () => Record<string, Function> | undefined } | undefined,
-  fallback: (value: any) => any,
-  isWasmStruct: (value: any) => boolean,
-  wrapCallable: (value: any, callbackState?: { getExports: () => Record<string, Function> | undefined }) => any,
-): any {
-  if (!isWasmStruct(value)) return fallback(value);
-  const exports = callbackState?.getExports();
-  const isClosure = exports?.__is_closure as ((candidate: any) => number) | undefined;
-  if (typeof isClosure === "function") {
-    try {
-      if (isClosure(value) === 1) return wrapCallable(value, callbackState);
-    } catch {
-      // Keep the ordinary ToPrimitive path when the classifier cannot inspect this value.
-    }
-  }
-  return fallback(value);
-}
-
-export function makeStringReplacementArg(
-  method: string,
-  callbackState: { getExports: () => Record<string, Function> | undefined } | undefined,
-  fallback: (value: any) => any,
-  isWasmStruct: (value: any) => boolean,
-  wrapCallable: (value: any, callbackState?: { getExports: () => Record<string, Function> | undefined }) => any,
-): (value: any) => any {
-  return (value: any): any =>
-    method === "replace" || method === "replaceAll"
-      ? deferStringReplacementArg(value, callbackState, fallback, isWasmStruct, wrapCallable)
-      : fallback(value);
 }

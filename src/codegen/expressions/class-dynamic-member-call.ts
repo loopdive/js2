@@ -39,8 +39,7 @@
  *
  * Scope: standalone only, and only for a class hierarchy that actually has a
  * runtime-keyed member — every other receiver keeps its existing lowering, so a
- * module without one compiles to identical bytes. The host lane keeps its own
- * `__extern_method_call_<n>` bridge (`dynamic-element-host-call.ts`).
+ * module without one compiles to identical bytes.
  */
 
 import type { Instr, ValType } from "../../ir/types.js";
@@ -67,7 +66,6 @@ function classDynamicMemberCallApplies(
   fctx: FunctionContext,
   elemAccess: ts.ElementAccessExpression,
 ): boolean {
-  if (!ctx.standalone) return false;
   // (#5195 R2-1) `super[k](...)` is a DIFFERENT operation and must not be
   // lowered as an ordinary member call. §13.3.7.1 reads the member off the HOME
   // OBJECT's [[Prototype]] and invokes it with the CURRENT `this`; compiling

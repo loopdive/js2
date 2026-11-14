@@ -28,7 +28,7 @@ import { walkChildren } from "./walk-instructions.js";
  * prototype store, exactly as an ordinary `HasProperty` miss should.
  */
 export function fillExternrefHoleHasIdxArms(ctx: CodegenContext): void {
-  if (!ctx.standalone || !ctx.usesArrayHoles) return;
+  if (!ctx.usesArrayHoles) return;
   const funcIdx = ctx.funcMap.get("__extern_has_idx");
   if (funcIdx === undefined) return;
   const fn = definedFuncAt(ctx, funcIdx);
@@ -130,7 +130,7 @@ export function fillExternrefHoleHasIdxArms(ctx: CodegenContext): void {
  * late-index bookkeeping intact.
  */
 export function fillExternrefHoleGetIdxArms(ctx: CodegenContext): void {
-  if (!ctx.standalone || !ctx.usesArrayHoles || !ctx.externGetIdxReserved) return;
+  if (!ctx.usesArrayHoles || !ctx.externGetIdxReserved) return;
   const funcIdx = ctx.funcMap.get("__extern_get_idx");
   if (funcIdx === undefined) return;
   const fn = definedFuncAt(ctx, funcIdx);

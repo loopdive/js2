@@ -13,17 +13,18 @@
 // left operand (a ToBoolean test, like a conditional's), answers legacy's `externref`, and the unit lowers like the
 // default (dynamic-param) harness case.
 //
-// Each case asserts the route on standalone and the default gc target and
-// the result on all three lanes against the JS evaluation of the same source
-// (or, on WASI, the pinned value base and head both give where WASI already
-// diverges from JS).
+// Each case asserts the route and the result on all three lanes against the
+// JS evaluation of the same source.
+// (#6979 S7-c) WASI lowers with the native semantic regime, so it takes the IR
+// body like standalone and gives the JS answer; the pre-flip `wasiValue` pins
+// recorded WASI's old legacy divergence and are no longer consulted.
 import { describe, expect, it } from "vitest";
 import { compile, type CompileOptions } from "../../src/index.js";
 import { evaluateAsJs, instantiateWithRuntime } from "./helpers.js";
 
 const LANES: { name: string; options: CompileOptions; ir: boolean }[] = [
   { name: "standalone", options: { target: "standalone" }, ir: true },
-  { name: "wasi", options: { target: "wasi" }, ir: false },
+  { name: "wasi", options: { target: "wasi" }, ir: true },
   { name: "gc (default)", options: {}, ir: true },
 ];
 
@@ -68,10 +69,8 @@ async function compileAndRun(source: string, options: CompileOptions) {
 
 interface Case {
   readonly source: string;
-  /** Units whose IR body must be emitted on standalone and gc. */
+  /** Units whose IR body must be emitted on every lane. */
   readonly irUnits: readonly string[];
-  /** WASI already diverges from JS here; the value (or trap) base and head both give. */
-  readonly wasiValue?: number | "throws";
 }
 
 const CASES: Record<string, Case> = {
@@ -81,7 +80,6 @@ const CASES: Record<string, Case> = {
       LITERAL_CALLER +
       `function inner() { try { fail(); return "no"; } catch (e) { return (e instanceof Test262Error) + "|" + e.message + "|" + String(e) + "|" + (e.constructor === Test262Error); } }`,
     irUnits: ["Test262Error"],
-    wasiValue: 30791622,
   },
   "Test262Error(m) without new": {
     source:
@@ -90,7 +88,6 @@ const CASES: Record<string, Case> = {
       `function mk() { return Test262Error("nn"); }
 function inner() { var e = mk(); return (e instanceof Test262Error) + "|" + e.message + "|" + e.toString(); }`,
     irUnits: ["Test262Error"],
-    wasiValue: 23070926,
   },
   "Test262Error.thrower": {
     source:
@@ -106,7 +103,6 @@ function inner() { var e = mk(); return (e instanceof Test262Error) + "|" + e.me
       `var a = new Test262Error(); var b = new Test262Error(null); var c = new Test262Error(7); var d = Test262Error(0);
 function inner() { return JSON.stringify([a.message, b.message, c.message, d.message]) + "|" + String(c); }`,
     irUnits: ["Test262Error"],
-    wasiValue: 28919330,
   },
   "assert.throws-shaped constructor check": {
     source:
@@ -115,7 +111,6 @@ function inner() { return JSON.stringify([a.message, b.message, c.message, d.mes
       `function throws(C, f) { try { f(); } catch (e) { return e.constructor === C ? "ok" : "wrongctor"; } return "nothrow"; }
 function inner() { return throws(Test262Error, fail) + "|" + throws(TypeError, fail); }`,
     irUnits: ["Test262Error"],
-    wasiValue: 19040817,
   },
   "prototype chain and own message": {
     source:
@@ -123,14 +118,12 @@ function inner() { return throws(Test262Error, fail) + "|" + throws(TypeError, f
       LITERAL_CALLER +
       `function inner() { var e = new Test262Error("p"); return Object.prototype.hasOwnProperty.call(e, "message") + "|" + (Object.getPrototypeOf(e) === Test262Error.prototype) + "|" + typeof Test262Error.prototype.toString; }`,
     irUnits: ["Test262Error"],
-    wasiValue: "throws",
   },
   "string || on a plain function (value only)": {
     source: `function pick(s) { return s || "none"; }
 function g() { return pick("x") + pick(""); }
 function inner() { return g(); }`,
     irUnits: [],
-    wasiValue: NaN,
   },
   "string && on a plain function (value only)": {
     source: `function both(s) { return s && "yes"; }
@@ -143,7 +136,6 @@ function inner() { return g(); }`,
 function g() { return pick("x") + pick(0) + pick(5); }
 function inner() { return g(); }`,
     irUnits: [],
-    wasiValue: NaN,
   },
 };
 
@@ -153,7 +145,6 @@ describe("#7251 harness Test262Error as an IR unit", () => {
       it(`${title} [${lane.name}]`, async () => {
         const source = c.source + HASHED_TEST;
         const { result, exports } = await compileAndRun(source, lane.options);
-        const wasi = lane.options.target === "wasi";
         const outcomes = result.irOutcomes ?? [];
         if (lane.ir) {
           for (const unit of c.irUnits) {
@@ -161,11 +152,7 @@ describe("#7251 harness Test262Error as an IR unit", () => {
             expect(outcome?.irBodyEmitted, `${unit} route: ${JSON.stringify(outcome)}`).toBe(true);
           }
         }
-        if (wasi && c.wasiValue === "throws") {
-          expect(() => exports.test!()).toThrow();
-          return;
-        }
-        const expected = wasi && c.wasiValue !== undefined ? c.wasiValue : evaluateAsJs(source).test!();
+        const expected = evaluateAsJs(source).test!();
         expect(exports.test!()).toBe(expected);
       });
     }

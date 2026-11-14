@@ -63,7 +63,6 @@ function reserve(ctx: CodegenContext, name: string, params: ValType[], results: 
 
 /** Early inert reservation: object-runtime may call this before generators exist. */
 export function reserveNativeGeneratorProtocolLookup(ctx: CodegenContext): void {
-  if (!(ctx.standalone || ctx.wasi)) return;
   reserve(ctx, NATIVE_GENERATOR_PROTO_VIEW, [ER], [ER], [load(0)]);
   reserve(
     ctx,
@@ -82,7 +81,7 @@ function keyInstrs(ctx: CodegenContext, key: NativeGeneratorProtocolKey): Instr[
 
 /** Reserve callable singleton values before closure/iterator finalization. */
 export function ensureNativeGeneratorProtocol(ctx: CodegenContext, _caller?: FunctionContext): void {
-  if (!(ctx.standalone || ctx.wasi) || prepared.has(ctx)) return;
+  if (prepared.has(ctx)) return;
   prepared.add(ctx); // Opaque dispatch reservation re-enters the iterator runtime.
   reserveNativeGeneratorProtocolLookup(ctx);
   ensureCurrentThisGlobal(ctx);
@@ -183,7 +182,6 @@ export function emitNativeGeneratorProtocolMethodBody(
   fctx: FunctionContext,
   member: string,
 ): ValType | null {
-  if (!(ctx.standalone || ctx.wasi)) return null;
   if (member === "@@1") {
     fctx.body.push(load(1));
     return ER;
@@ -351,7 +349,6 @@ export function buildNativeGeneratorProtocolGet(
  * `===` on one carrier, which is what the row asserts.
  */
 export function prependNativeGeneratorResultPrototypeArm(ctx: CodegenContext): void {
-  if (!(ctx.standalone || ctx.wasi)) return;
   const gptIdx = ctx.funcMap.get("__getPrototypeOf");
   const protoIdx = ctx.funcMap.get(OBJECT_PROTO_SINGLETON);
   if (gptIdx === undefined || protoIdx === undefined) return;

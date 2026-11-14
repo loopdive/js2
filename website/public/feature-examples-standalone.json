@@ -574,7 +574,7 @@
     {
       "name": "Objects",
       "testCategories": ["language/expressions/object", "built-ins/Object"],
-      "passCount": 4466,
+      "passCount": 4467,
       "totalCount": 4581,
       "editionSpread": [
         {
@@ -614,7 +614,7 @@
         },
         {
           "edition": "ES2021",
-          "pass": 5,
+          "pass": 6,
           "total": 6
         },
         {
@@ -1049,7 +1049,7 @@
         "built-ins/GeneratorFunction",
         "built-ins/GeneratorPrototype"
       ],
-      "passCount": 2477,
+      "passCount": 2476,
       "totalCount": 2486
     },
     {
@@ -1216,7 +1216,7 @@
         "language/expressions/async-generator",
         "language/statements/async-generator"
       ],
-      "passCount": 2974,
+      "passCount": 2972,
       "totalCount": 3812
     },
     {
@@ -1252,13 +1252,13 @@
     {
       "name": "WeakRef / FinalizationRegistry",
       "testCategories": ["built-ins/WeakRef", "built-ins/FinalizationRegistry"],
-      "passCount": 34,
+      "passCount": 46,
       "totalCount": 82
     },
     {
       "name": "Class fields (public, private, static)",
       "testCategories": ["language/statements/class/fields"],
-      "passCount": 3897,
+      "passCount": 3898,
       "totalCount": 4979
     },
     {
@@ -1564,12 +1564,12 @@
     {
       "name": "Temporal",
       "testCategories": ["built-ins/Temporal"],
-      "passCount": 4483,
+      "passCount": 4486,
       "totalCount": 4603,
       "editionSpread": [
         {
           "edition": "ES2026",
-          "pass": 4483,
+          "pass": 4486,
           "total": 4603
         }
       ]

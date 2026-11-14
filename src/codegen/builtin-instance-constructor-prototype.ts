@@ -111,7 +111,6 @@ export function tryEmitBuiltinInstanceConstructorPrototype(
   expr: ts.PropertyAccessExpression,
 ): ValType | undefined {
   if (
-    !ctx.standalone ||
     moduleTouchesConstructorProp(expr.getSourceFile()) ||
     expr.name.text !== "prototype" ||
     !ts.isPropertyAccessExpression(expr.expression) ||

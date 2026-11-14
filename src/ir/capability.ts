@@ -197,13 +197,12 @@ export function domSurfaceCapability(jsHost: boolean, exactStandaloneProvider: b
 // boolean can no longer speak for the whole surface, so the console member gets
 // its own row.
 //
-// The second parameter is NOT a mode flag — it is "did the backend actually
-// mint the sink", answered by the resolver from `funcMap`. That keeps the
-// question a *capability* one (is there something to lower to?) rather than a
-// target-name one, so a standalone module compiled without native strings, where
-// the sink genuinely does not exist, correctly defers.
-export function consoleSurfaceCapability(jsHost: boolean, hostFreeSink: boolean): IrOpCapability {
-  if (jsHost) return "claim-partial"; // per-arg-variant `console_<m>_<variant>` imports
+// The parameter is NOT a mode flag — it is "did the backend actually mint the
+// sink", answered by the resolver from `funcMap`. That keeps the question a
+// *capability* one (is there something to lower to?) rather than a target-name
+// one, so a module where the sink genuinely does not exist correctly defers.
+// (#6979) The host's per-arg-variant `console_<m>_<variant>` imports are gone.
+export function consoleSurfaceCapability(hostFreeSink: boolean): IrOpCapability {
   return hostFreeSink ? "claim-partial" : "defer";
 }
 

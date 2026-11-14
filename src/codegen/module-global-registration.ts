@@ -156,14 +156,14 @@ function functionIsFromAnotherSource(
  * script stores. Standalone only, so host-lane bytes are untouched.
  */
 export function scriptVarRedeclaresAmbientGlobal(ctx: CodegenContext, decl: ts.VariableDeclaration): boolean {
-  if (!ctx.standalone || ctx.sourceIsModule || decl.initializer === undefined) return false;
+  if (ctx.sourceIsModule || decl.initializer === undefined) return false;
   if (decl.getSourceFile().isDeclarationFile || !ts.isIdentifier(decl.name)) return false;
   return ctx.oracle.declarationsOf(decl.name).some((d) => d.getSourceFile().isDeclarationFile);
 }
 
 /** (#6651 V10b) An identifier read whose binding is such a redeclared ambient script var. */
 function readsAmbientRedeclaringScriptVar(ctx: CodegenContext, expr: ts.Expression): boolean {
-  if (!ctx.standalone || ctx.sourceIsModule || !ts.isIdentifier(expr)) return false;
+  if (ctx.sourceIsModule || !ts.isIdentifier(expr)) return false;
   return ctx.oracle
     .declarationsOf(expr)
     .some((d) => ts.isVariableDeclaration(d) && scriptVarRedeclaresAmbientGlobal(ctx, d));
@@ -177,7 +177,7 @@ function readsAmbientRedeclaringScriptVar(ctx: CodegenContext, expr: ts.Expressi
  * shape its binding was typed with.
  */
 export function objectLiteralReadsAmbientRedeclaredVar(ctx: CodegenContext, expr: ts.ObjectLiteralExpression): boolean {
-  if (!ctx.standalone || ctx.sourceIsModule || ts.isVariableDeclaration(expr.parent)) return false;
+  if (ctx.sourceIsModule || ts.isVariableDeclaration(expr.parent)) return false;
   return expr.properties.some(
     (p) =>
       (ts.isPropertyAssignment(p) && readsAmbientRedeclaringScriptVar(ctx, p.initializer)) ||

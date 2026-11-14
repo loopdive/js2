@@ -21,7 +21,7 @@ import { reportError } from "./context/errors.js";
 import { allocLocal } from "./context/locals.js";
 import { addUnionImports, resolveWasmType } from "./index.js";
 import { addStringConstantGlobal } from "./registry/imports.js";
-import { emitThrowTypeError, noJsHost } from "./js-errors.js";
+import { emitThrowTypeError } from "./js-errors.js";
 import { ensureExternSameValueZeroHelper, ensureExternStrictEqHelper } from "./any-helpers.js";
 import { ensureCurrentThisGlobal } from "./statements/nested-declarations.js";
 import { emitUndefined } from "./expressions/late-imports.js";
@@ -219,11 +219,7 @@ function assertThrowsBailApplies(
   methodName: string,
   borrowRecvWasmType: ValType | undefined,
 ): boolean {
-  if (
-    (ctx.standalone || ctx.wasi) &&
-    ARRAY_LIKE_SEARCH_METHODS.has(methodName) &&
-    !receiverHasPlainClosedStructLength(ctx, borrowRecvWasmType)
-  ) {
+  if (ARRAY_LIKE_SEARCH_METHODS.has(methodName) && !receiverHasPlainClosedStructLength(ctx, borrowRecvWasmType)) {
     return false;
   }
   let p: ts.Node | undefined = callExpr.parent;
@@ -399,7 +395,7 @@ export function compileArrayLikePrototypeCall(
   // arm (#2036 PR-1) and fall through unaffected. Host/gc mode is untouched
   // (gated on standalone||wasi). Step 2 (real generic arm + emitter fix) removes
   // entries from this set as native paths land.
-  if ((ctx.standalone || ctx.wasi) && standaloneArrayLikeMethodRefused(methodName, callExpr)) {
+  if (standaloneArrayLikeMethodRefused(methodName, callExpr)) {
     reportError(
       ctx,
       callExpr,
@@ -457,7 +453,7 @@ export function compileArrayLikePrototypeCall(
   // (#4556) A provably non-callable callback is a decidable TypeError — see
   // `emitArrayLikeNonCallableCallbackThrow` for the step order and why the
   // existing bails below produced no throw at all.
-  if (noJsHost(ctx) && provablyNonCallableCallback(callExpr.arguments[1])) {
+  if (provablyNonCallableCallback(callExpr.arguments[1])) {
     const thrown = emitArrayLikeNonCallableCallbackThrow(ctx, fctx, callExpr, methodName, receiverArg);
     if (thrown !== undefined) return thrown;
   }
@@ -509,8 +505,6 @@ export function compileArrayLikePrototypeCall(
   // the arm's own late imports invalidating an already-baked loadElem funcIdx
   // (the addUnionImports late-shift hazard → `call[0] expected extern`/invalid
   // Wasm). Idempotent; the arms re-fetch these by name too.
-  ensureLateImport(ctx, "__js_array_new", [], [{ kind: "externref" }]);
-  ensureLateImport(ctx, "__js_array_push", [{ kind: "externref" }, { kind: "externref" }], []);
   ensureLateImport(ctx, "__extern_set", [{ kind: "externref" }, { kind: "externref" }, { kind: "externref" }], []);
   ensureLateImport(ctx, "__box_number", [{ kind: "f64" }], [{ kind: "externref" }]);
   // (#2773 S8) A boolean-returning callback (`return prev === null` — the
@@ -527,9 +521,6 @@ export function compileArrayLikePrototypeCall(
   // Routed through the oracle (#1930): the signature fact's `returns` is
   // `{kind:"boolean"}` exactly when the declared return type is boolean.
   const cbTsReturnsBool = ctx.oracle.signatureOf(cbArg)?.returns.kind === "boolean";
-  if (cbTsReturnsBool && !noJsHost(ctx)) {
-    ensureLateImport(ctx, "__box_boolean", [{ kind: "i32" }], [{ kind: "externref" }]);
-  }
   const lengthLimit = methodName === "map" ? arrayLikeLengthLimitGuard(ctx, fctx, true) : []; // (#6651 H6) ArrayCreate
   flushLateImportShifts(ctx, fctx);
 
@@ -767,7 +758,7 @@ export function compileArrayLikePrototypeCall(
       ? // void callback: call_ref leaves nothing on stack. Its result is `undefined`,
         // which is FALSY (#6898, `filter/15.4.4.20-9-c-iii-2`); the host lane keeps
         // its historical constant 1 (byte-identical), the native regime answers 0.
-        [{ op: "i32.const", value: ctx.standalone ? 0 : 1 }]
+        [{ op: "i32.const", value: 0 }]
       : closureInfo.returnType.kind === "f64"
         ? // NaN is falsy in JS; f64.ne(0) treats NaN as truthy. Use |x|>0 instead.
           [{ op: "f64.abs" }, { op: "f64.const", value: 0 }, { op: "f64.gt" }]
@@ -885,7 +876,6 @@ function compileArrayLikePrototypeSearch(
   // and includes/return-abrupt-tonumber-length). The search element is simply
   // `undefined` then. Host/gc keeps the legacy bail (its host bridge handles
   // the form natively).
-  if (callExpr.arguments.length < 2 && !(ctx.standalone || ctx.wasi)) return undefined;
 
   // #1360 PR #274 follow-up: bail to the legacy `__proto_method_call` host
   // bridge when the search argument is statically null or undefined.
@@ -927,14 +917,7 @@ function compileArrayLikePrototypeSearch(
   // `__extern_same_value_zero` (includes) helpers — composed from
   // `__any_from_extern` + `__any_strict_eq` — so the search arm leaks no host
   // import. Host/gc mode keeps the `__host_eq` / `__same_value_zero` host imports.
-  const nativeCmp = ctx.standalone || ctx.wasi;
-  const cmpFn = nativeCmp
-    ? isIncludes
-      ? ensureExternSameValueZeroHelper(ctx)
-      : ensureExternStrictEqHelper(ctx)
-    : isIncludes
-      ? ensureLateImport(ctx, "__same_value_zero", [{ kind: "externref" }, { kind: "externref" }], [{ kind: "i32" }])
-      : ensureLateImport(ctx, "__host_eq", [{ kind: "externref" }, { kind: "externref" }], [{ kind: "i32" }]);
+  const cmpFn = isIncludes ? ensureExternSameValueZeroHelper(ctx) : ensureExternStrictEqHelper(ctx);
   if (lenFn === undefined || getIdxFn === undefined || hasIdxFn === undefined || cmpFn === undefined) return undefined;
   flushLateImportShifts(ctx, fctx);
 
@@ -1053,13 +1036,7 @@ function compileArrayLikePrototypeSearch(
   // late-shift hazard.)
   const getIdxFnNow = ctx.funcMap.get("__extern_get_idx") ?? getIdxFn;
   const hasIdxFnNow = ctx.funcMap.get("__extern_has_idx") ?? hasIdxFn;
-  const cmpFnName = nativeCmp
-    ? isIncludes
-      ? "__extern_same_value_zero"
-      : "__extern_strict_eq"
-    : isIncludes
-      ? "__same_value_zero"
-      : "__host_eq";
+  const cmpFnName = isIncludes ? "__extern_same_value_zero" : "__extern_strict_eq";
   const cmpFnNow = ctx.funcMap.get(cmpFnName) ?? cmpFn;
 
   // (#6912) The scan is the shared AST-free core — the callable-VALUE closure
@@ -1124,8 +1101,7 @@ export function compileArrayPrototypeCall(
     protoExpr.name.text === "prototype" &&
     ts.isIdentifier(protoExpr.expression) &&
     protoExpr.expression.text === "Array";
-  const isEmptyArrayLiteralBorrow =
-    (ctx.standalone || ctx.wasi) && ts.isArrayLiteralExpression(protoExpr) && protoExpr.elements.length === 0;
+  const isEmptyArrayLiteralBorrow = ts.isArrayLiteralExpression(protoExpr) && protoExpr.elements.length === 0;
   if (!isArrayProtoBorrow && !isEmptyArrayLiteralBorrow) return undefined;
 
   // First argument to .call() is the receiver object
@@ -1143,7 +1119,7 @@ export function compileArrayPrototypeCall(
   // closure emits an INVALID module ("need 3, got 2"). The spec loop is
   // receiver-agnostic — it reads through `__extern_length` / `__extern_get_idx`
   // — so the array-like receivers this spelling exists for work directly.
-  if ((ctx.standalone || ctx.wasi) && methodName === "concat") {
+  if (methodName === "concat") {
     const nativeConcat = compileArrayConcatNativeSpecFromExprs(ctx, fctx, receiverArg, callExpr.arguments.slice(1));
     if (nativeConcat !== undefined) return nativeConcat;
   }
@@ -1160,7 +1136,7 @@ export function compileArrayPrototypeCall(
   // typed synthetic-call route can compile this spelling but then traps when
   // the borrowed receiver is dynamically represented. Keep the direct
   // `array.push(...)` path untouched and refuse only the borrowed form.
-  if ((ctx.standalone || ctx.wasi) && methodName === "push") {
+  if (methodName === "push") {
     reportError(
       ctx,
       callExpr,
@@ -1171,7 +1147,6 @@ export function compileArrayPrototypeCall(
   }
   // (#2863 Phase 2) `toLocaleString` is array-native only under standalone/wasi;
   // host keeps the `__extern_toLocaleString` path.
-  if (methodName === "toLocaleString" && !ctx.standalone && !ctx.wasi) return undefined;
 
   // Resolve array info from shape map or TypeScript type.
   //

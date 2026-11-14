@@ -408,11 +408,6 @@ function optionalChainBaseBeforeAwait(root: ts.Expression, awaitTarget: ts.Await
   return found;
 }
 
-/** True when this lane can satisfy the resume-side `__call_function_<n>` import. */
-export function spilledCallLaneSupported(ctx: CodegenContext): boolean {
-  return ctx.standalone !== true && ctx.wasi !== true && ctx.strictNoHostImports !== true;
-}
-
 /** Compile `expr` and leave exactly one externref on the stack. */
 function pushAsExternref(ctx: CodegenContext, fctx: FunctionContext, expr: ts.Expression): void {
   const type = compileExpression(ctx, fctx, expr, EXTERNREF);

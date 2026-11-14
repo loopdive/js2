@@ -18,6 +18,7 @@
 import { describe, expect, it } from "vitest";
 import { compile } from "../src/index.ts";
 import { buildImports } from "../src/runtime.ts";
+import { jsFacingExports } from "./helpers/compile.js";
 
 async function run(source: string): Promise<unknown> {
   const result = await compile(source, { fileName: "test.ts" });
@@ -29,7 +30,7 @@ async function run(source: string): Promise<unknown> {
   if (typeof importObj.setExports === "function") {
     (importObj.setExports as (e: unknown) => void)(instance.exports);
   }
-  return (instance.exports as { test(): unknown }).test();
+  return (jsFacingExports(result, instance) as { test(): unknown }).test(); // (#6979 S7-f) embedder view
 }
 
 describe("#2035 generator return value excluded from iteration", () => {

@@ -97,7 +97,7 @@ export function ensureIrNativePromiseDelayProvider(ctx: CodegenContext): number 
     }
     return cached.providerFuncIdx;
   }
-  if (!ctx.standalone || !ctx.nativeStrings || ctx.wasi) {
+  if (!ctx.nativeStrings || ctx.wasi) {
     throw new Error("native Promise-delay provider requires the standalone native-string target");
   }
   requireUnoccupiedProviderName(ctx);

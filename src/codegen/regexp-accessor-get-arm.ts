@@ -365,7 +365,6 @@ function registerRegExpStructFieldKey(ctx: CodegenContext): number | undefined {
  * skipped rather than the whole arm declined.
  */
 export function unshiftRegExpAccessorGetArm(ctx: CodegenContext): void {
-  if (!(ctx.standalone || ctx.wasi)) return;
   const fn = ctx.mod.functions.find((candidate) => candidate.name === "__extern_get");
   if (!fn) return;
   const predIdx = registerRegExpGetterOnlySet(ctx);
@@ -474,7 +473,7 @@ export function emitGenericFlagsGetterBody(
   // resolved `__extern_get` / `__is_truthy` indices into a minted body.
   ensureObjectRuntime(ctx);
   ensureLateImport(ctx, "__extern_get", [EXTERNREF, EXTERNREF], [EXTERNREF]);
-  if (ctx.standalone) addUnionImports(ctx);
+  addUnionImports(ctx);
   ensureLateImport(ctx, "__is_truthy", [EXTERNREF], [{ kind: "i32" }]);
   ensureLateImport(ctx, "__typeof_object", [EXTERNREF], [{ kind: "i32" }]);
   flushLateImportShifts(ctx, fctx);

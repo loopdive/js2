@@ -96,7 +96,6 @@ const NEXT_CALLABLE_STEP = "__iterator_next_callable_step";
  * the iterator steppers invoke the cached callable for every subsequent step.
  */
 export function ensureIteratorNextCallableHandle(ctx: CodegenContext): number | undefined {
-  if (!ctx.standalone) return undefined;
   const existing = ctx.structMap.get(NEXT_CALLABLE_HANDLE);
   if (existing !== undefined) return existing;
 
@@ -139,7 +138,6 @@ export function ensureIteratorNextCallableHandle(ctx: CodegenContext): number | 
  * missing). Append-only — safe at reserve time, forbidden at fill time.
  */
 export function ensureNativeIterHof(ctx: CodegenContext, methodName: string): number | undefined {
-  if (!ctx.standalone) return undefined;
   if (!NATIVE_ITER_HOF_METHODS.has(methodName)) return undefined;
   const helperName = `__iter_hof_${methodName}`;
   const existing = ctx.funcMap.get(helperName);

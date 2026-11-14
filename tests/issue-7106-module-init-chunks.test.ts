@@ -116,10 +116,12 @@ describe("#7106 chunked <module-init> lowered by the IR", () => {
     expect(exports.probe()).toBe(FILLER_SUM);
   });
 
-  it("emits legacy chunks, and no IR chunk, when selection refuses the initializer", async () => {
-    // This original mixed string/number `+` guest now refuses during selection,
-    // before IR chunk names are reserved. The legacy initializer must still
-    // retain its bounded helpers; a collision suffix is not an ownership proof.
+  it("chunks the formerly refused mixed string/number initializer behind the dispatcher", async () => {
+    // This mixed string/number `+` guest used to refuse during selection
+    // (`operand-coercion-unsupported`) and pinned the legacy chunks. (#6979
+    // S7-f) Measured on the S7-d base: selection claims it now and the IR emits
+    // the body, so the row pins the claim and keeps the dispatch/run checks; a
+    // collision suffix is still not an ownership proof.
     const result = await compileHarnessBody(
       [
         "var tick = 0;",
@@ -128,13 +130,8 @@ describe("#7106 chunked <module-init> lowered by the IR", () => {
       ].join("\n"),
     );
     expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
-    expect(moduleInit(result)?.code).toBe("operand-coercion-unsupported");
-    expect(moduleInit(result)).toMatchObject({
-      stage: "select",
-      legacyBodyEmitted: true,
-      irBodyEmitted: false,
-      irBodyEmissions: 0,
-    });
+    expect(moduleInit(result)?.code).toBeUndefined();
+    expect(moduleInit(result)).toMatchObject({ kind: "emitted", irBodyEmitted: true, irBodyEmissions: 1 });
     expect(result.irPostClaimErrors ?? []).toEqual([]);
     // Both lanes share the preferred prefix; only real name collisions add a
     // numeric suffix. Join declared helpers to the dispatcher's actual calls.

@@ -66,7 +66,6 @@ import type { Instr, ValType } from "../ir/types.js";
 import { tunedFlagEnabled } from "../perf-flags.js";
 
 import type { CodegenContext, FunctionContext } from "./context/types.js";
-import { noJsHost } from "./js-errors.js";
 import { readEnv } from "../env.js";
 
 /** How a receiver was shown to be non-null. Each is a wasm-value fact. */
@@ -283,7 +282,7 @@ function classify(ctx: CodegenContext, q: NonNullProofQuery): NonNullProof | und
   if (kind === "ref") return "nonnull-ref";
   // `__box_number` returns `ref.i31`/`struct.new` on every path — but only the
   // in-module native is ours to reason about.
-  if (q.boxed === true && (kind === "f64" || kind === "i32") && noJsHost(ctx)) return "boxed-number";
+  if (q.boxed === true && (kind === "f64" || kind === "i32")) return "boxed-number";
   if (q.syntacticNonNull === true) return "syntactic-producer";
   return undefined;
 }

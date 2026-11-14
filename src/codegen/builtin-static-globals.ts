@@ -386,7 +386,6 @@ function coerceTopToExternref(fctx: FunctionContext, valueType: ValType | null):
  * reflection surface.
  */
 function pushJsonNamespaceOwnPropSeed(ctx: CodegenContext, fctx: FunctionContext, objLocal: number): void {
-  if (!ctx.standalone && !ctx.wasi) return;
   const defineIdx = ctx.funcMap.get("__defineProperty_value");
   if (defineIdx === undefined) return;
 
@@ -428,7 +427,7 @@ function pushMathReflectNamespaceTagSeed(
   builtinName: string,
   objLocal: number,
 ): void {
-  if ((!ctx.standalone && !ctx.wasi) || (builtinName !== "Math" && builtinName !== "Reflect")) return;
+  if (builtinName !== "Math" && builtinName !== "Reflect") return;
   const defineIdx = ctx.funcMap.get("__defineProperty_value");
   if (defineIdx === undefined) return;
   const boxSymbolIdx = ensureLateImport(ctx, "__box_symbol", [{ kind: "i32" }], [{ kind: "externref" }]);

@@ -22,7 +22,6 @@ import { widenJsDefaultGuessSymbolSlot } from "../js-default-param-type-guess.js
 import { storedClosureWidensOmittableParam } from "./callable-property-omittable-param.js"; // (#6417)
 import { isVoidType, isPromiseType } from "../../checker/type-mapper.js";
 import type { Instr, ValType } from "../../ir/types.js";
-import { callablePropertyIsExtractedHostBuiltin } from "./callable-property-host-value.js"; // (#5342)
 import {
   getClosureFuncSelfTypeIdx,
   getFuncRefWrapperRootTypeIdx,
@@ -34,7 +33,6 @@ import {
   disposableStackShortcutSuppressed,
   tryEmitDisposableStackAnyTwoArm,
 } from "./disposable-any-receiver-two-arm.js"; // (#7060)
-import { noJsHost } from "../js-errors.js";
 import { stringConstantExternrefInstrs } from "../native-strings.js";
 import { ensureObjVecBuilders, reserveApplyClosure } from "../object-runtime.js";
 import { emitRuntimeEvalCarrierUnwrapAny } from "../runtime-eval-callable.js";
@@ -47,7 +45,7 @@ import type {
   DeferredCallablePropertyDispatchPlan,
   FunctionContext,
 } from "../context/types.js";
-import { addFuncType, addImport, localGlobalIdx, resolveWasmType } from "../index.js";
+import { addFuncType, localGlobalIdx, resolveWasmType } from "../index.js";
 import {
   emitExternrefToStructGet,
   emitNullCheckThrow,
@@ -65,14 +63,13 @@ import {
   pushParamSentinel,
 } from "../type-coercion.js";
 import { getFuncParamTypes, getWasmFuncReturnType, isEffectivelyVoidReturn, wasmFuncReturnsVoid } from "./helpers.js";
-import { ensureLateImport, flushLateImportShifts, shiftLateImportIndices } from "./late-imports.js";
+import { ensureLateImport, flushLateImportShifts } from "./late-imports.js";
 import { compileInternalCallArgument } from "./internal-call-argument.js";
 import {
   emitFnctorSubclassDynamicMethodCall,
   emitClosureCallArgcExtras,
   emitResetArgcExtras,
   emitSetArgc,
-  emitWrapperDynamicMethodCall,
   flattenCallArgs,
   STANDALONE_TA_SCALAR_HOFS,
   tracesToTypedArrayIntrinsicProto,
@@ -106,7 +103,6 @@ import {
   argumentExternViews,
   bridgedRestFixedCount,
   collectRestDispatchPlans,
-  restShapedWrapperCandidates,
   restSlotMarshalInstrs,
 } from "./callable-rest-bridge.js"; // (#5334)
 import { tryCompileGetPrototypeOfIsPrototypeOf } from "./object-get-prototype-of.js";
@@ -118,7 +114,6 @@ import {
   FUNCTION_PROTO_HAS_INSTANCE_MEMBER,
   isNullableFunctionFact,
 } from "../function-proto-has-instance.js";
-import { tryEmitHostFunctionHasInstanceCall } from "../host-function-has-instance.js";
 import { ensureStandaloneNativeMethodClosure } from "../native-proto.js";
 import { pushBuiltinFnSingletonValueInstrs } from "../builtin-fn-meta.js";
 import { addStringConstantGlobal } from "../registry/imports.js";
@@ -166,59 +161,16 @@ type FuncCandidate = {
 function callablePropertyRefBridge(ctx: CodegenContext, from: ValType, to: ValType): Instr[] | null {
   const isHostExtern = (type: ValType): boolean => type.kind === "externref" || type.kind === "ref_extern";
   if (valTypesMatch(from, to) || (isHostExtern(from) && isHostExtern(to))) return [];
-  if (ctx.standalone || ctx.wasi) {
-    if ((from.kind === "ref" || from.kind === "ref_null") && isHostExtern(to)) {
-      for (const info of ctx.nativeGenerators.values()) {
-        if (info.stateTypeIdx === from.typeIdx) return [{ op: "extern.convert_any" }];
-      }
+  if ((from.kind === "ref" || from.kind === "ref_null") && isHostExtern(to)) {
+    for (const info of ctx.nativeGenerators.values()) {
+      if (info.stateTypeIdx === from.typeIdx) return [{ op: "extern.convert_any" }];
     }
-    return standaloneRefToExternBridge(ctx, from, to); // (#6704)
   }
-
-  if ((from.kind === "ref" || from.kind === "ref_null") && from.typeIdx !== ctx.anyValueTypeIdx && isHostExtern(to)) {
-    return [{ op: "extern.convert_any" }];
-  }
-  if (isHostExtern(from) && (to.kind === "ref" || to.kind === "ref_null")) {
-    return [
-      { op: "any.convert_extern" },
-      { op: to.kind === "ref_null" ? "ref.cast_null" : "ref.cast", typeIdx: to.typeIdx },
-    ];
-  }
-  return null;
+  return standaloneRefToExternBridge(ctx, from, to);
 }
 
 /** `fillApplyClosure` only emits dynamic method dispatchers for arities 0..8. */
 const REALM_DYNAMIC_CALL_MAX_ARITY = 8;
-
-/**
- * True when a callable property comes from a function-declaration shorthand
- * whose source ABI contains a destructured parameter:
- *
- *   function forEach(value, fn, { allOwnKeys = false } = {}) { ... }
- *   export default { forEach };
- *
- * The function body receives that binding pattern through the compiler's open
- * `externref` parameter carrier. TypeScript, however, exposes the shorthand
- * property with the closed object type of the binding pattern. Synthesizing a
- * wrapper from that property signature therefore produces a different lifted
- * funcref type; the root-wrapper dispatch cannot admit the actual closure and
- * throws even though the stored value is callable. In the JS-host profile,
- * use the existing dynamic closure bridge for this declaration-proven ABI
- * mismatch. Ordinary shorthand functions retain the direct `call_ref` path.
- */
-function callablePropertyHasDestructuredFunctionParam(
-  ctx: CodegenContext,
-  propAccess: ts.PropertyAccessExpression,
-): boolean {
-  const propertyDecl = ctx.oracle.declarationsOf(propAccess.name).find(ts.isShorthandPropertyAssignment);
-  if (!propertyDecl || !ts.isShorthandPropertyAssignment(propertyDecl)) return false;
-
-  const valueDecl = ctx.oracle.valueDeclarationOf(propertyDecl.name);
-  if (!valueDecl || !ts.isFunctionDeclaration(valueDecl)) return false;
-  return valueDecl.parameters.some(
-    (parameter) => ts.isObjectBindingPattern(parameter.name) || ts.isArrayBindingPattern(parameter.name),
-  );
-}
 
 /**
  * TypeScript gives an unannotated JavaScript function that reads `arguments`
@@ -306,17 +258,7 @@ function reserveSpeculativeClosureFuncCandidateTypes(
   if (declared.returnType !== null) tryAlt([]);
   if (declaredKind !== "f64") tryAlt([{ kind: "f64" }]);
   if (declaredKind !== "i32") tryAlt([{ kind: "i32" }]);
-  // (#5334) The pure-rest shape `(...args) -> R` as well, so a rest closure
-  // stored after this site compiles (jest's `vi.fn()` spy) has an arm; its vec
-  // slot is filled at runtime by the bridge.
-  if (!ctx.standalone && !ctx.wasi) {
-    const declaredResult = declared.returnType === null ? [] : [declared.returnType];
-    for (const info of restShapedWrapperCandidates(ctx, sourceFile, [declaredResult, [{ kind: "externref" }], []])) {
-      if (seen.has(info.funcTypeIdx)) continue;
-      seen.add(info.funcTypeIdx);
-      funcCandidates.push({ ...info, restReading: true });
-    }
-  }
+
   return funcCandidates;
 }
 
@@ -338,7 +280,6 @@ function collectClosureFuncCandidates(
   const funcCandidates: FuncCandidate[] = [...initialCandidates];
   const seen = new Set<number>(initialCandidates.map((candidate) => candidate.funcTypeIdx));
 
-  const hostLane = !ctx.standalone && !ctx.wasi;
   for (const [, info] of ctx.closureInfoByTypeIdx) {
     // (#5334) A trailing externref vec is admitted on the candidate's FIXED
     // prefix; whether it is a rest vec or a real array parameter is decided at
@@ -346,7 +287,7 @@ function collectClosureFuncCandidates(
     // only padded declared formals, so it takes that reading only when the vec
     // is provably empty. Any other rest carrier keeps the fail-closed guard: a
     // positional helper ABI cannot synthesize it.
-    const restFixedCount = bridgedRestFixedCount(ctx, info.paramTypes, hostLane);
+    const restFixedCount = bridgedRestFixedCount(ctx, info.paramTypes, false);
     if (restFixedCount === null && rejectRestCandidates && info.hasRestParam === true) continue;
     if (restFixedCount !== null) {
       if (restFixedCount > sigParamCount || (rejectRestCandidates && restFixedCount !== sigParamCount)) continue;
@@ -409,7 +350,7 @@ function buildClosureFuncCandidates(
  * ...handlers) =>`). The checker signature's own `...rest` is the evidence.
  */
 function standaloneRestPropertyInfo(ctx: CodegenContext, sig: ts.Signature, info: ClosureInfo): ClosureInfo | null {
-  if (!noJsHost(ctx) || info.paramTypes.length === 0) return null;
+  if (info.paramTypes.length === 0) return null;
   const decl = sig.getDeclaration();
   if (decl === undefined || !ts.isFunctionLike(decl)) return null;
   const params = decl.parameters;
@@ -518,7 +459,7 @@ function emitRootFuncrefDispatch(
     expectedReturn === null ? ({ kind: "empty" } as const) : ({ kind: "val", type: expectedReturn } as const);
   const numericKind = (t: ValType): boolean => t.kind === "i32" || t.kind === "f64" || t.kind === "i64";
   // (#5334) Read-only over the registry, as the deferred finalizer requires.
-  const restPlans = collectRestDispatchPlans(ctx, !ctx.standalone && !ctx.wasi);
+  const restPlans = collectRestDispatchPlans(ctx, false);
 
   // Build the dispatch chain bottom-up; innermost else = throw TypeError.
   let funcDispatch: Instr[] = terminal;
@@ -1525,17 +1466,11 @@ export function compileCallablePropertyCall(
           ts.isFunctionExpression(decl) ||
           (ts.isVariableDeclaration(decl) && !!decl.initializer && ts.isFunctionExpression(decl.initializer))));
     const approvedStandaloneFnctor =
-      ctx.standalone &&
-      (ctx.fnctorEscapeGate?.approvedNames.has(className) === true ||
-        (recvSym?.name !== undefined && ctx.fnctorEscapeGate?.approvedNames.has(recvSym.name) === true));
-    if (isFnCtorInstance && (!ctx.standalone || approvedStandaloneFnctor)) {
-      if (ctx.standalone) {
-        const dyn = emitFnctorSubclassDynamicMethodCall(ctx, fctx, expr, propAccess, methodName);
-        if (dyn !== undefined) return dyn;
-      } else {
-        const dyn = emitWrapperDynamicMethodCall(ctx, fctx, propAccess.expression, methodName, expr);
-        if (dyn !== null) return dyn;
-      }
+      ctx.fnctorEscapeGate?.approvedNames.has(className) === true ||
+      (recvSym?.name !== undefined && ctx.fnctorEscapeGate?.approvedNames.has(recvSym.name) === true);
+    if (isFnCtorInstance && approvedStandaloneFnctor) {
+      const dyn = emitFnctorSubclassDynamicMethodCall(ctx, fctx, expr, propAccess, methodName);
+      if (dyn !== undefined) return dyn;
     }
   }
 
@@ -1652,10 +1587,6 @@ export function compileCallablePropertyCall(
       },
     }); // (#6704) a `Function`-typed field on the host-free lane
     if (applied !== undefined) return applied;
-    if (fieldType.kind === "externref" && !noJsHost(ctx)) {
-      const dynamic = emitWrapperDynamicMethodCall(ctx, fctx, propAccess.expression, methodName, expr);
-      if (dynamic !== null) return dynamic;
-    }
     return undefined;
   }
 
@@ -1689,15 +1620,6 @@ export function compileCallablePropertyCall(
     pushDefaultValue(fctx, type, ctx);
   };
 
-  if (
-    !noJsHost(ctx) &&
-    (callablePropertyIsExtractedHostBuiltin(ctx, propAccess) ||
-      callablePropertyHasDestructuredFunctionParam(ctx, propAccess))
-  ) {
-    const dynamic = emitWrapperDynamicMethodCall(ctx, fctx, propAccess.expression, methodName, expr);
-    if (dynamic !== null) return dynamic;
-  }
-
   // A structural contract asserted over a live realm-global capability keeps
   // an open externref carrier (#4376). Its callable properties are likewise
   // live JavaScript properties: the function installed at runtime need not use
@@ -1710,7 +1632,6 @@ export function compileCallablePropertyCall(
   // call_ref path, while a dynamic spread stays on the existing fallback until
   // it has a value-preserving ObjVec concat.
   if (
-    (ctx.standalone || ctx.wasi) &&
     !expr.arguments.some((argument) => ts.isSpreadElement(argument)) &&
     expr.arguments.length <= REALM_DYNAMIC_CALL_MAX_ARITY &&
     expressionDescendsFromRealmStructuralBinding(ctx, fctx, propAccess.expression)
@@ -1768,26 +1689,6 @@ export function compileCallablePropertyCall(
       });
       return { kind: "externref" };
     }
-  }
-
-  // A synthetic wrapper derived from a field's call signature cannot encode
-  // whether its final vec parameter came from source `...rest` or was an
-  // explicit array parameter. If a real stored closure of the same signature
-  // is variadic, the static wrapper path would pass the final positional value
-  // as the vec itself and lose every trailing argument. Let the host bridge
-  // inspect the actual closure allocation and use the rest-aware dispatcher.
-  if (
-    fieldType.kind === "externref" &&
-    !noJsHost(ctx) &&
-    [...ctx.closureInfoByTypeIdx.values()].some(
-      (candidate) =>
-        candidate.hasRestParam === true &&
-        candidate.paramTypes.length === sigParamWasmTypes.length &&
-        candidate.paramTypes.every((param, index) => valTypesMatch(param, sigParamWasmTypes[index]!)),
-    )
-  ) {
-    const dynamic = emitWrapperDynamicMethodCall(ctx, fctx, propAccess.expression, methodName, expr);
-    if (dynamic !== null) return dynamic;
   }
 
   // If the field is a ref type, check if it's a known closure struct
@@ -2181,14 +2082,6 @@ export function compileCallableElementAccessCall(
   expr: ts.CallExpression,
   elemAccess: ts.ElementAccessExpression,
 ): InnerResult | undefined {
-  // (#4771) JS-host twin of the standalone arm below: the same inherited
-  // `@@hasInstance` method, lowered onto the host `__instanceof_check`
-  // predicate instead of a native method closure. Declines on every other lane.
-  {
-    const hostHasInstance = tryEmitHostFunctionHasInstanceCall(ctx, fctx, expr, elemAccess);
-    if (hostHasInstance !== undefined) return hostHasInstance;
-  }
-
   {
     const toPrimitive = tryEmitDynamicToPrimitiveMethodCall(ctx, fctx, expr, elemAccess);
     if (toPrimitive !== undefined) return toPrimitive;
@@ -2201,10 +2094,7 @@ export function compileCallableElementAccessCall(
   // calling a null funcref). Bind the receiver explicitly and call the native
   // closure ABI directly; this is deliberately limited to the statically
   // resolvable Function-prototype symbol and standalone mode.
-  if (
-    ctx.standalone &&
-    resolveComputedKeyExpression(ctx, elemAccess.argumentExpression) === FUNCTION_PROTO_HAS_INSTANCE_MEMBER
-  ) {
+  if (resolveComputedKeyExpression(ctx, elemAccess.argumentExpression) === FUNCTION_PROTO_HAS_INSTANCE_MEMBER) {
     const receiver = elemAccess.expression;
     const fact = ctx.oracle.typeFactOf(receiver);
     const directFunctionProto =
@@ -2452,7 +2342,7 @@ export function tryExternClassMethodOnAny(
   // arity guard is dropped for both members: `exec()` / `test()` with ZERO
   // args is the §22.2.6.2 step-3 `ToString(undefined)` case, and it must reach
   // the brand-checking native closure just as the one-arg form does.
-  if (ctx.standalone && (methodName === "test" || methodName === "exec") && expr.arguments.length <= 1) {
+  if ((methodName === "test" || methodName === "exec") && expr.arguments.length <= 1) {
     return null;
   }
 
@@ -2593,7 +2483,7 @@ export function tryExternClassMethodOnAny(
   // #3098 HOF arm drives the native backward `__hof_findLast[Index]` loops by
   // runtime shape. noJsHost-gated (the `join` precedent below): the HOST lane
   // keeps its extern binding byte-identical — the import is satisfiable there.
-  if (noJsHost(ctx) && STANDALONE_TA_SCALAR_HOFS.has(methodName)) return null;
+  if (STANDALONE_TA_SCALAR_HOFS.has(methodName)) return null;
 
   // (#5194 step 3) The rest of the `%TypedArray%.prototype` surface reached on
   // an `any` receiver. The first-match loop below binds whichever extern class
@@ -2615,7 +2505,7 @@ export function tryExternClassMethodOnAny(
   // rather than papered over here. Same `noJsHost` gate as the scalar-HOF
   // decline above; the host lane keeps its byte-identical extern binding
   // because the import IS satisfiable there.
-  if (noJsHost(ctx) && STANDALONE_TA_DISPATCHED_METHODS.has(methodName)) return null;
+  if (STANDALONE_TA_DISPATCHED_METHODS.has(methodName)) return null;
 
   // (#3309) Collection methods (`get`/`set`/`has`/`add`/`delete`/`clear`) on an
   // `any` receiver under standalone/wasi. The candidate pool below still
@@ -2634,13 +2524,12 @@ export function tryExternClassMethodOnAny(
   // `__extern_method_call` bottom arm. JS-host mode is untouched (the generic
   // WeakMap_* host bridge is satisfiable and correct there).
   if (
-    (ctx.standalone || ctx.wasi) &&
-    (methodName === "get" ||
-      methodName === "set" ||
-      methodName === "has" ||
-      methodName === "add" ||
-      methodName === "delete" ||
-      methodName === "clear")
+    methodName === "get" ||
+    methodName === "set" ||
+    methodName === "has" ||
+    methodName === "add" ||
+    methodName === "delete" ||
+    methodName === "clear"
   ) {
     return null;
   }
@@ -2674,33 +2563,10 @@ export function tryExternClassMethodOnAny(
     // (`o.match = String.prototype.match`), which otherwise first-matched the
     // DOM `Cache.match` extern class and leaked `env::Cache_match` host-free.
     // Host lane keeps the identifier-only answer, byte-identical.
-    sourceAssignsAliasedFunctionMember(expr.getSourceFile(), propAccess.expression, methodName, noJsHost(ctx))
+    sourceAssignsAliasedFunctionMember(expr.getSourceFile(), propAccess.expression, methodName, true)
   ) {
     return null;
   }
-
-  // (#1283) The dispatch below emits `externref` hints for every arg and
-  // assumes the call's params are all-externref. When iterating in
-  // insertion order we may otherwise hit an extern class whose method has a
-  // mixed param signature — e.g. TypedArray.set is `(externref, externref,
-  // f64)` and would mismatch the externref args we push. Concretely this
-  // hit WeakMap.set on `wm: any`: TypedArray's `set` was registered before
-  // WeakMap's, so first-match picked Uint8ClampedArray_set and produced an
-  // invalid Wasm module ("call[0] expected externref, found f64").
-  //
-  // Filter candidates to all-externref param signatures so arg coercions
-  // are always type-correct. Result types are NOT filtered — the dispatch
-  // returns sig.results[0]! to the caller verbatim, so methods like
-  // TypedArray.some `(externref, externref) -> f64` (boolean → f64) and
-  // Array.indexOf `(externref, externref, externref) -> f64` are valid
-  // first-match candidates. Filtering on results was too aggressive and
-  // forced these into __extern_method_call host-side dispatch, where wasm
-  // vec receivers are opaque to JS and `arr.some` returned undefined,
-  // surfacing as "some is not a function" runtime errors in test262.
-  const isAllExternrefParams = (sig: { params: ValType[] }): boolean => {
-    for (const p of sig.params) if (p.kind !== "externref") return false;
-    return true;
-  };
 
   // (#3237 Slice 1/2) Native `DisposableStack` dispatch on an `any` receiver.
   // Reaching here means every ambiguity/user-member refusal above already
@@ -2730,7 +2596,7 @@ export function tryExternClassMethodOnAny(
   // unsatisfiable standalone (e.g. `(Object.values(o) as any).join(",")`). Route
   // to the native externref `join` (host-free under noJsHost since #3155); host
   // lane keeps the existing binding (byte-identical).
-  if (noJsHost(ctx) && methodName === "join" && !joinOnTypedArrayIntrinsicProto(ctx, propAccess)) {
+  if (methodName === "join" && !joinOnTypedArrayIntrinsicProto(ctx, propAccess)) {
     const nativeJoin = compileArrayJoinExtern(ctx, fctx, propAccess, expr);
     if (nativeJoin !== null) return nativeJoin;
   }
@@ -2742,76 +2608,6 @@ export function tryExternClassMethodOnAny(
   // `NavigationHistoryEntry_getState`; the npm-compat standalone lane then
   // failed with "retained 2 host import(s)"). Fall through to the native
   // `__extern_method_call` route instead. JS-host lanes are untouched.
-  if (noJsHost(ctx)) return null;
-
-  for (const [key, info] of ctx.externClasses) {
-    if (key !== info.className) continue;
-    const sig = info.methods.get(methodName);
-    if (!sig) continue;
-    if (!isAllExternrefParams(sig)) continue;
-
-    // (#1712) Never bind a candidate that would DROP arguments the call
-    // actually provided. `sig.params` includes `self`, so the method's
-    // user-visible arity is `params.length - 1`; if the call passes MORE
-    // args than that, the loop below silently `drop`s the extras — which is
-    // never the right semantics for a name collision. The concrete failure:
-    // an `any`-typed receiver's `value.replace(/re/g, "rep")` first-matched
-    // `CSSStyleSheet.prototype.replace(text)` (one user arg), so the
-    // replacement string was emitted then immediately dropped and the host
-    // `replace` ran with `undefined` as the replacement (`"a b".replace(/ /,
-    // "|")` → `"aundefinedb"`). This silently broke acorn's
-    // `wordsRegexp(words){ return new RegExp("^(?:"+words.replace(/ /g,"|")+
-    // ")$") }` — keyword recognition failed (`varundefinedreturn…`), so every
-    // identifier mis-tokenized as `name` and the tokenizer looped forever
-    // (#1712 acorn dogfood). Refusing here lets the call fall through to the
-    // generic `__extern_method_call` host dispatch, which forwards ALL args to
-    // the correct `String.prototype.replace`. Mirrors the `.slice` refusal
-    // above (ambiguous String/Array/DOM method names on an `any` receiver).
-    const userArity = sig.params.length - 1;
-    if (expr.arguments.length > userArity) continue;
-
-    const importName = `${info.importPrefix}_${methodName}`;
-    let funcIdx = ctx.funcMap.get(importName);
-    if (funcIdx === undefined) {
-      const importsBefore = ctx.numImportFuncs;
-      const typeIdx = addFuncType(ctx, sig.params, sig.results);
-      addImport(ctx, "env", importName, { kind: "func", typeIdx });
-      shiftLateImportIndices(ctx, fctx, importsBefore, ctx.numImportFuncs - importsBefore);
-      funcIdx = ctx.funcMap.get(importName);
-    }
-    if (funcIdx === undefined) continue;
-
-    compileExpression(ctx, fctx, propAccess.expression, { kind: "externref" });
-    const argCount = sig.params.length - 1; // skip self
-    for (let i = 0; i < expr.arguments.length && i < argCount; i++) {
-      compileExpression(ctx, fctx, expr.arguments[i]!, { kind: "externref" });
-    }
-    for (let i = expr.arguments.length; i < argCount; i++) {
-      // (#5221) An OMITTED argument is `undefined`, not `null` — the same rule
-      // #4644 states for synthesized zero-arg method calls. It matters here
-      // because this arm binds an `any` receiver to the FIRST extern class that
-      // declares the name, and that class's fixed arity is then padded out. For
-      // `a.sort()` on an `any` array the first match is
-      // `Uint8ClampedArray_sort(self, comparator)`, so the raw `ref.null.extern`
-      // reached the host as an EXPLICIT `null` comparator and native
-      // `Array.prototype.sort` threw "The comparison function must be either a
-      // function or undefined: null" (§23.1.3.30 step 1 accepts `undefined`, not
-      // `null`). That is the third of the three defects behind
-      // `Temporal.PlainDate.from({…})`: the polyfill's `PrepareCalendarFields`
-      // sorts its field-name list with a bare `a.sort()`.
-      pushDefaultValue(fctx, sig.params[i + 1] ?? { kind: "externref" }, ctx);
-    }
-    for (let i = argCount; i < expr.arguments.length; i++) {
-      const argType = compileExpression(ctx, fctx, expr.arguments[i]!);
-      if (argType) fctx.body.push({ op: "drop" });
-    }
-    // `pushDefaultValue` may have registered `__get_undefined` as a late import,
-    // which shifts every function index above the import block — so re-read the
-    // callee rather than emitting the index captured before the padding.
-    fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get(importName) ?? funcIdx });
-    if (sig.results.length === 0) return VOID_RESULT;
-    return sig.results[0]!;
-  }
   return null;
 }
 
@@ -2822,5 +2618,5 @@ export function tryExternClassMethodOnAny(
  * `any`-receiver native `join` above declines it.
  */
 function joinOnTypedArrayIntrinsicProto(ctx: CodegenContext, propAccess: ts.PropertyAccessExpression): boolean {
-  return ctx.standalone === true && tracesToTypedArrayIntrinsicProto(ctx, propAccess.expression);
+  return tracesToTypedArrayIntrinsicProto(ctx, propAccess.expression);
 }

@@ -111,7 +111,7 @@ export function tryCorrelateFullyPreparedStandaloneClassBodies(
   routing: ClassBodyCompileRouting | undefined,
 ): boolean {
   if (readEnv("JS2WASM_PREPARED_CLASS_ROUTE_CUTOVER") === "0") return false;
-  if (!ctx.standalone || ctx.wasi || ctx.currentFunc != null || !routing || !declaration.name) return false;
+  if (ctx.wasi || ctx.currentFunc != null || !routing || !declaration.name) return false;
   if (!ts.isSourceFile(declaration.parent) || hasResidualClassBodySyntax(declaration)) return false;
 
   const className = declaration.name.text;

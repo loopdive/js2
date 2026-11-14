@@ -33,7 +33,12 @@ const canonicalEdges = {
     ["../../../wasm/model/instructions.js", true, ["FuncHandle", "Instr", "LocalDef"]],
     ["../../../wasm/physical/exception-control.js", false, ["buildTargetTaggedTry"]],
   ],
-  "src/runtime/wasmgc/async/native-await.ts": [["../../../wasm/model/instructions.js", true, ["Instr"]]],
+  // (#6979 S7-f) fix-on-touch: native-await gained the reaction-handled edge
+  // upstream (fails the same on 6a20eb9f18 without this pin).
+  "src/runtime/wasmgc/async/native-await.ts": [
+    ["../../../wasm/model/instructions.js", true, ["Instr"]],
+    ["../promise/rejection-event-bodies.js", false, ["buildPromiseReactionHandled"]],
+  ],
   "src/wasm/physical/exception-control.ts": [
     ["../model/instructions.js", true, ["BlockType", "Instr", "TryTableCatch", "ValType"]],
   ],
@@ -103,7 +108,6 @@ function walk(body: readonly Instr[]): Instr[] {
 
 function dispatch(overrides: Partial<engine.AsyncFrameDispatchInput> = {}): engine.AsyncFrameDispatchInput {
   return {
-    target: { wasi: false, standalone: false },
     stateTypeIdx: 41,
     stateField: 0,
     modeField: 2,
@@ -233,78 +237,17 @@ describe("resolved async-frame ownership", () => {
       { op: "unreachable" },
     ]);
   });
-  for (const routed of [false, true]) {
-    it(`preserves ${routed ? "routed" : "plain"} host tagged/catch-all isolation and order`, () => {
-      const finalizer: Instr[] = [{ op: "call", funcIdx: 601 }];
-      const input = dispatch({
-        hostGetCaughtIdx: 0,
-        completedStateId: 0,
-        handlers: [
-          {
-            id: 1,
-            parent: 0,
-            finalizerBody: finalizer,
-            ...(routed ? { catchState: 0, catchBinding: { name: "reason", local: 0, spillField: 0 } } : {}),
-          },
-        ],
-      });
-      const result = engine.buildAsyncFrameDispatch(input);
-      const attempt = walk([result]).find((instruction) => instruction.op === "try");
-      assert(attempt?.op === "try");
-      const tagged = attempt.catches![0]!.body;
-      const foreign = attempt.catchAll!;
-      expect(foreign.slice(0, 2)).toEqual([
-        { op: "call", funcIdx: 0 },
-        { op: "local.set", index: 2 },
-      ]);
-      expect(tagged[0]).toEqual({ op: "local.set", index: 2 });
-      expect(foreign.slice(2)).toEqual(tagged.slice(1));
-      const taggedObjects = new Set(walk(tagged));
-      expect(walk(foreign).some((instruction) => taggedObjects.has(instruction))).toBe(false);
-      const flat = walk(tagged);
-      expect(flat.indexOf(finalizer[0]!)).toBeLessThan(
-        flat.findIndex((instruction) => instruction.op === "call" && instruction.funcIdx === 500),
-      );
-      expect(flat.slice(-3)).toEqual([
-        { op: "local.get", index: 0 },
-        { op: "i32.const", value: 0 },
-        { op: "struct.set", typeIdx: 41, fieldIdx: 0 },
-      ]);
-      if (routed) {
-        expect(flat).toContainEqual({ op: "local.set", index: 0 });
-        expect(flat).toContainEqual({ op: "struct.set", typeIdx: 41, fieldIdx: 0 });
-        expect(flat).toContainEqual({ op: "struct.set", typeIdx: 41, fieldIdx: 2 });
-        expect(flat).toContainEqual({ op: "br", depth: 2 });
-      } else expect(result.op).toBe("try");
-    });
-  }
-  it("retains finally-only regions, empty finalizers and ordered equality guards", () => {
-    const first: Instr[] = [],
-      second: Instr[] = [{ op: "nop" }];
-    const handlers = [
-      { id: 1, parent: 0, finalizerBody: first },
-      { id: 2, parent: 1, finalizerBody: second },
-    ];
-    const result = engine.buildAsyncFrameDispatch(dispatch({ handlers }));
-    assert(result.op === "try");
-    const body = result.catches![0]!.body;
-    expect(body.slice(1, 4)).toEqual([{ op: "local.get", index: 3 }, { op: "i32.const", value: 1 }, { op: "i32.eq" }]);
-    expect(body.slice(5, 8)).toEqual([{ op: "local.get", index: 3 }, { op: "i32.const", value: 2 }, { op: "i32.eq" }]);
-    assert(body[4]!.op === "if" && body[8]!.op === "if");
-    expect(body[4]!.then).toBe(first);
-    expect(body[8]!.then).toBe(second);
-    expect(handlers.map((handler) => handler.parent)).toEqual([0, 1]);
+  // (#6979 S7-f) Three rows here pinned the legacy JS-host `try` layout
+  // (`{ wasi: false, standalone: false }`: plain/routed tagged + catch-all
+  // isolation and order, finally-only regions). That arm of
+  // `buildTargetTaggedTry` was unreachable since S7-c and is deleted with the
+  // `{ wasi, standalone }` target, so the rows have no lane left; the dispatch
+  // always lowers to standardized EH (below).
+  it("always uses standardized EH", () => {
+    const result = engine.buildAsyncFrameDispatch(dispatch());
+    expect(walk([result]).filter((instruction) => instruction.op === "try_table")).toHaveLength(1);
+    expect(walk([result]).some((instruction) => instruction.op === "try")).toBe(false);
   });
-  for (const target of [
-    { wasi: true, standalone: false },
-    { wasi: false, standalone: true },
-  ]) {
-    it(`uses unchanged standardized EH for ${JSON.stringify(target)}`, () => {
-      const result = engine.buildAsyncFrameDispatch(dispatch({ target }));
-      expect(walk([result]).filter((instruction) => instruction.op === "try_table")).toHaveLength(1);
-      expect(walk([result]).some((instruction) => instruction.op === "try")).toBe(false);
-    });
-  }
 });
 
 // Fault injection exercises the real source planner and context adapter. It is

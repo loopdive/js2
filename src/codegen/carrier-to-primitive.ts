@@ -89,7 +89,6 @@ import { ensureStandaloneRegExpToStringDyn, standaloneRegExpStructTypeIdx } from
  * in that case because `__to_primitive` returns the original Date unchanged.
  */
 export function unshiftDateToStringArm(ctx: CodegenContext): void {
-  if (!ctx.standalone) return;
   const dateTypeIdx = ctx.structMap.get("__Date");
   if (dateTypeIdx === undefined) return;
   if (ctx.anyStrTypeIdx < 0) return;
@@ -274,7 +273,6 @@ function buildRegExpCarrierArms(builders: CarrierArmBuilders, regexpTypeIdx: num
  * any helper the arms call is absent (a finalize splice must not conjure one).
  */
 export function unshiftCarrierToPrimitiveArms(ctx: CodegenContext): void {
-  if (!ctx.standalone) return;
   const fn = ctx.mod.functions.find((candidate) => candidate.name === "__to_primitive");
   if (!fn) return;
   if (ctx.anyStrTypeIdx < 0) return;

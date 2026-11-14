@@ -51,7 +51,6 @@ export const WITH_HAS_BINDING_NATIVE = "__with_has_binding_native";
  * later late-import batch cannot move it.
  */
 export function ensureWithHasBindingNative(ctx: CodegenContext): number | undefined {
-  if (!ctx.standalone) return undefined;
   const existing = ctx.funcMap.get(WITH_HAS_BINDING_NATIVE);
   if (existing !== undefined) return existing;
 

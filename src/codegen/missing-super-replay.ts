@@ -66,7 +66,7 @@ export function replayMissingSuperBody(
   fctx: FunctionContext,
   ctor: ts.ConstructorDeclaration | undefined,
 ): void {
-  if (!ctx.standalone || !ctor?.body || !canReplayMissingSuperBody(ctor)) return;
+  if (!ctor?.body || !canReplayMissingSuperBody(ctor)) return;
   hoistVarDeclarations(ctx, fctx, ctor.body.statements);
   hoistLetConstWithTdz(ctx, fctx, ctor.body.statements);
   for (const stmt of ctor.body.statements) compileStatement(ctx, fctx, stmt);

@@ -82,7 +82,7 @@ import {
 import { emitReceiverBrandCheck } from "./receiver-brand.js";
 import type { InnerResult } from "./shared.js";
 import { compileExpression } from "./shared.js";
-import { buildThrowJsErrorInstrs, noJsHost, emitThrowTypeError } from "./js-errors.js"; // (#4439) pairs the poison with its guard
+import { buildThrowJsErrorInstrs, emitThrowTypeError } from "./js-errors.js"; // (#4439) pairs the poison with its guard
 import { compileStringLiteral } from "./string-ops.js";
 import { tryCompileCoercedStringMatch, tryCompileCoercedStringSearch } from "./string-search-value.js";
 import { isPlainToStringReplacement } from "./string-proto-replace.js";
@@ -1946,42 +1946,40 @@ export function ensureDynamicStandaloneRegExpCompiler(ctx: CodegenContext): numb
           // catches it is emitted. Never let those two drift apart — an
           // unguarded poison would run a zero-length program and trap
           // uncatchably, the exact failure the deferral exists to avoid.
-          else: !noJsHost(ctx)
-            ? throwConstructed(ctx.funcMap.get("__new_TypeError")!, REGEX_UNSUPPORTED_DYNAMIC_PATTERN)
-            : [
-                // #6677 — the full-grammar runtime compiler first; only what it
-                // cannot model (null) keeps the poison below.
-                ...fullDynamicRegExpAttempt(
-                  ctx,
-                  structTypeIdx,
-                  flattenIdx,
-                  [PATTERN, FBITS, FULL],
-                  [...throwConstructed(syntaxCtorIdx, invalidMessage)],
-                ),
-                { op: "local.get", index: FBITS },
-                { op: "i32.const", value: 0 }, // nGroups = 0 → POISON
-                { op: "i32.const", value: 0 },
-                { op: "array.new_default", typeIdx: i32ArrIdx }, // prog (never run)
-                { op: "i32.const", value: 0 },
-                { op: "array.new_default", typeIdx: i32ArrIdx }, // classTable
-                // `source` keeps the ordinary normalization so `.source` reads and
-                // `toString()` are unaffected by the poison.
-                { op: "local.get", index: PLEN },
-                { op: "i32.eqz" },
-                {
-                  op: "if",
-                  blockType: { kind: "val", type: strRef },
-                  then: nativeStringLiteralInstrs(ctx, "(?:)"),
-                  else: [{ op: "local.get", index: PATTERN }],
-                },
-                { op: "i32.const", value: 0 }, // nScratch
-                { op: "f64.const", value: 0 }, // lastIndex
-                { op: "ref.null.extern" }, // raw lastIndex
-                { op: "i32.const", value: 0 }, // raw present
-                { op: "i32.const", value: 0 }, // lastIndex writable
-                { op: "struct.new", typeIdx: structTypeIdx },
-                { op: "return" },
-              ],
+          else: [
+            // #6677 — the full-grammar runtime compiler first; only what it
+            // cannot model (null) keeps the poison below.
+            ...fullDynamicRegExpAttempt(
+              ctx,
+              structTypeIdx,
+              flattenIdx,
+              [PATTERN, FBITS, FULL],
+              [...throwConstructed(syntaxCtorIdx, invalidMessage)],
+            ),
+            { op: "local.get", index: FBITS },
+            { op: "i32.const", value: 0 }, // nGroups = 0 → POISON
+            { op: "i32.const", value: 0 },
+            { op: "array.new_default", typeIdx: i32ArrIdx }, // prog (never run)
+            { op: "i32.const", value: 0 },
+            { op: "array.new_default", typeIdx: i32ArrIdx }, // classTable
+            // `source` keeps the ordinary normalization so `.source` reads and
+            // `toString()` are unaffected by the poison.
+            { op: "local.get", index: PLEN },
+            { op: "i32.eqz" },
+            {
+              op: "if",
+              blockType: { kind: "val", type: strRef },
+              then: nativeStringLiteralInstrs(ctx, "(?:)"),
+              else: [{ op: "local.get", index: PATTERN }],
+            },
+            { op: "i32.const", value: 0 }, // nScratch
+            { op: "f64.const", value: 0 }, // lastIndex
+            { op: "ref.null.extern" }, // raw lastIndex
+            { op: "i32.const", value: 0 }, // raw present
+            { op: "i32.const", value: 0 }, // lastIndex writable
+            { op: "struct.new", typeIdx: structTypeIdx },
+            { op: "return" },
+          ],
         },
       ],
     },
@@ -2521,7 +2519,7 @@ export function ensureDynamicStandaloneRegExpCompiler(ctx: CodegenContext): numb
       { name: "groupSeen", type: { kind: "i32" } },
       { name: "groupTotal", type: { kind: "i32" } },
       // #6677 — result slot of the full-grammar runtime compiler (standalone only).
-      ...(noJsHost(ctx) ? [{ name: "full", type: { kind: "ref_null", typeIdx: structTypeIdx } as ValType }] : []),
+      ...[{ name: "full", type: { kind: "ref_null", typeIdx: structTypeIdx } as ValType }],
     ],
     body,
     exported: false,
@@ -4282,7 +4280,7 @@ export function tryCompileStandaloneStringMatch(
     return undefined;
   }
   // (#6665) Runtime-only flags: the `string-regexp-dynamic.ts` dispatcher runs the generic @@match body.
-  if (ctx.standalone && hasStandaloneRegExpEngine(ctx) && staticRegExpFlags(ctx, argExpr) === null) return undefined;
+  if (hasStandaloneRegExpEngine(ctx) && staticRegExpFlags(ctx, argExpr) === null) return undefined;
 
   // String-method operand order: subject = receiver, regex = arg.
   return emitStandaloneRegExpMatchCore(ctx, fctx, expr, propAccess.expression, argExpr, receiverOverride);
@@ -4859,8 +4857,7 @@ export function tryCompileStandaloneStringSplit(
   }
   const limitExpr = expr.arguments[1];
   // (#6665) A runtime-only RegExp: the `string-regexp-dynamic.ts` dispatcher runs the generic @@split body.
-  if (ctx.standalone && hasStandaloneRegExpEngine(ctx) && staticRegExpPatternFlags(ctx, reExpr) === null)
-    return undefined;
+  if (hasStandaloneRegExpEngine(ctx) && staticRegExpPatternFlags(ctx, reExpr) === null) return undefined;
 
   // String-method operand order: subject = receiver, regex = arg[0].
   return emitStandaloneRegExpSplitCore(

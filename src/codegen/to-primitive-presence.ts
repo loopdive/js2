@@ -35,9 +35,7 @@ interface ToPrimitivePresenceCapture {
   };
 }
 function protoIndexPresenceDemanded(ctx: CodegenContext): boolean {
-  return (
-    ctx.standalone && !!(ctx.protoIndexDirty || ctx.protoNamedDirty || ctx.protoMemberDirty || ctx.moduleUsesDynTaView)
-  );
+  return !!(ctx.protoIndexDirty || ctx.protoNamedDirty || ctx.protoMemberDirty || ctx.moduleUsesDynTaView);
 }
 
 interface PresenceGraphNode {

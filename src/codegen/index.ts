@@ -211,7 +211,6 @@ import {
 } from "./async-ir-planning.js";
 import { unwrapPromiseTypeNode } from "../ir/async-static.js"; // (#1373b C-1)
 import {
-  functionHasCallableBoundary,
   hasMultiIrProgramCallableBoundary,
   initializeIrProgramCallableBindingGraph,
   initializeMultiPreparedProgram,
@@ -406,12 +405,11 @@ import {
   fillIteratorMethodPresent,
 } from "./iterator-native.js";
 import { fillNativeGeneratorMethodDispatches } from "./generators-native-consumer.js";
-import { emitResizableAbExports, inferNativeTaViewCallResultType } from "./dataview-native.js"; // (#3058)
+import { inferNativeTaViewCallResultType } from "./dataview-native.js"; // (#3058)
 import { fillCombinatorToVec } from "./promise-combinators.js"; // (#2922) dynamic combinator-arg drain fill
 import { fillClosedMethodDispatch, fillPromiseThenableHelpers } from "./closed-method-dispatch.js";
 import { fillPromiseSpeciesOfClass } from "./promise-species-then.js"; // (#5197 r3)
 import { fillDirectCallTrampolines } from "./typed-this.js"; // (#3683 S3) direct-call trampoline fill
-import { fillOwnShadowWrappers } from "./expressions/own-property-method-shadow.js";
 import { noteRetUnboxStats, retUnboxNumericFilterEnabled } from "./ret-unbox-abi.js"; // (#4406) return-ABI funnel census + the Phase-4 admission filter
 import { noteParamUnboxStats } from "./param-unbox-abi.js"; // (#4406 Phase 3) parameter-ABI funnel census
 import { fillSetRecFieldGetters } from "./collections-es2025.js"; // (#3172)
@@ -648,7 +646,7 @@ import {
 import { finalizeForwardClassCallableAbis } from "./class-callable-abi.js";
 import { finalizeForwardClassFieldLayouts } from "./class-field-layout.js";
 import { externrefBackedClassValType } from "./externref-backed-class-rep.js";
-import { classMemberFuncKey, fnctorAncestorOfClass, moduleHasFnctorSubclass } from "./class-member-keys.js"; // (#1983 / #3123)
+import { classMemberFuncKey } from "./class-member-keys.js"; // (#1983 / #3123)
 import { collectAccessorLiteralReturnCarrierTypes } from "./accessor-literal-return-carrier.js"; // (#6614) accessor-literal return slot
 import {
   armExternF64ArgTypeGuardForLinkedProvider,
@@ -737,12 +735,7 @@ import {
   emitDataViewByteExports,
 } from "./vec-access-exports.js"; // (#3272) extracted verbatim
 import { emitInitMarshalHelperRegistration } from "./init-marshal-helpers.js"; // (#5193)
-import { emitInitClassDispatchRegistration } from "./init-class-dispatch-helpers.js"; // (#5202)
-import { emitObjectCreateClassInstanceExport } from "./object-create-class-instance.js"; // (#5239)
-import { emitClassInstanceProtoExport } from "./class-instance-proto.js"; // (#5347)
 import { hostBridgeMethodKeys } from "./runtime-key-class-methods.js"; // (#5358)
-import { emitClassValueConstructExports } from "./class-value-construct.js"; // (#5242)
-import { emitClassObjectOfExport } from "./class-object-of.js"; // (#5354)
 import {
   emitClosureCallExport,
   publishStandaloneTimerCallbackDispatch,
@@ -987,7 +980,7 @@ function typedArrayNameFromTypeNode(node: ts.TypeNode): string | null {
 // width truncation. Float views stay f64. Host/gc mode stays f64 for all but
 // Uint8Array — the JS-host marshalling boundary already classifies non-Uint8
 // typed arrays as `number[]`-on-return; packing host-side risks that boundary and
-// is deferred (#2593 note). The packed map is gated on `ctx.wasi || ctx.standalone`.
+// is deferred (#2593 note). The packed map is gated on `ctx.wasi || the regime flag`.
 const TYPED_ARRAY_PACKED_STORAGE: Readonly<Record<string, { key: string; type: ValType }>> = {
   Int8Array: { key: "i8_byte", type: { kind: "i8" } },
   Uint8Array: { key: "i8_byte", type: { kind: "i8" } },
@@ -1024,10 +1017,8 @@ export function typedArrayVecStorage(ctx: CodegenContext, name: string): { key: 
   // (#838) BigInt views always use i64 storage, independent of target mode —
   // f64 cannot represent a 64-bit BigInt.
   if (BIGINT_TYPED_ARRAY_NAMES.has(name)) return { key: "i64", type: { kind: "i64" } };
-  if (ctx.wasi || ctx.standalone) {
-    const packed = TYPED_ARRAY_PACKED_STORAGE[name];
-    if (packed) return packed;
-  }
+  const packed = TYPED_ARRAY_PACKED_STORAGE[name];
+  if (packed) return packed;
   return { key: "f64", type: { kind: "f64" } };
 }
 
@@ -1534,14 +1525,12 @@ function resolvePositionType(
         const className = refType.getSymbol()?.name ?? node.typeName.text;
         const exactStandaloneDomPosition =
           ctx.requiresStandaloneDomCapability === true &&
-          ctx.standalone &&
           !ctx.wasi &&
           !ctx.strictNoHostImports &&
           STANDALONE_DOM_EXTERN_POSITION_CLASSES.has(className);
         if (
           isExternalDeclaredClass(refType, ctx.checker) &&
-          (!(ctx.standalone || ctx.wasi || ctx.strictNoHostImports) ||
-            exactStandaloneDomPosition ||
+          (exactStandaloneDomPosition ||
             // (#7091) the platform-extern lane (JS environment, native regime)
             (irPlatformExternClassPredicate(ctx)?.(className) === true && irTypeHasPlatformDeclaration(refType)))
         ) {
@@ -2571,11 +2560,8 @@ function isHostOnlyGeneratorImportName(name: string): boolean {
  * host/gc build where these imports DO register — is not matched and still
  * hard-errors.
  */
-function isTargetOmittedHostImportInvariant(
-  err: IrIntegrationError,
-  ctx?: Pick<CodegenContext, "standalone" | "wasi">,
-): boolean {
-  if (!ctx || !(ctx.standalone || ctx.wasi)) return false;
+function isTargetOmittedHostImportInvariant(err: IrIntegrationError, ctx?: Pick<CodegenContext, "wasi">): boolean {
+  if (!ctx) return false;
   if (err.outcome.kind !== "invariant" || err.outcome.code !== "unknown-function-ref") return false;
   const name = /unknown function ref "([^"]+)"/.exec(err.message)?.[1];
   return name !== undefined && isHostOnlyGeneratorImportName(name);
@@ -2583,7 +2569,7 @@ function isTargetOmittedHostImportInvariant(
 
 export function formatIrPathFallbackDiagnostic(
   err: IrIntegrationError,
-  ctx?: Pick<CodegenContext, "standalone" | "wasi">,
+  ctx?: Pick<CodegenContext, "wasi">,
 ): {
   readonly message: string;
   readonly severity: "error" | "warning";
@@ -2672,7 +2658,7 @@ function recordWholeSourceFailure(
   if (!identityContext || ctx.irOutcomes === undefined) return;
   const sourceId = requireIrPlanningSourceId(identityContext, sourceFile);
   if (ctx.irOutcomes.some((outcome) => outcome.sourceId === sourceId)) return;
-  const target: IrObservedOutcome["target"] = ctx.wasi ? "wasi" : ctx.standalone ? "standalone" : "gc";
+  const target: IrObservedOutcome["target"] = ctx.wasi ? "wasi" : "standalone";
   ctx.irOutcomes.push(...buildWholeSourceFailureOutcomes({ sourceFile, identityContext, failure, target }));
 }
 
@@ -2686,7 +2672,7 @@ function recordObservedIrOutcomes(
   skippedBodyUnitIds: ReadonlySet<IrUnitId>,
 ): void {
   if (ctx.irOutcomes === undefined) return;
-  const target: IrObservedOutcome["target"] = ctx.wasi ? "wasi" : ctx.standalone ? "standalone" : "gc";
+  const target: IrObservedOutcome["target"] = ctx.wasi ? "wasi" : "standalone";
   const preparedCallableUnitIds = ctx.irProgramCallablePreparedUnitIds;
   const preparedModuleInitUnitIds = new Set<IrUnitId>([
     ...(ctx.irProgramPreparedModuleInitUnitId ? [ctx.irProgramPreparedModuleInitUnitId] : []),
@@ -3136,7 +3122,7 @@ function planIrOverlay(
       ? makeIrAmbientClassCallResolver(ast.checker)
       : undefined;
   const supportsHostPromiseDelay = jsHostExterns && !ctx.fast && !ctx.nativeStrings;
-  const supportsStandalonePromiseDelay = ctx.standalone && ctx.nativeStrings && !ctx.wasi && !ctx.fast;
+  const supportsStandalonePromiseDelay = ctx.nativeStrings && !ctx.wasi && !ctx.fast;
   const resolvePromiseDelay =
     (supportsHostPromiseDelay || supportsStandalonePromiseDelay) && options.resolveModuleBindings !== false
       ? makeIrPromiseDelayResolver(ast.checker)
@@ -3167,7 +3153,6 @@ function planIrOverlay(
   // member-read claim off in that ONE config (clean pre-claim rejection, not a
   // claim-then-demote). The carrier keying in `ensureDynMemberGet` matches
   // (`ctx.fast`), so every claimed config emits a valid, carrier-aligned body.
-  const dynMemberReadBuildable = !(ctx.fast && !ctx.standalone && !ctx.wasi);
   const fnctorArgumentProjectionAuthority =
     fnctorArgumentProjections.length > 0 ? makeIrFnctorArgumentProjectionAuthority(ctx, ast.checker) : undefined;
   const fnctorParameterPreselection =
@@ -3297,7 +3282,7 @@ function planIrOverlay(
       ...(platformExternClass ? { platformExternClass, platformHostGlobal: isJsEnvironmentPlatformGlobalName } : {}),
       ...(standaloneDomCapability ? { standaloneDomCapability } : {}),
       ...(nativeBufferSurface ? { nativeBufferSurface } : {}),
-      dynMemberReadBuildable,
+      dynMemberReadBuildable: true,
       builtinProtoCompanionSeeded: ctx.protoMemberDirty, // (#7127)
       runtimeEvalMayExecute: ctx.runtimeEvalBoundaryPlan?.providerMayExecute !== false, // (#7106 lever O)
       builtinProtoMember: (builtin, member, anchor) => builtinProtoMemberProvided(ctx, builtin, member, anchor), // (#7294)
@@ -3317,7 +3302,7 @@ function planIrOverlay(
       // IS the non-fast dynamic carrier of the key string, so the head can be
       // read as a dynamic value instead.
       forInHeadValueIsDynamicCarrier: ctx.nativeStrings && !ctx.fast,
-      nativeDynamicInBuildable: !ctx.fast && (ctx.standalone || ctx.wasi) && hostFreeEnvironment(ctx),
+      nativeDynamicInBuildable: !ctx.fast && hostFreeEnvironment(ctx),
       resolveHostGlobal: makeIrHostGlobalResolver(ast.checker),
       ...(calendarResolvers.hostVoidCallback ? { hostVoidCallbacks: calendarResolvers.hostVoidCallback } : {}),
       ...(resolveAmbientClassCall ? { ambientClassCalls: resolveAmbientClassCall } : {}),
@@ -3340,7 +3325,7 @@ function planIrOverlay(
       dynamicInstanceOfAtLegacyParity: (site) => irDynamicInstanceOfAtLegacyParity(ctx, site), // (#7106)
       ...irOpenObjectSelectionOption(ctx), // (#7128 S1)
       isHoleyArrayFilterCall: (expr) => ctx.holeyArrayFilterCallNodes.has(expr),
-      supportsHoleyArrayFilter: ctx.standalone,
+      supportsHoleyArrayFilter: true,
       resolveImplicitParamType: (parameter) => resolveImplicitParamType(parameter)?.kind,
       implicitParamUsesNumericVecAbi,
       dynamicCarrierDivergesFromLegacy: makeIrDynamicCarrierDivergenceProbe(ctx),
@@ -3574,7 +3559,7 @@ function planIrOverlay(
   // (#2928, #7106 A1) Runtime eval is a per-unit boundary: only a function crossing it stays direct
   // (`withdrawEvalBoundaryFunctions`), the others' pushed values planned before their component seals.
   // Class members, and a module init holding an eval site the IR does not lower, stay direct whole.
-  if ((ctx.standalone || ctx.wasi) && ctx.runtimeEvalBoundaryPlan?.callableBoundaryRequired === true) {
+  if (ctx.runtimeEvalBoundaryPlan?.callableBoundaryRequired === true) {
     const failure = runtimeEvalBoundaryFailure();
     withdrawEvalBoundaryFunctions(ctx, ast.sourceFile, identityPlan, safeSelection.funcs, recordPreparationFailure);
     for (const name of safeSelection.classMembers ?? []) recordPreparationFailure(name, failure);
@@ -3920,7 +3905,6 @@ function makeMultiIrSafeSelection(
   }
   const moduleInitUnitId = plan.identityPlan.identityContext.moduleInitUnitIdBySourceFile.get(sourceFile);
   if (moduleInitUnitId) blocked.add(moduleInitUnitId);
-  const conservativeCrossFileCallers = ctx.standalone || ctx.wasi || ctx.strictNoHostImports;
   dropClassMemberFunctionValuePlans(plan); // (#7243) this lane selects no class member
 
   for (const [call, callPlan] of plan.importedCalls) {
@@ -3946,7 +3930,6 @@ function makeMultiIrSafeSelection(
         ([call, callPlan]) => callPlan.ownerUnitId === unitId && isMultiIrProgramCallableCall(ctx, call, callPlan),
       );
     const crossFileTarget = safety.crossFileFunctionNames.has(name);
-    const hasCallableBoundary = crossFileTarget && functionHasCallableBoundary(ctx, declaration);
     const registeredIdx = ctx.funcMap.get(name);
     const registeredFunction = registeredIdx === undefined ? undefined : definedFuncAt(ctx, registeredIdx);
     if (
@@ -3956,7 +3939,7 @@ function makeMultiIrSafeSelection(
           safety.occupiedFunctionNameCounts.get(name) !== 1 ||
           registeredFunction?.name !== name ||
           safety.occupiedFunctionKeys.some((key) => key.startsWith(`${name}$`)) ||
-          (crossFileTarget && (conservativeCrossFileCallers || hasCallableBoundary)))) ||
+          crossFileTarget)) ||
       functionBodyHasUnsupportedImportUse(declaration, plan) ||
       functionBodyContainsNestedRuntimeDeclaration(declaration, plan) ||
       functionTreeRequiresLegacyStructMaterialization(ctx, declaration) ||
@@ -4597,13 +4580,7 @@ function preparedExactLexicalModuleInit(
   identityContext: IrPlanningIdentityContext,
 ): PreparedLexicalModuleInitEvidence | undefined {
   const exactInvocationLane =
-    (!ctx.nativeStrings &&
-      !ctx.standalone &&
-      !ctx.wasi &&
-      planning?.plan.invocation.target === "host" &&
-      (planning.plan.invocation.kind === "wasm-start" || planning.plan.invocation.kind === "deferred-export")) ||
     (ctx.nativeStrings &&
-      ctx.standalone &&
       !ctx.wasi &&
       planning?.plan.invocation.target === "standalone" &&
       (planning.plan.invocation.kind === "wasm-start" || planning.plan.invocation.kind === "deferred-export")) ||
@@ -4768,7 +4745,6 @@ function preparedLexicalComponentPreflightFailure(
   );
   const hasStandaloneDomDispatcher =
     ctx.requiresStandaloneDomInteractionCapability === true &&
-    ctx.standalone &&
     !ctx.wasi &&
     ctx.nativeStrings &&
     ctx.targetProfile.environment === "none";
@@ -4917,7 +4893,7 @@ function planIrFirstBodyRouting(
       ...[...plan.promiseDelays.constructions.values()].map((delay) => delay.ownerUnitId),
       ...plan.suspendingAsyncUnitIds,
     ]),
-    generatorsSkippable: !(ctx.standalone || ctx.wasi || ctx.strictNoHostImports),
+    generatorsSkippable: false,
     numberToString: irBackendCapabilityQuery(ctx)("number-to-string"),
     fast: ctx.fast,
   };
@@ -5200,7 +5176,7 @@ function finalizeLeafStructTypes(ctx: CodegenContext): void {
   // changing one byte of every host module that builds an ArrayBuffer
   // (`sub final` → `sub`, measured on 14 of 22 probes in round 2). Keeping the
   // gate makes host byte-identical to main again.
-  const abVecIdx = ctx.wasi || ctx.standalone ? ctx.vecTypeMap.get("i32_byte") : undefined;
+  const abVecIdx = ctx.vecTypeMap.get("i32_byte");
   if (abVecIdx !== undefined) keepOpenTypeIdxs.add(abVecIdx);
   // (#5383 S2k) The canonical runtime rec group is the shared VALUE ABI of a
   // wasm→wasm link, and WasmGC canonicalizes a rec group AS A WHOLE: one
@@ -5412,7 +5388,7 @@ const SHARED_RUNTIME_NUMBER_FORMAT_EXPORTS = [
  */
 function emitSharedRuntimeProviderExports(ctx: CodegenContext): void {
   if (!ctx.runtimeProvider) return;
-  if (!ctx.nativeStrings || !(ctx.standalone || ctx.wasi)) {
+  if (!ctx.nativeStrings) {
     throw new Error("the js2wasm:runtime provider requires standalone/WASI native strings");
   }
 
@@ -5452,11 +5428,7 @@ export function generateModule(
   const standaloneCalendar = planSingleSourceStandaloneCalendar(ctx, ast.checker, ast.sourceFile, inventoryOptions);
   ctx.runtimeEvalBoundaryPlan = buildIrRuntimeEvalBoundaryPlan([ast.sourceFile], ctx.oracle);
   // (#6956) No runtime-eval provider linked: eval refuses in-module, so no callable boundary.
-  if (
-    (ctx.standalone || ctx.wasi) &&
-    ctx.runtimeEvalProviderAbsent !== true &&
-    ctx.runtimeEvalBoundaryPlan.callableBoundaryRequired
-  ) {
+  if (ctx.runtimeEvalProviderAbsent !== true && ctx.runtimeEvalBoundaryPlan.callableBoundaryRequired) {
     ctx.runtimeEvalCallableBoundaryEnabled = true;
   }
   const sourceFileInternal = ast.sourceFile as ts.SourceFile & { externalModuleIndicator?: ts.Node };
@@ -5498,13 +5470,11 @@ export function generateModule(
   // BEFORE anything can call `ensureObjectRuntime` (which is where the mint
   // hangs), and only for standalone — the gc/host lane keeps its genuine
   // `Object_get_constructor` read.
-  ctx.wrapperCtorCarrierDemanded = ctx.standalone === true && moduleReadsConstructorProp(ast.sourceFile);
+  ctx.wrapperCtorCarrierDemanded = moduleReadsConstructorProp(ast.sourceFile);
   // (#4232) Narrower gate for the ordinary-object arm alone — see
   // `moduleMentionsObjectIdentifier` for why it cannot ride the flag above.
   ctx.plainCtorCarrierDemanded = ctx.wrapperCtorCarrierDemanded && moduleMentionsObjectIdentifier(ast.sourceFile);
-  const collectMemberDeleteReceivers =
-    ctx.standalone === true || ast.sourceFile.text.includes("Reflect.deleteProperty");
-  const memberDeletes = scanModuleMemberDeletes(ast.sourceFile, collectMemberDeleteReceivers);
+  const memberDeletes = scanModuleMemberDeletes(ast.sourceFile, true);
   ctx.moduleUsesDelete = memberDeletes.any;
   ctx.memberDeleteReceiverNames = memberDeletes.receiverNames;
   ctx.deletedBuiltinPrototypeMembers = memberDeletes.builtinPrototypeMembers;
@@ -5516,7 +5486,7 @@ export function generateModule(
   // (#4235) The array + explicit `"single"` path tag. `generateMultiModule`
   // makes the identical call with the whole graph and `"multi"`; keeping the
   // two call shapes the same is what makes the parity testable.
-  ctx.fnctorEscapeGate = analyzeFnctorEscapeGate(ast.checker, [ast.sourceFile], ctx.standalone, "single", (decl) =>
+  ctx.fnctorEscapeGate = analyzeFnctorEscapeGate(ast.checker, [ast.sourceFile], true, "single", (decl) =>
     selfGuardedConstructorLeavesFnctor(ctx, decl),
   );
   // (#3673) Names the source itself defines as function-valued members, so the
@@ -5536,23 +5506,16 @@ export function generateModule(
   // SAME analysis with one extra fact rather than a re-derived approximation.
   let numericAnalysisHost: NumericPropertyAnalysisHost | undefined;
   let priorNumericFunctions: ReadonlySet<string> | undefined;
-  if (ctx.standalone) {
-    // (#4406 Phase 4) ONE traversal, both exclusions. This site already ran
-    // `analyzeBooleanNames` (behind a property-only view), so asking for the
-    // pair costs nothing extra and the two verdicts cannot disagree —
-    // the same "pass the REAL #2847 verdict rather than re-derive it" argument
-    // the `excludeNames` field already documents.
-    const booleanExclusions = analyzeBooleanNames(ctx, [ast.sourceFile]);
-    numericAnalysisHost = {
-      oracle: ctx.oracle,
-      fnctorReceivers: new Set(ctx.fnctorEscapeGate.receiverStruct.keys()),
-      excludeNames: booleanExclusions.properties,
-      excludeFunctionNames: retUnboxNumericFilterEnabled() ? booleanExclusions.functions : undefined,
-      openWorldPropertyReads: dynamicReadCrossesStandaloneLink(ctx), // (#5383)
-    };
-    applyNumericPropertyAnalysis(ctx, numericAnalysisHost, [ast.sourceFile]);
-    priorNumericFunctions = ctx.numericFunctionNames;
-  }
+  const booleanExclusions = analyzeBooleanNames(ctx, [ast.sourceFile]);
+  numericAnalysisHost = {
+    oracle: ctx.oracle,
+    fnctorReceivers: new Set(ctx.fnctorEscapeGate.receiverStruct.keys()),
+    excludeNames: booleanExclusions.properties,
+    excludeFunctionNames: retUnboxNumericFilterEnabled() ? booleanExclusions.functions : undefined,
+    openWorldPropertyReads: dynamicReadCrossesStandaloneLink(ctx), // (#5383)
+  };
+  applyNumericPropertyAnalysis(ctx, numericAnalysisHost, [ast.sourceFile]);
+  priorNumericFunctions = ctx.numericFunctionNames;
   // (#4121) Admission keys on the representation codegen is about to emit. Must
   // follow `applyNumericPropertyAnalysis` (the widening predicate consults its
   // verdict) and precede any function body — `setWidenedCarrierOracle` clears
@@ -5564,10 +5527,8 @@ export function generateModule(
   // for an `any` receiver) is enabled in helper functions compiled BEFORE the
   // construct (the `$__ta_dyn_view` type registers lazily). Host-free lane only;
   // byte-inert when the pattern is absent.
-  if (ctx.standalone || ctx.wasi) {
-    ctx.moduleUsesDynTaView = sourceHasDynamicTaConstruct(ast.checker, ast.sourceFile);
-    ctx.moduleUsesStaticTaView = sourceHasStaticTaViewConstruct(ast.checker, ast.sourceFile);
-  }
+  ctx.moduleUsesDynTaView = sourceHasDynamicTaConstruct(ast.checker, ast.sourceFile);
+  ctx.moduleUsesStaticTaView = sourceHasStaticTaViewConstruct(ast.checker, ast.sourceFile);
   // (#4630) Collect `globalThis.<fn> =` shadow targets so bare reads/calls of a
   // reassigned top-level function consult the override slot.
   // (#4648) Runs on every lane — the aliasing is §16.1.7, not a standalone
@@ -5639,17 +5600,7 @@ export function generateModule(
     // is compiled — gives a stable, isolated slot. `getOrRegisterSubviewType`
     // pulls in only the backing array type (deduped per elem kind), so vec
     // registration order is untouched. Standalone/WASI only; additive.
-    if (ctx.standalone || ctx.wasi) {
-      reserveTypedArraySubviewTypes(ctx);
-      // (#2901 fix) The integer-view PLAIN vec structs are deliberately NOT
-      // reserved here. An up-front, unconditional reservation prepended them to
-      // every standalone module's type table, renumbering the #2835 i8-packed
-      // array type → ~2.6k `array.get: ... packed type i8` failures in the
-      // merge_group (type-index-shift hazard). They are now registered LATE +
-      // ONCE, append-only, inside `typedArrayViewBrandCandidates` (only when a
-      // reflective TypedArray accessor getter is actually emitted) — so non-TA
-      // modules stay byte-identical and nothing already registered is renumbered.
-    }
+    reserveTypedArraySubviewTypes(ctx);
 
     // (#2026 #53) Reserve `$ObjVecArr` up-front when the source declares a class,
     // so the dynamic-`new` runtime-argv path (`new K(...someVar)`) has a stable
@@ -5703,8 +5654,7 @@ export function generateModule(
       // regression: Array/TypedArray .join, TypedArray HasProperty, Array
       // reduce). Passing `undefined` here keeps the gc lane byte-identical to
       // pre-#2520 behaviour while preserving the wasi/standalone flood fix.
-      const libRefs =
-        ctx.wasi || ctx.standalone ? collectReferencedGlobalNames([ast.sourceFile], ctx.checker) : undefined;
+      const libRefs = collectReferencedGlobalNames([ast.sourceFile], ctx.checker);
       // (#4218) The lib-file walk resolves every declared type SYNTACTICALLY
       // through a one-shot declaration index — lib files are fully annotated,
       // so the ~254k per-compile checker queries this loop used to issue are
@@ -5773,79 +5723,9 @@ export function generateModule(
     // wrapper constructors, unknown constructor imports.
     collectAllSourceImports(ctx, ast.sourceFile);
 
-    // #1047 — register __register_prototype host import before any local function
-    // is created so `emitLazyProtoGet` can look it up from funcMap without
-    // triggering late-import index shifts mid-expression compilation.
-    //
-    // #1472 Phase A — these two imports exist solely so the JS-host Proxy
-    // wrapper can present a spec-correct own-key set for class prototypes /
-    // class objects. There is no Proxy (and no JS host) in any no-JS-host
-    // target, so we skip registering them. `emitLazyProtoGet` /
-    // `emitLazyClassObjectGet` gate their `call` emission on the import being
-    // present in funcMap, so skipping registration cleanly drops the host
-    // notification while the struct-backed prototype/class globals still work
-    // natively.
-    //
-    // (#2026 PR-1b) The guard must cover BOTH no-JS-host targets (`wasi` AND
-    // `standalone`), not just `standalone`. Under `--target wasi` the import was
-    // still registered, so `emitLazyClassObjectGet` took its
-    // `__register_class_object` CSV-notification branch and emitted a
-    // `global.get` of the static-methods-CSV string global — which under
-    // nativeStrings is not a real module global, baking a `-1` global index and
-    // crashing binary emit ("global index out of range — -1") the moment a class
-    // flowed as a value (`use(A)`, `new K()` dynamic-new). `standalone` already
-    // skipped this and worked; `wasi` now matches.
-    if (sourceContainsClass(ast.sourceFile) && !(ctx.standalone || ctx.wasi)) {
-      const regProtoTypeIdx = addFuncType(ctx, [{ kind: "externref" }, { kind: "externref" }], []);
-      addImport(ctx, "env", "__register_prototype", { kind: "func", typeIdx: regProtoTypeIdx });
-      // (#1395) Same rationale for the class-object registry — must be
-      // registered up-front so `emitLazyClassObjectGet` finds it in funcMap.
-      const regClassTypeIdx = addFuncType(ctx, [{ kind: "externref" }, { kind: "externref" }], []);
-      addImport(ctx, "env", "__register_class_object", { kind: "func", typeIdx: regClassTypeIdx });
-      // (#4371) A name-only class-object registration can make reflection
-      // report a static method, but it cannot invoke that method after the
-      // class value crosses an `any`/host boundary. Register the real compiled
-      // closure on the singleton as well. This import is host-only for the same
-      // reason as __register_class_object; standalone/wasi keep their zero-host
-      // class representation and direct in-Wasm calls.
-      const regStaticMethodTypeIdx = addFuncType(
-        ctx,
-        [{ kind: "externref" }, { kind: "externref" }, { kind: "externref" }],
-        [],
-      );
-      addImport(ctx, "env", "__register_class_static_method", {
-        kind: "func",
-        typeIdx: regStaticMethodTypeIdx,
-      });
-      // (#4618) Pair the class object with its compiled constructor closure,
-      // prototype singleton, and fnctor parent so the host proxy can present
-      // the class as a constructible function (react-dom's `new type(props)`).
-      // Pre-registered here (not a late import) so the initBody instructions
-      // emitLazyClassObjectGet builds are never invalidated by an import shift.
-      const regClassCtorTypeIdx = addFuncType(
-        ctx,
-        [
-          { kind: "externref" },
-          { kind: "externref" },
-          { kind: "externref" },
-          { kind: "externref" },
-          { kind: "externref" },
-          { kind: "i32" },
-        ],
-        [],
-      );
-      addImport(ctx, "env", "__register_class_ctor", { kind: "func", typeIdx: regClassCtorTypeIdx });
-      // (#4618) Dynamic `extends <value>` parent registration — pre-registered
-      // for the same reason as __register_class_ctor: its late add at a class
-      // DECLARATION statement shifts func indices after an earlier class's
-      // initBody baked its ctor-closure ref.func.
-      const regClassParentTypeIdx = addFuncType(ctx, [{ kind: "externref" }, { kind: "externref" }], []);
-      addImport(ctx, "env", "__register_class_parent", { kind: "func", typeIdx: regClassParentTypeIdx });
-    }
-
     // #1677 — reconcile native-string helper func indices before emitting more
     // defined helpers that look them up. Imports registered after the helpers
-    // (e.g. the __register_prototype / __register_class_object pair above)
+    // (e.g. late-registered imports)
     // shift the helpers' true indices but not their baked-in sibling-call
     // targets nor the `nativeStrHelpers` / funcMap entries the deferred WASI
     // write helpers read. Incremental + no-op on the default GC path.
@@ -5906,7 +5786,7 @@ export function generateModule(
     // `Invalid global index`). Emitting the constructor here gives it a stable
     // slot ahead of user-function compilation. The emitter is idempotent, so
     // this is a no-op when no binding patterns exist.
-    if ((ctx.wasi || ctx.standalone) && sourceContainsBindingPattern(ast.sourceFile)) {
+    if (sourceContainsBindingPattern(ast.sourceFile)) {
       emitWasiErrorConstructor(ctx, "TypeError", 1);
     }
 
@@ -5967,7 +5847,7 @@ export function generateModule(
     noteRegexPropertySource(ctx, ast.sourceFile); // (#6677) link the \p{…} table only if spellable
     noteUntypedRegExpDemand(ctx, ast.sourceFile); // (#6651 B10)
 
-    if (options?.experimentalIR && ctx.standalone && ctx.nativeStrings && !ctx.wasi && !ctx.fast) {
+    if (options?.experimentalIR && ctx.nativeStrings && !ctx.wasi && !ctx.fast) {
       registerIrAsyncPromiseDelayResolver(ctx, makeIrPromiseDelayResolver(ast.checker));
     }
     prepareIdentityPreservingStructuralParams(ctx, [ast.sourceFile]);
@@ -6021,7 +5901,7 @@ export function generateModule(
         sourceFile: ast.sourceFile,
         checker: ast.checker,
         identityContext: irPlanningIdentityContext,
-        target: ctx.wasi ? "wasi" : ctx.standalone ? "standalone" : "host",
+        target: ctx.wasi ? "wasi" : "standalone",
         deferTopLevelInit: ctx.deferTopLevelInit,
       });
       moduleInitPlanning = Object.freeze({
@@ -6392,7 +6272,6 @@ export function generateModule(
     // (#3058) __rab_resize / __ab_max_len exports so the host runtime can
     // implement ArrayBuffer.prototype.resize + maxByteLength/resizable on
     // $__resizable_ab vec structs (no-op unless a resizable buffer exists).
-    emitResizableAbExports(ctx);
 
     // (#1503) __vec_set_byte for crypto.getRandomValues to write into Uint8Array vecs.
     emitVecSetByteExport(ctx);
@@ -6410,21 +6289,14 @@ export function generateModule(
     // Emit __call_@@iterator export for runtime Symbol.iterator dispatch on WasmGC structs
     emitIteratorMethodExport(ctx);
 
-    // (#5239) `Object.create(<class value>.prototype)` — the dynamic twin of
-    // the syntactic `Object.create(Foo.prototype)` fast path.
-    emitObjectCreateClassInstanceExport(ctx);
-
     // (#5347) …and the REVERSE map of the same family: which class minted this
     // struct, and what is its prototype carrier.
-    emitClassInstanceProtoExport(ctx);
 
     // (#5242) `new <class value>(…)` — the CONSTRUCT twin of the same family.
-    emitClassValueConstructExports(ctx, CLASS_VALUE_CONSTRUCT_HELPERS);
 
     // (#5354) "which class is this struct an instance of" — the identity the
     // host needs to give a foreign instance the same `[[Prototype]]` object
     // that `C.prototype` answers across the linked-provider seam.
-    emitClassObjectOfExport(ctx);
 
     // (#2038 / #3100, reserve-then-fill #1719) Rebuild the native `__iterator`
     // body with the LATE ladder arms now that every carrier type is known: the
@@ -6719,9 +6591,6 @@ export function generateModule(
     // because a trampoline whose twin did not materialize degrades to that
     // dispatcher. Read-only over funcMap.
     fillDirectCallTrampolines(ctx);
-    // Fill the reserved `__ownshadow_<C>_<m>_<n>` own-property guards. Read-only
-    // over funcMap/stringGlobalMap (deps registered at reserve time).
-    fillOwnShadowWrappers(ctx);
     // (#4406 Phase 0) The return-ABI funnel. A statement, never a condition —
     // inert without `JS2WASM_RET_UNBOX_STATS=1`.
     noteRetUnboxStats(ctx);
@@ -7015,7 +6884,7 @@ export function generateModule(
     // fill PREPENDS at body[0], which would break those shape probes if it ran
     // first. The prepended `$NativeProto` arm is receiver-disjoint from every
     // vec / TA-view arm, so taking the front slot is semantically inert.
-    // No-op unless `ctx.standalone && ctx.protoIndexDirty` reserved the store.
+    // No-op unless `the regime flag && ctx.protoIndexDirty` reserved the store.
     fillProtoIndexStore(ctx);
 
     // (#4222 ES5 residual) The bounded sparse Array IR provider uses the
@@ -7211,13 +7080,6 @@ export function generateModule(
     // compiled→host marshal during module init fails. Placement contract in the
     // module header. No-op unless a host-construct call site asked for it.
     emitInitMarshalHelperRegistration(ctx);
-
-    // (#5202) The same window's METHOD-DISPATCH facet: a compiled class's
-    // prototype is bare during module init, and the runtime answers `obj.m()`
-    // from the `__class_call_*` / `__member_kind_*` EXPORTS — unreachable for
-    // the whole of the start section. Register them through the same funcref
-    // channel. No-op unless the module has top-level code AND dispatch exports.
-    emitInitClassDispatchRegistration(ctx);
 
     // (#2800) Allocate + wire the `__in_module_init` flag global now that every
     // import global has settled (final absolute index), patching the recorded
@@ -7587,8 +7449,6 @@ function finalizeMultiPreparedModuleInitStartup(
   owner?.assertPreparedModuleInitCurrent();
   // (#5193) Same placement as the single-module pipeline: before the flag wrap.
   emitInitMarshalHelperRegistration(ctx, owner?.preparedModuleInitUnitId);
-  // (#5202) Method-dispatch facet of the same window, same placement.
-  emitInitClassDispatchRegistration(ctx, owner?.preparedModuleInitUnitId);
   finalizeInModuleInitFlag(ctx, owner?.preparedModuleInitUnitId);
   owner?.finalizePreparedModuleInitStartup();
 }
@@ -7802,7 +7662,7 @@ function addWasiStartExport(ctx: CodegenContext): void {
     const startBody: Instr[] =
       exnPrinterIdx !== undefined && ctx.wasiProcExitIdx >= 0
         ? [
-            buildTargetTaggedTry(ctx, { kind: "empty" }, body, [
+            buildTargetTaggedTry({ kind: "empty" }, body, [
               {
                 tagIdx: ctx.exnTagIdx,
                 body: [
@@ -7907,21 +7767,6 @@ function hostClassBridgeFormalIsOptional(ctx: CodegenContext, fullName: string, 
   return (ctx.funcOptionalParams.get(fullName) ?? []).some((info) => info.index === index);
 }
 
-/** Instructions converting one incoming bridge externref into `param`. */
-function hostClassBridgeParamCoercion(ctx: CodegenContext, param: ValType): Instr[] | undefined {
-  if (param.kind === "externref" || param.kind === "ref_extern") return [];
-  if (param.kind !== "f64") return undefined;
-  const unboxIdx = ctx.funcMap.get("__unbox_number");
-  if (unboxIdx === undefined) return undefined;
-  const coercion = callArgCoercionInstrs(
-    { kind: "externref" },
-    param,
-    ctx.funcMap.get("__box_number") ?? null,
-    unboxIdx,
-  );
-  return coercion.length > 0 ? coercion : undefined;
-}
-
 /**
  * Return whether a host-visible class bridge will need to box a numeric
  * result. The bridge bodies below have an `(externref, ...externref) ->
@@ -7943,15 +7788,6 @@ function hostClassBridgeParamCoercion(ctx: CodegenContext, param: ValType): Inst
  */
 function dynamicClassAccessorReadKeys(ctx: CodegenContext): Set<string> {
   const keys = new Set<string>();
-  if (ctx.standalone || ctx.wasi || ctx.hostDynamicClassAccessorReads.size === 0) return keys;
-  for (const className of ctx.classSet) {
-    const accessorPrefix = `${className}_`;
-    for (const accessor of ctx.classAccessorSet) {
-      if (!accessor.startsWith(accessorPrefix)) continue;
-      const key = accessor.slice(accessorPrefix.length);
-      if (ctx.hostDynamicClassAccessorReads.has(key)) keys.add(key);
-    }
-  }
   return keys;
 }
 
@@ -8022,13 +7858,11 @@ function emitIteratorMethodExport(ctx: CodegenContext): void {
   const needsIterator = ctx.funcMap.has("__iterator") || ctx.funcMap.has("__iterator_next");
   // (#5358) `bridgeKeys` = named dynamic demand ∪ runtime-key read demand.
   const bridgeKeys = hostBridgeMethodKeys(ctx);
-  const needsDynamicClassMembers = !ctx.standalone && !ctx.wasi && bridgeKeys.size > 0 && ctx.classSet.size > 0;
   // (#5204) An externref-backed class (`class D extends Array`) has host
   // objects for instances, so every host-side member access on it goes through
   // the class-qualified bridge. A module whose ONLY such access is a property
   // READ of a getter registers no dynamic method name at all and used to bail
   // here, which is why `get g()` read NaN with no dispatch export emitted.
-  const needsExternrefBackedClassBridges = !ctx.standalone && !ctx.wasi && ctx.classExternrefBackedSet.size > 0;
   // (#5223) A module whose ONLY host-side class access is a dynamic property
   // READ of an accessor (`function f(a: any) { return a.g; }`) registers no
   // method name and owns no externref-backed class, so it bailed here and the
@@ -8037,7 +7871,7 @@ function emitIteratorMethodExport(ctx: CodegenContext): void {
   // is empty unless some class in this module declares that accessor.
   const accessorReadKeys = dynamicClassAccessorReadKeys(ctx);
   const needsDynamicAccessorReads = accessorReadKeys.size > 0;
-  if (!needsIterator && !needsDynamicClassMembers && !needsExternrefBackedClassBridges && !needsDynamicAccessorReads) {
+  if (!needsIterator && !needsDynamicAccessorReads) {
     return;
   }
 
@@ -8532,7 +8366,7 @@ function emitIteratorMethodExport(ctx: CodegenContext): void {
     emitMethodDispatch("@@iterator", "__call_@@iterator");
     emitMethodDispatch("next", "__call_next");
     emitMethodDispatch("return", "__call_return"); // (#3100 S5) IteratorClose §7.4.9 USER-arm dispatcher
-    if (ctx.standalone || ctx.wasi) emitMethodDispatch("get_return", "__call_get_return"); // (#6773 S3) GetMethod getter
+    emitMethodDispatch("get_return", "__call_get_return"); // (#6773 S3) GetMethod getter
   }
 
   // (#3123) Host-side class-member resolution surface for fnctor-subclass
@@ -8544,709 +8378,6 @@ function emitIteratorMethodExport(ctx: CodegenContext): void {
   // (the plain-method CALL goes through the existing __call_<key> dispatchers
   // above). Gated on the module actually containing a fnctor subclass so every
   // other module's emitted bytes are IDENTICAL.
-  if (
-    !ctx.standalone &&
-    !ctx.wasi &&
-    (moduleHasFnctorSubclass(ctx) ||
-      needsDynamicClassMembers ||
-      needsExternrefBackedClassBridges ||
-      needsDynamicAccessorReads)
-  ) {
-    // The iterator protocol keys plus every instance method / accessor name
-    // of the module's fnctor-subclass classes (a widened binding dispatches
-    // ALL its member calls dynamically — see fnctorWidenedLocals).
-    const keys = new Set<string>(["next", "return"]);
-    for (const className of ctx.classParentMap.keys()) {
-      if (!needsDynamicClassMembers && fnctorAncestorOfClass(ctx, className) === undefined) continue;
-      for (const m of ctx.classMethodNames.get(className) ?? []) keys.add(m);
-      const accPrefix = `${className}_`;
-      for (const acc of ctx.classAccessorSet) {
-        if (acc.startsWith(accPrefix)) keys.add(acc.slice(accPrefix.length));
-      }
-    }
-    if (needsDynamicClassMembers) {
-      for (const key of bridgeKeys) keys.add(key);
-    }
-    const classMethodArities = new Map<string, Set<number>>();
-    const classMethodRestKeys = new Set<string>();
-    for (const [structName] of ctx.structFields) {
-      const typeIdx = ctx.structMap.get(structName);
-      if (typeIdx === undefined || isSyntheticStructName(structName)) continue;
-      for (const key of keys) {
-        const fullName = `${structName}_${key}`;
-        if (!ctx.classMethodSet.has(fullName)) continue;
-        const methodIdx = ctx.funcMap.get(classMemberFuncKey(ctx, fullName, "instance"));
-        const method = methodIdx === undefined ? undefined : definedFuncAt(ctx, methodIdx);
-        const methodType = method === undefined ? undefined : mod.types[method.typeIdx];
-        if (!methodType || methodType.kind !== "func" || methodType.params.length < 1) continue;
-        if (ctx.funcRestParams.has(fullName)) {
-          classMethodRestKeys.add(key);
-          continue;
-        }
-        if (!bridgeKeys.has(key) && methodType.params.length !== 1) continue;
-        if (methodType.params.slice(1).some((param) => !supportsHostClassBridgeParam(param))) continue;
-        let arities = classMethodArities.get(key);
-        if (!arities) classMethodArities.set(key, (arities = new Set()));
-        arities.add(methodType.params.length - 1);
-      }
-    }
-    // Emit the class call bridges before the kind discriminators.  Keep the
-    // zero-argument bridge in the class-specific namespace as well: the
-    // ToPrimitive finalizer owns `__call_toString`/`__call_valueOf`, and using
-    // those names here would create duplicate exports when a dynamically
-    // called class has either method.  The host resolver prefers this
-    // class-specific name and falls back to the historical iterator export.
-    for (const key of [...keys].sort()) {
-      for (const arity of [...(classMethodArities.get(key) ?? [])].sort((a, b) => a - b)) {
-        const exportName = `__class_call_${key}_${arity}`;
-        if (!ctx.funcMap.has(exportName)) emitMethodDispatch(key, exportName, true, arity);
-      }
-    }
-    for (const key of [...classMethodRestKeys].sort()) {
-      const exportName = `__class_call_${key}_vararg`;
-      if (!ctx.funcMap.has(exportName)) emitMethodDispatch(key, exportName, true, -1);
-    }
-    // Host-backed user subclasses use a real JS object as their receiver, so
-    // the historical ref.test dispatch above can never identify them. Publish
-    // a class-qualified direct bridge for each own method; the runtime selects
-    // it from the user-class tag before consulting the struct/fnctor surface.
-    // (#5204) An externref-backed instance is a host object, so EVERY member
-    // the host can reach on it needs a class-qualified bridge — not only the
-    // keys some call site happened to register. A dynamic property READ of an
-    // accessor (`a.g` on an `any`) registers nothing at all, so the getter
-    // surface was never emitted; a method reached only through such a class
-    // had the same hole. The extra keys are consumed ONLY here — the generic
-    // struct-path bridges and `emitClassMemberKindExports` still see the
-    // original demand-driven `keys` set, so no other module's bytes move.
-    for (const className of [...ctx.classExternrefBackedSet].sort()) {
-      const classKeys = new Set(keys);
-      for (const m of ctx.classMethodNames.get(className) ?? []) classKeys.add(m);
-      const accessorPrefix = `${className}_`;
-      for (const accessor of ctx.classAccessorSet) {
-        if (accessor.startsWith(accessorPrefix)) classKeys.add(accessor.slice(accessorPrefix.length));
-      }
-      for (const key of [...classKeys].sort()) {
-        emitExternrefClassMethodDispatch(ctx, className, key);
-        emitExternrefClassGetterDispatch(ctx, className, key);
-      }
-    }
-    // (#5223) Dynamic accessor READ keys join the member-kind surface ONLY —
-    // not the `keys` set above, which also drives the `__class_call_*` method
-    // bridges and their arity/rest admission. A read must publish the getter,
-    // never widen the method bridge surface.
-    emitClassMemberKindExports(ctx, dispatchTypeIdx, [...new Set([...keys, ...accessorReadKeys])].sort());
-  }
-}
-
-/**
- * Emit a direct `(externref, ...externref) -> externref` bridge for one own
- * method of an externref-backed user subclass. Such instances are host
- * objects (for example `VirtualConsole extends EventEmitter`), therefore a
- * `ref.test` against the synthetic WasmGC class type is necessarily false.
- * The class-qualified export is resolved by the runtime through the instance
- * tag installed by `__tag_user_class`.
- */
-function emitExternrefClassMethodDispatch(ctx: CodegenContext, className: string, methodName: string): void {
-  const fullName = `${className}_${methodName}`;
-  if (!ctx.classMethodSet.has(fullName)) return;
-  const methodIdx = ctx.funcMap.get(classMemberFuncKey(ctx, fullName, "instance"));
-  if (methodIdx === undefined) return;
-  const method = definedFuncAt(ctx, methodIdx);
-  const methodType = method ? ctx.mod.types[method.typeIdx] : undefined;
-  if (!methodType || methodType.kind !== "func" || methodType.params.length < 1) return;
-  // The RECEIVER must be externref — that is what "externref-backed" means.
-  // (#5204) Spelled out rather than reusing `supportsHostClassBridgeParam`,
-  // which now also admits f64: widening the argument allowlist must not
-  // silently widen the receiver test.
-  const receiverType = methodType.params[0]!;
-  if (receiverType.kind !== "externref" && receiverType.kind !== "ref_extern") return;
-  // (#5204) A rest-parameter method takes its `...args` as a typed GC vector,
-  // which no fixed-arity bridge can express. Emit the vararg shape instead.
-  if (ctx.funcRestParams.has(fullName)) {
-    emitExternrefClassVarargDispatch(ctx, className, methodName, fullName, methodIdx, methodType);
-    return;
-  }
-  const params = methodType.params.slice(1);
-  // (#5204) An externref call boundary passes host values directly; a numeric
-  // formal is unboxed at the call site. Everything else (i32/i64/f32 native
-  // annotations, struct/vec refs) still stays on the compiler-generated call
-  // path until it has a dedicated ABI contract — this is not a blanket
-  // widening.
-  const coercions: Instr[][] = [];
-  for (const param of params) {
-    const coercion = hostClassBridgeParamCoercion(ctx, param);
-    if (coercion === undefined) return;
-    coercions.push(coercion);
-  }
-  const exportName = `__class_call_${className}_${methodName}_${params.length}`;
-  if (ctx.funcMap.has(exportName)) return;
-
-  const typeIdx = addFuncType(
-    ctx,
-    [{ kind: "externref" }, ...params.map(() => ({ kind: "externref" as const }))],
-    [{ kind: "externref" }],
-    `$${exportName}_type`,
-  );
-  const body: Instr[] = [];
-  body.push({ op: "local.get", index: 0 });
-  for (let index = 0; index < params.length; index++) {
-    // (#5380) A defaulted numeric formal takes the undefined-preserving arm.
-    const guarded =
-      params[index]!.kind === "f64" && hostClassBridgeFormalIsOptional(ctx, fullName, index)
-        ? undefinedAwareF64BridgeArg(ctx, index + 1, coercions[index]!)
-        : undefined;
-    if (guarded !== undefined) body.push(...guarded);
-    else body.push({ op: "local.get", index: index + 1 }, ...coercions[index]!);
-  }
-  body.push({ op: "call", funcIdx: methodIdx });
-  const resultType = methodType.results.length > 0 ? methodType.results[0] : undefined;
-  if (resultType === undefined) {
-    const undefinedIdx = ctx.funcMap.get("__get_undefined");
-    body.push(undefinedIdx !== undefined ? { op: "call", funcIdx: undefinedIdx } : { op: "ref.null.extern" });
-  } else if (resultType.kind === "ref" || resultType.kind === "ref_null") {
-    body.push({ op: "extern.convert_any" });
-  } else if (resultType.kind === "f64") {
-    const boxIdx = ctx.funcMap.get("__box_number");
-    if (boxIdx === undefined) return;
-    body.push({ op: "call", funcIdx: boxIdx });
-  } else if (resultType.kind === "i32") {
-    const boxIdx = ctx.funcMap.get("__box_number");
-    if (boxIdx === undefined) return;
-    body.push({ op: "f64.convert_i32_s" }, { op: "call", funcIdx: boxIdx });
-  } else if (resultType.kind === "i64") {
-    const boxIdx = ctx.funcMap.get("__box_number");
-    if (boxIdx === undefined) return;
-    body.push({ op: "f64.convert_i64_s" }, { op: "call", funcIdx: boxIdx });
-  } else if (resultType.kind === "f32") {
-    const boxIdx = ctx.funcMap.get("__box_number");
-    if (boxIdx === undefined) return;
-    body.push({ op: "f64.promote_f32" }, { op: "call", funcIdx: boxIdx });
-  }
-
-  const funcIdx = ctx.numImportFuncs + ctx.mod.functions.length;
-  ctx.mod.functions.push({ name: exportName, typeIdx, locals: [], body, exported: true });
-  exportFunc(ctx.mod, exportName, funcIdx);
-  ctx.funcMap.set(exportName, funcIdx);
-}
-
-/** Box a bridge's Wasm result into the `externref` the host ABI returns. */
-function appendClassBridgeResultBoxing(ctx: CodegenContext, body: Instr[], resultType: ValType | undefined): boolean {
-  if (resultType === undefined) {
-    const undefinedIdx = ctx.funcMap.get("__get_undefined");
-    body.push(undefinedIdx !== undefined ? { op: "call", funcIdx: undefinedIdx } : { op: "ref.null.extern" });
-    return true;
-  }
-  if (resultType.kind === "externref" || resultType.kind === "ref_extern") return true;
-  if (resultType.kind === "ref" || resultType.kind === "ref_null") {
-    body.push({ op: "extern.convert_any" });
-    return true;
-  }
-  const boxIdx = ctx.funcMap.get("__box_number");
-  if (boxIdx === undefined) return false;
-  if (resultType.kind === "f64") body.push({ op: "call", funcIdx: boxIdx });
-  else if (resultType.kind === "i32") body.push({ op: "f64.convert_i32_s" }, { op: "call", funcIdx: boxIdx });
-  else if (resultType.kind === "i64") body.push({ op: "f64.convert_i64_s" }, { op: "call", funcIdx: boxIdx });
-  else if (resultType.kind === "f32") body.push({ op: "f64.promote_f32" }, { op: "call", funcIdx: boxIdx });
-  else return false;
-  return true;
-}
-
-/**
- * (#5242) The two boundary primitives `emitClassValueConstructExports` needs,
- * passed in rather than imported so the emitter can live in its own file
- * without a cycle back into this module.
- */
-const CLASS_VALUE_CONSTRUCT_HELPERS = {
-  paramCoercion: hostClassBridgeParamCoercion,
-  boxResult: appendClassBridgeResultBoxing,
-};
-
-/**
- * (#5204) Emit `__class_call_<Class>_<key>_vararg` — the rest-parameter shape
- * of the externref-backed class bridge.
- *
- * The struct path already had a vararg bridge (`__class_call_<key>_vararg`),
- * but it is a `ref.test` cascade over WasmGC struct types and an
- * externref-backed instance is a real host object, so that cascade never
- * matches: `__member_kind_<key>` answers 0 and the resolver misses. The
- * symptom was `sum is not a function` on `class D extends Array` with
- * `sum(...xs)`, at init AND after init.
- *
- * ABI `(receiver, argsArray) -> externref`: the host passes the ordinary JS
- * argument list, this packs its tail into the callee's typed rest vector and
- * reads any fixed parameters ahead of it out of the same array.
- */
-function emitExternrefClassVarargDispatch(
-  ctx: CodegenContext,
-  className: string,
-  methodName: string,
-  fullName: string,
-  methodIdxIn: number,
-  methodType: { kind: "func"; params: ValType[]; results: ValType[] },
-): void {
-  const restInfo = ctx.funcRestParams.get(fullName);
-  if (!restInfo) return;
-  const exportName = `__class_call_${className}_${methodName}_vararg`;
-  if (ctx.funcMap.has(exportName)) return;
-
-  // (#4644's lesson) Locate the rest vector by TYPE, scanning from the end —
-  // `restInfo.restIndex` is a SOURCE parameter index with no receiver slot,
-  // so arithmetic on it is off by one for any method with a fixed parameter
-  // ahead of the rest.
-  let restSlot = -1;
-  for (let p = methodType.params.length - 1; p > 0; p--) {
-    const param = methodType.params[p]!;
-    if (
-      (param.kind === "ref" || param.kind === "ref_null") &&
-      (param as { typeIdx: number }).typeIdx === restInfo.vecTypeIdx
-    ) {
-      restSlot = p;
-      break;
-    }
-  }
-  if (restSlot < 0) return;
-  const fixedParams = methodType.params.slice(1, restSlot);
-  const fixedCoercions: Instr[][] = [];
-  for (const param of fixedParams) {
-    const coercion = hostClassBridgeParamCoercion(ctx, param);
-    if (coercion === undefined) return;
-    fixedCoercions.push(coercion);
-  }
-
-  // Resolve every helper BEFORE reading the target index: `ensureVecNewSized`
-  // / `ensureVecElemSet` can add functions, and a stale `methodIdx` would make
-  // the bridge call a neighbouring function.
-  const newSizedIdx = ensureVecNewSized(ctx, restInfo.vecTypeIdx);
-  const elemSetIdx = ensureVecElemSet(ctx, restInfo.vecTypeIdx);
-  const lengthIdx = ctx.funcMap.get("__extern_length");
-  const getIdxIdx = ctx.funcMap.get("__extern_get");
-  const boxIdx = ctx.funcMap.get("__box_number");
-  if (newSizedIdx === null || elemSetIdx === null) return;
-  if (lengthIdx === undefined || getIdxIdx === undefined || boxIdx === undefined) return;
-  const methodIdx = ctx.funcMap.get(classMemberFuncKey(ctx, fullName, "instance")) ?? methodIdxIn;
-
-  const typeIdx = addFuncType(
-    ctx,
-    [{ kind: "externref" }, { kind: "externref" }],
-    [{ kind: "externref" }],
-    `$${exportName}_type`,
-  );
-  // Locals (params occupy 0 and 1): 2=len, 3=rest-count(f64), 4=count(i32),
-  // 5=vec, 6=loop index.
-  const LEN = 2;
-  const COUNT = 3;
-  const COUNT_I32 = 4;
-  const VEC = 5;
-  const I = 6;
-  const hostIndex = (instrs: Instr[]): void => {
-    instrs.push({ op: "call", funcIdx: boxIdx });
-  };
-  const body: Instr[] = [
-    { op: "local.get", index: 1 },
-    { op: "call", funcIdx: lengthIdx },
-    { op: "local.set", index: LEN },
-    { op: "local.get", index: LEN },
-    { op: "f64.const", value: fixedParams.length },
-    { op: "f64.sub" },
-    { op: "f64.const", value: 0 },
-    { op: "f64.max" },
-    { op: "local.tee", index: COUNT },
-    { op: "i32.trunc_sat_f64_s" },
-    { op: "local.set", index: COUNT_I32 },
-    { op: "local.get", index: COUNT },
-    { op: "call", funcIdx: newSizedIdx },
-    { op: "local.set", index: VEC },
-    { op: "i32.const", value: 0 },
-    { op: "local.set", index: I },
-    {
-      op: "block",
-      blockType: { kind: "empty" },
-      body: [
-        {
-          op: "loop",
-          blockType: { kind: "empty" },
-          body: [
-            { op: "local.get", index: I },
-            { op: "local.get", index: COUNT_I32 },
-            { op: "i32.ge_s" },
-            { op: "br_if", depth: 1 },
-            { op: "local.get", index: VEC },
-            { op: "ref.cast", typeIdx: restInfo.vecTypeIdx },
-            { op: "local.get", index: I },
-            { op: "local.get", index: 1 },
-            ...(() => {
-              const indexInstrs: Instr[] = [
-                { op: "local.get", index: I },
-                { op: "f64.convert_i32_s" },
-                { op: "f64.const", value: fixedParams.length },
-                { op: "f64.add" },
-              ];
-              hostIndex(indexInstrs);
-              return indexInstrs;
-            })(),
-            { op: "call", funcIdx: getIdxIdx },
-            { op: "call", funcIdx: elemSetIdx },
-            { op: "local.get", index: I },
-            { op: "i32.const", value: 1 },
-            { op: "i32.add" },
-            { op: "local.set", index: I },
-            { op: "br", depth: 0 },
-          ],
-        },
-      ],
-    },
-    // Operands in ABI order: (receiver, ...fixed, rest-vector).
-    { op: "local.get", index: 0 },
-  ];
-  for (let arg = 0; arg < fixedParams.length; arg++) {
-    body.push(
-      { op: "local.get", index: 1 },
-      ...(() => {
-        const indexInstrs: Instr[] = [{ op: "f64.const", value: arg }];
-        hostIndex(indexInstrs);
-        return indexInstrs;
-      })(),
-      { op: "call", funcIdx: getIdxIdx },
-      ...fixedCoercions[arg]!,
-    );
-  }
-  body.push(
-    { op: "local.get", index: VEC },
-    { op: "ref.cast", typeIdx: restInfo.vecTypeIdx },
-    { op: "call", funcIdx: methodIdx },
-  );
-  if (!appendClassBridgeResultBoxing(ctx, body, methodType.results.length > 0 ? methodType.results[0] : undefined)) {
-    return;
-  }
-
-  const funcIdx = ctx.numImportFuncs + ctx.mod.functions.length;
-  ctx.mod.functions.push({
-    name: exportName,
-    typeIdx,
-    locals: [
-      { name: "__len", type: { kind: "f64" } },
-      { name: "__count", type: { kind: "f64" } },
-      { name: "__count_i32", type: { kind: "i32" } },
-      { name: "__vec", type: { kind: "anyref" } },
-      { name: "__i", type: { kind: "i32" } },
-    ],
-    body,
-    exported: true,
-  } as WasmFunction);
-  exportFunc(ctx.mod, exportName, funcIdx);
-  ctx.funcMap.set(exportName, funcIdx);
-}
-
-/**
- * (#5204) Emit `__call_get_<Class>_<key>` — the GETTER shape of the
- * externref-backed class bridge.
- *
- * Same root cause as the vararg case: the generic `__call_get_<key>` is
- * reached only after `__member_kind_<key>`'s `ref.test` cascade says "getter",
- * and an externref-backed instance never passes that test. `get g()` on
- * `class D extends Array` therefore read `NaN` — at init and after.
- */
-function emitExternrefClassGetterDispatch(ctx: CodegenContext, className: string, key: string): void {
-  // `classAccessorSet` is keyed `<Class>_<prop>` (class-bodies.ts) while the
-  // emitted getter FUNCTION is `<Class>_get_<prop>` — the two conventions
-  // differ and mixing them silently finds nothing.
-  if (!ctx.classAccessorSet.has(`${className}_${key}`)) return;
-  const fullName = `${className}_get_${key}`;
-  const getterIdx = ctx.funcMap.get(classMemberFuncKey(ctx, fullName, "instance"));
-  if (getterIdx === undefined) return;
-  const getter = definedFuncAt(ctx, getterIdx);
-  const getterType = getter ? ctx.mod.types[getter.typeIdx] : undefined;
-  if (!getterType || getterType.kind !== "func" || getterType.params.length !== 1) return;
-  const receiverType = getterType.params[0]!;
-  if (receiverType.kind !== "externref" && receiverType.kind !== "ref_extern") return;
-  const exportName = `__call_get_${className}_${key}`;
-  if (ctx.funcMap.has(exportName)) return;
-
-  const typeIdx = addFuncType(ctx, [{ kind: "externref" }], [{ kind: "externref" }], `$${exportName}_type`);
-  const body: Instr[] = [
-    { op: "local.get", index: 0 },
-    { op: "call", funcIdx: getterIdx },
-  ];
-  if (!appendClassBridgeResultBoxing(ctx, body, getterType.results.length > 0 ? getterType.results[0] : undefined)) {
-    return;
-  }
-  const funcIdx = ctx.numImportFuncs + ctx.mod.functions.length;
-  ctx.mod.functions.push({ name: exportName, typeIdx, locals: [], body, exported: true });
-  exportFunc(ctx.mod, exportName, funcIdx);
-  ctx.funcMap.set(exportName, funcIdx);
-}
-
-/**
- * (#3123) Emit, per member key, the `__member_kind_<key>` discriminator and
- * (when any struct carries a getter of that name) the `__call_get_<key>`
- * getter dispatcher. Mirrors `emitIteratorMethodExport`'s per-struct
- * ref.test cascade. Getters remain self-only; methods additionally publish
- * their declared arity so the host can select an arity-specific bridge.
- */
-
-function emitClassMemberKindExports(ctx: CodegenContext, dispatchTypeIdx: number, keys: string[]): void {
-  const mod = ctx.mod;
-  const skipStruct = isSyntheticStructName;
-  const bridgeKeys = hostBridgeMethodKeys(ctx); // (#5358)
-
-  type KindEntry = {
-    structName: string;
-    typeIdx: number;
-    funcIdx: number;
-    resultType: ValType | undefined;
-    paramTypes: ValType[];
-    isRest?: boolean;
-  };
-  const collect = (
-    nameOf: (structName: string) => string,
-    memberKind: "method" | "getter" | "setter",
-    memberKey: string,
-  ): KindEntry[] => {
-    const entries: KindEntry[] = [];
-    for (const [structName] of ctx.structFields) {
-      const typeIdx = ctx.structMap.get(structName);
-      if (typeIdx === undefined || skipStruct(structName)) continue;
-      const fullName = nameOf(structName);
-      const funcIdx = ctx.funcMap.get(classMemberFuncKey(ctx, fullName, "instance"));
-      if (funcIdx === undefined) continue;
-      const funcDef = definedFuncAt(ctx, funcIdx);
-      const funcType = funcDef ? mod.types[funcDef.typeIdx] : undefined;
-      if (!funcType || funcType.kind !== "func") continue;
-      const isGetter = memberKind === "getter";
-      const isSetter = memberKind === "setter";
-      const restInfo = ctx.funcRestParams.get(fullName);
-      if (!isGetter && restInfo) {
-        if (!bridgeKeys.has(memberKey)) continue;
-        const resultType: ValType | undefined = funcType.results.length > 0 ? funcType.results[0]! : undefined;
-        entries.push({ structName, typeIdx, funcIdx, resultType, paramTypes: funcType.params, isRest: true });
-        continue;
-      }
-      if (isSetter) {
-        // Dynamic host writes can forward an erased externref without a
-        // representation guess. Typed setter parameters keep their existing
-        // compiled/static path until that ABI has an explicit coercion rule.
-        if (funcType.params.length !== 2 || funcType.params[1]!.kind !== "externref") continue;
-      } else if ((isGetter || !bridgeKeys.has(memberKey)) && funcType.params.length !== 1) {
-        continue;
-      }
-      if (funcType.params.length < 1) continue;
-      if (funcType.params.slice(1).some((param) => !supportsHostClassBridgeParam(param))) continue;
-      const resultType: ValType | undefined = funcType.results.length > 0 ? funcType.results[0]! : undefined;
-      entries.push({ structName, typeIdx, funcIdx, resultType, paramTypes: funcType.params });
-    }
-    return entries;
-  };
-
-  const kindTypeIdx = addFuncType(ctx, [{ kind: "externref" }], [{ kind: "i32" }], "$member_kind_type");
-  const arityTypeIdx = addFuncType(ctx, [{ kind: "externref" }], [{ kind: "i32" }], "$member_arity_type");
-
-  for (const key of keys) {
-    if (ctx.funcMap.has(`__member_kind_${key}`)) continue; // idempotent
-    const methodEntries = collect((s) => `${s}_${key}`, "method", key);
-    const getterEntries = collect((s) => `${s}_get_${key}`, "getter", key);
-    const setterEntries = collect((s) => `${s}_set_${key}`, "setter", key);
-    if (methodEntries.length === 0 && getterEntries.length === 0 && setterEntries.length === 0) continue;
-
-    // __member_kind_<key>: ref.test cascade → 1 (method) / 2 (getter) / 0.
-    {
-      const funcIdx = ctx.numImportFuncs + mod.functions.length;
-      let current: Instr[] = [{ op: "i32.const", value: 0 }];
-      const allEntries = [...methodEntries, ...getterEntries];
-      const arm = (entry: KindEntry, kind: number, tail: Instr[]): Instr[] => {
-        const tagCond = classArmTagCondition(ctx, entry.structName, entry.typeIdx, 1);
-        return [
-          { op: "local.get", index: 1 },
-          { op: "ref.test", typeIdx: entry.typeIdx },
-          ...(tagCond
-            ? ([
-                {
-                  op: "if",
-                  blockType: { kind: "val", type: { kind: "i32" } },
-                  then: tagCond,
-                  else: [{ op: "i32.const", value: 0 }],
-                },
-              ] satisfies Instr[])
-            : []),
-          {
-            op: "if",
-            blockType: { kind: "val", type: { kind: "i32" } },
-            then: [{ op: "i32.const", value: kind }],
-            else: tail,
-          },
-        ];
-      };
-      for (const e of methodEntries) current = arm(e, 1, current);
-      for (const e of getterEntries) current = arm(e, 2, current);
-      const exportName = `__member_kind_${key}`;
-      mod.functions.push({
-        name: exportName,
-        typeIdx: kindTypeIdx,
-        locals: [{ name: "__any", type: { kind: "anyref" } }],
-        body: [{ op: "local.get", index: 0 }, { op: "any.convert_extern" }, { op: "local.set", index: 1 }, ...current],
-        exported: true,
-      } as WasmFunction);
-      exportFunc(mod, exportName, funcIdx);
-      ctx.funcMap.set(exportName, funcIdx);
-    }
-
-    // __member_arity_<key>: identify the matching method's declared arity.
-    // The host bridge uses this to choose the correct all-externref dispatcher
-    // even when the JS call omits trailing arguments or supplies extras.
-    if (methodEntries.length > 0 && !ctx.funcMap.has(`__member_arity_${key}`)) {
-      const funcIdx = ctx.numImportFuncs + mod.functions.length;
-      let current: Instr[] = [{ op: "i32.const", value: -1 }];
-      for (const e of methodEntries) {
-        const tagCond = classArmTagCondition(ctx, e.structName, e.typeIdx, 1);
-        current = [
-          { op: "local.get", index: 1 },
-          { op: "ref.test", typeIdx: e.typeIdx },
-          ...(tagCond
-            ? ([
-                {
-                  op: "if",
-                  blockType: { kind: "val", type: { kind: "i32" } },
-                  then: tagCond,
-                  else: [{ op: "i32.const", value: 0 }],
-                },
-              ] satisfies Instr[])
-            : []),
-          {
-            op: "if",
-            blockType: { kind: "val", type: { kind: "i32" } },
-            then: [{ op: "i32.const", value: e.isRest ? -1 : e.paramTypes.length - 1 }],
-            else: current,
-          },
-        ];
-      }
-      const exportName = `__member_arity_${key}`;
-      mod.functions.push({
-        name: exportName,
-        typeIdx: arityTypeIdx,
-        locals: [{ name: "__any", type: { kind: "anyref" } }],
-        body: [{ op: "local.get", index: 0 }, { op: "any.convert_extern" }, { op: "local.set", index: 1 }, ...current],
-        exported: true,
-      } as WasmFunction);
-      exportFunc(mod, exportName, funcIdx);
-      ctx.funcMap.set(exportName, funcIdx);
-    }
-
-    // __call_get_<key>: run the compiled getter, box-coerce to externref.
-    if (getterEntries.length > 0) {
-      const funcIdx = ctx.numImportFuncs + mod.functions.length;
-      let current: Instr[] = [{ op: "ref.null.extern" }];
-      for (const e of getterEntries) {
-        const callArm: Instr[] = [
-          { op: "local.get", index: 1 },
-          { op: "ref.cast", typeIdx: e.typeIdx },
-          { op: "call", funcIdx: e.funcIdx },
-        ];
-        if (e.resultType === undefined) {
-          const undefinedIdx = ctx.funcMap.get("__get_undefined");
-          callArm.push(
-            ...(undefinedIdx !== undefined
-              ? ([{ op: "call", funcIdx: undefinedIdx }] satisfies Instr[])
-              : ([{ op: "ref.null.extern" }] satisfies Instr[])),
-          );
-        } else if (e.resultType.kind === "ref" || e.resultType.kind === "ref_null") {
-          callArm.push({ op: "extern.convert_any" });
-        } else if (e.resultType.kind === "f64") {
-          const boxIdx = ctx.funcMap.get("__box_number");
-          if (boxIdx !== undefined) callArm.push({ op: "call", funcIdx: boxIdx });
-        } else if (e.resultType.kind === "i32") {
-          callArm.push({ op: "f64.convert_i32_s" });
-          const boxIdx = ctx.funcMap.get("__box_number");
-          if (boxIdx !== undefined) callArm.push({ op: "call", funcIdx: boxIdx });
-        }
-        const tagCond = classArmTagCondition(ctx, e.structName, e.typeIdx, 1);
-        current = [
-          { op: "local.get", index: 1 },
-          { op: "ref.test", typeIdx: e.typeIdx },
-          ...(tagCond
-            ? ([
-                {
-                  op: "if",
-                  blockType: { kind: "val", type: { kind: "i32" } },
-                  then: tagCond,
-                  else: [{ op: "i32.const", value: 0 }],
-                },
-              ] satisfies Instr[])
-            : []),
-          {
-            op: "if",
-            blockType: { kind: "val", type: { kind: "externref" } },
-            then: callArm,
-            else: current,
-          },
-        ];
-      }
-      const exportName = `__call_get_${key}`;
-      mod.functions.push({
-        name: exportName,
-        typeIdx: dispatchTypeIdx,
-        locals: [{ name: "__any", type: { kind: "anyref" } }],
-        body: [{ op: "local.get", index: 0 }, { op: "any.convert_extern" }, { op: "local.set", index: 1 }, ...current],
-        exported: true,
-      } as WasmFunction);
-      exportFunc(mod, exportName, funcIdx);
-      ctx.funcMap.set(exportName, funcIdx);
-    }
-
-    // __call_set_<key>(receiver, value) -> i32. A successful arm invokes the
-    // real compiled prototype setter and returns 1; 0 means this receiver has
-    // no matching setter. The runtime uses that positive result before its
-    // sidecar fallback, preserving setter side effects such as Hono Context's
-    // `res` setter also marking `finalized = true`.
-    if (setterEntries.length > 0) {
-      const setterTypeIdx = addFuncType(
-        ctx,
-        [{ kind: "externref" }, { kind: "externref" }],
-        [{ kind: "i32" }],
-        `$call_set_${key}_type`,
-      );
-      const funcIdx = ctx.numImportFuncs + mod.functions.length;
-      let current: Instr[] = [{ op: "i32.const", value: 0 }];
-      for (const e of setterEntries) {
-        const callArm: Instr[] = [
-          { op: "local.get", index: 2 },
-          { op: "ref.cast", typeIdx: e.typeIdx },
-          { op: "local.get", index: 1 },
-          { op: "call", funcIdx: e.funcIdx },
-          { op: "i32.const", value: 1 },
-        ];
-        const tagCond = classArmTagCondition(ctx, e.structName, e.typeIdx, 2);
-        current = [
-          { op: "local.get", index: 2 },
-          { op: "ref.test", typeIdx: e.typeIdx },
-          ...(tagCond
-            ? ([
-                {
-                  op: "if",
-                  blockType: { kind: "val", type: { kind: "i32" } },
-                  then: tagCond,
-                  else: [{ op: "i32.const", value: 0 }],
-                },
-              ] satisfies Instr[])
-            : []),
-          {
-            op: "if",
-            blockType: { kind: "val", type: { kind: "i32" } },
-            then: callArm,
-            else: current,
-          },
-        ];
-      }
-      const exportName = `__call_set_${key}`;
-      mod.functions.push({
-        name: exportName,
-        typeIdx: setterTypeIdx,
-        locals: [{ name: "__any", type: { kind: "anyref" } }],
-        body: [{ op: "local.get", index: 0 }, { op: "any.convert_extern" }, { op: "local.set", index: 2 }, ...current],
-        exported: true,
-      } as WasmFunction);
-      exportFunc(mod, exportName, funcIdx);
-      ctx.funcMap.set(exportName, funcIdx);
-    }
-  }
 }
 
 /**
@@ -9451,25 +8582,7 @@ function emitToPrimitiveMethodExports(ctx: CodegenContext): void {
   // answered 8 instead of 42. Register it here — before any funcIdx below is
   // captured, and well before the #1984 index-space freeze — so the pad is the
   // real `undefined`.
-  if (!ctx.standalone && !ctx.nativeStrings && ctx.funcMap.get("__get_undefined") === undefined) {
-    let needsUndefinedPad = false;
-    outer: for (const [structName] of ctx.structFields) {
-      for (const methodName of ["toString", "valueOf"]) {
-        const idx = ctx.funcMap.get(`${structName}_${methodName}`);
-        if (idx === undefined) continue;
-        const def = definedFuncAt(ctx, idx);
-        const ft = def ? mod.types[def.typeIdx] : undefined;
-        if (ft?.kind === "func" && ft.params.slice(1).some((p) => p.kind === "externref")) {
-          needsUndefinedPad = true;
-          break outer;
-        }
-      }
-    }
-    if (needsUndefinedPad) {
-      ensureLateImport(ctx, "__get_undefined", [], [{ kind: "externref" }]);
-      flushLateImportShifts(ctx, null);
-    }
-  }
+
   const dispatchTypeIdx = addFuncType(ctx, [{ kind: "externref" }], [{ kind: "externref" }], "$call_toPrim_type");
 
   const emitDispatchForMethod = (methodName: string, exportName: "__call_valueOf" | "__call_toString") => {
@@ -9561,30 +8674,13 @@ function emitToPrimitiveMethodExports(ctx: CodegenContext): void {
       const fieldIdx = fields.findIndex((f) => f.name === methodName);
       const field = fieldIdx >= 0 ? fields[fieldIdx]! : undefined;
 
-      // (#1989) 1. Per-instance closure FIELD takes precedence over the
-      // name-keyed standalone method — but ONLY for structs with the genuine
-      // same-shape collision (`toPrimitiveForkedStructs`): two+ object literals
-      // share the deduped struct type, each storing its OWN method closure in
-      // the field, so reading the field + `call_ref` resolves to the right body
-      // per object. The standalone `${structName}_${methodName}` func is only the
-      // first literal's body and would collapse all instances onto it.
-      //
-      // Single-literal structs intentionally STAY on the name-keyed standalone
-      // arm below: it is the one literal's correct body, is simpler, and
-      // (critically) preserves the §7.1.1.1 step-6 object-return TypeError walk
-      // in `_hostToPrimitive`. Same-shape valueOf/toString closures are
-      // `ref.test`-indistinguishable, so routing a single-literal struct through
-      // the per-instance arm could mis-select the closure type for `toString`.
-      const forked = ctx.toPrimitiveForkedStructs.has(structName);
-      // (#2891) In STANDALONE, also route single-literal closure-method structs
-      // through the per-instance closure arm — there is no host `_hostToPrimitive`
-      // to fall back on, so the name-keyed arm (which collapses same-shape
-      // literals AND cannot model the §7.1.1.1 object-return fall-through) is not
-      // enough. The eqref path below is GUARDED (`closure-eqref-multi`), so the
-      // trap that previously justified gating single literals out is avoided.
-      const preferClosure = forked || ctx.standalone;
+      // (#1989/#2891) 1. Per-instance closure FIELD takes precedence over the
+      // name-keyed `${structName}_${methodName}` method, which is only the first
+      // literal's body and would collapse same-shape literals onto it (and cannot
+      // model the §7.1.1.1 object-return fall-through). The eqref path below is
+      // GUARDED (`closure-eqref-multi`), so single-literal structs take it too.
       let pushedClosure = false;
-      if (field && preferClosure) {
+      if (field) {
         // Closure ref field (eagerly-typed closure ref).
         if (field.type.kind === "ref" || field.type.kind === "ref_null") {
           const closureTypeIdx = (field.type as { typeIdx: number }).typeIdx;
@@ -9985,9 +9081,7 @@ function registerReassignedFunctionGlobals(
   const reassigned = new Set<string>();
   const reassignedDeclarations = new Set<ts.FunctionDeclaration>();
   const runtimeEvalConsumer =
-    (ctx.standalone || ctx.wasi) &&
-    ctx.runtimeEvalProviderAbsent !== true &&
-    runtimeEvalPlan.sharedRealmMayContainCanonicalValues; // (#6956)
+    ctx.runtimeEvalProviderAbsent !== true && runtimeEvalPlan.sharedRealmMayContainCanonicalValues; // (#6956)
   const hasUnknownDynamicSource = runtimeEvalPlan.unknownDynamicSource;
   const varEnvironment = (node: ts.Node): ts.Node => {
     for (let current: ts.Node | undefined = node.parent; current; current = current.parent) {
@@ -10662,7 +9756,6 @@ function multiIrHostImportedFunctions(
   multiAst: MultiTypedAST,
   resolver: irOverlayIdentity.IrIdentityImportedFunctionResolver,
 ): (sourceFile: ts.SourceFile) => irOverlayIdentity.IrIdentityImportedFunctionResolver | undefined {
-  if (!(ctx.standalone || ctx.wasi || ctx.strictNoHostImports)) return () => resolver;
   const namesPlatformGlobal = makeIrPlatformGlobalUseProbe(ctx, multiAst.checker, isJsEnvironmentPlatformGlobalName);
   return (sourceFile) => (namesPlatformGlobal?.(sourceFile) ? resolver : undefined);
 }
@@ -10806,11 +9899,7 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
   const standaloneCalendar = planMultiCalendar(ctx, multiAst.checker, multiAst.sourceFiles, multiAst.entryFile);
   ctx.runtimeEvalBoundaryPlan = buildIrRuntimeEvalBoundaryPlan(multiAst.sourceFiles, ctx.oracle);
   // (#6956) No runtime-eval provider linked: eval refuses in-module, so no callable boundary.
-  if (
-    (ctx.standalone || ctx.wasi) &&
-    ctx.runtimeEvalProviderAbsent !== true &&
-    ctx.runtimeEvalBoundaryPlan.callableBoundaryRequired
-  ) {
+  if (ctx.runtimeEvalProviderAbsent !== true && ctx.runtimeEvalBoundaryPlan.callableBoundaryRequired) {
     ctx.runtimeEvalCallableBoundaryEnabled = true;
   }
   // Multi-file compilation is linked through import/export module records.
@@ -10834,16 +9923,11 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
   // would leave the helper's runtime brand/index classifier permanently short
   // one arm. Mirrors the single-source pre-scan above and is byte-inert when no
   // source contains the dynamic buffer-backed constructor pattern.
-  if (ctx.standalone || ctx.wasi) {
-    ctx.moduleUsesDynTaView = multiAst.sourceFiles.some((sf) => sourceHasDynamicTaConstruct(multiAst.checker, sf));
-    ctx.moduleUsesStaticTaView = multiAst.sourceFiles.some((sf) =>
-      sourceHasStaticTaViewConstruct(multiAst.checker, sf),
-    );
-  }
+  ctx.moduleUsesDynTaView = multiAst.sourceFiles.some((sf) => sourceHasDynamicTaConstruct(multiAst.checker, sf));
+  ctx.moduleUsesStaticTaView = multiAst.sourceFiles.some((sf) => sourceHasStaticTaViewConstruct(multiAst.checker, sf));
   // (#4223) Same demand gate as the single-source path — any source file that
   // reads a `constructor` property arms the wrapper carriers.
-  ctx.wrapperCtorCarrierDemanded =
-    ctx.standalone === true && multiAst.sourceFiles.some((sf) => moduleReadsConstructorProp(sf));
+  ctx.wrapperCtorCarrierDemanded = multiAst.sourceFiles.some((sf) => moduleReadsConstructorProp(sf));
   // (#4232) Narrower gate for the ordinary-object arm alone.
   ctx.plainCtorCarrierDemanded =
     ctx.wrapperCtorCarrierDemanded && multiAst.sourceFiles.some((sf) => moduleMentionsObjectIdentifier(sf));
@@ -10866,12 +9950,8 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
   // why each pass is monotone-safe under that widening, and for the two hazards
   // it handles explicitly (import-alias symbol identity, and cross-module
   // fnctor NAME collisions, which are refused and COUNTED).
-  ctx.fnctorEscapeGate = analyzeFnctorEscapeGate(
-    multiAst.checker,
-    multiAst.sourceFiles,
-    ctx.standalone,
-    "multi",
-    (decl) => selfGuardedConstructorLeavesFnctor(ctx, decl),
+  ctx.fnctorEscapeGate = analyzeFnctorEscapeGate(multiAst.checker, multiAst.sourceFiles, true, "multi", (decl) =>
+    selfGuardedConstructorLeavesFnctor(ctx, decl),
   );
   try {
     // M1A: construct the checker-owned callable graph exactly once, before
@@ -10901,46 +9981,6 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
       if (nodeEnvDts) collectExternDeclarations(ctx, nodeEnvDts);
     });
 
-    // Multi-source projects can import every class declaration from package
-    // files rather than the entry module. Register the host class/prototype
-    // bridges from the whole graph before declarations and bodies are emitted,
-    // matching the single-source path and keeping function indices stable.
-    if (multiAst.sourceFiles.some((sf) => sourceContainsClass(sf)) && !(ctx.standalone || ctx.wasi)) {
-      const regProtoTypeIdx = addFuncType(ctx, [{ kind: "externref" }, { kind: "externref" }], []);
-      addImport(ctx, "env", "__register_prototype", { kind: "func", typeIdx: regProtoTypeIdx });
-      const regClassTypeIdx = addFuncType(ctx, [{ kind: "externref" }, { kind: "externref" }], []);
-      addImport(ctx, "env", "__register_class_object", { kind: "func", typeIdx: regClassTypeIdx });
-      const regStaticMethodTypeIdx = addFuncType(
-        ctx,
-        [{ kind: "externref" }, { kind: "externref" }, { kind: "externref" }],
-        [],
-      );
-      addImport(ctx, "env", "__register_class_static_method", {
-        kind: "func",
-        typeIdx: regStaticMethodTypeIdx,
-      });
-      // (#4618) Same class-ctor bridge registration as the single-source site.
-      const regClassCtorTypeIdx = addFuncType(
-        ctx,
-        [
-          { kind: "externref" },
-          { kind: "externref" },
-          { kind: "externref" },
-          { kind: "externref" },
-          { kind: "externref" },
-          { kind: "i32" },
-        ],
-        [],
-      );
-      addImport(ctx, "env", "__register_class_ctor", { kind: "func", typeIdx: regClassCtorTypeIdx });
-      // (#4618) Dynamic `extends <value>` parent registration — pre-registered
-      // for the same reason as __register_class_ctor: its late add at a class
-      // DECLARATION statement shifts func indices after an earlier class's
-      // initBody baked its ctor-closure ref.func.
-      const regClassParentTypeIdx = addFuncType(ctx, [{ kind: "externref" }, { kind: "externref" }], []);
-      addImport(ctx, "env", "__register_class_parent", { kind: "func", typeIdx: regClassParentTypeIdx });
-    }
-
     // WASI target: check for DOM-only globals and emit compile errors
     if (ctx.wasi) {
       for (const sf of multiAst.sourceFiles) {
@@ -10961,8 +10001,7 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
         // only; under the default gc target it reorders the import/type table and
         // exposed a latent late-import index-shift (#1787 −6). See the matching
         // comment in generateModule above.
-        const libRefs =
-          ctx.wasi || ctx.standalone ? collectReferencedGlobalNames(multiAst.sourceFiles, ctx.checker) : undefined;
+        const libRefs = collectReferencedGlobalNames(multiAst.sourceFiles, ctx.checker);
         // (#4218) Same syntactic lib-walk as generateModule above.
         const libSfs = multiAst.program.getSourceFiles().filter((libSf) => {
           const baseName = libSf.fileName.split("/").pop() ?? libSf.fileName;
@@ -11061,7 +10100,7 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     // field-shape promotion remains owned by the existing single-source path.
     let linkedNumericHost: NumericPropertyAnalysisHost | undefined;
     let linkedPriorNumericFunctions: ReadonlySet<string> | undefined;
-    if (ctx.standalone && readEnv("JS2WASM_NUMERIC_LOCALS") !== "0") {
+    if (readEnv("JS2WASM_NUMERIC_LOCALS") !== "0") {
       // (#4406 Phase 4) Both exclusions here too — assigning in only one of the
       // two lanes makes them disagree about which names are numeric.
       linkedNumericHost = {
@@ -11474,8 +10513,6 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     // because a trampoline whose twin did not materialize degrades to that
     // dispatcher. Read-only over funcMap.
     profilePhase("fill-direct-call-trampolines", () => fillDirectCallTrampolines(ctx));
-    // Same guard fill for the multi-source pipeline.
-    profilePhase("fill-own-shadow-wrappers", () => fillOwnShadowWrappers(ctx));
     // (#4406 Phase 0) Same funnel report in the linked lane.
     profilePhase("note-ret-unbox-stats", () => noteRetUnboxStats(ctx));
     profilePhase("note-param-unbox-stats", () => noteParamUnboxStats(ctx));
@@ -11702,7 +10739,6 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     profilePhase("emit-data-view-byte-exports", () => emitDataViewByteExports(ctx));
 
     // (#3058) Resizable-ArrayBuffer helper exports (mirrors generateModule path).
-    profilePhase("emit-resizable-ab-exports", () => emitResizableAbExports(ctx));
 
     // Multi-source parity with generateModule: linked Web Crypto calls need a
     // byte writer for their Wasm vec argument, and exported typed-array params
@@ -11717,19 +10753,11 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     // Emit __call_@@iterator export for runtime Symbol.iterator dispatch.
     profilePhase("emit-iterator-method-export", () => emitIteratorMethodExport(ctx));
 
-    // (#5239) See the single-source path — same placement, same gate.
-    profilePhase("emit-object-create-class-instance", () => emitObjectCreateClassInstanceExport(ctx));
-
     // (#5347) See the single-source path — same placement, same gate.
-    profilePhase("emit-class-instance-proto", () => emitClassInstanceProtoExport(ctx));
 
     // (#5242) See the single-source path — same placement, same gate.
-    profilePhase("emit-class-value-construct", () =>
-      emitClassValueConstructExports(ctx, CLASS_VALUE_CONSTRUCT_HELPERS),
-    );
 
     // (#5354) See the single-source path — same placement, same gate.
-    profilePhase("emit-class-object-of", () => emitClassObjectOfExport(ctx));
 
     // Multi-source parity with generateModule: rebuild the reserved native
     // iterator ladders only after every graph carrier and receiver dispatcher
@@ -12864,7 +11892,7 @@ export function resolveWasmType(ctx: CodegenContext, tsType: ts.Type, _depth = 0
   if (jsBodyArrayReturnOverride) return jsBodyArrayReturnOverride;
   // (#6774 S21) An accessor object literal is ALWAYS an open `$Object` at run
   // time; a struct-ref view of its type casts it away at every boundary.
-  if (ctx.standalone && isAccessorObjectLiteralType(tsType)) return { kind: "externref" };
+  if (isAccessorObjectLiteralType(tsType)) return { kind: "externref" };
 
   // Fast mode: string → ref $AnyString (not externref).
   // The String WRAPPER object (`new String(x)`) is excluded here — `isStringType`
@@ -13058,10 +12086,7 @@ export function resolveWasmType(ctx: CodegenContext, tsType: ts.Type, _depth = 0
     // construction-path notes in new-builtin-globals.ts / new-super.ts). Numeric
     // views map to a native vec in js-host too, but their Atomics bridge exists.
     const isBigIntView838 = builtinSymName !== undefined && BIGINT_TYPED_ARRAY_NAMES.has(builtinSymName);
-    if (
-      builtinSymName &&
-      (TYPED_ARRAY_NAMES.has(builtinSymName) || (isBigIntView838 && (ctx.wasi || ctx.standalone)))
-    ) {
+    if (builtinSymName && (TYPED_ARRAY_NAMES.has(builtinSymName) || isBigIntView838)) {
       const storage = typedArrayVecStorage(ctx, builtinSymName);
       const vecIdx = getOrRegisterVecType(ctx, storage.key, storage.type);
       return { kind: "ref_null", typeIdx: vecIdx };
@@ -13136,7 +12161,7 @@ export function resolveWasmType(ctx: CodegenContext, tsType: ts.Type, _depth = 0
     // getter/method dispatcher. Other standalone fnctors keep their existing
     // closed representation.
     const approvedStandaloneFnctor =
-      ctx.standalone && sym?.name !== undefined && ctx.fnctorEscapeGate?.approvedNames.has(sym.name) === true;
+      sym?.name !== undefined && ctx.fnctorEscapeGate?.approvedNames.has(sym.name) === true;
     // (#2071) A constructor whose body may `return` a FOREIGN object makes the
     // checker's instance-shape inference UNSOUND: the constructed value may be
     // an arbitrary object (§10.2.1.3 step 13), so a closed struct shape — and
@@ -13146,8 +12171,8 @@ export function resolveWasmType(ctx: CodegenContext, tsType: ts.Type, _depth = 0
     // flow dynamically end to end, the same representation the escape-gate arm
     // below already uses. Must answer in lockstep with the ctor-ABI widening
     // in compileNewFunctionDeclaration — both read the same pure-AST predicate.
-    const foreignReturnFnctor = (ctx.standalone || ctx.wasi) && typeIsForeignReturnFnctorInstance(tsType);
-    if ((!ctx.standalone && !ctx.wasi) || approvedStandaloneFnctor || foreignReturnFnctor) {
+    const foreignReturnFnctor = typeIsForeignReturnFnctorInstance(tsType);
+    if (approvedStandaloneFnctor || foreignReturnFnctor) {
       // Only when the type is an INSTANCE shape (has properties but is not
       // itself callable) — the function VALUE type (callable) must keep its
       // closure-wrapper resolution. Shared with ensureStructForType (#6938).
@@ -13158,7 +12183,7 @@ export function resolveWasmType(ctx: CodegenContext, tsType: ts.Type, _depth = 0
         // that `new F()` yields it — with an approved foreign-return ctor the
         // struct-typed binding guard-cast the overriding $Object to null and
         // every read answered undefined (measured, S13.2.2_A15_T1 shape).
-        if (foreignReturnFnctor && (ctx.standalone || ctx.wasi)) {
+        if (foreignReturnFnctor) {
           return { kind: "externref" };
         }
         // (#4155 Phase 1) Opt-in: map onto the ALREADY-RESERVED runtime struct.
@@ -13208,7 +12233,7 @@ export function resolveWasmType(ctx: CodegenContext, tsType: ts.Type, _depth = 0
     // it answers for BOTH producer arms: the H-1 member the checker propagates
     // into every derived type, and the H-2 mutation case, which leaves no
     // member and is carried by the literal type's own identity.
-    if (ctx.standalone && typeTakesToPrimitiveOpenPath(tsType)) {
+    if (typeTakesToPrimitiveOpenPath(tsType)) {
       return { kind: "externref" };
     }
     // (#4526) A literal with a runtime computed key is an open object; a closed
@@ -14316,14 +13341,14 @@ function hoistVarDecl(
       if (ctx.ordinaryToPrimitiveObjectDeclarations.has(decl)) {
         initForcesExternref = true;
       }
-      if (ctx.standalone && ctx.redeclaredObjectIdentityDeclarations.has(decl)) {
+      if (ctx.redeclaredObjectIdentityDeclarations.has(decl)) {
         initForcesExternref = true;
       }
       // (#802 Slice A) A proto-receiver object literal is built as an open
       // `$Object` (externref, standalone-only) in compileObjectLiteral; the
       // hoisted `var` slot must be externref to match (mirrors the let/const path
       // in statements/variables.ts via ctx.dynamicProtoLiteralNodes).
-      if (ctx.standalone && ctx.dynamicProtoLiteralNodes.has(decl.initializer)) {
+      if (ctx.dynamicProtoLiteralNodes.has(decl.initializer)) {
         initForcesExternref = true;
       }
       for (const p of decl.initializer.properties) {
@@ -14877,7 +13902,7 @@ function stripRegExpInferenceWrapper(expr: ts.Expression): ts.Expression {
 }
 
 function inferStandaloneRegExpMatchArrayType(ctx: CodegenContext, declaration: ts.VariableDeclaration): ValType | null {
-  return ctx.standalone ? inferStandaloneRegExpMatchResultType(ctx, declaration) : null;
+  return inferStandaloneRegExpMatchResultType(ctx, declaration);
 }
 
 function inferLetConstInitializerWasmType(
@@ -14949,7 +13974,7 @@ function inferLetConstInitializerWasmType(
   // time (so plain-array `a[i]` stays zero-cost). `slice` still returns an
   // independent copy (a plain vec). The receiver may itself be a subview (nested
   // subarray) — its element kind is recovered from the base vec.
-  if (methodName === "subarray" && (ctx.standalone || ctx.wasi)) {
+  if (methodName === "subarray") {
     const recvIdx = (receiverType as { typeIdx: number }).typeIdx;
     // elemKind from the receiver's struct name: `__vec_<elem>` (plain typed array)
     // or `__subview_<elem>` (nested subarray over a subview).
@@ -14961,81 +13986,6 @@ function inferLetConstInitializerWasmType(
     }
   }
   return { kind: "ref_null", typeIdx: receiverType.typeIdx };
-}
-
-/**
- * (#3123) When `varType` names a fnctor-subclass class (`class C extends F`,
- * F a top-level plain function), return the compiled class name; else
- * undefined. Class-expression synthetic names resolve through
- * `classExprNameMap` like the method-call ladder does.
- */
-function fnctorSubclassNameOfType(ctx: CodegenContext, varType: ts.Type): string | undefined {
-  let clsName = varType.getSymbol()?.name;
-  if (clsName !== undefined && !ctx.classSet.has(clsName)) {
-    clsName = ctx.classExprNameMap.get(clsName) ?? clsName;
-  }
-  if (clsName === undefined || !ctx.classSet.has(clsName)) return undefined;
-  return fnctorAncestorOfClass(ctx, clsName) !== undefined ? clsName : undefined;
-}
-
-/**
- * (#3123) True when the let-binding `decl` (named `name`, declared as class
- * `clsName`) is re-assigned somewhere in its containing FUNCTION with a RHS
- * whose declared type is NOT that class — i.e. the slot can hold a foreign
- * (usually host-object) value at runtime. Oracle-based (#1930): the RHS type
- * name comes from `ctx.oracle.declaredNameOf`. Name-matched but scoped to the
- * SAME function (nested function bodies are not descended), so an inner
- * function's same-named binding cannot false-positive; same-function shadows
- * are already excluded by the pre-hoist caller (`localMap.has(name)` skip).
- */
-function bindingHasForeignReassignment(
-  ctx: CodegenContext,
-  decl: ts.VariableDeclaration,
-  name: string,
-  clsName: string,
-): boolean {
-  const declFunc = getContainingFunctionForTdz(decl);
-  const funcBody = declFunc && "body" in declFunc ? (declFunc as { body?: ts.Node }).body : undefined;
-  const scope = funcBody ?? decl.getSourceFile();
-  let foreign = false;
-  const visit = (node: ts.Node): void => {
-    if (foreign) return;
-    // Do not descend into nested functions — their own `name` bindings are a
-    // different variable (and a capture-reassignment of the outer binding is
-    // out of this analysis' scope; the static-dispatch skip must not widen on
-    // it because dynamic dispatch only covers the kind-export surface).
-    if (
-      node !== scope &&
-      (ts.isFunctionDeclaration(node) ||
-        ts.isFunctionExpression(node) ||
-        ts.isArrowFunction(node) ||
-        ts.isMethodDeclaration(node) ||
-        ts.isGetAccessorDeclaration(node) ||
-        ts.isSetAccessorDeclaration(node) ||
-        ts.isConstructorDeclaration(node))
-    ) {
-      return;
-    }
-    if (
-      ts.isBinaryExpression(node) &&
-      node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
-      ts.isIdentifier(node.left) &&
-      node.left.text === name &&
-      node.left !== decl.name
-    ) {
-      let rhsName = ctx.oracle.declaredNameOf(node.right);
-      if (rhsName !== undefined && !ctx.classSet.has(rhsName)) {
-        rhsName = ctx.classExprNameMap.get(rhsName) ?? rhsName;
-      }
-      if (rhsName !== clsName) {
-        foreign = true;
-        return;
-      }
-    }
-    forEachChild(node, visit);
-  };
-  if (scope) forEachChild(scope, visit);
-  return foreign;
 }
 
 function walkStmtForLetConst(
@@ -15144,7 +14094,6 @@ function walkStmtForLetConst(
         // dynamic `__extern_get` path. Standalone-only (gc/host keeps its existing
         // closed-struct + host-sidecar path unchanged).
         const initIsProtoReceiverLiteral =
-          ctx.standalone &&
           decl.initializer !== undefined &&
           ts.isObjectLiteralExpression(decl.initializer) &&
           ctx.dynamicProtoLiteralNodes.has(decl.initializer);
@@ -15161,8 +14110,7 @@ function walkStmtForLetConst(
           ts.isObjectLiteralExpression(decl.initializer) &&
           ctx.growableObjectLiteralVars.has(name);
         const initIsOrdinaryToPrimitiveObjectLiteral = ctx.ordinaryToPrimitiveObjectDeclarations.has(decl);
-        const initIsRedeclaredObjectIdentityLiteral =
-          ctx.standalone && ctx.redeclaredObjectIdentityDeclarations.has(decl);
+        const initIsRedeclaredObjectIdentityLiteral = ctx.redeclaredObjectIdentityDeclarations.has(decl);
         const initForcesExternref =
           initIsAccessorLiteral ||
           initRequiresExternref ||
@@ -15243,18 +14191,7 @@ function walkStmtForLetConst(
         // host objects to hold). Typed use sites still recover the struct
         // through their own guarded casts, so a never-host value is
         // unaffected beyond the extra cast.
-        if (
-          (wasmType.kind === "ref" || wasmType.kind === "ref_null") &&
-          !ctx.standalone &&
-          !ctx.wasi &&
-          (list.flags & ts.NodeFlags.Let) !== 0
-        ) {
-          const fnctorCls = fnctorSubclassNameOfType(ctx, varType);
-          if (fnctorCls !== undefined && bindingHasForeignReassignment(ctx, decl, name, fnctorCls)) {
-            wasmType = { kind: "externref" };
-            (fctx.fnctorWidenedLocals ??= new Set()).add(name);
-          }
-        }
+
         // (#2660 S3b) A provably-monomorphic `let/const x = new F(...)` of an
         // approved fnctor gets the reserved struct slot instead of externref.
         // This allocator is the AUTHORITATIVE let/const slot-typer, so the
@@ -15529,9 +14466,7 @@ export {
   addStringImports,
   addUnionImports,
   addIteratorImports,
-  addArrayIteratorImports,
   addGeneratorImports,
-  addForInImports,
 } from "./registry/imports.js";
 export {
   addFuncType,

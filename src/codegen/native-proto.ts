@@ -448,7 +448,6 @@ export function buildLazyNativeProtoGetInstrs(ctx: CodegenContext, brand: number
           ctx,
           step.value.kind === "member-csv" ? glue.memberCsv : glue.name,
         );
-        pushNativeStringToExternref(instructions);
         step = recipe.next({ kind: step.value.kind, instructions });
         break;
       }
@@ -456,7 +455,7 @@ export function buildLazyNativeProtoGetInstrs(ctx: CodegenContext, brand: number
         ensureNativeProtoCompanionSeeder(ctx, brand);
         const companionIdx = ctx.funcMap.get("__protoidx_companion");
         const companion =
-          ctx.standalone && nativeProtoSeederRegistry(ctx).has(brand) && companionIdx !== undefined
+          nativeProtoSeederRegistry(ctx).has(brand) && companionIdx !== undefined
             ? { functionIndex: companionIdx, brandOffset: brand - BUILTIN_BRAND_BASE }
             : undefined;
         step = recipe.next({ kind: "seed-companion", companion });
@@ -711,7 +710,6 @@ function seedSymbolDataProps(
 }
 
 export function ensureNativeProtoCompanionSeeder(ctx: CodegenContext, brand: number): string | undefined {
-  if (!ctx.standalone) return undefined;
   const registry = nativeProtoSeederRegistry(ctx);
   const existing = registry.get(brand);
   if (existing !== undefined) return existing;
@@ -935,20 +933,6 @@ export function ensureNativeProtoCompanionSeeder(ctx: CodegenContext, brand: num
   });
   ctx.funcMap.set(funcName, funcIdx);
   return funcName;
-}
-
-/**
- * `stringConstantExternrefInstrs` already yields an externref for native-string
- * constants in standalone mode, so the `$NativeProto` string fields take the
- * value as-is. This guard normalizes the (rare) case where a backend hands back
- * a non-extern native-string ref by leaving it on the stack untouched — the
- * struct field is externref and `struct.new` coerces a ref via the surrounding
- * extern boxing. In practice the constant instrs are already extern; this is a
- * no-op placeholder kept for clarity / future class-CSV reuse.
- */
-function pushNativeStringToExternref(_body: Instr[]): void {
-  // No-op: stringConstantExternrefInstrs already produces an externref under
-  // standalone. Centralized here so a future ref→extern adjustment is one edit.
 }
 
 function nativeProtoGlobalMap(ctx: CodegenContext): Map<number, number> {
