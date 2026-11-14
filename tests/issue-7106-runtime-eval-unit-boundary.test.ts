@@ -7,9 +7,21 @@
 // their values through function-value support planned before the prepared
 // component seals.
 
-import { describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it, vi } from "vitest";
 
 import { compile } from "../src/index.js";
+
+// (#7345) On standalone the selector refuses an eval-boundary unit itself, and records the
+// boundary's reason in the detail only under this diagnostic; it is read when the selector loads.
+const previousDiag = vi.hoisted(() => {
+  const value = process.env.JS2WASM_IR_SHAPE_DIAG;
+  process.env.JS2WASM_IR_SHAPE_DIAG = "1";
+  return value;
+});
+afterAll(() => {
+  if (previousDiag === undefined) Reflect.deleteProperty(process.env, "JS2WASM_IR_SHAPE_DIAG");
+  else process.env.JS2WASM_IR_SHAPE_DIAG = previousDiag;
+});
 
 const SOURCE = `
 var counter = 0;
@@ -36,7 +48,11 @@ const direct = (byName: Awaited<ReturnType<typeof outcomes>>, name: string, why:
   expect(byName.get(name)?.detail, name).toContain(why);
 };
 
-function expectPerUnitBoundary(byName: Awaited<ReturnType<typeof outcomes>>): void {
+/**
+ * (#7345) Standalone refuses an eval-visible reader at select, so its component follows through the
+ * selector's call-graph closure; WASI still withdraws it at preparation (`boundary-closure`).
+ */
+function expectPerUnitBoundary(byName: Awaited<ReturnType<typeof outcomes>>, closure: string): void {
   // Published to evaluated code as values; their trampolines are planned
   // before the component seals (no sealed-scope error). `shadow`'s
   // `counter` is its own parameter.
@@ -47,13 +63,15 @@ function expectPerUnitBoundary(byName: Awaited<ReturnType<typeof outcomes>>): vo
   direct(byName, "callsLive", "(eval-visible-binding)");
   direct(byName, "bump", "(eval-visible-binding)");
   // The call-graph component of a withdrawn function goes with it.
-  direct(byName, "live", "(boundary-closure)");
-  direct(byName, "callsCallsLive", "(boundary-closure)");
+  // At select its callers go too; its callee `live` keeps the IR there (no eval-visible reference of its own).
+  if (closure === "call-graph-closure") expect(byName.get("live")?.irBodyEmitted, "live").toBe(true);
+  else direct(byName, "live", closure);
+  direct(byName, "callsCallsLive", closure);
 }
 
 describe("#7106 A1 — runtime-eval boundary per unit", () => {
   it("prepares the units eval cannot observe and keeps eval-visible readers direct", async () => {
-    expectPerUnitBoundary(await outcomes("standalone"));
+    expectPerUnitBoundary(await outcomes("standalone"), "call-graph-closure");
   });
 
   // (#6979 S7-c) WASI lowers with the same native semantic regime, so the
@@ -62,6 +80,6 @@ describe("#7106 A1 — runtime-eval boundary per unit", () => {
   // withdrawal. Its eval calls still refuse at run time (no linkable provider,
   // #4195); this pins the selection.
   it("takes the same per-unit boundary on WASI", async () => {
-    expectPerUnitBoundary(await outcomes("wasi"));
+    expectPerUnitBoundary(await outcomes("wasi"), "(boundary-closure)");
   });
 });

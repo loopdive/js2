@@ -62,12 +62,14 @@ export interface IrRuntimeEvalBoundaryPlan {
   readonly dynamicSourceReferences: ReadonlySet<string>;
 }
 
+export type IrRuntimeEvalCrossing = "eval-site" | "eval-visible-binding";
+
 /** (#7345) What the boundary answers about a top-level function, for the selector. */
 export interface IrRuntimeEvalFunctionAnswers {
-  /** Evaluated code may rebind it, so a call to it has no stable direct target. */
-  readonly mayRebind: (declaration: ts.FunctionDeclaration) => boolean;
-  /** Preparation withdraws it at the boundary (an eval site, or an eval-visible binding it reaches). */
-  readonly crossesBoundary: (declaration: ts.FunctionDeclaration) => boolean;
+  /** Evaluated code may rebind the binding `callee` reads, `declaration`'s, so the call has no stable direct target. */
+  readonly mayRebind: (callee: ts.Identifier, declaration: ts.FunctionDeclaration) => boolean;
+  /** Why preparation withdraws it at the boundary: it holds an eval site, or reaches an eval-visible binding. */
+  readonly crossing: (declaration: ts.FunctionDeclaration) => IrRuntimeEvalCrossing | undefined;
 }
 
 const PROVIDER_NAMES = new Set([

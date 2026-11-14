@@ -2171,9 +2171,6 @@ function whyNotIrClaimable(
   // name is rejected as a Phase-A method-shape failure.
   if (!isMethod) {
     if (!ts.isFunctionDeclaration(fn) || !fn.name) return "unnamed";
-    // (#7345) Refused here rather than claimed and withdrawn at preparation, whose closure would drag IR callees.
-    if (currentSelectionOptions?.runtimeEvalFunctions?.crossesBoundary(fn) === true)
-      return capabilityNo("deferred-feature", "fn-runtime-eval-boundary", fn.name) || "deferred-feature";
   }
   if (fn.typeParameters && fn.typeParameters.length > 0) return "type-parameters";
   // Modifier surface differs between FunctionDeclaration and class members:
@@ -2473,6 +2470,13 @@ function whyNotIrClaimable(
     }
   }
 
+  // (#7345) A claimable function preparation would withdraw at the runtime-eval boundary is refused here
+  // instead: the withdrawal's closure would drag IR callees back to legacy.
+  const crossing = ts.isFunctionDeclaration(fn)
+    ? currentSelectionOptions?.runtimeEvalFunctions?.crossing(fn)
+    : undefined;
+  if (crossing !== undefined)
+    return capabilityNo("deferred-feature", `fn-runtime-eval-boundary(${crossing})`, fn) || "deferred-feature";
   return null;
 }
 
@@ -14351,7 +14355,7 @@ export function buildLocalCallGraph(
           } else if (
             decls.has(callee) &&
             !localIsRewritten(decls.get(callee)!, closureSignatureFlowHooks.resolveValue) &&
-            currentSelectionOptions?.runtimeEvalFunctions?.mayRebind(decls.get(callee)!) !== true
+            currentSelectionOptions?.runtimeEvalFunctions?.mayRebind(node.expression, decls.get(callee)!) !== true
           ) {
             // (#7283) A function whose binding is reassigned (`f = …`), or (#7345) that evaluated
             // code may rebind, has no stable direct-call target: from-ast plans no direct call to it,

@@ -5,7 +5,11 @@ import type { IrHostVoidCallbackLoweringPlan, IrImportedCallLoweringPlan } from 
 import type { IrUnitId } from "../ir/identity.js";
 import { IrInvariantError, type IrPreparationFailure } from "../ir/outcomes.js";
 import type { IrPromiseDelayLoweringPlans } from "../ir/promise-delay-lowering.js";
-import type { IrRuntimeEvalFunctionAnswers, IrRuntimeEvalSite } from "../ir/runtime-eval-boundary-plan.js";
+import type {
+  IrRuntimeEvalCrossing,
+  IrRuntimeEvalFunctionAnswers,
+  IrRuntimeEvalSite,
+} from "../ir/runtime-eval-boundary-plan.js";
 import { scopeHasDirectEval } from "../ir/lattice-param-facts.js";
 import type { IrSelection } from "../ir/select.js";
 import { forEachChild, ts } from "../ts-api.js";
@@ -126,20 +130,28 @@ export function irRuntimeEvalSelectionOption(ctx: CodegenContext): {
   readonly runtimeEvalFunctions: IrRuntimeEvalFunctionAnswers;
 } {
   if (ctx.targetProfile.target !== "standalone") {
-    return { runtimeEvalFunctions: { mayRebind: scopeHasDirectEval, crossesBoundary: () => false } };
+    return {
+      runtimeEvalFunctions: {
+        mayRebind: (_, declaration) => scopeHasDirectEval(declaration),
+        crossing: () => undefined,
+      },
+    };
   }
   let evalVisible: ReadonlySet<string> | undefined;
   return {
     runtimeEvalFunctions: {
-      mayRebind: (declaration) => ctx.reassignedFunctionDeclarations?.has(declaration) === true,
-      crossesBoundary: (declaration) =>
-        ctx.runtimeEvalBoundaryPlan?.callableBoundaryRequired === true &&
-        runtimeEvalBoundaryCrossing(
-          ctx,
-          ctx.runtimeEvalBoundaryPlan?.sites ?? [],
-          declaration,
-          (evalVisible ??= evalVisibleBindings(ctx)),
-        ) !== undefined,
+      mayRebind: (callee, declaration) =>
+        ctx.reassignedFunctionDeclarations?.has(declaration) === true &&
+        ctx.oracle.valueDeclarationOf(callee) === declaration,
+      crossing: (declaration) =>
+        ctx.runtimeEvalBoundaryPlan?.callableBoundaryRequired === true
+          ? runtimeEvalBoundaryCrossing(
+              ctx,
+              ctx.runtimeEvalBoundaryPlan.sites,
+              declaration,
+              (evalVisible ??= evalVisibleBindings(ctx)),
+            )
+          : undefined,
     },
   };
 }
@@ -200,7 +212,7 @@ function runtimeEvalBoundaryCrossing(
   sites: readonly IrRuntimeEvalSite[],
   declaration: ts.FunctionDeclaration,
   evalVisible: ReadonlySet<string>,
-): "eval-site" | "eval-visible-binding" | undefined {
+): IrRuntimeEvalCrossing | undefined {
   const start = declaration.getStart();
   if (sites.some((site) => site.start >= start && site.end <= declaration.end)) return "eval-site";
   // A reference resolving outside this declaration (or nowhere) reaches the
