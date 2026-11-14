@@ -21,7 +21,7 @@
 import { ts } from "../ts-api.js";
 import type { IrBackendTargetCapability } from "./backend/legality.js";
 import type { OwnPropertyTest } from "./nodes.js";
-import { ownPropertyTestRow, storedObjectStaticRow } from "./object-statics.js";
+import { OWN_PROPERTY_TEST_ROW, storedObjectStaticRow } from "./object-statics.js";
 
 /**
  * (#7106 propertyHelper move-only arm) The STORED static form propertyHelper
@@ -292,7 +292,7 @@ export function certifiedAliasCall(
   if (alias === undefined) return undefined;
   if (alias.form === "uncurried") {
     // (#7339) The uncurried predicates are the statics table's own-property test rows, the receiver an argument.
-    const { arity, capability } = ownPropertyTestRow(alias.method);
+    const { arity, capability } = OWN_PROPERTY_TEST_ROW;
     return call.arguments.length === arity ? { ...alias, result: "boolean", capability } : undefined;
   }
   const { arity, result, capability, provider } = STORED_STATICS[alias.method];

@@ -24,6 +24,7 @@ import { nullComparisonFolds } from "./analysis/operand-admissibility.js";
 import type { IrBackendTargetCapability } from "./backend/legality.js";
 import { localIsRewritten } from "./lattice-param-facts.js";
 import { objectCreateDescriptorMap } from "./object-create-call.js";
+import type { IrPrimitiveExpressionFamily } from "./module-bindings.js";
 import * as objectStatics from "./object-statics.js";
 import { OBJECT_PROTOTYPE_KEYS } from "./realm-keys.js";
 import { outermostParenthesized } from "../shared/binding-writes.js";
@@ -48,6 +49,7 @@ export interface ObjectStaticSelectorState {
   readonly unannotatedLocal: (id: ts.Identifier) => ts.VariableDeclaration | undefined;
   readonly isDynamicHomeOpenCarrier: (decl: ts.VariableDeclaration) => boolean;
   readonly isDynamicParam: (id: ts.Identifier) => boolean;
+  readonly classifyPrimitive: (expr: ts.Expression) => IrPrimitiveExpressionFamily | undefined;
 }
 
 /** What a static's value admission asks of the selector's current walk. */
@@ -64,8 +66,8 @@ export interface ObjectStaticSelector {
   readonly plan: (call: ts.CallExpression) => objectStatics.ObjectStaticPlan | undefined;
   readonly isLiteralDefine: (call: ts.CallExpression) => boolean;
   readonly lowersToCarrier: (expression: ts.Expression) => boolean;
-  /** (#7339) An admitted own-property test row (`R.hasOwnProperty(k)`): it answers a boolean. */
-  readonly isOwnPropertyTest: (call: ts.CallExpression) => boolean;
+  /** (#7339) An admitted own-property test (`R.hasOwnProperty(k)`) that answers the i32 boolean. */
+  readonly answersBoolean: (call: ts.CallExpression) => boolean;
   /** `node`'s unit (its top-level function or class, else the module's code) holds a call the table admits. */
   readonly tableMayReach: (node: ts.Node) => boolean;
   readonly holdsCarrier: (expression: ts.Expression) => boolean;
@@ -116,7 +118,7 @@ function objectCallsOf(file: ts.SourceFile): ObjectCallIndex {
     if (
       ts.isCallExpression(node) &&
       ts.isPropertyAccessExpression(node.expression) &&
-      objectStatics.isObjectStaticName(node.expression.name.text)
+      objectStatics.isTableCallName(node.expression.name.text)
     ) {
       all.push(node);
       const unit = unitOf(node);
@@ -153,24 +155,27 @@ export function createObjectStaticSelector(state: ObjectStaticSelectorState): Ob
       isAmbientBinding: state.isAmbientBinding,
       dynamicCodeMayRun: state.dynamicCodeMayRun(),
       supportsBackendCapability: state.supports,
+      classifyPrimitive: state.classifyPrimitive,
     });
 
   const holdsCarrier = (expression: ts.Expression) => state.moduleBinding(expression)?.valueKind.kind === "dynamic";
 
   const lane = () => `${state.supports("native-object-statics")}:${state.dynamicCodeMayRun()}`;
-  /** An admitted call that answers or extends an object; an own-property test answers a boolean (#7339). */
-  const objectCall = (call: ts.CallExpression) => {
+  /** An admitted static: it answers or extends an object. */
+  const objectCall = (call: ts.CallExpression) => plan(call)?.kind === "call";
+  const answersBoolean = (call: ts.CallExpression) => {
     const admitted = plan(call);
-    return admitted?.kind === "call" && !admitted.call.test;
+    return admitted?.kind === "test" && admitted.test.answer === "boolean";
   };
-  const isOwnPropertyTest = (call: ts.CallExpression) => {
-    const admitted = plan(call);
-    return admitted?.kind === "call" && admitted.call.test;
+  /** Whether the file holds a call `matches` accepts, per file and lane. */
+  const fileHolds = (matches: (call: ts.CallExpression) => boolean) => {
+    const answers = laneAnswers<ts.SourceFile>();
+    return (file: ts.SourceFile) => answers(file, lane(), () => objectCallsOf(file).all.some(matches));
   };
-  /** The file holds a call the lane's plan admits that answers or extends an object: the table makes carriers. */
-  const fileAnswers = laneAnswers<ts.SourceFile>();
-  const fileCallsTable = (file: ts.SourceFile) =>
-    fileAnswers(file, lane(), () => objectCallsOf(file).all.some(objectCall));
+  /** The file holds an admitted static: the table makes carriers. */
+  const fileCallsTable = fileHolds(objectCall);
+  /** (#7339) The file holds an admitted own-property test. */
+  const fileCallsTest = fileHolds((call) => plan(call)?.kind === "test");
   /** Whether `node`'s unit holds a call `matches` accepts, per unit and lane. */
   const unitHolds = (matches: (call: ts.CallExpression) => boolean) => {
     const answers = laneAnswers<ts.Node>();
@@ -181,9 +186,10 @@ export function createObjectStaticSelector(state: ObjectStaticSelectorState): Ob
     };
   };
   /** A call the lane's plan admits, of any row: the table may make the unit reachable. */
-  const unitCallsTable = unitHolds((call) => plan(call)?.kind === "call");
-  /** (#7339) An admitted own-property test: a unit the tests, not the statics, made reachable. */
-  const unitCallsTest = unitHolds(isOwnPropertyTest);
+  const unitCallsTable = unitHolds((call) => {
+    const kind = plan(call)?.kind;
+    return kind === "call" || kind === "test";
+  });
 
   /** A #7280 dynamic home that an admitted table call takes: the object the table's defines extend. */
   const takenByTable = (declaration: ts.Declaration): boolean =>
@@ -214,9 +220,10 @@ export function createObjectStaticSelector(state: ObjectStaticSelectorState): Ob
     visited.add(declaration);
     return producesCarrier(declaration.initializer!, leaves(visited));
   };
-  // An admitted static answers the carrier; (#7339) an own-property test a boolean.
+  // An admitted static answers the carrier; (#7339) an own-property test the i32 boolean where its call is typed
+  // `boolean`, else the boxed boolean, which carries as main's method call on its receiver does.
   const staticCall: CarrierLeaves["call"] = (call) =>
-    objectCall(call) ? true : isOwnPropertyTest(call) ? false : undefined;
+    objectCall(call) ? true : answersBoolean(call) ? false : undefined;
 
   /** The table's results: a static's answer, and a binding initialised with one. */
   const resultLeaves = (visited: Set<ts.Declaration>): CarrierLeaves => ({
@@ -274,18 +281,20 @@ export function createObjectStaticSelector(state: ObjectStaticSelectorState): Ob
   };
 
   /**
-   * (#7339) `<carrier>.<key>` for a key `%Object.prototype%` owns, read other than as an admitted test's callee:
-   * the dynamic member read does not answer the realm's inherited member for an open `$Object` (main's gap,
-   * #7304). Where an own-property test makes the unit reachable, it is refused instead of answered wrong; a unit
-   * the statics alone reach keeps #7338's routing (`Object.create({}, { toString: … }).toString` is own there).
+   * (#7339) `<carrier>.<key>` read as a value, for a key `%Object.prototype%` owns other than `toString`: the
+   * open `$Object` member read answers the realm's inherited member only for `toString` (main's gap, #7304; the
+   * statics' units keep main's routing). In a program where an own-property test may make units reachable, it is
+   * refused instead of answered wrong. An admitted test's callee is no such read.
    */
   const readsInheritedMember = (e: ts.Expression): boolean => {
-    if (!ts.isPropertyAccessExpression(e) || !OBJECT_PROTOTYPE_KEYS.has(e.name.text)) return false;
-    const call = outermostParenthesized(e).parent;
-    if (ts.isCallExpression(call) && call.expression === outermostParenthesized(e) && isOwnPropertyTest(call)) {
+    if (!ts.isPropertyAccessExpression(e) || e.name.text === "toString" || !OBJECT_PROTOTYPE_KEYS.has(e.name.text)) {
       return false;
     }
-    return (holdsCarrier(e.expression) || lowersToCarrier(e.expression)) && unitCallsTest(e);
+    const call = outermostParenthesized(e).parent;
+    if (ts.isCallExpression(call) && call.expression === outermostParenthesized(e) && plan(call)?.kind === "test") {
+      return false;
+    }
+    return fileCallsTest(e.getSourceFile()) && (holdsCarrier(e.expression) || lowersToCarrier(e.expression));
   };
 
   /** A static's value crosses as a carrier, so any carrier qualifies: a dynamic home or parameter too. */
@@ -303,7 +312,7 @@ export function createObjectStaticSelector(state: ObjectStaticSelectorState): Ob
     const values = objectStatics.admittedValues(admitted);
     // (#7339) A test's receiver is a value already on the carrier: one the IR types as an array, a string or a
     // struct would answer for that representation, not for the object legacy builds.
-    const receiver = admitted?.kind === "call" && admitted.call.test ? values?.[0] : undefined;
+    const receiver = admitted?.kind === "test" ? admitted.test.receiver : undefined;
     return values?.every((operand) => {
       let value = operand;
       while (ts.isParenthesizedExpression(value)) value = value.expression;
@@ -320,16 +329,17 @@ export function createObjectStaticSelector(state: ObjectStaticSelectorState): Ob
     plan,
     isLiteralDefine: (call) => objectStatics.isLiteralDefine(plan(call)),
     lowersToCarrier,
-    isOwnPropertyTest,
+    answersBoolean,
     tableMayReach: unitCallsTable,
     holdsCarrier,
     compareVerdict: (expr, nullCompare, isUndefined) => {
       const sides = [expr.left, expr.right];
       const folds = nullComparisonFolds(expr.operatorToken.kind, "dynamic");
       if (!sides.some(lowersToCarrier)) {
-        // (#7339) A loose `null` compare on a dynamic module binding fails after the claim (main's gap,
-        // #7214); where an own-property test makes the unit reachable, it is refused instead.
-        return nullCompare && !folds && unitCallsTest(expr) && sides.some(holdsCarrier) ? "refused" : undefined;
+        // (#7339) A loose `null` compare on a dynamic module binding fails after the claim (main's gap, #7214);
+        // in a program where an own-property test may make units reachable, it is refused instead.
+        const gap = nullCompare && !folds && sides.some(holdsCarrier);
+        return gap && fileCallsTest(expr.getSourceFile()) ? "refused" : undefined;
       }
       if (nullCompare) return folds ? "folded" : "refused";
       return sides.some(isUndefined) ? "folded" : undefined;

@@ -8441,7 +8441,7 @@ function trackedModuleInfluenceIsBoolean(expr: ts.Expression): boolean {
     return trackedModuleInfluenceIsBoolean(candidate.whenTrue) && trackedModuleInfluenceIsBoolean(candidate.whenFalse);
   }
   if (ts.isCallExpression(candidate)) {
-    if (objectStaticSelector.isOwnPropertyTest(candidate)) return true; // (#7339) an i32 boolean test
+    if (objectStaticSelector.answersBoolean(candidate)) return true; // (#7339) an i32 boolean test
     if (expressionIsModuleBindingRootedCall(candidate)) return false;
     return currentModuleBindingResolver?.scalarExpressionFamily(candidate) === "boolean";
   }
@@ -9064,6 +9064,7 @@ const objectStaticSelector = createObjectStaticSelector({
   unannotatedLocal: (id) => unannotatedLocal(id),
   isDynamicHomeOpenCarrier: (decl) => isDynamicHomeOpenCarrierDeclaration(decl),
   isDynamicParam: (id) => currentDynamicParamNames.has(id.text),
+  classifyPrimitive: (expr) => currentSelectionOptions?.classifyPrimitiveExpression?.(expr),
 });
 const { lowersToCarrier, tableMayReach, holdsCarrier, moduleBindingTakes } = objectStaticSelector;
 

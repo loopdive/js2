@@ -1,12 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
-import { isUnshadowedUndefined } from "../shared/ambient-intrinsics.js";
 import { isStoreTarget } from "../shared/binding-writes.js";
-import {
-  sourceMayPatchPrototype,
-  sourceNamesReflectiveRoute,
-  sourceWritesMemberNamed,
-} from "../shared/intrinsic-prototype-writes.js";
 import { isEqualityOperator } from "./analysis/operand-admissibility.js";
 import type { OwnPropertyTest } from "./nodes.js";
 import { forEachChild, ts } from "../ts-api.js";
@@ -106,15 +100,11 @@ interface SourceIntegrityFacts {
    */
   readonly ownPropertyTestsSpelled: ReadonlySet<string>;
   /**
-   * (#7339) An object could carry a member the source does not spell, or have
-   * no `%Object.prototype%` on its chain: a store through `x[e]` or an
-   * `Object.defineProperty(x, e, …)` whose key `e` is no constant, a mention of
-   * `Proxy`, `fromEntries` or `JSON` other than `typeof JSON` / `JSON.stringify`
-   * (built-ins that make keys from data, or an exotic object), or an
-   * `Object.create` whose prototype is not an object
-   * literal, `X.prototype`, a `new` expression or a function.
+   * (#7339) The prototype operand of every mention of `Object.create`, in
+   * source order; `null` for a mention that is not called directly, so its
+   * prototype is unknown.
    */
-  readonly unspelledMembersMayExist: boolean;
+  readonly createPrototypes: readonly (ts.Expression | null)[];
 }
 
 const sourceIntegrityFactsCache = new WeakMap<ts.SourceFile, SourceIntegrityFacts>();
@@ -186,59 +176,15 @@ function isObservedConstructor(name: ts.Node): boolean {
 
 const OWN_PROPERTY_TESTS: ReadonlySet<string> = new Set<OwnPropertyTest>(["hasOwnProperty", "propertyIsEnumerable"]);
 
-/** Names of built-ins that make keys from data or an exotic object: any mention distrusts the own-property tests. */
-const KEY_MAKING_NAMES: ReadonlySet<string> = new Set(["Proxy", "fromEntries"]);
-
-/**
- * A mention of `JSON` that makes no object: `typeof JSON` and `JSON.stringify`
- * (assert.js's value formatter). `JSON.parse` makes keys from data.
- */
-function isObjectFreeJsonMention(node: ts.Identifier): boolean {
-  const use = unwrapExpressionParent(node);
-  const parent = use.parent;
-  return (
-    ts.isTypeOfExpression(parent) ||
-    (ts.isPropertyAccessExpression(parent) && parent.expression === use && parent.name.text === "stringify")
-  );
-}
-
-/** A property key fixed by the source: a literal, a signed number, or the global `undefined` / `NaN` / `Infinity`. */
-function isConstantKey(key: ts.Expression): boolean {
-  const k = unwrapExpression(key);
-  if (ts.isStringLiteralLike(k) || ts.isNumericLiteral(k) || isUnshadowedUndefined(k)) return true;
-  if (k.kind === ts.SyntaxKind.TrueKeyword || k.kind === ts.SyntaxKind.FalseKeyword) return true;
-  if (k.kind === ts.SyntaxKind.NullKeyword) return true;
-  if (ts.isIdentifier(k)) return k.text === "NaN" || k.text === "Infinity";
-  return (
-    ts.isPrefixUnaryExpression(k) &&
-    (k.operator === ts.SyntaxKind.MinusToken || k.operator === ts.SyntaxKind.PlusToken) &&
-    ts.isNumericLiteral(k.operand)
-  );
-}
-
-/** A prototype operand of `Object.create` that has `%Object.prototype%` on its chain. */
-function hasObjectPrototypeChain(proto: ts.Expression | undefined): boolean {
-  const p = proto && unwrapExpression(proto);
-  return (
-    p !== undefined &&
-    (ts.isObjectLiteralExpression(p) ||
-      ts.isNewExpression(p) ||
-      ts.isFunctionExpression(p) ||
-      ts.isArrowFunction(p) ||
-      (ts.isPropertyAccessExpression(p) && p.name.text === "prototype"))
-  );
-}
-
-/** `Object.<name>(…)` with that callee spelled directly. */
-function isObjectCall(node: ts.Node, name: string): node is ts.CallExpression {
-  if (!ts.isCallExpression(node)) return false;
-  const callee = unwrapExpression(node.expression);
-  return (
-    ts.isPropertyAccessExpression(callee) &&
-    ts.isIdentifier(callee.expression) &&
-    callee.expression.text === "Object" &&
-    callee.name.text === name
-  );
+/** What a mention of `Object.create` makes from: its prototype operand, or `null` when it is not called directly. */
+function createdFrom(name: ts.Identifier): ts.Expression | null | undefined {
+  const access = name.parent;
+  if (name.text !== "Object" || !ts.isPropertyAccessExpression(access) || access.name.text !== "create")
+    return undefined;
+  const call = unwrapExpressionParent(access).parent;
+  return ts.isCallExpression(call) && call.expression === unwrapExpressionParent(access)
+    ? (call.arguments[0] ?? null)
+    : null;
 }
 
 /** `Object` passed to an integrity test (`Object.isFrozen(Object)`): a test reads its operand and nothing else. */
@@ -262,7 +208,7 @@ function sourceIntegrityFacts(sourceFile: ts.SourceFile): SourceIntegrityFacts {
   let objectStaticsPristine = true;
   let isFrozenRebound = false;
   const ownPropertyTestsSpelled = new Set<string>();
-  let unspelledMembersMayExist = false;
+  const createPrototypes: (ts.Expression | null)[] = [];
   const visit = (node: ts.Node): void => {
     if (
       (ts.isStringLiteralLike(node) ||
@@ -271,12 +217,8 @@ function sourceIntegrityFacts(sourceFile: ts.SourceFile): SourceIntegrityFacts {
     ) {
       ownPropertyTestsSpelled.add(node.text);
     }
-    unspelledMembersMayExist ||=
-      ((ts.isIdentifier(node) || ts.isStringLiteralLike(node)) && KEY_MAKING_NAMES.has(node.text)) ||
-      (ts.isIdentifier(node) && node.text === "JSON" && !isObjectFreeJsonMention(node)) ||
-      (ts.isElementAccessExpression(node) && isStoreTarget(node) && !isConstantKey(node.argumentExpression)) ||
-      (isObjectCall(node, "defineProperty") && node.arguments[1] !== undefined && !isConstantKey(node.arguments[1])) ||
-      (isObjectCall(node, "create") && !hasObjectPrototypeChain(node.arguments[0]));
+    const created = ts.isIdentifier(node) ? createdFrom(node) : undefined;
+    if (created !== undefined) createPrototypes.push(created);
 
     // Treat even taking a reference to an integrity mutator as unsafe. This
     // covers aliases such as `const freeze = Object.freeze; freeze(Boolean)`.
@@ -334,7 +276,7 @@ function sourceIntegrityFacts(sourceFile: ts.SourceFile): SourceIntegrityFacts {
     objectStaticsPristine,
     isFrozenRebound,
     ownPropertyTestsSpelled,
-    unspelledMembersMayExist,
+    createPrototypes,
   };
   sourceIntegrityFactsCache.set(sourceFile, facts);
   return facts;
@@ -345,25 +287,13 @@ export function objectStaticsArePristine(sourceFile: ts.SourceFile): boolean {
   return sourceIntegrityFacts(sourceFile).objectStaticsPristine;
 }
 
-/**
- * (#7339) No object in the program can carry an own `method` other than the
- * realm's `Object.prototype` one, so the native test (which ignores an own
- * method) answers as `R.<method>(k)` does: the name is spelled only as a member
- * read's name, never stored, deleted or defined; no member is installed under a
- * name the source does not spell; `Object.prototype` is not patched; there is
- * no reflective route to a prototype; and every object has
- * `%Object.prototype%` on its chain (see the facts above). Dynamic code is the
- * realm's question, asked by the plan.
- */
-export function ownPropertyTestIsPristine(sourceFile: ts.SourceFile, method: OwnPropertyTest): boolean {
+/** (#7339) The facts {@link ownPropertyTestIsPristine} (`object-statics.ts`) reads for `method`. */
+export function ownPropertyTestFacts(
+  sourceFile: ts.SourceFile,
+  method: OwnPropertyTest,
+): { readonly spelled: boolean; readonly createPrototypes: readonly (ts.Expression | null)[] } {
   const facts = sourceIntegrityFacts(sourceFile);
-  return (
-    !facts.ownPropertyTestsSpelled.has(method) &&
-    !facts.unspelledMembersMayExist &&
-    !sourceWritesMemberNamed(sourceFile, method) &&
-    !sourceMayPatchPrototype(sourceFile, "Object") &&
-    !sourceNamesReflectiveRoute(sourceFile)
-  );
+  return { spelled: facts.ownPropertyTestsSpelled.has(method), createPrototypes: facts.createPrototypes };
 }
 
 function isEs5IntrinsicObject(expr: ts.Expression, isAmbientBinding: (node: ts.Identifier) => boolean): boolean {

@@ -66,7 +66,7 @@ const DEFINE = "var o = {}; Object.defineProperty(o, 'p', { value: 1 });";
 const CLAIMED: Record<string, string> = {
   "own key, after a getOwnPropertyDescriptor on the receiver": `${DEFINE} var d = Object.getOwnPropertyDescriptor(o, 'p'); if (!o.hasOwnProperty('p') || d.value !== 1) { throw "x"; }`,
   "a descriptor result's own fields": `${DEFINE} var d = Object.getOwnPropertyDescriptor(o, 'p'); if (!d.hasOwnProperty('value') || d.hasOwnProperty('get')) { throw "x"; }`,
-  "an Object.create result": `var n = Object.create({}, { p: { value: 1 } }); if (!n.hasOwnProperty('p')) { throw "x"; }`,
+  "an inherited toString read beside the test": `var o = {}; if (o.toString !== Object.prototype.toString || o.hasOwnProperty('toString')) { throw "x"; }`,
   "propertyIsEnumerable, non-enumerable": `${DEFINE} if (o.propertyIsEnumerable('p')) { throw "x"; }`,
   "propertyIsEnumerable, enumerable": `var o = {}; Object.defineProperty(o, 'p', { value: 1, enumerable: true }); if (!o.propertyIsEnumerable('p')) { throw "x"; }`,
   "propertyIsEnumerable on a descriptor result": `${DEFINE} var d = Object.getOwnPropertyDescriptor(o, 'p'); if (!d.propertyIsEnumerable('value')) { throw "x"; }`,
@@ -76,31 +76,45 @@ const CLAIMED: Record<string, string> = {
   "a nullish receiver throws before the key runs": `var u; var ran = false; function k() { ran = true; return 'p'; } try { u.hasOwnProperty(k()); throw "no"; } catch (e) { if (!(e instanceof TypeError) || ran) { throw "x"; } }`,
 };
 
-/** Each keeps the unit legacy with the stated code, and answers as legacy does. */
+/**
+ * A call the checker types `any` answers the boolean boxed onto the carrier, as main's dynamic method call does;
+ * the unit `g` holding it is claimed and the program answers as node does.
+ */
+const BOXED: Record<string, string> = {
+  "a dynamic parameter, concatenated": `function g(x) { return x.hasOwnProperty('a') + ','; } var r = g({ a: 1 }); if (String(r) !== "true,") { throw "x"; }`,
+  "a dynamic parameter, added to a number": `function g(x) { return x.hasOwnProperty('a') + 1; } var r = g({ a: 1 }); if (String(r) !== "2") { throw "x"; }`,
+  "a dynamic parameter, held in a local": `function g(x) { var b = x.hasOwnProperty('a'); return b; } var r = g({ a: 1 }); if (String(r) !== "true") { throw "x"; }`,
+  "a dynamic parameter, loosely compared": `function g(x) { return x.hasOwnProperty('a') == 1; } var r = g({ a: 1 }); if (String(r) !== "true") { throw "x"; }`,
+  "a script var assigned later, concatenated": `var o; o = { a: 1 }; function g() { return o.hasOwnProperty('a') + ','; } var r = g(); if (String(r) !== "true,") { throw "x"; }`,
+};
+
 /** The test, in its own unit `t` so its refusal is the first that unit records. */
 const T = "function t() { return o.hasOwnProperty('p'); } var r = t();";
+
+/** A test the table does not answer is no table call: main's arm for a script var's method call decides. */
+const UNTRUSTED = "expr-module-scalar-method";
 
 /** Each keeps a unit legacy, refused at select with the stated code, and answers as legacy does. */
 const REFUSED: Record<string, { readonly source: string; readonly detail: string }> = {
   "the method stored on the object": {
     source: `${DEFINE} o.hasOwnProperty = function () { return true; }; ${T}`,
-    detail: "expr-object-static-untrusted",
+    detail: UNTRUSTED,
   },
   "a store under a key the source does not spell": {
     source: `${DEFINE} var k = 'has' + 'OwnProperty'; var q = {}; q[k] = 1; ${T}`,
-    detail: "expr-object-static-untrusted",
+    detail: UNTRUSTED,
   },
   "the name as a string": {
     source: `${DEFINE} var name = 'hasOwnProperty'; var n = name.length; ${T}`,
-    detail: "expr-object-static-untrusted",
+    detail: UNTRUSTED,
   },
   "an Object.create(null) somewhere": {
     source: `${DEFINE} var n = Object.create(null); ${T}`,
-    detail: "expr-object-static-untrusted",
+    detail: UNTRUSTED,
   },
   "JSON.parse somewhere": {
     source: `${DEFINE} var j = JSON.parse('{}'); ${T}`,
-    detail: "expr-object-static-untrusted",
+    detail: UNTRUSTED,
   },
   "an array receiver": {
     source: "function t() { var a = [1]; return a.hasOwnProperty(0); } var r = t();",
@@ -108,12 +122,7 @@ const REFUSED: Record<string, { readonly source: string; readonly detail: string
   },
   "two arguments": {
     source: `${DEFINE} function t() { return o.hasOwnProperty('p', 1); } var r = t();`,
-    detail: "expr-object-static-arity",
-  },
-  // A read of an inherited member on the receiver: the dynamic read does not answer the realm's (#7304).
-  "an inherited member read beside the test": {
-    source: `${DEFINE} function t() { return o.hasOwnProperty('p') && o.toString !== undefined; } var r = t();`,
-    detail: "expr-carrier-inherited-member",
+    detail: UNTRUSTED,
   },
 };
 
@@ -123,6 +132,16 @@ describe("#7339 — own-property tests as rows of the Object statics table", () 
       const ir = await build(source);
       expect(ir.irPostClaimErrors ?? []).toEqual([]);
       expect(legacyUnits(ir), JSON.stringify(legacyUnits(ir))).toEqual([]);
+      expect(node(source)).toBe("ok");
+      expect(await run(ir)).toBe("ok");
+    });
+  }
+
+  for (const [name, source] of Object.entries(BOXED)) {
+    it(`claims the test's unit and answers as node does: ${name}`, async () => {
+      const ir = await build(source);
+      expect(ir.irPostClaimErrors ?? []).toEqual([]);
+      expect(legacyUnits(ir).map((row) => row.displayName)).not.toContain("g");
       expect(node(source)).toBe("ok");
       expect(await run(ir)).toBe("ok");
     });

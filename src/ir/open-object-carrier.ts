@@ -10,14 +10,17 @@
 
 import type { IrFunctionBuilder } from "./builder.js";
 import { irRuntimeFuncRef } from "./callable-bindings.js";
+import { JS_TAG_IDS } from "./js-tag-domain.js";
 import { irDynamic, irVal, type IrType, type IrValueId } from "./nodes.js";
-import type { OwnPropertyTest } from "./nodes.js";
-import type { ObjectStaticCall } from "./object-statics.js";
+import type { ObjectStaticCall, OwnPropertyTestCall } from "./object-statics.js";
 import {
   emitThrowTypeErrorIf,
   emitThrowTypeErrorIfNullish,
   emitThrowTypeErrorUnlessObject,
 } from "./throw-type-error.js";
+
+/** ToObject's TypeError (§7.1.18) for `undefined` / `null`. */
+const NOT_COERCIBLE = "Cannot convert undefined or null to object";
 
 /** A fresh open-hash `$Object` from `__new_plain_object`, typed `type`. */
 export function emitNewPlainObject(builder: IrFunctionBuilder, type: IrType): IrValueId {
@@ -95,54 +98,50 @@ export function emitObjectRuntimeCall(
 
 /**
  * #7338 — an admitted `Object.<static>(…)` (`object-statics.ts`) over its
- * values, each lowered to a `dynamic` carrier by its thunk, and its
- * definitions, all evaluated before (every argument is, before the static's
- * first step):
+ * values, each a `dynamic` carrier, and its definitions, all evaluated before
+ * (every argument is, before the static's first step):
  *   - the row's demand on the first value (an Object, or not nullish),
  *     where its helper does not make it;
  *   - the row's helper over the values, when it has one;
  *   - each definition, on the object the static answers: the helper's
  *     result, or the first value of a static that only defines.
  * Answers that object as a `dynamic` carrier.
- *
- * (#7339) An own-property test row (`R.<name>(k)`) reads its method from the
- * receiver first, so the receiver's nullish test runs before the key is
- * evaluated (§13.3.6.1 evaluates the member, then the arguments). It answers
- * the test's boolean.
  */
 export function emitObjectStaticCall(
   builder: IrFunctionBuilder,
-  call: Pick<ObjectStaticCall, "name" | "provider" | "requires" | "test">,
-  operands: readonly (() => IrValueId)[],
-  definitions: () => readonly ObjectStaticDefinitionValues[],
+  call: Pick<ObjectStaticCall, "name" | "provider" | "requires">,
+  operands: readonly IrValueId[],
+  definitions: readonly ObjectStaticDefinitionValues[],
 ): IrValueId {
-  const first = operands[0]!();
-  if (!call.test) {
-    const rest = operands.slice(1).map((operand) => operand());
-    const defined = definitions();
-    emitFirstValueDemand(builder, call, first);
-    const values = [first, ...rest];
-    const answer =
-      call.provider === undefined ? first : emitObjectRuntimeCall(builder, call.provider, values, irDynamic());
-    if (defined.length > 0) {
-      const object = builder.emitCoerceToExternref(answer);
-      for (const definition of defined) emitOpenCarrierDefine(builder, object, definition);
-    }
-    return answer;
-  }
-  emitFirstValueDemand(builder, call, first);
-  return builder.emitDynOwnProperty(first, operands[1]!(), call.name as OwnPropertyTest);
-}
-
-/** The row's TypeError for a first value that is not an Object, or is `undefined` / `null`. */
-function emitFirstValueDemand(
-  builder: IrFunctionBuilder,
-  call: Pick<ObjectStaticCall, "name" | "requires">,
-  first: IrValueId,
-): void {
+  const first = operands[0]!;
   if (call.requires === "object") {
     emitThrowTypeErrorUnlessObject(builder, first, `Object.${call.name} called on non-object`);
   } else if (call.requires === "coercible") {
-    emitThrowTypeErrorIfNullish(builder, first, "Cannot convert undefined or null to object");
+    emitThrowTypeErrorIfNullish(builder, first, NOT_COERCIBLE);
   }
+  const answer =
+    call.provider === undefined ? first : emitObjectRuntimeCall(builder, call.provider, operands, irDynamic());
+  if (definitions.length > 0) {
+    const object = builder.emitCoerceToExternref(answer);
+    for (const definition of definitions) emitOpenCarrierDefine(builder, object, definition);
+  }
+  return answer;
+}
+
+/**
+ * (#7339) An admitted own-property test `R.<name>(k)` (`object-statics.ts`):
+ * the method is read from the receiver first, so the receiver's nullish
+ * TypeError runs before the key is evaluated (§13.3.6.1 evaluates the member,
+ * then the arguments); then `dyn.own_property`. Answers the boolean as the
+ * plan's `answer` says: the i32, or boxed onto the carrier.
+ */
+export function emitOwnPropertyTest(
+  builder: IrFunctionBuilder,
+  test: Pick<OwnPropertyTestCall, "name" | "answer">,
+  receiver: IrValueId,
+  key: () => IrValueId,
+): IrValueId {
+  emitThrowTypeErrorIfNullish(builder, receiver, NOT_COERCIBLE);
+  const answer = builder.emitDynOwnProperty(receiver, key(), test.name);
+  return test.answer === "boolean" ? answer : builder.emitBox(answer, irDynamic(JS_TAG_IDS.Boolean));
 }

@@ -35,8 +35,12 @@
  *     `Object.assign(this, …)`).
  *   - {@link sourceRunsDynamicCode}: the same consumers ask whether code the
  *     walk cannot see may run (`eval`, `Function`, by any name route).
+ *   - {@link sourceMayWriteUnspelledMember}: the IR's own-property tests
+ *     (#7339) ask whether a member may be installed under a name the source
+ *     does not spell, so that no scan by name sees it.
  */
 import { forEachChild, ts } from "../ts-api.js";
+import { isUnshadowedUndefined } from "./ambient-intrinsics.js";
 import { isBindingSiteName, isStoreTarget, skipOuterExpressions } from "./binding-writes.js";
 
 export type PatchableIntrinsic = "Array" | "Boolean" | "Function" | "Number" | "Object" | "RegExp" | "String";
@@ -52,6 +56,8 @@ interface PrototypeUse {
   globalObjectEscapes: boolean;
   /** `eval` or `Function` is read other than as an operand or for its `prototype`: code the walk cannot see may run. */
   dynamicCode: boolean;
+  /** A member may be installed under a name the source does not spell ({@link installsUnspelledMember}). */
+  unspelledWrite: boolean;
 }
 
 const PATCHABLE: ReadonlySet<string> = new Set<PatchableIntrinsic>([
@@ -112,6 +118,11 @@ export function sourceRunsDynamicCode(sourceFile: ts.SourceFile): boolean {
   return prototypeUse(sourceFile).dynamicCode;
 }
 
+/** Whether a member may be installed under a name the source does not spell ({@link installsUnspelledMember}). */
+export function sourceMayWriteUnspelledMember(sourceFile: ts.SourceFile): boolean {
+  return prototypeUse(sourceFile).unspelledWrite;
+}
+
 /** Whether the source writes, deletes or defines a member or binding named `name` (`x.call = f`, `String = v`). */
 export function sourceWritesMemberNamed(sourceFile: ts.SourceFile, name: string): boolean {
   return prototypeUse(sourceFile).writtenNames.has(name);
@@ -127,6 +138,7 @@ function prototypeUse(sourceFile: ts.SourceFile): PrototypeUse {
       reflective: false,
       globalObjectEscapes: false,
       dynamicCode: false,
+      unspelledWrite: false,
     };
     const found = use;
     const callbacks: { readonly intrinsic: PatchableIntrinsic; readonly method: string }[] = [];
@@ -151,6 +163,7 @@ function prototypeUse(sourceFile: ts.SourceFile): PrototypeUse {
         found.globalObjectEscapes = true;
       const written = writtenName(node);
       if (written !== undefined) found.writtenNames.add(written);
+      found.unspelledWrite ||= installsUnspelledMember(node);
       const text = nameText(node);
       if (
         ts.isWithStatement(node) ||
@@ -300,6 +313,44 @@ function writtenName(node: ts.Node): string | undefined {
   if (!ts.isCallExpression(node) || !ts.isPropertyAccessExpression(node.expression)) return undefined;
   const key = node.arguments[1];
   return node.expression.name.text === "defineProperty" && key !== undefined ? nameText(key) : undefined;
+}
+
+/**
+ * A store `x[e] = v` or an `Object.defineProperty(x, e, …)` whose key `e` is no
+ * constant, so the member it installs has a name no scan by name sees; or a
+ * mention of a built-in that makes keys from data or an exotic object:
+ * `Proxy`, `fromEntries`, and `JSON` other than `typeof JSON` and
+ * `JSON.stringify` (assert.js's value formatter).
+ */
+function installsUnspelledMember(node: ts.Node): boolean {
+  if (ts.isElementAccessExpression(node)) return isStoreTarget(node) && !isConstantKey(node.argumentExpression);
+  if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression)) {
+    const key = node.arguments[1];
+    return node.expression.name.text === "defineProperty" && key !== undefined && !isConstantKey(key);
+  }
+  const name = referencedName(node);
+  if (name === "Proxy" || name === "fromEntries") return true;
+  if (name !== "JSON") return false;
+  const use = outermost(node as ts.Expression);
+  const user = use.parent;
+  return !(
+    ts.isTypeOfExpression(user) ||
+    (ts.isPropertyAccessExpression(user) && user.expression === use && user.name.text === "stringify")
+  );
+}
+
+/** A property key fixed by the source: a literal, a signed number, or the global `undefined` / `NaN` / `Infinity`. */
+function isConstantKey(key: ts.Expression): boolean {
+  const k = skipOuterExpressions(key);
+  if (ts.isStringLiteralLike(k) || ts.isNumericLiteral(k) || isUnshadowedUndefined(k)) return true;
+  if (k.kind === ts.SyntaxKind.TrueKeyword || k.kind === ts.SyntaxKind.FalseKeyword) return true;
+  if (k.kind === ts.SyntaxKind.NullKeyword) return true;
+  if (ts.isIdentifier(k)) return k.text === "NaN" || k.text === "Infinity";
+  return (
+    ts.isPrefixUnaryExpression(k) &&
+    (k.operator === ts.SyntaxKind.MinusToken || k.operator === ts.SyntaxKind.PlusToken) &&
+    ts.isNumericLiteral(k.operand)
+  );
 }
 
 /** `target` is itself what a store or `delete` writes, not a member's object or name (`x` and `k` in `x.k = v`). */

@@ -93,13 +93,13 @@ const CLAIMED: Record<string, string> = {
  * `<module-init>` is refused at select, with the arm named.
  */
 const REFUSED: Record<string, { readonly source: string; readonly detail: string }> = {
-  // (#7339) The probe is an own-property test row now; what it makes reachable is refused by the table's gap rules.
+  // (#7339) The probe is an own-property test row now: what it makes reachable is refused by the table's gap rules.
   "inherited method read": {
     source: `var o = {}; if (o.hasOwnProperty !== Object.prototype.hasOwnProperty) { throw "inherited"; }`,
     detail: "expr-carrier-inherited-member",
   },
   "parenthesized inherited read": {
-    source: `var o = {}; if ((o).toString === undefined) { throw "inherited"; }`,
+    source: `var o = {}; if ((o).valueOf === undefined) { throw "inherited"; }`,
     detail: "expr-carrier-inherited-member",
   },
   "parenthesized loose equality": {
@@ -107,7 +107,7 @@ const REFUSED: Record<string, { readonly source: string; readonly detail: string
     detail: "operand-coercion-unsupported",
   },
   alias: {
-    source: `var o = {}; var p = o; if (p.toString === undefined) { throw "alias"; }`,
+    source: `var o = {}; var p = o; if (p.valueOf === undefined) { throw "alias"; }`,
     detail: "expr-carrier-inherited-member",
   },
   reassigned: { source: `var o = {}; o = 5; if (o !== 5) { throw "w"; }`, detail: "vardecl-module-value-flow" },
@@ -171,7 +171,7 @@ const REFUSED: Record<string, { readonly source: string; readonly detail: string
   },
   "passed to a function that writes a computed key": {
     source: `var o = {}; function g(x, k) { x[k] = function () { return true; }; } g(o, "has" + "OwnProperty"); if (!o.hasOwnProperty("z")) { throw "x"; }`,
-    detail: "expr-object-static-untrusted",
+    detail: "expr-module-scalar-method",
   },
   // Round-3 review: a method call hands `o` to arbitrary code as `this`.
   "method call on the binding": {
