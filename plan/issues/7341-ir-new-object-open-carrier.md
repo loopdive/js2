@@ -487,6 +487,20 @@ module binding still fails after the claim, as on main. Fixing it at
 select needs the caller's unit not to be dragged by the call-graph
 closure. The test rows `FUNCTION_BODY_LITERAL_WRITE` pin main's route.
 
+Re-verified on `869c11fc03` against main `f5249b0062`. The current main
+`e6f49362b6` differs only in artifacts.
+
+- **Reviewer's 367 probes:** 0 wrong answers; 0 head-only post-claim
+  errors; 0 units lost. Post-claim errors fall from 12 on main to 6: the
+  six module-level shapes are removed.
+  - `lit:re-in-fn` routes as on main.
+  - `np:re-in-fn` keeps `<module-init>` on IR, which main refuses.
+- **Census (1,173 files):** 23 gained, 0 lost, 0 units newly legacy, 0
+  post-claim errors.
+- **gc bytes:** 391/391 identical.
+- **Tests:** #7341 59/59.
+- **Quality:** the full list passes, 49/49.
+
 ### Review (step B) round 1: NOT MET → fixes (2026-11-14)
 
 - **B1 (blocker):** `var o = new Object(); o.p = 1; o = { p: 2 }` claimed
