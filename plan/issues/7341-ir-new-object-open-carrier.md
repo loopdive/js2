@@ -466,6 +466,31 @@ the own-property probe. Only its expected detail changed.
   `new Object()` file refused #7335's define as `expr-object-static-untrusted`
   once #7212 moved defines into the statics table.
 
+### Measurements after merging #7340 (2026-11-14)
+
+Re-run on `833f251579`, which merges main `9745e46d72` with #7340. The
+current main `c181f3f3e5` differs only by a baseline refresh, with no
+source change. Base: that main, exported.
+
+- **Census** (same tool, flags and 1,173 files): 23 gained, exactly the S1
+  set; 0 lost; 0 post-claim errors; no compile-error difference. Routing
+  changed only in the 23. 298 of the 300 sample files are IR-only on both
+  trees.
+- **gc bytes:** 391/391 identical to main.
+- **#7212's and #7221's gained files:**
+  - #7340's 10 (`grouping/S11.1.6_A3_T{1,2}`,
+    `for/12.6.3_2-3-a-ii-{2,4..10}`) are IR-only on head and main alike.
+  - #7338's list (40 files in its gained list) is legacy under this census
+    on main itself (e.g. `expr-carrier-escapes-unit`), and the head routes
+    all 40 exactly as main does. So this branch costs none of them. Whether
+    main still yields them under #7338's own measurement is not checked
+    here.
+- **Tests:** the six R2-S1 rows pass with the rest of
+  `tests/issue-7341-new-object-open-carrier.test.ts` (53/53). The #7338,
+  #7340 and #7335 files pass too (94, 41, 38).
+- **Quality:** the full list passes, 49/49, including the LOC and function
+  budgets against current main.
+
 ### Measurements after step B
 
 Base: `origin/main` `5b1f4794bb` (with #7212), exported into the scratchpad.
