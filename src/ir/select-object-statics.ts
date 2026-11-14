@@ -45,7 +45,7 @@ export interface ObjectStaticSelectorState {
     expr: ts.Expression,
   ) => { readonly valueKind: { readonly kind: string }; readonly declaration: ts.Node } | undefined;
   /** The resolver's kind match of a write of `value` to module binding `id`. */
-  readonly moduleBindingMatches: (id: ts.Identifier, value: ts.Expression) => boolean;
+  readonly moduleBindingMatches: (id: ts.Identifier, value: ts.Expression, scope: ReadonlySet<string>) => boolean;
   readonly unannotatedLocal: (id: ts.Identifier) => ts.VariableDeclaration | undefined;
   readonly isDynamicHomeOpenCarrier: (decl: ts.VariableDeclaration) => boolean;
   /** #7335's own-property test on a dynamic home: it answers a boolean. */
@@ -105,7 +105,7 @@ export interface ObjectStaticSelector {
   readonly admitsCarrierUse: (expression: ts.Expression, refuse: (detail: string, node: ts.Node) => false) => boolean;
   /** A value already on the carrier: the table's carriers, and main's dynamic bindings and parameters. */
   readonly isCarrierValue: (expression: ts.Expression) => boolean;
-  readonly moduleBindingTakes: (id: ts.Identifier, value: ts.Expression) => boolean;
+  readonly moduleBindingTakes: (id: ts.Identifier, value: ts.Expression, scope: ReadonlySet<string>) => boolean;
   /** `Object.<static>(…)` or the JS environment's #7276 create, admitted; undefined for any other call. */
   readonly admit: (call: ts.CallExpression, rules: ObjectStaticValueRules) => boolean | undefined;
 }
@@ -348,8 +348,8 @@ export function createObjectStaticSelector(state: ObjectStaticSelectorState): Ob
     },
     isCarrierValue,
     // A carrier goes only into its home; a function local holds one only as its own initializer.
-    moduleBindingTakes: (id, value) =>
-      state.moduleBindingMatches(id, value) && (holdsCarrier(id) || !lowersToCarrier(value)),
+    moduleBindingTakes: (id, value, scope) =>
+      state.moduleBindingMatches(id, value, scope) && (holdsCarrier(id) || !lowersToCarrier(value)),
     admit,
   };
 }

@@ -169,6 +169,11 @@ const VALUE_USES: Record<string, string> = {
   "a comma ending in an object literal assigned": `var o = new Object(); o.p = 1; o = (0, { p: 2 }); if (o.p !== 2) throw "x";`,
   "an array literal assigned": `var o = new Object(); o.p = 1; o = [1, 2]; if (o[1] !== 2) throw "x";`,
   "a chained write of an object literal": `var q; var o = new Object(); o.p = 1; o = q = { p: 2 }; if (q.p !== 2) throw "x";`,
+  // A repeated `var`'s initializer writes the same slot (PR #7214 review round 3).
+  "a redeclared var initialised with an object literal": `var o = new Object(); o.p = 1; var o = { a: 1 }; if (o.a !== 1) throw "x";`,
+  "a redeclared var initialised with an array literal": `var o = new Object(); var o = [1]; if (o[0] !== 1) throw "x";`,
+  "a redeclared `{}` var in a try block": `var o = {}; try { var o = { a: 1 }; } catch (e) {} if (o.a !== 1) throw "x";`,
+  "a redeclared number var": `var o = 1; var o = { a: 1 }; if (o.a !== 1) throw "x";`,
   "an object literal assigned in a labelled if block": `var c = 1; var o = new Object(); o.p = 1; l: if (c) { { o = { p: 2 }; } } if (o.p !== 2) throw "x";`,
   // Mixed carrier expressions (PR #7214 review R2-S1): the carrier flows through `+`, a comma, or a `void`.
   "a member plus one as a switch discriminant": `var o = new Object(); o.k = 1; switch (o.k + 1) { case 2: break; default: throw "k"; }`,
@@ -236,6 +241,13 @@ const CARRIER_WRITES: Record<string, string> = {
   "a typeof": "typeof c",
 };
 
+/** A redeclared `var` whose initializer the carrier stores stays claimed. */
+const REDECLARED_CARRIER_WRITES: Record<string, string> = {
+  "a number": `var o = new Object(); o.p = 1; var o = 2; if (o !== 2) throw "x";`,
+  "a string": `var o = {}; var o = "s"; if (o !== "s") throw "x";`,
+  "another dynamic var": `var q; var o = {}; var o = q; if (o !== undefined) throw "x";`,
+};
+
 describe("#7341 S1 — `new Object()` as the open-object carrier", () => {
   for (const [name, source] of Object.entries(CLAIMED)) {
     it(`claims every unit and runs as JS: ${name}`, async () => {
@@ -296,6 +308,16 @@ describe("#7341 S1 — `new Object()` as the open-object carrier", () => {
   for (const [name, value] of Object.entries(CARRIER_WRITES)) {
     it(`keeps <module-init> claimed for a value the carrier stores: ${name}`, async () => {
       const source = `var c = 1; var q; var d = {}; var o = new Object(); o.p = 1; function f() { return 1; } if (c) { o = ${value}; } if (typeof o === "symbol") throw "x";`;
+      const ir = await build(source, "standalone");
+      expect(ir.irPostClaimErrors ?? []).toEqual([]);
+      expect(outcome(ir, "<module-init>")?.irBodyEmitted).toBe(true);
+      expect(await run(ir, "standalone")).toBe("ok");
+    });
+  }
+
+  for (const [name, source] of Object.entries(REDECLARED_CARRIER_WRITES)) {
+    it(`keeps <module-init> claimed for a redeclared var the carrier stores: ${name}`, async () => {
+      expect(node(source)).toBe("ok");
       const ir = await build(source, "standalone");
       expect(ir.irPostClaimErrors ?? []).toEqual([]);
       expect(outcome(ir, "<module-init>")?.irBodyEmitted).toBe(true);

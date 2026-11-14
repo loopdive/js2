@@ -3272,7 +3272,7 @@ function concreteOperandBoxesOntoCarrier(concrete: ts.Expression): boolean {
  * stores on its carrier, however spelled or nested: a carrier, a primitive wrapper (its arm judges the store),
  * or a scalar that boxes. A function keeps main's route: refusing it drags its IR callers to legacy.
  */
-function moduleBindingWrite(id: ts.Identifier, value: ts.Expression) {
+function moduleBindingWrite(id: ts.Identifier, value: ts.Expression, scope: ReadonlySet<string>) {
   const binding = currentModuleBindingResolver?.(id, value);
   if (!currentSubjectIsModuleInit || binding?.valueKind.kind !== "dynamic") return binding;
   const stores = (leaf: ts.Expression) =>
@@ -3280,7 +3280,7 @@ function moduleBindingWrite(id: ts.Identifier, value: ts.Expression) {
     wrapper.wrapperConstruction(leaf, WRAPPER_AMBIENCE) !== undefined ||
     concreteOperandBoxesOntoCarrier(leaf) ||
     ts.isVoidExpression(leaf) ||
-    isUnshadowedUndefinedIdentifier(leaf, new Set());
+    isUnshadowedUndefinedIdentifier(leaf, scope);
   return everyYieldedValue(value, stores) ? binding : undefined;
 }
 
@@ -4876,7 +4876,7 @@ function isPhase1StatementListInScope(
       ) {
         const moduleBinding = currentModuleBindingResolver?.(s.expression.left);
         if (moduleBinding) {
-          if (!moduleBindingTakes(s.expression.left, s.expression.right)) {
+          if (!moduleBindingTakes(s.expression.left, s.expression.right, scope)) {
             return shapeNo("nontail-module-assign-incompatible", s.expression);
           }
           if (!isPhase1Expr(s.expression.right, scope, localClasses)) {
@@ -5937,11 +5937,11 @@ function isPhase1ForUpdateExpr(
       if (currentSubjectIsModuleInit) {
         if (op !== ts.SyntaxKind.EqualsToken && !isSelectableNumberCompound(expr, scope, localClasses)) return false;
         if (!scope.has(expr.left.text)) return false;
-        if (op === ts.SyntaxKind.EqualsToken && !moduleBindingWrite(expr.left, expr.right)) return false;
+        if (op === ts.SyntaxKind.EqualsToken && !moduleBindingWrite(expr.left, expr.right, scope)) return false;
         return isPhase1Expr(expr.right, scope, localClasses);
       }
       if (op !== ts.SyntaxKind.EqualsToken) return false;
-      if (!moduleBindingWrite(expr.left, expr.right)) return false;
+      if (!moduleBindingWrite(expr.left, expr.right, scope)) return false;
       return isPhase1Expr(expr.right, scope, localClasses);
     }
     // Plain or compound assignment to an identifier in scope.
@@ -6345,7 +6345,7 @@ function isPhase1BodyStatement(
           }
           const moduleBinding = currentModuleBindingResolver?.(stmt.expression.left);
           if (moduleBinding) {
-            if (!moduleBindingTakes(stmt.expression.left, stmt.expression.right)) {
+            if (!moduleBindingTakes(stmt.expression.left, stmt.expression.right, scope)) {
               return shapeNo("body-module-assign-incompatible", stmt.expression);
             }
             return isPhase1Expr(stmt.expression.right, scope, localClasses);
@@ -6579,9 +6579,9 @@ function isPhase1Tail(
     }
     if (ts.isBinaryExpression(expr) && ts.isIdentifier(expr.left)) {
       const exactModuleWrite =
-        expr.operatorToken.kind === ts.SyntaxKind.EqualsToken ? moduleBindingWrite(expr.left, expr.right) : undefined;
+        expr.operatorToken.kind === ts.SyntaxKind.EqualsToken && moduleBindingWrite(expr.left, expr.right, scope);
       if (exactModuleWrite) {
-        if (!moduleBindingTakes(expr.left, expr.right)) return shapeNo("tail-module-assign-incompatible", expr);
+        if (!moduleBindingTakes(expr.left, expr.right, scope)) return shapeNo("tail-module-assign-incompatible", expr);
         return isPhase1Expr(expr.right, scope, localClasses);
       }
       if (isUnrepresentableModuleBinding(expr.left)) {
@@ -6592,7 +6592,7 @@ function isPhase1Tail(
         if (expr.operatorToken.kind !== ts.SyntaxKind.EqualsToken) {
           return shapeNo("tail-module-compound", expr);
         }
-        if (!moduleBindingTakes(expr.left, expr.right)) {
+        if (!moduleBindingTakes(expr.left, expr.right, scope)) {
           return shapeNo("tail-module-assign-incompatible", expr);
         }
         return isPhase1Expr(expr.right, scope, localClasses);
@@ -7262,7 +7262,7 @@ function isPhase1VarDeclarationList(
     if (!ts.isIdentifier(d.name)) return shapeNo("vardecl-nonident-name", d.name);
     // (#7106) A repeated script `var` resolves to the binding's FIRST
     // declaration: it is a write to that slot (or, without an initializer, a
-    // no-op), never a new binding.
+    // no-op), never a new binding; (#7341) `moduleBindingWrite` admits that write.
     const redeclaredModuleVar =
       moduleVarList &&
       scope.has(d.name.text) &&
@@ -7326,6 +7326,8 @@ function isPhase1VarDeclarationList(
     if (directModuleBinding && !currentModuleBindingResolver?.bindingValueMatches(d.name, d.initializer)) {
       return shapeNo("vardecl-module-value-flow", d.initializer);
     }
+    if (redeclaredModuleVar && !moduleBindingWrite(d.name, d.initializer, scope))
+      return shapeNo("vardecl-redeclared-write", d);
     // A local alias loses the module declaration identity (and therefore its
     // semantic boolean/numeric/extern representation). Reject direct and
     // value-preserving wrappers for every module kind. Calls rooted in a
@@ -8566,7 +8568,7 @@ function moduleExternConsumerIsProven(expr: ts.Expression, scope: ReadonlySet<st
     if (
       op === ts.SyntaxKind.EqualsToken &&
       ts.isIdentifier(candidate.left) &&
-      moduleBindingWrite(candidate.left, candidate.right)
+      moduleBindingWrite(candidate.left, candidate.right, scope)
     ) {
       return true;
     }
@@ -9083,7 +9085,7 @@ const objectStaticSelector = createObjectStaticSelector({
   isAmbientBinding: (node) => selectorSeesAmbientBinding(node),
   isLibOnlyBinding: selectorSeesLibOnlyBinding,
   moduleBinding: (expr) => moduleBinding(expr),
-  moduleBindingMatches: (id, value) => moduleBindingWrite(id, value) !== undefined,
+  moduleBindingMatches: (id, value, scope) => moduleBindingWrite(id, value, scope) !== undefined,
   unannotatedLocal: (id) => unannotatedLocal(id),
   isDynamicHomeOpenCarrier: (decl) => isDynamicHomeOpenCarrierDeclaration(decl),
   isOwnPropertyTest: (call) => dynamicHomeOwnPropertyMethod(call) !== undefined,

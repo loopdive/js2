@@ -32,32 +32,33 @@ export interface CarrierLeaves {
 }
 
 export function producesCarrier(expression: ts.Expression, leaves: CarrierLeaves): boolean {
-  let e = expression;
-  while (ts.isParenthesizedExpression(e)) e = e.expression;
   const carrier = (inner: ts.Expression) => producesCarrier(inner, leaves);
-  if (ts.isIdentifier(e) || e.kind === ts.SyntaxKind.ThisKeyword) return leaves.binding(e as ts.Identifier);
-  if (ts.isPropertyAccessExpression(e) || ts.isElementAccessExpression(e)) return carrier(e.expression);
-  if (ts.isCallExpression(e)) {
-    const answer = leaves.call(e);
-    if (answer !== undefined) return answer;
-    return ts.isPropertyAccessExpression(e.expression) && carrier(e.expression.expression);
-  }
-  if (ts.isConditionalExpression(e)) {
-    return (carrier(e.whenTrue) && carrier(e.whenFalse)) || leaves.conditional?.(e) === true;
-  }
-  if (yieldsRight(e)) return carrier(e.right);
-  return isCarrierAddition(e, (operand) => carrier(operand) || leaves.addsAsCarrier?.(operand) === true);
+  const leaf = (e: ts.Expression): boolean => {
+    if (ts.isIdentifier(e) || e.kind === ts.SyntaxKind.ThisKeyword) return leaves.binding(e as ts.Identifier);
+    if (ts.isPropertyAccessExpression(e) || ts.isElementAccessExpression(e)) return carrier(e.expression);
+    if (ts.isCallExpression(e)) {
+      const answer = leaves.call(e);
+      if (answer !== undefined) return answer;
+      return ts.isPropertyAccessExpression(e.expression) && carrier(e.expression.expression);
+    }
+    return isCarrierAddition(e, (operand) => carrier(operand) || leaves.addsAsCarrier?.(operand) === true);
+  };
+  return everyYieldedValue(expression, leaf, leaves.conditional);
 }
 
 /**
- * (#7341) Every value `expression` can yield passes `leaf`: a conditional yields either arm, a comma
- * or an `=` assignment its right side (the flow `producesCarrier` follows), anything else itself.
+ * Every value `expression` can yield passes `leaf`: a conditional yields either arm (or passes as a
+ * whole by `conditional`), a comma or an `=` assignment its right side, anything else itself.
  */
-export function everyYieldedValue(expression: ts.Expression, leaf: (value: ts.Expression) => boolean): boolean {
+export function everyYieldedValue(
+  expression: ts.Expression,
+  leaf: (value: ts.Expression) => boolean,
+  conditional?: (conditional: ts.ConditionalExpression) => boolean,
+): boolean {
   let e = expression;
   while (ts.isParenthesizedExpression(e)) e = e.expression;
-  const each = (inner: ts.Expression) => everyYieldedValue(inner, leaf);
-  if (ts.isConditionalExpression(e)) return each(e.whenTrue) && each(e.whenFalse);
+  const each = (inner: ts.Expression) => everyYieldedValue(inner, leaf, conditional);
+  if (ts.isConditionalExpression(e)) return (each(e.whenTrue) && each(e.whenFalse)) || conditional?.(e) === true;
   if (yieldsRight(e)) return each(e.right);
   return leaf(e);
 }
