@@ -125,6 +125,11 @@ const REFUSED: Record<string, { readonly source: string; readonly detail: string
     detail: "expr-object-static-operand",
   },
   // The boxed boolean of a call the checker types `boolean` does not cross a call boundary (`escapesUnit`).
+  // An array literal types its elements from the checker, so a boxed test typed `boolean` is refused there.
+  "a boxed test as an array element": {
+    source: "var o = {}; o.a = 1; function t() { return [o.hasOwnProperty('a')][0]; } var r = t();",
+    detail: "expr-boxed-test-array-element",
+  },
   "a local static result's test returned": {
     source:
       "function t() { var x = Object.defineProperty({}, 'a', { value: 1 }); return x.hasOwnProperty('a'); } var r = t();",

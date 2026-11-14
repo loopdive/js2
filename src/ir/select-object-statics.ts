@@ -289,7 +289,18 @@ export function createObjectStaticSelector(state: ObjectStaticSelectorState): Ob
   const resultCall: CarrierLeaves["call"] = (call) => {
     const admitted = plan(call);
     if (admitted?.kind !== "test") return admitted?.kind === "call" ? true : undefined;
-    return admitted.test.answer === "dynamic" && state.classifyPrimitive(call) === "boolean";
+    return boxedAgainstChecker(call);
+  };
+  const boxedAgainstChecker = (call: ts.CallExpression): boolean => {
+    const admitted = plan(call);
+    return (
+      admitted?.kind === "test" && admitted.test.answer === "dynamic" && state.classifyPrimitive(call) === "boolean"
+    );
+  };
+  /** An open object is a static's answer; a test answers a boolean, boxed or not, which is no object. */
+  const openObjectCall: CarrierLeaves["call"] = (call) => {
+    const kind = plan(call)?.kind;
+    return kind === "call" ? true : kind === "test" ? false : undefined;
   };
 
   /** The table's results: a static's answer, and a binding initialised with one. */
@@ -318,7 +329,15 @@ export function createObjectStaticSelector(state: ObjectStaticSelectorState): Ob
       if (state.isDynamicHomeOpenCarrier(declaration)) return true;
       return holdsInitializer(declaration, visited, openObjectLeaves);
     },
-    call: staticCall,
+    call: openObjectCall,
+  });
+  /** (#7339) A boxed test the checker types `boolean`, and a binding initialised with one. */
+  const boxedTestLeaves = (visited: Set<ts.Declaration>): CarrierLeaves => ({
+    binding: (node) => {
+      const declaration = initializedDeclaration(node);
+      return declaration !== undefined && holdsInitializer(declaration, visited, boxedTestLeaves);
+    },
+    call: (call) => boxedAgainstChecker(call) || (plan(call) !== undefined ? false : undefined),
   });
   /** A static's own values, which cross as carriers: the table's carriers, and main's dynamic bindings and parameters. */
   const valueLeaves = (visited: Set<ts.Declaration>): CarrierLeaves => ({
@@ -445,6 +464,10 @@ export function createObjectStaticSelector(state: ObjectStaticSelectorState): Ob
         return refuse("expr-carrier-optional-chain", e);
       }
       if (readsInheritedMember(e)) return refuse("expr-carrier-inherited-member", e);
+      // (#7339) An array literal types its elements from the checker too, so it would hold that boolean as the i32.
+      if (ts.isArrayLiteralExpression(e.parent) && producesCarrier(e, boxedTestLeaves(new Set()))) {
+        return refuse("expr-boxed-test-array-element", e);
+      }
       return !escapesUnit(e) || refuse("expr-carrier-escapes-unit", e);
     },
     isCarrierValue,
