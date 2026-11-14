@@ -5,7 +5,7 @@ status: in-progress
 assignee: ttraenkler/senior-dev
 sprint: current
 created: 2026-11-12
-updated: 2026-11-12
+updated: 2026-11-14
 priority: medium
 horizon: m
 feasibility: medium
@@ -469,7 +469,8 @@ not explained file by file.
    `JSON.stringify`: every test's assert.js formats values with
    `JSON.stringify`, and the plan's rule refused all 42 files that are
    IR-only on main. `JSON.parse` and any other `JSON` use still distrust.
-3. **Two gap rules where a test makes a unit reachable.** #7335's allow-list
+3. **Two gap rules where a test makes a unit reachable** (narrowed and
+   gated by the program in review round 1, below). #7335's allow-list
    also kept out two shapes main gets wrong. Both are refused at select in a
    unit holding an admitted own-property test; a unit the statics alone reach
    keeps #7338's routing.
@@ -485,7 +486,8 @@ not explained file by file.
 4. **The unit index lists calls by row name**, `Object.<static>` and
    `R.<test>`. The file gate (does the table make carriers?) counts only rows
    that answer or extend an object.
-5. **Evaluation order is the row's `test` flag**, not a `guard:` field:
+5. **Evaluation order is the row's `test` flag** (replaced in review round 1
+   by a `test` plan kind with its own emitter), not a `guard:` field:
    `emitObjectStaticCall` takes operand and definition thunks; a test row
    lowers the receiver, tests it, then lowers the key.
 6. **The names have one definition:** `IrInstrDynOwnProperty.test`, named
@@ -510,3 +512,94 @@ not explained file by file.
   not broken down.
 - WASI and the JS environment: by lane, nothing changes there. Measured only
   as gc bytes on 445 files, and with a three-program WASI probe.
+
+## Review round 1: NOT MET → fixes (2026-11-14)
+
+PR #7234 at `8db70d18aa` was reviewed NOT MET. Each finding and what was done:
+
+| Finding | Disposition |
+| --- | --- |
+| **B1** — the i32 answer broke `+`, `==` and local typing where the call is typed `any` | Fixed by the design decision below. The reviewer's five `plus-*` cases answer as node does, as on main. |
+| **B2** — `expr-carrier-inherited-member` refused units main gets right (`typeof o.toString`) | Narrowed to the read that is actually wrong (below). The reviewer's `toString` cases are claimed again, as on main. |
+| **S1** — `row.test` was a hidden mode switch, and statics took operand thunks | Two plan kinds: `call` (the statics, plain operands, `emitObjectStaticCall`) and `test` (`emitOwnPropertyTest`). They share the lane and trust helpers and the nullish guard. |
+| **S2** — the two gap rules were gated by the unit | Both are gated by a program fact instead: the file holds an admitted own-property test. Measured on the reviewer's `e.json` `ln*` cases: routing equals main. |
+| **S3** — `hasObjectPrototypeChain` was unsound and duplicated the create row's check; a second key/write scanner | `hasObjectPrototypeChain` is deleted. Every `Object.create` in the program must make from a prototype the create row admits (`isAdmittedPrototype`), and a mention that is not a direct call distrusts. The unspelled-member fact is now `sourceMayWriteUnspelledMember` in `shared/intrinsic-prototype-writes.ts`, inside the existing walk. |
+| **S4** — an untrusted test refused a unit main claimed (`t` on a parameter) | A test the table does not answer is no table call (below). |
+| Nits | One `./nodes.js` import in `open-object-carrier.ts`; no `OwnPropertyTest` casts. |
+
+### Design decision: the answer follows the call's static type
+
+A test's result representation follows the checker's static type of the call,
+which is what every consumer's proof reads. It is decided once, in
+`objectStaticCallPlan`, as the test plan's `answer`:
+
+- a call typed `boolean` (`var o = {}`, a descriptor result) answers the i32
+  boolean, as before;
+- any other call (a dynamic parameter, `var o; o = …`, an `Object.create`
+  result) computes the same i32 and boxes it onto the carrier
+  (`irDynamic(JS_TAG_IDS.Boolean)`), as main's dynamic method call answers.
+
+The selector's carrier leaves (`staticCall`), from-ast's
+`expressionProducesDynamic`, `trackedModuleInfluenceIsBoolean` and the
+emitter all read that field; none of them asks the checker again. The boxed
+boolean is a carrier, but it is not a table result: `escapesUnit` guards the
+statics' objects, and a boolean crosses a call as any of main's dynamic values
+does. Without that split, 10 `Object.create` files were lost to
+`expr-carrier-escapes-unit` (census 43 instead of 53).
+
+A test the plan cannot answer is not a table call: untrusted, another arity, a
+spread or an optional call. The receiver's own arms then decide exactly as on
+main, so no refusal is introduced.
+
+### The inherited-member gap, measured
+
+Measured with each `%Object.prototype%` key read as a value on an open
+`$Object` (`var o = {}`, a `defineProperty` result, an `Object.create`
+result). The member read answers the realm's member only for `toString`. For
+`hasOwnProperty`, `isPrototypeOf`, `propertyIsEnumerable`, `toLocaleString`,
+`valueOf` and `__defineGetter__`, the read and `typeof` answer wrong on main
+as well. Examples: `function t() { var o = Object.defineProperty({}, 'a', …);
+return typeof o.valueOf; }`, and `o.hasOwnProperty !==
+Object.prototype.hasOwnProperty`.
+
+Dropping the rule outright made head claim and answer wrong in programs main
+refuses. One example is `var o = {}; if (o.hasOwnProperty !==
+Object.prototype.hasOwnProperty) throw …; o.hasOwnProperty("zz")`. So the rule
+stays, with two changes:
+
+- it is limited to the keys that read wrong (every own key of
+  `%Object.prototype%` but `toString`);
+- it is gated by the program fact.
+
+**Residual.** In a file with an admitted test, a unit that reads such a key as
+a value from a carrier is refused. Main claims some of these units and answers
+them wrong, for example the reviewer's `valueOf` and `hasOwnProperty`
+variants. Head keeps them legacy. In the probes, 3 of them now answer
+correctly, and in the other 3 legacy is wrong too. In a file with no admitted test, main's wrong answers are
+unchanged. The fix is the member read (#7304), not this table.
+
+### Measurements (branch at `b70ba8df6b`, main `8e2a65b374`, whose `src/` equals `281b60192d`)
+
+Every run used one process at a time.
+
+- **Census 818:** 53 gained, 0 lost, 0 units newly legacy (1,261 → 1,208), 0
+  compile errors, 0 post-claim errors. These are the same 53 files as before
+  the review.
+- **#7338's 2,757-file set:** 39 gained (40 before the review), 0 lost, 0
+  units newly legacy, 0 new compile errors, 0 post-claim errors. The missing
+  file was not identified. The likely cause is the stricter `Object.create`
+  trust check (S3).
+- **Verdicts:** the 53 routing-changed files all pass under
+  `run-test262-paths.mts --standalone`. All 53 also pass in the CI standalone
+  baseline.
+- **gc bytes:** identical on 445 files, and on the reviewer's 364-program
+  `gc.json`.
+- **Reviewer case sets `a2`, `b2`, `c2`, `d`, `e`, head vs main:**
+  - 0 post-claim errors on head. Main has 4, in `param-recv-str`,
+    `loose-null-test-other-unit` and `p-str:h/e`.
+  - 0 units lost that main answers correctly.
+  - No head IR answer differs from main's.
+  - The only units lost are `e/inh2-test`. Main's IR answer there is wrong,
+    and so is legacy's.
+- **Probe matrix (39 programs):** 16 claimed whole against 9 on main; every
+  claimed one answers as node does.
