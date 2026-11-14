@@ -309,6 +309,16 @@ import {
 import { collectLatticeParamFacts, latticeAdditiveFact, type LatticeParamFacts } from "./lattice-param-facts.js";
 import { tryEmitUnrolledReduction } from "./reduction-unroll.js";
 import { demoteToLegacy, IrInvariantError, IrUnsupportedError } from "./outcomes.js";
+import {
+  boxWrapper,
+  emitToPrimitive,
+  emitWrapperConstruction,
+  wrapperArgumentHint,
+  wrapperConstruction,
+  wrapperConsumer,
+  type WrapperAmbience,
+  type WrapperConstruction,
+} from "./wrapper-construction.js";
 import { collectPatternBindingNames } from "./analysis/ast-scope.js";
 import {
   isPatternDeclaration,
@@ -8608,77 +8618,49 @@ function lowerNewExpression(expr: ts.NewExpression, cx: LowerCtx): IrValueId {
   return cx.builder.emitClassNew(shape, args);
 }
 
-type PrimitiveWrapperConstructorName = "Boolean" | "Number" | "String";
+/** from-ast's binding facts for the wrapper recognizer (`wrapper-construction.ts`). */
+function fromAstWrapperAmbience(cx: LowerCtx): WrapperAmbience {
+  return {
+    isAmbient: (node) => cx.resolver?.isAmbientBinding?.(node) === true,
+    isAmbientString: (node) => cx.resolver?.isAmbientStringBinding?.(node) === true,
+  };
+}
 
-/**
- * #4208 S4 — checker-identity-backed ambient primitive-wrapper constructor.
- * Selection admits this only as an operand of a ToPrimitive operator (#7106);
- * keeping the recognizer here exact prevents a textual shadow from being
- * routed to the runtime wrapper family.
- */
-function primitiveWrapperConstructorName(
-  expression: ts.Expression,
-  cx: LowerCtx,
-): PrimitiveWrapperConstructorName | null {
-  const candidate = peelParensExpr(expression);
-  if (!ts.isNewExpression(candidate) || !ts.isIdentifier(candidate.expression)) return null;
-  const name = candidate.expression.text;
-  if (name !== "Boolean" && name !== "Number" && name !== "String") return null;
-  const ambient =
-    name === "String"
-      ? cx.resolver?.isAmbientStringBinding?.(candidate.expression) === true
-      : cx.resolver?.isAmbientBinding?.(candidate.expression) === true;
-  return ambient ? name : null;
+/** `expression` as an ambient wrapper construction (#4208 S4, #7340). */
+function primitiveWrapperConstruction(expression: ts.Expression, cx: LowerCtx): WrapperConstruction | undefined {
+  return wrapperConstruction(expression, fromAstWrapperAmbience(cx));
 }
 
 /**
- * Materialize the real wrapper object through the existing host/native
- * constructor provider. The result stays branded `extern:Object`: an operator
- * must still run the canonical `__to_primitive` protocol
- * ({@link freshWrapperToDynamic}) and may not substitute the constructor
- * argument as an AST shortcut.
+ * Materialize the real wrapper object through the native constructor. In a
+ * ToPrimitive operand the result stays branded `extern:Object`: the operator
+ * still runs the canonical `__to_primitive` protocol ({@link freshWrapperToDynamic})
+ * and may not substitute the constructor argument. (#7340) Stored into a
+ * dynamic-home script var, it is boxed onto the carrier, because the position
+ * says so (`wrapperConsumer`).
  */
 function lowerPrimitiveWrapperConstruction(expr: ts.NewExpression, cx: LowerCtx): IrValueId | null {
   if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== expr)
     return withNodeSourceSite(cx, expr, () => lowerPrimitiveWrapperConstruction(expr, cx));
-  const kind = primitiveWrapperConstructorName(expr, cx);
-  if (kind === null) return null;
-  const args = expr.arguments ?? [];
-  if (args.length !== 1 || ts.isSpreadElement(args[0]!)) {
+  const construction = primitiveWrapperConstruction(expr, cx);
+  if (construction === undefined) return null;
+  const { row, argument } = construction;
+  if (argument === undefined) {
     throw new IrUnsupportedError(
       "constructor-arity-unsupported",
       "build",
-      `ir/from-ast: primitive wrapper ${kind} requires one exact primitive argument in ${cx.funcName}`,
+      `ir/from-ast: primitive wrapper ${row.name} requires one exact primitive argument in ${cx.funcName}`,
     );
   }
-
-  let argument: IrValueId;
-  if (kind === "Number") {
-    argument = lowerExpr(args[0]!, cx, irVal({ kind: "f64" }));
-    if (asVal(cx.builder.typeOf(argument))?.kind !== "f64") {
-      demoteToLegacy("unknown-class-construction", `ir/from-ast: new Number argument is not f64 in ${cx.funcName}`);
-    }
-  } else if (kind === "Boolean") {
-    const boolean = lowerExpr(args[0]!, cx, irVal({ kind: "i32", boolean: true }));
-    if (asVal(cx.builder.typeOf(boolean))?.kind !== "i32") {
-      demoteToLegacy("unknown-class-construction", `ir/from-ast: new Boolean argument is not i32 in ${cx.funcName}`);
-    }
-    argument = cx.builder.emitUnary("f64.convert_i32_s", boolean, irVal({ kind: "f64" }));
-  } else {
-    const string = lowerExpr(args[0]!, cx, { kind: "string" });
-    if (cx.builder.typeOf(string).kind !== "string") {
-      demoteToLegacy("unknown-class-construction", `ir/from-ast: new String argument is not string in ${cx.funcName}`);
-    }
-    argument = cx.builder.emitCoerceToExternref(string);
+  const value = lowerExpr(argument, cx, wrapperArgumentHint(row));
+  if (irOperandFamily(cx.builder.typeOf(value), argument) !== row.family) {
+    demoteToLegacy(
+      "unknown-class-construction",
+      `ir/from-ast: new ${row.name} argument is not ${row.family} in ${cx.funcName}`,
+    );
   }
-
-  const resultType: IrType = { kind: "extern", className: "Object" };
-  const value = cx.builder.emitCall(irRuntimeFuncRef(`__new_${kind}`), [argument], resultType);
-  if (value === null) {
-    // invariant (producer-promise): a compiler-support/runtime helper declared non-void returned no SSA value — #4502.
-    throw new Error(`ir/from-ast: __new_${kind} produced no value in ${cx.funcName}`);
-  }
-  return value;
+  const wrapper = emitWrapperConstruction(cx.builder, row, value);
+  return wrapperConsumer(expr).kind === "store" ? boxWrapper(cx.builder, wrapper) : wrapper;
 }
 
 /**
@@ -8695,17 +8677,8 @@ function freshWrapperToDynamic(op: ts.SyntaxKind, value: IrValueId, cx: LowerCtx
       `ir/from-ast: primitive-wrapper ToPrimitive requires the externref dynamic carrier (${cx.funcName})`,
     );
   }
-  const externref = irVal({ kind: "externref" });
-  const hint =
-    op === ts.SyntaxKind.PlusToken || isEqualityOperator(op)
-      ? cx.builder.emitConst({ kind: "null", ty: externref }, externref)
-      : cx.builder.emitCoerceToExternref(cx.builder.emitStringConst("number"));
-  const primitive = cx.builder.emitCall(irRuntimeFuncRef("__to_primitive"), [value, hint], externref);
-  if (primitive === null) {
-    // invariant (producer-promise): a compiler-support/runtime helper declared non-void returned no SSA value — #4502.
-    throw new Error(`ir/from-ast: __to_primitive produced no value in ${cx.funcName}`);
-  }
-  return cx.builder.emitBox(primitive, irDynamic());
+  const hint = op === ts.SyntaxKind.PlusToken || isEqualityOperator(op) ? "default" : "number";
+  return cx.builder.emitBox(emitToPrimitive(cx.builder, value, hint), irDynamic());
 }
 
 /**
@@ -14363,13 +14336,7 @@ function emitUnaryToNumber(
   // this branded as `extern:Object` so enabling the abstract operation does
   // not silently widen every host-class externref unary expression.
   if (randType.kind === "extern" && randType.className === "Object") {
-    const externref = irVal({ kind: "externref" });
-    const hint = cx.builder.emitConst({ kind: "null", ty: externref }, externref);
-    const primitive = cx.builder.emitCall(irRuntimeFuncRef("__to_primitive"), [rand, hint], externref);
-    if (primitive === null) {
-      // invariant (producer-promise): a compiler-support/runtime helper declared non-void returned no SSA value — #4502.
-      throw new Error(`ir/from-ast: __to_primitive produced no value in ${cx.funcName}`);
-    }
+    const primitive = emitToPrimitive(cx.builder, rand, "default");
     const number = cx.builder.emitCall(irRuntimeFuncRef("__unbox_number"), [primitive], irVal({ kind: "f64" }));
     if (number === null) {
       // invariant (producer-promise): a compiler-support/runtime helper declared non-void returned no SSA value — #4502.
@@ -15111,13 +15078,13 @@ function expressionProducesDynamic(expr: ts.Expression, cx: LowerCtx): boolean {
     },
     // (#7066) A claimed #5092 mixed-primitive conditional lowers to the carrier (`lowerConditional`).
     conditional: (conditional) => mixedPrimitiveConditionalClaim(conditional, cx) !== null,
-    addsAsCarrier: (operand) => primitiveWrapperConstructorName(operand, cx) !== null,
+    addsAsCarrier: (operand) => primitiveWrapperConstruction(operand, cx) !== undefined,
   });
 }
 
 /** A `+` operand that adds as the carrier: a dynamic value, or a fresh wrapper's ToPrimitive. */
 function addsAsCarrier(operand: ts.Expression, cx: LowerCtx): boolean {
-  return expressionProducesDynamic(operand, cx) || primitiveWrapperConstructorName(operand, cx) !== null;
+  return expressionProducesDynamic(operand, cx) || primitiveWrapperConstruction(operand, cx) !== undefined;
 }
 
 /**
@@ -15569,8 +15536,8 @@ function lowerBinaryOperands(
   };
   const lhs = lower(expr.left, additiveProofs?.[1]);
   const rhs = lower(expr.right, additiveProofs?.[0]);
-  const leftWrapper = primitiveWrapperConstructorName(expr.left, cx) !== null;
-  const rightWrapper = primitiveWrapperConstructorName(expr.right, cx) !== null;
+  const leftWrapper = primitiveWrapperConstruction(expr.left, cx) !== undefined;
+  const rightWrapper = primitiveWrapperConstruction(expr.right, cx) !== undefined;
   if (!leftWrapper && !rightWrapper)
     return boxNumericReaderOperands(expr, booleansReadAsNumbers(expr, op, lhs, rhs, cx), cx);
   if (wrapperComparisonIsIdentity(op, leftWrapper, rightWrapper)) {

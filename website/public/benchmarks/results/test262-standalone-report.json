@@ -4,7 +4,7 @@
   "executionCompilerPath": "unknown",
   "configuredCompilerPath": "hybrid",
   "measurementState": "measured",
-  "attemptedCases": 57705,
+  "attemptedCases": 57704,
   "completedCases": 48735,
   "skippedCases": 114,
   "compileErrorCases": 1401,
@@ -12,9 +12,9 @@
   "verifiedExecutionCases": 0,
   "verifiedFrontendCases": 0,
   "unverifiedExecutionCases": 48621,
-  "timestamp": "2026-11-13T18:15:05.549Z",
-  "baseline_generated_at": "2026-11-13T18:15:05.549Z",
-  "baseline_sha": "73239fdc1e331768150e1c5271a6e165dd8e5f9d",
+  "timestamp": "2026-11-13T23:55:16.228Z",
+  "baseline_generated_at": "2026-11-13T23:55:16.228Z",
+  "baseline_sha": "9745e46d720bba48bbd86114990572d425827ea1",
   "oracle_version": 16,
   "mode": {
     "target": "standalone",
@@ -31,9 +31,9 @@
     "skip": 18,
     "compilable": 46947,
     "host_free_pass": 42455,
-    "ir_only_pass": 2317,
+    "ir_only_pass": 2367,
     "ir_measured": 39011,
-    "ir_only_pass_pct": 4.8,
+    "ir_only_pass_pct": 4.9,
     "stale": 0,
     "by_category": {
       "standard": {
@@ -45,9 +45,9 @@
         "skip": 18,
         "compilable": 45875,
         "host_free_pass": 41412,
-        "ir_only_pass": 2293,
+        "ir_only_pass": 2343,
         "ir_measured": 37932,
-        "ir_only_pass_pct": 4.9,
+        "ir_only_pass_pct": 5,
         "stale": 0,
         "label": "ECMAScript current standard"
       },
@@ -90,9 +90,9 @@
         "skip": 18,
         "compilable": 46947,
         "host_free_pass": 42455,
-        "ir_only_pass": 2317,
+        "ir_only_pass": 2367,
         "ir_measured": 39011,
-        "ir_only_pass_pct": 4.8,
+        "ir_only_pass_pct": 4.9,
         "stale": 0,
         "label": "standard + annex_b (default)"
       },
@@ -105,9 +105,9 @@
         "skip": 114,
         "compilable": 47199,
         "host_free_pass": 42691,
-        "ir_only_pass": 2317,
+        "ir_only_pass": 2367,
         "ir_measured": 39020,
-        "ir_only_pass_pct": 4.8,
+        "ir_only_pass_pct": 4.9,
         "stale": 0,
         "label": "standard + annex_b + proposals"
       }
@@ -122,9 +122,9 @@
     "skip": 18,
     "compilable": 46947,
     "host_free_pass": 42455,
-    "ir_only_pass": 2317,
+    "ir_only_pass": 2367,
     "ir_measured": 39011,
-    "ir_only_pass_pct": 4.8,
+    "ir_only_pass_pct": 4.9,
     "stale": 0
   },
   "full_summary": {
@@ -136,9 +136,9 @@
     "skip": 114,
     "compilable": 47199,
     "host_free_pass": 42691,
-    "ir_only_pass": 2317,
+    "ir_only_pass": 2367,
     "ir_measured": 39020,
-    "ir_only_pass_pct": 4.8,
+    "ir_only_pass_pct": 4.9,
     "stale": 0
   },
   "strict_summary": {
@@ -150,17 +150,17 @@
     "skip": 18,
     "compilable": 44483,
     "host_free_pass": 40083,
-    "ir_only_pass": 2295,
+    "ir_only_pass": 2345,
     "ir_measured": 36596,
-    "ir_only_pass_pct": 5,
+    "ir_only_pass_pct": 5.1,
     "stale": 0
   },
   "ir_fallback_codes": [
     {
       "code": "unsupported:select:body-shape-rejected",
-      "tests": 30984,
-      "units": 53190,
-      "passing_tests": 25945
+      "tests": 32290,
+      "units": 54549,
+      "passing_tests": 27173
     },
     {
       "code": "unsupported:select:param-type-not-resolvable",
@@ -176,9 +176,9 @@
     },
     {
       "code": "unsupported:select:operand-coercion-unsupported",
-      "tests": 4587,
-      "units": 4593,
-      "passing_tests": 3712
+      "tests": 4591,
+      "units": 4597,
+      "passing_tests": 3716
     },
     {
       "code": "unsupported:select:class-member-unsupported",
@@ -211,16 +211,10 @@
       "passing_tests": 1362
     },
     {
-      "code": "unsupported:select:call-resolution-unsupported",
-      "tests": 1610,
-      "units": 1617,
-      "passing_tests": 1514
-    },
-    {
       "code": "unsupported:select:constructor-resolution-unsupported",
-      "tests": 1570,
-      "units": 2048,
-      "passing_tests": 1395
+      "tests": 1598,
+      "units": 2076,
+      "passing_tests": 1423
     },
     {
       "code": "unsupported:select:async-generator",
@@ -254,15 +248,15 @@
     },
     {
       "code": "unsupported:select:regexp-constructor-unsupported",
-      "tests": 435,
-      "units": 435,
-      "passing_tests": 405
+      "tests": 443,
+      "units": 443,
+      "passing_tests": 413
     },
     {
       "code": "unsupported:select:host-surface-unavailable",
-      "tests": 412,
-      "units": 413,
-      "passing_tests": 186
+      "tests": 415,
+      "units": 416,
+      "passing_tests": 189
     },
     {
       "code": "unsupported:select:param-shape-rejected",
@@ -272,15 +266,21 @@
     },
     {
       "code": "unsupported:select:error-constructor-unsupported",
-      "tests": 258,
-      "units": 524,
-      "passing_tests": 103
+      "tests": 263,
+      "units": 529,
+      "passing_tests": 108
     },
     {
       "code": "unsupported:select:destructuring-param-complex",
       "tests": 153,
       "units": 172,
       "passing_tests": 153
+    },
+    {
+      "code": "unsupported:select:call-resolution-unsupported",
+      "tests": 142,
+      "units": 149,
+      "passing_tests": 137
     },
     {
       "code": "unsupported:select:class-projection-unsupported",
@@ -308,9 +308,9 @@
     },
     {
       "code": "unsupported:select:date-constructor-unsupported",
-      "tests": 73,
-      "units": 73,
-      "passing_tests": 73
+      "tests": 82,
+      "units": 82,
+      "passing_tests": 82
     },
     {
       "code": "unsupported:build:method-call-unsupported",
@@ -501,9 +501,9 @@
       "skip": 18,
       "compilable": 45875,
       "host_free_pass": 41412,
-      "ir_only_pass": 2293,
+      "ir_only_pass": 2343,
       "ir_measured": 37932,
-      "ir_only_pass_pct": 4.9,
+      "ir_only_pass_pct": 5,
       "stale": 0
     }
   },
@@ -1051,7 +1051,7 @@
       "skip": 0,
       "total": 3411,
       "host_free_pass": 3344,
-      "ir_only_pass": 255,
+      "ir_only_pass": 295,
       "ir_measured": 3411
     },
     {
@@ -1506,7 +1506,7 @@
       "skip": 18,
       "total": 11102,
       "host_free_pass": 9598,
-      "ir_only_pass": 507,
+      "ir_only_pass": 509,
       "ir_measured": 8912
     },
     {
@@ -1714,7 +1714,7 @@
       "skip": 0,
       "total": 9347,
       "host_free_pass": 8243,
-      "ir_only_pass": 192,
+      "ir_only_pass": 200,
       "ir_measured": 7823
     },
     {
