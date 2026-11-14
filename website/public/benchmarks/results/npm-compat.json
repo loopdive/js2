@@ -1,8 +1,8 @@
 {
-  "generatedAt": "2026-11-13T21:27:15.873Z",
+  "generatedAt": "2026-11-14T04:20:17.540Z",
   "measuredRange": {
     "oldest": "2026-11-13T17:08:26.852Z",
-    "newest": "2026-11-13T21:26:23.692Z"
+    "newest": "2026-11-14T04:19:25.477Z"
   },
   "correctness": {
     "definition": {
@@ -6527,11 +6527,11 @@
       "shape": "cjs-project",
       "compile": {
         "success": false,
-        "durationMs": 2092016,
+        "durationMs": 1962361,
         "timedOut": false,
         "timeoutMs": 120000,
         "errorCount": 0,
-        "binaryBytes": 188069098,
+        "binaryBytes": 188063935,
         "categories": {},
         "error": null
       },
@@ -6566,8 +6566,8 @@
           "implementationInvalidTests": 0,
           "compile": {
             "success": true,
-            "durationMs": 128468,
-            "binaryBytes": 15524348,
+            "durationMs": 122623,
+            "binaryBytes": 15524350,
             "invalidBatches": 0
           },
           "validation": {
@@ -6586,8 +6586,8 @@
           "implementationInvalidTests": 0,
           "compile": {
             "success": false,
-            "durationMs": 298620,
-            "binaryBytes": 14994455,
+            "durationMs": 289832,
+            "binaryBytes": 14994376,
             "invalidBatches": 7
           },
           "validation": {
@@ -6606,8 +6606,8 @@
           "implementationInvalidTests": 0,
           "compile": {
             "success": false,
-            "durationMs": 137388,
-            "binaryBytes": 5984463,
+            "durationMs": 132493,
+            "binaryBytes": 5984428,
             "invalidBatches": 2
           },
           "validation": {
@@ -6626,7 +6626,7 @@
           "implementationInvalidTests": 0,
           "compile": {
             "success": true,
-            "durationMs": 38159,
+            "durationMs": 37807,
             "binaryBytes": 925565,
             "invalidBatches": 0
           },
@@ -6650,7 +6650,7 @@
             "status": "fail",
             "passed": 0,
             "total": 3,
-            "error": "Error: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\nError: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\n    at buildImports (/home/runner/work/js2/js2/src/runtime.ts:19620:15)\n    at buildCompiledAdapterImports (/home/runner/work/js2/js2/src/runtime.ts:4842:10)\n    at buildCompiledImports (/home/runner/work/js2/js2/src/runtime.ts:4811:38)\n    at buildProviderImportObject (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:195:17)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:322:29)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1334:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
+            "error": "Error: Linked provider js2wasm:npm:react-dom-client:43ff09c93ac81860 threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\nError: Linked provider js2wasm:npm:react-dom-client:43ff09c93ac81860 threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\n    at renderedProviderInitError (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:293:12)\n    at wireProviderInstance (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:252:13)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:330:5)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1332:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
             "tests": [
               {
                 "status": "trapped"
@@ -6687,7 +6687,7 @@
             "status": "fail",
             "passed": 0,
             "total": 44,
-            "error": "Error: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\nError: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\n    at buildImports (/home/runner/work/js2/js2/src/runtime.ts:19620:15)\n    at buildCompiledAdapterImports (/home/runner/work/js2/js2/src/runtime.ts:4842:10)\n    at buildCompiledImports (/home/runner/work/js2/js2/src/runtime.ts:4811:38)\n    at buildProviderImportObject (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:195:17)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:322:29)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1334:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
+            "error": "Error: Linked provider js2wasm:npm:react-dom-client:43ff09c93ac81860 threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\nError: Linked provider js2wasm:npm:react-dom-client:43ff09c93ac81860 threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\n    at renderedProviderInitError (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:293:12)\n    at wireProviderInstance (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:252:13)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:330:5)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1332:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
             "tests": [
               {
                 "status": "trapped"
@@ -6838,7 +6838,7 @@
             "status": "fail",
             "passed": 0,
             "total": 1,
-            "error": "Error: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\nError: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\n    at buildImports (/home/runner/work/js2/js2/src/runtime.ts:19620:15)\n    at buildCompiledAdapterImports (/home/runner/work/js2/js2/src/runtime.ts:4842:10)\n    at buildCompiledImports (/home/runner/work/js2/js2/src/runtime.ts:4811:38)\n    at buildProviderImportObject (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:195:17)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:322:29)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1334:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
+            "error": "Error: Linked provider js2wasm:npm:react-dom-client:43ff09c93ac81860 threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\nError: Linked provider js2wasm:npm:react-dom-client:43ff09c93ac81860 threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\n    at renderedProviderInitError (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:293:12)\n    at wireProviderInstance (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:252:13)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:330:5)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1332:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
             "tests": [
               {
                 "status": "harness-incompatible"
@@ -6854,7 +6854,7 @@
             "status": "fail",
             "passed": 0,
             "total": 9,
-            "error": "Error: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\nError: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\n    at buildImports (/home/runner/work/js2/js2/src/runtime.ts:19620:15)\n    at buildCompiledAdapterImports (/home/runner/work/js2/js2/src/runtime.ts:4842:10)\n    at buildCompiledImports (/home/runner/work/js2/js2/src/runtime.ts:4811:38)\n    at buildProviderImportObject (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:195:17)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:322:29)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1334:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
+            "error": "Error: Linked provider js2wasm:npm:react-dom-client:43ff09c93ac81860 threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\nError: Linked provider js2wasm:npm:react-dom-client:43ff09c93ac81860 threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\n    at renderedProviderInitError (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:293:12)\n    at wireProviderInstance (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:252:13)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:330:5)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1332:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
             "tests": [
               {
                 "status": "trapped"
@@ -6918,7 +6918,7 @@
             "status": "fail",
             "passed": 0,
             "total": 1,
-            "error": "Error: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\nError: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\n    at buildImports (/home/runner/work/js2/js2/src/runtime.ts:19620:15)\n    at buildCompiledAdapterImports (/home/runner/work/js2/js2/src/runtime.ts:4842:10)\n    at buildCompiledImports (/home/runner/work/js2/js2/src/runtime.ts:4811:38)\n    at buildProviderImportObject (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:195:17)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:322:29)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1334:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
+            "error": "Error: Linked provider js2wasm:npm:react-dom-client:43ff09c93ac81860 threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\nError: Linked provider js2wasm:npm:react-dom-client:43ff09c93ac81860 threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\n    at renderedProviderInitError (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:293:12)\n    at wireProviderInstance (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:252:13)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:330:5)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1332:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
             "tests": [
               {
                 "status": "trapped"
@@ -6931,7 +6931,7 @@
             "status": "fail",
             "passed": 0,
             "total": 8,
-            "error": "Error: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\nError: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\n    at buildImports (/home/runner/work/js2/js2/src/runtime.ts:19620:15)\n    at buildCompiledAdapterImports (/home/runner/work/js2/js2/src/runtime.ts:4842:10)\n    at buildCompiledImports (/home/runner/work/js2/js2/src/runtime.ts:4811:38)\n    at buildProviderImportObject (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:195:17)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:322:29)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1334:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
+            "error": "Error: Linked provider js2wasm:npm:react-dom-client:43ff09c93ac81860 threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\nError: Linked provider js2wasm:npm:react-dom-client:43ff09c93ac81860 threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\n    at renderedProviderInitError (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:293:12)\n    at wireProviderInstance (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:252:13)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:330:5)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1332:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
             "tests": [
               {
                 "status": "harness-incompatible"
@@ -6998,7 +6998,7 @@
             "status": "fail",
             "passed": 0,
             "total": 12,
-            "error": "Error: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\nError: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\n    at buildImports (/home/runner/work/js2/js2/src/runtime.ts:19620:15)\n    at buildCompiledAdapterImports (/home/runner/work/js2/js2/src/runtime.ts:4842:10)\n    at buildCompiledImports (/home/runner/work/js2/js2/src/runtime.ts:4811:38)\n    at buildProviderImportObject (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:195:17)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:322:29)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1334:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
+            "error": "Error: Linked provider js2wasm:npm:react-dom-client:43ff09c93ac81860 threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\nError: Linked provider js2wasm:npm:react-dom-client:43ff09c93ac81860 threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\n    at renderedProviderInitError (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:293:12)\n    at wireProviderInstance (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:252:13)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:330:5)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1332:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
             "tests": [
               {
                 "status": "trapped"
@@ -7092,7 +7092,7 @@
             "status": "fail",
             "passed": 0,
             "total": 23,
-            "error": "Error: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\nError: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\n    at buildImports (/home/runner/work/js2/js2/src/runtime.ts:19620:15)\n    at buildCompiledAdapterImports (/home/runner/work/js2/js2/src/runtime.ts:4842:10)\n    at buildCompiledImports (/home/runner/work/js2/js2/src/runtime.ts:4811:38)\n    at buildProviderImportObject (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:195:17)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:322:29)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1334:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
+            "error": "Error: Linked provider js2wasm:npm:react-dom-client:43ff09c93ac81860 threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\nError: Linked provider js2wasm:npm:react-dom-client:43ff09c93ac81860 threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\n    at renderedProviderInitError (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:293:12)\n    at wireProviderInstance (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:252:13)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:330:5)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1332:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
             "tests": [
               {
                 "status": "skipped"
@@ -7222,7 +7222,7 @@
             "status": "fail",
             "passed": 0,
             "total": 3,
-            "error": "Error: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\nError: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\n    at buildImports (/home/runner/work/js2/js2/src/runtime.ts:19620:15)\n    at buildCompiledAdapterImports (/home/runner/work/js2/js2/src/runtime.ts:4842:10)\n    at buildCompiledImports (/home/runner/work/js2/js2/src/runtime.ts:4811:38)\n    at buildProviderImportObject (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:195:17)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:322:29)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1334:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
+            "error": "Error: Linked provider js2wasm:npm:react-dom-client:43ff09c93ac81860 threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\nError: Linked provider js2wasm:npm:react-dom-client:43ff09c93ac81860 threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\n    at renderedProviderInitError (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:293:12)\n    at wireProviderInstance (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:252:13)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:330:5)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1332:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
             "tests": [
               {
                 "status": "trapped"
@@ -7241,7 +7241,7 @@
             "status": "fail",
             "passed": 0,
             "total": 1,
-            "error": "Error: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\nError: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\n    at buildImports (/home/runner/work/js2/js2/src/runtime.ts:19620:15)\n    at buildCompiledAdapterImports (/home/runner/work/js2/js2/src/runtime.ts:4842:10)\n    at buildCompiledImports (/home/runner/work/js2/js2/src/runtime.ts:4811:38)\n    at buildProviderImportObject (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:195:17)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:322:29)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1334:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
+            "error": "Error: Linked provider js2wasm:npm:react-dom-client:43ff09c93ac81860 threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\nError: Linked provider js2wasm:npm:react-dom-client:43ff09c93ac81860 threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\n    at renderedProviderInitError (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:293:12)\n    at wireProviderInstance (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:252:13)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:330:5)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1332:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
             "tests": [
               {
                 "status": "trapped"
@@ -7254,7 +7254,7 @@
             "status": "fail",
             "passed": 0,
             "total": 5,
-            "error": "Error: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\nError: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\n    at buildImports (/home/runner/work/js2/js2/src/runtime.ts:19620:15)\n    at buildCompiledAdapterImports (/home/runner/work/js2/js2/src/runtime.ts:4842:10)\n    at buildCompiledImports (/home/runner/work/js2/js2/src/runtime.ts:4811:38)\n    at buildProviderImportObject (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:195:17)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:322:29)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1334:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
+            "error": "Error: Linked provider js2wasm:npm:react-dom-client:43ff09c93ac81860 threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\nError: Linked provider js2wasm:npm:react-dom-client:43ff09c93ac81860 threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\n    at renderedProviderInitError (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:293:12)\n    at wireProviderInstance (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:252:13)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:330:5)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1332:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
             "tests": [
               {
                 "status": "trapped"
@@ -7354,7 +7354,7 @@
             "status": "fail",
             "passed": 0,
             "total": 6,
-            "error": "Error: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\nError: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\n    at buildImports (/home/runner/work/js2/js2/src/runtime.ts:19620:15)\n    at buildCompiledAdapterImports (/home/runner/work/js2/js2/src/runtime.ts:4842:10)\n    at buildCompiledImports (/home/runner/work/js2/js2/src/runtime.ts:4811:38)\n    at buildProviderImportObject (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:195:17)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:322:29)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1334:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
+            "error": "Error: Linked provider js2wasm:npm:react-dom-client:43ff09c93ac81860 threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\nError: Linked provider js2wasm:npm:react-dom-client:43ff09c93ac81860 threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\n    at renderedProviderInitError (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:293:12)\n    at wireProviderInstance (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:252:13)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:330:5)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1332:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
             "tests": [
               {
                 "status": "trapped"
@@ -7403,7 +7403,7 @@
             "status": "fail",
             "passed": 0,
             "total": 74,
-            "error": "Error: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\nError: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\n    at buildImports (/home/runner/work/js2/js2/src/runtime.ts:19620:15)\n    at buildCompiledAdapterImports (/home/runner/work/js2/js2/src/runtime.ts:4842:10)\n    at buildCompiledImports (/home/runner/work/js2/js2/src/runtime.ts:4811:38)\n    at buildProviderImportObject (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:195:17)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:322:29)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1334:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
+            "error": "Error: Linked provider js2wasm:npm:react-dom-client:43ff09c93ac81860 threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\nError: Linked provider js2wasm:npm:react-dom-client:43ff09c93ac81860 threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\n    at renderedProviderInitError (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:293:12)\n    at wireProviderInstance (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:252:13)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:330:5)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1332:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
             "tests": [
               {
                 "status": "trapped"
@@ -8016,7 +8016,7 @@
             "status": "fail",
             "passed": 0,
             "total": 83,
-            "error": "Error: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\nError: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\n    at buildImports (/home/runner/work/js2/js2/src/runtime.ts:19620:15)\n    at buildCompiledAdapterImports (/home/runner/work/js2/js2/src/runtime.ts:4842:10)\n    at buildCompiledImports (/home/runner/work/js2/js2/src/runtime.ts:4811:38)\n    at buildProviderImportObject (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:195:17)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:322:29)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1334:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
+            "error": "Error: Linked provider js2wasm:npm:react-dom-client:43ff09c93ac81860 threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\nError: Linked provider js2wasm:npm:react-dom-client:43ff09c93ac81860 threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\n    at renderedProviderInitError (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:293:12)\n    at wireProviderInstance (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:252:13)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:330:5)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1332:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
             "tests": [
               {
                 "status": "harness-incompatible"
@@ -8293,7 +8293,7 @@
             "status": "fail",
             "passed": 0,
             "total": 31,
-            "error": "Error: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\nError: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\n    at buildImports (/home/runner/work/js2/js2/src/runtime.ts:19620:15)\n    at buildCompiledAdapterImports (/home/runner/work/js2/js2/src/runtime.ts:4842:10)\n    at buildCompiledImports (/home/runner/work/js2/js2/src/runtime.ts:4811:38)\n    at buildProviderImportObject (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:195:17)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:322:29)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1334:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
+            "error": "Error: Linked provider js2wasm:npm:react-dom-client:43ff09c93ac81860 threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\nError: Linked provider js2wasm:npm:react-dom-client:43ff09c93ac81860 threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\n    at renderedProviderInitError (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:293:12)\n    at wireProviderInstance (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:252:13)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:330:5)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1332:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
             "tests": [
               {
                 "status": "skipped"
@@ -8498,7 +8498,7 @@
             "status": "fail",
             "passed": 0,
             "total": 11,
-            "error": "Error: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\nError: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\n    at buildImports (/home/runner/work/js2/js2/src/runtime.ts:19620:15)\n    at buildCompiledAdapterImports (/home/runner/work/js2/js2/src/runtime.ts:4842:10)\n    at buildCompiledImports (/home/runner/work/js2/js2/src/runtime.ts:4811:38)\n    at buildProviderImportObject (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:195:17)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:322:29)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1334:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
+            "error": "Error: Linked provider js2wasm:npm:react-dom-client:43ff09c93ac81860 threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\nError: Linked provider js2wasm:npm:react-dom-client:43ff09c93ac81860 threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\n    at renderedProviderInitError (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:293:12)\n    at wireProviderInstance (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:252:13)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:330:5)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1332:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
             "tests": [
               {
                 "status": "trapped"
@@ -9075,7 +9075,7 @@
             "status": "fail",
             "passed": 0,
             "total": 7,
-            "error": "Error: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\nError: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\n    at buildImports (/home/runner/work/js2/js2/src/runtime.ts:19620:15)\n    at buildCompiledAdapterImports (/home/runner/work/js2/js2/src/runtime.ts:4842:10)\n    at buildCompiledImports (/home/runner/work/js2/js2/src/runtime.ts:4811:38)\n    at buildProviderImportObject (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:195:17)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:322:29)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1334:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
+            "error": "Error: Linked provider js2wasm:npm:react-dom-client:43ff09c93ac81860 threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\nError: Linked provider js2wasm:npm:react-dom-client:43ff09c93ac81860 threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\n    at renderedProviderInitError (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:293:12)\n    at wireProviderInstance (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:252:13)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:330:5)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1332:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
             "tests": [
               {
                 "status": "trapped"
@@ -9166,7 +9166,7 @@
             "status": "fail",
             "passed": 0,
             "total": 3,
-            "error": "Error: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\nError: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\n    at buildImports (/home/runner/work/js2/js2/src/runtime.ts:19620:15)\n    at buildCompiledAdapterImports (/home/runner/work/js2/js2/src/runtime.ts:4842:10)\n    at buildCompiledImports (/home/runner/work/js2/js2/src/runtime.ts:4811:38)\n    at buildProviderImportObject (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:195:17)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:322:29)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1334:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
+            "error": "Error: Linked provider js2wasm:npm:react-dom-client:43ff09c93ac81860 threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\nError: Linked provider js2wasm:npm:react-dom-client:43ff09c93ac81860 threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\n    at renderedProviderInitError (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:293:12)\n    at wireProviderInstance (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:252:13)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:330:5)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1332:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
             "tests": [
               {
                 "status": "trapped"
@@ -9278,7 +9278,7 @@
             "status": "fail",
             "passed": 0,
             "total": 3,
-            "error": "Error: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\nError: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\n    at buildImports (/home/runner/work/js2/js2/src/runtime.ts:19620:15)\n    at buildCompiledAdapterImports (/home/runner/work/js2/js2/src/runtime.ts:4842:10)\n    at buildCompiledImports (/home/runner/work/js2/js2/src/runtime.ts:4811:38)\n    at buildProviderImportObject (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:195:17)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:322:29)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1334:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
+            "error": "Error: Linked provider js2wasm:npm:react-dom-client:43ff09c93ac81860 threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\nError: Linked provider js2wasm:npm:react-dom-client:43ff09c93ac81860 threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\n    at renderedProviderInitError (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:293:12)\n    at wireProviderInstance (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:252:13)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:330:5)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1332:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
             "tests": [
               {
                 "status": "harness-incompatible"
@@ -9651,7 +9651,7 @@
             "status": "fail",
             "passed": 0,
             "total": 14,
-            "error": "Error: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\nError: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\n    at buildImports (/home/runner/work/js2/js2/src/runtime.ts:19620:15)\n    at buildCompiledAdapterImports (/home/runner/work/js2/js2/src/runtime.ts:4842:10)\n    at buildCompiledImports (/home/runner/work/js2/js2/src/runtime.ts:4811:38)\n    at buildProviderImportObject (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:195:17)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:322:29)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1334:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
+            "error": "Error: Linked provider js2wasm:npm:react-dom-client:43ff09c93ac81860 threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\nError: Linked provider js2wasm:npm:react-dom-client:43ff09c93ac81860 threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\n    at renderedProviderInitError (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:293:12)\n    at wireProviderInstance (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:252:13)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:330:5)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1332:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
             "tests": [
               {
                 "status": "trapped"
@@ -9790,7 +9790,7 @@
             "status": "fail",
             "passed": 0,
             "total": 1,
-            "error": "Error: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\nError: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\n    at buildImports (/home/runner/work/js2/js2/src/runtime.ts:19620:15)\n    at buildCompiledAdapterImports (/home/runner/work/js2/js2/src/runtime.ts:4842:10)\n    at buildCompiledImports (/home/runner/work/js2/js2/src/runtime.ts:4811:38)\n    at buildProviderImportObject (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:195:17)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:322:29)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1334:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
+            "error": "Error: Linked provider js2wasm:npm:react-dom-client:43ff09c93ac81860 threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\nError: Linked provider js2wasm:npm:react-dom-client:43ff09c93ac81860 threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\n    at renderedProviderInitError (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:293:12)\n    at wireProviderInstance (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:252:13)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:330:5)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1332:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
             "tests": [
               {
                 "status": "harness-incompatible"
@@ -9976,7 +9976,7 @@
             "status": "fail",
             "passed": 0,
             "total": 1,
-            "error": "Error: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\nError: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\n    at buildImports (/home/runner/work/js2/js2/src/runtime.ts:19620:15)\n    at buildCompiledAdapterImports (/home/runner/work/js2/js2/src/runtime.ts:4842:10)\n    at buildCompiledImports (/home/runner/work/js2/js2/src/runtime.ts:4811:38)\n    at buildProviderImportObject (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:195:17)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:322:29)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1334:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
+            "error": "Error: Linked provider js2wasm:npm:react-dom-client:43ff09c93ac81860 threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\nError: Linked provider js2wasm:npm:react-dom-client:43ff09c93ac81860 threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\n    at renderedProviderInitError (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:293:12)\n    at wireProviderInstance (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:252:13)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:330:5)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1332:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
             "tests": [
               {
                 "status": "trapped"
@@ -9989,7 +9989,7 @@
             "status": "fail",
             "passed": 0,
             "total": 1,
-            "error": "Error: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\nError: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\n    at buildImports (/home/runner/work/js2/js2/src/runtime.ts:19620:15)\n    at buildCompiledAdapterImports (/home/runner/work/js2/js2/src/runtime.ts:4842:10)\n    at buildCompiledImports (/home/runner/work/js2/js2/src/runtime.ts:4811:38)\n    at buildProviderImportObject (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:195:17)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:322:29)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1334:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
+            "error": "Error: Linked provider js2wasm:npm:react-dom-client:43ff09c93ac81860 threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\nError: Linked provider js2wasm:npm:react-dom-client:43ff09c93ac81860 threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\n    at renderedProviderInitError (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:293:12)\n    at wireProviderInstance (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:252:13)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:330:5)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1332:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
             "tests": [
               {
                 "status": "trapped"
@@ -10365,7 +10365,7 @@
             "status": "fail",
             "passed": 0,
             "total": 2,
-            "error": "Error: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\nError: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\n    at buildImports (/home/runner/work/js2/js2/src/runtime.ts:19620:15)\n    at buildCompiledAdapterImports (/home/runner/work/js2/js2/src/runtime.ts:4842:10)\n    at buildCompiledImports (/home/runner/work/js2/js2/src/runtime.ts:4811:38)\n    at buildProviderImportObject (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:195:17)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:322:29)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1334:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
+            "error": "Error: Linked provider js2wasm:npm:react-dom-client:43ff09c93ac81860 threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\nError: Linked provider js2wasm:npm:react-dom-client:43ff09c93ac81860 threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\n    at renderedProviderInitError (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:293:12)\n    at wireProviderInstance (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:252:13)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:330:5)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1332:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
             "tests": [
               {
                 "status": "trapped"
@@ -10534,7 +10534,7 @@
             "status": "fail",
             "passed": 0,
             "total": 1,
-            "error": "Error: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\nError: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\n    at buildImports (/home/runner/work/js2/js2/src/runtime.ts:19620:15)\n    at buildCompiledAdapterImports (/home/runner/work/js2/js2/src/runtime.ts:4842:10)\n    at buildCompiledImports (/home/runner/work/js2/js2/src/runtime.ts:4811:38)\n    at buildProviderImportObject (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:195:17)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:322:29)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1334:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
+            "error": "Error: Linked provider js2wasm:npm:react-dom-client:43ff09c93ac81860 threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\nError: Linked provider js2wasm:npm:react-dom-client:43ff09c93ac81860 threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\n    at renderedProviderInitError (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:293:12)\n    at wireProviderInstance (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:252:13)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:330:5)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1332:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
             "tests": [
               {
                 "status": "trapped"
@@ -10547,7 +10547,7 @@
             "status": "fail",
             "passed": 0,
             "total": 6,
-            "error": "Error: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\nError: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\n    at buildImports (/home/runner/work/js2/js2/src/runtime.ts:19620:15)\n    at buildCompiledAdapterImports (/home/runner/work/js2/js2/src/runtime.ts:4842:10)\n    at buildCompiledImports (/home/runner/work/js2/js2/src/runtime.ts:4811:38)\n    at buildProviderImportObject (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:195:17)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:322:29)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1334:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
+            "error": "Error: Linked provider js2wasm:npm:react-dom-client:43ff09c93ac81860 threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\nError: Linked provider js2wasm:npm:react-dom-client:43ff09c93ac81860 threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\n    at renderedProviderInitError (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:293:12)\n    at wireProviderInstance (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:252:13)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:330:5)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1332:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
             "tests": [
               {
                 "status": "trapped"
@@ -10581,7 +10581,7 @@
             "status": "fail",
             "passed": 0,
             "total": 1,
-            "error": "Error: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\nError: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\n    at buildImports (/home/runner/work/js2/js2/src/runtime.ts:19620:15)\n    at buildCompiledAdapterImports (/home/runner/work/js2/js2/src/runtime.ts:4842:10)\n    at buildCompiledImports (/home/runner/work/js2/js2/src/runtime.ts:4811:38)\n    at buildProviderImportObject (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:195:17)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:322:29)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1334:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
+            "error": "Error: Linked provider js2wasm:npm:react-dom-client:43ff09c93ac81860 threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\nError: Linked provider js2wasm:npm:react-dom-client:43ff09c93ac81860 threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\n    at renderedProviderInitError (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:293:12)\n    at wireProviderInstance (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:252:13)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:330:5)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1332:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
             "tests": [
               {
                 "status": "trapped"
@@ -10594,7 +10594,7 @@
             "status": "fail",
             "passed": 0,
             "total": 6,
-            "error": "Error: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\nError: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\n    at buildImports (/home/runner/work/js2/js2/src/runtime.ts:19620:15)\n    at buildCompiledAdapterImports (/home/runner/work/js2/js2/src/runtime.ts:4842:10)\n    at buildCompiledImports (/home/runner/work/js2/js2/src/runtime.ts:4811:38)\n    at buildProviderImportObject (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:195:17)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:322:29)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1334:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
+            "error": "Error: Linked provider js2wasm:npm:react-dom-client:43ff09c93ac81860 threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\nError: Linked provider js2wasm:npm:react-dom-client:43ff09c93ac81860 threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\n    at renderedProviderInitError (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:293:12)\n    at wireProviderInstance (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:252:13)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:330:5)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1332:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
             "tests": [
               {
                 "status": "trapped"
@@ -10640,7 +10640,7 @@
             "status": "fail",
             "passed": 0,
             "total": 9,
-            "error": "Error: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\nError: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\n    at buildImports (/home/runner/work/js2/js2/src/runtime.ts:19620:15)\n    at buildCompiledAdapterImports (/home/runner/work/js2/js2/src/runtime.ts:4842:10)\n    at buildCompiledImports (/home/runner/work/js2/js2/src/runtime.ts:4811:38)\n    at buildProviderImportObject (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:195:17)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:322:29)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1334:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
+            "error": "Error: Linked provider js2wasm:npm:react-dom-client:43ff09c93ac81860 threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\nError: Linked provider js2wasm:npm:react-dom-client:43ff09c93ac81860 threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\n    at renderedProviderInitError (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:293:12)\n    at wireProviderInstance (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:252:13)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:330:5)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1332:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
             "tests": [
               {
                 "status": "harness-incompatible"
@@ -10731,7 +10731,7 @@
             "status": "fail",
             "passed": 0,
             "total": 4,
-            "error": "Error: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\nError: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\n    at buildImports (/home/runner/work/js2/js2/src/runtime.ts:19620:15)\n    at buildCompiledAdapterImports (/home/runner/work/js2/js2/src/runtime.ts:4842:10)\n    at buildCompiledImports (/home/runner/work/js2/js2/src/runtime.ts:4811:38)\n    at buildProviderImportObject (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:195:17)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:322:29)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1334:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
+            "error": "Error: Linked provider js2wasm:npm:react-dom-client:43ff09c93ac81860 threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\nError: Linked provider js2wasm:npm:react-dom-client:43ff09c93ac81860 threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\n    at renderedProviderInitError (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:293:12)\n    at wireProviderInstance (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:252:13)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:330:5)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1332:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
             "tests": [
               {
                 "status": "trapped"
@@ -10753,7 +10753,7 @@
             "status": "fail",
             "passed": 0,
             "total": 2,
-            "error": "Error: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\nError: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\n    at buildImports (/home/runner/work/js2/js2/src/runtime.ts:19620:15)\n    at buildCompiledAdapterImports (/home/runner/work/js2/js2/src/runtime.ts:4842:10)\n    at buildCompiledImports (/home/runner/work/js2/js2/src/runtime.ts:4811:38)\n    at buildProviderImportObject (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:195:17)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:322:29)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1334:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
+            "error": "Error: Linked provider js2wasm:npm:react-dom-client:43ff09c93ac81860 threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\nError: Linked provider js2wasm:npm:react-dom-client:43ff09c93ac81860 threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\n    at renderedProviderInitError (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:293:12)\n    at wireProviderInstance (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:252:13)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:330:5)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1332:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
             "tests": [
               {
                 "status": "trapped"
@@ -10769,7 +10769,7 @@
             "status": "fail",
             "passed": 0,
             "total": 29,
-            "error": "Error: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\nError: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\n    at buildImports (/home/runner/work/js2/js2/src/runtime.ts:19620:15)\n    at buildCompiledAdapterImports (/home/runner/work/js2/js2/src/runtime.ts:4842:10)\n    at buildCompiledImports (/home/runner/work/js2/js2/src/runtime.ts:4811:38)\n    at buildProviderImportObject (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:195:17)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:322:29)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1334:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
+            "error": "Error: Linked provider js2wasm:npm:react-dom-client:43ff09c93ac81860 threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\nError: Linked provider js2wasm:npm:react-dom-client:43ff09c93ac81860 threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\n    at renderedProviderInitError (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:293:12)\n    at wireProviderInstance (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:252:13)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:330:5)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1332:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
             "tests": [
               {
                 "status": "skipped"
@@ -10980,7 +10980,7 @@
             "status": "fail",
             "passed": 0,
             "total": 5,
-            "error": "Error: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\nError: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\n    at buildImports (/home/runner/work/js2/js2/src/runtime.ts:19620:15)\n    at buildCompiledAdapterImports (/home/runner/work/js2/js2/src/runtime.ts:4842:10)\n    at buildCompiledImports (/home/runner/work/js2/js2/src/runtime.ts:4811:38)\n    at buildProviderImportObject (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:195:17)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:322:29)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1334:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
+            "error": "Error: Linked provider js2wasm:npm:react-dom-client:43ff09c93ac81860 threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\nError: Linked provider js2wasm:npm:react-dom-client:43ff09c93ac81860 threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\n    at renderedProviderInitError (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:293:12)\n    at wireProviderInstance (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:252:13)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:330:5)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1332:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
             "tests": [
               {
                 "status": "trapped"
@@ -11033,7 +11033,7 @@
             "status": "fail",
             "passed": 0,
             "total": 54,
-            "error": "Error: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\nError: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\n    at buildImports (/home/runner/work/js2/js2/src/runtime.ts:19620:15)\n    at buildCompiledAdapterImports (/home/runner/work/js2/js2/src/runtime.ts:4842:10)\n    at buildCompiledImports (/home/runner/work/js2/js2/src/runtime.ts:4811:38)\n    at buildProviderImportObject (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:195:17)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:322:29)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1334:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
+            "error": "Error: Linked provider js2wasm:npm:react-dom-client:43ff09c93ac81860 threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\nError: Linked provider js2wasm:npm:react-dom-client:43ff09c93ac81860 threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\n    at renderedProviderInitError (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:293:12)\n    at wireProviderInstance (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:252:13)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:330:5)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1332:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
             "tests": [
               {
                 "status": "trapped"
@@ -11205,7 +11205,7 @@
             "status": "fail",
             "passed": 0,
             "total": 4,
-            "error": "Error: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\nError: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\n    at buildImports (/home/runner/work/js2/js2/src/runtime.ts:19620:15)\n    at buildCompiledAdapterImports (/home/runner/work/js2/js2/src/runtime.ts:4842:10)\n    at buildCompiledImports (/home/runner/work/js2/js2/src/runtime.ts:4811:38)\n    at buildProviderImportObject (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:195:17)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:322:29)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1334:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
+            "error": "Error: Linked provider js2wasm:npm:react-dom-client:43ff09c93ac81860 threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\nError: Linked provider js2wasm:npm:react-dom-client:43ff09c93ac81860 threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\n    at renderedProviderInitError (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:293:12)\n    at wireProviderInstance (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:252:13)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:330:5)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1332:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
             "tests": [
               {
                 "status": "trapped"
@@ -11242,7 +11242,7 @@
             "status": "fail",
             "passed": 0,
             "total": 2,
-            "error": "Error: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\nError: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\n    at buildImports (/home/runner/work/js2/js2/src/runtime.ts:19620:15)\n    at buildCompiledAdapterImports (/home/runner/work/js2/js2/src/runtime.ts:4842:10)\n    at buildCompiledImports (/home/runner/work/js2/js2/src/runtime.ts:4811:38)\n    at buildProviderImportObject (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:195:17)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:322:29)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1334:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
+            "error": "Error: Linked provider js2wasm:npm:react-dom-client:43ff09c93ac81860 threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\nError: Linked provider js2wasm:npm:react-dom-client:43ff09c93ac81860 threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\n    at renderedProviderInitError (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:293:12)\n    at wireProviderInstance (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:252:13)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:330:5)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1332:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
             "tests": [
               {
                 "status": "trapped"
@@ -11258,7 +11258,7 @@
             "status": "fail",
             "passed": 0,
             "total": 9,
-            "error": "Error: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\nError: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\n    at buildImports (/home/runner/work/js2/js2/src/runtime.ts:19620:15)\n    at buildCompiledAdapterImports (/home/runner/work/js2/js2/src/runtime.ts:4842:10)\n    at buildCompiledImports (/home/runner/work/js2/js2/src/runtime.ts:4811:38)\n    at buildProviderImportObject (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:195:17)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:322:29)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1334:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
+            "error": "Error: Linked provider js2wasm:npm:react-dom-client:43ff09c93ac81860 threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\nError: Linked provider js2wasm:npm:react-dom-client:43ff09c93ac81860 threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\n    at renderedProviderInitError (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:293:12)\n    at wireProviderInstance (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:252:13)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:330:5)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1332:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
             "tests": [
               {
                 "status": "trapped"
@@ -11543,7 +11543,7 @@
             "status": "fail",
             "passed": 0,
             "total": 3,
-            "error": "Error: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\nError: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\n    at buildImports (/home/runner/work/js2/js2/src/runtime.ts:19620:15)\n    at buildCompiledAdapterImports (/home/runner/work/js2/js2/src/runtime.ts:4842:10)\n    at buildCompiledImports (/home/runner/work/js2/js2/src/runtime.ts:4811:38)\n    at buildProviderImportObject (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:195:17)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:322:29)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1334:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
+            "error": "Error: Linked provider js2wasm:npm:react-dom-client:43ff09c93ac81860 threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\nError: Linked provider js2wasm:npm:react-dom-client:43ff09c93ac81860 threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\n    at renderedProviderInitError (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:293:12)\n    at wireProviderInstance (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:252:13)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:330:5)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1332:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
             "tests": [
               {
                 "status": "trapped"
@@ -11580,7 +11580,7 @@
             "status": "fail",
             "passed": 0,
             "total": 32,
-            "error": "Error: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\nError: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\n    at buildImports (/home/runner/work/js2/js2/src/runtime.ts:19620:15)\n    at buildCompiledAdapterImports (/home/runner/work/js2/js2/src/runtime.ts:4842:10)\n    at buildCompiledImports (/home/runner/work/js2/js2/src/runtime.ts:4811:38)\n    at buildProviderImportObject (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:195:17)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:322:29)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1334:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
+            "error": "Error: Linked provider js2wasm:npm:react-dom-client:43ff09c93ac81860 threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\nError: Linked provider js2wasm:npm:react-dom-client:43ff09c93ac81860 threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\n    at renderedProviderInitError (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:293:12)\n    at wireProviderInstance (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:252:13)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:330:5)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1332:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
             "tests": [
               {
                 "status": "trapped"
@@ -11728,7 +11728,7 @@
             "status": "fail",
             "passed": 0,
             "total": 1,
-            "error": "Error: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\nError: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\n    at buildImports (/home/runner/work/js2/js2/src/runtime.ts:19620:15)\n    at buildCompiledAdapterImports (/home/runner/work/js2/js2/src/runtime.ts:4842:10)\n    at buildCompiledImports (/home/runner/work/js2/js2/src/runtime.ts:4811:38)\n    at buildProviderImportObject (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:195:17)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:322:29)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1334:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
+            "error": "Error: Linked provider js2wasm:npm:react-dom-client:43ff09c93ac81860 threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\nError: Linked provider js2wasm:npm:react-dom-client:43ff09c93ac81860 threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\n    at renderedProviderInitError (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:293:12)\n    at wireProviderInstance (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:252:13)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:330:5)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1332:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
             "tests": [
               {
                 "status": "harness-incompatible"
@@ -11829,7 +11829,7 @@
             "status": "fail",
             "passed": 0,
             "total": 7,
-            "error": "Error: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\nError: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\n    at buildImports (/home/runner/work/js2/js2/src/runtime.ts:19620:15)\n    at buildCompiledAdapterImports (/home/runner/work/js2/js2/src/runtime.ts:4842:10)\n    at buildCompiledImports (/home/runner/work/js2/js2/src/runtime.ts:4811:38)\n    at buildProviderImportObject (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:195:17)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:322:29)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1334:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
+            "error": "Error: Linked provider js2wasm:npm:react-dom-client:43ff09c93ac81860 threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\nError: Linked provider js2wasm:npm:react-dom-client:43ff09c93ac81860 threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\n    at renderedProviderInitError (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:293:12)\n    at wireProviderInstance (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:252:13)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:330:5)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1332:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
             "tests": [
               {
                 "status": "trapped"
@@ -11875,7 +11875,7 @@
             "status": "fail",
             "passed": 0,
             "total": 10,
-            "error": "Error: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\nError: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\n    at buildImports (/home/runner/work/js2/js2/src/runtime.ts:19620:15)\n    at buildCompiledAdapterImports (/home/runner/work/js2/js2/src/runtime.ts:4842:10)\n    at buildCompiledImports (/home/runner/work/js2/js2/src/runtime.ts:4811:38)\n    at buildProviderImportObject (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:195:17)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:322:29)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1334:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
+            "error": "Error: Linked provider js2wasm:npm:react-dom-client:43ff09c93ac81860 threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\nError: Linked provider js2wasm:npm:react-dom-client:43ff09c93ac81860 threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\n    at renderedProviderInitError (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:293:12)\n    at wireProviderInstance (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:252:13)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:330:5)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1332:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
             "tests": [
               {
                 "status": "trapped"
@@ -11918,7 +11918,7 @@
             "status": "fail",
             "passed": 0,
             "total": 2,
-            "error": "Error: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\nError: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\n    at buildImports (/home/runner/work/js2/js2/src/runtime.ts:19620:15)\n    at buildCompiledAdapterImports (/home/runner/work/js2/js2/src/runtime.ts:4842:10)\n    at buildCompiledImports (/home/runner/work/js2/js2/src/runtime.ts:4811:38)\n    at buildProviderImportObject (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:195:17)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:322:29)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1334:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
+            "error": "Error: Linked provider js2wasm:npm:react-dom-client:43ff09c93ac81860 threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\nError: Linked provider js2wasm:npm:react-dom-client:43ff09c93ac81860 threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\n    at renderedProviderInitError (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:293:12)\n    at wireProviderInstance (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:252:13)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:330:5)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1332:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
             "tests": [
               {
                 "status": "harness-incompatible"
@@ -12054,7 +12054,7 @@
             "status": "fail",
             "passed": 0,
             "total": 1,
-            "error": "Error: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\nError: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\n    at buildImports (/home/runner/work/js2/js2/src/runtime.ts:19620:15)\n    at buildCompiledAdapterImports (/home/runner/work/js2/js2/src/runtime.ts:4842:10)\n    at buildCompiledImports (/home/runner/work/js2/js2/src/runtime.ts:4811:38)\n    at buildProviderImportObject (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:195:17)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:322:29)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1334:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
+            "error": "Error: Linked provider js2wasm:npm:react-dom-client:43ff09c93ac81860 threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\nError: Linked provider js2wasm:npm:react-dom-client:43ff09c93ac81860 threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\n    at renderedProviderInitError (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:293:12)\n    at wireProviderInstance (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:252:13)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:330:5)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1332:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
             "tests": [
               {
                 "status": "harness-incompatible"
@@ -12178,7 +12178,7 @@
             "status": "fail",
             "passed": 0,
             "total": 2,
-            "error": "Error: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\nError: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\n    at buildImports (/home/runner/work/js2/js2/src/runtime.ts:19620:15)\n    at buildCompiledAdapterImports (/home/runner/work/js2/js2/src/runtime.ts:4842:10)\n    at buildCompiledImports (/home/runner/work/js2/js2/src/runtime.ts:4811:38)\n    at buildProviderImportObject (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:195:17)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:322:29)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1334:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
+            "error": "Error: Linked provider js2wasm:npm:react-dom-client:43ff09c93ac81860 threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\nError: Linked provider js2wasm:npm:react-dom-client:43ff09c93ac81860 threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\n    at renderedProviderInitError (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:293:12)\n    at wireProviderInstance (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:252:13)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:330:5)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1332:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
             "tests": [
               {
                 "status": "trapped"
@@ -12194,7 +12194,7 @@
             "status": "fail",
             "passed": 0,
             "total": 1,
-            "error": "Error: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\nError: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\n    at buildImports (/home/runner/work/js2/js2/src/runtime.ts:19620:15)\n    at buildCompiledAdapterImports (/home/runner/work/js2/js2/src/runtime.ts:4842:10)\n    at buildCompiledImports (/home/runner/work/js2/js2/src/runtime.ts:4811:38)\n    at buildProviderImportObject (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:195:17)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:322:29)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1334:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
+            "error": "Error: Linked provider js2wasm:npm:react-dom-client:43ff09c93ac81860 threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\nError: Linked provider js2wasm:npm:react-dom-client:43ff09c93ac81860 threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\n    at renderedProviderInitError (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:293:12)\n    at wireProviderInstance (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:252:13)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:330:5)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1332:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
             "tests": [
               {
                 "status": "trapped"
@@ -12213,7 +12213,7 @@
             "status": "fail",
             "passed": 0,
             "total": 9,
-            "error": "Error: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\nError: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\n    at buildImports (/home/runner/work/js2/js2/src/runtime.ts:19620:15)\n    at buildCompiledAdapterImports (/home/runner/work/js2/js2/src/runtime.ts:4842:10)\n    at buildCompiledImports (/home/runner/work/js2/js2/src/runtime.ts:4811:38)\n    at buildProviderImportObject (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:195:17)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:322:29)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1334:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
+            "error": "Error: Linked provider js2wasm:npm:react-dom-client:43ff09c93ac81860 threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\nError: Linked provider js2wasm:npm:react-dom-client:43ff09c93ac81860 threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\n    at renderedProviderInitError (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:293:12)\n    at wireProviderInstance (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:252:13)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:330:5)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1332:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
             "tests": [
               {
                 "status": "trapped"
@@ -12265,7 +12265,7 @@
             "status": "fail",
             "passed": 0,
             "total": 29,
-            "error": "Error: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\nError: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\n    at buildImports (/home/runner/work/js2/js2/src/runtime.ts:19620:15)\n    at buildCompiledAdapterImports (/home/runner/work/js2/js2/src/runtime.ts:4842:10)\n    at buildCompiledImports (/home/runner/work/js2/js2/src/runtime.ts:4811:38)\n    at buildProviderImportObject (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:195:17)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:322:29)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1334:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
+            "error": "Error: Linked provider js2wasm:npm:react-dom-client:43ff09c93ac81860 threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\nError: Linked provider js2wasm:npm:react-dom-client:43ff09c93ac81860 threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\n    at renderedProviderInitError (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:293:12)\n    at wireProviderInstance (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:252:13)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:330:5)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1332:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
             "tests": [
               {
                 "status": "skipped"
@@ -12383,7 +12383,7 @@
             "status": "fail",
             "passed": 0,
             "total": 8,
-            "error": "Error: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\nError: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\n    at buildImports (/home/runner/work/js2/js2/src/runtime.ts:19620:15)\n    at buildCompiledAdapterImports (/home/runner/work/js2/js2/src/runtime.ts:4842:10)\n    at buildCompiledImports (/home/runner/work/js2/js2/src/runtime.ts:4811:38)\n    at buildProviderImportObject (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:195:17)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:322:29)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1334:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
+            "error": "Error: Linked provider js2wasm:npm:react-dom-client:43ff09c93ac81860 threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\nError: Linked provider js2wasm:npm:react-dom-client:43ff09c93ac81860 threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\n    at renderedProviderInitError (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:293:12)\n    at wireProviderInstance (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:252:13)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:330:5)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1332:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
             "tests": [
               {
                 "status": "trapped"
@@ -12533,7 +12533,7 @@
             "status": "fail",
             "passed": 0,
             "total": 2,
-            "error": "Error: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\nError: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\n    at buildImports (/home/runner/work/js2/js2/src/runtime.ts:19620:15)\n    at buildCompiledAdapterImports (/home/runner/work/js2/js2/src/runtime.ts:4842:10)\n    at buildCompiledImports (/home/runner/work/js2/js2/src/runtime.ts:4811:38)\n    at buildProviderImportObject (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:195:17)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:322:29)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1334:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
+            "error": "Error: Linked provider js2wasm:npm:react-dom-client:43ff09c93ac81860 threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\nError: Linked provider js2wasm:npm:react-dom-client:43ff09c93ac81860 threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\n    at renderedProviderInitError (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:293:12)\n    at wireProviderInstance (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:252:13)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:330:5)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1332:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
             "tests": [
               {
                 "status": "trapped"
@@ -12660,7 +12660,7 @@
             "status": "fail",
             "passed": 0,
             "total": 1,
-            "error": "Error: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\nError: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\n    at buildImports (/home/runner/work/js2/js2/src/runtime.ts:19620:15)\n    at buildCompiledAdapterImports (/home/runner/work/js2/js2/src/runtime.ts:4842:10)\n    at buildCompiledImports (/home/runner/work/js2/js2/src/runtime.ts:4811:38)\n    at buildProviderImportObject (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:195:17)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:322:29)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1334:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
+            "error": "Error: Linked provider js2wasm:npm:react-dom-client:43ff09c93ac81860 threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\nError: Linked provider js2wasm:npm:react-dom-client:43ff09c93ac81860 threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\n    at renderedProviderInitError (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:293:12)\n    at wireProviderInstance (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:252:13)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:330:5)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1332:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
             "tests": [
               {
                 "status": "harness-incompatible"
@@ -12682,7 +12682,7 @@
             "status": "fail",
             "passed": 0,
             "total": 10,
-            "error": "Error: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\nError: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\n    at buildImports (/home/runner/work/js2/js2/src/runtime.ts:19620:15)\n    at buildCompiledAdapterImports (/home/runner/work/js2/js2/src/runtime.ts:4842:10)\n    at buildCompiledImports (/home/runner/work/js2/js2/src/runtime.ts:4811:38)\n    at buildProviderImportObject (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:195:17)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:322:29)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1334:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
+            "error": "Error: Linked provider js2wasm:npm:react-dom-client:43ff09c93ac81860 threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\nError: Linked provider js2wasm:npm:react-dom-client:43ff09c93ac81860 threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\n    at renderedProviderInitError (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:293:12)\n    at wireProviderInstance (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:252:13)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:330:5)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1332:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
             "tests": [
               {
                 "status": "trapped"
@@ -12740,7 +12740,7 @@
             "status": "fail",
             "passed": 0,
             "total": 2,
-            "error": "Error: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\nError: Native-first adapter cannot bind env::matchMedia: unknown import owned by #4401. Use the explicit compatibility profile until this semantic provider is native.\n    at buildImports (/home/runner/work/js2/js2/src/runtime.ts:19620:15)\n    at buildCompiledAdapterImports (/home/runner/work/js2/js2/src/runtime.ts:4842:10)\n    at buildCompiledImports (/home/runner/work/js2/js2/src/runtime.ts:4811:38)\n    at buildProviderImportObject (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:195:17)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:322:29)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1334:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
+            "error": "Error: Linked provider js2wasm:npm:react-dom-client:43ff09c93ac81860 threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\nError: Linked provider js2wasm:npm:react-dom-client:43ff09c93ac81860 threw during module init: TypeError: Cannot access property on null or undefined at 3200:35\n    at renderedProviderInitError (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:293:12)\n    at wireProviderInstance (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:252:13)\n    at instantiateLinkedProviders (/home/runner/work/js2/js2/src/linked-provider-runtime.ts:330:5)\n    at instantiateLinkedProject (/home/runner/work/js2/js2/src/index.ts:1332:27)\n    at main (/home/runner/work/js2/js2/tests/dogfood/upstream-suite-compile-worker.mjs:382:15)",
             "tests": [
               {
                 "status": "trapped"
@@ -12784,8 +12784,8 @@
               "flatten"
             ],
             "optimizationLevel": 4,
-            "compileDurationMs": 13495.763608000001,
-            "moduleCompileDurationMs": 26.78541000000041,
+            "compileDurationMs": 12862.429988,
+            "moduleCompileDurationMs": 7.253274999999121,
             "binaryBytes": 594541,
             "moduleImportCount": 44,
             "functionImportCount": 35
@@ -12795,53 +12795,53 @@
             "placement": "standalone",
             "inputMode": "compile-time-static",
             "sampleOp": "react-dom package import + text.length",
-            "wasmUs": 0.0013354722108596395,
-            "nodeUs": 0.0005073706833340042,
-            "wasmStdUs": 0.000006455598199079883,
-            "nodeStdUs": 0.0000026252557607733183,
-            "ratio": 0.3794009861910676,
-            "ratioStd": 0.002116875809538023,
+            "wasmUs": 0.0011369867897370394,
+            "nodeUs": 0.000584745323254252,
+            "wasmStdUs": 0.0000048469884435187256,
+            "nodeStdUs": 0.000008292101313725807,
+            "ratio": 0.5140773405679263,
+            "ratioStd": 0.008350607164102023,
             "ratioSamples": [
-              0.3795784872603535,
-              0.38065938467996413,
-              0.3804348288433817,
-              0.3832086248859415,
-              0.37918955338872296,
-              0.37870095581230295,
-              0.374689379043461,
-              0.3794009861910676,
-              0.37875718785752555
+              0.4988311021052194,
+              0.5116779657885648,
+              0.517728717415295,
+              0.5139977827018763,
+              0.5140773405679263,
+              0.5272062343351238,
+              0.5137255348628548,
+              0.5277418038057549,
+              0.5219838314214641
             ],
             "measurementOrder": "alternating-paired",
             "ratioEstimator": "median-of-paired-ratios",
-            "iters": 4405426,
+            "iters": 617096,
             "warmupRounds": 2,
             "measuredRounds": 9,
             "wasmSamplesUs": [
-              0.001350315951283555,
-              0.0013350061946340753,
-              0.001334125916539932,
-              0.0013378987639336886,
-              0.0013354722108596395,
-              0.0013343193144090672,
-              0.0013512870264986055,
-              0.0013372940551042497,
-              0.0013347696681316422
+              0.0011354149111298833,
+              0.001142799499589709,
+              0.0011369867897370394,
+              0.0011371877309168928,
+              0.001136977066773301,
+              0.0011272654497879136,
+              0.0011381972983157138,
+              0.001127408053203021,
+              0.0011387547480421795
             ],
             "nodeSamplesUs": [
-              0.0005125508861117369,
-              0.0005081826365933475,
-              0.0005075479647143888,
-              0.0005126943455636296,
-              0.0005063971111989172,
-              0.0005053079997255305,
-              0.0005063128968682473,
-              0.0005073706833340042,
-              0.0005055536059390634
+              0.0005663802714656194,
+              0.000584745323254252,
+              0.0005886507123686912,
+              0.0005845119722070609,
+              0.0005844941467735402,
+              0.0005943013728787756,
+              0.0005847210158566963,
+              0.0005949803596224968,
+              0.0005944115664324409
             ],
-            "compileDurationMs": 25972.595498000002,
-            "moduleCompileDurationMs": 11.195880999999645,
-            "instantiateDurationMs": 21.69836199999918,
+            "compileDurationMs": 24423.632182999998,
+            "moduleCompileDurationMs": 17.590186999997968,
+            "instantiateDurationMs": 20.04041700000016,
             "binaryBytes": 956530,
             "moduleImportCount": 0,
             "functionImportCount": 0,
@@ -12859,11 +12859,11 @@
               {
                 "level": 4,
                 "outcome": "optimized",
-                "durationMs": 19993
+                "durationMs": 18589
               }
             ],
-            "rawBinaryBytes": 1192510,
-            "optimizeDurationMs": 19993,
+            "rawBinaryBytes": 1192326,
+            "optimizeDurationMs": 18590,
             "optimizationOmittedPasses": [
               "flatten"
             ]
@@ -12873,53 +12873,53 @@
             "placement": "standalone",
             "inputMode": "runtime-dynamic",
             "sampleOp": "react-dom package import + text.length",
-            "wasmUs": 0.045988312072165805,
-            "nodeUs": 0.0005085798470542399,
-            "wasmStdUs": 0.0030404453543466273,
-            "nodeStdUs": 0.0000025863108651668304,
-            "ratio": 0.011027304739810997,
-            "ratioStd": 0.0006011507420367217,
+            "wasmUs": 0.04378298639730021,
+            "nodeUs": 0.0005873669074426334,
+            "wasmStdUs": 0.0004325365042555442,
+            "nodeStdUs": 0.000014146930776956284,
+            "ratio": 0.013474462539348727,
+            "ratioStd": 0.0003061147635315114,
             "ratioSamples": [
-              0.01105401120554506,
-              0.010815890323607838,
-              0.009116582113847378,
-              0.010953841004383732,
-              0.010918049904313686,
-              0.011060470973035018,
-              0.011140448270323202,
-              0.011027304739810997,
-              0.011084329795421266
+              0.013415414428625,
+              0.013083334359282871,
+              0.013437486084764144,
+              0.013474462539348727,
+              0.014131941478127331,
+              0.013853141693987908,
+              0.013889369540117005,
+              0.013386282679411863,
+              0.013754245184043983
             ],
             "measurementOrder": "alternating-paired",
             "ratioEstimator": "median-of-paired-ratios",
-            "iters": 1735637,
+            "iters": 503503,
             "warmupRounds": 2,
             "measuredRounds": 9,
             "wasmSamplesUs": [
-              0.04612506474568226,
-              0.046926562985231686,
-              0.055786241016986704,
-              0.046531035003285544,
-              0.045988312072165805,
-              0.04597805474301298,
-              0.04595062965355127,
-              0.04592584336471476,
-              0.04591032744750186
+              0.04378298639730021,
+              0.04468858974028014,
+              0.04370988852102194,
+              0.04338049028505862,
+              0.043822092420503625,
+              0.04468811506584747,
+              0.043673700057393953,
+              0.0436696643316876,
+              0.04406333825220184
             ],
             "nodeSamplesUs": [
-              0.000509866982555263,
-              0.0005075525585121411,
-              0.0005085798470542399,
-              0.0005096935591954039,
-              0.0005021026862190577,
-              0.0005085389398817101,
-              0.0005119106126441672,
-              0.0005064382702155365,
-              0.0005088852104438916
+              0.0005873669074426334,
+              0.0005846757616169031,
+              0.0005873510187678244,
+              0.0005845287912846038,
+              0.0006192912455356446,
+              0.0006190707900444207,
+              0.0006066001592813739,
+              0.0005845744712589997,
+              0.0006060579579482482
             ],
-            "compileDurationMs": 26055.200797999998,
-            "moduleCompileDurationMs": 10.240325999999186,
-            "instantiateDurationMs": 15.295261999999639,
+            "compileDurationMs": 24154.601949,
+            "moduleCompileDurationMs": 9.434794000000693,
+            "instantiateDurationMs": 14.87823600000047,
             "binaryBytes": 956474,
             "moduleImportCount": 0,
             "functionImportCount": 0,
@@ -12937,11 +12937,11 @@
               {
                 "level": 4,
                 "outcome": "optimized",
-                "durationMs": 20052
+                "durationMs": 18360
               }
             ],
-            "rawBinaryBytes": 1192436,
-            "optimizeDurationMs": 20053,
+            "rawBinaryBytes": 1192252,
+            "optimizeDurationMs": 18360,
             "optimizationOmittedPasses": [
               "flatten"
             ],
@@ -12950,7 +12950,7 @@
         }
       },
       "knownBugs": [],
-      "measuredAt": "2026-11-13T21:26:23.692Z",
+      "measuredAt": "2026-11-14T04:19:25.477Z",
       "esEdition": {
         "required": 2015,
         "requiredLabel": "ES2015",
@@ -32664,7 +32664,7 @@
       "shape": "esm-project",
       "compile": {
         "success": false,
-        "durationMs": 14418,
+        "durationMs": 13442,
         "timedOut": false,
         "timeoutMs": 120000,
         "errorCount": 1,
@@ -32672,12 +32672,12 @@
         "categories": {
           "compiler-diagnostic": {
             "count": 1,
-            "sample": "emitted WebAssembly failed validation — WebAssembly.Module(): Compiling function #139:\"y_createRenderRoot\" failed: local.set[0] expected type (ref null 217), found global.get of type i32 @+192452"
+            "sample": "emitted WebAssembly failed validation — WebAssembly.Module(): Compiling function #139:\"y_createRenderRoot\" failed: local.set[0] expected type (ref null 216), found global.get of type i32 @+192376"
           }
         },
         "errors": [
           {
-            "message": "emitted WebAssembly failed validation — WebAssembly.Module(): Compiling function #139:\"y_createRenderRoot\" failed: local.set[0] expected type (ref null 217), found global.get of type i32 @+192452",
+            "message": "emitted WebAssembly failed validation — WebAssembly.Module(): Compiling function #139:\"y_createRenderRoot\" failed: local.set[0] expected type (ref null 216), found global.get of type i32 @+192376",
             "line": 1,
             "column": 1,
             "severity": "error"
@@ -32686,7 +32686,7 @@
       },
       "validation": {
         "validates": false,
-        "firstError": "emitted WebAssembly failed validation — WebAssembly.Module(): Compiling function #139:\"y_createRenderRoot\" failed: local.set[0] expected type (ref null 217), found global.get of type i32 @+192452"
+        "firstError": "emitted WebAssembly failed validation — WebAssembly.Module(): Compiling function #139:\"y_createRenderRoot\" failed: local.set[0] expected type (ref null 216), found global.get of type i32 @+192376"
       },
       "capabilities": {
         "nodeFs": false
@@ -32929,45 +32929,46 @@
           },
           {
             "path": "packages/lit-html/src/test/directives/class-map_test.ts",
-            "status": "skip",
+            "status": "fail",
             "passed": 0,
             "total": 12,
+            "error": "dereferencing a null pointer",
             "tests": [
               {
-                "status": "skipped"
+                "status": "trapped"
               },
               {
-                "status": "skipped"
+                "status": "trapped"
               },
               {
-                "status": "skipped"
+                "status": "trapped"
               },
               {
-                "status": "skipped"
+                "status": "trapped"
               },
               {
-                "status": "skipped"
+                "status": "trapped"
               },
               {
-                "status": "skipped"
+                "status": "trapped"
               },
               {
-                "status": "skipped"
+                "status": "trapped"
               },
               {
-                "status": "skipped"
+                "status": "trapped"
               },
               {
-                "status": "skipped"
+                "status": "trapped"
               },
               {
-                "status": "skipped"
+                "status": "fail"
               },
               {
-                "status": "skipped"
+                "status": "fail"
               },
               {
-                "status": "skipped"
+                "status": "fail"
               }
             ],
             "sourceUrl": "https://raw.githubusercontent.com/lit/lit/20afabd3c5bfd49fdcdf1b8518e05c7f99a46db6/packages/lit-html/src/test/directives/class-map_test.ts"
@@ -34906,9 +34907,9 @@
         ],
         "summary": {
           "pass": 0,
-          "fail": 77,
+          "fail": 89,
           "compile_error": 0,
-          "skip": 97,
+          "skip": 85,
           "total": 174
         }
       },
@@ -34926,51 +34927,51 @@
             "placement": "js-host",
             "inputMode": "runtime-dynamic",
             "sampleOp": "select one of two runtime-owned callbacks",
-            "wasmUs": 8.661107106958314,
-            "nodeUs": 0.005253527419150868,
-            "wasmStdUs": 0.04865696878490515,
-            "nodeStdUs": 0.00020699274312823996,
-            "ratio": 0.0006057740983188111,
-            "ratioStd": 0.000026099607811428513,
+            "wasmUs": 8.975395193144813,
+            "nodeUs": 0.0056858472250603176,
+            "wasmStdUs": 0.06877417680895945,
+            "nodeStdUs": 0.00034673209961633443,
+            "ratio": 0.0006346326445906995,
+            "ratioStd": 0.00004004990482293663,
             "ratioSamples": [
-              0.0005617449899689952,
-              0.0006040487740150131,
-              0.0006057740983188111,
-              0.000605600166331965,
-              0.0006052762036887951,
-              0.0006528158717603245,
-              0.0006533184662736705,
-              0.0006070994942725992,
-              0.0006072358867962544
+              0.0006346326445906995,
+              0.0006209042414332471,
+              0.0006956158402321815,
+              0.0006614595179283674,
+              0.0006347357574793672,
+              0.0006234319282692425,
+              0.0006083738230572208,
+              0.0006217370714632334,
+              0.0007376656651262668
             ],
             "measurementOrder": "alternating-paired",
             "ratioEstimator": "median-of-paired-ratios",
-            "iters": 26861,
+            "iters": 29874,
             "warmupRounds": 2,
             "measuredRounds": 9,
             "wasmSamplesUs": [
-              8.808318417035585,
-              8.685480696921141,
-              8.673034585458423,
-              8.660710286288685,
-              8.680168943821968,
-              8.661107106958314,
-              8.644699899482372,
-              8.635028740553096,
-              8.651543054986771
+              9.0192973823392,
+              9.030835274821058,
+              8.989247372297307,
+              8.956226953203382,
+              8.957817734484799,
+              8.946486945169788,
+              9.181735556001772,
+              8.968236961906758,
+              8.975395193144813
             ],
             "nodeSamplesUs": [
-              0.0049480287408213705,
-              0.005246453966706277,
-              0.005253899705693939,
-              0.005244927589929388,
-              0.005253899705693939,
-              0.005654108186438534,
-              0.0056477420797259766,
-              0.005242321581419144,
-              0.005253527419150868
+              0.0057239405501039,
+              0.005607283925821379,
+              0.0062530628639355205,
+              0.00592418156292296,
+              0.0056858472250603176,
+              0.005577525607462806,
+              0.005585927562505215,
+              0.005575885384884233,
+              0.006620840864922266
             ],
-            "compileDurationMs": 3712.4065509999928,
+            "compileDurationMs": 3437.481991000008,
             "binaryBytes": 72158,
             "moduleImportCount": 17,
             "functionImportCount": 17,
@@ -34995,53 +34996,53 @@
             "reason": "the pinned Lit callback probe currently covers the JS-host lane only"
           }
         },
-        "wasmUs": 8.661107106958314,
-        "nodeUs": 0.005253527419150868,
-        "wasmStdUs": 0.04865696878490515,
-        "nodeStdUs": 0.00020699274312823996,
-        "ratio": 0.0006057740983188111,
-        "ratioStd": 0.000026099607811428513,
+        "wasmUs": 8.975395193144813,
+        "nodeUs": 0.0056858472250603176,
+        "wasmStdUs": 0.06877417680895945,
+        "nodeStdUs": 0.00034673209961633443,
+        "ratio": 0.0006346326445906995,
+        "ratioStd": 0.00004004990482293663,
         "ratioSamples": [
-          0.0005617449899689952,
-          0.0006040487740150131,
-          0.0006057740983188111,
-          0.000605600166331965,
-          0.0006052762036887951,
-          0.0006528158717603245,
-          0.0006533184662736705,
-          0.0006070994942725992,
-          0.0006072358867962544
+          0.0006346326445906995,
+          0.0006209042414332471,
+          0.0006956158402321815,
+          0.0006614595179283674,
+          0.0006347357574793672,
+          0.0006234319282692425,
+          0.0006083738230572208,
+          0.0006217370714632334,
+          0.0007376656651262668
         ],
         "measurementOrder": "alternating-paired",
         "ratioEstimator": "median-of-paired-ratios",
-        "iters": 26861,
+        "iters": 29874,
         "warmupRounds": 2,
         "measuredRounds": 9,
         "wasmSamplesUs": [
-          8.808318417035585,
-          8.685480696921141,
-          8.673034585458423,
-          8.660710286288685,
-          8.680168943821968,
-          8.661107106958314,
-          8.644699899482372,
-          8.635028740553096,
-          8.651543054986771
+          9.0192973823392,
+          9.030835274821058,
+          8.989247372297307,
+          8.956226953203382,
+          8.957817734484799,
+          8.946486945169788,
+          9.181735556001772,
+          8.968236961906758,
+          8.975395193144813
         ],
         "nodeSamplesUs": [
-          0.0049480287408213705,
-          0.005246453966706277,
-          0.005253899705693939,
-          0.005244927589929388,
-          0.005253899705693939,
-          0.005654108186438534,
-          0.0056477420797259766,
-          0.005242321581419144,
-          0.005253527419150868
+          0.0057239405501039,
+          0.005607283925821379,
+          0.0062530628639355205,
+          0.00592418156292296,
+          0.0056858472250603176,
+          0.005577525607462806,
+          0.005585927562505215,
+          0.005575885384884233,
+          0.006620840864922266
         ]
       },
       "knownBugs": [],
-      "measuredAt": "2026-11-13T20:49:50.236Z",
+      "measuredAt": "2026-11-14T03:44:36.469Z",
       "esEdition": {
         "required": 2015,
         "requiredLabel": "ES2015",
