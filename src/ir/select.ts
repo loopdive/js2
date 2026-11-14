@@ -104,7 +104,6 @@ import {
   type EmptyObjectLiteralBinding,
 } from "./empty-object-literal.js";
 import { createObjectStaticSelector } from "./select-object-statics.js";
-import * as dynamicHome from "./dynamic-home-open-object.js";
 import { writerKnowsItsStrictness } from "./dynamic-home-uses.js";
 import { selectWithEnvironmentClosures } from "./with-environment.js";
 // (#1373b C-1) Pure-syntactic async helpers from the LEAF module (safe for

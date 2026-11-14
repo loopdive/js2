@@ -4,8 +4,10 @@
  * to a binding the dynamic arms answer as node does. Every consumer must accept
  * all of a binding's references before the selector claims it. The scan is
  * shared; each consumer supplies only its allow-list as a {@link ServedUsePolicy}:
- *   - #7335's open `$Object` (`var o = {}`, `dynamic-home-open-object.ts`);
- *   - #7340's primitive wrapper (`var w = new String(s)`, `wrapper-construction.ts`).
+ * #7340's primitive wrapper (`var w = new String(s)`, `wrapper-construction.ts`).
+ * (#7339) #7335's open `$Object` was the other consumer; its own-property test
+ * is a row of the `Object` statics table now, proved per file, so no policy
+ * serves a member call any more.
  *
  * The member screen is shared. The dynamic member read (`__dyn_member_get`)
  * answers own properties only, so a key the value may inherit is never served,
@@ -19,8 +21,6 @@ import { ts } from "../ts-api.js";
 export interface ServedUsePolicy {
   /** Keys the value may inherit or own beyond what the program stores: never read through the dynamic arms. */
   readonly unreadableKeys: ReadonlySet<string>;
-  /** A call on a member of the binding that the consumer lowers itself (`o.hasOwnProperty(k)`). */
-  readonly servesMemberCall: (call: ts.CallExpression) => boolean;
   /** A plain member read that passed the shared screen, judged on where its value goes. */
   readonly servesMemberRead: (member: ts.PropertyAccessExpression) => boolean;
   /** A reference that is not a member access's receiver. */
@@ -43,14 +43,12 @@ export function referencesNamed(name: ts.Identifier, owner: ts.Node): ts.Identif
 
 /**
  * One reference, judged on its outermost parenthesized form. A member access
- * on the binding is served when:
- *   - it is the callee of a call the policy serves; or
- *   - it is not optional, its key is not one the policy cannot read, and the
- *     member is not called or used as a tag (that hands the value to arbitrary
- *     code as `this`), and then either:
- *     - it is a read the policy serves; or
- *     - it is a plain `v.<key> = x` in code whose strictness `dyn.member_set`
- *       is told.
+ * on the binding is served when it is not optional, its key is not one the
+ * policy cannot read, and the member is not called or used as a tag (that
+ * hands the value to arbitrary code as `this`), and then either:
+ *   - it is a read the policy serves; or
+ *   - it is a plain `v.<key> = x` in code whose strictness `dyn.member_set`
+ *     is told.
  * Any other reference is the policy's.
  */
 export function isServedUse(reference: ts.Identifier, policy: ServedUsePolicy): boolean {
@@ -59,7 +57,6 @@ export function isServedUse(reference: ts.Identifier, policy: ServedUsePolicy): 
   if (!ts.isPropertyAccessExpression(parent) || parent.expression !== use) {
     return policy.servesReference(use, reference);
   }
-  if (ts.isCallExpression(parent.parent) && policy.servesMemberCall(parent.parent)) return true;
   if (parent.questionDotToken !== undefined || policy.unreadableKeys.has(parent.name.text)) return false;
   const member = outermostParenthesized(parent);
   const user = member.parent;
