@@ -20,7 +20,7 @@
 // `plan/issues/1713-ir-backend-emitter-trait-seam.md` for that design step.
 // Nothing here changes for Phase 1.
 
-import type { OwnPropertyTest } from "../core/dialect/js.js";
+import type { OwnPropertyTest } from "../nodes.js";
 import type { Instr, ValType } from "../types.js";
 import type { JsTag } from "../js-tag.js";
 import type { IrClassMemberKind, IrFuncRef, IrType, IrTypeRef } from "../nodes.js";

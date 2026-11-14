@@ -11,7 +11,7 @@
 import type { IrFunctionBuilder } from "./builder.js";
 import { irRuntimeFuncRef } from "./callable-bindings.js";
 import { irDynamic, irVal, type IrType, type IrValueId } from "./nodes.js";
-import type { OwnPropertyTest } from "./core/dialect/js.js";
+import type { OwnPropertyTest } from "./nodes.js";
 import type { ObjectStaticCall } from "./object-statics.js";
 import {
   emitThrowTypeErrorIf,

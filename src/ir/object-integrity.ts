@@ -8,7 +8,7 @@ import {
   sourceWritesMemberNamed,
 } from "../shared/intrinsic-prototype-writes.js";
 import { isEqualityOperator } from "./analysis/operand-admissibility.js";
-import type { OwnPropertyTest } from "./core/dialect/js.js";
+import type { OwnPropertyTest } from "./nodes.js";
 import { forEachChild, ts } from "../ts-api.js";
 
 const ES5_INTRINSIC_OBJECTS: ReadonlySet<string> = new Set([

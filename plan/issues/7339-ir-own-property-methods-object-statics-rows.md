@@ -16,8 +16,8 @@ goal: ir-full-coverage
 depends_on: [7338]
 related: [7335, 7280, 7128, 7190, 7106]
 loc-budget-allow:
-  # 2026-11-13 (#7339 S1), +1 each: the import of `OwnPropertyTest`, the one definition of the two method names
-  # (`core/dialect/js.ts`) that replaces the literal union these files repeated.
+  # 2026-11-13 (#7339 S1), +1 each: the import of `OwnPropertyTest` (`ir/nodes.ts`), which names the two method names
+  # of `dyn.own_property` once and replaces the literal union these files repeated.
   - src/ir/builder.ts
   - src/ir/integration.ts
 ---

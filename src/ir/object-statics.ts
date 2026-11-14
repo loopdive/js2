@@ -28,7 +28,7 @@
 import { isUnshadowedUndefined } from "../shared/ambient-intrinsics.js";
 import { ts } from "../ts-api.js";
 import type { IrBackendTargetCapability } from "./backend/legality.js";
-import type { OwnPropertyTest } from "./core/dialect/js.js";
+import type { OwnPropertyTest } from "./nodes.js";
 import {
   definesLiteralsOnly,
   descriptorMapDefinitions,

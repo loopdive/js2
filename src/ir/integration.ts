@@ -22,7 +22,7 @@
 // `shiftLateImportIndices` pass is a no-op for every body produced here.
 // That's the whole point of the symbolic-ref design — spec #1131 §1.2.
 
-import type { OwnPropertyTest } from "./core/dialect/js.js";
+import type { OwnPropertyTest } from "./nodes.js";
 import {
   isObjectRuntimeProvider,
   objectRuntimeProviderImport,

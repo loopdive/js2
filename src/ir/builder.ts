@@ -6,7 +6,7 @@
 // terminate the block. No control-flow primitives yet (if/loop sugar) — those
 // come in Phase 2 together with AST→IR lowering for real control-flow.
 
-import type { OwnPropertyTest } from "./core/dialect/js.js";
+import type { OwnPropertyTest } from "./nodes.js";
 import {
   asBlockId,
   asLabelId,

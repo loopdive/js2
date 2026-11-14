@@ -180,6 +180,9 @@ export {
 } from "./core/nodes.js";
 export type { PreparedIrFunction as IrFunction, PreparedIrModule as IrModule } from "./async-plan.js";
 
+/** (#7339) The two `Object.prototype` own-property tests `dyn.own_property` answers. */
+export type OwnPropertyTest = import("./core/nodes.js").IrInstrDynOwnProperty["test"];
+
 /**
  * Wrap a ValType as an IrType with an explicit signedness fact (#1126 Stage 1).
  * Use this only for `i32` ValTypes where the value-domain (signed `int32` vs
