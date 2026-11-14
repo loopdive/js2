@@ -29,8 +29,18 @@
  *     - `R = Function.prototype`: any `<k>` but `"constructor"`; the others
  *       hold ordinary functions (`call`, `apply`, `bind`, `toString`, the
  *       `caller` / `arguments` thrower), a number or a string.
- *     A source write cannot put either intrinsic under another key without a
- *     `Function` mention of its own that is a site (`Function.x = Function`).
+ *     The pairs describe the realm's own keys. A source store can change
+ *     them WITHOUT a site: `Function.prototype.k = (function () {}).constructor`
+ *     (the member arm above treats a write target like a read) and
+ *     `Object.defineProperty(Function.prototype, "k", { value: (function ()
+ *     {}).constructor })` (a discarded define with a literal key) both put
+ *     `%Function%` under `"k"`, which a later inert read hands out. Main has
+ *     the same exposure through its `Function.prototype.<member>` excusal.
+ *     It is harmless ONLY because a function value's inherited `constructor`
+ *     cannot evaluate source in this compiler today; the test row
+ *     `FN_CONSTRUCTOR_EVALUATES` (tests/issue-7343-function-inert-uses.test.ts)
+ *     pins that, and the moment it can, such stores must become sites (#7343
+ *     "Follow-ups": receiver-aware written-key sets).
  * Each position also needs the global `Function` and an unpatched global
  * `Object` (`objectStaticIsPristine`): a source that declares either name, or
  * writes `Object` or the static it calls (`Object = …`, `Object.isSealed = f`,

@@ -316,3 +316,74 @@ What the screen does not catch:
     r22, s02.
 - **gc (JS environment):** byte-identical on the 200-file sample without a
   `Function` mention.
+
+## Review round 2 (PR #7231, 2026-11-14): MET
+
+Round 2 found no program that passes on main and fails on head; `s03` and
+`t18` newly pass. Two should-fix items were left, plus a nit.
+
+**S1: the comment "a source write cannot put either intrinsic under another
+key without a site" was false. Disposition: the doc now states the real
+limit, pinned by a test (option D).**
+
+Two writes put `%Function%` under a new key with no site:
+- `Function.prototype.k = (function () {}).constructor`, because the member
+  arm treats a write target like a read;
+- `Object.defineProperty(Function.prototype, "k", { value: (function ()
+  {}).constructor })`, a discarded define with a literal key.
+
+A later inert read then hands that value out. Main has the same exposure
+through its `Function.prototype.<member>` excusal. It is harmless only
+because a function value's inherited `.constructor` cannot evaluate source
+in this compiler today.
+
+Tests in `tests/issue-7343-function-inert-uses.test.ts` pin that dependency
+so it cannot rot silently:
+- the `FN_CONSTRUCTOR_EVALUATES` rows: `(function () {}).constructor("return
+  7;")()` throws on standalone and on the default target, and no
+  `js2wasm:runtime-eval` import is linked;
+- the `INERT_TODAY_KNOWN_LIMIT` rows (both counterexamples, plus a store
+  followed by a descriptor read) state today's inert answer.
+
+Stores and `defineProperty` statements stay inert, exactly as on main.
+
+The two sound variants were measured (249-file population, against main
+`9745e46d72`) and rejected. Both send back to the legacy compiler units that
+main lowers on IR, which is not allowed:
+
+| variant | rule | gained | units newly legacy |
+| --- | --- | --- | --- |
+| A | every store into `Function.prototype.<k>`, and every define with a non-literal descriptor, is a site | 9 | **85 units in 17 files** (`Function.prototype.myproperty = 1`, `.property = 12`, `.get = function…`, `.toString = Object.prototype.toString`, …: main excuses them all) |
+| B | a store is inert, but a READ of key k is a site when the file writes any member named k (`sourceWritesMemberNamed`) | **8** | **68 units in 12 files** |
+
+Variant B's losses come from the key screen not knowing the receiver. sta.js
+writes `Test262Error.prototype.toString`, which makes every
+`Function.prototype.toString` read a site:
+- the gained `getOwnPropertyDescriptor/15.2.3.3-4-35`;
+- the `Function/prototype/toString/S15.3.4.2_A*` family;
+- `bind/15.3.4.5-2-2` (`f.bind = …`).
+
+The Variant B patch is kept in the review scratch (`round2-readside.patch`).
+
+**S2: done.** Test rows pin the `Object` write screen's limit (the #3776
+boundary):
+- `Object["is" + "Sealed"] = f` stays inert (not seen);
+- `var O = Object; O.isSealed = f` is a site (seen).
+
+**Nit: done.** `hasWithStatement`'s doc notes that
+`sourceNamesReflectiveRoute` also counts `with` as a reflective route.
+
+## Follow-ups
+
+- **Make stores into `Function` / `Function.prototype` sound without losing
+  units (option C).**
+  - Make the written-key screen receiver-aware: per-intrinsic written-key
+    sets in `src/shared/intrinsic-prototype-writes.ts`, which already tracks
+    `writes` per patchable intrinsic through `prototypeOwner`.
+  - Treat a fresh stored value as harmless: a primitive literal, a function
+    or arrow expression, an object or array literal.
+  - With both, a read of `<k>` is a site only when the file stores a
+    non-fresh value under `<k>` on `Function` / `Function.prototype`.
+  - Not measured. It would avoid both A's and B's losses on this population.
+  - **Required before** a function value's inherited `.constructor` can
+    evaluate source (the `FN_CONSTRUCTOR_EVALUATES` rows flip).

@@ -121,7 +121,10 @@ export function hasDynamicScope(root: ts.Node): boolean {
   return scope.withStatement || scope.directEval;
 }
 
-/** `with` anywhere in the subtree: a name may resolve to an object's property, outside every declaration. */
+/**
+ * `with` anywhere in the subtree: a name may resolve to an object's property, outside every declaration.
+ * `sourceNamesReflectiveRoute` (intrinsic-prototype-writes.ts) also counts `with` as a reflective route.
+ */
 export function hasWithStatement(root: ts.Node): boolean {
   return dynamicScopeOf(root).withStatement;
 }

@@ -8,6 +8,7 @@
 import { describe, expect, it } from "vitest";
 import { elideDeadTopLevelBindings } from "../src/deadcode-elide.js";
 import { analyzeSource } from "../src/checker/index.js";
+import { compile } from "../src/index.js";
 import { createTypeOracle } from "../src/checker/oracle-backend.js";
 import { buildIrRuntimeEvalBoundaryPlan } from "../src/ir/runtime-eval-boundary-plan.js";
 import { ts } from "../src/ts-api.js";
@@ -37,6 +38,7 @@ const INERT: Record<string, string> = {
   "Object.defineProperty statement on Function":
     'Object.defineProperty(Function, "prop", { value: 1, configurable: true });',
   "prototype method chain": "var call = Function.prototype.call;",
+  "delete of a Function.prototype member": "delete Function.prototype.xq;",
 };
 
 /** Acceptance criterion 3: each stays a dynamic-code site. */
@@ -76,6 +78,37 @@ const SITES: Record<string, string> = {
   "with statement": "with ({}) { var r = Object.isSealed(Function); }",
 };
 
+/**
+ * The known limit of the store arms (#7343 review round 2, PR #7231): a store into `Function.prototype.<k>` and a
+ * discarded `Object.defineProperty` statement are inert, as on main, so they can place `%Function%` under another key
+ * with no site, and a later inert read hands it out. Harmless ONLY while a function value's inherited `.constructor`
+ * cannot evaluate source (`FN_CONSTRUCTOR_EVALUATES` below). Follow-up: #7343 "Follow-ups" (receiver-aware written-key
+ * sets in `src/shared/intrinsic-prototype-writes.ts`).
+ */
+const INERT_TODAY_KNOWN_LIMIT: Record<string, string> = {
+  "store of a function's constructor": "Function.prototype.xq = (function () {}).constructor;",
+  "define of a function's constructor":
+    'Object.defineProperty(Function.prototype, "yq", { value: (function () {}).constructor });',
+  "store, then a descriptor read of the stored key":
+    'Function.prototype.xq = (function () {}).constructor; var d = Object.getOwnPropertyDescriptor(Function.prototype, "xq");',
+};
+
+/**
+ * The known limit of the `Object` write screen (`objectStaticIsPristine`), the #3776 boundary the object statics
+ * share: a write under a COMPUTED name is not seen, so the static still counts as the realm's. A literal-named write
+ * through an alias is seen.
+ */
+const OBJECT_WRITE_SCREEN: Record<string, { readonly body: string; readonly inert: boolean }> = {
+  "computed-name write (not seen: #3776 boundary)": {
+    body: 'Object["is" + "Sealed"] = function (F) { return F; }; var r = Object.isSealed(Function);',
+    inert: true,
+  },
+  "alias write under a literal name (seen)": {
+    body: "var O = Object; O.isSealed = function (F) { return F; }; var r = Object.isSealed(Function);",
+    inert: false,
+  },
+};
+
 /** Whether the elision pre-pass keeps the dead shim, i.e. it saw a dynamic-code position. */
 function keepsShim(body: string): boolean {
   return !elideDeadTopLevelBindings(SHIM + body, ts.ScriptKind.JS).elided.includes("deadShim");
@@ -105,5 +138,47 @@ describe("#7343 — a Function value in an inert position is not dynamic code", 
       expect(keepsShim(body)).toBe(true);
       expect(boundarySite(body)).toBe(true);
     });
+  }
+
+  for (const [name, body] of Object.entries(INERT_TODAY_KNOWN_LIMIT)) {
+    it(`inert today, known limit: ${name}`, () => {
+      expect(keepsShim(body)).toBe(false);
+      expect(boundarySite(body)).toBe(false);
+    });
+  }
+
+  for (const [name, { body, inert }] of Object.entries(OBJECT_WRITE_SCREEN)) {
+    it(`Object write screen: ${name}`, () => {
+      expect(keepsShim(body)).toBe(!inert);
+      expect(boundarySite(body)).toBe(!inert);
+    });
+  }
+});
+
+/**
+ * The dependency the known limit rests on. A function value's inherited `.constructor` is `%Function%` in the
+ * language, but this compiler cannot evaluate source through it: the call throws, and no `js2wasm:runtime-eval`
+ * import is linked. IF THIS ROW EVER STARTS ANSWERING 1 (the source ran), stores into `Function` /
+ * `Function.prototype` must become sites (#7343, "Follow-ups"), or `INERT_TODAY_KNOWN_LIMIT` hands out `%Function%`.
+ */
+describe("#7343 — FN_CONSTRUCTOR_EVALUATES: a function's inherited constructor cannot evaluate source today", () => {
+  const source = `var r = 0;
+try { var v = (function () {}).constructor("return 7;")(); r = v === 7 ? 1 : 2; } catch (e) { r = 3; }
+export function probe() { return r; }`;
+  for (const target of ["standalone", undefined] as const) {
+    it(`${target ?? "default"} target: the call throws (3), with no runtime-eval import`, async () => {
+      const result = await compile(source, {
+        fileName: "probe.js",
+        allowJs: true,
+        skipSemanticDiagnostics: true,
+        ...(target ? { target } : {}),
+      });
+      expect(result.success).toBe(true);
+      const modules = WebAssembly.Module.imports(new WebAssembly.Module(result.binary)).map((entry) => entry.module);
+      expect(modules).not.toContain("js2wasm:runtime-eval");
+      const { instance } = await WebAssembly.instantiate(result.binary, result.importObject ?? {});
+      (instance.exports.__module_init as (() => void) | undefined)?.();
+      expect((instance.exports.probe as () => number)()).toBe(3);
+    }, 60_000);
   }
 });
