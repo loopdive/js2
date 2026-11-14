@@ -82,7 +82,6 @@ export function tryCompileStandaloneErrorPrototypeToString(
   propAccess: ts.PropertyAccessExpression,
 ): InnerResult | undefined {
   if (
-    !ctx.standalone ||
     propAccess.name.text !== "toString" ||
     expr.arguments.length !== 0 ||
     !writesErrorPrototypeToString(ctx, propAccess) ||

@@ -31,7 +31,6 @@ import { ts } from "../ts-api.js";
 import type { ValType } from "../ir/types.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { allocLocal } from "./context/locals.js";
-import { noJsHost } from "./js-errors.js";
 import { getArrTypeIdxFromVec, getOrRegisterVecType } from "./registry/types.js";
 import { compileExpression } from "./shared.js";
 import { ensureNativeStringHelpers, nativeStringLiteralInstrs, nativeStringType } from "./native-strings.js";
@@ -412,7 +411,7 @@ export function tryCompileStandaloneSplitSeparator(
     return { kind: "ref", typeIdx: vecTypeIdx };
   }
 
-  if (firstArgIsStringLike || !noJsHost(ctx)) return undefined;
+  if (firstArgIsStringLike) return undefined;
   if (sepExpr === undefined || !isPlainToStringSearchValue(ctx, sepExpr, "split")) return undefined;
   const splitIdx = ctx.nativeStrHelpers.get("__str_split");
   const nstrVecTypeIdx = ctx.vecTypeMap.get(`ref_${ctx.anyStrTypeIdx}`);
@@ -466,7 +465,7 @@ export function tryCompileStandaloneStringValueReplace(
   emitReceiver: () => ValType | null,
   firstArgIsStringLike: boolean,
 ): ValType | null | undefined {
-  if (!noJsHost(ctx) || expr.arguments.length !== 2) return undefined;
+  if (expr.arguments.length !== 2) return undefined;
   const searchExpr = expr.arguments[0]!;
   const replExpr = expr.arguments[1]!;
 

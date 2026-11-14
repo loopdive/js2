@@ -78,7 +78,7 @@ export function libExternScanMemoKey(ctx: CodegenContext, libIndex: LibDeclIndex
   // (#6841) The standalone extern-class gates also read the environment and
   // the certified DOM capability, so both are part of the scan's identity.
   const flags =
-    `${ctx.nativeStrings ? 1 : 0}${ctx.standalone ? 1 : 0}${ctx.wasi ? 1 : 0}` +
+    `${ctx.nativeStrings ? 1 : 0}${1}${ctx.wasi ? 1 : 0}` +
     `${ctx.targetProfile.environment === "none" ? 1 : 0}${ctx.requiresStandaloneDomCapability === true ? 1 : 0}`;
   return `${libScanMemoEpoch}|${id}|${flags}|${ctx.externClasses.size}:${ctx.externClassParent.size}:${h}`;
 }

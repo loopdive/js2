@@ -45,33 +45,6 @@ export function writeWasmStructSidecar(
   state.deletedKeys.get(value)?.delete(typeof key === "symbol" ? key : String(key));
 }
 
-/** Alias every ordinary-property record when a vec projection changes only its physical carrier. */
-export function copyWasmStructSidecar(
-  state: WasmStructSidecarState,
-  source: any,
-  destination: any,
-  normalize: (value: any) => any,
-  canBeWeakKey: (value: any) => boolean,
-): void {
-  const rawSource = normalize(source);
-  const rawDestination = normalize(destination);
-  if (rawSource === rawDestination || !canBeWeakKey(rawSource) || !canBeWeakKey(rawDestination)) return;
-
-  const alias = <T>(store: WeakMap<object, T>): void => {
-    const value = store.get(rawSource);
-    if (value) store.set(rawDestination, value);
-  };
-  alias(state.props);
-  alias(state.descriptors);
-  alias(state.accessors);
-  alias(state.deletedKeys);
-  alias(state.shadowedFields);
-  if (state.prototypes.has(rawSource)) state.prototypes.set(rawDestination, state.prototypes.get(rawSource));
-  if (state.frozen.has(rawSource)) state.frozen.add(rawDestination);
-  if (state.sealed.has(rawSource)) state.sealed.add(rawDestination);
-  if (state.nonExtensible.has(rawSource)) state.nonExtensible.add(rawDestination);
-}
-
 export function isVisibleWasmVecSidecarKey(state: WasmStructSidecarState, vec: object, key: string | symbol): boolean {
   const normalized = typeof key === "symbol" ? key : String(key);
   if (state.deletedKeys.get(vec)?.has(normalized)) return false;

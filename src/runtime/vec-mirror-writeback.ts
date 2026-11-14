@@ -73,7 +73,6 @@ const _apply = Reflect.apply;
 const _wmGet = WeakMap.prototype.get;
 const _wmSet = WeakMap.prototype.set;
 const _wsAdd = WeakSet.prototype.add;
-const _wsHas = WeakSet.prototype.has;
 const _objectIs = Object.is;
 const _arrayBufferIsView = ArrayBuffer.isView;
 const _DataView = DataView;
@@ -148,15 +147,6 @@ export function vecForMirror(v: unknown): unknown {
   return _mirrorGet(v as object);
 }
 
-/** Whether a registered TypedArray mirror detached its compiled vec source. */
-export function isDetachedVecMirrorSource(v: unknown): boolean {
-  return (
-    v != null &&
-    (typeof v === "object" || typeof v === "function") &&
-    (_apply(_wsHas, _detachedViewSources, [v as object]) as boolean)
-  );
-}
-
 /** Save the mirror contents last known to match its Wasm vec. */
 export function recordVecMirrorElements(v: unknown): void {
   if (v == null || typeof v !== "object") return;
@@ -229,22 +219,6 @@ export function snapshotVecMirrors(
     };
   }
   return snaps ?? NO_MIRRORS;
-}
-
-/** Invoke a host callable and reconcile committed mirror state on every exit. */
-export function applyWithVecMirrorWriteback(
-  fn: unknown,
-  receiver: unknown,
-  args: unknown[],
-  exports: Exports,
-  unwrap: (v: unknown) => unknown,
-): unknown {
-  const snaps = snapshotVecMirrors(receiver, args, exports);
-  try {
-    return _apply(fn as (...values: unknown[]) => unknown, receiver, args);
-  } finally {
-    reconcileVecMirrors(snaps, exports, unwrap);
-  }
 }
 
 /**

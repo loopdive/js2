@@ -196,9 +196,6 @@ export function resolveFnctorTypedField(
   recvType: ValType | null | undefined,
   propName: string,
 ): FnctorTypedField | undefined {
-  // Standalone only: the win is the host-free native slot lane, and in JS-host
-  // mode a fnctor instance must keep `$Object` identity for the host MOP.
-  if (!ctx.standalone) return undefined;
   if (recvType == null) return undefined;
   if (recvType.kind !== "ref" && recvType.kind !== "ref_null") return undefined;
   const typeIdx = (recvType as { typeIdx?: number }).typeIdx;
@@ -332,7 +329,7 @@ export function tryEmitFnctorTypedFieldGet(
   // When inherited descriptors are observable, preserve the dynamic getter so
   // it can continue into the fnctor prototype instead of returning the slot's
   // local `undefined`.
-  if (ctx.standalone && inheritedSetAffectsKey(ctx, propName) && f.presenceSlot !== undefined) {
+  if (inheritedSetAffectsKey(ctx, propName) && f.presenceSlot !== undefined) {
     note(fnctorTypedReadStats.declines, `get:inherited-presence:${f.structName}.${propName}`);
     return undefined;
   }
@@ -403,7 +400,7 @@ export function tryEmitFnctorTypedFieldSet(
   // write shortcut materialize an absent slot ahead of an inherited setter or
   // non-writable descriptor; its caller falls through to the already-reserved
   // member dispatcher, whose absent branch delegates once to `__extern_set`.
-  if (ctx.standalone && inheritedSetAffectsKey(ctx, propName) && f.presenceSlot !== undefined) {
+  if (inheritedSetAffectsKey(ctx, propName) && f.presenceSlot !== undefined) {
     note(fnctorTypedReadStats.declines, `set:inherited-presence:${f.structName}.${propName}`);
     return undefined;
   }

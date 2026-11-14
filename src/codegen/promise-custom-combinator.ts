@@ -207,7 +207,6 @@ function buildCustomCombFinishBody(res: CombBodyRes): Instr[] {
     // (`all/capability-resolve-throws-{reject,no-close}.js`), never rethrown
     // into the caller.
     buildTargetTaggedTry(
-      ctx,
       { kind: "empty" },
       [
         { op: "local.get", index: 0 },
@@ -428,7 +427,7 @@ function buildCustomCombLoopBody(res: CombBodyRes, kind: "all" | "race"): Instr[
    * depth bookkeeping is never a correctness question.
    */
   const guardedElementWork = (work: Instr[]): Instr[] => [
-    buildTargetTaggedTry(ctx, { kind: "empty" }, work, [
+    buildTargetTaggedTry({ kind: "empty" }, work, [
       {
         tagIdx: ensureExnTag(ctx),
         body: [

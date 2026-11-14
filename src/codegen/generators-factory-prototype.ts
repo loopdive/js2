@@ -24,7 +24,7 @@ export function nativeGeneratorFunctionValueWrapperResults(
   ctx: CodegenContext,
   results: readonly ValType[],
 ): ValType[] {
-  if (!(ctx.standalone || ctx.wasi) || results.length !== 1) return [...results];
+  if (results.length !== 1) return [...results];
   const result = results[0]!;
   if (result.kind !== "ref" && result.kind !== "ref_null") return [...results];
   for (const info of ctx.nativeGenerators.values()) {
@@ -59,7 +59,7 @@ export function nativeGeneratorFunctionValueNeedsResultBridge(
  * whole fix.
  */
 export function isGeneratorDeclarationPrototypeWrite(ctx: CodegenContext, target: ts.Expression): boolean {
-  if (!(ctx.standalone || ctx.wasi) || !ts.isPropertyAccessExpression(target)) return false;
+  if (!ts.isPropertyAccessExpression(target)) return false;
   if (!ts.isIdentifier(target.name) || target.name.text !== "prototype") return false;
   let receiver: ts.Expression = target.expression; // `(g as any).prototype` is the same write
   while (ts.isParenthesizedExpression(receiver) || ts.isAsExpression(receiver) || ts.isNonNullExpression(receiver)) {
@@ -82,7 +82,6 @@ export function initializeNativeGeneratorFunctionValue(
   type: ValType,
 ): ValType {
   if (
-    !(ctx.standalone || ctx.wasi) ||
     !declaration ||
     // (#6651 A8) A generator METHOD is a generator function too: §15.5.4 /
     // MethodDefinition evaluation gives it the same own `prototype`

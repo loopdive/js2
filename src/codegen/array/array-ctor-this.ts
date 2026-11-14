@@ -46,7 +46,7 @@ const armed = new WeakSet<CodegenContext>();
 
 /** Pre-scan hook: `Array.from.call(…)` / `Array.of.apply(…)` & co. (standalone). */
 export function noteArrayCtorThisCall(ctx: CodegenContext, node: ts.Node): void {
-  if (!ctx.standalone || armed.has(ctx) || !ts.isCallExpression(node)) return;
+  if (armed.has(ctx) || !ts.isCallExpression(node)) return;
   const callee = node.expression;
   if (!ts.isPropertyAccessExpression(callee) || (callee.name.text !== "call" && callee.name.text !== "apply")) return;
   const method = callee.expression;
@@ -184,7 +184,7 @@ export function reflectiveArrayCallNeedsExternref(
   ctx: CodegenContext,
   initializer: ts.Expression | undefined,
 ): boolean {
-  if (!ctx.standalone || !initializer || !ts.isCallExpression(initializer)) return false;
+  if (!initializer || !ts.isCallExpression(initializer)) return false;
   const callee = initializer.expression;
   if (!ts.isPropertyAccessExpression(callee) || (callee.name.text !== "call" && callee.name.text !== "apply")) {
     return false;

@@ -31,8 +31,6 @@ import { emitSymbolToString, ensureSymbolCarrier } from "./symbol-native.js";
  * substrate is unavailable, so the glue ladder falls through byte-identically.
  */
 export function emitSymbolProtoToStringBody(ctx: CodegenContext, fctx: FunctionContext): ValType | null {
-  if (!ctx.standalone) return null;
-
   const symbolTypeIdx = ensureSymbolCarrier(ctx);
   ensureObjectRuntime(ctx);
   const objectTypes = ctx.objectRuntimeTypes;

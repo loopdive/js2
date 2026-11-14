@@ -55,7 +55,7 @@ export function isSelfGuardedConstructor(decl: ts.Node): decl is ts.FunctionDecl
  */
 export function selfGuardedConstructorLeavesFnctor(ctx: CodegenContext, decl: ts.FunctionDeclaration): boolean {
   const plan = ctx.runtimeEvalBoundaryPlan;
-  if (!ctx.standalone || plan === undefined) return false;
+  if (plan === undefined) return false;
   if (ctx.runtimeEvalProviderAbsent === true || !plan.sharedRealmMayContainCanonicalValues) return true;
   return !plan.unknownDynamicSource && !plan.dynamicSourceWrites.has(decl.name!.text);
 }

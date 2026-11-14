@@ -52,7 +52,7 @@ import { pushBuiltinFnSingletonValueInstrs } from "./builtin-fn-meta.js";
 import { allocLocal } from "./context/locals.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { ensureLateImport } from "./expressions/late-imports.js";
-import { buildThrowJsErrorInstrs, noJsHost } from "./js-errors.js";
+import { buildThrowJsErrorInstrs } from "./js-errors.js";
 import { getWellKnownSymbolId } from "./literals.js";
 import { getBuiltinBrand } from "./native-proto.js";
 import { resolveStandaloneProtoMemberValueClosure } from "./native-proto-value-read.js";
@@ -80,7 +80,7 @@ export function tryEmitAnyReceiverRegExpSymbolCall(
   /** Supplied by `regexp-standalone.ts` (which imports this leaf). */
   rx: { ensureGlue: () => boolean; regexpStruct: () => number },
 ): ValType | null | undefined {
-  if (!noJsHost(ctx) || !ROUTED.has(symbolMethod)) return undefined;
+  if (!ROUTED.has(symbolMethod)) return undefined;
   const fact = ctx.oracle.typeFactOf(regexExpr).kind;
   if (fact !== "any" && fact !== "unknown") return undefined;
   if (expr.arguments.some((a) => ts.isSpreadElement(a))) return undefined;

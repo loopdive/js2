@@ -60,7 +60,6 @@ const NP_IS_CLASS = 1;
  * `$NativeProto`, or when a needed boxing helper is missing.
  */
 export function unshiftNativeProtoToPrimitiveArm(ctx: CodegenContext): void {
-  if (!ctx.standalone) return;
   const protoTypeIdx = ctx.nativeProtoTypeIdx;
   if (protoTypeIdx === undefined) return;
   const fn = ctx.mod.functions.find((candidate) => candidate.name === "__to_primitive");

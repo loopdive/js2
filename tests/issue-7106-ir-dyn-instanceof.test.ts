@@ -146,10 +146,7 @@ describe("#7106 — generic dynamic instanceof at legacy parity", () => {
       source: `var H: any = {}; H[Symbol.hasInstance] = function () { return true; };
         export function probe(v: any, C: any) { return v instanceof C; }`,
     },
-    "the host-assisted gc lane": {
-      source: `export function probe(v: any, C: any) { return v instanceof C; }`,
-      options: { target: undefined, semanticProviders: "host-assisted" },
-    },
+    // (#6979 S7-a/S7-b) The host-assisted profile is removed — `semanticProviders: "host-assisted"` is a compile error now — so its row is deleted.
   };
   for (const [name, { source, options }] of Object.entries(REFUSED)) {
     it(`keeps ${name} on legacy`, async () => {

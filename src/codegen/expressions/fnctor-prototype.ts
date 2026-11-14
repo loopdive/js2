@@ -26,7 +26,7 @@
  * `new F()` — ONE link location (`$Object.$proto`), ONE walk
  * (`__extern_get`/`__extern_has`). No parallel `[[Prototype]]` mechanism.
  *
- * Gated on `ctx.standalone` (the host fnctor prototype is the #2660 (3a) sidecar
+ * Gated on the regime flag (the host fnctor prototype is the #2660 (3a) sidecar
  * lap — host stays byte-identical). Classes (`ctx.classSet` / class fast path in
  * property-access), builtins (`Array.prototype` etc.), arrow functions, and
  * method receivers are all excluded by `resolveFnctorSymbol` (it only matches an
@@ -101,14 +101,7 @@ export function resolveUserFnctorName(ctx: CodegenContext, expr: ts.Expression):
   // `(Con as any).prototype` must still resolve to `Con`.
   const sym = resolveFnctorSymbol(ctx.checker, expr);
   if (!sym) return undefined;
-  // The JS-host lane already has a live fnctor sidecar (`_getOrVivifyFnPrototype`)
-  // that represents every ordinary function's `.prototype`. Its module-init
-  // assignments must therefore be retained even when the standalone escape
-  // gate classified the constructor as `keep-typed`/`keep-static`; otherwise a
-  // chained write such as `HydrationRoot.prototype.render = Root.prototype.render
-  // = fn` is dropped before the sidecar can observe it. Standalone/WASI use the
-  // native per-fnctor prototype global below instead.
-  if (!ctx.standalone && !ctx.wasi) return sym.name;
+
   // (#6949) Standalone/WASI: every ORDINARY user fnctor gets a native
   // prototype once the escape gate exists. History: #2660 S2 scoped this to
   // gate-APPROVED fnctors (plus #4480's never-constructed arm and a
@@ -445,7 +438,7 @@ export function tryEmitFnctorPrototypeRead(
   expr: ts.PropertyAccessExpression,
   propName: string,
 ): ValType | undefined {
-  if (!ctx.standalone || propName !== "prototype") return undefined;
+  if (propName !== "prototype") return undefined;
   const fnctorName = resolveUserFnctorName(ctx, expr.expression);
   if (fnctorName === undefined) return undefined;
   if (!emitFnctorProtoGet(ctx, fctx, fnctorName)) return undefined;
@@ -466,7 +459,6 @@ export function tryCompileFnctorPrototypeAssign(
   target: ts.PropertyAccessExpression,
   value: ts.Expression,
 ): ValType | undefined {
-  if (!ctx.standalone) return undefined;
   if (!ts.isIdentifier(target.name) || target.name.text !== "prototype") return undefined;
   const fnctorName = resolveUserFnctorName(ctx, target.expression);
   if (fnctorName === undefined) return undefined;

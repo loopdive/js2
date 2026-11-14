@@ -34,7 +34,6 @@ import type { CodegenContext } from "./context/types.js";
 import { ERROR_FAMILY_CTOR_NAMES, isBuiltinTypeName } from "./builtin-tags.js";
 import { emitInstanceofThrowGuard } from "./expressions/identifiers.js";
 import { helperFunctionContext, publishHelperFunction } from "./helpers/ir-helper-function.js";
-import { noJsHost } from "./js-errors.js";
 import { ensureNativeDynamicInstanceOf } from "./native-dynamic-instanceof.js";
 import { identifierIsWrittenTo, moduleInstallsCallableHasInstance } from "./native-ordinary-instanceof.js";
 import { flushLateImportShifts } from "./shared.js";
@@ -95,10 +94,7 @@ function declaredNonParameterNames(file: ts.SourceFile): ReadonlySet<string> {
  * refused here.
  */
 export function irDynamicInstanceOfAtLegacyParity(ctx: CodegenContext, site: ts.BinaryExpression): boolean {
-  if (!noJsHost(ctx) || ctx.fast) return false;
-  // `noJsHost` does not imply native-first: wasi with `strictNoHostImports: false`
-  // keeps host-assisted providers, whose instanceof tail this wrapper does not copy.
-  if (ctx.targetProfile.semanticProviders !== "native-first") return false;
+  if (ctx.fast) return false;
   if (site.operatorToken.kind !== ts.SyntaxKind.InstanceOfKeyword || !ts.isIdentifier(site.right)) return false;
   const file = site.getSourceFile();
   if (moduleInstallsCallableHasInstance(file)) return false;
@@ -166,7 +162,7 @@ function errorIntrinsicTargetTakesTagPath(
  * `$AnyValue` carrier (where a dynamic value is not an externref).
  */
 export function ensureIrDynamicInstanceOfHelper(ctx: CodegenContext): number | undefined {
-  if (!noJsHost(ctx) || ctx.fast) return undefined;
+  if (ctx.fast) return undefined;
   const existing = ctx.funcMap.get(IR_DYN_INSTANCEOF_HELPER);
   if (existing !== undefined) return existing;
   const ordinary = ensureNativeDynamicInstanceOf(ctx);

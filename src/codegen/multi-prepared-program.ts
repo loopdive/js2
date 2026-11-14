@@ -532,7 +532,7 @@ export class MultiPreparedProgramOwner<Plan extends MultiPreparedScalarLeafPlan 
     this.#moduleInitCensus = buildMultiPreparedModuleInitCensus({
       multiAst: this.#multiAst,
       identityContext: this.#identityContext,
-      target: this.#ctx.wasi ? "wasi" : this.#ctx.standalone ? "standalone" : "host",
+      target: this.#ctx.wasi ? "wasi" : "standalone",
       deferTopLevelInit: this.#ctx.deferTopLevelInit,
     });
   }
@@ -2145,11 +2145,7 @@ export class MultiPreparedProgramOwner<Plan extends MultiPreparedScalarLeafPlan 
       }
       const outcomes = this.#ctx.irOutcomes;
       if (outcomes) {
-        const target: IrObservedOutcome["target"] = this.#ctx.wasi
-          ? "wasi"
-          : this.#ctx.standalone
-            ? "standalone"
-            : "gc";
+        const target: IrObservedOutcome["target"] = this.#ctx.wasi ? "wasi" : "standalone";
         for (const contributor of batch.contributors) {
           const terminal = this.#terminalMap.get(contributor.unitId);
           if (!terminal)
@@ -2192,7 +2188,7 @@ export class MultiPreparedProgramOwner<Plan extends MultiPreparedScalarLeafPlan 
       if (outcomes.some((outcome) => outcome.unitId === preparation.unitId || outcome.key === terminal.legacyKey)) {
         this.#fail("module-init-reservation-mismatch", `module-init ${preparation.unitId} already has an outcome`);
       }
-      const target: IrObservedOutcome["target"] = this.#ctx.wasi ? "wasi" : this.#ctx.standalone ? "standalone" : "gc";
+      const target: IrObservedOutcome["target"] = this.#ctx.wasi ? "wasi" : "standalone";
       outcomes.push({
         key: terminal.legacyKey,
         sourceId: terminal.sourceId,

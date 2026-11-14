@@ -382,7 +382,6 @@ function unshiftKeyArm(ctx: CodegenContext, fnName: string, keyIdx: number, then
  * which has to stay `__extern_get`'s prefix.
  */
 export function installRegExpLastIndexCarrierArms(ctx: CodegenContext): void {
-  if (!(ctx.standalone || ctx.wasi)) return;
   const reTypeIdx = standaloneRegExpStructTypeIdx(ctx);
   const boxNumberIdx = ctx.funcMap.get("__box_number");
   const boxNumTypeIdx = ctx.nativeBoxNumberTypeIdx;

@@ -34,7 +34,7 @@ import { ensureObjectRuntime } from "./object-runtime.js";
 import { typeErrorThrowInstrs } from "./property-access.js";
 import { addStringConstantGlobal } from "./registry/imports.js";
 import { getOrRegisterTemplateVecType } from "./registry/types.js";
-import { compileExpression, ensureLateImport, flushLateImportShifts } from "./shared.js";
+import { compileExpression, flushLateImportShifts } from "./shared.js";
 import { coerceType } from "./type-coercion.js";
 
 /**
@@ -68,13 +68,8 @@ export function emitDynamicTemplateRawRead(
   expr: ts.PropertyAccessExpression,
 ): ValType | null {
   const externRef: ValType = { kind: "externref" };
-  let externGetIdx: number | undefined;
-  if (ctx.standalone || ctx.wasi) {
-    ensureObjectRuntime(ctx);
-    externGetIdx = ctx.funcMap.get("__extern_get");
-  } else if (!ctx.strictNoHostImports) {
-    externGetIdx = ensureLateImport(ctx, "__extern_get", [externRef, externRef], [externRef]);
-  }
+  ensureObjectRuntime(ctx);
+  const externGetIdx = ctx.funcMap.get("__extern_get");
   if (externGetIdx === undefined) return null;
   flushLateImportShifts(ctx, fctx);
 

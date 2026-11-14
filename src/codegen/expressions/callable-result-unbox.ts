@@ -42,7 +42,6 @@ function definedHelper(ctx: CodegenContext, name: string): number | undefined {
 
 /** The pure-Wasm result conversion for a live arm, or `null` to keep the placeholder. */
 export function hostFreeCallableResultBridge(ctx: CodegenContext, from: ValType, to: ValType): Instr[] | null {
-  if (!(ctx.standalone || ctx.wasi)) return null;
   if (from.kind !== "externref") return null;
   if (to.kind === "f64" && to.undefSentinel !== true) {
     const unbox = definedHelper(ctx, TO_NUMBER);
@@ -64,7 +63,7 @@ export function ensureHostFreeCallableResultHelper(
   fctx: FunctionContext,
   expectedReturn: ValType | null,
 ): void {
-  if (!(ctx.standalone || ctx.wasi) || expectedReturn === null) return;
+  if (expectedReturn === null) return;
   const wantsNumber = expectedReturn.kind === "f64" && expectedReturn.undefSentinel !== true;
   const wantsBoolean = expectedReturn.kind === "i32" && expectedReturn.boolean === true;
   if (!wantsNumber && !wantsBoolean) return;

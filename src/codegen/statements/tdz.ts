@@ -3,11 +3,9 @@
  * Temporal Dead Zone (TDZ) helpers for module-level let/const variables.
  */
 import { ts } from "../../ts-api.js";
-import type { Instr } from "../../ir/types.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
-import { emitThrowReferenceError, noJsHost } from "../expressions/helpers.js";
-import { ensureLateImport, flushLateImportShifts } from "../expressions/late-imports.js";
-import { addHostStringConstantGlobal, ensureExnTag } from "../registry/imports.js";
+import { emitThrowReferenceError } from "../expressions/helpers.js";
+import { ensureExnTag } from "../registry/imports.js";
 
 // (#4601 route 1) `collectPatternBindingNames` is a pure-AST walk with no
 // CodegenContext in sight; it moved below the IR (`ir/analysis/ast-scope.ts`)
@@ -112,7 +110,7 @@ export function emitTdzCheckAtGlobal(
   // Keep this check's error payload aligned with local TDZ checks. A null
   // exception payload is catchable by Wasm, but does not satisfy JS
   // `assert.throws(ReferenceError, ...)` in the host lane.
-  if (noJsHost(ctx)) {
+  {
     fctx.body.push({ op: "global.get", index: flagIdx });
     fctx.body.push({ op: "i32.eqz" });
     const savedBody = fctx.body;
@@ -127,28 +125,4 @@ export function emitTdzCheckAtGlobal(
     fctx.body.push({ op: "if", blockType: { kind: "empty" }, then, else: [] });
     return;
   }
-
-  // if (flag == 0) throw ReferenceError
-  // Emit the flag read before settling the real-ReferenceError provider: its
-  // constructor/message may insert imports, and the canonical global-index
-  // fixup can then relocate this already-live instruction. A numeric flagIdx
-  // captured by an exact-source caller cannot be repaired after the fact.
-  fctx.body.push({ op: "global.get", index: flagIdx });
-  fctx.body.push({ op: "i32.eqz" });
-  const throwRefErrIdx = ensureLateImport(ctx, "__throw_reference_error", [{ kind: "externref" }], []);
-  flushLateImportShifts(ctx, fctx);
-  let then: Instr[];
-  if (throwRefErrIdx !== undefined) {
-    const strIdx = addHostStringConstantGlobal(ctx, msg);
-    if (strIdx !== undefined) {
-      then = [{ op: "global.get", index: strIdx }, { op: "call", funcIdx: throwRefErrIdx }, { op: "unreachable" }];
-    } else {
-      const tagIdx = ensureExnTag(ctx);
-      then = [{ op: "ref.null.extern" }, { op: "throw", tagIdx }];
-    }
-  } else {
-    const tagIdx = ensureExnTag(ctx);
-    then = [{ op: "ref.null.extern" }, { op: "throw", tagIdx }];
-  }
-  fctx.body.push({ op: "if", blockType: { kind: "empty" }, then, else: [] });
 }

@@ -55,7 +55,6 @@ import { addFuncType } from "./index.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { ensureExnTag } from "./registry/imports.js";
 import { buildTargetTaggedTry } from "../ir/try-table.js";
-import { readEnv } from "../env.js";
 
 const EXTERNREF: ValType = { kind: "externref" };
 
@@ -68,12 +67,6 @@ interface ReservedWrapper {
 }
 
 const reservedByCtx = new WeakMap<CodegenContext, ReservedWrapper[]>();
-
-/** Is the host-lane async-closure promise wrapper enabled? (escape hatch: `=0`) */
-export function asyncClosurePromiseWrapEnabled(ctx: CodegenContext): boolean {
-  if (ctx.standalone === true || ctx.wasi === true) return false;
-  return readEnv("JS2WASM_ASYNC_CLOSURE_PROMISE") !== "0";
-}
 
 /**
  * Reserve `<bodyName>__async_promise`: same params as the raw body, `externref`
@@ -177,7 +170,6 @@ export function fillAsyncClosurePromiseWrappers(ctx: CodegenContext): void {
     const tagIdx = ensureExnTag(ctx);
     wrapper.body = [
       buildTargetTaggedTry(
-        ctx,
         { kind: "val", type: EXTERNREF },
         inner,
         [{ tagIdx, body: [{ op: "call", funcIdx: rejectIdx }] }],

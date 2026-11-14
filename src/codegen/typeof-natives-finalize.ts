@@ -156,8 +156,8 @@ export function fillStandaloneTypeofClosureArms(ctx: CodegenContext): void {
     ctx.mod.functions.find((f) => (f as { name?: string }).name === name) as WasmFunction | undefined;
 
   // (#5383 S2f R13) A class VALUE (`const C = PlainDate`) is a `$ClassName`
-  // STRUCT of the same type and the same `__tag` as an instance (#3976,
-  // `class-object-of.ts`), so nothing about its TYPE can tell the two apart —
+  // STRUCT of the same type and the same `__tag` as an instance (#3976), so
+  // nothing about its TYPE can tell the two apart —
   // only its IDENTITY can: it is the one lazily-materialised class-object
   // singleton global. Without an arm here the runtime natives answered
   // `"object"` for every class value reached through a parameter, a property

@@ -119,7 +119,6 @@ export function tryEmitPrimitiveProtoMemberGet(
   expr: ts.PropertyAccessExpression,
   propName: string,
 ): ValType | undefined {
-  if (!ctx.standalone && !ctx.wasi) return undefined;
   if (ts.isPrivateIdentifier(expr.name)) return undefined;
   if (WRAPPER_CHAIN_MEMBERS.has(propName)) return undefined;
   if (isWriteOrDeleteTarget(expr)) return undefined;

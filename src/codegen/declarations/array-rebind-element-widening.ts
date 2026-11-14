@@ -104,7 +104,7 @@ export function descriptorValueWidenedArrayVecType(
   sourceFile: ts.SourceFile,
   decl: ts.VariableDeclaration,
 ): ValType | undefined {
-  if (!ctx.standalone || !ts.isIdentifier(decl.name)) return undefined;
+  if (!ts.isIdentifier(decl.name)) return undefined;
   const elementTag = jsTagOfFact(ctx.oracle.elementFactOf(decl));
   if (elementTag === undefined || !["number", "string", "boolean", "bigint"].includes(elementTag)) {
     return undefined;

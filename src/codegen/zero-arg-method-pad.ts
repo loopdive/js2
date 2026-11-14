@@ -145,7 +145,7 @@ export function standaloneDispatchArityPads(
   optionalParams: readonly { index: number; hasExpressionDefault?: boolean; constantDefault?: unknown }[],
   argc: number,
 ): Map<number, Instr[]> | null {
-  if (!ctx.standalone || ctx.funcUsesArguments.has(fullName)) return null;
+  if (ctx.funcUsesArguments.has(fullName)) return null;
   const rest = ctx.funcRestParams.get(fullName);
   const pads = new Map<number, Instr[]>();
   if (paramTypes.length <= argc) return rest ? null : pads;

@@ -50,7 +50,7 @@ function receiverKind(ctx: CodegenContext, receiver: ts.Expression): string {
 
 /** The `intl` accelerator on the regime's JS boundary (the only place these routes apply). */
 function intlAccelerated(ctx: CodegenContext): boolean {
-  return ctx.standalone && hasHostAccelerator(ctx.targetProfile, "intl") && hostStringBridgeUsable(ctx);
+  return hasHostAccelerator(ctx.targetProfile, "intl") && hostStringBridgeUsable(ctx);
 }
 
 /**

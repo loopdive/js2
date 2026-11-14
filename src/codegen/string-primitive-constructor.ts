@@ -143,7 +143,6 @@ export function tryEmitPrimitiveStringConstructorRead(
   expr: ts.PropertyAccessExpression | ts.ElementAccessExpression,
   propName: string,
 ): ValType | undefined {
-  if (!ctx.standalone) return undefined;
   if (propName !== "constructor") return undefined;
   if (isWriteOrDeleteTarget(expr)) return undefined;
 

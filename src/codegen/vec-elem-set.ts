@@ -181,7 +181,7 @@ export function ensureVecElemSet(ctx: CodegenContext, vecTypeIdx: number): numbe
   // f64 zeroes, materializing every intervening index as an own property.
   // Mark the carrier here as well as in literal lowering: a module can first
   // encounter a sparse indexed write before it emits a f64 literal marker.
-  const f64HoleCarrier = ctx.standalone && elem.kind === "f64" && f64HolesActive(ctx);
+  const f64HoleCarrier = elem.kind === "f64" && f64HolesActive(ctx);
   if (f64HoleCarrier) ctx.f64HoleMarkerEmitted = true;
   const gapFill: VectorGrowStoreGapFill = holeyCarrier
     ? { kind: "hole-global", globalIndex: ensureHoleType(ctx) }

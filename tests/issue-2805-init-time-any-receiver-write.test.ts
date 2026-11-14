@@ -20,6 +20,7 @@
 import { describe, it, expect } from "vitest";
 import { compile } from "../src/index.js";
 import { buildImports } from "../src/runtime.js";
+import { jsFacingExports } from "./helpers/compile.js";
 
 async function runHost(source: string): Promise<Record<string, (...a: unknown[]) => unknown>> {
   const result = await compile(source, { skipSemanticDiagnostics: true });
@@ -33,7 +34,7 @@ async function runHost(source: string): Promise<Record<string, (...a: unknown[])
   // Mirror production wiring: exports are wired AFTER instantiate (the start
   // section / module-init has already run by this point).
   built.setInstance?.(instance);
-  return instance.exports as unknown as Record<string, (...a: unknown[]) => unknown>;
+  return jsFacingExports(result, instance) as unknown as Record<string, (...a: unknown[]) => unknown>; // (#6979 S7-f) the embedder-facing view
 }
 
 describe("#2805 init-time any-receiver field WRITE at module-init", () => {

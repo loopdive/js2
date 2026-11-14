@@ -180,7 +180,6 @@ export function collectAccessorLiteralReturnCarrierTypes(
   checker: ts.TypeChecker,
   sourceFile: ts.SourceFile,
 ): void {
-  if (!ctx.standalone && !ctx.wasi) return;
   const carriers = new Set<ts.SignatureDeclaration>();
   const visit = (node: ts.Node): void => {
     if (isFunctionLike(node) && returnsHostCarrierLiteral(ctx, node)) {

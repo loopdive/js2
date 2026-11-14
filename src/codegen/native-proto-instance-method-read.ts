@@ -134,7 +134,6 @@ function unseededOverrideConsultInstrs(ctx: CodegenContext, member: string, prot
  * order the existing fills already establish.
  */
 export function unshiftExternGetProtoMethodArm(ctx: CodegenContext): void {
-  if (!ctx.standalone) return;
   const protoTypeIdx = ctx.nativeProtoTypeIdx;
   const objTypes = ctx.objectRuntimeTypes;
   const anyStr = ctx.anyStrTypeIdx;

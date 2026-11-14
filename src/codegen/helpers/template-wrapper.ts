@@ -15,7 +15,6 @@ import type { CodegenContext, FunctionContext } from "../context/types.js";
 import { compileExpression } from "../shared.js";
 import { coerceType } from "../type-coercion.js";
 import { emitUndefined } from "../expressions/late-imports.js";
-import { noJsHost } from "../js-errors.js";
 
 /**
  * The lanes every template-built IR wrapper serves: host-free and non-fast,
@@ -24,7 +23,7 @@ import { noJsHost } from "../js-errors.js";
  * (`__js_array_new` under the native-first kill switch, measured, #7119).
  */
 export function irTemplateWrapperLane(ctx: CodegenContext): boolean {
-  return noJsHost(ctx) && !ctx.fast;
+  return !ctx.fast;
 }
 
 /**

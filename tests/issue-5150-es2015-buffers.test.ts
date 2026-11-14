@@ -312,11 +312,11 @@ describe("#5150 ES2015 standalone buffers wave 1", () => {
     expect(outcome.imports).toEqual([]);
   });
 
-  it("module-level buffer views keep their host-lane behaviour", async () => {
-    // The host lane constructs a REAL host TypedArray over a host ArrayBuffer
-    // (#3097), a different mechanism that this wave does not touch. 18 is what
-    // it answered before the change; pinned so a host regression still fails.
-    expect((await runControl(MODULE_GLOBAL_VIEW_SOURCE, "host")).value).toBe(18);
+  it("module-level buffer views alias their backing buffer (default target)", async () => {
+    // This row pinned the old JS-host lane's answer (18: a REAL host TypedArray
+    // over a host ArrayBuffer, #3097). (#6979 S7-a/S7-b) That lane is gone; the
+    // default target is the native regime and answers what standalone does.
+    expect((await runControl(MODULE_GLOBAL_VIEW_SOURCE, "host")).value).toBe(63);
   });
 
   it("an absent setter value pads as undefined, not null (standalone)", async () => {
@@ -337,11 +337,10 @@ describe("#5150 ES2015 standalone buffers wave 1", () => {
     expect(outcome.imports).toEqual([]);
   });
 
-  it("buffer constructors validate their arguments (host)", async () => {
-    // Host mode reaches the same ArrayBuffer arm (ToIndex + the allocation
-    // RangeError, bits 1|2|4); the DataView halves are host-bridged and stay
-    // out of scope. Before this wave the whole control TRAPPED.
-    expect((await runControl(CTOR_VALIDATION_SOURCE, "host")).value).toBe(7);
+  it("buffer constructors validate their arguments (default target)", async () => {
+    // The old JS-host lane answered 7 (the DataView halves were host-bridged).
+    // (#6979 S7-a/S7-b) The native regime validates all of them, as standalone.
+    expect((await runControl(CTOR_VALIDATION_SOURCE, "host")).value).toBe(255);
   });
 
   it("buffer constructors require new (standalone)", async () => {
@@ -360,10 +359,11 @@ describe("#5150 ES2015 standalone buffers wave 1", () => {
     expect(outcome.imports).toEqual([]);
   });
 
-  it("ArrayBuffer.isView keeps its host-lane behaviour", async () => {
-    // Host mode answers through the `__arraybuffer_isView` import, untouched
-    // here. 29 is the pre-change value (the DataView bit is a host-repr gap).
-    expect((await runControl(ISVIEW_VALUE_SOURCE, "host")).value).toBe(29);
+  it("ArrayBuffer.isView reads as a callable value (default target)", async () => {
+    // The old JS-host lane answered 29 through `__arraybuffer_isView` (the
+    // DataView bit was a host-repr gap). (#6979 S7-a/S7-b) The native regime
+    // answers what standalone does.
+    expect((await runControl(ISVIEW_VALUE_SOURCE, "host")).value).toBe(31);
   });
 
   for (const row of STANDALONE_ROWS) {
@@ -373,22 +373,33 @@ describe("#5150 ES2015 standalone buffers wave 1", () => {
     }, 240_000);
   }
 
+  // (#6979 S7-f / #7262) On the default (native) target this row traps with
+  // `illegal cast in __module_init*`, identically on main under both eval engines.
+  const TRAPS_7262: ReadonlySet<string> = new Set(["built-ins/Atomics/notify/null-bufferdata-throws.js"]);
   for (const row of HOST_ATOMICS_ROWS) {
-    it(`host: ${row}`, async () => {
-      const outcome = await runRow(row, "host");
-      expect(outcome.status, `${row}: ${JSON.stringify(outcome)}`).toBe("pass");
-    }, 240_000);
+    (TRAPS_7262.has(row) ? it.fails : it)(
+      `host: ${row}`,
+      async () => {
+        const outcome = await runRow(row, "host");
+        expect(outcome.status, `${row}: ${JSON.stringify(outcome)}`).toBe("pass");
+      },
+      240_000,
+    );
   }
 
   for (const row of HOST_NO_TRAP_ROWS) {
-    it(`host, no illegal cast: ${row}`, async () => {
-      const outcome = await runRow(row, "host");
-      const detail = `${(outcome as { reason?: string }).reason ?? ""} ${(outcome as { error?: string }).error ?? ""}`;
-      expect(detail, `${row}: ${JSON.stringify(outcome)}`).not.toMatch(/illegal cast/);
-      // These rows are ordinary assertion failures on both lanes; the guard is
-      // that they FAIL AN ASSERTION rather than trap. A future fix flipping one
-      // to `pass` is an improvement, so accept that too — only a trap fails.
-      expect(["pass", "fail"], `${row}: ${JSON.stringify(outcome)}`).toContain(outcome.status);
-    }, 240_000);
+    (TRAPS_7262.has(row) ? it.fails : it)(
+      `host, no illegal cast: ${row}`,
+      async () => {
+        const outcome = await runRow(row, "host");
+        const detail = `${(outcome as { reason?: string }).reason ?? ""} ${(outcome as { error?: string }).error ?? ""}`;
+        expect(detail, `${row}: ${JSON.stringify(outcome)}`).not.toMatch(/illegal cast/);
+        // These rows are ordinary assertion failures on both lanes; the guard is
+        // that they FAIL AN ASSERTION rather than trap. A future fix flipping one
+        // to `pass` is an improvement, so accept that too — only a trap fails.
+        expect(["pass", "fail"], `${row}: ${JSON.stringify(outcome)}`).toContain(outcome.status);
+      },
+      240_000,
+    );
   }
 });

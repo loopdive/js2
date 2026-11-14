@@ -45,7 +45,7 @@ export function symbolBoundaryCoercionInstrs(
   fctx?: FunctionContext,
 ): Instr[] | undefined {
   if ((from.kind === "externref" || from.kind === "ref_extern") && to.kind === "i32" && to.symbol === true) {
-    if ((ctx.standalone || ctx.wasi) && ctx.symbolTypeIdx >= 0) {
+    if (ctx.symbolTypeIdx >= 0) {
       return [
         { op: "any.convert_extern" },
         { op: "ref.cast", typeIdx: ctx.symbolTypeIdx },

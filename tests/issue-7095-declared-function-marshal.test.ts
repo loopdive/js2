@@ -107,22 +107,4 @@ describe("#7095 — declared host functions under the native regime", () => {
     const marked = result.imports.filter((entry) => entry.refResult).map((entry) => entry.name);
     expect(marked.sort()).toEqual(["dyn", "echo", "greet", "maybe"]);
   });
-
-  it("leaves a host-assisted module's crossings untouched", async () => {
-    const result = await compile(SOURCE, {
-      fileName: "issue-7095.ts",
-      target: "gc",
-      semanticProviders: "host-assisted",
-    });
-    expect(result.success).toBe(true);
-    const wasmSeen: unknown[][] = [];
-    const out = await runWasm(result, makeDeps(wasmSeen, "abc"));
-    expect(wasmSeen.filter((entry) => entry[0] === "log")).toEqual([
-      ["log", "string", "hi"],
-      ["log", "string", "café 😀"],
-    ]);
-    // Host-assisted closures still cross opaque (pre-existing, not this marshal's lane).
-    expect(wasmSeen.find((entry) => entry[0] === "apply1")).toEqual(["apply1", "object"]);
-    expect(out).toBe("hello:5:yo!:YO!:-1:abc:any-str:7");
-  });
 });

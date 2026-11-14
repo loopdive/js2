@@ -105,7 +105,7 @@ export interface ArraySpeciesDeps {
  * `.constructor` assignment emits byte-identical output.
  */
 export function arraySpeciesActive(ctx: CodegenContext): boolean {
-  return (ctx.standalone || ctx.wasi) && ctx.arraySpeciesDirty;
+  return ctx.arraySpeciesDirty;
 }
 
 export function withArraySpeciesSuppressed<T>(fctx: FunctionContext, emit: () => T): T {

@@ -108,7 +108,6 @@ function ensureBigIntRadixFormatter(ctx: CodegenContext): number | undefined {
  * `any.convert_extern; ref.cast $AnyString; return`.
  */
 export function unshiftAnyToStringBigIntArm(ctx: CodegenContext): void {
-  if (!ctx.standalone) return;
   if (ctx.nativeBigIntTypeIdx < 0) return;
   if (ctx.anyStrTypeIdx < 0) return;
   const fn = ctx.mod.functions.find((candidate) => candidate.name === ANY_TO_STRING_HELPER);
@@ -159,7 +158,6 @@ export function unshiftAnyToStringBigIntArm(ctx: CodegenContext): void {
  * floored and must land in [2, 36].
  */
 export function unshiftExternMethodCallBigIntPrimitiveArm(ctx: CodegenContext): void {
-  if (!ctx.standalone) return;
   if (ctx.nativeBigIntTypeIdx < 0) return;
   if (!ctx.nativeStrings || ctx.nativeStrTypeIdx < 0) return;
   const objVecTypeIdx = ctx.objectRuntimeTypes?.objVecTypeIdx;

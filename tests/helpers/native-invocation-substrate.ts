@@ -309,7 +309,6 @@ function fillSourceFixture(f: ReturnType<typeof sourceSubstrateFixture>) {
   const resolver = {
     ...getterResolver(f),
     ensureExnTag: () => tx.physicalIndex(f.exception),
-    standardizedExceptions: () => false,
     nativeStrings: () => true,
     resolveString: (): ValType => ({ kind: "ref", typeIdx: f.strings.layout.anyStrTypeIdx }),
   };

@@ -16,7 +16,6 @@ import { ensureHoleType, holeSentinelInstrs } from "./array-holes.js";
 import type { CodegenContext } from "./context/types.js";
 import { exportFunc } from "./emit-helpers.js";
 import { ensureGetUndefined } from "./expressions/late-imports.js";
-import { hasFixedHostMethodCallImport } from "./fixed-host-method-call.js";
 import { definedFuncAt, definedFuncHandleOf, mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { PROGRAM_ABI_CALLABLE_ROLE } from "./program-abi-planning.js";
 import { addUnionImports } from "./registry/imports.js";
@@ -1545,27 +1544,8 @@ function _emitVecAccessExportsInner(ctx: CodegenContext): void {
     ctx.funcMap.has("__defineProperty_desc") ||
     ctx.funcMap.has("__defineProperty_accessor") ||
     ctx.funcMap.has("__defineProperties");
-  const wantsDynamicWriteback =
-    !ctx.standalone &&
-    !ctx.wasi &&
-    (ctx.funcMap.has("__extern_set") ||
-      ctx.funcMap.has("__extern_set_strict") ||
-      ctx.funcMap.has("__unwrap_for_wasm") ||
-      // Host calls can receive an Array/TypedArray facade and mutate it
-      // without changing its length (`reverse`, `sort`, `fill`, ...). Their
-      // runtime bracketing needs the element writer to reconcile that mirror
-      // before compiled aliases observe the vec again.
-      ctx.funcMap.has("__proto_method_call") ||
-      ctx.funcMap.has("__extern_method_call") ||
-      hasFixedHostMethodCallImport(ctx) ||
-      ctx.funcMap.has("__call_function") ||
-      ctx.funcMap.has("__call_function_0") ||
-      ctx.funcMap.has("__call_function_1") ||
-      ctx.funcMap.has("__call_function_2") ||
-      ctx.funcMap.has("__call_function_3") ||
-      ctx.funcMap.has("__call_function_4"));
   const wantsNativeBoundaryWriteback = ctx.emitHostBridge && ctx.targetProfile.hostValueInterop !== "off";
-  if (wantsDefineWriteback || wantsDynamicWriteback || wantsNativeBoundaryWriteback) {
+  if (wantsDefineWriteback || wantsNativeBoundaryWriteback) {
     emitVecDefineWritebackExports(ctx, mutEntries, unboxNumIdx);
   }
 }

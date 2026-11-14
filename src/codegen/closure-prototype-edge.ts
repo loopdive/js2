@@ -91,7 +91,7 @@
  * global, class global and closure singleton has been registered. Nothing is
  * MINTED at finalize (the #4221 hazard); the fill only swaps a body.
  *
- * Gated on `ctx.standalone || ctx.wasi`. In gc/host mode the host owns the
+ * Gated on the native regime. In gc/host mode the host owns the
  * dynamic-property and `instanceof` paths, nothing here is reserved, and the
  * output is byte-identical.
  */
@@ -267,7 +267,7 @@ export function hasClosurePrototypeEdges(ctx: CodegenContext): boolean {
 
 /**
  * Reserve `__closure_proto_of` with a `ref.null.extern` body. Called from
- * `ensureObjectRuntime` under `ctx.standalone || ctx.wasi`, BEFORE any consumer
+ * `ensureObjectRuntime` under the native regime, BEFORE any consumer
  * bakes its `call <idx>`. Idempotent.
  *
  * The placeholder is a VALID body for the declared result type, not an
