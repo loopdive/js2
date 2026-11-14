@@ -5,7 +5,8 @@ import type { IrHostVoidCallbackLoweringPlan, IrImportedCallLoweringPlan } from 
 import type { IrUnitId } from "../ir/identity.js";
 import { IrInvariantError, type IrPreparationFailure } from "../ir/outcomes.js";
 import type { IrPromiseDelayLoweringPlans } from "../ir/promise-delay-lowering.js";
-import type { IrRuntimeEvalSite } from "../ir/runtime-eval-boundary-plan.js";
+import type { IrRuntimeEvalFunctionAnswers, IrRuntimeEvalSite } from "../ir/runtime-eval-boundary-plan.js";
+import { scopeHasDirectEval } from "../ir/lattice-param-facts.js";
 import type { IrSelection } from "../ir/select.js";
 import { forEachChild, ts } from "../ts-api.js";
 import { isBindingReferencePosition } from "../checker/binder.js";
@@ -79,11 +80,7 @@ export function withdrawEvalBoundaryFunctions(
   record: (legacyName: string, failure: IrPreparationFailure) => void,
 ): void {
   const sites = ctx.runtimeEvalBoundaryPlan?.sites ?? [];
-  const evalVisible = new Set([
-    ...(ctx.liveFuncBindingGlobals ?? []),
-    ...(ctx.globalObjectVarBindings ?? []),
-    ...(ctx.globalLexicalBindings ?? []),
-  ]);
+  const evalVisible = evalVisibleBindings(ctx);
   const wholeProgram = !runtimeEvalPushPublishesCachedFunctionValues(ctx);
   const reasons = new Map<IrUnitId, string>();
   for (const name of funcs) {
@@ -107,6 +104,44 @@ export function withdrawEvalBoundaryFunctions(
     funcs.delete(name);
     irOverlayIdentity.dropIrSafeFunctionByLegacyName(identityPlan, name);
   }
+}
+
+/** The script bindings evaluated code may replace: A1's `eval-visible-binding` names. */
+function evalVisibleBindings(ctx: CodegenContext): ReadonlySet<string> {
+  return new Set([
+    ...(ctx.liveFuncBindingGlobals ?? []),
+    ...(ctx.globalObjectVarBindings ?? []),
+    ...(ctx.globalLexicalBindings ?? []),
+  ]);
+}
+
+/**
+ * (#7345) The selector's `runtimeEvalFunctions`. On the standalone lane they are the boundary's own
+ * answers: `registerReassignedFunctionGlobals`' set (the one the direct-call side excludes), and A1's
+ * `runtimeEvalBoundaryCrossing` where A1 runs (`callableBoundaryRequired`), so selection refuses what
+ * preparation would withdraw. Every other lane keeps its earlier answer until it is measured: a
+ * function whose scope has a direct `eval` may be rebound, and selection refuses none here.
+ */
+export function irRuntimeEvalSelectionOption(ctx: CodegenContext): {
+  readonly runtimeEvalFunctions: IrRuntimeEvalFunctionAnswers;
+} {
+  if (ctx.targetProfile.target !== "standalone") {
+    return { runtimeEvalFunctions: { mayRebind: scopeHasDirectEval, crossesBoundary: () => false } };
+  }
+  let evalVisible: ReadonlySet<string> | undefined;
+  return {
+    runtimeEvalFunctions: {
+      mayRebind: (declaration) => ctx.reassignedFunctionDeclarations?.has(declaration) === true,
+      crossesBoundary: (declaration) =>
+        ctx.runtimeEvalBoundaryPlan?.callableBoundaryRequired === true &&
+        runtimeEvalBoundaryCrossing(
+          ctx,
+          ctx.runtimeEvalBoundaryPlan?.sites ?? [],
+          declaration,
+          (evalVisible ??= evalVisibleBindings(ctx)),
+        ) !== undefined,
+    },
+  };
 }
 
 /**

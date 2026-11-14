@@ -158,6 +158,7 @@ import {
 } from "./select-closure-literal.js";
 import type { IrAmbientClassCallResolver, IrHostVoidCallbackResolver } from "./host-extern.js";
 import type { IrPromiseDelayResolver } from "./promise-delay.js";
+import type { IrRuntimeEvalFunctionAnswers } from "./runtime-eval-boundary-plan.js";
 import {
   isNumericArrayTypeNode,
   mutableParameterHasIrSlot,
@@ -791,6 +792,8 @@ export interface IrSelectionOptions extends IrAsyncSelectionOptions {
    * assumes a pristine realm.
    */
   readonly runtimeEvalMayExecute?: boolean;
+  /** (#7345) The runtime-eval boundary's answers for a top-level function; undefined ⇒ none rebound or refused. */
+  readonly runtimeEvalFunctions?: IrRuntimeEvalFunctionAnswers;
   /**
    * #2952 slice 5 — certify that this exact `for (head in receiver)` source
    * expression uses the non-fast dynamic externref carrier. The callback is
@@ -2168,6 +2171,9 @@ function whyNotIrClaimable(
   // name is rejected as a Phase-A method-shape failure.
   if (!isMethod) {
     if (!ts.isFunctionDeclaration(fn) || !fn.name) return "unnamed";
+    // (#7345) Refused here rather than claimed and withdrawn at preparation, whose closure would drag IR callees.
+    if (currentSelectionOptions?.runtimeEvalFunctions?.crossesBoundary(fn) === true)
+      return capabilityNo("deferred-feature", "fn-runtime-eval-boundary", fn.name) || "deferred-feature";
   }
   if (fn.typeParameters && fn.typeParameters.length > 0) return "type-parameters";
   // Modifier surface differs between FunctionDeclaration and class members:
@@ -14344,10 +14350,11 @@ export function buildLocalCallGraph(
             // top-level call with the same text elsewhere in the function.
           } else if (
             decls.has(callee) &&
-            !localIsRewritten(decls.get(callee)!, closureSignatureFlowHooks.resolveValue)
+            !localIsRewritten(decls.get(callee)!, closureSignatureFlowHooks.resolveValue) &&
+            currentSelectionOptions?.runtimeEvalFunctions?.mayRebind(decls.get(callee)!) !== true
           ) {
-            // (#7283) A function whose binding is reassigned (`f = …`) has no
-            // stable direct-call target: from-ast plans no direct call to it,
+            // (#7283) A function whose binding is reassigned (`f = …`), or (#7345) that evaluated
+            // code may rebind, has no stable direct-call target: from-ast plans no direct call to it,
             // so a call to it is external, not a graph edge.
             callees.get(callerName)!.add(callee);
             callers.get(callee)!.add(callerName);

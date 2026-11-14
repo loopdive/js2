@@ -62,6 +62,14 @@ export interface IrRuntimeEvalBoundaryPlan {
   readonly dynamicSourceReferences: ReadonlySet<string>;
 }
 
+/** (#7345) What the boundary answers about a top-level function, for the selector. */
+export interface IrRuntimeEvalFunctionAnswers {
+  /** Evaluated code may rebind it, so a call to it has no stable direct target. */
+  readonly mayRebind: (declaration: ts.FunctionDeclaration) => boolean;
+  /** Preparation withdraws it at the boundary (an eval site, or an eval-visible binding it reaches). */
+  readonly crossesBoundary: (declaration: ts.FunctionDeclaration) => boolean;
+}
+
 const PROVIDER_NAMES = new Set([
   "__runtime_new_function",
   "__runtime_indirect_eval",

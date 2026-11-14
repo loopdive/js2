@@ -113,6 +113,9 @@ function writeIndexOf(root: ts.Node): WriteIndex {
  * closed. With `resolve`, a same-name write counts only when it resolves to
  * this binding or to nothing (a write inside `with`); without it, every
  * same-name write counts.
+ *
+ * (#7345) Not for a function declaration: whether evaluated code rebinds one
+ * is the runtime-eval plan's answer (`IrRuntimeEvalFunctionAnswers.mayRebind`).
  */
 export function localIsRewritten(
   declaration: ts.VariableDeclaration | ts.FunctionDeclaration | ts.ParameterDeclaration,
@@ -128,8 +131,13 @@ export function localIsRewritten(
     return !written || written === identity || sameVarScopedBinding(written, identity!);
   };
   const index = writeIndexOf(varScopeOf(declaration));
-  if (index.dynamicScope) return true;
+  if (index.dynamicScope && !ts.isFunctionDeclaration(declaration)) return true;
   return (index.byName.get(name.text) ?? []).some(({ target, node }) => node !== declaration && writesBinding(target));
+}
+
+/** (#7345) A direct `eval` lies anywhere in `declaration`'s function scope, nested functions included. */
+export function scopeHasDirectEval(declaration: ts.Declaration): boolean {
+  return writeIndexOf(varScopeOf(declaration)).dynamicScope;
 }
 
 function varScopeOf(node: ts.Node): ts.Node {
