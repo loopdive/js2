@@ -172,3 +172,94 @@ Code quality:
 6. No flag parameter added to `localIsRewritten` to switch the old behaviour
    back on.
 7. A fresh-context adversarial review records its verdict in the PR body.
+
+## Implementation (2026-11-14, branch `claude/7345-eval-file-call-targets`)
+
+### What changed
+
+- **`localIsRewritten`** (`src/ir/lattice-param-facts.ts`) no longer applies
+  the direct-eval term to a function declaration. The term itself is now
+  `scopeHasDirectEval`.
+- **One selection option, `runtimeEvalFunctions`**
+  (`IrRuntimeEvalFunctionAnswers`, `src/ir/runtime-eval-boundary-plan.ts`).
+  It is built next to A1 by `irRuntimeEvalSelectionOption`
+  (`src/codegen/ir-overlay-preparation.ts`), on standalone only.
+  - `mayRebind(callee, declaration)`: the declaration is in
+    `ctx.reassignedFunctionDeclarations` (the set the direct-call side
+    excludes) **and** the call resolves to it. A named function expression's
+    self-call (`function f(k) { return f(k - 1); }`) reads its own name, not
+    the script binding; the #7106 A1 self-reference test pins this.
+  - `crossing(declaration)`: A1's own `runtimeEvalBoundaryCrossing`, asked
+    only where A1 runs (`callableBoundaryRequired`). The predicate is the
+    same, not a mirror: the set of eval-visible names is now a shared helper,
+    `evalVisibleBindings`, that the withdrawal uses too.
+- **The call graph** (`buildLocalCallGraph`) asks `mayRebind`. A lane that
+  passes no option (the JS environment, WASI, bare selector callers) keeps
+  the earlier rule: a direct `eval` in the function's scope may rebind it.
+  That fallback sits in the selector because codegen importing
+  `lattice-param-facts` would add a codegen→ir edge (`check:import-cycles`).
+- **`whyNotIrClaimable`** refuses an otherwise-claimable function that
+  `crossing` names as `deferred-feature` /
+  `fn-runtime-eval-boundary(<eval-site | eval-visible-binding>)`. The check
+  runs after the body walk, so a shape refusal keeps its own label.
+
+### Differences from the plan
+
+- `mayRebind` takes the call's identifier as well, so it can resolve by
+  identity (above).
+- The refusal is placed after the body walk, not first.
+- On standalone, an eval-visible reader's call-graph component now follows
+  the selector's closure instead of preparation's `boundary-closure`. In the
+  #7106 A1 unit-boundary test, `live` keeps the IR on standalone: it has no
+  eval-visible reference of its own, and its caller is refused at select.
+  WASI is unchanged. Three #7106 tests are updated for this:
+  - `runtime-eval-unit-boundary` (the standalone closure label, and `live`);
+  - `runtime-eval-a3-liveness` and `runtime-eval-a1-selfref`, which now read
+    the reason from the selector's detail with shape diagnostics on. Their
+    assertions are unchanged.
+
+### Measured
+
+Main `1d441ad8eb` against head `06e1870c4d`. The later commit `aa6b4fd69e`
+moves only the off-standalone fallback into the selector; standalone behaviour
+is unchanged. gc bytes were re-measured on `aa6b4fd69e`.
+
+- **Population:** 1,113 ES5 files from the 2026-11-14 census
+  (`plan/log/es5-ir-only-census-2026-11-14.md`) whose record carries
+  `harness:assert.js`, `external-call(isPrimitive)` or an eval label, plus a
+  seeded 300-file IR-only control. 1,413 files in all, standalone.
+
+| measure | result |
+| --- | --- |
+| files gained IR-only | **8**: `language/line-terminators/S7.3_A7_T1`–`T8` (the #7209 loss) |
+| files lost | 0 |
+| files with a unit newly legacy | 0 |
+| new compile errors | 0 |
+| post-claim errors | 0 on main, 0 on head |
+| `formatIdentityFreeValue` / `formatSimpleValue` now IR | 446 files each |
+| routing-changed files | 473 (0 of the 300 control files) |
+
+- **Verdicts, runtime-eval provider linked.** The interpreter tier was used:
+  `JS2WASM_EVAL_ENGINE=interpreter TEST262_FULL_RUNTIME_EVAL=1`, with the
+  provider built per tree. Every run announced `tier: INTERPRETER`.
+  - The 473 routing-changed files: main 302 pass / 171 fail, head
+    302 / 171. **0 per-file verdict changes.**
+  - The 8 regained files fail on both trees with the same message (the eval'd
+    source's result `x` is wrong at L21), so the routing change does not cause it.
+- **JS-environment bytes:** 673 / 673 identical (the 473 routing-changed
+  files plus 200 seeded compiled ES5 files without `eval`).
+- **Tests:**
+  - `tests/issue-7345-eval-file-call-targets.test.ts`: 5/5, including the
+    three rows acceptance criterion 3 says must stay refused;
+  - #7283: 4/4; #7306: 46/46;
+  - #7106: 66 failures, all of them also failing on main `1d441ad8eb`. On
+    main the same files have 67; this change fixes one (A3
+    `makes the function live for a direct-eval call`).
+- **Quality:** the full list passes, 49/49, run in foreground ranges.
+
+### Not verified
+
+- A full-population census. Only the 1,413-file population above was
+  measured.
+- Verdicts on files whose routing did not change.
+- Acceptance criterion 7 (the adversarial review) is the PR's.
