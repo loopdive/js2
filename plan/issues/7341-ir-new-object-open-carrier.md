@@ -648,6 +648,71 @@ Re-verified on `869c11fc03` against main `f5249b0062`. The current main
     - #7335: 38/38.
   - **Quality:** the full list passes, 49/49.
 
+### Review (step B) round 3: NOT MET → fix (2026-11-14)
+
+- **B1 residual:** a repeated `var` with an initializer, such as
+  `var o = new Object(); var o = { a: 1 };` or `var o = [1];`. It was claimed,
+  then withdrawn ("proven dynamic binding 'o' initializer has no supported
+  carrier"). Main withdraws the same way for `var o = {}` and for
+  `var o = 1` redeclared with a literal. The redeclaration's initializer
+  writes the first declaration's slot, but `isPhase1VarDeclarationList` judged
+  it only with `bindingValueMatches`.
+  - Fix: the initializer now also goes through `moduleBindingWrite`, and a
+    refusal reads `vardecl-redeclared-write`. This also clears main's own
+    post-claim errors for these shapes.
+- **Audit of every other way to write a module binding:**
+
+  | Write form | How it is handled |
+  | --- | --- |
+  | `=` in a statement, tail, for-update or module-extern consumer | Goes through `moduleBindingWrite` (round 2). |
+  | `=` in a for-init | Refused at select (`for-init-expr`). |
+  | A redeclared `var` with an initializer | Goes through `moduleBindingWrite` (this round). |
+  | A redeclared `var` without an initializer | A no-op. |
+  | `o++`, `--o`, `o += …`, `o *= …` | Admitted only as number compounds or a string `+=`. Both are scalars, which box. All probes stay claimed and correct. |
+  | `for (o in x)` | Cannot write one: the for-in head must be a `var` declaration (`forin-head-not-declaration`), and a module `var` head is refused (`forin-head-module-var`). |
+  | `for (… of …)` | Cannot write one: the head must be a `let` or `const` declaration. |
+  | `function o() {}` beside `var o = new Object()` / `{}` | The name is then not a dynamic home, and the initializer is refused on both trees. |
+  | A catch parameter | Binds a new local, not the module slot. |
+  | Destructuring | Not ES5. Module-init destructuring is refused (`vardecl-module-destructuring`). |
+
+  The audit probes are 69 + 18 cases over a `new Object()` home, a `{}` home
+  and a number var (`rv7214b/cases/a3.json` and `a4.json`). Results: 0 units
+  lost, 0 head-only post-claim errors, 0 wrong answers. Main has 16 cases with
+  post-claim errors; head has 0.
+- **Should-fix:** `producesCarrier` is now built on `everyYieldedValue`, so
+  one walker covers parentheses, both conditional arms, and the right side of
+  a comma or `=`. `producesCarrier` adds only its leaf rule, and passes its
+  `conditional` hook as the walker's optional third argument.
+- **Nit:** `moduleBindingWrite` now takes the caller's scope for its
+  `undefined` test. `moduleBindingTakes` and `moduleBindingMatches` pass that
+  scope through.
+- **Size:** `select.ts` is +5 past its budget. The redeclaration check costs
+  +2 at its call site; the grant above is updated.
+- **Tests:** 4 new rows in `VALUE_USES` for a redeclared `var` (object
+  literal, array literal, inside `try`, over a number var). A new
+  `REDECLARED_CARRIER_WRITES` table pins 3 redeclarations that stay claimed.
+- **Re-verified** on `eb51fb72f7` against main `f5249b0062`. Every set: 0
+  units lost, 0 head-only post-claim errors, 0 wrong answers.
+
+  | Set | Cases | Post-claim, main / head |
+  | --- | --- | --- |
+  | r3 | 280 | 34 / 2 |
+  | c4 | 624 | 140 / 56 |
+  | all | 367 | 12 / 6 |
+  | z | 108 | 10 / 0 |
+  | z2 | 76 | 2 / 2 |
+
+  - The 2 r3 cases left on head (`zzh:fndyn`, `zzd:fndyn`) are a typeIdx
+    parity mismatch that main has too.
+  - **Census (1,173 files):** 23 gained (the S1 set), 0 lost, 0 units newly
+    legacy, 0 post-claim errors.
+  - **gc bytes:** 391/391 identical.
+  - **Tests:**
+    - #7341: 81/81;
+    - #7340: 41/41;
+    - #7338 + #7335 + #7280: 165/165.
+  - **Quality:** the full list passes, 49/49.
+
 ### Measurements after merging #7340 (2026-11-14)
 
 Re-run on `833f251579`, which merges main `9745e46d72` with #7340. The
