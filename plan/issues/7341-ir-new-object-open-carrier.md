@@ -553,6 +553,99 @@ Re-verified on `869c11fc03` against main `f5249b0062`. The current main
   - #7212's 39 gained files are IR-only on head and main.
   - Tests: #7341 58/58, #7340 41/41, #7338 94/94, #7335 + #7280 71/71.
 
+### Review (step B) round 2: NOT MET → fix (2026-11-14)
+
+- **B1 (blocker):** the round-1 refusal read the right-hand side's syntax.
+  A struct or vec that reached a dynamic slot another way was still
+  claimed and then withdrawn:
+  - `o = c ? { p: 2 } : { p: 3 }`;
+  - `o = (0, { p: 2 })`;
+  - `o = [1, 2]`;
+  - `o = q = { p: 2 }`, which failed on the inner write to `q`.
+
+  The same held inside a block, `if`, `for`, `try` and a labelled block:
+  24 head-only post-claim cases in the reviewer's 624-case set. The inner
+  `q = …` was never judged, because the rule ran only at the four
+  statement and tail sites.
+- **Fix:** the refusal now depends on what kind of value the right-hand
+  side is, not how it is written.
+  - **Where it lives:** `moduleBindingWrite` in `select.ts`, beside the
+    selector's module-binding admission. It replaces the resolver call
+    `(id, value)` at every write site, so nested writes are judged too.
+    The sites are:
+    - the statics table's `moduleBindingMatches`, which every statement
+      and tail arm reads through `moduleBindingTakes`;
+    - the tail arm's exact write;
+    - the for-update arm (`isPhase1ForUpdateExpr`);
+    - the module-extern consumer (`moduleExternConsumerIsProven`).
+
+    In the reviewer's chained case, `o = q = {…}` is now refused at select
+    (the probe reports `body-chained-assign`), since the value `o` takes
+    is the literal.
+  - **What a dynamic binding takes in `<module-init>`:** only a value
+    from-ast stores on its carrier:
+    - a value already on the carrier (`isCarrierValue`, now exported by
+      the statics table);
+    - a primitive wrapper, whose construction arm judges the store;
+    - a scalar that boxes (`concreteOperandBoxesOntoCarrier`, unchanged);
+    - `void` or `undefined`.
+  - **How nesting is handled:** `everyYieldedValue` checks every value the
+    expression can yield: both arms of a conditional, and the right side of
+    a comma or `=`. It is new in `analysis/carrier-expression.ts`, and it
+    shares its comma/`=` rule (`yieldsRight`) with `producesCarrier`.
+  - **Function bodies** keep main's route, as in round 1.
+  - **Old rule removed:** `moduleBindingTakes` is main's again. The
+    syntax-based rule is gone from `select-object-statics.ts`.
+  - **Size:** `select.ts` grows by 3 lines past its budget. The grant is
+    in this file's frontmatter. The recursion was split out to keep the
+    growth that small.
+  - **One reason changed:** `var o; o = new Object()` is now refused as
+    `body-module-assign-incompatible` before the construction arm
+    (`expr-new-object-home`). The test row is updated.
+- **Zero-loss check:** a new probe set has 108 cases, mostly ones this rule
+  touches.
+  - Two homes (`new Object()`, `{}`), each written at top level and inside
+    `if { { } }`.
+  - The values assigned were:
+    - a number, a string or a boolean;
+    - `null`, `undefined` or `void 0`;
+    - another dynamic var, or a call result;
+    - `{}`, a function expression, an arrow or `new Object()`;
+    - the four failing spellings;
+    - a chained number write, conditionals, `-c`, a template, `c + 1`,
+      `!c`, `c < 2`, `c && d` or `typeof`.
+  - **Every value main claims stays claimed and correct.** These are a
+    number, a string, a boolean, `undefined`, `void 0`, a dynamic var, a
+    call result, a chained number write, `-c`, `c + 1`, `!`, a comparison,
+    a conditional and `typeof`.
+  - **Five values main does not claim either** (`{}` home, standalone):
+    - `{}`, `null` and `c && d` are refused at select on main;
+    - function expressions and arrows fail with `closure-return-type`;
+    - `new Object()` fails on the call-graph closure.
+  - So those five have no claim to keep, and they stay refused. Results:
+    `rv7214b/zm.txt` (main) against `zh2.txt` (head).
+- **Tests:** the conditional, comma, array and chained spellings are new
+  rows, plus a write inside a labelled `if` block. `CARRIER_WRITES` pins
+  ten values that stay claimed.
+- **Re-verified** on `601b79ca54` against main `f5249b0062` (the merge
+  base):
+  - **Reviewer's 624 cases:** 0 head-only post-claim errors (24 before
+    this fix), 0 wrong answers, 0 units lost. Cases with post-claim errors:
+    140 on main, 56 on head.
+  - **Reviewer's 367 probes:** 0 head-only post-claim errors, 0 wrong
+    answers, 0 units lost. Post-claim errors: 12 on main, 6 on head.
+  - **Zero-loss set (108 cases):** 0 lost, 0 post-claim errors on head
+    (10 on main), 0 wrong answers.
+  - **Census (1,173 files):** 23 gained (the S1 set), 0 lost, 0 units newly
+    legacy, 0 post-claim errors.
+  - **gc bytes:** 391/391 identical.
+  - **Tests:**
+    - #7341: 74/74;
+    - #7340: 41/41;
+    - #7338 + #7280: 127/127;
+    - #7335: 38/38.
+  - **Quality:** the full list passes, 49/49.
+
 ### Measurements after merging #7340 (2026-11-14)
 
 Re-run on `833f251579`, which merges main `9745e46d72` with #7340. The
