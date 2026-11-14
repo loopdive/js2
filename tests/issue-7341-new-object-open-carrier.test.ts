@@ -157,11 +157,10 @@ const VALUE_USES: Record<string, string> = {
   "a member as a switch discriminant": `var o = new Object(); o.k = 2; switch (o.k) { case 2: break; default: throw "k"; }`,
   "a void member strictly compared with undefined": `var o = new Object(); o.p = 1; if (void o.p !== undefined) { throw "v"; }`,
   "a void member loosely compared with undefined": `var o = new Object(); o.p = 1; if (void o.p != undefined) { throw "v"; }`,
-  // An object literal assigned to the dynamic home (PR #7214 step-B review B1); `{}` and a bare
-  // `var` withdrew after the claim on main too.
+  // An object literal assigned to the dynamic home in the module's own code (PR #7214 step-B
+  // review B1); `{}` and a bare `var` withdrew after the claim on main too.
   "an object literal assigned to the var": `var o = new Object(); o.p = 1; o = { p: 2 }; if (o.p !== 2) throw "x";`,
   "an object literal assigned, bare `new Object`": `var o = new Object; o.p = 1; o = { p: 2 }; if (o.p !== 2) throw "x";`,
-  "an object literal assigned in a function": `var o = new Object(); function g() { o = { p: 2 }; } g(); if (o.p !== 2) throw "x";`,
   "an object literal assigned to a `{}` var": `var o = {}; o = { p: 2 }; if (o.p !== 2) throw "x";`,
   "an object literal assigned to a bare var": `var o; o = { p: 2 }; if (o.p !== 2) throw "x";`,
   // Mixed carrier expressions (PR #7214 review R2-S1): the carrier flows through `+`, a comma, or a `void`.
@@ -203,6 +202,17 @@ const NON_CARRIER_VOID: Record<string, { readonly source: string; readonly unit:
     source: `function h(a) { var b = a + 1; return void b === undefined ? 1 : 0; } if (h(1) !== 1) { throw "x"; }`,
     unit: "h",
   },
+};
+
+/**
+ * FOLLOW-UP (PR #7214 step-B review B1): a function-body write of an object literal into a dynamic
+ * module binding still fails after the claim, as on main. Refusing it at select would drag the
+ * caller's unit (here `<module-init>`) to legacy through the call-graph closure, so these rows pin
+ * main's route: the writer is withdrawn after the claim, its caller stays IR, the answer is JS's.
+ */
+const FUNCTION_BODY_LITERAL_WRITE: Record<string, string> = {
+  "`new Object()` home": `var o = new Object(); function g() { o = { p: 2 }; } g(); if (o.p !== 2) throw "x";`,
+  "`{}` home": `var o = {}; function g() { o = { p: 2 }; } g(); if (o.p !== 2) throw "x";`,
 };
 
 describe("#7341 S1 — `new Object()` as the open-object carrier", () => {
@@ -258,6 +268,16 @@ describe("#7341 S1 — `new Object()` as the open-object carrier", () => {
       const ir = await build(source, "standalone");
       expect(outcome(ir, "<module-init>")?.irBodyEmitted).toBe(true);
       expect(outcome(ir, unit)?.detail ?? "").not.toContain("expr-void-carrier-compare");
+      expect(await run(ir, "standalone")).toBe("ok");
+    });
+  }
+
+  for (const [name, source] of Object.entries(FUNCTION_BODY_LITERAL_WRITE)) {
+    it(`keeps main's route for an object literal written in a function: ${name}`, async () => {
+      expect(node(source)).toBe("ok");
+      const ir = await build(source, "standalone");
+      expect((ir.irPostClaimErrors ?? []).map((error) => error.func)).toEqual(["g"]);
+      expect(outcome(ir, "<module-init>")?.irBodyEmitted).toBe(true);
       expect(await run(ir, "standalone")).toBe("ok");
     });
   }

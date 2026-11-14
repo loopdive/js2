@@ -466,6 +466,27 @@ the own-property probe. Only its expected detail changed.
   `new Object()` file refused #7335's define as `expr-object-static-untrusted`
   once #7212 moved defines into the statics table.
 
+### B1 narrowed to the module's own code (coordinator decision, 2026-11-14)
+
+The full B1 rule cost a unit no other path loses. For
+`var o = {}; function g() { o = { p: 2 }; } g();`, refusing `g` at select
+dragged `<module-init>` to legacy through the call-graph closure. On main,
+`g` withdraws after its claim and `<module-init>` stays IR. The hard rule is
+that no unit main lowers on IR may be lost.
+
+So the object-literal refusal in `moduleBindingTakes` now applies only to
+an assignment outside every function, in `<module-init>`. There, the unit
+the withdrawal would cost is the claimed unit itself, so refusing loses
+nothing. The level is derived where the rule lives, from the assignment's
+enclosing function; nothing is threaded through callers. This still closes
+the review's blocker (`new Object()` and bare `new Object` homes) and main's
+module-level `{}` and bare-`var` cases.
+
+Follow-up: a function-body write of an object literal into a dynamic
+module binding still fails after the claim, as on main. Fixing it at
+select needs the caller's unit not to be dragged by the call-graph
+closure. The test rows `FUNCTION_BODY_LITERAL_WRITE` pin main's route.
+
 ### Review (step B) round 1: NOT MET → fixes (2026-11-14)
 
 - **B1 (blocker):** `var o = new Object(); o.p = 1; o = { p: 2 }` claimed
