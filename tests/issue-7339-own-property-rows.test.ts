@@ -65,7 +65,6 @@ const DEFINE = "var o = {}; Object.defineProperty(o, 'p', { value: 1 });";
 /** Each runs as node does with no legacy unit. */
 const CLAIMED: Record<string, string> = {
   "own key, after a getOwnPropertyDescriptor on the receiver": `${DEFINE} var d = Object.getOwnPropertyDescriptor(o, 'p'); if (!o.hasOwnProperty('p') || d.value !== 1) { throw "x"; }`,
-  "a descriptor result's own fields": `${DEFINE} var d = Object.getOwnPropertyDescriptor(o, 'p'); if (!d.hasOwnProperty('value') || d.hasOwnProperty('get')) { throw "x"; }`,
   "an inherited toString read beside the test": `var o = {}; if (o.toString !== Object.prototype.toString || o.hasOwnProperty('toString')) { throw "x"; }`,
   "propertyIsEnumerable, non-enumerable": `${DEFINE} if (o.propertyIsEnumerable('p')) { throw "x"; }`,
   "propertyIsEnumerable, enumerable": `var o = {}; Object.defineProperty(o, 'p', { value: 1, enumerable: true }); if (!o.propertyIsEnumerable('p')) { throw "x"; }`,
@@ -77,14 +76,19 @@ const CLAIMED: Record<string, string> = {
 };
 
 /**
- * A call the checker types `any` answers the boolean boxed onto the carrier, as main's dynamic method call does;
- * the unit `g` holding it is claimed and the program answers as node does.
+ * A test answers the i32 boolean only on a #7280 dynamic home (`var o = {}`), as #7335's arm did on main; on any
+ * other receiver the boolean is boxed onto the carrier, as main's dynamic method call answered, whatever the
+ * checker's type of the call. The unit `g` holding it is claimed and the program answers as node does.
  */
 const BOXED: Record<string, string> = {
   "a dynamic parameter, concatenated": `function g(x) { return x.hasOwnProperty('a') + ','; } var r = g({ a: 1 }); if (String(r) !== "true,") { throw "x"; }`,
   "a dynamic parameter, added to a number": `function g(x) { return x.hasOwnProperty('a') + 1; } var r = g({ a: 1 }); if (String(r) !== "2") { throw "x"; }`,
   "a dynamic parameter, held in a local": `function g(x) { var b = x.hasOwnProperty('a'); return b; } var r = g({ a: 1 }); if (String(r) !== "true") { throw "x"; }`,
   "a dynamic parameter, loosely compared": `function g(x) { return x.hasOwnProperty('a') == 1; } var r = g({ a: 1 }); if (String(r) !== "true") { throw "x"; }`,
+  // Review round 2: the checker types these calls `boolean`; main answered them as the carrier.
+  "a local static result, loosely compared": `function g() { var x = Object.defineProperty({}, 'a', { value: 1, enumerable: true }); return x.hasOwnProperty('a') == 1; } if (g() !== true) { throw "x"; }`,
+  "a local static result, strictly compared": `function g() { var x = Object.defineProperty({}, 'a', { value: 1, enumerable: true }); return x.hasOwnProperty('a') === 1; } if (g() !== false) { throw "x"; }`,
+  "a local static result, compared to a string": `function g() { var x = Object.defineProperty({}, 'a', { value: 1, enumerable: true }); return x.hasOwnProperty('a') == 'true'; } if (g() !== false) { throw "x"; }`,
   "a script var assigned later, concatenated": `var o; o = { a: 1 }; function g() { return o.hasOwnProperty('a') + ','; } var r = g(); if (String(r) !== "true,") { throw "x"; }`,
 };
 
@@ -126,6 +130,16 @@ const REFUSED: Record<string, { readonly source: string; readonly detail: string
   },
 };
 
+/**
+ * Boxed answers a consumer cannot take on main either: refused at select, every unit as on main, and the program
+ * answers as legacy does.
+ */
+const AS_MAIN: Record<string, string> = {
+  "a descriptor result's own fields": `${DEFINE} var d = Object.getOwnPropertyDescriptor(o, 'p'); if (!d.hasOwnProperty('value') || d.hasOwnProperty('get')) { throw "x"; }`,
+  "a local static result, added to a number": `function g() { var x = Object.defineProperty({}, 'a', { value: 1, enumerable: true }); return x.hasOwnProperty('a') + 1; } if (String(g()) !== "2") { throw "x"; }`,
+  "a local static result, its constructor": `function g() { var x = Object.defineProperty({}, 'a', { value: 1, enumerable: true }); var b = x.hasOwnProperty('a'); return b.constructor === Boolean; } if (g() !== true) { throw "x"; }`,
+};
+
 describe("#7339 — own-property tests as rows of the Object statics table", () => {
   for (const [name, source] of Object.entries(CLAIMED)) {
     it(`claims whole and answers as node does: ${name}`, async () => {
@@ -134,6 +148,15 @@ describe("#7339 — own-property tests as rows of the Object statics table", () 
       expect(legacyUnits(ir), JSON.stringify(legacyUnits(ir))).toEqual([]);
       expect(node(source)).toBe("ok");
       expect(await run(ir)).toBe("ok");
+    });
+  }
+
+  for (const [name, source] of Object.entries(AS_MAIN)) {
+    it(`refuses at select as main does: ${name}`, async () => {
+      const ir = await build(source);
+      expect(ir.irPostClaimErrors ?? []).toEqual([]);
+      expect(legacyUnits(ir).every((row) => row.stage === "select")).toBe(true);
+      expect(await run(ir)).toBe(await run(await build(source, false)));
     });
   }
 

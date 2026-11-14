@@ -24,7 +24,6 @@ import { nullComparisonFolds } from "./analysis/operand-admissibility.js";
 import type { IrBackendTargetCapability } from "./backend/legality.js";
 import { localIsRewritten } from "./lattice-param-facts.js";
 import { objectCreateDescriptorMap } from "./object-create-call.js";
-import type { IrPrimitiveExpressionFamily } from "./module-bindings.js";
 import * as objectStatics from "./object-statics.js";
 import { OBJECT_PROTOTYPE_KEYS } from "./realm-keys.js";
 import { outermostParenthesized } from "../shared/binding-writes.js";
@@ -49,7 +48,6 @@ export interface ObjectStaticSelectorState {
   readonly unannotatedLocal: (id: ts.Identifier) => ts.VariableDeclaration | undefined;
   readonly isDynamicHomeOpenCarrier: (decl: ts.VariableDeclaration) => boolean;
   readonly isDynamicParam: (id: ts.Identifier) => boolean;
-  readonly classifyPrimitive: (expr: ts.Expression) => IrPrimitiveExpressionFamily | undefined;
 }
 
 /** What a static's value admission asks of the selector's current walk. */
@@ -149,13 +147,37 @@ function laneAnswers<K extends object>(): (key: K, lane: string, compute: () => 
   };
 }
 
+/** (#7339) The receivers the selector found to be dynamic homes, for from-ast's plan ({@link selectedDynamicHomeReceiver}). */
+const dynamicHomeReceivers = new WeakSet<ts.Expression>();
+
+/**
+ * (#7339) The selector's answer for a test's receiver, read by from-ast's plan so both sides plan the same
+ * representation, as #7335's arm recorded its admitted calls on main.
+ */
+export function selectedDynamicHomeReceiver(receiver: ts.Expression): boolean {
+  return dynamicHomeReceivers.has(receiver);
+}
+
 export function createObjectStaticSelector(state: ObjectStaticSelectorState): ObjectStaticSelector {
+  /** A script `var o = {}` that legacy keeps as an open `$Object` on the dynamic slot: #7335's receivers on main. */
+  const isDynamicHomeReceiver = (receiver: ts.Expression): boolean => {
+    const declaration = ts.isIdentifier(receiver) ? state.moduleBinding(receiver)?.declaration : undefined;
+    const home =
+      declaration !== undefined &&
+      ts.isVariableDeclaration(declaration) &&
+      declaration.initializer !== undefined &&
+      objectStatics.isEmptyObjectLiteral(declaration.initializer) &&
+      state.isDynamicHomeOpenCarrier(declaration);
+    if (home) dynamicHomeReceivers.add(receiver);
+    else dynamicHomeReceivers.delete(receiver);
+    return home;
+  };
   const plan = (call: ts.CallExpression) =>
     objectStatics.objectStaticCallPlan(call, {
       isAmbientBinding: state.isAmbientBinding,
       dynamicCodeMayRun: state.dynamicCodeMayRun(),
       supportsBackendCapability: state.supports,
-      classifyPrimitive: state.classifyPrimitive,
+      isDynamicHomeReceiver,
     });
 
   const holdsCarrier = (expression: ts.Expression) => state.moduleBinding(expression)?.valueKind.kind === "dynamic";
@@ -221,8 +243,8 @@ export function createObjectStaticSelector(state: ObjectStaticSelectorState): Ob
     return producesCarrier(declaration.initializer!, leaves(visited));
   };
   /**
-   * An admitted static answers the carrier; (#7339) an own-property test its boolean, boxed onto the carrier where
-   * the call is typed other than `boolean` (the plan's `answer`, which from-ast reads too).
+   * An admitted static answers the carrier; (#7339) an own-property test its boolean, boxed onto the carrier except
+   * on a dynamic home (the plan's `answer`, which from-ast reads too).
    */
   const staticCall: CarrierLeaves["call"] = (call) => {
     const admitted = plan(call);
@@ -292,9 +314,10 @@ export function createObjectStaticSelector(state: ObjectStaticSelectorState): Ob
 
   /**
    * (#7339) `<carrier>.<key>` read as a value, for a key `%Object.prototype%` owns other than `toString`: the
-   * open `$Object` member read answers the realm's inherited member only for `toString` (main's gap, #7304; the
-   * statics' units keep main's routing). In a program where an own-property test may make units reachable, it is
-   * refused instead of answered wrong. An admitted test's callee is no such read.
+   * open `$Object` member read answers the realm's inherited member only for `toString` (main's gap, #7304). The
+   * gap holds with or without a test in the file; refusing it only where the file holds an admitted test is a
+   * deliberate scope limit, not a soundness argument: this PR closes what its tests newly reach and leaves the
+   * statics' units on main's routing, wrong answers included, for #7304. An admitted test's callee is no such read.
    */
   const readsInheritedMember = (e: ts.Expression): boolean => {
     if (!ts.isPropertyAccessExpression(e) || e.name.text === "toString" || !OBJECT_PROTOTYPE_KEYS.has(e.name.text)) {

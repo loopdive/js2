@@ -349,6 +349,7 @@ import {
 import type { DescriptorDefinition } from "./descriptor-literal.js";
 import { lowerObjectCreateDescriptorMapCall } from "./object-create-call.js";
 import { objectStaticCallPlan, type ObjectStaticCapability, type ObjectStaticPlan } from "./object-statics.js";
+import { selectedDynamicHomeReceiver } from "./select-object-statics.js";
 import { staticPrivateFieldOwner, staticPrivateThisCallClassName } from "./private-member-syntax.js";
 import {
   emitNewPlainObject,
@@ -9203,7 +9204,7 @@ function objectStaticPlanOf(expr: ts.CallExpression, cx: LowerCtx): ObjectStatic
     isAmbientBinding: (node) => cx.resolver?.isAmbientBinding?.(node) === true && cx.scope.get(node.text) === undefined,
     dynamicCodeMayRun: cx.resolver?.runtimeEvalMayExecute?.() !== false,
     supportsBackendCapability: (capability) => cx.resolver?.supportsBackendCapability?.(capability) === true,
-    classifyPrimitive: (e) => (cx.checker ? makeIrPrimitiveExpressionClassifier(cx.checker)(e) : undefined),
+    isDynamicHomeReceiver: selectedDynamicHomeReceiver,
   });
 }
 

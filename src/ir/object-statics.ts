@@ -11,11 +11,11 @@
  * (#7339) Beside the statics, the table holds `Object.prototype`'s two
  * own-property tests, spelled `R.<name>(k)` on any receiver: the receiver and
  * the key cross as carriers, and the test answers through `dyn.own_property`
- * (`emitOwnPropertyTest`). Its answer takes the representation the checker
- * gives the call, as every consumer's proof reads it: an i32 boolean where the
- * call is typed `boolean`, else that boolean boxed onto the carrier, as main's
- * dynamic method call answers. A test the table does not answer is no table
- * call: the receiver's own arms decide it, as on main.
+ * (`emitOwnPropertyTest`). Its answer takes the representation main gave the
+ * same call: the i32 boolean on a #7280 dynamic home `var o = {}`, which
+ * #7335's arm answered so, and on every other receiver that boolean boxed onto
+ * the carrier, as main's dynamic method call answered. A test the table does
+ * not answer is no table call: the receiver's own arms decide it, as on main.
  *
  * The same rows serve propertyHelper's stored aliases
  * (`uncurried-object-alias.ts`) and #7128 / #7335's define on an open carrier.
@@ -39,7 +39,6 @@ import {
 } from "../shared/intrinsic-prototype-writes.js";
 import { ts } from "../ts-api.js";
 import type { IrBackendTargetCapability } from "./backend/legality.js";
-import type { IrPrimitiveExpressionFamily } from "./module-bindings.js";
 import type { OwnPropertyTest } from "./nodes.js";
 import {
   definesLiteralsOnly,
@@ -146,7 +145,7 @@ export interface ObjectStaticCall {
 
 /**
  * (#7339) An admitted `R.<name>(k)`. `answer` is the representation of its
- * boolean: the checker's type of the call, `boolean` or anything else.
+ * boolean: the i32 (`boolean`) or boxed onto the carrier (`dynamic`).
  */
 export interface OwnPropertyTestCall {
   readonly name: OwnPropertyTest;
@@ -185,11 +184,12 @@ export type ObjectStaticPlan =
 /** What the plan asks of the lane and the program, beyond its own source. */
 export interface ObjectStaticsRealm extends IrObjectIntegrityRealm {
   readonly supportsBackendCapability: (capability: ObjectStaticCapability) => boolean;
-  /** The checker's primitive family of an expression, as every consumer's proof reads it. */
-  readonly classifyPrimitive: (expr: ts.Expression) => IrPrimitiveExpressionFamily | undefined;
+  /** (#7339) `receiver` reads a #7280 dynamic home `var o = {}`, whose test main answered as the i32 boolean. */
+  readonly isDynamicHomeReceiver: (receiver: ts.Expression) => boolean;
 }
 
-function isEmptyObjectLiteral(expr: ts.Expression): boolean {
+/** An inline `{}`. */
+export function isEmptyObjectLiteral(expr: ts.Expression): boolean {
   return ts.isObjectLiteralExpression(expr) && expr.properties.length === 0;
 }
 
@@ -246,8 +246,9 @@ function ownPropertyTestPlan(
   if (callee.questionDotToken || call.questionDotToken || call.arguments.length !== 1) return undefined;
   if (ts.isSpreadElement(call.arguments[0]!)) return undefined;
   if (realm.dynamicCodeMayRun || !ownPropertyTestIsPristine(call.getSourceFile(), name)) return undefined;
-  const answer = realm.classifyPrimitive(call) === "boolean" ? "boolean" : "dynamic";
-  return { kind: "test", test: { name, receiver: callee.expression, key: call.arguments[0]!, answer } };
+  const receiver = callee.expression;
+  const answer = realm.isDynamicHomeReceiver(receiver) ? "boolean" : "dynamic";
+  return { kind: "test", test: { name, receiver, key: call.arguments[0]!, answer } };
 }
 
 /**
