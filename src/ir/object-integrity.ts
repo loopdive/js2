@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
+import { isUnshadowedUndefined } from "../shared/ambient-intrinsics.js";
 import { isStoreTarget } from "../shared/binding-writes.js";
 import { isEqualityOperator } from "./analysis/operand-admissibility.js";
 import type { OwnPropertyTest } from "./nodes.js";
