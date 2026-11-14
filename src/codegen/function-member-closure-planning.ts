@@ -570,7 +570,6 @@ function planMemberClosure(
     ctx.fast ||
     !operations.dynamicCarrierIsExternref() ||
     ctx.targetProfile.semanticProviders !== "native-first" ||
-    !(ctx.standalone || ctx.wasi) ||
     runtimeEvalMayRebindClosureSite(ctx, expression) ||
     expression.name ||
     expression.type ||

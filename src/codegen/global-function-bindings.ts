@@ -65,7 +65,6 @@ const SCRIPT_FUNCTION_BINDING_FLAGS = 0x03;
  * minting one here trips the ABI seal.
  */
 export function emitScriptGlobalFunctionBindings(ctx: CodegenContext, fctx: FunctionContext): void {
-  if (!ctx.standalone && !ctx.wasi) return;
   if (ctx.sourceIsModule) return;
   if (ctx.topLevelFunctionNames.size === 0) return;
 

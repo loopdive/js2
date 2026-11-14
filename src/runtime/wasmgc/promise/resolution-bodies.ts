@@ -14,7 +14,6 @@ export interface PromiseResolutionBindings {
 }
 export interface PromiseResolveValueResources {
   readonly rejectionDispatchFuncIdx?: FuncHandle;
-  readonly target: { wasi: boolean; standalone: boolean };
   readonly state: {
     readonly promiseFulfillFuncIdx: FuncHandle;
     readonly promiseRejectFuncIdx: FuncHandle;
@@ -113,7 +112,6 @@ export function buildPromiseResolveValueBody(resources: PromiseResolveValueResou
     callbackTypeIdx,
     capsTypeIdx,
     thenable,
-    target,
     exnTagIdx,
     selfResolutionStringInstrs,
     thenStringInstrs,
@@ -150,7 +148,6 @@ export function buildPromiseResolveValueBody(resources: PromiseResolveValueResou
           // accessors, so a poisoned getter THROWS here (§27.2.1.3.2 step 9):
           // catch → reject(promise, thrown).
           buildTargetTaggedTry(
-            target,
             { kind: "empty" },
             [
               { op: "local.get", index: valueLocal },
@@ -464,7 +461,6 @@ export function buildPromiseSettleClosureBody(
   ];
 }
 export interface PromiseThenableJobResources {
-  readonly target: { wasi: boolean; standalone: boolean };
   readonly promiseTypeIdx: TypeHandle;
   readonly promiseRejectFuncIdx: FuncHandle;
   readonly capsTypeIdx: TypeHandle;
@@ -482,7 +478,6 @@ export interface PromiseThenableJobResources {
 }
 export function buildPromiseThenableJob(resources: PromiseThenableJobResources): { locals: LocalDef[]; body: Instr[] } {
   const {
-    target,
     capsTypeIdx,
     capsFields,
     objVecNewIdx,
@@ -595,7 +590,7 @@ export function buildPromiseThenableJob(resources: PromiseThenableJobResources):
             ...emitSettleCap(execClosures.rejectClFuncIdx),
             { op: "local.set", index: rejectClosureLocal },
           ] satisfies Instr[])),
-      buildTargetTaggedTry(target, { kind: "empty" }, jobTryBody, [
+      buildTargetTaggedTry({ kind: "empty" }, jobTryBody, [
         {
           tagIdx: exnTag,
           body: [

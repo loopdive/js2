@@ -65,11 +65,7 @@ function fixture(): {
   };
 }
 
-function makeContext(
-  data: ReturnType<typeof fixture>,
-  observed: { value?: unknown },
-  standalone = false,
-): CodegenContext {
+function makeContext(data: ReturnType<typeof fixture>, observed: { value?: unknown }): CodegenContext {
   const gate = {
     approved: new Set([data.site]),
     approvedNames: new Set(["Parser"]),
@@ -79,7 +75,6 @@ function makeContext(
   } as unknown as CodegenContext["fnctorEscapeGate"];
   return {
     checker: data.checker,
-    standalone,
     wasi: false,
     fnctorEscapeGate: gate,
     fnctorReservedTypeIdx: new Map([["Parser", 7]]),
@@ -140,7 +135,7 @@ function standalonePhysicalFixture(data: ReturnType<typeof fixture>): {
   input: ReturnType<typeof inputFor>;
   shape: IrFnctorShape;
 } {
-  const ctx = makeContext(data, {}, true);
+  const ctx = makeContext(data, {});
   const fields = [
     { name: "input", type: { kind: "ref_null" as const, typeIdx: 9 }, mutable: true },
     fnctorConstructorField(),
@@ -196,41 +191,10 @@ function standalonePhysicalFixture(data: ReturnType<typeof fixture>): {
 }
 
 describe("#3521 Program-ABI fnctor producer", () => {
-  it("observes the complete source/unit-qualified fixed-input shape", () => {
-    const data = fixture();
-    const observed: { value?: any } = {};
-    const ctx = makeContext(data, observed);
-
-    expect(observeApprovedIrFnctor(inputFor(ctx, data))).toBe(true);
-    expect(observed.value.shape).toMatchObject({
-      kind: "fnctor-shape",
-      sourceId: data.identity.sourceIdBySourceFile.get(data.file),
-      constructorUnitId: data.identity.unitIdByDeclaration.get(data.declaration),
-      fields: [{ name: "input", type: { kind: "string" }, ordinal: 0 }],
-      captures: [],
-      userParamTypes: [{ kind: "string" }],
-      hiddenIdentity: true,
-      constructorIdentity: {
-        unitId: data.identity.unitIdByDeclaration.get(data.declaration),
-        paramIndex: 1,
-      },
-    });
-    expect(observed.value).toMatchObject({
-      constructorFuncIdx: 42,
-      structTypeIdx: 7,
-      fields: [{ name: "input", type: { kind: "externref" }, mutable: true }],
-      captureParamTypes: [],
-      tdzFlagParamTypes: [],
-      userParamTypes: [{ kind: "externref" }],
-      constructorIdentityParamIndex: 1,
-      resultIsExternref: false,
-    });
-  });
-
   it("leaves standalone/internal layouts on the legacy path", () => {
     const data = fixture();
     const observed: { value?: unknown } = {};
-    const ctx = makeContext(data, observed, true);
+    const ctx = makeContext(data, observed);
 
     expect(observeApprovedIrFnctor(inputFor(ctx, data))).toBe(false);
     expect(observed.value).toBeUndefined();
@@ -369,7 +333,6 @@ describe("#3521 Program-ABI fnctor producer", () => {
       (ctx: CodegenContext) => (ctx.fnctorColdTailStructName = new Map([["__fnctor_Parser", "__fnctor_Parser__cold"]])),
     ],
     ["a fast lane", (ctx: CodegenContext) => (ctx.fast = true)],
-    ["a host lane", (ctx: CodegenContext) => (ctx.standalone = false)],
   ])("does not build the standalone observation for %s", (_label, mutate) => {
     const data = fixture();
     const { ctx, input, shape } = standalonePhysicalFixture(data);

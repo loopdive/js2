@@ -260,7 +260,6 @@ export function prepareStandaloneDynamicToNumberSupport(
   ctx: CodegenContext,
   callableImports: ReadonlyMap<string, Import>,
 ): readonly IrFuncRef[] | undefined {
-  if (!ctx.standalone) return undefined;
   const shim = { body: [], savedBodies: [] } as unknown as FunctionContext;
   const selected = prepareStandaloneExternrefToNumberProviders(ctx, shim);
   if (!selected) return undefined;
@@ -302,22 +301,8 @@ function prepareCompilerTimerShimDynamicInstructionSupport(
 ): ReadonlyMap<IrUnitId, PreparedDynamicInstructionSupportEvidence> {
   const support = new Map<IrUnitId, PreparedDynamicInstructionSupportEvidence>();
   for (const shape of shapes.values()) {
-    let conversionCallables: readonly IrFuncRef[] | undefined;
-    if (ctx.standalone) {
-      conversionCallables = prepareStandaloneDynamicToNumberSupport(ctx, callableImports);
-      if (!conversionCallables) continue;
-    } else {
-      const unboxNumber = exactPreparedDynamicHelperRef(
-        ctx,
-        callableImports,
-        "__unbox_number",
-        ctx.funcMap.get("__unbox_number"),
-        [{ kind: "externref" }],
-        [{ kind: "f64" }],
-      );
-      if (!unboxNumber) continue;
-      conversionCallables = [unboxNumber];
-    }
+    const conversionCallables = prepareStandaloneDynamicToNumberSupport(ctx, callableImports);
+    if (!conversionCallables) continue;
     const boxNumber = exactPreparedDynamicHelperRef(
       ctx,
       callableImports,

@@ -83,7 +83,7 @@ export function registerProxyInvariantValidators(
 ): ProxyInvariantValidators | null {
   // (#5316 r4, review round 1) TARGET GATE — these validators are sound only
   // where the attribute model they consume is. `--target wasi` sets `ctx.wasi`
-  // and leaves `ctx.standalone` false, and under it three of the primitives
+  // and (before #6979 S7-c) left the regime flag false, and under it three of the primitives
   // below answer WRONGLY for an ordinary object literal (measured on
   // `origin/main`, i.e. pre-#5316, with Proxy-free probes —
   // `.tmp/rev5316/p/w5`): `Object.isExtensible({a:1,b:2})` -> `false`,

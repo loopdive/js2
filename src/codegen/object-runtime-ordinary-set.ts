@@ -238,7 +238,6 @@ function makeSetWalkEmitters(ctx: CodegenContext, prims: SetWalkPrimitives): Set
  * drivers in `object-runtime-proxy.ts`.
  */
 export function reserveOrdinarySetWithReceiver(ctx: CodegenContext): number | undefined {
-  if (!ctx.standalone) return undefined;
   const existing = ctx.funcMap.get(REFLECT_SET_RECEIVER);
   if (existing !== undefined) return existing;
   if (resolveSetWalkPrimitives(ctx) === undefined) return undefined;
@@ -264,7 +263,6 @@ export function reserveOrdinarySetWithReceiver(ctx: CodegenContext): number | un
  * nothing, so no funcIdx moves.
  */
 export function fillOrdinarySetWithReceiver(ctx: CodegenContext): number | undefined {
-  if (!ctx.standalone) return undefined;
   const funcIdx = ctx.funcMap.get(REFLECT_SET_RECEIVER);
   if (funcIdx === undefined) return undefined;
   const func = definedFuncAt(ctx, funcIdx);

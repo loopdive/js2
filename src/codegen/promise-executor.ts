@@ -24,7 +24,7 @@
 //       any.convert_extern; ref.test (ref $wrap); [native] struct.get 0 ->
 //       ref.cast $wrapFuncType -> call_ref ; [else] throw TypeError.
 //     There is NO host `__call_function` fallback under WASI (that arm is
-//     gated `!ctx.standalone && !ctx.wasi`). So a `resolve`/`reject` value
+//     gated `!the regime flag && !ctx.wasi`). So a `resolve`/`reject` value
 //     that IS a subtype of the canonical `(externref) -> ()` wrapper struct
 //     dispatches natively; anything else throws. We therefore construct the
 //     settle closures as subtypes of exactly that canonical wrapper struct,

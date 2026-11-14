@@ -575,15 +575,6 @@ export interface IrFromAstResolver extends PreparedAsyncFromAstResolver {
    * wrapper constructor. Null keeps the operation on direct codegen.
    */
   standaloneWrapperInstanceOfPlan?(ctorName: string): { readonly funcName: string } | null;
-  /**
-   * Resolve the canonical host ToPropertyDescriptor entry point for an
-   * ambient `Object.defineProperty(target, key, descriptor)` call.
-   *
-   * `null` means this lane cannot preserve the descriptor carrier through
-   * the IR yet (notably standalone, whose typed descriptor structs require
-   * the legacy reification step before `__obj_define_from_desc`).
-   */
-  objectDefinePropertyTarget?(): IrFuncRef | null;
   resolveString?(): ValType;
   /**
    * Resolve the backend's canonical boxed-any carrier for a dynamic value.
@@ -763,13 +754,6 @@ export interface IrFromAstResolver extends PreparedAsyncFromAstResolver {
    */
   getHostGlobalInfo?(name: string): { importName: string; className: string } | undefined;
   /**
-   * (#2856) True iff this compile targets a JS host. Feeds the
-   * `hostExternCapability` invariant assert at the host-extern lowering
-   * arms — a host-extern node reaching the builder in a host-free mode is a
-   * selector↔capability drift, not a fallback.
-   */
-  jsHostExterns?(): boolean;
-  /**
    * (#7091) The platform-extern lane (JS environment, native regime): true for
    * an extern class that is a platform capability (DOM, declared external
    * API). Its native-string / closure arguments cross as carriers the
@@ -824,13 +808,6 @@ export interface IrFromAstResolver extends PreparedAsyncFromAstResolver {
   ensureNativeMapStorageType?(): IrType | undefined;
   /** Shared binding inference, settled before the initializer is lowered. */
   localNeedsDynamicCarrier?(declaration: ts.VariableDeclaration): boolean;
-  /**
-   * (#2856) Console-argument variant selection for `console.<m>(arg)` —
-   * returns the import-name suffix (`console_<m>_<variant>`). MUST use the
-   * same checker predicates as the legacy `collectConsoleImports` scan so
-   * the variant the IR picks is the variant the scan registered.
-   */
-  consoleArgVariant?(arg: ts.Expression): "number" | "bool" | "string" | "externref";
   /**
    * The backend's plan for a `String.prototype` call (`string-method-surface.ts`),
    * the helper picked for the receiver's proven encoding. `null`: the backend
@@ -1571,34 +1548,19 @@ function lowerMutableParameterStorage(
   });
 }
 
-function lowerGeneratorPrologue(options: AstToIrOptions, name: string, builder: IrFunctionBuilder): number {
-  // (#3565 contract) The generator prologue below needs the HOST-ONLY import
-  // `env.__gen_create_buffer`. In host-free modes (standalone / wasi /
-  // strictNoHostImports) that import is deliberately never registered — the
+function refuseIrGenerator(name: string): never {
+  // (#3565 contract, #6979) The IR generator lowering needs the host-only import
+  // `env.__gen_create_buffer`, which the native regime never registers — the
   // legacy path lowers generators to the native `__GenState` state machine
-  // instead (see tests/issue-680). Claiming such a function here would emit a
-  // reference to an import that does not exist in the module, which the exact
-  // import resolver reports as a HARD `unknown-function-ref` invariant at the
-  // `lower` stage — where `unsupported` is not expressible. So refuse at BUILD
-  // stage, which demotes the function to legacy as designed rather than
-  // failing the whole compile.
-  if (options.resolver?.jsHostExterns?.() === false) {
-    throw new IrUnsupportedError(
-      "imported-call-planning-unsupported",
-      "build",
-      `ir/from-ast: generator ${name} needs host-only env.__gen_create_buffer; host-free targets lower generators via the legacy native state machine`,
-    );
-  }
-  builder.setFuncKind("generator");
-  const generatorBufferSlot = builder.declareSlot("__gen_buffer", { kind: "externref" });
-  builder.setGeneratorBufferSlot(generatorBufferSlot);
-  const buf = builder.emitCall(irImportFuncRef("env", "__gen_create_buffer"), [], irVal({ kind: "externref" }));
-  if (buf === null) {
-    // invariant (producer-promise): a compiler-support helper declared non-void must produce an SSA value — #4502.
-    throw new Error(`ir/from-ast: __gen_create_buffer call must produce a value (${name})`);
-  }
-  builder.emitSlotWrite(generatorBufferSlot, buf);
-  return generatorBufferSlot;
+  // (see tests/issue-680). Claiming such a function would emit a reference to
+  // an import that does not exist, which the exact import resolver reports as a
+  // HARD `unknown-function-ref` invariant at the `lower` stage. So refuse at
+  // BUILD stage, which demotes the function to legacy.
+  throw new IrUnsupportedError(
+    "imported-call-planning-unsupported",
+    "build",
+    `ir/from-ast: generator ${name} needs host-only env.__gen_create_buffer; host-free targets lower generators via the legacy native state machine`,
+  );
 }
 
 function lowerClosureCaptureBindings(
@@ -1942,26 +1904,13 @@ export function lowerFunctionAstToIr(
     } else lowerMutableParameterStorage(param, options, name, scope, builder);
   }
 
-  // Slice 7a (#1169f): generator prologue — allocate the `__gen_buffer`
-  // Wasm-local slot, initialize it via `__gen_create_buffer()`. Must
-  // happen AFTER `openBlock()` (instrs require a current block) and
-  // BEFORE user-body lowering so `lowerYield` can emit `gen.push`
-  // against the slot. The lowerer reads `func.generatorBufferSlot` to
-  // produce the `local.get $__gen_buffer` op.
-  let generatorBufferSlot: number | undefined;
   if (isAsync) {
     // (#1373b C-1) Mark the IrFunction async. No prologue is needed — the
     // sync-pass-through model compiles the body as an ordinary synchronous
     // function; `await` lowers per-lane in lower.ts (`case "await"`).
     builder.setFuncKind("async");
   }
-  if (isGenerator) {
-    generatorBufferSlot = sourceScope
-      ? withGeneratedSourceSite(sourceScope, "binding-scaffold", fn, () =>
-          lowerGeneratorPrologue(options, name, builder),
-        )
-      : lowerGeneratorPrologue(options, name, builder);
-  }
+  if (isGenerator) refuseIrGenerator(name);
 
   const stmts = fn.body.statements;
   // Constructors and synchronous zero-result bodies have valid empty
@@ -2024,7 +1973,6 @@ export function lowerFunctionAstToIr(
     // string element reads (`hex[(n >> 4) & 0xf]`) consult this.
     stringLiteralLens: collectStringLiteralLens(fn),
     funcKind: isGenerator ? "generator" : isAsync ? "async" : "regular",
-    generatorBufferSlot,
     checker: options.checker,
     oracle: options.oracle,
     // #4177 — outer function only; lifted-closure contexts deliberately omit
@@ -4902,7 +4850,7 @@ function lowerResolvedModuleBindingTdzCheck(name: string, binding: ModuleBinding
   requireMatchingModuleBindingOwner(binding, cx.ownerUnitId, cx.funcName);
   if (binding.type.kind === "extern") {
     assertNotDeferred(
-      domSurfaceCapability(cx.resolver?.jsHostExterns?.() === true, binding.capability === "dom"),
+      domSurfaceCapability(false, binding.capability === "dom"),
       `module-scope extern binding "${name}"`,
       cx.funcName,
     );
@@ -5297,7 +5245,7 @@ function lowerExprUnchecked(expr: ts.Expression, cx: LowerCtx, hint: IrType): Ir
           standaloneDomGlobal.identifier === expr &&
           standaloneDomGlobal.importName === hg.importName;
         assertNotDeferred(
-          domSurfaceCapability(hostExternSurfaceAdmits(cx, hg.className), exactStandaloneDomGlobal),
+          domSurfaceCapability(platformExternAdmits(cx, hg.className), exactStandaloneDomGlobal),
           `host global "${expr.text}"`,
           cx.funcName,
         );
@@ -6514,7 +6462,7 @@ function lowerPropertyAccess(expr: ts.PropertyAccessExpression, cx: LowerCtx): I
     const standaloneDomRead = cx.resolver?.standaloneDomOperation?.(expr);
     const exactStandaloneDomRead = standaloneDomRead?.kind === "member-get" && standaloneDomRead.access === expr;
     assertNotDeferred(
-      domSurfaceCapability(hostExternSurfaceAdmits(cx, className), exactStandaloneDomRead),
+      domSurfaceCapability(platformExternAdmits(cx, className), exactStandaloneDomRead),
       `extern property read .${propName}`,
       cx.funcName,
     );
@@ -8750,23 +8698,18 @@ function emitDefaultExternArg(cx: LowerCtx, expected: ValType): IrValueId {
 }
 
 /**
- * (#7091) Does the host-extern surface admit `className` here? The JS-host
- * lane admits every extern class; the platform lane admits only platform
- * capabilities. Feeds the same `domSurfaceCapability` asserts the selector's
- * claim was gated on, so a drift stays an invariant, not a fallback.
+ * (#7091) Is `className` a platform capability the extern surface admits? Feeds
+ * the same `domSurfaceCapability` asserts the selector's claim was gated on, so
+ * a drift stays an invariant, not a fallback; an admitted call's arguments
+ * cross as Wasm carriers the marshal converts.
  */
-function hostExternSurfaceAdmits(cx: LowerCtx, className: string): boolean {
-  return cx.resolver?.jsHostExterns?.() === true || cx.resolver?.platformExternClass?.(className) === true;
-}
-
-/** (#7091) Platform-lane call: arguments cross as Wasm carriers the marshal converts. */
-function platformCarrierBoundary(cx: LowerCtx, className: string): boolean {
-  return cx.resolver?.jsHostExterns?.() !== true && cx.resolver?.platformExternClass?.(className) === true;
+function platformExternAdmits(cx: LowerCtx, className: string): boolean {
+  return cx.resolver?.platformExternClass?.(className) === true;
 }
 
 /** (#7091) The native-string carrier boundary for one platform-lane argument. */
 function platformStringBoundary(cx: LowerCtx, className: string): "native-string" | undefined {
-  return platformCarrierBoundary(cx, className) ? "native-string" : undefined;
+  return platformExternAdmits(cx, className) ? "native-string" : undefined;
 }
 
 function coerceToExpectedExtern(
@@ -8963,27 +8906,21 @@ function tryLowerConsoleMethodCall(
     }
   }
 
-  // (#2856) console.<m>(arg) — host console variant call. Intercepted BEFORE
-  // receiver lowering (like the Math arm below): `console` has NO
-  // `global_console` handle and NO extern-class registration — the legacy
-  // backend services it via dedicated per-arg-type import variants
-  // (`console_log_string`, `console_log_number`, … — `collectConsoleImports`).
+  // (#2856, #4462) console.<m>(arg) — the host-free `__stdout_append` sink.
+  // Intercepted BEFORE receiver lowering (like the Math arm below): `console`
+  // has NO `global_console` handle and NO extern-class registration.
   // Statement position only: console methods return undefined, and the
   // single-arg restriction mirrors what this slice lowers (multi-arg calls
-  // demote cleanly). The variant is chosen by the resolver from the CHECKER
-  // type of the argument — the exact predicate `collectConsoleImports` used
-  // to register the import — so the picked name is registered by
-  // construction.
+  // demote cleanly).
   if (
     ts.isIdentifier(expr.expression.expression) &&
     expr.expression.expression.text === "console" &&
     !receiverIsDirectModuleBinding &&
     cx.scope.get("console") === undefined &&
-    cx.resolver?.consoleArgVariant !== undefined
+    cx.resolver?.nativeConsoleOutputAvailable !== undefined
   ) {
-    const jsHost = cx.resolver?.jsHostExterns?.() === true;
-    const hostFreeSink = cx.resolver?.nativeConsoleOutputAvailable?.() === true;
-    assertNotDeferred(consoleSurfaceCapability(jsHost, hostFreeSink), `console.${methodName}`, cx.funcName);
+    const hostFreeSink = cx.resolver.nativeConsoleOutputAvailable();
+    assertNotDeferred(consoleSurfaceCapability(hostFreeSink), `console.${methodName}`, cx.funcName);
     if (!statementPosition) {
       demoteToLegacy(
         "method-call-unsupported",
@@ -9002,19 +8939,7 @@ function tryLowerConsoleMethodCall(
         `ir/from-ast: console.${methodName} with ${expr.arguments.length} args not in slice (${cx.funcName})`,
       );
     }
-    // (#4462) Host-free lane first — the two capabilities are disjoint, and the
-    // sink only exists where there is no host to import from.
-    if (!jsHost && hostFreeSink) return lowerHostFreeConsoleCall(expr.arguments[0]!, cx, methodName);
-    const argExpr = expr.arguments[0]!;
-    const variant = cx.resolver.consoleArgVariant(argExpr);
-    const importName = `console_${methodName}_${variant}`;
-    const expected: ValType =
-      variant === "number" ? { kind: "f64" } : variant === "bool" ? { kind: "i32" } : { kind: "externref" };
-    const argVal = lowerExpr(argExpr, cx, irVal(expected));
-    const coerced = coerceToExpectedExtern(argVal, expected, cx, `arg of console.${methodName}`);
-    const target = cx.resolver.preparedAsyncConsoleTarget?.(expr) ?? irImportFuncRef("env", importName);
-    cx.builder.emitCall(target, [coerced], null);
-    return null;
+    return lowerHostFreeConsoleCall(expr.arguments[0]!, cx, methodName);
   }
 
   return undefined;
@@ -9277,53 +9202,15 @@ function tryLowerNativeMapMethodCall(
 }
 
 /**
- * ES5 Object.defineProperty — an exact ambient static call. The host lane
- * routes it through the same full ToPropertyDescriptor helper as legacy
- * codegen. Keeping the target symbolic means import indices remain
- * allocator-owned, while `coerce.to_externref` preserves one
- * representation-neutral IR shape for structural target/key/descriptor values.
- * (#7338) A lane without the host helper is the native one, whose defines the
- * statics table lowered before this arm.
+ * ES5 `Object.defineProperty` that reached from-ast: (#7338) the `Object` statics table lowers every
+ * admitted define and the selector refuses every other one, so this is a drift, not a fallback.
  */
-function lowerObjectDefinePropertyCall(expr: ts.CallExpression, cx: LowerCtx): IrValueId {
-  if (expr.arguments.length !== 3 || expr.arguments.some(ts.isSpreadElement)) {
-    throw new IrUnsupportedError(
-      "method-call-unsupported",
-      "build",
-      `ir/from-ast: Object.defineProperty call shape not supported (${cx.funcName})`,
-    );
-  }
-  const target = cx.resolver?.objectDefinePropertyTarget?.();
-  if (!target) {
-    throw new IrInvariantError(
-      "selection-preparation-mismatch",
-      "build",
-      `ir/from-ast: Object.defineProperty is not an admitted Object static (${cx.funcName})`,
-    );
-  }
-  const args = expr.arguments.map((arg, index) => {
-    const value = lowerExpr(arg, cx, irVal({ kind: "externref" }));
-    const type = cx.builder.typeOf(value);
-    const val = asVal(type);
-    const hostExternCarrier =
-      type.kind === "extern" ||
-      val?.kind === "externref" ||
-      (index === 1 && type.kind === "string" && cx.resolver?.stringIsExternref?.() !== false);
-    if (!hostExternCarrier) {
-      throw new IrUnsupportedError(
-        "operand-coercion-unsupported",
-        "build",
-        `ir/from-ast: Object.defineProperty arg ${index} is not host-extern-backed: ${describeIrType(type)} (${cx.funcName})`,
-      );
-    }
-    return cx.builder.emitCoerceToExternref(value);
-  });
-  const result = cx.builder.emitCall(target, args, irVal({ kind: "externref" }));
-  if (result === null) {
-    // invariant (producer-promise): a compiler-support/runtime helper declared non-void returned no SSA value — #4502.
-    throw new Error(`ir/from-ast: Object.defineProperty helper produced no result (${cx.funcName})`);
-  }
-  return result;
+function unadmittedObjectDefineProperty(cx: LowerCtx): never {
+  throw new IrInvariantError(
+    "selection-preparation-mismatch",
+    "build",
+    `ir/from-ast: Object.defineProperty is not an admitted Object static (${cx.funcName})`,
+  );
 }
 
 /** (#7338) The selector's `Object` statics plan, on from-ast's scope and the same program facts. */
@@ -9636,7 +9523,7 @@ function lowerMethodCall(expr: ts.CallExpression, cx: LowerCtx, statementPositio
     methodName === "defineProperty" &&
     isAmbientReceiver(receiverIdentifier, receiverIsDirectModuleBinding, cx)
   ) {
-    return lowerObjectDefinePropertyCall(expr, cx);
+    unadmittedObjectDefineProperty(cx);
   }
 
   // #3787 — exact ambient String.fromCharCode(...). Intercept before receiver
@@ -10209,7 +10096,7 @@ function lowerMethodCall(expr: ts.CallExpression, cx: LowerCtx, statementPositio
     const standaloneDomCall = cx.resolver?.standaloneDomOperation?.(expr);
     const exactStandaloneDomCall = standaloneDomCall?.kind === "member-call" && standaloneDomCall.call === expr;
     assertNotDeferred(
-      domSurfaceCapability(hostExternSurfaceAdmits(cx, recvType.className), exactStandaloneDomCall),
+      domSurfaceCapability(platformExternAdmits(cx, recvType.className), exactStandaloneDomCall),
       `extern method call .${methodName}`,
       cx.funcName,
     );
@@ -10260,7 +10147,7 @@ function lowerMethodCall(expr: ts.CallExpression, cx: LowerCtx, statementPositio
         const packed = cx.builder.emitCallablePack(closure, hostCallbackPlan.signature);
         if (
           (exactStandaloneDomCall && standaloneDomCall.argumentBoundaries[i] === "native-callback-zero-void") ||
-          platformCarrierBoundary(cx, recvType.className)
+          platformExternAdmits(cx, recvType.className)
         ) {
           // (#7091) On the platform lane the packed closure IS the carrier:
           // the runtime's platform-arg marshal bridges it to a JS function.
@@ -10855,7 +10742,7 @@ function lowerPropertyAssignment(expr: ts.BinaryExpression, cx: LowerCtx, receiv
       standaloneDomSet.assignment === expr &&
       standaloneDomSet.access === lhs;
     assertNotDeferred(
-      domSurfaceCapability(hostExternSurfaceAdmits(cx, recvType.className), exactStandaloneDomSet),
+      domSurfaceCapability(platformExternAdmits(cx, recvType.className), exactStandaloneDomSet),
       `extern property write .${fieldName}`,
       cx.funcName,
     );
@@ -17525,15 +17412,12 @@ function lowerTryStatement(stmt: ts.TryStatement, cx: LowerCtx): void {
       payloadSlot = cx.builder.declareSlot(`__catch_${varName}`, { kind: "externref" });
       // Bind the catch variable as a slot read so identifier reads
       // inside the handler emit `local.get` against the slot.
-      // (#7106) On the host-free lanes the thrown payload already IS the dynamic
-      // carrier (an externref), and the selector's move-only scan treats the
+      // (#7106) Where the dynamic carrier is an externref the thrown payload
+      // already IS that carrier, and the selector's move-only scan treats the
       // binding as dynamic. Read it as one, as the for-in head is read, so
       // `"…" + e` and `e instanceof TypeError` take the dynamic operations the
-      // selector admitted. The gc lane's carrier is an externref too, but gc
-      // output stays byte-identical when shared code changes, so the re-tag is
-      // host-free only; gc keeps its pre-existing claim-then-demote on these shapes.
-      const catchIsCarrier =
-        cx.resolver?.dynamicCarrierIsExternref?.() === true && cx.resolver?.jsHostExterns?.() === false;
+      // selector admitted.
+      const catchIsCarrier = cx.resolver?.dynamicCarrierIsExternref?.() === true;
       catchScope.set(varName, {
         kind: "slot",
         slotIndex: payloadSlot,

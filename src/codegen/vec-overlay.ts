@@ -71,7 +71,7 @@
  * factories per `reference_shared_instr_object_dce_double_remap`).
  *
  * Host/gc mode: `reserveVecOverlayHelpers` is only invoked under
- * `ctx.standalone` (see buildObjectDescriptorHelpers) and the fill gates on
+ * the regime flag (see buildObjectDescriptorHelpers) and the fill gates on
  * the reserve flag — host output is byte-identical.
  */
 import { inheritedSetAnyDirty } from "./inherited-set-gate.js"; // (#4602) per-key #4504 gate
@@ -929,7 +929,7 @@ function buildOwnElementFastSet(
  * exists; no funcIdx churn (in-place body edits + append-only mints).
  */
 export function fillVecOverlayHelpers(ctx: CodegenContext): void {
-  if (!ctx.vecOverlayReserved || !ctx.standalone) return;
+  if (!ctx.vecOverlayReserved) return;
   const types = ctx.objectRuntimeTypes;
   if (!types) return;
   const { objectTypeIdx, propEntryTypeIdx } = types;
@@ -994,7 +994,7 @@ export function fillVecOverlayHelpers(ctx: CodegenContext): void {
   // is set for most standalone modules anyway (6 of a 15-module corpus moved,
   // including one with no `Symbol` in its source). The control that holds is
   // the HOST one, and it holds by construction rather than by luck —
-  // `fillVecOverlayHelpers` returns early unless `ctx.standalone`, so gc output
+  // `fillVecOverlayHelpers` returns early unless the regime flag, so gc output
   // cannot move; measured 15/15 sha256-identical on that corpus.
   const symbolKeyTypeIdx = ctx.symbolTypeIdx;
   const carriers = allowedCarriers(ctx);
@@ -2546,7 +2546,7 @@ export function fillVecOverlayHelpers(ctx: CodegenContext): void {
       const setResultGlobalIdx = ctx.externSetResultGlobalIdx;
       const setDecideIdx = ctx.funcMap.get("__extern_set_decide");
       const descriptorDecisionAvailable =
-        ctx.standalone && inheritedSetAnyDirty(ctx) && setResultGlobalIdx !== undefined && setDecideIdx !== undefined;
+        inheritedSetAnyDirty(ctx) && setResultGlobalIdx !== undefined && setDecideIdx !== undefined;
       const holeAwarePresence =
         descriptorDecisionAvailable && ctx.usesArrayHoles && carriers.some((carrier) => carrier.kind === "externref");
       const base = 3 + fn.locals.length;

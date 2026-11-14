@@ -72,7 +72,7 @@ export function isCtorReturnOverrideClass(ctx: CodegenContext, className: string
  * unsound.
  */
 export function isReturnOverrideMemberRead(ctx: CodegenContext, expr: ts.Expression): boolean {
-  if (!ctx.standalone || markedClasses.get(ctx) === undefined) return false;
+  if (markedClasses.get(ctx) === undefined) return false;
   const e = skipTransparentExpressions(expr);
   if (!ts.isPropertyAccessExpression(e) && !ts.isElementAccessExpression(e)) return false;
   if (ts.isPropertyAccessExpression(e) && ts.isPrivateIdentifier(e.name)) return false;
@@ -111,7 +111,7 @@ export function tryEmitOverrideBindingGetPrototypeOf(
   fctx: FunctionContext,
   arg: ts.Expression,
 ): ValType | undefined {
-  if (!ctx.standalone || markedClasses.get(ctx) === undefined) return undefined;
+  if (markedClasses.get(ctx) === undefined) return undefined;
   if (markedInstanceValueClass(ctx, arg) === undefined) return undefined;
   const gptIdx = ensureLateImport(ctx, "__getPrototypeOf", [EXTERNREF], [EXTERNREF]);
   flushLateImportShifts(ctx, fctx);
@@ -146,7 +146,7 @@ export function returnOverrideReceiverIsDynamic(
   receiver: ts.Expression,
   member: ts.MemberName | undefined,
 ): boolean {
-  if (!ctx.standalone || member === undefined || !ts.isIdentifier(member)) return false;
+  if (member === undefined || !ts.isIdentifier(member)) return false;
   if (!isCtorReturnOverrideClass(ctx, typeName)) return false;
   const recv = skipTransparentExpressions(receiver);
   if (recv.kind === ts.SyntaxKind.SuperKeyword) return false;
@@ -225,7 +225,7 @@ export function markCtorReturnOverrideClass(
   className: string,
   decl: ts.ClassDeclaration | ts.ClassExpression,
 ): void {
-  if (!ctx.standalone || ctx.classExternrefBackedSet.has(className)) return;
+  if (ctx.classExternrefBackedSet.has(className)) return;
   let set = markedClasses.get(ctx);
   const parent = ctx.classParentMap.get(className);
   const fnctorParent = parent !== undefined && fnctorParentMayReturnObject(ctx, parent, decl);
@@ -299,7 +299,7 @@ export function emitSaveParentOverride(ctx: CodegenContext, fctx: FunctionContex
  * (recorded residual).
  */
 function frameThisMayBeOverride(ctx: CodegenContext, fctx: FunctionContext): boolean {
-  if (!ctx.standalone || !fctx.isDerivedConstructor || fctx.localMap.get("this") === undefined) return false;
+  if (!fctx.isDerivedConstructor || fctx.localMap.get("this") === undefined) return false;
   const className = markedFrameClass(ctx, fctx);
   return parentMayOverride(ctx, className === undefined ? undefined : ctx.classParentMap.get(className));
 }

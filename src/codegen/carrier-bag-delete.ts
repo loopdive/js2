@@ -154,7 +154,6 @@ function preexistingNativeStringLiteralInstrs(literal: PreexistingNativeStringLi
  * final argument would no longer establish an exact receiver inventory.
  */
 function collectAnonymousExpandoDeleteCandidates(ctx: CodegenContext): AnonymousExpandoDeleteCandidate[] {
-  if (!(ctx.standalone || ctx.wasi)) return [];
   // A linked peer can contribute a canonical twin that this module cannot
   // inventory here. The shape-brand pass handles that broader problem, but this
   // narrow consumer has no cross-module receipt, so retain the old fallback.

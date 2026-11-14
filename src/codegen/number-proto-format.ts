@@ -44,7 +44,6 @@ import { emitNativeNumberFormat } from "./number-format-native.js";
 export type NumberProtoFormatMember = "toPrecision";
 
 export function emitNumberProtoFormatBody(ctx: CodegenContext, fctx: FunctionContext, member: string): ValType | null {
-  if (!ctx.standalone) return null;
   if (member !== "toPrecision") return null;
 
   emitNativeNumberFormat(ctx, new Set(["number_toPrecision", "number_toString"]));

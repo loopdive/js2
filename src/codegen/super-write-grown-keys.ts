@@ -76,7 +76,6 @@ function classHierarchyHasSuperWrite(ctx: CodegenContext, name: string): boolean
  * the super write is standalone-only (`super-property-write.ts`).
  */
 function receiverGainsKeysViaSuperWrite(ctx: CodegenContext, expr: ts.Expression): boolean {
-  if (!ctx.standalone) return false;
   if (ts.isObjectLiteralExpression(expr)) return objectLiteralHasSuperWrite(expr);
   if (ts.isPropertyAccessExpression(expr) && expr.name.text === "prototype" && ts.isIdentifier(expr.expression)) {
     const className = ctx.classExprNameMap.get(expr.expression.text) ?? expr.expression.text;

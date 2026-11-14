@@ -38,7 +38,7 @@ import type { Instr, ValType } from "../ir/types.js";
 import { emitCachedFuncClosureExternref } from "./closures/method-trampolines.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
-import { buildThrowJsErrorInstrs, noJsHost } from "./js-errors.js";
+import { buildThrowJsErrorInstrs } from "./js-errors.js";
 import { stringConstantExternrefInstrs } from "./native-strings.js";
 import { ensureObjectRuntime } from "./object-runtime.js";
 import { addFuncType } from "./registry/types.js";
@@ -90,7 +90,6 @@ export function seedStrictArgumentsCalleePoison(
   fctx: FunctionContext,
   argsLocalIdx: number,
 ): void {
-  if (!noJsHost(ctx)) return;
   ensureObjectRuntime(ctx);
   const poisonIdx = ensureThrowTypeErrorFunc(ctx);
   if (poisonIdx === undefined) return;
@@ -159,7 +158,6 @@ const ITERATOR_FLAGS = 0x01 | 0x04;
  * Installed BEFORE `callee`, matching the spec's own-key creation order.
  */
 export function seedArgumentsIteratorProperty(ctx: CodegenContext, fctx: FunctionContext, argsLocalIdx: number): void {
-  if (!noJsHost(ctx)) return;
   ensureObjectRuntime(ctx);
   const brand = ensureArrayNativeProtoGlue(ctx);
   if (brand === undefined) return;

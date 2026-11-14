@@ -221,7 +221,7 @@ export function moduleMentionsObjectIdentifier(sourceFile: ts.SourceFile): boole
  * before any funcIdx is captured by name and flush afterwards.
  */
 export function ensureWrapperConstructorCarriers(ctx: CodegenContext): void {
-  if (!ctx.standalone || ctx.wrapperCtorCarrierDemanded !== true) return;
+  if (ctx.wrapperCtorCarrierDemanded !== true) return;
   for (const builtinName of [...WRAPPER_BUILTINS, PLAIN_CARRIER_FN] as const) {
     // (#4232) The plain-`Object` carrier carries its own, NARROWER gate — see
     // `moduleMentionsObjectIdentifier`. The three wrapper carriers are cheap
@@ -293,7 +293,6 @@ export function wrapperConstructorArmInstrs(
     instrs: [] as Instr[],
     locals: [] as { name: string; type: ValType }[],
   };
-  if (!ctx.standalone) return empty;
   const { keyEqualsConstructor, firstLocalIndex, objectTypeIdx, propEntryTypeIdx } = opts;
   if (!keyEqualsConstructor) return empty;
   const objFindIdx = ctx.funcMap.get("__obj_find");

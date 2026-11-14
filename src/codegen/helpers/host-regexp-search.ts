@@ -49,7 +49,7 @@ const used = new WeakSet<CodegenContext>();
 
 /** The `regexp` accelerator under the native regime (needs the string bridge). */
 export function hostRegExpAccelerated(ctx: CodegenContext): boolean {
-  return ctx.standalone && hasHostAccelerator(ctx.targetProfile, "regexp") && hostStringBridgeUsable(ctx);
+  return hasHostAccelerator(ctx.targetProfile, "regexp") && hostStringBridgeUsable(ctx);
 }
 
 /** Collector visit: remember that the source can create a RegExp. */

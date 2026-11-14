@@ -39,7 +39,6 @@ function isArrayFact(ctx: CodegenContext, expr: ts.Expression): boolean {
  * returns the (non-array) target. `call` is the ambient `Object.assign` call.
  */
 export function objectAssignArraySourceLies(ctx: CodegenContext, call: ts.CallExpression): boolean {
-  if (!(ctx.standalone || ctx.wasi)) return false;
   const [target, ...sources] = call.arguments;
   if (target === undefined || ts.isSpreadElement(target) || isArrayFact(ctx, target)) return false;
   return sources.some((arg) => !ts.isSpreadElement(arg) && isArrayFact(ctx, arg));

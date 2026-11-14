@@ -110,9 +110,8 @@ export function prepareCollectionSubclassHeritage(
   ensureMapRuntimeTypes: (ctx: CodegenContext) => void,
 ): string | undefined {
   if (!ctx.nativeStrings) return undefined;
-  const standalone = ctx.standalone || ctx.wasi;
   if (parentIsUserClass) {
-    return standalone && isCollectionCarrierClass(ctx, parentClassName)
+    return isCollectionCarrierClass(ctx, parentClassName)
       ? `Codegen error: 'class ${className} extends ${parentClassName}' is not yet supported in --target standalone ` +
           `(#6754): '${parentClassName}' stores instance fields on its native collection, and a subclass's ` +
           `super() would bypass that storage. Extend the builtin directly or recompile without --target standalone.`
@@ -120,14 +119,13 @@ export function prepareCollectionSubclassHeritage(
   }
   if (!isNativeCollectionBuiltin(parentClassName)) return undefined;
   const declaresAccessor = decl.members.some((m) => ts.isGetAccessorDeclaration(m) || ts.isSetAccessorDeclaration(m));
-  const declaresField = decl.members.some((m) => ts.isPropertyDeclaration(m));
-  if (!declaresAccessor && (standalone || !declaresField)) {
-    if (standalone && mayDeclareOwnFields(decl)) ensureMapRuntimeTypes(ctx);
+  if (!declaresAccessor) {
+    if (mayDeclareOwnFields(decl)) ensureMapRuntimeTypes(ctx);
     return undefined;
   }
   return (
     `Codegen error: 'class ${className} extends ${parentClassName}' with a declared ` +
-    `${standalone ? "accessor" : "property or accessor"} is not yet supported in --target standalone (#2620/#3972/#6754). ` +
+    `accessor is not yet supported in --target standalone (#2620/#3972/#6754). ` +
     `Construction, inherited methods and instance fields are native — but an accessor on a ` +
     `native-collection subclass is not implemented, and would trap at runtime rather than fail here. ` +
     `Drop the accessor, use ${parentClassName} directly, or recompile without --target standalone.`
@@ -147,7 +145,7 @@ export function applyCollectionCarrierLayout(
   structDef: StructTypeDef,
   fields: FieldDef[],
 ): void {
-  if (!(ctx.standalone || ctx.wasi) || !ctx.nativeStrings) return;
+  if (!ctx.nativeStrings) return;
   if (!ctx.classExternrefBackedSet.has(className)) return;
   const builtinParent = ctx.classBuiltinParentMap.get(className);
   if (builtinParent === undefined || !isNativeCollectionBuiltin(builtinParent)) return;
@@ -283,7 +281,7 @@ export function compileCollectionSuperMethodCall(
   className: string,
   native: { readonly map: NativeCollectionMethodCall; readonly set: NativeCollectionMethodCall },
 ): InnerResult | undefined {
-  if (!(ctx.standalone || ctx.wasi) || !ctx.classExternrefBackedSet.has(className)) return undefined;
+  if (!ctx.classExternrefBackedSet.has(className)) return undefined;
   const parent = ctx.classBuiltinParentMap.get(className);
   const callee = expr.expression;
   if (parent === undefined || !isNativeCollectionBuiltin(parent) || !ts.isPropertyAccessExpression(callee)) {

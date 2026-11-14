@@ -49,7 +49,7 @@
  *
  * ## Safety envelope
  *
- * The caller gates on `ctx.standalone` + unshadowed builtin identifier +
+ * The caller gates on the regime flag + unshadowed builtin identifier +
  * literal key — every intercepted shape CE'd on main (`__get_builtin`
  * refusal), so nothing currently passing can change. Host/gc/wasi lanes never
  * reach this module. Each arm resolves its natives (`ensureLateImport` +
@@ -245,7 +245,7 @@ export function resolveBuiltinProtoGopdReceiver(
   builtinCtorNames: ReadonlySet<string>,
   tracesToTypedArrayProto: (e: ts.Expression) => boolean,
 ): string | undefined {
-  if (!ctx.standalone || propLiteral === undefined) return undefined;
+  if (propLiteral === undefined) return undefined;
   if (
     ts.isPropertyAccessExpression(arg0) &&
     !ts.isPrivateIdentifier(arg0.name) &&
@@ -512,7 +512,7 @@ export function tryEmitStandaloneBuiltinSpeciesGopd(
  *
  * ## Safety envelope
  *
- * `ctx.standalone`-gated by the caller; host/gc keeps its working host-import
+ * regime-gated by the caller; host/gc keeps its working host-import
  * route (byte-inert). Bails (returns `false`, nothing pushed) for class
  * receivers (methods keep the #1364a dynamic-fallback behavior) and
  * sidecar-defined keys (#1629b defineProperty migration). A non-string

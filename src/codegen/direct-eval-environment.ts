@@ -273,7 +273,6 @@ export function widenClosureReturnForDirectEval(
 ): ValType | null {
   if (
     closureReturnType === null ||
-    (!ctx.standalone && !ctx.wasi) ||
     !functionOwnScopeMayReachDirectEval(arrow, ctx.oracle) ||
     !arrow.body ||
     !ts.isBlock(arrow.body)
@@ -491,10 +490,6 @@ export function emitEnsureDirectEvalActivationStatePoolInitialized(
  * only an outer capture or a name with no current binding can be shadowed by a
  * later sloppy direct-eval var declaration. */
 export function runtimeEvalStateMayShadowBinding(ctx: CodegenContext, fctx: FunctionContext, name: string): boolean {
-  // The caller-owned activation carrier belongs to the standalone/WASI
-  // provider seam. JS-host direct eval keeps its existing static-splice/host
-  // behavior and must not synthesize provider-only helpers into that module.
-  if (!ctx.standalone && !ctx.wasi) return false;
   if (fctx.directEvalActivationStatePoolLocal === undefined && fctx.directEvalBindingNames === undefined) {
     return false;
   }

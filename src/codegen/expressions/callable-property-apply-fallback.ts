@@ -30,7 +30,6 @@ import { ts } from "../../ts-api.js";
 import type { Instr, ValType } from "../../ir/types.js";
 import { allocLocal } from "../context/locals.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
-import { noJsHost } from "../js-errors.js";
 import { applyClosureAdmitsCall, ensureObjVecBuilders, reserveApplyClosure } from "../object-runtime.js";
 import { standaloneMissingStringArgRead } from "./dispatch-extern-arg-bridge.js";
 import { guardedExternRefResultBridge } from "./dispatch-extern-result-bridge.js";
@@ -106,7 +105,7 @@ export function planCallablePropertyApplyFallback(
   paramTypes: readonly ValType[],
   expectedReturn: ValType | null,
 ): CallablePropertyApplyFallback | null {
-  if (!noJsHost(ctx) || fieldType.kind !== "externref") return null;
+  if (fieldType.kind !== "externref") return null;
   if (!applyClosureAdmitsCall(expr)) return null;
   const argCount = Math.min(expr.arguments.length, paramTypes.length);
   const views: ArgView[] = [];

@@ -38,8 +38,7 @@ import { ensureLateImport, flushLateImportShifts } from "./expressions/late-impo
  * bridge is skipped in BOTH directions and the lane stays byte-identical.
  */
 export function slotNeedsExternrefBridge(ctx: CodegenContext, slotType: ValType | undefined): boolean {
-  const noJsHost = ctx.standalone === true || ctx.wasi === true;
-  return noJsHost && slotType?.kind === "externref";
+  return slotType?.kind === "externref";
 }
 
 /**

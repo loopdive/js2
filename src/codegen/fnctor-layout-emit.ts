@@ -137,7 +137,7 @@ export function fnctorLayoutEmitEnabled(): boolean {
  * be byte-identical for every flag value by ITS OWN check, not by inheritance.
  */
 export function fnctorLayoutEmitFor(ctx: CodegenContext): boolean {
-  return ctx.standalone && fnctorLayoutEmitEnabled();
+  return fnctorLayoutEmitEnabled();
 }
 
 /** The split-verdict plan for `fnctorName`, or undefined when not splittable. */
@@ -203,7 +203,7 @@ export function reserveFnctorLayoutTypes(ctx: CodegenContext, fnctorName: string
   const plan = fnctorLayoutPlanFor(ctx, fnctorName);
   if (readEnv("JS2WASM_FNCTOR_LAYOUT_DIAG") === "1") {
     process.stderr.write(
-      `[layout-emit] reserve ${fnctorName}: standalone=${String(ctx.standalone)} flag=${String(
+      `[layout-emit] reserve ${fnctorName}: standalone=${String(true)} flag=${String(
         fnctorLayoutEmitEnabled(),
       )} plans=${String(ctx.fnctorEscapeGate?.allocLabels !== undefined)} verdict=${
         ctx.fnctorEscapeGate?.allocLabels?.plans.get(fnctorName)?.verdict ?? "-"
@@ -450,7 +450,7 @@ export function emitLayoutSelectingStructNew(
   const defaultsFor = (structName: string, stamp: number): Instr[] => {
     const out: Instr[] = [];
     for (const field of ctx.structFields.get(structName) ?? []) {
-      if (ctx.standalone && field.name === "$constructor") {
+      if (field.name === "$constructor") {
         out.push({ op: "local.get", index: constructorIdentityParamIdx });
       } else if (field.name === LAYOUT_STAMP_FIELD) {
         out.push({ op: "i32.const", value: stamp });

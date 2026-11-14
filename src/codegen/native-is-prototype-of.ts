@@ -43,7 +43,6 @@
  */
 import { ts } from "../ts-api.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
-import { noJsHost } from "./js-errors.js";
 import type { InnerResult } from "./shared.js";
 import { coerceType, compileExpression } from "./shared.js";
 import { ensureLateImport, flushLateImportShifts } from "./shared.js";
@@ -204,8 +203,6 @@ export function tryEmitStaticOrNativeIsPrototypeOf(
     fctx.body.push({ op: "i32.const", value: staticResult ? 1 : 0 });
     return { kind: "i32", boolean: true };
   }
-  // The runtime walk exists ONLY host-free; gc/host keeps its `env::` dispatch.
-  if (!noJsHost(ctx)) return null;
 
   // Reserve the walk helper BEFORE any operand is compiled so a late funcIdx
   // shift reaches the already-emitted instructions through `currentFunc`. Under

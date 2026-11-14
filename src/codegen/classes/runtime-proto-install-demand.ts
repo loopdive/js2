@@ -106,7 +106,7 @@ export function recordRuntimeProtoInstallDemand(
   protoRead: ts.Node | undefined,
   className: string,
 ): void {
-  if (!(ctx.standalone || ctx.wasi) || protoRead === undefined) return;
+  if (protoRead === undefined) return;
   if (!isRuntimeProtoMutationTarget(protoRead)) return;
   const structTypeIdx = ctx.structMap.get(className);
   // No struct, no instances to serve: recording would widen to every class.

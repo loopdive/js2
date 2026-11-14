@@ -60,7 +60,7 @@ import { addUnionImportsViaRegistry } from "./shared.js";
  * Emitted at RESERVE time (append-only defined funcs — no funcIdx shift, same
  * invariant as `ensureObjectGroupBy`), so `fillClosedMethodDispatch` only
  * READS funcMap (#1719). Standalone-only: the `__extern_get_idx` array-like
- * arms this loop relies on are emitted only under `ctx.standalone` (see
+ * arms this loop relies on are emitted only under the regime flag (see
  * `objArrayLikeArms` in `ensureObjectRuntime`). Idempotent per method name.
  */
 const NATIVE_HOF_EACH = new Set([
@@ -104,7 +104,6 @@ export function ensureNativeArrayHof(
   methodName: string,
   options: NativeArrayHofOptions = {},
 ): number | undefined {
-  if (!ctx.standalone) return undefined;
   if (!NATIVE_HOF_METHODS.has(methodName)) return undefined;
   const helperName = options.helperName ?? `__hof_${methodName}`;
   const existing = ctx.funcMap.get(helperName);
@@ -599,7 +598,7 @@ export function fillHofTaDynViewPresenceBypass(ctx: CodegenContext): void {
   const dynIdx = ctx.taDynViewTypeIdx;
   const hasIdx = ctx.funcMap.get("__extern_has_idx");
   const externLengthIdx = ctx.funcMap.get("__extern_length");
-  if (!ctx.standalone || dynIdx < 0 || externLengthIdx === undefined) return;
+  if (dynIdx < 0 || externLengthIdx === undefined) return;
   type Nested = Instr & { then?: Instr[]; else?: Instr[]; body?: Instr[] };
   const walk = (arr: Instr[], visit: (arr: Instr[], j: number) => number): void => {
     for (let j = 0; j < arr.length; j++) {

@@ -307,7 +307,7 @@ export function isHostCallbackArgument(node: ts.Node, ctx: CodegenContext): bool
       // then invokes — `Array.prototype.forEach.call(arr, cb)` — dispatches the
       // struct via `__call_fn_N`, verified host-free). Standalone-gated so the
       // js-host lane stays byte-identical.
-      if (ctx.standalone && (methodName === "call" || methodName === "apply")) {
+      if (methodName === "call" || methodName === "apply") {
         return false;
       }
       try {
@@ -396,11 +396,7 @@ export function isHostCallbackArgument(node: ts.Node, ctx: CodegenContext): bool
         // byte-identical). map/filter (typed-RESULT construction) are NOT here —
         // deferred to R4b. The dyn-view (`$__ta_dyn_view`) receiver shape stays
         // on its own #3058/#3162 path in array-methods.ts.
-        if (
-          ctx.standalone &&
-          STANDALONE_TYPED_ARRAY_SCALAR_HOFS.has(methodName) &&
-          isTypedArrayReceiverType(receiverType, ctx)
-        ) {
+        if (STANDALONE_TYPED_ARRAY_SCALAR_HOFS.has(methodName) && isTypedArrayReceiverType(receiverType, ctx)) {
           return false;
         }
       } catch {

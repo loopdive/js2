@@ -82,7 +82,6 @@ export function tryEmitClassInstanceMemberCall(
   fctx: FunctionContext,
   expr: ts.CallExpression,
 ): ValType | undefined {
-  if (!ctx.standalone && !ctx.wasi) return undefined;
   const shape = memberCallShape(expr);
   if (shape === undefined) return undefined;
   if (!applyClosureAdmitsCall(expr)) return undefined;

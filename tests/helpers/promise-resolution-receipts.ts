@@ -6,7 +6,7 @@ import { arrayThenObservable } from "../../src/codegen/promise-species-then.js";
 import ts from "typescript";
 import { expect } from "vitest";
 import { createBuiltinFunctionMetadataType } from "../../src/runtime/wasmgc/values/closure-layouts.js";
-import { buildTargetTaggedTry } from "../../src/wasm/physical/exception-control.js";
+import { buildTargetTaggedTry as buildTaggedTry } from "../../src/wasm/physical/exception-control.js";
 import { promiseRejectionDispatcher } from "../../src/codegen/registry/promise-rejection-dispatch.js";
 import {
   buildPromiseResolveValueBody as buildResolutionBody,
@@ -22,6 +22,24 @@ import {
   buildPromiseThenableLookup,
   type PromiseThenableInventory,
 } from "../../src/runtime/wasmgc/promise/thenable-bodies.js";
+
+/**
+ * (#6979 S7-f) The historical donors call the pre-S7-f `(target, blockType, …)`
+ * ABI, whose `{ wasi: false, standalone: false }` arm emitted a legacy `try`.
+ * Replay that ABI for donor text only; current sources call the live
+ * `(blockType, …)` builder, which always lowers to standardized EH.
+ */
+type TaggedTryArgs = Parameters<typeof buildTaggedTry>;
+function buildTargetTaggedTry(...args: unknown[]): unknown {
+  const first = args[0] as { wasi?: unknown; standalone?: unknown; kind?: unknown } | undefined;
+  if (first && typeof first === "object" && "wasi" in first && !("kind" in first)) {
+    const [blockType, body, catches, catchAll] = args.slice(1) as TaggedTryArgs;
+    if (!first.wasi && !first.standalone)
+      return { op: "try", blockType, body, catches, ...(catchAll === undefined ? {} : { catchAll }) };
+    return buildTaggedTry(blockType, body, catches, catchAll);
+  }
+  return buildTaggedTry(...(args as TaggedTryArgs));
+}
 
 // Authentication is self-contained: shallow CI needs no historical Git objects.
 // This pins the verbatim donor receipt, not a regenerated expected result.

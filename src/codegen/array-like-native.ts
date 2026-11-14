@@ -37,8 +37,6 @@ interface ArrayLikeDeps {
 
 /** Register the shared dynamic-object helpers before their indices are used. */
 function prepareArrayLikeDeps(ctx: CodegenContext, fctx: FunctionContext): ArrayLikeDeps | undefined {
-  if (!ctx.standalone && !ctx.wasi) return undefined;
-
   // The native object runtime owns these names under the host-free semantic
   // provider.  Calling it first also makes the helper available when this is
   // the first native-prototype body requested by a module.

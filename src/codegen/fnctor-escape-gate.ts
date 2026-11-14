@@ -2208,7 +2208,7 @@ export function deriveFnctorFields(
   // duplicate native slots there would shadow the sidecar during marshalling
   // while their presence bits remain unset. This native shape growth is the
   // host-free standalone replacement only.
-  if (ctx.standalone && flowStructName) {
+  if (flowStructName) {
     for (const [receiver, structName] of ctx.fnctorEscapeGate?.receiverStruct ?? []) {
       if (structName !== flowStructName) continue;
       const access = receiver.parent;
