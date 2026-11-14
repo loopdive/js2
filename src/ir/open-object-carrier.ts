@@ -9,6 +9,7 @@
  */
 
 import type { IrFunctionBuilder } from "./builder.js";
+import type { OpenCarrierHome } from "./empty-object-literal.js";
 import { irRuntimeFuncRef } from "./callable-bindings.js";
 import { JS_TAG_IDS } from "./js-tag-domain.js";
 import { irDynamic, irVal, type IrType, type IrValueId } from "./nodes.js";
@@ -40,6 +41,16 @@ export interface DescriptorFieldValue {
 export interface ObjectStaticDefinitionValues {
   readonly key: IrValueId | string;
   readonly fields: readonly DescriptorFieldValue[];
+}
+
+/**
+ * The open carrier an admitted empty object value builds (`{}` or `new
+ * Object()`): a fresh `$Object`, boxed onto the dynamic carrier in #7280's
+ * dynamic-home slot, raw in #7128's externref binding.
+ */
+export function emitOpenCarrierObject(builder: IrFunctionBuilder, home: OpenCarrierHome): IrValueId {
+  const object = emitNewPlainObject(builder, irVal({ kind: "externref" }));
+  return home === "dynamic-home" ? builder.emitBox(object, irDynamic()) : object;
 }
 
 /**

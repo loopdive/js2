@@ -188,8 +188,7 @@ export interface ObjectStaticsRealm extends IrObjectIntegrityRealm {
   readonly isDynamicHomeReceiver: (receiver: ts.Expression) => boolean;
 }
 
-/** An inline `{}`. */
-export function isEmptyObjectLiteral(expr: ts.Expression): boolean {
+function isEmptyObjectLiteral(expr: ts.Expression): boolean {
   return ts.isObjectLiteralExpression(expr) && expr.properties.length === 0;
 }
 

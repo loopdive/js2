@@ -102,6 +102,7 @@ const REFUSED: Record<string, { readonly source: string; readonly detail: string
     source: `var o = {}; if ((o).valueOf === undefined) { throw "inherited"; }`,
     detail: "expr-carrier-inherited-member",
   },
+  // (#7341) Refused before the probe: the carrier's loose `== null` has no lowering.
   "parenthesized loose equality": {
     source: `var o = {}; if ((o) == null) { throw "null"; }`,
     detail: "operand-coercion-unsupported",
