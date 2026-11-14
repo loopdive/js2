@@ -1948,3 +1948,32 @@ it is `it.fails` #7262. Measured across the ten F3 files: 35 rows red at HEAD �
   the one receipt file F2 edits were re-pinned (fix-on-touch).
 - `buildTargetTaggedTry` keeps its name although it no longer takes a target —
   renaming it touches ~50 sites and the receipt fixtures for no behaviour.
+
+## S7 chain merge_group: the retired-host-import refusal is the #2961 root cause (2026-11-14)
+
+The chain's first merge_group (PR #7226, run 43532256652) failed
+`merge shard reports` with "Standalone root-cause map has 7 unclassified
+failures". Reproduced locally:
+
+- **Sample:** the 375 rows that fail on main's standalone baseline with
+  "standalone target emitted host imports (#2961)". Ran them on the chain
+  head with CI-shaped records and classified with CI's flags. The result was
+  exactly 7 unclassified.
+- **The 7:** `test/built-ins/Error/isError/{fake-errors,errors,non-error-objects,non-error-objects-other-realm,errors-other-realm,bigints,error-subclass}.js`.
+  `symbols.js` has the same text but another bucket takes it.
+- **Verdict:** `compile_error` on main and on the chain. Only the text
+  changed, from main's #2961 leak diagnostic to the chain's compile-time
+  refusal ("… would need retired host imports: env::__error_isError …").
+- **Fix:** the same root cause and category for both spellings. One
+  pattern in `classifyError` (`tests/test262-runner.ts`, category
+  `host_import_leak`) and in the existing
+  `standalone-host-import-leak-reclassification` bucket
+  (`scripts/build-test262-report.mjs`). No new bucket. The rows are pinned in
+  `tests/issue-2961-standalone-no-raw-pass.test.ts`.
+- **After the fix:** 0 unclassified on the 375. No pass↔fail flip against
+  main's baseline. 13 rows go `compile_error` → `pass`, and 27 go
+  `compile_error` → `fail` (non-pass to non-pass).
+- **Candidate under #5385, out of scope here:** a native `Error.isError`
+  (ES2026), a brand test on the native error structs including subclasses and
+  other realms. It would turn these eight rows from compile errors into
+  verdicts.
