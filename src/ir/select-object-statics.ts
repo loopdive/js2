@@ -220,10 +220,20 @@ export function createObjectStaticSelector(state: ObjectStaticSelectorState): Ob
     visited.add(declaration);
     return producesCarrier(declaration.initializer!, leaves(visited));
   };
-  // An admitted static answers the carrier; (#7339) an own-property test the i32 boolean where its call is typed
-  // `boolean`, else the boxed boolean, which carries as main's method call on its receiver does.
-  const staticCall: CarrierLeaves["call"] = (call) =>
-    objectCall(call) ? true : answersBoolean(call) ? false : undefined;
+  /**
+   * An admitted static answers the carrier; (#7339) an own-property test its boolean, boxed onto the carrier where
+   * the call is typed other than `boolean` (the plan's `answer`, which from-ast reads too).
+   */
+  const staticCall: CarrierLeaves["call"] = (call) => {
+    const admitted = plan(call);
+    if (admitted?.kind === "test") return admitted.test.answer === "dynamic";
+    return admitted?.kind === "call" ? true : undefined;
+  };
+  /** A table result is a static's object: a test's boolean, boxed or not, crosses a call as main's values do. */
+  const resultCall: CarrierLeaves["call"] = (call) => {
+    const kind = plan(call)?.kind;
+    return kind === "call" ? true : kind === "test" ? false : undefined;
+  };
 
   /** The table's results: a static's answer, and a binding initialised with one. */
   const resultLeaves = (visited: Set<ts.Declaration>): CarrierLeaves => ({
@@ -231,7 +241,7 @@ export function createObjectStaticSelector(state: ObjectStaticSelectorState): Ob
       const declaration = initializedDeclaration(node);
       return declaration !== undefined && holdsInitializer(declaration, visited, resultLeaves);
     },
-    call: staticCall,
+    call: resultCall,
   });
   /** The table's carriers, as its consumers read them: its results, and a dynamic home a table call takes. */
   const carrierLeaves = (visited: Set<ts.Declaration>): CarrierLeaves => ({
