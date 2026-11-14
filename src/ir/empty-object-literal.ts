@@ -12,20 +12,70 @@
  *     later `o.k` can read; an IR `object.new` could serve neither.
  */
 
+import { isUnshadowedLibBinding } from "../shared/ambient-intrinsics.js";
+import {
+  sourceMayWriteGlobalObject,
+  sourceRunsDynamicCode,
+  sourceWritesMemberNamed,
+} from "../shared/intrinsic-prototype-writes.js";
 import { ts } from "../ts-api.js";
 import { isPrimitiveLiteral } from "./descriptor-literal.js";
 import { referencesNamed } from "./dynamic-home-uses.js";
 import { OBJECT_PROTOTYPE_KEYS } from "./realm-keys.js";
 
-export interface EmptyObjectLiteralBinding {
-  readonly literal: ts.ObjectLiteralExpression;
+/** An empty object value in either spelling. */
+export type EmptyObjectExpression = ts.ObjectLiteralExpression | ts.NewExpression;
+
+/**
+ * Where an admitted empty object value lives: #7128's function-local binding
+ * holds the raw externref, #7280's dynamic-home script slot holds it boxed onto
+ * the dynamic carrier.
+ */
+export type OpenCarrierHome = "binding" | "dynamic-home";
+
+/**
+ * (#7341) `new Object(…)` reaches the realm's `Object`: only lib declarations
+ * bind the name and nothing in the file declares it (a script's
+ * `function Object() {}` merges with the lib one, so the checker alone cannot
+ * tell), nor writes it (`Object = f`, `this.Object = f`), nor can write it
+ * unseen (the global object escaping, or dynamic code).
+ */
+export function isRealmObjectConstruction(
+  expr: ts.NewExpression,
+  isLibOnlyBinding: (node: ts.Identifier) => boolean,
+): boolean {
+  const callee = expr.expression;
+  if (!ts.isIdentifier(callee) || callee.text !== "Object" || !isUnshadowedLibBinding(callee, isLibOnlyBinding)) {
+    return false;
+  }
+  const file = expr.getSourceFile();
+  return !sourceWritesMemberNamed(file, "Object") && !sourceMayWriteGlobalObject(file) && !sourceRunsDynamicCode(file);
+}
+
+/**
+ * `{}`, or (#7341) `new Object()` / `new Object` on the realm's `Object`: the
+ * same fresh ordinary object (§20.1.1.1 step 3 without a value), which legacy
+ * builds with the same `__new_plain_object` call.
+ */
+export function isEmptyObjectExpression(
+  expr: ts.Expression,
+  isLibOnlyBinding: (node: ts.Identifier) => boolean,
+): expr is EmptyObjectExpression {
+  if (ts.isObjectLiteralExpression(expr)) return expr.properties.length === 0;
+  return (
+    ts.isNewExpression(expr) && (expr.arguments?.length ?? 0) === 0 && isRealmObjectConstruction(expr, isLibOnlyBinding)
+  );
+}
+
+export interface EmptyObjectBinding {
+  readonly value: EmptyObjectExpression;
   readonly decl: ts.VariableDeclaration;
   readonly name: ts.Identifier;
   readonly references: readonly ts.Identifier[];
 }
 
 /**
- * The binding an empty literal initializes, with every reference to it in
+ * The binding an empty object value initializes, with every reference to it in
  * `owner` (its projection owner), or undefined.
  *
  * The binding must be a plain, UN-ANNOTATED identifier. An annotation is
@@ -53,14 +103,14 @@ export interface EmptyObjectLiteralBinding {
  * or a shadowing binding all count. That over-approximates, which is the safe
  * direction — it can only refuse to claim.
  */
-export function emptyObjectLiteralBinding(
-  expr: ts.ObjectLiteralExpression,
+export function emptyObjectBinding(
+  expr: EmptyObjectExpression,
   owner: ts.Node | undefined,
-): EmptyObjectLiteralBinding | undefined {
+): EmptyObjectBinding | undefined {
   const decl = expr.parent;
   if (owner === undefined || !ts.isVariableDeclaration(decl) || decl.initializer !== expr) return undefined;
   if (decl.type !== undefined || !ts.isIdentifier(decl.name)) return undefined;
-  return { literal: expr, decl, name: decl.name, references: referencesNamed(decl.name, owner) };
+  return { value: expr, decl, name: decl.name, references: referencesNamed(decl.name, owner) };
 }
 
 /**

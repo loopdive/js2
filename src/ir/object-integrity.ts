@@ -175,6 +175,11 @@ function isIntegrityTestOperand(object: ts.Identifier): boolean {
   );
 }
 
+/** `new Object(…)` (#7341): the construction answers a fresh object and exposes no static. */
+function isConstructed(object: ts.Identifier): boolean {
+  return ts.isNewExpression(object.parent) && object.parent.expression === object;
+}
+
 function sourceIntegrityFacts(sourceFile: ts.SourceFile): SourceIntegrityFacts {
   const cached = sourceIntegrityFactsCache.get(sourceFile);
   if (cached !== undefined) return cached;
@@ -205,7 +210,13 @@ function sourceIntegrityFacts(sourceFile: ts.SourceFile): SourceIntegrityFacts {
       const parent = node.parent;
       const isObjectKey = ts.isPropertyAssignment(parent) && parent.name === node;
       if (node.text === "globalThis") objectStaticsPristine = false;
-      else if (node.text === "Object" && !isObjectKey && !isStaticRead(node) && !isIntegrityTestOperand(node)) {
+      else if (
+        node.text === "Object" &&
+        !isObjectKey &&
+        !isStaticRead(node) &&
+        !isIntegrityTestOperand(node) &&
+        !isConstructed(node)
+      ) {
         objectStaticsPristine = false;
       }
     }
