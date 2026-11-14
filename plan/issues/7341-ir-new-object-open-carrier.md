@@ -404,7 +404,7 @@ for `new Object()`.
 | `o.p++`, `o.p += 1`, `o["p"]++` on a carrier | from-ast: "compound property/element write on dynamic" | `member-compound-dynamic-receiver` (#7212's arm in `isPhase1MutableMemberTarget`) |
 | `o == null`, `null != o`, `o.p != null` | from-ast: "bare 'null' in non-reference context" | `expr-carrier-loose-null` (#7212's `compareVerdict`) |
 | `switch (o)`, `switch (o.k)` on a carrier | from-ast: "switch disc must lower to i32/f64" | `switch-disc-carrier` (`isPhase1SwitchStatement`) |
-| `void o.p !== undefined`, `void o != undefined`, and the step-B mixed shapes below | from-ast: "undefined-compare on f64 not in IR scope" / "matching operand types" / "bare 'null'" | `expr-void-carrier-compare` (the `void` arm, `isPhase1VoidExpression`; `voidEquality` in `analysis/operand-admissibility.ts`) |
+| `void o.p !== undefined`, `void o != undefined`, and the step-B mixed shapes below | from-ast: "undefined-compare on f64 not in IR scope" / "matching operand types" / "bare 'null'" | `expr-void-carrier-compare` (the `void` arm, `isPhase1VoidExpression`; `voidCompareUnlowered` in `select-object-statics.ts`) |
 
 On ordinary code these rules only flip claims that main withdrew after the
 claim.
@@ -466,6 +466,53 @@ the own-property probe. Only its expected detail changed.
   `new Object()` file refused #7335's define as `expr-object-static-untrusted`
   once #7212 moved defines into the statics table.
 
+### Review (step B) round 1: NOT MET → fixes (2026-11-14)
+
+- **B1 (blocker):** `var o = new Object(); o.p = 1; o = { p: 2 }` claimed
+  `<module-init>`, and from-ast then withdrew it ("assignment to module
+  binding "o" (dynamic) got object{p:f64}"). The root cause predates this
+  branch: main withdraws the same way for `var o = {}`, a bare `var o;`,
+  and a function-body write.
+  - Fix: `moduleBindingTakes` (`select-object-statics.ts`) refuses an
+    object literal assigned to a dynamic module binding, because from-ast
+    boxes no struct onto the dynamic slot. Every assignment arm (statement,
+    body, tail) goes through it.
+  - Rows for five shapes are in the test file.
+  - One cost, on a synthetic probe only: `var o = {}; function g() { o = { p: 2 }; } g();`.
+    On main, `g` withdraws after its claim and `<module-init>` stays IR. Here
+    `g` is refused at select, and the callee-direction call-graph closure
+    takes `<module-init>` with it. The 1,173-file census shows no such loss.
+- **S1:** the `void`/carrier equality predicate moved from the shared
+  `analysis/operand-admissibility.ts` into the selector's carrier module as
+  `voidCompareUnlowered`, next to its sibling `compareVerdict`. from-ast
+  refuses these compares in three places, not one: the null fold, the
+  matching-type check and the undefined compare. So the predicate is the
+  selector's mirror of them, not a shared fact.
+  - Follow-up: give from-ast one lowering for a `void` compared with the
+    carrier, then make the predicate the fact both sides read.
+- **S2:** `openObjectLeaves` is one leaf set in the shape of
+  `carrierLeaves` and recurses through itself. The redundant `holdsCarrier`
+  test is gone.
+- **Nits:**
+  - the table name is corrected;
+  - `hasNoConstructorArguments` is inlined;
+  - `new Object(undefined)` and `new Object(null)` are refused
+    (`expr-new-object-argument`) as a conservative limit, although they also
+    build a fresh object;
+  - the #7212 gained-list note is corrected.
+- **Re-verified** on `a6619f5995`, which merges main `f5249b0062`, the merged
+  S7 chain:
+  - Census (1,173 files): 23 gained (the S1 set); 0 lost; 0 units newly
+    legacy; 0 post-claim errors on both trees.
+  - Reviewer's 367 probes: 0 wrong answers; 0 head-only post-claim errors.
+    Post-claim errors fell from 12 on main to 4, removing `lit:eq-null`,
+    `lit:eq-void`, `lit:switch`, `lit:reassign-obj`, `lit:void-o`,
+    `lit:void-o-loose`, `np:re-in-fn` and `lit:re-in-fn`. One probe,
+    `lit:re-in-fn`, lost a unit; this is B1's cost above.
+  - gc bytes: 391/391 identical.
+  - #7212's 39 gained files are IR-only on head and main.
+  - Tests: #7341 58/58, #7340 41/41, #7338 94/94, #7335 + #7280 71/71.
+
 ### Measurements after merging #7340 (2026-11-14)
 
 Re-run on `833f251579`, which merges main `9745e46d72` with #7340. The
@@ -480,11 +527,9 @@ source change. Base: that main, exported.
 - **#7212's and #7221's gained files:**
   - #7340's 10 (`grouping/S11.1.6_A3_T{1,2}`,
     `for/12.6.3_2-3-a-ii-{2,4..10}`) are IR-only on head and main alike.
-  - #7338's list (40 files in its gained list) is legacy under this census
-    on main itself (e.g. `expr-carrier-escapes-unit`), and the head routes
-    all 40 exactly as main does. So this branch costs none of them. Whether
-    main still yields them under #7338's own measurement is not checked
-    here.
+  - #7212's 39 gained files are IR-only on head and main alike. (Corrected
+    in review round 1: the 40-file list first checked here was a later
+    rewrite by other work, not #7212's gain list.)
 - **Tests:** the six R2-S1 rows pass with the rest of
   `tests/issue-7341-new-object-open-carrier.test.ts` (53/53). The #7338,
   #7340 and #7335 files pass too (94, 41, 38).
