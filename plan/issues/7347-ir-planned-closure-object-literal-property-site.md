@@ -1,7 +1,7 @@
 ---
 id: 7347
 title: "IR: a function expression as an object-literal property value becomes a planned closure"
-status: ready
+status: wont-fix
 sprint: current
 created: 2026-11-15
 updated: 2026-11-15
@@ -17,6 +17,9 @@ related: [7106, 7195, 7198, 7338, 7339]
 ---
 
 # #7347 — IR: function values in object literals
+
+> **Superseded 2026-11-15 by #7349.** The object-literal property position becomes one position of #7349's
+> single value rule (slice S1b) instead of a fifth site function. The measurements below stay valid.
 
 ## Problem
 
