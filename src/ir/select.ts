@@ -167,7 +167,14 @@ import {
 import { collectModuleInitPopulation, makeModuleInitSynthetic, MODULE_INIT_UNIT_NAME } from "./module-init.js";
 export { collectModuleInitPopulation, makeModuleInitSynthetic, MODULE_INIT_UNIT_NAME } from "./module-init.js";
 
-import { binaryOpCapability, domSurfaceCapability, hostExternCapability, prefixOpCapability } from "./capability.js";
+import {
+  binaryOpCapability,
+  collectStringLiteralLens,
+  domSurfaceCapability,
+  hostExternCapability,
+  prefixOpCapability,
+} from "./capability.js";
+import { stringUseRefusal } from "./select-string-uses.js";
 import { nativeBufferOperationParts, type IrNativeBufferSurfacePlan } from "./native-buffer-surface.js";
 import type { IrStandaloneDomCapabilityPlan, IrStandaloneDomOperation } from "./dom-capability.js";
 import { isDirectStandaloneDomMemberCall } from "./dom-boundary.js";
@@ -943,7 +950,7 @@ export interface IrSelectionOptions extends IrAsyncSelectionOptions {
       | "dynamic-method-call-wrapper"
       | "native-global-function-call"
       | "native-object-statics"
-      | "module-string-value",
+      | "native-string-uses",
   ) => boolean;
   /**
    * #3787 exact global String-constructor identity. This is separate from the
@@ -8125,11 +8132,7 @@ function isUnshadowedUndefinedIdentifier(expr: ts.Expression, scope: ReadonlySet
  */
 function moduleExternBinding(expr: ts.Expression): ReturnType<IrLegacyModuleBindingResolver> {
   const binding = moduleBinding(expr);
-  if (binding === undefined || !isIrModuleReferenceValueKind(binding.valueKind)) return undefined;
-  const stringValue =
-    currentSelectionOptions?.supportsBackendCapability?.("module-string-value") === true &&
-    currentModuleBindingResolver!.readsStringValue(unwrapPhase1Parens(expr) as ts.Identifier);
-  return stringValue ? undefined : binding;
+  return binding !== undefined && isIrModuleReferenceValueKind(binding.valueKind) ? binding : undefined;
 }
 
 /** True only for the one module representation whose IR value is a JS boolean. */
@@ -12328,6 +12331,22 @@ function phase1NativeBufferVerdict(
   return operands.every((operand) => isPhase1Expr(operand, scope, localClasses));
 }
 
+const subjectStringLiteralLengths = new WeakMap<IrClaimableSubject, ReadonlyMap<string, number>>();
+
+/** (#7346 step A) `select-string-uses.ts` over the selector's string proof, on the lane measured for it. */
+function selectorRefusesStringUse(expr: ts.Expression, scope: ReadonlySet<string>): boolean {
+  const subject = currentSelectionSubject;
+  if (subject === null || currentSelectionOptions?.supportsBackendCapability?.("native-string-uses") !== true) {
+    return false;
+  }
+  let lengths = subjectStringLiteralLengths.get(subject);
+  if (lengths === undefined) subjectStringLiteralLengths.set(subject, (lengths = collectStringLiteralLens(subject)));
+  const isString = (operand: ts.Expression) =>
+    provenIrFamily(operand, scope) === "string" || expressionIsProvenString(operand);
+  const refusal = stringUseRefusal(expr, isString, lengths);
+  return refusal !== undefined && !capabilityNo(refusal.reason, refusal.arm, expr);
+}
+
 function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClasses: ReadonlySet<string>): boolean {
   const nativeBuffer = phase1NativeBufferVerdict(expr, scope, localClasses);
   if (nativeBuffer !== undefined) return nativeBuffer;
@@ -12339,6 +12358,7 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
   ) {
     return shapeNo("expr-module-extern-consumer", expr);
   }
+  if (selectorRefusesStringUse(expr, scope)) return false;
   // (#7106 levers R2, S2) A match result's served field goes only where its dynamic value lowers.
   if (
     currentSelectionOptions?.supportsBackendCapability?.("native-regexp") === true &&

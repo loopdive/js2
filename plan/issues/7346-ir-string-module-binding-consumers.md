@@ -21,6 +21,10 @@ related: [3523, 7125, 7252, 7292, 7106]
 loc-budget-allow:
   - src/ir/module-bindings.ts
   - src/ir/select.ts
+# 2026-11-15 (step A): the one guard line that runs the string-use rules
+# (`selectorRefusesStringUse`) beside isPhase1Expr's other pre-arm guards.
+func-budget-allow:
+  - src/ir/select.ts::isPhase1Expr
 ---
 
 # #7346 — IR: consumers of a string module binding
@@ -198,3 +202,64 @@ post-claim error on head only:
 - `s[0]`;
 - a dynamic-valued concat stored into a string slot. That is a write-admission gap: main post-claims the
   same write when nothing else refuses the unit.
+
+## Step A: string uses the IR claims and then withdraws
+
+Before #7346 routes module strings to the general arms, the selector refuses the string uses from-ast
+cannot lower instead of claiming and withdrawing them. Local and module strings take the same rules.
+
+**Where it lives.** `src/ir/select-string-uses.ts` holds the rules. The selector supplies two things:
+- its string proof: `provenIrFamily(e) === "string"` or `expressionIsProvenString`;
+- the unit's literal lengths.
+
+Each rule asks the predicate that from-ast's own arm asks:
+- **Member read,** other than a call's callee: `stringMemberReadLowerable`, newly in `capability.ts`.
+  from-ast's `lowerPropertyAccess` now asks it too, in place of its inline `propName !== "length"`. No
+  list of served members exists to share: a string's read surface is `.length`, and its methods are
+  calls.
+- **Element read:** `stringElementReadLowerable` over `collectStringLiteralLens(unit)`, plus the
+  counted-loop proof. `detectCountedLoopSafeIndex` moved from from-ast to `fixed-literal-loop-proof.ts`,
+  beside its helpers. `countedLoopProvesElementRead` reads that proof off the AST.
+- **Equality with `null`:** `nullComparisonFolds(op, "string")` and `nullValueAdmissible("string")`.
+
+**Gate.** The standalone-only `native-string-uses` capability, so JS-environment output is unchanged.
+
+**Not built,** because from-ast has no table the selector can ask:
+- **Typed `+=`.** from-ast decides from the slot's tracked string encoding (`inferStringEncoding` over
+  `cx.scope` bindings, `proveTypedStringAppend`). That is flow state inside the lowering. A selector rule
+  would copy it.
+- **A dynamic-valued expression stored into a string slot.** The selector proves no `dynamic` family for
+  a dynamic module binding read: `provenIrFamily` answers `unknown`, deliberately, per #5289. So it
+  cannot see that `" " + d + " "` lowers to the carrier.
+
+### Step A measured alone (2026-11-15)
+
+Head is Step A without Step B's read hook. Main is `6bab37c0cd`. The set has 969 files:
+- the 138 carriers;
+- the 300 IR-only controls;
+- the 31 files whose 2026-11-14 census row had a post-claim error;
+- 500 further IR-only files, chosen with a seed.
+
+| measure | result |
+| --- | --- |
+| IR-only files | 800 → 800 |
+| gained / lost | 0 / 0 |
+| units newly legacy | 0 |
+| post-claim → refused at select | 0 |
+| new compile errors | 0 |
+| post-claim errors | 31 → 31 |
+| routing-changed files | 0 |
+
+None of main's 31 post-claim errors in this set is one of Step A's string shapes. Most are bare
+`null`, mixed string/number equality, `throw`, and the typed `+=` that Step A does not build. So
+Step A frees nothing in the census; it exists for Step B.
+
+On small programs, Step A does refuse the shapes: a local `str == null`, `str.constructor` and
+`a.index`.
+
+**The hazard the coordinator named shows up there.** The refused function's IR caller, `<module-init>`,
+which main claimed beside a withdrawn callee, now goes to legacy through the call-graph closure. The
+census set contains no such case.
+
+`tests/issue-2766` and `tests/issue-2972` fail 6 tests on main and on this branch alike. I checked by
+swapping main's sources into the worktree.

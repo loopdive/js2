@@ -42,7 +42,7 @@ export type IrBackendTargetCapability =
   | "dynamic-method-call-wrapper"
   | "native-global-function-call"
   | "native-object-statics"
-  | "module-string-value";
+  | "native-string-uses";
 
 /**
  * The target facts needed by pre-claim capability checks. Keep this smaller
@@ -176,7 +176,7 @@ export function supportsIrBackendTargetCapability(
     // (#7338) The `Object` statics table (`ir/object-statics.ts`): the
     // native object runtime's helpers and a member read that answers for an
     // open `$Object`, measured on host-free standalone only.
-    case "module-string-value":
+    case "native-string-uses":
       // (#7346) A string module binding read as an ordinary string value
       // (`module-binding-string.ts`), measured on host-free standalone only.
       return (
