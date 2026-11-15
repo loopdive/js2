@@ -8618,11 +8618,9 @@ function lowerPrimitiveWrapperConstruction(expr: ts.NewExpression, cx: LowerCtx)
   const construction = primitiveWrapperConstruction(expr, cx);
   if (construction === undefined) return null;
   // The argument's lowered family picks the row as the selector's proved family did (`constructedRow`).
-  let value: IrValueId | undefined;
-  const row = constructedRow(construction, (argument) => {
-    value = lowerExpr(argument, cx, construction.row ? wrapperArgumentHint(construction.row) : irDynamic());
-    return irOperandFamily(cx.builder.typeOf(value), argument);
-  });
+  const hint = construction.row ? wrapperArgumentHint(construction.row) : irDynamic();
+  const value = construction.argument && lowerExpr(construction.argument, cx, hint);
+  const row = constructedRow(construction, (argument) => irOperandFamily(cx.builder.typeOf(value!), argument));
   if (row === undefined) {
     demoteToLegacy(
       "unknown-class-construction",

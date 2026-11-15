@@ -317,6 +317,19 @@ describe("#7340 — every other position is refused at select, never withdrawn",
       reason: "expr-new-wrapper-argument",
       body: `var w = new String({ toString: function () { return "q"; } }); if (w + "" !== "q") throw "x";`,
     },
+    // (PR #7243 review) The sum is the dynamic carrier: a member read of it would be claimed and withdrawn.
+    "a member read of the sum (S2 form)": {
+      reason: "expr-new-wrapper-use",
+      body: `var w = new String(); var r = (w + "").length; if (r !== 0) throw "x";`,
+    },
+    "a member read of the sum (S1 form)": {
+      reason: "expr-new-wrapper-use",
+      body: `var w = new String("a"); var r = (w + "").length; if (r !== 1) throw "x";`,
+    },
+    "a member read of a chained sum": {
+      reason: "expr-new-wrapper-use",
+      body: `var w = new String("a"); var r = (w + "b" + "c").length; if (r !== 3) throw "x";`,
+    },
     "two arguments": {
       reason: "expr-new-wrapper-argument",
       body: `var w = new Number(1, 2); if (w - 1 !== 0) throw "x";`,

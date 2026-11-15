@@ -31,6 +31,7 @@ import type { IrFunctionBuilder } from "./builder.js";
 import { irRuntimeFuncRef } from "./callable-bindings.js";
 import { isServedUse, referencesNamed, type ServedUsePolicy } from "./dynamic-home-uses.js";
 import { JS_TAG_IDS } from "./js-tag-domain.js";
+import { IrInvariantError } from "./outcomes.js";
 import { irBool } from "./boolean-brand.js";
 import { irDynamic, irVal, type IrType, type IrValueId } from "./nodes.js";
 import { carrierStringFamily, lowerPrimitiveToString } from "./primitive-to-string.js";
@@ -51,7 +52,8 @@ const ROWS: readonly WrapperRow[] = [
 
 /**
  * (#7340 S2) The argument families a row converts to its own: ToString of a number or a boolean
- * (§7.1.17), ToNumber of a string (§7.1.4). Only the forms the ES5 corpus constructs are rows.
+ * (§7.1.17), ToNumber of a string (§7.1.4). `Number(boolean)` and `Boolean(<other family>)` are sound
+ * too but left out: no blocked ES5 file constructs them, and each needs a conversion lowering of its own.
  */
 const CONVERTED_FAMILIES: Readonly<Record<WrapperRow["family"], readonly OperandFamily[]>> = {
   string: ["number", "boolean"],
@@ -100,13 +102,18 @@ export function wrapperConstruction(
   return { expr, row, argument: single };
 }
 
-/** The construction's argument, when the selector's `familyOf` proves it the row's own family. */
+/**
+ * The construction's argument, when the selector's `familyOf` proves it the row's own family. `new
+ * Object(v)` has no row of its own: only a store picks one ({@link constructedRow}), so it has none here.
+ */
 export function admissibleArgument(
   construction: WrapperConstruction | undefined,
   familyOf: (argument: ts.Expression) => OperandFamily,
 ): ts.Expression | undefined {
+  const row = construction?.row;
   const argument = construction?.argument;
-  return argument !== undefined && familyOf(argument) === construction!.row?.family ? argument : undefined;
+  if (row === undefined || argument === undefined) return undefined;
+  return familyOf(argument) === row.family ? argument : undefined;
 }
 
 /**
@@ -298,7 +305,7 @@ function wrapperPolicy(row: WrapperRow): ServedUsePolicy {
       if (ts.isBinaryExpression(parent)) {
         const op = parent.operatorToken.kind;
         if (RELATIONAL_OPERATORS.has(op)) return numericRelational && againstNumericLiteral(use, parent);
-        return SERVED_BINARY_OPERATORS.has(op) && !isLooseNullTest(parent);
+        return SERVED_BINARY_OPERATORS.has(op) && !isLooseNullTest(parent) && !isSumReceiver(parent);
       }
       return ts.isPrefixUnaryExpression(parent) || ts.isTypeOfExpression(parent) || isConditionOf(use, parent);
     },
@@ -336,6 +343,21 @@ function againstNumericLiteral(use: ts.Expression, comparison: ts.BinaryExpressi
   return ts.isNumericLiteral(other);
 }
 
+/**
+ * `(w + "").length`: a `+` over the wrapper is the dynamic carrier's `+`, so a member or element read of the
+ * sum is a dynamic read, which a binding the checker types from that read (`.length` as a number) does not
+ * take: the claim would be withdrawn.
+ */
+function isSumReceiver(binary: ts.BinaryExpression): boolean {
+  if (binary.operatorToken.kind !== ts.SyntaxKind.PlusToken) return false;
+  let sum: ts.Expression = outermostParenthesized(binary);
+  while (ts.isBinaryExpression(sum.parent) && sum.parent.operatorToken.kind === ts.SyntaxKind.PlusToken) {
+    sum = outermostParenthesized(sum.parent);
+  }
+  const access = sum.parent;
+  return (ts.isPropertyAccessExpression(access) || ts.isElementAccessExpression(access)) && access.expression === sum;
+}
+
 /** `w == null` / `w != null`: from-ast folds the `null` operand before the carrier compare (#7212's case). */
 function isLooseNullTest(comparison: ts.BinaryExpression): boolean {
   const op = comparison.operatorToken.kind;
@@ -354,8 +376,9 @@ function isConditionOf(use: ts.Expression, parent: ts.Node): boolean {
 }
 
 /**
- * `new <row>(argument)` through the row's native constructor; the result is `extern:Object`. `argument`
- * is of a family {@link constructedRow} admits, converted here; none builds the row's empty value.
+ * `new <row>(admitted)` through the row's native constructor; the result is `extern:Object`. `admitted`
+ * is the lowered argument, of a family {@link constructedRow} admits and converted here; `undefined`
+ * builds the row's empty value.
  */
 export function emitWrapperConstruction(
   builder: IrFunctionBuilder,
@@ -375,7 +398,11 @@ export function emitWrapperConstruction(
   });
   if (value === null) {
     // invariant (producer-promise): a compiler-support/runtime helper declared non-void returned no SSA value — #4502.
-    throw new Error(`ir/wrapper-construction: __new_${row.name} produced no value`);
+    throw new IrInvariantError(
+      "unknown-function-ref",
+      "build",
+      `ir/wrapper-construction: __new_${row.name} produced no value`,
+    );
   }
   return value;
 }
@@ -391,7 +418,13 @@ function rowPrimitive(builder: IrFunctionBuilder, row: WrapperRow, argument: IrV
   if (row.family === "string" && type.kind !== "string") {
     const string = lowerPrimitiveToString(builder, argument, carrierStringFamily(type));
     // invariant: the selector admits only a number or a boolean here (`constructedRow`), and from-ast checks it.
-    if (string === null) throw new Error(`ir/wrapper-construction: no ToString for the String argument`);
+    if (string === null) {
+      throw new IrInvariantError(
+        "selection-preparation-mismatch",
+        "build",
+        "ir/wrapper-construction: no ToString for the String argument",
+      );
+    }
     return string;
   }
   if (row.family === "number" && type.kind === "string") {
@@ -418,7 +451,11 @@ export function emitToPrimitive(builder: IrFunctionBuilder, value: IrValueId, hi
   const primitive = builder.emitCall(irRuntimeFuncRef("__to_primitive"), [value, hintValue], externref);
   if (primitive === null) {
     // invariant (producer-promise): a compiler-support/runtime helper declared non-void returned no SSA value — #4502.
-    throw new Error("ir/wrapper-construction: __to_primitive produced no value");
+    throw new IrInvariantError(
+      "unknown-function-ref",
+      "build",
+      "ir/wrapper-construction: __to_primitive produced no value",
+    );
   }
   return primitive;
 }

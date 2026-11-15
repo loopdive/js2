@@ -779,3 +779,27 @@ the pre-merge round (`559af2e529` against `7996e61a23`) gave the same numbers.
    not `operand-admissibility.ts`, beside the table it reads.
 
 S3 is not started; the issue stays `in-progress`.
+
+### S2 review round 1 (2026-11-15)
+
+- **`(w + "").length` is refused at select.** It is `expr-new-wrapper-use`, through `isSumReceiver` in
+  the wrapper use screen. The `+` over the wrapper is the dynamic carrier, and a member or element read
+  of the sum (including a chained sum) was claimed and then withdrawn. That held for the S1 form
+  (`new String("a")`) on main too. Three test rows cover it.
+- **from-ast lowers the argument first,** then asks `constructedRow`. The family callback no longer
+  assigns.
+- **`emitWrapperConstruction`'s doc** names `admitted`.
+- **Its three helper invariants** throw `IrInvariantError`.
+- **`admissibleArgument` states the `new Object(v)` case.** Outside a store there is no row, so no
+  argument is admitted.
+- **`CONVERTED_FAMILIES` stays corpus-shaped,** now with a one-line reason at the table.
+  `Number(boolean)` and `Boolean(<family>)` are sound, but no blocked file constructs them, and each
+  needs its own conversion lowering.
+
+Re-measured on main `36e87d6dc7`:
+
+| check | result |
+| --- | --- |
+| census, 1,076 files | 2 gained / 0 lost / 0 units newly legacy / post-claim 1 → 1 |
+| wrapper probes, 222 | 0 lost / 0 head-only post-claim / 0 wrong |
+| `new Object` probes, 1,450 | 0 / 0 / 0 |
