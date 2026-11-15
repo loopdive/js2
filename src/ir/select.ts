@@ -294,6 +294,14 @@ let shapeRejectDetail: string | null = null;
 let typedShapeRejectReason: IrFallbackReason | null = null;
 
 /** Record the proximate reject arm (first-wins) and return false. */
+// #7348 Step 0 PROBE (scratch only): admit refusals whose only reason is legacy storage/call agreement.
+const IR_OWNED_PROBE = process.env.JS2WASM_IR_OWNED_PROBE === "1";
+const IR_OWNED_AGREEMENT =
+  /(module-storage-unrepresentable|module-extern-consumer|vardecl-let-closure|forin-receiver-not-dynamic-externref|forin-head-module-var|module-extern-call-brand|compound-dynamic-module-operand|module-value-flow|module-binding-alias|module-assign-incompatible|vardecl-var-kind|vardecl-noinit|expr-new-module-binding-callee|vardecl-dstr-module-value|expr-arraylit-module-value-unproven|expr-module-value-(not|nullish|logical|conditional-mismatch|representation-mismatch)|condition-module-value-(truthiness|nonbool))$/;
+function probeAdmits(arm: string): boolean {
+  return IR_OWNED_PROBE && IR_OWNED_AGREEMENT.test(arm);
+}
+
 function shapeNo(arm: string, node: ts.Node): false {
   if (SHAPE_DIAG_ON && shapeRejectDetail === null) {
     let text = "";
@@ -2834,6 +2842,7 @@ function resolveParamType(p: ts.ParameterDeclaration, mapped: LatticeType | unde
   // instead. See `dynamicCarrierDivergesFromLegacy`.
   if (mapped && (mapped.kind === "unknown" || mapped.kind === "dynamic")) {
     if (currentSelectionOptions?.dynamicCarrierDivergesFromLegacy?.(p) === true) {
+      if (IR_OWNED_PROBE) return "dynamic";
       shapeNo("param-dynamic-carrier-diverges-from-legacy", p);
       return null;
     }
@@ -4564,7 +4573,7 @@ function phase1MutatingStatementVerdict(
       !currentMutableSlotNames.has(expr.left.text) &&
       currentModuleBindingResolver?.(expr.left) === undefined
     ) {
-      if (isUnrepresentableModuleBinding(expr.left)) {
+      if (isUnrepresentableModuleBinding(expr.left) && !IR_OWNED_PROBE) {
         return { ok: false, arm: "module-storage-unrepresentable", node: expr };
       }
       if (projectionBindingMutationIsUnsupported(expr.left.text, expr)) {
@@ -4604,7 +4613,8 @@ function identifierUpdateRefusal(
   expr: ts.Node,
   scope: ReadonlySet<string>,
 ): { readonly arm: string; readonly node: ts.Node } | undefined {
-  if (isUnrepresentableModuleBinding(id)) return { arm: "module-storage-unrepresentable", node: expr };
+  if (isUnrepresentableModuleBinding(id) && !IR_OWNED_PROBE)
+    return { arm: "module-storage-unrepresentable", node: expr };
   if (currentModuleBindingResolver?.(id) && !currentSubjectIsModuleInit) return { arm: "module-update", node: expr };
   if (!scope.has(id.text)) return { arm: "incdec-scope", node: id };
   if (projectionBindingMutationIsUnsupported(id.text, expr)) return { arm: "incdec-projection", node: expr };
@@ -4884,7 +4894,8 @@ function isPhase1StatementListInScope(
         const moduleBinding = currentModuleBindingResolver?.(s.expression.left);
         if (moduleBinding) {
           if (!moduleBindingTakes(s.expression.left, s.expression.right, scope)) {
-            return shapeNo("nontail-module-assign-incompatible", s.expression);
+            if (!probeAdmits("nontail-module-assign-incompatible"))
+              return shapeNo("nontail-module-assign-incompatible", s.expression);
           }
           if (!isPhase1Expr(s.expression.right, scope, localClasses)) {
             return shapeNo("nontail-module-assign-rhs", s.expression.right);
@@ -6105,7 +6116,8 @@ function isPhase1ForInStatement(
   breaks: BreakScope = NO_BREAKS,
 ): boolean {
   if (currentSelectionOptions?.isDynamicForInReceiver?.(stmt.expression) !== true) {
-    return shapeNo("forin-receiver-not-dynamic-externref", stmt.expression);
+    if (!probeAdmits("forin-receiver-not-dynamic-externref"))
+      return shapeNo("forin-receiver-not-dynamic-externref", stmt.expression);
   }
   if (!isPhase1Expr(stmt.expression, scope, localClasses)) return shapeNo("forin-receiver", stmt.expression);
   if (!ts.isVariableDeclarationList(stmt.initializer)) return shapeNo("forin-head-not-declaration", stmt.initializer);
@@ -6121,7 +6133,7 @@ function isPhase1ForInStatement(
   if (scope.has(headName)) return shapeNo("forin-head-shadow", declaration.name);
   // (#7288) In `<module-init>` the head hoists into its `__mod_<name>` slot, which the loop-local key slot never writes.
   if (currentSubjectIsModuleInit && enclosingProjectionOwner(stmt) === undefined) {
-    return shapeNo("forin-head-module-var", declaration.name);
+    if (!probeAdmits("forin-head-module-var")) return shapeNo("forin-head-module-var", declaration.name);
   }
   // #2952 slice 6c — the head value is now READABLE in the body. The #2964
   // ABI already materialises the key into the head slot on every iteration
@@ -6348,12 +6360,14 @@ function isPhase1BodyStatement(
       if (op === ts.SyntaxKind.EqualsToken) {
         if (ts.isIdentifier(stmt.expression.left)) {
           if (isUnrepresentableModuleBinding(stmt.expression.left)) {
-            return shapeNo("body-module-storage-unrepresentable", stmt.expression);
+            if (!probeAdmits("body-module-storage-unrepresentable"))
+              return shapeNo("body-module-storage-unrepresentable", stmt.expression);
           }
           const moduleBinding = currentModuleBindingResolver?.(stmt.expression.left);
           if (moduleBinding) {
             if (!moduleBindingTakes(stmt.expression.left, stmt.expression.right, scope)) {
-              return shapeNo("body-module-assign-incompatible", stmt.expression);
+              if (!probeAdmits("body-module-assign-incompatible"))
+                return shapeNo("body-module-assign-incompatible", stmt.expression);
             }
             return isPhase1Expr(stmt.expression.right, scope, localClasses);
           }
@@ -6582,17 +6596,21 @@ function isPhase1Tail(
       ts.isIdentifier(expr.operand) &&
       isUnrepresentableModuleBinding(expr.operand)
     ) {
-      return shapeNo("tail-module-storage-unrepresentable", expr);
+      if (!probeAdmits("tail-module-storage-unrepresentable"))
+        return shapeNo("tail-module-storage-unrepresentable", expr);
     }
     if (ts.isBinaryExpression(expr) && ts.isIdentifier(expr.left)) {
       const exactModuleWrite =
         expr.operatorToken.kind === ts.SyntaxKind.EqualsToken && moduleBindingWrite(expr.left, expr.right, scope);
       if (exactModuleWrite) {
-        if (!moduleBindingTakes(expr.left, expr.right, scope)) return shapeNo("tail-module-assign-incompatible", expr);
+        if (!moduleBindingTakes(expr.left, expr.right, scope)) {
+          if (!probeAdmits("tail-module-assign-incompatible")) return shapeNo("tail-module-assign-incompatible", expr);
+        }
         return isPhase1Expr(expr.right, scope, localClasses);
       }
       if (isUnrepresentableModuleBinding(expr.left)) {
-        return shapeNo("tail-module-storage-unrepresentable", expr);
+        if (!probeAdmits("tail-module-storage-unrepresentable"))
+          return shapeNo("tail-module-storage-unrepresentable", expr);
       }
       const moduleBinding = currentModuleBindingResolver?.(expr.left);
       if (moduleBinding) {
@@ -6600,7 +6618,7 @@ function isPhase1Tail(
           return shapeNo("tail-module-compound", expr);
         }
         if (!moduleBindingTakes(expr.left, expr.right, scope)) {
-          return shapeNo("tail-module-assign-incompatible", expr);
+          if (!probeAdmits("tail-module-assign-incompatible")) return shapeNo("tail-module-assign-incompatible", expr);
         }
         return isPhase1Expr(expr.right, scope, localClasses);
       }
@@ -7235,7 +7253,7 @@ function uninitializedVarIsDynamicUndefined(d: ts.VariableDeclaration, isLexical
 function isPhase1VarDecl(stmt: ts.VariableStatement, scope: Set<string>, localClasses: ReadonlySet<string>): boolean {
   const isLexical = !!(stmt.declarationList.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const));
   if (!isLexical && !currentIrSafeVarDeclarationLists.has(stmt.declarationList)) {
-    return shapeNo("vardecl-var-kind", stmt);
+    if (!probeAdmits("vardecl-var-kind")) return shapeNo("vardecl-var-kind", stmt);
   }
   if (stmt.modifiers && stmt.modifiers.length > 0) return shapeNo("vardecl-modifier", stmt);
   return isPhase1VarDeclarationList(stmt.declarationList, scope, localClasses);
@@ -7287,7 +7305,7 @@ function isPhase1VarDeclarationList(
           ? currentModuleBindingResolver?.(d.name) === undefined
           : !uninitializedVarIsDynamicUndefined(d, isLexical)
       ) {
-        return shapeNo("vardecl-noinit", d);
+        if (!probeAdmits("vardecl-noinit")) return shapeNo("vardecl-noinit", d);
       }
       clearProjectionBinding(d.name.text);
       scope.add(d.name.text);
@@ -7326,12 +7344,13 @@ function isPhase1VarDeclarationList(
       directModuleDeclaration &&
       currentModuleBindingResolver?.(d.name) === undefined
     ) {
-      return shapeNo("vardecl-module-storage-unrepresentable", d);
+      if (!probeAdmits("vardecl-module-storage-unrepresentable"))
+        return shapeNo("vardecl-module-storage-unrepresentable", d);
     }
     const directModuleBinding =
       currentSubjectIsModuleInit && directModuleDeclaration ? currentModuleBindingResolver?.(d.name) : undefined;
     if (directModuleBinding && !currentModuleBindingResolver?.bindingValueMatches(d.name, d.initializer)) {
-      return shapeNo("vardecl-module-value-flow", d.initializer);
+      if (!probeAdmits("vardecl-module-value-flow")) return shapeNo("vardecl-module-value-flow", d.initializer);
     }
     if (redeclaredModuleVar && !moduleBindingWrite(d.name, d.initializer, scope))
       return shapeNo("vardecl-redeclared-write", d);
@@ -7363,7 +7382,8 @@ function isPhase1VarDeclarationList(
       ) {
         const family = obviousModuleValueFamily(d.initializer);
         if (!isConst || (family !== "f64" && family !== "boolean")) {
-          return shapeNo("vardecl-module-binding-alias", d.initializer);
+          if (!probeAdmits("vardecl-module-binding-alias"))
+            return shapeNo("vardecl-module-binding-alias", d.initializer);
         }
       }
       if (
@@ -7385,7 +7405,9 @@ function isPhase1VarDeclarationList(
         isPlannedScriptVarClosure(currentSelectionOptions?.functionMemberClosures, d.initializer)
       )
     ) {
-      if (!isConst) return shapeNo("vardecl-let-closure", d.initializer);
+      if (!isConst) {
+        if (!probeAdmits("vardecl-let-closure")) return shapeNo("vardecl-let-closure", d.initializer);
+      }
       // Permit an explicit closure type annotation (like `: (n: number) => number`)
       // — it's a shape-only signal, not a primitive type. Since the IR doesn't
       // syntactically check the annotation against the body, just accept any
@@ -7425,7 +7447,7 @@ function isPhase1VarDeclarationList(
             tableMayReach(initializer))
         : lowersToCarrier(initializer))
     )
-      return shapeNo("vardecl-module-value-flow", d.initializer);
+      if (!probeAdmits("vardecl-module-value-flow")) return shapeNo("vardecl-module-value-flow", d.initializer);
     const objectMethodValue = isConst ? directObjectMethodValueProjection(d, initializer, initializerScope) : null;
     const returnedCallable = objectMethodValue ? null : directReturnedCallableSignature(initializer, initializerScope);
     const callableAlias =
@@ -7506,7 +7528,9 @@ function isPhase1DeclarationPattern(
   for (const name of patternNames) clearProjectionBinding(name);
   const initializerScope = new Set(scope);
   for (const name of patternNames) initializerScope.add(name);
-  if (expressionTouchesTrackedModuleValue(d.initializer)) return shapeNo("vardecl-dstr-module-value", d.initializer);
+  if (expressionTouchesTrackedModuleValue(d.initializer)) {
+    if (!probeAdmits("vardecl-dstr-module-value")) return shapeNo("vardecl-dstr-module-value", d.initializer);
+  }
   // The builder reads the initializer's IrType: object.get for an object
   // pattern, vec.get for an array pattern.
   if (!isPhase1Expr(d.initializer, initializerScope, localClasses)) return shapeNo("vardecl-dstr-init", d.initializer);
@@ -7526,7 +7550,10 @@ function moduleVarLeavesStorable(pattern: ts.BindingPattern, scope: ReadonlySet<
   if (resolver === null) return shapeNo("vardecl-module-storage-unrepresentable", pattern);
   for (const leaf of patternLeaves(pattern)) {
     const binding = resolver(leaf.name);
-    if (binding === undefined) return shapeNo("vardecl-module-storage-unrepresentable", leaf);
+    if (binding === undefined) {
+      if (IR_OWNED_PROBE) continue;
+      return shapeNo("vardecl-module-storage-unrepresentable", leaf);
+    }
     const source = literalLeafSource(leaf);
     const dynamicSlot = binding.valueKind.kind === "dynamic";
     // Boolean pattern leaves remain outside this S5 admission slice.
@@ -7539,7 +7566,9 @@ function moduleVarLeavesStorable(pattern: ts.BindingPattern, scope: ReadonlySet<
           (dynamicSlot
             ? boxableIntoDynamic(provenIrFamily(source, scope))
             : resolver.bindingValueMatches(leaf.name, source)));
-    if (!fits) return shapeNo("vardecl-module-value-flow", leaf);
+    if (!fits) {
+      if (!probeAdmits("vardecl-module-value-flow")) return shapeNo("vardecl-module-value-flow", leaf);
+    }
   }
   return true;
 }
@@ -7555,7 +7584,9 @@ function isPhase1LiteralPattern(
   collectBindingPatternNames(pattern, leaves);
   if ([...leaves].some((name) => scope.has(name))) return shapeNo("vardecl-dstr-shadow", pattern);
   for (const expression of expressions) {
-    if (expressionTouchesTrackedModuleValue(expression)) return shapeNo("vardecl-dstr-module-value", expression);
+    if (expressionTouchesTrackedModuleValue(expression)) {
+      if (!probeAdmits("vardecl-dstr-module-value")) return shapeNo("vardecl-dstr-module-value", expression);
+    }
     if (!isPhase1Expr(expression, scope, localClasses)) return shapeNo("vardecl-dstr-init", expression);
   }
   for (const name of leaves) {
@@ -8334,7 +8365,7 @@ function phase1CallPreambleIsBuildable(expr: ts.CallExpression): boolean {
   // AST-to-IR deliberately treats optional invocation as a hard invariant.
   if (expr.questionDotToken) return shapeNo("expr-optional-call", expr);
   if (currentModuleBindingResolver && !currentModuleBindingResolver.externCallArgumentsMatch(expr)) {
-    return shapeNo("expr-module-extern-call-brand", expr);
+    if (!probeAdmits("expr-module-extern-call-brand")) return shapeNo("expr-module-extern-call-brand", expr);
   }
   return !isOptionalModuleExternCall(expr) || shapeNo("expr-module-extern-optional-call", expr);
 }
@@ -8608,7 +8639,7 @@ function elementStoreReceiverRefusal(
   const shaped =
     (ts.isIdentifier(receiver) && scope.has(receiver.text)) || stableDynamicStoreReceiverHasAdmittedRoot(receiver);
   if (!shaped) return "recv";
-  return ts.isIdentifier(receiver) && isUnrepresentableModuleBinding(receiver)
+  return !IR_OWNED_PROBE && ts.isIdentifier(receiver) && isUnrepresentableModuleBinding(receiver)
     ? "module-storage-unrepresentable"
     : undefined;
 }
@@ -8644,11 +8675,11 @@ function isPhase1ConditionExpr(
     !moduleInfluenceIsExactBoolean(truthinessOperand, scope) &&
     !isTruthinessTestableModuleBinding(truthinessOperand)
   ) {
-    return shapeNo("condition-module-value-nonbool", expr);
+    if (!probeAdmits("condition-module-value-nonbool")) return shapeNo("condition-module-value-nonbool", expr);
   }
   // Reached only through conditional / nullish wrappers of module values.
   if (expressionMayBeModuleBinding(truthinessOperand) && !isTruthinessTestableModuleBinding(truthinessOperand)) {
-    return shapeNo("condition-module-value-truthiness", expr);
+    if (!probeAdmits("condition-module-value-truthiness")) return shapeNo("condition-module-value-truthiness", expr);
   }
   if (expressionIsModuleExternAccessChain(truthinessOperand)) {
     return shapeNo("condition-module-extern-truthiness", expr);
@@ -9833,7 +9864,7 @@ function isSelectableNumberCompound(
     : binaryOperandFamily(expr.right, scope, localClasses);
   const carrierHome = ts.isIdentifier(expr.left) && holdsCarrier(expr.left);
   if (carrierHome && !compoundWriteAdmissible(expr.operatorToken.kind, "dynamic", rhsFamily)) {
-    return shapeNo("compound-dynamic-module-operand", expr.right);
+    if (!probeAdmits("compound-dynamic-module-operand")) return shapeNo("compound-dynamic-module-operand", expr.right);
   }
   // (#7338) Any other target takes no table carrier: the numeric compound needs a number.
   if (!carrierHome && lowersToCarrier(expr.right)) return shapeNo("compound-carrier-operand", expr.right);
@@ -9875,7 +9906,10 @@ function isPhase1IdentifierCompound(
   localClasses: ReadonlySet<string>,
   arm: "body" | "nontail",
 ): boolean {
-  if (isUnrepresentableModuleBinding(left)) return shapeNo(`${arm}-module-storage-unrepresentable`, expr);
+  if (isUnrepresentableModuleBinding(left)) {
+    if (!probeAdmits(`${arm}-module-storage-unrepresentable`))
+      return shapeNo(`${arm}-module-storage-unrepresentable`, expr);
+  }
   if (currentModuleBindingResolver?.(left) && !currentSubjectIsModuleInit)
     return shapeNo(`${arm}-module-compound`, expr);
   if (!scope.has(left.text)) return shapeNo(`${arm}-compound-scope`, left);
@@ -12089,7 +12123,8 @@ function phase1NewExpression(
     }
   }
   if (currentModuleBindingResolver?.isDirectModuleBinding(expr.expression)) {
-    return shapeNo("expr-new-module-binding-callee", expr.expression);
+    if (!probeAdmits("expr-new-module-binding-callee"))
+      return shapeNo("expr-new-module-binding-callee", expr.expression);
   }
   const hostDateSnapshot =
     ctorName === "Date" && isAmbientConstructor ? currentSelectionOptions?.hostDateSnapshots?.(expr) : undefined;
@@ -12127,7 +12162,7 @@ function phase1NewExpression(
     return shapeNo("expr-new-type-args", expr);
   }
   if (currentModuleBindingResolver && !currentModuleBindingResolver.externCallArgumentsMatch(expr)) {
-    return shapeNo("expr-new-module-extern-call-brand", expr);
+    if (!probeAdmits("expr-new-module-extern-call-brand")) return shapeNo("expr-new-module-extern-call-brand", expr);
   }
   if (!expr.arguments) return true;
   for (const arg of expr.arguments) {
@@ -12333,7 +12368,7 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
     (expressionTouchesModuleExtern(expr) || expressionTouchesModuleMapGetAlias(expr)) &&
     !moduleExternConsumerIsProven(expr, scope)
   ) {
-    return shapeNo("expr-module-extern-consumer", expr);
+    if (!probeAdmits("expr-module-extern-consumer")) return shapeNo("expr-module-extern-consumer", expr);
   }
   // (#7106 levers R2, S2) A match result's served field goes only where its dynamic value lowers.
   if (
@@ -12368,7 +12403,8 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
     while (ts.isParenthesizedExpression(op)) op = op.expression;
     if (ts.isCallExpression(op) && ts.isIdentifier(op.expression) && currentAsyncDeclNames.has(op.expression.text)) {
       if (currentModuleBindingResolver && !currentModuleBindingResolver.externCallArgumentsMatch(op)) {
-        return shapeNo("expr-await-module-extern-call-brand", op);
+        if (!probeAdmits("expr-await-module-extern-call-brand"))
+          return shapeNo("expr-await-module-extern-call-brand", op);
       }
       for (const arg of op.arguments) {
         if (ts.isSpreadElement(arg)) return shapeNo("expr-await-async-call-spread", arg);
@@ -12420,7 +12456,8 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
     }
     if (currentModuleBindingResolver?.(expr) !== undefined) return true;
     if (isUnrepresentableModuleBinding(expr)) {
-      return shapeNo("expr-module-storage-unrepresentable", expr);
+      if (!probeAdmits("expr-module-storage-unrepresentable"))
+        return shapeNo("expr-module-storage-unrepresentable", expr);
     }
     // (#7106 item 1) the global `undefined` (unshadowed) as a VALUE — a call
     // argument, a member-store value, a logical operand: the dynamic carrier's
@@ -12506,7 +12543,7 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
       !isTruthinessTestableModuleBinding(expr.operand) &&
       !isStoredObjectDescriptorMemberRead(unwrapPhase1Parens(expr.operand), (name) => scope.has(name))
     ) {
-      return shapeNo("expr-module-value-not", expr);
+      if (!probeAdmits("expr-module-value-not")) return shapeNo("expr-module-value-not", expr);
     }
     if (expressionMayBeModuleExtern(expr.operand)) {
       return shapeNo("expr-module-extern-prefix", expr);
@@ -12574,7 +12611,8 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
           leftFamily === undefined ||
           rightFamily === undefined);
       if (leftFamily && rightFamily && leftFamily !== rightFamily && !nullishEquality && addition !== "admit") {
-        return shapeNo("expr-module-value-representation-mismatch", expr);
+        if (!probeAdmits("expr-module-value-representation-mismatch"))
+          return shapeNo("expr-module-value-representation-mismatch", expr);
       }
       const booleanModuleOperand =
         (leftTracksModule && (leftFamily === "boolean" || expressionTouchesBooleanModuleBinding(expr.left))) ||
@@ -12593,14 +12631,14 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
       binOp === ts.SyntaxKind.QuestionQuestionToken &&
       (expressionTouchesTrackedModuleValue(expr.left) || expressionTouchesTrackedModuleValue(expr.right))
     ) {
-      return shapeNo("expr-module-value-nullish", expr);
+      if (!probeAdmits("expr-module-value-nullish")) return shapeNo("expr-module-value-nullish", expr);
     }
     // Refuses a module value on the dynamic logical-value path
     // (`o || moduleNumber`); typed boolean operands pass.
     if (binOp === ts.SyntaxKind.AmpersandAmpersandToken || binOp === ts.SyntaxKind.BarBarToken) {
       for (const operand of [expr.left, expr.right]) {
         if (!moduleInfluenceIsExactBoolean(operand, scope)) {
-          return shapeNo("expr-module-value-logical", expr);
+          if (!probeAdmits("expr-module-value-logical")) return shapeNo("expr-module-value-logical", expr);
         }
       }
     }
@@ -12770,7 +12808,8 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
       const whenTrueFamily = obviousModuleValueFamily(expr.whenTrue);
       const whenFalseFamily = obviousModuleValueFamily(expr.whenFalse);
       if (!whenTrueFamily || !whenFalseFamily || whenTrueFamily !== whenFalseFamily) {
-        return shapeNo("expr-module-value-conditional-mismatch", expr);
+        if (!probeAdmits("expr-module-value-conditional-mismatch"))
+          return shapeNo("expr-module-value-conditional-mismatch", expr);
       }
     }
     // (#7113) A planned closure's dynamic parameter joined with `undefined` /
@@ -13202,7 +13241,13 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
       if (expressionTouchesScalarModuleBinding(expr.expression.expression, scope)) {
         if (isExactF64ScalarToStringCall(expr)) return isPhase1Expr(expr.expression.expression, scope, localClasses);
         const rules = objectStaticValueRules(scope, localClasses); // (#7339) the test row: main refuses here
-        return objectStaticSelector.admitOwnPropertyTest(expr, rules) ?? shapeNo("expr-module-scalar-method", expr);
+        return (
+          objectStaticSelector.admitOwnPropertyTest(expr, rules) ??
+          (IR_OWNED_PROBE
+            ? isPhase1Expr(expr.expression.expression, scope, localClasses) &&
+              expr.arguments.every((a) => !ts.isSpreadElement(a) && isPhase1Expr(a, scope, localClasses))
+            : shapeNo("expr-module-scalar-method", expr))
+        );
       }
       // (#3144) Static method call `C.m(args)` — the receiver is a bare
       // LOCAL class identifier (never in scope, so the generic receiver
@@ -13309,7 +13354,13 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
       }
       return true;
     }
-    if (!ts.isIdentifier(expr.expression)) return shapeNo("expr-call-callee-nonident", expr.expression);
+    if (!ts.isIdentifier(expr.expression)) {
+      if (!IR_OWNED_PROBE) return shapeNo("expr-call-callee-nonident", expr.expression);
+      return (
+        isPhase1Expr(expr.expression, scope, localClasses) &&
+        expr.arguments.every((a) => !ts.isSpreadElement(a) && isPhase1Expr(a, scope, localClasses))
+      );
+    }
     const mixedPrimitiveWrapper = exactMixedPrimitiveWrapperCall(expr);
     if (mixedPrimitiveWrapper) {
       return isPhase1Expr(mixedPrimitiveWrapper.conditional, scope, localClasses);
@@ -13354,6 +13405,8 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
     if (scope.has(calleeName)) {
       localCallableArity = knownCallableArity(expr.expression, scope);
       if (localCallableArity === undefined) {
+        if (IR_OWNED_PROBE)
+          return expr.arguments.every((a) => !ts.isSpreadElement(a) && isPhase1Expr(a, scope, localClasses));
         return capabilityNo("call-resolution-unsupported", "expr-local-call-target", expr.expression);
       }
       if (actualArity !== null && (actualArity < localCallableArity.min || actualArity > localCallableArity.max)) {
@@ -13563,11 +13616,13 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
       let family: ObviousModuleValueFamily | undefined;
       for (const element of expr.elements) {
         if (ts.isSpreadElement(element) || ts.isOmittedExpression(element)) {
-          return shapeNo("expr-arraylit-module-value-unproven", expr);
+          if (!probeAdmits("expr-arraylit-module-value-unproven"))
+            return shapeNo("expr-arraylit-module-value-unproven", expr);
         }
         const elementFamily = obviousModuleValueFamily(element);
         if (!elementFamily || (family !== undefined && family !== elementFamily)) {
-          return shapeNo("expr-arraylit-module-value-unproven", expr);
+          if (!probeAdmits("expr-arraylit-module-value-unproven"))
+            return shapeNo("expr-arraylit-module-value-unproven", expr);
         }
         family = elementFamily;
       }

@@ -43,7 +43,11 @@ export function closureLiteralIsBuildable<Projection>(
     return host.shapeNo("closure-async", expr);
   if (expr.typeParameters && expr.typeParameters.length > 0) return host.shapeNo("closure-type-params", expr);
   if (plan && (plan.expression !== expr || !plan.isCurrent())) return host.shapeNo("closure-member-plan-stale", expr);
-  if (!plan && (!expr.type || host.annotationToResolvedKind(expr.type) === null))
+  if (
+    process.env.JS2WASM_IR_OWNED_PROBE !== "1" && // #7348 Step 0 PROBE (scratch only)
+    !plan &&
+    (!expr.type || host.annotationToResolvedKind(expr.type) === null)
+  )
     return host.shapeNo("closure-return-type", expr.type ?? expr);
   const inner = new Set(plan ? [] : scope);
   // (#7106 Stage 4) A planned closure that reads its own `this` binds it at entry.
