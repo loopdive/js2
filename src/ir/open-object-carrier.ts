@@ -15,6 +15,7 @@ import { JS_TAG_IDS } from "./js-tag-domain.js";
 import { irDynamic, irVal, type IrType, type IrValueId } from "./nodes.js";
 import type { ObjectStaticCall, OwnPropertyTestCall } from "./object-statics.js";
 import {
+  emitThrowTypeErrorAlways,
   emitThrowTypeErrorIf,
   emitThrowTypeErrorIfNullish,
   emitThrowTypeErrorUnlessObject,
@@ -113,6 +114,8 @@ export function emitObjectRuntimeCall(
  * (every argument is, before the static's first step):
  *   - the row's demand on the first value (an Object, or not nullish),
  *     where its helper does not make it;
+ *   - (#7338 S3) the TypeError of a primitive descriptor or a nullish map,
+ *     before anything is defined;
  *   - the row's helper over the values, when it has one;
  *   - each definition, on the object the static answers: the helper's
  *     result, or the first value of a static that only defines.
@@ -120,7 +123,7 @@ export function emitObjectRuntimeCall(
  */
 export function emitObjectStaticCall(
   builder: IrFunctionBuilder,
-  call: Pick<ObjectStaticCall, "name" | "provider" | "requires">,
+  call: Pick<ObjectStaticCall, "name" | "provider" | "requires" | "throws">,
   operands: readonly IrValueId[],
   definitions: readonly ObjectStaticDefinitionValues[],
 ): IrValueId {
@@ -130,9 +133,10 @@ export function emitObjectStaticCall(
   } else if (call.requires === "coercible") {
     emitThrowTypeErrorIfNullish(builder, first, NOT_COERCIBLE);
   }
+  if (call.throws) emitThrowTypeErrorAlways(builder, "Property description must be an object");
   const answer =
     call.provider === undefined ? first : emitObjectRuntimeCall(builder, call.provider, operands, irDynamic());
-  if (definitions.length > 0) {
+  if (!call.throws && definitions.length > 0) {
     const object = builder.emitCoerceToExternref(answer);
     for (const definition of definitions) emitOpenCarrierDefine(builder, object, definition);
   }

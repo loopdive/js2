@@ -15,7 +15,7 @@ import type { ts } from "../ts-api.js";
 import type { BindingLeaf, PatternLeafValue, PatternPlan } from "./binding-pattern-plan.js";
 import type { IrFunctionBuilder } from "./builder.js";
 import { irVal, type IrValueId } from "./nodes.js";
-import { emitThrowTypeErrorIf } from "./throw-type-error.js";
+import { emitThrowTypeErrorAlways } from "./throw-type-error.js";
 
 export interface PatternLoweringHost<Read> {
   readonly builder: IrFunctionBuilder;
@@ -43,14 +43,8 @@ export function lowerPatternPlan<Read>(plan: PatternPlan<Read>, host: PatternLow
   }
 }
 
-/**
- * Thrown behind a constant-true branch rather than as a terminator: the leaves
- * after it still bind, so the code the selector admitted after the
- * declaration stays well-formed.
- */
 function throwTypeError(builder: IrFunctionBuilder): void {
-  const always = builder.emitConst({ kind: "bool", value: true }, irVal({ kind: "i32" }));
-  emitThrowTypeErrorIf(builder, always, "Cannot destructure 'null' or 'undefined'");
+  emitThrowTypeErrorAlways(builder, "Cannot destructure 'null' or 'undefined'");
 }
 
 function lowerLeafValue<Read>(

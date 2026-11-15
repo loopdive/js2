@@ -18,6 +18,15 @@ export function emitThrowTypeErrorIf(builder: IrFunctionBuilder, cond: IrValueId
   builder.emitIfStmt({ cond, then: builder.collectBodyInstrs(() => emitThrowTypeError(builder, message)), else: [] });
 }
 
+/**
+ * `throw new TypeError(message)` behind a constant-true branch rather than as
+ * a terminator: the code after it still binds, so what the selector admitted
+ * after the throwing step stays well-formed.
+ */
+export function emitThrowTypeErrorAlways(builder: IrFunctionBuilder, message: string): void {
+  emitThrowTypeErrorIf(builder, builder.emitConst({ kind: "bool", value: true }, irVal({ kind: "i32" })), message);
+}
+
 /** `if (Type(value) is not Object) throw new TypeError(message)`, for a `dynamic` value: neither an object nor a function. */
 export function emitThrowTypeErrorUnlessObject(builder: IrFunctionBuilder, value: IrValueId, message: string): void {
   const unlessFunction = builder.collectBodyInstrs(() => {

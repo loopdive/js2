@@ -72,7 +72,7 @@ export function objectCreateDescriptorMap(
   ) {
     return null;
   }
-  const definitions = descriptorMapDefinitions(expr.arguments[1]!, isPrimitiveLiteral);
+  const definitions = descriptorMapDefinitions(expr.arguments[1]!, isPrimitiveLiteral, "data");
   if (definitions === null || !isUnshadowedLibBinding(callee.expression, admission.isLibOnlyBinding)) return null;
   return unitInKeysAreOwnOnly(expr) ? definitions : null;
 }
