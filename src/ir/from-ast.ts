@@ -145,8 +145,6 @@ import { remainderFastPathPlan } from "./analysis/remainder-fast-path.js";
 import { evaluateConstantCondition } from "../codegen/statements/control-flow.js";
 import type { IrClassInstanceInitializer } from "./class-instance-initializers.js";
 import { staticMemberBindingIsUnsound } from "./class-overrides.js";
-// #2766 — reuse the legacy counted-loop proof predicates (pure AST analysis, no
-// codegen state) to port the `safeIndexedArrays` in-bounds proof into the IR.
 import { countedStringAppendPlanIsCurrent } from "./analysis/counted-string-append.js";
 import { stringBuilderSlotPlan } from "./string-builder-shape.js";
 // (#3741) native-i32 slot storage for provably-int32 mutable locals
@@ -203,6 +201,8 @@ import { objectLiteralDataPropertyName, phase1PropertyName } from "./property-ke
 import { collectDynamicStringLocalWidening } from "./dynamic-local-widening.js";
 import { coercibleStandaloneDomArgumentBoundary } from "./dom-boundary.js";
 import { fmodRefFor } from "./fmod-selection.js";
+// #2766 — the counted-loop proofs (pure AST analysis, no codegen state) that port the
+// `safeIndexedArrays` in-bounds proof into the IR; the selector reads the same proof (#7346).
 import { detectCountedLoopSafeIndex, detectFixedLiteralLoopSafeIndexes } from "./fixed-literal-loop-proof.js";
 import {
   requireMatchingModuleBindingOwner,

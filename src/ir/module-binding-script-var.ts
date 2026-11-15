@@ -54,8 +54,9 @@ function collectScriptVarWrites(
  * True when `node` is the declaration itself or a module-init use that runs
  * after it, so the script var's slot has been written: a top-level statement
  * after it, outside every function and class body. Which operators a home
- * lets read the slot (`typeof`, `delete`) is the home's own rule
- * (`isTypeofOrDeleteOperand`).
+ * lets read the slot is the home's own rule: the class-instance, capability,
+ * vec and native-buffer homes refuse a `typeof` / `delete` operand
+ * (`isTypeofOrDeleteOperand`); the string home (#7346) reads `typeof`'s.
  */
 export function scriptVarUseFollowsDeclaration(
   node: ts.Identifier,

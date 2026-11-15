@@ -75,6 +75,10 @@ const CLAIMED: Record<string, string> = {
   "rewritten with strings, in a function too": `var s = "ab"; function w() { s = "zz"; } s = "cd"; w(); if (s !== "zz") { throw "w"; }`,
   "a typeof in the branch typeof excludes": `var s = "ab"; if (typeof s !== "string") { throw "x" + typeof s; }`,
   "a key of an open object": `var o = {}; Object.defineProperty(o, "p", { value: 1 }); var k = "p"; if (o[k] !== 1) { throw "k"; }`,
+  "a loose compare with a string": `var s = "1"; if (s == "1") {} else { throw "x"; }`,
+  // PR #7251 review: step A judges by the IR family, so a local the IR does not type a string keeps main's route.
+  "a local string set to null, === null": `function f() { var s = "ab"; s = null; return s === null; } if (!f()) { throw "x"; }`,
+  "a local string set to null, !== null": `function f() { var s = "ab"; s = null; return s !== null; } if (f()) { throw "x"; }`,
 };
 
 /** The read keeps the opaque-reference discipline (or a step A rule): refused at select, never withdrawn. */
@@ -105,8 +109,8 @@ const REFUSED: Record<string, { readonly source: string; readonly unit: string; 
     unit: "<module-init>",
     detail: "expr-string-member-read",
   },
-  "== null": {
-    source: `var s = "ab"; if (s == null) { throw "n"; }`,
+  "=== null": {
+    source: `var s = "ab"; if (s === null) { throw "n"; }`,
     unit: "<module-init>",
     detail: "expr-string-null-compare",
   },
@@ -115,10 +119,57 @@ const REFUSED: Record<string, { readonly source: string; readonly unit: string; 
     unit: "<module-init>",
     detail: "expr-string-element-read",
   },
-  "a local string's member read": {
-    source: `function g() { var a = "".toLowerCase(); var b = ""; if (a.index !== b.index) throw "g"; } g();`,
-    unit: "g",
+  "a member read other than length": {
+    source: `var a = "".toLowerCase(); var b = ""; if (a.index !== b.index) { throw "g"; }`,
+    unit: "<module-init>",
     detail: "expr-string-member-read",
+  },
+  // PR #7251 review: a binding the proof does not cover keeps main's route (legacy, refused at select).
+  "a compound write": {
+    source: `var s = "ab"; s += 1; if (s.length !== 3) { throw "x"; }`,
+    unit: "<module-init>",
+    detail: "expr-module-extern-consumer",
+  },
+  "a compound write of null": {
+    source: `var s = "ab"; s += null; if (s !== "abnull") { throw "x"; }`,
+    unit: "<module-init>",
+    detail: "expr-module-extern-consumer",
+  },
+  "a loose compare with a number": {
+    source: `var s = "1"; if (s == 1) {} else { throw "x"; }`,
+    unit: "<module-init>",
+    detail: "expr-module-extern-consumer",
+  },
+  "a loose compare with a boolean": {
+    source: `var s = "1"; if (s == true) {} else { throw "x"; }`,
+    unit: "<module-init>",
+    detail: "expr-module-extern-consumer",
+  },
+  "a catch parameter of the same name": {
+    source: `var s = "ab"; try { throw 1; } catch (s) { s = 5; } if (s !== "ab") { throw "x"; }`,
+    unit: "<module-init>",
+    detail: "expr-module-extern-consumer",
+  },
+  // The program's own `String` is not the built-in (legacy answers these wrong too, as on main).
+  "a shadowed String, typeof": {
+    source: `function String(v) { return 7; } var s = String(1); if (typeof s !== "number") { throw "x"; }`,
+    unit: "<module-init>",
+    detail: "expr-module-extern-consumer",
+  },
+  "a shadowed String, .length": {
+    source: `function String(v) { return 7; } var s = String(1); if (s.length !== undefined) { throw "x"; }`,
+    unit: "<module-init>",
+    detail: "expr-module-extern-consumer",
+  },
+  "a shadowed String, concatenation": {
+    source: `function String(v) { return 7; } var s = String(1); if (s + "" !== "7") { throw "x"; }`,
+    unit: "<module-init>",
+    detail: "expr-module-extern-consumer",
+  },
+  "a shadowed String, plus one": {
+    source: `function String(v) { return 7; } var s = String(1); var t = s + 1; if (t !== 8) { throw "x"; }`,
+    unit: "<module-init>",
+    detail: "expr-module-extern-consumer",
   },
 };
 

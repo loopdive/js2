@@ -172,10 +172,10 @@ export function supportsIrBackendTargetCapability(
       // native `__extern_is_array` — the provider legacy's `Array.isArray`
       // arm uses on standalone only (WASI keeps its inline `ref.test` chain).
       return profile.backend === "wasmgc" && profile.fast !== true && profile.target === "standalone";
-    case "native-object-statics":
     // (#7338) The `Object` statics table (`ir/object-statics.ts`): the
     // native object runtime's helpers and a member read that answers for an
     // open `$Object`, measured on host-free standalone only.
+    case "native-object-statics":
     case "native-string-uses":
       // (#7346) The selector's string-use rules (`select-string-uses.ts`) and a
       // string module binding read as an ordinary string value

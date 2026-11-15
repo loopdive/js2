@@ -2357,6 +2357,7 @@ export function makeIrLegacyModuleBindingResolver(
 ): IrLegacyModuleBindingResolver {
   const isAmbientBinding = makeIrAmbientBindingPredicate(checker);
   const classifyPrimitiveExpression = makeIrPrimitiveExpressionClassifier(checker);
+  const isLibOnlyBinding = makeIrAmbientBindingPredicate(checker, "every");
   const resolveCapabilityExtern = options.resolveCapabilityExternBinding;
   const stableFunctionCallPlans = new Map<ts.FunctionDeclaration, IrStableFunctionCallPlan | null>();
   const inspectDirectBinding = (node: ts.Identifier, writeValue?: ts.Expression): IrLegacyModuleBindingInspection => {
@@ -2497,9 +2498,9 @@ export function makeIrLegacyModuleBindingResolver(
       }
     },
     isAmbientBinding,
-    isLibOnlyBinding: makeIrAmbientBindingPredicate(checker, "every"),
+    isLibOnlyBinding,
     readsStringValue: (node: ts.Identifier) =>
-      stringBindingReadIsValue(checker, node, resolve, classifyPrimitiveExpression),
+      stringBindingReadIsValue(checker, node, resolve, classifyPrimitiveExpression, isLibOnlyBinding),
     localVariableDeclaration(node: ts.Identifier): ts.VariableDeclaration | undefined {
       try {
         return localVariableDeclaration(node, checker);

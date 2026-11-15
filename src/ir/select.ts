@@ -12339,16 +12339,13 @@ function phase1NativeBufferVerdict(
   return operands.every((operand) => isPhase1Expr(operand, scope, localClasses));
 }
 
-/** (#7346) Module-init's synthetic unit, the body from-ast lowers module-init over. */
-let currentModuleInitUnit: ts.FunctionDeclaration | null = null;
 const nativeStringUses = () => currentSelectionOptions?.supportsBackendCapability?.("native-string-uses") === true;
 
 /** (#7346 step A) `select-string-uses.ts` over the selector's string proof, on the lane measured for it. */
 function selectorRefusesStringUse(expr: ts.Expression, scope: ReadonlySet<string>, classes: ReadonlySet<string>) {
-  const unit = currentSubjectIsModuleInit ? currentModuleInitUnit : currentSelectionSubject;
+  const unit = currentSubjectIsModuleInit ? expr.getSourceFile() : currentSelectionSubject;
   if (unit === null || !nativeStringUses()) return false;
-  const isString = (e: ts.Expression) =>
-    binaryOperandFamily(e, scope, classes) === "string" || expressionIsProvenString(e);
+  const isString = (e: ts.Expression) => binaryOperandFamily(e, scope, classes) === "string";
   const refusal = stringUseRefusal(expr, isString, unit);
   return refusal !== undefined && !capabilityNo(refusal.reason, refusal.arm, expr);
 }
@@ -14146,7 +14143,6 @@ export function assessModuleInit(
 ): IrModuleInitAssessment {
   const population = collectModuleInitPopulation(sourceFile);
   if (population.length === 0) return { stmtCount: 0, reason: null };
-  currentModuleInitUnit = makeModuleInitSynthetic(population);
 
   // Gate 1 — shape.
   if (SHAPE_DIAG_ON) shapeRejectDetail = null;
