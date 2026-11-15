@@ -99,9 +99,12 @@ const GLOBAL_CONSTANTS: ReadonlySet<string> = new Set(["undefined", "NaN", "Infi
 
 /** (#7339) `undefined`, `NaN` or `Infinity` read as the global value: nothing in the file declares the name. */
 export function isUnshadowedGlobalConstant(node: ts.Expression): boolean {
-  return (
-    ts.isIdentifier(node) && GLOBAL_CONSTANTS.has(node.text) && !declaredNames(node.getSourceFile()).has(node.text)
-  );
+  return ts.isIdentifier(node) && GLOBAL_CONSTANTS.has(node.text) && isUndeclaredInFile(node);
+}
+
+/** Nothing in `node`'s file declares its name, so the read is of the global (a syntactic test, no checker). */
+export function isUndeclaredInFile(node: ts.Identifier): boolean {
+  return !declaredNames(node.getSourceFile()).has(node.text);
 }
 
 const declaredNamesCache = new WeakMap<ts.SourceFile, ReadonlySet<string>>();
