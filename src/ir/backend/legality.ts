@@ -177,7 +177,8 @@ export function supportsIrBackendTargetCapability(
     // native object runtime's helpers and a member read that answers for an
     // open `$Object`, measured on host-free standalone only.
     case "native-string-uses":
-      // (#7346) A string module binding read as an ordinary string value
+      // (#7346) The selector's string-use rules (`select-string-uses.ts`) and a
+      // string module binding read as an ordinary string value
       // (`module-binding-string.ts`), measured on host-free standalone only.
       return (
         profile.backend === "wasmgc" &&

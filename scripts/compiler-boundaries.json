@@ -12985,6 +12985,14 @@
       "nextBoundary": "Separate pure IR contracts from frontend inventory and physical/backend dependencies."
     },
     {
+      "path": "src/ir/module-binding-string.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "7346",
+      "nextBoundary": "Script-var string read admission (#7346), the vec and class-instance twin: separate the source-shape certification from the IR value kind when the frontend inventory is split from ir-core."
+    },
+    {
       "path": "src/ir/module-binding-vec.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
@@ -13807,6 +13815,14 @@
       "destination": "ir-core",
       "owner": "3518-coordinator",
       "nextBoundary": "Separate pure IR contracts from frontend inventory and physical/backend dependencies."
+    },
+    {
+      "path": "src/ir/select-string-uses.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "7346",
+      "nextBoundary": "The selector's string-use refusals (#7346 step A) over from-ast's own predicates; moves with the frontend inventory split."
     },
     {
       "path": "src/ir/select-object-statics.ts",

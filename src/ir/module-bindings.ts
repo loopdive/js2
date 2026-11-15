@@ -2489,13 +2489,8 @@ export function makeIrLegacyModuleBindingResolver(
     },
     isAmbientBinding,
     isLibOnlyBinding: makeIrAmbientBindingPredicate(checker, "every"),
-    readsStringValue(node: ts.Identifier): boolean {
-      const identity = resolve(node);
-      return (
-        identity?.valueKind.kind === "string" &&
-        stringBindingReadIsValue(checker, node, identity.declaration, classifyPrimitiveExpression)
-      );
-    },
+    readsStringValue: (node: ts.Identifier) =>
+      stringBindingReadIsValue(checker, node, resolve, classifyPrimitiveExpression),
     localVariableDeclaration(node: ts.Identifier): ts.VariableDeclaration | undefined {
       try {
         return localVariableDeclaration(node, checker);

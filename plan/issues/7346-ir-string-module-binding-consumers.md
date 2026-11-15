@@ -1,7 +1,7 @@
 ---
 id: 7346
 title: "IR: a string module binding is an ordinary string value at its uses"
-status: ready
+status: in-progress
 sprint: current
 created: 2026-11-15
 updated: 2026-11-15
@@ -263,3 +263,96 @@ census set contains no such case.
 
 `tests/issue-2766` and `tests/issue-2972` fail 6 tests on main and on this branch alike. I checked by
 swapping main's sources into the worktree.
+
+## Step B: a string module binding is an ordinary string value (2026-11-15)
+
+**Built.**
+- `src/ir/module-binding-string.ts`: `stringBindingReadIsValue` decides. The resolver exposes it as
+  `readsStringValue`.
+- The selector consults it in one place, `moduleStringValueRead`:
+  - `moduleExternBinding` stops counting such a read as an opaque reference;
+  - `provenIrFamily` answers `string` for it, so Step A's rules and the operand tables see a string.
+- Gate: the standalone-only `native-string-uses` capability. There is no per-shape branch in the
+  selector and no change to from-ast for Step B.
+
+**When a read is an ordinary string value.** The decision rests on three facts about the binding and
+the read:
+1. **Writes.** The declaration has an initializer, and every write is a value the checker classifier
+   proves a string.
+2. **No dynamic reads in any write.** No write reads a binding on the dynamic carrier. The checker
+   types `" " + d` a string, but the IR lowers it on the carrier, and the string slot does not take
+   that. This is the rule `carrierLeafReads` states for a destructured leaf. Without it, `r` in
+   `var d; d = "ab"; var r = " " + d + " "` claimed, then withdrew.
+3. **Position and type of the read.** The read is a module-init use after the declaration
+   (`scriptVarUseFollowsDeclaration`). Either the checker types the read itself a string, or the read
+   is `typeof`'s operand.
+   - from-ast's `+` proof keys on the checker type, which narrowing makes `never` inside
+     `if (typeof s !== "string")`. Without the rule, `S8.4_A2` claimed, then withdrew.
+   - `typeof` folds from the IR type. Exempting its operand keeps the 11 `S15.5.1.1_A1_T*` files,
+     which read `typeof __str` in that branch.
+
+### Measured (head against main `6bab37c0cd`)
+
+All on the 969-file wide set from Step A.
+
+| measure | Step A alone | Step A + B |
+| --- | --- | --- |
+| IR-only files | 800 → 800 | 800 → **830** |
+| gained / lost | 0 / 0 | **30** / 0 |
+| units newly legacy | 0 | 0 |
+| post-claim → refused at select | 0 | 0 |
+| new compile errors | 0 | 0 |
+| post-claim errors | 31 → 31 | 31 → 31 (0 new) |
+| routing-changed files (control) | 0 (0) | 30 (0) |
+
+The "Step A alone" column was re-measured after Step A's module-init literal lengths were fixed.
+
+- **Gained** (30), counts by group:
+  - `String/S15.5.1.1_A1_T*` (11);
+  - `S9.8_A4_T1` / `_T2`;
+  - the `<`, `<=`, `>`, `>=` `A4.10` / `A4.11` files (8);
+  - `source-text/6.1`;
+  - `throw/S12.13_A3_T2`;
+  - `try/S12.14_A18_T4`;
+  - `types/string/S8.4_A1`, `A3`, `A4`, `A6.1`, `A6.2`, `A10`.
+- **Verdicts** of the 30 routing-changed files (standalone, interpreter provider): 30/30 pass on both
+  trees.
+- **JS-environment bytes:** 338/338 identical. The set is the 30 changed files, the 138 carriers and
+  200 other compiled files.
+- **Hazard matrix:** 407 programs (`genmatrix.mjs`), every binding form × every use, each checked against
+  node.
+  - **Admitted forms:** 256 cells. 172 are claimed (main claims 24); 0 answer wrong and 0 have a
+    post-claim error.
+  - **Head-only post-claim cells:** 0.
+  - **Wrong answers:** 4 cells answer wrong on both trees. All are unclaimed `null`-write forms on the
+    legacy path.
+  - **Units lost:** 0.
+- **Tests:**
+  - `tests/issue-7346.test.ts` is new: 10 claimed rows, 8 refused-at-select rows, and the JS-environment
+    row.
+  - In `tests/issue-7335` one row's refusal label moved, because `o[k]` with a string `k` is now
+    admitted. It answers as JS does, and the row is in the claimed list of the #7346 test.
+  - 15 failures in the related suites also fail on main with main's sources swapped in:
+    - `issue-2766` / `issue-2972`: 6;
+    - `issue-3523` R4-M1 and module-init: 4;
+    - `issue-4208` wrapper loose equality: 1;
+    - `issue-7144`: 4.
+
+### Differences from the plan
+
+1. **Step A was added first,** at the coordinator's direction. Without it, the general arms claimed
+   and then withdrew `.index` / `.constructor` / `== null` / `s[i]` on a module string, as they already
+   did on a local one.
+2. **Two refusals the plan did not name:**
+   - a write that reads a dynamic binding;
+   - a narrowed read outside `typeof`.
+
+   Each closes one claim-then-withdraw that the plan's write and position rules let through.
+3. **`provenIrFamily` answers `string` for the proven read.** The plan said only "the ordinary
+   expression arms judge it". Without this answer, Step A's rules and the `+` tables do not see a
+   string.
+4. **Measured yield is +30 files** on the 138 carriers (the plan's text-filter bound was ≤ 38 alone).
+5. **Follow-up, not built:** `o[k] === undefined` on an open object claims and then withdraws on main
+   for every key spelling. That is #2856 C3's unproven-element-read demote; `S8.12.3_A2` is in main's
+   post-claim list. With a string `k` it can now also arise from a module string key. No census file
+   has it.

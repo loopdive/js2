@@ -137,8 +137,10 @@ const REFUSED: Record<string, { readonly source: string; readonly detail: string
     detail: "expr-ident-not-in-scope",
   },
   "element read": {
+    // (#7346) The string var `k` is an ordinary string value, so `o[k]` is admitted
+    // (and answers as JS does, `tests/issue-7346.test.ts`); the probe's own call refuses.
     source: `var o = {}; ${DEFINE} var k = 'p'; if (o[k] !== 1) { throw "elem"; }`,
-    detail: "expr-module-extern-consumer",
+    detail: "expr-module-scalar-method",
   },
   "ToPropertyKey-running key": {
     source: `var o = {}; ${DEFINE} if (!o.hasOwnProperty({ toString: function () { return 'p'; } })) { throw "key"; }`,

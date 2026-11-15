@@ -8132,7 +8132,18 @@ function isUnshadowedUndefinedIdentifier(expr: ts.Expression, scope: ReadonlySet
  */
 function moduleExternBinding(expr: ts.Expression): ReturnType<IrLegacyModuleBindingResolver> {
   const binding = moduleBinding(expr);
-  return binding !== undefined && isIrModuleReferenceValueKind(binding.valueKind) ? binding : undefined;
+  if (binding === undefined || !isIrModuleReferenceValueKind(binding.valueKind)) return undefined;
+  return moduleStringValueRead(expr) ? undefined : binding;
+}
+
+/** (#7346) A read of a `string` binding that is an ordinary string value, on the lane measured for it. */
+function moduleStringValueRead(expr: ts.Expression): boolean {
+  const candidate = unwrapPhase1Parens(expr);
+  return (
+    ts.isIdentifier(candidate) &&
+    currentSelectionOptions?.supportsBackendCapability?.("native-string-uses") === true &&
+    currentModuleBindingResolver?.readsStringValue(candidate) === true
+  );
 }
 
 /** True only for the one module representation whose IR value is a JS boolean. */
@@ -12246,6 +12257,7 @@ function provenIrFamily(expression: ts.Expression, scope: ReadonlySet<string>): 
   if (ts.isIdentifier(expression) && unannotatedLocal(expression) !== undefined) return "unknown";
   if (isScriptVarVecCarrierRead(expression)) return "dynamic";
   if (moduleBinding(expression) !== undefined) {
+    if (moduleStringValueRead(expression)) return "string";
     const slot = obviousModuleValueFamily(expression);
     return slot === "f64" ? "number" : slot === "boolean" ? "boolean" : "unknown";
   }
@@ -12331,18 +12343,24 @@ function phase1NativeBufferVerdict(
   return operands.every((operand) => isPhase1Expr(operand, scope, localClasses));
 }
 
-const subjectStringLiteralLengths = new WeakMap<IrClaimableSubject, ReadonlyMap<string, number>>();
+const unitStringLiteralLengths = new WeakMap<IrClaimableSubject, ReadonlyMap<string, number>>();
+/** (#7346) Module-init's synthetic unit, the body from-ast reads its literal string lengths over. */
+let currentModuleInitUnit: ts.FunctionDeclaration | null = null;
 
 /** (#7346 step A) `select-string-uses.ts` over the selector's string proof, on the lane measured for it. */
-function selectorRefusesStringUse(expr: ts.Expression, scope: ReadonlySet<string>): boolean {
-  const subject = currentSelectionSubject;
-  if (subject === null || currentSelectionOptions?.supportsBackendCapability?.("native-string-uses") !== true) {
+function selectorRefusesStringUse(
+  expr: ts.Expression,
+  scope: ReadonlySet<string>,
+  localClasses: ReadonlySet<string>,
+): boolean {
+  const unit = currentSubjectIsModuleInit ? currentModuleInitUnit : currentSelectionSubject;
+  if (unit === null || currentSelectionOptions?.supportsBackendCapability?.("native-string-uses") !== true) {
     return false;
   }
-  let lengths = subjectStringLiteralLengths.get(subject);
-  if (lengths === undefined) subjectStringLiteralLengths.set(subject, (lengths = collectStringLiteralLens(subject)));
+  let lengths = unitStringLiteralLengths.get(unit);
+  if (lengths === undefined) unitStringLiteralLengths.set(unit, (lengths = collectStringLiteralLens(unit)));
   const isString = (operand: ts.Expression) =>
-    provenIrFamily(operand, scope) === "string" || expressionIsProvenString(operand);
+    binaryOperandFamily(operand, scope, localClasses) === "string" || expressionIsProvenString(operand);
   const refusal = stringUseRefusal(expr, isString, lengths);
   return refusal !== undefined && !capabilityNo(refusal.reason, refusal.arm, expr);
 }
@@ -12358,7 +12376,7 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
   ) {
     return shapeNo("expr-module-extern-consumer", expr);
   }
-  if (selectorRefusesStringUse(expr, scope)) return false;
+  if (selectorRefusesStringUse(expr, scope, localClasses)) return false;
   // (#7106 levers R2, S2) A match result's served field goes only where its dynamic value lowers.
   if (
     currentSelectionOptions?.supportsBackendCapability?.("native-regexp") === true &&
@@ -14136,6 +14154,7 @@ export function assessModuleInit(
 ): IrModuleInitAssessment {
   const population = collectModuleInitPopulation(sourceFile);
   if (population.length === 0) return { stmtCount: 0, reason: null };
+  currentModuleInitUnit = makeModuleInitSynthetic(population);
 
   // Gate 1 — shape.
   if (SHAPE_DIAG_ON) shapeRejectDetail = null;
