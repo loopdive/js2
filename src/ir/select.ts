@@ -55,7 +55,7 @@
 //     `localClasses` set drives that exemption.
 
 import { ts, forEachChild } from "../ts-api.js";
-import { localIsRewritten } from "./lattice-param-facts.js";
+import { isStableDirectCallTarget, localIsRewritten } from "./lattice-param-facts.js";
 import { isPlannedScriptVarClosure } from "./function-member-closure-plan.js";
 import { exactGlobalEvalStatement } from "../eval-call-shape.js";
 import { collectIrClassInstanceInitializers } from "./class-instance-initializers.js";
@@ -158,6 +158,7 @@ import {
 } from "./select-closure-literal.js";
 import type { IrAmbientClassCallResolver, IrHostVoidCallbackResolver } from "./host-extern.js";
 import type { IrPromiseDelayResolver } from "./promise-delay.js";
+import type { IrRuntimeEvalFunctionAnswers } from "./runtime-eval-boundary-plan.js";
 import {
   isNumericArrayTypeNode,
   mutableParameterHasIrSlot,
@@ -791,6 +792,8 @@ export interface IrSelectionOptions extends IrAsyncSelectionOptions {
    * assumes a pristine realm.
    */
   readonly runtimeEvalMayExecute?: boolean;
+  /** (#7345) The runtime-eval boundary's answers for a top-level function, on a lane that measured them. */
+  readonly runtimeEvalFunctions?: IrRuntimeEvalFunctionAnswers;
   /**
    * #2952 slice 5 — certify that this exact `for (head in receiver)` source
    * expression uses the non-fast dynamic externref carrier. The callback is
@@ -2467,7 +2470,11 @@ function whyNotIrClaimable(
     }
   }
 
-  return null;
+  // (#7345) Refused, not withdrawn at the runtime-eval boundary after the claim (that closure drags IR callees).
+  const crossing = ts.isFunctionDeclaration(fn) && currentSelectionOptions?.runtimeEvalFunctions?.crossing(fn);
+  if (!crossing) return null;
+  shapeNo(`fn-runtime-eval-boundary(${crossing})`, fn);
+  return "deferred-feature";
 }
 
 /** @internal Exact-subject entry used by the structural selector orchestration. */
@@ -14350,10 +14357,15 @@ export function buildLocalCallGraph(
             // top-level call with the same text elsewhere in the function.
           } else if (
             decls.has(callee) &&
-            !localIsRewritten(decls.get(callee)!, closureSignatureFlowHooks.resolveValue)
+            isStableDirectCallTarget(
+              node.expression,
+              decls.get(callee)!,
+              currentSelectionOptions?.runtimeEvalFunctions,
+              closureSignatureFlowHooks.resolveValue,
+            )
           ) {
-            // (#7283) A function whose binding is reassigned (`f = …`) has no
-            // stable direct-call target: from-ast plans no direct call to it,
+            // (#7283) A function whose binding may be rebound has no stable
+            // direct-call target: from-ast plans no direct call to it,
             // so a call to it is external, not a graph edge.
             callees.get(callerName)!.add(callee);
             callers.get(callee)!.add(callerName);
