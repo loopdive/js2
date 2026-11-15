@@ -92,7 +92,16 @@ export function isUnshadowedLibBinding(
 
 /** (#7274) `undefined` read as the global value: nothing in the file declares the name. */
 export function isUnshadowedUndefined(node: ts.Expression): boolean {
-  return ts.isIdentifier(node) && node.text === "undefined" && !declaredNames(node.getSourceFile()).has("undefined");
+  return ts.isIdentifier(node) && node.text === "undefined" && isUnshadowedGlobalConstant(node);
+}
+
+const GLOBAL_CONSTANTS: ReadonlySet<string> = new Set(["undefined", "NaN", "Infinity"]);
+
+/** (#7339) `undefined`, `NaN` or `Infinity` read as the global value: nothing in the file declares the name. */
+export function isUnshadowedGlobalConstant(node: ts.Expression): boolean {
+  return (
+    ts.isIdentifier(node) && GLOBAL_CONSTANTS.has(node.text) && !declaredNames(node.getSourceFile()).has(node.text)
+  );
 }
 
 const declaredNamesCache = new WeakMap<ts.SourceFile, ReadonlySet<string>>();

@@ -351,13 +351,20 @@ import {
 import type { OwnPropertyMethod } from "./dynamic-home-open-object.js";
 import type { DescriptorDefinition } from "./descriptor-literal.js";
 import { lowerObjectCreateDescriptorMapCall } from "./object-create-call.js";
-import { objectStaticCallPlan, type ObjectStaticCapability, type ObjectStaticPlan } from "./object-statics.js";
+import {
+  isOwnPropertyTestTerritory,
+  objectStaticCallPlan,
+  type ObjectStaticCapability,
+  type ObjectStaticPlan,
+  type ObjectStaticsRealm,
+} from "./object-statics.js";
 import { staticPrivateFieldOwner, staticPrivateThisCallClassName } from "./private-member-syntax.js";
 import {
   emitNewPlainObject,
   emitObjectRuntimeCall,
   emitObjectStaticCall,
   emitOpenCarrierObject,
+  emitOwnPropertyTest,
   type ObjectStaticDefinitionValues,
 } from "./open-object-carrier.js";
 import {
@@ -9214,11 +9221,22 @@ function unadmittedObjectDefineProperty(cx: LowerCtx): never {
 
 /** (#7338) The selector's `Object` statics plan, on from-ast's scope and the same program facts. */
 function objectStaticPlanOf(expr: ts.CallExpression, cx: LowerCtx): ObjectStaticPlan | undefined {
-  return objectStaticCallPlan(expr, {
+  return objectStaticCallPlan(expr, objectStaticsRealmOf(cx));
+}
+
+function objectStaticsRealmOf(cx: LowerCtx): ObjectStaticsRealm {
+  return {
     isAmbientBinding: (node) => cx.resolver?.isAmbientBinding?.(node) === true && cx.scope.get(node.text) === undefined,
     dynamicCodeMayRun: cx.resolver?.runtimeEvalMayExecute?.() !== false,
     supportsBackendCapability: (capability) => cx.resolver?.supportsBackendCapability?.(capability) === true,
-  });
+    // (#7339) The test row's territory. The selector reads the same resolver identity: its `valueKind` is `dynamic`
+    // exactly when `resolveModuleBindingGlobal` types the global `dynamic`. #7335's arm runs before the row and records
+    // every call it admits, so in a claimed unit the record equals the selector's live predicate; a disagreement
+    // throws in `tryLowerObjectStaticCall`.
+    isDynamicModuleBinding: (id) => cx.resolver?.resolveModuleBinding?.(id)?.type.kind === "dynamic",
+    existingArmAdmits: (call) => admittedOwnPropertyCallMethod(call) !== undefined,
+    classifyPrimitive: (e) => (cx.checker ? makeIrPrimitiveExpressionClassifier(cx.checker)(e) : undefined),
+  };
 }
 
 /** A define's key (a literal stays static) and field values, each as a carrier (#7338, #7276). */
@@ -9239,18 +9257,33 @@ function lowerDescriptorDefinition(
 /**
  * (#7338) An admitted `Object.<static>(…)` (`object-statics.ts`), behind the
  * selector's plan: every value and definition as a carrier, in source order,
- * then `emitObjectStaticCall`. Null when the call is no table static on this
- * lane, which leaves it to the other arms; a refused one never reaches here.
+ * then `emitObjectStaticCall`; (#7339) the fallback test row's receiver, then
+ * `emitOwnPropertyTest`, which lowers its key. Null when the call is no table
+ * row on this lane, which leaves it to the other arms; a refused one never
+ * reaches here.
  */
 function tryLowerObjectStaticCall(expr: ts.CallExpression, cx: LowerCtx): IrValueId | null {
-  const plan = objectStaticPlanOf(expr, cx);
-  if (plan === undefined) return null;
+  const realm = objectStaticsRealmOf(cx);
+  const plan = objectStaticCallPlan(expr, realm);
+  if (plan === undefined) {
+    if (!isOwnPropertyTestTerritory(expr, realm)) return null;
+    throw new IrInvariantError(
+      "selection-preparation-mismatch",
+      "build",
+      `ir/from-ast: own-property test on a script var planned by neither #7335's arm nor the row (${cx.funcName})`,
+    );
+  }
   if (plan.kind === "refused") {
     throw new IrInvariantError(
       "selection-preparation-mismatch",
       "build",
       `ir/from-ast: Object static refused (${plan.refusal}) after selection admitted it (${cx.funcName})`,
     );
+  }
+  if (plan.kind === "test") {
+    const { name, receiver, key } = plan.test;
+    const object = lowerCarrierOperand(receiver, name, cx);
+    return emitOwnPropertyTest(cx.builder, plan.test, object, () => lowerCarrierOperand(key, name, cx));
   }
   const { name, operands, definitions } = plan.call;
   const values = operands.map((operand) =>
@@ -14909,8 +14942,10 @@ function expressionProducesDynamic(expr: ts.Expression, cx: LowerCtx): boolean {
         return cx.calleeTypes?.get(call.expression.text)?.returnType?.kind === "dynamic";
       }
       if (!ts.isPropertyAccessExpression(call.expression)) return false;
-      // (#7338) An admitted `Object` static answers the carrier.
-      if (objectStaticPlanOf(call, cx)?.kind === "call") return true;
+      // (#7338) An admitted `Object` static answers the carrier; (#7339) the test row as its plan's answer says.
+      const plan = objectStaticPlanOf(call, cx);
+      if (plan?.kind === "call") return true;
+      if (plan?.kind === "test") return plan.test.answer === "dynamic";
       // (#7335) A dynamic home's own-property test answers a boolean.
       if (admittedOwnPropertyCallMethod(call) !== undefined) return false;
       // (#7106 lever R2) A host-free `re.exec(s)` answers the match array or null as the carrier.

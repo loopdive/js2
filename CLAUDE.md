@@ -68,6 +68,31 @@ How it is enforced:
    fold the duplicate into the shared helper in the same PR, or file the
    cleanup as its own issue and link it.
 
+## ⚠ IR migration: foundations first (project-lead decision, 2026-11-15)
+
+**Applies to every session and agent working on the IR migration.** The goal is
+every ES5 test262 file compiling on `--target standalone` with zero legacy
+units. Measured 2026-11-11 to 2026-11-15, narrow slices (one refusal label at a
+time) moved that from 17.5 % to about 19 % of 8,591 files: 2 to 55 files per
+slice, because almost every blocked file carries several reasons.
+
+- **Build the mechanisms many files need, before narrow slices.** In order of
+  measured size: function values and closures, object literals as open
+  dynamic objects, built-in globals as values, `eval`. A slice for one refusal
+  label is taken only when a compile run shows its yield.
+- **Measure before planning.** A yield number in a plan comes from a run on
+  current main, with its date and head. An estimate is labelled as one. (On
+  2026-11-15 a slice planned at +16 files delivered +2.)
+- **Do not over-orient on the legacy compiler.** Where it speeds the migration
+  or gives a better result, the IR chooses its own representation instead of
+  mirroring legacy's slot types, closure ABI or per-site special cases: for
+  example by owning a whole file, or by changing what standalone legacy stores
+  so the IR can share it. A legacy behaviour that is wrong is not preserved.
+- **What still holds:** standalone only; the IR code-quality rule above; no
+  regression in test verdicts or in a completed edition; JS-environment output
+  byte-identical while that lane exists; refuse at select, never claim a unit
+  and then withdraw it.
+
 ## Answering style
 
 Be concise. Lead with the answer, then only the context needed to act on it.

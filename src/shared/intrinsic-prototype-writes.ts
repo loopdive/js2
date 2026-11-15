@@ -35,8 +35,14 @@
  *     `Object.assign(this, …)`).
  *   - {@link sourceRunsDynamicCode}: the same consumers ask whether code the
  *     walk cannot see may run (`eval`, `Function`, by any name route).
+ *   - The IR's own-property tests (#7339) ask whether any object may carry an
+ *     own member of a name: {@link sourceSpellsName} (the name spelled other
+ *     than as a member read's name), {@link sourceMayWriteUnspelledMember} (a
+ *     member installed under a name the source does not spell) and
+ *     {@link sourceCreatePrototypes} (what every `Object.create` makes from).
  */
 import { forEachChild, ts } from "../ts-api.js";
+import { isUnshadowedGlobalConstant } from "./ambient-intrinsics.js";
 import { isBindingSiteName, isStoreTarget, skipOuterExpressions } from "./binding-writes.js";
 
 export type PatchableIntrinsic = "Array" | "Boolean" | "Function" | "Number" | "Object" | "RegExp" | "String";
@@ -52,6 +58,12 @@ interface PrototypeUse {
   globalObjectEscapes: boolean;
   /** `eval` or `Function` is read other than as an operand or for its `prototype`: code the walk cannot see may run. */
   dynamicCode: boolean;
+  /** A member may be installed under a name the source does not spell ({@link installsUnspelledMember}). */
+  unspelledWrite: boolean;
+  /** Names spelled other than as a member read's name: string literals, bindings, keys, references. */
+  readonly spelledNames: Set<string>;
+  /** The prototype operand of every mention of `Object.create`; `null` where it is not called directly. */
+  readonly createPrototypes: (ts.Expression | null)[];
 }
 
 const PATCHABLE: ReadonlySet<string> = new Set<PatchableIntrinsic>([
@@ -112,6 +124,21 @@ export function sourceRunsDynamicCode(sourceFile: ts.SourceFile): boolean {
   return prototypeUse(sourceFile).dynamicCode;
 }
 
+/** Whether a member may be installed under a name the source does not spell ({@link installsUnspelledMember}). */
+export function sourceMayWriteUnspelledMember(sourceFile: ts.SourceFile): boolean {
+  return prototypeUse(sourceFile).unspelledWrite;
+}
+
+/** Whether the source spells `name` other than as a member read's name (`"hasOwnProperty"`, `{ hasOwnProperty: f }`). */
+export function sourceSpellsName(sourceFile: ts.SourceFile, name: string): boolean {
+  return prototypeUse(sourceFile).spelledNames.has(name);
+}
+
+/** The prototype operand of every mention of `Object.create`, in source order; `null` where it is not called directly. */
+export function sourceCreatePrototypes(sourceFile: ts.SourceFile): readonly (ts.Expression | null)[] {
+  return prototypeUse(sourceFile).createPrototypes;
+}
+
 /** Whether the source writes, deletes or defines a member or binding named `name` (`x.call = f`, `String = v`). */
 export function sourceWritesMemberNamed(sourceFile: ts.SourceFile, name: string): boolean {
   return prototypeUse(sourceFile).writtenNames.has(name);
@@ -127,6 +154,9 @@ function prototypeUse(sourceFile: ts.SourceFile): PrototypeUse {
       reflective: false,
       globalObjectEscapes: false,
       dynamicCode: false,
+      unspelledWrite: false,
+      spelledNames: new Set(),
+      createPrototypes: [],
     };
     const found = use;
     const callbacks: { readonly intrinsic: PatchableIntrinsic; readonly method: string }[] = [];
@@ -151,6 +181,12 @@ function prototypeUse(sourceFile: ts.SourceFile): PrototypeUse {
         found.globalObjectEscapes = true;
       const written = writtenName(node);
       if (written !== undefined) found.writtenNames.add(written);
+      found.unspelledWrite ||= installsUnspelledMember(node);
+      if (ts.isStringLiteralLike(node) || (ts.isIdentifier(node) && !isMemberName(node))) {
+        found.spelledNames.add(node.text);
+      }
+      const created = createdFrom(node);
+      if (created !== undefined) found.createPrototypes.push(created);
       const text = nameText(node);
       if (
         ts.isWithStatement(node) ||
@@ -300,6 +336,72 @@ function writtenName(node: ts.Node): string | undefined {
   if (!ts.isCallExpression(node) || !ts.isPropertyAccessExpression(node.expression)) return undefined;
   const key = node.arguments[1];
   return node.expression.name.text === "defineProperty" && key !== undefined ? nameText(key) : undefined;
+}
+
+/** `node` is the name of a member read or write (`o.<name>`), not a spelling of the name itself. */
+function isMemberName(node: ts.Identifier): boolean {
+  return ts.isPropertyAccessExpression(node.parent) && node.parent.name === node;
+}
+
+/** The names that define a member by a key operand (`defineProperty`) or by a map's keys (`defineProperties`). */
+const DEFINE_NAMES: ReadonlySet<string> = new Set(["defineProperty", "defineProperties"]);
+
+/**
+ * A member may be installed under a name the source does not spell:
+ *   - a store `x[e] = v` or a computed literal key `{ [e]: v }` whose `e` is no
+ *     constant;
+ *   - `defineProperty` called directly (by any spelling the walk reads:
+ *     `Object.defineProperty`, `Object["defineProperty"]`) with a key that is
+ *     no constant, or reached any other way (an alias, `.call`, `.apply`), and
+ *     `defineProperties` reached other than as a direct call;
+ *   - a mention of a built-in that makes keys from data or an exotic object:
+ *     `Proxy`, `fromEntries`, and `JSON` other than `typeof JSON` and
+ *     `JSON.stringify` (assert.js's value formatter).
+ */
+function installsUnspelledMember(node: ts.Node): boolean {
+  if (ts.isElementAccessExpression(node) && isStoreTarget(node)) return !isConstantKey(node.argumentExpression);
+  if (ts.isComputedPropertyName(node)) return !isConstantKey(node.expression);
+  const name = referencedName(node);
+  if (name === undefined) return false;
+  if (DEFINE_NAMES.has(name)) {
+    const use = outermost(node as ts.Expression);
+    const call = use.parent;
+    if (!ts.isCallExpression(call) || call.expression !== use) return true;
+    const key = call.arguments[1];
+    return name === "defineProperty" && key !== undefined && !isConstantKey(key);
+  }
+  if (name === "Proxy" || name === "fromEntries") return true;
+  if (name !== "JSON") return false;
+  const use = outermost(node as ts.Expression);
+  const user = use.parent;
+  return !(
+    ts.isTypeOfExpression(user) ||
+    (ts.isPropertyAccessExpression(user) && user.expression === use && user.name.text === "stringify")
+  );
+}
+
+/** What a mention of `Object.create` (by any spelling the walk reads) makes from: its prototype, `null` if not called. */
+function createdFrom(node: ts.Node): ts.Expression | null | undefined {
+  if (!(ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node))) return undefined;
+  if (referencedName(node) !== "create" || referencedName(skipOuterExpressions(node.expression)) !== "Object") {
+    return undefined;
+  }
+  const use = outermost(node);
+  const call = use.parent;
+  return ts.isCallExpression(call) && call.expression === use ? (call.arguments[0] ?? null) : null;
+}
+
+/** A property key fixed by the source: a literal, a signed number, or the global `undefined` / `NaN` / `Infinity`. */
+function isConstantKey(key: ts.Expression): boolean {
+  const k = skipOuterExpressions(key);
+  if (ts.isStringLiteralLike(k) || ts.isNumericLiteral(k) || isUnshadowedGlobalConstant(k)) return true;
+  if (k.kind === ts.SyntaxKind.TrueKeyword || k.kind === ts.SyntaxKind.FalseKeyword) return true;
+  if (k.kind === ts.SyntaxKind.NullKeyword) return true;
+  return (
+    ts.isPrefixUnaryExpression(k) &&
+    (k.operator === ts.SyntaxKind.MinusToken || k.operator === ts.SyntaxKind.PlusToken) &&
+    ts.isNumericLiteral(k.operand)
+  );
 }
 
 /** `target` is itself what a store or `delete` writes, not a member's object or name (`x` and `k` in `x.k = v`). */
