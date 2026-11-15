@@ -30,6 +30,8 @@ import {
 } from "./empty-object-literal.js";
 import { isServedUse, type ServedUsePolicy } from "./dynamic-home-uses.js";
 import type { IrLegacyModuleBindingIdentity } from "./module-bindings.js";
+import type { OwnPropertyTest } from "./nodes.js";
+import { isOwnPropertyTest, OWN_PROPERTY_TESTS } from "./object-statics.js";
 import { OBJECT_PROTOTYPE_KEYS } from "./realm-keys.js";
 
 /** What the selector answers about a binding. */
@@ -56,7 +58,7 @@ export function isReference(id: ts.Identifier, query: DynamicHomeQuery): boolean
 }
 
 /** The `Object.prototype` own-property tests a dynamic-home open object answers through `dyn.own_property`. */
-export type OwnPropertyMethod = "hasOwnProperty" | "propertyIsEnumerable";
+export type OwnPropertyMethod = OwnPropertyTest;
 
 /** `o.hasOwnProperty(k)` / `o.propertyIsEnumerable(k)` on a dynamic-home open object. */
 export function ownPropertyMethod(call: ts.CallExpression, query: DynamicHomeQuery): OwnPropertyMethod | undefined {
@@ -149,7 +151,7 @@ function ownPropertyCallMethod(call: ts.CallExpression): OwnPropertyMethod | und
   const callee = call.expression;
   if (!ts.isPropertyAccessExpression(callee) || callee.questionDotToken !== undefined) return undefined;
   const method = callee.name.text;
-  if (method !== "hasOwnProperty" && method !== "propertyIsEnumerable") return undefined;
+  if (!isOwnPropertyTest(method)) return undefined;
   if (call.arguments.length !== 1 || ts.isSpreadElement(call.arguments[0]!)) return undefined;
   return methodIsOnlyRead(call.getSourceFile(), method) ? method : undefined;
 }
@@ -174,8 +176,9 @@ function methodIsOnlyRead(file: ts.SourceFile, method: OwnPropertyMethod): boole
       ts.forEachChild(node, visit);
     };
     visit(file);
-    const methods: OwnPropertyMethod[] = ["hasOwnProperty", "propertyIsEnumerable"];
-    readOnly = new Set(methods.filter((name) => !mentioned.has(name) && !sourceWritesMemberNamed(file, name)));
+    readOnly = new Set(
+      [...OWN_PROPERTY_TESTS].filter((name) => !mentioned.has(name) && !sourceWritesMemberNamed(file, name)),
+    );
     readOnlyMethodsByFile.set(file, readOnly);
   }
   return readOnly.has(method);
