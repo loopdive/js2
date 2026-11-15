@@ -45,6 +45,7 @@ import {
 import { lowerNativeConsoleLine } from "./console-lowering.js";
 import { boxNativeInKey, lowerNativeIn } from "./native-in.js";
 import * as functionObjects from "./function-object-lowering.js";
+import { argumentsCrossSyntactically, bareCallCallee } from "./function-values.js";
 import { expressionIsDefinitelyBoolean } from "./select-expression-structure.js";
 import { skipTransparentExpressions, unwrapTypeErasedExpression } from "../shared/transparent-expressions.js";
 import { constBindingNumber, isStaticArrayIndex, staticElementKey } from "../shared/array-index-key.js";
@@ -368,7 +369,6 @@ import {
   type ObjectStaticDefinitionValues,
 } from "./open-object-carrier.js";
 import {
-  isStatementDynamicModuleCall,
   localValueDeclaration,
   makeIrDeclaredPrimitiveExpressionClassifier,
   makeIrPrimitiveExpressionClassifier,
@@ -7869,13 +7869,13 @@ function lowerCall(expr: ts.CallExpression, cx: LowerCtx, statementPosition = fa
   // script `var`s in a dynamic module home too, but keep legacy's provider.
   const bindingLogicalType =
     binding?.kind === "slot" ? (binding.asType ?? binding.type) : binding?.kind === "local" ? binding.type : undefined;
-  // (#7287) …or a script `var` in its dynamic module home (the prelude's `print`).
+  // (#7287, #7349) …or a script `var` in its dynamic module home (`print`), also `<module-init>`'s own module global.
+  const bareCallee = bareCallCallee(expr);
   const dynamicModuleCallee =
-    binding === undefined &&
-    isStatementDynamicModuleCall(
-      expr,
-      (callee) => cx.resolver?.resolveModuleBinding?.(callee)?.type.kind === "dynamic",
-    );
+    (binding === undefined || binding.kind === "moduleGlobal") &&
+    bareCallee !== undefined &&
+    cx.resolver?.resolveModuleBinding?.(bareCallee)?.type.kind === "dynamic" &&
+    argumentsCrossSyntactically(expr);
   if (bindingLogicalType?.kind === "dynamic" || dynamicModuleCallee) {
     const callee = lowerExpr(expr.expression, cx, irDynamic());
     if (cx.builder.typeOf(callee).kind !== "dynamic") {

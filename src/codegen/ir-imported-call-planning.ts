@@ -24,9 +24,9 @@ import {
   effectiveIrParamTypeNode,
   effectiveIrReturnTypeNode,
   isFunctionObjectReceiverUse,
-  functionObjectStoreRoot,
   type IrSelection,
 } from "../ir/select.js";
+import { functionValueUse } from "../ir/function-values.js";
 import type { ValType } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
 import type { IrClassShapeLookup } from "./ir-class-shapes.js";
@@ -201,11 +201,6 @@ export function recordIrOverlayPreparationFailure(
  * member call/write on it dispatches dynamically. All-dynamic is the one
  * signature that claims nothing about the target's real ABI.
  */
-function isFunctionObjectStoredValue(node: ts.Identifier, resolver: IrIdentityImportedFunctionResolver): boolean {
-  const root = functionObjectStoreRoot(node);
-  return root !== undefined && resolver.resolveTopLevelFunctionValueTarget(root)?.legacyProjection === "unambiguous";
-}
-
 function opaqueReceiverSignature(declaration: ts.FunctionDeclaration): IrClosureSignature {
   const dynamic: IrType = { kind: "dynamic" };
   return { params: declaration.parameters.map(() => dynamic), returnType: dynamic };
@@ -852,7 +847,9 @@ export function planIrImportedCalls(options: PlanIrImportedCallsOptions): IrImpo
       const visit = (node: ts.Node): void => {
         if (ts.isIdentifier(node)) {
           const access = node.parent;
-          const isReceiver = !selfGuardedOnly && isFunctionObjectReceiverUse(node, { chainedWrite: true });
+          // (#7349) A receiver of the function object's own expandos, or a whole value read; the selector
+          // admitted each where the carrier is consumed.
+          const use = selfGuardedOnly ? undefined : functionValueUse(node);
           // (#7106 S3c) A self-guarded constructor used as a value: the `new F(…)`
           // callee (`dyn.construct`) or the `x instanceof F` operand
           // (`dyn.instanceof_fn`, which reads the plan's exact unit target).
@@ -862,13 +859,8 @@ export function planIrImportedCalls(options: PlanIrImportedCallsOptions): IrImpo
                 access.right === node &&
                 access.operatorToken.kind === ts.SyntaxKind.InstanceOfKeyword)) &&
             irSelfGuardedConstructorValue(ctx, node);
-          // (#7106 census arm 3) A top-level function STORED on a function
-          // object (`F.x = G`): its value is boxed into the dynamic carrier and
-          // written through the receiver's dynamic member write, exactly like
-          // a receiver-only use — the signature is never read.
-          const isStoredValue = !selfGuardedOnly && isFunctionObjectStoredValue(node, functionObjectValues);
           const target =
-            (isReceiver || isSelfGuardedValue || isStoredValue) && options.sourceOwnerUnitId(node) === ownerUnitId
+            (use !== undefined || isSelfGuardedValue) && options.sourceOwnerUnitId(node) === ownerUnitId
               ? functionObjectValues.resolveTopLevelFunctionValueTarget(node)
               : undefined;
           if (target?.legacyProjection === "unambiguous") {

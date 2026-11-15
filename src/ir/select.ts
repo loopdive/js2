@@ -135,7 +135,6 @@ import {
   identifierIsValueReference,
   isFunctionObjectReceiver,
   functionObjectReadLocals,
-  isFunctionObjectStoredValue,
   effectiveIrParamTypeNode,
   effectiveIrReturnTypeNode,
   functionObjectMemberCallIsBuildable,
@@ -148,7 +147,6 @@ export {
   effectiveIrParamTypeNode,
   effectiveIrReturnTypeNode,
   isFunctionObjectReceiverUse,
-  functionObjectStoreRoot,
 } from "./select-expression-structure.js";
 import type { IrHostDateSnapshotResolver } from "./host-date.js";
 import {
@@ -178,8 +176,15 @@ import {
   isIrModuleMapValueKind,
   isIrModuleNativeBufferValueKind,
   isIrModuleReferenceValueKind,
-  isStatementDynamicModuleCall,
 } from "./module-bindings.js";
+import {
+  argumentsCrossSyntactically,
+  bareCallCallee,
+  carrierSink,
+  functionValueUse,
+  operatorReadsCarrier,
+  type CarrierSinkHost,
+} from "./function-values.js";
 import { isStoreTarget, outermostParenthesized } from "../shared/binding-writes.js";
 import { firstConstBindingWrite } from "./const-binding-writes.js";
 import type {
@@ -3532,6 +3537,8 @@ function dynamicUsesAreMoveOnly(
     if (dynamicConstructCallee(e) !== null) return true;
     // (#7106 propertyHelper, #7338) the stored descriptor alias and an `Object` static yield a carrier.
     if (ts.isCallExpression(e) && carrierStaticValues(e) !== undefined) return true;
+    // (#7349) a call through a dynamic value answers the carrier.
+    if (ts.isCallExpression(e) && dynamicCallCarrier(e) !== undefined) return true;
     if (ts.isCallExpression(e) && ts.isIdentifier(e.expression) && !dynNames.has(e.expression.text)) {
       return calleeReturnKind(e.expression.text, typeMap) === "dynamic";
     }
@@ -3695,6 +3702,10 @@ function dynamicUsesAreMoveOnly(
       return expectDyn && currentDynamicRuntimeBuildable && scanCarrierArguments(e.arguments ?? []);
     }
     if (ts.isCallExpression(e)) {
+      // (#7349) A call through a dynamic value in value position: callee and arguments are carriers, so is the result.
+      if (dynamicCallCarrier(e) !== undefined) {
+        return expectDyn && scanExpr(e.expression, true) && scanCarrierArguments(e.arguments);
+      }
       // (#7106 S1b) `JSON.stringify(<dynamic>)` → `dyn.json_stringify`: a
       // concrete string result; a concrete operand is boxed first.
       const jsonStringifyArg = dynNames.has("JSON") ? null : ambientJsonStringifyCall(e);
@@ -4249,7 +4260,7 @@ function dynamicUsesAreMoveOnly(
       // (`assert.sameValue(d, undefined, msg)`); other dyn-shaped calls keep theirs.
       if (functionObjectMemberCallee(e) !== null || objectStaticScanValues(e)) return scanExpr(e, true);
       // (#7305) A call through a dynamic value: callee and arguments are `__apply_closure` carriers.
-      if (ts.isCallExpression(e) && dynamicValueCallTarget(e)) {
+      if (ts.isCallExpression(e) && dynamicCallCarrier(e) !== undefined) {
         return scanExpr(e.expression, true) && scanCarrierArguments(e.arguments);
       }
       return scanExpr(s.expression, false);
@@ -6877,62 +6888,53 @@ function closureFunctionObjectReadLocals(
 }
 
 /**
- * (#7106 Stage 4) `func()` — a bare call through one of the planned member
- * closure's dynamic parameters (assert.throws' `func()`) or its
- * function-object read locals (assert.compareArray's `format(actual)`), lowered through the
- * native IsCallable + `__apply_closure` runtime with an undefined receiver.
- * The shared runtime does not restore `__current_this` when the callee throws
- * inside a try (legacy does), which is observable only by a caller that reads
- * its own `this` afterwards — a planned member closure never does (its plan
- * refuses `this`).
+ * (#7106 Stage 4, #7305, #7287, #7349) What a bare call `func(…)` goes through when `func` holds the dynamic carrier;
+ * from-ast lowers it through IsCallable + `__apply_closure` with an undefined receiver:
  *
- * The arm's lane is the plan's lane, with no capability check of its own:
- * `currentClosureDynamicParamNames` is non-empty only inside a closure that
- * `planMemberClosure` (function-member-closure-planning.ts) minted, and that
- * plan already requires non-fast, native-first, standalone|wasi and the
- * externref dynamic carrier.
- *
- * (#7305) A top-level subject takes the arm for its own dynamic PARAMETER
- * (`currentDynamicParamNames`, the membership `new g()` already uses, #7106
- * S3a) called in statement position in its own body, when it has no ambient
- * `this`: it then cannot read `this` after a callee throws. Statement position
- * only: a call result would be typed by the callee's checker signature (#7287).
- *
- * In the closure arm the match is by identifier text, so a catch binding that
- * shadows the parameter (`catch (func) { func(); }`) also takes it; that is sound,
- * because the catch binding is itself the dynamic carrier on these lanes
- * (`catchIsCarrier`). `var`/`let` shadows are refused at select; nested
- * functions are refused by the plan.
+ * - `closure`: a planned member closure's dynamic parameter (assert.throws' `func()`) or function-object read local
+ *   (assert.compareArray's `format(actual)`), on the plan's lane. A catch binding that shadows the parameter matches
+ *   by text, soundly: it is itself the carrier (`catchIsCarrier`). The plan's operand walk types the result.
+ * - `parameter`: the subject's own dynamic parameter in its own body, without an ambient `this` (the runtime does not
+ *   restore `__current_this` when the callee throws). The move-only scan judges where the result flows.
+ * - `script-var`: a script `var` in its dynamic module home (the prelude's `print`). Phase-1 judges where the result
+ *   flows (`carrierSink`): elsewhere a lib-named `var`'s call is typed by the lib signature.
  */
-function dynamicValueCallTarget(expr: ts.CallExpression): boolean {
-  const callee = expr.expression;
-  if (!ts.isIdentifier(callee) || expr.questionDotToken || expr.arguments.some(ts.isSpreadElement)) return false;
-  const closureCarrier =
-    currentClosureDynamicParamNames.has(callee.text) || currentClosureFunctionObjectReadLocals.has(callee.text);
-  const subjectCarrier =
+function dynamicCallCarrier(expr: ts.CallExpression): "closure" | "parameter" | "script-var" | undefined {
+  const callee = bareCallCallee(expr);
+  if (callee === undefined || !currentDynamicRuntimeBuildable) return undefined;
+  if (currentClosureDynamicParamNames.has(callee.text) || currentClosureFunctionObjectReadLocals.has(callee.text))
+    return "closure";
+  if (
     currentDynamicParamNames.has(callee.text) &&
     !subjectHasAmbientThis() &&
-    ownParameterStatementCall(expr, currentSelectionSubject);
-  if (!closureCarrier && !subjectCarrier) return false;
-  return currentDynamicRuntimeBuildable;
+    ownParameterCall(expr, currentSelectionSubject)
+  )
+    return "parameter";
+  return isDynamicScriptVarCall(expr) ? "script-var" : undefined;
+}
+
+/** (#7287) A call through a script `var`'s dynamic module home, every argument crossing into the carrier. */
+function isDynamicScriptVarCall(expr: ts.CallExpression): boolean {
+  const callee = bareCallCallee(expr);
+  return (
+    callee !== undefined &&
+    currentModuleBindingResolver?.(callee)?.valueKind.kind === "dynamic" &&
+    argumentsCrossSyntactically(expr)
+  );
 }
 
 /**
- * (#7305) A statement call through one of `owner`'s own parameters, in
- * `owner`'s own body. `owner` is a function declaration the selector claims
- * (a top-level one; class members are out of scope). The call graph reads it
- * too: such a call is the dynamic call above, never an edge, and a
- * non-dynamic parameter is refused at Phase-1.
+ * (#7305) A call through one of `owner`'s own parameters, in `owner`'s own body. `owner` is a function declaration
+ * the selector claims (a top-level one; class members are out of scope). The call graph reads it too: such a call is
+ * the dynamic call above, never an edge, and a non-dynamic parameter is refused at Phase-1.
  *
- * The walk can leave the source file without meeting `owner`: the call graph
- * passes `<module-init>`'s synthetic declaration, whose statements are
- * parented to the source file, and `<module-init>`'s own Phase-1 walk runs
- * under the last function subject.
+ * The walk can leave the source file without meeting `owner`: the call graph passes `<module-init>`'s synthetic
+ * declaration, whose statements are parented to the source file, and `<module-init>`'s own Phase-1 walk runs under
+ * the last function subject.
  */
-function ownParameterStatementCall(expr: ts.CallExpression, owner: ts.SignatureDeclaration | null): boolean {
+function ownParameterCall(expr: ts.CallExpression, owner: ts.SignatureDeclaration | null): boolean {
   const callee = expr.expression;
-  const shaped = owner !== null && ts.isFunctionDeclaration(owner) && ts.isIdentifier(callee);
-  if (!shaped || !ts.isExpressionStatement(expr.parent)) return false;
+  if (owner === null || !ts.isFunctionDeclaration(owner) || !ts.isIdentifier(callee)) return false;
   let enclosing: ts.Node | undefined = expr.parent;
   while (enclosing !== undefined && !ts.isFunctionLike(enclosing)) enclosing = enclosing.parent;
   return enclosing === owner && owner.parameters.some((p) => ts.isIdentifier(p.name) && p.name.text === callee.text);
@@ -9667,6 +9669,7 @@ function binaryOperandFamily(
   const candidate = unwrapPhase1Parens(operand);
   if (
     lowersToCarrier(candidate) ||
+    functionCarrierValue(candidate) ||
     isCarrierAddition(candidate, (side) => selectorCarrierValue(side, scope, localClasses))
   )
     return "dynamic";
@@ -9723,13 +9726,63 @@ function selectorCarrierValue(
 function carrierValueConsumed(expr: ts.Expression): boolean {
   const node = outermostParenthesized(expr);
   const parent = node.parent;
-  if (ts.isBinaryExpression(parent)) return isTypedBinaryOperator(parent.operatorToken.kind);
-  if (ts.isTypeOfExpression(parent)) return true;
+  if (operatorReadsCarrier(node)) return true;
   if (ts.isNewExpression(parent)) return parent.expression !== node && dynamicConstructCallee(parent) !== null;
   // (#7338) A table carrier's `+` is stored whole by a dynamic home.
   if (ts.isVariableDeclaration(parent) && parent.initializer === node)
     return holdsCarrier(parent.name as ts.Identifier) && lowersToCarrier(node);
-  return ts.isPrefixUnaryExpression(parent) && parent.operator === ts.SyntaxKind.ExclamationToken;
+  return false;
+}
+
+/**
+ * Does argument `index` of `call` cross into its callee as the carrier? A function object's member call
+ * (`assert.sameValue`) and a call through a dynamic value box every argument; a top-level function takes one where
+ * its parameter resolved dynamic.
+ */
+function argumentTakesCarrier(call: ts.CallExpression, index: number, scope: ReadonlySet<string>): boolean {
+  const callee = unwrapPhase1Parens(call.expression);
+  if (
+    (ts.isPropertyAccessExpression(callee) || ts.isElementAccessExpression(callee)) &&
+    ts.isIdentifier(callee.expression)
+  )
+    return isFunctionObjectReceiver(callee.expression, currentSelectionOptions?.functionObjectValues);
+  if (!ts.isIdentifier(callee)) return false;
+  if (dynamicCallCarrier(call) !== undefined) return true;
+  return (
+    !scope.has(callee.text) &&
+    currentDynScanDecls?.has(callee.text) === true &&
+    calleeParamResolvedKind(callee.text, index, currentClaimTypeMap) === "dynamic"
+  );
+}
+
+/** (#7349) The consumers of a function value, or of a dynamic call's result, that take the carrier as-is. */
+function carrierSinks(scope: ReadonlySet<string>): CarrierSinkHost {
+  return {
+    argumentTakesCarrier: (call, index) => argumentTakesCarrier(call, index, scope),
+    constructTakesCarrier: (expr) => dynamicConstructCallee(expr) !== null,
+    storeTakesCarrier: (store) => {
+      const receiver = store.expression;
+      const root = ts.isPropertyAccessExpression(receiver) ? receiver.expression : receiver;
+      return ts.isIdentifier(root) && isFunctionObjectReceiver(root, currentSelectionOptions?.functionObjectValues);
+    },
+  };
+}
+
+/** (#7349) How `id` reads a top-level function the planner boxes, if it does. */
+function functionDeclarationUse(id: ts.Identifier): "receiver" | "value" | undefined {
+  const use = functionValueUse(id);
+  return use && currentSelectionOptions?.functionObjectValues?.resolveTopLevelFunctionValue(id) ? use : undefined;
+}
+
+/**
+ * (#7349) A value from-ast lowers to the carrier: a function value, or a call through one outside a planned closure
+ * (whose own operand walk types its calls, `select-planned-closure-operands.ts`).
+ */
+function functionCarrierValue(expression: ts.Expression): boolean {
+  const e = unwrapPhase1Parens(expression);
+  if (ts.isIdentifier(e)) return functionDeclarationUse(e) === "value";
+  const carrier = ts.isCallExpression(e) ? dynamicCallCarrier(e) : undefined;
+  return carrier !== undefined && carrier !== "closure";
 }
 
 /**
@@ -9770,16 +9823,10 @@ function phase1ScriptVarVecReadAdmitted(expr: ts.Expression, scope: ReadonlySet<
       carrierValueConsumed(node) || capabilityNo("operand-coercion-unsupported", "expr-vec-carrier-position", read)
     );
   }
-  const callee = unwrapPhase1Parens(call.expression);
-  const takesCarrier =
-    (ts.isPropertyAccessExpression(callee) || ts.isElementAccessExpression(callee)) &&
-    ts.isIdentifier(callee.expression)
-      ? isFunctionObjectReceiver(callee.expression, currentSelectionOptions?.functionObjectValues)
-      : ts.isIdentifier(callee) &&
-        !scope.has(callee.text) &&
-        currentDynScanDecls?.has(callee.text) === true &&
-        calleeParamResolvedKind(callee.text, call.arguments.indexOf(node), currentClaimTypeMap) === "dynamic";
-  return takesCarrier || capabilityNo("operand-coercion-unsupported", "expr-vec-carrier-argument", read);
+  return (
+    argumentTakesCarrier(call, call.arguments.indexOf(node), scope) ||
+    capabilityNo("operand-coercion-unsupported", "expr-vec-carrier-argument", read)
+  );
 }
 
 /** The leaf of a destructuring declaration that takes the literal plan, read through `expression`. */
@@ -12237,7 +12284,7 @@ function provenIrFamily(expression: ts.Expression, scope: ReadonlySet<string>): 
   }
   // An unannotated local: its family is its initializer's, which the caller traces.
   if (ts.isIdentifier(expression) && unannotatedLocal(expression) !== undefined) return "unknown";
-  if (isScriptVarVecCarrierRead(expression)) return "dynamic";
+  if (isScriptVarVecCarrierRead(expression) || functionCarrierValue(expression)) return "dynamic";
   if (moduleBinding(expression) !== undefined) {
     const slot = obviousModuleValueFamily(expression);
     return slot === "f64" ? "number" : slot === "boolean" ? "boolean" : "unknown";
@@ -12481,8 +12528,9 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
     if (namesDeferredHostSurface(expr, localClasses)) {
       return capabilityNo("host-surface-unavailable", "expr-ident-host-surface-deferred", expr);
     }
-    if (isFunctionObjectReceiver(expr, currentSelectionOptions?.functionObjectValues)) return true;
-    if (isFunctionObjectStoredValue(expr, currentSelectionOptions?.functionObjectValues)) return true;
+    // (#7349) A top-level function as a value: the boxed function object, wherever the carrier is consumed.
+    const functionUse = functionDeclarationUse(expr);
+    if (functionUse === "receiver" || (functionUse === "value" && carrierSink(expr, carrierSinks(scope)))) return true;
     if (isAmbientIntrinsicValue(expr)) return true;
     return shapeNo("expr-ident-not-in-scope", expr);
   }
@@ -13348,7 +13396,10 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
     const calleeName = expr.expression.text;
     const actualArity = staticCallArgumentCount(expr.arguments);
     let localCallableArity: CallableArityRange | undefined;
-    if (scope.has(calleeName) && dynamicValueCallTarget(expr)) {
+    const dynamicCarrier = dynamicCallCarrier(expr);
+    if (dynamicCarrier !== undefined) {
+      if (dynamicCarrier === "script-var" && !carrierSink(expr, carrierSinks(scope)))
+        return capabilityNo("call-resolution-unsupported", "expr-dynamic-call-position", expr);
       return expr.arguments.every((argument) => isPhase1Expr(argument, scope, localClasses));
     }
     if (scope.has(calleeName)) {
@@ -14399,17 +14450,9 @@ export function buildLocalCallGraph(
             // decide the lane.
             for (const argument of node.arguments) visit(argument);
             return;
-          } else if (
-            isStatementDynamicModuleCall(
-              node,
-              (callee) => currentModuleBindingResolver?.(callee)?.valueKind.kind === "dynamic",
-            )
-          ) {
-            // (#7287) Lowered by from-ast's Stage-4 dynamic call, not an edge.
-            for (const argument of node.arguments) visit(argument);
-            return;
-          } else if (ownParameterStatementCall(node, fn)) {
-            // (#7305) A statement call through the caller's own parameter.
+          } else if (isDynamicScriptVarCall(node) || ownParameterCall(node, fn)) {
+            // (#7287, #7305, #7349) A call through a script `var`'s dynamic home or the caller's own parameter:
+            // from-ast's dynamic value call, not an edge. Phase-1 judges the callee and where the result flows.
             for (const argument of node.arguments) visit(argument);
             return;
           } else {
