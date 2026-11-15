@@ -5481,7 +5481,11 @@ function round2(n: number): number {
  */
 export function classifyError(errorMsg: string | undefined): string | undefined {
   if (!errorMsg) return undefined;
-  if (/standalone target emitted host imports/i.test(errorMsg)) return "host_import_leak";
+  // (#6979) The S7 chain replaced the #2961 leak diagnostic ("standalone target emitted host
+  // imports") with a compile-time refusal ("… would need retired host imports: env::X"): the
+  // same root cause, a construct with no native lowering, so the same category.
+  // oracle-version-exempt: label-only — both texts already score compile_error, no verdict flips.
+  if (/(standalone target emitted|would need retired) host imports/i.test(errorMsg)) return "host_import_leak";
 
   // (#3285) Wrapper return-code protocol FIRST — before the trap patterns. A
   // message beginning with "returned <N>" is by construction the synthetic

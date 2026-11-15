@@ -115,7 +115,6 @@ const NONE_HEAP = -15;
  */
 export function reserveVecPropsKeySource(ctx: CodegenContext): void {
   if (ctx.funcMap.get(VEC_PROPS_KEYSRC) !== undefined) return;
-  if (!ctx.standalone) return;
   if (ctx.funcMap.get(IS_VEC_PROP_CARRIER) === undefined) return;
   const typeIdx = addFuncType(ctx, [EXT], [EXT], `$${VEC_PROPS_KEYSRC}_type`);
   const funcIdx = mintDefinedFunc(ctx);

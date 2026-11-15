@@ -99,17 +99,9 @@ export function emitModuleInitPrologue(
     // not `null`, so seed the `$undefined` singleton rather than leaving
     // the `ref.null.extern` global init.
     if (!annexBModuleGlobalSeedsFromTopLevel(ctx, liveName)) {
-      // Standalone/WASI only: the host lane's `undefined` IS the null
-      // extern (a host boundary crossing reads it back as undefined),
-      // while the tag-1 singleton would surface to host helpers as an
-      // opaque object (`typeof` → "object", `=== undefined` → false).
+      // Seed the regime's tag-1 `undefined` singleton.
       const annexBGlobalIdx = ctx.moduleGlobals.get(liveName);
-      if (
-        (ctx.standalone || ctx.wasi) &&
-        annexBGlobalIdx !== undefined &&
-        !seededGlobals.has(annexBGlobalIdx) &&
-        emitUndefinedExtern(ctx, initFctx)
-      ) {
+      if (annexBGlobalIdx !== undefined && !seededGlobals.has(annexBGlobalIdx) && emitUndefinedExtern(ctx, initFctx)) {
         initFctx.body.push({ op: "global.set", index: annexBGlobalIdx });
         seededGlobals.add(annexBGlobalIdx);
       }
@@ -143,7 +135,6 @@ export function emitModuleInitPrologue(
 export function moduleInitPrologueMayEmit(ctx: CodegenContext, sourceFile: ts.SourceFile): boolean {
   if (ctx.restrictedGlobalLexicalName !== undefined) return true;
   if ((ctx.liveFuncBindingGlobals?.size ?? 0) > 0) return true;
-  if (!ctx.standalone && !ctx.wasi) return false;
   if (scriptVarBindingNames(sourceFile).size > 0) return true;
   if (ctx.sourceIsModule) return false;
   return ctx.topLevelFunctionNames.size > 0 || (ctx.globalObjectVarBindings?.size ?? 0) > 0;

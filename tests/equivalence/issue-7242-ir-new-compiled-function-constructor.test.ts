@@ -26,7 +26,10 @@ import { evaluateAsJs, instantiateWithRuntime } from "./helpers.js";
 
 const LANES: { name: string; options: CompileOptions; ir: boolean }[] = [
   { name: "standalone", options: { target: "standalone" }, ir: true },
-  { name: "wasi", options: { target: "wasi" }, ir: false },
+  // (#6979 S7-c) WASI lowers with the native semantic regime, so it takes the IR
+  // body like standalone and gives the JS answer; the pre-flip `wasiValue` pins
+  // recorded WASI's old divergence and are no longer consulted.
+  { name: "wasi", options: { target: "wasi" }, ir: true },
   { name: "gc (default)", options: {}, ir: true },
 ];
 
@@ -57,8 +60,6 @@ interface Case {
   readonly irUnits: readonly string[];
   /** Units refused at select (never claimed, so never demoted at build). */
   readonly selectRefused?: readonly string[];
-  /** WASI already diverges from JS here; the value base and head both give. */
-  readonly wasiValue?: number;
 }
 
 const CASES: Record<string, Case> = {
@@ -78,7 +79,6 @@ function inner() {
   try { check(2, "bad"); return "no"; } catch (e) { return (e instanceof MyErr) + "|" + e.message + "|" + (e.constructor === MyErr) + "|" + String(e); }
 }`,
     irUnits: ["check"],
-    wasiValue: 30533023,
   },
   "new F() used as a value": {
     source: `
@@ -149,7 +149,6 @@ class Sub extends MyErr { constructor(m) { super(m); this.extra = 1; } }
 function mk(m) { return new MyErr(m); }
 function inner() { MyErr(1); var s = new Sub("s"); return s.message + "|" + (s instanceof MyErr) + "|" + mk("z").message; }`,
     irUnits: ["mk"],
-    wasiValue: 17558681,
   },
   "F reading new.target (route unchanged)": {
     source: `
@@ -161,7 +160,6 @@ function F(m) {
 function mk(m) { return new F(m); }
 function inner() { F(1); var a = mk("v"); return a.m + "|" + a.nt; }`,
     irUnits: [],
-    wasiValue: 7320310,
   },
   "new F() inside a class member takes the IR body (#7243)": {
     source: `
@@ -204,8 +202,7 @@ describe("#7242 IR new of a self-guarded function constructor", () => {
           if (outcome?.kind === "unsupported") expect(outcome.stage, `${unit} stage`).toBe("select");
         }
         expect(outcomes.some((o) => o.kind === "unsupported" && /unknown class/.test(o.detail))).toBe(false);
-        const expected =
-          lane.options.target === "wasi" && c.wasiValue !== undefined ? c.wasiValue : evaluateAsJs(source).test!();
+        const expected = evaluateAsJs(source).test!();
         expect(exports.test!()).toBe(expected);
       });
     }

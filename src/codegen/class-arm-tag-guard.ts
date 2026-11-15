@@ -439,9 +439,5 @@ export function ownKeysSubclassRoute(
   argType: ts.Type,
   arg: ts.Expression,
 ): boolean {
-  return (
-    (method === "keys" || !ctx.wasi || ctx.standalone) &&
-    subclassedInstance(ctx, structName, argType, arg) &&
-    !hasDefinedPropertyFlags(ctx, arg)
-  );
+  return subclassedInstance(ctx, structName, argType, arg) && !hasDefinedPropertyFlags(ctx, arg);
 }

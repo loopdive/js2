@@ -143,10 +143,7 @@ function carrierClaimsKey(
 
 /** Did the runtime-eval inventory record a `%GeneratorFunction%(…)` site in this module? */
 export function carrierFnMetaEnabled(ctx: CodegenContext): boolean {
-  return (
-    ctx.standalone &&
-    (ctx.runtimeEvalBoundaryPlan?.sites.some((site) => site.kind === "generator-function-constructor") ?? false)
-  );
+  return ctx.runtimeEvalBoundaryPlan?.sites.some((site) => site.kind === "generator-function-constructor") ?? false;
 }
 
 /** Splice the carrier arms into `__builtinfn_get_meta` and `__builtinfn_delete`. */

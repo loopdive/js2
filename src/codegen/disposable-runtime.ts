@@ -609,7 +609,7 @@ export function fillDisposableStackDisposeDriver(ctx: CodegenContext): void {
       ],
     },
   ];
-  dispatch.push(buildTargetTaggedTry(ctx, { kind: "empty" }, invokeSwitch, [{ tagIdx: exnTag, body: catchHandler }]));
+  dispatch.push(buildTargetTaggedTry({ kind: "empty" }, invokeSwitch, [{ tagIdx: exnTag, body: catchHandler }]));
   loopBody.push({ op: "if", blockType: { kind: "empty" }, then: dispatch, else: [] });
   // i = i - 1; continue
   loopBody.push({ op: "local.get", index: I });

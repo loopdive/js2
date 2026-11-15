@@ -77,7 +77,6 @@ import {
   getFuncParamTypes,
   getWasmFuncReturnType,
   isEffectivelyVoidReturn,
-  noJsHost,
   wasmFuncReturnsVoid,
 } from "./helpers.js";
 import { parkOuterReturnProtocol, patchInlinedIifeReturns, restoreOuterReturnProtocol } from "./iife-return-patch.js"; // (#5339, #6651 C3b)
@@ -90,7 +89,6 @@ import { classMemberFuncKey, elementCallTargetsStaticMethod } from "../class-mem
 import { matchClosureInfoBySignature } from "./closure-sig-match.js"; // (#4394) exact-first closure pick
 import { emitPlainObjectDynamicCallWithReceiver } from "./plain-object-dynamic-receiver-call.js";
 import { tryEmitClassDynamicMemberCall } from "./class-dynamic-member-call.js"; // (#5195 F1/F3)
-import { tryEmitDynamicElementHostMethodCall } from "./dynamic-element-host-call.js";
 import { tryEmitGenericComputedMethodCall } from "./dynamic-element-generic-call.js";
 import { tryEmitLinkedStaticComputedCall } from "../standalone-linked-static-inheritance.js"; // (#6644)
 import { isLinkedDynamicParentInstanceReceiver } from "../standalone-dynamic-parent-class.js"; // (#6654)
@@ -101,12 +99,10 @@ import {
   coerceNumberMethodArgToF64,
   compileCallExpression,
   compileConditionalCallee,
-  compileFunctionBind,
   compileIIFE,
   elemAccessReceiverClassName,
   elemAccessReceiverIsPlainObject,
   elemAccessReceiverIsUserClass,
-  emitBoundFunctionCall,
   emitClosureCallArgcExtras,
   emitResetArgcExtras,
   emitSetArgc,
@@ -155,7 +151,6 @@ function receiverHasCompiledSymbolMethod(
   receiverType: ts.Type,
   methodName: string,
 ): boolean {
-  if (!ctx.standalone) return false;
   let className = receiverType.getSymbol()?.name;
   if (className && !ctx.classSet.has(className)) className = ctx.classExprNameMap.get(className) ?? className;
   const owners: (string | undefined)[] = [ctx.classSet.has(className ?? "") ? className : undefined];
@@ -787,7 +782,7 @@ export function compileTailDispatch(
         // whose `.next()` answered `null`; emit the live record directly so
         // `map[Symbol.iterator]().next()` is by construction what
         // `map.entries().next()` is.
-        if (methodName === "@@iterator" && (ctx.standalone || ctx.wasi) && ctx.nativeStrings) {
+        if (methodName === "@@iterator" && ctx.nativeStrings) {
           const recvSymName = receiverType.getSymbol()?.name;
           if (recvSymName === "Map" || recvSymName === "Set") {
             const isSet = recvSymName === "Set";
@@ -828,7 +823,7 @@ export function compileTailDispatch(
         // arms the finalize step S3 added for the diverted carrier.
         const iterRecvSymName = receiverType.getSymbol()?.name;
         const typedArrayIterRecv = iterRecvSymName !== undefined && TYPED_ARRAY_NAMES.has(iterRecvSymName);
-        if (methodName === "@@iterator" && (ctx.standalone || ctx.wasi) && resolveArrayInfo(ctx, receiverType)) {
+        if (methodName === "@@iterator" && resolveArrayInfo(ctx, receiverType)) {
           // (#6484 S2) THE CARRIER MIGRATION the #5147 note deferred. This arm
           // used to answer a SNAPSHOT `$Vec`, which is why `.next()` on
           // `[1,2][Symbol.iterator]()` answered null — a vec has no cursor. The
@@ -880,7 +875,7 @@ export function compileTailDispatch(
         // singleton is lazy, and the finalize arm below reads its global — and
         // arm the finalize step. The statically-typed `ArrayIterator` binding
         // already routes through the #3013 compile-time arm and is untouched.
-        if (methodName === "@@iterator" && (ctx.standalone || ctx.wasi) && typedArrayIterRecv) {
+        if (methodName === "@@iterator" && typedArrayIterRecv) {
           const protoType = emitArrayIteratorPrototypeSingleton(ctx, fctx);
           if (protoType) {
             fctx.body.push({ op: "drop" });
@@ -895,9 +890,7 @@ export function compileTailDispatch(
         // empty native string. This exact pristine-realm shape is used by
         // Deno to discover `%StringIteratorPrototype%` during bootstrap.
         const recvType =
-          methodName === "@@iterator" &&
-          (ctx.standalone || ctx.wasi) &&
-          isPristineStringPrototypeExpression(fctx, elemAccess.expression)
+          methodName === "@@iterator" && isPristineStringPrototypeExpression(fctx, elemAccess.expression)
             ? compileStringLiteral(ctx, fctx, "")
             : compileExpression(ctx, fctx, elemAccess.expression);
         if (recvType) {
@@ -923,7 +916,7 @@ export function compileTailDispatch(
         if (iterIdx !== undefined) {
           fctx.body.push({ op: "call", funcIdx: iterIdx });
           // (#6980) A generator's @@iterator is `return this`.
-          if (ctx.standalone && methodName === "@@iterator") {
+          if (methodName === "@@iterator") {
             const scratch = allocLocal(fctx, `__gen_self_iter_${fctx.locals.length}`, { kind: "externref" });
             fctx.body.push(...generatorSelfIteratorInstrs(ctx, scratch));
           }
@@ -1159,10 +1152,9 @@ export function compileTailDispatch(
       // Try struct method: structName_methodName
       // (#6774 S6) An open `$Object` literal binding keeps the dynamic call: the
       // closed-shape method arm would `ref.cast` it to the stale inferred struct.
-      const structTypeName =
-        ctx.standalone && isAccessorReceiver(ctx, skipTransparentExpressions(elemAccess.expression))
-          ? undefined
-          : resolveStructName(ctx, receiverType);
+      const structTypeName = isAccessorReceiver(ctx, skipTransparentExpressions(elemAccess.expression))
+        ? undefined
+        : resolveStructName(ctx, receiverType);
       if (structTypeName) {
         const fullName = `${structTypeName}_${methodName}`;
         const funcIdx = ctx.funcMap.get(classMemberFuncKey(ctx, fullName, "instance")); // (#6772 S4)
@@ -1566,7 +1558,6 @@ export function compileTailDispatch(
           elementFact.kind === "object" && elementFact.shape === undefined && externrefArrayElement;
         if (
           (elementIsUnresolved || undefinedExternrefElement || shapelessObjectExternrefElement) &&
-          (ctx.standalone || externrefArrayElement) &&
           receiverArrayInfo
         ) {
           const dyn = tryEmitInlineDynamicCall(ctx, fctx, expr, true);
@@ -1623,9 +1614,6 @@ export function compileTailDispatch(
         const dyn = emitPlainObjectDynamicCallWithReceiver(ctx, fctx, expr, elemAccess);
         if (dyn !== null) return dyn;
       }
-
-      const dynamicHostCall = tryEmitDynamicElementHostMethodCall(ctx, fctx, expr, elemAccess);
-      if (dynamicHostCall !== undefined) return dynamicHostCall;
 
       // (#6641) standalone/wasi twin of the arm just above.
       const genericComputedCall = tryEmitGenericComputedMethodCall(ctx, fctx, expr, elemAccess);
@@ -1709,9 +1697,6 @@ export function compileTailDispatch(
       const dyn = emitPlainObjectDynamicCallWithReceiver(ctx, fctx, expr, elemAccess);
       if (dyn !== null) return dyn;
     }
-
-    const dynamicHostCall = tryEmitDynamicElementHostMethodCall(ctx, fctx, expr, elemAccess);
-    if (dynamicHostCall !== undefined) return dynamicHostCall;
 
     // (#6641) standalone/wasi twin of the arm just above.
     const genericComputedCallUnresolved = tryEmitGenericComputedMethodCall(ctx, fctx, expr, elemAccess);
@@ -1920,20 +1905,6 @@ export function compileTailDispatch(
             }
             return VOID_RESULT;
           }
-        }
-      }
-
-      // A callable stored in an object field (for example `f.af`) has no
-      // statically registered `Class_method` body for the direct optimization
-      // above. In JS-host mode `.bind()` therefore produces a real host bound
-      // function, not a Wasm closure struct. Invoke that externref through the
-      // host callable seam instead of letting the generic call-of-call path
-      // ref.test it as a closure and dereference the resulting null.
-      if (!ctx.standalone && !noJsHost(ctx) && ts.isPropertyAccessExpression(bindCall.expression)) {
-        const boundType = compileFunctionBind(ctx, fctx, bindCall, bindCall.expression);
-        if (boundType !== undefined) {
-          const called = emitBoundFunctionCall(ctx, fctx, expr, true);
-          if (called !== null) return called;
         }
       }
 

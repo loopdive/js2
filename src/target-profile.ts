@@ -86,9 +86,9 @@ export interface CompileTargetProfile {
   readonly strictEnvImportGate: boolean;
   readonly nativeStringsRequiredByPolicy: boolean;
   /**
-   * (#5385) Whether codegen lowers with the native semantic REGIME — the
-   * `ctx.standalone` provider arms. True for the standalone target and the
-   * JavaScript environment (#6979). This answers "which ECMAScript
+   * (#5385) Whether codegen lowers with the native semantic REGIME — the single
+   * regime truth since #6979 S7-c removed codegen's flag. True for every WasmGC target —
+   * standalone, gc and wasi (#6979 S7-c). This answers "which ECMAScript
    * implementation runs?"; `environment` / `hostValueInterop` still answer
    * "who instantiates it and does it keep the JS value bridge?".
    */
@@ -219,9 +219,12 @@ export function resolveCompileTargetProfile(input: TargetProfileInput = {}): Com
           : "off";
 
   // (#5385 S5, #6708 S6, #6979 S7) The regime is the only semantic
-  // implementation in a JavaScript environment that permits host imports, as
-  // it is host-free. The S6 kill switch `JS2WASM_NATIVE_REGIME_JS` is gone.
-  const nativeRegime = target === "standalone" || (target === "gc" && capabilityPolicy === "ambient-js");
+  // implementation on WasmGC: standalone, the JavaScript environment with or
+  // without ambient host imports (S7-b moved strict gc onto it), and WASI
+  // (S7-c). What WASI lacks is an environment, not semantics — its fd/proc
+  // capabilities key on the WASI environment, the runtime-eval provider on
+  // `runtimeEvalProviderLinkable`. The linear backend keeps its own lowering.
+  const nativeRegime = backend === "wasmgc";
 
   return Object.freeze({
     target,

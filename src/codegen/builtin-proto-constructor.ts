@@ -52,7 +52,7 @@
  *
  * ## Safety envelope
  *
- * Standalone only (`ctx.standalone` is checked by both callers); host/gc keep
+ * Standalone only (the regime flag is checked by both callers); host/gc keep
  * their genuine `Object_get_constructor` read. Every shape this module answers
  * was previously `undefined` on main, so nothing that previously produced a
  * value can change. `tryEmit*` keeps the no-partial-instructions contract when

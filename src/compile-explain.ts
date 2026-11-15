@@ -34,7 +34,7 @@ function explanationStatus(input: CompileExplanationInput): CompileExplanationSt
     input.hostImports.byClassification["value-adapter"] +
     input.hostImports.byClassification["instance-lifecycle"] +
     input.hostImports.byClassification["host-accelerator"] +
-    input.hostImports.byClassification["legacy-semantic"];
+    input.hostImports.byClassification["regime-gap"];
   return providerImports > 0 ? "runtime-provider" : "host-free-wasm";
 }
 

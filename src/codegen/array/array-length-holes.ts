@@ -51,7 +51,7 @@ function arrayHoldsExternref(ctx: CodegenContext, arrTypeIdx: number): boolean {
  * element kind that has no marker.
  */
 export function holeFilledArrayNewInstrs(ctx: CodegenContext, fctx: FunctionContext, arrTypeIdx: number): Instr[] {
-  if (!ctx.standalone || !ctx.usesArrayHoles || !arrayHoldsExternref(ctx, arrTypeIdx)) {
+  if (!ctx.usesArrayHoles || !arrayHoldsExternref(ctx, arrTypeIdx)) {
     return [{ op: "array.new_default", typeIdx: arrTypeIdx }];
   }
   const size = allocTempLocal(fctx, { kind: "i32" });
@@ -76,7 +76,7 @@ export function vecStaticIndexPresenceInstrs(
   vecTypeIdx: number,
   idx: number,
 ): Instr[] | undefined {
-  if (!ctx.standalone || !ctx.usesArrayHoles || idx > 0x7fffffff) return undefined;
+  if (!ctx.usesArrayHoles || idx > 0x7fffffff) return undefined;
   const arrTypeIdx = getArrTypeIdxFromVec(ctx, vecTypeIdx);
   if (arrTypeIdx < 0 || !arrayHoldsExternref(ctx, arrTypeIdx)) return undefined;
   const vec = allocTempLocal(fctx, { kind: "ref_null", typeIdx: vecTypeIdx });
@@ -128,5 +128,5 @@ export function vecStaticIndexPresenceInstrs(
  * holes (S3) instead of `null`. The host lane keeps its bytes.
  */
 export function holeSearchReadsUndefined(ctx: CodegenContext): boolean {
-  return !ctx.standalone || ctx.protoIndexDirty;
+  return ctx.protoIndexDirty;
 }

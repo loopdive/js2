@@ -14,8 +14,7 @@
  * object MOP). Both converters are INJECTED, so this module never imports
  * runtime.ts.
  *
- * Only selected under `hostAccelerators: ["intl"]`; the host-assisted lane binds
- * the same imports unwrapped.
+ * Only selected under `hostAccelerators: ["intl"]`.
  */
 
 type Exports = Record<string, Function>;

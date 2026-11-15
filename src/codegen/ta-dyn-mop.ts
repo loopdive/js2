@@ -363,7 +363,6 @@ const NAMED_PROPS: readonly NamedProp[] = [
  * prepends at body index 0 — last fill wins the front slot).
  */
 export function fillTaDynViewMopArms(ctx: CodegenContext): void {
-  if (!ctx.standalone) return; // host imports own the dynamic path
   fillArrayBufferGetPrototypeOfArm(ctx); // (#6769 S10) buffer [[Prototype]]; (#6775 S6) also without dyn views
   fillSharedArrayBufferMopArms(ctx); // (#7011) prepended after, so `$__sab` precedes the ArrayBuffer arm
   const dynIdx = ctx.taDynViewTypeIdx;
@@ -1682,7 +1681,7 @@ export function fillTaDynViewMopArms(ctx: CodegenContext): void {
 
 /** #3371 finalize arm for DataView's Reflect.construct prototype override. */
 export function fillDataViewConstructProtoArm(ctx: CodegenContext): void {
-  if (!ctx.standalone || ctx.dvWindowTypeIdx < 0) return;
+  if (ctx.dvWindowTypeIdx < 0) return;
   const getProtoIdx = ctx.funcMap.get("__getPrototypeOf");
   const getProtoFn = getProtoIdx === undefined ? undefined : definedFuncAt(ctx, getProtoIdx);
   if (!getProtoFn) return;

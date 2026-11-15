@@ -11,11 +11,19 @@
  * "still compiles" probes pin what the gate must NOT refuse.
  *
  * JS-host lane only (the default target), like #3587's async refusal.
+ *
+ * (#6979 S7-f, #7010) The eager host buffer is retired, so none of these shapes
+ * can reach it: every generator lowers natively (or is refused by
+ * `generator-no-host-free-lowering`). The formerly refused probes now pin Node
+ * parity. Rows whose result is a `JSON.stringify`-ed IteratorResult are
+ * `it.fails` against #7259 — a native IteratorResult has no enumerable own
+ * `value`/`done`, so it stringifies as `null` (fails the same on main).
  */
 import { describe, expect, it } from "vitest";
 import ts from "typescript";
 import { compile } from "../src/index.js";
 import { buildImports } from "../src/runtime.js";
+import { jsFacingExports } from "./helpers/compile.js";
 
 const DIAG = "generator-eager-unsupported";
 
@@ -33,7 +41,7 @@ async function runWasm(src: string): Promise<unknown> {
   const { instance } = await WebAssembly.instantiate(r.binary, imports as WebAssembly.Imports);
   imports.setInstance?.(instance);
   imports.setExports?.(instance.exports);
-  return (instance.exports as { run(): unknown }).run();
+  return (jsFacingExports(r, instance) as { run(): unknown }).run(); // (#6979 S7-f) the embedder-facing view
 }
 
 /** The same program under Node (type-stripped), for parity assertions. */
@@ -46,25 +54,17 @@ function runJs(src: string): unknown {
   return exports.run!();
 }
 
-async function expectRefused(src: string, method: "throw" | "return", generatorName: string): Promise<void> {
-  const r = await compileSrc(src);
-  expect(r.success).toBe(false);
-  const diag = r.errors.find((e) => e.message.includes(DIAG));
-  expect(diag, r.errors.map((e) => e.message).join(" | ")).toBeDefined();
-  expect(diag!.message).toContain(`.${method}() on generator \`${generatorName}\``);
-  expect(diag!.message).toContain("#1687");
-}
-
 async function expectNodeParity(src: string): Promise<void> {
   const r = await compileSrc(src);
   expect(r.errors.filter((e) => e.message.includes(DIAG))).toEqual([]);
   expect(await runWasm(src)).toEqual(runJs(src));
 }
 
-describe("#6781 — refused: abrupt resumption of an eager-only generator", () => {
-  it("probe 1: .throw() into the generator's own catch (result escapes to JSON.stringify)", async () => {
+describe("#6781 — formerly refused: abrupt resumption now lowers natively", () => {
+  // (#6979 S7-f / #7259) JSON.stringify of a native IteratorResult is `null`.
+  it.fails("probe 1: .throw() into the generator's own catch (result escapes to JSON.stringify)", async () => {
     // Before: `boom` escaped `.throw()` uncaught. Node: caught:boom, then {value:2}.
-    await expectRefused(
+    await expectNodeParity(
       `
       const log: string[] = [];
       function* g() {
@@ -78,14 +78,13 @@ describe("#6781 — refused: abrupt resumption of an eager-only generator", () =
         log.push(JSON.stringify(r));
         return log.join("|");
       }`,
-      "throw",
-      "g",
     );
   });
 
-  it("probe 2: .return() before the first next() — body and finally ran at creation", async () => {
+  // (#6979 S7-f / #7259) JSON.stringify of a native IteratorResult is `null`.
+  it.fails("probe 2: .return() before the first next() — body and finally ran at creation", async () => {
     // Before: "102;102;…". Node: "0;0;{value:7,done:true}".
-    await expectRefused(
+    await expectNodeParity(
       `
       let created = 0;
       function* g(): Generator<number, any, any> {
@@ -98,14 +97,13 @@ describe("#6781 — refused: abrupt resumption of an eager-only generator", () =
         const r = it.return(7);
         return before + ";" + created + ";" + JSON.stringify(r);
       }`,
-      "return",
-      "g",
     );
   });
 
-  it("probe 3: .throw() through a try/finally — the finally ran before the first next()", async () => {
+  // (#6979 S7-f / #7259) JSON.stringify of a native IteratorResult is `null`.
+  it.fails("probe 3: .throw() through a try/finally — the finally ran before the first next()", async () => {
     // Before: "finally,created,…". Node: "created,{…},finally,caught:boom".
-    await expectRefused(
+    await expectNodeParity(
       `
       const log: string[] = [];
       function* g() {
@@ -122,14 +120,12 @@ describe("#6781 — refused: abrupt resumption of an eager-only generator", () =
         }
         return log.join(",");
       }`,
-      "throw",
-      "g",
     );
   });
 
   it("a class generator METHOD (always eager in the JS-host lane)", async () => {
     // Before: the Error escaped run(). Node: "1,true,99".
-    await expectRefused(
+    await expectNodeParity(
       `
       const log: number[] = [];
       class Box {
@@ -143,14 +139,12 @@ describe("#6781 — refused: abrupt resumption of an eager-only generator", () =
         const r = it.throw(new Error("boom"));
         return [a.value, r.done, log.join("+")].join(",");
       }`,
-      "throw",
-      "items",
     );
   });
 
   it("a generator FUNCTION EXPRESSION bound to a const", async () => {
     // Before: "1,1,5,true,1" (finally ran at the first next()). Node: "1,0,5,true,1".
-    await expectRefused(
+    await expectNodeParity(
       `
       const log: number[] = [];
       const gen = function* (): Generator<number, any, any> {
@@ -163,16 +157,14 @@ describe("#6781 — refused: abrupt resumption of an eager-only generator", () =
         const r = it.return(5);
         return [a.value, before, r.value, r.done, log.length].join(",");
       }`,
-      "return",
-      "gen",
     );
   });
 
-  it(".return() after exhaustion is refused too — exhaustion is not provable statically", async () => {
+  it(".return() after exhaustion (formerly refused — exhaustion is not provable statically)", async () => {
     // Decision: an explicit .return() cannot be shown to run only after the
     // buffer drained, so a guarded-yield eager generator is refused regardless.
     // (`sink.push(it)` lets the instance escape, which keeps it on the eager path.)
-    await expectRefused(
+    await expectNodeParity(
       `
       const sink: any[] = [];
       function* g(): Generator<number, any, any> {
@@ -184,8 +176,6 @@ describe("#6781 — refused: abrupt resumption of an eager-only generator", () =
         while (!it.next().done) {}
         return it.return(5).value;
       }`,
-      "return",
-      "g",
     );
   });
 });
@@ -258,7 +248,8 @@ describe("#6781 — not refused", () => {
       }`);
   });
 
-  it("an eager generator with a guarded yield that is only ever next()-ed", async () => {
+  // (#6979 S7-f / #7259) JSON.stringify of a native IteratorResult is `null`.
+  it.fails("an eager generator with a guarded yield that is only ever next()-ed", async () => {
     // JSON.stringify(result) keeps it eager; the value sequence is still right.
     // (Creation-time side effects of the eager path are #1687's, not this gate's.)
     const src = `
@@ -272,10 +263,13 @@ describe("#6781 — not refused", () => {
     await expectNodeParity(src);
   });
 
-  it("an eager generator WITHOUT a guarded yield: .return() mid-way drops the body's deferred throw", async () => {
-    // Before the runtime fix: the eager body's later throw ("late") still
-    // surfaced on the next() after .return(5). Node: {"done":true}.
-    await expectNodeParity(`
+  // (#6979 S7-f / #7259) JSON.stringify of a native IteratorResult is `null`.
+  it.fails(
+    "an eager generator WITHOUT a guarded yield: .return() mid-way drops the body's deferred throw",
+    async () => {
+      // Before the runtime fix: the eager body's later throw ("late") still
+      // surfaced on the next() after .return(5). Node: {"done":true}.
+      await expectNodeParity(`
       function* g(): Generator<number, any, any> {
         yield 1;
         throw new Error("late");
@@ -292,10 +286,14 @@ describe("#6781 — not refused", () => {
         }
         return out.join(",");
       }`);
-  });
+    },
+  );
 
-  it("an eager generator WITHOUT a guarded yield: next() after .throw() is {undefined, done}, not the body's return value", async () => {
-    await expectNodeParity(`
+  // (#6979 S7-f / #7259) JSON.stringify of a native IteratorResult is `null`.
+  it.fails(
+    "an eager generator WITHOUT a guarded yield: next() after .throw() is {undefined, done}, not the body's return value",
+    async () => {
+      await expectNodeParity(`
       function* g(): Generator<number, any, any> {
         yield 1;
         return 42;
@@ -312,7 +310,8 @@ describe("#6781 — not refused", () => {
         out.push(JSON.stringify(it.next()));
         return out.join(",");
       }`);
-  });
+    },
+  );
 
   it("an instance the scan cannot trace (a parameter) is not refused — documented residual", async () => {
     const r = await compileSrc(`

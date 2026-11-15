@@ -57,10 +57,8 @@
  *   - The 2^53-1 target-index TypeError is not emitted: no carrier can hold
  *     that many elements, so it is unreachable in practice.
  *
- * Standalone-only (`ctx.standalone`): the array-like arms of
- * `__extern_get_idx` these bodies read through exist only there — the same
- * gate `ensureNativeArrayHof` and `ensureNativeArrayProducer` carry. Emitted
- * as append-only defined funcs (no funcIdx shift), idempotent per name.
+ * The bodies read through the array-like arms of the native `__extern_get_idx`.
+ * Emitted as append-only defined funcs (no funcIdx shift), idempotent per name.
  */
 import type { ts } from "../ts-api.js";
 import type { Instr, ValType } from "../ir/types.js";
@@ -462,7 +460,7 @@ function buildFlatMapBody(
  * unavailable, in which case callers keep their previous behaviour.
  */
 export function ensureNativeArrayFlat(ctx: CodegenContext, methodName: string): number | undefined {
-  if (!ctx.standalone || !NATIVE_FLAT_METHODS.has(methodName)) return undefined;
+  if (!NATIVE_FLAT_METHODS.has(methodName)) return undefined;
   const helperName = `__arrprod_${methodName}`;
   const existing = ctx.funcMap.get(helperName);
   if (existing !== undefined) return existing;
@@ -483,7 +481,6 @@ export function ensureNativeArrayFlat(ctx: CodegenContext, methodName: string): 
  * (nothing emitted, stack untouched) when the substrate is unavailable.
  */
 export function emitFlattenDepth1Extern(ctx: CodegenContext, fctx: FunctionContext): boolean {
-  if (!ctx.standalone) return false;
   const deps = resolveDeps(ctx);
   if (deps === undefined) return false;
   const flattenIdx = ensureFlattenInto(ctx, deps);

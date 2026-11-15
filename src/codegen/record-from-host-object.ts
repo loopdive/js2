@@ -127,9 +127,8 @@ export function buildRecordFromExternref(
   // Wasm helpers there (native-first semantic providers). It has no
   // `__extern_is_object`; its `__typeof_object` answers 1 for `null`, so the
   // object test below pairs it with an explicit null check.
-  const hostFree = ctx.standalone || ctx.wasi;
 
-  const isObjectName = hostFree ? "__typeof_object" : "__extern_is_object";
+  const isObjectName = "__typeof_object";
   ensureLateImport(ctx, "__extern_get", [externref, externref], [externref]);
   ensureLateImport(ctx, isObjectName, [externref], [{ kind: "i32" }]);
   ensureLateImport(ctx, UNBOX_NUMBER, [externref], [{ kind: "f64" }]);
@@ -205,19 +204,14 @@ export function buildRecordFromExternref(
   build.push({ op: "struct.new", typeIdx: recordTypeIdx });
 
   const resultType: ValType = { kind: "ref_null", typeIdx: recordTypeIdx };
-  const isObjectTest: Instr[] = hostFree
-    ? [
-        { op: "local.get", index: externLocal },
-        { op: "ref.is_null" },
-        { op: "i32.eqz" },
-        { op: "local.get", index: externLocal },
-        { op: "call", funcIdx: helperIdx(isObjectName, isObjectIdx) },
-        { op: "i32.and" },
-      ]
-    : [
-        { op: "local.get", index: externLocal },
-        { op: "call", funcIdx: isObjectIdx },
-      ];
+  const isObjectTest: Instr[] = [
+    { op: "local.get", index: externLocal },
+    { op: "ref.is_null" },
+    { op: "i32.eqz" },
+    { op: "local.get", index: externLocal },
+    { op: "call", funcIdx: helperIdx(isObjectName, isObjectIdx) },
+    { op: "i32.and" },
+  ];
   return [
     ...isObjectTest,
     {

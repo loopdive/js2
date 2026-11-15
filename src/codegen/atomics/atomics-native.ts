@@ -35,7 +35,7 @@ import {
   pushTaDynViewInBoundsLen,
 } from "../dataview-native.js";
 import { getArrTypeIdxFromVec, getOrRegisterVecType } from "../index.js";
-import { buildThrowJsErrorInstrs, noJsHost } from "../js-errors.js";
+import { buildThrowJsErrorInstrs } from "../js-errors.js";
 import { mintDefinedFunc, pushDefinedFunc } from "../func-space.js";
 import { canonicalUndefinedExternInstrs } from "../any-helpers.js";
 import { ensureObjectRuntime } from "../object-runtime.js";
@@ -1017,7 +1017,7 @@ export function emitNativeAtomicsCall(
   args: readonly ts.Expression[],
   compileExpr: (expr: ts.Expression) => ValType | null,
 ): ValType | undefined {
-  if (!noJsHost(ctx) || !Object.prototype.hasOwnProperty.call(OP, method)) return undefined;
+  if (!Object.prototype.hasOwnProperty.call(OP, method)) return undefined;
   const op = OP[method as AtomicsMethod];
   if (ensureAtomicsHelper(ctx, fctx) === undefined) return undefined;
   const builtin = args.length > 0 ? ctx.oracle.builtinReceiverOf(args[0]!) : undefined;

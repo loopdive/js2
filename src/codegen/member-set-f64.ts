@@ -235,7 +235,7 @@ export function fillTypedMemberSetF64Dispatch(ctx: CodegenContext): void {
       ];
       const direct: Instr[] = !canStoreDirect
         ? buildDelegate()
-        : ctx.standalone && inheritedSetAffectsKey(ctx, propName) && cand.presenceSlot !== undefined
+        : inheritedSetAffectsKey(ctx, propName) && cand.presenceSlot !== undefined
           ? [
               { op: "local.get", index: 2 },
               { op: "ref.cast", typeIdx: cand.structTypeIdx },

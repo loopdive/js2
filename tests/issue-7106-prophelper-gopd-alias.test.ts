@@ -63,14 +63,9 @@ const PROBE = `
 
 const HELPER_NAMES = ["expectWritable", "expectNotWritable", "expectEnumerable", "expectConfigurable"];
 
-async function compileProbe(
-  source: string,
-  target?: "standalone" | "wasi",
-  semanticProviders?: "host-assisted",
-): Promise<CompileResult> {
+async function compileProbe(source: string, target?: "standalone" | "wasi"): Promise<CompileResult> {
   const result = await compile(source, {
     ...(target ? { target } : {}),
-    ...(semanticProviders ? { semanticProviders } : {}),
     experimentalIR: true,
     skipSemanticDiagnostics: true,
     allowJs: true,
@@ -127,14 +122,7 @@ describe("#7106 propertyHelper — the stored Object.getOwnPropertyDescriptor al
     expect(await wasmProbe(result)).toBe(nodeProbe(source));
   });
 
-  it("refuses before claim on the host-assisted gc lane, which has no native provider", async () => {
-    const result = await compileProbe(source, undefined, "host-assisted");
-    for (const name of HELPER_NAMES) expect(outcomeOf(result, name)).toMatchObject({ irBodyEmitted: false });
-    expect((result.irPostClaimErrors ?? []).filter((error) => HELPER_NAMES.includes(error.func))).toEqual([]);
-    // No node comparison here: on this lane the helpers are all legacy, and
-    // legacy answers 86 where node answers 511 — identical on the base, a
-    // pre-existing direct-path gap outside this arm.
-  });
+  // (#6979 S7-a/S7-b) The host-assisted profile is removed — `semanticProviders: "host-assisted"` is a compile error now — so its row is deleted.
 
   it("does not certify a reassigned alias", async () => {
     // Only the IR refusal is asserted: legacy itself still treats this alias

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { compile } from "../src/index.ts";
 import { buildImports } from "../src/runtime.ts";
+import { jsFacingExports } from "./helpers/compile.js";
 
 // #2731 — delete + re-add read/write asymmetry (HOST mode).
 //
@@ -24,7 +25,7 @@ async function runHost(src: string): Promise<unknown> {
   };
   const { instance } = await WebAssembly.instantiate(r.binary, imp);
   if (typeof imp.setInstance === "function") imp.setInstance(instance);
-  return (instance.exports as { test(): unknown }).test();
+  return (jsFacingExports(r, instance) as { test(): unknown }).test(); // (#6979 S7-f) the embedder-facing view
 }
 
 describe("#2731 for-in delete+re-add read/write symmetry", () => {

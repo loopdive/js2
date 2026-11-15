@@ -652,7 +652,6 @@ function resolveCandidateFacts<Plan extends MultiPreparedFunctionValuePlan>(
   // Identity-only authentication; all type queries remain behind the oracle/shared proof.
   const { checker: contextChecker } = ctx;
   if (
-    !ctx.standalone ||
     ctx.fast ||
     ctx.wasi ||
     proofContext.checker !== contextChecker ||

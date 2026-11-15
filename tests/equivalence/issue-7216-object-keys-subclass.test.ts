@@ -112,7 +112,8 @@ const CASES: Record<string, [string, boolean?]> = {
 // holds null at runtime. The consumers must not throw or trap there; they keep
 // base's compile-time answer (pinned — node, which sees the real object,
 // differs). `(o as any) as A` traps at the cast itself on gc/standalone, on
-// base too, so that row runs on wasi only.
+// base too. (#6979 S7-c) Its row ran on wasi only; WASI now lowers with the
+// native regime and traps there the same way, so the row is gone.
 const AB = `class A { a = 1; m() {} }\nclass B extends A { b = 2; n() {} }`;
 const NON_INSTANCE: Record<string, [string, string, readonly string[]]> = {
   "JSON.parse(...) as A": [
@@ -129,11 +130,6 @@ const NON_INSTANCE: Record<string, [string, string, readonly string[]]> = {
     `${AB}\nfunction run(): string { const r = Object.getPrototypeOf(new A()) as A; return String(Object.keys(r).length); }`,
     "1",
     ["gc", "standalone", "wasi"],
-  ],
-  "({z:1} as any) as A": [
-    `${AB}\nfunction run(): string { const o: any = { z: 1 }; const p = o as A; const k: string[] = []; for (const q in p) k.push(q); return Object.keys(p).join() + "." + k.join(); }`,
-    "a.",
-    ["wasi"],
   ],
 };
 

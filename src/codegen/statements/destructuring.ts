@@ -9,7 +9,7 @@ import { reportError } from "../context/errors.js";
 import { allocLocal, getLocalType } from "../context/locals.js";
 import { snapshotSpeculative, rollbackSpeculative, type SpeculativeSnapshot } from "../context/speculative.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
-import { ensureLateImport, flushLateImportShifts, shiftLateImportIndices } from "../expressions/late-imports.js";
+import { ensureLateImport, flushLateImportShifts } from "../expressions/late-imports.js";
 import {
   addIteratorImports,
   ensureLetConstBindingPatternTdzFlags,
@@ -31,9 +31,9 @@ import {
   emitExternrefDestructureGuard,
   patternIteratorStepCount,
 } from "../destructuring-params.js";
-import { addImport, addStringConstantGlobal, ensureExnTag, localGlobalIdx } from "../registry/imports.js";
+import { addStringConstantGlobal, ensureExnTag, localGlobalIdx } from "../registry/imports.js";
 import { emitWasiErrorConstructor } from "../registry/error-types.js";
-import { addFuncType, getArrTypeIdxFromVec, getOrRegisterVecType } from "../registry/types.js";
+import { getArrTypeIdxFromVec, getOrRegisterVecType } from "../registry/types.js";
 import { getVecInfo } from "../type-coercion.js";
 import {
   coerceType,
@@ -430,17 +430,8 @@ export function emitNullGuard(
  * Promise runtime (PR-C).
  */
 export function ensureAsyncIterator(ctx: CodegenContext, fctx: FunctionContext): number | undefined {
-  if (ctx.standalone || ctx.wasi) {
-    ensureNativeIteratorRuntime(ctx);
-    return ctx.funcMap.get("__iterator");
-  }
-  const idx = ctx.funcMap.get("__async_iterator");
-  if (idx !== undefined) return idx;
-  const importsBefore = ctx.numImportFuncs;
-  const fnType = addFuncType(ctx, [{ kind: "externref" }], [{ kind: "externref" }]);
-  addImport(ctx, "env", "__async_iterator", { kind: "func", typeIdx: fnType });
-  shiftLateImportIndices(ctx, fctx, importsBefore, ctx.numImportFuncs - importsBefore);
-  return ctx.funcMap.get("__async_iterator");
+  ensureNativeIteratorRuntime(ctx);
+  return ctx.funcMap.get("__iterator");
 }
 
 /**

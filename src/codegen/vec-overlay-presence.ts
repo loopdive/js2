@@ -46,7 +46,7 @@
  *
  * ## Byte-neutrality
  * Reached only from `fillVecOverlayHelpers`, which returns early unless
- * `ctx.standalone`, so gc/host output is unchanged. Within standalone the
+ * the regime flag, so gc/host output is unchanged. Within standalone the
  * prologue is gated at runtime on the `__vec_overlay_numeric` flag global — the
  * same gate the `__extern_get_idx` prologue uses (#3673): a module that never
  * puts an INDEXED entry in a companion pays exactly one `global.get`, not the

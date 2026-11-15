@@ -156,8 +156,8 @@ export function externrefBackedOwnFieldBacking(
  * class's name string ("Error" / "TypeError" / …) instead of the Phase-1
  * `ref.null extern` placeholder, so `err.name` reads the correct value in
  * standalone mode (the property-access fast path in `property-access.ts`
- * already does `struct.get $Error_struct[2]` for `.name` under
- * `ctx.wasi || ctx.standalone`). The constant is materialized via the
+ * already does `struct.get $Error_struct[2]` for `.name` on the
+ * native regime). The constant is materialized via the
  * shared `stringConstantExternrefInstrs` dual-mode helper: nativeStrings
  * mode builds the FlatString struct inline + `extern.convert_any`;
  * host-strings mode emits a `global.get` of the interned string constant.
@@ -587,7 +587,7 @@ export function ensureNativeSuppressedErrorCtor(ctx: CodegenContext): number | u
  * modules name.
  */
 function userErrorCtorArmApplies(ctx: CodegenContext, name: string): boolean {
-  return ctx.funcMap.has(`__new_${name}`) || (ctx.standalone && ctx.exportsConsumedByWasm === true);
+  return ctx.funcMap.has(`__new_${name}`) || ctx.exportsConsumedByWasm === true;
 }
 
 /**

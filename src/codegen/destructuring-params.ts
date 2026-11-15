@@ -97,13 +97,7 @@ export function coerceArrayBindingExternrefToAnyValue(
   from: ValType,
   to: ValType,
 ): boolean {
-  if (
-    !ctx.unionAnyRep ||
-    !(ctx.standalone || ctx.wasi) ||
-    from.kind !== "externref" ||
-    !isAnyValue(to, ctx) ||
-    ctx.anyValueTypeIdx < 0
-  ) {
+  if (!ctx.unionAnyRep || from.kind !== "externref" || !isAnyValue(to, ctx) || ctx.anyValueTypeIdx < 0) {
     return false;
   }
 
@@ -441,7 +435,6 @@ function emitBoundsCheckedArrayGetUndefWidened(
   arrTypeIdx: number,
   elementType: ValType,
 ): boolean {
-  if (!ctx.nativeStrings && !ctx.standalone) ensureLateImport(ctx, "__get_undefined", [], [{ kind: "externref" }]);
   const oobElse: Instr[] = canonicalUndefinedExternInstrs(ctx);
   const boxInstrs = boxToExternref(ctx, elementType.kind, elementType, fctx);
   // A no-op box would mean the element is already externref — that shape is the
@@ -1087,7 +1080,6 @@ export function destructureParamObjectExternref(
           // subsequent `__extern_get` reads its fields. Only for resolvable
           // key/value object literals; everything else keeps the normal path.
           const initIsPlainObjectLiteral =
-            (ctx.standalone || ctx.wasi) &&
             ts.isObjectLiteralExpression(element.initializer) &&
             element.initializer.properties.length > 0 &&
             element.initializer.properties.every(
@@ -1193,11 +1185,7 @@ export function emitExternrefDestructureGuard(ctx: CodegenContext, fctx: Functio
   const undefIdx = ensureLateImport(ctx, "__extern_is_undefined", [{ kind: "externref" }], [{ kind: "i32" }]);
   if (undefIdx !== undefined) {
     flushLateImportShifts(ctx, fctx);
-    if (!ctx.standalone && !ctx.wasi) {
-      fctx.body.push({ op: "local.get", index: paramIdx });
-      fctx.body.push({ op: "call", funcIdx: undefIdx });
-      fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: buildDestructureNullThrow(ctx, fctx), else: [] });
-    } else if (undefinedSingletonActive(ctx)) {
+    if (undefinedSingletonActive(ctx)) {
       // (#2106 S1) Under the singleton regime a standalone `undefined`
       // container is a NON-null externref, so the `ref.is_null` guard above
       // misses it. Test the tag-1 `$AnyValue` shape ONLY — deliberately NOT
@@ -2077,12 +2065,8 @@ export function destructureParamArray(
       // The host-free lane therefore keeps its measured pre-existing behaviour —
       // this slice is host-lane only by construction, with the native strict arm
       // left as an explicit follow-up.
-      const fbIterName = ctx.standalone || ctx.wasi ? "__array_from_iter_n" : "__array_from_iter_n_strict";
-      if (ctx.standalone || ctx.wasi) {
-        ensureNativeArrayFromIterN(ctx);
-      } else {
-        ensureLateImport(ctx, fbIterName, [{ kind: "externref" }, { kind: "f64" }], [{ kind: "externref" }]);
-      }
+      const fbIterName = "__array_from_iter_n";
+      ensureNativeArrayFromIterN(ctx);
       flushLateImportShifts(ctx, fctx);
 
       // Else: try each other known vec type and convert element-by-element

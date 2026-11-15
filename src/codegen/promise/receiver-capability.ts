@@ -299,7 +299,6 @@ function emitPromiseTry(
   fctx.body.push(
     // status = Completion(Call(callbackfn, undefined, args))
     buildTargetTaggedTry(
-      ctx,
       { kind: "empty" },
       [
         { op: "local.get", index: fn },

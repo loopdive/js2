@@ -34,7 +34,6 @@ import { addStringConstantGlobal } from "./registry/imports.js";
  * not-implemented body) when the object runtime cannot supply its helpers.
  */
 export function emitDateProtoToPrimitiveBody(ctx: CodegenContext, fctx: FunctionContext): ValType | null {
-  if (!ctx.standalone) return null;
   ensureObjectRuntime(ctx);
   const toPrimitiveIdx = ctx.funcMap.get("__to_primitive");
   const typeofObjectIdx = ctx.funcMap.get("__typeof_object");

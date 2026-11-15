@@ -113,7 +113,6 @@ export function builtinInstanceKeyNeedsRuntime(
   foldedAnswer: number,
 ): boolean {
   if (foldedAnswer !== 0) return false;
-  if (!ctx.standalone && !ctx.wasi) return false;
   return isBuiltinInstanceCarrierType(ctx, recvWasm);
 }
 

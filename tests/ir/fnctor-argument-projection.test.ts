@@ -184,7 +184,6 @@ function contextFor(data: Fixture, options: ContextOptions = {}): CodegenContext
     },
     fnctorReservedTypeIdx: new Map([["Parser", reservedTypeIdx]]),
     structMap: new Map([["__fnctor_Parser", structTypeIdx]]),
-    standalone: true,
     nativeStrings: true,
     wasi: false,
     fast: false,
@@ -314,7 +313,6 @@ describe("#3521 dormant source-qualified fnctor argument projection", () => {
     }
 
     const contextMutations: readonly [string, CodegenContext][] = [
-      ["host target", { ...exactContext, standalone: false }],
       ["WASI target", { ...exactContext, wasi: true }],
       ["fast mode", { ...exactContext, fast: true }],
       // (#6979) host-strings variant removed with the host-assisted profile.

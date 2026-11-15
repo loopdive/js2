@@ -143,7 +143,6 @@ const WIDENED_NATIVES: ReadonlyArray<readonly [string, readonly string[], number
  * provider is byte-identical.
  */
 export function fillRuntimeEvalIntrinsicFunctionOwnProps(ctx: CodegenContext): void {
-  if (!ctx.standalone) return;
   const markerTypeIdx = ctx.runtimeEvalInterpretedCallbackTypeIdx;
   if (markerTypeIdx === undefined) return;
   if (!ctx.nativeStrings || ctx.anyStrTypeIdx < 0) return;

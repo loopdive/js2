@@ -6,7 +6,6 @@ import { isGlobalObjectExpr } from "./global-environment.js";
 import { moduleTdzGlobalIndexForIdentifier } from "./expressions/identifier-module-storage.js";
 import { analyzeTdzAccess, emitLocalTdzCheck, emitStaticTdzThrow } from "./expressions/identifiers.js";
 import { compileExpression, skipTransparentExpressions } from "./shared.js";
-import { noJsHost } from "./js-errors.js";
 import { emitTdzCheckAtGlobal } from "./statements/tdz.js";
 import { compileStringLiteral } from "./string-ops.js";
 
@@ -27,7 +26,7 @@ export function emitTypeofTdzGuard(ctx: CodegenContext, fctx: FunctionContext, o
   const verdict = analyzeTdzAccess(ctx, id);
   if (verdict === "throw") emitStaticTdzThrow(ctx, fctx, id.text);
   else if (verdict === "check" && localFlag !== undefined) emitLocalTdzCheck(ctx, fctx, id.text, localFlag);
-  else if (verdict === "check") emitTdzCheckAtGlobal(ctx, fctx, moduleFlag!, id.text, noJsHost(ctx));
+  else if (verdict === "check") emitTdzCheckAtGlobal(ctx, fctx, moduleFlag!, id.text, true);
 }
 
 function isUnshadowedRealmGlobal(ctx: CodegenContext, fctx: FunctionContext, operand: ts.Expression): boolean {
@@ -46,7 +45,6 @@ function isUnshadowedFunctionPrototype(ctx: CodegenContext, fctx: FunctionContex
       ? skipTransparentExpressions(bare.expression)
       : undefined;
   return (
-    ctx.standalone === true &&
     receiver !== undefined &&
     ts.isIdentifier(receiver) &&
     receiver.text === "Function" &&

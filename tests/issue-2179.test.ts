@@ -28,6 +28,7 @@ import { describe, expect, it } from "vitest";
 
 import { compile } from "../src/index.js";
 import { buildImports } from "../src/runtime.js";
+import { jsFacingExports } from "./helpers/compile.js";
 
 async function run<T = unknown>(src: string): Promise<T> {
   const result = await compile(src, { fileName: "test.ts" });
@@ -39,7 +40,7 @@ async function run<T = unknown>(src: string): Promise<T> {
   if (typeof (importResult as { setInstance?: Function }).setInstance === "function") {
     (importResult as { setInstance: Function }).setInstance(inst.instance);
   }
-  return (inst.instance.exports as Record<string, Function>).test!() as T;
+  return (jsFacingExports(result, inst.instance) as Record<string, Function>).test!() as T; // (#6979 S7-f) the embedder-facing view
 }
 
 describe("#2179 post-delete struct read consults the tombstone (JS-host)", () => {

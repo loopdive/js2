@@ -6,7 +6,7 @@ import { coerceType } from "../shared.js";
 
 /** The packed argument ABI preserves the optional start/end positions. */
 export function isArrayFillVariadicMember(ctx: CodegenContext, member: string): boolean {
-  return member === "fill" && (ctx.standalone || ctx.wasi);
+  return member === "fill";
 }
 
 /** Generic first-class Array.prototype.fill; no receiver replacement or copy. */

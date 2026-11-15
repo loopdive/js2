@@ -43,9 +43,7 @@ const MAX_SAFE_LENGTH = 9007199254740991;
  * `native-first` (`--target standalone` / `--target wasi` / an explicit
  * `semanticProviders: "native-first"` gc build).
  *
- * The JS-host fallback (`compileArrayConcatExternHost` in array-methods.ts)
- * delegates the
- * whole operation to `env::__array_concat_any` (plus `env::__js_array_new` /
+ * The retired JS-host fallback (deleted by #6979) delegated the whole operation to `env::__array_concat_any` (plus `env::__js_array_new` /
  * `env::__js_array_push` for the argument list). Those are unsatisfiable
  * `env::*` imports host-free, so the #2961 strict leak guard turned every
  * dynamic-operand concat into a standalone compile error — ~28 of the 69

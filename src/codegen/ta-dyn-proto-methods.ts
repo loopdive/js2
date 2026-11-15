@@ -39,7 +39,7 @@ import {
   ITER_FAMILY_ARRAY,
   ITER_KIND_VEC,
 } from "./iterator-native.js";
-import { buildThrowJsErrorInstrs, emitThrowTypeError, noJsHost } from "./js-errors.js";
+import { buildThrowJsErrorInstrs, emitThrowTypeError } from "./js-errors.js";
 import { undefinedExternInstrs } from "./any-helpers.js";
 import { emitStableMergeSort } from "./merge-sort.js"; // (#6769 S6)
 import { ensureObjectRuntime, ensureObjVecBuilders } from "./object-runtime.js";
@@ -72,7 +72,6 @@ const ITERATOR_METHODS = new Set(["values", "keys", "entries"]);
  * or a dependency is missing — the caller then keeps its current path.
  */
 export function ensureTaDynProtoMethodHelper(ctx: CodegenContext, method: string): number | undefined {
-  if (!noJsHost(ctx)) return undefined;
   if (SEARCH_METHODS.has(method)) return ensureTaDynSearchHelper(ctx, method);
   if (ITERATOR_METHODS.has(method)) return ensureTaDynIteratorHelper(ctx, method);
   if (method === "subarray") return ensureTaDynSubarrayHelper(ctx);

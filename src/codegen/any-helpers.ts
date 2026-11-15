@@ -48,7 +48,7 @@ export function ensureAnyValueType(ctx: CodegenContext): void {
   // host `undefined` via `__get_undefined`) is byte-identical and never allocates
   // this global. The tag-1 shape mirrors `__any_from_extern`'s `nullAny`
   // ({tag:1, i32val:0, f64val:NaN, refval:null, externval:null}).
-  if ((ctx.standalone || ctx.nativeStrings) && ctx.undefinedGlobalIdx === undefined) {
+  if (ctx.undefinedGlobalIdx === undefined) {
     const anyTypeIdx = ctx.anyValueTypeIdx;
     const globalIdx = ctx.numImportGlobals + ctx.mod.globals.length;
     ctx.mod.globals.push({
@@ -83,7 +83,6 @@ export function resolveIrDynamicCarrierType(ctx: CodegenContext): ValType {
  * path. INERT until S1.1 routes `emitUndefined` here.
  */
 export function emitUndefinedSingleton(ctx: CodegenContext, fctx: FunctionContext): boolean {
-  if (!(ctx.standalone || ctx.nativeStrings)) return false;
   if (ctx.undefinedGlobalIdx === undefined) {
     ensureAnyValueType(ctx);
     if (ctx.undefinedGlobalIdx === undefined) return false;
@@ -112,7 +111,7 @@ export function undefinedAnyValueInstrs(ctx: CodegenContext): Instr[] {
  * flag-off (default) modules are byte-identical to legacy.
  */
 export function undefinedSingletonActive(ctx: CodegenContext): boolean {
-  return ctx.undefinedSingleton === true && (ctx.standalone || ctx.nativeStrings);
+  return ctx.undefinedSingleton === true;
 }
 
 /**
@@ -164,13 +163,6 @@ export function undefinedExternInstrs(ctx: CodegenContext): Instr[] | undefined 
  * old `ref.null.extern` meant "absent reference" — that is a different fact.
  */
 export function canonicalUndefinedExternInstrs(ctx: CodegenContext): Instr[] {
-  // Host lane: the real host `undefined` (a null externref surfaces as JS
-  // `null` there). Read-only funcMap lookup — never registers a late import
-  // mid-body, which would shift funcidxs under the caller.
-  if (!(ctx.standalone || ctx.nativeStrings)) {
-    const getUndefIdx = ctx.funcMap.get("__get_undefined");
-    return getUndefIdx !== undefined ? [{ op: "call", funcIdx: getUndefIdx }] : [{ op: "ref.null.extern" }];
-  }
   if (ctx.undefinedGlobalIdx === undefined) {
     ensureAnyValueType(ctx);
     if (ctx.undefinedGlobalIdx === undefined) return [{ op: "ref.null.extern" }];
@@ -762,7 +754,7 @@ export function emitPrimitiveUnionExternToAny(
   fctx: FunctionContext,
   expr: ts.Expression,
 ): boolean {
-  if (ctx.undefinedSingleton !== true || !(ctx.standalone || ctx.nativeStrings)) return false;
+  if (ctx.undefinedSingleton !== true) return false;
   if (!isPrimitiveOnlyUnionFact(ctx, expr)) return false;
   ensureAnyHelpers(ctx);
   const fromExtern = ensureAnyFromExternHelper(ctx);

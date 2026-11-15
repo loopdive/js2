@@ -123,8 +123,6 @@ export function ensureStandaloneGlobalFunctionClosure(
   ctx: CodegenContext,
   name: StandaloneEs5GlobalFunctionName,
 ): StandaloneGlobalFunctionClosure | null {
-  if (!ctx.standalone && !ctx.wasi) return null;
-
   const arity = GLOBAL_FUNCTION_ARITY[name];
   const paramTypes = Array.from({ length: arity }, () => ({ kind: "externref" }) as ValType);
   const returnsBoolean = name === "isNaN" || name === "isFinite";
@@ -278,16 +276,14 @@ export function tryEmitStandaloneGlobalFunctionIdentifier(
   name: string,
   node: Parameters<CodegenContext["oracle"]["valueDeclarationOf"]>[0],
 ): ValType | null {
-  if (!ctx.standalone || !isStandaloneEs5GlobalFunctionName(name)) return null;
+  if (!isStandaloneEs5GlobalFunctionName(name)) return null;
   const declaration = ctx.oracle.valueDeclarationOf(node);
   if (declaration !== undefined && !declaration.getSourceFile().isDeclarationFile) return null;
   return emitStandaloneGlobalFunctionValue(ctx, fctx, name);
 }
 
 function moduleNeedsStandaloneEvalGlobalSeed(ctx: CodegenContext): boolean {
-  return (
-    ctx.standalone && (ctx.runtimeEvalBoundaryPlan?.sites.some((site) => site.kind === "global-eval-property") ?? false)
-  );
+  return ctx.runtimeEvalBoundaryPlan?.sites.some((site) => site.kind === "global-eval-property") ?? false;
 }
 
 /** Build the one-time seeds for the native realm object in `objectLocal`. */
@@ -296,8 +292,6 @@ export function standaloneGlobalFunctionSeedInstrs(
   fctx: FunctionContext,
   objectLocal: number,
 ): Instr[] | null {
-  if (!ctx.standalone && !ctx.wasi) return [];
-
   // Settle every possible late import before capturing any function index in
   // the detached initialization body returned below.
   for (const name of STANDALONE_ES5_GLOBAL_FUNCTION_NAMES) {

@@ -1,7 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
 interface IsViewClassMetadata {
-  readonly standalone: boolean;
   readonly classExprNameMap: ReadonlyMap<string, string>;
   readonly classExternrefBackedSet: ReadonlySet<string>;
   readonly classBuiltinParentMap: ReadonlyMap<string, string>;
@@ -24,7 +23,6 @@ export function arrayBufferIsViewStaticDecision(
   const className = argSym === undefined ? undefined : (metadata.classExprNameMap.get(argSym) ?? argSym);
   // (#5150) Heritage admits this case to a runtime test, never constant true.
   const needsDataViewSubclassTest =
-    metadata.standalone &&
     className !== undefined &&
     metadata.classExternrefBackedSet.has(className) &&
     metadata.classBuiltinParentMap.get(className) === "DataView" &&
@@ -33,7 +31,6 @@ export function arrayBufferIsViewStaticDecision(
   // [[Construct]] (object-runtime.ts) — a runtime test, as for DataView.
   const builtinParent = className === undefined ? undefined : metadata.classBuiltinParentMap.get(className);
   const needsTypedArraySubclassTest =
-    metadata.standalone &&
     className !== undefined &&
     metadata.classExternrefBackedSet.has(className) &&
     builtinParent !== undefined &&

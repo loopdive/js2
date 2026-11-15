@@ -161,7 +161,6 @@ export function boxToAny(ctx: CodegenContext, fctx: FunctionContext, from: ValTy
       // legacy path keeps the historical kind-keyed dispatch below.
       if (
         ctx.undefinedSingleton === true &&
-        (ctx.standalone || ctx.nativeStrings) &&
         (from.kind === "externref" || from.kind === "ref" || from.kind === "ref_null" || from.kind === "f64") &&
         emit("__any_box_undefined", [{ op: "drop" }])
       ) {
@@ -199,7 +198,7 @@ export function boxToAny(ctx: CodegenContext, fctx: FunctionContext, from: ValTy
     // measured −788/−794). Without this, `u === miss` over two `any` operands
     // boxes both nullish values as tag-5 "strings" and __any_strict_eq's
     // guarded string arm answers 0.
-    if (ctx.undefinedSingleton === true && (ctx.standalone || ctx.nativeStrings) && emit("__any_box_extern_s1")) {
+    if (ctx.undefinedSingleton === true && emit("__any_box_extern_s1")) {
       return true;
     }
     // #1888 (regression −788/−794): do NOT route generic externref boxing

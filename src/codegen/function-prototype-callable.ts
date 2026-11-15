@@ -18,7 +18,6 @@ import { emitThrowTypeError } from "./expressions/helpers.js";
 export { FUNCTION_PROTOTYPE_CALL_HELPER } from "../ir/runtime-symbols.js";
 
 export function ensureFunctionPrototypeCallHelper(ctx: CodegenContext): number | undefined {
-  if (!(ctx.standalone || ctx.wasi)) return undefined;
   const existing = ctx.funcMap.get(FUNCTION_PROTOTYPE_CALL_HELPER);
   if (existing !== undefined) return existing;
 

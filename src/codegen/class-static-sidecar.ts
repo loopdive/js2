@@ -110,7 +110,6 @@ const PRIVATE_NAME_PREFIX = "__priv_";
  * class. Pure predicate — no emission, no context mutation.
  */
 export function classStaticSidecarApplies(ctx: CodegenContext, className: string): boolean {
-  if (!ctx.standalone) return false;
   if (ctx.classObjectGlobals?.get(className) === undefined) return false;
   if (ctx.classStaticSidecarGlobals.get(className) === undefined) return false;
   // A class with a static member whose key is known only at runtime — the case

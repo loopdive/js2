@@ -26,7 +26,6 @@ import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { flushLateImportShifts } from "./shared.js";
 import { coerceType } from "./type-coercion.js";
 import { ensureWrapperStringValueHelper } from "./object-runtime.js";
-import { noJsHost } from "./js-errors.js";
 
 export const IR_STRING_CARRIER_HELPER = "__ir_string_carrier";
 
@@ -35,7 +34,7 @@ export const IR_STRING_CARRIER_HELPER = "__ir_string_carrier";
  * Returns the function index, or undefined off the native-string host-free lanes.
  */
 export function ensureIrStringCarrierHelper(ctx: CodegenContext): number | undefined {
-  if (!noJsHost(ctx) || !ctx.nativeStrings || ctx.anyStrTypeIdx < 0) return undefined;
+  if (!ctx.nativeStrings || ctx.anyStrTypeIdx < 0) return undefined;
   const existing = ctx.funcMap.get(IR_STRING_CARRIER_HELPER);
   if (existing !== undefined) return existing;
 

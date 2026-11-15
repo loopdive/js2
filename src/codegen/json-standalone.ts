@@ -320,7 +320,7 @@ export function tryEmitJsonParsePropertyAccess(
   // "Cannot read properties of undefined (reading '0')" (its predicate lies at
   // runtime). Read args off the unwrapped call node instead.
   const call = unwrapTransparentExpression(expr.expression);
-  if (!(ctx.standalone || ctx.wasi) || !isJsonParseCall(call)) return undefined;
+  if (!isJsonParseCall(call)) return undefined;
   const value = parsedJsonLiteral(ctx, call.arguments[0]!);
   if (value === UNSUPPORTED || value === null || Array.isArray(value) || typeof value !== "object") return undefined;
   if (!Object.prototype.hasOwnProperty.call(value, expr.name.text)) {
@@ -337,7 +337,7 @@ export function tryEmitJsonParseElementAccess(
 ): ValType | null | undefined {
   // #3384 — unwrap before reading `.arguments` (see tryEmitJsonParsePropertyAccess).
   const call = unwrapTransparentExpression(expr.expression);
-  if (!(ctx.standalone || ctx.wasi) || !isJsonParseCall(call)) return undefined;
+  if (!isJsonParseCall(call)) return undefined;
   const value = parsedJsonLiteral(ctx, call.arguments[0]!);
   if (value === UNSUPPORTED) return undefined;
 

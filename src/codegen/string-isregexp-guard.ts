@@ -33,7 +33,7 @@ import type { Instr, ValType } from "../ir/types.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { allocLocal } from "./context/locals.js";
 import { coerceType, compileExpression, ensureLateImport, flushLateImportShifts } from "./shared.js";
-import { buildThrowJsErrorInstrs, noJsHost } from "./expressions/helpers.js";
+import { buildThrowJsErrorInstrs } from "./expressions/helpers.js";
 import { ensureObjectRuntime } from "./object-runtime.js";
 import { ensureAnyToStringHelper } from "./native-strings.js";
 import { emitStringProtoToStringFlat } from "./string-proto-tostring.js";
@@ -83,7 +83,6 @@ export function tryEmitRuntimeIsRegExpSearchArg(
   arg: ts.Expression,
   method: string,
 ): number | null {
-  if (!noJsHost(ctx)) return null;
   if (!argCouldBeRegExp(ctx, arg)) return null;
 
   ensureObjectRuntime(ctx);

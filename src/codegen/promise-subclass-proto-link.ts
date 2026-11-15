@@ -60,7 +60,6 @@ function promiseBagFieldIdx(ctx: CodegenContext, promiseTypeIdx: number): number
 /** A standalone class rooted at `Promise` whose prototype is a real `$Object`. */
 function linkApplies(ctx: CodegenContext, className: string): boolean {
   return (
-    ctx.standalone === true &&
     ctx.classBuiltinParentMap.get(className) === "Promise" &&
     standaloneClassProtoObjectApplies(ctx, className) &&
     ctx.objectRuntimeTypes !== undefined
@@ -74,7 +73,7 @@ function linkApplies(ctx: CodegenContext, className: string): boolean {
  * path (that parent's constructor has to run).
  */
 export function isStandalonePromiseSuperForwarder(ctx: CodegenContext, className: string, arity: number): boolean {
-  if (ctx.standalone !== true || arity < 1) return false;
+  if (arity < 1) return false;
   const parent = ctx.classParentMap.get(className);
   if (parent !== undefined && ctx.classSet.has(parent)) return false;
   return ctx.classBuiltinParentMap.get(className) === "Promise";

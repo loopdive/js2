@@ -638,7 +638,7 @@ export function fillMemberGetDispatch(ctx: CodegenContext): void {
     // is cloned because this fill can splice a presence miss into multiple
     // independently-remapped instruction trees.
     const presenceMiss = (): Instr[] =>
-      ctx.standalone && inheritedSetAffectsKey(ctx, propName)
+      inheritedSetAffectsKey(ctx, propName)
         ? (structuredClone(fallback) as Instr[])
         : (undefinedExternInstrs(ctx) ?? [{ op: "ref.null.extern" }]);
 
@@ -977,7 +977,7 @@ export function fillTypedMemberGetF64Dispatch(ctx: CodegenContext): void {
           ]
         : [{ op: "f64.const", value: NaN }];
     const presenceMiss = (): Instr[] =>
-      ctx.standalone && inheritedSetAffectsKey(ctx, propName)
+      inheritedSetAffectsKey(ctx, propName)
         ? (structuredClone(fallback) as Instr[])
         : [{ op: "f64.const", value: NaN }];
 
@@ -1085,7 +1085,6 @@ function buildMemberGetInlineCacheArm(
   if (
     readEnv("JS2WASM_MEMBER_GET_IC") !== "1" ||
     !eligible ||
-    !ctx.standalone ||
     !ctx.nativeStrings ||
     objTypes === undefined ||
     HSTR < 0

@@ -219,7 +219,6 @@ function collectEntries(ctx: CodegenContext): ProtoLookupEntry[] {
  * class with a runtime-keyed member.
  */
 export function fillClassProtoLookupArm(ctx: CodegenContext): void {
-  if (!ctx.standalone) return;
   if (ctx.funcMap.has(LOOKUP_NAME)) return; // idempotence
   const entries = collectEntries(ctx);
   if (entries.length === 0) return;

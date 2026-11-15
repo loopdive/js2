@@ -425,7 +425,6 @@ const verdictCache = new WeakMap<CodegenContext, WeakMap<ts.VariableDeclaration,
 export function resolveFnctorTypedBindingType(ctx: CodegenContext, decl: ts.VariableDeclaration): ValType | null {
   const enabled = fnctorTypedBindingsEnabled();
   if (!enabled && !censusEnabled()) return null;
-  if (!ctx.standalone) return null;
   let perCtx = verdictCache.get(ctx);
   if (perCtx === undefined) {
     perCtx = new WeakMap();

@@ -851,7 +851,7 @@ export function isPatchedBuiltinStaticMember(
   ns: string,
   name: string,
 ): boolean {
-  if (!ctx.standalone || !PATCHABLE_NAMESPACES.has(ns)) return false;
+  if (!PATCHABLE_NAMESPACES.has(ns)) return false;
   for (const sourceFile of ctx.callableSourceFiles ?? []) {
     if (patchedBuiltinStaticMembers(sourceFile).get(ns)?.has(name)) return true;
   }

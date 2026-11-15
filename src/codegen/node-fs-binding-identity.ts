@@ -42,7 +42,7 @@ export function isUnaliasedNodeFsImportBinding(ctx: CodegenContext, id: ts.Ident
  * compile error, as do WASI and the linked / JS-environment standalone regimes.
  */
 function isStandaloneDependencyNodeFsCall(ctx: CodegenContext, expr: ts.CallExpression): boolean {
-  if (!ctx.standalone || ctx.wasi || ctx.targetProfile.environment !== "none") return false;
+  if (ctx.wasi || ctx.targetProfile.environment !== "none") return false;
   if (ctx.standaloneGlobalThisImport !== undefined) return false;
   // A package-linker provider build (#5247) compiles one dependency package
   // with package-relative file keys, so its path carries no `node_modules`.

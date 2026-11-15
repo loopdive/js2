@@ -174,7 +174,6 @@ export function moduleReadsBareFunctionValue(ctx: CodegenContext): boolean {
  * Stack: `[] → [externref]` on success.
  */
 export function emitStandaloneFunctionIntrinsicValue(ctx: CodegenContext, fctx: FunctionContext): ValType | undefined {
-  if (!ctx.standalone) return undefined;
   if (moduleReadsBareFunctionValue(ctx)) return emitStandaloneIntrinsicFunctionValue(ctx, fctx);
   // Self-contained arm. `Function` already carries `length: 1` in
   // `BUILTIN_CTOR_ARITY`, so #3006's carrier machinery seeds the §20.2.2 own
@@ -205,7 +204,7 @@ export function emitStandaloneGlobalFunctionPropertyValue(
   fctx: FunctionContext,
   site: ts.Node,
 ): ValType | undefined {
-  if (!ctx.standalone || moduleMayWriteGlobalFunction(site.getSourceFile())) return undefined;
+  if (moduleMayWriteGlobalFunction(site.getSourceFile())) return undefined;
   const getIdx = ensureLateImport(ctx, "__extern_get", [EXTERNREF, EXTERNREF], [EXTERNREF]);
   flushLateImportShifts(ctx, fctx);
   if (getIdx === undefined) return undefined;
@@ -365,8 +364,6 @@ export function tryEmitFunctionValueConstructorRead(
   objType: ts.Type,
   objectCoercionFunction = false,
 ): ValType | undefined {
-  if (!ctx.standalone) return undefined;
-
   // A function's inherited `constructor` is `%Function%`, and its inherited
   // `prototype` is therefore the *same* `%Function.prototype%` object as the
   // direct `Function.prototype` spelling.  When the source reads

@@ -50,7 +50,7 @@ import { ensureLateImport, flushLateImportShifts } from "./shared.js";
 const EXTERNREF: ValType = { kind: "externref" };
 
 function applies(ctx: CodegenContext, className: string, propName: string, cellGlobalIdx: number): boolean {
-  if (ctx.standalone !== true || ctx.classBuiltinParentMap.get(className) !== "Promise") return false;
+  if (ctx.classBuiltinParentMap.get(className) !== "Promise") return false;
   const parent = ctx.classParentMap.get(className);
   if (parent !== undefined && ctx.classSet.has(parent)) return false;
   if (!isClassObjectExpandoCell(ctx, className, propName)) return false;

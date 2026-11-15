@@ -6,7 +6,6 @@
 import { ts } from "../ts-api.js";
 import type { ValType } from "../ir/types.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
-import { noJsHost } from "./js-errors.js";
 import { emitFnctorProtoGet } from "./expressions/fnctor-prototype.js";
 import { objectCoercionObjectArgumentOf } from "./object-ctor-primitive-receiver.js";
 import { resolveReceiverStruct } from "./fnctor-escape-gate.js";
@@ -25,7 +24,6 @@ export function tryObjectCoercionFnctorPrototypeIdentity(
   moduleTouchesConstructor: boolean,
 ): ValType | undefined {
   if (
-    !noJsHost(ctx) ||
     propName !== "prototype" ||
     !ts.isPropertyAccessExpression(expr.expression) ||
     expr.expression.name.text !== "constructor" ||

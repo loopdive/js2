@@ -90,7 +90,6 @@ export function tryEmitDynamicValueOfCall(
   fctx: FunctionContext,
   propAccess: ts.PropertyAccessExpression,
 ): ValType | undefined {
-  if (!ctx.standalone) return undefined;
   const fact = ctx.oracle.typeFactOf(propAccess.expression).kind;
   // (#4491 wave-5 T2) …plus the one receiver whose static type is a LIE about
   // its shape: `new Object(<primitive>)` types as `Object`, but §20.1.1.1 makes

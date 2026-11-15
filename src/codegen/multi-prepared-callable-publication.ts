@@ -433,7 +433,7 @@ export class MultiPreparedCallablePublication<BodyPlan extends object> {
     if (publicationMutation() === "existing-outcome") {
       existingUnitIds.add(this.#components[0]!.units[0]!.unitId);
     }
-    const target: IrObservedOutcome["target"] = this.#ctx.wasi ? "wasi" : this.#ctx.standalone ? "standalone" : "gc";
+    const target: IrObservedOutcome["target"] = this.#ctx.wasi ? "wasi" : "standalone";
     // One claim per component, counted rather than assumed: the constructor
     // already rejects a repeated component id, so anything but `1` here is a
     // broken claim loop and `hasMalformedBodyEmissionAccounting` rejects it.

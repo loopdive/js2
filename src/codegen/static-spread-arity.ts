@@ -57,7 +57,7 @@
  *
  * ## Lane
  *
- * Callers gate on `ctx.standalone || ctx.wasi`. The JS-host lane already
+ * Callers gate on the native regime. The JS-host lane already
  * repairs these shapes through `emitDynamicSpreadCall` (which builds a real JS
  * argument array and calls `__call_function`), so widening the static rule
  * there would change bytes for no behavioural gain. Keeping the gate at the

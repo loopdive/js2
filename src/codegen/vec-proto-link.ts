@@ -114,7 +114,6 @@ function arrayRootClass(ctx: CodegenContext, className: string): string | undefi
 /** A standalone externref-backed class rooted at `Array` with a real `$Object` prototype. */
 function linkApplies(ctx: CodegenContext, className: string): boolean {
   return (
-    (ctx.standalone || ctx.wasi) &&
     ctx.classExternrefBackedSet.has(className) &&
     arrayRootClass(ctx, className) !== undefined &&
     standaloneClassProtoObjectApplies(ctx, className) &&
@@ -176,7 +175,6 @@ export function emitVecProtoLinkInstall(
  * for every other class.
  */
 export function emitArrayRootedProtoParent(ctx: CodegenContext, fctx: FunctionContext, className: string): boolean {
-  if (!(ctx.standalone || ctx.wasi)) return false;
   if (ctx.classBuiltinParentMap.get(className) !== "Array") return false;
   const arrayBrand = ensureArrayNativeProtoGlue(ctx);
   const instrs = arrayBrand === undefined ? null : buildLazyNativeProtoGetInstrs(ctx, arrayBrand);
@@ -235,7 +233,6 @@ export function wrapArrayProtoVecAlias(
   arrTypeIdx: number,
   materialize: Instr[],
 ): Instr[] {
-  if (!(ctx.standalone || ctx.wasi)) return materialize;
   const brand = ctx.builtinBrandMap?.get("Array");
   const protoGlobal = brand === undefined ? undefined : ctx.nativeProtoGlobals?.get(brand);
   const npTypeIdx = ctx.nativeProtoTypeIdx;
@@ -347,7 +344,6 @@ export function unwrapArrayProtoVecAliasInstrs(ctx: CodegenContext, slot: number
  * `fillStandaloneClassInstanceProtoArm`.
  */
 export function fillVecProtoLinkArms(ctx: CodegenContext): void {
-  if (!(ctx.standalone || ctx.wasi)) return;
   const objectTypeIdx = ctx.objectRuntimeTypes?.objectTypeIdx;
   const isVecIdx = ctx.funcMap.get(IS_VEC);
   const lookupIdx = ctx.funcMap.get(BAG_LOOKUP);

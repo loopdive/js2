@@ -40,7 +40,7 @@ export function emitSymbolNotIterableGuard(
   local: number,
   site: ts.Node,
 ): void {
-  if ((!ctx.standalone && !ctx.wasi) || ctx.symbolTypeIdx < 0) return;
+  if (ctx.symbolTypeIdx < 0) return;
   // GetIterator(symbol) consults `%Symbol.prototype%` / `%Object.prototype%`:
   // a program that can reach either can make symbols iterable.
   if (ctx.protoIndexDirty === true || ctx.dynamicCodeDirty === true) return;
@@ -85,7 +85,6 @@ function fileMayInstallIteratorLate(sf: ts.SourceFile): boolean {
  * `@@iterator` the static type does not show.
  */
 export function isProvablyNonIterableStructSource(ctx: CodegenContext, value: ts.Expression): boolean {
-  if (!ctx.standalone && !ctx.wasi) return false;
   if (ctx.protoIndexDirty === true || ctx.dynamicCodeDirty === true) return false;
   if (fileMayInstallIteratorLate(value.getSourceFile())) return false;
   return ctx.oracle.wellKnownSymbolMemberOf(value, "iterator") === false;

@@ -90,7 +90,7 @@
  *   test262 population is entirely dynamic — a deliberate, bounded divergence.
  *
  * ## Byte-neutrality
- * Everything is gated on `ctx.standalone || ctx.wasi` (in gc/host mode the
+ * Everything is gated on the native regime (in gc/host mode the
  * `env::__extern_*` imports own the dynamic-property path) and on the module
  * actually declaring a class. Every placeholder body is the "nothing to add"
  * answer (`0`), so a skipped fill degrades to exactly today's behaviour instead
@@ -147,10 +147,8 @@ function userClassStructTypeIdxs(ctx: CodegenContext): number[] {
   // `isConfigurable` (`delete obj[name]; !hasOwnProperty(obj, name)`) saw a
   // no-op delete for every literal member. Only the narrowing direction moves:
   // a member reads absent after an explicit, successful `delete`.
-  if (ctx.standalone) {
-    for (const [name, typeIdx] of ctx.structMap) {
-      if (name.startsWith("__anon_") && !isSyntheticStructName(name)) add(typeIdx);
-    }
+  for (const [name, typeIdx] of ctx.structMap) {
+    if (name.startsWith("__anon_") && !isSyntheticStructName(name)) add(typeIdx);
   }
   return idxs;
 }
@@ -162,7 +160,6 @@ function userClassStructTypeIdxs(ctx: CodegenContext): number[] {
  * idempotent, and a no-op outside standalone/wasi.
  */
 export function reserveInstanceTombstones(ctx: CodegenContext): void {
-  if (!(ctx.standalone || ctx.wasi)) return;
   if (ctx.funcMap.get(IS_CLASS_INSTANCE_CARRIER) !== undefined) return;
 
   const reserve = (name: string, params: ValType[]): void => {
@@ -264,7 +261,7 @@ export function fillInstanceTombstones(ctx: CodegenContext): void {
   // active.  The marker belongs to the hidden bag's OWN table; a prototype
   // setter on Object.prototype must neither observe delete nor replace it.
   const externSetOwnIdx = ctx.funcMap.get("__extern_set_own");
-  const inheritedSetRuntimeActive = ctx.standalone && inheritedSetAnyDirty(ctx) && externSetOwnIdx !== undefined;
+  const inheritedSetRuntimeActive = inheritedSetAnyDirty(ctx) && externSetOwnIdx !== undefined;
   if (lookupIdx === undefined || ensureIdx === undefined || externGetIdx === undefined || externSetIdx === undefined) {
     return;
   }

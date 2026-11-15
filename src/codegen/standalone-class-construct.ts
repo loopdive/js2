@@ -15,8 +15,8 @@
 // `result = __call_fn_method_<N>(self, callee, …)` — a CLOSURE dispatch. But a
 // class value in standalone is not a closure: it is the class-object singleton,
 // an `extern.convert_any`'d `$ClassName` STRUCT with the same type and the same
-// `__tag` as an instance (#3976, `class-object-of.ts`). The module-local
-// closure dispatcher misses, `result` is null, and the driver returns the bare
+// `__tag` as an instance (#3976). The module-local closure dispatcher misses,
+// `result` is null, and the driver returns the bare
 // `Object.create(proto)` — an object with none of the constructor's own fields.
 //
 // The same hole exists on the wasm→wasm boundary: `__js2wasm_link_construct`
@@ -127,7 +127,6 @@ function admitsBuiltinParentConstruct(ctx: CodegenContext, className: string): b
  * Every other standalone module emits exactly the bytes it did before.
  */
 function classConstructWanted(ctx: CodegenContext): boolean {
-  if (!ctx.standalone && !ctx.wasi) return false;
   return valueConstructSites.has(ctx) || ctx.exportsConsumedByWasm === true;
 }
 
@@ -221,7 +220,6 @@ function collectCandidates(ctx: CodegenContext): ClassConstructCandidate[] {
  * `structMap`, which `collect-declarations` fills before any body runs.
  */
 export function moduleHasRefTypedConstructFormal(ctx: CodegenContext): boolean {
-  if (!ctx.standalone && !ctx.wasi) return false;
   for (const className of ctx.structMap.keys()) {
     if (ctx.classBuiltinParentMap.has(className)) continue;
     const ctorFuncIdx = ctx.funcMap.get(classMemberFuncKey(ctx, `${className}_new`));
@@ -245,7 +243,6 @@ export function moduleHasRefTypedConstructFormal(ctx: CodegenContext): boolean {
  * pays nothing for a TypeError it could never reach.
  */
 export function moduleHasF64TypedConstructFormal(ctx: CodegenContext): boolean {
-  if (!ctx.standalone && !ctx.wasi) return false;
   for (const className of ctx.structMap.keys()) {
     if (ctx.classBuiltinParentMap.has(className)) continue;
     const ctorFuncIdx = ctx.funcMap.get(classMemberFuncKey(ctx, `${className}_new`));

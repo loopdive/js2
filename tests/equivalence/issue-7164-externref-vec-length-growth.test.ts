@@ -46,6 +46,11 @@ const LANES = [
   { lane: "wasi", options: { target: "wasi" } },
 ] as const;
 type Lane = (typeof LANES)[number]["lane"];
+// (#6979 S7-c) WASI lowers with the native semantic regime, so it carries
+// standalone's pins: every known gap and origin/main base below is looked up
+// for `pinLane(lane)`. The WASI-only pins these tables used to carry belonged
+// to WASI's pre-regime arms; on the regime those rows match node.
+const pinLane = (lane: Lane): Lane => (lane === "wasi" ? "standalone" : lane);
 
 const PROGRAMS: Record<string, string> = {
   // The issue's program: grow within the capacity `push` reserved.
@@ -78,7 +83,6 @@ const READS: Record<string, string> = {
 
 const NATIVE: readonly Lane[] = ["gc", "standalone"];
 const ALL: readonly Lane[] = ["gc", "standalone", "wasi"];
-const WASI: readonly Lane[] = ["wasi"];
 
 // Known gaps: program → reads → lanes, with the issue that owns the rows.
 const GROWTH = "grow|zeroGrow|growBig";
@@ -92,24 +96,12 @@ const GAPS: { program: string; reads: string[]; lanes: readonly Lane[]; owner: s
     lanes: NATIVE,
     owner: "#7170 (grown index is a present undefined)",
   },
-  { program: GROWTH, reads: ["map", "forEach"], lanes: WASI, owner: "#7170 (grown index is a present undefined)" },
-  // wasi: `in` and for-in report holes as present (#7171).
-  { program: GROWTH, reads: ["in", "forIn"], lanes: WASI, owner: "#7171" },
-  // wasi: Object.keys / hasOwnProperty on an `any[]` are wrong even when it is dense (untracked).
-  { program: "grow|growBig|append", reads: ["objectKeys"], lanes: WASI, owner: "wasi-vec-own-keys" },
-  { program: "append", reads: ["hasOwnProperty"], lanes: WASI, owner: "wasi-vec-own-keys" },
   // `delete g[1]` keeps the value in the slot; reads that skip the deleted-index record see it (#7169 / #7170 / #7171).
   {
     program: "del",
     reads: ["join", "forEach", "map", "spread", "entries", "sort"],
     lanes: NATIVE,
     owner: "#7169/#7170",
-  },
-  {
-    program: "del",
-    reads: ["index", "in", "forIn", "join", "forEach", "map", "objectKeys", "json", "spread", "entries", "sort"],
-    lanes: WASI,
-    owner: "#7171/#7170",
   },
   // `new Array(3)` holes on the native-first lane and the per-read gaps (#7170 / #7171).
   {
@@ -118,12 +110,11 @@ const GAPS: { program: string; reads: string[]; lanes: readonly Lane[]; owner: s
     lanes: NATIVE,
     owner: "#7170",
   },
-  { program: "newArray", reads: ["in", "forIn", "forEach", "map", "objectKeys"], lanes: WASI, owner: "#7170/#7171" },
 ];
 
 function gapFor(program: string, read: string, lane: Lane): string | undefined {
   for (const gap of GAPS) {
-    if (gap.program.split("|").includes(program) && gap.reads.includes(read) && gap.lanes.includes(lane)) {
+    if (gap.program.split("|").includes(program) && gap.reads.includes(read) && gap.lanes.includes(pinLane(lane))) {
       return gap.owner;
     }
   }
@@ -163,7 +154,7 @@ for (const program of Object.keys(PROGRAMS)) {
 }
 
 // (#7164 r2) Share-group guards: every alias must observe every store.
-const GUARDS: Record<string, { pre?: string; body: string; gap?: string; wasiGap?: string }> = {
+const GUARDS: Record<string, { pre?: string; body: string; gap?: string }> = {
   paramTypedStr: {
     pre: "function f(a: string[]): void { a.push('p'); }",
     body: "const xs: any[] = []; xs.push('a'); xs.length = 3; f(xs); xs.push('c'); return xs.length+':'+JSON.stringify(xs);",
@@ -204,11 +195,9 @@ const GUARDS: Record<string, { pre?: string; body: string; gap?: string; wasiGap
   // (#7164 r5) `++` / `--` / `+=` / `-=` share the static length store.
   spreadAfterShrinkInc: {
     body: "const g: any[] = []; g.push('y'); g.push('z'); g.length = 1; g.length++; const s = [...g]; return s.length + ':' + (1 in s) + ':' + JSON.stringify(Object.keys(s));",
-    wasiGap: "#7171",
   },
   toReversedAfterShrinkInc: {
     body: "const g: any[] = []; g.push('y'); g.push('z'); g.length = 1; g.length++; g.length++; const t = g.toReversed(); let p = ''; for (let i = 0; i < t.length; i++) p += (i in t) ? 'P' : 'H'; return p + String(t[0]);",
-    wasiGap: "#7171",
   },
   lengthUpdateValues: {
     body: "const g: any[] = []; g.push('y'); const a = g.length++; const b = ++g.length; const c = (g.length += 2); const d = (g.length -= 1); const e = g.length--; return [a, b, c, d, e, g.length, String(g[1])].join(',');",
@@ -222,11 +211,9 @@ const GUARDS: Record<string, { pre?: string; body: string; gap?: string; wasiGap
   // the update forms on their old, descriptor-aware route (TypeError as before).
   nonWritableMinusEq: {
     body: "const g: any[] = ['a', 'b']; Object.defineProperty(g, 'length', { writable: false }); try { g.length -= 1; return 'no:' + g.length; } catch (e) { return (e instanceof TypeError) + ':' + g.length; }",
-    wasiGap: "same as origin/main 2b0565cb14: wasi reads a non-writable length as undefined",
   },
   nonConfigurableElementDec: {
     body: "const g: any[] = ['a', 'b']; Object.defineProperty(g, 1, { value: 'b', configurable: false }); try { g.length--; return 'no:' + g.length; } catch (e) { return (e instanceof TypeError) + ':' + g.length; }",
-    wasiGap: "wasi-nonconfigurable-length-store",
   },
   // `find` / `findLast` with no match return `undefined`, also on a mixed `any[]`.
   findNotFoundIsUndefined: {
@@ -235,12 +222,9 @@ const GUARDS: Record<string, { pre?: string; body: string; gap?: string; wasiGap
   // Update forms with no plain `length =` in the module, on every element kind.
   incOnlyAny: {
     body: "const g: any[] = ['a', 'b']; g.length++; return String(g[2]) + ':' + g.length;",
-    wasiGap:
-      "same as origin/main 2b0565cb14: wasi length++ on a dense any[] is lost (so `while (g.length < 5) g.length++` never terminates)",
   },
   incOnlyMixed: {
     body: "const g: any[] = []; g.push('a'); g.push(1); g.length++; return String(g[2]) + ':' + g.length + ':' + [...g].length;",
-    wasiGap: "same as origin/main 2b0565cb14: wasi length++ on a dense any[] is lost",
   },
   pushPopIncSpread: {
     pre: "function fd(...r: any[]): any[] { return r; }",
@@ -249,7 +233,6 @@ const GUARDS: Record<string, { pre?: string; body: string; gap?: string; wasiGap
   },
   chainPreInc: {
     body: "const o = { p: { arr: ['a'] as any[] } }; const v = ++o.p.arr.length; return v + ':' + o.p.arr.length;",
-    wasiGap: "same as origin/main 2b0565cb14: wasi ++o.p.arr.length reads NaN",
   },
   // (#7164 r6) `+=` on a binding #7164 moved to the externref carrier takes the
   // static store (origin/main emits invalid wasm here).
@@ -260,7 +243,6 @@ const GUARDS: Record<string, { pre?: string; body: string; gap?: string; wasiGap
   // reallocates the backing; indexOf / includes must scan the new one.
   fromIndexGrowsBacking: {
     body: "const g: any[] = []; g.push('a'); g.push('b'); g.length = 2; const fi: any = { valueOf(): number { g.length = 40; g[1] = 'Q'; return 0; } }; const fj: any = { valueOf(): number { g.length = 90; g[3] = 'R'; return 0; } }; return String(g.indexOf('Q', fi)) + ':' + g.includes('R', fj);",
-    wasiGap: "same as origin/main 2b0565cb14: wasi indexOf / includes miss a value written by fromIndex's valueOf",
   },
   // (#7164 r7) A grow of an externref vec #7164 did not switch keeps
   // origin/main's store: mixed arrays, parameters and literal-seeded arrays.
@@ -269,16 +251,13 @@ const GUARDS: Record<string, { pre?: string; body: string; gap?: string; wasiGap
   },
   mixedGrowIn: {
     body: "const g: any[] = ['a', 1]; g.length = 4; return (3 in g ? 'T' : 'F') + (g.hasOwnProperty(3) ? 'T' : 'F') + g.length;",
-    wasiGap: "#7171 (same as origin/main: wasi `in` is true for a grown index)",
   },
   paramGrow: {
     pre: "function p(g: any[]): string { g.length = 4; return [g.indexOf(undefined), g.some((x: any) => x === undefined) ? 'T' : 'F', 3 in g ? 'T' : 'F', g.length].join(','); }",
     body: "return p(['a', 1]);",
-    wasiGap: "#7171 (same as origin/main: wasi `in` is true for a grown index)",
   },
   literalGrowIn: {
     body: "const g: any[] = ['a', 'b']; g.length = 4; return (3 in g ? 'T' : 'F') + g.filter((x: any) => x === undefined).length;",
-    wasiGap: "#7171",
   },
   // (#7164 r7) The native element-equality helpers register the box types they
   // need: a search on a string-only switched vec used to fold to a constant.
@@ -373,10 +352,9 @@ const GUARDS: Record<string, { pre?: string; body: string; gap?: string; wasiGap
 };
 
 describe("#7164 share-group guards", () => {
-  for (const [name, { pre, body, gap: allGap, wasiGap }] of Object.entries(GUARDS)) {
+  for (const [name, { pre, body, gap }] of Object.entries(GUARDS)) {
     const src = `${ENC}${pre ?? ""}\nfunction value(): string { ${body} }\nexport function test(): number { return enc(value()); }`;
     for (const { lane, options } of LANES) {
-      const gap = allGap ?? (lane === "wasi" ? wasiGap : undefined);
       const test = gap !== undefined ? it.fails : it;
       test(`${name} / ${lane}${gap !== undefined ? ` (known gap: ${gap})` : ""}`, async () => {
         const expected = evaluateAsJs(src).test!();
@@ -439,8 +417,6 @@ const READERS: Record<string, string> = {
   anyJoin: `(() => { const a: any = g; return a.join("-"); })()`,
 };
 const READER_GAPS: Record<string, { lanes: readonly Lane[]; owner: string }> = {
-  // wasi: `in` reports holes as present (#7171).
-  restParam: { lanes: WASI, owner: "#7171" },
   // (#7164 r4) The grown index is a present `undefined` (#7170): copies keep it
   // own, `indexOf` finds it, callbacks visit it. `someEvery` was right on
   // origin/main only because its slot held `null` (`v === undefined` false).
@@ -451,8 +427,6 @@ const READER_GAPS: Record<string, { lanes: readonly Lane[]; owner: string }> = {
   filter: { lanes: ALL, owner: "#7170 (grown index is a present undefined)" },
   reduce: { lanes: ALL, owner: "#7170 (grown index is a present undefined)" },
   someEvery: { lanes: ALL, owner: "#7170 (grown index is a present undefined)" },
-  // wasi: `super(...r)` from a rest-param constructor loses the first argument (same on origin/main; untracked).
-  superSpread: { lanes: WASI, owner: "wasi-super-spread" },
   // `Array.from(anyVec)` traps "illegal cast" even when dense (same on origin/main; untracked).
   arrayFrom: { lanes: ALL, owner: "array-from-any-vec" },
   // `Function.prototype.apply` reads a hole as `null` (same on origin/main; untracked).
@@ -461,8 +435,6 @@ const READER_GAPS: Record<string, { lanes: readonly Lane[]; owner: string }> = {
   objectValues: { lanes: ALL, owner: "#7170" },
   // A join through an `any` receiver prints `undefined`/`null` elements verbatim, dense too (untracked).
   anyJoin: { lanes: ALL, owner: "dynamic-join-nullish" },
-  // wasi: `Array.of(...g)` traps (same on origin/main; untracked).
-  arrayOf: { lanes: WASI, owner: "wasi-array-of-spread" },
 };
 
 describe("#7164 readers after growth", () => {
@@ -480,7 +452,7 @@ describe("#7164 readers after growth", () => {
         exports = (await instantiateWithRuntime(result)).exports as Record<string, unknown>;
       }, 120_000);
       for (const name of Object.keys(READERS)) {
-        const gap = READER_GAPS[name]?.lanes.includes(lane) ? READER_GAPS[name]!.owner : undefined;
+        const gap = READER_GAPS[name]?.lanes.includes(pinLane(lane)) ? READER_GAPS[name]!.owner : undefined;
         const test = gap !== undefined ? it.fails : it;
         test(`${name}${gap !== undefined ? ` (known gap: ${gap})` : ""}`, () => {
           const fn = `r_${name}`;
@@ -522,35 +494,13 @@ const SWEEP_GAPS: Record<string, { lanes: readonly Lane[]; owner: string }> = {
   restSuper: { lanes: ALL, owner: "super-spread-rest-empty" },
   dynamicRead: { lanes: ALL, owner: "dynamic-index-read-null" },
   apply: { lanes: ALL, owner: "apply-reads-null" },
-  // wasi: `i in r` is false even for a present index (#7171), so every other row differs there.
-  toReversed: { lanes: WASI, owner: "#7171" },
-  toSpliced: { lanes: WASI, owner: "#7171" },
-  with: { lanes: WASI, owner: "#7171" },
-  arrayOf: { lanes: WASI, owner: "wasi-array-of-host-import" },
-  entries: { lanes: WASI, owner: "#7171" },
-  values: { lanes: WASI, owner: "#7171" },
-  spread: { lanes: WASI, owner: "#7171" },
-  spreadLead: { lanes: WASI, owner: "#7171" },
-  forOfCollect: { lanes: WASI, owner: "#7171" },
-  indexRead: { lanes: WASI, owner: "#7171" },
-  restDecl: { lanes: WASI, owner: "#7171" },
-  restLead: { lanes: WASI, owner: "#7171" },
-  restArrow: { lanes: WASI, owner: "#7171" },
-  restExpr: { lanes: WASI, owner: "#7171" },
-  restMethod: { lanes: WASI, owner: "#7171" },
-  restStatic: { lanes: WASI, owner: "#7171" },
-  restClosure: { lanes: WASI, owner: "#7171" },
-  restNew: { lanes: WASI, owner: "#7171" },
-  positionalDecl: { lanes: WASI, owner: "#7171" },
-  positionalMethod: { lanes: WASI, owner: "#7171" },
-  positionalNew: { lanes: WASI, owner: "#7171" },
 };
 
 describe("#7164 generated sweep: matches node", () => {
   for (const [name, expr] of Object.entries(SWEEP)) {
     const src = `${ENC}${SWEEP_PRELUDE}\nexport function test(): number { ${SWEEP_GROW} return enc(sum(${expr})); }`;
     for (const { lane, options } of LANES) {
-      const gap = SWEEP_GAPS[name]?.lanes.includes(lane) ? SWEEP_GAPS[name]!.owner : undefined;
+      const gap = SWEEP_GAPS[name]?.lanes.includes(pinLane(lane)) ? SWEEP_GAPS[name]!.owner : undefined;
       (gap !== undefined ? it.fails : it)(
         `${name} / ${lane}${gap !== undefined ? ` (known gap: ${gap})` : ""}`,
         async () => {
@@ -572,9 +522,8 @@ describe("#7164 generated sweep: matches node", () => {
 // undefined / n null / O object / v other). A leak is node P → head H, node V
 // → head S, or node u → head anything but u — so a `null` fill where node has
 // `undefined` is a leak. Present-where-node-has-a-hole (H → P) is the accepted
-// #7170 gap. On wasi `i in r` is false even for dense arrays (#7171), so only
-// the visit and value columns count there. Setups cover every grow form and
-// the reallocation path.
+// #7170 gap. Setups cover every grow form and the reallocation path. (#6979
+// S7-c: WASI runs the regime, so all three columns count there as well.)
 //
 // r6: the detector is relative to origin/main. issue-7164-leak-base.json lists,
 // per setup/case/lane, the leaks this branch still shares with origin/main at
@@ -636,8 +585,8 @@ describe("#7164 generated sweep: no marker leaks", () => {
               continue; // a trap is not a leak
             }
             const expected = readSummary(node[`at_${name}`] as (i: number) => number);
-            const shared = new Set(LEAK_BASE[`${setupName}/${name}`]?.[lane] ?? []);
-            for (const leak of leaksIn(expected, head, lane))
+            const shared = new Set(LEAK_BASE[`${setupName}/${name}`]?.[pinLane(lane)] ?? []);
+            for (const leak of leaksIn(expected, head, pinLane(lane)))
               if (!shared.has(leak)) leaks.push(`${name} ${leak} (node ${expected}, head ${head})`);
           }
           expect(leaks).toEqual([]);
@@ -686,7 +635,7 @@ describe("#7164 callbacks that grow the array", () => {
     for (const [method, body] of Object.entries(cbCases(m, r))) {
       const src = `${ENC}function value(): string { ${CB_SETUP} ${body} }\nexport function test(): number { return enc(value()); }`;
       for (const { lane, options } of LANES) {
-        const gap = CB_GAPS[method]?.lanes.includes(lane) ? CB_GAPS[method]!.owner : undefined;
+        const gap = CB_GAPS[method]?.lanes.includes(pinLane(lane)) ? CB_GAPS[method]!.owner : undefined;
         (gap !== undefined ? it.fails : it)(
           `${method} / grow by ${form} / ${lane}${gap ? ` (known gap: ${gap})` : ""}`,
           async () => {
@@ -738,7 +687,7 @@ describe("#7164 length-update sweep: never worse than origin/main", () => {
         } catch (e) {
           head = `TRAP ${String(e)}`;
         }
-        const base = SWEEP_BASE[row.key]?.[lane] ?? "ok";
+        const base = SWEEP_BASE[row.key]?.[pinLane(lane)] ?? "ok";
         if (base === "ok") expect(head, `${row.key}/${lane}`).toBe(node);
         else if (base === "wrong") expect(head, `${row.key}/${lane}`).not.toMatch(/^(TRAP|CE) /);
       }, 120_000);
@@ -787,7 +736,7 @@ describe("#7164 callback-array escape sweep: never worse than origin/main", () =
         } catch (e) {
           head = `TRAP ${String(e)}`;
         }
-        const base = CALLBACK_BASE[row.key]?.[lane] ?? "ok";
+        const base = CALLBACK_BASE[row.key]?.[pinLane(lane)] ?? "ok";
         if (base === "ok") expect(head, `${row.key}/${lane}`).toBe(node);
         else if (base === "wrong") expect(head, `${row.key}/${lane}`).not.toMatch(/^(TRAP|CE) /);
       }, 120_000);
@@ -822,7 +771,7 @@ describe("#7164 assignment-target sweep: never worse than origin/main", () => {
         } catch (e) {
           head = `TRAP ${String(e)}`;
         }
-        const base = TARGET_BASE[form]?.[lane] ?? "ok";
+        const base = TARGET_BASE[form]?.[pinLane(lane)] ?? "ok";
         if (base === "ok") expect(head, `${form}/${lane}`).toBe(node);
         if (base !== "trap") expect(head, `${form}/${lane}`).not.toMatch(/^TRAP /);
         if (base !== "ce") expect(head, `${form}/${lane}`).not.toMatch(/^CE /);

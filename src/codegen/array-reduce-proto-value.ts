@@ -16,8 +16,7 @@
  * (`(self, this, (ref null $vec_externref))`, the one `join`/`push`/`concat`
  * use) and derives `hasInit` from the packed argument COUNT — the same rule the
  * direct-call lowering applies (`callExpr.arguments.length >= 2`, the #3098
- * dispatcher's `arity >= 2`). The ABI switch is confined to the native regime
- * (`ctx.standalone || ctx.wasi`), so host-assisted `gc` modules are untouched.
+ * dispatcher's `arity >= 2`).
  */
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import type { Instr, ValType } from "../ir/types.js";
@@ -29,7 +28,7 @@ import { getArrTypeIdxFromVec } from "./registry/types.js";
 
 /** True when `Array.prototype.<member>`'s closure uses the packed variadic ABI. */
 export function isArrayReduceVariadicMember(ctx: CodegenContext, member: string): boolean {
-  return NATIVE_HOF_REDUCE.has(member) && (ctx.standalone || ctx.wasi);
+  return NATIVE_HOF_REDUCE.has(member);
 }
 
 /**

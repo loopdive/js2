@@ -375,15 +375,14 @@ describe("#6651 SG1 · residuals pinned in their current (spec-WRONG) state", ()
     ]);
   });
 
-  it("PINNED WRONG — `yield *` before a newline emits INVALID Wasm", async () => {
-    // Pre-existing (recorded by slice A1, re-verified by this lane against the
-    // current tree): the module fails WASM VALIDATION with
+  it("`yield *` before a newline delegates (was PINNED WRONG: invalid Wasm)", async () => {
+    // Recorded by slice A1: the module used to fail WASM VALIDATION with
     //   __gen_resume_g: local.tee[0] expected (ref null N), found ref.as_non_null of (ref eq)
-    // i.e. the #2170 `yield*` delegation SLOT is laid out at the resolved inner
-    // state type while the emit site produces the unresolved `eqref` form — a
-    // two-pass disagreement in the hottest `yield*` path. Left alone
-    // deliberately rather than risking every delegation site for one row; it
-    // costs `statements/generators/yield-star-before-newline.js`.
+    // (the #2170 `yield*` delegation SLOT laid out at the resolved inner state
+    // type while the emit site produced the unresolved `eqref` form). (#6979
+    // S7-f) Measured on the S7-d base: it now validates and answers correctly,
+    // so the row pins the spec answer — `statements/generators/
+    // yield-star-before-newline.js`.
     const src = `function* g() {
   yield *
   g2();
@@ -393,6 +392,6 @@ export function test(): number {
   const r: any = g().next();
   return r.done === true ? 1 : 0;
 }`;
-    await expect(run(src)).rejects.toThrow(/CompileError|local\.tee/);
+    expect(await run(src)).toBe(1);
   });
 });

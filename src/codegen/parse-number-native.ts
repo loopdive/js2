@@ -204,9 +204,7 @@ export function fillParseNumberToStringArms(ctx: CodegenContext): void {
       { op: "ref.cast", typeIdx: anyStrTypeIdx },
     ];
   } else {
-    const anyToStringIdx =
-      ctx.nativeStrHelpers.get(ANY_TO_STRING_HELPER) ??
-      (ctx.standalone || ctx.wasi ? ensureAnyToStringHelper(ctx) : undefined);
+    const anyToStringIdx = ctx.nativeStrHelpers.get(ANY_TO_STRING_HELPER) ?? ensureAnyToStringHelper(ctx);
     if (anyToStringIdx !== undefined) convert = [{ op: "call", funcIdx: anyToStringIdx }];
   }
   if (!convert) return; // host-backed lane without a native ToString: keep the trap

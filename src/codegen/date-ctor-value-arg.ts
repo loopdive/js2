@@ -45,7 +45,6 @@ export function tryEmitStandaloneDateCtorValueArg(
   arg: ts.Expression,
   dateTypeIdx: number,
 ): boolean {
-  if (!ctx.standalone) return false;
   // A statically numeric argument cannot carry a `@@toPrimitive`, a `valueOf`
   // override, or a [[DateValue]] slot: ToPrimitive is the identity on it, so
   // the direct `f64` compile is already the spec answer AND the cheap one.

@@ -3,17 +3,19 @@
 import { describe, expect, it } from "vitest";
 import { compile } from "../src/index.js";
 import { buildImports } from "../src/runtime.js";
+import { jsFacingExports } from "./helpers/compile.js";
 
 async function runHost(source: string): Promise<unknown> {
   const result = await compile(source, { fileName: "test.ts" });
   if (!result.success) throw new Error(`Compile error: ${result.errors?.[0]?.message}`);
   // The generator must ride the native state machine, not the eager buffer.
-  expect(result.imports.map((i) => i.name)).toContain("__gen_yield_star_step");
-  expect(result.imports.map((i) => i.name)).not.toContain("__gen_yield_star");
+  // (#6979 S7-f, #7010) The `__gen_yield_star_step` host step is retired with
+  // the eager-generator provider; no `__gen_*` import may be emitted at all.
+  expect(result.imports.map((i) => i.name).filter((n) => n.startsWith("__gen_"))).toEqual([]);
   const imports = buildImports(result.imports, undefined, result.stringPool);
   const instance = new WebAssembly.Instance(new WebAssembly.Module(result.binary), imports);
   imports.setInstance?.(instance);
-  return (instance.exports as any).test();
+  return (jsFacingExports(result, instance) as any).test(); // (#6979 S7-f) the embedder-facing view
 }
 
 const PRELUDE = `

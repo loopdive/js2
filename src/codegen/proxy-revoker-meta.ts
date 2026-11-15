@@ -38,7 +38,7 @@ const LENGTH_DELETED = 1;
 const NAME_DELETED = 2;
 
 export function fillProxyRevokerFnMeta(ctx: CodegenContext): void {
-  if (!ctx.standalone || ctx.proxyRevocableSite !== true) return;
+  if (ctx.proxyRevocableSite !== true) return;
   const revokerTypeIdx = ctx.structMap.get("__proxy_revoker");
   if (revokerTypeIdx === undefined) return;
   const getMetaFn = ctx.mod.functions.find((f) => f.name === "__builtinfn_get_meta");

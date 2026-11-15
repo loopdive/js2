@@ -56,7 +56,7 @@
  *
  * ## Byte-neutrality
  * Reached only from `fillVecOverlayHelpers`, which returns early unless
- * `ctx.standalone`, so gc/host output is unchanged. Degrades to emitting nothing
+ * the regime flag, so gc/host output is unchanged. Degrades to emitting nothing
  * when `vec-props.ts` reserved no helpers (a module with no expando writes).
  *
  * ## (#4010 S2) The DELETE side of the same seam

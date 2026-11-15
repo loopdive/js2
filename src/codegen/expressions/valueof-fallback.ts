@@ -30,9 +30,7 @@ export function tryEmitValueOfFallback(
   // Receiver-precise, so a module that does not override `valueOf` on this
   // binding compiles byte-identically. Measured flips:
   // `Number/prototype/valueOf/S15.7.4.4_A2_T0{3,4,5}` block #1.
-  if (ctx.standalone && sourceOverridesMethodOnReceiver(access.expression, "valueOf")) return undefined;
-  const receiverFact = ctx.oracle.typeFactOf(access.expression).kind;
-  const dynamicReceiver = receiverFact === "any" || receiverFact === "unknown";
-  if (!ctx.standalone && dynamicReceiver) return undefined;
+  if (sourceOverridesMethodOnReceiver(access.expression, "valueOf")) return undefined;
+
   return tryEmitDynamicValueOfCall(ctx, fctx, access) ?? compileExpression(ctx, fctx, access.expression);
 }

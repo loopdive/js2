@@ -109,7 +109,7 @@ const PROMISE_PROTO_MEMBER_LENGTH: Readonly<Record<string, number>> = { catch: 1
  * keeps its fold; the gc lane is left to its host value path unchanged.
  */
 export function promiseProtoMemberSpecLength(ctx: CodegenContext, memberAccess: ts.Expression): number | undefined {
-  if (!ctx.standalone || ctx.wasi || !ts.isPropertyAccessExpression(memberAccess)) return undefined;
+  if (ctx.wasi || !ts.isPropertyAccessExpression(memberAccess)) return undefined;
   const length = PROMISE_PROTO_MEMBER_LENGTH[memberAccess.name.text];
   if (length === undefined || ctx.oracle.builtinReceiverOf(memberAccess.expression) !== "Promise") return undefined;
   return length;
@@ -127,7 +127,7 @@ const mentionsPromise = new WeakMap<ts.SourceFile, boolean>();
  * import flush repairs `fctx`'s live bodies.
  */
 export function demandPromiseDynamicMember(ctx: CodegenContext, member: string, fctx: FunctionContext | null): void {
-  if (!ctx.standalone || ctx.wasi) return;
+  if (ctx.wasi) return;
   const isData = PROMISE_PROTO_DATA_KEYS.has(member);
   if (!isData && !PROMISE_PROTO_MEMBERS.has(member)) return;
   let demanded = demandedByCtx.get(ctx);
@@ -192,7 +192,7 @@ function fileMentionsPromise(node: ts.Node): boolean {
  * `fctx.body` itself.
  */
 export function notePromiseDynamicMemberRead(ctx: CodegenContext, fctx: FunctionContext, expr: ts.Expression): void {
-  if (!ctx.standalone || ctx.wasi) return;
+  if (ctx.wasi) return;
   const member = dynamicReadMemberName(expr);
   if (member === undefined || !fileMentionsPromise(expr)) return;
   demandPromiseDynamicMember(ctx, member, fctx);
@@ -206,7 +206,7 @@ export function notePromiseDynamicMemberRead(ctx: CodegenContext, fctx: Function
  * `.prototype.then` (the pre-scan member set, #4492 wave-5).
  */
 export function promiseProtoThenMayBeReplaced(ctx: CodegenContext, fctx: FunctionContext | null): boolean {
-  if (!ctx.standalone || ctx.wasi) return false;
+  if (ctx.wasi) return false;
   // The observable pipeline's generic Invoke reads `then` off any value —
   // a native promise returned by a user `C.resolve` included.
   demandPromiseDynamicMember(ctx, "then", fctx);
@@ -387,7 +387,7 @@ function keyIsToStringTagSymbol(symbolTypeIdx: number): Instr[] {
  * No-op unless a member was demanded.
  */
 export function unshiftExternGetPromiseMemberArm(ctx: CodegenContext): void {
-  if (!ctx.standalone || ctx.wasi) return;
+  if (ctx.wasi) return;
   const brand = ctx.builtinBrandMap?.get("Promise");
   const promiseTypeIdx = ctx.structMap.get("$Promise");
   const objTypes = ctx.objectRuntimeTypes;

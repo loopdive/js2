@@ -69,7 +69,6 @@ export const VEC_CONSTRUCTOR_CARRIER_FN = "__vec_ctor_Array";
  * before any funcIdx is captured by name and flush afterwards.
  */
 export function ensureVecConstructorCarrier(ctx: CodegenContext): number | undefined {
-  if (!ctx.standalone) return undefined;
   const existing = ctx.funcMap.get(VEC_CONSTRUCTOR_CARRIER_FN);
   if (existing !== undefined) return existing;
 

@@ -40,16 +40,13 @@ export function reserveUnmatchedClosureHostCall(
   fctx: FunctionContext,
   call: ts.CallExpression,
 ): HostCallFallbackPlan | UnmatchedClosureApplyPlan | undefined {
-  if (ctx.standalone || ctx.wasi) {
-    if (!calleeIsDescriptorAccessor(ctx, call.expression)) return undefined;
-    ensureObjVecBuilders(ctx);
-    reserveApplyClosure(ctx);
-    return {
-      apply: true,
-      argsLocal: allocLocal(fctx, `__unmatched_args_${fctx.locals.length}`, { kind: "externref" }),
-    };
-  }
-  return undefined;
+  if (!calleeIsDescriptorAccessor(ctx, call.expression)) return undefined;
+  ensureObjVecBuilders(ctx);
+  reserveApplyClosure(ctx);
+  return {
+    apply: true,
+    argsLocal: allocLocal(fctx, `__unmatched_args_${fctx.locals.length}`, { kind: "externref" }),
+  };
 }
 
 /**

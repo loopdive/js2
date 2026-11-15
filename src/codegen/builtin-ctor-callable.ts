@@ -58,7 +58,6 @@ export function builtinObjectArrayCallableArmInstrs(
   arrayConstructor: (ctx: CodegenContext, argCount: number) => number | undefined,
   localBaseIndex: number,
 ): { instrs: Instr[]; locals: CallableArmLocals[] } {
-  if (!ctx.standalone) return { instrs: [], locals: [] };
   const objectTypeIdx = ctx.objectRuntimeTypes?.objectTypeIdx;
   const externLengthIdx = ctx.funcMap.get("__extern_length");
   const newPlainObjectIdx = ctx.funcMap.get("__new_plain_object");
@@ -296,7 +295,6 @@ export function builtinCtorCallableArmInstrs(ctx: CodegenContext, argOf: (k: num
 }
 
 function wrapperCtorCallableArmInstrs(ctx: CodegenContext, argOf: (k: number) => Instr[]): Instr[] {
-  if (!ctx.standalone) return [];
   const objectTypeIdx = ctx.objectRuntimeTypes?.objectTypeIdx;
   const externLengthIdx = ctx.funcMap.get("__extern_length");
   if (objectTypeIdx === undefined || externLengthIdx === undefined) return [];

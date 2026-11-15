@@ -198,7 +198,7 @@ export function tryCompileNativeWeakMethodCall(
     }
     case "set": {
       compileCollectionElementArg(ctx, fctx, args.length > 0 ? args[0]! : undefined);
-      const rejectsKey = ctx.standalone || ctx.wasi ? isDefinitelyNotWeakKey(ctx, fctx, args[0]) : false;
+      const rejectsKey = isDefinitelyNotWeakKey(ctx, fctx, args[0]);
       if (rejectsKey) {
         fctx.body.push({ op: "drop" });
         // Arguments are evaluated left-to-right before the method body can
@@ -215,7 +215,7 @@ export function tryCompileNativeWeakMethodCall(
     }
     case "add": {
       compileCollectionElementArg(ctx, fctx, args.length > 0 ? args[0]! : undefined);
-      const rejectsValue = ctx.standalone || ctx.wasi ? isDefinitelyNotWeakKey(ctx, fctx, args[0]) : false;
+      const rejectsValue = isDefinitelyNotWeakKey(ctx, fctx, args[0]);
       if (rejectsValue) {
         fctx.body.push({ op: "drop" });
         emitThrowTypeError(ctx, fctx, "TypeError: Invalid value used as weak set value");

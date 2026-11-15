@@ -350,22 +350,6 @@ export function tryEmitSpecOrderedArrayAssignDrive(
   pattern: ts.ArrayLiteralExpression,
   srcLocal: number,
 ): boolean {
-  // STANDALONE/WASI ONLY, and this is a measurement, not a preference. On the
-  // host lane `__iterator_rest` is the JS import at `runtime.ts:17999`, which
-  // drains via `iter.next` / the string sidecar — and the iterator in every row
-  // of this family is a compiled OBJECT LITERAL, i.e. a WasmGC struct whose
-  // `next` neither lookup finds. It therefore answers `[]` without stepping,
-  // where the eager `__array_from_iter_n` it replaces goes through the host's
-  // own iteration bridge and steps correctly. Measured: with the drive ungated,
-  // the 1,207-row host sweep gained 10 rows and LOST 3
-  // (`for-of/dstr/array-rest-{lref,nested-array-iter-thrw-close-skip,
-  // put-prop-ref-user-err-iter-close-skip}.js`, `nextCount 0` where 1 is
-  // required). Gating restores host byte-identity and costs nothing measurable:
-  // every row in this bucket already fails on the host lane, for the same
-  // ordering reason, plus a host-only `IteratorClose` receiver defect
-  // (`return()` does not see the iterator as its `this`). Lifting the gate
-  // means giving the host lane a rest drain that can step a struct iterator.
-  if (!(ctx.standalone || ctx.wasi)) return false;
   const plans = planPattern(pattern);
   if (!plans || !isObservablyOrdered(plans)) return false;
   if (!ensureRuntime(ctx, fctx, plans)) return false;
@@ -654,7 +638,7 @@ function planSpecOrderedObjectAssign(
   ctx: CodegenContext,
   pattern: ts.ObjectLiteralExpression,
 ): ObjectAssignPlan | undefined {
-  if (!(ctx.standalone || ctx.wasi) || !objectPatternHasRuntimeKey(ctx, pattern)) return undefined;
+  if (!objectPatternHasRuntimeKey(ctx, pattern)) return undefined;
   const plans: ObjectAssignPlan = [];
   for (const prop of pattern.properties) {
     if (ts.isShorthandPropertyAssignment(prop)) {

@@ -116,7 +116,6 @@ export function appendStandaloneGlobalConstructorSeeds(
   fctx: FunctionContext,
   objectLocal: number,
 ): void {
-  if (!ctx.standalone && !ctx.wasi) return;
   // Runtime-eval modules already construct callable constructor carriers at
   // the eval boundary. Re-entering the full constructor emitter while the
   // native global object is itself being built recursively expands Function
@@ -166,9 +165,6 @@ export function appendStandaloneGlobalConstructorSeeds(
 }
 
 export function appendStandaloneGlobalEvalSeed(ctx: CodegenContext, fctx: FunctionContext, objectLocal: number): void {
-  // The key must exist for ES5 reflection. A demand-gated runtime-eval wrapper
-  // may replace this undefined value when a callable eval property is needed.
-  if (!ctx.standalone && !ctx.wasi) return;
   // A direct/indirect eval boundary already owns `%eval%`'s callable identity
   // and live-environment plumbing. Installing an undefined reflective stub in
   // those modules makes the runtime evaluator observe that stub as the global

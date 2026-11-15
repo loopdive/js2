@@ -69,7 +69,7 @@
  *     `options`, `input`, `strict` and friends on externref.
  *  3. **≥1 provably numeric write is required**, so a name whose every write
  *     is a parameter read is never promoted.
- *  4. It is off unless `ctx.standalone` — the host lane, where a JS caller can
+ *  4. It is off unless the regime flag — the host lane, where a JS caller can
  *     hand the module arbitrary values, is untouched.
  *
  * ### Why name-keyed rather than per-(class, field)

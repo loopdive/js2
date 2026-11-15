@@ -108,7 +108,6 @@ export function emitWrapperProtoToStringBody(
   fctx: FunctionContext,
   brandName: WrapperBrandName,
 ): ValType | null {
-  if (!ctx.standalone) return null;
   // Ask before emitting anything at all — see the note in
   // `emitNumberProtoToStringBody`. Cheap here, load-bearing there.
   if (!canEmitWrapperThisValueBody(ctx, brandName)) return null;

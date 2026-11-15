@@ -5,7 +5,7 @@
 // `undefined` and every primitive and never threw (only the host-assisted lane
 // asked the host). The no-host lanes now test Object-ness with the module's own
 // `typeof` classifiers. Pinned: every program's output equals V8's, and the
-// thrown message is the host lane's text on all three lanes.
+// thrown message is the old host lane's text on both lanes (#6979 S7-f).
 import { describe, expect, it } from "vitest";
 import { compile } from "../src/index.js";
 import { buildImports, instantiateWasm } from "../src/runtime.js";
@@ -72,7 +72,7 @@ const MESSAGE_PROGRAM = `class C { #v; static has(o) { return #v in o; } }
 try { C.has(1); } catch (e) { console.log(e.message); }`;
 const MESSAGE = "Cannot use 'in' operator to search for private field in a non-object";
 
-type Lane = "host-assisted" | "gc" | "standalone";
+type Lane = "gc" | "standalone";
 
 function runV8(src: string): string[] {
   const out: string[] = [];
@@ -85,7 +85,6 @@ async function runWasm(src: string, lane: Lane): Promise<string[]> {
     fileName: "probe.js",
     deferTopLevelInit: true,
     ...(lane === "standalone" ? { target: "standalone" as const, hostBridge: "always" as const } : {}),
-    ...(lane === "host-assisted" ? { semanticProviders: "host-assisted" as const } : {}),
   });
   expect(result.success, result.errors.map((e) => e.message).join("\n")).toBe(true);
   const out: string[] = [];
@@ -131,7 +130,8 @@ describe("#7150 `#x in v` throws a TypeError for a non-object v", () => {
       });
     }
   }
-  for (const lane of ["host-assisted", "gc", "standalone"] as const) {
+  // (#6979 S7-a/S7-b) The host-assisted profile is removed — `semanticProviders: "host-assisted"` is a compile error now — so its row is deleted.
+  for (const lane of ["gc", "standalone"] as const) {
     it(`${lane}: message text`, async () => {
       expect(await runWasm(MESSAGE_PROGRAM, lane)).toEqual([MESSAGE]);
     });

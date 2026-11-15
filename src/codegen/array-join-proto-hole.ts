@@ -49,7 +49,7 @@ import { nativeStringLiteralInstrs } from "./native-strings.js";
  * import shifts every defined-function index at or above it (#2043).
  */
 export function ensureJoinProtoHoleLocal(ctx: CodegenContext, fctx: FunctionContext): number {
-  if (ctx.standalone !== true || ctx.protoIndexDirty !== true) return -1;
+  if (ctx.protoIndexDirty !== true) return -1;
   const externref: ValType = { kind: "externref" };
   ensureLateImport(ctx, "__extern_get_idx", [externref, { kind: "f64" }], [externref]);
   ensureLateImport(ctx, "__extern_toString", [externref], [externref]);

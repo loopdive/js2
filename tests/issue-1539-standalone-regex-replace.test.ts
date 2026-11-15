@@ -119,36 +119,49 @@ describe("#1913 $-substitution replace — formerly refused, now matches native"
 });
 
 describe("#1539/#3567 standalone/WASI replace narrowed refusals (Phase 2c)", () => {
-  async function expectRefused(src: string, target: "standalone" | "wasi"): Promise<void> {
-    const r = await compile(src, { fileName: "issue-3567.ts", target });
-    expect(r.success, `expected refusal for:\n${src}`).toBe(false);
-    expect(r.errors.some((e) => /#1539|#1474/.test(e.message))).toBe(true);
-    const refusal = r.errors.find((e) => /#1539|#1474/.test(e.message))!;
-    expect(refusal.line).toBeGreaterThan(0);
-  }
-
   // (#4224) STANDALONE function replacers are no longer refused — the
   // §22.2.6.11 walk is re-emitted at the call site so the closure can be invoked
   // per match (positive coverage in tests/es5-standalone-replace-fn.test.ts).
-  // WASI has no native RegExp lowering on this path and keeps the refusal.
-  it("wasi: refuses replace function replacer", async () => {
-    await expectRefused(
-      `export function f(s: string): string { return s.replace(/\\d/, (m: string) => m + m); }`,
-      "wasi",
+  // (#6979 S7-c) WASI lowers with the same native semantic regime, so it takes
+  // that walk too: the three former "wasi: refuses …" rows now assert
+  // native-equal output with no host import, so a rollback to silent wrong
+  // codegen still fails loudly here.
+  async function wasiReplaceFn(head: string): Promise<string> {
+    const src = `
+      ${head}
+      export function len(): number { return __r.length; }
+      export function at(i: number): number { return __r.charCodeAt(i); }
+    `;
+    const r = await compile(src, { fileName: "issue-3567.ts", target: "wasi" });
+    expect(r.success, r.success ? "" : `compile error: ${r.errors?.[0]?.message}`).toBe(true);
+    const mod = await WebAssembly.compile(r.binary);
+    const hostRegex = WebAssembly.Module.imports(mod).filter((i) => /RegExp|string_replace/.test(i.name));
+    expect(hostRegex, "no RegExp/string_replace host import on wasi").toEqual([]);
+    const wasi: Record<string, () => number> = {};
+    for (const i of WebAssembly.Module.imports(mod)) if (i.module === "wasi_snapshot_preview1") wasi[i.name] = () => 0;
+    const { instance } = await WebAssembly.instantiate(r.binary, { wasi_snapshot_preview1: wasi });
+    const ex = instance.exports as { _initialize?: () => void; len(): number; at(i: number): number };
+    ex._initialize?.();
+    let out = "";
+    for (let i = 0; i < ex.len(); i++) out += String.fromCharCode(ex.at(i));
+    return out;
+  }
+
+  it("wasi: replace function replacer matches native", async () => {
+    expect(await wasiReplaceFn(`const __r: string = "a1b2".replace(/\\d/, (m: string) => m + m);`)).toBe(
+      "a1b2".replace(/\d/, (m) => m + m),
     );
   });
 
-  it("wasi: refuses replaceAll function replacer", async () => {
-    await expectRefused(
-      `export function f(s: string): string { return s.replaceAll(/\\d/g, (m: string) => m + m); }`,
-      "wasi",
+  it("wasi: replaceAll function replacer matches native", async () => {
+    expect(await wasiReplaceFn(`const __r: string = "a1b2".replaceAll(/\\d/g, (m: string) => m + m);`)).toBe(
+      "a1b2".replaceAll(/\d/g, (m) => m + m),
     );
   });
 
-  it("wasi: refuses direct RegExp @@replace function replacer", async () => {
-    await expectRefused(
-      `export function f(s: string): string { return /\\d/[Symbol.replace](s, (m: string) => m + m); }`,
-      "wasi",
+  it("wasi: direct RegExp @@replace function replacer matches native", async () => {
+    expect(await wasiReplaceFn(`const __r: string = /\\d/[Symbol.replace]("a1b2", (m: string) => m + m);`)).toBe(
+      /\d/[Symbol.replace]("a1b2", (m) => m + m),
     );
   });
 

@@ -7,8 +7,10 @@
  * IteratorClose, malformed-next / missing-callFn0 handling) as options. Also
  * folds the verbatim-dup `truthyEnv` into one export.
  *
- * Pure dedup (zero test-diff). These cases exercise the three drainer call
- * paths end-to-end through the unified loop — spread and Array.from (full
+ * Pure dedup (zero test-diff). (#6979 S7-f) The host drainers themselves were
+ * deleted with the eager-generator provider — no live import reached them; the
+ * rows stay as end-to-end value checks of the native lowering. These cases
+ * exercise the three drainer call paths end-to-end through the unified loop — spread and Array.from (full
  * drain) and bounded destructuring (limit + IteratorClose) over an object whose
  * `[Symbol.iterator]` is a compiled Wasm closure.
  */

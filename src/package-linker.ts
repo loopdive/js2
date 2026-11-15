@@ -1386,10 +1386,10 @@ function topoPackages(packages: Map<string, PackageNode>): { order?: PackageNode
  * and inherits it from the root import object (`buildProviderImportObject`
  * passes every non-env namespace through). `runtimeEvalProvider: false`
  * (#6676) promises no provider will be linked, so it stays out. (#6930) The
- * native-first JS regime (`ctx.standalone`) lowers eval the same way.
+ * JS regime lowers eval the same way; WASI has no provider (#6979).
  */
 function standaloneProviderRuntimeImports(options: CompileOptions): string[] {
-  const regime = options.target === "standalone" || resolveCompileTargetProfile(options).nativeRegime;
+  const regime = options.target === "standalone" || resolveCompileTargetProfile(options).environment === "javascript";
   return regime && options.runtimeEvalProvider !== false ? ["js2wasm:runtime-eval"] : [];
 }
 

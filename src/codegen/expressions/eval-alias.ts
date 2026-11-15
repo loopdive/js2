@@ -5,6 +5,7 @@ import type { TypeOracle } from "../../checker/oracle.js";
 import { ensureFuncClosureSingleton } from "../closures/method-trampolines.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
 import { ensureStandaloneIntrinsicEvalWrapper } from "./eval-inline.js";
+import { runtimeEvalProviderLinkable } from "./runtime-eval-provider.js";
 
 function resolvesToGlobalEvalAlias(
   ident: ts.Identifier,
@@ -46,7 +47,7 @@ export function prepareStandaloneEvalAliasCall(
 ): boolean {
   if (
     !isKnownVariable ||
-    !ctx.standalone ||
+    !runtimeEvalProviderLinkable(ctx) ||
     ctx.runtimeEvalCallableBoundaryEnabled !== true ||
     !ts.isIdentifier(callee) ||
     !resolvesToGlobalEvalAlias(callee, ctx.oracle)

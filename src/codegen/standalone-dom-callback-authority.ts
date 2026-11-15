@@ -96,7 +96,6 @@ export function reserveStandaloneDomCallbackDispatch(
 ): boolean {
   if (
     ctx.requiresStandaloneDomInteractionCapability !== true ||
-    !ctx.standalone ||
     ctx.wasi ||
     !ctx.nativeStrings ||
     ctx.targetProfile.environment !== "none"

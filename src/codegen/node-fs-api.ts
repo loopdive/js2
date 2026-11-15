@@ -16,7 +16,6 @@ import { ts } from "../ts-api.js";
 import { allocLocal } from "./context/locals.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { emitDataViewToWriteScratch } from "./dataview-native.js";
-import { noJsHost } from "./expressions/helpers.js";
 import { flushLateImportShifts } from "./expressions/late-imports.js";
 import {
   ensureWasiFdWriteAllHelper,
@@ -116,7 +115,7 @@ export function tryCompileNodeProcessCall(
   const argSymName = argTsType.getSymbol?.()?.name;
   const isArrayBufferArg = argSymName === "ArrayBuffer" || argSymName === "SharedArrayBuffer";
   const elemKey: "i8_byte" | "i32_byte" | "f64" =
-    noJsHost(ctx) && argSymName === "Uint8Array" ? "i8_byte" : isArrayBufferArg ? "i32_byte" : "f64";
+    argSymName === "Uint8Array" ? "i8_byte" : isArrayBufferArg ? "i32_byte" : "f64";
   // (#2835) Both `i8_byte` (Uint8Array) and `i32_byte` (ArrayBuffer byte buffer)
   // are now packed `i8` arrays — the byte-buffer rep cut to 1 byte/element.
   const elemType: ValType =
@@ -145,7 +144,7 @@ export function tryCompileNodeProcessCall(
   // carrier is never a Uint8Array, so an erased argument that is neither byte
   // vec writes nothing instead of trapping — a pre-existing trap on main, not a
   // regression of the brand, but the same defect and free to close here.
-  if (noJsHost(ctx) && argType?.kind === "externref") {
+  if (argType?.kind === "externref") {
     const i8VecIdx = getOrRegisterVecType(ctx, "i8_byte", { kind: "i8" });
     const i32VecIdx = getOrRegisterVecType(ctx, "i32_byte", { kind: "i8" });
     // Mint BOTH helpers before either funcIdx is baked into an instruction.

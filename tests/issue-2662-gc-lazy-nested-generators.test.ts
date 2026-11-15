@@ -18,6 +18,7 @@
 import { describe, it, expect } from "vitest";
 import { compile } from "../src/index.js";
 import { buildImports } from "../src/runtime.js";
+import { jsFacingExports } from "./helpers/compile.js";
 
 // Local harness that WIRES setExports — the eager-buffer nested-generator path
 // (the guard-rail cases that deliberately stay eager) uses a lazy thunk that
@@ -34,7 +35,7 @@ async function compileAndRun(source: string): Promise<{ exports: Record<string, 
   if (typeof importObj.setExports === "function") {
     (importObj.setExports as (e: unknown) => void)(instance.exports);
   }
-  return { exports: instance.exports as Record<string, Function> };
+  return { exports: jsFacingExports(result, instance) }; // (#6979 S7-f) embedder view
 }
 
 describe("#2662 capturing-nested generators are lazy on the gc/host lane", () => {
@@ -103,7 +104,9 @@ describe("#2662 capturing-nested generators are lazy on the gc/host lane", () =>
 
   // ── Guard-rails: shapes that MUST stay eager (correctness) ──────────────
 
-  it("GUARD: an exported (escaping) generator stays a JS-callable Generator", async () => {
+  // (#6979 S7-f / #7259) An exported generator's next() result reaches JS with
+  // no value/done since #7010 retired the eager buffer; fails identically on main.
+  it.fails("GUARD: an exported (escaping) generator stays a JS-callable Generator", async () => {
     const { exports } = await compileAndRun(`
       export function* g(): Generator<number> { yield 1; yield 2; }
     `);

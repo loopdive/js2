@@ -554,7 +554,7 @@ function externToClosureParamRef(ctx: CodegenContext, paramType: ValType): Instr
  * standalone projections stay byte-identical (#5385 slice rule).
  */
 function closureDispatchParamType(ctx: CodegenContext, paramType: ValType | undefined): ValType | undefined {
-  return paramType?.kind === "ref" && ctx.standalone && jsValueBoundary(ctx)
+  return paramType?.kind === "ref" && jsValueBoundary(ctx)
     ? { kind: "ref_null", typeIdx: paramType.typeIdx }
     : paramType;
 }

@@ -41,7 +41,6 @@ export interface AsyncFrameHandler {
 }
 
 export interface AsyncFrameDispatchInput {
-  readonly target: { readonly wasi: boolean; readonly standalone: boolean };
   readonly stateTypeIdx: number;
   readonly stateField: number;
   readonly modeField: number;
@@ -164,7 +163,6 @@ export function buildAsyncFrameStateChain(input: AsyncFrameStateChainInput): Ins
 /** Assemble routed or plain rejection dispatch from fully bound physical data. */
 export function buildAsyncFrameDispatch(input: AsyncFrameDispatchInput): Instr {
   const {
-    target,
     stateTypeIdx,
     stateField,
     modeField,
@@ -310,9 +308,7 @@ export function buildAsyncFrameDispatch(input: AsyncFrameDispatchInput): Instr {
         {
           op: "loop",
           blockType: { kind: "empty" },
-          body: [
-            buildTargetTaggedTry(target, { kind: "empty" }, chain, [{ tagIdx: exnTag, body: route }], catchAllRoute),
-          ],
+          body: [buildTargetTaggedTry({ kind: "empty" }, chain, [{ tagIdx: exnTag, body: route }], catchAllRoute)],
         },
       ],
     };
@@ -345,7 +341,6 @@ export function buildAsyncFrameDispatch(input: AsyncFrameDispatchInput): Instr {
           ]
         : undefined;
     return buildTargetTaggedTry(
-      target,
       { kind: "empty" },
       dispatch,
       [

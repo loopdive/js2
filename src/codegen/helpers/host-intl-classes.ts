@@ -122,7 +122,7 @@ export function registerHostIntlExternClasses(ctx: CodegenContext): void {
     if (ctx.externClasses.has(className)) continue;
     if (!accelerated) {
       if (!LEGACY_HOST_INTL_CLASSES.has(className)) continue;
-      if (className === "DateTimeFormat" && (ctx.standalone || ctx.wasi || ctx.nativeStrings)) continue;
+      if (className === "DateTimeFormat") continue;
     }
     // The pre-#6986 method tables, kept so the host-assisted import set does not move.
     const methods = new Map<string, ExternMethod>();

@@ -69,7 +69,7 @@ function loop(exit: Instr[], body: Instr[]): Instr {
 
 /** sort / toSorted take the packed variadic ABI so an omitted comparator is distinguishable from `null`. */
 export function isArraySortVariadicMember(ctx: CodegenContext, member: string): boolean {
-  return (member === "sort" || member === "toSorted") && (ctx.standalone || ctx.wasi);
+  return member === "sort" || member === "toSorted";
 }
 
 const NAMES = [
@@ -97,7 +97,7 @@ export function emitArraySortMemberBody(
   member: string,
 ): ValType | undefined {
   if (member !== "sort" && member !== "toSorted") return undefined;
-  if (!ctx.standalone && !ctx.wasi) return undefined;
+
   if (fctx.params.length < 3 || ctx.anyStrTypeIdx < 0) return undefined;
   const isCopy = member === "toSorted";
 
@@ -498,7 +498,6 @@ export function prepareExternVecDefaultSortCompare(
   ctx: CodegenContext,
   fctx: FunctionContext,
 ): ((pushLeft: Instr[], pushRight: Instr[]) => Instr[]) | undefined {
-  if (!ctx.standalone && !ctx.wasi) return undefined;
   ensureNativeStringHelpers(ctx);
   if (ctx.anyStrTypeIdx < 0) return undefined;
   // The element ToString and the undefined test are the shared array-like deps

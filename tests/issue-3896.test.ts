@@ -109,13 +109,15 @@ describe("#3896 private generator methods route native in the standalone lane", 
    * construction (a private name cannot appear in an object literal), and this
    * pins that the intended scope did not widen.
    */
-  it("CONTROL — string/computed-named object-literal generators stay excluded", async () => {
+  // (#6979 S7-f, #7010) This CONTROL pinned the (#2571) bail to the host
+  // generator imports. That host lane is retired; the shapes now lower
+  // natively, so the row pins the host-free answer instead.
+  it("CONTROL — string/computed-named object-literal generators run host-free", async () => {
     for (const src of [
       `export function test(): number { const o = { *"m"() { yield 1; } }; return (o as any).m().next().value as number; }`,
       `export function test(): number { const k = "m"; const o = { *[k]() { yield 1; } }; return (o as any).m().next().value as number; }`,
     ]) {
-      const text = new TextDecoder("utf-8", { fatal: false }).decode(await build(src));
-      expect(text.match(HOST_GEN), "expected the (#2571) bail to still exclude this shape").not.toBeNull();
+      expect(await runHostFree(src)).toBe(1);
     }
   });
 });

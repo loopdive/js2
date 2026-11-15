@@ -135,7 +135,7 @@ function buildProxyCallableToStringArm(ctx: CodegenContext, receiverLocal: numbe
  * an already-armed helper would double the arm, so callers must not repeat it.
  */
 export function fillCallableAnyToStringArm(ctx: CodegenContext): void {
-  if (!ctx.standalone || !ctx.nativeStrings) return;
+  if (!ctx.nativeStrings) return;
   if (ctx.anyStrTypeIdx < 0) return;
   const helperIdx = ctx.nativeStrHelpers.get(ANY_TO_STRING_HELPER);
   if (helperIdx === undefined) return;
@@ -256,7 +256,7 @@ export function fillCallableAnyToStringArm(ctx: CodegenContext): void {
  * {@link fillCallableAnyToStringArm}.
  */
 export function fillCallableExternToStringArm(ctx: CodegenContext): void {
-  if (!ctx.standalone || !ctx.nativeStrings) return;
+  if (!ctx.nativeStrings) return;
   if (ctx.anyStrTypeIdx < 0) return;
   const anyToStringIdx = ctx.nativeStrHelpers.get(ANY_TO_STRING_HELPER);
   if (anyToStringIdx === undefined) return;

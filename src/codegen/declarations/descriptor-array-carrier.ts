@@ -21,7 +21,7 @@ export function recordDescriptorArrayReceiver(ctx: CodegenContext, name: string)
 }
 
 export function descriptorArrayCarrierType(ctx: CodegenContext, decl: ts.VariableDeclaration): ValType | undefined {
-  if (!ctx.standalone || !ctx.vecAccessorDescriptorDirty || !ts.isIdentifier(decl.name)) return undefined;
+  if (!ctx.vecAccessorDescriptorDirty || !ts.isIdentifier(decl.name)) return undefined;
   const receivers = descriptorArrayReceivers.get(ctx);
   if (receivers === undefined) return undefined;
   const name = decl.name.text;

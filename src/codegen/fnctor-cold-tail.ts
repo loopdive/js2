@@ -140,7 +140,7 @@ export function coldTailHotFieldLimit(): number | undefined {
  * type RESERVATION and the split itself go through here.
  */
 export function coldTailHotFieldLimitFor(ctx: CodegenContext): number | undefined {
-  return ctx.standalone ? coldTailHotFieldLimit() : undefined;
+  return coldTailHotFieldLimit();
 }
 
 /** Cold-tail struct name for a main fnctor struct name. */

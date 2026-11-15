@@ -185,7 +185,6 @@ function pushApplyArgArrayGuard(ctx: CodegenContext, fctx: FunctionContext): voi
  * array-like `argArray` generically.
  */
 export function emitFunctionProtoApplyBody(ctx: CodegenContext, fctx: FunctionContext): ValType | null {
-  if (!ctx.standalone && !ctx.wasi) return null;
   ensureObjectRuntime(ctx);
   const applyClosureIdx = reserveApplyClosure(ctx);
   if (!pushIsCallableGuard(ctx, fctx, "apply")) return null;
@@ -208,7 +207,6 @@ export function emitFunctionProtoApplyBody(ctx: CodegenContext, fctx: FunctionCo
  * `$__bound_fn` carrier.
  */
 export function emitFunctionProtoBindBody(ctx: CodegenContext, fctx: FunctionContext): ValType | null {
-  if (!ctx.standalone && !ctx.wasi) return null;
   const bindDynIdx = reserveBindDynHelper(ctx);
   if (!pushIsCallableGuard(ctx, fctx, "bind")) return null;
   fctx.body.push(
@@ -229,7 +227,6 @@ export function emitFunctionProtoBindBody(ctx: CodegenContext, fctx: FunctionCon
  * `__closure_method_call`'s own "call" route builds (closure-props.ts).
  */
 export function emitFunctionProtoCallBody(ctx: CodegenContext, fctx: FunctionContext): ValType | null {
-  if (!ctx.standalone && !ctx.wasi) return null;
   ensureObjectRuntime(ctx);
   const objVecBuilders = ensureObjVecBuilders(ctx);
   const applyClosureIdx = reserveApplyClosure(ctx);

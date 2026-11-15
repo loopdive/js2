@@ -91,7 +91,7 @@ import { ts } from "../ts-api.js";
 import type { Instr, ValType } from "../ir/types.js";
 import { allocLocal } from "./context/locals.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
-import { buildThrowJsErrorInstrs, noJsHost } from "./js-errors.js";
+import { buildThrowJsErrorInstrs } from "./js-errors.js";
 import { getWellKnownSymbolId } from "./literals.js";
 import { ensureObjectRuntime, reserveApplyClosure } from "./object-runtime.js";
 import { compileExpression, ensureLateImport } from "./shared.js";
@@ -202,7 +202,7 @@ export function tryCompileStringSymbolProtocolDispatch(
   /** The caller's own step-3 lowering, re-entered in the not-found arm. */
   emitFallback: () => ValType | null,
 ): ValType | null | undefined {
-  if (!noJsHost(ctx) || !PROTOCOL_METHODS.has(method)) return undefined;
+  if (!PROTOCOL_METHODS.has(method)) return undefined;
   if (expr.arguments.length < 1) return undefined;
   const searchExpr = expr.arguments[0]!;
   const receiverExpr = propAccess.expression;

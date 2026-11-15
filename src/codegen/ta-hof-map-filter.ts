@@ -39,7 +39,7 @@ import {
   pushTaDynMethodPreamble,
 } from "./dataview-native.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
-import { emitThrowTypeError, noJsHost } from "./js-errors.js";
+import { emitThrowTypeError } from "./js-errors.js";
 import { addFuncType, getArrTypeIdxFromVec, getOrRegisterTaDynViewType } from "./registry/types.js";
 import { ensureObjectRuntime, reserveApplyClosure } from "./object-runtime.js";
 import { ensureLateImport, flushLateImportShifts } from "./shared.js";
@@ -68,7 +68,6 @@ export function ensureTaMapFilterHelper(
   vecTypeIdx: number,
   clamp = false,
 ): number | undefined {
-  if (!ctx.standalone) return undefined;
   const helperName = clamp ? `__ta_${methodName}_clamp_${vecTypeIdx}` : `__ta_${methodName}_${vecTypeIdx}`;
   const cached = ctx.funcMap.get(helperName);
   if (cached !== undefined) return cached;
@@ -405,7 +404,6 @@ export function beginTaDynProducer(
   paramNames: readonly [string, string, string],
   validate = true,
 ): TaDynProducerKit | undefined {
-  if (!noJsHost(ctx)) return undefined;
   const dynIdx = getOrRegisterTaDynViewType(ctx);
   if (dynIdx < 0) return undefined;
   const ext: ValType = { kind: "externref" };

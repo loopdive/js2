@@ -70,7 +70,6 @@ import { emitCachedFuncClosureExternref } from "./closures/method-trampolines.js
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { shouldRegisterArgumentsWithHost } from "./helpers/arguments-registration.js";
 import { isStrictFunction } from "./helpers/is-strict-function.js";
-import { noJsHost } from "./js-errors.js";
 import { stringConstantExternrefInstrs } from "./native-strings.js";
 import { ensureObjectRuntime } from "./object-runtime.js";
 import { reserveArgumentsOwnDefine } from "./arguments-length-brand.js"; // (#6964)
@@ -97,7 +96,6 @@ export function seedArgumentsCallee(
   argsLocalIdx: number,
   pushCallee: () => ValType | null,
 ): void {
-  if (!noJsHost(ctx)) return;
   ensureObjectRuntime(ctx);
   // (#6964) the fresh-arguments define — no companion-table scan, no expando bag.
   const defineIdx = reserveArgumentsOwnDefine(ctx, false);
@@ -198,7 +196,6 @@ export function seedDeclarationArgumentsCallee(
   const funcIdx = ctx.funcMap.get(funcName);
   if (funcIdx === undefined || funcIdx < ctx.numImportFuncs) return;
   const constructible =
-    noJsHost(ctx) &&
     ts.isFunctionDeclaration(decl) &&
     decl.asteriskToken === undefined &&
     !(decl.modifiers?.some((m) => m.kind === ts.SyntaxKind.AsyncKeyword) ?? false);

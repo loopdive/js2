@@ -43,7 +43,6 @@ export function tryNewBuiltinStaticAlias(
   fctx: FunctionContext,
   expr: ts.NewExpression,
 ): ValType | undefined {
-  if (!ctx.standalone && !ctx.wasi) return undefined;
   let callee: ts.Expression = expr.expression;
   while (ts.isParenthesizedExpression(callee) || ts.isAsExpression(callee) || ts.isNonNullExpression(callee)) {
     callee = callee.expression;

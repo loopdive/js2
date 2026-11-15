@@ -144,7 +144,7 @@ function reserveVarView(
   fctx: FunctionContext,
   name: string,
 ): { accessor: GlobalVarAccessor; closures: Instr[] } | undefined {
-  if (!ctx.standalone || ctx.standaloneScriptVarBindings) return undefined;
+  if (ctx.standaloneScriptVarBindings) return undefined;
   const globalIdx = ctx.moduleGlobals.get(name);
   const global = globalIdx === undefined ? undefined : ctx.mod.globals[localGlobalIdx(ctx, globalIdx)];
   // An AnyValue carrier takes a write only through its boxing helper; leave it
@@ -204,7 +204,6 @@ export function emitScriptGlobalVarBindings(
   fctx: FunctionContext,
   sourceFile: ts.SourceFile,
 ): void {
-  if (!ctx.standalone && !ctx.wasi) return;
   if (ctx.sourceIsModule) return;
   const varNames = ctx.globalObjectVarBindings;
   if (!varNames || varNames.size === 0) return;

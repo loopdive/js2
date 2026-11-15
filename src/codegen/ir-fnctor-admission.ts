@@ -45,7 +45,6 @@ export function irFnctorArgumentProjectionRouteIsActive(
     route.experimentalIR &&
     route.postLegacyPhysicalReservation &&
     route.irFirstEnvironment === "0" &&
-    ctx.standalone === true &&
     ctx.nativeStrings === true &&
     ctx.wasi === false &&
     ctx.fast === false

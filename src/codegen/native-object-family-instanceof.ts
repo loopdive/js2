@@ -91,7 +91,6 @@ import type { Instr, ValType } from "../ir/types.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { allocLocal } from "./context/locals.js";
 import { ensureLateImport, flushLateImportShifts } from "./expressions/late-imports.js";
-import { noJsHost } from "./js-errors.js";
 import { coerceType, compileExpression } from "./shared.js";
 
 const EXTERNREF: ValType = { kind: "externref" };
@@ -124,8 +123,6 @@ export function tryEmitNativeObjectFamilyInstanceOf(
   ctorName: ObjectFamilyCtorName,
   fallbackTypeIdxs: number[] | undefined,
 ): ValType | null {
-  if (!noJsHost(ctx)) return null;
-
   // Register (or look up) the finalize-corrected classifiers. Under `noJsHost`
   // these resolve to DEFINED functions, never to an `env::` import.
   const typeofFunctionIdx = ensureLateImport(ctx, "__typeof_function", [EXTERNREF], [I32]);

@@ -52,10 +52,6 @@ export function emitStandaloneAnyBigIntBinary(
   hostBinopCode: number | undefined,
   emitI64Op: () => ValType,
 ): ValType | null | undefined {
-  // Standalone/WASI only, an `any`/`unknown` other side only, and only the
-  // operators `bigIntHostBinopOpcode` admits, minus `>>>`, which throws for
-  // two BigInts as well (§6.1.6.2.11).
-  if (!(ctx.standalone || ctx.wasi)) return undefined;
   if ((otherTsType.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) === 0) return undefined;
   if (hostBinopCode === undefined || expr.operatorToken.kind === ts.SyntaxKind.GreaterThanGreaterThanGreaterThanToken) {
     return undefined;

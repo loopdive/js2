@@ -48,10 +48,7 @@ export function ensureToPrimitiveDispatchBoxing(ctx: CodegenContext): void {
     if (!ctx.structMap.has(structName) || isSyntheticStructName(structName)) continue;
     for (const methodName of ["toString", "valueOf"]) {
       const field = fields.find((candidate) => candidate.name === methodName);
-      const closure =
-        field && (ctx.standalone || ctx.toPrimitiveForkedStructs.has(structName))
-          ? closureDispatchNeedsBoxing(ctx, structName, field)
-          : undefined;
+      const closure = field ? closureDispatchNeedsBoxing(ctx, structName, field) : undefined;
       if (closure !== undefined) {
         if (closure) {
           addUnionImports(ctx);

@@ -94,7 +94,6 @@ export function fillNativeReflectTargetClassifier(ctx: CodegenContext): void {
  * normal property reads.
  */
 export function fillNativeReflectOwnPropertyMop(ctx: CodegenContext): void {
-  if (!ctx.standalone) return;
   const ownNamesIdx = ctx.funcMap.get("__getOwnPropertyNames");
   const gopdIdx = ctx.funcMap.get("__getOwnPropertyDescriptor");
   const ownNamesFn = ownNamesIdx === undefined ? undefined : definedFuncAt(ctx, ownNamesIdx);

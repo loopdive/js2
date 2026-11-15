@@ -37,7 +37,7 @@ export interface ProxyForwardDeps {
 
 /** Install every V1 forward arm. No-op outside standalone or without `Proxy`. */
 export function installProxyForwardArms(ctx: CodegenContext, deps: ProxyForwardDeps): void {
-  if (!ctx.standalone || ctx.proxyDirty !== true) return;
+  if (ctx.proxyDirty !== true) return;
   installDispatchKeyCanonicalization(ctx, deps);
   installHasOwnArm(ctx, deps);
   installPropertyIsEnumerableArm(ctx, deps);

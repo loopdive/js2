@@ -22,7 +22,6 @@
  */
 import { ts } from "../../ts-api.js";
 import type { CodegenContext } from "../context/types.js";
-import { noJsHost } from "../js-errors.js";
 
 function unwrapCallee(expression: ts.Expression): ts.Expression {
   let current = expression;
@@ -63,5 +62,5 @@ export function isValueSelectingNewSite(
   calleeExpr: ts.Expression,
   className: string | undefined,
 ): boolean {
-  return noJsHost(ctx) && isValueSelectingNewCallee(calleeExpr) && !(className && ctx.classSet.has(className));
+  return isValueSelectingNewCallee(calleeExpr) && !(className && ctx.classSet.has(className));
 }

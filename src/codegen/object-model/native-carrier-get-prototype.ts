@@ -282,7 +282,6 @@ function wrapperArm(ctx: CodegenContext, slots: Slots): Instr[] {
  * intrinsics materialised) is left byte-identical.
  */
 export function fillNativeCarrierGetPrototypeOfArms(ctx: CodegenContext, deps: NativeCarrierProtoDeps): void {
-  if (!ctx.standalone && !ctx.wasi) return;
   if (!ctx.nativeProtoGlobals || ctx.nativeProtoGlobals.size === 0) return;
   const fn = ctx.mod.functions.find((f) => f.name === "__getPrototypeOf");
   if (!fn?.body || ctx.funcMap.has(BASE_NAME)) return; // idempotent

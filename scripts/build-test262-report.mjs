@@ -895,8 +895,12 @@ const STANDALONE_ROOT_CAUSE_BUCKETS = [
     issues: ["#2961"],
     label:
       "Standalone host-import honesty reclassification (#2961): legacy leaky-pass row (host-satisfied `env::` import) now scored compile_error — residual not matched by a feature-path bucket",
+    // (#6979) The S7 chain replaced the #2961 leak diagnostic with a compile-time refusal
+    // ("… would need retired host imports: env::X"): the same root cause — the construct has no
+    // native lowering — so one pattern covers both spellings.
     match: (record, text) =>
-      record.error_category === "host_import_leak" || hasAny(text, ["standalone target emitted host imports"]),
+      record.error_category === "host_import_leak" ||
+      hasAny(text, [/(standalone target emitted|would need retired) host imports/i]),
   },
 ];
 

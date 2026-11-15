@@ -114,12 +114,16 @@ export function test(): number { f({ n: 1 }, () => 1); const it = f({ n: 1 }, ()
     expect(await runStandalone(src)).toBe(2);
   });
 
-  it("NEGATIVE · a YIELDING body keeps the host path for a class-valued default", async () => {
+  it("NEGATIVE · a YIELDING body with a class-valued default is refused, not host-lowered", async () => {
     // `zeroSuspendDefaultLane` is what excludes this. It is the cell measured to
-    // FAIL when admitted (#3952's own experiment), so the bail stays.
+    // FAIL when admitted (#3952's own experiment), so the bail stays. (#6979
+    // S7-f, #7010) The bail used to land on the host generator path, which is
+    // retired; it is a compile-time refusal now.
     const src = `const g = function* ({ K = class { v(): number { return 41; } } }: { K?: new () => { v(): number } }) { yield 0; yield new K().v() + 1; };
 export function test(): number { const it = g({}); it.next(); return it.next().value as number; }`;
-    expect(await importCount(src)).toBeGreaterThan(0);
+    const r = (await compile(src, { fileName: "t.ts", target: "standalone" })) as unknown as Compiled;
+    expect(r.success).toBe(false);
+    expect(JSON.stringify(r.errors)).toContain("generator-no-host-free-lowering");
   });
 });
 

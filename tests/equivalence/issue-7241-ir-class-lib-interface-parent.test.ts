@@ -60,7 +60,8 @@ interface Case {
   readonly throwsOn?: readonly string[];
 }
 
-const ITERATOR_LEGACY_THROW = ["standalone", "gc (default)"];
+// (#6979 S7-c) WASI lowers with the native regime and throws here as standalone does.
+const ITERATOR_LEGACY_THROW = ["standalone", "wasi", "gc (default)"];
 
 const ITERATOR_CASES: Record<string, Case> = {
   "own methods take the IR; the explicit constructor stays legacy": {
@@ -165,8 +166,9 @@ describe("#7241 array-returning ListFormat polyfill members get a descriptor", (
         expect(o?.code, unit).toBe("return-type-not-resolvable");
       }
       expect(outcome(result, "__js2wasm_Intl_ListFormat_new")?.kind).toBe("unsupported");
-      // WASI's `supportedLocalesOf` already diverges from node on base (1005942).
-      const expected = lane.options.target === "wasi" ? 1005942 : evaluateAsJs(LIST_FORMAT_SOURCE).test!();
+      // (#6979 S7-c) WASI's `supportedLocalesOf` diverged from node on base
+      // (1005942); on the native regime it matches, as standalone does.
+      const expected = evaluateAsJs(LIST_FORMAT_SOURCE).test!();
       expect(await run(result, lane.options)).toBe(expected);
     }, 120_000);
   }

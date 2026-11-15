@@ -118,20 +118,13 @@ describe("#3527 numeric throw consumes an explicit independently materialized bo
       }
     }, 30_000);
 
-    it(`shares one box import between regular and async bodies and rejects with native payload (shared=${shared})`, async () => {
+    // (#6979) The async half of this program settles through the IR "host"
+    // target's host `Promise_*` providers, which the runtime no longer binds
+    // (the host-semantic lane is retired); only the shared box import and the
+    // regular throw are still observable.
+    it(`shares one box import between regular and async bodies (shared=${shared})`, async () => {
       const result = await instantiate(prepared(COMBINED), shared);
       expect(caught(() => call(result.exports, "fail"))).toBeInstanceOf(WebAssembly.Exception);
-      const native = async () => {
-        throw 17;
-      };
-      const expected = await native().catch((reason: unknown) => reason);
-      let output: unknown;
-      expect(() => {
-        output = call(result.exports, "rejected");
-      }).not.toThrow();
-      expect(output).toBeInstanceOf(Promise);
-      await expect(output).rejects.toBe(expected);
-      expect(expected).toBe(17);
     }, 30_000);
   }
 
@@ -162,7 +155,7 @@ describe("#3527 numeric throw consumes an explicit independently materialized bo
   it("rejects a removed provider and altered canonical box signature before emission, following a real positive", async () => {
     const program = prepared(COMBINED);
     const positive = await instantiate(program, true);
-    await expect(call(positive.exports, "rejected")).rejects.toBe(17);
+    expect(caught(() => call(positive.exports, "fail"))).toBeInstanceOf(WebAssembly.Exception);
     const missingProvider: PreparedIrProgram = {
       ...program,
       runtime: program.runtime.map((projection) => ({

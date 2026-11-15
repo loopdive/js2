@@ -57,7 +57,6 @@ export function tryEmitClassCtorCallApply(
   expr: ts.CallExpression,
   propAccess: ts.PropertyAccessExpression,
 ): ValType | undefined {
-  if (!ctx.standalone) return undefined; // host lane byte-identical (plan: standalone-gated)
   if (expr.questionDotToken !== undefined || ts.isOptionalChain(expr) || ts.isOptionalChain(propAccess)) {
     return undefined;
   }

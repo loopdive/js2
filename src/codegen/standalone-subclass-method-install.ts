@@ -74,7 +74,7 @@
  *
  * ## Byte-neutrality
  *
- * Gated on `ctx.standalone || ctx.wasi` AND on the class being externref-backed
+ * Gated on the native regime AND on the class being externref-backed
  * AND on it declaring at least one installable instance method. The JS-host /
  * `gc` lane never reaches here — it keeps `__set_subclass_proto`, which does
  * the equivalent job through the real prototype — and any standalone module
@@ -181,7 +181,6 @@ export function emitStandaloneSubclassMethodInstall(
   selfLocal: number,
   subName: string,
 ): void {
-  if (!(ctx.standalone || ctx.wasi)) return;
   if (!ctx.classExternrefBackedSet.has(subName)) return;
   // MEASURED exclusion, not a policy one: `__defineProperty_value` lands in the
   // #3537 vec bag / #3468 closure bag and on a native `$Object`, but NOT in an

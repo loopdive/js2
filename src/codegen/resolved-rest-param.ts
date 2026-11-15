@@ -45,7 +45,7 @@ export function restPatternParamVecType(
   param: ts.ParameterDeclaration,
   vecOf: (elemType: ValType) => number,
 ): ValType | undefined {
-  if (!ctx.standalone || param.dotDotDotToken === undefined || ts.isIdentifier(param.name)) return undefined;
+  if (param.dotDotDotToken === undefined || ts.isIdentifier(param.name)) return undefined;
   return { kind: "ref_null", typeIdx: vecOf({ kind: "externref" }) };
 }
 

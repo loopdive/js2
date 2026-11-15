@@ -37,7 +37,7 @@ import { emitPromiseSubclassProtoLink, isStandalonePromiseSuperForwarder } from 
 // `arguments` methods route through the same native producer as fn
 // declarations/expressions (the drive gate self-limits to standalone/wasi).
 import { emitAsyncGenerator, isAsyncGenDriveCandidate } from "./async-frame.js";
-import { genBodyReferencesThis, genBodyReferencesSuper, emitCachedFuncClosureAccess } from "./closures.js"; // (#3132 / #3123 fnctor parent closure)
+import { genBodyReferencesThis, genBodyReferencesSuper } from "./closures.js"; // (#3132 / #3123 fnctor parent closure)
 import { standaloneCommaHeritage } from "./classes/class-heritage-comma.js"; // (#6772 S6)
 import {
   classAccessorFuncKey,
@@ -108,7 +108,6 @@ import { replayMissingSuperBody } from "./missing-super-replay.js";
 import { missingSuperReturnIsTypeError } from "./classes/missing-super-return.js"; // (#6651 V4)
 import { detectStringBuilders } from "./string-builder.js"; // (#2641/#1210) string-builder fast-path parity in class methods
 import type { StringBuilderPresizeInfo } from "./string-builder.js";
-import { compileStringLiteral } from "./string-ops.js";
 import { emitUndefined } from "./expressions/late-imports.js";
 import { emitLazyClassObjectGet } from "./expressions/extern.js"; // (#5377)
 import { addStringConstantGlobal, ensureExnTag, nextModuleGlobalIdx } from "./registry/imports.js";
@@ -155,8 +154,6 @@ import {
   valTypesMatch,
 } from "./shared.js";
 import { readEnv } from "../env.js";
-import { emitExternrefBackedFieldInitializers, type ExternrefFieldOps } from "./classes/externref-class-fields.js"; // (#6844)
-import { stringConstantExternrefInstrs } from "./native-strings.js";
 
 /**
  * (#846h / #1682) Returns true if `body` lexically contains a `super(...)` call
@@ -407,13 +404,10 @@ function resolveStandaloneBuiltinSuperCtorIdx(
   parentName: string,
   arity: number,
 ): number | null | undefined {
-  const hostFree = ctx.wasi || ctx.standalone;
-
   if (isWasiErrorName(parentName)) {
     emitWasiErrorConstructor(ctx, parentName, arity);
     return ctx.funcMap.get(`__new_${parentName}`) ?? null;
   }
-  if (!hostFree) return undefined;
   if (parentName === "Object") {
     return emitStandaloneObjectConstructor(ctx, arity) ?? null;
   }
@@ -532,7 +526,6 @@ function standaloneCollectionCtorFirstArgType(
 ): ValType {
   const parentName = ctx.classBuiltinParentMap.get(className);
   if (
-    (ctx.standalone || ctx.wasi) &&
     paramIndex === 0 &&
     (parentName === "Map" || parentName === "Set") &&
     (wasmType.kind === "ref" || wasmType.kind === "ref_null") &&
@@ -566,7 +559,7 @@ function compileExternrefArgument(
   ) {
     carrier = carrier.expression;
   }
-  const shouldForceVec = forceArrayLiteralVec && (ctx.standalone || ctx.wasi) && ts.isArrayLiteralExpression(carrier);
+  const shouldForceVec = forceArrayLiteralVec && ts.isArrayLiteralExpression(carrier);
   const previousForceVec = (ctx as unknown as { _arrayLiteralForceVec?: boolean })._arrayLiteralForceVec;
   const previousCollectionForceVec = (ctx as unknown as { _arrayLiteralForceCollectionVec?: boolean })
     ._arrayLiteralForceCollectionVec;
@@ -599,18 +592,6 @@ function evaluateArgumentForSideEffects(ctx: CodegenContext, fctx: FunctionConte
   if (argResult !== null) {
     fctx.body.push({ op: "drop" });
   }
-}
-
-/** (#6844) Externref-backed field initializers, with the codegen entry points the leaf needs injected. */
-function emitExternrefFields(ctx: CodegenContext, fctx: FunctionContext, decl: ts.ClassLikeDeclaration, self: number) {
-  const ops: ExternrefFieldOps = {
-    ...{ compileExpression, coerceType, ensureLateImport, flushLateImportShifts },
-    pushStringKey: (key) => {
-      addStringConstantGlobal(ctx, key);
-      fctx.body.push(...stringConstantExternrefInstrs(ctx, key));
-    },
-  };
-  emitExternrefBackedFieldInitializers(ctx, fctx, decl, self, ops);
 }
 
 /**
@@ -755,7 +736,6 @@ function emitSetSubclassUserBrand(
   selfLocal: number,
   subName: string,
 ): void {
-  if (!(ctx.wasi || ctx.standalone)) return;
   const brand = ctx.classTagMap.get(subName);
   if (brand === undefined) return;
   const structIdx = getOrRegisterErrorStructType(ctx);
@@ -816,7 +796,7 @@ export function resolveInstallableClassMemberName(
   // Only an unfoldable COMPUTED key gets a synthetic name. A private name is
   // already mangled by `resolveClassMemberName`; anything else that answers
   // `undefined` is a shape this lane does not model.
-  if (!ctx.standalone || !ts.isComputedPropertyName(member.name)) return undefined;
+  if (!ts.isComputedPropertyName(member.name)) return undefined;
   const kind = classDynamicMemberKind(member);
   if (kind === undefined) return undefined;
   const ordinal = decl.members.indexOf(member);
@@ -1071,13 +1051,10 @@ export function collectClassDeclaration(
   // Such a parent is allowed to replace derived instance fields with ordinary
   // host objects. Keep closed-object fields on the externref carrier so that
   // the host writeback and subsequent compiled reads observe one live slot.
-  let hasDynamicHostParent = false;
   if (decl.heritageClauses) {
     for (const clause of decl.heritageClauses) {
       if (clause.token === ts.SyntaxKind.ExtendsKeyword && clause.types.length > 0) {
         const baseExpr = standaloneCommaHeritage(ctx, decl)?.value ?? clause.types[0]!.expression; // (#6772 S6)
-        if (!ctx.standalone && !ctx.wasi)
-          hasDynamicHostParent = !ts.isIdentifier(baseExpr) && !ts.isClassExpression(baseExpr);
         if (ts.isIdentifier(baseExpr)) {
           // (#4291) The local import spelling is not the class identity. Hono's
           // published base is declared as `var Hono = class _Hono {}`, exported
@@ -1109,7 +1086,7 @@ export function collectClassDeclaration(
           // independent ROOT struct wearing a heritage clause it has no compiled
           // relationship to. See the field-collision note on
           // `classDynamicUnresolvedHeritageSet`.
-          if ((ctx.standalone || ctx.wasi) && resolvedParentClassName === undefined) {
+          if (resolvedParentClassName === undefined) {
             ctx.classDynamicUnresolvedHeritageSet.add(className);
           }
           // (#2620 → #3972 → #6754) A native-collection subclass (Set/Map/
@@ -1148,11 +1125,7 @@ export function collectClassDeclaration(
           // parentStructTypeIdx undefined so the existing "root struct" path
           // still fires for any user-class collection bookkeeping (struct
           // registration, tag).
-          const isExternClassParent = ctx.externClasses.has(parentClassName) && !(ctx.standalone || ctx.wasi);
-          if (
-            parentStructTypeIdx === undefined &&
-            (isHostConstructibleBuiltin(parentClassName) || isExternClassParent)
-          ) {
+          if (parentStructTypeIdx === undefined && isHostConstructibleBuiltin(parentClassName)) {
             ctx.classBuiltinParentMap.set(className, parentClassName);
             ctx.classExternrefBackedSet.add(className);
           } else if (
@@ -1197,13 +1170,12 @@ export function collectClassDeclaration(
             parentFields = ctx.structFields.get(parentClassName) ?? [];
             ctx.classParentMap.set(className, parentClassName);
           }
-        } else if (ctx.standalone || ctx.wasi) {
+        } else {
           // (#6623, #5383 S36) A property/element-access heritage expression
           // (`class S extends NS.PD {}`, the shape a LINKED provider namespace
-          // produces) is resolved at runtime on the host lane
-          // (`hasDynamicHostParent` above) but has NO standalone/wasi handling
-          // at all — `parentClassName` stays `undefined` and this class is
-          // silently registered as an independent ROOT struct. Same collision
+          // produces) is resolved at runtime, so `parentClassName` stays
+          // `undefined` and this class would silently register as an
+          // independent ROOT struct. Same collision
           // risk as the unresolved-identifier case just above.
           ctx.classDynamicUnresolvedHeritageSet.add(className);
           // (#6640, #5383 S64) …but in a LINK CONSUMER the value behind that
@@ -1264,9 +1236,6 @@ export function collectClassDeclaration(
     ) {
       fieldType = { kind: "externref" };
     }
-    if (hasDynamicHostParent && (fieldType.kind === "ref" || fieldType.kind === "ref_null")) {
-      fieldType = { kind: "externref" };
-    }
     ownFields.push({
       name: fieldName,
       type: fieldType,
@@ -1313,9 +1282,6 @@ export function collectClassDeclaration(
           voidClearedInstanceFields.has(fieldName) &&
           (fieldType.kind === "ref" || fieldType.kind === "ref_null")
         ) {
-          fieldType = { kind: "externref" };
-        }
-        if (hasDynamicHostParent && (fieldType.kind === "ref" || fieldType.kind === "ref_null")) {
           fieldType = { kind: "externref" };
         }
         if (!ownFields.some((f) => f.name === fieldName)) {
@@ -1415,7 +1381,7 @@ export function collectClassDeclaration(
     // the dynamic-proto sentinel instead (see src/codegen/dynamic-proto.ts).
     // Standalone-only: gc/host models dynamic protos via the host
     // `_wasmStructProto` WeakMap sidecar and its structs are untouched.
-    if (ctx.standalone && ctx.dynamicProtoClasses.has(className) && !fields.some((f) => f.name === "__proto__")) {
+    if (ctx.dynamicProtoClasses.has(className) && !fields.some((f) => f.name === "__proto__")) {
       fields.push({ name: "__proto__", type: { kind: "externref" }, mutable: true });
     }
   }
@@ -1741,9 +1707,8 @@ export function collectClassDeclaration(
         // `synthesizedThis` so `param_this` is minted. The actual factory emit
         // is routed below (the generator-method emit block). JS-host mode keeps
         // the externref Generator object (eager-buffer path) — byte-identical.
-        const noJsHost = ctx.standalone || ctx.wasi;
         let nativeGen = null;
-        if (noJsHost && !isAsyncMethod && isNativeGeneratorCandidate(ctx, member)) {
+        if (!isAsyncMethod && isNativeGeneratorCandidate(ctx, member)) {
           nativeGen = registerNativeGenerator(
             ctx,
             member,
@@ -2045,7 +2010,6 @@ export function collectClassDeclaration(
   // index is stable before any body bakes a read of it; the object itself is
   // built lazily at ClassDefinitionEvaluation (`class-static-sidecar.ts`).
   if (
-    ctx.standalone &&
     !ctx.classStaticSidecarGlobals.has(className) &&
     (ctx.classDynamicMembers.get(className) ?? []).some((member) => member.isStatic)
   ) {
@@ -2590,35 +2554,6 @@ function compileClassBodiesInner(
       }
     }
 
-    // (#5377) Materialize this class's class-object singleton at the top of its
-    // constructor, so a compiled instance can answer `i.constructor` with the
-    // class object no matter what the program reads first. This must happen
-    // AFTER the constructor signatures above are re-resolved: the singleton
-    // registration captures a constructor closure, and emitting it against the
-    // pre-resolution placeholder type creates a zero-argument trampoline for a
-    // constructor that later receives parameters (the Wasm validator then sees
-    // a call with too few stack arguments in large class-heavy packages such as
-    // hono).
-    //
-    // The singleton is otherwise created by whichever `C` identifier read runs
-    // first, and that init registers `classObject → prototype carrier` with the
-    // host (`__register_class_ctor`). Constructor entry remains the right
-    // once-per-class point: it provably precedes the existence of any instance,
-    // while the externref-backed lane is materialized by `emitSetSubclassProto`.
-    // Host lane only: standalone has no class-object host registry to answer
-    // to, and the externref-backed lane is covered by `emitSetSubclassProto`.
-    // Name-keyed class tables can expose a compatibility alias for the same
-    // source class expression (for example Hono's two module-local `Node`
-    // bindings).  A non-owner body shares the owner's constructor slot and
-    // class-object global; materializing through that alias would capture the
-    // owner's still-unresolved placeholder signature and mint a zero-argument
-    // trampoline before the canonical body fixes the type.  The scoped
-    // synthetic identity owns the real singleton for that declaration.
-    const classIdentityOwner = ctx.classDeclarationMap.get(className);
-    if (!ctx.standalone && !ctx.wasi && !isExternrefBacked && classIdentityOwner === decl) {
-      if (emitLazyClassObjectGet(ctx, fctx, className)) fctx.body.push({ op: "drop" });
-    }
-
     for (let i = 0; i < fctxParams.length; i++) {
       fctx.localMap.set(fctxParams[i]!.name, i);
     }
@@ -2763,7 +2698,6 @@ function compileClassBodiesInner(
         }
         const collectionParent = ctx.classBuiltinParentMap.get(className);
         const ctorIsCollectionArrayDefault =
-          (ctx.standalone || ctx.wasi) &&
           paramIdx === 0 &&
           (collectionParent === "Map" || collectionParent === "Set") &&
           defaultCarrier !== undefined &&
@@ -2945,13 +2879,12 @@ function compileClassBodiesInner(
     let ownFieldInitializersEmitted = false;
     const emitOwnInstanceFieldInitializers = (): void => {
       // Compile field initializers from property declarations
-      // (e.g., x: number = 42, #x: number = 42). (#6844) Externref-backed: DEFINEd on the host instance.
+      // (e.g., x: number = 42, #x: number = 42). (#6844, #6979) An externref-backed
+      // instance keeps no struct fields; its host `__defineProperty_value`
+      // DefineField lane only ever ran without the native regime and is retired.
       if (ownFieldInitializersEmitted) return;
       ownFieldInitializersEmitted = true;
-      if (isExternrefBacked && !isCollectionCarrierClass(ctx, className)) {
-        emitExternrefFields(ctx, fctx, decl, selfLocal);
-        return;
-      }
+      if (isExternrefBacked && !isCollectionCarrierClass(ctx, className)) return;
       const storeOwnField = (fieldName: string, value: ts.Expression): void => {
         const fieldIdx = fields.findIndex((f) => f.name === fieldName);
         if (fieldIdx === -1) return;
@@ -3044,98 +2977,6 @@ function compileClassBodiesInner(
           continue;
         }
         compileStatement(ctx, fctx, stmt);
-      }
-    }
-
-    // (#1455) Tag externref-backed user-class instances with their class name
-    // so the modified `__instanceof` host import can resolve
-    // `instance instanceof Sub` by walking the registered tag chain. The
-    // direct user-class parent (or null when the direct parent is a builtin)
-    // is registered idempotently on first call.
-    // (#1536c) Skipped under standalone / WASI: `__tag_user_class` is a JS host
-    // import (it would leak `env::__tag_user_class` and fail to instantiate).
-    // Standalone resolves `instance instanceof Sub`/`Parent` natively via the
-    // `$Error_struct` `$tag` discrimination (identifiers.ts) — no host tagging
-    // needed.
-    if (isExternrefBacked && !(ctx.wasi || ctx.standalone)) {
-      const builtinParent = ctx.classBuiltinParentMap.get(className);
-      // Direct user-class parent: classParentMap[className] is set to the
-      // immediate parent name; if it equals the builtin parent, the user
-      // chain terminates here (pass ref.null.extern for the parent arg).
-      const directParent = ctx.classParentMap.get(className);
-      const userParent = directParent && directParent !== builtinParent ? directParent : undefined;
-      const tagIdx = ensureLateImport(
-        ctx,
-        "__tag_user_class",
-        [{ kind: "externref" }, { kind: "externref" }, { kind: "externref" }],
-        [],
-      );
-      flushLateImportShifts(ctx, fctx);
-      if (tagIdx !== undefined) {
-        fctx.body.push({ op: "local.get", index: selfLocal });
-        // Class name as string constant externref
-        addStringConstantGlobal(ctx, className);
-        const cnameIdx = ctx.stringGlobalMap.get(className);
-        if (cnameIdx !== undefined && cnameIdx !== -1) {
-          fctx.body.push({ op: "global.get", index: cnameIdx });
-        } else {
-          fctx.body.push({ op: "ref.null.extern" });
-        }
-        // Parent name (or null externref).
-        if (userParent !== undefined) {
-          addStringConstantGlobal(ctx, userParent);
-          const pnameIdx = ctx.stringGlobalMap.get(userParent);
-          if (pnameIdx !== undefined && pnameIdx !== -1) {
-            fctx.body.push({ op: "global.get", index: pnameIdx });
-          } else {
-            fctx.body.push({ op: "ref.null.extern" });
-          }
-        } else {
-          fctx.body.push({ op: "ref.null.extern" });
-        }
-        fctx.body.push({ op: "call", funcIdx: tagIdx });
-      }
-    }
-
-    // (#3123) `class C extends F` where F is a top-level PLAIN FUNCTION
-    // (fnctor): register the instance with the host runtime so member reads
-    // that MISS the compiled surface resolve through F's LIVE `.prototype`
-    // chain (`_fnctorInstanceCtor` → `_fnctorProtoLookup`). The test262
-    // harness `Iterator` shim assigns `F.prototype` at module init; the
-    // Iterator-helper methods the instance inherits live only on that runtime
-    // object. Host lane only — standalone/wasi have no host MOP (the import
-    // would leak). Runs at the tail of the ctor body (the `_init` body for
-    // split classes), so every construction path — `new C()` and `super()`
-    // from a subclass — registers (WeakMap set, idempotent).
-    if (!isExternrefBacked && !(ctx.wasi || ctx.standalone)) {
-      const fnctorParent = fnctorAncestorOfClass(ctx, className);
-      if (fnctorParent !== undefined) {
-        const regIdx = ensureLateImport(
-          ctx,
-          "__register_fnctor_instance",
-          [{ kind: "externref" }, { kind: "externref" }],
-          [],
-        );
-        flushLateImportShifts(ctx, fctx);
-        // Read F's funcIdx AFTER the late-import flush — the import add above
-        // shifts every defined-func index.
-        const fnctorFuncIdx = ctx.funcMap.get(fnctorParent);
-        if (regIdx !== undefined && fnctorFuncIdx !== undefined) {
-          fctx.body.push({ op: "local.get", index: selfLocal });
-          fctx.body.push({ op: "extern.convert_any" });
-          // F's canonical cached closure — identity-stable with the receiver
-          // the top-level `F.prototype = …` write resolved to, so the host
-          // lookup reads the SAME sidecar/field slot.
-          const closTy = emitCachedFuncClosureAccess(ctx, fctx, fnctorParent, fnctorFuncIdx);
-          if (closTy !== null) {
-            fctx.body.push({ op: "extern.convert_any" });
-            const finalRegIdx = ctx.funcMap.get("__register_fnctor_instance") ?? regIdx;
-            fctx.body.push({ op: "call", funcIdx: finalRegIdx });
-          } else {
-            // Closure signature unresolvable — drop the self externref, skip.
-            fctx.body.push({ op: "drop" });
-          }
-        }
       }
     }
 
@@ -3372,7 +3213,7 @@ function compileClassBodiesInner(
         // the omitted-argument sentinel instead, which needs this predicate; and
         // an import can only be added HERE, while a body swap can still absorb
         // the funcidx shift, not in the finalize pass that emits the bridge.
-        if (paramType.kind === "externref" || (paramType.kind === "f64" && !ctx.standalone && !ctx.wasi)) {
+        if (paramType.kind === "externref") {
           ensureLateImport(ctx, "__extern_is_undefined", [{ kind: "externref" }], [{ kind: "i32" }]);
           flushLateImportShifts(ctx, fctx);
         }
@@ -3570,7 +3411,6 @@ function compileClassBodiesInner(
             : [];
         fctx.body.push(
           buildTargetTaggedTry(
-            ctx,
             { kind: "empty" },
             [{ op: "block", blockType: { kind: "empty" }, body: bodyInstrs }],
             [{ tagIdx, body: catchBody }],
@@ -3998,48 +3838,7 @@ export function compileSuperCall(
 
   const parentClassName = ctx.classParentMap.get(childClassName);
   if (!parentClassName) {
-    const childDecl = ctx.classDeclarationMap.get(childClassName);
-    const hasRuntimeParent =
-      childDecl?.heritageClauses?.some(
-        (clause) => clause.token === ts.SyntaxKind.ExtendsKeyword && clause.types.length > 0,
-      ) === true && !ctx.classBuiltinParentMap.has(childClassName);
     const args = callExpr.arguments;
-
-    // (#4618) `class C extends runtimeValue { constructor(props) {
-    // super(props); ... } }` has no statically-resolved parent init function.
-    // The class-definition path already registered that live parent by the
-    // synthetic class identity; invoke it here with the allocated derived
-    // receiver, at the source-level SuperCall position. This preserves the
-    // critical ordering that a host-mirror pre/post hook cannot: code before
-    // super runs first, the parent initializes `this`, then subsequent
-    // constructor statements and derived fields observe that state.
-    if (hasRuntimeParent && !(ctx.standalone || ctx.wasi) && !args.some((arg) => ts.isSpreadElement(arg))) {
-      const importName = `__call_dynamic_class_parent_${args.length}`;
-      const funcIdx = ensureLateImport(
-        ctx,
-        importName,
-        Array.from({ length: args.length + 2 }, () => ({ kind: "externref" }) as ValType),
-        [],
-      );
-      flushLateImportShifts(ctx, fctx);
-      if (funcIdx !== undefined) {
-        addStringConstantGlobal(ctx, childClassName);
-        const nameIdx = ctx.stringGlobalMap.get(childClassName);
-        if (nameIdx !== undefined && nameIdx >= 0) {
-          fctx.body.push({ op: "global.get", index: nameIdx });
-        } else {
-          compileStringLiteral(ctx, fctx, childClassName);
-        }
-        fctx.body.push({ op: "local.get", index: selfLocal });
-        fctx.body.push({ op: "extern.convert_any" });
-        for (const arg of args) compileExternrefArgument(ctx, fctx, arg);
-        fctx.body.push({
-          op: "call",
-          funcIdx: ctx.funcMap.get(importName) ?? funcIdx,
-        });
-        return;
-      }
-    }
 
     // Preserve ArgumentListEvaluation even when the dynamic-parent bridge is
     // unavailable (standalone/WASI or a runtime spread not representable by
@@ -4113,7 +3912,7 @@ export function compileSuperCall(
     // honours every argument (§23.1.1.1 `Array(...values)`), so forward them
     // all: at the declared arity 1, `super(42, "foo")` built `Array(42)`.
     const forwardArity =
-      (ctx.standalone || ctx.wasi) && builtinParent === "Array"
+      builtinParent === "Array"
         ? Math.max(
             getBuiltinConstructorForwardArity(ctx, builtinParent),
             (hasSpread ? flattenStaticallyKnownArgs(args) : args)?.length ?? 0,
@@ -4212,28 +4011,6 @@ export function compileSuperCall(
     // this exact ES5-constructor shape.
     const fnctorParent = fnctorAncestorOfClass(ctx, childClassName);
     const args = callExpr.arguments;
-    if (fnctorParent !== undefined && !(ctx.standalone || ctx.wasi) && !args.some((arg) => ts.isSpreadElement(arg))) {
-      const importName = `__call_dynamic_class_parent_${args.length}`;
-      const bridgeIdx = ensureLateImport(
-        ctx,
-        importName,
-        Array.from({ length: args.length + 2 }, () => ({ kind: "externref" }) as ValType),
-        [],
-      );
-      flushLateImportShifts(ctx, fctx);
-      const fnctorIdx = ctx.funcMap.get(fnctorParent);
-      if (bridgeIdx !== undefined && fnctorIdx !== undefined) {
-        const parentClosureType = emitCachedFuncClosureAccess(ctx, fctx, fnctorParent, fnctorIdx);
-        if (parentClosureType !== null) {
-          if (parentClosureType.kind !== "externref") fctx.body.push({ op: "extern.convert_any" });
-          fctx.body.push({ op: "local.get", index: selfLocal });
-          fctx.body.push({ op: "extern.convert_any" });
-          for (const arg of args) compileExternrefArgument(ctx, fctx, arg);
-          fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get(importName) ?? bridgeIdx });
-          return;
-        }
-      }
-    }
     // (#5153 F) Standalone has no host bridge, and the old lowering evaluated
     // the arguments and returned — the parent function was never CALLED, so a
     // parent constructor that throws completed normally
@@ -4245,7 +4022,7 @@ export function compileSuperCall(
     // parent returning an object REBINDS the derived `this`. That needs the
     // ctor body's `this` slot to be re-pointed after `super()` and is filed as
     // a residual (`call-expr-value.js`, `call-bind-this-value.js`).
-    if (fnctorParent !== undefined && (ctx.standalone || ctx.wasi) && !args.some((arg) => ts.isSpreadElement(arg))) {
+    if (fnctorParent !== undefined && !args.some((arg) => ts.isSpreadElement(arg))) {
       const fnctorIdx = ctx.funcMap.get(fnctorParent);
       const fnctorParamTypes = fnctorIdx === undefined ? undefined : getFuncParamTypes(ctx, fnctorIdx);
       if (fnctorIdx !== undefined && fnctorParamTypes !== undefined && args.length <= fnctorParamTypes.length) {

@@ -28,8 +28,6 @@ import { stringConstantExternrefInstrs } from "./native-strings.js";
  * user property with the same spelling from being mistaken for that slot.
  */
 export function emitSymbolProtoValueOfBody(ctx: CodegenContext, fctx: FunctionContext): ValType | null {
-  if (!ctx.standalone) return null;
-
   const symbolTypeIdx = ensureSymbolCarrier(ctx);
   ensureObjectRuntime(ctx);
   const objectTypes = ctx.objectRuntimeTypes;

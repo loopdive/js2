@@ -67,7 +67,7 @@ export function ensureIrNativePromiseAllProvider(ctx: CodegenContext): number {
     assertPromiseAllAbi(ctx, cached, state.promiseAllVecTypeIdx);
     return cached;
   }
-  if (!ctx.standalone || ctx.wasi || !ctx.nativeStrings) {
+  if (ctx.wasi || !ctx.nativeStrings) {
     throw new Error("native IR Promise.all provider requires standalone WasmGC with native strings");
   }
   requireUnoccupied(ctx, IR_ASYNC_PROMISE_ALL_NATIVE_FN);

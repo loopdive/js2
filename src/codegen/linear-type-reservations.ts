@@ -156,7 +156,6 @@ export function reserveObjVecArrType(ctx: CodegenContext): void {
  * bag lookup walked it — ~35% self-time in `__closure_bag_lookup` on deltablue.
  */
 export function appendInstanceBagSlot(ctx: CodegenContext, fnctorName: string, fields: FieldDef[]): void {
-  if (!ctx.standalone) return;
   if (fnctorLayoutPlanFor(ctx, fnctorName) !== undefined) return; // split family — excluded
   // Cold-tailed fnctors ARE eligible. The presence-word hazard does not reach
   // the base struct: `applyColdTailSplit` moves the COLD subset out and calls

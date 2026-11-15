@@ -152,54 +152,8 @@ describe("#1004 counted string-append aggregation", () => {
     expect((instance.exports.test as () => number)()).toBe(3);
   });
 
-  it("executes the same counted Prepared shape through the host repeat adapter", async () => {
-    vi.stubEnv(DIRECT_POISON, "test");
-    const result = await compile(
-      `
-        export function test(): number {
-          let value = "";
-          for (let index = 0; index < 3; index++) value = value + "abc";
-          return value.length;
-        }
-      `,
-      {
-        // This case specifically pins the explicit host repeat adapter.
-        semanticProviders: "host-assisted",
-        trackIrOutcomes: true,
-        emitWat: true,
-      },
-    );
-    expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
-    expect(result.irOutcomes?.find((outcome) => outcome.displayName === "test")).toMatchObject({
-      kind: "emitted",
-      legacyBodyEmitted: false,
-      irBodyEmitted: true,
-    });
-    expect(result.imports).toContainEqual(
-      expect.objectContaining({
-        module: "env",
-        name: "string_repeat",
-        kind: "func",
-        paramCount: 2,
-        intent: { type: "string_method", method: "repeat" },
-      }),
-    );
-    expect(
-      watCallTargets(result.wat, watFunctionBody(result.wat, "test")).filter(
-        (target) => target === "string_repeat_import",
-      ),
-    ).toHaveLength(1);
-    const { buildCompiledImports } = await import("../src/index.js");
-    const imports = buildCompiledImports(result);
-    const { instance } = await instantiateWasm(
-      new Uint8Array(result.binary),
-      imports.env,
-      imports.string_constants,
-      imports.string_constants16,
-    );
-    imports.setInstance?.(instance);
-    expect((instance.exports.test as () => number)()).toBe(9);
-  });
+  // (#6979 S7-a) The "host repeat adapter" row selected the removed `host-assisted`
+  // profile; the native `__sh_str_repeat` row above is the only repeat lowering.
 
   it("restores the exact direct artifact when the string-builder rollback is disabled", async () => {
     vi.stubEnv(BUILDER_SWITCH, "0");

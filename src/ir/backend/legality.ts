@@ -17,7 +17,6 @@ export { verifyIrBackendLegality } from "../analysis/backend-legality.js";
 export type IrBackendTargetCapability =
   | "host-date-snapshot"
   | "host-regexp-constructor"
-  | "host-object-define-property"
   | "standalone-function-prototype-call"
   | "native-regexp"
   | "native-function-methods"
@@ -119,8 +118,6 @@ export function supportsIrBackendTargetCapability(
     case "host-date-snapshot":
       return profile.backend === "wasmgc" && profile.target === "gc" && profile.allowHostImports;
     case "host-regexp-constructor":
-      return profile.backend === "wasmgc" && profile.target === "gc" && profile.allowHostImports;
-    case "host-object-define-property":
       return profile.backend === "wasmgc" && profile.target === "gc" && profile.allowHostImports;
     case "standalone-function-prototype-call":
     // (#3791, #7106 lever R) The in-module RegExp: construction from a static

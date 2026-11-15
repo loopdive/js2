@@ -544,7 +544,7 @@ export function fillConstructBoundDriver(ctx: CodegenContext): void {
  * IsConstructor TypeError.
  */
 export function admitBoundValueConstruct(ctx: CodegenContext, callee: ts.Expression): boolean {
-  if (!ctx.standalone || !ts.isIdentifier(callee) || !nodeCanMintBoundFn(callee)) return false;
+  if (!ts.isIdentifier(callee) || !nodeCanMintBoundFn(callee)) return false;
   const decls = ctx.oracle.declarationsOf(callee);
   if (decls.length !== 1 || !ts.isVariableDeclaration(decls[0]!)) return false;
   let init = ctx.oracle.variableInitializerOf(callee);

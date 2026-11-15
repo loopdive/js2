@@ -58,7 +58,6 @@ import { stringConstantExternrefInstrs } from "./native-strings.js";
  * Params: 0 = self (closure struct), 1 = `this` (externref). Result externref.
  */
 export function emitFunctionProtoToStringBody(ctx: CodegenContext, fctx: FunctionContext): ValType | null {
-  if (!ctx.standalone) return null;
   const typeofFunctionIdx = ctx.funcMap.get("__typeof_function");
   if (typeofFunctionIdx === undefined) return null;
   addStringConstantGlobal(ctx, NATIVE_FUNCTION_SOURCE);

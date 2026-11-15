@@ -15,7 +15,6 @@ import type { ts } from "../ts-api.js";
 import type { ValType } from "../ir/types.js";
 import { allocLocal } from "./context/locals.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
-import { maybeStampCompiledFunctionArgName } from "./expressions/helpers.js";
 import { flushLateImportShifts } from "./expressions/late-imports.js";
 import { bindingIsNodeBuiltinNamedImport } from "./expressions/node-builtin-named-import.js";
 import { stringConstantExternrefInstrs } from "./native-strings.js";
@@ -39,11 +38,7 @@ export function emitHostMethodCallArgs(
   arrPushName: string,
   arrPushIdx: number,
 ): void {
-  const handled = tryEmitSpreadHostArgs(ctx, fctx, expr.arguments, argsLocal, arrPushName, arrPushIdx, {
-    afterValue: (arg) => {
-      maybeStampCompiledFunctionArgName(ctx, fctx, arg);
-    },
-  });
+  const handled = tryEmitSpreadHostArgs(ctx, fctx, expr.arguments, argsLocal, arrPushName, arrPushIdx);
   if (handled) return;
   for (const arg of expr.arguments) {
     fctx.body.push({ op: "local.get", index: argsLocal });
@@ -54,10 +49,6 @@ export function emitHostMethodCallArgs(
     if (argType === null) {
       fctx.body.push({ op: "ref.null.extern" });
     }
-    // (#3429) A statically-name-resolvable compiled function/class argument
-    // (e.g. `assert.throws(MyError, fn)`) gets its real `.name` stamped before
-    // crossing — see maybeStampCompiledFunctionArgName.
-    maybeStampCompiledFunctionArgName(ctx, fctx, arg);
     fctx.body.push({ op: "call", funcIdx: arrPushIdx });
   }
 }

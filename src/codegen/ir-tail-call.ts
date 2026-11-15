@@ -73,7 +73,7 @@ function resultsMatchCaller(ctx: CodegenContext, calleeResults: ValType[], calle
   // `return_call`. Preserve an ordinary call + return for host-free targets
   // that execute in Wasmtime, without disabling JS-host proper tail calls.
   // Keep this guard in sync with both legacy checks in control-flow.ts.
-  if ((ctx.standalone || ctx.wasi) && (calleeRet.kind === "externref" || callerRet.kind === "externref")) return false;
+  if (calleeRet.kind === "externref" || callerRet.kind === "externref") return false;
   if (calleeRet.kind === callerRet.kind) return true;
   // ref/ref_null are compatible for return purposes.
   if (

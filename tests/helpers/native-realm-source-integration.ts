@@ -219,7 +219,6 @@ export function fillRealmFixture(f: RealmFixture) {
     },
     internFuncType: (type) => tx.internFunctionType(type.params, type.results),
     ensureExnTag: () => tx.physicalIndex(f.kernel.exception),
-    standardizedExceptions: () => false,
     nativeStrings: () => true,
     resolveString: () => ({ kind: "ref", typeIdx: f.strings.strings.layout.anyStrTypeIdx }),
   };

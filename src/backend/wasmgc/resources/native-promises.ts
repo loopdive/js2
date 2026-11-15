@@ -767,9 +767,7 @@ export function fillNativePromiseResources(
     capPromiseFieldIdx: 5,
     guardTypeIdx: t.resolvingPair.typeIndex,
   };
-  const target = { wasi: false, standalone: true };
   const resolution = buildNativePromiseResolveValueBody({
-    target,
     state: {
       promiseFulfillFuncIdx: f.fulfill.handle,
       promiseRejectFuncIdx: f.reject.handle,
@@ -812,7 +810,6 @@ export function fillNativePromiseResources(
   const classifier = buildPromiseThenableClassifier(thenableInventory);
   const lookupThen = buildPromiseThenableLookup(thenableInventory);
   const job = buildPromiseThenableJob({
-    target,
     promiseTypeIdx: t.promise.typeIndex,
     promiseRejectFuncIdx: f.reject.handle,
     capsTypeIdx: t.captures.typeIndex,

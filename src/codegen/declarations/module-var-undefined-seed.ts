@@ -85,7 +85,6 @@ export function emitModuleVarUndefinedSeeds(
   sourceFile: ts.SourceFile,
   initFctx: FunctionContext,
 ): void {
-  if (!(ctx.standalone || ctx.wasi)) return;
   // Context-owned object-record bindings are created only when absent by
   // emitScriptGlobalVarBindings. A private-slot seed would reset a prior
   // Script's live value after all accesses are routed to the shared record.

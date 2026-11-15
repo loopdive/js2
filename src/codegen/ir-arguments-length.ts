@@ -21,7 +21,6 @@ import { allocLocal } from "./context/locals.js";
 import { addFuncType } from "./registry/types.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { ensureArgcGlobal, ensureExtrasArgvGlobal } from "./statements/nested-declarations.js";
-import { noJsHost } from "./js-errors.js";
 
 export const IR_ARGUMENTS_LENGTH_HELPER = "__ir_arguments_length";
 
@@ -30,7 +29,6 @@ export const IR_ARGUMENTS_LENGTH_HELPER = "__ir_arguments_length";
  * Returns the function index, or undefined off the host-free lanes.
  */
 export function ensureIrArgumentsLengthHelper(ctx: CodegenContext): number | undefined {
-  if (!noJsHost(ctx)) return undefined;
   const existing = ctx.funcMap.get(IR_ARGUMENTS_LENGTH_HELPER);
   if (existing !== undefined) return existing;
 
@@ -118,7 +116,6 @@ export const IR_PUBLISH_ARGC_HELPER = "__ir_publish_argc";
  * Returns the function index, or undefined off the host-free lanes.
  */
 export function ensureIrPublishArgcHelper(ctx: CodegenContext): number | undefined {
-  if (!noJsHost(ctx)) return undefined;
   const existing = ctx.funcMap.get(IR_PUBLISH_ARGC_HELPER);
   if (existing !== undefined) return existing;
   const argcGlobalIdx = ensureArgcGlobal(ctx);

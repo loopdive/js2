@@ -63,7 +63,7 @@
  * ## Scope
  * Standalone only. In gc/host mode the `env::__extern_*` imports own the
  * reflective property path, so the extra field would be pure cost; every entry
- * point here is a no-op unless `ctx.standalone`.
+ * point here is a no-op unless the regime flag.
  */
 import type { FieldDef, GlobalDef, Instr, ValType } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
@@ -305,7 +305,6 @@ export function registerFnMetaFamily(ctx: CodegenContext, typeIdx: number, field
  * reflective `.call` recovery resolve it exactly like the base.
  */
 export function ensureFnMetaSubtype(ctx: CodegenContext, baseTypeIdx: number): number | undefined {
-  if (!ctx.standalone) return undefined;
   const cache = (ctx.fnInstanceMetaSubtypeByBase ??= new Map<number, number>());
   const existing = cache.get(baseTypeIdx);
   if (existing !== undefined) return existing;
@@ -525,7 +524,7 @@ export function fnInstanceNameOf(decl: ts.Node): string {
  * observable value, so the fold and the descriptor cannot disagree.
  */
 export function fnInstanceMetaOf(ctx: CodegenContext, decl: ts.Node | undefined): FnInstanceMeta | undefined {
-  if (!ctx.standalone || decl === undefined) return undefined;
+  if (decl === undefined) return undefined;
   if (!ts.isFunctionLike(decl)) return undefined;
   // A method/accessor's own `name` has spec subtleties (`get `/`set ` prefixes,
   // symbol keys) that this slice does not measure; declarations, function

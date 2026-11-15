@@ -68,7 +68,7 @@ export function userErrorCtorCarrierGlobal(ctx: CodegenContext, name: string): n
   // linked-harness prelude: `var Test262Error = __js2wasm_get___h_…();`). No
   // function declaration exists here, so the module global IS the only carrier
   // and the value `===` compares against.
-  if (closureGlobalIdx === undefined && moduleGlobalIdx !== undefined && ctx.standalone) {
+  if (closureGlobalIdx === undefined && moduleGlobalIdx !== undefined) {
     if (ctx.linkedPackageBindings.size > 0) return moduleGlobalIdx;
   }
   return closureGlobalIdx;

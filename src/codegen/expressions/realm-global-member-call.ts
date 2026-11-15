@@ -52,7 +52,6 @@ export function tryEmitRealmGlobalMemberCall(
   fctx: FunctionContext,
   expr: ts.CallExpression,
 ): ValType | undefined {
-  if (!ctx.standalone && !ctx.wasi) return undefined;
   if (expr.questionDotToken !== undefined) return undefined;
 
   const callee = expr.expression;

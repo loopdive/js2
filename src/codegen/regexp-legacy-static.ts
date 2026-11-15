@@ -83,7 +83,7 @@ export function tryCompileStandaloneRegExpLegacyStaticRead(
       keyName = resolveComputedKeyExpression(ctx, keyExpression);
     }
   }
-  if (!ctx.standalone || !isRegExpSubclass(ctx, resolvedClass)) return undefined;
+  if (!isRegExpSubclass(ctx, resolvedClass)) return undefined;
 
   const provenName = keyName ?? (keyExpression && resolveComputedKeyExpression(ctx, keyExpression));
   if (provenName !== undefined) {

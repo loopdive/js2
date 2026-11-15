@@ -10,7 +10,7 @@
 // Standalone never performed that check: `collectClassDeclaration` resolves an
 // identifier or a class expression statically and the host-lane registration
 // `extern.ts::emitRegisterDynamicClassParent` returns immediately under
-// `ctx.standalone`, so `class D extends (() => {}) {}` silently compiled as a
+// the regime flag, so `class D extends (() => {}) {}` silently compiled as a
 // base class.
 //
 // SCOPE, deliberately narrow. This module answers the IsConstructor half only,
@@ -221,7 +221,7 @@ function heritagePrototypeIsProvablyInvalid(ctx: CodegenContext, expr: ts.Expres
   if (ts.isIdentifier(expr) && expr.text === "Proxy" && identifierIsAmbientGlobal(ctx, expr)) return true;
   // (#6767 step 3) Standalone only, like the IsConstructor arms: the host lane
   // registers every other runtime heritage through its own bridge.
-  return ctx.standalone === true && heritageIsProvablyPrototypelessBoundFunction(ctx, expr, 0);
+  return heritageIsProvablyPrototypelessBoundFunction(ctx, expr, 0);
 }
 
 /**
@@ -338,7 +338,6 @@ export function heritageExpressionNeedingRuntimeCheck(
     // `Proxy.prototype` either. The IsConstructor arms stay standalone-only —
     // the host registers every other runtime heritage through its own bridge.
     if (heritagePrototypeIsProvablyInvalid(ctx, expr)) return expr;
-    if (!ctx.standalone) return undefined;
     return heritageIsProvablyNotConstructor(ctx, expr) ? expr : undefined;
   }
   return undefined;
@@ -357,7 +356,7 @@ export function heritageExpressionNeedingRuntimeCheck(
  * side effects are observable, its value is not a constructor by construction.
  * In standalone nothing else evaluates it: the static resolution in
  * `collectClassDeclaration` is syntactic and `emitRegisterDynamicClassParent`
- * returns early under `ctx.standalone`.
+ * returns early under the regime flag.
  */
 export function emitStandaloneHeritageCheck(
   ctx: CodegenContext,
@@ -382,9 +381,7 @@ export function emitStandaloneHeritageCheck(
       : "Class extends value is not a constructor or null";
     // Host lane: the ordinary `__new_TypeError` import, so the thrown value is
     // the realm's own TypeError. Standalone: the in-module constructor.
-    fctx.body.push(
-      ...buildThrowJsErrorInstrs(ctx, "TypeError", message, { forceInModuleCtor: ctx.standalone === true }),
-    );
+    fctx.body.push(...buildThrowJsErrorInstrs(ctx, "TypeError", message, { forceInModuleCtor: true }));
     return { commit: true, value: undefined };
   });
 }

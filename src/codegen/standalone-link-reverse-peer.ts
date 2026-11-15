@@ -74,7 +74,7 @@ import type { ReversePeerReadBinding } from "../runtime/wasmgc/values/object-get
 //
 // Scope: `--target standalone` only, and only between modules of one linked
 // project. The JS-host lane keeps its host mirror and is untouched (every entry
-// point returns before emitting anything unless `ctx.standalone`).
+// point returns before emitting anything unless the regime flag).
 
 import { ensureLateImport, flushLateImportShifts } from "./shared.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
@@ -141,12 +141,12 @@ const reverseOwnedGlobals = new WeakMap<CodegenContext, number>();
 
 /** A module compiled as a linked provider whose consumer is wasm, not JS. */
 function isProvider(ctx: CodegenContext): boolean {
-  return ctx.standalone && ctx.exportsConsumedByWasm === true;
+  return ctx.exportsConsumedByWasm === true;
 }
 
 /** The provider namespace this module consumes, if it is a consumer. */
 function peerNamespace(ctx: CodegenContext): string | undefined {
-  if (!ctx.standalone || isProvider(ctx)) return undefined;
+  if (isProvider(ctx)) return undefined;
   return [...ctx.linkedNamespaces].filter((name) => name.startsWith("js2wasm:npm:")).sort()[0];
 }
 

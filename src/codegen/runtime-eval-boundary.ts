@@ -451,7 +451,7 @@ export function buildRuntimeEvalValueUnwrap(
     },
   ];
   const undefinedValue: Instr[] =
-    ctx.undefinedSingleton === true && (ctx.standalone || ctx.nativeStrings) && ctx.undefinedGlobalIdx !== undefined
+    ctx.undefinedSingleton === true && ctx.undefinedGlobalIdx !== undefined
       ? [{ op: "global.get", index: ctx.undefinedGlobalIdx }, { op: "extern.convert_any" }]
       : [{ op: "ref.null.extern" }];
   const boxNumberIdx = ctx.funcMap.get("__box_number");

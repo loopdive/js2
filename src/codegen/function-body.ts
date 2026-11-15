@@ -31,8 +31,6 @@ import {
   hoistVarDeclarations,
   resolveWasmType,
 } from "./index.js";
-import { ensureExnTag } from "./registry/imports.js";
-import { buildTargetTaggedTry } from "../ir/try-table.js";
 import { getArrTypeIdxFromVec, getOrRegisterVecType } from "./registry/types.js";
 import {
   coerceType,
@@ -591,7 +589,6 @@ export function compileFunctionBody(ctx: CodegenContext, decl: ts.FunctionDeclar
       // the existing shape — its `__extern_get` reflects wasm structs via the
       // host wrapper, so it was never broken.
       const useDynamicObjCarrier =
-        (ctx.standalone || ctx.wasi) &&
         objectPatternStructHint === undefined &&
         ts.isObjectBindingPattern(param.name) &&
         paramType.kind === "externref" &&
@@ -733,103 +730,13 @@ export function compileFunctionBody(ctx: CodegenContext, decl: ts.FunctionDeclar
     const nativeGenerator = nativeGeneratorInfoForDecl(ctx, func.name, decl);
     if (nativeGenerator) {
       compileNativeGeneratorFunction(ctx, fctx, decl, nativeGenerator);
-    } else if (ctx.standalone || ctx.wasi) {
+    } else {
       reportError(
         ctx,
         decl,
         "Codegen error: native generator lowering currently supports only sequential numeric yields in standalone/WASI targets (#680). Recompile with a JS host target for complex generator shapes.",
       );
       fctx.body.push({ op: "ref.null.extern" });
-    } else {
-      // Generator function: eagerly evaluate body, collect yields into a JS array,
-      // then wrap it with __create_generator to return a Generator-like object.
-      // Body is wrapped in try/catch to defer thrown exceptions to first next() (#928).
-      const bufferLocal = allocLocal(fctx, "__gen_buffer", { kind: "externref" });
-      const pendingThrowLocal = allocLocal(fctx, "__gen_pending_throw", { kind: "externref" });
-
-      // Create buffer: __gen_buffer = __gen_create_buffer()
-      const createBufIdx = ctx.funcMap.get("__gen_create_buffer")!;
-      fctx.body.push({ op: "call", funcIdx: createBufIdx });
-      fctx.body.push({ op: "local.set", index: bufferLocal });
-      fctx.body.push({ op: "ref.null.extern" });
-      fctx.body.push({ op: "local.set", index: pendingThrowLocal });
-
-      // Wrap the generator body in a block so that `return` statements inside
-      // the body can `br` out to the generator creation code instead of
-      // using the wasm `return` opcode (which would skip __create_generator).
-      // Use pushBody/popBody so the outer body stays reachable for global-index
-      // fixups when new string-constant imports are added during body compilation.
-      const savedGenBody = pushBody(fctx);
-
-      // Set generator return depth for correct `br` depth in nested contexts
-      fctx.generatorReturnDepth = 0;
-
-      // Push a block label level so return can break out
-      fctx.blockDepth++;
-      for (let i = 0; i < fctx.breakStack.length; i++) fctx.breakStack[i]!++;
-      for (let i = 0; i < fctx.continueStack.length; i++) fctx.continueStack[i]!++;
-
-      if (decl.body) {
-        hoistVarDeclarations(ctx, fctx, decl.body.statements);
-        hoistLetConstWithTdz(ctx, fctx, decl.body.statements);
-        reifyCurrentDirectEvalBindings(ctx, fctx);
-        // (#4456) Names this body hoists are lexically its own; pop them again
-        // so a later same-named declaration elsewhere is not silently aliased
-        // to this one's compiled function.
-        const nameScope = beginNestedFunctionNameScope(ctx);
-        try {
-          hoistFunctionDeclarations(ctx, fctx, decl.body.statements);
-          for (const stmt of decl.body.statements) {
-            compileStatement(ctx, fctx, stmt);
-          }
-        } finally {
-          endNestedFunctionNameScope(ctx, nameScope);
-        }
-      }
-
-      fctx.blockDepth--;
-      for (let i = 0; i < fctx.breakStack.length; i++) fctx.breakStack[i]!--;
-      for (let i = 0; i < fctx.continueStack.length; i++) fctx.continueStack[i]!--;
-      fctx.generatorReturnDepth = undefined;
-
-      // Restore outer body and wrap compiled body in a try/catch(block)
-      const bodyInstrs = fctx.body;
-      popBody(fctx, savedGenBody);
-
-      // Wrap generator body block in try/catch to capture exceptions as pending throw
-      const tagIdx = ensureExnTag(ctx);
-      const getCaughtIdx = ctx.funcMap.get("__get_caught_exception");
-      const catchBody: Instr[] = [{ op: "local.set", index: pendingThrowLocal }];
-      const catchAllBody: Instr[] =
-        getCaughtIdx !== undefined
-          ? [
-              { op: "call", funcIdx: getCaughtIdx },
-              { op: "local.set", index: pendingThrowLocal },
-            ]
-          : [];
-      fctx.body.push(
-        buildTargetTaggedTry(
-          ctx,
-          { kind: "empty" },
-          [{ op: "block", blockType: { kind: "empty" }, body: bodyInstrs }],
-          [{ tagIdx, body: catchBody }],
-          catchAllBody.length > 0 ? catchAllBody : undefined,
-        ),
-      );
-
-      // Return __create_generator or __create_async_generator depending on async flag.
-      // Note: ctx.asyncFunctions excludes async generators (by design), so we check
-      // the AST node directly to detect async function* declarations.
-      const isAsyncGenerator = hasAsyncModifier(decl);
-      const createGenName = isAsyncGenerator ? "__create_async_generator" : "__create_generator";
-      // (#2865) Record legacy-buffer async gens so the .next() dispatch keeps a host miss arm.
-      if (createGenName === "__create_async_generator") ctx.asyncGenLegacyBufferEmitted = true;
-      ctx.legacyGenBufferEmitted = true; // (#3132) sync OR async legacy buffer emitted
-      const createGenIdx = ctx.funcMap.get(createGenName)!;
-      fctx.body.push({ op: "local.get", index: bufferLocal });
-      fctx.body.push({ op: "local.get", index: pendingThrowLocal });
-      fctx.body.push({ op: "call", funcIdx: createGenIdx });
-      // The externref Generator object is now on the stack as the return value
     }
   } else {
     // Compile body statements

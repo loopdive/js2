@@ -17,8 +17,6 @@ export interface ClassMethodHostBridgeDeps {
   miss: unknown;
   canBeWeakKey(value: unknown): boolean;
   isRegisteredInstance(value: unknown): boolean;
-  /** Return the innermost compiled user-class name for a host-backed object. */
-  getClassName?(value: unknown): string | undefined;
   marshalBridgeResult(value: any, callbackState: ClassMethodCallbackState): any;
   /**
    * (#5237) Strip a host mirror back to the raw carrier the compiled bridges
@@ -88,45 +86,6 @@ function unwrapBridgeArgs(
   return out ?? args;
 }
 
-export function invokeResolvedClassMethod(
-  resolver: (obj: any, key: any, exports: ClassMethodExports | undefined) => any,
-  obj: any,
-  key: any,
-  exports: ClassMethodExports | undefined,
-  receiver: any,
-  args: any[],
-  miss: unknown,
-  unwrap: (value: any) => any,
-): any {
-  const method = resolver(obj, key, exports);
-  if (method === miss) return miss;
-  const result = method.apply(receiver, args);
-  return result === obj || result === receiver ? obj : unwrap(result);
-}
-
-export function createResolvedClassMethodInvoker(
-  resolver: (obj: any, key: any, exports: ClassMethodExports | undefined) => any,
-  miss: unknown,
-  unwrap: (value: any) => any,
-): (obj: any, key: any, exports: ClassMethodExports | undefined, receiver: any, args: any[]) => any {
-  return (obj, key, exports, receiver, args) =>
-    invokeResolvedClassMethod(resolver, obj, key, exports, receiver, args, miss, unwrap);
-}
-
-export function resolveSubclassParent(
-  parentName: string,
-  deps: Record<string, any> | undefined,
-  resolveNamespace: (path: string[], name: string, deps?: Record<string, any>) => any,
-): any {
-  let parent = (deps && deps[parentName]) ?? (globalThis as any)[parentName];
-  if (typeof parent !== "function" && parentName.includes(".")) {
-    const parts = parentName.split(".");
-    const name = parts.pop();
-    if (name) parent = resolveNamespace(parts, name, deps);
-  }
-  return parent;
-}
-
 /**
  * Build the host-side resolver for compiled class methods. The resolver keeps
  * method identity stable per instance and reads the compiler-emitted member
@@ -143,92 +102,6 @@ export function createClassMemberResolver(
     if (obj == null || typeof obj !== "object" || !deps.canBeWeakKey(obj)) return deps.miss;
     if (!deps.isRegisteredInstance(obj)) return deps.miss;
     const callbackState: ClassMethodCallbackState = { getExports: () => exports };
-    const className = deps.getClassName?.(obj);
-    if (className !== undefined) {
-      // Externref-backed subclasses cannot use the ordinary ref.test cascade:
-      // the receiver is the real host object, not a WasmGC struct. The codegen
-      // emits a class-qualified bridge for each such method, so resolve it
-      // directly before consulting the historical fnctor/struct surface.
-      // (#5204) A GETTER on an externref-backed class. The generic
-      // `__call_get_<key>` is reached only after `__member_kind_<key>`'s
-      // ref.test cascade classifies the receiver, and a host-object receiver
-      // never passes that test — so `get g()` read `NaN` with no error. The
-      // class-qualified export is unambiguous; check it before the method
-      // candidates, since a key is either an accessor or a method.
-      const classGetFn = exports[`__call_get_${className}_${key}`] as unknown as ((value: any) => any) | undefined;
-      if (typeof classGetFn === "function") {
-        return deps.marshalBridgeResult(classGetFn(obj), callbackState);
-      }
-      const prefix = `__class_call_${className}_${key}_`;
-      const candidates: Array<{ arity: number; fn: Function }> = [];
-      // (#5204) A rest-parameter method publishes ONE `_vararg` bridge taking
-      // the whole argument array, not an arity-suffixed family.
-      let varargFn: ((value: any, args: any[]) => any) | undefined;
-      // `callbackState.getExports()` may be the host-bridge projection whose
-      // generated helpers live on a prototype. Walk the full export view, not
-      // only its enumerable own keys, so class-qualified bridges remain
-      // discoverable after projection.
-      const seenNames = new Set<string>();
-      let exportView: Record<string, any> | null = exports;
-      while (exportView !== null) {
-        for (const name of Object.getOwnPropertyNames(exportView)) {
-          if (seenNames.has(name) || !name.startsWith(prefix)) continue;
-          seenNames.add(name);
-          const suffix = name.slice(prefix.length);
-          const fn = exports[name];
-          if (suffix === "vararg") {
-            if (typeof fn === "function") varargFn = fn as (value: any, args: any[]) => any;
-            continue;
-          }
-          if (!/^\d+$/.test(suffix)) continue;
-          if (typeof fn === "function") candidates.push({ arity: Number(suffix), fn });
-        }
-        exportView = Object.getPrototypeOf(exportView) as Record<string, any> | null;
-      }
-      if (varargFn !== undefined) {
-        const restFn = varargFn;
-        let bridges = classMethodHostBridges.get(obj);
-        if (!bridges) {
-          bridges = new Map();
-          classMethodHostBridges.set(obj, bridges);
-        }
-        let fn = bridges.get(key);
-        if (!fn) {
-          fn = function externrefClassVarargHostBridge(this: any, ...args: any[]) {
-            return deps.marshalBridgeResult(restFn(obj, unwrapBridgeArgs(args, deps, callbackState)), callbackState);
-          };
-          Object.defineProperty(fn, "name", { value: key, configurable: true });
-          bridges.set(key, fn);
-        }
-        return fn;
-      }
-      if (candidates.length > 0) {
-        candidates.sort((a, b) => a.arity - b.arity);
-        let bridges = classMethodHostBridges.get(obj);
-        if (!bridges) {
-          bridges = new Map();
-          classMethodHostBridges.set(obj, bridges);
-        }
-        let fn = bridges.get(key);
-        if (!fn) {
-          fn = function externrefClassMethodHostBridge(this: any, ...hostArgs: any[]) {
-            const args = unwrapBridgeArgs(hostArgs, deps, callbackState);
-            // Prefer the declaration whose arity covers the call, while
-            // retaining the smallest declaration for omitted/default args.
-            const selected =
-              candidates.find((candidate) => candidate.arity >= args.length) ?? candidates[candidates.length - 1]!;
-            const callArgs =
-              args.length < selected.arity
-                ? args.concat(new Array(selected.arity - args.length).fill(undefined))
-                : args.slice(0, selected.arity);
-            return deps.marshalBridgeResult(selected.fn(obj, ...callArgs), callbackState);
-          };
-          Object.defineProperty(fn, "name", { value: key, configurable: true });
-          bridges.set(key, fn);
-        }
-        return fn;
-      }
-    }
     let kindCache = memberKindFnCache.get(exports);
     if (!kindCache) {
       kindCache = new Map();
@@ -304,38 +177,4 @@ export function createClassMemberResolver(
     }
     return fn;
   };
-}
-
-/**
- * (#5358) Does `obj` — a compiled class instance or prototype singleton —
- * carry `key` as a compiled prototype member? Presence only, through the same
- * `__member_kind_<key>` discriminator `createClassMemberResolver` resolves
- * with, so `k in h` and `h[k]` agree; a getter is NOT invoked. A key whose
- * bridge was never published (nothing registered the demand) answers false,
- * which is the pre-#5358 answer.
- */
-export function hasCompiledClassMember(obj: any, key: any, exports: ClassMethodExports | undefined): boolean {
-  if (exports === undefined || typeof key !== "string") return false;
-  const kindFn = exports[`__member_kind_${key}`];
-  if (typeof kindFn !== "function") return false;
-  try {
-    return kindFn(obj) !== 0;
-  } catch {
-    return false;
-  }
-}
-
-/**
- * Host-side `in` fallback for a WasmGC struct after its own-property probe.
- * Keep `%Object.prototype%` and compiled-class prototype membership together:
- * both are `HasProperty` prototype checks, and the export view stays lazy for
- * ordinary object-prototype names just as it was in `src/runtime.ts`.
- */
-export function hasStructPrototypeMember(
-  obj: any,
-  key: any,
-  objectPrototypeKeys: ReadonlySet<string>,
-  getExports: () => ClassMethodExports | undefined,
-): boolean {
-  return typeof key === "string" && (objectPrototypeKeys.has(key) || hasCompiledClassMember(obj, key, getExports()));
 }

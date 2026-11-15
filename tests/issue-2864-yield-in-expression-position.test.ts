@@ -27,10 +27,10 @@
  *
  * Everything here is asserted on the STANDALONE target with
  * `imports === []`, because the host-import leak is the whole point of #2864.
- * The last cases pin the deliberate boundary (a member assignment target stays
- * refused; a yield nested in a yield operand was refused here until #6651 A6
- * lowered it) and the standalone gating (the gc lane keeps its eager host
- * buffer, unchanged).
+ * The last cases pin the former boundaries (a member assignment target and a
+ * yield nested in a yield operand were refused here until the native lowering
+ * claimed them) and the gc lane, which no longer has an eager host buffer
+ * (#7010).
  */
 import { describe, expect, it } from "vitest";
 import { compile } from "../src/index.js";
@@ -168,21 +168,19 @@ export function test(): number {
   // Both of these are REFUSALS on purpose. Widening either one is a real
   // change of semantics, not a cleanup, so it must land with its own argument.
 
-  it("BOUNDARY: a MEMBER assignment target stays on the host path", async () => {
-    // §13.15.2 evaluates the target reference BEFORE the RHS, so deferring
-    // `o.p` into the successor state would move an observable Get across the
-    // resume boundary.
-    const r = await compile(
-      `const o: { p: number } = { p: 0 };
+  it("BOUNDARY: a MEMBER assignment target whose RHS suspends lowers host-free", async () => {
+    // §13.15.2 evaluates the target reference BEFORE the RHS. This row pinned
+    // the scoped #680 refusal; (#6979 S7-f) the native lowering now claims the
+    // shape, so it pins the answer (the reference base is a const binding, so
+    // its evaluation point is unobservable here).
+    expect(
+      await runStandalone(`const o: { p: number } = { p: 0 };
 function* g(): Generator<number, void, number> {
   o.p = yield 1;
   yield o.p;
 }
-${DRIVE}`,
-      { fileName: "test.ts", target: "standalone" },
-    );
-    expect(r.success).toBe(false);
-    expect(r.errors?.[0]?.message ?? "").toContain("#680");
+${DRIVE}`),
+    ).toBe(7);
   });
 
   // (#6651 A6) This case pinned the REFUSAL of a yield nested in a yield
@@ -215,7 +213,9 @@ ${DRIVE}`,
     expect(r.errors?.[0]?.message ?? "").toContain("#680");
   });
 
-  it("GATING: the gc lane is untouched — a newly-admitted shape keeps its eager host buffer", async () => {
+  // (#6979 S7-f, #7010) The gc lane's eager host buffer is retired: the same
+  // shape lowers natively there too, with no `__gen_*` import.
+  it("GATING: the gc lane lowers the newly-admitted shape without a __gen_* buffer", async () => {
     const r = await compile(
       `function* g(): Generator<number, void, number> {
   let a = 0;
@@ -226,6 +226,6 @@ ${DRIVE}`,
       { fileName: "test.ts", target: "gc" },
     );
     expect(r.success).toBe(true);
-    expect(r.imports.map((i) => i.name)).toContain("__gen_create_buffer");
+    expect(r.imports.map((i) => i.name).filter((n) => n.startsWith("__gen_"))).toEqual([]);
   });
 });

@@ -250,7 +250,6 @@ function emitProxyReceiverArms(ctx: CodegenContext, fctx: FunctionContext): Prox
 
 /** `get Error.prototype.stack` (ABI: local 0 = self, local 1 = `this`). */
 export function emitErrorStackGetterBody(ctx: CodegenContext, fctx: FunctionContext): ValType | null {
-  if (!ctx.standalone) return null;
   const errTypeIdx = ctx.errorStructTypeIdx;
   if (errTypeIdx < 0) return null;
 
@@ -284,7 +283,6 @@ export function emitErrorStackGetterBody(ctx: CodegenContext, fctx: FunctionCont
  * local 2 = the value).
  */
 export function emitErrorStackSetterBody(ctx: CodegenContext, fctx: FunctionContext, brand: number): ValType | null {
-  if (!ctx.standalone) return null;
   const gopdIdx = ctx.funcMap.get("__getOwnPropertyDescriptor");
   const defineValueIdx = ctx.funcMap.get("__defineProperty_value");
   const strictSetIdx = ctx.funcMap.get("__extern_set_strict");

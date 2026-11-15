@@ -56,7 +56,7 @@ function cellExportName(name: string): string {
 
 /** The provider namespace a standalone consumer links, if any. */
 function peerNamespace(ctx: CodegenContext): string | undefined {
-  if (!ctx.standalone || ctx.exportsConsumedByWasm === true) return undefined;
+  if (ctx.exportsConsumedByWasm === true) return undefined;
   return [...ctx.linkedNamespaces].filter((name) => name.startsWith("js2wasm:npm:")).sort()[0];
 }
 
@@ -85,7 +85,7 @@ export function importStandaloneLinkErrorCtorCells(ctx: CodegenContext): void {
  * unchanged when no consumer imports them.
  */
 export function exportStandaloneLinkErrorCtorCells(ctx: CodegenContext): void {
-  if (!ctx.standalone || ctx.exportsConsumedByWasm !== true) return;
+  if (ctx.exportsConsumedByWasm !== true) return;
   for (const name of WASI_ERROR_NAMES) {
     const exportName = cellExportName(name);
     if (ctx.mod.exports.some((entry) => entry.name === exportName)) continue;

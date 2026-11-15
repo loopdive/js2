@@ -57,7 +57,6 @@ function isStaticMember(member: ts.ClassElement): boolean {
  * directly and which declares no constructor and no instance member.
  */
 export function newSiteBuiltinParent(ctx: CodegenContext, className: string): string | undefined {
-  if (!ctx.standalone) return undefined;
   if (!ctx.classExternrefBackedSet.has(className)) return undefined;
   const parent = ctx.classBuiltinParentMap.get(className);
   if (parent === undefined || !NEW_SITE_BUILTIN_PARENTS.has(parent)) return undefined;

@@ -77,17 +77,18 @@ describe("#5199 native generator protocol bridge", () => {
     expect((instance.exports.test as () => number)()).toBe(1);
   });
 
-  it("keeps a deliberately legacy rest-parameter generator producer runnable", async () => {
-    // Rest parameters are intentionally outside the native generator candidate
-    // gate. This positive control proves the generator protocol work does not
-    // accidentally erase the existing host-buffer producer path.
+  it("keeps a rest-parameter generator producer runnable", async () => {
+    // Rest parameters were outside the native generator candidate gate and this
+    // control pinned the host-buffer producer path. (#6979 S7-f, #7010) That
+    // path is retired: the producer must run without any `__gen_*` /
+    // `__create_generator` import.
     const result = await compile(
       "export function test():number{function* legacy(...values:number[]){yield values[0];return 9;}const iterator:any=legacy(7);const first:any=iterator.next();const done:any=iterator.next();return first.value===7&&!first.done&&done.done&&done.value===9?1:0;}",
       { fileName: "issue-5199-legacy-producer.ts", target: "gc", skipSemanticDiagnostics: true },
     );
     expect(result.success, JSON.stringify(result.errors)).toBe(true);
     expect(WebAssembly.validate(result.binary!)).toBe(true);
-    expect(result.imports.some((entry) => entry.name === "__create_generator")).toBe(true);
+    expect(result.imports.filter((entry) => /^__gen_|^__create_(async_)?generator$/.test(entry.name))).toEqual([]);
     const instance = await instantiateWithRuntime(result);
     expect((instance.exports.test as () => number)()).toBe(1);
   });

@@ -104,7 +104,7 @@ function tryCompileWithScopedVarObjectPattern(
   decl: ts.VariableDeclaration,
   pattern: ts.ObjectBindingPattern,
 ): boolean {
-  if (!(ctx.standalone || ctx.wasi) || !decl.initializer) return false;
+  if (!decl.initializer) return false;
   const bound = pattern.elements.some(
     (el) => ts.isIdentifier(el.name) && resolveWithBinding(fctx, el.name.text)?.kind === "dynamic",
   );

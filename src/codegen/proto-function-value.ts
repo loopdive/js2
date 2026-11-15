@@ -93,7 +93,7 @@
  * reserved at `ensureObjectRuntime` time (so `object-runtime-prototype.ts` can
  * bake a stable `call <idx>`) with `unreachable` stubs, and filled at FINALIZE,
  * once every closure root is registered. Everything is gated on
- * `ctx.standalone || ctx.wasi`; in gc/host mode nothing is reserved, every
+ * the native regime; in gc/host mode nothing is reserved, every
  * consult resolves `funcMap.get(…) === undefined`, and the emitted bytes are
  * identical to the pre-#4637 ones by construction.
  */

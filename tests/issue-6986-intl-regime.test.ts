@@ -123,7 +123,10 @@ describe("#6986 `intl` host accelerator on the native regime", () => {
         classification: "host-accelerator",
         family: "intl",
       });
-      expect(classifyHostImport(entry, "javascript").classification).not.toBe("legacy-semantic");
+      // Unselected, an Intl import is never a host accelerator: the extern
+      // classes stay declared capabilities and the `__intl_*` builtins are
+      // retired imports (the compile refuses Intl without the accelerator).
+      expect(["platform-capability", "unknown"]).toContain(classifyHostImport(entry, "javascript").classification);
     }
   });
 });

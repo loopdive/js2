@@ -108,7 +108,7 @@
  * A module whose source cannot reach the runtime-eval lane at all never
  * reserves the driver and never emits the retry, so its output is
  * byte-identical (gc/host included — every entry point is gated on
- * `ctx.standalone`). When the driver IS reserved but the module minted no
+ * the regime flag). When the driver IS reserved but the module minted no
  * carrier, or an object-model helper is missing, the fill emits
  * `ref.null.extern` — the exact pre-#4438 outcome for that site, never a trap.
  */
@@ -214,7 +214,6 @@ function nodeCanSeeRuntimeEvalCallable(site: ts.Node): boolean {
  * the former otherwise enters the native-prototype value-read machinery.
  */
 export function ensureFunctionConstructorPrototypeInheritance(ctx: CodegenContext): void {
-  if (!ctx.standalone) return;
   ensureObjectRuntime(ctx);
   const functionBrand = ensureFunctionNativeProtoGlue(ctx);
   if (functionBrand !== undefined) ensureNativeProtoCompanionSeeder(ctx, functionBrand);
@@ -234,7 +233,6 @@ export function ensureFunctionConstructorPrototypeInheritance(ctx: CodegenContex
  * the shared Function.prototype companion and emits no seed instructions.
  */
 export function emitRuntimeEvalFunctionPrototypeSeed(ctx: CodegenContext, fctx?: FunctionContext): void {
-  if (!ctx.standalone) return;
   if (fctx === undefined) {
     // The constant-AOT `Function()` lane mints a local closure and therefore
     // needs the compiler's native Function.prototype companion. A callable
@@ -331,7 +329,6 @@ export function emitRuntimeEvalConstructOnNull(
   calleeAnyLocal: number,
   argLocals: readonly number[],
 ): void {
-  if (!ctx.standalone) return;
   if (!nodeCanSeeRuntimeEvalCallable(site)) return;
   ensureObjectRuntime(ctx);
   ensureObjVecBuilders(ctx);
@@ -541,7 +538,7 @@ export function emitOrdinaryFunctionConstructOnNull(
   calleeAnyLocal: number,
   argLocals: readonly number[],
 ): void {
-  if (!ctx.standalone || argLocals.length > MAX_DYNAMIC_CONSTRUCT_ARITY || !ts.isIdentifier(calleeExpr)) return;
+  if (argLocals.length > MAX_DYNAMIC_CONSTRUCT_ARITY || !ts.isIdentifier(calleeExpr)) return;
   const fact = ctx.oracle.typeFactOf(calleeExpr);
   if (fact.kind !== "builtin" || fact.name !== "Function") return;
   if (argLocals.length > MAX_NATIVE_CONSTRUCT_ARITY) {

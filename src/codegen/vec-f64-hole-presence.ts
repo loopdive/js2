@@ -135,7 +135,7 @@ export function fillF64HoleHasIdxArms(ctx: CodegenContext): void {
   // FINALIZE-time, so it can use the NARROWER flag: a module whose elisions all
   // sit in `any[]` literals sets `usesArrayHoles` but never mints an f64
   // marker, and there is nothing for these arms to find.
-  if (!ctx.standalone || ctx.f64HoleMarkerEmitted !== true) return;
+  if (ctx.f64HoleMarkerEmitted !== true) return;
   const funcIdx = ctx.funcMap.get("__extern_has_idx");
   if (funcIdx === undefined) return;
   const fn = definedFuncAt(ctx, funcIdx);

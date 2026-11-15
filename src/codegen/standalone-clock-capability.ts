@@ -53,7 +53,7 @@ export function standaloneClockCapabilityImport(ctx: CodegenContext): Import | u
 
 /** Emit the exact certified standalone clock call when this module demanded it. */
 export function emitCertifiedStandaloneClockSnapshot(ctx: CodegenContext, fctx: FunctionContext): boolean {
-  if (ctx.standalone !== true || ctx.requiresStandaloneClockCapability !== true) return false;
+  if (ctx.requiresStandaloneClockCapability !== true) return false;
   if (!standaloneClockCapabilityImport(ctx)) {
     throw new Error("standalone clock capability was certified without the __date_now provider");
   }

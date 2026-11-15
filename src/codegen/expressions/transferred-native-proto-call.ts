@@ -78,7 +78,6 @@ export function tryEmitTransferredNativeProtoMethodCall(
   expr: ts.CallExpression,
   propAccess: ts.PropertyAccessExpression,
 ): ValType | undefined {
-  if (!ctx.standalone) return undefined;
   if (ts.isPrivateIdentifier(propAccess.name)) return undefined;
   const recvExpr = unwrapTransparent(propAccess.expression);
   if (!ts.isIdentifier(recvExpr)) return undefined;

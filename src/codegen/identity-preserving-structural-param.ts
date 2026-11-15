@@ -13,19 +13,6 @@ const identityPreservingParams = new WeakMap<
   WeakMap<ts.ParameterDeclaration, IdentityPreservingStructuralCarrier>
 >();
 
-export function markIdentityPreservingStructuralParam(
-  ctx: CodegenContext,
-  parameter: ts.ParameterDeclaration,
-  carrier: IdentityPreservingStructuralCarrier = { open: true },
-): void {
-  let parameters = identityPreservingParams.get(ctx);
-  if (!parameters) {
-    parameters = new WeakMap();
-    identityPreservingParams.set(ctx, parameters);
-  }
-  parameters.set(parameter, carrier);
-}
-
 /**
  * Whether this expression reads the exact parameter whose ABI was opened to
  * preserve an asserted structural object's JavaScript identity.

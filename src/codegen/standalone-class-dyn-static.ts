@@ -125,7 +125,6 @@ function declaresInstallableStatic(ctx: CodegenContext, className: string): bool
  * reaches it by both routes ends up with the ONE singleton.
  */
 export function mintStandaloneClassStaticBuilders(ctx: CodegenContext): void {
-  if (!ctx.standalone) return;
   // (#6767) The reflective views need the same position (before the arity
   // dispatchers) and are not gated on the runtime-key demand below.
   mintClassStaticReflectiveViews(ctx);

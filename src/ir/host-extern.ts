@@ -447,8 +447,8 @@ function isIrPlatformExternClass(className: string): boolean {
  * capabilities the environment still provides, and the runtime's platform-arg
  * marshal (#6708) converts the native-string and closure carriers passed to
  * them. Returns the per-class admission predicate, or `undefined` off the lane
- * (host-assisted keeps its own `jsHostExterns` surface; standalone and WASI
- * have no host externs to call). `console` and ECMAScript builtins are never
+ * (standalone and WASI have no host externs to call). `console` and
+ * ECMAScript builtins are never
  * admitted: they keep their native / host-free-sink arms.
  */
 export function irPlatformExternClassPredicate(
@@ -481,8 +481,8 @@ export interface IrPlatformExternLaneFacts {
  * predicate and its registered global names. `undefined` off the lane.
  *
  * Two consumers key on it: the multi-source imported-call surface (a source
- * that touches the DOM gets the certified imported-call plans its host-assisted
- * twin has) and the callable-component route (a host-free mechanism that must
+ * that touches the DOM gets certified imported-call plans) and the
+ * callable-component route (a host-free mechanism that must
  * not attempt — and so withdraw — a component containing such an owner).
  * Sources that touch no platform global keep their existing routes untouched.
  */

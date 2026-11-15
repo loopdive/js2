@@ -80,7 +80,6 @@ import { withSpeculativeCompile } from "./context/speculative.js"; // (#1919) tr
  * actually consumes a wasm provider — see the scope note above.
  */
 export function isLinkedDynamicParentHeritage(ctx: CodegenContext, baseExpr: ts.Expression): boolean {
-  if (!ctx.standalone && !ctx.wasi) return false;
   if (!ts.isPropertyAccessExpression(baseExpr) && !ts.isElementAccessExpression(baseExpr)) return false;
   return isStandaloneLinkConsumer(ctx);
 }
@@ -112,7 +111,6 @@ export function isLinkedDynamicParentIdentifier(
   decl: ts.ClassDeclaration | ts.ClassExpression,
   baseExpr: ts.Identifier,
 ): boolean {
-  if (!ctx.standalone && !ctx.wasi) return false;
   if (!isStandaloneLinkConsumer(ctx)) return false;
   // The heritage value must be CAPTURABLE, and the one place it is in scope is
   // this declaration's own statement. `statements.ts`'s nested-class arm is the

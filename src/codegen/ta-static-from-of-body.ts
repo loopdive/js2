@@ -74,7 +74,7 @@
 import type { Instr, ValType, WasmFunction } from "../ir/types.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { allocLocal } from "./context/locals.js";
-import { buildThrowJsErrorInstrs, noJsHost } from "./js-errors.js";
+import { buildThrowJsErrorInstrs } from "./js-errors.js";
 import { ensureObjectRuntime, ensureObjVecBuilders, reserveApplyClosure } from "./object-runtime.js";
 import {
   buildInt8ArrayCarrierMatch,
@@ -464,7 +464,6 @@ function emitFromSourceToCarrier(
  * pre-E4 `refusalBodyFallback` in charge rather than emitting half a step.
  */
 export function emitTaStaticFromOfBody(ctx: CodegenContext, fctx: FunctionContext, member: string): ValType | null {
-  if (!noJsHost(ctx)) return null;
   if (!isTaStaticFromOfMember(member)) return null;
   // Register the carrier arms' natives FIRST, before any index below is
   // resolved or any instruction pushed; their later calls are cache hits.
@@ -630,7 +629,6 @@ export function emitTaStaticFromOfBody(ctx: CodegenContext, fctx: FunctionContex
  * from `mapfn`, so writing it at the end is unobservable.
  */
 export function ensureTaFromArrayLikeMappedHelper(ctx: CodegenContext): number | undefined {
-  if (!noJsHost(ctx)) return undefined;
   const existing = ctx.funcMap.get("__ta_from_arraylike_mapped");
   if (existing !== undefined) return existing;
   // Every dependency is registered BEFORE the helper mints its index; the hook
@@ -683,7 +681,7 @@ export function emitTaStaticFromOfInheritedValue(
   intrinsicBrand: number | undefined,
   member: string,
 ): ValType | undefined {
-  if (!ctx.standalone || intrinsicBrand === undefined || !isTaStaticFromOfMember(member)) return undefined;
+  if (intrinsicBrand === undefined || !isTaStaticFromOfMember(member)) return undefined;
   const closure = ensureStandaloneNativeMethodClosure(ctx, intrinsicBrand, member, "method", {
     refusalBodyFallback: true,
   });

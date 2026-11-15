@@ -86,7 +86,6 @@ export function ensureWrapperProtoDynamicMember(
   brandName: WrapperBrandName,
   member: string,
 ): void {
-  if (!ctx.standalone) return;
   const brand = ensureWrapperGlue(ctx, brandName);
   if (brand === undefined) return;
   const glue = getNativeProtoBuiltinGlue(ctx, brand);

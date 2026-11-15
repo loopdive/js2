@@ -99,7 +99,6 @@ function scratchFctx(name: string, params: ValType[]): FunctionContext {
 export function ensureIterRecPrototypeHelper(ctx: CodegenContext): number | undefined {
   const existing = ctx.funcMap.get("__iter_rec_proto");
   if (existing !== undefined) return existing;
-  if (!(ctx.standalone || ctx.wasi)) return undefined;
   // Bootstrap the record runtime rather than declining when it is not up yet.
   // Declining here is ORDER-DEPENDENT, and the order is the one test262 uses:
   // `emitBuiltinGetPrototypeOfFallback` deliberately calls this BEFORE compiling
@@ -183,7 +182,6 @@ export function emitIteratorFamilyNextBody(
   family: number,
   label: string,
 ): ValType | null {
-  if (!(ctx.standalone || ctx.wasi)) return null;
   const recTypeIdx = ctx.structMap.get("__IterRec");
   const stepIdx = ctx.funcMap.get("__iter_next_result");
   if (recTypeIdx === undefined || stepIdx === undefined) return null;
@@ -294,7 +292,6 @@ export function pushIteratorFamilyNextValue(
  * No-op unless `__iter_rec_proto` was already demanded by this module.
  */
 export function unshiftExternGetIterRecArm(ctx: CodegenContext): void {
-  if (!(ctx.standalone || ctx.wasi)) return;
   const protoIdx = ctx.funcMap.get("__iter_rec_proto");
   const getIdx = ctx.funcMap.get("__extern_get");
   const recTypeIdx = ctx.structMap.get("__IterRec");

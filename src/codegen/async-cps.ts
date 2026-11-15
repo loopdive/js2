@@ -10,7 +10,6 @@ import {
   emitSpilledCallPreSuspend,
   emitSpilledCallResume,
   planSpilledCallAwait,
-  spilledCallLaneSupported,
   type SpilledCallPlan,
 } from "./async-spilled-call.js";
 import type { Instr, ValType } from "../ir/types.js";
@@ -209,20 +208,6 @@ export function asyncBodyHasConditionalSuspension(fn: ts.FunctionLikeDeclaration
 // them without an import cycle (this file imports codegen/index.ts, which
 // imports ir/select.ts). Re-exported here for existing callers.
 export { awaitIsStaticallyResolved, staticPromiseResolveSettledExpr } from "../ir/async-static.js";
-
-/**
- * (#5372) The JS-host async lane (host settle backend). Expression-level await
- * hoisting (`async-await-hoist.ts`) is admitted ONLY here: the wasi / standalone
- * CFG machine mistypes a re-declared own-local's spill for the newly admitted
- * shapes (measured on `--target standalone`: `__async_resume_fr10` failed
- * validation with `struct.set` field `(ref null $Promise)` vs a `.then()`
- * closure-typed local), so those lanes keep their pre-#5372 planner
- * byte-identically. Every planner caller derives the flag from this ONE
- * predicate so the activation gate, the spill layout and the resume CFG agree.
- */
-export function isHostAsyncLane(ctx: CodegenContext): boolean {
-  return ctx.wasi !== true && ctx.standalone !== true;
-}
 
 /** Promise static combinators whose call result is already a real Promise. */
 const PROMISE_COMBINATOR_NAMES = new Set(["all", "race", "any", "allSettled"]);
@@ -1456,7 +1441,7 @@ export function planAsyncCfg(
     // (#6504) Derived from `ctx` at every site rather than plumbed through
     // options, so the claim predicate, the spill computation and the plan
     // builder cannot disagree about which shapes exist.
-    allowSpilledCall: spilledCallLaneSupported(ctx),
+    allowSpilledCall: false,
   });
   if (linear !== null) return linearPlanToCfg(linear);
   if (opts.allowLoops) {
@@ -1475,7 +1460,7 @@ export function planAsyncCfg(
   }
   // (#2906 3c) Bounded try/catch-around-await — catch region as states.
   if (opts.allowTryCatch) {
-    const tryCatchCfg = planTryCatchCfg(fn, plan, isHostAsyncLane(ctx), ctx.checker);
+    const tryCatchCfg = planTryCatchCfg(fn, plan, false, ctx.checker);
     if (tryCatchCfg !== null) return tryCatchCfg;
   }
   return null;

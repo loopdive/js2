@@ -157,7 +157,7 @@ export function ensureStructAccessorGlobal(
  * C5 — OBJLIT. The object-literal `{ get x() {} }` accessor compile-site is
  *   literals.ts:~1409/1497 (`${typeName}_get/set_${propName}` + classAccessorSet.add).
  *   Mirror C2 there (lift via buildAccessorClosure → global.set under the flag +
- *   ctx.standalone). NOTE: the objlit-standalone S5c test currently surfaces a
+ *   the regime flag). NOTE: the objlit-standalone S5c test currently surfaces a
  *   separate `u32 out of range: -1` emit error in this path — diagnose as part of
  *   C5, it is pre-existing and unrelated to the closure rework.
  */
@@ -183,7 +183,6 @@ export function ensureStructAccessorGlobal(
  * false outside standalone/wasi, keeping those lanes byte-identical.
  */
 export function isDefinePropertyReceiverLiteral(ctx: CodegenContext, expr: ts.ObjectLiteralExpression): boolean {
-  if (!ctx.standalone && !ctx.wasi) return false;
   let node: ts.Node = expr;
   while (
     node.parent &&

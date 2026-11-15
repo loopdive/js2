@@ -60,28 +60,13 @@ export function resolveDynamicCodePolicy(
   }
 }
 
-// Errors raised while BUILDING the child module for a dynamic-code string —
-// parse, js2wasm compile, Wasm compile, import wiring, instantiation. Tracked
-// by identity rather than by class so the error the caller observes keeps its
-// own class (`SyntaxError` for a bad source).
-const buildFailures = new WeakSet<object>();
-
 /**
- * Mark `error` as a build-stage failure: nothing of the dynamic-code string has
- * run yet, so `hostEval` may hand the string to the host instead. A primitive
- * thrown value is wrapped so it can carry the mark.
+ * Normalize an error raised while BUILDING the child module for a dynamic-code
+ * string (parse, js2wasm compile, Wasm compile, import wiring, instantiation):
+ * a primitive thrown value is wrapped in a `SyntaxError`; an object keeps its
+ * own identity and class. (#6979 S7-d) The build/run split this used to record
+ * served only the host `__extern_eval` provider, which no WasmGC profile emits.
  */
 export function markDynamicCodeBuildFailure(error: unknown): object {
-  const marked = typeof error === "object" && error !== null ? error : new SyntaxError(String(error));
-  buildFailures.add(marked);
-  return marked;
-}
-
-/**
- * True only for a {@link markDynamicCodeBuildFailure} error. Anything else came
- * from RUNNING the string's code, and re-running the string in the host would
- * execute its side effects a second time — so it must propagate unchanged.
- */
-export function isDynamicCodeBuildFailure(error: unknown): boolean {
-  return typeof error === "object" && error !== null && buildFailures.has(error);
+  return typeof error === "object" && error !== null ? error : new SyntaxError(String(error));
 }

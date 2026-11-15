@@ -850,14 +850,14 @@ function collectExternDeclarationsImpl(
       // shim's own guard throws the honest "unsupported by this host" error
       // (correct semantics — standalone has no structuredClone). Host mode still
       // registers the import so a real host can satisfy it.
-      if ((ctx.wasi || ctx.standalone) && name === "structuredClone") continue;
-      // (#7079) `atob`/`btoa` have pure-Wasm lowerings on the host-free targets
-      // (base64-native.ts, emitted by the import-collector finalize): never
-      // retain an unsatisfiable `env.atob`/`env.btoa`.
-      if ((ctx.wasi || ctx.standalone) && (name === "atob" || name === "btoa")) continue;
+      if (name === "structuredClone") continue;
+      // (#7079) `atob`/`btoa` have pure-Wasm lowerings (base64-native.ts,
+      // emitted by the import-collector finalize): never retain an
+      // unsatisfiable `env.atob`/`env.btoa`.
+      if (name === "atob" || name === "btoa") continue;
       // (#6664) standalone `queueMicrotask(cb)` enqueues on the module's own
       // microtask queue (standalone-queue-microtask.ts), never on the host.
-      if (ctx.standalone && name === "queueMicrotask") continue;
+      if (name === "queueMicrotask") continue;
       if (isStandaloneUnavailableTimerGlobal(ctx, name)) continue; // #6675: no event loop, no env.<timer>
       if (skipStandalonePackageStub(ctx, sourceFile, stmt.name)) continue; // #6843: not a host global
       if (!ctx.funcMap.has(name)) {
@@ -959,9 +959,8 @@ function collectExternDeclarationsImpl(
             // late imports used by the Promise-specific handler. (#966)
             "Promise",
           ]);
-          // (#7011) The native regime owns SharedArrayBuffer (buffers/shared-array-buffer.ts);
-          // only the opt-in host-assisted profile keeps the host extern class.
-          const nativeSab = varName === "SharedArrayBuffer" && (ctx.wasi || ctx.standalone);
+          // (#7011) The native regime owns SharedArrayBuffer (buffers/shared-array-buffer.ts).
+          const nativeSab = varName === "SharedArrayBuffer";
           if (!BUILTIN_SKIP.has(varName) && !nativeSab) {
             const hasCtor = libIndex
               ? libConstructSignatures(typeRefName(decl.type.typeName), libIndex).length > 0
@@ -1283,52 +1282,9 @@ function collectInterfaceMembers(
     if (ts.isPropertySignature(member) && member.name && ts.isIdentifier(member.name)) {
       const propName = member.name.text;
       if (info.properties.has(propName)) continue;
-      let wasmType = libIndex
+      const wasmType = libIndex
         ? mapLibTypeNodeToWasm(member.type, libIndex, typeParamScopeOf(iface))
         : mapTsTypeToWasm(ctx.checker.getTypeAtLocation(member), ctx.checker);
-      // (#2671) `RegExp.lastIndex` is a value-preserving data slot: §22.2.7.2
-      // RegExpBuiltinExec reads it via `ToLength(? Get(R, "lastIndex"))` at exec
-      // time — the spec stores whatever was assigned verbatim and coerces only
-      // inside exec (writing back only when the regex is global/sticky). Typing
-      // the field `number` makes the host import eagerly ToNumber the assigned
-      // value: an opaque WasmGC struct (`r.lastIndex = {valueOf(){…}}`) is
-      // unconvertible to V8 ("Cannot convert object to primitive value"), so the
-      // subsequent `exec` throws instead of firing the object's `valueOf` once.
-      // Carry the slot as `externref` in host mode so the raw value round-trips
-      // through the native RegExp; numeric uses coerce at the use site, and the
-      // exec-time ToLength is performed by native code. Standalone / WASI keep
-      // their native struct-field RegExp path (the `RegExp_*_lastIndex` extern
-      // import is never emitted there), so only true host mode is retyped.
-      if (info.className === "RegExp" && propName === "lastIndex" && !ctx.standalone && !ctx.wasi) {
-        wasmType = { kind: "externref" };
-      }
-      // (#3051 Slice 2) `RegExp.prototype.global` / `.unicode` are spec-readonly
-      // booleans, but test262's @@replace/@@split coercion tests redefine them as
-      // writable data properties (`Object.defineProperty(r,'global',{writable:true})`)
-      // and then assign arbitrary values (`r.global = Symbol.replace`, `= {}`,
-      // `= NaN`, …). §22.2.6.11/§22.2.6.14 read the flag back through
-      // `ToBoolean(? Get(rx, "global"|"unicode"))` — i.e. any value coerces at
-      // read time, it is NOT constrained to a boolean on write. Typing the extern
-      // property `boolean` makes the generated `RegExp_set_global(externref, i32)`
-      // setter eagerly ToNumber the assigned value: a Symbol RHS traps ("Cannot
-      // convert a Symbol value to a number") and an object RHS traps ("Cannot
-      // convert object to primitive value") at the wasm boundary, before the value
-      // is ever stored. Carry the slot as `externref` in host mode (mirroring the
-      // #2671 `lastIndex` treatment) so the raw value round-trips onto the native
-      // RegExp and the native @@replace/@@split protocol performs the spec
-      // ToBoolean itself; explicit `r.global` reads coerce externref→boolean at the
-      // use site (a boxed `false` unboxes correctly — see the Slice 2 controls).
-      // Standalone / WASI keep their native struct-field RegExp path (the
-      // `RegExp_*_global` extern import is never emitted there), so only host mode
-      // is retyped.
-      if (
-        info.className === "RegExp" &&
-        (propName === "global" || propName === "unicode") &&
-        !ctx.standalone &&
-        !ctx.wasi
-      ) {
-        wasmType = { kind: "externref" };
-      }
       const isReadonly = member.modifiers?.some((m) => m.kind === ts.SyntaxKind.ReadonlyKeyword) ?? false;
       info.properties.set(propName, { type: wasmType, readonly: isReadonly });
     }
@@ -1418,47 +1374,14 @@ function collectMixinMembersLib(
  * declarations by depend only on the user files, yet the multi-source caller
  * runs once per (lib file x user source): memoized on the `allUserFiles` array.
  */
-type UserProgramNames = Record<"referencedNames" | "valueRefNames" | "userModuleBindings", ReadonlySet<string>>;
+type UserProgramNames = Record<"referencedNames" | "userModuleBindings", ReadonlySet<string>>;
 const userProgramNamesCache = new WeakMap<readonly ts.SourceFile[], UserProgramNames>();
 
 function userProgramNames(bindingSourceFiles: readonly ts.SourceFile[]): UserProgramNames {
   // First collect identifiers referenced in user source
   const referencedNames = new Set<string>();
-  // #2520 — also track names used as a VALUE (vs. a pure call/new callee or a
-  // type-position reference). Only a value use actually needs the reified host
-  // constructor object (`global_<Ctor>`); `new Uint8Array(4)` does not, so it
-  // must not register it.
-  //
-  // A property-access RECEIVER (`Date.parse`, `Date.hasOwnProperty(...)`,
-  // `Uint8Array.from(...)`) IS a value use: the static methods/props the
-  // compiler intercepts (`Date.now`, `Array.isArray`, `Uint8Array.from`, …) are
-  // resolved BEFORE identifier resolution at the property-access site, so for
-  // those the registered global is simply an unused import the fast path
-  // bypasses — harmless. But for any NON-intercepted static prop (`Date.parse`,
-  // `Date.prototype`, `Date.hasOwnProperty`, `X.length`, `X.constructor`) the
-  // bare receiver `X` must resolve to the host constructor object, which needs
-  // `global_X`. Excluding the receiver dropped that global and broke e.g.
-  // `Date.hasOwnProperty("prototype")` (→ null receiver, assert fails). So a
-  // receiver counts as a value use; only the call/new callee, the property NAME
-  // (`obj.Date`), and type positions are excluded.
-  const valueRefNames = new Set<string>();
-  const isBareValueUse = (id: ts.Identifier): boolean => {
-    const p = id.parent;
-    if ((ts.isNewExpression(p) || ts.isCallExpression(p)) && p.expression === id) return false;
-    // Property NAME (`obj.Date`) is a key, not a value reference; the RECEIVER
-    // (`Date.member`) is a value use and must NOT be excluded.
-    if (ts.isPropertyAccessExpression(p) && p.name === id) return false;
-    // Type-annotation position (`buf: Uint8Array`, `Uint8Array | ArrayBuffer`,
-    // `typeof X`) is not a value use of the constructor.
-    if (ts.isTypeReferenceNode(p) && p.typeName === id) return false;
-    if (ts.isTypeQueryNode(p) && p.exprName === id) return false;
-    return true;
-  };
   const collectRefs = (node: ts.Node): void => {
-    if (ts.isIdentifier(node)) {
-      referencedNames.add(node.text);
-      if (isBareValueUse(node)) valueRefNames.add(node.text);
-    }
+    if (ts.isIdentifier(node)) referencedNames.add(node.text);
     forEachChild(node, collectRefs);
   };
   for (const sourceFile of bindingSourceFiles) {
@@ -1507,7 +1430,7 @@ function userProgramNames(bindingSourceFiles: readonly ts.SourceFile[]): UserPro
     }
   }
 
-  return { referencedNames, valueRefNames, userModuleBindings };
+  return { referencedNames, userModuleBindings };
 }
 
 export function collectDeclaredGlobals(
@@ -1520,7 +1443,7 @@ export function collectDeclaredGlobals(
   const names =
     (allUserFiles && userProgramNamesCache.get(allUserFiles)) || userProgramNames(allUserFiles ?? [userFile]);
   if (allUserFiles) userProgramNamesCache.set(allUserFiles, names);
-  const { referencedNames, valueRefNames, userModuleBindings } = names;
+  const { referencedNames, userModuleBindings } = names;
 
   for (const stmt of libFile.statements) {
     if (!ts.isVariableStatement(stmt) || !hasDeclareModifier(stmt)) continue;
@@ -1569,13 +1492,11 @@ export function collectDeclaredGlobals(
       // binding here only affects genuine bare-value uses, which fall through to
       // the native-namespace carrier (identifiers.ts:emitBuiltinNamespaceObject)
       // or the `ref.null.extern` graceful default. Host/gc mode is unchanged.
-      const certifiedStandaloneDocument =
-        ctx.standalone && ctx.requiresStandaloneDomCapability === true && name === "document";
+      const certifiedStandaloneDocument = ctx.requiresStandaloneDomCapability === true && name === "document";
       // (#6708) The regime in a JS environment keeps DOM globals: they are
       // platform capabilities of the embedder, not ECMAScript semantics.
       const jsEnvironmentPlatformGlobal = !hostFreeEnvironment(ctx) && isJsEnvironmentPlatformGlobalName(name);
-      if (ctx.strictNoHostImports || (ctx.standalone && !certifiedStandaloneDocument && !jsEnvironmentPlatformGlobal))
-        continue;
+      if (ctx.strictNoHostImports || (!certifiedStandaloneDocument && !jsEnvironmentPlatformGlobal)) continue;
       const importName = `global_${name}`;
       const typeIdx = addFuncType(ctx, [], [{ kind: "externref" }]);
       addImport(ctx, "env", importName, { kind: "func", typeIdx });
@@ -1588,149 +1509,11 @@ export function collectDeclaredGlobals(
       }
     }
   }
-
-  // Ambient browser/JS APIs such as `queueMicrotask`, `parseInt`, and
-  // `requestAnimationFrame` are declared as `declare function` rather than
-  // `declare var` in lib.dom/lib.es*.  Treat those declarations as first-class
-  // globals too.  Previously the checker knew their callable type (so
-  // `typeof queueMicrotask` folded to "function"), but identifier lowering had
-  // no value binding: assigning the function to a local produced a null
-  // externref and the eventual indirect call trapped.  Register the same
-  // cached host-global thunk used by declared variables so both direct and
-  // first-class calls observe the real host function.
-  for (const stmt of libFile.statements) {
-    if (!ts.isFunctionDeclaration(stmt) || !hasDeclareModifier(stmt) || !stmt.name) continue;
-    const name = stmt.name.text;
-    // Timer call sites have a dedicated callback-aware ABI. Do not also
-    // expose the lib.dom declarations as `global_<name>` externrefs in the
-    // multi-file path: that shadows the timer import and passes a Wasm
-    // closure directly to the host timer, so the callback can never run.
-    // queueMicrotask follows the same rule until its multi-file lowering is
-    // available; treating it as an ordinary host function has the same
-    // unwrapped-callback failure mode.
-    if (
-      name === "setTimeout" ||
-      name === "setInterval" ||
-      name === "clearTimeout" ||
-      name === "clearInterval" ||
-      name === "queueMicrotask"
-    ) {
-      continue;
-    }
-    if (!referencedNames.has(name) || userModuleBindings.has(name) || ctx.declaredGlobals.has(name)) continue;
-    // No JS host exists for standalone/WASI modules.  Keep the host-free
-    // behavior used by the variable-global path above.
-    if (ctx.strictNoHostImports || ctx.standalone || ctx.wasi) continue;
-    const importName = `global_${name}`;
-    if (!ctx.funcMap.has(importName)) {
-      const typeIdx = addFuncType(ctx, [], [{ kind: "externref" }]);
-      addImport(ctx, "env", importName, { kind: "func", typeIdx });
-    }
-    const funcIdx = ctx.funcMap.get(importName);
-    if (funcIdx !== undefined) {
-      ctx.declaredGlobals.set(name, { type: { kind: "externref" }, funcIdx });
-    }
-  }
-
-  // #1065 — Register ambient builtin constructors (Array, Object, Function, ...)
-  // as declared globals when referenced in source. These are filtered out of
-  // isExternalDeclaredClass because they have Wasm-native fast paths (vec
-  // structs, tuples, etc.), but they ALSO need to resolve to the real host
-  // constructor when used in identity-compare positions (`x.constructor === Array`).
-  // The fast paths at call sites (`new Array(n)`, `Array.of`, `Array.prototype`,
-  // `Array.isArray`) intercept BEFORE identifier resolution, so adding the
-  // global only affects bare-identifier uses.
-  const AMBIENT_BUILTIN_CTORS = [
-    "Array",
-    "Object",
-    "Function",
-    "Number",
-    "String",
-    "Boolean",
-    "Symbol",
-    "Error",
-    "TypeError",
-    "RangeError",
-    "SyntaxError",
-    "ReferenceError",
-    // (#4394) The remaining NativeError subtypes plus AggregateError. They were
-    // missing here while their five siblings above were listed, so a bare value
-    // use lowered to `ref.null.extern` and every identity comparison against
-    // them silently answered `false` — including the `thrown.constructor !==
-    // expectedErrorConstructor` test at the heart of `assert.throws`, which then
-    // dereferenced the null constructor. `new EvalError()` was always a real
-    // host EvalError; only the bare-identifier read was null.
-    "EvalError",
-    "URIError",
-    "AggregateError",
-    // (#4394) Same omission for the non-Error ambient constructors/namespaces
-    // that also carry native fast paths at their call sites.
-    "BigInt",
-    "Proxy",
-    "SharedArrayBuffer",
-    "Atomics",
-    "Date",
-    "RegExp",
-    "Map",
-    "Set",
-    "WeakMap",
-    "WeakSet",
-    "Promise",
-    "Math",
-    "JSON",
-    "Reflect",
-    "ArrayBuffer",
-    "DataView",
-    "Int8Array",
-    "Uint8Array",
-    "Uint8ClampedArray",
-    "Int16Array",
-    "Uint16Array",
-    "Int32Array",
-    "Uint32Array",
-    "Float32Array",
-    "Float64Array",
-    "BigInt64Array",
-    "BigUint64Array",
-  ];
-  for (const name of AMBIENT_BUILTIN_CTORS) {
-    // #2520 — only when the constructor is used as a bare value/identity; a
-    // plain `new Uint8Array(4)` / `Uint8Array.from(...)` is intercepted by the
-    // native fast paths and needs no host constructor object.
-    if (!valueRefNames.has(name)) continue;
-    if (ctx.declaredGlobals.has(name)) continue;
-    // #2696 — under strict-no-host-imports (auto-on for --target wasi) there is
-    // no JS host to satisfy `env.global_<Ctor>`, so addImport would drop it AND,
-    // because the dropped import leaves no funcMap entry, the
-    // `declaredGlobals.set` below never fires either — the whole registration is
-    // already a no-op EXCEPT for the spurious "not on the dual-mode allowlist"
-    // warning it emits. nm_js2wasm_node_process.ts trips this via the
-    // `String.fromCharCode` receiver in the injected process.stdin prelude
-    // (loopdive/js2wasm#389 bug 2: `env.global_String`). Skip it so the standalone
-    // module compiles cleanly; bare identity uses already had no host global
-    // under strict mode, so behavior is unchanged.
-    // #2907 — `ctx.standalone` is a SEPARATE flag from `strictNoHostImports`
-    // (create-context.ts: strictNoHostImports defaults to `wasi`, NOT
-    // `standalone`), so the guard above missed `--target standalone`. A bare
-    // value use of an ambient ctor there (`[Int8Array, Uint8Array, …].forEach`,
-    // `expectedError = TypeError`) leaked `env.global_<Ctor>` with no host to
-    // satisfy it. Include `ctx.standalone` so standalone stops leaking the host
-    // constructor object; bare-value uses fall through to the native carrier /
-    // ref.null.extern default exactly as under wasi.
-    if (ctx.strictNoHostImports || ctx.standalone) continue;
-    const importName = `global_${name}`;
-    const typeIdx = addFuncType(ctx, [], [{ kind: "externref" }]);
-    addImport(ctx, "env", importName, { kind: "func", typeIdx });
-    const funcIdx = ctx.funcMap.get(importName);
-    if (funcIdx !== undefined) {
-      ctx.declaredGlobals.set(name, { type: { kind: "externref" }, funcIdx });
-    }
-  }
 }
 
 /** (#6708) Did a JS-environment regime module bind a DOM platform global? */
 export function usesJsEnvironmentPlatformGlobal(ctx: CodegenContext): boolean {
-  if (!ctx.standalone || hostFreeEnvironment(ctx)) return false;
+  if (hostFreeEnvironment(ctx)) return false;
   for (const name of DOM_ONLY_GLOBALS) if (ctx.declaredGlobals.has(name)) return true;
   return false;
 }

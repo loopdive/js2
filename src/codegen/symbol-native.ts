@@ -55,7 +55,7 @@ const INITIAL_CAP = 128;
  * left null here; the description is always recoverable from the side table by
  * id, so the box path stays trivial and side-table-free.
  *
- * MUST only be called in `ctx.standalone || ctx.wasi` (host/gc mode keeps the
+ * MUST only be called in the native regime (host/gc mode keeps the
  * spec-accurate `env::__box_symbol` host import; registering a native carrier
  * there would both collide with that import and shift host type indices).
  */

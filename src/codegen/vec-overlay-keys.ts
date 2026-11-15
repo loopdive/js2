@@ -62,7 +62,7 @@
  * local, type or function is added (#4232's lesson: unconditional pull-ins cost
  * code size and compile time on every module that does not use the feature).
  * gc/host output is unchanged twice over: the flag is only consulted under
- * `ctx.standalone`, and the `env::__object_keys` / `env::__getOwnPropertyNames`
+ * the regime flag, and the `env::__object_keys` / `env::__getOwnPropertyNames`
  * imports own these paths there.
  *
  * ## Reserve / fill, and what a skipped fill degrades to
@@ -103,7 +103,7 @@ const I32: ValType = { kind: "i32" };
  * cannot observe anything this module does, so it gets none of it.
  */
 export function vecOwnKeysEnumerationActive(ctx: CodegenContext): boolean {
-  return ctx.standalone === true && ctx.vecOwnKeysDirty === true;
+  return ctx.vecOwnKeysDirty === true;
 }
 
 /**
@@ -354,7 +354,7 @@ export function buildVecOverlayHasArm(ctx: CodegenContext): Instr[] {
   if (vecGopdIdx === undefined || isUndefinedIdx === undefined) return [];
   const argumentsVecTypeIdx = getArgumentsVecTypeIdx(ctx);
   const argumentsOwnNamedArm: Instr[] =
-    ctx.standalone && argumentsVecTypeIdx >= 0
+    argumentsVecTypeIdx >= 0
       ? [
           { op: "local.get", index: 0 },
           { op: "any.convert_extern" },

@@ -22,7 +22,7 @@ import { ts } from "../ts-api.js";
 import type { TypeFact } from "../checker/oracle.js";
 import type { BlockType, FuncHandle, Instr, ValType, WasmFunction } from "../ir/types.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
-import { explicitNullReceiverLane, explicitNullThisExternInstrs } from "./explicit-null-receiver.js";
+import { explicitNullThisExternInstrs } from "./explicit-null-receiver.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { bodyReferencesOwnThis } from "./helpers/body-references-own-this.js";
 import { isStrictContext } from "./helpers/is-strict-function.js";
@@ -355,10 +355,6 @@ function installAndCallFrame(ctx: CodegenContext, frame: ReceiverInstallFrame, r
  * `try`/`catch_all`. A module may not mix the two, so every handler a helper
  * emits must follow this one choice.
  */
-function usesStandardEh(ctx: CodegenContext): boolean {
-  return ctx.wasi || ctx.standalone;
-}
-
 /**
  * `body` protected so that a throw out of it puts `__current_this` back to the
  * caller's value (held in `prevThisLocal`) before the exception propagates.
@@ -377,9 +373,7 @@ export function restoreThisOnUnwind(
     { op: "local.get", index: prevThisLocal },
     { op: "global.set", index: currentThisGlobalIdx },
   ];
-  if (!usesStandardEh(ctx)) {
-    return { op: "try", blockType, body, catches: [], catchAll: [...restore, { op: "rethrow", depth: 0 }] };
-  }
+  // (#6979 S7-c2) The native regime always takes the standard `try_table` form.
   const tagIdx = ensureExnTag(ctx);
   return buildStandardTryTable(blockType, body, [
     {
@@ -439,7 +433,6 @@ function ensureNamedThisCallTrampoline(
   const prevThisLocal = trampolineParams.length;
   const resultType = results[0];
   const resultLocal = resultType === undefined ? -1 : prevThisLocal + 1;
-  const standardizedEh = usesStandardEh(ctx);
   const unwindExnLocal = resultType === undefined ? prevThisLocal + 1 : resultLocal + 1;
   const exactCall = (): Instr[] => callTarget(targetFuncIdx, params.length);
 
@@ -449,7 +442,7 @@ function ensureNamedThisCallTrampoline(
     resultType,
     resultLocal,
     unwindExnLocal,
-    standardizedEh,
+    standardizedEh: true,
     exactCall,
   };
   const installAndCall = (receiver: readonly Instr[]): Instr[] => installAndCallFrame(ctx, frame, receiver);
@@ -479,7 +472,7 @@ function ensureNamedThisCallTrampoline(
   const trampolineFunc: WasmFunction = {
     name: helperName,
     typeIdx,
-    locals: installFrameLocals(resultType, standardizedEh),
+    locals: installFrameLocals(resultType, true),
     body,
     exported: false,
   };
@@ -531,7 +524,6 @@ function ensureNamedPlainCallTrampoline(
   const prevThisLocal = params.length;
   const resultType = results[0];
   const resultLocal = resultType === undefined ? -1 : prevThisLocal + 1;
-  const standardizedEh = usesStandardEh(ctx);
   const unwindExnLocal = resultType === undefined ? prevThisLocal + 1 : resultLocal + 1;
   const frame: ReceiverInstallFrame = {
     currentThisGlobalIdx,
@@ -539,13 +531,13 @@ function ensureNamedPlainCallTrampoline(
     resultType,
     resultLocal,
     unwindExnLocal,
-    standardizedEh,
+    standardizedEh: true,
     exactCall: () => callTarget(targetFuncIdx, params.length, 0),
   };
   const trampolineFunc: WasmFunction = {
     name: helperName,
     typeIdx,
-    locals: installFrameLocals(resultType, standardizedEh),
+    locals: installFrameLocals(resultType, true),
     body: installAndCallFrame(ctx, frame, [{ op: "ref.null.extern" }]),
     exported: false,
   };
@@ -655,9 +647,7 @@ export function resolveNamedThisCallTarget(
   // observe explicit-null differently from absent, so only a strict target
   // needs (or gets) the marker.
   const markerNullArm =
-    declaration?.body !== undefined &&
-    explicitNullReceiverLane(ctx) &&
-    isStrictContext(declaration.body, ctx.inferModuleStrictArguments);
+    declaration?.body !== undefined && isStrictContext(declaration.body, ctx.inferModuleStrictArguments);
   if (
     !declaration?.body ||
     // (#6880) An eval-only live binding keeps the trampoline: the fallback

@@ -30,7 +30,7 @@ export function buildOverlayArrayLengthSet(
   newLenTmp: number,
   strictTarget: ts.Node,
 ): Instr[] | null {
-  if (!ctx.standalone || !ctx.vecAccessorDescriptorDirty) return null;
+  if (!ctx.vecAccessorDescriptorDirty) return null;
   const dpValueIdx = ctx.funcMap.get("__vec_dp_value");
   const boxNumberIdx = ctx.funcMap.get("__box_number");
   if (dpValueIdx === undefined || boxNumberIdx === undefined) return null;
@@ -79,5 +79,5 @@ export function buildOverlayArrayLengthSet(
       },
     );
   }
-  return [buildTargetTaggedTry(ctx, { kind: "empty" }, call, [{ tagIdx: exnTag, body: handler }])];
+  return [buildTargetTaggedTry({ kind: "empty" }, call, [{ tagIdx: exnTag, body: handler }])];
 }

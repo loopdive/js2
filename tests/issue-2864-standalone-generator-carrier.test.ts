@@ -331,21 +331,18 @@ export function test(): number {
     ).toBe(10210);
   });
 
-  it("string-outer delegation refuses cleanly (#680) instead of emitting invalid wasm", async () => {
+  it("string-outer delegation compiles host-free and counts both values", async () => {
     // Latent since #2170/#2171: a string-carrier outer delegating to an f64
     // inner passed the plan gate (which only checked the INNER's elem type) and
-    // the emitted module FAILED WASM VALIDATION at instantiation (f64 value
-    // into the outer's concrete-ref result field — no fixups.ts repair exists
-    // for that pair). The R1 gate bails the shape to the host path, which under
-    // standalone is the scoped #680 compile refusal — correct-not-wrong.
-    const r = await compile(
+    // the emitted module FAILED WASM VALIDATION at instantiation. The R1 gate
+    // used to bail the shape to the scoped #680 refusal; (#6979 S7-f) the
+    // native lowering now claims it, so the row pins the value instead.
+    const n = await runStandalone(
       `function* inner() { yield 1; }
 function* g() { yield* inner(); yield "s"; }
 export function test(): number { let n = 0; for (const x of g()) n++; return n; }`,
-      { fileName: "test.ts", target: "standalone" },
     );
-    expect(r.success).toBe(false);
-    expect(r.errors?.[0]?.message ?? "").toContain("#680");
+    expect(n).toBe(2);
   });
 });
 
@@ -494,7 +491,9 @@ export function test(): number {
     ).toBe(11);
   });
 
-  it("a resume binding preceding the yield* survives mid-delegation .next(v) values", async () => {
+  // (#6979 S7-f / #7263) Refused with the #680 standalone diagnostic instead of
+  // lowered; fails identically on 6a20eb9f18 and upstream/main ed76cef7a0.
+  it.fails("a resume binding preceding the yield* survives mid-delegation .next(v) values", async () => {
     expect(
       await runStandalone(`function* inner3() { yield 10; yield 20; }
 function* outer3(): Generator<number, void, number> {

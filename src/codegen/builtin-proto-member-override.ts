@@ -277,7 +277,7 @@ export function tryEmitProtoOverrideTwoArm(
   memberName: string,
   expectedType: ValType | undefined,
 ): ValType | undefined {
-  if (!ctx.standalone || !ctx.protoNamedDirty) return undefined;
+  if (!ctx.protoNamedDirty) return undefined;
   if (!ts.isPropertyAccessExpression(propAccess)) return undefined;
   if (overrideTwoArmActive.has(callExpr)) return undefined;
   // Unwrap the type-only wrappers (`(x as any)`, `<any>x`, `x!`, parens): they

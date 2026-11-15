@@ -13,7 +13,7 @@ import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { coerceType, compileExpression, valTypesMatch, VOID_RESULT } from "./shared.js";
 import type { InnerResult } from "./shared.js";
 import { compileStringLiteral } from "./string-ops.js";
-import { buildThrowJsErrorInstrs, emitThrowTypeError, noJsHost } from "./expressions/helpers.js";
+import { buildThrowJsErrorInstrs, emitThrowTypeError } from "./expressions/helpers.js";
 import { ensureLateImport, flushLateImportShifts } from "./expressions/late-imports.js";
 import { emitWasiErrorConstructor } from "./registry/error-types.js";
 import { ensureExnTag } from "./registry/imports.js";
@@ -363,7 +363,7 @@ function temporalStringResult(ctx: CodegenContext): ValType {
  * (PR #1274 review). The throw itself and its message are observable.
  */
 function buildTemporalThrowInstrs(ctx: CodegenContext, fctx: FunctionContext, message: string): Instr[] {
-  if (noJsHost(ctx)) emitWasiErrorConstructor(ctx, "TypeError", 1);
+  emitWasiErrorConstructor(ctx, "TypeError", 1);
   ensureLateImport(ctx, "__new_TypeError", [EXTERNREF], [EXTERNREF]);
   flushLateImportShifts(ctx, fctx);
   ensureExnTag(ctx);

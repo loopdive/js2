@@ -142,7 +142,6 @@ const ELEMENT_METHOD = "toLocaleString";
  */
 function overrideScanArms(ctx: CodegenContext, anchor: ts.Node): boolean {
   return (
-    ctx.standalone &&
     ctx.protoNamedDirty === true &&
     builtinBrandOffsetOf("Number") !== undefined &&
     sourceOverridesBuiltinPrototypeMember(anchor, "Number", ELEMENT_METHOD)

@@ -18,7 +18,6 @@ import type { PresenceSlot } from "./fnctor-presence-bits.js"; // (#3780) packed
 import { presenceSlotOf, presenceTestInstrs } from "./fnctor-presence-bits.js";
 import { UNDEF_F64_BITS } from "./value-tags.js";
 import { DATA_STRUCT_HOST_BRIDGE_ORDINAL, publishDataStructHostBridge } from "./data-struct-host-bridge.js";
-import { ensureLateImport, flushLateImportShifts } from "./shared.js";
 import { recordStructFieldAccessor } from "./struct-field-accessor-abi.js"; // (#3520 C34) structural ownership
 import { buildShapeGuardedArm } from "./shape-guarded-arm.js"; // (#4645) single-`next` dispatch arm
 import { walkChildren } from "./walk-instructions.js";
@@ -214,14 +213,6 @@ function _emitStructFieldGettersInner(ctx: CodegenContext): void {
     "struct-field-getter-entries",
     [...fieldMap.values()].reduce((sum, entries) => sum + entries.length, 0),
   );
-
-  const hasSymbolField = [...fieldMap.values()].some((entries) =>
-    entries.some((entry) => entry.fieldType.kind === "i32" && entry.fieldType.symbol === true),
-  );
-  if (hasSymbolField && !ctx.standalone && !ctx.wasi) {
-    ensureLateImport(ctx, "__box_symbol", [{ kind: "i32" }], [{ kind: "externref" }]);
-    flushLateImportShifts(ctx, null);
-  }
 
   // (#1320) A getter that returns a numeric/boolean field as externref boxes it
   // via __box_number / __box_boolean. Those helpers are registered lazily at
@@ -478,14 +469,6 @@ function _emitStructFieldSettersInner(ctx: CodegenContext): void {
 
   if (fieldMap.size === 0) return;
 
-  const hasSymbolField = [...fieldMap.values()].some((entries) =>
-    entries.some((entry) => entry.fieldType.kind === "i32" && entry.fieldType.symbol === true),
-  );
-  if (hasSymbolField && !ctx.standalone && !ctx.wasi) {
-    ensureLateImport(ctx, "__unbox_symbol", [{ kind: "externref" }], [{ kind: "i32", symbol: true }]);
-    flushLateImportShifts(ctx, null);
-  }
-
   // Only kinds we can emit a correct `struct.set` for after the externref →
   // anyref convert. Abstract heap types other than `anyref` (eqref / structref /
   // funcref) would need a `ref.cast` to an abstract heap type, which the
@@ -571,7 +554,7 @@ function _emitStructFieldSettersInner(ctx: CodegenContext): void {
           isRefKind(e.fieldType.kind) ||
           (e.fieldType.kind === "i32" &&
             e.fieldType.symbol === true &&
-            (unboxSymbolIdx !== undefined || ((ctx.standalone || ctx.wasi) && ctx.symbolTypeIdx >= 0))) ||
+            (unboxSymbolIdx !== undefined || ctx.symbolTypeIdx >= 0)) ||
           ((e.fieldType.kind === "f64" || (e.fieldType.kind === "i32" && e.fieldType.symbol !== true)) &&
             unboxNumIdx !== undefined),
       );
@@ -782,7 +765,7 @@ function buildSetterStore(
     // externref value to f64 (Number coercion host-side), truncating for i32
     // fields. Boolean-branded i32 fields coerce true/false → 1/0 the same way.
     if (ft.kind === "i32" && ft.symbol === true) {
-      if ((ctx.standalone || ctx.wasi) && ctx.symbolTypeIdx >= 0) {
+      if (ctx.symbolTypeIdx >= 0) {
         then.push({ op: "any.convert_extern" });
         then.push({ op: "ref.cast", typeIdx: ctx.symbolTypeIdx });
         then.push({ op: "struct.get", typeIdx: ctx.symbolTypeIdx, fieldIdx: 0 });
@@ -1077,7 +1060,7 @@ function emitStructFieldNamesExport(
   // invisible before #3912 only because reading the result trapped first.
   //
   // It is NOT fixed here because the fix is not the predicate: switching to
-  // `ctx.wasi || ctx.standalone` makes this body emit under native strings,
+  // the native regime makes this body emit under native strings,
   // where the string-constant globals it reads do not exist — the module then
   // fails to build ("Codegen error: global index out of range"). Making the CSV
   // a native string is a separate piece of work; see the follow-up issue.

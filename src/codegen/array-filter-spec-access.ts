@@ -61,7 +61,7 @@ export interface FilterLoopView {
  * coerces an inherited accessor's string to NaN before the next read.
  */
 export function filterResultNeedsDynamicCarrier(ctx: CodegenContext, initializer: ts.Expression | undefined): boolean {
-  if (!ctx.standalone || !ctx.protoIndexDirty || !initializer || !ts.isCallExpression(initializer)) return false;
+  if (!ctx.protoIndexDirty || !initializer || !ts.isCallExpression(initializer)) return false;
   if (!ts.isPropertyAccessExpression(initializer.expression) || initializer.expression.name.text !== "filter")
     return false;
   const resultFact = ctx.oracle.typeFactOf(initializer);

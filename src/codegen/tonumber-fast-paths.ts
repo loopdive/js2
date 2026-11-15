@@ -138,7 +138,7 @@ function slowChainInstrs(ctx: CodegenContext, toPrimIdx: FuncHandle, unboxIdx: F
 
 /** Does `symbolThrowArm` emit anything (and so need its scratch local)? */
 function needsSymbolThrowArm(ctx: CodegenContext): boolean {
-  return ctx.standalone === true && ctx.symbolTypeIdx >= 0;
+  return ctx.symbolTypeIdx >= 0;
 }
 
 /**
@@ -168,7 +168,7 @@ function needsSymbolThrowArm(ctx: CodegenContext): boolean {
  */
 export function symbolThrowArm(ctx: CodegenContext, primLocal = 2): Instr[] {
   const symTypeIdx = ctx.symbolTypeIdx;
-  if (!ctx.standalone || symTypeIdx < 0) return [];
+  if (symTypeIdx < 0) return [];
   return [
     { op: "local.tee", index: primLocal },
     { op: "any.convert_extern" },
@@ -198,15 +198,13 @@ export function prepareSymbolToNumberGuard(
   fctx: FunctionContext,
   requireSymbolCarrier = true,
 ): void {
-  if (ctx.standalone) {
-    if (requireSymbolCarrier && ctx.symbolTypeIdx < 0) {
-      throw new Error("Missing native Symbol carrier for numeric value conversion");
-    }
-    void buildThrowJsErrorInstrs(ctx, "TypeError", SYMBOL_TO_NUMBER_MESSAGE, {
-      forceInModuleCtor: true,
-      flush: fctx,
-    });
+  if (requireSymbolCarrier && ctx.symbolTypeIdx < 0) {
+    throw new Error("Missing native Symbol carrier for numeric value conversion");
   }
+  void buildThrowJsErrorInstrs(ctx, "TypeError", SYMBOL_TO_NUMBER_MESSAGE, {
+    forceInModuleCtor: true,
+    flush: fctx,
+  });
 }
 
 /**
@@ -265,7 +263,7 @@ function ensureDeps(
  * `__to_primitive`, Symbol TypeError guard, and `__unbox_number` sequence.
  */
 export function emitStandaloneObjectToNumber(ctx: CodegenContext, fctx: FunctionContext, hint: string): boolean {
-  if (!ctx.standalone || hint !== "number") return false;
+  if (hint !== "number") return false;
 
   const fused = fusedToNumberEnabled();
   // The non-fused arm must retain the post-ToPrimitive value while it tests
@@ -305,7 +303,7 @@ export function emitStandaloneObjectToNumber(ctx: CodegenContext, fctx: Function
  *
  * Read against `__to_primitive` (`object-runtime.ts`) and `__unbox_number`
  * (`registry/imports.ts`); both are the standalone NATIVE definitions, which is
- * why this whole module is gated on `ctx.standalone`.
+ * why this whole module is gated on the regime flag.
  *
  * | value | `__to_primitive(v,"number")` | `__unbox_number(·)` | fused arm |
  * | --- | --- | --- | --- |
@@ -432,7 +430,6 @@ export function prepareStandaloneExternrefToNumberProviders(
       readonly fusedToNumber?: FuncHandle;
     }
   | undefined {
-  if (!ctx.standalone) return undefined;
   const deps = ensureDeps(ctx, fctx);
   if (!deps) return undefined;
   if (!fusedToNumberEnabled()) {
@@ -485,7 +482,6 @@ export function tryEmitFastToNumber(
   // a different abstract operation with a different method order (and, for
   // "default", `+`/`==` semantics) — never fused, never guarded.
   if (hint !== "number") return false;
-  if (!ctx.standalone) return false;
 
   const deps = ensureDeps(ctx, fctx);
   if (deps === undefined) {

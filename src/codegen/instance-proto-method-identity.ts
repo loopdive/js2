@@ -366,7 +366,7 @@ export function tryEmitInstanceBuiltinProtoMethodValue(
   expr: ts.PropertyAccessExpression,
   propName: string,
 ): ValType | undefined {
-  if (!ctx.standalone || ts.isPrivateIdentifier(expr.name)) return undefined;
+  if (ts.isPrivateIdentifier(expr.name)) return undefined;
 
   // CALLEE position keeps its existing lowering — `arr.toString()` and
   // `({}).toString()` already work and are not this arm's business. Same for a

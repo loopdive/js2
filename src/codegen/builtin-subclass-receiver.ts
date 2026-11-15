@@ -94,7 +94,6 @@ function inheritedBuiltinMemberBase(
  * (`number_toFixed`, …), which the collector registers by receiver type.
  */
 export function collectorReceiverType(ctx: CodegenContext, receiverType: ts.Type, method: string): ts.Type {
-  if (!(ctx.standalone || ctx.wasi)) return receiverType;
   return inheritedBuiltinMemberBase(receiverType, method) ?? receiverType;
 }
 
@@ -108,7 +107,6 @@ export function inheritedBuiltinReceiverType(
   receiverType: ts.Type,
   method: string,
 ): ts.Type | undefined {
-  if (!(ctx.standalone || ctx.wasi)) return undefined;
   const symbolName = receiverType.getSymbol()?.name;
   if (symbolName === undefined) return undefined;
   const className = ctx.classExprNameMap.get(symbolName) ?? symbolName;

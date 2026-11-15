@@ -225,10 +225,6 @@ function typescriptSharedSyntaxNodeCarrier(
   // installs `types` afterward. Materializing any of these producer views as a
   // distinct nominal struct would turn the real value into null at the parser
   // return boundary.
-  const isHostUnionOrIntersectionAllocationView =
-    !ctx.standalone &&
-    !ctx.wasi &&
-    (declaration.name.text === "UnionTypeNode" || declaration.name.text === "IntersectionTypeNode");
   const allocationViewBaseName =
     declaration.name.text === "LiteralLikeNode"
       ? "Node"
@@ -236,16 +232,9 @@ function typescriptSharedSyntaxNodeCarrier(
         ? "NamedDeclaration"
         : declaration.name.text === "PropertyAccessChain"
           ? "PropertyAccessExpression"
-          : isHostUnionOrIntersectionAllocationView
-            ? "TypeNode"
-            : undefined;
-  const hasExactMergedTypeNodeBase =
-    isHostUnionOrIntersectionAllocationView &&
-    recordsExactInterfaceCarrierAlias(ctx, baseTypes[0]?.getSymbol()) &&
-    ctx.structMap.get("TypeNode") === ctx.structMap.get("Node");
-  const hasEligibleAllocationViewBase = isHostUnionOrIntersectionAllocationView
-    ? hasExactMergedTypeNodeBase
-    : directBaseDeclarations?.length === 1 && directBaseDeclarations[0]?.getSourceFile() === sourceFile;
+          : undefined;
+  const hasEligibleAllocationViewBase =
+    directBaseDeclarations?.length === 1 && directBaseDeclarations[0]?.getSourceFile() === sourceFile;
   const isSingleBaseSyntaxAllocationView =
     allocationViewBaseName !== undefined &&
     declarations?.length === 1 &&

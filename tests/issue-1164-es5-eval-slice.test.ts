@@ -12,7 +12,6 @@ import { describe, expect, it } from "vitest";
 
 import { exactGlobalEvalStatement } from "../src/eval-call-shape.js";
 import { compile, type CompileResult, type IrObservedOutcome } from "../src/index.js";
-import { buildImports } from "../src/runtime.js";
 import { hasActiveUnshadowedTest262Assert, rawTest262AssertShimEnabled } from "../src/runtime-eval.js";
 import { ts } from "../src/ts-api.js";
 
@@ -60,26 +59,9 @@ function firstCall(source: string): ts.CallExpression {
  * native strings (#6979), so legacy eval goes to the runtime-eval provider, and since #6779 the shim denies
  * dynamic code unless the host opts in. The shim's raw-assert classifier is what these tests pin.
  */
-async function hostEvalImport(): Promise<(source: unknown, isDirect: number) => unknown> {
-  const imports = buildImports(
-    [{ module: "env", name: "__extern_eval", kind: "func", intent: { type: "builtin", name: "__extern_eval" } }],
-    undefined,
-    [],
-    { dynamicCode: "hostEval" },
-  );
-  return imports.env.__extern_eval as (source: unknown, isDirect: number) => unknown;
-}
-
-async function withoutGlobalAssert<T>(run: () => Promise<T> | T): Promise<T> {
-  const previous = Object.getOwnPropertyDescriptor(globalThis, "assert");
-  expect(Reflect.deleteProperty(globalThis, "assert")).toBe(true);
-  try {
-    return await run();
-  } finally {
-    Reflect.deleteProperty(globalThis, "assert");
-    if (previous) Object.defineProperty(globalThis, "assert", previous);
-  }
-}
+// (#6979 S7-d) The JS-host `__extern_eval` shim rows that lived here (raw-assert
+// fallback, shadowed-assert, kill switch, inert-text) pinned the host-lane eval
+// shim that S7-d deleted from `src/runtime.ts`; only the pure classifier rows stay.
 
 describe("#1164 ES5 eval slice — raw Test262 assert classifier", () => {
   it("keeps the attribution switch safe when a browser has no process environment", () => {
@@ -116,64 +98,6 @@ describe("#1164 ES5 eval slice — raw Test262 assert classifier", () => {
     ["catch binding", "try {} catch (assert) { assert.sameValue(); }"],
   ])("does not activate for %s", (_label, source) => {
     expect(hasActiveUnshadowedTest262Assert(source)).toBe(false);
-  });
-
-  it("runs raw callable/dot/bracket Test262 assertions through the legacy fallback shim", async () => {
-    await withoutGlobalAssert(async () => {
-      const evaluate = await hostEvalImport();
-
-      expect(evaluate("assert(true);", 0)).toBeUndefined();
-      expect(evaluate("assert.sameValue(1, 1);", 0)).toBeUndefined();
-      expect(evaluate('assert["sameValue"](1, 1);', 0)).toBeUndefined();
-      expect(
-        evaluate("assert.throws(TypeError, function () { throw new TypeError('expected'); });", 0),
-      ).toBeUndefined();
-      expect(() => evaluate("assert.sameValue(1, 2);", 0)).toThrow(/eval harness assertion/);
-    });
-  });
-
-  // Known failure, measured identically on main 5ef8f0aae5: the shadowing parameter sends this Script through
-  // the fresh child Wasm module, which throws a non-Error value. That is the JS-host `hostEval` lane, which is
-  // being sunset (no new JS-host work); `it.fails` keeps the gap visible and flags the day it closes.
-  // Tracked in #7106 follow-ups (JS-host hostEval shadowed assert).
-  it.fails("runs a raw assert beside a parameter that shadows assert", async () => {
-    await withoutGlobalAssert(async () => {
-      const evaluate = await hostEvalImport();
-      expect(
-        evaluate(
-          "assert.sameValue(1, 1); (function (assert) { assert.sameValue(1, 1); })({ sameValue: function () {} });",
-          0,
-        ),
-      ).toBeUndefined();
-    });
-  });
-
-  it("retains a measurement-only raw-assert kill switch", async () => {
-    const previous = process.env.JS2WASM_DISABLE_RAW_TEST262_ASSERT_SHIM;
-    process.env.JS2WASM_DISABLE_RAW_TEST262_ASSERT_SHIM = "1";
-    try {
-      await withoutGlobalAssert(async () => {
-        const evaluate = await hostEvalImport();
-        expect(() => evaluate("assert.sameValue(1, 1);", 0)).toThrow(/assert is not defined/);
-      });
-    } finally {
-      if (previous === undefined) Reflect.deleteProperty(process.env, "JS2WASM_DISABLE_RAW_TEST262_ASSERT_SHIM");
-      else process.env.JS2WASM_DISABLE_RAW_TEST262_ASSERT_SHIM = previous;
-    }
-  });
-
-  it("does not inject a raw-assert shim for inert text or a local binding", async () => {
-    await withoutGlobalAssert(async () => {
-      const evaluate = await hostEvalImport();
-      // `with` keeps these on the legacy fallback path, where a raw
-      // substring detector would otherwise prepend `var assert`.
-      expect(evaluate('with ({}) { "assert.sameValue(1, 1)"; }', 0)).toBeUndefined();
-      expect((globalThis as Record<string, unknown>).assert).toBeUndefined();
-      expect(
-        evaluate("let assert = { sameValue: function () {} }; with ({}) { assert.sameValue(); }", 0),
-      ).toBeUndefined();
-      expect((globalThis as Record<string, unknown>).assert).toBeUndefined();
-    });
   });
 });
 

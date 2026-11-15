@@ -76,7 +76,7 @@ function propertyNamesOf(sourceFile: ts.SourceFile): ReadonlySet<string> {
  * source file. Only members with a native body are minted.
  */
 export function mintDateCarrierDynamicMembers(ctx: CodegenContext, fctx: FunctionContext, anchor: ts.Node): void {
-  if (!ctx.standalone || ctx.wasi) return;
+  if (ctx.wasi) return;
   const sourceFile = ts.getOriginalNode(anchor).getSourceFile() as ts.SourceFile | undefined;
   if (!sourceFile) return;
   let seen = mintedSourceFiles.get(ctx);
@@ -234,7 +234,7 @@ function unshiftDynValueOfArm(ctx: CodegenContext, dateTypeIdx: number): void {
  * which has to stay `__extern_get`'s prefix. No-op without a minted member.
  */
 export function unshiftDateCarrierMemberArms(ctx: CodegenContext): void {
-  if (!ctx.standalone || ctx.wasi) return;
+  if (ctx.wasi) return;
   const dateTypeIdx = ctx.structMap.get("__Date");
   const brand = dateTypeIdx === undefined ? undefined : ctx.builtinBrandMap?.get("Date");
   if (dateTypeIdx === undefined || brand === undefined) return;

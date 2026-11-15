@@ -43,7 +43,7 @@ const VARIADIC: ReadonlySet<string> = new Set(["with", "toSpliced", "copyWithin"
 
 /** True when the member's closure takes the packed variadic ABI. */
 export function isArrayCopyMethodVariadicMember(ctx: CodegenContext, member: string): boolean {
-  return VARIADIC.has(member) && (ctx.standalone || ctx.wasi);
+  return VARIADIC.has(member);
 }
 
 const get = (index: number): Instr => ({ op: "local.get", index });
@@ -89,7 +89,7 @@ export function emitArrayCopyMethodMemberBody(
   if (member !== "toReversed" && member !== "with" && member !== "toSpliced" && member !== "copyWithin") {
     return undefined;
   }
-  if (!ctx.standalone && !ctx.wasi) return undefined;
+
   if (member === "copyWithin") {
     if (fctx.params.length < 3) return undefined;
     const helper = ensureNativeArrayCopyWithin(ctx);

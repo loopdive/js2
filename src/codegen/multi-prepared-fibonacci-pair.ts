@@ -332,7 +332,7 @@ function resolveExactFibonacciPair<Plan extends MultiPreparedFunctionValuePlan>(
 }): MultiPreparedFibonacciPairCandidateEvidence | undefined {
   const { ctx, plan, safeSelection, safety, syntax } = input;
   const { recursiveDeclaration, sourceFile, wrapperCall, wrapperDeclaration } = syntax;
-  if (!ctx.standalone || ctx.fast || ctx.wasi) return rejectRequired("target lane");
+  if (ctx.fast || ctx.wasi) return rejectRequired("target lane");
   if (recursiveDeclaration.parent !== sourceFile || wrapperDeclaration.parent !== sourceFile) {
     return rejectRequired("source children");
   }

@@ -142,7 +142,6 @@ export function forOfSubjectMayYieldObjectIterator(ctx: CodegenContext, subject:
  * caller then keeps the plain `__iterator_next` step.
  */
 export function reserveForOfIteratorStep(ctx: CodegenContext): ForOfStepFuncs | undefined {
-  if (!ctx.standalone && !ctx.wasi) return undefined;
   const existing = reserved.get(ctx);
   if (existing) return existing;
   const iterRecTypeIdx = ctx.structMap.get("__IterRec");

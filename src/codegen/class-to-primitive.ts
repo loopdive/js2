@@ -392,7 +392,7 @@ export function requireExhaustiveClassToPrimitive(ctx: CodegenContext): void {
  */
 export function armExhaustiveForNonCallableMemberLiteral(ctx: CodegenContext, node: ts.Node): boolean {
   if (exhaustiveModules.has(ctx)) return true;
-  if (!ctx.standalone || !ts.isPropertyAssignment(node) || !ts.isObjectLiteralExpression(node.parent)) return false;
+  if (!ts.isPropertyAssignment(node) || !ts.isObjectLiteralExpression(node.parent)) return false;
   const name = node.name;
   const key = ts.isIdentifier(name) || ts.isStringLiteral(name) ? name.text : undefined;
   if (key !== "valueOf" && key !== "toString") return false;

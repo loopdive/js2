@@ -15,7 +15,7 @@ import { compileExpression, coerceType, flushLateImportShifts } from "./shared.j
 import { addUnionImports } from "./index.js";
 import { ensureObjectRuntime } from "./object-runtime.js";
 import { emitUndefined, ensureLateImport } from "./expressions/late-imports.js";
-import { buildThrowJsErrorInstrs, noJsHost } from "./expressions/helpers.js";
+import { buildThrowJsErrorInstrs } from "./expressions/helpers.js";
 import { collectConcatOperands } from "./native-batched-concat.js";
 import {
   compileNativeConcatOperand,
@@ -39,7 +39,7 @@ import { readEnv } from "../env.js";
 // so trusting them here is consistent with the representation those fields
 // ALREADY have, not a new claim. Standalone-only, like the verdicts.
 export function provenNumericOperand(ctx: CodegenContext, e: ts.Expression): boolean {
-  if (!ctx.standalone || readEnv("JS2WASM_NUMERIC_OPERANDS") === "0") return false;
+  if (readEnv("JS2WASM_NUMERIC_OPERANDS") === "0") return false;
   const bare = ts.isParenthesizedExpression(e) ? e.expression : e;
   // `this.f` where every write to `f` is numeric.
   if (
@@ -341,12 +341,7 @@ function emitAddOperand(
     // expressions must finish before either operand's ToPrimitive runs.
     return saveDeferredAddOperand(fctx, opType, deferred);
   }
-  // The native-first provider regime, not the host axis: `{target:"gc",
-  // strictNoHostImports:true, nativeStrings:true}` is native-first while
-  // `ctx.standalone`/`ctx.wasi` are both false, and it keeps this string-hint
-  // conversion (#6979 S7-a review). Not constant by type: the linear target
-  // resolves "backend-defined", though it never enters this backend.
-  if (ctx.targetProfile.semanticProviders === "native-first" && structHasOnlyUserToString(ctx, structName)) {
+  if (structHasOnlyUserToString(ctx, structName)) {
     const opType = compileExpression(ctx, fctx, inner);
     if (!opType) return null;
     return saveDeferredAddOperand(fctx, opType, deferred, undefined, true);
@@ -721,7 +716,6 @@ export function compileStringBinaryOpWithNativeAddition(
 ): ValType | null {
   if (
     op !== ts.SyntaxKind.PlusToken ||
-    !noJsHost(ctx) ||
     !ctx.nativeStrings ||
     ctx.anyStrTypeIdx < 0 ||
     collectConcatOperands(ctx, expr).every((operand) => isPrimitiveConcatProducer(operand, ctx, fctx))

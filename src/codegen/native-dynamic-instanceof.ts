@@ -169,7 +169,6 @@ import { collectErrorInstanceOfTags, ERROR_FAMILY_CTOR_NAMES } from "./builtin-t
 import { CLOSURE_PROTO_OF } from "./closure-prototype-edge.js"; // (#2660 M3) closure → prototype identity edge
 import { ensureLateImport, flushLateImportShifts } from "./expressions/late-imports.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
-import { noJsHost } from "./js-errors.js";
 import { getWellKnownSymbolId } from "./literals.js"; // (#6651 I2) @@hasInstance id
 import { moduleInstallsCallableHasInstance } from "./native-ordinary-instanceof.js"; // (#6651 I2)
 import { stringConstantExternrefInstrs } from "./native-strings.js";
@@ -1378,7 +1377,6 @@ export function tryEmitNativeDynamicInstanceOf(
   fctx: FunctionContext,
   expr: ts.BinaryExpression,
 ): ValType | null {
-  if (!noJsHost(ctx)) return null;
   // Reserve the helper (and everything it calls) BEFORE either operand is
   // compiled, so any index shift it triggers reaches the already-emitted
   // instructions through `currentFunc`.

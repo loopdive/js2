@@ -18,7 +18,8 @@ const LANES: { name: string; options: CompileOptions; ir: boolean }[] = [
   { name: "standalone", options: { target: "standalone" }, ir: true },
   // WASI keeps `new MyErr()` itself on legacy (no S3c value plan), so the
   // method stays legacy there; base gives the same.
-  { name: "wasi", options: { target: "wasi" }, ir: false },
+  // (#6979 S7-c) WASI lowers with the native semantic regime and takes the IR body.
+  { name: "wasi", options: { target: "wasi" }, ir: true },
   { name: "gc (default)", options: {}, ir: true },
 ];
 

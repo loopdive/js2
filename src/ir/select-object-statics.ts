@@ -18,9 +18,15 @@
  * what a callee returns.
  */
 
+import { outermostParenthesized, stripParens } from "../shared/binding-writes.js";
 import { ts } from "../ts-api.js";
 import { producesCarrier, type CarrierLeaves } from "./analysis/carrier-expression.js";
-import { nullComparisonFolds } from "./analysis/operand-admissibility.js";
+import {
+  isEqualityOperator,
+  isStrictEqualityOperator,
+  isUndefinedCompareOperand,
+  nullComparisonFolds,
+} from "./analysis/operand-admissibility.js";
 import type { IrBackendTargetCapability } from "./backend/legality.js";
 import { localIsRewritten } from "./lattice-param-facts.js";
 import { objectCreateDescriptorMap } from "./object-create-call.js";
@@ -39,7 +45,7 @@ export interface ObjectStaticSelectorState {
     expr: ts.Expression,
   ) => { readonly valueKind: { readonly kind: string }; readonly declaration: ts.Node } | undefined;
   /** The resolver's kind match of a write of `value` to module binding `id`. */
-  readonly moduleBindingMatches: (id: ts.Identifier, value: ts.Expression) => boolean;
+  readonly moduleBindingMatches: (id: ts.Identifier, value: ts.Expression, scope: ReadonlySet<string>) => boolean;
   readonly unannotatedLocal: (id: ts.Identifier) => ts.VariableDeclaration | undefined;
   readonly isDynamicHomeOpenCarrier: (decl: ts.VariableDeclaration) => boolean;
   /** #7335's own-property test on a dynamic home: it answers a boolean. */
@@ -61,11 +67,17 @@ export interface ObjectStaticSelector {
   readonly plan: (call: ts.CallExpression) => objectStatics.ObjectStaticPlan | undefined;
   readonly isLiteralDefine: (call: ts.CallExpression) => boolean;
   readonly lowersToCarrier: (expression: ts.Expression) => boolean;
+  /**
+   * `expression` lowers to an open object's carrier on any lane, through `producesCarrier`: a table
+   * carrier, or a #7280 dynamic home (`{}`, #7341's `new Object()`). A plain dynamic script var is
+   * neither: its routing stays main's (#7212 review K1).
+   */
+  readonly readsCarrier: (expression: ts.Expression) => boolean;
   /** `node`'s unit (its top-level function or class, else the module's code) holds a call the table admits. */
   readonly tableMayReach: (node: ts.Node) => boolean;
   readonly holdsCarrier: (expression: ts.Expression) => boolean;
   /**
-   * An equality with a table carrier and `null` (`nullCompare`) or the global `undefined`:
+   * An equality with a carrier (`readsCarrier`) and `null` (`nullCompare`) or the global `undefined`:
    * `refused` when loose against `null` (`tryFoldNullCompare` folds only the strict compare; a
    * loose one types `null` as f64), else `folded`, since the fold or the carrier equality
    * (`tryLowerDynamicEq`) lowers it before `lowerBinary`'s family rule. `void 0` is no such
@@ -77,12 +89,23 @@ export interface ObjectStaticSelector {
     isUndefined: (side: ts.Expression) => boolean,
   ) => "refused" | "folded" | undefined;
   /**
+   * An equality between a `void` and a carrier (`readsCarrier`) that from-ast cannot lower: its f64
+   * `undefined` sentinel meets the carrier or an `undefined` test. `void <carrier>` against
+   * `undefined`, a `void`, the carrier, or (loosely) `null`; any `void` loosely against the carrier.
+   * A strict compare with `void 0`, a number or `null` lowers, and a non-carrier `void` keeps main's
+   * route. from-ast refuses these in three places (the null fold, the matching-type check, the
+   * undefined compare), so this is the selector's mirror of them, not a shared fact (#7341).
+   */
+  readonly voidCompareUnlowered: (expr: ts.VoidExpression, isShadowed: (name: string) => boolean) => boolean;
+  /**
    * Refuses (through `refuse`) a use from-ast has no lowering for: `<carrier>?.p` / `?.[k]` / `?.()`
    * on a table carrier (`expr-carrier-optional-chain`), and a table result that leaves its unit
    * (`expr-carrier-escapes-unit`, `escapesUnit`).
    */
   readonly admitsCarrierUse: (expression: ts.Expression, refuse: (detail: string, node: ts.Node) => false) => boolean;
-  readonly moduleBindingTakes: (id: ts.Identifier, value: ts.Expression) => boolean;
+  /** A value already on the carrier: the table's carriers, and main's dynamic bindings and parameters. */
+  readonly isCarrierValue: (expression: ts.Expression) => boolean;
+  readonly moduleBindingTakes: (id: ts.Identifier, value: ts.Expression, scope: ReadonlySet<string>) => boolean;
   /** `Object.<static>(…)` or the JS environment's #7276 create, admitted; undefined for any other call. */
   readonly admit: (call: ts.CallExpression, rules: ObjectStaticValueRules) => boolean | undefined;
 }
@@ -218,6 +241,16 @@ export function createObjectStaticSelector(state: ObjectStaticSelectorState): Ob
     },
     call: staticCall,
   });
+  /** The open objects: the table's results, and every #7280 dynamic home (`{}`, #7341's `new Object()`). */
+  const openObjectLeaves = (visited: Set<ts.Declaration>): CarrierLeaves => ({
+    binding: (node) => {
+      const declaration = initializedDeclaration(node);
+      if (declaration === undefined) return false;
+      if (state.isDynamicHomeOpenCarrier(declaration)) return true;
+      return holdsInitializer(declaration, visited, openObjectLeaves);
+    },
+    call: staticCall,
+  });
   /** A static's own values, which cross as carriers: the table's carriers, and main's dynamic bindings and parameters. */
   const valueLeaves = (visited: Set<ts.Declaration>): CarrierLeaves => ({
     binding: (node) =>
@@ -229,6 +262,7 @@ export function createObjectStaticSelector(state: ObjectStaticSelectorState): Ob
 
   const lowersToCarrier = (expression: ts.Expression) =>
     fileCallsTable(expression.getSourceFile()) && producesCarrier(expression, carrierLeaves(new Set()));
+  const readsCarrier = (expression: ts.Expression) => producesCarrier(expression, openObjectLeaves(new Set()));
 
   /**
    * A table result (a static's answer, or a binding initialised with one) leaves the unit that made
@@ -282,13 +316,28 @@ export function createObjectStaticSelector(state: ObjectStaticSelectorState): Ob
     plan,
     isLiteralDefine: (call) => objectStatics.isLiteralDefine(plan(call)),
     lowersToCarrier,
+    readsCarrier,
     tableMayReach: unitCallsTable,
     holdsCarrier,
     compareVerdict: (expr, nullCompare, isUndefined) => {
       const sides = [expr.left, expr.right];
-      if (!sides.some(lowersToCarrier)) return undefined;
+      if (!sides.some(readsCarrier)) return undefined;
       if (nullCompare) return nullComparisonFolds(expr.operatorToken.kind, "dynamic") ? "folded" : "refused";
       return sides.some(isUndefined) ? "folded" : undefined;
+    },
+    voidCompareUnlowered: (expr, isShadowed) => {
+      const operand = outermostParenthesized(expr);
+      const parent = operand.parent;
+      if (!ts.isBinaryExpression(parent) || !isEqualityOperator(parent.operatorToken.kind)) return false;
+      const other = stripParens(parent.left === operand ? parent.right : parent.left);
+      const loose = !isStrictEqualityOperator(parent.operatorToken.kind);
+      if (!readsCarrier(expr.expression)) return loose && readsCarrier(other);
+      return (
+        isUndefinedCompareOperand(other, isShadowed) ||
+        ts.isVoidExpression(other) ||
+        readsCarrier(other) ||
+        (loose && other.kind === ts.SyntaxKind.NullKeyword)
+      );
     },
     admitsCarrierUse: (e, refuse) => {
       const chained = ts.isPropertyAccessExpression(e) || ts.isElementAccessExpression(e) || ts.isCallExpression(e);
@@ -297,9 +346,10 @@ export function createObjectStaticSelector(state: ObjectStaticSelectorState): Ob
       }
       return !escapesUnit(e) || refuse("expr-carrier-escapes-unit", e);
     },
+    isCarrierValue,
     // A carrier goes only into its home; a function local holds one only as its own initializer.
-    moduleBindingTakes: (id, value) =>
-      state.moduleBindingMatches(id, value) && (holdsCarrier(id) || !lowersToCarrier(value)),
+    moduleBindingTakes: (id, value, scope) =>
+      state.moduleBindingMatches(id, value, scope) && (holdsCarrier(id) || !lowersToCarrier(value)),
     admit,
   };
 }

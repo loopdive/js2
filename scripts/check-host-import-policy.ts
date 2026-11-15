@@ -2,14 +2,35 @@
 /** #4401 — zero-debt ratchet for the migrated native-first semantic surface. */
 import { readFileSync } from "node:fs";
 import { compile } from "../src/index.ts";
+import { REGIME_GAP_FAMILIES } from "../src/host-import-policy.ts";
 
 // (#6686/#5385 S5, #6708 S6, #6979 S7) native-first is the compiler's only
 // semantic-provider policy and the native regime its lowering in a JS
 // environment; the probes compile with no semanticProviders option, so this
-// ratchet measures exactly what the compiler ships. No profile may emit a
-// `legacy-semantic` or `unknown` import any more, so every probe is held to a
-// hard zero (the S6 host-assisted compatibility control is gone with the
-// profile).
+// ratchet measures exactly what the compiler ships. Since S7-b the
+// `legacy-semantic` class is gone: a retired host-semantic import classifies
+// `unknown` and is a compile error on every WasmGC profile, so every probe is
+// held to a hard zero. The only host imports outside adapters, capabilities,
+// lifecycle hooks and selected accelerators are the named #5385 regime gaps,
+// held to the explicit name ceiling below.
+
+/**
+ * (#6979) The regime-gap ceiling: exactly these families, and within them only
+ * these import names (or name prefixes ending in `*`). A second family, or a new
+ * name in an existing one, fails this ratchet until it is reviewed.
+ */
+const REGIME_GAP_CEILING: Record<string, readonly string[]> = {};
+{
+  const declared = Object.keys(REGIME_GAP_FAMILIES).sort();
+  const ceiling = Object.keys(REGIME_GAP_CEILING).sort();
+  if (declared.join(",") !== ceiling.join(",")) {
+    throw new Error(`regime-gap families ${declared.join(", ")} do not match the ceiling ${ceiling.join(", ")}`);
+  }
+}
+const withinRegimeGapCeiling = (family: string, name: string): boolean =>
+  (REGIME_GAP_CEILING[family] ?? []).some((allowed) =>
+    allowed.endsWith("*") ? name.startsWith(allowed.slice(0, -1)) : name === allowed,
+  );
 
 interface HostImportPolicyBaseline {
   schemaVersion: 1;
@@ -240,7 +261,7 @@ const probes = {
 const nativeSummaries: Record<string, unknown> = Object.create(null);
 const nativeInventories = new Map<string, NonNullable<Awaited<ReturnType<typeof compile>>["hostImportInventory"]>>();
 let nativeImportTotal = 0;
-let nativeLegacySemanticTotal = 0;
+let nativeRegimeGapTotal = 0;
 let nativeUnknownTotal = 0;
 
 for (const [name, source] of Object.entries(probes)) {
@@ -257,11 +278,9 @@ for (const [name, source] of Object.entries(probes)) {
   nativeInventories.set(name, inventory);
   nativeSummaries[name] = result.hostImportSummary;
   nativeImportTotal += inventory.length;
-  nativeLegacySemanticTotal += inventory.filter((entry) => entry.classification === "legacy-semantic").length;
+  nativeRegimeGapTotal += inventory.filter((entry) => entry.classification === "regime-gap").length;
   nativeUnknownTotal += inventory.filter((entry) => entry.classification === "unknown").length;
-  const debt = inventory.filter(
-    (entry) => entry.classification === "legacy-semantic" || entry.classification === "unknown",
-  );
+  const debt = inventory.filter((entry) => entry.classification === "unknown");
   if (debt.length > 0) {
     throw new Error(
       `native-first ${name} host semantic debt grew:\n${debt
@@ -324,9 +343,7 @@ for (const [family, source] of Object.entries(acceleratorProbes)) {
     (entry) => entry.classification === "host-accelerator" && entry.family === family,
   );
   if (accelerated.length === 0) throw new Error(`host-accelerator ${family} probe selected no ${family} imports`);
-  const debt = (selected.hostImportInventory ?? []).filter(
-    (entry) => entry.classification === "legacy-semantic" || entry.classification === "unknown",
-  );
+  const debt = (selected.hostImportInventory ?? []).filter((entry) => entry.classification === "unknown");
   if (debt.length > 0) {
     throw new Error(`host-accelerator ${family} probe carries ${debt.map((entry) => entry.name).join(", ")}`);
   }
@@ -347,6 +364,93 @@ for (const family of ["js-string"] as const) {
     (error: unknown) => String(error).includes("not available yet"),
   );
   if (!refused) throw new Error(`host-accelerator ${family} must refuse selection until its host path exists`);
+}
+
+// #6979 — one probe per named regime gap: each still compiles (the gap is the
+// construct's only implementation), and every import it needs beyond adapters
+// and capabilities is a regime-gap import inside the explicit name ceiling.
+// (2026-11-05) Empty: the last family, `eager-generator-buffer`, closed with
+// #7010 — see the refusal check below.
+const regimeGapProbes: Record<string, string> = {};
+const regimeGapImports: Record<string, string[]> = Object.create(null);
+for (const [family, source] of Object.entries(regimeGapProbes)) {
+  const result = await compile(source, { fileName: `host-import-policy-regime-gap-${family}.ts` });
+  const inventory = result.hostImportInventory ?? [];
+  const outside = inventory.filter(
+    (entry) =>
+      entry.classification === "unknown" ||
+      (entry.classification === "regime-gap" && !withinRegimeGapCeiling(entry.family, entry.name)),
+  );
+  if (outside.length > 0) {
+    throw new Error(
+      `regime-gap ${family} probe carries imports outside the ceiling: ` +
+        outside.map((entry) => `${entry.name} (${entry.classification}/${entry.family})`).join(", "),
+    );
+  }
+  regimeGapImports[family] = inventory
+    .filter((entry) => entry.classification === "regime-gap")
+    .map((entry) => entry.name)
+    .sort();
+  if (regimeGapImports[family]!.length === 0) {
+    throw new Error(`regime-gap ${family} probe no longer needs the gap: close it and drop the family (#5385)`);
+  }
+}
+
+// #6979 S7-b — closed regime gaps stay closed: their probe must compile with no
+// regime-gap and no retired (`unknown`) import. `shared-array-buffer` closed
+// with #7011's native SharedArrayBuffer/Atomics provider, `temporal-strings`
+// with #7012's in-module Temporal string/field helpers.
+const closedRegimeGapProbes = {
+  "temporal-strings": `export function run(): string { return Temporal.PlainDate.from("2020-01-02").toString(); }`,
+  "shared-array-buffer": `export function run(): number {
+    const buffer: any = new SharedArrayBuffer(16);
+    return Atomics.load(new Int32Array(buffer), 0);
+  }`,
+} as const;
+for (const [family, source] of Object.entries(closedRegimeGapProbes)) {
+  const result = await compile(source, { fileName: `host-import-policy-closed-gap-${family}.ts` });
+  if (!result.success) {
+    throw new Error(`closed regime gap ${family} probe no longer compiles: ${JSON.stringify(result.errors?.[0])}`);
+  }
+  const reopened = (result.hostImportInventory ?? []).filter(
+    (entry) => entry.classification === "unknown" || entry.classification === "regime-gap",
+  );
+  if (reopened.length > 0) {
+    throw new Error(
+      `closed regime gap ${family} reopened: ` +
+        reopened.map((entry) => `${entry.name} (${entry.classification}/${entry.family})`).join(", "),
+    );
+  }
+}
+
+// #6979 S7-b / #7010 — `eager-generator-buffer` closed by refusal, not by a
+// native lowering: a generator shape the native state machine and the
+// async-generator drive decline is a compile error, never a `__gen_*` host
+// buffer. Its old probe must keep refusing with that diagnostic; once a native
+// lowering accepts it, it must compile with no regime-gap and no `unknown`
+// import (then move it to `closedRegimeGapProbes`).
+{
+  const source = `
+    export async function run(): Promise<number> {
+      async function* values(): AsyncGenerator<number> { const x = yield 1; yield (x as any) + 1; }
+      const it = values(); await it.next(); return (await it.next(2)).value as number;
+    }
+  `;
+  const result = await compile(source, { fileName: "host-import-policy-closed-gap-eager-generator-buffer.ts" });
+  if (!result.success) {
+    if (!result.errors.some((error) => error.message.includes("generator-no-host-free-lowering"))) {
+      throw new Error(
+        `eager-generator-buffer probe failed without the #7010 refusal: ${JSON.stringify(result.errors[0])}`,
+      );
+    }
+  } else {
+    const reopened = (result.hostImportInventory ?? []).filter(
+      (entry) => entry.classification === "unknown" || entry.classification === "regime-gap",
+    );
+    if (reopened.length > 0) {
+      throw new Error(`closed regime gap eager-generator-buffer reopened: ${reopened.map((e) => e.name).join(", ")}`);
+    }
+  }
 }
 
 const runtimeSource = readRepoFile("src/runtime.ts");
@@ -393,7 +497,7 @@ if (nativeImportTotal > baseline.nativeFirst.maximumImports) {
 }
 // (#6979) Hard zero, not a baseline: no profile may publish implicit or
 // unclassified host semantics.
-if (nativeLegacySemanticTotal > 0) budgetViolations.push(`legacy-semantic imports ${nativeLegacySemanticTotal} > 0`);
+if (nativeRegimeGapTotal > 0) budgetViolations.push(`regime-gap imports on the probes ${nativeRegimeGapTotal} > 0`);
 if (nativeUnknownTotal > 0) budgetViolations.push(`unknown imports ${nativeUnknownTotal} > 0`);
 for (const [metric, maximum] of [
   ["runtimeTsLines", baseline.runtimeSource.maximumRuntimeTsLines],
@@ -419,10 +523,11 @@ console.log(
     nativeFirstTotals: {
       probes: Object.keys(probes).length,
       imports: nativeImportTotal,
-      legacySemanticImports: nativeLegacySemanticTotal,
+      regimeGapImports: nativeRegimeGapTotal,
       unknownImports: nativeUnknownTotal,
     },
     hostAcceleratorImports: acceleratorImports,
+    regimeGapImports,
     migrationMetrics,
   }),
 );

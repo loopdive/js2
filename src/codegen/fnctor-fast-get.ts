@@ -208,7 +208,7 @@ function globalIndexByName(ctx: CodegenContext, name: string): number | undefine
  * inline extractor requires it) and this one runs right behind it.
  */
 export function unshiftFnctorFastGetArm(ctx: CodegenContext): void {
-  if (!ctx.standalone || ctx.hashedStrTypeIdx < 0 || ctx.objectRuntimeTypes === undefined) return;
+  if (ctx.hashedStrTypeIdx < 0 || ctx.objectRuntimeTypes === undefined) return;
   const getFn = ctx.mod.functions.find((candidate) => candidate.name === "__extern_get");
   const objFindIdx = ctx.funcMap.get("__obj_find");
   const active = globalIndexByName(ctx, "__reflect_get_receiver_active");

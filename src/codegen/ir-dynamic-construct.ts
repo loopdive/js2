@@ -37,7 +37,6 @@ import {
 import { armExternF64ArgTypeGuard, armExternRefArgTypeGuard } from "./extern-arg-marshal.js";
 import { armConstructIsConstructorGuard } from "./construct-is-constructor-guard.js";
 import { buildInt8ArrayCarrierMatch, emitTaDynCtorConstructFromLocals } from "./dataview-native.js";
-import { noJsHost } from "./js-errors.js";
 import { isFunctionIntrinsicValueCallee } from "./closures/function-intrinsic-construct.js";
 import { tracesToProxyConstructorValue } from "./proxy-value-provenance.js";
 import { admitBoundValueConstruct } from "./construct-bound.js";
@@ -45,7 +44,7 @@ import { isRuntimeEvalCallableResultExpression } from "./expressions/runtime-eva
 import { funcConstructorForCallee } from "./fnctor-ctor-decl.js";
 import { resolvesToGlobalFunctionAlias } from "./expressions/eval-inline.js";
 import { resolvesToNonConstructableValue } from "./expressions/non-constructable.js";
-import { buildExplicitNullThisElseArm, explicitNullReceiverLane } from "./explicit-null-receiver.js";
+import { buildExplicitNullThisElseArm } from "./explicit-null-receiver.js";
 import { emitFnctorProtoGet } from "./expressions/fnctor-prototype.js";
 import { identifierIsWrittenTo } from "./native-ordinary-instanceof.js";
 import { ensureCurrentThisGlobal } from "./statements/nested-declarations.js";
@@ -69,7 +68,6 @@ export function irDynamicConstructHelperName(arity: number): string {
  * takes before the ordinary driver; a site any of them claims stays legacy.
  */
 export function irDynamicConstructCalleeIsPlain(ctx: CodegenContext, callee: ts.Identifier): boolean {
-  if (!noJsHost(ctx)) return false;
   if (ctx.classSet.has(callee.text) || ctx.externClasses.has(callee.text)) return false;
   if (funcConstructorForCallee(ctx, callee)) return false; // a compiled fnctor owns the typed-struct path
   if (resolvesToNonConstructableValue(ctx, callee)) return false; // the throwing path
@@ -87,7 +85,7 @@ export function irDynamicConstructCalleeIsPlain(ctx: CodegenContext, callee: ts.
  * Returns the function index, or undefined off the host-free lanes.
  */
 export function ensureIrDynamicConstructHelper(ctx: CodegenContext, arity: number): number | undefined {
-  if (!noJsHost(ctx) || arity < 0 || arity > IR_DYNAMIC_CONSTRUCT_MAX_ARITY) return undefined;
+  if (arity < 0 || arity > IR_DYNAMIC_CONSTRUCT_MAX_ARITY) return undefined;
   const name = irDynamicConstructHelperName(arity);
   const existing = ctx.funcMap.get(name);
   if (existing !== undefined) return existing;
@@ -224,7 +222,6 @@ export function captureReceiverSequence(
  * Returns the function index, or undefined off the host-free lanes.
  */
 export function ensureIrCurrentThisHelper(ctx: CodegenContext, strict: boolean): number | undefined {
-  if (!noJsHost(ctx)) return undefined;
   const name = strict ? IR_CURRENT_THIS_STRICT_HELPER : IR_CURRENT_THIS_SLOPPY_HELPER;
   const existing = ctx.funcMap.get(name);
   if (existing !== undefined) return existing;
@@ -244,9 +241,7 @@ export function ensureIrCurrentThisHelper(ctx: CodegenContext, strict: boolean):
   const yieldReceiver: Instr[] = [{ op: "local.get", index: receiver }];
   // The marker can only arrive where legacy installs it; testing for it in a
   // module that never does is dead code, never a different answer.
-  const installed = explicitNullReceiverLane(ctx)
-    ? (buildExplicitNullThisElseArm(ctx, receiver, explicitNull) ?? yieldReceiver)
-    : yieldReceiver;
+  const installed = buildExplicitNullThisElseArm(ctx, receiver, explicitNull) ?? yieldReceiver;
   helper.body.push(
     { op: "global.get", index: thisGlobal },
     { op: "local.tee", index: receiver },
@@ -265,7 +260,6 @@ export const IR_GLOBAL_OBJECT_HELPER = "__ir_global_object";
  * fallback), so an IR read of an ambient global sees the realm's bindings.
  */
 export function ensureIrGlobalObjectHelper(ctx: CodegenContext): number | undefined {
-  if (!noJsHost(ctx)) return undefined;
   const existing = ctx.funcMap.get(IR_GLOBAL_OBJECT_HELPER);
   if (existing !== undefined) return existing;
   const externref: ValType = { kind: "externref" };
@@ -281,7 +275,6 @@ export function ensureIrGlobalObjectHelper(ctx: CodegenContext): number | undefi
  * chain walk is unavailable on this lane.
  */
 export function ensureIrInstanceOfFunctionHelper(ctx: CodegenContext, functionName: string): number | undefined {
-  if (!noJsHost(ctx)) return undefined;
   const name = irInstanceOfFunctionHelperName(functionName);
   const existing = ctx.funcMap.get(name);
   if (existing !== undefined) return existing;

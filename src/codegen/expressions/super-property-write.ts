@@ -172,7 +172,6 @@ export function tryCompileStandaloneSuperWrite(
   target: ts.PropertyAccessExpression | ts.ElementAccessExpression,
   value: ts.Expression,
 ): InnerResult | undefined {
-  if (!ctx.standalone) return undefined;
   if (target.expression.kind !== ts.SyntaxKind.SuperKeyword) return undefined;
   let keyName: string | undefined;
   let keyExpr: ts.Expression | undefined;

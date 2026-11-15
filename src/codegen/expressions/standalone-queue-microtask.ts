@@ -62,7 +62,7 @@ export function tryStandaloneQueueMicrotaskCall(
   fctx: FunctionContext,
   expr: ts.CallExpression,
 ): InnerResult | undefined {
-  if (!ctx.standalone || ctx.standaloneGlobalThisImport !== undefined) return undefined;
+  if (ctx.standaloneGlobalThisImport !== undefined) return undefined;
   const callee = expr.expression;
   if (!ts.isIdentifier(callee) || callee.text !== "queueMicrotask") return undefined;
   if (fctx.localMap.has(callee.text) || runtimeEvalStateMayShadowBinding(ctx, fctx, callee.text)) return undefined;

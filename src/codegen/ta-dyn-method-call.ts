@@ -167,7 +167,6 @@ function taDynMethodValidatesTypedArray(method: string): boolean {
  * the #2872 helper call site but not this guard).
  */
 function taDynDetachedGuardApplies(ctx: CodegenContext, method: string): boolean {
-  if (!ctx.standalone) return false;
   const dynIdx = ctx.taDynViewTypeIdx;
   if (dynIdx === undefined || dynIdx < 0) return false;
   if (!taDynMethodValidatesTypedArray(method)) return false;
@@ -347,7 +346,7 @@ export function taDynJoinLengthInstrs(
     { op: "call", funcIdx: externLenIdx },
   ];
   const dynIdx = ctx.taDynViewTypeIdx;
-  if (!ctx.standalone || dynIdx === undefined || dynIdx < 0) return generic;
+  if (dynIdx === undefined || dynIdx < 0) return generic;
   const anyLocal = allocLocal(fctx, `__tajl_any_${fctx.locals.length}`, { kind: "anyref" });
   const dvLocal = allocLocal(fctx, `__tajl_dv_${fctx.locals.length}`, { kind: "ref_null", typeIdx: dynIdx });
   const kindLocal = allocLocal(fctx, `__tajl_kind_${fctx.locals.length}`, { kind: "i32" });
@@ -392,7 +391,6 @@ export function taDynJoinLengthInstrs(
  * `__ta_dyn_<m>(recv, a0, a1, a2, argc) -> externref`.
  */
 export function unshiftExternMethodCallTaDynViewArm(ctx: CodegenContext): void {
-  if (!ctx.standalone) return;
   const dynIdx = ctx.taDynViewTypeIdx;
   if (dynIdx === undefined || dynIdx < 0) return;
   if (!ctx.nativeStrings || ctx.nativeStrTypeIdx < 0) return;

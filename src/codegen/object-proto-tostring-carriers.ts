@@ -260,7 +260,7 @@ function tailStart(fn: WasmFunction): number {
  * consumer body (a second run would only append arms that can never fire).
  */
 export function fillObjectProtoToStringCarrierArms(ctx: CodegenContext): void {
-  if (!ctx.standalone || !ctx.nativeStrings) return;
+  if (!ctx.nativeStrings) return;
   for (const [name, receiverIndex] of CONSUMERS) {
     const fn = ctx.mod.functions.find((f) => (f as { name?: string }).name === name) as WasmFunction | undefined;
     if (!fn || filled.has(fn)) continue;
@@ -381,7 +381,7 @@ export function emitObjectProtoToStringSymbolTagConsult(
   fctx: FunctionContext,
   receiverIndex: number,
 ): void {
-  if (!ctx.standalone || ctx.symbolTypeIdx < 0) return;
+  if (ctx.symbolTypeIdx < 0) return;
   if (ctx.funcMap.get("__typeof_undefined") === undefined) return;
   if (ensureObjectProtoSymbolTagFn(ctx) === undefined) return;
   flushLateImportShifts(ctx, fctx);

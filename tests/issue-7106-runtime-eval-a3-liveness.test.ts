@@ -7,10 +7,22 @@
 // liveness precise, the harness's function objects (`assert`, `compareArray`,
 // `Test262Error`) keep their IR value route under the push.
 
-import { describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it, vi } from "vitest";
 
 import { compile } from "../src/index.js";
 import { compileHarnessBody } from "./helpers/harness-module-init.js";
+
+// (#7345) On standalone the selector refuses an eval-boundary unit itself, and records the
+// boundary's reason in the detail only under this diagnostic; it is read when the selector loads.
+const previousDiag = vi.hoisted(() => {
+  const value = process.env.JS2WASM_IR_SHAPE_DIAG;
+  process.env.JS2WASM_IR_SHAPE_DIAG = "1";
+  return value;
+});
+afterAll(() => {
+  if (previousDiag === undefined) Reflect.deleteProperty(process.env, "JS2WASM_IR_SHAPE_DIAG");
+  else process.env.JS2WASM_IR_SHAPE_DIAG = previousDiag;
+});
 
 async function outcomes(source: string) {
   const result = await compile(source, { target: "standalone", trackIrOutcomes: true, fileName: "test.ts" });

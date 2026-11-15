@@ -159,13 +159,13 @@ export function memberSetCandidates(
   propName: string,
 ): ReturnType<typeof findAlternateStructsForField> {
   return findAlternateStructsForField(ctx, propName, -1).filter(
-    (c) => c.mutable && !(propName === "length" && ctx.standalone && isVecBaseSubtype(ctx, c.structTypeIdx)),
+    (c) => c.mutable && !(propName === "length" && isVecBaseSubtype(ctx, c.structTypeIdx)),
   );
 }
 
 /** Build the ordinary-property `arguments.length` arm for standalone vecs. */
 function argumentsLengthSetArm(ctx: CodegenContext, propName: string): Instr[] {
-  const typeIdx = ctx.standalone ? ctx.structMap.get("__arguments_vec") : undefined;
+  const typeIdx = ctx.structMap.get("__arguments_vec");
   if (propName !== "length" || typeIdx === undefined) return [];
   return [
     { op: "local.get", index: 2 },
@@ -260,7 +260,7 @@ export function fillMemberSetDispatch(ctx: CodegenContext): void {
     const residLocs = findFnctorResidStructsForField(ctx, propName);
     // (#4602) Per-key: only a key a suspicious descriptor could actually use
     // demotes this property's writes; a clean key keeps the pre-#4504 path.
-    const inheritedFlowDecisionActive = ctx.standalone && inheritedSetAffectsKey(ctx, propName);
+    const inheritedFlowDecisionActive = inheritedSetAffectsKey(ctx, propName);
     const buildResidArmChain = (idx: number): Instr[] => {
       if (idx >= residLocs.length) return buildFallback();
       const loc = residLocs[idx]!;

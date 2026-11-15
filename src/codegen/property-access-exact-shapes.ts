@@ -149,7 +149,6 @@ export function tryEmitExactStructFieldGet(
   const objResult = compileExpression(ctx, fctx, expr.expression);
   const fieldType = fields[fieldIdx]!.type;
   if (
-    ctx.standalone &&
     objResult &&
     ctx.classSet.has(typeName) &&
     (objResult.kind === "externref" || objResult.kind === "ref" || objResult.kind === "ref_null")
@@ -179,11 +178,7 @@ export function tryEmitExactStructFieldGet(
     // the finalize-filled member dispatcher, whose own terminal remains
     // `__extern_get` for genuine host objects. This is the callable counterpart
     // of the exclusions in the open-object dynamic-read paths.
-    const needsWasmCallableCarrier = !ctx.standalone && !ctx.wasi && ctx.oracle.signatureOf(expr) !== undefined;
-    if (
-      !needsWasmCallableCarrier &&
-      ((!ctx.standalone && !ctx.wasi) || isStructuralObjectContract(ctx, objType, typeName))
-    ) {
+    if (isStructuralObjectContract(ctx, objType, typeName)) {
       const structuralResult = emitStructuralExternrefFieldGet(ctx, fctx, expr, propName);
       if (structuralResult !== undefined) return structuralResult;
     }
@@ -214,7 +209,7 @@ export function tryEmitStructuralContractReadFromLocal(
   typeName: string | undefined,
   receiverLocal: number,
 ): ValType | undefined {
-  if (!ctx.standalone || !isStructuralObjectContract(ctx, objType, typeName)) return undefined;
+  if (!isStructuralObjectContract(ctx, objType, typeName)) return undefined;
   fctx.body.push({ op: "local.get", index: receiverLocal });
   const result = emitStructuralExternrefFieldGet(ctx, fctx, expr, propName, true);
   if (result === undefined) fctx.body.push({ op: "drop" });

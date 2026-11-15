@@ -20,16 +20,11 @@ import { ensureLateImport, flushLateImportShifts } from "./late-imports.js";
  * reuse for both the read and the write.
  */
 export function emitToPropertyKeyOnce(ctx: CodegenContext, fctx: FunctionContext): void {
-  if (ctx.standalone) {
-    ensureObjectRuntime(ctx);
-    flushLateImportShifts(ctx, fctx);
-    const tpkIdx = ctx.funcMap.get("__to_property_key");
-    if (tpkIdx !== undefined) fctx.body.push({ op: "call", funcIdx: tpkIdx });
-    return;
-  }
-  const tpkIdx = ensureLateImport(ctx, "__to_property_key", [{ kind: "externref" }], [{ kind: "externref" }]);
+  ensureObjectRuntime(ctx);
   flushLateImportShifts(ctx, fctx);
+  const tpkIdx = ctx.funcMap.get("__to_property_key");
   if (tpkIdx !== undefined) fctx.body.push({ op: "call", funcIdx: tpkIdx });
+  return;
 }
 
 /** (#6963) `(externref obj, externref key) -> externref` element-store key canonicaliser. */
@@ -49,10 +44,6 @@ const ELEM_STORE_KEY = "__elem_store_key";
  * string canonicalisation the receiver-specific setter arms rely on.
  */
 export function emitElementStoreKeyOnce(ctx: CodegenContext, fctx: FunctionContext, objLocal: number): void {
-  if (!ctx.standalone) {
-    emitToPropertyKeyOnce(ctx, fctx);
-    return;
-  }
   ensureObjectRuntime(ctx);
   flushLateImportShifts(ctx, fctx);
   let helperIdx = ctx.funcMap.get(ELEM_STORE_KEY);

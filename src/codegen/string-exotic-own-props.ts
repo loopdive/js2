@@ -82,7 +82,6 @@ export function registerStringExoticHasOwn(
     objFindIdx: number;
   },
 ): number | undefined {
-  if (!ctx.standalone) return undefined;
   if (ctx.funcMap.get(STRING_EXOTIC_HASOWN_FN) !== undefined) {
     return ctx.funcMap.get(STRING_EXOTIC_HASOWN_FN);
   }
@@ -376,7 +375,6 @@ export function registerStringExoticPushKeys(
     objVecPushIdx: number;
   },
 ): number | undefined {
-  if (!ctx.standalone) return undefined;
   const already = ctx.funcMap.get(STRING_EXOTIC_PUSH_KEYS_FN);
   if (already !== undefined) return already;
   const anyStr = ctx.anyStrTypeIdx;

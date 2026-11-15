@@ -1896,7 +1896,7 @@ export function ensureProxyRuntime(
   const setBody = findBody("__extern_set");
   if (setBody) {
     const setResultGlobalIdx = ctx.externSetResultGlobalIdx;
-    const inheritedSetRuntimeActive = ctx.standalone && inheritedSetAnyDirty(ctx) && setResultGlobalIdx !== undefined;
+    const inheritedSetRuntimeActive = inheritedSetAnyDirty(ctx) && setResultGlobalIdx !== undefined;
     const isTruthyIdx = ctx.funcMap.get("__is_truthy");
     const resultAwareGuard = inheritedSetRuntimeActive && isTruthyIdx !== undefined;
     const callSetDispatch = (): Instr[] => [
@@ -2033,7 +2033,7 @@ export function ensureProxyRuntime(
   // its pre-existing bytes. Measured 2026-09-17: ungated, a Proxy-free wasi
   // probe moved by 113 bytes — a lane this slice does not measure should not
   // move at all.
-  const strictSetBody = ctx.standalone ? findBody("__extern_set_strict") : undefined;
+  const strictSetBody = findBody("__extern_set_strict");
   const strictSetDispatchIdx = setReceiverDispatchIdx ?? setDispatchIdx;
   const strictSetTruthyIdx = ctx.funcMap.get("__is_truthy");
   if (strictSetBody && strictSetTruthyIdx !== undefined) {

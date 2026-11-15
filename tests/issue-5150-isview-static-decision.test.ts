@@ -19,7 +19,6 @@ interface DecisionCase {
   symbol?: string;
   anyOrUnknown?: boolean;
   union?: boolean;
-  standalone?: boolean;
   alias?: string;
   externrefBacked?: boolean;
   builtinParent?: string;
@@ -28,8 +27,26 @@ interface DecisionCase {
   reads: readonly string[];
 }
 
-const ordinaryReads = (symbol: string) => [`typed:${symbol}`, `alias:${symbol}`, `extern:${symbol}`];
-const directReads = ["typed:DV", "alias:DV", "extern:DV", "builtin:DV", "parent:DV"];
+// (#6651 V3) Both heritage probes run for every named class: the DataView
+// probe (`extern`, then `builtin`/`parent` only when externref-backed) and the
+// TypedArray-subclass probe (`builtin`, then `extern`, then `typed:<parent>`).
+const ordinaryReads = (symbol: string) => [
+  `typed:${symbol}`,
+  `alias:${symbol}`,
+  `extern:${symbol}`,
+  `builtin:${symbol}`,
+  `extern:${symbol}`,
+];
+const directReads = [
+  "typed:DV",
+  "alias:DV",
+  "extern:DV",
+  "builtin:DV",
+  "parent:DV",
+  "builtin:DV",
+  "extern:DV",
+  "typed:DataView",
+];
 const directDV = { symbol: "DV", externrefBacked: true, builtinParent: "DataView", directParent: "DataView" };
 const CASES: readonly DecisionCase[] = [
   ...NUMERIC_VIEWS.map((symbol) => ({ id: symbol, symbol, expected: true, reads: ordinaryReads(symbol) })),
@@ -53,7 +70,16 @@ const CASES: readonly DecisionCase[] = [
     symbol: "Local",
     alias: "DV",
     expected: undefined,
-    reads: ["typed:Local", "alias:Local", "extern:DV", "builtin:DV", "parent:DV"],
+    reads: [
+      "typed:Local",
+      "alias:Local",
+      "extern:DV",
+      "builtin:DV",
+      "parent:DV",
+      "builtin:DV",
+      "extern:DV",
+      "typed:DataView",
+    ],
   },
   {
     id: "non-direct parent",
@@ -70,18 +96,12 @@ const CASES: readonly DecisionCase[] = [
     reads: [...ordinaryReads("DV"), "union"],
   },
   {
-    id: "non-DataView builtin parent",
+    // (#6651 V3) A TypedArray builtin parent makes it a runtime test.
+    id: "TypedArray builtin parent",
     ...directDV,
     builtinParent: "Uint8Array",
-    expected: false,
-    reads: [...ordinaryReads("DV"), "builtin:DV", "union"],
-  },
-  {
-    id: "standalone false",
-    ...directDV,
-    standalone: false,
-    expected: false,
-    reads: ["typed:DV", "alias:DV", "union"],
+    expected: undefined,
+    reads: ["typed:DV", "alias:DV", "extern:DV", "builtin:DV", "builtin:DV", "extern:DV", "typed:Uint8Array"],
   },
   {
     id: "numeric view wins over Any and union",
@@ -164,7 +184,6 @@ describe("#5150 pure isView static classification", () => {
     ];
     const before = [...maps.map((map) => [...map]), [...externrefs], [...typedArrays]];
     const metadata = Object.freeze({
-      standalone: row.standalone ?? true,
       classExprNameMap: aliases,
       classExternrefBackedSet: externrefs,
       classBuiltinParentMap: builtins,

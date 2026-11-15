@@ -101,9 +101,10 @@ const REFUSED: Record<string, { readonly source: string; readonly detail: string
     source: `var o = {}; if ((o).toString === undefined) { throw "inherited"; }`,
     detail: "expr-module-scalar-method",
   },
+  // (#7341) Refused before the probe: the carrier's loose `== null` has no lowering.
   "parenthesized loose equality": {
     source: `var o = {}; if ((o) == null) { throw "null"; }`,
-    detail: "expr-module-scalar-method",
+    detail: "operand-coercion-unsupported",
   },
   alias: {
     source: `var o = {}; var p = o; if (p.toString === undefined) { throw "alias"; }`,

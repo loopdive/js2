@@ -367,7 +367,6 @@ export function emitStandalonePromiseCombinatorDrive(
       blockType: { kind: "empty" },
       then: [
         buildTargetTaggedTry(
-          ctx,
           { kind: "empty" },
           [
             { op: "local.get", index: L.argLocal },
@@ -401,7 +400,6 @@ export function emitStandalonePromiseCombinatorDrive(
       { op: "i32.const", value: 1 },
       { op: "local.set", index: L.doneLocal },
       buildTargetTaggedTry(
-        ctx,
         { kind: "empty" },
         [
           { op: "local.get", index: L.iterLocal },
@@ -446,7 +444,6 @@ export function emitStandalonePromiseCombinatorDrive(
         blockType: { kind: "empty" },
         then: [
           buildTargetTaggedTry(
-            ctx,
             { kind: "empty" },
             [
               { op: "local.get", index: L.iterLocal },

@@ -8,8 +8,8 @@
  * host API needs JS values, so each argument goes through the runtime's
  * primitive converter and its callable bridge. Both are INJECTED, so this
  * module never imports runtime.ts. A module that does not export the
- * native-string bridge (`__str_is_native`) — every host-assisted module — is
- * passed through untouched, as is any value the converters do not own.
+ * native-string bridge (`__str_is_native`) is passed through untouched, as is
+ * any value the converters do not own.
  *
  * (#7095) A user `declare function f(...)` bound to an embedder dependency
  * crosses the same boundary and gets the same argument marshal, plus the

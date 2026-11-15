@@ -19,7 +19,7 @@ import { getArrTypeIdxFromVec } from "./registry/types.js";
  * miss is exactly `false` rather than a partially modelled prototype lookup.
  */
 export function fillHoleyArrayHasIdxArm(ctx: CodegenContext): void {
-  if (!ctx.standalone || ctx.holeyArrayTypeIdx < 0) return;
+  if (ctx.holeyArrayTypeIdx < 0) return;
   const funcIdx = ctx.funcMap.get("__extern_has_idx");
   if (funcIdx === undefined) return;
   const fn = definedFuncAt(ctx, funcIdx);

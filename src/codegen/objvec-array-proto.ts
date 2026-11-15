@@ -60,7 +60,7 @@ export function fillObjVecReflectionHelpers(ctx: CodegenContext): void {
  */
 export function fillObjVecArrayPrototypeArm(ctx: CodegenContext): void {
   const state = ctx as CodegenContext & { objVecArrayPrototypeArmFilled?: boolean };
-  if (state.objVecArrayPrototypeArmFilled || !ctx.standalone) return;
+  if (state.objVecArrayPrototypeArmFilled) return;
   const objVecTypeIdx = ctx.objectRuntimeTypes?.objVecTypeIdx;
   const getProtoIdx = ctx.funcMap.get("__getPrototypeOf");
   const getProtoFn = getProtoIdx === undefined ? undefined : definedFuncAt(ctx, getProtoIdx);

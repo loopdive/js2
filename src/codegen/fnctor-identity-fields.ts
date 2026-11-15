@@ -32,7 +32,7 @@ export function fnctorProtoField(): FieldDef {
  */
 export function fnctorProtoStartNeeded(ctx: CodegenContext): boolean {
   const gate = ctx.fnctorEscapeGate;
-  return ctx.standalone && ((gate?.approvedNames.size ?? 0) > 0 || (gate?.ctorDeclByName.size ?? 0) > 0);
+  return (gate?.approvedNames.size ?? 0) > 0 || (gate?.ctorDeclByName.size ?? 0) > 0;
 }
 
 /**
@@ -119,10 +119,8 @@ export function appendFnctorInternalFields(
   for (let word = 0; word < wordCount; word++) {
     fields.push({ name: presenceWordName(word * 32), type: { kind: "i32" }, mutable: true });
   }
-  if (ctx.standalone) {
-    fields.push(fnctorConstructorField());
-    fields.push(fnctorProtoField());
-  }
+  fields.push(fnctorConstructorField());
+  fields.push(fnctorProtoField());
 }
 
 /**

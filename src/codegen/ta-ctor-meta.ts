@@ -46,7 +46,7 @@ const FLAG_NONE = 0x00;
 
 /** Splice the `$__ta_ctor` name/length arm into `__builtinfn_get_meta`. */
 export function fillTaCtorGetMetaArm(ctx: CodegenContext): void {
-  if (!ctx.standalone || ctx.taCtorTypeIdx < 0) return;
+  if (ctx.taCtorTypeIdx < 0) return;
   const taCtorTypeIdx = ctx.taCtorTypeIdx;
   const getMetaFn = ctx.mod.functions.find((f) => f.name === "__builtinfn_get_meta");
   if (!getMetaFn) return;

@@ -20,7 +20,6 @@ import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "../func-space.j
 import { inLiveShiftRange } from "../../emit/resolve-layout.js";
 import { addStringConstantGlobal, localGlobalIdx } from "../registry/imports.js";
 import { stringConstantExternrefInstrs } from "../native-strings.js";
-import { noJsHost } from "../expressions/helpers.js";
 import { emitWasiErrorConstructor } from "../registry/error-types.js";
 import { allocTempLocal } from "../context/locals.js";
 import { ensureExnTag } from "../index.js";
@@ -108,9 +107,7 @@ const NULL_THIS_TYPEERROR_MSG = "Cannot read properties of undefined (reading a 
 export function ensureNullThisTypeError(ctx: CodegenContext, fctx: FunctionContext | null): void {
   if (ctx.nullThisTypeErrorReady) return;
   // In no-JS-host mode, define `__new_TypeError` in-module (no env import).
-  if (noJsHost(ctx)) {
-    emitWasiErrorConstructor(ctx, "TypeError", 1);
-  }
+  emitWasiErrorConstructor(ctx, "TypeError", 1);
   addStringConstantGlobal(ctx, NULL_THIS_TYPEERROR_MSG);
   ensureLateImportShared(ctx, "__new_TypeError", [{ kind: "externref" }], [{ kind: "externref" }]);
   flushLateImportShiftsShared(ctx, fctx);
@@ -1127,7 +1124,6 @@ export function ensureFuncClosureSingleton(
   const liveGlobalBindingResultBridge =
     !eagerAsyncPromiseWrap &&
     !nativeGeneratorResultBridge &&
-    (ctx.standalone === true || ctx.wasi === true) &&
     ctx.runtimeEvalGlobalFunctionBindings === true &&
     sig.results.length === 1 &&
     (sig.results[0]!.kind === "ref" || sig.results[0]!.kind === "ref_null");

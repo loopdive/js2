@@ -13,7 +13,7 @@ export function fillClosedObjectPrototypeEdges(
   },
 ): void {
   const { nextModuleGlobalIdx, canonicalUndefinedExternInstrs } = services;
-  if (!ctx.standalone || !ctx.usesDynamicProto || !ctx.objectRuntimeTypes) return;
+  if (!ctx.usesDynamicProto || !ctx.objectRuntimeTypes) return;
   if (ctx.funcMap.has("__closed_proto_find")) return;
   const required = [
     "__getPrototypeOf",

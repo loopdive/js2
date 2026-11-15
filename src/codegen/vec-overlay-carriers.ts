@@ -74,7 +74,7 @@ export function carrierDefaultInstrs(
   missExtern: () => Instr[],
 ): Instr[] {
   if (carrier.kind === "f64") {
-    return mode === "holes" && ctx.standalone && ctx.usesArrayHoles
+    return mode === "holes" && ctx.usesArrayHoles
       ? [{ op: "i64.const", value: HOLE_F64_BITS }, { op: "f64.reinterpret_i64" }]
       : [{ op: "f64.const", value: 0 }];
   }

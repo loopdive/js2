@@ -9,7 +9,7 @@
  * (`tag5ToNumber`/`tag5ValueEqThen`) are threaded in so their captured
  * environment is unchanged (prove-emit-identity across gc/standalone/wasi). The
  * standalone/wasi-gated reference-identity reconciliation (#2175 V2-S3) inside
- * `__any_strict_eq` moves verbatim WITH its `ctx.standalone || ctx.wasi` guard.
+ * `__any_strict_eq` moves verbatim WITH its native-regime guard.
  *
  * The loose-eq and strict-eq(+relational) registrars are split into two private
  * functions (each < the #3400 per-function LOC ceiling) so the decomposition
@@ -49,7 +49,7 @@ function ensureStandaloneHostEqGuard(
   ctx: CodegenContext,
   buildThrow: typeof buildThrowJsErrorInstrs,
 ): number | undefined {
-  // Key on the TARGET, not `ctx.standalone`: that flag is the native semantic
+  // Key on the TARGET, not the regime flag: that flag is the native semantic
   // regime, also true for `semanticProviders: "native-first"` in a JavaScript
   // environment, where host values are readable and must not be refused.
   if (ctx.targetProfile.target !== "standalone") return undefined;
@@ -510,49 +510,46 @@ function registerAnyStrictEqAndComparisonHelpers(
             // Cannot false-positive a primitive: distinct number/string/object boxes
             // are distinct refs. GATED on standalone/wasi (native-GC-only; host mode
             // uses host externrefs and answers identity correctly, byte-identical).
-            then:
-              ctx.standalone === true || ctx.wasi === true
-                ? (() => {
-                    const EQ_HEAP_TYPE = -19; // WasmGC `eq` abstract heap type
-                    const recoverRefPayload = (opIdx: number, dstLocal: number): Instr[] => [
-                      { op: "local.get", index: opIdx },
-                      { op: "struct.get", typeIdx: anyTypeIdx, fieldIdx: 3 }, // refval (eqref)
-                      { op: "local.tee", index: dstLocal },
-                      { op: "ref.is_null" },
-                      {
-                        op: "if",
-                        blockType: { kind: "empty" },
-                        then: [
-                          { op: "local.get", index: opIdx },
-                          { op: "struct.get", typeIdx: anyTypeIdx, fieldIdx: 4 }, // externval (externref)
-                          { op: "any.convert_extern" },
-                          { op: "local.set", index: dstLocal },
-                        ],
-                      },
-                    ];
-                    return [
-                      ...recoverRefPayload(0, 4),
-                      ...recoverRefPayload(1, 5),
-                      { op: "local.get", index: 4 },
-                      { op: "ref.test", typeIdx: EQ_HEAP_TYPE },
-                      { op: "local.get", index: 5 },
-                      { op: "ref.test", typeIdx: EQ_HEAP_TYPE },
-                      { op: "i32.and" },
-                      {
-                        op: "if",
-                        blockType: { kind: "val", type: { kind: "i32" } },
-                        then: [
-                          { op: "local.get", index: 4 },
-                          { op: "ref.cast", typeIdx: EQ_HEAP_TYPE },
-                          { op: "local.get", index: 5 },
-                          { op: "ref.cast", typeIdx: EQ_HEAP_TYPE },
-                          { op: "ref.eq" },
-                        ],
-                        else: [{ op: "i32.const", value: 0 }],
-                      },
-                    ];
-                  })()
-                : [{ op: "i32.const", value: 0 }],
+            then: (() => {
+              const EQ_HEAP_TYPE = -19; // WasmGC `eq` abstract heap type
+              const recoverRefPayload = (opIdx: number, dstLocal: number): Instr[] => [
+                { op: "local.get", index: opIdx },
+                { op: "struct.get", typeIdx: anyTypeIdx, fieldIdx: 3 }, // refval (eqref)
+                { op: "local.tee", index: dstLocal },
+                { op: "ref.is_null" },
+                {
+                  op: "if",
+                  blockType: { kind: "empty" },
+                  then: [
+                    { op: "local.get", index: opIdx },
+                    { op: "struct.get", typeIdx: anyTypeIdx, fieldIdx: 4 }, // externval (externref)
+                    { op: "any.convert_extern" },
+                    { op: "local.set", index: dstLocal },
+                  ],
+                },
+              ];
+              return [
+                ...recoverRefPayload(0, 4),
+                ...recoverRefPayload(1, 5),
+                { op: "local.get", index: 4 },
+                { op: "ref.test", typeIdx: EQ_HEAP_TYPE },
+                { op: "local.get", index: 5 },
+                { op: "ref.test", typeIdx: EQ_HEAP_TYPE },
+                { op: "i32.and" },
+                {
+                  op: "if",
+                  blockType: { kind: "val", type: { kind: "i32" } },
+                  then: [
+                    { op: "local.get", index: 4 },
+                    { op: "ref.cast", typeIdx: EQ_HEAP_TYPE },
+                    { op: "local.get", index: 5 },
+                    { op: "ref.cast", typeIdx: EQ_HEAP_TYPE },
+                    { op: "ref.eq" },
+                  ],
+                  else: [{ op: "i32.const", value: 0 }],
+                },
+              ];
+            })(),
             else: [
               // Same tag — compare by tag type
               { op: "local.get", index: 2 },

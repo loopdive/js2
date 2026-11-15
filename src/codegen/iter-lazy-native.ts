@@ -370,7 +370,6 @@ function ensureLazyBufHelpers(ctx: CodegenContext): LazyBufHelpers | undefined {
 /** Gather (registering as needed) every dependency the lazy runtime needs.
  *  Returns undefined when a dep is unavailable (⇒ no native arm; legacy path). */
 function gatherLazyDeps(ctx: CodegenContext): LazyDeps | undefined {
-  if (!ctx.standalone) return undefined;
   ensureObjectRuntime(ctx);
   addUnionImportsViaRegistry(ctx);
   ensureNativeIteratorRuntime(ctx);

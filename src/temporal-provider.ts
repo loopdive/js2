@@ -155,7 +155,7 @@ export function temporalProviderCacheKey(options: {
  * served for a changed shim.
  *
  * (#6748) The native-first measurement lane's provider gets the shim too. It
- * is compiled under the native semantic REGIME (`ctx.standalone`), which reads
+ * is compiled under the native semantic REGIME (`targetProfile.nativeRegime`), which reads
  * the bare `Intl` identifier as null exactly like standalone does (the host
  * `Intl` arm in `expressions/identifiers.ts` is the `intl` accelerator's), so
  * without it the provider's `__module_init` threw `TypeError: Cannot access

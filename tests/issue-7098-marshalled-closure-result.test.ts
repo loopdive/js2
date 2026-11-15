@@ -113,11 +113,4 @@ describe("#7098 closure results read by the host (native regime, JS environment)
       expect(names.filter((name) => name === "__dynamic_boundary_tag" || name.endsWith("_boolean"))).toEqual([]);
     }
   });
-
-  it("host-assisted keeps its own callback wrapper (unchanged)", async () => {
-    const { callback } = await captureCallback("listener", `() => { sink.textContent = "x"; }`, {
-      semanticProviders: "host-assisted",
-    });
-    expect(callback()).toBeUndefined();
-  });
 });

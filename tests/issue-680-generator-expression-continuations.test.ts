@@ -1390,9 +1390,18 @@ describe("#680 native generator expression continuations", () => {
         return iterator.next().done ? 1 : 0;
       }
     `);
-    expect(canonicalPrefix.imports.filter(({ module }) => module === "env").map(({ name }) => name)).toContain(
+    // (#6979 S7-f, #7010) The canonical prefix used to keep the eager
+    // `__create_generator` host buffer; that buffer is retired, so the shape
+    // lowers natively on the default target too and must answer the same.
+    expect(canonicalPrefix.imports.filter(({ module }) => module === "env").map(({ name }) => name)).not.toContain(
       "__create_generator",
     );
+    const prefixImports = buildImports(canonicalPrefix.imports, undefined, canonicalPrefix.stringPool);
+    const prefixInstance = (
+      await WebAssembly.instantiate(canonicalPrefix.binary, prefixImports as unknown as WebAssembly.Imports)
+    ).instance;
+    prefixImports.setExports?.(prefixInstance.exports as Record<string, Function>);
+    expect((prefixInstance.exports as { test(): number }).test()).toBe(1);
   });
 
   it.each([

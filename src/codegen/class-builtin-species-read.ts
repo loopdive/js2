@@ -23,7 +23,7 @@ export function tryCompileClassBuiltinSpeciesRead(
   fctx: FunctionContext,
   expr: ts.ElementAccessExpression,
 ): ValType | undefined {
-  if (!ctx.standalone || !ts.isIdentifier(expr.expression)) return undefined;
+  if (!ts.isIdentifier(expr.expression)) return undefined;
   if (!isSymbolSpeciesKeyExpression(fctx, expr.argumentExpression)) return undefined;
   const root = ctx.classBuiltinParentMap.get(expr.expression.text);
   if (root === undefined || !SPECIES_OWNER_CTORS.has(root)) return undefined;

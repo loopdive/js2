@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 /**
  * #7335 (lever D) — the uses proof for #7280's dynamic-home carrier: a script
- * `var o = {}` on the dynamic module slot that legacy keeps as an open
+ * `var o = {}` (or, #7341, `new Object()`) on the dynamic module slot that legacy keeps as an open
  * `$Object` (`isDynamicHomeOpenCarrier` in `select.ts`, the one initializer
  * admission). #7280 lets every use read the binding through the ordinary
  * dynamic arms. Two arms here need more:
@@ -22,7 +22,12 @@ import {
   sourceWritesMemberNamed,
 } from "../shared/intrinsic-prototype-writes.js";
 import { ts } from "../ts-api.js";
-import { emptyObjectLiteralBinding, isOpenCarrierUse } from "./empty-object-literal.js";
+import {
+  emptyObjectBinding,
+  isEmptyObjectExpression,
+  isOpenCarrierUse,
+  type EmptyObjectExpression,
+} from "./empty-object-literal.js";
 import { isServedUse, type ServedUsePolicy } from "./dynamic-home-uses.js";
 import type { IrLegacyModuleBindingIdentity } from "./module-bindings.js";
 import { OBJECT_PROTOTYPE_KEYS } from "./realm-keys.js";
@@ -34,17 +39,19 @@ export interface DynamicHomeQuery {
   readonly isCarrier: (decl: ts.VariableDeclaration) => boolean;
   /** #7128's U1 define: `Object.defineProperty` with a literal key and descriptor, as the lane lowers it. */
   readonly isLiteralDefine: (call: ts.CallExpression) => boolean;
+  readonly isLibOnlyBinding: (node: ts.Identifier) => boolean;
 }
 
 /** `id` reads a #7280 dynamic-home carrier whose every use is served. */
 export function isReference(id: ts.Identifier, query: DynamicHomeQuery): boolean {
   const declaration = query.resolve?.(id)?.declaration;
+  if (declaration === undefined || !ts.isVariableDeclaration(declaration) || !isScriptVar(declaration)) return false;
+  const value = declaration.initializer;
   return (
-    declaration !== undefined &&
-    ts.isVariableDeclaration(declaration) &&
-    isScriptEmptyLiteralVar(declaration) &&
+    value !== undefined &&
+    isEmptyObjectExpression(value, query.isLibOnlyBinding) &&
     query.isCarrier(declaration) &&
-    everyUseIsServed(declaration, query)
+    everyUseIsServed(declaration, value, query)
   );
 }
 
@@ -59,15 +66,12 @@ export function ownPropertyMethod(call: ts.CallExpression, query: DynamicHomeQue
   return ts.isIdentifier(receiver) && isReference(receiver, query) ? method : undefined;
 }
 
-/** A top-level `var <id> = {}` of a script: unannotated, a plain identifier. */
-function isScriptEmptyLiteralVar(decl: ts.VariableDeclaration): boolean {
+/** A top-level `var <id>` of a script: unannotated, a plain identifier. */
+function isScriptVar(decl: ts.VariableDeclaration): boolean {
   const list = decl.parent;
   return (
     decl.type === undefined &&
     ts.isIdentifier(decl.name) &&
-    decl.initializer !== undefined &&
-    ts.isObjectLiteralExpression(decl.initializer) &&
-    decl.initializer.properties.length === 0 &&
     ts.isVariableDeclarationList(list) &&
     (list.flags & ts.NodeFlags.BlockScoped) === 0 &&
     ts.isVariableStatement(list.parent) &&
@@ -87,12 +91,16 @@ const servedByDeclaration = new WeakMap<ts.VariableDeclaration, boolean>();
  *   - no patch of `Object.prototype` and no reflective route to a prototype
  *     (`Object.setPrototypeOf(o, …)`, `__proto__`, `Reflect`).
  */
-function everyUseIsServed(decl: ts.VariableDeclaration, query: DynamicHomeQuery): boolean {
+function everyUseIsServed(
+  decl: ts.VariableDeclaration,
+  value: EmptyObjectExpression,
+  query: DynamicHomeQuery,
+): boolean {
   let served = servedByDeclaration.get(decl);
   if (served === undefined) {
     const name = decl.name as ts.Identifier;
     const file = decl.getSourceFile();
-    const binding = emptyObjectLiteralBinding(decl.initializer as ts.ObjectLiteralExpression, file);
+    const binding = emptyObjectBinding(value, file);
     const policy = openObjectPolicy(query);
     served =
       bindingIsUniqueAndNeverWritten(name, decl) &&

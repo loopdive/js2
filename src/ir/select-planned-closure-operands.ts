@@ -40,6 +40,7 @@ import {
   isTypedBinaryOperator,
   isUndefinedCompareOperand,
   logicalResultFamily,
+  nullComparedOperand,
   nullComparisonFolds,
   undefinedCompareOperandAdmissible,
   nullishLeftAdmissible,
@@ -104,15 +105,6 @@ function unwrapParens(expr: ts.Expression): ts.Expression {
 
 function isAssignmentOperator(op: ts.SyntaxKind): boolean {
   return op >= ts.SyntaxKind.FirstAssignment && op <= ts.SyntaxKind.LastAssignment;
-}
-
-/** The operand an equality compares with a direct `null` literal (`null === null`: none to type). */
-function nullComparedOperand(expr: ts.BinaryExpression): ts.Expression | null {
-  if (!isEqualityOperator(expr.operatorToken.kind)) return null;
-  const leftNull = expr.left.kind === ts.SyntaxKind.NullKeyword;
-  const rightNull = expr.right.kind === ts.SyntaxKind.NullKeyword;
-  if (leftNull === rightNull) return null;
-  return leftNull ? expr.right : expr.left;
 }
 
 function nullIsComparedOperand(node: ts.Node): boolean {

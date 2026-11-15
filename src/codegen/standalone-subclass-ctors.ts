@@ -66,7 +66,7 @@
  * per key.
  *
  * Host/gc mode never reaches any of this — the caller gates on
- * `ctx.standalone || ctx.wasi` and keeps the `__new_<Parent>` import there, so
+ * the native regime and keeps the `__new_<Parent>` import there, so
  * those lanes stay byte-identical.
  */
 import type { Instr, ValType } from "../ir/types.js";

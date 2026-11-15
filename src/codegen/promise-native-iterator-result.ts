@@ -57,7 +57,6 @@ export function tryEmitAsyncGenNextDispatch(
   callExpr?: ts.CallExpression,
 ): ValType | null {
   const producers = ctx.asyncGenProducers;
-  if (ctx.standalone !== true && ctx.wasi !== true) return null;
   if (producers === undefined || producers.size === 0) return null;
   const recvLocal = allocLocal(fctx, `__agen_recv_${fctx.locals.length}`, { kind: "externref" });
   const rt = compileExpression(ctx, fctx, receiverExpr, { kind: "externref" });
