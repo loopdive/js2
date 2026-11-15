@@ -30,7 +30,10 @@ import type { OperandFamily } from "./analysis/operand-admissibility.js";
 import type { IrFunctionBuilder } from "./builder.js";
 import { irRuntimeFuncRef } from "./callable-bindings.js";
 import { isServedUse, referencesNamed, type ServedUsePolicy } from "./dynamic-home-uses.js";
+import { JS_TAG_IDS } from "./js-tag-domain.js";
+import { irBool } from "./boolean-brand.js";
 import { irDynamic, irVal, type IrType, type IrValueId } from "./nodes.js";
+import { carrierStringFamily, lowerPrimitiveToString } from "./primitive-to-string.js";
 import { OBJECT_PROTOTYPE_KEYS } from "./realm-keys.js";
 import type { IrSelectionOptions } from "./select.js";
 
@@ -46,10 +49,21 @@ const ROWS: readonly WrapperRow[] = [
   { name: "Boolean", family: "boolean" },
 ];
 
-/** An ambient wrapper construction with exactly one non-spread argument. */
+/**
+ * (#7340 S2) The argument families a row converts to its own: ToString of a number or a boolean
+ * (§7.1.17), ToNumber of a string (§7.1.4). Only the forms the ES5 corpus constructs are rows.
+ */
+const CONVERTED_FAMILIES: Readonly<Record<WrapperRow["family"], readonly OperandFamily[]>> = {
+  string: ["number", "boolean"],
+  number: ["string"],
+  boolean: [],
+};
+
+/** An ambient wrapper construction; (#7341 S2) `new Object(v)` with an argument is one too. */
 export interface WrapperConstruction {
   readonly expr: ts.NewExpression;
-  readonly row: WrapperRow;
+  /** The constructor's row; `undefined` for `Object`, whose argument's family picks it ({@link constructedRow}). */
+  readonly row: WrapperRow | undefined;
   /** `undefined` when the arity is not one or the argument is a spread. */
   readonly argument: ts.Expression | undefined;
 }
@@ -77,9 +91,11 @@ export function wrapperConstruction(
   let expr = expression;
   while (ts.isParenthesizedExpression(expr)) expr = expr.expression;
   if (!ts.isNewExpression(expr) || !ts.isIdentifier(expr.expression)) return undefined;
-  const row = ambientWrapperRow(expr.expression, ambience);
-  if (row === undefined) return undefined;
   const args = expr.arguments ?? [];
+  // `new Object()` is the empty object (#7341 S1); with an argument it is ToObject's wrapper.
+  const toObject = expr.expression.text === "Object" && args.length > 0 && ambience.isAmbient(expr.expression);
+  const row = ambientWrapperRow(expr.expression, ambience);
+  if (row === undefined && !toObject) return undefined;
   const single = args.length === 1 && !ts.isSpreadElement(args[0]!) ? args[0] : undefined;
   return { expr, row, argument: single };
 }
@@ -90,7 +106,25 @@ export function admissibleArgument(
   familyOf: (argument: ts.Expression) => OperandFamily,
 ): ts.Expression | undefined {
   const argument = construction?.argument;
-  return argument !== undefined && familyOf(argument) === construction!.row.family ? argument : undefined;
+  return argument !== undefined && familyOf(argument) === construction!.row?.family ? argument : undefined;
+}
+
+/**
+ * (#7340 S2, #7341 S2) The row a stored construction builds, or `undefined` to refuse it: no argument
+ * (the row's own empty value), or one argument of the row's family or of a family the row converts
+ * ({@link CONVERTED_FAMILIES}). For `new Object(v)` the argument's primitive family picks the row
+ * (ToObject, §9.9). `null`, `undefined` and an object are refused: the IR has no dynamic `null`, and an
+ * object's ToPrimitive would run user code.
+ */
+export function constructedRow(
+  construction: WrapperConstruction,
+  familyOf: (argument: ts.Expression) => OperandFamily,
+): WrapperRow | undefined {
+  if ((construction.expr.arguments ?? []).length === 0) return construction.row;
+  if (construction.argument === undefined) return undefined;
+  const family = familyOf(construction.argument);
+  const row = construction.row ?? ROWS.find((candidate) => candidate.family === family);
+  return row && (row.family === family || CONVERTED_FAMILIES[row.family].includes(family)) ? row : undefined;
 }
 
 /** The IR hint the argument is lowered under: its row's own representation. */
@@ -177,9 +211,10 @@ export function wrapperStoreRefusal(
     return "expr-new-wrapper-lane";
   }
   if (resolver === null || resolver(stored.target)?.valueKind.kind !== "dynamic") return "expr-new-wrapper-home";
-  if (!realmIsUnpatched(stored, (node) => resolver.isLibOnlyBinding(node))) return "expr-new-wrapper-realm";
-  if (admissibleArgument(stored, argumentFamily) === undefined) return "expr-new-wrapper-argument";
-  return everyUseIsServed(stored) ? undefined : "expr-new-wrapper-use";
+  const row = constructedRow(stored, argumentFamily);
+  if (!realmIsUnpatched(stored, row, (node) => resolver.isLibOnlyBinding(node))) return "expr-new-wrapper-realm";
+  if (row === undefined) return "expr-new-wrapper-argument";
+  return everyUseIsServed(stored, row) ? undefined : "expr-new-wrapper-use";
 }
 
 /**
@@ -191,13 +226,17 @@ export function wrapperStoreRefusal(
  * reaches a prototype; no `eval`, `Function` or `with` could do any of it
  * unseen.
  */
-function realmIsUnpatched(stored: StoredWrapper, isLibOnlyBinding: (node: ts.Identifier) => boolean): boolean {
+function realmIsUnpatched(
+  stored: StoredWrapper,
+  row: WrapperRow | undefined,
+  isLibOnlyBinding: (node: ts.Identifier) => boolean,
+): boolean {
   const callee = stored.expr.expression as ts.Identifier;
   const file = callee.getSourceFile();
   return (
     isUnshadowedLibBinding(callee, isLibOnlyBinding) &&
     !sourceWritesMemberNamed(file, callee.text) &&
-    !sourceMayPatchPrototype(file, stored.row.name) &&
+    (row === undefined || !sourceMayPatchPrototype(file, row.name)) &&
     !sourceMayPatchPrototype(file, "Object") &&
     !sourceNamesReflectiveRoute(file) &&
     !sourceRunsDynamicCode(file) &&
@@ -213,8 +252,8 @@ function realmIsUnpatched(stored: StoredWrapper, isLibOnlyBinding: (node: ts.Ide
  * use before the store (`var r = w + 1; var w = new Number(5)`) reads
  * `undefined`, which the claimed lowering does not expect.
  */
-function everyUseIsServed(stored: StoredWrapper): boolean {
-  const policy = wrapperPolicy(stored);
+function everyUseIsServed(stored: StoredWrapper, row: WrapperRow): boolean {
+  const policy = wrapperPolicy(row);
   return referencesNamed(stored.target, stored.target.getSourceFile()).every(
     (reference) => isDeclarationName(reference) || (reference.pos >= stored.expr.end && isServedUse(reference, policy)),
   );
@@ -247,8 +286,8 @@ function isDeclarationName(reference: ts.Identifier): boolean {
  *     alias, a call argument, a return value, a literal element, a template
  *     substitution, and a `for…in` / `in` / `instanceof` / `delete` operand.
  */
-function wrapperPolicy(stored: StoredWrapper): ServedUsePolicy {
-  const numericRelational = stored.row.family !== "string";
+function wrapperPolicy(row: WrapperRow): ServedUsePolicy {
+  const numericRelational = row.family !== "string";
   return {
     unreadableKeys: OBJECT_PROTOTYPE_KEYS,
     servesMemberCall: () => false,
@@ -314,8 +353,16 @@ function isConditionOf(use: ts.Expression, parent: ts.Node): boolean {
   );
 }
 
-/** `new <row>(argument)` through the row's native constructor; the result is `extern:Object`. */
-export function emitWrapperConstruction(builder: IrFunctionBuilder, row: WrapperRow, argument: IrValueId): IrValueId {
+/**
+ * `new <row>(argument)` through the row's native constructor; the result is `extern:Object`. `argument`
+ * is of a family {@link constructedRow} admits, converted here; none builds the row's empty value.
+ */
+export function emitWrapperConstruction(
+  builder: IrFunctionBuilder,
+  row: WrapperRow,
+  admitted: IrValueId | undefined,
+): IrValueId {
+  const argument = rowPrimitive(builder, row, admitted);
   const native =
     row.family === "boolean"
       ? builder.emitUnary("f64.convert_i32_s", argument, irVal({ kind: "f64" }))
@@ -331,6 +378,26 @@ export function emitWrapperConstruction(builder: IrFunctionBuilder, row: Wrapper
     throw new Error(`ir/wrapper-construction: __new_${row.name} produced no value`);
   }
   return value;
+}
+
+/** The row's own primitive: `""`, `+0` or `false` for no argument; else the argument, converted. */
+function rowPrimitive(builder: IrFunctionBuilder, row: WrapperRow, argument: IrValueId | undefined): IrValueId {
+  if (argument === undefined) {
+    if (row.family === "string") return builder.emitStringConst("");
+    if (row.family === "number") return builder.emitConst({ kind: "f64", value: 0 }, irVal({ kind: "f64" }));
+    return builder.emitConst({ kind: "bool", value: false }, irBool());
+  }
+  const type = builder.typeOf(argument);
+  if (row.family === "string" && type.kind !== "string") {
+    const string = lowerPrimitiveToString(builder, argument, carrierStringFamily(type));
+    // invariant: the selector admits only a number or a boolean here (`constructedRow`), and from-ast checks it.
+    if (string === null) throw new Error(`ir/wrapper-construction: no ToString for the String argument`);
+    return string;
+  }
+  if (row.family === "number" && type.kind === "string") {
+    return builder.emitDynToNumber(builder.emitBox(argument, irDynamic(JS_TAG_IDS.String)));
+  }
+  return argument;
 }
 
 /** A store-position construction's value: the wrapper on the dynamic carrier, untagged. */

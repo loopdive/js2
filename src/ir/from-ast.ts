@@ -313,6 +313,7 @@ import { demoteToLegacy, IrInvariantError, IrUnsupportedError } from "./outcomes
 import {
   boxWrapper,
   emitToPrimitive,
+  constructedRow,
   emitWrapperConstruction,
   wrapperArgumentHint,
   wrapperConstruction,
@@ -8609,19 +8610,16 @@ function lowerPrimitiveWrapperConstruction(expr: ts.NewExpression, cx: LowerCtx)
     return withNodeSourceSite(cx, expr, () => lowerPrimitiveWrapperConstruction(expr, cx));
   const construction = primitiveWrapperConstruction(expr, cx);
   if (construction === undefined) return null;
-  const { row, argument } = construction;
-  if (argument === undefined) {
-    throw new IrUnsupportedError(
-      "constructor-arity-unsupported",
-      "build",
-      `ir/from-ast: primitive wrapper ${row.name} requires one exact primitive argument in ${cx.funcName}`,
-    );
-  }
-  const value = lowerExpr(argument, cx, wrapperArgumentHint(row));
-  if (irOperandFamily(cx.builder.typeOf(value), argument) !== row.family) {
+  // The argument's lowered family picks the row as the selector's proved family did (`constructedRow`).
+  let value: IrValueId | undefined;
+  const row = constructedRow(construction, (argument) => {
+    value = lowerExpr(argument, cx, construction.row ? wrapperArgumentHint(construction.row) : irDynamic());
+    return irOperandFamily(cx.builder.typeOf(value), argument);
+  });
+  if (row === undefined) {
     demoteToLegacy(
       "unknown-class-construction",
-      `ir/from-ast: new ${row.name} argument is not ${row.family} in ${cx.funcName}`,
+      `ir/from-ast: new ${expr.expression.getText()} takes no argument of this family in ${cx.funcName}`,
     );
   }
   const wrapper = emitWrapperConstruction(cx.builder, row, value);

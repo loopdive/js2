@@ -12099,17 +12099,17 @@ function phase1NewExpression(
     }
   }
   // (#7341 S1) `new Object()` on the realm's `Object`: only as a `{}` the dynamic-home admission takes.
-  if (isRealmObjectConstruction(expr, selectorSeesLibOnlyBinding)) {
-    // A conservative limit: `new Object(undefined)` / `new Object(null)` would also build a fresh object.
-    if ((expr.arguments?.length ?? 0) > 0) return shapeNo("expr-new-object-argument", expr);
-    return isDynamicHomeOpenCarrier(expr) || shapeNo("expr-new-object-home", expr);
-  }
   const stored = isLocalClass ? undefined : wrapper.storedWrapperConstruction(expr, WRAPPER_AMBIENCE);
+  if (isRealmObjectConstruction(expr, selectorSeesLibOnlyBinding)) {
+    // (#7341 S2) With an argument, `new Object(v)` is a stored wrapper (below) or nothing.
+    if (!expr.arguments?.length) return isDynamicHomeOpenCarrier(expr) || shapeNo("expr-new-object-home", expr);
+    if (stored === undefined) return shapeNo("expr-new-object-argument", expr);
+  }
   if (stored !== undefined) {
-    const family = (argument: ts.Expression) => obviousSelectorValueFamily(argument, scope) ?? "unknown";
+    const family = (a: ts.Expression) => obviousSelectorValueFamily(a, scope) ?? provenIrFamily(a, scope);
     const refusal = wrapper.wrapperStoreRefusal(stored, currentSelectionOptions, currentModuleBindingResolver, family);
     if (refusal !== undefined) return capabilityNo("constructor-resolution-unsupported", refusal, expr);
-    return isPhase1Expr(stored.argument!, scope, localClasses);
+    return stored.argument === undefined || isPhase1Expr(stored.argument, scope, localClasses);
   }
   if (!isLocalClass && !isKnownExternClass(ctorName)) {
     return capabilityNo("constructor-resolution-unsupported", "expr-new-ctor-unknown", expr.expression);
@@ -14220,7 +14220,7 @@ function isLoweredConstruction(node: ts.NewExpression, localClasses: ReadonlySet
       (localClasses.has(callee.text) ||
         (isKnownExternClass(callee.text) &&
           (currentModuleBindingResolver === null || currentModuleBindingResolver.isAmbientBinding(callee))) ||
-        (selectorSeesAmbientWrapperConstructor(callee) &&
+        (wrapper.wrapperConstruction(node, WRAPPER_AMBIENCE) !== undefined &&
           currentSelectionOptions?.supportsBackendCapability?.("primitive-wrapper-to-primitive") === true) ||
         enclosingFunctionParameterNames(node).has(callee.text) ||
         selfGuardedConstructorValueUse(callee))) ||
