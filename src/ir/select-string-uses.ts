@@ -12,7 +12,7 @@
  * A local and a module string take the same rules.
  */
 import { ts } from "../ts-api.js";
-import { stringElementReadLowerable, stringMemberReadLowerable } from "./capability.js";
+import { collectStringLiteralLens, stringElementReadLowerable, stringMemberReadLowerable } from "./capability.js";
 import { nullComparedOperand, nullComparisonFolds, nullValueAdmissible } from "./analysis/operand-admissibility.js";
 import { countedLoopProvesElementRead } from "./fixed-literal-loop-proof.js";
 import { outermostParenthesized } from "../shared/binding-writes.js";
@@ -23,11 +23,19 @@ export interface StringUseRefusal {
   readonly arm: string;
 }
 
-/** The refusal of `expr` as a string use, or `undefined`; `isString` is the selector's string proof. */
+/** The unit from-ast lowers (a claimable subject, or module-init's synthetic), whose literal lengths it reads. */
+type LoweredUnit = Parameters<typeof collectStringLiteralLens>[0];
+
+const unitLiteralLengths = new WeakMap<LoweredUnit, ReadonlyMap<string, number>>();
+
+/**
+ * The refusal of `expr` as a string use, or `undefined`; `isString` is the
+ * selector's string proof, `unit` the unit `expr` is lowered in.
+ */
 export function stringUseRefusal(
   expr: ts.Expression,
   isString: (operand: ts.Expression) => boolean,
-  literalLengths: ReadonlyMap<string, number> | undefined,
+  unit: LoweredUnit,
 ): StringUseRefusal | undefined {
   if (ts.isPropertyAccessExpression(expr) && ts.isIdentifier(expr.name)) {
     const read = outermostParenthesized(expr);
@@ -37,7 +45,9 @@ export function stringUseRefusal(
   }
   if (ts.isElementAccessExpression(expr)) {
     if (!isString(expr.expression)) return undefined;
-    if (stringElementReadLowerable(expr, literalLengths, countedLoopProvesElementRead(expr))) return undefined;
+    let lengths = unitLiteralLengths.get(unit);
+    if (lengths === undefined) unitLiteralLengths.set(unit, (lengths = collectStringLiteralLens(unit)));
+    if (stringElementReadLowerable(expr, lengths, countedLoopProvesElementRead(expr))) return undefined;
     return { reason: "string-method-unsupported", arm: "expr-string-element-read" };
   }
   if (ts.isBinaryExpression(expr)) {

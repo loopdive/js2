@@ -167,13 +167,7 @@ import {
 import { collectModuleInitPopulation, makeModuleInitSynthetic, MODULE_INIT_UNIT_NAME } from "./module-init.js";
 export { collectModuleInitPopulation, makeModuleInitSynthetic, MODULE_INIT_UNIT_NAME } from "./module-init.js";
 
-import {
-  binaryOpCapability,
-  collectStringLiteralLens,
-  domSurfaceCapability,
-  hostExternCapability,
-  prefixOpCapability,
-} from "./capability.js";
+import { binaryOpCapability, domSurfaceCapability, hostExternCapability, prefixOpCapability } from "./capability.js";
 import { stringUseRefusal } from "./select-string-uses.js";
 import { nativeBufferOperationParts, type IrNativeBufferSurfacePlan } from "./native-buffer-surface.js";
 import type { IrStandaloneDomCapabilityPlan, IrStandaloneDomOperation } from "./dom-capability.js";
@@ -8141,7 +8135,7 @@ function moduleStringValueRead(expr: ts.Expression): boolean {
   const candidate = unwrapPhase1Parens(expr);
   return (
     ts.isIdentifier(candidate) &&
-    currentSelectionOptions?.supportsBackendCapability?.("native-string-uses") === true &&
+    nativeStringUses() &&
     currentModuleBindingResolver?.readsStringValue(candidate) === true
   );
 }
@@ -12345,25 +12339,17 @@ function phase1NativeBufferVerdict(
   return operands.every((operand) => isPhase1Expr(operand, scope, localClasses));
 }
 
-const unitStringLiteralLengths = new WeakMap<IrClaimableSubject, ReadonlyMap<string, number>>();
-/** (#7346) Module-init's synthetic unit, the body from-ast reads its literal string lengths over. */
+/** (#7346) Module-init's synthetic unit, the body from-ast lowers module-init over. */
 let currentModuleInitUnit: ts.FunctionDeclaration | null = null;
+const nativeStringUses = () => currentSelectionOptions?.supportsBackendCapability?.("native-string-uses") === true;
 
 /** (#7346 step A) `select-string-uses.ts` over the selector's string proof, on the lane measured for it. */
-function selectorRefusesStringUse(
-  expr: ts.Expression,
-  scope: ReadonlySet<string>,
-  localClasses: ReadonlySet<string>,
-): boolean {
+function selectorRefusesStringUse(expr: ts.Expression, scope: ReadonlySet<string>, classes: ReadonlySet<string>) {
   const unit = currentSubjectIsModuleInit ? currentModuleInitUnit : currentSelectionSubject;
-  if (unit === null || currentSelectionOptions?.supportsBackendCapability?.("native-string-uses") !== true) {
-    return false;
-  }
-  let lengths = unitStringLiteralLengths.get(unit);
-  if (lengths === undefined) unitStringLiteralLengths.set(unit, (lengths = collectStringLiteralLens(unit)));
-  const isString = (operand: ts.Expression) =>
-    binaryOperandFamily(operand, scope, localClasses) === "string" || expressionIsProvenString(operand);
-  const refusal = stringUseRefusal(expr, isString, lengths);
+  if (unit === null || !nativeStringUses()) return false;
+  const isString = (e: ts.Expression) =>
+    binaryOperandFamily(e, scope, classes) === "string" || expressionIsProvenString(e);
+  const refusal = stringUseRefusal(expr, isString, unit);
   return refusal !== undefined && !capabilityNo(refusal.reason, refusal.arm, expr);
 }
 
