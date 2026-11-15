@@ -1,11 +1,12 @@
 ---
 id: 7345
 title: "IR: a top-level function stays a direct-call target in a file that contains eval, unless the source can rebind it"
-status: in-progress
+status: done
+completed: 2026-11-15
 assignee: ttraenkler/senior-dev
 sprint: current
 created: 2026-11-14
-updated: 2026-11-14
+updated: 2026-11-15
 priority: high
 horizon: s
 feasibility: medium
@@ -177,9 +178,10 @@ Code quality:
 
 ### What changed
 
-- **`localIsRewritten`** (`src/ir/lattice-param-facts.ts`) no longer applies
-  the direct-eval term to a function declaration. The term itself is now
-  `scopeHasDirectEval`.
+- **`localIsRewritten`** (`src/ir/lattice-param-facts.ts`) is main's: a
+  direct `eval` in the scope, or a source write (`bindingIsWritten`). The
+  call graph instead asks `isStableDirectCallTarget` beside it, which owns
+  the whole decision (review round 1, below).
 - **One selection option, `runtimeEvalFunctions`**
   (`IrRuntimeEvalFunctionAnswers`, `src/ir/runtime-eval-boundary-plan.ts`).
   It is built next to A1 by `irRuntimeEvalSelectionOption`
@@ -193,11 +195,14 @@ Code quality:
     only where A1 runs (`callableBoundaryRequired`). The predicate is the
     same, not a mirror: the set of eval-visible names is now a shared helper,
     `evalVisibleBindings`, that the withdrawal uses too.
-- **The call graph** (`buildLocalCallGraph`) asks `mayRebind`. A lane that
-  passes no option (the JS environment, WASI, bare selector callers) keeps
-  the earlier rule: a direct `eval` in the function's scope may rebind it.
-  That fallback sits in the selector because codegen importing
-  `lattice-param-facts` would add a codegen→ir edge (`check:import-cycles`).
+- **The call graph** (`buildLocalCallGraph`) asks
+  `isStableDirectCallTarget(callee, declaration, runtimeEvalFunctions,
+  resolve)`: no source write, and no rebinding by evaluated code, which is
+  `mayRebind` where the lane passes the option. A lane that passes none (the
+  JS environment, WASI, bare selector callers) keeps the earlier rule: a
+  direct `eval` in the function's scope may rebind it. That fallback is on
+  the ir side because codegen importing `lattice-param-facts` would add a
+  codegen→ir edge (`check:import-cycles`).
 - **`whyNotIrClaimable`** refuses an otherwise-claimable function that
   `crossing` names as `deferred-feature` /
   `fn-runtime-eval-boundary(<eval-site | eval-visible-binding>)`. The check
@@ -263,3 +268,40 @@ is unchanged. gc bytes were re-measured on `aa6b4fd69e`.
   measured.
 - Verdicts on files whose routing did not change.
 - Acceptance criterion 7 (the adversarial review) is the PR's.
+
+## Review round 1: MET (PR #7239, 2026-11-15)
+
+Reviewer's verdict: no wrong answer on 39 rebinding attack files with the
+interpreter provider, no unit lost, no post-claim error, gc bytes identical,
+and the #7106 test updates judged legitimate. Two should-fix items, both
+fixed in `c63470f261`:
+
+1. **One decision in one place.** `localIsRewritten` special-cased function
+   declarations, and the call graph then re-added the eval term through
+   `scopeHasDirectEval`.
+   - `localIsRewritten` is main's again (`dynamicScope ||
+     bindingIsWritten`).
+   - The call graph asks `isStableDirectCallTarget`, beside it in
+     `lattice-param-facts.ts`, which owns the whole decision.
+   - `scopeHasDirectEval` is gone.
+   - `select.ts` growth falls from +15 to **+12**, and `whyNotIrClaimable`
+     from +7 to +4. The grant above is updated.
+2. **Explicit refusal.** `capabilityNo(…) || "deferred-feature"` called a
+   predicate for its side effect. The refusal now records its detail with
+   `shapeNo` and returns `"deferred-feature"`.
+
+Re-verified on `c63470f261`, which includes main `7996e61a23` (no `src/` or
+`tests/` change since the earlier base):
+
+- **Tests:** 95/95. That covers #7345 5/5; the #7106 runtime-eval
+  unit-boundary, A3 liveness and A1 self-reference tests; #7283 4/4; and
+  #7306 46/46.
+- **Routing on the 1,413-file census:** 0 differences in units, codes or
+  details from `06e1870c4d`, whose standalone path is the same as
+  `a9463bb697`. Against main: +8 IR-only, 0 lost, 0 units newly legacy, 0
+  compile errors, 0 post-claim errors.
+- **JS-environment bytes:** 673/673 identical.
+- **The reviewer's 39 attack files** (`rv7239/zrepro`), interpreter tier, run
+  through a private test262 overlay: head 18 pass / 21 fail, main 18 / 21. 0
+  per-file differences, and head equals the reviewer's head run.
+- **Quality:** the full list passes, 49/49, in foreground ranges.
