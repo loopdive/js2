@@ -7,7 +7,7 @@
 import type { TypeOracle } from "../checker/oracle.js";
 import { forEachChild, ts } from "../ts-api.js";
 import { identifierWritesOf, isStoreTarget } from "../shared/binding-writes.js";
-import { isInertFunctionMention } from "../shared/function-mention.js";
+import { isBareFunctionPrototypeValue, isInertFunctionMention } from "../shared/function-mention.js";
 
 export type IrRuntimeEvalSiteKind =
   | "direct-eval"
@@ -44,7 +44,7 @@ export interface IrRuntimeEvalSite {
    *
    * Recorded here rather than re-derived by a second scanner precisely because
    * the classification has non-obvious carve-outs (`isDirectCalleeIntrinsicValue`,
-   * `isInertFunctionMention`) whose cost is
+   * `isInertFunctionMention`, `isBareFunctionPrototypeValue`) whose cost is
    * measured in the comments below; a copy of them would drift.
    */
   readonly intrinsicName?: "eval" | "Function";
@@ -447,7 +447,7 @@ function visitRuntimeEvalSites(root: ts.Node, oracle: TypeOracle | undefined, si
       // receiver position (`eval.call(null, src)` is a real indirect eval), and
       // `.constructor` chains stay escapes because `Function.prototype.constructor`
       // IS the eval-capable constructor.
-      if (!isMemberName && !isInertFunctionMention(node)) {
+      if (!isMemberName && !isInertFunctionMention(node) && !isBareFunctionPrototypeValue(node)) {
         sink.site(node, "intrinsic-value", "required", undefined, node.text as "eval" | "Function");
         sink.source(undefined);
       }

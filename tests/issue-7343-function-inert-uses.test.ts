@@ -60,10 +60,8 @@ const SITES: Record<string, string> = {
     'var d = Object.getOwnPropertyDescriptor(Function, "prototype"); var g = d.value.constructor;',
   'descriptor of Function.prototype "constructor"':
     'var d = Object.getOwnPropertyDescriptor(Function.prototype, "constructor");',
-  "Object.defineProperty as a value": 'var r = Object.defineProperty(Function.prototype, "prop", { value: 1 });',
   "computed key": 'var k = "call"; var d = Object.getOwnPropertyDescriptor(Function.prototype, k);',
-  // Review S2: the bare `Function.prototype` value is a site for both readers now.
-  "bare Function.prototype value": "var P = Function.prototype;",
+  "all descriptors of Function.prototype": "var ds = Object.getOwnPropertyDescriptors(Function.prototype);",
   // Review S1: a written `Object` or static may hand `%Function%` to the program's own code.
   "Object reassigned": "Object = { isSealed: function (F) { return F; } }; var r = Object.isSealed(Function);",
   "static assigned": "Object.isSealed = function (F) { return F; }; var r = Object.isSealed(Function);",
@@ -91,6 +89,19 @@ const INERT_TODAY_KNOWN_LIMIT: Record<string, string> = {
     'Object.defineProperty(Function.prototype, "yq", { value: (function () {}).constructor });',
   "store, then a descriptor read of the stored key":
     'Function.prototype.xq = (function () {}).constructor; var d = Object.getOwnPropertyDescriptor(Function.prototype, "xq");',
+};
+
+/**
+ * The bare `Function.prototype` value: elision keeps the shim (computed source could reach the proto's constructor),
+ * the boundary plan does not link the provider (`isBareFunctionPrototypeValue`, as on main). Making it a plan site broke
+ * 127 standalone Temporal rows in PR #7231's merge group (`assert.sameValue(Object.getPrototypeOf(F), Function.prototype)`).
+ */
+const ELISION_SITE_ONLY: Record<string, string> = {
+  "bare Function.prototype value": "var P = Function.prototype;",
+  "Function.prototype as an argument":
+    "var f = function () {}; var r = Object.getPrototypeOf(f) === Function.prototype;",
+  // `defineProperty` answers its first argument: the same bare value.
+  "Object.defineProperty as a value": 'var r = Object.defineProperty(Function.prototype, "prop", { value: 1 });',
 };
 
 /**
@@ -137,6 +148,13 @@ describe("#7343 — a Function value in an inert position is not dynamic code", 
     it(`stays a site: ${name}`, () => {
       expect(keepsShim(body)).toBe(true);
       expect(boundarySite(body)).toBe(true);
+    });
+  }
+
+  for (const [name, body] of Object.entries(ELISION_SITE_ONLY)) {
+    it(`elision site, no boundary site: ${name}`, () => {
+      expect(keepsShim(body)).toBe(true);
+      expect(boundarySite(body)).toBe(false);
     });
   }
 

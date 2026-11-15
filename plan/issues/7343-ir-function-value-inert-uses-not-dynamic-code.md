@@ -387,3 +387,40 @@ boundary):
   - Not measured. It would avoid both A's and B's losses on this population.
   - **Required before** a function value's inherited `.constructor` can
     evaluate source (the `FN_CONSTRUCTOR_EVALUATES` rows flip).
+
+## Merge-group park (PR #7231, run 43730890416) — diagnosed and fixed
+
+The queue parked the PR: standalone net −115 (127 pass → fail, 12
+improvements), ES5 untouched.
+
+**The 127 regressions are all `built-ins/Temporal/**` rows** of the
+`builtin.js` shape (`assert.sameValue(Object.getPrototypeOf(<method>),
+Function.prototype)`, `Object.isExtensible(<Temporal ctor/method>)`). They
+only run for real when the Temporal provider is linked, which CI does on the
+standalone lane and a bare local run does not (there they fail on both trees
+with `Temporal is not defined`). That is why the ES5 measurement and the
+local re-measurements missed them.
+
+**Root cause: review round 1's S2** dropped the boundary plan's excusal of
+the bare `Function.prototype` value. Every such argument became an
+`intrinsic-value` site, so the module went on the runtime-eval route, and in
+that mode the Temporal provider's objects answer the shape assertions wrong.
+The ES5 population was routing-identical with and without the excusal, so the
+cost was invisible there.
+
+**Fix:** `isBareFunctionPrototypeValue` (`src/shared/function-mention.ts`) is
+back, read by the boundary plan only, as on main. Elision still treats the
+bare value as a site. One narrowing against main: a descriptor read of
+`Function.prototype` (`getOwnPropertyDescriptor(s)`) stays a site, because the
+`constructor` descriptor's value is `%Function%` (B1). The rows that this
+moves from "site in both readers" to "elision site only" are the bare value,
+`Function.prototype` as an argument, and `Object.defineProperty(…)` used as a
+value, which answers its first argument.
+
+Measured on 354 files whose `Function` mentions classify differently (base
+`72dcc11563`), standalone, QuickJS provider and Temporal provider built per
+tree, `TEST262_FULL_RUNTIME_EVAL=1`:
+- Temporal (127 files): base passes 127. The parked head fails all 30 rows
+  sampled. With the fix, 127 pass.
+- The other 227: the fix matches base row for row.
+- The 9 ES5 files gained stay IR-only, with 0 post-claim errors.

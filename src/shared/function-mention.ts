@@ -71,6 +71,43 @@ export function isInertFunctionMention(identifier: ts.Identifier): boolean {
     : isInertPrototypeUse(prototype);
 }
 
+/**
+ * The BARE `Function.prototype` value (stored, passed on, compared): no member
+ * read and no destructure of it. Only the runtime-eval boundary plan excuses
+ * it, as main does: its `.constructor` read is served by the self-contained
+ * `%Function%` arm (function-intrinsic-carrier.ts) like `<fn>.constructor`, and
+ * `%Function.prototype%` keeps one identity without the provider. As a plan
+ * site it moved every `assert.sameValue(Object.getPrototypeOf(F),
+ * Function.prototype)` module onto the runtime-eval route, which broke the
+ * 127 Temporal `builtin.js`-family rows that link the Temporal provider
+ * (merge group 43730890416, PR #7231). Elision keeps it a dynamic-code
+ * position: computed source could still reach the prototype's constructor.
+ * A descriptor read of it stays a site (`isInertPrototypeUse` excuses the
+ * inert keys): the `constructor` descriptor's value is `%Function%` itself.
+ */
+export function isBareFunctionPrototypeValue(identifier: ts.Identifier): boolean {
+  if (identifier.text !== "Function") return false;
+  const prototype = prototypeRead(identifier);
+  if (prototype === undefined) return false;
+  const use = prototype.parent;
+  return (
+    !((ts.isPropertyAccessExpression(use) || ts.isElementAccessExpression(use)) && use.expression === prototype) &&
+    !(ts.isVariableDeclaration(use) && use.initializer === prototype && ts.isObjectBindingPattern(use.name)) &&
+    !isDescriptorReadOf(prototype)
+  );
+}
+
+/** `<R>.getOwnPropertyDescriptor(value, …)` or `<R>.getOwnPropertyDescriptors(value)`, whatever `<R>` is. */
+function isDescriptorReadOf(value: ts.Expression): boolean {
+  const call = value.parent;
+  if (!ts.isCallExpression(call) || call.arguments[0] !== value) return false;
+  const callee = skipTransparentExpressions(call.expression);
+  return (
+    ts.isPropertyAccessExpression(callee) &&
+    (callee.name.text === "getOwnPropertyDescriptor" || callee.name.text === "getOwnPropertyDescriptors")
+  );
+}
+
 /** `Function.prototype`, with every transparent wrapper around it, when `identifier` is its receiver. */
 function prototypeRead(identifier: ts.Identifier): ts.Expression | undefined {
   const read = outermostTransparent(identifier).parent;
