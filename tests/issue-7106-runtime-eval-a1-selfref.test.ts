@@ -12,9 +12,21 @@
 // observed even by a direct legacy `f(1)` — a provider gap measured identically
 // before and after this fix (plan/issues/7106-ir-test262-harness-units.md).
 
-import { describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it, vi } from "vitest";
 
 import { compile } from "../src/index.js";
+
+// (#7345) On standalone the selector refuses an eval-boundary unit itself, and records the
+// boundary's reason in the detail only under this diagnostic; it is read when the selector loads.
+const previousDiag = vi.hoisted(() => {
+  const value = process.env.JS2WASM_IR_SHAPE_DIAG;
+  process.env.JS2WASM_IR_SHAPE_DIAG = "1";
+  return value;
+});
+afterAll(() => {
+  if (previousDiag === undefined) Reflect.deleteProperty(process.env, "JS2WASM_IR_SHAPE_DIAG");
+  else process.env.JS2WASM_IR_SHAPE_DIAG = previousDiag;
+});
 
 const REBIND = 'Function("f = function (n) { return 9; }")();';
 
