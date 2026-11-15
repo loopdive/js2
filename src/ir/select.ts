@@ -13193,10 +13193,9 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
       }
       if (admitDynamicHomeOwnPropertyCall(expr)) return isPhase1Expr(expr.arguments[0]!, scope, localClasses);
       if (expressionTouchesScalarModuleBinding(expr.expression.expression, scope)) {
-        if (!isExactF64ScalarToStringCall(expr)) {
-          return isPhase1OwnPropertyTest(expr, scope, localClasses) ?? shapeNo("expr-module-scalar-method", expr);
-        }
-        return isPhase1Expr(expr.expression.expression, scope, localClasses);
+        if (isExactF64ScalarToStringCall(expr)) return isPhase1Expr(expr.expression.expression, scope, localClasses);
+        const rules = objectStaticValueRules(scope, localClasses); // (#7339) the test row: main refuses here
+        return objectStaticSelector.admitOwnPropertyTest(expr, rules) ?? shapeNo("expr-module-scalar-method", expr);
       }
       // (#3144) Static method call `C.m(args)` — the receiver is a bare
       // LOCAL class identifier (never in scope, so the generic receiver
@@ -13871,18 +13870,6 @@ function isPhase1ObjectStatic(
 ): boolean | undefined {
   if (scope.has("Object")) return undefined;
   return objectStaticSelector.admit(expr, objectStaticValueRules(scope, localClasses));
-}
-
-/**
- * (#7339) The statics table's own-property test row, asked only where every arm before it refuses a method call
- * on a script var (`expr-module-scalar-method`): the row is a fallback, so main's routes stand bit for bit.
- */
-function isPhase1OwnPropertyTest(
-  expr: ts.CallExpression,
-  scope: ReadonlySet<string>,
-  localClasses: ReadonlySet<string>,
-): boolean | undefined {
-  return objectStaticSelector.admitOwnPropertyTest(expr, objectStaticValueRules(scope, localClasses));
 }
 
 /** What the statics table's value admission asks of the current walk. */

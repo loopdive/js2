@@ -85,6 +85,10 @@ const CLAIMED: Record<string, string> = {
   "own-property result stored": `var o = {}; ${DEFINE} var b = o.hasOwnProperty('p'); if (b !== true) { throw "b"; }`,
   typeof: `var o = {}; if (typeof o !== 'object') { throw "typeof"; }`,
   "read before the declaration runs": `if (o !== undefined) { throw "hoist"; } var o = {};`,
+  // (#7339) The refusal rows' `toString` programs: where #7335's arm does not serve the probe, the statics table's
+  // test row answers it, and the open object's member read answers `toString` as the realm's.
+  "parenthesized inherited toString read, probed": `var o = {}; if ((o).toString === undefined) { throw "inherited"; } var probe = o.hasOwnProperty("zz");`,
+  "aliased inherited toString read, probed": `var o = {}; var p = o; if (p.toString === undefined) { throw "alias"; } var probe = o.hasOwnProperty("zz");`,
 };
 
 /**

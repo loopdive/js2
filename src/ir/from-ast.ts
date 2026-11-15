@@ -351,7 +351,13 @@ import {
 import type { OwnPropertyMethod } from "./dynamic-home-open-object.js";
 import type { DescriptorDefinition } from "./descriptor-literal.js";
 import { lowerObjectCreateDescriptorMapCall } from "./object-create-call.js";
-import { objectStaticCallPlan, type ObjectStaticCapability, type ObjectStaticPlan } from "./object-statics.js";
+import {
+  isOwnPropertyTestTerritory,
+  objectStaticCallPlan,
+  type ObjectStaticCapability,
+  type ObjectStaticPlan,
+  type ObjectStaticsRealm,
+} from "./object-statics.js";
 import { staticPrivateFieldOwner, staticPrivateThisCallClassName } from "./private-member-syntax.js";
 import {
   emitNewPlainObject,
@@ -9216,27 +9222,22 @@ function unadmittedObjectDefineProperty(cx: LowerCtx): never {
 
 /** (#7338) The selector's `Object` statics plan, on from-ast's scope and the same program facts. */
 function objectStaticPlanOf(expr: ts.CallExpression, cx: LowerCtx): ObjectStaticPlan | undefined {
-  return objectStaticCallPlan(expr, {
+  return objectStaticCallPlan(expr, objectStaticsRealmOf(cx));
+}
+
+function objectStaticsRealmOf(cx: LowerCtx): ObjectStaticsRealm {
+  return {
     isAmbientBinding: (node) => cx.resolver?.isAmbientBinding?.(node) === true && cx.scope.get(node.text) === undefined,
     dynamicCodeMayRun: cx.resolver?.runtimeEvalMayExecute?.() !== false,
     supportsBackendCapability: (capability) => cx.resolver?.supportsBackendCapability?.(capability) === true,
-    // (#7339) The test row's fallback territory, from the same inputs the selector reads.
+    // (#7339) The test row's territory. The selector reads the same resolver identity: its `valueKind` is `dynamic`
+    // exactly when `resolveModuleBindingGlobal` types the global `dynamic`. #7335's arm runs before the row and records
+    // every call it admits, so in a claimed unit the record equals the selector's live predicate; a disagreement
+    // throws in `tryLowerObjectStaticCall`.
     isDynamicModuleBinding: (id) => cx.resolver?.resolveModuleBinding?.(id)?.type.kind === "dynamic",
     existingArmAdmits: (call) => admittedOwnPropertyCallMethod(call) !== undefined,
-    classifyPrimitive: (e) => (cx.checker ? primitiveClassifierOf(cx.checker)(e) : undefined),
-  });
-}
-
-const primitiveClassifiers = new WeakMap<ts.TypeChecker, ReturnType<typeof makeIrPrimitiveExpressionClassifier>>();
-
-/** One primitive classifier per checker, rather than one per call. */
-function primitiveClassifierOf(checker: ts.TypeChecker): ReturnType<typeof makeIrPrimitiveExpressionClassifier> {
-  let classify = primitiveClassifiers.get(checker);
-  if (classify === undefined) {
-    classify = makeIrPrimitiveExpressionClassifier(checker);
-    primitiveClassifiers.set(checker, classify);
-  }
-  return classify;
+    classifyPrimitive: (e) => (cx.checker ? makeIrPrimitiveExpressionClassifier(cx.checker)(e) : undefined),
+  };
 }
 
 /** A define's key (a literal stays static) and field values, each as a carrier (#7338, #7276). */
@@ -9263,8 +9264,16 @@ function lowerDescriptorDefinition(
  * reaches here.
  */
 function tryLowerObjectStaticCall(expr: ts.CallExpression, cx: LowerCtx): IrValueId | null {
-  const plan = objectStaticPlanOf(expr, cx);
-  if (plan === undefined) return null;
+  const realm = objectStaticsRealmOf(cx);
+  const plan = objectStaticCallPlan(expr, realm);
+  if (plan === undefined) {
+    if (!isOwnPropertyTestTerritory(expr, realm)) return null;
+    throw new IrInvariantError(
+      "selection-preparation-mismatch",
+      "build",
+      `ir/from-ast: own-property test on a script var planned by neither #7335's arm nor the row (${cx.funcName})`,
+    );
+  }
   if (plan.kind === "refused") {
     throw new IrInvariantError(
       "selection-preparation-mismatch",

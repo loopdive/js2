@@ -560,15 +560,24 @@ export function makeIrDeclaredPrimitiveExpressionClassifier(
   };
 }
 
+type IrPrimitiveExpressionClassifier = (expr: ts.Expression) => IrPrimitiveExpressionFamily | undefined;
+
+const primitiveClassifiers = new WeakMap<ts.TypeChecker, IrPrimitiveExpressionClassifier>();
+
 /**
- * Build a provenance-safe primitive classifier for coercion-sensitive
- * builtin acceptance. This follows local initializers and ignores type
- * assertions, so diagnostics-off annotations cannot masquerade as runtime
- * evidence. Use makeIrDeclaredPrimitiveExpressionClassifier for routing.
+ * The provenance-safe primitive classifier for coercion-sensitive builtin
+ * acceptance, one per checker (it is pure over the checker). This follows
+ * local initializers and ignores type assertions, so diagnostics-off
+ * annotations cannot masquerade as runtime evidence. Use
+ * makeIrDeclaredPrimitiveExpressionClassifier for routing.
  */
-export function makeIrPrimitiveExpressionClassifier(
-  checker: ts.TypeChecker,
-): (expr: ts.Expression) => IrPrimitiveExpressionFamily | undefined {
+export function makeIrPrimitiveExpressionClassifier(checker: ts.TypeChecker): IrPrimitiveExpressionClassifier {
+  let classify = primitiveClassifiers.get(checker);
+  if (classify === undefined) primitiveClassifiers.set(checker, (classify = primitiveExpressionClassifier(checker)));
+  return classify;
+}
+
+function primitiveExpressionClassifier(checker: ts.TypeChecker): IrPrimitiveExpressionClassifier {
   const classifyType = (type: ts.Type): IrPrimitiveExpressionFamily | undefined => {
     if (type.isUnion()) {
       const families = type.types.map(classifyType);

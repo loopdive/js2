@@ -20,14 +20,17 @@ loc-budget-allow:
   # of `dyn.own_property` once and replaces the literal union these files repeated.
   - src/ir/builder.ts
   - src/ir/integration.ts
-  # 2026-11-15 (#7339 review round 3): the test row became a fallback arm beside main's #7335 arm, which stays
-  # byte-for-byte. from-ast (+26): the test plan's lowering branch, the plan's realm (the fallback territory read
-  # from the same resolver inputs as the selector, and one primitive classifier per checker instead of one per call),
-  # and its `expressionProducesDynamic` answer. select.ts (+19): the row's call at main's `expr-module-scalar-method`
-  # refusal (a helper, so `isPhase1Expr` does not grow), the value rules shared with the statics arm, and the two
-  # selector state fields.
+  # 2026-11-15 (#7339 review rounds 3-4): the test row is a fallback arm beside main's #7335 arm, which stays
+  # byte-for-byte. from-ast (+35): the test plan's lowering branch; the plan's realm, split out so the lowering and
+  # the territory invariant share it; the invariant throw when a test in the row's territory is planned by neither
+  # arm (round 4: it turns a disagreement between from-ast's inputs and the selector's into a loud error); the
+  # `expressionProducesDynamic` answer. select.ts (+6): the row's call at main's `expr-module-scalar-method` refusal,
+  # written so `isPhase1Expr` does not grow, the value rules shared with the statics arm, and two selector state
+  # fields. module-bindings.ts (+9): `makeIrPrimitiveExpressionClassifier` returns one classifier per checker, so
+  # every site (the selector's options, from-ast's three) shares it instead of from-ast keeping a second cache.
   - src/ir/from-ast.ts
   - src/ir/select.ts
+  - src/ir/module-bindings.ts
 ---
 
 # #7339 — IR: own-property method calls on dynamic module bindings
@@ -737,7 +740,7 @@ lacks, and lost 74 units that main answers correctly.
 
 - **RULE 1: the row is a fallback arm.**
   - #7335's arm is restored byte-for-byte from main: `dynamic-home-open-object.ts`, its selector glue and its from-ast lowering.
-  - The table's test row is asked only at main's `expr-module-scalar-method` refusal (`isPhase1OwnPropertyTest`, `select.ts`). That refusal is a method call on a script var, reached after every other arm.
+  - The table's test row is asked only at main's `expr-module-scalar-method` refusal (`select.ts`, in `isPhase1Expr`). That refusal is a method call on a script var, reached after every other arm.
   - The plan (`ownPropertyTestPlan`) stands only when:
     - the receiver is a script var on the dynamic slot;
     - #7335's arm does not admit the call (main's own predicate `dynamicHomeOwnPropertyMethod`, and in from-ast main's own record `admittedOwnPropertyCallMethod`).
@@ -746,7 +749,7 @@ lacks, and lost 74 units that main answers correctly.
 - **RULE 3: no side channel.** Both sides call the same pure plan with the same inputs:
   - the receiver's module binding: the selector's `valueKind`, and the from-ast resolver's type, both `dynamic`;
   - #7335's admission.
-- from-ast builds one primitive classifier per checker.
+- One primitive classifier per checker for every site (`makeIrPrimitiveExpressionClassifier`, review round 4).
 
 ### Main's general gaps the row now reaches (not patched, per RULE 2)
 
@@ -754,8 +757,8 @@ An i32 boolean meets two consumer rules that admit what from-ast cannot build.
 Main has the same failure for any i32 boolean (`var b = x > 0`), reproduced on
 main by the review scratch `rv7234b/gap.json`:
 
-- `b.constructor` on an i32 (`property access .constructor on i32 is not in slice 2`): 5 `*:localctor:T:mod` rows of `cases.json`.
-- `g() == 1` where `g` returns an i32 boolean (`Phase 1 requires matching operand types for '=='`): 4 `*:reteq:T:fn` rows.
+- `b.constructor` on an i32 (`property access .constructor on i32 is not in slice 2`): 6 `*:localctor:T:mod` rows of `cases.json`.
+- `g() == 1` where `g` returns an i32 boolean (`Phase 1 requires matching operand types for '=='`): 3 `*:reteq:T:fn` rows.
 
 These 9 are the only post-claim errors head has that main lacks. The units hold
 a test main refused at select, so main claims none of them.
@@ -782,3 +785,36 @@ Reviewer matrices against the reviewer's main outputs (same main):
   - `a2`, `b2`, `c2`, `d`, `e` and `f`–`j`: 0 units lost, 0 head-only post-claim errors.
   - `r2` (`k`, `k2`, `l`, `l2`, `m`): 0 units lost, 0 head-only post-claim errors.
   - Main's wrong answers on local receivers (`l2`, `i`, `g`, `j`) are unchanged: those calls are main's route.
+
+## Review round 4: MET (2026-11-15)
+
+The reviewer confirmed:
+
+- **RULE 1:** 486 main-admitted rows route identically, and standalone bytes are identical on 49/49.
+- **New territory:** correct, including on a 238-program set of `any`-typed calls.
+- **S3 and S4:** closed.
+- **The 9 head-only post-claim errors:** they reproduce on main with plain booleans.
+
+Changes before release; behaviour is unchanged:
+
+- **Same inputs, made loud.**
+  - The plan's realm in from-ast reads the territory from the selector's resolver identity: its `valueKind` is `dynamic` exactly when `resolveModuleBindingGlobal` types the global `dynamic`.
+  - It reads #7335's admission from main's own record, which #7335's arm writes for every call it admits, before the row is asked.
+  - The territory is one predicate, `isOwnPropertyTestTerritory`, used by the plan. `tryLowerObjectStaticCall` throws `selection-preparation-mismatch` when a test in that territory is planned by neither arm.
+  - Every claimed test row (the 7339/7335 suites, the census, the reviewer matrices) runs through that check.
+- **One classifier.** `makeIrPrimitiveExpressionClassifier` returns one classifier per checker. The selector's options and from-ast's three sites share it; from-ast's own cache is gone.
+- **Nits.**
+  - The row's call is inlined into `isPhase1Expr` without growing it.
+  - The original `toString` programs of the #7335 refusal rows are now CLAIMED rows there.
+  - The accepted set is 6 `localctor` + 3 `reteq` (corrected above).
+
+### Accepted residuals
+
+- **The 9 i32-boolean consumer gaps of main.** These are `.constructor` on an i32 and `g() == 1` on a boolean-returning function. In the row's territory, head reaches them where main refused the test at select.
+- **The inherited-member scope limit.** `expr-carrier-inherited-member` refuses a value read of a `%Object.prototype%` key other than `toString` on an open object, but only in a file that holds an admitted test. The #7304 gap exists with or without a test in the file.
+
+## Follow-ups
+
+- Fold #7335's arm into the row once the row can serve the dynamic-home receivers the way legacy does (i32 answer, open `$Object`) without losing units.
+  - Gate: the #7335 suite, plus `cases.json` main-admitted routing identity.
+  - Then delete `dynamic-home-open-object.ts` and its WeakMap.

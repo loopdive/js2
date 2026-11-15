@@ -240,11 +240,23 @@ function ownPropertyTestIsPristine(sourceFile: ts.SourceFile, method: OwnPropert
 }
 
 /**
+ * (#7339) The fallback row's territory: `R.<test>(…)` where main refuses the
+ * call at selection, `R` a script var on the dynamic slot that no existing arm
+ * (#7335's) takes. In a claimed unit every such call is the row's plan; from-ast
+ * checks that, so a disagreement between its inputs and the selector's throws.
+ */
+export function isOwnPropertyTestTerritory(call: ts.CallExpression, realm: ObjectStaticsRealm): boolean {
+  const callee = call.expression;
+  if (!ts.isPropertyAccessExpression(callee) || !isOwnPropertyTest(callee.name.text)) return false;
+  const receiver = callee.expression;
+  return ts.isIdentifier(receiver) && realm.isDynamicModuleBinding(receiver) && !realm.existingArmAdmits(call);
+}
+
+/**
  * (#7339) The fallback row's plan of `R.<name>(k)`, a test or nothing. It
- * stands only where main refuses the call at selection: `R` is a script var on
- * the dynamic slot, and no existing arm admits the call. Anything else (an
- * existing arm's call, another receiver, shape or arity, or a program where an
- * object could carry an own method of its name) is no table call: main's route
+ * stands only in {@link isOwnPropertyTestTerritory}. Anything else (an existing
+ * arm's call, another receiver, shape or arity, or a program where an object
+ * could carry an own method of its name) is no table call: main's route
  * stands, bit for bit.
  */
 function ownPropertyTestPlan(
@@ -254,10 +266,7 @@ function ownPropertyTestPlan(
 ): ObjectStaticPlan | undefined {
   const callee = call.expression as ts.PropertyAccessExpression;
   const receiver = callee.expression;
-  if (!TEST_LANE.every(realm.supportsBackendCapability)) return undefined;
-  if (!ts.isIdentifier(receiver) || !realm.isDynamicModuleBinding(receiver) || realm.existingArmAdmits(call)) {
-    return undefined;
-  }
+  if (!TEST_LANE.every(realm.supportsBackendCapability) || !isOwnPropertyTestTerritory(call, realm)) return undefined;
   if (callee.questionDotToken || call.questionDotToken || call.arguments.length !== 1) return undefined;
   if (ts.isSpreadElement(call.arguments[0]!)) return undefined;
   if (realm.dynamicCodeMayRun || !ownPropertyTestIsPristine(call.getSourceFile(), name)) return undefined;
