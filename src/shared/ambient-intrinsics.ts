@@ -92,7 +92,14 @@ export function isUnshadowedLibBinding(
 
 /** (#7274) `undefined` read as the global value: nothing in the file declares the name. */
 export function isUnshadowedUndefined(node: ts.Expression): boolean {
-  return ts.isIdentifier(node) && node.text === "undefined" && isUndeclaredInFile(node);
+  return ts.isIdentifier(node) && node.text === "undefined" && isUnshadowedGlobalConstant(node);
+}
+
+const GLOBAL_CONSTANTS: ReadonlySet<string> = new Set(["undefined", "NaN", "Infinity"]);
+
+/** (#7339) `undefined`, `NaN` or `Infinity` read as the global value: nothing in the file declares the name. */
+export function isUnshadowedGlobalConstant(node: ts.Expression): boolean {
+  return ts.isIdentifier(node) && GLOBAL_CONSTANTS.has(node.text) && isUndeclaredInFile(node);
 }
 
 /** Nothing in `node`'s file declares its name, so the read is of the global (a syntactic test, no checker). */

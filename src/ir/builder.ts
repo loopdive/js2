@@ -6,6 +6,7 @@
 // terminate the block. No control-flow primitives yet (if/loop sugar) — those
 // come in Phase 2 together with AST→IR lowering for real control-flow.
 
+import type { OwnPropertyTest } from "./nodes.js";
 import {
   asBlockId,
   asLabelId,
@@ -735,7 +736,7 @@ export class IrFunctionBuilder {
   }
 
   /** #7106 S1g — Object.prototype.hasOwnProperty / propertyIsEnumerable over the carrier; result bool. */
-  emitDynOwnProperty(receiver: IrValueId, key: IrValueId, test: "hasOwnProperty" | "propertyIsEnumerable"): IrValueId {
+  emitDynOwnProperty(receiver: IrValueId, key: IrValueId, test: OwnPropertyTest): IrValueId {
     for (const [label, operand] of [
       ["receiver", receiver],
       ["key", key],

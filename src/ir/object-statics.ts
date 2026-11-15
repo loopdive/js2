@@ -8,18 +8,42 @@
  * from-ast both read {@link objectStaticCallPlan}, so they agree on every
  * call, and a call the plan declines is refused at selection.
  *
+ * (#7339) Beside the statics, the table holds `Object.prototype`'s two
+ * own-property tests as a FALLBACK row ({@link ownPropertyTestPlan}). It
+ * answers `R.<name>(k)` only where every arm main has refuses the call: `R` is
+ * a script var on the dynamic slot (main refuses a method call on it as
+ * `expr-module-scalar-method`) that #7335's arm does not serve. The receiver
+ * and the key cross as carriers, and the test answers through
+ * `dyn.own_property` (`emitOwnPropertyTest`). Its answer takes the checker's
+ * type of the call, as every consumer's proof there reads it: the i32 boolean
+ * where the call is typed `boolean`, else that boolean boxed onto the carrier.
+ *
  * The same rows serve propertyHelper's stored aliases
  * (`uncurried-object-alias.ts`) and #7128 / #7335's define on an open carrier.
  *
  * Lane: non-fast host-free standalone only (`native-object-statics`). A result
  * is read back through the carrier's member read, which answers for an open
  * `$Object` on standalone, not on WASI. A JS environment keeps its own arms
- * (`object-create-call.ts` is the one that reaches this runtime there).
+ * (`object-create-call.ts` is the one that reaches this runtime there). The
+ * tests also need the `dyn.own_property` provider (`native-own-property-test`),
+ * which the JS environment's native regime and WASI build too; the table's
+ * lane keeps them to standalone, where #7335's arm ran (on WASI and in a JS
+ * environment no script `var o = {}` is an open `$Object`).
  */
 
 import { isUnshadowedUndefined } from "../shared/ambient-intrinsics.js";
+import {
+  sourceCreatePrototypes,
+  sourceMayPatchPrototype,
+  sourceMayWriteUnspelledMember,
+  sourceNamesReflectiveRoute,
+  sourceSpellsName,
+  sourceWritesMemberNamed,
+} from "../shared/intrinsic-prototype-writes.js";
 import { ts } from "../ts-api.js";
 import type { IrBackendTargetCapability } from "./backend/legality.js";
+import type { IrPrimitiveExpressionFamily } from "./module-bindings.js";
+import type { OwnPropertyTest } from "./nodes.js";
 import {
   definesLiteralsOnly,
   descriptorMapDefinitions,
@@ -57,7 +81,8 @@ interface ObjectStaticRow {
    * The first value is a prototype and the answer a fresh open `$Object`. The
    * prototype is an inline `{}`, or a primitive literal or `undefined` (step
    * 1's TypeError): `__object_create` reads a null proto as the
-   * `%Object.prototype%` terminal, and no carrier is known to be non-null.
+   * `%Object.prototype%` terminal, and no carrier is known to be non-null
+   * ({@link isAdmittedPrototype}).
    */
   readonly prototype?: true;
 }
@@ -72,13 +97,42 @@ const OBJECT_STATICS = {
 
 export type ObjectStaticName = keyof typeof OBJECT_STATICS;
 
+function isObjectStaticName(name: string): name is ObjectStaticName {
+  return Object.hasOwn(OBJECT_STATICS, name);
+}
+
+/** (#7339) The one definition of the two own-property test names in `src/ir/`. */
+export const OWN_PROPERTY_TESTS: ReadonlySet<OwnPropertyTest> = new Set(["hasOwnProperty", "propertyIsEnumerable"]);
+
+export function isOwnPropertyTest(name: string): name is OwnPropertyTest {
+  return (OWN_PROPERTY_TESTS as ReadonlySet<string>).has(name);
+}
+
+/** `name` names a row: `Object.<name>(…)`, or a test's `R.<name>(k)`. */
+export function isTableCallName(name: string): boolean {
+  return isObjectStaticName(name) || isOwnPropertyTest(name);
+}
+
 /** The row a stored alias of `name` lowers as: its helper and its arity. */
 export function storedObjectStaticRow(name: "getOwnPropertyDescriptor" | "getOwnPropertyNames") {
   const { values, provider } = OBJECT_STATICS[name];
   return { arity: values, provider };
 }
 
-export type ObjectStaticCapability = Extract<IrBackendTargetCapability, "native-object-statics">;
+/**
+ * A test's receiver and key, and the lane of its `dyn.own_property` provider;
+ * the uncurried alias `__hasOwnProperty(o, k)` lowers as this row.
+ */
+export const OWN_PROPERTY_TEST_ROW = { arity: 2, capability: "native-own-property-test" } as const;
+
+export type ObjectStaticCapability = Extract<
+  IrBackendTargetCapability,
+  "native-object-statics" | typeof OWN_PROPERTY_TEST_ROW.capability
+>;
+
+/** The table's lane; a test also needs its provider's. */
+const STATICS_LANE: readonly ObjectStaticCapability[] = ["native-object-statics"];
+const TEST_LANE: readonly ObjectStaticCapability[] = [...STATICS_LANE, OWN_PROPERTY_TEST_ROW.capability];
 
 export type ObjectStaticOperand =
   | { readonly kind: "value"; readonly expr: ts.Expression }
@@ -94,8 +148,21 @@ export interface ObjectStaticCall {
   readonly definitions: readonly DescriptorDefinition[];
 }
 
+/**
+ * (#7339) An admitted `R.<name>(k)`. `answer` is the representation of its
+ * boolean, from the checker's type of the call: the i32 (`boolean`) or boxed
+ * onto the carrier (`dynamic`).
+ */
+export interface OwnPropertyTestCall {
+  readonly name: OwnPropertyTest;
+  readonly receiver: ts.Expression;
+  readonly key: ts.Expression;
+  readonly answer: "boolean" | "dynamic";
+}
+
 /** Every expression an admitted call evaluates, in source order (each crosses as a carrier); undefined for any other plan. */
 export function admittedValues(plan: ObjectStaticPlan | undefined): readonly ts.Expression[] | undefined {
+  if (plan?.kind === "test") return [plan.test.receiver, plan.test.key];
   if (plan?.kind !== "call") return undefined;
   const { operands, definitions } = plan.call;
   return [
@@ -117,11 +184,18 @@ export type ObjectStaticRefusal = "shape" | "arity" | "untrusted" | "proto" | "d
 
 export type ObjectStaticPlan =
   | { readonly kind: "call"; readonly call: ObjectStaticCall }
+  | { readonly kind: "test"; readonly test: OwnPropertyTestCall }
   | { readonly kind: "refused"; readonly refusal: ObjectStaticRefusal };
 
 /** What the plan asks of the lane and the program, beyond its own source. */
 export interface ObjectStaticsRealm extends IrObjectIntegrityRealm {
   readonly supportsBackendCapability: (capability: ObjectStaticCapability) => boolean;
+  /** (#7339) `id` reads a script var on the dynamic slot, whose method call every arm of main refuses. */
+  readonly isDynamicModuleBinding: (id: ts.Identifier) => boolean;
+  /** (#7339) An existing arm (#7335's, for a dynamic home) admits this test: main's route stands. */
+  readonly existingArmAdmits: (call: ts.CallExpression) => boolean;
+  /** The checker's primitive family of an expression, as every consumer's proof reads it. */
+  readonly classifyPrimitive: (expr: ts.Expression) => IrPrimitiveExpressionFamily | undefined;
 }
 
 function isEmptyObjectLiteral(expr: ts.Expression): boolean {
@@ -139,10 +213,72 @@ function rowDefinitions(
   return definition && [definition];
 }
 
+/** A prototype operand the create row admits ({@link ObjectStaticRow.prototype}). */
+function isAdmittedPrototype(proto: ts.Expression): boolean {
+  return isEmptyObjectLiteral(proto) || isPrimitiveLiteral(proto) || isUnshadowedUndefined(proto);
+}
+
 /**
- * The ONE admission of `Object.<static>(…)`:
- *   - `undefined` when `call` is no table static on the ambient `Object`, or
- *     the lane is not the table's: the other call arms decide;
+ * (#7339) No object in the program can carry an own `method` other than the
+ * realm's `Object.prototype` one, so `dyn.own_property` (which ignores an own
+ * method) answers as `R.<method>(k)` does: the name is spelled only as a member
+ * read's name, never stored, deleted or defined; no member is installed under a
+ * name the source does not spell; `Object.prototype` is not patched; there is
+ * no reflective route to a prototype; and every `Object.create` makes from a
+ * prototype the create row admits, so every object has `%Object.prototype%`
+ * on its chain. Dynamic code is the realm's question, asked by the plan.
+ */
+function ownPropertyTestIsPristine(sourceFile: ts.SourceFile, method: OwnPropertyTest): boolean {
+  return (
+    !sourceSpellsName(sourceFile, method) &&
+    sourceCreatePrototypes(sourceFile).every((proto) => proto !== null && isAdmittedPrototype(proto)) &&
+    !sourceMayWriteUnspelledMember(sourceFile) &&
+    !sourceWritesMemberNamed(sourceFile, method) &&
+    !sourceMayPatchPrototype(sourceFile, "Object") &&
+    !sourceNamesReflectiveRoute(sourceFile)
+  );
+}
+
+/**
+ * (#7339) The fallback row's territory: `R.<test>(…)` where main refuses the
+ * call at selection, `R` a script var on the dynamic slot that no existing arm
+ * (#7335's) takes. In a claimed unit every such call is the row's plan; from-ast
+ * checks that, so a disagreement between its inputs and the selector's throws.
+ */
+export function isOwnPropertyTestTerritory(call: ts.CallExpression, realm: ObjectStaticsRealm): boolean {
+  const callee = call.expression;
+  if (!ts.isPropertyAccessExpression(callee) || !isOwnPropertyTest(callee.name.text)) return false;
+  const receiver = callee.expression;
+  return ts.isIdentifier(receiver) && realm.isDynamicModuleBinding(receiver) && !realm.existingArmAdmits(call);
+}
+
+/**
+ * (#7339) The fallback row's plan of `R.<name>(k)`, a test or nothing. It
+ * stands only in {@link isOwnPropertyTestTerritory}. Anything else (an existing
+ * arm's call, another receiver, shape or arity, or a program where an object
+ * could carry an own method of its name) is no table call: main's route
+ * stands, bit for bit.
+ */
+function ownPropertyTestPlan(
+  call: ts.CallExpression,
+  name: OwnPropertyTest,
+  realm: ObjectStaticsRealm,
+): ObjectStaticPlan | undefined {
+  const callee = call.expression as ts.PropertyAccessExpression;
+  const receiver = callee.expression;
+  if (!TEST_LANE.every(realm.supportsBackendCapability) || !isOwnPropertyTestTerritory(call, realm)) return undefined;
+  if (callee.questionDotToken || call.questionDotToken || call.arguments.length !== 1) return undefined;
+  if (ts.isSpreadElement(call.arguments[0]!)) return undefined;
+  if (realm.dynamicCodeMayRun || !ownPropertyTestIsPristine(call.getSourceFile(), name)) return undefined;
+  const answer = realm.classifyPrimitive(call) === "boolean" ? "boolean" : "dynamic";
+  return { kind: "test", test: { name, receiver, key: call.arguments[0]!, answer } };
+}
+
+/**
+ * The ONE admission of `Object.<static>(…)` and of the own-property tests
+ * ({@link ownPropertyTestPlan}):
+ *   - `undefined` when `call` is no table row, or the lane is not the row's:
+ *     the other call arms decide;
  *   - `refused` when it is one the IR does not lower. A descriptor that is
  *     not an inline data descriptor is refused: legacy reifies a struct-typed
  *     one before the helper, and the IR has no such step. A call the program
@@ -151,33 +287,25 @@ function rowDefinitions(
  *     `Object.<name>` read or called (`objectStaticsArePristine`: a write or
  *     delete of a static, a bare `Object`, `globalThis`, `with`, a reflective
  *     name);
- *   - `call` otherwise. Its values are the selector's to admit.
+ *   - `call` or `test` otherwise. Its values are the selector's to admit.
  */
 export function objectStaticCallPlan(call: ts.CallExpression, realm: ObjectStaticsRealm): ObjectStaticPlan | undefined {
   const callee = call.expression;
-  if (
-    !ts.isPropertyAccessExpression(callee) ||
-    !ts.isIdentifier(callee.expression) ||
-    callee.expression.text !== "Object" ||
-    !Object.hasOwn(OBJECT_STATICS, callee.name.text) ||
-    !realm.supportsBackendCapability("native-object-statics") ||
-    !realm.isAmbientBinding(callee.expression)
-  ) {
-    return undefined;
-  }
-  const name = callee.name.text as ObjectStaticName;
-  const refused = (refusal: ObjectStaticRefusal): ObjectStaticPlan => ({ kind: "refused", refusal });
+  if (!ts.isPropertyAccessExpression(callee)) return undefined;
+  const name = callee.name.text;
+  if (isOwnPropertyTest(name)) return ownPropertyTestPlan(call, name, realm);
+  const receiver = callee.expression;
+  if (!isObjectStaticName(name) || !ts.isIdentifier(receiver) || receiver.text !== "Object") return undefined;
+  if (!realm.isAmbientBinding(receiver) || !STATICS_LANE.every(realm.supportsBackendCapability)) return undefined;
   const row: ObjectStaticRow = OBJECT_STATICS[name];
+  const refused = (refusal: ObjectStaticRefusal): ObjectStaticPlan => ({ kind: "refused", refusal });
   const args = call.arguments;
   const definingArity = row.defines === "keyed" ? 2 : row.defines === undefined ? 0 : 1;
   const minimum = row.values + (row.defines === "optional-map" ? 0 : definingArity);
   if (callee.questionDotToken || call.questionDotToken || args.some(ts.isSpreadElement)) return refused("shape");
   if (args.length < minimum || args.length > row.values + definingArity) return refused("arity");
   if (realm.dynamicCodeMayRun || !objectStaticsArePristine(call.getSourceFile())) return refused("untrusted");
-  const first = args[0]!;
-  if (row.prototype && !isEmptyObjectLiteral(first) && !isPrimitiveLiteral(first) && !isUnshadowedUndefined(first)) {
-    return refused("proto");
-  }
+  if (row.prototype && !isAdmittedPrototype(args[0]!)) return refused("proto");
   const definitions = rowDefinitions(row, args.slice(row.values));
   if (definitions === null) return refused("descriptor");
   const operands = args

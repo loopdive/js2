@@ -107,7 +107,7 @@ import {
   type OpenCarrierHome,
   type EmptyObjectBinding,
 } from "./empty-object-literal.js";
-import { createObjectStaticSelector } from "./select-object-statics.js";
+import { createObjectStaticSelector, type ObjectStaticValueRules } from "./select-object-statics.js";
 import * as dynamicHome from "./dynamic-home-open-object.js";
 import { writerKnowsItsStrictness } from "./dynamic-home-uses.js";
 import { selectWithEnvironmentClosures } from "./with-environment.js";
@@ -8474,6 +8474,7 @@ function trackedModuleInfluenceIsBoolean(expr: ts.Expression): boolean {
   }
   if (ts.isCallExpression(candidate)) {
     if (dynamicHomeOwnPropertyMethod(candidate) !== undefined) return true; // (#7335) an i32 boolean test
+    if (objectStaticSelector.answersBoolean(candidate)) return true; // (#7339) the fallback row's i32 test
     if (expressionIsModuleBindingRootedCall(candidate)) return false;
     return currentModuleBindingResolver?.scalarExpressionFamily(candidate) === "boolean";
   }
@@ -9097,6 +9098,7 @@ const objectStaticSelector = createObjectStaticSelector({
   isDynamicHomeOpenCarrier: (decl) => isDynamicHomeOpenCarrierDeclaration(decl),
   isOwnPropertyTest: (call) => dynamicHomeOwnPropertyMethod(call) !== undefined,
   isDynamicParam: (id) => currentDynamicParamNames.has(id.text),
+  classifyPrimitive: (expr) => currentSelectionOptions?.classifyPrimitiveExpression?.(expr),
 });
 const { lowersToCarrier, readsCarrier, tableMayReach, holdsCarrier, moduleBindingTakes } = objectStaticSelector;
 
@@ -13198,10 +13200,9 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
       }
       if (admitDynamicHomeOwnPropertyCall(expr)) return isPhase1Expr(expr.arguments[0]!, scope, localClasses);
       if (expressionTouchesScalarModuleBinding(expr.expression.expression, scope)) {
-        if (!isExactF64ScalarToStringCall(expr)) {
-          return shapeNo("expr-module-scalar-method", expr);
-        }
-        return isPhase1Expr(expr.expression.expression, scope, localClasses);
+        if (isExactF64ScalarToStringCall(expr)) return isPhase1Expr(expr.expression.expression, scope, localClasses);
+        const rules = objectStaticValueRules(scope, localClasses); // (#7339) the test row: main refuses here
+        return objectStaticSelector.admitOwnPropertyTest(expr, rules) ?? shapeNo("expr-module-scalar-method", expr);
       }
       // (#3144) Static method call `C.m(args)` — the receiver is a bare
       // LOCAL class identifier (never in scope, so the generic receiver
@@ -13875,7 +13876,12 @@ function isPhase1ObjectStatic(
   localClasses: ReadonlySet<string>,
 ): boolean | undefined {
   if (scope.has("Object")) return undefined;
-  return objectStaticSelector.admit(expr, {
+  return objectStaticSelector.admit(expr, objectStaticValueRules(scope, localClasses));
+}
+
+/** What the statics table's value admission asks of the current walk. */
+function objectStaticValueRules(scope: ReadonlySet<string>, localClasses: ReadonlySet<string>): ObjectStaticValueRules {
+  return {
     isUndefinedOrNull: (value) =>
       isUnshadowedUndefinedIdentifier(value, scope) || value.kind === ts.SyntaxKind.NullKeyword,
     openCarrierIsOwn: (value) =>
@@ -13885,7 +13891,7 @@ function isPhase1ObjectStatic(
     isPhase1: (value) => isPhase1Expr(value, scope, localClasses),
     boxesOntoCarrier: concreteOperandBoxesOntoCarrier,
     refuse: shapeNo,
-  });
+  };
 }
 
 /**
