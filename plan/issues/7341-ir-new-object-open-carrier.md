@@ -5,7 +5,7 @@ status: in-progress
 assignee: ttraenkler/senior-dev
 sprint: current
 created: 2026-11-12
-updated: 2026-11-12
+updated: 2026-11-15
 priority: medium
 horizon: m
 feasibility: medium
@@ -796,3 +796,121 @@ standalone, with `JS2WASM_IR_SHAPE_DIAG=1 JS2WASM_IR_MODULE_INIT_ALL_REJECTS=1`.
   - The PR #7214 review cases match too, 276 of 276. These are rounds 1 and 2,
     including the three non-carrier `void` repros of round 2. No unit that main
     claims is lost in those cases.
+
+## S2 — implementation notes (2026-11-15, branch `claude/7340-7341-s2-construction-args`)
+
+### What was built (one PR with the other issue's S2: #7340 S2 + #7341 S2)
+
+- **One table, one answer.** `constructedRow` (`src/ir/wrapper-construction.ts`) says which row a
+  stored construction builds, or refuses it:
+  - the selector asks it over the family it proves for the argument
+    (`obviousSelectorValueFamily`, else `provenIrFamily`);
+  - from-ast asks it over the family it lowered.
+  - The answer:
+    - **No argument:** the row's own empty value (`""`, `+0`, `false`).
+    - **One argument of the row's family:** as in S1.
+    - **One argument of a family the row converts:** the one table `CONVERTED_FAMILIES`. String takes
+      a number or a boolean (ToString, through `lowerPrimitiveToString`); Number takes a string
+      (ToNumber, the boxed string through `dyn.to_number`).
+    - **`new Object(v)` with a primitive argument:** the argument's family picks the row (ToObject).
+      `new Object()` stays #7341 S1's empty object.
+  - Refused at select (`expr-new-wrapper-argument`): `null`, `undefined`, an object, an array, a
+    function, two or more arguments, a spread, and a family the row does not convert.
+- **No per-constructor arm.** `wrapperConstruction` recognizes `new Object(v)` beside the three rows
+  (its `row` is `undefined` until the argument picks one). S1's use screen, realm check and lane run
+  unchanged, keyed on the constructed row. The call graph treats every construction the one recognizer
+  names as a lowering.
+- **Position.** The store position only. The ToPrimitive-operand position keeps main's own-family rule.
+- **Sizes:** `select.ts` 0 net past its budget; no LOC or function grant.
+
+### Argument forms measured before building (census of 2026-11-14 carriers, re-run on main)
+
+The population is the 776 blocked ES5 files that carry a construction label. Store position only. "Alone" =
+files whose every reason is a construction label: the upper bound of what an argument rule can free.
+
+| constructor | argument form | constructions | files | alone |
+| --- | --- | --- | --- | --- |
+| String | own-family literal (S1) | 265 | 226 | 13 |
+| String | none | 35 | 33 | 6 |
+| String | number literal (incl. `NaN`) | 17 | 10 | 5 |
+| String | boolean literal | 1 | 1 | 1 |
+| String | object / array / function / call / undefined / other identifier | 8 | 8 | 2 |
+| Number | own-family literal (S1) | 180 | 136 | 8 |
+| Number | none | 10 | 9 | 3 |
+| Number | string literal | 5 | 5 | 5 |
+| Number | `NaN` / `Number.X` | 6 | 6 | 1 |
+| Boolean | own-family literal (S1) | 169 | 115 | 5 |
+| Boolean | none | 26 | 24 | 3 |
+| Object | none (S1) | 91 | 62 | 1 |
+| Object | boolean / number / string literal | 22 | 22 | 0 |
+| Object | `null` / `undefined` | 9 | 9 | 0 |
+| Object | identifier of a boolean / number script var, `NaN` var | 5 | 5 | 5 |
+| Object | `2 * 3`, `"" + 1`, `a && b` | 3 | 3 | 3 |
+| Object | three arguments | 3 | 3 | 3 |
+
+Dropped because they gain nothing (0 alone files):
+- Boolean of another family, and Number of a boolean;
+- `null` / `undefined` arguments;
+- objects (whose ToPrimitive would run user code), and calls.
+
+Not built, although files carry them:
+- three arguments to `Object`: 3 files, all blocked by the realm check anyway;
+- `"" + 1`, `a && b`: the selector proves no family for them.
+
+### Measured
+
+Head `397cbcf677` (merged with main `1cfba59ca8`, which includes #7239/#7345) against that main;
+the pre-merge round (`559af2e529` against `7996e61a23`) gave the same numbers.
+
+- **Census**, 1,076 files (the 776 carriers plus 300 seeded IR-only files):
+
+  | measure | result |
+  | --- | --- |
+  | gained IR-only | **2**: `expressions/grouping/S11.1.6_A3_T3` (`new Number("1")`), `statements/for/12.6.3_2-3-a-ii-3` (`new Number(NaN)`) |
+  | lost | 0 |
+  | units newly legacy | 0 |
+  | new compile errors | 0 |
+  | post-claim errors | 1 on main, 1 on head (none new) |
+  | routing-changed files | 2 (0 of the control) |
+
+- **Why so few.** Of the 62 store-form files a construction label alone blocks, after S2:
+  - 34 stop at S1's use screen (`expr-new-wrapper-use`). These are member reads (`.constructor`,
+    `.length`, `.toString`), element reads, a reference before the store (the `++`/`--` files), and
+    `Object.defineProperty` arguments.
+  - 25 stop at S1's realm check (`expr-new-wrapper-realm`). These are the `S15.2.2.1_*` and
+    `S15.5.2.1_*` files, which also read `.constructor`.
+
+  Neither rule is S2's to loosen: the S1 reviews established both. The plans' +11 / +5 came from
+  prototypes without them.
+- **Verdicts** of the 2 routing-changed files: pass on both trees.
+- **JS-environment bytes:** 500/500 identical. The set is the 2 changed files, 300 seeded carriers,
+  and 200 compiled files without `new`.
+- **Bare-program matrix**, 912 cells (`genmatrix.mjs`). Each cell checks its own value against
+  node's:
+  - **Admitted forms:** 24 constructions × 23 uses, 552 cells. 231 cells have `<module-init>` claimed
+    (0 on main). 0 of them are wrong, and 0 have a post-claim error.
+  - **Refused forms:** 16 constructions, 360 cells. 0 claimed, 0 post-claim.
+  - 4 cells answer wrong on both trees; all 4 are unclaimed (legacy).
+- **The reviewers' earlier probe sets:**
+  - wrappers (`rv7221` `w*.json`, 222 unique): 0 units lost, 0 head-only post-claim, 0 wrong;
+  - `new Object` (`rv7214b/cases`, 1,450 unique): 0 / 0 / 0.
+- **Tests:**
+  - `issue-7340` + `issue-7341`, with the S2 rows: all pass;
+  - #4208 ×3, #7144, lever SR, #7280, #7335: 5 failures, the same 5 that fail on main (#4208's loose
+    equality import list; four #7144 operand-family rows).
+
+### Differences from the plan (S2)
+
+1. **Gain: 0 `new Object` files of the plan's +5.** The S2 files (`Object/S15.2.2.1_A3`–`A6`) are
+   blocked by #7340 S1's realm check and member-read screen (they read `.constructor`). The two gained
+   files are #7340's.
+2. **`new Object(null)` / `new Object(undefined)` / `new Object(void 0)` are refused**
+   (`expr-new-wrapper-argument`), not built as the empty object. They gain 0 files.
+3. **Refusal labels:**
+   - A refused `new Object(v)` in store position now reads `expr-new-wrapper-argument` / `-realm` /
+     `-use` (the wrapper table's).
+   - Outside store position it keeps `expr-new-object-argument`.
+4. **Three arguments are refused.** The plan's "extra arguments evaluated and discarded" follow-up is not
+   built: its 3 files are realm-refused anyway.
+
+S3 is not started; the issue stays `in-progress`.
