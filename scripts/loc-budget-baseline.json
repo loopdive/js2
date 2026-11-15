@@ -1,7 +1,7 @@
 {
-  "generated": "2026-11-14",
+  "generated": "2026-11-15",
   "threshold": 1500,
-  "totalCeiling": 1032282,
+  "totalCeiling": 1032371,
   "files": {
     "src/codegen-linear/index.ts": 5791,
     "src/codegen-linear/runtime.ts": 4195,
@@ -49,7 +49,7 @@
     "src/codegen/generators-native-consumer.ts": 1787,
     "src/codegen/generators-native.ts": 6332,
     "src/codegen/generic-struct-factory.ts": 1865,
-    "src/codegen/index.ts": 14481,
+    "src/codegen/index.ts": 14483,
     "src/codegen/ir-inline.ts": 1571,
     "src/codegen/ir-prepared-free-functions.ts": 2228,
     "src/codegen/iterator-native.ts": 6518,
@@ -111,7 +111,7 @@
     "src/ir/runtime/manifest.ts": 2412,
     "src/ir/runtime/verify.ts": 3164,
     "src/ir/select-identity.ts": 1655,
-    "src/ir/select.ts": 14716,
+    "src/ir/select.ts": 14728,
     "src/package-linker.ts": 2136,
     "src/runtime.ts": 4772,
     "src/runtime/iterator-polyfills.ts": 1516
