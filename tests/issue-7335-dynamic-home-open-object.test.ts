@@ -85,6 +85,10 @@ const CLAIMED: Record<string, string> = {
   "own-property result stored": `var o = {}; ${DEFINE} var b = o.hasOwnProperty('p'); if (b !== true) { throw "b"; }`,
   typeof: `var o = {}; if (typeof o !== 'object') { throw "typeof"; }`,
   "read before the declaration runs": `if (o !== undefined) { throw "hoist"; } var o = {};`,
+  // (#7339) The refusal rows' `toString` programs: where #7335's arm does not serve the probe, the statics table's
+  // test row answers it, and the open object's member read answers `toString` as the realm's.
+  "parenthesized inherited toString read, probed": `var o = {}; if ((o).toString === undefined) { throw "inherited"; } var probe = o.hasOwnProperty("zz");`,
+  "aliased inherited toString read, probed": `var o = {}; var p = o; if (p.toString === undefined) { throw "alias"; } var probe = o.hasOwnProperty("zz");`,
 };
 
 /**
@@ -93,13 +97,15 @@ const CLAIMED: Record<string, string> = {
  * `<module-init>` is refused at select, with the arm named.
  */
 const REFUSED: Record<string, { readonly source: string; readonly detail: string }> = {
+  // (#7339) Where #7335's arm does not serve the probe, the statics table's fallback test row answers it, and
+  // what it makes reachable is refused by the table's gap rules.
   "inherited method read": {
     source: `var o = {}; if (o.hasOwnProperty !== Object.prototype.hasOwnProperty) { throw "inherited"; }`,
-    detail: "expr-module-scalar-method",
+    detail: "expr-carrier-inherited-member",
   },
   "parenthesized inherited read": {
-    source: `var o = {}; if ((o).toString === undefined) { throw "inherited"; }`,
-    detail: "expr-module-scalar-method",
+    source: `var o = {}; if ((o).valueOf === undefined) { throw "inherited"; }`,
+    detail: "expr-carrier-inherited-member",
   },
   // (#7341) Refused before the probe: the carrier's loose `== null` has no lowering.
   "parenthesized loose equality": {
@@ -107,8 +113,8 @@ const REFUSED: Record<string, { readonly source: string; readonly detail: string
     detail: "operand-coercion-unsupported",
   },
   alias: {
-    source: `var o = {}; var p = o; if (p.toString === undefined) { throw "alias"; }`,
-    detail: "expr-module-scalar-method",
+    source: `var o = {}; var p = o; if (p.valueOf === undefined) { throw "alias"; }`,
+    detail: "expr-carrier-inherited-member",
   },
   reassigned: { source: `var o = {}; o = 5; if (o !== 5) { throw "w"; }`, detail: "vardecl-module-value-flow" },
   "array destructuring write": {
@@ -146,7 +152,7 @@ const REFUSED: Record<string, { readonly source: string; readonly detail: string
   },
   "shadowing parameter": {
     source: `var o = {}; ${DEFINE} function f(o) { return o.p; } if (f({ p: 2 }) !== 2) { throw "shadow"; }`,
-    detail: "expr-module-scalar-method",
+    detail: "module-init-uncarried-dynamic-argument",
   },
   "element destructuring target": {
     source: `"use strict"; var o = {}; Object.defineProperty(o, 'b', { value: 1 }); ${STRICT_THROW("[o.b] = [11];")}`,
