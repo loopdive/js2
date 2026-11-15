@@ -91,17 +91,45 @@ const CLAIMED: Record<string, string> = {
   "== 1": `var o = new Object(); if (o == 1) { throw "n"; }`,
   "== true": `var o = new Object(); if (o == true) { throw "b"; }`,
   '== "[object Object]"': `var o = new Object(); if (o == "[object Object]") {} else { throw "s"; }`,
+  // S2: ToObject of a primitive is its wrapper, picked by the argument's family.
+  "a boolean literal": `var o = new Object(true); if (typeof o !== "object") { throw "t"; } if (o != true) { throw "=="; } if (o === true) { throw "==="; }`,
+  "a number literal": `var o = new Object(1.5); if (o + 1 !== 2.5) { throw "+"; }`,
+  "a string literal": `var o = new Object("ab"); if (o + "c" !== "abc") { throw "+"; } if (o === "ab") { throw "==="; }`,
+  "a boolean script var": `var x = false; var o = new Object(x); if (o != false) { throw "=="; } if (!o) { throw "truthy"; }`,
+  "a number script var": `var x = 1; var o = new Object(x); if (typeof o !== "object") { throw "t"; } if (o * 2 !== 2) { throw "*"; }`,
+  "a product": `var o = new Object(2 * 3); if (o - 6 !== 0) { throw "-"; }`,
 };
 
 /** A construction the plan declines: the unit is refused at select, with the arm named. */
 const REFUSED: Record<string, { readonly source: string; readonly unit: string; readonly detail: string }> = {
-  "an argument from a dynamic var": {
-    source: `var x = 1; var o = new Object(x); if (typeof o !== "object") { throw "t"; }`,
+  // S2: `new Object(v)` is the wrapper of `v`'s primitive family, and takes nothing else.
+  "a null argument": {
+    source: `var o = new Object(null); if (typeof o !== "object") { throw "t"; }`,
     unit: "<module-init>",
-    detail: "expr-new-object-argument",
+    detail: "expr-new-wrapper-argument",
+  },
+  "an array argument": {
+    source: `var o = new Object([1]); if (typeof o !== "object") { throw "t"; }`,
+    unit: "<module-init>",
+    detail: "expr-new-wrapper-argument",
+  },
+  "three arguments": {
+    source: `var o = new Object(1, 2, 3); if (typeof o !== "object") { throw "t"; }`,
+    unit: "<module-init>",
+    detail: "expr-new-wrapper-argument",
   },
   "a spread argument": {
     source: `var o = new Object(...[1]); if (typeof o !== "object") { throw "t"; }`,
+    unit: "<module-init>",
+    detail: "expr-new-wrapper-argument",
+  },
+  "a member read of the wrapper": {
+    source: `var o = new Object(true); if (o.constructor !== Boolean) { throw "c"; }`,
+    unit: "<module-init>",
+    detail: "expr-new-wrapper-use",
+  },
+  "an argument outside store position": {
+    source: `if (typeof new Object(1) !== "object") { throw "t"; }`,
     unit: "<module-init>",
     detail: "expr-new-object-argument",
   },

@@ -122,6 +122,49 @@ const ROWS: Record<string, { readonly make: string; readonly checks: string }> =
       w--;
       if (w !== -1) throw "w--";`,
   },
+  // S2: no argument, or an argument the row converts (ToString / ToNumber).
+  "String()": {
+    make: "new String()",
+    checks: `
+      if (typeof w !== "object") throw "typeof";
+      if (w + "" !== "") throw "+";
+      if (!w) throw "an empty String object is truthy";
+      if (w != "") throw "!=";`,
+  },
+  "String(number)": {
+    make: "new String(-1.5)",
+    checks: `
+      if (w + "" !== "-1.5") throw "+";
+      if (w != "-1.5") throw "!=";`,
+  },
+  "String(boolean)": {
+    make: "new String(true)",
+    checks: `
+      if (w + "!" !== "true!") throw "+";`,
+  },
+  "Number()": {
+    make: "new Number()",
+    checks: `
+      if (w + 1 !== 1) throw "+";
+      if (!w) throw "a Number(0) object is truthy";`,
+  },
+  "Number(string)": {
+    make: 'new Number("12")',
+    checks: `
+      if (w + 1 !== 13) throw "+";
+      if (w != 12) throw "!=";`,
+  },
+  "Number(non-numeric string)": {
+    make: 'new Number("x")',
+    checks: `
+      if (w + 1 === w + 1) throw "NaN";`,
+  },
+  "Boolean()": {
+    make: "new Boolean()",
+    checks: `
+      if (!w) throw "a Boolean(false) object is truthy";
+      if (w != false) throw "!=";`,
+  },
 };
 
 describe("#7340 — a stored wrapper is claimed and answers as node", () => {
@@ -265,9 +308,27 @@ describe("#7340 — every other position is refused at select, never withdrawn",
       reason: "expr-new-wrapper-realm",
       body: `eval("1"); var w = new Number(1); if (w - 1 !== 0) throw "x";`,
     },
-    "an argument of another family (S2)": {
+    // S2 takes only the conversions the corpus constructs, and never an object's ToPrimitive.
+    "a family the row does not convert (Number of a boolean)": {
       reason: "expr-new-wrapper-argument",
-      body: `var w = new String(1); if (w + "" !== "1") throw "x";`,
+      body: `var w = new Number(true); if (w + 1 !== 2) throw "x";`,
+    },
+    "an object argument with its own toString": {
+      reason: "expr-new-wrapper-argument",
+      body: `var w = new String({ toString: function () { return "q"; } }); if (w + "" !== "q") throw "x";`,
+    },
+    // (PR #7243 review) The sum is the dynamic carrier: a member read of it would be claimed and withdrawn.
+    "a member read of the sum (S2 form)": {
+      reason: "expr-new-wrapper-use",
+      body: `var w = new String(); var r = (w + "").length; if (r !== 0) throw "x";`,
+    },
+    "a member read of the sum (S1 form)": {
+      reason: "expr-new-wrapper-use",
+      body: `var w = new String("a"); var r = (w + "").length; if (r !== 1) throw "x";`,
+    },
+    "a member read of a chained sum": {
+      reason: "expr-new-wrapper-use",
+      body: `var w = new String("a"); var r = (w + "b" + "c").length; if (r !== 3) throw "x";`,
     },
     "two arguments": {
       reason: "expr-new-wrapper-argument",
