@@ -1,8 +1,8 @@
 ---
 id: 7348
 title: "IR-owned files: when the IR lowers every unit of a file, it owns the file's storage and calling conventions"
-status: ready
-sprint: current
+status: backlog
+sprint: Backlog
 created: 2026-11-15
 updated: 2026-11-15
 priority: high
@@ -17,6 +17,19 @@ related: [7346, 7347, 7338, 7106, 2855]
 ---
 
 # #7348 — IR-owned files
+
+> **Parked 2026-11-15 after Step 0.** The prototype measurement shows this is not the lever now.
+>
+> - Run: branch `scratch/7348-step0` at `30382ba8af` (main `d253210865` plus a throwaway switch that admits
+>   every storage-agreement refusal at 38 selector sites), standalone, on the first 1,500 rows of a seeded
+>   shuffle of the 6,990 blocked files (1,438 blocked, 62 IR-only controls).
+> - Result: 41 of 1,438 blocked files (2.9 %) then have every unit claimed; 19 compile clean, 17 fail after
+>   the claim, 5 hit a hard compile error. Projection for all 6,990: about 200 claim every unit.
+> - All 1,397 files still blocked have their test body refused. The first remaining reasons are function
+>   values and built-in globals used as values (`Function` 201 files, `Object` 36, `Number` 23, `String` 16,
+>   `Math` 13; `assert` 41 and `f` 28 as function values), then descriptors (101) and eval (94).
+> - So function values must be shared with legacy units for now: see #7349. This issue can be reopened
+>   when most files are close to fully claimed; the seam notes are in the run's record.
 
 ## Problem
 
