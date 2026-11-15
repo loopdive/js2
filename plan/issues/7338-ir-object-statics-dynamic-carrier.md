@@ -4,7 +4,7 @@ title: "IR: `Object.<static>(…)` calls through the dynamic carrier, one table 
 status: in-progress
 sprint: current
 created: 2026-11-11
-updated: 2026-11-13
+updated: 2026-11-15
 priority: high
 horizon: l
 feasibility: hard
@@ -305,7 +305,9 @@ data descriptor. Expected gain: 14 files.**
 
 **S3 — descriptor and map operands that are dynamic values; computed
 descriptor values; primitive and inline-literal targets. Expected gain: +19
-(46).**
+(46).** *(Narrowed 2026-11-15, see "S3 (narrowed) + S4a result" below:
+primitive targets and computed descriptor values were already admitted by
+S1/S2; what remained is primitive descriptors and non-literal map entries.)*
 
 - A descriptor held in a dynamic binding or returned by a call passes as is.
 - A primitive target (`Object.defineProperty(true, "foo", {})` inside an
@@ -318,7 +320,10 @@ descriptor values; primitive and inline-literal targets. Expected gain: +19
 - Size: `object-statics.ts` only.
 
 **S4 — accessor and function-valued descriptor literals. Expected gain: +13
-(59).**
+(59).** *(Split 2026-11-15 into S4a, accessor halves that carry no function
+value, built; S4b, function values without `this` or captures; S4c, `this`
+and written captures. The closure-as-value support this slice assumed does
+not exist in these positions; see below.)*
 
 - A literal field whose value is a function expression is a closure boxed to
   the dynamic carrier. Depends on the closure-as-dynamic-value support the
@@ -682,3 +687,82 @@ unchanged. No new host import is added on any lane.
 - Struct-typed descriptors (a descriptor the IR types as a closed object
   literal). Refused at selection; no file in the 59 needs it.
 - `Object.create(null)`: the IR's existing separate contract.
+
+## S3 (narrowed) + S4a result (2026-11-15)
+
+The 2026-11-15 measurement narrowed S3 and split S4. The census was taken
+before the slice, on the #7339 head `ab380a0f8b` (standalone,
+`JS2WASM_IR_SHAPE_DIAG=1 JS2WASM_IR_MODULE_INIT_ALL_REJECTS=1`). The population
+was the 1,719 ES5 files that carried an Object-statics label in the 2026-11-14
+census.
+
+| Object-statics label | files carrying it | files where it is the only reason |
+|---|---|---|
+| `expr-object-static-descriptor` | 1,290 | 136 |
+| `expr-object-static-operand` | 345 | 22 |
+| `expr-object-static-untrusted` | 133 | 3 |
+| `expr-object-static-proto` | 37 | 1 |
+
+What the descriptors in the 136 sole-reason files need:
+
+| Descriptor needs | files |
+|---|---|
+| primitive descriptor, primitive map entry, nullish map (narrowed S3) | 22 |
+| `get` / `set` with no function: `undefined` 15, primitive or `null` 11, array literal 3, `new` 1 (S4a) | 35 |
+| `get` / `set` naming a function through a binding (S4b) | 7 |
+| function values with no `this` and no captures (S4b) | 40 |
+| function values that read captures only (S4b) | 2 |
+| function values that write captures (S4c) | 15 |
+| function values that use `this` (S4c) | 15 |
+
+The plan's S3 items "primitive targets" and "computed descriptor values" were
+already admitted by S1/S2. A descriptor held in a table result, a dynamic
+binding or a parameter is the only reason in no file.
+
+S4 assumed that a function field is a closure boxed onto the carrier through
+the selector's closure-as-value support. On `ab380a0f8b` that support does not
+exist in these positions. A function expression as a value is refused
+(`closure-return-type`, `vardecl-let-closure`, `expr-local-call-target`), and so
+are captured module vars and written locals.
+
+### What this slice does (branch `claude/7338-s3-s4a`)
+
+- **One rule for the descriptor.** It lives in `descriptor-literal.ts` and the selector and from-ast read it through the one plan.
+  - A descriptor literal may also hold `get` / `set` spelled as a primitive: a number, string or boolean literal, `null`, or the global `undefined`. An array or object literal, a name, a call or a function expression stays refused.
+  - The JS environment's `Object.create` uses mode `"literal-data"` and is unchanged.
+- **Static TypeErrors, decided in one place.** `descriptor-literal.ts` decides when ToObject or ToPropertyDescriptor throws, and the define carries the TypeError's message as `throws`:
+  - a `null` / `undefined` map of `defineProperties` and a `null` map of `create` (ToObject);
+  - a primitive descriptor or map entry;
+  - a `get` / `set` that is not `undefined` (every admitted one is a primitive, so never callable);
+  - a `get` / `set` beside `value` / `writable`.
+  - The static then throws once its values are evaluated and its first value tested, before anything is defined: §20.1.2.3.1 converts every descriptor before it defines any (review round 1, PR #7246).
+  - A throwing descriptor of `defineProperty` is admitted only behind a literal key, so no ToPropertyKey is skipped.
+  - A number or boolean map defines nothing.
+  - A string map stays refused, because its index keys have descriptors.
+  - An explicit `undefined` map of `create` is no map.
+- **Accessor halves.** The native applier `__obj_define_from_desc` reads an `undefined` half as an empty one. Every other admitted half throws at compile time's decision above, never inside the define loop. No runtime or host change.
+- **Struct-typed descriptors** stay refused through the one existing rule. A descriptor that is no literal and no primitive is not admitted. A test row pins this.
+- **One constant-true throw.** `emitThrowTypeErrorAlways` (`throw-type-error.ts`) replaces the private copy in `binding-pattern-lowering.ts`.
+
+### Measured
+
+Head `9438d0d208`, base `ab380a0f8b` (the #7339 head), standalone.
+
+| | 1,719-file population | 300 IR-only control files |
+|---|---|---|
+| gained (IR-only now) | 41 | 0 |
+| lost | 0 | 0 |
+| units newly legacy | 0 (legacy units 5,670 → 5,629) | 0 |
+| new compile errors | 0 | 0 |
+| post-claim errors | 0 (0 on base) | 0 |
+| routing changed | 41 | 0 |
+
+- **Verdicts:** all 41 routing-changed files pass on head with `run-test262-paths.mts --standalone`, and in the CI standalone baseline.
+- **JS-environment bytes:** identical, head vs base, on 380 files (the 41 changed files, every seventh population file, every third control file) and on 25 probe programs.
+- **Probes:** 25 programs against node; every claimed one answers as node does. In two of them (`get: 12`, `set: 'abc'`) legacy itself answers wrong.
+- **Yield:** 41 of the 57-file ceiling. The other 16 sole-reason files were not broken down file by file. An array or object literal as a `get` value, for example, is refused by the operand rules (`expr-object-static-operand`, `objectlit-empty`).
+
+Size: `descriptor-literal.ts` +61 net, `object-statics.ts` +28,
+`open-object-carrier.ts` +4, `throw-type-error.ts` +9,
+`binding-pattern-lowering.ts` −6, `from-ast.ts` and `object-create-call.ts`
+0. There is no budget grant.

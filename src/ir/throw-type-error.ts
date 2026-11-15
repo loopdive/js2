@@ -4,6 +4,9 @@ import { irRuntimeFuncRef } from "./callable-bindings.js";
 import { JS_TAG_IDS } from "./js-tag-domain.js";
 import { irDynamic, irVal, type IrValueId } from "./nodes.js";
 
+/** ToObject's TypeError (§7.1.18) for `undefined` / `null`. */
+export const NOT_COERCIBLE = "Cannot convert undefined or null to object";
+
 /** `throw new TypeError(message)` through the native `__new_TypeError`. */
 function emitThrowTypeError(builder: IrFunctionBuilder, message: string): void {
   const boxed = builder.emitBox(builder.emitStringConst(message), irDynamic(JS_TAG_IDS.String));
@@ -16,6 +19,15 @@ function emitThrowTypeError(builder: IrFunctionBuilder, message: string): void {
 /** `if (cond) throw new TypeError(message)`. */
 export function emitThrowTypeErrorIf(builder: IrFunctionBuilder, cond: IrValueId, message: string): void {
   builder.emitIfStmt({ cond, then: builder.collectBodyInstrs(() => emitThrowTypeError(builder, message)), else: [] });
+}
+
+/**
+ * `throw new TypeError(message)` behind a constant-true branch rather than as
+ * a terminator: the code after it still binds, so what the selector admitted
+ * after the throwing step stays well-formed.
+ */
+export function emitThrowTypeErrorAlways(builder: IrFunctionBuilder, message: string): void {
+  emitThrowTypeErrorIf(builder, builder.emitConst({ kind: "bool", value: true }, irVal({ kind: "i32" })), message);
 }
 
 /** `if (Type(value) is not Object) throw new TypeError(message)`, for a `dynamic` value: neither an object nor a function. */

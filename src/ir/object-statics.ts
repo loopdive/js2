@@ -49,7 +49,7 @@ import {
   descriptorMapDefinitions,
   isPrimitiveLiteral,
   keyedDescriptorDefinition,
-  type DescriptorDefinition,
+  type DescriptorDefinitions,
 } from "./descriptor-literal.js";
 import { unitInKeysAreOwnOnly } from "./empty-object-literal.js";
 import { objectStaticsArePristine, type IrObjectIntegrityRealm } from "./object-integrity.js";
@@ -139,13 +139,15 @@ export type ObjectStaticOperand =
   /** An inline `{}`: a fresh open `$Object`. */
   | { readonly kind: "object" };
 
-/** An admitted call: its values in order, then the definitions it applies to its answer. */
-export interface ObjectStaticCall {
+/**
+ * An admitted call: its values in order, then the definitions it applies to its answer, or (#7338 S3) the TypeError
+ * it throws once its values are evaluated and its first value tested, before it defines anything.
+ */
+export interface ObjectStaticCall extends DescriptorDefinitions {
   readonly name: ObjectStaticName;
   readonly provider: ObjectStaticProvider | undefined;
   readonly requires: "object" | "coercible" | undefined;
   readonly operands: readonly ObjectStaticOperand[];
-  readonly definitions: readonly DescriptorDefinition[];
 }
 
 /**
@@ -176,7 +178,7 @@ export function admittedValues(plan: ObjectStaticPlan | undefined): readonly ts.
 
 /** #7128's U1 define: an admitted call that only defines, literal keys and literal descriptors. */
 export function isLiteralDefine(plan: ObjectStaticPlan | undefined): boolean {
-  return plan?.kind === "call" && plan.call.provider === undefined && definesLiteralsOnly(plan.call.definitions);
+  return plan?.kind === "call" && plan.call.provider === undefined && definesLiteralsOnly(plan.call);
 }
 
 /** Why a call of a table static keeps legacy; the selector reports it as `expr-object-static-<refusal>`. */
@@ -202,15 +204,18 @@ function isEmptyObjectLiteral(expr: ts.Expression): boolean {
   return ts.isObjectLiteralExpression(expr) && expr.properties.length === 0;
 }
 
-/** The definitions the arguments after a row's values make, else null. */
-function rowDefinitions(
-  row: ObjectStaticRow,
-  defining: readonly ts.Expression[],
-): readonly DescriptorDefinition[] | null {
-  if (defining.length === 0) return [];
-  if (row.defines !== "keyed") return descriptorMapDefinitions(defining[0]!, () => true);
-  const definition = keyedDescriptorDefinition(defining[0]!, defining[1]!);
-  return definition && [definition];
+/**
+ * The definitions the arguments after a row's values make, and the TypeError the static throws before it defines
+ * (`descriptor-literal.ts` decides both); else null. A map is optional only for `Object.create`, which reads
+ * `undefined` as none.
+ */
+function rowDefinitions(row: ObjectStaticRow, defining: readonly ts.Expression[]): DescriptorDefinitions | null {
+  const [first] = defining;
+  if (first === undefined || (row.defines === "optional-map" && isUnshadowedUndefined(first))) {
+    return { definitions: [], throws: undefined };
+  }
+  if (row.defines !== "keyed") return descriptorMapDefinitions(first, "no-function");
+  return keyedDescriptorDefinition(first, defining[1]!);
 }
 
 /** A prototype operand the create row admits ({@link ObjectStaticRow.prototype}). */
@@ -306,8 +311,9 @@ export function objectStaticCallPlan(call: ts.CallExpression, realm: ObjectStati
   if (args.length < minimum || args.length > row.values + definingArity) return refused("arity");
   if (realm.dynamicCodeMayRun || !objectStaticsArePristine(call.getSourceFile())) return refused("untrusted");
   if (row.prototype && !isAdmittedPrototype(args[0]!)) return refused("proto");
-  const definitions = rowDefinitions(row, args.slice(row.values));
-  if (definitions === null) return refused("descriptor");
+  const defined = rowDefinitions(row, args.slice(row.values));
+  if (defined === null) return refused("descriptor");
+  const { definitions, throws } = defined;
   const operands = args
     .slice(0, row.values)
     .map((arg): ObjectStaticOperand => (isEmptyObjectLiteral(arg) ? { kind: "object" } : { kind: "value", expr: arg }));
@@ -315,5 +321,5 @@ export function objectStaticCallPlan(call: ts.CallExpression, realm: ObjectStati
   if ((row.prototype || operands[0]!.kind === "object") && !unitInKeysAreOwnOnly(call)) return refused("in-key");
   // A fresh `{}` is an Object by construction.
   const requires = operands[0]!.kind === "object" ? undefined : row.requires;
-  return { kind: "call", call: { name, provider: row.provider, requires, operands, definitions } };
+  return { kind: "call", call: { name, provider: row.provider, requires, operands, definitions, throws } };
 }
