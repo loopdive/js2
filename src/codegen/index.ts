@@ -270,6 +270,7 @@ import {
 import {
   applyIrFinalContextFunctionUnitIds,
   finalizePreparedIrSelection,
+  irRuntimeEvalSelectionOption,
   prepareHostDateSnapshotPreflight,
   synchronizeIrSafeFunctionSelection,
   moduleInitCrossesEvalBoundary,
@@ -3324,6 +3325,7 @@ function planIrOverlay(
       arrayPrototypeBorrow: (call, method, reaches) => irArrayPrototypeBorrowAdmitted(ctx, call, method, reaches),
       dynamicInstanceOfAtLegacyParity: (site) => irDynamicInstanceOfAtLegacyParity(ctx, site), // (#7106)
       ...irOpenObjectSelectionOption(ctx), // (#7128 S1)
+      ...irRuntimeEvalSelectionOption(ctx), // (#7345)
       isHoleyArrayFilterCall: (expr) => ctx.holeyArrayFilterCallNodes.has(expr),
       supportsHoleyArrayFilter: true,
       resolveImplicitParamType: (parameter) => resolveImplicitParamType(parameter)?.kind,
