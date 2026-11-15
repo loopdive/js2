@@ -9248,7 +9248,7 @@ function lowerDescriptorDefinition(
 ): ObjectStaticDefinitionValues {
   return {
     key: typeof key === "string" ? key : lowerCarrierOperand(key, callName, cx),
-    fields: (fields ?? []).map(({ name, initializer }) => ({
+    fields: fields.map(({ name, initializer }) => ({
       name,
       value: lowerCarrierOperand(initializer, callName, cx),
     })),

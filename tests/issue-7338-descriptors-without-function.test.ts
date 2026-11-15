@@ -87,7 +87,22 @@ const CLAIMED: Record<string, string> = {
   "a getter beside a value": typeError("Object.defineProperty({}, 'p', { get: undefined, value: 1 })"),
   "an undefined setter in a create map":
     "var o = Object.create({}, { p: { set: undefined } }); var d = Object.getOwnPropertyDescriptor(o, 'p'); if (d.set !== undefined || d.hasOwnProperty('value')) { throw 'x'; }",
+  "a later get: 1 descriptor throws before any define": `var obj = {}; ${typeError("Object.defineProperties(obj, { a: { value: 1 }, b: { get: 1 } })")} if (obj.hasOwnProperty('a')) { throw 'y'; }`,
+  "a later set: null descriptor throws before any define": `var obj = {}; ${typeError("Object.defineProperties(obj, { a: { value: 1 }, b: { set: null } })")} if (obj.hasOwnProperty('a')) { throw 'y'; }`,
+  "a later set: 'f' descriptor throws before any define": `var obj = {}; ${typeError("Object.defineProperties(obj, { a: { value: 1 }, b: { set: 'f' } })")} if (obj.hasOwnProperty('a')) { throw 'y'; }`,
+  "a later get: undefined beside value descriptor throws before any define": `var obj = {}; ${typeError("Object.defineProperties(obj, { a: { value: 1 }, b: { get: undefined, value: 2 } })")} if (obj.hasOwnProperty('a')) { throw 'y'; }`,
+  "a later writable beside set: undefined descriptor throws before any define": `var obj = {}; ${typeError("Object.defineProperties(obj, { a: { value: 1 }, b: { writable: true, set: undefined } })")} if (obj.hasOwnProperty('a')) { throw 'y'; }`,
+  "a throwing descriptor of create defines nothing": typeError("Object.create({}, { a: { value: 1 }, b: { set: 0 } })"),
   "an accessor redefining a non-configurable data property": `var obj = {}; Object.defineProperty(obj, 'p', { value: 1 }); ${typeError("Object.defineProperty(obj, 'p', { get: undefined })")}`,
+};
+
+/**
+ * Evaluation order before the TypeError: every value is evaluated, in source order, and nothing is defined. A value
+ * whose evaluation is observable (an update, a call) keeps its unit on legacy today, so these rows hold whatever the
+ * route; they guard the order once such values are admitted.
+ */
+const ORDERED: Record<string, string> = {
+  "every value of a map with a later throwing descriptor": `var obj = {}; var n = 0; ${typeError("Object.defineProperties(obj, { a: { value: ++n }, b: { get: 1 }, c: { value: n += 10 } })")} if (n !== 11 || obj.hasOwnProperty('a') || obj.hasOwnProperty('c')) { throw 'y'; }`,
 };
 
 /** Each stays refused at select with the stated detail, and answers as legacy does. */
@@ -114,6 +129,11 @@ const REFUSED: Record<string, { readonly source: string; readonly detail: string
     source: `var k = 'p'; ${typeError("Object.defineProperty({}, k, true)")}`,
     detail: "expr-object-static-descriptor",
   },
+  // ToPropertyKey would run before ToPropertyDescriptor's TypeError of an accessor half too.
+  "a throwing accessor half behind a computed key": {
+    source: `var k = 'p'; ${typeError("Object.defineProperty({}, k, { get: 1 })")}`,
+    detail: "expr-object-static-descriptor",
+  },
   // A string map has index keys, whose descriptors are its characters.
   "a string map": {
     source: typeError("Object.defineProperties({}, 'ab')"),
@@ -127,6 +147,15 @@ describe("#7338 S3 + S4a — descriptors that carry no function value", () => {
       const ir = await build(source);
       expect(ir.irPostClaimErrors ?? []).toEqual([]);
       expect(legacyUnits(ir), JSON.stringify(legacyUnits(ir))).toEqual([]);
+      expect(node(source)).toBe("ok");
+      expect(await run(ir)).toBe("ok");
+    });
+  }
+
+  for (const [name, source] of Object.entries(ORDERED)) {
+    it(`evaluates every value before the TypeError, as node does: ${name}`, async () => {
+      const ir = await build(source);
+      expect(ir.irPostClaimErrors ?? []).toEqual([]);
       expect(node(source)).toBe("ok");
       expect(await run(ir)).toBe("ok");
     });

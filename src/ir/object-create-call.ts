@@ -26,7 +26,7 @@ import { isUnshadowedLibBinding } from "../shared/ambient-intrinsics.js";
 import { ts } from "../ts-api.js";
 import type { IrBackendTargetCapability } from "./backend/legality.js";
 import type { IrFunctionBuilder } from "./builder.js";
-import { descriptorMapDefinitions, isPrimitiveLiteral, type DescriptorDefinition } from "./descriptor-literal.js";
+import { descriptorMapDefinitions, type DescriptorDefinition } from "./descriptor-literal.js";
 import { unitInKeysAreOwnOnly } from "./empty-object-literal.js";
 import { irDynamic, irVal, type IrValueId } from "./nodes.js";
 import {
@@ -72,9 +72,9 @@ export function objectCreateDescriptorMap(
   ) {
     return null;
   }
-  const definitions = descriptorMapDefinitions(expr.arguments[1]!, isPrimitiveLiteral, "data");
-  if (definitions === null || !isUnshadowedLibBinding(callee.expression, admission.isLibOnlyBinding)) return null;
-  return unitInKeysAreOwnOnly(expr) ? definitions : null;
+  const map = descriptorMapDefinitions(expr.arguments[1]!, "literal-data");
+  if (map === null || !isUnshadowedLibBinding(callee.expression, admission.isLibOnlyBinding)) return null;
+  return unitInKeysAreOwnOnly(expr) ? map.definitions : null;
 }
 
 /** What the lowering needs from from-ast (no import of the lowerer itself). */

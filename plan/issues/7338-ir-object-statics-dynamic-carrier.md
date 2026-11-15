@@ -728,16 +728,19 @@ are captured module vars and written locals.
 ### What this slice does (branch `claude/7338-s3-s4a`)
 
 - **One rule for the descriptor.** It lives in `descriptor-literal.ts` and the selector and from-ast read it through the one plan.
-  - A descriptor literal may also hold `get` / `set` whose value is no function by its spelling (`carriesNoFunction`): a primitive, `null`, the global `undefined`, an array literal or an object literal.
-  - A name, a call or a function expression stays refused: that is a function value.
-  - The JS environment's `Object.create` passes `fieldSet: "data"` and is unchanged.
-- **Static TypeErrors.** A primitive descriptor, a primitive map entry, a `null` / `undefined` map of `defineProperties` and a `null` map of `create` set `ObjectStaticCall.throws`.
-  - The static then throws the TypeError once its values are evaluated and its first value tested, before anything is defined.
-  - A primitive descriptor throws only behind a literal key, so no ToPropertyKey is skipped.
+  - A descriptor literal may also hold `get` / `set` spelled as a primitive: a number, string or boolean literal, `null`, or the global `undefined`. An array or object literal, a name, a call or a function expression stays refused.
+  - The JS environment's `Object.create` uses mode `"literal-data"` and is unchanged.
+- **Static TypeErrors, decided in one place.** `descriptor-literal.ts` decides when ToObject or ToPropertyDescriptor throws, and the define carries the TypeError's message as `throws`:
+  - a `null` / `undefined` map of `defineProperties` and a `null` map of `create` (ToObject);
+  - a primitive descriptor or map entry;
+  - a `get` / `set` that is not `undefined` (every admitted one is a primitive, so never callable);
+  - a `get` / `set` beside `value` / `writable`.
+  - The static then throws once its values are evaluated and its first value tested, before anything is defined: §20.1.2.3.1 converts every descriptor before it defines any (review round 1, PR #7246).
+  - A throwing descriptor of `defineProperty` is admitted only behind a literal key, so no ToPropertyKey is skipped.
   - A number or boolean map defines nothing.
   - A string map stays refused, because its index keys have descriptors.
   - An explicit `undefined` map of `create` is no map.
-- **Accessor halves.** The native applier `__obj_define_from_desc` already does what node does for them. It reads `undefined` as an empty half, throws for `null` or a non-callable value, and throws for a `get` beside a `value`. No runtime or host change.
+- **Accessor halves.** The native applier `__obj_define_from_desc` reads an `undefined` half as an empty one. Every other admitted half throws at compile time's decision above, never inside the define loop. No runtime or host change.
 - **Struct-typed descriptors** stay refused through the one existing rule. A descriptor that is no literal and no primitive is not admitted. A test row pins this.
 - **One constant-true throw.** `emitThrowTypeErrorAlways` (`throw-type-error.ts`) replaces the private copy in `binding-pattern-lowering.ts`.
 

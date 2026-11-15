@@ -47,10 +47,9 @@ import type { OwnPropertyTest } from "./nodes.js";
 import {
   definesLiteralsOnly,
   descriptorMapDefinitions,
-  isNullish,
   isPrimitiveLiteral,
   keyedDescriptorDefinition,
-  type DescriptorDefinition,
+  type DescriptorDefinitions,
 } from "./descriptor-literal.js";
 import { unitInKeysAreOwnOnly } from "./empty-object-literal.js";
 import { objectStaticsArePristine, type IrObjectIntegrityRealm } from "./object-integrity.js";
@@ -140,19 +139,15 @@ export type ObjectStaticOperand =
   /** An inline `{}`: a fresh open `$Object`. */
   | { readonly kind: "object" };
 
-/** An admitted call: its values in order, then the definitions it applies to its answer. */
-export interface ObjectStaticCall {
+/**
+ * An admitted call: its values in order, then the definitions it applies to its answer, or (#7338 S3) the TypeError
+ * it throws once its values are evaluated and its first value tested, before it defines anything.
+ */
+export interface ObjectStaticCall extends DescriptorDefinitions {
   readonly name: ObjectStaticName;
   readonly provider: ObjectStaticProvider | undefined;
   readonly requires: "object" | "coercible" | undefined;
   readonly operands: readonly ObjectStaticOperand[];
-  readonly definitions: readonly DescriptorDefinition[];
-  /**
-   * (#7338 S3) The static throws a TypeError once its values are evaluated and
-   * its first value tested, before it defines anything: a primitive descriptor
-   * (ToPropertyDescriptor), or a `null` / `undefined` descriptor map (ToObject).
-   */
-  readonly throws: boolean;
 }
 
 /**
@@ -176,19 +171,14 @@ export function admittedValues(plan: ObjectStaticPlan | undefined): readonly ts.
     ...operands.flatMap((operand) => (operand.kind === "value" ? [operand.expr] : [])),
     ...definitions.flatMap(({ key, fields }) => [
       ...(typeof key === "string" ? [] : [key]),
-      ...(fields ?? []).map((field) => field.initializer),
+      ...fields.map((field) => field.initializer),
     ]),
   ];
 }
 
 /** #7128's U1 define: an admitted call that only defines, literal keys and literal descriptors. */
 export function isLiteralDefine(plan: ObjectStaticPlan | undefined): boolean {
-  return (
-    plan?.kind === "call" &&
-    plan.call.provider === undefined &&
-    !plan.call.throws &&
-    definesLiteralsOnly(plan.call.definitions)
-  );
+  return plan?.kind === "call" && plan.call.provider === undefined && definesLiteralsOnly(plan.call);
 }
 
 /** Why a call of a table static keeps legacy; the selector reports it as `expr-object-static-<refusal>`. */
@@ -215,29 +205,17 @@ function isEmptyObjectLiteral(expr: ts.Expression): boolean {
 }
 
 /**
- * The definitions the arguments after a row's values make, and whether the
- * static throws before it defines ({@link ObjectStaticCall.throws}); else null.
- * A map is optional only for `Object.create`, which reads `undefined` as none;
- * a `null` map, or `defineProperties`' nullish one, fails ToObject. A primitive
- * descriptor of `defineProperty` throws only behind a literal key, so no
- * ToPropertyKey runs that the IR would skip.
+ * The definitions the arguments after a row's values make, and the TypeError the static throws before it defines
+ * (`descriptor-literal.ts` decides both); else null. A map is optional only for `Object.create`, which reads
+ * `undefined` as none.
  */
-function rowDefinitions(
-  row: ObjectStaticRow,
-  defining: readonly ts.Expression[],
-): { readonly definitions: readonly DescriptorDefinition[]; readonly throws: boolean } | null {
+function rowDefinitions(row: ObjectStaticRow, defining: readonly ts.Expression[]): DescriptorDefinitions | null {
   const [first] = defining;
   if (first === undefined || (row.defines === "optional-map" && isUnshadowedUndefined(first))) {
-    return { definitions: [], throws: false };
+    return { definitions: [], throws: undefined };
   }
-  if (row.defines !== "keyed") {
-    if (isNullish(first)) return { definitions: [], throws: true };
-    const definitions = descriptorMapDefinitions(first, () => true, "no-function");
-    return definitions && { definitions, throws: definitions.some(({ fields }) => fields === null) };
-  }
-  const definition = keyedDescriptorDefinition(first, defining[1]!);
-  if (definition === null || (definition.fields === null && typeof definition.key !== "string")) return null;
-  return { definitions: [definition], throws: definition.fields === null };
+  if (row.defines !== "keyed") return descriptorMapDefinitions(first, "no-function");
+  return keyedDescriptorDefinition(first, defining[1]!);
 }
 
 /** A prototype operand the create row admits ({@link ObjectStaticRow.prototype}). */

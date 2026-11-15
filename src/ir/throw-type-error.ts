@@ -4,6 +4,9 @@ import { irRuntimeFuncRef } from "./callable-bindings.js";
 import { JS_TAG_IDS } from "./js-tag-domain.js";
 import { irDynamic, irVal, type IrValueId } from "./nodes.js";
 
+/** ToObject's TypeError (§7.1.18) for `undefined` / `null`. */
+export const NOT_COERCIBLE = "Cannot convert undefined or null to object";
+
 /** `throw new TypeError(message)` through the native `__new_TypeError`. */
 function emitThrowTypeError(builder: IrFunctionBuilder, message: string): void {
   const boxed = builder.emitBox(builder.emitStringConst(message), irDynamic(JS_TAG_IDS.String));
