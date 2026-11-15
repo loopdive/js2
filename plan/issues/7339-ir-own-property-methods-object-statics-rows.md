@@ -20,6 +20,14 @@ loc-budget-allow:
   # of `dyn.own_property` once and replaces the literal union these files repeated.
   - src/ir/builder.ts
   - src/ir/integration.ts
+  # 2026-11-15 (#7339 review round 3): the test row became a fallback arm beside main's #7335 arm, which stays
+  # byte-for-byte. from-ast (+26): the test plan's lowering branch, the plan's realm (the fallback territory read
+  # from the same resolver inputs as the selector, and one primitive classifier per checker instead of one per call),
+  # and its `expressionProducesDynamic` answer. select.ts (+19): the row's call at main's `expr-module-scalar-method`
+  # refusal (a helper, so `isPhase1Expr` does not grow), the value rules shared with the statics arm, and the two
+  # selector state fields.
+  - src/ir/from-ast.ts
+  - src/ir/select.ts
 ---
 
 # #7339 — IR: own-property method calls on dynamic module bindings

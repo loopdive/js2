@@ -93,7 +93,8 @@ const CLAIMED: Record<string, string> = {
  * `<module-init>` is refused at select, with the arm named.
  */
 const REFUSED: Record<string, { readonly source: string; readonly detail: string }> = {
-  // (#7339) The probe is an own-property test row now: what it makes reachable is refused by the table's gap rules.
+  // (#7339) Where #7335's arm does not serve the probe, the statics table's fallback test row answers it, and
+  // what it makes reachable is refused by the table's gap rules.
   "inherited method read": {
     source: `var o = {}; if (o.hasOwnProperty !== Object.prototype.hasOwnProperty) { throw "inherited"; }`,
     detail: "expr-carrier-inherited-member",

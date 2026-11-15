@@ -107,7 +107,8 @@ import {
   type OpenCarrierHome,
   type EmptyObjectBinding,
 } from "./empty-object-literal.js";
-import { createObjectStaticSelector } from "./select-object-statics.js";
+import { createObjectStaticSelector, type ObjectStaticValueRules } from "./select-object-statics.js";
+import * as dynamicHome from "./dynamic-home-open-object.js";
 import { writerKnowsItsStrictness } from "./dynamic-home-uses.js";
 import { selectWithEnvironmentClosures } from "./with-environment.js";
 // (#1373b C-1) Pure-syntactic async helpers from the LEAF module (safe for
@@ -8465,7 +8466,8 @@ function trackedModuleInfluenceIsBoolean(expr: ts.Expression): boolean {
     return trackedModuleInfluenceIsBoolean(candidate.whenTrue) && trackedModuleInfluenceIsBoolean(candidate.whenFalse);
   }
   if (ts.isCallExpression(candidate)) {
-    if (objectStaticSelector.answersBoolean(candidate)) return true; // (#7339) an i32 boolean test
+    if (dynamicHomeOwnPropertyMethod(candidate) !== undefined) return true; // (#7335) an i32 boolean test
+    if (objectStaticSelector.answersBoolean(candidate)) return true; // (#7339) the fallback row's i32 test
     if (expressionIsModuleBindingRootedCall(candidate)) return false;
     return currentModuleBindingResolver?.scalarExpressionFamily(candidate) === "boolean";
   }
@@ -9087,6 +9089,7 @@ const objectStaticSelector = createObjectStaticSelector({
   moduleBindingMatches: (id, value, scope) => moduleBindingWrite(id, value, scope) !== undefined,
   unannotatedLocal: (id) => unannotatedLocal(id),
   isDynamicHomeOpenCarrier: (decl) => isDynamicHomeOpenCarrierDeclaration(decl),
+  isOwnPropertyTest: (call) => dynamicHomeOwnPropertyMethod(call) !== undefined,
   isDynamicParam: (id) => currentDynamicParamNames.has(id.text),
   classifyPrimitive: (expr) => currentSelectionOptions?.classifyPrimitiveExpression?.(expr),
 });
@@ -13188,9 +13191,10 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
         }
         return true;
       }
+      if (admitDynamicHomeOwnPropertyCall(expr)) return isPhase1Expr(expr.arguments[0]!, scope, localClasses);
       if (expressionTouchesScalarModuleBinding(expr.expression.expression, scope)) {
         if (!isExactF64ScalarToStringCall(expr)) {
-          return shapeNo("expr-module-scalar-method", expr);
+          return isPhase1OwnPropertyTest(expr, scope, localClasses) ?? shapeNo("expr-module-scalar-method", expr);
         }
         return isPhase1Expr(expr.expression.expression, scope, localClasses);
       }
@@ -13866,7 +13870,24 @@ function isPhase1ObjectStatic(
   localClasses: ReadonlySet<string>,
 ): boolean | undefined {
   if (scope.has("Object")) return undefined;
-  return objectStaticSelector.admit(expr, {
+  return objectStaticSelector.admit(expr, objectStaticValueRules(scope, localClasses));
+}
+
+/**
+ * (#7339) The statics table's own-property test row, asked only where every arm before it refuses a method call
+ * on a script var (`expr-module-scalar-method`): the row is a fallback, so main's routes stand bit for bit.
+ */
+function isPhase1OwnPropertyTest(
+  expr: ts.CallExpression,
+  scope: ReadonlySet<string>,
+  localClasses: ReadonlySet<string>,
+): boolean | undefined {
+  return objectStaticSelector.admitOwnPropertyTest(expr, objectStaticValueRules(scope, localClasses));
+}
+
+/** What the statics table's value admission asks of the current walk. */
+function objectStaticValueRules(scope: ReadonlySet<string>, localClasses: ReadonlySet<string>): ObjectStaticValueRules {
+  return {
     isUndefinedOrNull: (value) =>
       isUnshadowedUndefinedIdentifier(value, scope) || value.kind === ts.SyntaxKind.NullKeyword,
     openCarrierIsOwn: (value) =>
@@ -13876,8 +13897,48 @@ function isPhase1ObjectStatic(
     isPhase1: (value) => isPhase1Expr(value, scope, localClasses),
     boxesOntoCarrier: concreteOperandBoxesOntoCarrier,
     refuse: shapeNo,
-  });
+  };
 }
+
+/**
+ * (#7335) The method of `o.hasOwnProperty(k)` / `o.propertyIsEnumerable(k)` on
+ * a dynamic-home open object, where the lane builds the own-property provider
+ * the certified uncurried aliases lower to (#7106 S1g).
+ */
+function dynamicHomeOwnPropertyMethod(call: ts.CallExpression): dynamicHome.OwnPropertyMethod | undefined {
+  if (
+    !currentDynamicRuntimeBuildable ||
+    currentSelectionOptions?.supportsBackendCapability?.("native-own-property-test") !== true
+  ) {
+    return undefined;
+  }
+  return dynamicHome.ownPropertyMethod(call, DYNAMIC_HOME_QUERY);
+}
+
+/** (#7335) Admit a {@link dynamicHomeOwnPropertyMethod} call, recording its method for the lowering. */
+function admitDynamicHomeOwnPropertyCall(call: ts.CallExpression): boolean {
+  const method = dynamicHomeOwnPropertyMethod(call);
+  if (method === undefined) return false;
+  admittedOwnPropertyCalls.set(call, method);
+  return true;
+}
+
+const admittedOwnPropertyCalls = new WeakMap<ts.CallExpression, dynamicHome.OwnPropertyMethod>();
+
+/** (#7335) The own-property method of a certified `o.<method>(k)` call on a dynamic-home open object. */
+export function admittedOwnPropertyCallMethod(call: ts.CallExpression): dynamicHome.OwnPropertyMethod | undefined {
+  return admittedOwnPropertyCalls.get(call);
+}
+
+/** (#7335) The selector state a #7280 dynamic-home carrier's uses are judged against, read live. */
+const DYNAMIC_HOME_QUERY: dynamicHome.DynamicHomeQuery = {
+  get resolve() {
+    return currentModuleBindingResolver;
+  },
+  isCarrier: (decl) => isDynamicHomeOpenCarrierDeclaration(decl),
+  isLiteralDefine: (call) => objectStaticSelector.isLiteralDefine(call),
+  isLibOnlyBinding: selectorSeesLibOnlyBinding,
+};
 
 /** `Object.defineProperty(…)` on the ambient `Object`. */
 function isAmbientObjectDefineProperty(call: ts.CallExpression): boolean {

@@ -251,6 +251,7 @@ function wrapperPolicy(stored: StoredWrapper): ServedUsePolicy {
   const numericRelational = stored.row.family !== "string";
   return {
     unreadableKeys: OBJECT_PROTOTYPE_KEYS,
+    servesMemberCall: () => false,
     servesMemberRead: () => false,
     servesReference: (use) => {
       const parent = use.parent;

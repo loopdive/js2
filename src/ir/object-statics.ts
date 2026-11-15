@@ -9,13 +9,14 @@
  * call, and a call the plan declines is refused at selection.
  *
  * (#7339) Beside the statics, the table holds `Object.prototype`'s two
- * own-property tests, spelled `R.<name>(k)` on any receiver: the receiver and
- * the key cross as carriers, and the test answers through `dyn.own_property`
- * (`emitOwnPropertyTest`). Its answer takes the representation main gave the
- * same call: the i32 boolean on a #7280 dynamic home `var o = {}`, which
- * #7335's arm answered so, and on every other receiver that boolean boxed onto
- * the carrier, as main's dynamic method call answered. A test the table does
- * not answer is no table call: the receiver's own arms decide it, as on main.
+ * own-property tests as a FALLBACK row ({@link ownPropertyTestPlan}). It
+ * answers `R.<name>(k)` only where every arm main has refuses the call: `R` is
+ * a script var on the dynamic slot (main refuses a method call on it as
+ * `expr-module-scalar-method`) that #7335's arm does not serve. The receiver
+ * and the key cross as carriers, and the test answers through
+ * `dyn.own_property` (`emitOwnPropertyTest`). Its answer takes the checker's
+ * type of the call, as every consumer's proof there reads it: the i32 boolean
+ * where the call is typed `boolean`, else that boolean boxed onto the carrier.
  *
  * The same rows serve propertyHelper's stored aliases
  * (`uncurried-object-alias.ts`) and #7128 / #7335's define on an open carrier.
@@ -32,13 +33,16 @@
 
 import { isUnshadowedUndefined } from "../shared/ambient-intrinsics.js";
 import {
+  sourceCreatePrototypes,
   sourceMayPatchPrototype,
   sourceMayWriteUnspelledMember,
   sourceNamesReflectiveRoute,
+  sourceSpellsName,
   sourceWritesMemberNamed,
 } from "../shared/intrinsic-prototype-writes.js";
 import { ts } from "../ts-api.js";
 import type { IrBackendTargetCapability } from "./backend/legality.js";
+import type { IrPrimitiveExpressionFamily } from "./module-bindings.js";
 import type { OwnPropertyTest } from "./nodes.js";
 import {
   definesLiteralsOnly,
@@ -48,7 +52,7 @@ import {
   type DescriptorDefinition,
 } from "./descriptor-literal.js";
 import { unitInKeysAreOwnOnly } from "./empty-object-literal.js";
-import { objectStaticsArePristine, ownPropertyTestFacts, type IrObjectIntegrityRealm } from "./object-integrity.js";
+import { objectStaticsArePristine, type IrObjectIntegrityRealm } from "./object-integrity.js";
 
 /** The object-runtime helpers the rows call: `externref` operands, an `externref` result. */
 export type ObjectStaticProvider = "__getOwnPropertyDescriptor" | "__getOwnPropertyNames" | "__object_create";
@@ -97,10 +101,11 @@ function isObjectStaticName(name: string): name is ObjectStaticName {
   return Object.hasOwn(OBJECT_STATICS, name);
 }
 
-const OWN_PROPERTY_TESTS: ReadonlySet<string> = new Set<OwnPropertyTest>(["hasOwnProperty", "propertyIsEnumerable"]);
+/** (#7339) The one definition of the two own-property test names in `src/ir/`. */
+export const OWN_PROPERTY_TESTS: ReadonlySet<OwnPropertyTest> = new Set(["hasOwnProperty", "propertyIsEnumerable"]);
 
-function isOwnPropertyTest(name: string): name is OwnPropertyTest {
-  return OWN_PROPERTY_TESTS.has(name);
+export function isOwnPropertyTest(name: string): name is OwnPropertyTest {
+  return (OWN_PROPERTY_TESTS as ReadonlySet<string>).has(name);
 }
 
 /** `name` names a row: `Object.<name>(…)`, or a test's `R.<name>(k)`. */
@@ -145,7 +150,8 @@ export interface ObjectStaticCall {
 
 /**
  * (#7339) An admitted `R.<name>(k)`. `answer` is the representation of its
- * boolean: the i32 (`boolean`) or boxed onto the carrier (`dynamic`).
+ * boolean, from the checker's type of the call: the i32 (`boolean`) or boxed
+ * onto the carrier (`dynamic`).
  */
 export interface OwnPropertyTestCall {
   readonly name: OwnPropertyTest;
@@ -184,8 +190,12 @@ export type ObjectStaticPlan =
 /** What the plan asks of the lane and the program, beyond its own source. */
 export interface ObjectStaticsRealm extends IrObjectIntegrityRealm {
   readonly supportsBackendCapability: (capability: ObjectStaticCapability) => boolean;
-  /** (#7339) `receiver` reads a #7280 dynamic home `var o = {}`, whose test main answered as the i32 boolean. */
-  readonly isDynamicHomeReceiver: (receiver: ts.Expression) => boolean;
+  /** (#7339) `id` reads a script var on the dynamic slot, whose method call every arm of main refuses. */
+  readonly isDynamicModuleBinding: (id: ts.Identifier) => boolean;
+  /** (#7339) An existing arm (#7335's, for a dynamic home) admits this test: main's route stands. */
+  readonly existingArmAdmits: (call: ts.CallExpression) => boolean;
+  /** The checker's primitive family of an expression, as every consumer's proof reads it. */
+  readonly classifyPrimitive: (expr: ts.Expression) => IrPrimitiveExpressionFamily | undefined;
 }
 
 function isEmptyObjectLiteral(expr: ts.Expression): boolean {
@@ -219,10 +229,9 @@ function isAdmittedPrototype(proto: ts.Expression): boolean {
  * on its chain. Dynamic code is the realm's question, asked by the plan.
  */
 function ownPropertyTestIsPristine(sourceFile: ts.SourceFile, method: OwnPropertyTest): boolean {
-  const { spelled, createPrototypes } = ownPropertyTestFacts(sourceFile, method);
   return (
-    !spelled &&
-    createPrototypes.every((proto) => proto !== null && isAdmittedPrototype(proto)) &&
+    !sourceSpellsName(sourceFile, method) &&
+    sourceCreatePrototypes(sourceFile).every((proto) => proto !== null && isAdmittedPrototype(proto)) &&
     !sourceMayWriteUnspelledMember(sourceFile) &&
     !sourceWritesMemberNamed(sourceFile, method) &&
     !sourceMayPatchPrototype(sourceFile, "Object") &&
@@ -231,9 +240,12 @@ function ownPropertyTestIsPristine(sourceFile: ts.SourceFile, method: OwnPropert
 }
 
 /**
- * (#7339) The plan of `R.<name>(k)`, a call or nothing: a test the table does
- * not answer (another shape or arity, or a program where an object could carry
- * an own method of its name) is the receiver's own arms' to decide.
+ * (#7339) The fallback row's plan of `R.<name>(k)`, a test or nothing. It
+ * stands only where main refuses the call at selection: `R` is a script var on
+ * the dynamic slot, and no existing arm admits the call. Anything else (an
+ * existing arm's call, another receiver, shape or arity, or a program where an
+ * object could carry an own method of its name) is no table call: main's route
+ * stands, bit for bit.
  */
 function ownPropertyTestPlan(
   call: ts.CallExpression,
@@ -241,12 +253,15 @@ function ownPropertyTestPlan(
   realm: ObjectStaticsRealm,
 ): ObjectStaticPlan | undefined {
   const callee = call.expression as ts.PropertyAccessExpression;
+  const receiver = callee.expression;
   if (!TEST_LANE.every(realm.supportsBackendCapability)) return undefined;
+  if (!ts.isIdentifier(receiver) || !realm.isDynamicModuleBinding(receiver) || realm.existingArmAdmits(call)) {
+    return undefined;
+  }
   if (callee.questionDotToken || call.questionDotToken || call.arguments.length !== 1) return undefined;
   if (ts.isSpreadElement(call.arguments[0]!)) return undefined;
   if (realm.dynamicCodeMayRun || !ownPropertyTestIsPristine(call.getSourceFile(), name)) return undefined;
-  const receiver = callee.expression;
-  const answer = realm.isDynamicHomeReceiver(receiver) ? "boolean" : "dynamic";
+  const answer = realm.classifyPrimitive(call) === "boolean" ? "boolean" : "dynamic";
   return { kind: "test", test: { name, receiver, key: call.arguments[0]!, answer } };
 }
 

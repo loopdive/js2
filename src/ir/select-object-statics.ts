@@ -28,7 +28,6 @@ import {
   nullComparisonFolds,
 } from "./analysis/operand-admissibility.js";
 import type { IrBackendTargetCapability } from "./backend/legality.js";
-import { isEmptyObjectExpression } from "./empty-object-literal.js";
 import { localIsRewritten } from "./lattice-param-facts.js";
 import { objectCreateDescriptorMap } from "./object-create-call.js";
 import type { IrPrimitiveExpressionFamily } from "./module-bindings.js";
@@ -54,8 +53,10 @@ export interface ObjectStaticSelectorState {
   readonly moduleBindingMatches: (id: ts.Identifier, value: ts.Expression, scope: ReadonlySet<string>) => boolean;
   readonly unannotatedLocal: (id: ts.Identifier) => ts.VariableDeclaration | undefined;
   readonly isDynamicHomeOpenCarrier: (decl: ts.VariableDeclaration) => boolean;
+  /** #7335's own-property test on a dynamic home: it answers a boolean, and the table's test row stands aside. */
+  readonly isOwnPropertyTest: (call: ts.CallExpression) => boolean;
   readonly isDynamicParam: (id: ts.Identifier) => boolean;
-  /** The checker's primitive family of an expression, which the IR's call-boundary types (the lattice) read. */
+  /** The checker's primitive family of an expression, as every consumer's proof reads it. */
   readonly classifyPrimitive: (expr: ts.Expression) => IrPrimitiveExpressionFamily | undefined;
 }
 
@@ -116,6 +117,11 @@ export interface ObjectStaticSelector {
   readonly moduleBindingTakes: (id: ts.Identifier, value: ts.Expression, scope: ReadonlySet<string>) => boolean;
   /** `Object.<static>(…)` or the JS environment's #7276 create, admitted; undefined for any other call. */
   readonly admit: (call: ts.CallExpression, rules: ObjectStaticValueRules) => boolean | undefined;
+  /**
+   * (#7339) The fallback own-property test row, asked only where main refuses the call (a method call on a
+   * script var): admitted, refused, or undefined when the row does not answer it either.
+   */
+  readonly admitOwnPropertyTest: (call: ts.CallExpression, rules: ObjectStaticValueRules) => boolean | undefined;
 }
 
 /** The unit a node belongs to: its top-level function or class, else the module's own code. */
@@ -173,44 +179,17 @@ function laneAnswers<K extends object>(): (key: K, lane: string, compute: () => 
   };
 }
 
-/** (#7339) The receivers the selector found to be dynamic homes, for from-ast's plan ({@link selectedDynamicHomeReceiver}). */
-const dynamicHomeReceivers = new WeakSet<ts.Expression>();
-
-/**
- * (#7339) The selector's answer for a test's receiver, read by from-ast's plan so both sides plan the same
- * representation, as #7335's arm recorded its admitted calls on main.
- */
-export function selectedDynamicHomeReceiver(receiver: ts.Expression): boolean {
-  return dynamicHomeReceivers.has(receiver);
-}
-
-/**
- * (#7339) A script `var o = {}` or (#7341) `var o = new Object()` that legacy keeps as an open `$Object` on the
- * dynamic slot: #7335's receivers on main. Recorded for {@link selectedDynamicHomeReceiver}.
- */
-function isDynamicHomeReceiver(state: ObjectStaticSelectorState, receiver: ts.Expression): boolean {
-  const declaration = ts.isIdentifier(receiver) ? state.moduleBinding(receiver)?.declaration : undefined;
-  const home =
-    declaration !== undefined &&
-    ts.isVariableDeclaration(declaration) &&
-    declaration.initializer !== undefined &&
-    isEmptyObjectExpression(declaration.initializer, state.isLibOnlyBinding) &&
-    state.isDynamicHomeOpenCarrier(declaration);
-  if (home) dynamicHomeReceivers.add(receiver);
-  else dynamicHomeReceivers.delete(receiver);
-  return home;
-}
-
 export function createObjectStaticSelector(state: ObjectStaticSelectorState): ObjectStaticSelector {
+  const holdsCarrier = (expression: ts.Expression) => state.moduleBinding(expression)?.valueKind.kind === "dynamic";
   const plan = (call: ts.CallExpression) =>
     objectStatics.objectStaticCallPlan(call, {
       isAmbientBinding: state.isAmbientBinding,
       dynamicCodeMayRun: state.dynamicCodeMayRun(),
       supportsBackendCapability: state.supports,
-      isDynamicHomeReceiver: (receiver) => isDynamicHomeReceiver(state, receiver),
+      isDynamicModuleBinding: holdsCarrier,
+      existingArmAdmits: state.isOwnPropertyTest,
+      classifyPrimitive: state.classifyPrimitive,
     });
-
-  const holdsCarrier = (expression: ts.Expression) => state.moduleBinding(expression)?.valueKind.kind === "dynamic";
 
   const lane = () => `${state.supports("native-object-statics")}:${state.dynamicCodeMayRun()}`;
   /** An admitted static: it answers or extends an object. */
@@ -273,36 +252,17 @@ export function createObjectStaticSelector(state: ObjectStaticSelectorState): Ob
     return producesCarrier(declaration.initializer!, leaves(visited));
   };
   /**
-   * An admitted static answers the carrier; (#7339) an own-property test its boolean, boxed onto the carrier except
-   * on a dynamic home (the plan's `answer`, which from-ast reads too).
+   * An admitted static answers the carrier; #7335's own-property test on a dynamic home a boolean; (#7339) the
+   * test row its boolean, boxed onto the carrier where the checker types the call other than `boolean` (the plan's
+   * `answer`, which from-ast reads too).
    */
   const staticCall: CarrierLeaves["call"] = (call) => {
     const admitted = plan(call);
     if (admitted?.kind === "test") return admitted.test.answer === "dynamic";
-    return admitted?.kind === "call" ? true : undefined;
+    return admitted?.kind === "call" ? true : state.isOwnPropertyTest(call) ? false : undefined;
   };
-  /**
-   * What may not cross a call boundary: a static's object, and (#7339) a boxed test the checker types `boolean`.
-   * The IR types a call's parameters and a function's result from the checker's types of what crosses (the
-   * lattice), so that boolean would cross as the i32 while the test answers the carrier. Any other test crosses
-   * as main's values do: the i32 where the checker agrees, the carrier where it types the call `any`.
-   */
-  const resultCall: CarrierLeaves["call"] = (call) => {
-    const admitted = plan(call);
-    if (admitted?.kind !== "test") return admitted?.kind === "call" ? true : undefined;
-    return boxedAgainstChecker(call);
-  };
-  const boxedAgainstChecker = (call: ts.CallExpression): boolean => {
-    const admitted = plan(call);
-    return (
-      admitted?.kind === "test" && admitted.test.answer === "dynamic" && state.classifyPrimitive(call) === "boolean"
-    );
-  };
-  /** An open object is a static's answer; a test answers a boolean, boxed or not, which is no object. */
-  const openObjectCall: CarrierLeaves["call"] = (call) => {
-    const kind = plan(call)?.kind;
-    return kind === "call" ? true : kind === "test" ? false : undefined;
-  };
+  /** A table object is a static's answer: a test's boolean, boxed or not, is no object. */
+  const objectResultCall: CarrierLeaves["call"] = (call) => (plan(call)?.kind === "test" ? false : staticCall(call));
 
   /** The table's results: a static's answer, and a binding initialised with one. */
   const resultLeaves = (visited: Set<ts.Declaration>): CarrierLeaves => ({
@@ -310,7 +270,7 @@ export function createObjectStaticSelector(state: ObjectStaticSelectorState): Ob
       const declaration = initializedDeclaration(node);
       return declaration !== undefined && holdsInitializer(declaration, visited, resultLeaves);
     },
-    call: resultCall,
+    call: objectResultCall,
   });
   /** The table's carriers, as its consumers read them: its results, and a dynamic home a table call takes. */
   const carrierLeaves = (visited: Set<ts.Declaration>): CarrierLeaves => ({
@@ -330,23 +290,7 @@ export function createObjectStaticSelector(state: ObjectStaticSelectorState): Ob
       if (state.isDynamicHomeOpenCarrier(declaration)) return true;
       return holdsInitializer(declaration, visited, openObjectLeaves);
     },
-    call: openObjectCall,
-  });
-  /**
-   * (#7339) A boxed test the checker types `boolean` that main did not lower, and a binding initialised with one.
-   * On an open object (`readsCarrier`) main lowered the call already, as the carrier's method call with the same
-   * answer, so its routing stays main's.
-   */
-  const newBoxedTestLeaves = (visited: Set<ts.Declaration>): CarrierLeaves => ({
-    binding: (node) => {
-      const declaration = initializedDeclaration(node);
-      return declaration !== undefined && holdsInitializer(declaration, visited, newBoxedTestLeaves);
-    },
-    call: (call) => {
-      const admitted = plan(call);
-      if (admitted?.kind !== "test") return admitted === undefined ? undefined : false;
-      return boxedAgainstChecker(call) && !readsCarrier(admitted.test.receiver);
-    },
+    call: objectResultCall,
   });
   /** A static's own values, which cross as carriers: the table's carriers, and main's dynamic bindings and parameters. */
   const valueLeaves = (visited: Set<ts.Declaration>): CarrierLeaves => ({
@@ -381,7 +325,7 @@ export function createObjectStaticSelector(state: ObjectStaticSelectorState): Ob
     // A dynamic home a table call takes is main's carrier already: where it goes across a call is main's.
     return (
       (returned || passed) &&
-      (fileCallsTable(expression.getSourceFile()) || fileCallsTest(expression.getSourceFile())) &&
+      fileCallsTable(expression.getSourceFile()) &&
       producesCarrier(expression, resultLeaves(new Set()))
     );
   };
@@ -407,20 +351,13 @@ export function createObjectStaticSelector(state: ObjectStaticSelectorState): Ob
   /** A static's value crosses as a carrier, so any carrier qualifies: a dynamic home or parameter too. */
   const isCarrierValue = (value: ts.Expression): boolean => producesCarrier(value, valueLeaves(new Set()));
 
-  const admit = (call: ts.CallExpression, rules: ObjectStaticValueRules): boolean | undefined => {
-    // The JS environment's #7276 create applies only off the table's lane, so at most one of the two answers.
-    const create = objectCreateDescriptorMap(call, {
-      supportsBackendCapability: state.supports,
-      isLibOnlyBinding: state.isLibOnlyBinding,
-    });
-    if (create !== null) return true;
-    const admitted = plan(call);
-    if (admitted?.kind === "refused") return rules.refuse(`expr-object-static-${admitted.refusal}`, call);
-    const values = objectStatics.admittedValues(admitted);
-    // (#7339) A test's receiver is a value already on the carrier: one the IR types as an array, a string or a
-    // struct would answer for that representation, not for the object legacy builds.
-    const receiver = admitted?.kind === "test" ? admitted.test.receiver : undefined;
-    return values?.every((operand) => {
+  /** Every value of an admitted row crosses as a carrier: one already on it, or (not a test's receiver) boxed. */
+  const admitValues = (
+    values: readonly ts.Expression[],
+    receiver: ts.Expression | undefined,
+    rules: ObjectStaticValueRules,
+  ) =>
+    values.every((operand) => {
       let value = operand;
       while (ts.isParenthesizedExpression(value)) value = value.expression;
       if (rules.isUndefinedOrNull(value)) return true;
@@ -430,6 +367,26 @@ export function createObjectStaticSelector(state: ObjectStaticSelectorState): Ob
       const carried = own ?? (isCarrierValue(value) || boxes);
       return carried || rules.refuse("expr-object-static-operand", value);
     });
+
+  const admit = (call: ts.CallExpression, rules: ObjectStaticValueRules): boolean | undefined => {
+    // The JS environment's #7276 create applies only off the table's lane, so at most one of the two answers.
+    const create = objectCreateDescriptorMap(call, {
+      supportsBackendCapability: state.supports,
+      isLibOnlyBinding: state.isLibOnlyBinding,
+    });
+    if (create !== null) return true;
+    const admitted = plan(call);
+    if (admitted?.kind === "refused") return rules.refuse(`expr-object-static-${admitted.refusal}`, call);
+    return admitted?.kind === "call"
+      ? admitValues(objectStatics.admittedValues(admitted)!, undefined, rules)
+      : undefined;
+  };
+
+  // (#7339) A test's receiver is a script var already on the carrier, never boxed.
+  const admitOwnPropertyTest = (call: ts.CallExpression, rules: ObjectStaticValueRules): boolean | undefined => {
+    const admitted = plan(call);
+    if (admitted?.kind !== "test") return undefined;
+    return admitValues(objectStatics.admittedValues(admitted)!, admitted.test.receiver, rules);
   };
 
   return {
@@ -473,10 +430,6 @@ export function createObjectStaticSelector(state: ObjectStaticSelectorState): Ob
         return refuse("expr-carrier-optional-chain", e);
       }
       if (readsInheritedMember(e)) return refuse("expr-carrier-inherited-member", e);
-      // (#7339) An array literal types its elements from the checker too, so it would hold that boolean as the i32.
-      if (ts.isArrayLiteralExpression(e.parent) && producesCarrier(e, newBoxedTestLeaves(new Set()))) {
-        return refuse("expr-boxed-test-array-element", e);
-      }
       return !escapesUnit(e) || refuse("expr-carrier-escapes-unit", e);
     },
     isCarrierValue,
@@ -484,6 +437,7 @@ export function createObjectStaticSelector(state: ObjectStaticSelectorState): Ob
     moduleBindingTakes: (id, value, scope) =>
       state.moduleBindingMatches(id, value, scope) && (holdsCarrier(id) || !lowersToCarrier(value)),
     admit,
+    admitOwnPropertyTest,
   };
 }
 
