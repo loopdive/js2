@@ -356,3 +356,20 @@ The "Step A alone" column was re-measured after Step A's module-init literal len
    for every key spelling. That is #2856 C3's unproven-element-read demote; `S8.12.3_A2` is in main's
    post-claim list. With a string `k` it can now also arise from a module string key. No census file
    has it.
+
+### Non-ES5 routing check (2026-11-15, head `4de7e8d59e` vs main `7ed3a65f88`)
+
+Sample: 3,000 seeded test262 files outside the ES5 census list, with `_FIXTURE` files excluded.
+Compiled standalone with IR outcomes tracked.
+- 2,671 files compared.
+- 329 skipped: 328 negative / raw / module files, the census's own rule, plus the 3.2 MB
+  `staging/sm/String/string-upper-lower-mapping.js`, which does not compile within the chunk timeout.
+
+| measure | result |
+| --- | --- |
+| routing changed (legacy units, post-claim errors, compile error) | **0** |
+| standalone binary changed | 14 in the full run; **0** when the 14 are recompiled in a fresh process |
+
+The 14 binary differences are run-to-run noise in a long compile process. Main's own two runs differ
+on 8 of them and head's on 11, and the fresh-process hashes of main and head are equal for all 14.
+With no routing change, there was no verdict to run, and the sample was not extended.
