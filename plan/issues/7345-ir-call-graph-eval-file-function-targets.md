@@ -15,11 +15,11 @@ area: ir
 goal: ir-full-coverage
 depends_on: []
 related: [7283, 7171, 7106, 3630, 7343]
-# 2026-11-14: the selection option, the call-graph check and the select-time boundary refusal live with
-# their siblings in select.ts (+15: the option field, its type import, the call-graph condition with the
-# lane fallback, the refusal). codegen/index.ts +2 and planIrOverlay +1: the option's import and its one spread line beside
-# #7128's. whyNotIrClaimable +7: the refusal with its reason, after the body walk, so a shape refusal keeps
-# its own label and only an otherwise-claimable function is refused for the boundary.
+# 2026-11-15 (review round 1): select.ts +12: the option field and its type import, the call-graph
+# condition (one call to `isStableDirectCallTarget`, lattice-param-facts.ts, which owns the whole decision),
+# and the boundary refusal. whyNotIrClaimable +4: that refusal, after the body walk, so a shape refusal
+# keeps its own label. codegen/index.ts +2 and planIrOverlay +1: the option's import and its one spread line
+# beside #7128's.
 loc-budget-allow:
   - src/ir/select.ts
   - src/codegen/index.ts

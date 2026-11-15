@@ -35,6 +35,7 @@ import { identifierWritesOf, skipOuterExpressions } from "../shared/binding-writ
 
 import type { IrDirectCallLoweringPlan } from "./ast-lowering-plans.js";
 import { asVal, type IrType } from "./nodes.js";
+import type { IrRuntimeEvalFunctionAnswers } from "./runtime-eval-boundary-plan.js";
 
 export type LatticeParamFacts = ReadonlyMap<ts.ParameterDeclaration, "number" | "string">;
 
@@ -114,11 +115,33 @@ function writeIndexOf(root: ts.Node): WriteIndex {
  * this binding or to nothing (a write inside `with`); without it, every
  * same-name write counts.
  *
- * (#7345) Not for a function declaration: whether evaluated code rebinds one
- * is the runtime-eval plan's answer (`IrRuntimeEvalFunctionAnswers.mayRebind`),
- * and {@link scopeHasDirectEval} only on a lane that has none.
  */
 export function localIsRewritten(
+  declaration: ts.VariableDeclaration | ts.FunctionDeclaration | ts.ParameterDeclaration,
+  resolve?: (identifier: ts.Identifier) => ts.Declaration | undefined,
+): boolean {
+  return writeIndexOf(varScopeOf(declaration)).dynamicScope || bindingIsWritten(declaration, resolve);
+}
+
+/**
+ * (#7283, #7345) A call to the top-level function `declaration` names a stable direct-call target: the
+ * source does not write its binding, and evaluated code may not rebind it. That is the runtime-eval
+ * boundary's answer where the lane has one (`evalAnswers`), else any direct `eval` in its scope.
+ */
+export function isStableDirectCallTarget(
+  callee: ts.Identifier,
+  declaration: ts.FunctionDeclaration,
+  evalAnswers: IrRuntimeEvalFunctionAnswers | undefined,
+  resolve?: (identifier: ts.Identifier) => ts.Declaration | undefined,
+): boolean {
+  const mayRebind = evalAnswers
+    ? evalAnswers.mayRebind(callee, declaration)
+    : writeIndexOf(varScopeOf(declaration)).dynamicScope;
+  return !mayRebind && !bindingIsWritten(declaration, resolve);
+}
+
+/** `localIsRewritten`'s source writes alone: the same-name writes that reach this binding. */
+function bindingIsWritten(
   declaration: ts.VariableDeclaration | ts.FunctionDeclaration | ts.ParameterDeclaration,
   resolve?: (identifier: ts.Identifier) => ts.Declaration | undefined,
 ): boolean {
@@ -131,14 +154,8 @@ export function localIsRewritten(
     const written = resolve(target);
     return !written || written === identity || sameVarScopedBinding(written, identity!);
   };
-  const index = writeIndexOf(varScopeOf(declaration));
-  if (index.dynamicScope && !ts.isFunctionDeclaration(declaration)) return true;
-  return (index.byName.get(name.text) ?? []).some(({ target, node }) => node !== declaration && writesBinding(target));
-}
-
-/** (#7345) A direct `eval` lies anywhere in `declaration`'s function scope, nested functions included. */
-export function scopeHasDirectEval(declaration: ts.Declaration): boolean {
-  return writeIndexOf(varScopeOf(declaration)).dynamicScope;
+  const sites = writeIndexOf(varScopeOf(declaration)).byName.get(name.text) ?? [];
+  return sites.some(({ target, node }) => node !== declaration && writesBinding(target));
 }
 
 function varScopeOf(node: ts.Node): ts.Node {
