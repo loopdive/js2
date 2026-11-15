@@ -942,7 +942,8 @@ export interface IrSelectionOptions extends IrAsyncSelectionOptions {
       | "native-dynamic-loose-equality"
       | "dynamic-method-call-wrapper"
       | "native-global-function-call"
-      | "native-object-statics",
+      | "native-object-statics"
+      | "module-string-value",
   ) => boolean;
   /**
    * #3787 exact global String-constructor identity. This is separate from the
@@ -8119,11 +8120,16 @@ function isUnshadowedUndefinedIdentifier(expr: ts.Expression, scope: ReadonlySet
  * reference-shaped — the host externref handle, or (#4461) the host-free
  * native `$Map` struct. Both carriers take the same consumer discipline: the
  * value is opaque to this shape-only selector, so only positions with a proven
- * lowering may own an expression that touches one.
+ * lowering may own an expression that touches one. (#7346) A string read that
+ * is an ordinary string value is not one: the expression arms judge it.
  */
 function moduleExternBinding(expr: ts.Expression): ReturnType<IrLegacyModuleBindingResolver> {
   const binding = moduleBinding(expr);
-  return binding !== undefined && isIrModuleReferenceValueKind(binding.valueKind) ? binding : undefined;
+  if (binding === undefined || !isIrModuleReferenceValueKind(binding.valueKind)) return undefined;
+  const stringValue =
+    currentSelectionOptions?.supportsBackendCapability?.("module-string-value") === true &&
+    currentModuleBindingResolver!.readsStringValue(unwrapPhase1Parens(expr) as ts.Identifier);
+  return stringValue ? undefined : binding;
 }
 
 /** True only for the one module representation whose IR value is a JS boolean. */

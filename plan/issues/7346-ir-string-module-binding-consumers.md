@@ -14,6 +14,13 @@ area: ir
 goal: ir-full-coverage
 depends_on: []
 related: [3523, 7125, 7252, 7292, 7106]
+# 2026-11-15 (prototype): the resolver surface method `readsStringValue` (+15: interface,
+# legacy resolver, owner-aware and legacy projections) and the selector's one consult in
+# `moduleExternBinding` plus the capability-union line (+6). The decision itself lives in
+# module-binding-string.ts.
+loc-budget-allow:
+  - src/ir/module-bindings.ts
+  - src/ir/select.ts
 ---
 
 # #7346 — IR: consumers of a string module binding
@@ -149,3 +156,45 @@ Code quality:
    two siblings; `moduleExternConsumerIsProven` gains no per-shape branch.
 6. No selector-side copy of from-ast's string lowering rules.
 7. A fresh-context adversarial review records its verdict in the PR body.
+
+## Plan check (2026-11-15) — stopped before the full slice
+
+A prototype on branch `claude/7346-string-module-binding` implements the plan's mechanism:
+- `src/ir/module-binding-string.ts` decides when a read is an ordinary string value;
+- the resolver exposes the decision as `readsStringValue`;
+- `moduleExternBinding` drops such a read;
+- the typeof/delete test is split out of `scriptVarUseFollowsDeclaration`;
+- a standalone-only `module-string-value` capability gates it.
+
+The mechanism holds where the plan expects it to: `typeof` folds to `"string"`, and compare, `.length`,
+concat, `charAt`, `switch` and `<` all lower and answer as node does.
+
+It does not hold everywhere, because several general arms claim and then demote a string value. They
+already do this for a function-local string on main: `.constructor` / `.index` reads, `str == null`,
+`s[0]` with an unproven index, and typed `+=`. Routing module strings to them carries those post-claim
+errors over.
+
+Measured on the 138 carriers plus 300 IR-only control files (head against main `6bab37c0cd`):
+
+| measure | result |
+| --- | --- |
+| gained IR-only | +31 |
+| lost | 0 |
+| units newly legacy | 0 |
+| new compile errors | 0 |
+| new post-claim files | **7** (main 2, head 9) |
+
+The 7 new post-claim files are:
+- `.index` on a string: 4 files (`S15.5.4.1[6-9]_A1_T4`);
+- `.constructor` on a string: `S8.4_A12`;
+- `== null` on a string: `S8.4_A8`;
+- `'+' operands not provably …`: `S8.4_A2`.
+
+The two files `S13.2.1_A6_T1` / `T3` add a post-claim error in a reached function (typed `+=`) to the
+same files' list.
+
+Hazard matrix: 407 programs. Of the 172 admitted cells now claimed, 0 answer wrong. 10 cells have a
+post-claim error on head only:
+- `s[0]`;
+- a dynamic-valued concat stored into a string slot. That is a write-admission gap: main post-claims the
+  same write when nothing else refuses the unit.

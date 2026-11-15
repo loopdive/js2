@@ -41,7 +41,8 @@ export type IrBackendTargetCapability =
   | "native-dynamic-loose-equality"
   | "dynamic-method-call-wrapper"
   | "native-global-function-call"
-  | "native-object-statics";
+  | "native-object-statics"
+  | "module-string-value";
 
 /**
  * The target facts needed by pre-claim capability checks. Keep this smaller
@@ -172,9 +173,12 @@ export function supportsIrBackendTargetCapability(
       // arm uses on standalone only (WASI keeps its inline `ref.test` chain).
       return profile.backend === "wasmgc" && profile.fast !== true && profile.target === "standalone";
     case "native-object-statics":
-      // (#7338) The `Object` statics table (`ir/object-statics.ts`): the
-      // native object runtime's helpers and a member read that answers for an
-      // open `$Object`, measured on host-free standalone only.
+    // (#7338) The `Object` statics table (`ir/object-statics.ts`): the
+    // native object runtime's helpers and a member read that answers for an
+    // open `$Object`, measured on host-free standalone only.
+    case "module-string-value":
+      // (#7346) A string module binding read as an ordinary string value
+      // (`module-binding-string.ts`), measured on host-free standalone only.
       return (
         profile.backend === "wasmgc" &&
         profile.fast !== true &&

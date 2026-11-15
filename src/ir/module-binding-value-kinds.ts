@@ -144,6 +144,8 @@ export function isIrModuleStructValueKind(valueKind: IrModuleBindingValueKind): 
  * (unboxed `throw`, numeric method dispatch) whose string lowering was never
  * proven. A site that later earns a proven string lowering should test
  * `valueKind.kind === "string"` at that site rather than widen this predicate.
+ * (#7346) The selector's `moduleExternBinding` is such a site: a read
+ * `module-binding-string.ts` proves an ordinary string value is not opaque.
  *
  * (#5289) `dynamic` is deliberately NOT a member, even though both of ITS
  * carriers are reference-shaped too. The hazard this predicate exists to stop
