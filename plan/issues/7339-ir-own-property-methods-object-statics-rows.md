@@ -5,7 +5,7 @@ status: in-progress
 assignee: ttraenkler/senior-dev
 sprint: current
 created: 2026-11-12
-updated: 2026-11-14
+updated: 2026-11-15
 priority: medium
 horizon: m
 feasibility: medium
@@ -636,6 +636,9 @@ PR #7234 at `5b63e3addf` was reviewed NOT MET with one blocker, B1′.
 
 ### Design decision (refines round 1): main's representation for the receiver
 
+Superseded in review round 3 (below): the row is a fallback arm beside main's,
+and in its territory the representation is the checker's type of the call.
+
 The answer is the representation main gave the same call. It is decided once,
 as the test plan's `answer`, from the receiver kind:
 
@@ -713,3 +716,69 @@ Reviewer case sets `a2`, `b2`, `c2`, `d`, `e`, the `r2-*` sets (`k`, `k2`,
   now boxed and refused: `var o = {}; o.a = 1` (no dynamic home) and a
   descriptor result in a script var, returned from `t`. Main refuses them
   too, so the cost is against round 1, not main.
+
+## Review round 3: NOT MET → fixes (2026-11-15)
+
+A second, fresh reviewer ran 1,262 bare programs against PR #7234 at
+`1f09b0537e`. None answered wrong. But head had 13 post-claim errors main
+lacks, and lost 74 units that main answers correctly.
+
+| Finding | Disposition |
+| --- | --- |
+| **B1**: a script var holding a table result, read into an array element or object field, was claimed and then failed (`[o.hasOwnProperty('a')][0]`, `({ f: … }).f`) | Fixed by the design below. The receiver is the row's territory and is typed `boolean`, so the test answers the i32, which both positions build. `R2`/`R3` are claimed and correct. |
+| **B2a**: a dynamic parameter under `+` was refused (`expr-wrapper-carrier-position`), losing 5 units | Fixed by RULE 1: a parameter's test is main's dynamic method call again (`cases-dparam` equals main). |
+| **B2b**: a struct-typed parameter's test was refused at select, and the call-graph closure dragged 69 units | Fixed by RULE 1: main's route; no unit lost on `cases.json`. |
+| **S1**: the receiver kind travelled through a module-global `WeakSet` | Removed (RULE 3). |
+| **S2**: consumers re-classified the call, with four different "is this a carrier" answers; `createObjectStaticSelector` was 285 lines | Removed. There is one leaf (`staticCall`, main's plus the plan's `answer`) and one object-result view of it. The array-element and boxed-escape refusals are gone. |
+| **S3**: holes in the trust fact (a shadowed `NaN`/`Infinity` key, `Object['defineProperty']`, an alias, `.call`/`.apply`) | Install detection is in the shared write scanner's one walk (`installsUnspelledMember`). `defineProperty` by any name route the walk reads counts, or reached other than as a direct call (alias, `.call`, `.apply`). So do a computed literal key and a store or define whose key is not constant. `NaN`/`Infinity` are shadow-checked like `undefined` (`isUnshadowedGlobalConstant`). Each hole has a `NOT_ROW` test row. |
+| **S4**: `OWN_PROPERTY_TESTS` was defined twice, and the trust fact split across two walks | One definition in `object-statics.ts`, which #7335's file uses too. The spelled names and `Object.create` prototypes moved into the shared walk (`sourceSpellsName`, `sourceCreatePrototypes`); `object-integrity.ts` is main's again. |
+
+### Design (replaces round 2's "receiver kind" rule)
+
+- **RULE 1: the row is a fallback arm.**
+  - #7335's arm is restored byte-for-byte from main: `dynamic-home-open-object.ts`, its selector glue and its from-ast lowering.
+  - The table's test row is asked only at main's `expr-module-scalar-method` refusal (`isPhase1OwnPropertyTest`, `select.ts`). That refusal is a method call on a script var, reached after every other arm.
+  - The plan (`ownPropertyTestPlan`) stands only when:
+    - the receiver is a script var on the dynamic slot;
+    - #7335's arm does not admit the call (main's own predicate `dynamicHomeOwnPropertyMethod`, and in from-ast main's own record `admittedOwnPropertyCallMethod`).
+  - Every other call keeps main's route.
+- **RULE 2: in the row's territory, the representation is the checker's type of the call.** Typed `boolean`, the test answers the i32; anything else is boxed onto the carrier. Consumers apply their existing rules. Where an existing rule admits what from-ast cannot build, that is main's gap (listed below), not patched per position.
+- **RULE 3: no side channel.** Both sides call the same pure plan with the same inputs:
+  - the receiver's module binding: the selector's `valueKind`, and the from-ast resolver's type, both `dynamic`;
+  - #7335's admission.
+- from-ast builds one primitive classifier per checker.
+
+### Main's general gaps the row now reaches (not patched, per RULE 2)
+
+An i32 boolean meets two consumer rules that admit what from-ast cannot build.
+Main has the same failure for any i32 boolean (`var b = x > 0`), reproduced on
+main by the review scratch `rv7234b/gap.json`:
+
+- `b.constructor` on an i32 (`property access .constructor on i32 is not in slice 2`): 5 `*:localctor:T:mod` rows of `cases.json`.
+- `g() == 1` where `g` returns an i32 boolean (`Phase 1 requires matching operand types for '=='`): 4 `*:reteq:T:fn` rows.
+
+These 9 are the only post-claim errors head has that main lacks. The units hold
+a test main refused at select, so main claims none of them.
+
+### Measurements
+
+Branch `fbe56ebef6` against main `7996e61a23`, one process at a time.
+
+| | result |
+| --- | --- |
+| Census 818 | 53 gained, 0 lost, 0 units newly legacy (1,261 → 1,208), 0 compile errors, 0 post-claim errors |
+| #7338's 2,757-file set | 39 gained, 0 lost, 0 units newly legacy, 0 post-claim errors |
+| #7341's 23 gained files | all IR-only on head, 0 post-claim errors |
+| Verdicts | the 53 routing-changed files all pass, here and in the CI standalone baseline |
+| gc bytes | identical on 445 files, `gc.json` (364), `r2gc.json` (357), `rv7234b/gc60.json` (86) |
+| Related test files | 442/442 pass (7106 aliases, 7128, 7276, 7280, 7335, 7338, 7339, 7341) |
+
+Reviewer matrices against the reviewer's main outputs (same main):
+
+- **`rv7234b/cases.json` (1,200):** 0 units lost. The only head-only post-claim errors are the 9 above. 246 cases gain.
+- **`rv7234b`, the other sets:** `cases-dparam`, `edge2`, `sound` and `sound2` equal main. `repro` gains 5 cases, with 0 lost and 0 post-claim errors.
+- **`rv7234b/edge`:** lost `E10-home-inherited-valueOf` (`t`, `chk`). Main's IR answers it wrong; head refuses the inherited-member read and answers correctly.
+- **`rv7234/cases`:**
+  - `a2`, `b2`, `c2`, `d`, `e` and `f`–`j`: 0 units lost, 0 head-only post-claim errors.
+  - `r2` (`k`, `k2`, `l`, `l2`, `m`): 0 units lost, 0 head-only post-claim errors.
+  - Main's wrong answers on local receivers (`l2`, `i`, `g`, `j`) are unchanged: those calls are main's route.
