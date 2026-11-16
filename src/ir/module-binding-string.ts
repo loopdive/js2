@@ -25,23 +25,22 @@
  *     from-ast's operand proofs (the `+` rule) key on the checker type, which
  *     narrowing makes `never` in a branch `typeof x !== "string"` guards, while
  *     `typeof` folds from the IR type (`lowerTypeOf`);
- *   - it is not `delete`'s operand, and not an equality operand (any of the
- *     four operators) beside a value not proven a string: from-ast compares a
- *     string with a string only, and folds a strict compare with `undefined`.
+ *   - it is not `delete`'s operand, and not an equality operand whose pair
+ *     with a string from-ast does not lower (`binaryOperandsAdmissible`).
  * Such a read is judged by the ordinary expression arms, exactly like a local
  * string; any other read keeps the opaque-reference discipline
  * (`isIrModuleReferenceValueKind`).
  */
 import { ts } from "../ts-api.js";
-import { isEqualityOperator, isStrictEqualityOperator, nullComparedOperand } from "./analysis/operand-admissibility.js";
+import { binaryOperandsAdmissible, isEqualityOperator, nullComparedOperand } from "./analysis/operand-admissibility.js";
 import { isUnshadowedLibBinding } from "../shared/ambient-intrinsics.js";
 import { isStoreTarget, outermostParenthesized } from "../shared/binding-writes.js";
 import { scriptVarUseFollowsDeclaration, scriptVarWrites } from "./module-binding-script-var.js";
-import type { IrLegacyModuleBindingIdentity } from "./module-bindings.js";
-import type { ClassifyPrimitive } from "./regexp-match-uses.js";
+import type { IrLegacyModuleBindingIdentity, IrPrimitiveExpressionFamily } from "./module-bindings.js";
 
 type ResolveBinding = (node: ts.Identifier) => IrLegacyModuleBindingIdentity | undefined;
 type IsLibOnlyBinding = (node: ts.Identifier) => boolean;
+type ClassifyPrimitive = (expr: ts.Expression) => IrPrimitiveExpressionFamily | undefined;
 
 const qualifiesCache = new WeakMap<ts.VariableDeclaration, boolean>();
 
@@ -104,17 +103,16 @@ function bindingQualifies(
 }
 
 /**
- * `node` is an equality operand beside a value from-ast does not compare with a string: one not proven a
- * string, other than `undefined` under a strict operator (which folds) and the `null` literal (whose compare
- * `stringUseRefusal` judges as a string's).
+ * `node` is an equality operand whose pair from-ast does not lower as a string's (`binaryOperandsAdmissible`
+ * over the other side's primitive family). A compare with the `null` literal is `stringUseRefusal`'s.
  */
 function isEqualityOperandBesideNonString(node: ts.Identifier, classify: ClassifyPrimitive): boolean {
   const operand = outermostParenthesized(node);
   const equality = operand.parent;
   if (!ts.isBinaryExpression(equality) || !isEqualityOperator(equality.operatorToken.kind)) return false;
   if (nullComparedOperand(equality) !== null) return false;
-  const other = classify(equality.left === operand ? equality.right : equality.left);
-  return other !== "string" && !(other === "undefined" && isStrictEqualityOperator(equality.operatorToken.kind));
+  const other = classify(equality.left === operand ? equality.right : equality.left) ?? "unknown";
+  return !binaryOperandsAdmissible(equality.operatorToken.kind, "string", other);
 }
 
 /** True when `node` reads a `string` binding and the read is an ordinary string value. */

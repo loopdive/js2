@@ -414,9 +414,10 @@ claimed by the IR and answers wrong. So does the `String` twin; legacy answers w
 - **Must-fix: strict equality beside a non-string.** `var s = "1"; if (s === 1) { throw "x"; }` was
   claimed, then withdrawn ("mixed string/non-string operand for '==='"); main refuses it at select.
   The loose rule is now one rule for all four equality operators (`isEqualityOperandBesideNonString`):
-  the read keeps the reference rule beside a value not proven a string. Two exceptions, both because
-  from-ast handles them: a strict compare with `undefined` folds, and a compare with the `null` literal
-  is judged by Step A's null rule (`s == null` / `s === null` stay refused at select there).
+  the read keeps the reference rule beside a value not proven a string. A compare with the `null`
+  literal is left to Step A's null rule (`s == null` / `s === null` stay refused at select there).
+  (Round 3 corrected this: the round-2 text also claimed a strict-`undefined` exception, which could
+  not fire; see below.)
 - **Other operators checked in the same pass** (a 945-case matrix: the module string `"1"` / `"ab"`
   beside a number, boolean, `null`, `undefined`, object, number var, mixed var and string, on both
   sides, for `===` `!==` `==` `!=` `<` `>` `<=` `>=` `+` `-` `*` `&&` `||`, as a value and as an `if`
@@ -438,3 +439,23 @@ claimed by the IR and answers wrong. So does the `String` twin; legacy answers w
 | reviewer's round-2 probe set (175 × 2) | 0 head-only post-claim; +29 claimed, 0 lost; wrong answers identical to main |
 | 969-file census | +30, 0 lost, 0 units newly legacy, post-claim 31 → 31 (identical to round 1) |
 | JS-environment bytes (232 files) | 232/232 identical |
+
+### Review round 3 (2026-11-16)
+
+- **Should-fix: a dead half and a restated rule.** The round-2 exception for a strict compare with
+  `undefined` tested the classifier for `"undefined"`, which `makeIrPrimitiveExpressionClassifier`
+  never returns; `s === undefined` is claimed through the opaque-reference strict-nullish arm, as on
+  main. The rule also restated from-ast's "a string compares with a string only".
+- **Fix.** `isEqualityOperandBesideNonString` now asks from-ast's own predicate,
+  `binaryOperandsAdmissible(op, "string", <other side's primitive family>)`, and the dead half and its
+  doc line are gone. The classifier type is narrowed to `IrPrimitiveExpressionFamily | undefined`
+  (unproven reads as `unknown`), so no cast is needed.
+
+**Measured against round 2 (`9063468b68`):**
+
+| check | result |
+| --- | --- |
+| `tests/issue-7346.test.ts` | 39/39 |
+| operator matrix (945 cases × 2) | output byte-identical to round 2 |
+| 969-file census | identical routing: 0 gained, 0 lost, 0 newly legacy, post-claim 31 → 31 |
+| JS-environment bytes (232 files) | 232/232 identical to main |
