@@ -197,6 +197,87 @@ Code quality:
 8. A fresh-context adversarial review per slice records its verdict in the PR
    body.
 
+## D1 result (2026-11-16)
+
+Branch `claude/7354-d1`, stacked on slice R. Decisions taken before the
+slice (they override the plan text above where they differ):
+
+1. **Option B, one legalization pass.** The Prepared backend binds runtime
+   functions only through semantic intrinsics, so
+   `src/ir/program/dynamic-value-legalization.ts` rewrites the dynamic
+   operations of the wasmgc standalone projection into intrinsics and every
+   `dynamic` type into `externref`. It runs inside
+   `prepareWholeProgramRuntimeManifest` (the per-policy projection, before
+   provider attachment), so the validator's replay reproduces it; the clock
+   witness compares against the legalized body. ABI contracts stay `dynamic`;
+   `preparedDynamicCarrier` is the carrier arm `physicalSignatureConverter`
+   asks (it also keeps the host async identity arm). `from-ast.ts` is
+   unchanged and there is no second `IrDynamicLowering`. This replaces the
+   plan's "second `IrDynamicLowering` implementation" bullet.
+2. **The D1 set.** `box` from f64/i32 to `js.number.box`, a Boolean-tagged box
+   to `js.boolean.box`; `unbox` NumberF64/Boolean to `js.number.unbox` /
+   `js.boolean.unbox`; `tag.test` NumberF64/Boolean/Undefined to
+   `js.value.is_number` / `js.value.is_boolean` / `js.extern.is_undefined`;
+   `dyn.undefined` to `js.value.undefined`; strict `dyn.eq` to
+   `js.value.strict_eq` (+ `i32.eqz` for `!==`). Added beyond the list:
+   `dyn.to_number` to `js.number.unbox`, because `__unbox_number` is exactly
+   ToNumber over the admitted values (number, boolean, `undefined` gives NaN);
+   from-ast emits no numeric unbox, so this is how a dynamic value becomes a
+   number again (`v * 2`). Everything else refuses as "dynamic operation X has
+   no Prepared intrinsic": loose `==`, `tag.test` Null/NumberI32/String/Object,
+   ToBoolean, `typeof`, member access, a box of any non-primitive (strings
+   included), `coerce.to_externref`, and a dynamic type nested in a composite.
+   A front-end dynamic helper call (`__ir_dyn_add`, …) was an invariant in
+   `prepareIrProgramRuntimeCallables`; over a dynamic value it is now the same
+   named refusal.
+   - Soundness rests on the admitted set: only numbers, booleans and
+     `undefined` enter a dynamic value. Strict equality therefore has no BigInt
+     or string arm; the slice that admits strings must pass the string arm.
+   - New providers live in `src/ir/runtime/dynamic-value-callables.ts` (one
+     native standalone arm each, no policy); the four ids join the closed lists
+     the `js.boolean.*` family uses. The provider-row comparison that the
+     ordinary-object family carried is now one helper
+     (`canonical-provider-mismatch.ts`) both families call.
+   - Bodies are shared: strict equality is `buildObjectSameValueBody` with
+     `numbers: "strict"` (`f64.eq`; `same-value` keeps the bit compare) and the
+     BigInt/string arms optional; the `undefined` probe is the legacy body moved
+     to `buildIsUndefinedBody` (`primitive-layouts.ts`). Legacy calls both with
+     its previous arguments; `__extern_strict_eq` is untouched.
+   - Boolean unbox from a dynamic value is unreachable from source today; if it
+     arrives it meets the existing keyed-Get proof gate in
+     `selectNativeBooleans` and refuses, and the presentation does not select
+     `booleanBoundary.unbox`.
+3. **Numeric mode.** `selectNativeDynamicValues` (one predicate) puts the
+   native string value plan into its existing numeric mode when the projection
+   has any `js.value.*` intrinsic or a natively bound `js.extern.is_undefined`;
+   `resources/native-dynamic-values.ts` adds `__js_strict_eq`,
+   `__js_undefined` and `__extern_is_undefined` beside the value and Boolean
+   resources. The Boolean predicate pair is reserved whenever strict equality
+   or the Boolean tag test needs it. The `primitive-only` resource plan was not
+   widened (per the handover it has no production caller).
+4. **`any` contracts.** `src/ir/source-dynamic-contracts.ts` now holds every
+   `any`-contract rule of the Prepared source producer (the host async arm,
+   moved unchanged, and the native arm: an explicitly annotated `any`
+   parameter or result of a synchronous wasmgc standalone function), plus
+   `resolveDynamic`; `program-source.ts` shrank by 37 lines. Untyped and JSDoc
+   parameters stay refused (slice P). The presentation's ABI join admits an
+   internal `dynamic` callable contract (the physical plan carries or refuses
+   it); an exported `any` contract stays refused.
+5. **`typeof`** stays a named gap (`dyn.typeof`), with a refusal probe.
+6. **Stacked on R.** `preparedPresentationPolicy` additionally selects native
+   Boolean boxing and the native `undefined` probe; the `js.value.*` providers
+   need no policy. The census (`nativeProviderJoins`) accepts all new providers
+   unchanged; `checkResourceDemand` and `emittedSupportFunctionReceipts` were
+   not touched.
+
+Proof: `tests/issue-7354-d1-dynamic-carrier.test.ts` (15 tests) compiles
+through the strict Prepared entry, validates and runs: number/boolean/
+`undefined` through `function id(v: any): any`, `===`/`!==` between them,
+`+0 === -0`, `NaN !== NaN`, `1 !== true`, one helper called with three tags,
+ToNumber back to a number; refusal probes for loose equality, the null tag
+test, ToBoolean, dynamic `+`, member reads, `typeof`, an exported `any`
+contract and the gc target; three direct tests of the pass.
+
 ## Coordination
 
 #7188 (slices S2 to S4) is claimed by `js2-17` since 2026-10-28 and #2949 by

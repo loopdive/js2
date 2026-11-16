@@ -3,7 +3,18 @@
 import { irCallableBindingKey, irRuntimeFuncRef } from "../../../ir/core/callable-bindings.js";
 import { INTRINSIC_DEFINITIONS } from "../../../ir/core/intrinsics.js";
 import type { IrType } from "../../../ir/core/types.js";
-import { BOOLEAN_BOUNDARY_RUNTIME_PROVIDERS, NUMBER_BOUNDARY_RUNTIME_PROVIDERS } from "../../../ir/runtime/manifest.js";
+import {
+  BOOLEAN_BOUNDARY_RUNTIME_PROVIDERS,
+  DYNAMIC_VALUE_RUNTIME_PROVIDERS,
+  EXTERN_BOUNDARY_RUNTIME_PROVIDERS,
+  NUMBER_BOUNDARY_RUNTIME_PROVIDERS,
+} from "../../../ir/runtime/manifest.js";
+import type { RuntimeProviderDefinition } from "../../../ir/runtime/contracts/manifest.js";
+import type {
+  BooleanBoundaryIntrinsicId,
+  DynamicValueIntrinsicId,
+  IntrinsicId,
+} from "../../../ir/core/intrinsic-vocabulary.js";
 import { preparedIrCallableSignature } from "../../../ir/program/abi-signatures.js";
 import type { ProgramAbiMap, ProgramAbiPlanEntry } from "../../../ir/program/abi.js";
 import {
@@ -23,18 +34,19 @@ import type { NativeStringValueReservationInput } from "./native-string-values.j
 export interface NativeBooleanSelection {
   /** A resolved consumer recipe, independent of permission to use native boxing. */
   readonly boxMode?: "interned";
+  /** Reserve the Boolean predicate and payload reader (`__typeof_boolean`, `__unbox_boolean`). */
   readonly unbox: boolean;
 }
 function fail(detail: string): never {
-  throw new PreparedIrProgramInvariantError("invalid-prepared-data", "native Boolean ABI: " + detail);
+  throw new PreparedIrProgramInvariantError("invalid-prepared-data", "native intrinsic ABI: " + detail);
 }
 function same(actual: unknown, expected: unknown, detail: string): void {
   if (preparedIrDataMismatch(actual, expected) !== undefined) fail(detail);
 }
-function booleanDemands(demands: NativeStringValueDemands, direction: "box" | "unbox") {
+function intrinsicDemands(demands: NativeStringValueDemands, id: IntrinsicId) {
   return demands.intrinsics.filter(
     (row) =>
-      row.instruction.id === `js.boolean.${direction}` &&
+      row.instruction.id === id &&
       demands.buffers[demands.occurrences[row.occurrence]!.bufferIndex]!.view === "projection",
   );
 }
@@ -52,7 +64,7 @@ export function selectNativeBooleans(
     )
       fail("different invocation/string demand owner");
   }
-  const unboxes = booleanDemands(demands, "unbox");
+  const unboxes = intrinsicDemands(demands, "js.boolean.unbox");
   for (const row of unboxes) {
     const proof = invocation?.objectResults;
     if (
@@ -82,38 +94,85 @@ export function selectNativeBooleans(
   const box =
     getterBox ||
     (demands.projection.prepared.manifest.policy.booleanBoundary.box === "native" &&
-      booleanDemands(demands, "box").length > 0);
-  return box || unboxes.length
-    ? { selection: Object.freeze({ ...(box ? { boxMode: "interned" as const } : {}), unbox: unboxes.length > 0 }) }
+      intrinsicDemands(demands, "js.boolean.box").length > 0);
+  // (#7354 D1) Dynamic strict equality and the Boolean tag test call the same
+  // predicate and payload reader a proven extraction does.
+  const readers =
+    unboxes.length > 0 ||
+    intrinsicDemands(demands, "js.value.strict_eq").length > 0 ||
+    intrinsicDemands(demands, "js.value.is_boolean").length > 0;
+  return box || readers
+    ? { selection: Object.freeze({ ...(box ? { boxMode: "interned" as const } : {}), unbox: readers }) }
     : {};
 }
 
-/** Called only after exact canonical signature authentication; BOX takes plain i32. */
-function physicalBooleanCarrier(type: IrType) {
+/** Called only after exact canonical signature authentication; a Boolean param is plain i32. */
+function physicalCarrier(type: IrType) {
   if (type.kind === "val" && !Object.hasOwn(type, "typeRef") && type.val.kind === "i32")
     return { kind: "i32" as const };
   if (type.kind === "val" && !Object.hasOwn(type, "typeRef") && type.val.kind === "externref") return type.val;
-  return fail("canonical Boolean contract has an unexpected carrier");
+  return fail("canonical intrinsic contract has an unexpected carrier");
+}
+
+/** The canonical native provider, physical role and policy admission of one bound intrinsic. */
+interface NativeIntrinsicRow {
+  readonly feature: BooleanBoundaryIntrinsicId | DynamicValueIntrinsicId | "js.extern.is_undefined";
+  readonly provider: RuntimeProviderDefinition;
+  readonly role: readonly [string, string];
+  readonly admitted: boolean;
+}
+
+function canonicalRow(
+  providers: readonly RuntimeProviderDefinition[],
+  feature: NativeIntrinsicRow["feature"],
+  role: string,
+  admitted: boolean,
+): NativeIntrinsicRow {
+  const canonical = providers.filter((row) => row.id === `native.${feature}`);
+  if (canonical.length !== 1) fail("nonunique canonical " + feature);
+  return { feature, provider: canonical[0]!, role: ["values", role], admitted };
+}
+
+/**
+ * The Boolean carrier pair, plus the dynamic value's operations (#7354 D1):
+ * every one is a runtime callable answered by a declared native resource.
+ */
+function nativeIntrinsicRows(input: NativeStringValueReservationInput): readonly NativeIntrinsicRow[] {
+  const policy = input.demands.projection.prepared.manifest.policy;
+  return [
+    ...(["box", "unbox"] as const).map((direction) =>
+      canonicalRow(
+        BOOLEAN_BOUNDARY_RUNTIME_PROVIDERS,
+        `js.boolean.${direction}`,
+        direction + "-boolean",
+        policy.booleanBoundary[direction] === "native",
+      ),
+    ),
+    canonicalRow(
+      EXTERN_BOUNDARY_RUNTIME_PROVIDERS,
+      "js.extern.is_undefined",
+      "is-undefined",
+      policy.externIsUndefined.probe === "native",
+    ),
+    canonicalRow(DYNAMIC_VALUE_RUNTIME_PROVIDERS, "js.value.strict_eq", "strict-eq", true),
+    canonicalRow(DYNAMIC_VALUE_RUNTIME_PROVIDERS, "js.value.is_number", "typeof-number", true),
+    canonicalRow(DYNAMIC_VALUE_RUNTIME_PROVIDERS, "js.value.is_boolean", "typeof-boolean", true),
+    canonicalRow(DYNAMIC_VALUE_RUNTIME_PROVIDERS, "js.value.undefined", "undefined-value", true),
+  ];
 }
 
 /** Bind only actual native attachments to the declared, canonical resource. */
-export function nativeBooleanAbiBindings(input: NativeStringValueReservationInput, baseOrder: number) {
+export function nativeIntrinsicAbiBindings(input: NativeStringValueReservationInput, baseOrder: number) {
   const { program, projection } = input.demands;
   const manifest = projection.prepared.manifest;
-  return (["box", "unbox"] as const).flatMap((direction) => {
-    const uses = booleanDemands(input.demands, direction);
-    if (!uses.length || (direction === "box" && manifest.policy.booleanBoundary.box !== "native")) return [];
-    const feature = `js.boolean.${direction}` as const;
-    const canonical = BOOLEAN_BOUNDARY_RUNTIME_PROVIDERS.filter((row) => row.id === `native.${feature}`);
-    if (canonical.length !== 1) fail("nonunique canonical " + feature);
-    const provider = canonical[0]!;
+  return nativeIntrinsicRows(input).flatMap(({ feature, provider, role, admitted }) => {
+    const uses = intrinsicDemands(input.demands, feature);
+    // A policy that does not admit the native arm selected another authority
+    // (the host import), which is not a native resource binding.
+    if (!uses.length || !admitted) return [];
     if (provider.implementation.kind !== "runtime-callable" || !provider.signature) fail("noncallable " + feature);
     const selected = manifest.providers.filter((row) => row.id === provider.id || row.feature === feature);
-    if (
-      input.plan.mode !== "number-boundary" ||
-      manifest.policy.booleanBoundary[direction] !== "native" ||
-      selected.length !== 1
-    )
+    if (input.plan.mode !== "number-boundary" || selected.length !== 1)
       fail("missing unique native policy/provider for " + feature);
     same(selected[0], provider, "manifest provider differs");
     same(projection.prepared.providers.get(feature), provider, "provider map differs");
@@ -124,9 +183,7 @@ export function nativeBooleanAbiBindings(input: NativeStringValueReservationInpu
       same(instruction.provider.target.binding, reference.binding, "attachment target differs");
       same(instruction.resultType, provider.signature.result, "attachment logical result differs");
     }
-    const matches = input.plan.declarations.filter(
-      (row) => preparedIrDataMismatch(row.role, ["values", `${direction}-boolean`]) === undefined,
-    );
+    const matches = input.plan.declarations.filter((row) => preparedIrDataMismatch(row.role, role) === undefined);
     if (matches.length !== 1) fail("nonunique actual " + feature + " declaration");
     const index = input.plan.declarations.indexOf(matches[0]!);
     const declaration = input.plan.declarations[index];
@@ -134,8 +191,8 @@ export function nativeBooleanAbiBindings(input: NativeStringValueReservationInpu
     same(
       declaration.signature,
       {
-        params: provider.signature.params.map(physicalBooleanCarrier),
-        results: [physicalBooleanCarrier(provider.signature.result)],
+        params: provider.signature.params.map(physicalCarrier),
+        results: [physicalCarrier(provider.signature.result)],
       },
       "recipe differs from canonical physical carriers",
     );

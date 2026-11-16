@@ -49,15 +49,15 @@ export function registerObjectSameValueHelper(
       { name: "ba", type: { kind: "anyref" } },
     ],
     buildObjectSameValueBody({
+      numbers: "same-value",
       typeofNumIdx,
       typeofBoolIdx,
-      typeofBigIdx,
       unboxNumIdx,
       unboxBoolIdx,
-      bigint: { kind: "carrier", equalIdx: bigintEqualityIdx },
-      anyStrTypeIdx,
-      strFlattenIdx,
-      strEqualsIdx,
+      bigint: { kind: "carrier", typeofIdx: typeofBigIdx, equalIdx: bigintEqualityIdx },
+      ...(strFlattenIdx !== undefined && strEqualsIdx !== undefined && anyStrTypeIdx >= 0
+        ? { strings: { anyStrTypeIdx, flattenIdx: strFlattenIdx, equalsIdx: strEqualsIdx } }
+        : {}),
     }),
   );
 }

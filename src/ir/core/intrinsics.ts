@@ -9,6 +9,7 @@ export {
   NUMBER_BOUNDARY_INTRINSIC_IDS,
   BOOLEAN_BOUNDARY_INTRINSIC_IDS,
   EXTERN_BOUNDARY_INTRINSIC_IDS,
+  DYNAMIC_VALUE_INTRINSIC_IDS,
   INTRINSIC_IDS,
   INTRINSIC_SIGNATURE_VERSION,
 } from "./intrinsic-vocabulary.js";
@@ -16,6 +17,7 @@ export type {
   NumberBoundaryIntrinsicId,
   BooleanBoundaryIntrinsicId,
   ExternBoundaryIntrinsicId,
+  DynamicValueIntrinsicId,
   IntrinsicId,
   IntrinsicSignatureVersion,
 } from "./intrinsic-vocabulary.js";
@@ -199,6 +201,10 @@ export const INTRINSIC_DEFINITIONS: Readonly<Record<IntrinsicId, IntrinsicDefini
   "js.boolean.box": definition("js.boolean.box", I32_TO_EXTERNREF_INTRINSIC_SIGNATURE),
   "js.boolean.unbox": definition("js.boolean.unbox", EXTERNREF_TO_BOOLEAN_INTRINSIC_SIGNATURE),
   "js.extern.is_undefined": definition("js.extern.is_undefined", EXTERNREF_TO_I32_INTRINSIC_SIGNATURE),
+  "js.value.strict_eq": definition("js.value.strict_eq", EXTERNREF_PAIR_TO_I32_INTRINSIC_SIGNATURE),
+  "js.value.is_number": definition("js.value.is_number", EXTERNREF_TO_I32_INTRINSIC_SIGNATURE),
+  "js.value.is_boolean": definition("js.value.is_boolean", EXTERNREF_TO_I32_INTRINSIC_SIGNATURE),
+  "js.value.undefined": definition("js.value.undefined", EXTERNREF_GLOBAL_INTRINSIC_SIGNATURE),
   "math.abs": definition("math.abs", F64_UNARY_INTRINSIC_SIGNATURE),
   "math.acos": definition("math.acos", F64_UNARY_INTRINSIC_SIGNATURE),
   "math.acosh": definition("math.acosh", F64_UNARY_INTRINSIC_SIGNATURE),

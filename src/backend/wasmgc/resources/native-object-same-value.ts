@@ -164,16 +164,18 @@ export function fillNativeObjectSameValueResources(
       { name: "ba", type: { kind: "anyref" } },
     ],
     body: buildObjectSameValueBody({
+      numbers: "same-value",
       typeofNumIdx: d.values.functions.isNumber.handle,
       typeofBoolIdx: d.booleans.isBoolean.handle,
-      typeofBigIdx: d.bigints.isBigInt.handle,
       unboxNumIdx: d.values.functions.unboxNumber.handle,
       unboxBoolIdx: d.booleans.unboxBoolean.handle,
       // Both actual brands pass first; exact carrier equality includes all wide limbs.
-      bigint: { kind: "carrier", equalIdx: d.bigints.equal.handle },
-      anyStrTypeIdx: d.strings.layout.anyStrTypeIdx,
-      strFlattenIdx: d.flatten.flatten.handle,
-      strEqualsIdx: d.equality.equals.handle,
+      bigint: { kind: "carrier", typeofIdx: d.bigints.isBigInt.handle, equalIdx: d.bigints.equal.handle },
+      strings: {
+        anyStrTypeIdx: d.strings.layout.anyStrTypeIdx,
+        flattenIdx: d.flatten.flatten.handle,
+        equalsIdx: d.equality.equals.handle,
+      },
     }),
   });
   owner.filled = true;

@@ -21,11 +21,12 @@ import {
 } from "../backend/wasmgc/program/native-invocation-abi.js";
 import { nativeStringOutputAbiBindings } from "../backend/wasmgc/program/native-string-output-abi.js";
 import {
-  nativeBooleanAbiBindings,
+  nativeIntrinsicAbiBindings,
   nativeNumberBinding,
 } from "../backend/wasmgc/program/native-primitive-boundary-abi.js";
 import { planHostNumberBoundary, type HostNumberBoundarySetup } from "./program/host-number-boundary-setup.js";
-import { planHostAsyncDynamicUnits, preparedHostAsyncDynamicCarrier } from "./program/host-async-dynamic.js";
+import { planHostAsyncDynamicUnits } from "./program/host-async-dynamic.js";
+import { preparedDynamicCarrier } from "./program/dynamic-value-legalization.js";
 import { irGlobalBindingKey, irTypeBindingKey, irSupportGlobalRef, irSourceTypeRef } from "./abi-bindings.js";
 import {
   irCallableBindingKey,
@@ -689,7 +690,7 @@ function nativeStringSetup(
     const binding = nativeNumberBinding(context, input, baseOrder + index, direction);
     if (binding) add(binding);
   }
-  nativeBooleanAbiBindings(input, baseOrder).forEach(add);
+  nativeIntrinsicAbiBindings(input, baseOrder).forEach(add);
   if (input.plan.output) {
     if (!input.outputRequirements) nativeInvalid("missing output requirements for ABI join");
     const offset = input.plan.declarations.findIndex((row) => row.key === input.plan.output!.declarations[0]?.key);
@@ -952,8 +953,8 @@ function physicalSignatureConverter(
   program: PreparedIrProgram,
   vectors: NativeVectorResourcePlan,
   gaps: Gaps,
-  native?: PhysicalNativeStringSetup,
-  dynamicUnits: readonly IrUnitId[] = [],
+  native: PhysicalNativeStringSetup | undefined,
+  dynamicCarrier: ReturnType<typeof preparedDynamicCarrier>,
   sourceClosures?: NativeSourceClosureRequirements,
 ) {
   const abi = native ? new ProgramAbiMap(program.inventory, program.derivedUnits) : undefined;
@@ -993,9 +994,7 @@ function physicalSignatureConverter(
         out.push(type);
         continue;
       }
-      const value =
-        scalar(type) ??
-        (unitId !== undefined && dynamicUnits.includes(unitId) ? preparedHostAsyncDynamicCarrier(type) : undefined);
+      const value = scalar(type) ?? dynamicCarrier(type, unitId);
       if (
         type.kind === "support-ref" &&
         native?.formatterScratch &&
@@ -1196,12 +1195,11 @@ function missingIntrinsicMaterialization(
       ((nativeStrings &&
         (instruction.id === "js.number.unbox" ||
           (instruction.id === "js.number.box" && projection.prepared.manifest.policy.numberBoundary.box === "native") ||
-          ((instruction.id === "js.boolean.box" || instruction.id === "js.boolean.unbox") &&
-            nativeStrings.bindings.some(
-              (row) =>
-                row.reference.kind === "func" &&
-                irCallableBindingKey(row.reference.binding) === irCallableBindingKey(provider.target.binding),
-            )))) ||
+          nativeStrings.bindings.some(
+            (row) =>
+              row.reference.kind === "func" &&
+              irCallableBindingKey(row.reference.binding) === irCallableBindingKey(provider.target.binding),
+          ))) ||
         (instruction.id === "js.number.box" &&
           hostNumberBoundary?.imports.some(
             (row) => row.referenceKey === irCallableBindingKey(provider.target.binding),
@@ -1288,7 +1286,8 @@ export function planPhysicalSetup(
   const nativeIds = new Set(nativeBindings.map((row) => row.entry.id));
   const dynamic = planHostAsyncDynamicUnits(program, projection, asyncFrames);
   for (const gap of dynamic.gaps) gaps.add(gap.detail, gap.unitId);
-  const convert = physicalSignatureConverter(program, vectors, gaps, nativeStrings, dynamic.units, sourceClosures);
+  const dynamicCarrier = preparedDynamicCarrier(projection, dynamic.units);
+  const convert = physicalSignatureConverter(program, vectors, gaps, nativeStrings, dynamicCarrier, sourceClosures);
 
   const functions = planPhysicalFunctionSlots(physical, entries, convert, dynamic.units, gaps);
   const numberRemainders = planNumberRemainders(program, projection);

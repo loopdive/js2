@@ -43,6 +43,11 @@ import {
   irOrdinaryObjectCallableDeclaration,
 } from "./ordinary-object-callables.js";
 
+import {
+  DYNAMIC_VALUE_RUNTIME_PROVIDERS,
+  dynamicValuePolicyMismatch,
+  dynamicValueProviderMismatch,
+} from "./dynamic-value-callables.js";
 import type { RuntimeManifestPolicy } from "../../runtime/contracts/provider-policy.js";
 
 /** Policy-independent callable contracts; physical providers are selected by the manifest. */
@@ -122,6 +127,7 @@ export const SEMANTIC_CALLABLE_RUNTIME_PROVIDERS: readonly RuntimeProviderDefini
   ...ORDINARY_OBJECT_RUNTIME_PROVIDERS,
   ...NUMBER_REMAINDER_RUNTIME_PROVIDERS,
   ...NUMBER_CONVERSION_RUNTIME_PROVIDERS,
+  ...DYNAMIC_VALUE_RUNTIME_PROVIDERS,
 ]);
 
 export function semanticCallableProviderMismatch(provider: RuntimeProviderDefinition): string | undefined {
@@ -129,7 +135,8 @@ export function semanticCallableProviderMismatch(provider: RuntimeProviderDefini
     nativeAsyncProviderMismatch(provider) ??
     vectorProviderMismatch(provider) ??
     ordinaryObjectProviderMismatch(provider) ??
-    numberRemainderProviderMismatch(provider)
+    numberRemainderProviderMismatch(provider) ??
+    dynamicValueProviderMismatch(provider)
   );
 }
 
@@ -139,5 +146,7 @@ export function semanticCallablePolicyMismatch(
 ): string | undefined {
   return NATIVE_ASYNC_CALLABLE_RUNTIME_FEATURES.some((entry) => entry === feature)
     ? nativeAsyncCallablePolicyMismatch(feature, policy)
-    : (vectorCallablePolicyMismatch(feature, policy) ?? ordinaryObjectCallablePolicyMismatch(feature, policy));
+    : (vectorCallablePolicyMismatch(feature, policy) ??
+        ordinaryObjectCallablePolicyMismatch(feature, policy) ??
+        dynamicValuePolicyMismatch(feature, policy));
 }

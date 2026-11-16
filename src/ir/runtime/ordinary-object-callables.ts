@@ -11,6 +11,7 @@ import {
   type RuntimeFeature,
   type RuntimeProviderDefinition,
 } from "./contracts/manifest.js";
+import { canonicalProviderMismatch } from "./canonical-provider-mismatch.js";
 import type { RuntimeManifestPolicy } from "../../runtime/contracts/provider-policy.js";
 
 const EXTERNAL: IrType = Object.freeze({ kind: "val", val: Object.freeze({ kind: "externref" }) });
@@ -79,17 +80,7 @@ export const ORDINARY_OBJECT_RUNTIME_PROVIDERS: readonly RuntimeProviderDefiniti
 );
 
 export function ordinaryObjectProviderMismatch(provider: RuntimeProviderDefinition): string | undefined {
-  const canonical = ORDINARY_OBJECT_RUNTIME_PROVIDERS.find(
-    (row) => row.id === provider.id || row.feature === provider.feature,
-  );
-  if (!canonical) return undefined;
-  for (const field of ["id", "feature", "signature", "implementation"] as const)
-    if (JSON.stringify(provider[field]) !== JSON.stringify(canonical[field]))
-      return `ordinary object callable provider ${field} mismatch`;
-  for (const field of ["dependencies", "hostCapabilities", "supportedTargets", "supportedBackends"] as const)
-    if (JSON.stringify([...provider[field]].sort()) !== JSON.stringify([...canonical[field]].sort()))
-      return `ordinary object callable provider ${field} mismatch`;
-  return undefined;
+  return canonicalProviderMismatch(ORDINARY_OBJECT_RUNTIME_PROVIDERS, provider, "ordinary object callable");
 }
 
 export function ordinaryObjectCallablePolicyMismatch(
