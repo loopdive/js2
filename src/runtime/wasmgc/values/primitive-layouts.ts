@@ -18,6 +18,59 @@ export function buildAnyValueType(): StructTypeDef {
   };
 }
 
+/**
+ * `(externref) -> i32` "is this value `undefined`?" under the singleton
+ * regime: a tag-1 `$AnyValue` (the singleton), or a number box carrying the
+ * `UNDEF_F64` sentinel bits (#2979: an `undefined` that crossed an f64 carrier).
+ * A null externref answers 0 through the failing tests: null is not undefined.
+ * Param 0 is the value; `scratchAnyLocal` is an anyref local.
+ */
+export function buildIsUndefinedBody(
+  anyTypeIdx: number,
+  boxNumberTypeIdx: number | undefined,
+  scratchAnyLocal: number,
+  undefF64Bits: bigint,
+): Instr[] {
+  const boxedNumArm: Instr[] =
+    boxNumberTypeIdx !== undefined
+      ? [
+          { op: "local.get", index: scratchAnyLocal },
+          { op: "ref.test", typeIdx: boxNumberTypeIdx },
+          {
+            op: "if",
+            blockType: { kind: "val", type: { kind: "i32" } },
+            then: [
+              { op: "local.get", index: scratchAnyLocal },
+              { op: "ref.cast", typeIdx: boxNumberTypeIdx },
+              { op: "struct.get", typeIdx: boxNumberTypeIdx, fieldIdx: 0 },
+              { op: "i64.reinterpret_f64" },
+              { op: "i64.const", value: undefF64Bits },
+              { op: "i64.eq" },
+            ],
+            else: [{ op: "i32.const", value: 0 }],
+          },
+        ]
+      : [{ op: "i32.const", value: 0 }];
+  return [
+    { op: "local.get", index: 0 },
+    { op: "any.convert_extern" },
+    { op: "local.tee", index: scratchAnyLocal },
+    { op: "ref.test", typeIdx: anyTypeIdx },
+    {
+      op: "if",
+      blockType: { kind: "val", type: { kind: "i32" } },
+      then: [
+        { op: "local.get", index: scratchAnyLocal },
+        { op: "ref.cast", typeIdx: anyTypeIdx },
+        { op: "struct.get", typeIdx: anyTypeIdx, fieldIdx: 0 },
+        { op: "i32.const", value: 1 },
+        { op: "i32.eq" },
+      ],
+      else: boxedNumArm,
+    },
+  ];
+}
+
 /** Canonical non-null undefined: tag 1, zero, NaN, null eq, null extern. */
 export function buildUndefinedInitializer(anyTypeIdx: number): Instr[] {
   const EQ_HEAP_TYPE = -19; // WasmGC `eq` abstract heap type

@@ -26,14 +26,22 @@ import type { IrBindingId } from "../shared/contracts/ir-identity.js";
 /**
  * (#7354 R) The runtime policy a Prepared presentation selects: on wasmgc standalone the number boundary is the
  * native value runtime (`__box_number` / `__unbox_number`), which the census below authenticates; every other
- * family and target keeps its default (unsupported).
+ * family and target keeps its default (unsupported). (#7354 D1) The dynamic value also boxes booleans
+ * (`__box_boolean`) and probes `undefined` (`__extern_is_undefined`) natively; its own `js.value.*` operations
+ * have only a native arm and need no policy.
  */
 export function preparedPresentationPolicy(
   backend: PreparedIrBackendOptions["backend"],
   target: PreparedIrBackendOptions["target"],
 ): RuntimeManifestPolicy {
   return backend === "wasmgc" && target === "standalone"
-    ? { backend, target, numberBoundary: { box: "native", unbox: "native" } }
+    ? {
+        backend,
+        target,
+        numberBoundary: { box: "native", unbox: "native" },
+        booleanBoundary: { box: "native" },
+        externIsUndefined: { probe: "native" },
+      }
     : { backend, target };
 }
 

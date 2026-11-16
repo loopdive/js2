@@ -88,6 +88,15 @@ import {
 } from "../resources/native-booleans.js";
 
 import {
+  declareNativeDynamicValueResources,
+  reserveNativeDynamicValueResources,
+  fillNativeDynamicValueResources,
+  requireCompletedNativeDynamicValues,
+  selectNativeDynamicValues,
+  type NativeDynamicValueSelection,
+  type NativeDynamicValueReservations,
+} from "../resources/native-dynamic-values.js";
+import {
   deriveNativeStringOutputRequirements,
   assertNativeStringOutputRequirementsCurrent,
   type NativeStringOutputRequirements,
@@ -111,6 +120,7 @@ export interface NativeStringValuePhysicalPlan {
   readonly key: string;
   readonly mode: "literals" | "number-boundary" | "realm-bootstrap";
   readonly booleans?: NativeBooleanSelection;
+  readonly dynamicValues?: NativeDynamicValueSelection;
   readonly output?: NativeStringOutputPhysicalPlan;
   readonly literalRequirements: NativeStringLiteralRequirements;
   readonly literalUses: readonly { readonly demandIndex: number; readonly cacheKey: string }[];
@@ -148,6 +158,7 @@ export interface NativeStringValueReservations {
     readonly dependencies: NativeValueDependencies;
     readonly booleans?: NativeBooleanReservations;
     readonly booleanBoxes?: NativeBooleanBoxReservations;
+    readonly dynamicValues?: NativeDynamicValueReservations;
   };
 }
 function fail(detail: string): never {
@@ -243,9 +254,13 @@ export function planNativeStringValuePhysical(
           closureMethodArity(instruction.target.binding.symbol) !== undefined)
       );
     });
+  const dynamicValues = selectNativeDynamicValues(
+    demands.intrinsics.filter((row) => executable(row.occurrence)).map((row) => row.instruction),
+  );
   const numeric =
     invocation ||
     !!boolean.selection ||
+    !!dynamicValues ||
     demands.intrinsics.some(
       (row) =>
         executable(row.occurrence) &&
@@ -334,6 +349,7 @@ export function planNativeStringValuePhysical(
     ...(boolean.selection && booleanType
       ? [declareNativeBooleanResources(key + ":booleans", booleanType.key, boolean.selection)]
       : []),
+    ...(dynamicValues ? [declareNativeDynamicValueResources(key + ":dynamic", dynamicValues)] : []),
     ...(output ? [output] : []),
   ];
   return {
@@ -344,6 +360,7 @@ export function planNativeStringValuePhysical(
       key,
       mode: numeric ? "number-boundary" : realmLiterals ? "realm-bootstrap" : "literals",
       ...(boolean.selection ? { booleans: boolean.selection } : {}),
+      ...(dynamicValues ? { dynamicValues } : {}),
       ...(output ? { output } : {}),
       literalRequirements,
       literalUses: uses,
@@ -451,6 +468,17 @@ export function reserveNativeStringValueResources(
     const booleans = input.plan.booleans?.unbox
       ? reserveNativeBooleanResources(tx, key, values, input.valueRequirements!, dependencies)
       : undefined;
+    const dynamicValues = input.plan.dynamicValues
+      ? reserveNativeDynamicValueResources(
+          tx,
+          input.plan.key + ":dynamic",
+          input.plan.dynamicValues,
+          values,
+          booleans,
+          input.valueRequirements!,
+          dependencies,
+        )
+      : undefined;
     number = Object.freeze({
       flatten,
       scanner,
@@ -458,6 +486,7 @@ export function reserveNativeStringValueResources(
       dependencies,
       ...(booleanBoxes ? { booleanBoxes } : {}),
       ...(booleans ? { booleans } : {}),
+      ...(dynamicValues ? { dynamicValues } : {}),
     });
   }
   const output =
@@ -506,6 +535,7 @@ export function reserveNativeStringValueResources(
       fn(number.booleans.isBoolean);
       fn(number.booleans.unboxBoolean);
     }
+    if (number.dynamicValues) Object.values(number.dynamicValues).forEach(fn);
   }
   if (output) {
     for (const row of nativeStringOutputReservationInventory(tx, output, input.plan.output!)) {
@@ -559,6 +589,7 @@ export function fillNativeStringValueResources(
     });
     if (pack.number.booleanBoxes) fillNativeBooleanBoxResources(tx, pack.number.booleanBoxes);
     if (pack.number.booleans) fillNativeBooleanResources(tx, pack.number.booleans);
+    if (pack.number.dynamicValues) fillNativeDynamicValueResources(tx, pack.number.dynamicValues);
   }
   if (pack.output) fillNativeStringOutputResources(tx, pack.output);
   owner.filled = true;
@@ -593,6 +624,7 @@ export function requireCompletedNativeStringValues(
         owner.input.valueRequirements,
         pack.number.dependencies,
       );
+    if (pack.number.dynamicValues) requireCompletedNativeDynamicValues(tx, pack.number.dynamicValues);
     if (pack.number.booleans)
       requireCompletedNativeBooleans(
         tx,
