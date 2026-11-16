@@ -72,64 +72,81 @@ async function refusal(source: string, fileName = "test.js", target: "standalone
 }
 
 const NO_HOME = "has no exact typed storage: not-direct";
+/** `x` is read by a hoisted function before its initializer runs, so it has the dynamic home. */
+const HOISTED_X = "var e = f(); var x = 1; function f() { return x; } ";
 
 describe("#7354 H — the dynamic home of a script var", () => {
   // Each program carries node's answer and runs twice: as written (returns) and with a wrong answer (throws), so a
   // pass cannot come from a check that never ran.
-  it.each([
-    ["assigned after a bare declaration", "var x; x = 1;", "x !== 1", "x !== 2"],
+  it.each(
     [
-      "read as undefined before its first store, then a boolean",
-      "var x; if (x !== undefined) throw 9; x = true;",
-      "x !== true",
-      "x !== false",
-    ],
-    ["read before its declaration statement", "if (y !== undefined) throw 9; var y = 5;", "y !== 5", "y !== 6"],
-    [
-      "read by a hoisted function called before and after the initializer",
-      "var r1 = f(); var z = 3; var r2 = f(); function f() { return z; }",
-      "r1 !== undefined || r2 !== 3",
-      "r1 !== 3",
-    ],
-    [
-      "read through another hoisted function before the initializer",
-      "function g() { return f(); } function f() { return x; } var r = g(); var x = 1;",
-      "r !== undefined || g() !== 1",
-      "r !== 1",
-    ],
-    [
-      "holding a number, a boolean and undefined in turn",
-      "var x; x = 1; var a = x === 1; x = true; var b = x === true; x = undefined; var c = x === undefined;",
-      "!a || !b || !c",
-      "a",
-    ],
-    ["written in a function and read at top level", "var x; function w() { x = 2; } w();", "x !== 2", "x !== 3"],
-    [
-      "written at top level and read in a function",
-      "var x; function r() { return x; } x = true;",
-      "r() !== true",
-      "r() !== false",
-    ],
-    [
-      "beside a typed home it is copied from",
-      "var a = 1; var b; b = a; b = undefined;",
-      "a !== 1 || b !== undefined",
-      "b !== 1",
-    ],
-    ["initialized from a var of its own statement", "var x = 1, y = x;", "y !== 1", "y !== 2"],
-    [
-      "stored into another var from a call result",
-      "var b = f(); var a = 1; function f() { return a; } a = b;",
-      "a !== undefined || b !== undefined",
-      "a !== 1",
-    ],
-    [
-      "copied into a local and returned",
-      "var e = f(); var x = 1; function f() { return x; } function k() { var t = x; return t; }",
-      "k() !== 1",
-      "k() !== 2",
-    ],
-  ])("runs a script var %s", async (_, program, holds, fails) => {
+      ["assigned after a bare declaration", "var x; x = 1;", "x !== 1", "x !== 2"],
+      [
+        "read as undefined before its first store, then a boolean",
+        "var x; if (x !== undefined) throw 9; x = true;",
+        "x !== true",
+        "x !== false",
+      ],
+      ["read before its declaration statement", "if (y !== undefined) throw 9; var y = 5;", "y !== 5", "y !== 6"],
+      [
+        "read by a hoisted function called before and after the initializer",
+        "var r1 = f(); var z = 3; var r2 = f(); function f() { return z; }",
+        "r1 !== undefined || r2 !== 3",
+        "r1 !== 3",
+      ],
+      [
+        "read through another hoisted function before the initializer",
+        "function g() { return f(); } function f() { return x; } var r = g(); var x = 1;",
+        "r !== undefined || g() !== 1",
+        "r !== 1",
+      ],
+      [
+        "holding a number, a boolean and undefined in turn",
+        "var x; x = 1; var a = x === 1; x = true; var b = x === true; x = undefined; var c = x === undefined;",
+        "!a || !b || !c",
+        "a",
+      ],
+      ["written in a function and read at top level", "var x; function w() { x = 2; } w();", "x !== 2", "x !== 3"],
+      [
+        "written at top level and read in a function",
+        "var x; function r() { return x; } x = true;",
+        "r() !== true",
+        "r() !== false",
+      ],
+      [
+        "beside a typed home it is copied from",
+        "var a = 1; var b; b = a; b = undefined;",
+        "a !== 1 || b !== undefined",
+        "b !== 1",
+      ],
+      ["initialized from a var of its own statement", "var x = 1, y = x;", "y !== 1", "y !== 2"],
+      [
+        "stored into another var from a call result",
+        "var b = f(); var a = 1; function f() { return a; } a = b;",
+        "a !== undefined || b !== undefined",
+        "a !== 1",
+      ],
+      [
+        "copied into a local and returned",
+        "var e = f(); var x = 1; function f() { return x; } function k() { var t = x; return t; }",
+        "k() !== 1",
+        "k() !== 2",
+      ],
+      // A typed home needs every stored value typed: each of these stores may be the dynamic value.
+      ["stored from an untyped parameter", "var y = 1; function s(v) { y = v; } s(2);", "y !== 2", "y !== 1"],
+      ["stored from a conditional of dynamic reads", "%svar y = 1; y = e === undefined ? x : x;", "y !== 1", "y !== 2"],
+      ["stored from a comma expression", "%svar y = 1; y = (f(), x);", "y !== 1", "y !== 2"],
+      ["stored from an assignment", "%svar w; var y = 1; y = (w = x);", "y !== 1 || w !== 1", "w !== 2"],
+      ["initialized under a JSDoc number type", "%s/** @type {number} */ var y = x;", "y !== 1", "y !== 2"],
+      // `x` and `y` store each other before `x` stores the dynamic `z`: the cycle must not leave `y` typed.
+      [
+        "in a cycle of stores with a dynamic one",
+        "var e = g(); var z = 1; function g() { return z; } var x = 1; var y = 1; x = y; y = x; x = z;",
+        "y !== 1 || x !== 1",
+        "y !== 2",
+      ],
+    ].map(([name, program, holds, fails]) => [name, program.replace("%s", HOISTED_X), holds, fails]),
+  )("runs a script var %s", async (_, program, holds, fails) => {
     expect(await run(`${program} if (${holds}) throw 1;`)).toBe("returned");
     expect(await run(`${program} if (${fails}) throw 1;`)).toBe("threw");
   });
@@ -160,6 +177,13 @@ describe("#7354 H — the dynamic home of a script var", () => {
       "passed to an annotated number parameter (TypeScript)",
       "var e = f(); var x = 1; function f() { return x; } function h(n: number) { return n; } h(x);",
       "a dynamic value flows into number without a conversion (CallExpression)",
+    ],
+    // An operation on the dynamic value the legalization has no intrinsic for (slices Str and T).
+    ["added to", `${HOISTED_X}var y = 1; y = x + 1;`, "dynamic operation __ir_dyn_add has no Prepared intrinsic"],
+    [
+      "tested for truth",
+      `${HOISTED_X}var y = 1; y = x || 0;`,
+      "dynamic operation dyn.truthy has no Prepared intrinsic",
     ],
     // A value kind the carrier cannot hold yet is refused at its store, by the slice that owns it.
     [
@@ -196,6 +220,19 @@ describe("#7354 H — the dynamic home of a script var", () => {
     }
     const fileName = name.includes("TypeScript") ? "entry.ts" : "test.js";
     expect(await refusal(program, fileName, name.includes("gc target") ? "gc" : "standalone")).toContain(message);
+  });
+
+  // An ES module's `var` is not a script var: the resolver types its global, so a function returning it keeps the
+  // checker's result (a dynamic one could not flow into `main`'s annotated number).
+  it("keeps an ES module var read by a hoisted function typed", async () => {
+    const result = await compile(
+      "export function main(): number { return f(); }\nfunction f() { return x; }\nvar x = 1;\n",
+      options("entry.ts"),
+    );
+    expect(messages(result)).toEqual([]);
+    const exports = instantiatePreparedArtifact(result).instance.exports;
+    (exports.__module_init as (() => void) | undefined)?.();
+    expect((exports.main as () => number)()).toBe(1);
   });
 
   // A repeated var with the brief's `var b = a` is not a JavaScript-level refusal: the checker types `b` as number
