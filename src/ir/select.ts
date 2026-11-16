@@ -6919,6 +6919,8 @@ function isDynamicScriptVarCall(expr: ts.CallExpression): boolean {
   return (
     callee !== undefined &&
     currentModuleBindingResolver?.(callee)?.valueKind.kind === "dynamic" &&
+    // propertyHelper's certified aliases are script vars on the dynamic slot too, but keep their native provider.
+    certifiedAliasCall(expr, () => false) === undefined &&
     argumentsCrossSyntactically(expr)
   );
 }
