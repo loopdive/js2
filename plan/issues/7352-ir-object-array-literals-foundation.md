@@ -19,6 +19,10 @@ related: [7349, 7350, 7353, 7335, 7280, 7338, 7339, 7292]
 # carrier; object-shape-widening.ts +2 (import, and the one call to the shared
 # home decision inside collectGrowableObjectLiterals' scanStatements). The
 # decision, the builder and the field reader live in their own modules.
+# 2026-11-16 (O1, verification round): select.ts also takes the one-line wrap of
+# the selection options at each selector entry (open-object-field-reads.ts) and
+# the typed-return rule (isPhase1ReturnValue, shared by both return arms);
+# planIrCompilation +1 for the wrap. The evidence adapter is its own module.
 loc-budget-allow:
   - src/ir/select.ts
   - src/ir/from-ast.ts
@@ -26,6 +30,7 @@ loc-budget-allow:
 func-budget-allow:
   - src/codegen/declarations/object-shape-widening.ts::collectGrowableObjectLiterals
   - src/codegen/declarations/object-shape-widening.ts::scanStatements#2
+  - src/ir/select.ts::planIrCompilation
 ---
 
 # #7352 — IR foundation: object and array literals

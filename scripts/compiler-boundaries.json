@@ -8555,6 +8555,14 @@
       "nextBoundary": "IR open-object carrier support (#7128 S1): legacy's open-$Object binding query the selector asks; moves with the object-shape widening pre-pass."
     },
     {
+      "path": "src/codegen/declarations/open-object-literal-home.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "7352",
+      "nextBoundary": "IR open-object home decision (#7352 O1): which script `var` object literal legacy keeps as the open $Object, asked by the widening pre-pass and (through the slot) the selector; moves with the object-shape widening pre-pass."
+    },
+    {
       "path": "src/codegen/array/ir-array-prototype-borrow.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
@@ -11792,6 +11800,14 @@
       "nextBoundary": "Separate pure IR contracts from frontend inventory and physical/backend dependencies."
     },
     {
+      "path": "src/shared/object-literal-fields.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "7352",
+      "nextBoundary": "Pure-AST object-literal property reader shared by the IR descriptor literals and the #7352 open-object home decision; becomes a frontend fact when the frontend inventory is split from ir-core."
+    },
+    {
       "path": "src/ir/analysis/counted-string-append.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
@@ -13119,6 +13135,14 @@
       "destination": "ir-core",
       "owner": "7335",
       "nextBoundary": "Frontend source-shape certifier for the #7335 dynamic-home open object (a script `var o = {}` on the dynamic module slot); move with the empty-object-literal arms when the frontend inventory is split from ir-core."
+    },
+    {
+      "path": "src/ir/open-object-field-reads.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "7352",
+      "nextBoundary": "Selector evidence adapter (#7352 O1): blinds the checker-backed families of values read off an open-object binding; move with dynamic-home-open-object.ts when the frontend inventory is split from ir-core."
     },
     {
       "path": "src/ir/dynamic-home-uses.ts",

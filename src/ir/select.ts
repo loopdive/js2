@@ -109,6 +109,7 @@ import {
 } from "./empty-object-literal.js";
 import { createObjectStaticSelector, type ObjectStaticValueRules } from "./select-object-statics.js";
 import { openObjectLiteralFields } from "../shared/object-literal-fields.js";
+import { readsOpenObject, withOpenObjectFieldReads } from "./open-object-field-reads.js";
 import * as dynamicHome from "./dynamic-home-open-object.js";
 import { writerKnowsItsStrictness } from "./dynamic-home-uses.js";
 import { selectWithEnvironmentClosures } from "./with-environment.js";
@@ -973,9 +974,10 @@ function legacyCallerAbiIsProjected(
 
 export function planIrCompilation(
   sourceFile: ts.SourceFile,
-  options?: IrSelectionOptions,
+  selectionOptions?: IrSelectionOptions,
   typeMap?: TypeMap,
 ): IrSelection {
+  const options = withOpenObjectFieldReads(selectionOptions);
   if (!options?.experimentalIR) return EMPTY;
 
   // Slice 4 (#1169d): scan classes declared in this compilation unit.
@@ -1937,11 +1939,12 @@ let currentNumericParamNames = new Set<string>();
 /** @internal Configure the shared predicates for an exact structural selector run. */
 export function configureIrStructuralSelectorPredicates(
   sourceFile: ts.SourceFile,
-  options: IrSelectionOptions | undefined,
+  selectionOptions: IrSelectionOptions | undefined,
   localClassDeclarations: ReadonlyMap<string, ts.ClassDeclaration | ts.ClassExpression>,
   functionDeclarations: ReadonlyMap<string, ts.FunctionDeclaration>,
   asyncDeclarationNames: ReadonlySet<string>,
 ): void {
+  const options = withOpenObjectFieldReads(selectionOptions);
   currentSelectionOptions = options;
   currentSelectionSubject = null;
   currentLocalClassDeclarations = localClassDeclarations;
@@ -6492,9 +6495,17 @@ function isPhase1BodyStatement(
       return currentFnIsVoidReturn || currentFnIsDynamicReturn ? true : shapeNo("body-return-bare-nonvoid", stmt);
     }
     if (currentFnIsDynamicReturn && isUnshadowedUndefinedIdentifier(stmt.expression, scope)) return true;
-    return isPhase1Expr(stmt.expression, scope, localClasses);
+    return isPhase1ReturnValue(stmt.expression, scope, localClasses);
   }
   return shapeNo("body-unhandled-stmt", stmt);
+}
+
+/** A returned value; (#7352 O1) a typed result takes none computed from an open object (`readsOpenObject`). */
+function isPhase1ReturnValue(value: ts.Expression, scope: Set<string>, localClasses: ReadonlySet<string>): boolean {
+  if (!currentFnIsDynamicReturn && readsOpenObject(currentSelectionOptions, value)) {
+    return shapeNo("return-open-object-value", value);
+  }
+  return isPhase1Expr(value, scope, localClasses);
 }
 
 /** (#7106 S3c) The implicit `return;` after a dynamic-return function's trailing statement. */
@@ -6519,7 +6530,7 @@ function isPhase1Tail(
       return isGenerator || isVoidReturn || currentFnIsDynamicReturn ? true : shapeNo("tail-bare-return-nonvoid", stmt);
     // #7104 — `return undefined` in a dynamic-return function.
     if (currentFnIsDynamicReturn && isUnshadowedUndefinedIdentifier(stmt.expression, scope)) return true;
-    return isPhase1Expr(stmt.expression, scope, localClasses);
+    return isPhase1ReturnValue(stmt.expression, scope, localClasses);
   }
   if (ts.isBlock(stmt)) {
     return isPhase1StatementList(stmt.statements, new Set(scope), localClasses, isGenerator, isVoidReturn);

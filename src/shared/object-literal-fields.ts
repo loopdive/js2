@@ -40,15 +40,18 @@ export function staticNamedProperties(literal: ts.Expression): readonly DataDesc
 /**
  * (#7352 O1) A data-only object literal's properties in source order, else null: distinct identifier or
  * string-literal names, none a canonical array index (an open object enumerates indices first, §10.1.11.1)
- * nor `__proto__` (which sets the prototype), and no value a function, class, object or array literal (later
- * slices). Legacy and the IR both build such a literal as the open `$Object`, one put per property.
+ * nor `__proto__` (which sets the prototype), nor `toString` / `valueOf` (the conversions read them: O4's
+ * `{ toString / valueOf }` objects), and no value a function, class, object or array literal (later slices).
+ * Legacy and the IR both build such a literal as the open `$Object`, one put per property.
  */
+const CONVERSION_OR_PROTO_KEYS: ReadonlySet<string> = new Set(["__proto__", "toString", "valueOf"]);
+
 export function openObjectLiteralFields(literal: ts.Expression): readonly DataDescriptorField[] | null {
   const fields = staticNamedProperties(literal);
   const plain = (field: DataDescriptorField) => {
     const value = stripParens(field.initializer);
     return (
-      field.name !== "__proto__" &&
+      !CONVERSION_OR_PROTO_KEYS.has(field.name) &&
       !CANONICAL_ARRAY_INDEX.test(field.name) &&
       !ts.isFunctionLike(value) &&
       !ts.isClassExpression(value) &&

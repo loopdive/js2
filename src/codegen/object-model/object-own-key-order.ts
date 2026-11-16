@@ -65,8 +65,11 @@ function staticArrayIndexOf(name: string): number {
  * (`illegal cast`); a `var` binding in between worked because its initializer
  * coercion materializes the vec. The caller materializes the receiver the same
  * way (`withArraySubclassReceiverAsVec`) when this answers true.
+ * (#7352 O1) On standalone `Object.values` / `Object.entries` of an open
+ * object answer the same externref list, and `Object.values(o).reverse()`
+ * trapped the same way; the JS environment keeps its bytes until its own A/B.
  */
-function isOwnKeyListCall(expr: ts.Expression): boolean {
+function isOwnKeyListCall(ctx: CodegenContext, expr: ts.Expression): boolean {
   if (!ts.isCallExpression(expr) || !ts.isPropertyAccessExpression(expr.expression)) return false;
   const callee = expr.expression;
   if (!ts.isIdentifier(callee.expression)) return false;
@@ -74,6 +77,7 @@ function isOwnKeyListCall(expr: ts.Expression): boolean {
   const name = callee.name.text;
   return (
     (owner === "Object" && (name === "keys" || name === "getOwnPropertyNames" || name === "getOwnPropertySymbols")) ||
+    (owner === "Object" && (name === "values" || name === "entries") && ctx.targetProfile.target === "standalone") ||
     (owner === "Reflect" && name === "ownKeys")
   );
 }
@@ -92,14 +96,14 @@ const READ_ONLY_KEY_LIST_METHODS = new Set(["indexOf", "lastIndexOf", "includes"
  * still reads correctly.
  */
 function isStandaloneOwnKeyListCall(ctx: CodegenContext, expr: ts.Expression, methodName: string): boolean {
-  if (isOwnKeyListCall(expr)) return true;
+  if (isOwnKeyListCall(ctx, expr)) return true;
   if (!ts.isIdentifier(expr) || !READ_ONLY_KEY_LIST_METHODS.has(methodName)) return false;
   const decl = ctx.oracle.valueDeclarationOf(expr);
   return (
     decl !== undefined &&
     ts.isVariableDeclaration(decl) &&
     decl.initializer !== undefined &&
-    isOwnKeyListCall(decl.initializer)
+    isOwnKeyListCall(ctx, decl.initializer)
   );
 }
 
