@@ -16,6 +16,65 @@ const STRICT_EQUALITY_OPERATORS: ReadonlySet<ts.SyntaxKind> = new Set([
 ]);
 
 /**
+ * The built-in globals whose realm property is the value legacy's bare read
+ * yields, measured with a legacy `return <Name>` against the module's read and
+ * against `globalThis.<Name>`. `Function` takes the provider-owned
+ * `%Function%` when the module reads it bare (`function-intrinsic-carrier.ts`),
+ * on both sides alike.
+ *   - `every-lane`: #7118's names, measured on standalone and the JS
+ *     environment;
+ *   - `standalone`: the rest of the ES5 namespaces and global functions
+ *     (#7350, 2026-11-15), measured on standalone only, so they ask the lane's
+ *     `native-builtin-globals` capability: the JS environment's output stays
+ *     byte-identical.
+ * The ES2015+ constructors (`Map`, `Promise`, `Proxy`, …) are not measured.
+ */
+const BUILTIN_GLOBAL_LANES: ReadonlyMap<string, "every-lane" | "standalone"> = new Map([
+  ...[
+    "Object",
+    "Function",
+    "Array",
+    "String",
+    "Boolean",
+    "Number",
+    "Symbol",
+    "Error",
+    "EvalError",
+    "RangeError",
+    "ReferenceError",
+    "SyntaxError",
+    "TypeError",
+    "URIError",
+  ].map((name) => [name, "every-lane"] as const),
+  ...[
+    "Math",
+    "JSON",
+    "Date",
+    "RegExp",
+    "parseInt",
+    "parseFloat",
+    "isNaN",
+    "isFinite",
+    "decodeURI",
+    "decodeURIComponent",
+    "encodeURI",
+    "encodeURIComponent",
+    "escape",
+    "unescape",
+  ].map((name) => [name, "standalone"] as const),
+]);
+
+/** The lanes a built-in global was measured on, or `undefined` for any other name (`ir/builtin-globals.ts`). */
+export function builtinGlobalLanes(name: string): "every-lane" | "standalone" | undefined {
+  return BUILTIN_GLOBAL_LANES.get(name);
+}
+
+/** Also consulted by the codegen `instanceof` arm (`ir-dynamic-instanceof.ts`): the names the realm read admits. */
+export function isBuiltinGlobalName(name: string): boolean {
+  return BUILTIN_GLOBAL_LANES.has(name);
+}
+
+/**
  * Every declaration of `node`'s symbol is a lib one AND nothing in its file
  * declares the name: a script's top-level `function Error() {}` is reported by
  * the checker as the lib declarations alone. (#7274) Also the native

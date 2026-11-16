@@ -17,63 +17,9 @@ import {
   nullComparisonFolds,
   nullValueAdmissible,
 } from "./analysis/operand-admissibility.js";
-import { isUnshadowedLibBinding } from "../shared/ambient-intrinsics.js";
+import { builtinGlobalLanes, isUnshadowedLibBinding } from "../shared/ambient-intrinsics.js";
 import { outermostParenthesized } from "../shared/binding-writes.js";
 import { isPristineIntrinsic } from "../shared/intrinsic-prototype-writes.js";
-
-/**
- * The built-in globals whose realm property is the value legacy's bare read
- * yields, measured with a legacy `return <Name>` against the module's read and
- * against `globalThis.<Name>`. `Function` takes the provider-owned
- * `%Function%` when the module reads it bare (`function-intrinsic-carrier.ts`),
- * on both sides alike.
- *   - `every-lane`: #7118's names, measured on standalone and the JS
- *     environment;
- *   - `standalone`: the rest of the ES5 namespaces and global functions
- *     (#7350, 2026-11-15), measured on standalone only, so they ask the lane's
- *     `native-builtin-globals` capability: the JS environment's output stays
- *     byte-identical.
- * The ES2015+ constructors (`Map`, `Promise`, `Proxy`, …) are not measured.
- */
-const BUILTIN_GLOBAL_LANES: ReadonlyMap<string, "every-lane" | "standalone"> = new Map([
-  ...[
-    "Object",
-    "Function",
-    "Array",
-    "String",
-    "Boolean",
-    "Number",
-    "Symbol",
-    "Error",
-    "EvalError",
-    "RangeError",
-    "ReferenceError",
-    "SyntaxError",
-    "TypeError",
-    "URIError",
-  ].map((name) => [name, "every-lane"] as const),
-  ...[
-    "Math",
-    "JSON",
-    "Date",
-    "RegExp",
-    "parseInt",
-    "parseFloat",
-    "isNaN",
-    "isFinite",
-    "decodeURI",
-    "decodeURIComponent",
-    "encodeURI",
-    "encodeURIComponent",
-    "escape",
-    "unescape",
-  ].map((name) => [name, "standalone"] as const),
-]);
-
-/** Also consulted by the codegen `instanceof` arm (`ir-dynamic-instanceof.ts`): the names the realm read admits. */
-export function isBuiltinGlobalName(name: string): boolean {
-  return BUILTIN_GLOBAL_LANES.has(name);
-}
 
 /** What the admission reads from the lane (the selection options and the from-ast resolver both supply it). */
 export interface BuiltinGlobalLane {
@@ -84,7 +30,7 @@ export interface BuiltinGlobalLane {
 
 /**
  * The admission. All of:
- *   - a built-in global's name the lane measured ({@link BUILTIN_GLOBAL_LANES}),
+ *   - a built-in global's name the lane measured (`builtinGlobalLanes`),
  *     bound to its lib declaration and declared nowhere in the file
  *     (`isUnshadowedLibBinding`);
  *   - the realm keeps its own value under the name (`isPristineIntrinsic`):
@@ -99,7 +45,7 @@ export interface BuiltinGlobalLane {
  */
 export function builtinGlobalValueAdmitted(node: ts.Identifier, lane: BuiltinGlobalLane): boolean {
   const native = lane.supportsBackendCapability?.("native-builtin-globals") === true;
-  const lanes = BUILTIN_GLOBAL_LANES.get(node.text);
+  const lanes = builtinGlobalLanes(node.text);
   if (lanes === undefined || (lanes === "standalone" && !native)) return false;
   const libOnly = (id: ts.Identifier) => lane.isLibOnlyBinding?.(id) === true;
   if (!isUnshadowedLibBinding(node, libOnly) || !isPristineIntrinsic(node)) return false;
