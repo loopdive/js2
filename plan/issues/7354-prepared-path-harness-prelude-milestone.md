@@ -676,6 +676,14 @@ against the lowered body (a disagreement is a refusal, never a conversion).
 - Gates: typecheck, loc, func, coercion-sites, oracle-ratchet, dead-exports, import-cycles, compiler-boundaries
   inventory.
 
+### Test pins updated by P
+
+- `tests/issue-7354-d1-dynamic-carrier.test.ts` (on the merge with D1 `368c41b7c4`): two pins encoded the propagation
+  rule P replaces. `function id(x) { return x; }` with `id(3) + 1` relied on a propagated number parameter; under P the
+  result is dynamic, so the test now reaches the number through ToNumber (`id(3) * 1 + 1`). "an inferred `any` result"
+  stays refused no more: `function f(v: any) { return v; }` returns the dynamic value, so it moved from the refusal
+  list to a run.
+
 ### Named gaps (refused, not built here)
 
 - **Unbracketed JSDoc `number`/`string`/`boolean` parameter or `@returns`.** from-ast (`resolveIrType`) treats such a

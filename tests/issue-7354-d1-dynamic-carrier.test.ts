@@ -127,10 +127,10 @@ describe("#7354 D1 — the dynamic value on the Prepared standalone path", () =>
   });
 
   const flow = (type: string, site: string) => `a dynamic value flows into ${type} without a conversion (${site})`;
-  // A checker `any` the IR types concretely (an untyped parameter with a propagated number type) is no dynamic
-  // value, so the flow rule does not apply to it.
-  it("leaves a checker `any` that the IR typed as a number on its numeric path", async () => {
-    expect(await run("function id(x) { return x; }\nexport function main(): number { return id(3) + 1; }")).toBe(4);
+  // (#7354 P) An untyped parameter is the dynamic value, never a propagated number, so the result of `id` is
+  // dynamic too and reaches a number only through an explicit ToNumber.
+  it("returns an untyped parameter as the dynamic value, which ToNumber turns back into a number", async () => {
+    expect(await run("function id(x) { return x; }\nexport function main(): number { return id(3) * 1 + 1; }")).toBe(4);
   });
 
   it.each([
@@ -213,8 +213,6 @@ describe("#7354 D1 — the dynamic value on the Prepared standalone path", () =>
   });
 
   it.each([
-    // Only an annotated `any` is a result contract; an inferred one is not dynamic (here: no value).
-    ["an inferred `any` result", "function f(v: any) { return v; }\n", "returned void used as expression"],
     [
       "an exported `any` contract (a host boundary)",
       "export function f(v: any): any { return v; }\n",
@@ -224,6 +222,13 @@ describe("#7354 D1 — the dynamic value on the Prepared standalone path", () =>
     expect(await refusal(source + "export function main(): number { return f(1) === 1 ? 1 : 0; }\n")).toContain(
       expected,
     );
+  });
+
+  // (#7354 P) An inferred `any` result that the body returns is the dynamic value too.
+  it("returns an inferred `any` result as the dynamic value", async () => {
+    expect(
+      await run("function f(v: any) { return v; }\nexport function main(): number { return f(1) === 1 ? 1 : 0; }"),
+    ).toBe(1);
   });
 
   it("keeps the dynamic carrier off the gc target", async () => {
