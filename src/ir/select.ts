@@ -182,6 +182,7 @@ import {
   bareCallCallee,
   carrierSink,
   functionValueUse,
+  memberStoreRoot,
   operatorReadsCarrier,
   type CarrierSinkHost,
 } from "./function-values.js";
@@ -947,7 +948,8 @@ export interface IrSelectionOptions extends IrAsyncSelectionOptions {
       | "native-dynamic-loose-equality"
       | "dynamic-method-call-wrapper"
       | "native-global-function-call"
-      | "native-object-statics",
+      | "native-object-statics"
+      | "native-function-values",
   ) => boolean;
   /**
    * #3787 exact global String-constructor identity. This is separate from the
@@ -6904,6 +6906,7 @@ function dynamicCallCarrier(expr: ts.CallExpression): "closure" | "parameter" | 
   if (callee === undefined || !currentDynamicRuntimeBuildable) return undefined;
   if (currentClosureDynamicParamNames.has(callee.text) || currentClosureFunctionObjectReadLocals.has(callee.text))
     return "closure";
+  if (widensDynamicCall(expr, currentSubjectIsModuleInit) && !functionValuesLane()) return undefined;
   if (
     currentDynamicParamNames.has(callee.text) &&
     !subjectHasAmbientThis() &&
@@ -6911,6 +6914,16 @@ function dynamicCallCarrier(expr: ts.CallExpression): "closure" | "parameter" | 
   )
     return "parameter";
   return isDynamicScriptVarCall(expr) ? "script-var" : undefined;
+}
+
+/** (#7349) Beyond #7305's and #7287's statement calls from a function: the lane must carry function values. */
+function widensDynamicCall(expr: ts.CallExpression, fromModuleInit: boolean): boolean {
+  return fromModuleInit || !ts.isExpressionStatement(outermostParenthesized(expr).parent);
+}
+
+/** (#7349) The lane that carries S1a's function values (`native-function-values`). */
+function functionValuesLane(): boolean {
+  return currentSelectionOptions?.supportsBackendCapability?.("native-function-values") === true;
 }
 
 /** (#7287) A call through a script `var`'s dynamic module home, every argument crossing into the carrier. */
@@ -9762,17 +9775,15 @@ function carrierSinks(scope: ReadonlySet<string>): CarrierSinkHost {
   return {
     argumentTakesCarrier: (call, index) => argumentTakesCarrier(call, index, scope),
     constructTakesCarrier: (expr) => dynamicConstructCallee(expr) !== null,
-    storeTakesCarrier: (store) => {
-      const receiver = store.expression;
-      const root = ts.isPropertyAccessExpression(receiver) ? receiver.expression : receiver;
-      return ts.isIdentifier(root) && isFunctionObjectReceiver(root, currentSelectionOptions?.functionObjectValues);
-    },
+    isFunctionObject: (root) => isFunctionObjectReceiver(root, currentSelectionOptions?.functionObjectValues),
   };
 }
 
 /** (#7349) How `id` reads a top-level function the planner boxes, if it does. */
 function functionDeclarationUse(id: ts.Identifier): "receiver" | "value" | undefined {
   const use = functionValueUse(id);
+  // Every lane stores a function on a function object (#7106); a value elsewhere needs the function-values lane.
+  if (use === "value" && !functionValuesLane() && memberStoreRoot(id) === undefined) return undefined;
   return use && currentSelectionOptions?.functionObjectValues?.resolveTopLevelFunctionValue(id) ? use : undefined;
 }
 
@@ -14452,7 +14463,10 @@ export function buildLocalCallGraph(
             // decide the lane.
             for (const argument of node.arguments) visit(argument);
             return;
-          } else if (isDynamicScriptVarCall(node) || ownParameterCall(node, fn)) {
+          } else if (
+            (isDynamicScriptVarCall(node) || ownParameterCall(node, fn)) &&
+            (!widensDynamicCall(node, callerName === MODULE_INIT_UNIT_NAME) || functionValuesLane())
+          ) {
             // (#7287, #7305, #7349) A call through a script `var`'s dynamic home or the caller's own parameter:
             // from-ast's dynamic value call, not an edge. Phase-1 judges the callee and where the result flows.
             for (const argument of node.arguments) visit(argument);

@@ -48,8 +48,8 @@ export interface CarrierSinkHost {
   argumentTakesCarrier(call: ts.CallExpression, index: number): boolean;
   /** Does `expr` construct through the dynamic carrier, taking every argument as one? */
   constructTakesCarrier(expr: ts.NewExpression): boolean;
-  /** Is the member write `store = value` a dynamic member write on a function object? */
-  storeTakesCarrier(store: ts.PropertyAccessExpression | ts.ElementAccessExpression): boolean;
+  /** Is `root` a function object, whose member write is a dynamic member write? */
+  isFunctionObject(root: ts.Identifier): boolean;
 }
 
 /** An operator that reads its operand as the carrier: a typed binary operator, `typeof` or `!`. */
@@ -73,14 +73,35 @@ export function carrierSink(value: ts.Expression, host: CarrierSinkHost): boolea
   if (ts.isCallExpression(parent) && parent.expression !== node)
     return host.argumentTakesCarrier(parent, parent.arguments.indexOf(node));
   if (ts.isNewExpression(parent) && parent.expression !== node) return host.constructTakesCarrier(parent);
+  const root = memberStoreRoot(node);
+  return root !== undefined && host.isFunctionObject(root);
+}
+
+/**
+ * The receiver `F` when `value` is stored by `F.x = value`, `F["x"] = value` or the chained `F.p.x = value`
+ * (`Test262Error.prototype.toString = …`); syntax only, each asker resolves `F`. (#7106 census arm 3) Storing a top-level
+ * function on a function object is the one whole-value use of a function every lane carries.
+ */
+export function memberStoreRoot(value: ts.Expression): ts.Identifier | undefined {
+  const node = outermostParenthesized(value);
+  const assignment = node.parent;
   if (
-    ts.isBinaryExpression(parent) &&
-    parent.right === node &&
-    parent.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
-    (ts.isPropertyAccessExpression(parent.left) || ts.isElementAccessExpression(parent.left))
+    !ts.isBinaryExpression(assignment) ||
+    assignment.right !== node ||
+    assignment.operatorToken.kind !== ts.SyntaxKind.EqualsToken
   )
-    return host.storeTakesCarrier(parent.left);
-  return false;
+    return undefined;
+  const store = assignment.left;
+  if (!(ts.isPropertyAccessExpression(store) || ts.isElementAccessExpression(store)) || store.questionDotToken)
+    return undefined;
+  const receiver = store.expression;
+  if (ts.isIdentifier(receiver)) return receiver;
+  return ts.isPropertyAccessExpression(store) &&
+    ts.isPropertyAccessExpression(receiver) &&
+    !receiver.questionDotToken &&
+    ts.isIdentifier(receiver.expression)
+    ? receiver.expression
+    : undefined;
 }
 
 /**

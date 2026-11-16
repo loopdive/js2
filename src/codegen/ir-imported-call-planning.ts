@@ -26,7 +26,8 @@ import {
   isFunctionObjectReceiverUse,
   type IrSelection,
 } from "../ir/select.js";
-import { functionValueUse } from "../ir/function-values.js";
+import { functionValueUse, memberStoreRoot } from "../ir/function-values.js";
+import { irBackendCapabilityQuery } from "../ir/backend/legality.js";
 import type { ValType } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
 import type { IrClassShapeLookup } from "./ir-class-shapes.js";
@@ -841,6 +842,8 @@ export function planIrImportedCalls(options: PlanIrImportedCallsOptions): IrImpo
           >(),
         };
   if (functionObjectValues) {
+    // (#7349) A whole function value is planned only on the lane that carries it; receivers on every lane.
+    const valuesLane = irBackendCapabilityQuery(ctx)("native-function-values");
     const identity = options.identityPlan;
     const source = identity.identityContext.sourceFileBySourceId;
     const addOwner = (ownerName: string, ownerUnitId: IrUnitId, root: ts.Node, selfGuardedOnly = false): void => {
@@ -849,7 +852,8 @@ export function planIrImportedCalls(options: PlanIrImportedCallsOptions): IrImpo
           const access = node.parent;
           // (#7349) A receiver of the function object's own expandos, or a whole value read; the selector
           // admitted each where the carrier is consumed.
-          const use = selfGuardedOnly ? undefined : functionValueUse(node);
+          const read = selfGuardedOnly ? undefined : functionValueUse(node);
+          const use = read === "value" && !valuesLane && memberStoreRoot(node) === undefined ? undefined : read;
           // (#7106 S3c) A self-guarded constructor used as a value: the `new F(…)`
           // callee (`dyn.construct`) or the `x instanceof F` operand
           // (`dyn.instanceof_fn`, which reads the plan's exact unit target).
