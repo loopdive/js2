@@ -15,31 +15,34 @@ import {
   type Test262CompileOptions,
 } from "../src/test262/test262-prepared-entry.js";
 import type { RuntimeProviderDefinition } from "../src/ir/runtime/contracts/manifest.js";
+import type { PhysicalNativeStringSetup } from "../src/ir/program-physical-plan.js";
+import type { NativeSetupSlots } from "../src/compiler/prepared-provider-census.js";
+import { RUNTIME_PROVIDERS } from "../src/ir/runtime/manifest.js";
 
 /**
- * The census runs on the real completed emission; each alteration rewrites one population it is given, so each
- * check can be shown to refuse on its own. (The emission itself cannot be altered here: its own reservation
- * census refuses any changed function, global or type before the presentation looks.)
+ * The census runs on the real completed emission; each alteration rewrites one population it is given (the
+ * providers, the receipts, the accepted native setup plan, or the slots the census answers), so each check can be
+ * shown to refuse on its own. (The emission itself cannot be altered here: its own reservation census refuses any
+ * changed function, global or type before the presentation looks.)
  */
-type Slots = { readonly types: ReadonlySet<number>; readonly globals: ReadonlySet<number> };
 type Receipt = { readonly key: string; readonly index: number };
 const census = vi.hoisted(() => ({
   providers: undefined as
     | undefined
     | ((providers: readonly RuntimeProviderDefinition[]) => readonly RuntimeProviderDefinition[]),
-  slots: undefined as undefined | ((slots: Slots) => Slots),
+  slots: undefined as undefined | ((slots: NativeSetupSlots) => NativeSetupSlots),
   receipts: undefined as undefined | ((receipts: readonly Receipt[]) => readonly Receipt[]),
+  setup: undefined as undefined | ((setup: PhysicalNativeStringSetup) => PhysicalNativeStringSetup | undefined),
+  target: undefined as undefined | "gc" | "wasi",
 }));
 vi.mock("../src/compiler/prepared-provider-census.js", async (original) => {
   const real = await original<typeof import("../src/compiler/prepared-provider-census.js")>();
   return {
     ...real,
-    providerCensusMatches: (
-      ...[program, emission, backend, providers]: Parameters<typeof real.providerCensusMatches>
-    ) => real.providerCensusMatches(program, emission, backend, census.providers?.(providers) ?? providers),
-    nativeSetupSlots: (...args: Parameters<typeof real.nativeSetupSlots>) => {
-      const slots = real.nativeSetupSlots(...args);
-      return slots && (census.slots?.(slots) ?? slots);
+    runtimeCensus: (...[program, emission, backend, providers]: Parameters<typeof real.runtimeCensus>) => {
+      const target = census.target ? { ...backend, target: census.target } : backend;
+      const result = real.runtimeCensus(program, emission, target, census.providers?.(providers) ?? providers);
+      return result?.native && census.slots ? { native: census.slots(result.native) } : result;
     },
   };
 });
@@ -50,6 +53,12 @@ vi.mock("../src/ir/program-consumer.js", async (original) => {
     emittedSupportFunctionReceipts: (...args: Parameters<typeof real.emittedSupportFunctionReceipts>) => {
       const receipts = real.emittedSupportFunctionReceipts(...args);
       return census.receipts?.(receipts) ?? receipts;
+    },
+    emittedPhysicalSetupPlan: (...args: Parameters<typeof real.emittedPhysicalSetupPlan>) => {
+      const plan = real.emittedPhysicalSetupPlan(...args);
+      if (!plan.nativeStrings || !census.setup) return plan;
+      const setup = census.setup(plan.nativeStrings);
+      return setup === plan.nativeStrings ? plan : { ...plan, nativeStrings: setup };
     },
   };
 });
@@ -77,7 +86,7 @@ function forbidDirectGenerators(): void {
 }
 afterEach(() => {
   vi.restoreAllMocks();
-  census.providers = census.slots = census.receipts = undefined;
+  census.providers = census.slots = census.receipts = census.setup = census.target = undefined;
 });
 
 const messages = (result: { errors: readonly { message: string }[] }) => result.errors.map((error) => error.message);
@@ -168,6 +177,7 @@ describe("#7354 R — the census refuses what joins nothing", () => {
     census.providers = (providers) => providers;
     census.slots = (slots) => slots;
     census.receipts = (receipts) => receipts;
+    census.setup = (setup) => setup;
     await present(program, "test.js");
   });
 
@@ -183,6 +193,13 @@ describe("#7354 R — the census refuses what joins nothing", () => {
         rows.map((row) => (native(row) ? { ...row, id: "native.js.number.box.renamed" } : row)),
     ],
     [
+      "adds another canonical provider of the same runtime symbol",
+      (rows: readonly RuntimeProviderDefinition[]) => [
+        ...rows,
+        RUNTIME_PROVIDERS.find((row) => row.id === "native.js.generator.number-box")!,
+      ],
+    ],
+    [
       "alters the native provider's canonical definition (same id)",
       (rows: readonly RuntimeProviderDefinition[]) =>
         rows.map((row) => (native(row) ? { ...row, supportedTargets: ["standalone", "wasi"] as const } : row)),
@@ -192,19 +209,154 @@ describe("#7354 R — the census refuses what joins nothing", () => {
     expect(await refusal()).toContain(RUNTIME_DEMAND);
   });
 
-  it("refuses a support receipt that joins no provider and no native-setup function", async () => {
-    census.receipts = (receipts) => [...receipts, { key: "foreign-support", index: receipts.length + 100 }];
+  it.each([
+    ["adds a receipt that joins nothing", (rows: readonly Receipt[]) => [...rows, { key: "foreign", index: 100 }]],
+    ["drops a receipt", (rows: readonly Receipt[]) => rows.slice(1)],
+    [
+      "moves a receipt to another index",
+      (rows: readonly Receipt[]) => rows.map((row, i) => (i ? row : { ...row, index: 1000 })),
+    ],
+    [
+      "renames a receipt at its index",
+      (rows: readonly Receipt[]) => rows.map((row, i) => (i ? row : { ...row, key: "foreign" })),
+    ],
+    [
+      "duplicates one receipt in place of another",
+      (rows: readonly Receipt[]) => rows.map((row, i) => (i === 1 ? rows[0]! : row)),
+    ],
+  ])("refuses a support population that %s", async (_, alter) => {
+    census.receipts = alter;
     expect(await refusal()).toContain(RUNTIME_DEMAND);
   });
 
-  it("refuses a support receipt joined under its key at another index", async () => {
-    census.receipts = (receipts) => receipts.map((row, index) => (index === 0 ? { ...row, index: 1000 } : row));
+  type Declaration = PhysicalNativeStringSetup["resources"]["declarations"][number];
+  const declarations = (alter: (row: Declaration) => Declaration) => (setup: PhysicalNativeStringSetup) =>
+    ({ ...setup, resources: { ...setup.resources, declarations: setup.resources.declarations.map(alter) } }) as never;
+  const named = (name: string, alter: (row: Declaration) => Declaration) =>
+    declarations((row) => ("name" in row && row.name === name ? alter(row) : row));
+  const f64 = { kind: "f64" as const };
+  it.each([
+    [
+      "a native function's declared params",
+      named("__str_to_number", (row) =>
+        row.space === "function" ? { ...row, signature: { ...row.signature, params: [f64] } } : row,
+      ),
+    ],
+    [
+      "a native function's declared results",
+      named("__box_number", (row) =>
+        row.space === "function" ? { ...row, signature: { ...row.signature, results: [f64] } } : row,
+      ),
+    ],
+    [
+      "a native global's declared type",
+      named("__pow10_f64", (row) => (row.space === "global" ? { ...row, valueType: f64 } : row)),
+    ],
+    [
+      "a native global's declared mutability",
+      named("__pow10_f64", (row) => (row.space === "global" ? { ...row, mutable: !row.mutable } : row)),
+    ],
+    [
+      "the runtime-bound function's declared name",
+      named("__box_number", (row) => ({ ...row, name: "__box_number_x" }) as never),
+    ],
+    [
+      "a declaration's space (a type declared as a global)",
+      declarations((row) =>
+        row.space === "type" && row.key.endsWith(":data")
+          ? ({ ...row, space: "global", name: "x", valueType: f64, mutable: false } as never)
+          : row,
+      ),
+    ],
+  ])("refuses a native setup plan that alters %s", async (_, alter) => {
+    census.setup = alter;
     expect(await refusal()).toContain(RUNTIME_DEMAND);
   });
 
   it.each([
-    ["global", (slots: Slots) => ({ ...slots, globals: new Set<number>() })],
-    ["type", (slots: Slots) => ({ ...slots, types: new Set<number>() })],
+    [
+      "publishes an extra binding",
+      (setup: PhysicalNativeStringSetup) => ({
+        ...setup,
+        bindings: [...setup.bindings, { ...setup.bindings[0]!, resourceKey: "foreign" }],
+      }),
+    ],
+    [
+      "duplicates a binding",
+      (setup: PhysicalNativeStringSetup) => ({ ...setup, bindings: [...setup.bindings, setup.bindings[0]!] }),
+    ],
+    [
+      // The Boolean box type is named by no signature or global, so only the slot-space join sees the swap.
+      "resolves a type declaration's binding to a global slot",
+      (setup: PhysicalNativeStringSetup) => {
+        const global = setup.bindings.find((row) => row.reference.kind === "global")!;
+        return {
+          ...setup,
+          bindings: setup.bindings.map((row) =>
+            row.resourceKey.endsWith(":boolean") ? { ...row, entry: global.entry } : row,
+          ),
+        };
+      },
+    ],
+    ["drops a binding", (setup: PhysicalNativeStringSetup) => ({ ...setup, bindings: setup.bindings.slice(1) })],
+    [
+      "duplicates a declaration",
+      (setup: PhysicalNativeStringSetup) =>
+        ({
+          ...setup,
+          resources: {
+            ...setup.resources,
+            declarations: [...setup.resources.declarations, setup.resources.declarations[0]!],
+          },
+        }) as never,
+    ],
+  ])("refuses a native setup plan that %s", async (_, alter) => {
+    census.setup = alter;
+    expect(await refusal()).toContain(RUNTIME_DEMAND);
+  });
+
+  it.each(["gc", "wasi"] as const)("refuses a native setup census run for the %s target", async (target) => {
+    census.target = target;
+    expect(await refusal()).toContain(RUNTIME_DEMAND);
+  });
+
+  it("refuses a native provider with neither a native setup nor a support function", async () => {
+    census.setup = () => undefined;
+    census.receipts = () => [];
+    expect(await refusal()).toContain(RUNTIME_DEMAND);
+  });
+
+  // A catalogue provider that is not dependency/capability-free, given a setup whose runtime-bound function carries
+  // its symbol: only the canonical callable's own dependency/capability check is left to refuse it.
+  it.each(["native.async.delay", "host.js.string.char_code_at"])(
+    "refuses the canonical %s even when the setup binds its symbol",
+    async (id) => {
+      const provider = RUNTIME_PROVIDERS.find((row) => row.id === id)!;
+      if (provider.implementation.kind !== "runtime-callable") throw new Error("expected a runtime callable");
+      const symbol = provider.implementation.symbol;
+      census.providers = (rows) => rows.map((row) => (native(row) ? provider : row));
+      census.setup = (setup) =>
+        ({
+          ...setup,
+          resources: {
+            ...setup.resources,
+            declarations: setup.resources.declarations.map((row) =>
+              "name" in row && row.name === "__box_number" ? { ...row, name: symbol } : row,
+            ),
+          },
+          bindings: setup.bindings.map((row) =>
+            row.reference.kind === "func" && row.reference.binding.kind === "runtime"
+              ? { ...row, reference: { ...row.reference, binding: { kind: "runtime", symbol } } }
+              : row,
+          ),
+        }) as never;
+      expect(await refusal()).toContain(RUNTIME_DEMAND);
+    },
+  );
+
+  it.each([
+    ["global", (slots: NativeSetupSlots) => ({ ...slots, globals: new Set<number>() })],
+    ["type", (slots: NativeSetupSlots) => ({ ...slots, types: new Set<number>() })],
   ])("refuses a reference %s that is no native-setup slot", async (_, alter) => {
     census.slots = alter;
     expect(await refusal()).toContain(WIDENING_DEMAND);

@@ -209,26 +209,29 @@ Status 2026-11-16. Branch `claude/7354-r`, built on origin/main `46e4cf4030`, fi
 - **Policy.** `preparedPresentationPolicy` lives in `src/compiler/prepared-provider-census.ts`. On wasmgc
   standalone, a Prepared presentation now selects the native number boundary (`__box_number` /
   `__unbox_number`). Every other target, and every other runtime family, keeps its default ("unsupported").
-- **Census (review round 1: fail-closed in both directions).** `checkResourceDemand` used to refuse every
-  runtime provider. `providerCensusMatches` now joins the selected providers and the completed support
-  population one to one; anything that joins nothing refuses.
-  - **One join shape for every support function** (`supportCallableJoins`): exactly one receipt under the row's
-    key at the slot's index, and the slot carries the row's signature. Remainders and natives both use it; a
-    provider is first checked against its canonical catalogue entry (`preparedIrDataMismatch`, dependency- and
-    capability-free runtime callable). Provider ids must be distinct.
-  - **The native setup is authenticated as a whole, from its own plan, not a list of names.** Every declaration
-    of `nativeStrings.resources` joins exactly one published binding of its space, resolved to a slot of that
-    space, and every binding joins a declaration. Function declarations become support rows with their declared
-    signature (type keys resolved to the completed type slots); global slots must carry their declared type.
-  - **Runtime callables and native providers are a bijection:** the setup's runtime-bound functions and the
-    selected native providers' symbols are the same set, with no duplicates. Every other native function (string
-    scanner, flatten, unbox, typeof) is a dependency the setup plan declares.
-  - **Receipts:** count = remainders + native functions, distinct indices, distinct keys.
-  - **Reference values (`nativeSetupSlots`, `referenceDemand`).** The widening refusal is lifted only when a native
-    setup exists (standalone). Then every reference global must be a native global slot, every struct/array type
-    carrying a reference a native type slot, and every non-defaultable reference in a function type, local or block
-    type must point at a native type slot.
-  - **Without a native setup** the numeric contract is unchanged: every support function is a remainder.
+- **Census (review rounds 1–2: fail-closed in both directions, every check tested).** `checkResourceDemand` used
+  to refuse every runtime provider. `runtimeCensus` now joins the selected providers and the completed support
+  population one to one, and answers the native setup's slots (or refuses).
+  - **One join of the support population** (`supportPopulationJoins`): every row's completed slot carries the row's
+    signature, and the rows' (slot index, key) pairs equal the receipts' as a multiset — no receipt joins nothing,
+    none joins twice, no row lacks its receipt. Remainders and natives are rows of the same shape. A provider is
+    first checked against its canonical catalogue entry (`preparedIrDataMismatch`; dependency- and
+    capability-free runtime callable).
+  - **The native setup is authenticated from its own plan, not a list of names.** Declarations and published
+    bindings join one to one by key; each binding resolves to a completed slot of its declaration's space.
+    Function declarations become support rows with their declared signature (type keys resolved to the native
+    type slots); global slots carry their declared type and mutability.
+  - **Runtime callables and native providers:** each runtime-bound function is named by its runtime symbol, and
+    those symbols equal the selected native providers' symbols (sorted, so duplicates on either side refuse).
+    Every other native function is a dependency the setup plan declares.
+  - **Reference values (`referenceDemand`, one walk).** With an authenticated native setup, its type and global
+    slots are exempt and every other reference must name a native type slot (struct/array types and globals
+    outside the setup may carry none); without one, any non-defaultable reference refuses. A native setup always
+    asks for the detached finalization.
+  - **Removed as implied (round 2):** distinct provider ids, distinct receipt indices, distinct row keys and the
+    binding count (all implied by the multiset join and the key bijection), the catalogue-uniqueness test (ids
+    are unique in the catalogue), the `""` runtime sentinel, and the "setup but no native rows" clause (its
+    function receipts then join no row).
   - `physicalCallableMatches` moved to `src/compiler/prepared-physical-signature.ts` (shared with the async checks);
     the detached-finalization map is now `detachedPresentations`.
   - `preparedPresentationPolicy` is the single place the presentation's runtime policy is chosen; D1 adds its
@@ -258,12 +261,10 @@ Status 2026-11-16. Branch `claude/7354-r`, built on origin/main `46e4cf4030`, fi
   - A numeric-only program keeps the exact contract.
 - **Mutation check.** With the detached-finalization switch removed, every acceptance test fails with
   "altered type descriptor … flat".
-- **Census refusal tests** (`vi.mock` wrappers over the real census on `try { throw 5; } catch (e) {}`): dropping,
-  duplicating, renaming or altering the native provider refuses (runtime-demand); an extra receipt or one at another
-  index refuses; an empty global or type slot set refuses (widening-demand). Mutation-checked: removing the runtime
-  bijection, canonical equality, catalogue match (with equality), receipt count (with distinct indices), receipt
-  index, duplicate-id (with bijection) or the global-slot clause each fails its test. Altering the emission itself
-  is refused earlier by the emission's own reservation census, so these tests alter what the census is given.
+- **Census refusal tests** (`vi.mock` wrappers over the real census on `try { throw 5; } catch (e) {}`; each
+  alters one input: providers, receipts, the accepted native setup plan, the census target, or the answered slots).
+  Mutation sweep: each of the 17 census checks deleted alone fails at least one test. The emission itself cannot
+  be altered: its own reservation census refuses a changed function, global or type first.
 - **Ordinary-pipeline bytes.** I compared 330 sample files against base sources swapped into the same tree.
   - 301 compiled, the rest were skipped as negative, raw or module tests.
   - All 301 are byte-identical on both standalone and the JS environment.

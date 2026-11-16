@@ -44,36 +44,45 @@ export function preparedPresentationPolicy(
     : { backend, target };
 }
 
-type SupportReceipt = ReturnType<typeof emittedSupportFunctionReceipts>[number];
-/** A completed support function: one receipt at its slot under its key, and the slot carries its signature. */
+/** A completed support function: the row's key and its slot's index name exactly one receipt, and the slot
+ * carries the row's signature. */
 interface SupportCallableRow {
   readonly bindingId: IrBindingId;
   readonly key: string;
   readonly params: readonly ValType[];
   readonly results: readonly ValType[];
 }
-/** The shared join of a selected provider and of every support function: one shape for remainders and natives. */
-function supportCallableJoins(
-  emission: EmittedPreparedIrProgram,
-  receipts: readonly SupportReceipt[],
-  row: SupportCallableRow,
-): boolean {
-  const slot = completedFunctionSlot(emission, row.bindingId);
-  return Boolean(
-    slot &&
-    receipts.filter((receipt) => receipt.key === row.key && receipt.index === slot.index).length === 1 &&
-    preparedIrDataMismatch(row.params, slot.params) === undefined &&
-    preparedIrDataMismatch(row.results, slot.results) === undefined,
-  );
+/**
+ * The one join of the support population, for remainders and natives alike: every row's completed slot carries
+ * its signature, and the rows' (slot index, key) pairs are exactly the receipts' — no receipt joins nothing, none
+ * joins twice, and no row lacks its receipt.
+ */
+function supportPopulationJoins(emission: EmittedPreparedIrProgram, rows: readonly SupportCallableRow[]): boolean {
+  const joined: [number, string][] = [];
+  for (const row of rows) {
+    const slot = completedFunctionSlot(emission, row.bindingId);
+    if (
+      !slot ||
+      preparedIrDataMismatch(row.params, slot.params) !== undefined ||
+      preparedIrDataMismatch(row.results, slot.results) !== undefined
+    )
+      return false;
+    joined.push([slot.index, row.key]);
+  }
+  const receipts = emittedSupportFunctionReceipts(emission).map((row): [number, string] => [row.index, row.key]);
+  const order = (left: [number, string], right: [number, string]) =>
+    left[0] - right[0] || left[1].localeCompare(right[1]);
+  return preparedIrDataMismatch(joined.sort(order), receipts.sort(order)) === undefined;
 }
-/** The provider exactly as its canonical catalogue defines it: a dependency-free runtime callable. */
+/** The provider exactly as its canonical catalogue (ids unique) defines it: a dependency-free runtime callable. */
 function canonicalCallable(
   catalogue: readonly RuntimeProviderDefinition[],
   provider: RuntimeProviderDefinition,
 ): string | undefined {
-  const canonical = catalogue.filter((row) => row.id === provider.id);
-  return canonical.length === 1 &&
-    preparedIrDataMismatch(canonical[0], provider) === undefined &&
+  return preparedIrDataMismatch(
+    catalogue.find((row) => row.id === provider.id),
+    provider,
+  ) === undefined &&
     provider.implementation.kind === "runtime-callable" &&
     !provider.dependencies.length &&
     !provider.hostCapabilities.length
@@ -102,153 +111,131 @@ function remainderRows(
       entry.plan.structuralReferenceKey === resource.referenceKey &&
       preparedIrDataMismatch(entry.contract.params, declaration.params) === undefined &&
       preparedIrDataMismatch(entry.contract.results, declaration.results) === undefined
-      ? { bindingId: resource.bindingId, key: resource.bindingId, params: [F64, F64], results: [F64] }
+      ? {
+          bindingId: resource.bindingId,
+          key: resource.bindingId,
+          params: [F64, F64],
+          results: [F64],
+        }
       : undefined;
   });
   return rows.every((row) => row !== undefined) ? rows : undefined;
 }
 
-/** A native-setup declaration and the binding the setup published for it. */
+/** A native-setup declaration, the binding the setup published for it, and the completed slot of its space. */
 interface NativeSlot {
   readonly declaration: NativeStringValueDeclaration;
   readonly binding: NativeStringValueAbiBinding;
+  readonly index: number;
 }
-const REFERENCE_KIND = { function: "func", type: "type", global: "global" } as const;
+/** The completed type and global slots of an authenticated native setup: the reference values it owns. */
+export interface NativeSetupSlots {
+  readonly types: ReadonlySet<number>;
+  readonly globals: ReadonlySet<number>;
+}
 /**
- * Every declaration of the accepted native setup plan joins exactly one published binding of its space, resolved
- * by the completed emission to a slot of that space, and every binding joins a declaration.
+ * Declarations and published bindings of the accepted native setup plan join one to one by key, and the completed
+ * emission resolves each binding to a slot of its declaration's space.
  */
 function nativeSlots(emission: EmittedPreparedIrProgram, setup: PhysicalNativeStringSetup): NativeSlot[] | undefined {
   const { declarations } = setup.resources;
-  if (setup.bindings.length !== declarations.length) return undefined;
+  if (!setup.bindings.every((binding) => declarations.filter((row) => row.key === binding.resourceKey).length === 1))
+    return undefined;
   const slots: NativeSlot[] = [];
   for (const declaration of declarations) {
     const bindings = setup.bindings.filter((row) => row.resourceKey === declaration.key);
-    const binding = bindings[0];
-    if (
-      bindings.length !== 1 ||
-      binding!.reference.kind !== REFERENCE_KIND[declaration.space] ||
-      emittedProgramBindingIndex(emission, binding!.entry.id)?.space !== declaration.space
-    )
-      return undefined;
-    slots.push({ declaration, binding: binding! });
+    const slot = bindings.length === 1 ? emittedProgramBindingIndex(emission, bindings[0]!.entry.id) : undefined;
+    if (slot?.space !== declaration.space) return undefined;
+    slots.push({ declaration, binding: bindings[0]!, index: slot.index });
   }
   return slots;
 }
-/** A declared value type with its resource type key resolved to the completed type slot. */
-function completedValType(
-  emission: EmittedPreparedIrProgram,
-  slots: readonly NativeSlot[],
-  value: NativeDeclaredValType,
-): ValType | undefined {
+/** A declared value type, its resource type key resolved to the completed native type slot. */
+function completedValType(slots: readonly NativeSlot[], value: NativeDeclaredValType): ValType | undefined {
   if (!("typeKey" in value)) return value;
   const type = slots.find((row) => row.declaration.space === "type" && row.declaration.key === value.typeKey);
-  const slot = type && emittedProgramBindingIndex(emission, type.binding.entry.id);
-  return slot?.space === "type" ? { kind: value.kind, typeIdx: slot.index } : undefined;
+  return type && { kind: value.kind, typeIdx: type.index };
 }
 function completedValTypes(
-  emission: EmittedPreparedIrProgram,
   slots: readonly NativeSlot[],
   values: readonly NativeDeclaredValType[],
 ): readonly ValType[] | undefined {
-  const result = values.map((value) => completedValType(emission, slots, value));
+  const result = values.map((value) => completedValType(slots, value));
   return result.every((value) => value !== undefined) ? result : undefined;
 }
-/** A native function declaration as a support row; a global declaration's slot carries its declared type. */
-function nativeSupportRow(emission: EmittedPreparedIrProgram, slots: readonly NativeSlot[], slot: NativeSlot) {
-  const { declaration, binding } = slot;
-  if (declaration.space !== "function") return undefined;
-  const params = completedValTypes(emission, slots, declaration.signature.params);
-  const results = completedValTypes(emission, slots, declaration.signature.results);
-  return params && results ? { bindingId: binding.entry.id, key: declaration.key, params, results } : undefined;
-}
+/** A native global slot carries its declared type and mutability. */
 function nativeGlobalMatches(emission: EmittedPreparedIrProgram, slots: readonly NativeSlot[], slot: NativeSlot) {
-  const { declaration, binding } = slot;
+  const { declaration, index } = slot;
   if (declaration.space !== "global") return true;
-  const index = emittedProgramBindingIndex(emission, binding.entry.id)!.index;
-  const global = emission.module.globals[index];
-  const type = completedValType(emission, slots, declaration.valueType);
-  return Boolean(
-    global && type && global.mutable === declaration.mutable && preparedIrDataMismatch(type, global.type) === undefined,
-  );
+  const global = emission.module.globals[index]!;
+  const type = completedValType(slots, declaration.valueType);
+  return global.mutable === declaration.mutable && preparedIrDataMismatch(type, global.type) === undefined;
 }
 /**
- * The native setup's runtime callables and the selected native providers join one to one; every other native
- * function is a dependency the setup plan itself declares. Answers the setup's support rows.
+ * The native setup's support rows: every function it declares, with its declared signature. The runtime-bound ones
+ * (named by their runtime symbol) are exactly the selected native providers' symbols; every other one is a
+ * dependency the setup plan itself declares.
  */
 function nativeRows(
   emission: EmittedPreparedIrProgram,
   setup: PhysicalNativeStringSetup,
   providers: readonly RuntimeProviderDefinition[],
-): readonly SupportCallableRow[] | undefined {
+):
+  | {
+      readonly rows: readonly SupportCallableRow[];
+      readonly slots: NativeSetupSlots;
+    }
+  | undefined {
   const slots = nativeSlots(emission, setup);
-  if (!slots || !slots.every((slot) => nativeGlobalMatches(emission, slots, slot))) return undefined;
-  const runtime = slots.flatMap(({ declaration, binding }) =>
-    binding.reference.kind === "func" && binding.reference.binding.kind === "runtime"
-      ? [
-          declaration.space === "function" && declaration.name === binding.reference.binding.symbol
-            ? declaration.name
-            : "",
-        ]
-      : [],
-  );
-  const symbols = providers.map((provider) => canonicalCallable(RUNTIME_PROVIDERS, provider) ?? "");
-  if (
-    new Set(runtime).size !== runtime.length ||
-    preparedIrDataMismatch([...runtime].sort(), [...symbols].sort()) !== undefined ||
-    runtime.includes("")
-  )
-    return undefined;
-  const rows = slots
-    .filter((slot) => slot.declaration.space === "function")
-    .map((slot) => nativeSupportRow(emission, slots, slot));
-  return rows.every((row) => row !== undefined) ? rows : undefined;
+  if (!slots?.every((slot) => nativeGlobalMatches(emission, slots, slot))) return undefined;
+  const runtime: string[] = [];
+  const rows: SupportCallableRow[] = [];
+  for (const { declaration, binding } of slots) {
+    if (declaration.space !== "function") continue;
+    const reference = binding.reference;
+    if (reference.kind === "func" && reference.binding.kind === "runtime") {
+      if (declaration.name !== reference.binding.symbol) return undefined;
+      runtime.push(reference.binding.symbol);
+    }
+    const params = completedValTypes(slots, declaration.signature.params);
+    const results = completedValTypes(slots, declaration.signature.results);
+    if (!params || !results) return undefined;
+    rows.push({
+      bindingId: binding.entry.id,
+      key: declaration.key,
+      params,
+      results,
+    });
+  }
+  const symbols = providers.map((provider) => canonicalCallable(RUNTIME_PROVIDERS, provider));
+  if (preparedIrDataMismatch(runtime.sort(), [...symbols].sort()) !== undefined) return undefined;
+  const indices = (space: "type" | "global") =>
+    new Set(slots.filter((slot) => slot.declaration.space === space).map((slot) => slot.index));
+  return {
+    rows,
+    slots: { types: indices("type"), globals: indices("global") },
+  };
 }
 /**
- * The selected providers and the completed support population join one to one: each remainder its completed
- * resource, each native provider a runtime callable of the native setup (standalone only), and every support
- * receipt exactly one of those rows or a function the native setup plan declares. Without a native setup the
- * numeric contract stays exact: every support function is a remainder.
+ * The runtime census of a numeric presentation. The selected providers and the completed support population join
+ * one to one: each remainder its completed resource, each native provider a runtime callable of the native setup
+ * (standalone only), and every support receipt exactly one of those rows or a function the native setup plan
+ * declares. Answers the native setup's slots when there is one, an empty census when there is none (then every
+ * support function is a remainder), and undefined when anything joins nothing.
  */
-export function providerCensusMatches(
+export function runtimeCensus(
   program: PreparedIrProgram,
   emission: EmittedPreparedIrProgram,
   backend: PreparedIrBackendOptions,
   providers: readonly RuntimeProviderDefinition[],
-): boolean {
-  if (new Set(providers.map((row) => row.id)).size !== providers.length) return false;
+): { readonly native?: NativeSetupSlots } | undefined {
   const isRemainder = (row: RuntimeProviderDefinition) =>
     NUMBER_REMAINDER_RUNTIME_PROVIDERS.some((canonical) => canonical.id === row.id);
   const natives = providers.filter((row) => !isRemainder(row));
   const remainders = remainderRows(program, emission, providers.filter(isRemainder));
   const setup = emittedPhysicalSetupPlan(emission).nativeStrings;
   const native = setup && backend.target === "standalone" ? nativeRows(emission, setup, natives) : undefined;
-  if (!remainders || (!native && (setup || natives.length))) return false;
-  const rows = [...remainders, ...(native ?? [])];
-  const receipts = emittedSupportFunctionReceipts(emission);
-  return (
-    receipts.length === rows.length &&
-    new Set(rows.map((row) => row.key)).size === rows.length &&
-    new Set(receipts.map((row) => row.index)).size === rows.length &&
-    rows.every((row) => supportCallableJoins(emission, receipts, row))
-  );
-}
-/**
- * (#7354) The completed slots of an authenticated native setup, on standalone: reference-typed values the
- * presentation may carry without a widening refusal. Undefined when there is no native setup to authenticate them.
- */
-export function nativeSetupSlots(
-  emission: EmittedPreparedIrProgram,
-  backend: PreparedIrBackendOptions,
-): { readonly types: ReadonlySet<number>; readonly globals: ReadonlySet<number> } | undefined {
-  const setup = emittedPhysicalSetupPlan(emission).nativeStrings;
-  const slots = setup && backend.target === "standalone" ? nativeSlots(emission, setup) : undefined;
-  if (!slots) return undefined;
-  const indices = (space: "type" | "global") =>
-    new Set(
-      slots
-        .filter((slot) => slot.declaration.space === space)
-        .map((slot) => emittedProgramBindingIndex(emission, slot.binding.entry.id)!.index),
-    );
-  return { types: indices("type"), globals: indices("global") };
+  if (!remainders || (!native && natives.length)) return undefined;
+  if (!supportPopulationJoins(emission, [...remainders, ...(native?.rows ?? [])])) return undefined;
+  return native ? { native: native.slots } : {};
 }
