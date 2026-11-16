@@ -18,8 +18,13 @@ related: [7188, 2949, 3526, 3527, 3518, 7106, 7349, 7350, 7352]
 # policy (`preparedPresentationPolicy`), which replaces the inline `{ backend, target }`
 # policy literal in place; the policy and the provider census live in their own
 # module, src/compiler/prepared-provider-census.ts.
+# 2026-11-16 (slices V and G): src/ir/program-source.ts +2, the import of
+# `irOwnedScriptVarHome` and the `scriptVarHome` resolver option that passes it; the
+# classifier and its reads proof live in src/ir/module-binding-script-var-home.ts and
+# src/ir/module-binding-script-var.ts. (ir-program-presentation.ts shrinks by 3.)
 loc-budget-allow:
   - src/compiler.ts
+  - src/ir/program-source.ts
 ---
 
 # #7354 — Prepared IR path, milestone 1
