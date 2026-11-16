@@ -18,6 +18,7 @@ import type { RuntimeProviderDefinition } from "../src/ir/runtime/contracts/mani
 import type { PhysicalNativeStringSetup } from "../src/ir/program-physical-plan.js";
 import type { NativeSetupSlots } from "../src/compiler/prepared-provider-census.js";
 import { RUNTIME_PROVIDERS } from "../src/ir/runtime/manifest.js";
+import { NUMBER_REMAINDER_RUNTIME_PROVIDERS } from "../src/ir/runtime/number-remainder-callables.js";
 
 /**
  * The census runs on the real completed emission; each alteration rewrites one population it is given (the
@@ -193,6 +194,10 @@ describe("#7354 R — the census refuses what joins nothing", () => {
         rows.map((row) => (native(row) ? { ...row, id: "native.js.number.box.renamed" } : row)),
     ],
     [
+      "adds a canonical remainder the program has no resource for",
+      (rows: readonly RuntimeProviderDefinition[]) => [...rows, NUMBER_REMAINDER_RUNTIME_PROVIDERS[0]!],
+    ],
+    [
       "adds another canonical provider of the same runtime symbol",
       (rows: readonly RuntimeProviderDefinition[]) => [
         ...rows,
@@ -236,6 +241,27 @@ describe("#7354 R — the census refuses what joins nothing", () => {
     declarations((row) => ("name" in row && row.name === name ? alter(row) : row));
   const f64 = { kind: "f64" as const };
   it.each([
+    [
+      "a native function's declared type key (naming no native type)",
+      named("__str_flatten", (row) =>
+        row.space === "function"
+          ? { ...row, signature: { ...row.signature, params: [{ kind: "ref" as const, typeKey: "foreign" }] } }
+          : row,
+      ),
+    ],
+    [
+      // __str_flatten takes (ref AnyString), type slot 2; the scanner __str_to_number is function slot 2. A type key
+      // naming the scanner's declaration resolves only if the key's space is ignored.
+      "a native function's declared type key (naming a function declaration at the same index)",
+      (setup: PhysicalNativeStringSetup) => {
+        const scanner = setup.resources.declarations.find((row) => "name" in row && row.name === "__str_to_number")!;
+        return named("__str_flatten", (row) =>
+          row.space === "function"
+            ? { ...row, signature: { ...row.signature, params: [{ kind: "ref" as const, typeKey: scanner.key }] } }
+            : row,
+        )(setup);
+      },
+    ],
     [
       "a native function's declared params",
       named("__str_to_number", (row) =>
