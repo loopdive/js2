@@ -140,7 +140,8 @@
         "src/ir/analysis/dominance.ts",
         "src/ir/analysis/alloc-verification.ts",
         "src/ir/analysis/nested-stackification.ts",
-        "src/ir/analysis/backend-legality.ts"
+        "src/ir/analysis/backend-legality.ts",
+        "src/ir/analysis/value-types.ts"
       ],
       "required": true,
       "entries": [
@@ -162,7 +163,8 @@
         "src/ir/analysis/allocation-evidence/effect-rules.ts",
         "src/ir/analysis/allocation-evidence/census.ts",
         "src/ir/analysis/allocation-evidence/metadata.ts",
-        "src/ir/analysis/allocation-evidence/verify.ts"
+        "src/ir/analysis/allocation-evidence/verify.ts",
+        "src/ir/analysis/value-types.ts"
       ],
       "minModules": 19
     },
@@ -17002,14 +17004,6 @@
       "nextBoundary": "Prepared presentation runtime census (#7354 R): the presentation's runtime policy and the authentication of each selected provider against the completed physical plan; moves with ir-program-presentation.ts at compiler-layer activation."
     },
     {
-      "path": "src/compiler/prepared-physical-signature.ts",
-      "state": "unmigrated",
-      "layer": "mixed-needs-split",
-      "destination": "compiler",
-      "owner": "7354",
-      "nextBoundary": "Prepared presentation physical-signature joins (#7354 R): the completed function slot of a binding and its signature against a physical plan row; moves with ir-program-presentation.ts at compiler-layer activation."
-    },
-    {
       "path": "src/ir/source-dynamic-contracts.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
@@ -17021,6 +17015,11 @@
       "path": "src/ir/program/dynamic-value-legalization.ts",
       "state": "clean",
       "layer": "ir-program"
+    },
+    {
+      "path": "src/ir/analysis/value-types.ts",
+      "state": "clean",
+      "layer": "ir-analysis"
     },
     {
       "path": "src/ir/runtime/dynamic-value-callables.ts",
@@ -17038,9 +17037,12 @@
       "layer": "backend-wasmgc"
     },
     {
-      "path": "src/runtime/wasmgc/values/strict-equality-body.ts",
-      "state": "clean",
-      "layer": "native-runtime"
+      "path": "src/compiler/prepared-physical-signature.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "compiler",
+      "owner": "7354",
+      "nextBoundary": "Prepared presentation physical-signature joins (#7354 R): the completed function slot of a binding and its signature against a physical plan row; moves with ir-program-presentation.ts at compiler-layer activation."
     },
     {
       "path": "src/ir/runtime/number-remainder-callables.ts",

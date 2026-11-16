@@ -933,8 +933,8 @@ function stringConcatManyProviderId(policy: StringConcatPolicy): StringConcatMan
  * which keeps the demand honest on both lanes with one policy.
  *
  * All four carry {@link EXTERNREF_GLOBAL_INTRINSIC_SIGNATURE} — the catalogue's
- * only empty-parameter signature, and the one place a row states a VALUE shape
- * instead of a call.
+ * VALUE signature, and the one place a row states a VALUE shape instead of a
+ * call. (#7354 D1) The one nullary call, `js.value.undefined`, carries its own.
  */
 export const STRING_CONST_RUNTIME_PROVIDERS: readonly RuntimeProviderDefinition[] = Object.freeze([
   numberBoundaryProvider(
@@ -1334,9 +1334,9 @@ export const FUNCTION_PROTOTYPE_CALL_RUNTIME_PROVIDERS: readonly RuntimeProvider
     // Reusing `EXTERNREF_GLOBAL_INTRINSIC_SIGNATURE` for its `() -> externref`
     // shape would ALSO have broken a deliberate F2-S8 invariant (measured, not
     // predicted): that signature means "a GLOBAL holding an externref VALUE", and
-    // F2-S8 pins the string-const family as the catalogue's ONLY empty-parameter
-    // rows precisely so an empty-params row can only ever be a storage row. A
-    // nullary CALL is not a storage row, so it must not borrow that spelling.
+    // F2-S8 pins the string-const family as the catalogue's ONLY rows carrying it
+    // precisely so that signature can only ever be a storage row. A nullary CALL
+    // is not a storage row, so it must not borrow that spelling.
     undefined,
     { kind: "runtime-callable", symbol: "__function_prototype_call" },
     [],

@@ -18,8 +18,6 @@ import type { RuntimeManifestPolicy } from "../../runtime/contracts/provider-pol
  */
 const SYMBOLS: Readonly<Record<DynamicValueRuntimeFeature, string>> = Object.freeze({
   "js.value.strict_eq": "__js_strict_eq",
-  "js.value.is_number": "__typeof_number",
-  "js.value.is_boolean": "__typeof_boolean",
   "js.value.undefined": "__js_undefined",
 });
 

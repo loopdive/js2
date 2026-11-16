@@ -61,7 +61,11 @@ import {
   preparedStringConstProvider,
   stringConstFeatureFor,
 } from "../src/ir/intrinsic-support.js";
-import { EXTERNREF_GLOBAL_INTRINSIC_SIGNATURE, INTRINSIC_SIGNATURE_VERSION } from "../src/ir/intrinsics.js";
+import {
+  EXTERNREF_GLOBAL_INTRINSIC_SIGNATURE,
+  INTRINSIC_DEFINITIONS,
+  INTRINSIC_SIGNATURE_VERSION,
+} from "../src/ir/intrinsics.js";
 import {
   asBlockId,
   asValueId,
@@ -212,15 +216,19 @@ describe("#3526 F2-S8 string-const contract", () => {
       params: [],
       result: irVal({ kind: "externref" }),
     });
-    // The whole point of the signature: it describes a VALUE. The only rows that
-    // carry it are the string storage rows and (#7354 D1) the dynamic
-    // `undefined` value, which is also a value: nothing goes in.
+    // The whole point of the signature: it describes a VALUE. Nothing else in
+    // the catalogue carries it, so a row with it can only be a storage row.
     const emptyParamRows = (RUNTIME_PROVIDERS as readonly RuntimeProviderDefinition[]).filter(
       (provider) => provider.signature !== undefined && provider.signature.params.length === 0,
     );
-    expect(emptyParamRows.map((provider) => provider.id).sort()).toEqual(
-      [...STRING_CONST_RUNTIME_PROVIDER_IDS, "native.js.value.undefined"].sort(),
-    );
+    const valueRows = emptyParamRows.filter((provider) => provider.signature === EXTERNREF_GLOBAL_INTRINSIC_SIGNATURE);
+    expect(valueRows.map((provider) => provider.id).sort()).toEqual([...STRING_CONST_RUNTIME_PROVIDER_IDS].sort());
+    // (#7354 D1) The one nullary CALL, the dynamic `undefined` value, carries its
+    // own signature of the same shape, never the VALUE one.
+    const callRows = emptyParamRows.filter((provider) => !valueRows.includes(provider));
+    expect(callRows.map((provider) => provider.id)).toEqual(["native.js.value.undefined"]);
+    expect(callRows[0]!.signature).toBe(INTRINSIC_DEFINITIONS["js.value.undefined"].signature);
+    expect(callRows[0]!.signature).not.toBe(EXTERNREF_GLOBAL_INTRINSIC_SIGNATURE);
   });
 
   it("is FOUR-armed — two authorities × two namespaces", () => {

@@ -127,26 +127,57 @@ export function sourceDynamicResolver(policy: SourcePolicy): { readonly resolveD
 }
 
 /**
- * (#7354 D1) A program with a native `any` contract is legalized to the
- * intrinsic/externref form, and an operation without a Prepared intrinsic is a
- * named refusal of it. A program without one keeps its existing path: from-ast
- * may use dynamic values internally there, and those reach the later stages
- * exactly as before.
+ * (#7354 D1) The one rule for a dynamic value leaving the dynamic domain. An
+ * `any` expression whose contextual type is not `any` (an argument for a typed
+ * parameter, the value returned from a typed result, the initializer or
+ * assigned value of a typed binding, a property or element of a typed literal)
+ * would cross into that type with no conversion the source wrote. The Prepared
+ * path has no checked unbox yet (a mismatch must convert or throw, never pass),
+ * so the flow refuses by name. An operator that converts explicitly (`+v`,
+ * `v * 2`, `v === w`) gives its operand no contextual type; the legalization
+ * expresses it or refuses it by name.
+ */
+function refuseImplicitDynamicFlows(checker: ts.TypeChecker, roots: readonly ts.Node[]): void {
+  const any = checker.getAnyType();
+  const visit = (node: ts.Node): void => {
+    if (ts.isExpression(node) && checker.getTypeAtLocation(node) === any) {
+      const contextual = checker.getContextualType(node);
+      if (contextual !== undefined && contextual !== any)
+        throw new IrUnsupportedError(
+          "type-resolution-unsupported",
+          "build",
+          `a dynamic value flows into ${checker.typeToString(contextual)} without a conversion (${ts.SyntaxKind[node.parent.kind]})`,
+        );
+    }
+    ts.forEachChild(node, visit);
+  };
+  roots.forEach(visit);
+}
+
+/**
+ * (#7354 D1) On the native lane every function lowered from `declaration` is
+ * legalized to the intrinsic/externref form; an operation without a Prepared
+ * intrinsic is a named refusal. A function without a dynamic value is returned
+ * unchanged, so a program without one keeps its exact IR. The flow rule runs
+ * only where a dynamic value was lowered: a checker `any` the IR typed
+ * concretely (an untyped parameter with a propagated number type) carries no
+ * dynamic value.
  */
 export function legalizeSourceDynamicValues(
+  checker: ts.TypeChecker,
   policy: SourcePolicy,
-  signatures: Iterable<{ readonly params: readonly IrType[]; readonly returnType: IrType | null }>,
+  declaration: ts.FunctionDeclaration | readonly ts.Statement[],
   functions: readonly IrFunction[],
 ): readonly IrFunction[] {
   if (dynamicLane(policy, undefined) !== "native") return functions;
-  const contracted = [...signatures].some(
-    (signature) => signature.returnType?.kind === "dynamic" || signature.params.some((type) => type.kind === "dynamic"),
-  );
-  if (!contracted) return functions;
+  let legalized: readonly IrFunction[];
   try {
-    return functions.map(legalizeDynamicValues);
+    legalized = functions.map(legalizeDynamicValues);
   } catch (error) {
     if (!(error instanceof DynamicValueGap)) throw error;
     throw new IrUnsupportedError("type-resolution-unsupported", "build", error.message);
   }
+  if (legalized.some((fn, index) => fn !== functions[index]))
+    refuseImplicitDynamicFlows(checker, "kind" in declaration ? [declaration] : declaration);
+  return legalized;
 }

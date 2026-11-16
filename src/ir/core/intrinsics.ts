@@ -167,6 +167,18 @@ export const EXTERNREF_GLOBAL_INTRINSIC_SIGNATURE: IntrinsicSignature = Object.f
   result: EXTERNREF_TYPE,
 });
 
+/**
+ * (#7354 D1) `() -> externref` as a CALL: the dynamic `undefined` value is
+ * answered by a nullary runtime function (`__js_undefined`), not by a global.
+ * Same shape as {@link EXTERNREF_GLOBAL_INTRINSIC_SIGNATURE}, but a separate
+ * identity, so a row carrying that one still states a stored VALUE.
+ */
+const NULLARY_TO_EXTERNREF_INTRINSIC_SIGNATURE: IntrinsicSignature = Object.freeze({
+  version: INTRINSIC_SIGNATURE_VERSION,
+  params: Object.freeze([] as readonly IrType[]),
+  result: EXTERNREF_TYPE,
+});
+
 export const F64_TO_U32_INTRINSIC_SIGNATURE: IntrinsicSignature = Object.freeze({
   version: INTRINSIC_SIGNATURE_VERSION,
   params: Object.freeze([F64_TYPE]),
@@ -202,9 +214,7 @@ export const INTRINSIC_DEFINITIONS: Readonly<Record<IntrinsicId, IntrinsicDefini
   "js.boolean.unbox": definition("js.boolean.unbox", EXTERNREF_TO_BOOLEAN_INTRINSIC_SIGNATURE),
   "js.extern.is_undefined": definition("js.extern.is_undefined", EXTERNREF_TO_I32_INTRINSIC_SIGNATURE),
   "js.value.strict_eq": definition("js.value.strict_eq", EXTERNREF_PAIR_TO_I32_INTRINSIC_SIGNATURE),
-  "js.value.is_number": definition("js.value.is_number", EXTERNREF_TO_I32_INTRINSIC_SIGNATURE),
-  "js.value.is_boolean": definition("js.value.is_boolean", EXTERNREF_TO_I32_INTRINSIC_SIGNATURE),
-  "js.value.undefined": definition("js.value.undefined", EXTERNREF_GLOBAL_INTRINSIC_SIGNATURE),
+  "js.value.undefined": definition("js.value.undefined", NULLARY_TO_EXTERNREF_INTRINSIC_SIGNATURE),
   "math.abs": definition("math.abs", F64_UNARY_INTRINSIC_SIGNATURE),
   "math.acos": definition("math.acos", F64_UNARY_INTRINSIC_SIGNATURE),
   "math.acosh": definition("math.acosh", F64_UNARY_INTRINSIC_SIGNATURE),

@@ -22,9 +22,16 @@ related: [7188, 2949, 3526, 3527, 3518, 7106, 7349, 7350, 7352]
 # `irOwnedScriptVarHome` and the `scriptVarHome` resolver option that passes it; the
 # classifier and its reads proof live in src/ir/module-binding-script-var-home.ts and
 # src/ir/module-binding-script-var.ts. (ir-program-presentation.ts shrinks by 3.)
+# 2026-11-16 (slice D1, review round 1): src/ir/from-ast.ts +10, two named
+# declines the Prepared producer reaches because it has no selector (`**` on a
+# dynamic operand, a value-position prefix `++`/`--`); they replace invariant
+# crashes in place and sit in the arms that own them. ir-program-presentation.ts
+# +1: D1's internal externref callable contract admission in the ABI join.
 loc-budget-allow:
   - src/compiler.ts
   - src/ir/program-source.ts
+  - src/ir/from-ast.ts
+  - src/compiler/ir-program-presentation.ts
 ---
 
 # #7354 — Prepared IR path, milestone 1

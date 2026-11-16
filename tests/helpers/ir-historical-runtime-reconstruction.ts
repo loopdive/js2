@@ -56,6 +56,8 @@ const preClockOwnerOrder: Readonly<Record<string, readonly string[]>> = {
     "var:EXTERNREF_PAIR_TO_REF_EXTERN_INTRINSIC_SIGNATURE#0",
     "var:EXTERNREF_I32_TO_F64_INTRINSIC_SIGNATURE#0",
     "var:EXTERNREF_GLOBAL_INTRINSIC_SIGNATURE#0",
+    // #7354 D1: the nullary call signature of `js.value.undefined`.
+    "var:NULLARY_TO_EXTERNREF_INTRINSIC_SIGNATURE#0",
     "var:F64_TO_U32_INTRINSIC_SIGNATURE#0",
     "var:F64_UNARY_INTRINSIC_SIGNATURE#0",
     "var:F64_BINARY_INTRINSIC_SIGNATURE#0",

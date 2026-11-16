@@ -1751,13 +1751,8 @@ export function prepareIrProgramSources(
         ? makeModuleInitSynthetic(identity.moduleInitPopulationBySourceFile.get(source) ?? [])
         : identity.declarationByUnitId.get(unit.id)!;
       if (!ts.isFunctionDeclaration(declaration)) unsupported(`missing declaration producer for ${unit.kind}`);
-      Object.assign(
-        resolver,
-        prepareSourceBuiltinResolvers(
-          input,
-          moduleInit ? (identity.moduleInitPopulationBySourceFile.get(source) ?? []) : declaration,
-        ),
-      );
+      const sourceRoots = moduleInit ? (identity.moduleInitPopulationBySourceFile.get(source) ?? []) : declaration;
+      Object.assign(resolver, prepareSourceBuiltinResolvers(input, sourceRoots));
       const signature = signatures.get(unit.id);
       const lowered = lowerFunctionAstToIr(declaration, {
         booleanReturnBoundary: sourceBooleanAnyResult(input.checker, declaration) ? declaration : undefined,
@@ -1810,7 +1805,7 @@ export function prepareIrProgramSources(
           `certified native Promise-delay ${unit.id} fabricated support bodies or provenance`,
         );
       functions.push(
-        ...legalizeSourceDynamicValues(input.policy, signatures.values(), [lowered.main, ...lowered.lifted]),
+        ...legalizeSourceDynamicValues(input.checker, input.policy, sourceRoots, [lowered.main, ...lowered.lifted]),
       );
       appendLiftedSourceProvenance(lowered.liftedUnitProvenance, inventory, unit, derivedUnits);
       if (derivedSourceRows !== undefined) appendSourceMapDerivedRows(derivedSourceRows, lowered, identity, unit);
