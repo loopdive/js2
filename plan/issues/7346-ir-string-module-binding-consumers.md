@@ -373,3 +373,38 @@ Compiled standalone with IR outcomes tracked.
 The 14 binary differences are run-to-run noise in a long compile process. Main's own two runs differ
 on 8 of them and head's on 11, and the fresh-process hashes of main and head are equal for all 14.
 With no routing change, there was no verdict to run, and the sample was not extended.
+
+### Review round 1 (2026-11-16)
+
+- **What changed in the binding proof** (`module-binding-string.ts`):
+  - **Shadowed built-ins.** A write that names a built-in the program redeclares is not a proven
+    string (`isUnshadowedLibBinding`). The checker reports a script's own `function String` as the
+    lib's.
+  - **Plain stores only.** Every write must be a plain store: an initializer, or `=`. A compound
+    `s += 1` / `s += null` keeps the reference rule.
+  - **No rebinding in module-init.** Module-init code must not declare the name for another binding,
+    such as a top-level `catch (s)`. A function's parameters and locals are another unit's, so they do
+    not count. Counting them dropped `S12.13_A3_T2`, through the harness parameters `a` and `b`.
+  - **Loose equality.** A read that is a loose `==` / `!=` operand beside a value not proven a string
+    keeps the reference rule. from-ast lowers that equality for two strings only.
+- **Step A asks the IR family only** (`binaryOperandFamily`). A local `s = null; s === null` keeps
+  main's route (IR).
+- **Should-fix items:**
+  - the vec and native-buffer homes refuse `typeof` / `delete` explicitly;
+  - the module-init literal lengths come from the source file, so there is no selector state;
+  - comments are back in place;
+  - the string module reuses the resolver's identity type.
+
+**Measured against main `ed17563bc2`:**
+
+| check | result |
+| --- | --- |
+| 969-file census | **+30**, 0 lost, 0 units newly legacy, post-claim 31 → 31 |
+| reviewer's 1,739-file list (all editions) | +26, 0 lost, 0 units newly legacy, post-claim 10 → 10 |
+| hazard matrix | 0 head-only post-claim; 0 claimed answers wrong |
+| JS-environment bytes (changed files + 200 others) | 232/232 identical |
+
+**Outside this PR: the classifier hole is wider.** `makeIrPrimitiveExpressionClassifier` (and the
+checker) treat a redeclared `String` / `Number` as the built-in everywhere. On main,
+`function Number(v) { return 'n'; } function g() { var s = 'a' + Number(1); return s === 'an'; }` is
+claimed by the IR and answers wrong. So does the `String` twin; legacy answers wrong too.
