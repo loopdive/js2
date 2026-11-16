@@ -455,14 +455,14 @@ function checkAbiExports(
   if (entries.size !== program.abi.entries.length)
     gap("abi", "duplicate-binding", "prepared ABI binding identities are not unique");
   const joinedExports = new Set<string>();
+  // (#7354 D1, H) On standalone an internal callable or global may carry the legalized dynamic value whatever the
+  // checker classified; an exported callable is refused by its declaration capture, a global by its export witness.
+  const dynamic = (type: IrType | undefined) =>
+    capture.backend.target === "standalone" && type?.kind === "val" && type.val.kind === "externref";
+  const carried = (type: IrType) => (type.kind === "val" && numeric(type.val)) || dynamic(type);
   for (const entry of program.abi.entries) {
     const { plan, contract } = entry;
     if (contract.kind === "callable") {
-      // (#7354 D1) On standalone an internal callable may carry the legalized dynamic value, an `externref`;
-      // an exported one is still refused by its source declaration capture.
-      const carried = (type: IrType) =>
-        type.kind === "val" &&
-        (numeric(type.val) || (capture.backend.target === "standalone" && type.val.kind === "externref"));
       if (!mixed && (contract.promise || [...contract.params, ...contract.results].some((type) => !carried(type))))
         gap(
           "abi.callable",
@@ -473,12 +473,14 @@ function checkAbiExports(
       const unitId =
         plan.intent.kind === "callable" && plan.intent.origin === "source" ? plan.intent.unitId : undefined;
       const declaration = unitId && captures.get(unitId);
+      const joins = (slot: PresentationSlot, type: IrType | undefined) =>
+        sourceSlotMatches(slot, type) || (declaration?.slots === "primitive" && !declaration.exported && dynamic(type));
       if (
         declaration?.slots === "primitive" &&
         (contract.params.length !== declaration.params.length ||
           contract.results.length !== declaration.results.length ||
-          declaration.params.some((slot, index) => !sourceSlotMatches(slot, contract.params[index])) ||
-          declaration.results.some((slot, index) => !sourceSlotMatches(slot, contract.results[index])) ||
+          declaration.params.some((slot, index) => !joins(slot, contract.params[index])) ||
+          declaration.results.some((slot, index) => !joins(slot, contract.results[index])) ||
           !promiseContractMatches(declaration, contract.promise))
       )
         gap("abi.callable", "signature-join", "source declaration and prepared callable slots disagree", {
@@ -486,10 +488,8 @@ function checkAbiExports(
           bindingId: plan.id,
         });
     }
-    if (contract.kind === "global" && (contract.type.kind !== "val" || !numeric(contract.type.val)))
-      gap("abi.global", "non-numeric-contract", "global resources require a primitive numeric contract", {
-        bindingId: plan.id,
-      });
+    if (contract.kind === "global" && !carried(contract.type))
+      gap("abi.global", "non-numeric-contract", "globals need a numeric or dynamic contract", { bindingId: plan.id });
     if (contract.kind !== "export") continue;
     if (joinedExports.has(contract.externalName))
       gap("exports", "duplicate-export", "export contract names must be unique", { bindingId: plan.id });

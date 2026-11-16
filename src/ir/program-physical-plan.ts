@@ -1364,8 +1364,9 @@ export function planPhysicalSetup(
       if (binding.kind === "import") {
         importedGlobals.push({ ...base, module: binding.module, field: binding.field });
       } else if (binding.kind === "source") {
-        if (!numeric(type)) gaps.add(`source global ${contract.ref.name} needs a reference-typed default initializer`);
-        else definedGlobals.push(base);
+        // (#7354 H) The one reference-typed source global is the dynamic carrier, stored before any read.
+        if (numeric(type) || type.kind === "externref") definedGlobals.push(base);
+        else gaps.add(`source global ${contract.ref.name} needs a reference-typed default initializer`);
       } else {
         gaps.add(`${binding.kind} global ${contract.ref.name} needs runtime storage materialization`);
       }

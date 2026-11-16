@@ -4,14 +4,9 @@ import { ts } from "../ts-api.js";
 import { sourceBooleanAnyResult, assertSourceBooleanAnyReturns } from "../frontend/boolean-return-boundary.js";
 import { preparedIrProgramCallableResults } from "./program-callable-contract.js";
 import { prepareSourceClosureInvocations } from "./source-closure-invocation.js";
-import {
-  checkerAny,
-  legalizeSourceDynamicValues,
-  sourceDynamicParameter,
-  sourceDynamicResolver,
-  sourceDynamicResult,
-} from "./source-dynamic-contracts.js";
+import { checkerAny, programDynamicContracts, type ProgramDynamicContracts } from "./source-dynamic-contracts.js";
 import type { TypedIrProgramInput } from "./program/input-contracts.js";
+import { legalizeDynamicGlobals } from "./program/dynamic-value-legalization.js";
 import type { TypeOracle } from "../checker/oracle.js";
 import { AllocSiteRegistry } from "./analysis/alloc-registry.js";
 import { irModuleGlobalBindingId, irModuleTdzGlobalBindingId, irSourceGlobalRef } from "./abi-bindings.js";
@@ -45,7 +40,6 @@ import { buildIrModuleInitPlan } from "./module-init-plan.js";
 import type { IrModuleInitPlan } from "./program/startup.js";
 import { makeModuleInitSynthetic } from "./module-init.js";
 import { makeIrIdentityModuleBindingResolver, type IrModuleBindingIdentity } from "./module-bindings.js";
-import { irOwnedScriptVarHome } from "./module-binding-script-var-home.js";
 import type { IrDirectCallLoweringPlan, ModuleBindingGlobal } from "./ast-lowering-plans.js";
 import type { PreparedIrFunction as IrFunction, PreparedIrModule as IrModule } from "./runtime/contracts/prepared.js";
 import type { IrType } from "./core/types.js";
@@ -1363,7 +1357,6 @@ function validateNativePromiseDelaySourceLowering(
 /** Keep callable carriers separate from semantic fulfillment signatures. */
 function prepareSourceFunctionSignatures(
   checker: ts.TypeChecker,
-  policy: RuntimeManifestPolicy,
   inventory: IrUnitInventory,
   identity: ReturnType<typeof buildIrPlanningIdentityContext>,
   types: ReturnType<typeof buildIrUnitTypeMap>,
@@ -1371,6 +1364,7 @@ function prepareSourceFunctionSignatures(
   nativeFamily: NativeAsyncSourceFamilies | undefined,
   signatures: Map<IrUnitId, { params: readonly IrType[]; returnType: IrType | null }>,
   bodyResults: Map<IrUnitId, IrType | null>,
+  dynamic: ProgramDynamicContracts,
   diagnostic: SourceDiagnosticOwner,
 ): void {
   for (const unit of inventory.terminalUnits) {
@@ -1386,7 +1380,7 @@ function prepareSourceFunctionSignatures(
       family?.params ??
       declaration.parameters.map(
         (param, index) =>
-          sourceDynamicParameter(checker, policy, declaration, param) ??
+          dynamic.parameter(declaration, param) ??
           (param.type
             ? (checkerCallable(checker, param.type, unit.displayName) ?? typeNodeToIr(param.type, unit.displayName))
             : propagated?.params[index]
@@ -1395,7 +1389,7 @@ function prepareSourceFunctionSignatures(
       );
     if (params.some((type) => !type)) unsupported(`function ${unit.displayName} has an unresolved parameter contract`);
     const returnNode = isAsync ? unwrapPromiseTypeNode(declaration.type) : declaration.type;
-    const dynamicResult = sourceDynamicResult(checker, policy, declaration);
+    const dynamicResult = dynamic.result(declaration);
     const result: IrType | null = certifiedDelays.has(unit.id)
       ? { kind: "extern", className: "Promise" }
       : family
@@ -1597,6 +1591,7 @@ export function prepareIrProgramSources(
       sourceFiles,
       identityContext: identity,
     });
+    const dynamicContracts = programDynamicContracts(input.checker, input.policy, sourceFiles);
     const moduleResolver = makeIrIdentityModuleBindingResolver(
       input.checker,
       {
@@ -1605,7 +1600,7 @@ export function prepareIrProgramSources(
         allowBuiltinMapExtern: input.policy.target === "host" && input.policy.stringConst?.storage !== "native",
         allowNativeMapStorage: input.policy.stringConst?.storage === "native",
         oracle: input.oracle,
-        scriptVarHome: irOwnedScriptVarHome(input.checker, sourceFiles),
+        scriptVarHome: dynamicContracts.scriptVarHome,
       },
       identity,
     );
@@ -1651,7 +1646,6 @@ export function prepareIrProgramSources(
       : undefined;
     prepareSourceFunctionSignatures(
       input.checker,
-      input.policy,
       inventory,
       identity,
       types,
@@ -1659,6 +1653,7 @@ export function prepareIrProgramSources(
       nativeFamily,
       signatures,
       bodyResults,
+      dynamicContracts,
       diagnostic,
     );
     for (const source of sourceFiles) {
@@ -1743,7 +1738,7 @@ export function prepareIrProgramSources(
           return resultType ? { resultType, operandType } : null;
         },
         ...family?.resolver,
-        ...sourceDynamicResolver(input.policy),
+        ...dynamicContracts.resolver,
       };
       const source = identity.sourceFileBySourceId.get(unit.sourceId)!;
       const moduleInit = unit.kind === "module-init";
@@ -1804,9 +1799,7 @@ export function prepareIrProgramSources(
           "invalid-prepared-data",
           `certified native Promise-delay ${unit.id} fabricated support bodies or provenance`,
         );
-      functions.push(
-        ...legalizeSourceDynamicValues(input.checker, input.policy, sourceRoots, [lowered.main, ...lowered.lifted]),
-      );
+      functions.push(...dynamicContracts.legalize(sourceRoots, [lowered.main, ...lowered.lifted]));
       appendLiftedSourceProvenance(lowered.liftedUnitProvenance, inventory, unit, derivedUnits);
       if (derivedSourceRows !== undefined) appendSourceMapDerivedRows(derivedSourceRows, lowered, identity, unit);
     }
@@ -1822,15 +1815,16 @@ export function prepareIrProgramSources(
       sourceMapProjector === undefined
         ? undefined
         : finishSourceMapCatalog(sourceMapProjector, derivedSourceRows!, derivedUnits);
+    const dynamic = legalizeDynamicGlobals(functions, globals);
     const prepared: IrProgramSourcePreparation = {
       kind: "prepared",
       ...(sourceMap === undefined ? {} : { sourceMap }),
       inventory,
-      ir: { functions },
+      ir: { functions: dynamic.functions },
       derivedUnits,
       startup,
       callables: callGraph.records,
-      globals,
+      globals: dynamic.globals,
       allocations,
     };
     if (sourceMap !== undefined) assertPreparedSourceMap(prepared);

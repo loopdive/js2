@@ -7,17 +7,21 @@
  * the binding's uses alone, in the same `IrScriptVarHome` vocabulary the
  * resolver already reads.
  *
- * Only the `typed` home is answered: a `number` or `boolean` binding whose reads
- * all follow its initializer (`scriptVarReadsFollowInitializer`), since an `f64`
- * or `i32` global cannot hold the hoisted `undefined`. A string home needs the
- * presentation's string policies (#7354 S) and a dynamic one the Prepared
- * dynamic carrier (#7354 D1); until then those bindings have no home.
+ * The `typed` home is a `number` or `boolean` binding whose reads all follow
+ * its initializer (`scriptVarReadsFollowInitializer`), since an `f64` or `i32`
+ * global cannot hold the hoisted `undefined`, and whose stored values are all
+ * typed. (#7354 H) Where the lane has the dynamic carrier, every other
+ * top-level script `var` gets the `dynamic` home: the carrier holds `undefined`
+ * before the initializer runs, so it needs no reads proof, and a value the
+ * carrier cannot hold yet is refused at its store, not here. A string home
+ * needs the presentation's string policies (#7354 Str).
  *
  * Not shared with codegen's classifier: that one reads back the slot legacy's
  * allocation chose (including legacy's own zero for an unwritten typed slot),
  * so a common core would either change legacy's answer or inherit its zero.
  */
 import { ts } from "../ts-api.js";
+import { isTopLevelStatementDeclaration } from "../shared/var-declaration-lists.js";
 import { type NamedVariableDeclaration, scriptVarReadsFollowInitializer } from "./module-binding-script-var.js";
 import type { IrModuleBindingDeclaration, IrScriptVarHome } from "./module-bindings.js";
 
@@ -28,11 +32,15 @@ const NON_WRITABLE_GLOBALS: ReadonlySet<string> = new Set(["undefined", "NaN", "
  * The `scriptVarHome` resolver option of a pipeline whose IR owns every script `var`'s storage, over the
  * program's `sourceFiles`. Every script of a program shares one global scope, and the reads proof walks only the
  * declaration's file, so a typed home needs that file to be the program's only source: a read in a script that
- * runs first would otherwise go unseen.
+ * runs first would otherwise go unseen. The dynamic home needs it too: each script's module-init stores the
+ * hoisted `undefined` into its own globals, so a script that runs first would read the carrier's null.
+ * `storesDynamic` (the lane's dynamic provenance, absent without a carrier) says whether a store may be the
+ * dynamic value.
  */
 export function irOwnedScriptVarHome(
   checker: ts.TypeChecker,
   sourceFiles: readonly ts.SourceFile[],
+  storesDynamic?: (declaration: ts.VariableDeclaration) => boolean,
 ): (declaration: IrModuleBindingDeclaration) => IrScriptVarHome | undefined {
   const soleSource = sourceFiles.length === 1 ? sourceFiles[0] : undefined;
   return (declaration) => {
@@ -42,8 +50,14 @@ export function irOwnedScriptVarHome(
     const declarations = checker.getSymbolAtLocation(declaration.name)?.declarations ?? [];
     if (declarations.filter((other) => !other.getSourceFile().isDeclarationFile).length !== 1) return undefined;
     const type = checker.getTypeAtLocation(declaration.name);
-    if ((type.flags & (ts.TypeFlags.NumberLike | ts.TypeFlags.BooleanLike)) === 0) return undefined;
-    return scriptVarReadsFollowInitializer(checker, declaration) ? "typed" : undefined;
+    if (
+      (type.flags & (ts.TypeFlags.NumberLike | ts.TypeFlags.BooleanLike)) !== 0 &&
+      scriptVarReadsFollowInitializer(checker, declaration) &&
+      !storesDynamic?.(declaration)
+    )
+      return "typed";
+    // The global exists for a top-level statement's declarator only; a nested `var` is a module-init local.
+    return storesDynamic && isTopLevelStatementDeclaration(declaration) ? "dynamic" : undefined;
   };
 }
 

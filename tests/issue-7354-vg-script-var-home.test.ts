@@ -101,19 +101,11 @@ describe("#7354 V — the IR's own typed home for a script var", () => {
     expect(await run(`${program} if (${fails}) throw 1;`)).toBe("threw");
   });
 
-  it.each([
-    ["a function that runs before the initializer reads it", "function f() { return x; } f(); var x = 1;"],
-    [
-      "a function reached before the initializer by another one",
-      "function g() { f(); } function f() { return x; } g(); var x = 1;",
-    ],
-    ["its own initializer reads it", "var x = 1, y = x;"],
-    ["it is declared twice (the startup plan gives each declarator its own binding)", "var x = 1; var x = 2;"],
-    ["it has no initializer (its type is `any`: the dynamic carrier, slice D1)", "var u; u = 1;"],
-    ["it holds a string (slice S)", 'var s = "a";'],
-    ["it holds a string an update would retype (the dynamic carrier, slice D1)", 'var s = "a"; s++;'],
-  ])("refuses a script var when %s", async (_, program) => {
-    expect(await refusal(program)).toContain(NO_HOME);
+  // (#7354 H) A script var V cannot prove (a read before the initializer, no initializer, a string) now gets the
+  // dynamic home: `tests/issue-7354-h-script-var-dynamic-home.test.ts` runs those programs. A repeated `var` still
+  // has no home.
+  it("refuses a script var when it is declared twice (the startup plan gives each declarator its own binding)", async () => {
+    expect(await refusal("var x = 1; var x = 2;")).toContain(NO_HOME);
   });
 
   it("refuses a var of a non-writable global, whose write never lands", async () => {
@@ -145,8 +137,11 @@ describe("#7354 V — the IR's own typed home for a script var", () => {
     }
   });
 
+  // (#7354 H) The binding is in the dynamic home now; its read cannot flow into the annotated `number` result.
   it("refuses a read of the hoisted binding in a TypeScript script", async () => {
-    expect(await refusal("function f(): number { return x; } f(); var x: number = 1;", "entry.ts")).toContain(NO_HOME);
+    expect(await refusal("function f(): number { return x; } f(); var x: number = 1;", "entry.ts")).toContain(
+      "a dynamic value flows into number without a conversion (ReturnStatement)",
+    );
   });
 });
 
