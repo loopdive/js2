@@ -1,7 +1,7 @@
 ---
 id: 7349
 title: "IR foundation: function values — one planner, one call path"
-status: in-progress
+status: blocked
 sprint: current
 created: 2026-11-15
 updated: 2026-11-15
@@ -191,3 +191,105 @@ Code quality:
    case is gone after S1a.
 7. A fresh-context adversarial review per slice records its verdict in the
    PR body.
+
+## Parked 2026-11-16
+
+Owner decision 2026-11-16: the program goal is the prepared-program IR path
+(`TEST262_COMPILER_PATH=ir`, #7188), not zero legacy units in the ordinary
+pipeline. S1a is parked on branch `claude/7349-s1a` (head `a7d240cab2`), no PR.
+
+### What S1a builds
+
+- `src/ir/function-values.ts` (new):
+  - `functionValueUse`: a top-level function read as a receiver of its own
+    expandos, or as a whole value. It replaces the stored-value position list.
+  - `carrierSink`: the positions that consume the dynamic carrier as-is. The
+    host supplies arguments, `new` and function-object stores.
+  - `memberStoreRoot`: the one store-root rule, replacing
+    `isFunctionObjectStoredValue` in both the selector and the planner.
+  - `bareCallCallee` and `argumentsCrossSyntactically` (moved out of
+    `module-bindings.ts`).
+- Selector (`select.ts`):
+  - `dynamicCallCarrier` (closure / parameter / script-var) replaces
+    `dynamicValueCallTarget` and `isStatementDynamicModuleCall`.
+  - Value-position dynamic calls are judged by `carrierSink`, or by the
+    move-only scan for parameters.
+  - Function values and dynamic-call results read as family `dynamic`.
+  - The call graph uses the same rule.
+- `from-ast.ts`: the dynamic-call arm also takes a `<module-init>` module
+  global, with no statement-position restriction.
+- Planner (`ir-imported-call-planning.ts`): plans whole-value reads.
+- New backend capability `native-function-values` (host-free standalone, not
+  fast, not the JS environment's native regime). It gates every new admission,
+  so JS-environment bytes stay identical. Stores on a function object keep
+  every lane.
+
+### Measured (base origin/main `8032c37eb2`, src identical to `d253210865`; standalone)
+
+- Census of 3,699 function-value carriers and 500 IR-only controls (head
+  `2e448ad904`; the routing and binary re-run on `a7d240cab2` is identical):
+
+  | measure | result |
+  | --- | --- |
+  | files gained (IR-only now) | 4 (S15.10.6.3_A2_T10, S10.1.1_A1_T1, S13_A4_T1, S15.10.6.2_A2_T10) |
+  | files lost | 0 |
+  | units newly legacy | 0 |
+  | new compile errors | 0 |
+  | post-claim errors | 1 → 1 |
+  | routing changed | 6 files |
+  | standalone binary changed | only those 6 files |
+  | controls | unchanged |
+
+- Verdicts of the 6 routing-changed files: 6/6 pass on both trees.
+- The first census run found a defect: a certified propertyHelper alias call
+  was taken as a dynamic script-var call, making 7,094 units newly legacy.
+  Fixed in `2e448ad904`.
+- Re-measure before coding: of the 341 target files (the 19 of the static
+  estimate plus the 332 genuine declaration-value files), 30 had only S1a-scope
+  refusals. The measured yield is 4.
+- Beyond ES5: 6,181 non-ES5 files where S1a can change routing (text filter
+  `s1afilter.mjs`). On `2e448ad904`, 0 files gained or lost, 0 new compile
+  errors, post-claim errors not increased, 54 binaries changed. Verdicts on
+  those 54: identical on both trees (24 pass, 26 fail, 4 skip).
+- JS-environment bytes: identical on 309 binaries at `a7d240cab2` (the 6
+  changed files, the 54 beyond-ES5 changed files, every 21st census file and
+  25 probe programs × 2 wrappers).
+- Probe matrix (25 programs, against node): every claimed program answers as
+  node does. On main 38 units stayed legacy across the matrix; on head 17.
+- Tests and gates: the loc and func gates pass, with grants in this file. The
+  coercion, oracle-ratchet and dead-exports gates pass.
+
+### Unmeasured
+
+- The beyond-ES5 re-run on `a7d240cab2` stopped at 6,096 of 6,181 files:
+  routing differs in 3 files, binaries in 48. Verdicts for these 48 at
+  `a7d240cab2` were not run; the earlier run at `2e448ad904` showed no
+  verdict change.
+- The equivalence gate and the vitest suites were not run on this branch.
+- No fresh-context adversarial review was done.
+
+### Known open defects and limits
+
+- Member reads of a function value in general positions (`F.prototype ===
+  …`) stay refused: only receiver uses are admitted.
+- A realm member (`F.bind`, `F.caller`) is refused by design, because the boxed
+  function object does not resolve it.
+- `Function(…)` and `Object(f)` callees are built-in globals as values, not
+  S1a.
+
+### Resume
+
+1. `git checkout claude/7349-s1a`, then merge `origin/main`.
+2. Re-run the census:
+   - `scratchpad/s1a/chunk.sh head|base <census-list> c` for routing with
+     refusal details, then `compare.py`;
+   - `rc.sh head|base <list> cr` for routing and binary, then `crcmp.py`.
+3. Finish the beyond-ES5 run: `bchunk.sh head` resumes, then `bcmp.py`. Run
+   verdicts on `beyond-changed.txt` with
+   `scripts/run-test262-paths.mts --standalone` on both trees.
+4. Run the probe matrix (`matrix.mts`) and JS-environment bytes (`bytes.mts`
+   with `bytes-list.txt`). Run the equivalence gate (8 shards), the IR tests
+   and the adversarial review.
+5. For the prepared-program path: the `from-ast.ts` arm and
+   `function-object-lowering.ts` are shared. The selector, call-graph and
+   planner changes are ordinary-pipeline only.
