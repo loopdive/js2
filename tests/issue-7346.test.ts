@@ -79,6 +79,9 @@ const CLAIMED: Record<string, string> = {
   // PR #7251 review: step A judges by the IR family, so a local the IR does not type a string keeps main's route.
   "a local string set to null, === null": `function f() { var s = "ab"; s = null; return s === null; } if (!f()) { throw "x"; }`,
   "a local string set to null, !== null": `function f() { var s = "ab"; s = null; return s !== null; } if (f()) { throw "x"; }`,
+  // PR #7251 review round 2: from-ast folds a strict compare with `undefined`, and compares a string with a number.
+  "a strict compare with undefined": `var s = "1"; if (s === undefined) { throw "x"; }`,
+  "a relational compare with a number": `var s = "1"; if (s < 0) { throw "x"; }`,
 };
 
 /** The read keeps the opaque-reference discipline (or a step A rule): refused at select, never withdrawn. */
@@ -144,6 +147,32 @@ const REFUSED: Record<string, { readonly source: string; readonly unit: string; 
     source: `var s = "1"; if (s == true) {} else { throw "x"; }`,
     unit: "<module-init>",
     detail: "expr-module-extern-consumer",
+  },
+  // PR #7251 review round 2: one rule for the four equality operators.
+  "a strict compare with a number": {
+    source: `var s = "1"; if (s === 1) { throw "x"; }`,
+    unit: "<module-init>",
+    detail: "expr-module-extern-consumer",
+  },
+  "a strict compare with a boolean": {
+    source: `var s = "1"; if (s !== true) {} else { throw "x"; }`,
+    unit: "<module-init>",
+    detail: "expr-module-extern-consumer",
+  },
+  "a strict compare with an object": {
+    source: `var s = "1"; var o = { a: 1 }; if (s === o) { throw "x"; }`,
+    unit: "<module-init>",
+    detail: "expr-module-extern-consumer",
+  },
+  "a loose compare with null": {
+    source: `var s = "ab"; if (s == null) { throw "n"; }`,
+    unit: "<module-init>",
+    detail: "expr-string-null-compare",
+  },
+  "an instanceof operand": {
+    source: `var s = "ab"; if (s instanceof Object) { throw "x"; }`,
+    unit: "<module-init>",
+    detail: "expr-binary-op-instanceof",
   },
   "a catch parameter of the same name": {
     source: `var s = "ab"; try { throw 1; } catch (s) { s = 5; } if (s !== "ab") { throw "x"; }`,

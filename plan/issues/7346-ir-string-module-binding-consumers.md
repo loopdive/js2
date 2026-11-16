@@ -408,3 +408,33 @@ With no routing change, there was no verdict to run, and the sample was not exte
 checker) treat a redeclared `String` / `Number` as the built-in everywhere. On main,
 `function Number(v) { return 'n'; } function g() { var s = 'a' + Number(1); return s === 'an'; }` is
 claimed by the IR and answers wrong. So does the `String` twin; legacy answers wrong too.
+
+### Review round 2 (2026-11-16)
+
+- **Must-fix: strict equality beside a non-string.** `var s = "1"; if (s === 1) { throw "x"; }` was
+  claimed, then withdrawn ("mixed string/non-string operand for '==='"); main refuses it at select.
+  The loose rule is now one rule for all four equality operators (`isEqualityOperandBesideNonString`):
+  the read keeps the reference rule beside a value not proven a string. Two exceptions, both because
+  from-ast handles them: a strict compare with `undefined` folds, and a compare with the `null` literal
+  is judged by Step A's null rule (`s == null` / `s === null` stay refused at select there).
+- **Other operators checked in the same pass** (a 945-case matrix: the module string `"1"` / `"ab"`
+  beside a number, boolean, `null`, `undefined`, object, number var, mixed var and string, on both
+  sides, for `===` `!==` `==` `!=` `<` `>` `<=` `>=` `+` `-` `*` `&&` `||`, as a value and as an `if`
+  condition, plus `in` and `instanceof` on both sides; module level and in a function). Only the
+  strict equalities withdrew. Relational compares with a number lower (row added as claimed);
+  `instanceof` is refused at select (row added); `in` beside an object literal is refused for the
+  literal's storage, not the string.
+- **Accepted residual.** `var s = "ab"; function f(s) { return s; } …` gains a module-init post-claim
+  entry: main already claims `f` and withdraws it on a function typeIdx parity mismatch, and
+  module-init, which main refused, is now claimed and withdrawn because it calls `f`. Refusing it at
+  select here would mean predicting that parity withdrawal of another unit; the follow-up is main's
+  withdrawal of `f` itself.
+
+**Measured against main `ed17563bc2`:**
+
+| check | result |
+| --- | --- |
+| operator matrix, 945 cases × module level / function | 0 head-only post-claim; +112 claimed, 0 lost; wrong answers identical to main |
+| reviewer's round-2 probe set (175 × 2) | 0 head-only post-claim; +29 claimed, 0 lost; wrong answers identical to main |
+| 969-file census | +30, 0 lost, 0 units newly legacy, post-claim 31 → 31 (identical to round 1) |
+| JS-environment bytes (232 files) | 232/232 identical |

@@ -25,14 +25,15 @@
  *     from-ast's operand proofs (the `+` rule) key on the checker type, which
  *     narrowing makes `never` in a branch `typeof x !== "string"` guards, while
  *     `typeof` folds from the IR type (`lowerTypeOf`);
- *   - it is not `delete`'s operand, and not a loose `==` / `!=` operand beside
- *     a value not proven a string (from-ast lowers that equality for two
- *     strings only).
+ *   - it is not `delete`'s operand, and not an equality operand (any of the
+ *     four operators) beside a value not proven a string: from-ast compares a
+ *     string with a string only, and folds a strict compare with `undefined`.
  * Such a read is judged by the ordinary expression arms, exactly like a local
  * string; any other read keeps the opaque-reference discipline
  * (`isIrModuleReferenceValueKind`).
  */
 import { ts } from "../ts-api.js";
+import { isEqualityOperator, isStrictEqualityOperator, nullComparedOperand } from "./analysis/operand-admissibility.js";
 import { isUnshadowedLibBinding } from "../shared/ambient-intrinsics.js";
 import { isStoreTarget, outermostParenthesized } from "../shared/binding-writes.js";
 import { scriptVarUseFollowsDeclaration, scriptVarWrites } from "./module-binding-script-var.js";
@@ -102,14 +103,18 @@ function bindingQualifies(
   return cached;
 }
 
-/** `node` is an operand of a loose `==` / `!=` whose other operand is not proven a string. */
-function isLooseOperandBesideNonString(node: ts.Identifier, classify: ClassifyPrimitive): boolean {
+/**
+ * `node` is an equality operand beside a value from-ast does not compare with a string: one not proven a
+ * string, other than `undefined` under a strict operator (which folds) and the `null` literal (whose compare
+ * `stringUseRefusal` judges as a string's).
+ */
+function isEqualityOperandBesideNonString(node: ts.Identifier, classify: ClassifyPrimitive): boolean {
   const operand = outermostParenthesized(node);
   const equality = operand.parent;
-  if (!ts.isBinaryExpression(equality)) return false;
-  const op = equality.operatorToken.kind;
-  if (op !== ts.SyntaxKind.EqualsEqualsToken && op !== ts.SyntaxKind.ExclamationEqualsToken) return false;
-  return classify(equality.left === operand ? equality.right : equality.left) !== "string";
+  if (!ts.isBinaryExpression(equality) || !isEqualityOperator(equality.operatorToken.kind)) return false;
+  if (nullComparedOperand(equality) !== null) return false;
+  const other = classify(equality.left === operand ? equality.right : equality.left);
+  return other !== "string" && !(other === "undefined" && isStrictEqualityOperator(equality.operatorToken.kind));
 }
 
 /** True when `node` reads a `string` binding and the read is an ordinary string value. */
@@ -125,7 +130,7 @@ export function stringBindingReadIsValue(
   const declaration = identity.declaration;
   if (!ts.isVariableDeclaration(declaration) || node === declaration.name || isStoreTarget(node)) return false;
   const operator = outermostParenthesized(node).parent;
-  if (ts.isDeleteExpression(operator) || isLooseOperandBesideNonString(node, classify)) return false;
+  if (ts.isDeleteExpression(operator) || isEqualityOperandBesideNonString(node, classify)) return false;
   return (
     scriptVarUseFollowsDeclaration(node, declaration) &&
     (ts.isTypeOfExpression(operator) || classify(node) === "string") &&
