@@ -8,7 +8,9 @@
  * reify hands it.
  */
 
+import type { ts } from "../ts-api.js";
 import type { IrFunctionBuilder } from "./builder.js";
+import { openObjectLiteralFields } from "../shared/object-literal-fields.js";
 import type { OpenCarrierHome } from "./empty-object-literal.js";
 import { irRuntimeFuncRef } from "./callable-bindings.js";
 import { JS_TAG_IDS } from "./js-tag-domain.js";
@@ -42,13 +44,40 @@ export interface ObjectStaticDefinitionValues {
   readonly fields: readonly DescriptorFieldValue[];
 }
 
-/**
- * The open carrier an admitted empty object value builds (`{}` or `new
- * Object()`): a fresh `$Object`, boxed onto the dynamic carrier in #7280's
- * dynamic-home slot, raw in #7128's externref binding.
- */
-export function emitOpenCarrierObject(builder: IrFunctionBuilder, home: OpenCarrierHome): IrValueId {
+/** (#7352 O1) A data-only literal's fields, each value lowered by `lower`; none for `{}` / `new Object()`. */
+export function openLiteralFieldValues(
+  literal: ts.Expression,
+  lower: (value: ts.Expression) => IrValueId,
+): DescriptorFieldValue[] {
+  return (openObjectLiteralFields(literal) ?? []).map(({ name, initializer }) => ({ name, value: lower(initializer) }));
+}
+
+/** A fresh `$Object` with one `__extern_set` per field, in source order: legacy's open-literal builder. */
+function emitPlainObjectWithFields(builder: IrFunctionBuilder, fields: readonly DescriptorFieldValue[]): IrValueId {
   const object = emitNewPlainObject(builder, irVal({ kind: "externref" }));
+  for (const field of fields) {
+    const fieldKey = builder.emitCoerceToExternref(builder.emitStringConst(field.name));
+    builder.emitCall(
+      irRuntimeFuncRef("__extern_set"),
+      [object, fieldKey, builder.emitCoerceToExternref(field.value)],
+      null,
+    );
+  }
+  return object;
+}
+
+/**
+ * The open carrier an admitted object value builds (`{}`, `new Object()`, or
+ * (#7352 O1) a data-only literal with its `fields`): a fresh `$Object`, boxed
+ * onto the dynamic carrier in #7280's dynamic-home slot, raw in #7128's
+ * externref binding.
+ */
+export function emitOpenCarrierObject(
+  builder: IrFunctionBuilder,
+  home: OpenCarrierHome,
+  fields: readonly DescriptorFieldValue[],
+): IrValueId {
+  const object = emitPlainObjectWithFields(builder, fields);
   return home === "dynamic-home" ? builder.emitBox(object, irDynamic()) : object;
 }
 
@@ -65,15 +94,7 @@ export function emitOpenCarrierDefine(
   { key, fields }: ObjectStaticDefinitionValues,
 ): void {
   const externref = irVal({ kind: "externref" });
-  const descriptor = emitNewPlainObject(builder, externref);
-  for (const field of fields) {
-    const fieldKey = builder.emitCoerceToExternref(builder.emitStringConst(field.name));
-    builder.emitCall(
-      irRuntimeFuncRef("__extern_set"),
-      [descriptor, fieldKey, builder.emitCoerceToExternref(field.value)],
-      null,
-    );
-  }
+  const descriptor = emitPlainObjectWithFields(builder, fields);
   const propertyKey = builder.emitCoerceToExternref(typeof key === "string" ? builder.emitStringConst(key) : key);
   const result = builder.emitCall(
     irRuntimeFuncRef("__obj_define_from_desc"),

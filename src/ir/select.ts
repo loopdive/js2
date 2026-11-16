@@ -108,6 +108,7 @@ import {
   type EmptyObjectBinding,
 } from "./empty-object-literal.js";
 import { createObjectStaticSelector, type ObjectStaticValueRules } from "./select-object-statics.js";
+import { openObjectLiteralFields } from "../shared/object-literal-fields.js";
 import * as dynamicHome from "./dynamic-home-open-object.js";
 import { writerKnowsItsStrictness } from "./dynamic-home-uses.js";
 import { selectWithEnvironmentClosures } from "./with-environment.js";
@@ -13713,6 +13714,12 @@ function isPhase1ObjectLiteral(
     }
     if (isDynamicHomeOpenCarrier(expr)) return true;
     return shapeNo("objectlit-empty", expr);
+  }
+  // (#7352 O1) A data-only literal in a dynamic-home open slot is that open object: one put per field.
+  const openFields = openObjectLiteralFields(expr);
+  if (openFields !== null && isDynamicHomeOpenCarrier(expr)) {
+    const values = openFields.map((field) => field.initializer);
+    return objectStaticSelector.admitCarrierValues(values, objectStaticValueRules(scope, localClasses));
   }
 
   // Function-valued data properties still have no general closed-object IR

@@ -31,6 +31,7 @@ import {
   markStandaloneReflectiveWriteTargets,
 } from "../object-model/object-literal-reflective-escape.js"; // (#6770 S2)
 import { readEnv } from "../../env.js";
+import { isStandaloneOpenObjectLiteral } from "./open-object-literal-home.js"; // (#7352 O1)
 import {
   literalObjectWriteDeclaration,
   sourceHasObjectPropertyWrite,
@@ -1354,6 +1355,7 @@ export function collectGrowableObjectLiterals(
           // delete/accessor paths; it must not re-admit a W1 target whose alias
           // or ABI proof declined the open-object promotion.
           const mopSet = new Set<string>();
+          if (isStandaloneOpenObjectLiteral(ctx, decl)) mopSet.add(varName); // (#7352 O1)
           for (const s of stmts) {
             markStandaloneDeleteTargets(s, varName, mopSet);
             markStandaloneAccessorDefineTargets(s, varName, mopSet);

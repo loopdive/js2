@@ -365,6 +365,7 @@ import {
   emitObjectRuntimeCall,
   emitObjectStaticCall,
   emitOpenCarrierObject,
+  openLiteralFieldValues,
   emitOwnPropertyTest,
   type ObjectStaticDefinitionValues,
 } from "./open-object-carrier.js";
@@ -6614,8 +6615,11 @@ function lowerObjectLiteral(expr: ts.ObjectLiteralExpression, cx: LowerCtx, hint
   // carrier: legacy's raw-externref `$Object`, which the U2 read arm serves.
   // An open-carrier literal stored into a dynamic-carrier slot crosses onto
   // the carrier: a property of the slot, not of the admitting arm (#7280 S1).
+  // (#7352 O1) A data-only literal there is the same object, each field value a carrier.
   const openCarrierHome = admittedOpenCarrierHome(expr);
-  if (openCarrierHome !== undefined) return emitOpenCarrierObject(cx.builder, openCarrierHome);
+  const lowerField = (value: ts.Expression) => lowerCarrierOperand(value, "object literal", cx);
+  if (openCarrierHome !== undefined)
+    return emitOpenCarrierObject(cx.builder, openCarrierHome, openLiteralFieldValues(expr, lowerField));
   if (
     expr.properties.some((property) => ts.isGetAccessorDeclaration(property) || ts.isSetAccessorDeclaration(property))
   ) {
@@ -8398,7 +8402,7 @@ function lowerNewExpression(expr: ts.NewExpression, cx: LowerCtx): IrValueId {
   const promiseDelay = tryLowerPromiseDelayConstruction(expr, cx.promiseDelays, () => makePromiseDelayLoweringHost(cx));
   if (promiseDelay !== undefined) return promiseDelay;
   const openCarrierHome = admittedOpenCarrierHome(expr);
-  if (openCarrierHome !== undefined) return emitOpenCarrierObject(cx.builder, openCarrierHome);
+  if (openCarrierHome !== undefined) return emitOpenCarrierObject(cx.builder, openCarrierHome, []);
   const primitiveWrapper = lowerPrimitiveWrapperConstruction(expr, cx);
   if (primitiveWrapper !== null) return primitiveWrapper;
   // (#4461) `new Map()` on a lane whose `Map` carrier is the native `$Map`

@@ -114,6 +114,8 @@ export interface ObjectStaticSelector {
   readonly admitsCarrierUse: (expression: ts.Expression, refuse: (detail: string, node: ts.Node) => false) => boolean;
   /** A value already on the carrier: the table's carriers, and main's dynamic bindings and parameters. */
   readonly isCarrierValue: (expression: ts.Expression) => boolean;
+  /** (#7352 O1) Every value crosses onto the carrier, as a row's operands do: a data-only literal's field values. */
+  readonly admitCarrierValues: (values: readonly ts.Expression[], rules: ObjectStaticValueRules) => boolean;
   readonly moduleBindingTakes: (id: ts.Identifier, value: ts.Expression, scope: ReadonlySet<string>) => boolean;
   /** `Object.<static>(…)` or the JS environment's #7276 create, admitted; undefined for any other call. */
   readonly admit: (call: ts.CallExpression, rules: ObjectStaticValueRules) => boolean | undefined;
@@ -433,6 +435,7 @@ export function createObjectStaticSelector(state: ObjectStaticSelectorState): Ob
       return !escapesUnit(e) || refuse("expr-carrier-escapes-unit", e);
     },
     isCarrierValue,
+    admitCarrierValues: (values, rules) => admitValues(values, undefined, rules),
     // A carrier goes only into its home; a function local holds one only as its own initializer.
     moduleBindingTakes: (id, value, scope) =>
       state.moduleBindingMatches(id, value, scope) && (holdsCarrier(id) || !lowersToCarrier(value)),

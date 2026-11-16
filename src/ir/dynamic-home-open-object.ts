@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 /**
  * #7335 (lever D) — the uses proof for #7280's dynamic-home carrier: a script
- * `var o = {}` (or, #7341, `new Object()`) on the dynamic module slot that legacy keeps as an open
+ * `var o = {}` (or, #7341, `new Object()`; #7352 O1, a data-only literal) on the dynamic module slot that legacy keeps as an open
  * `$Object` (`isDynamicHomeOpenCarrier` in `select.ts`, the one initializer
  * admission). #7280 lets every use read the binding through the ordinary
  * dynamic arms. Two arms here need more:
@@ -29,6 +29,7 @@ import {
   type EmptyObjectExpression,
 } from "./empty-object-literal.js";
 import { isServedUse, type ServedUsePolicy } from "./dynamic-home-uses.js";
+import { openObjectLiteralFields } from "../shared/object-literal-fields.js";
 import type { IrLegacyModuleBindingIdentity } from "./module-bindings.js";
 import type { OwnPropertyTest } from "./nodes.js";
 import { isOwnPropertyTest, OWN_PROPERTY_TESTS } from "./object-statics.js";
@@ -51,10 +52,18 @@ export function isReference(id: ts.Identifier, query: DynamicHomeQuery): boolean
   const value = declaration.initializer;
   return (
     value !== undefined &&
-    isEmptyObjectExpression(value, query.isLibOnlyBinding) &&
+    isOpenCarrierInitializer(value, query.isLibOnlyBinding) &&
     query.isCarrier(declaration) &&
     everyUseIsServed(declaration, value, query)
   );
+}
+
+/** `{}` / `new Object()`, or (#7352 O1) a data-only literal: an initializer a dynamic home holds open. */
+function isOpenCarrierInitializer(
+  value: ts.Expression,
+  isLibOnlyBinding: (node: ts.Identifier) => boolean,
+): value is EmptyObjectExpression {
+  return isEmptyObjectExpression(value, isLibOnlyBinding) || openObjectLiteralFields(value) !== null;
 }
 
 /** The `Object.prototype` own-property tests a dynamic-home open object answers through `dyn.own_property`. */

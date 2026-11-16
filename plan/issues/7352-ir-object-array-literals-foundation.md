@@ -1,7 +1,7 @@
 ---
 id: 7352
 title: "IR foundation: object literals are open objects; array literals share the typed vec slot"
-status: ready
+status: in-progress
 sprint: current
 created: 2026-11-16
 updated: 2026-11-16
@@ -14,6 +14,18 @@ area: ir
 goal: ir-full-coverage
 depends_on: []
 related: [7349, 7350, 7353, 7335, 7280, 7338, 7339, 7292]
+# 2026-11-16 (O1): select.ts +7, the data-only literal arm beside the `{}` arm in
+# isPhase1ObjectLiteral; from-ast.ts +4, the field values passed to the open
+# carrier; object-shape-widening.ts +2 (import, and the one call to the shared
+# home decision inside collectGrowableObjectLiterals' scanStatements). The
+# decision, the builder and the field reader live in their own modules.
+loc-budget-allow:
+  - src/ir/select.ts
+  - src/ir/from-ast.ts
+  - src/codegen/declarations/object-shape-widening.ts
+func-budget-allow:
+  - src/codegen/declarations/object-shape-widening.ts::collectGrowableObjectLiterals
+  - src/codegen/declarations/object-shape-widening.ts::scanStatements#2
 ---
 
 # #7352 — IR foundation: object and array literals

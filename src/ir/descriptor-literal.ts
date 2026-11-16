@@ -9,6 +9,11 @@
 
 import { isUnshadowedUndefined } from "../shared/ambient-intrinsics.js";
 import { stripParens } from "../shared/binding-writes.js";
+import {
+  CANONICAL_ARRAY_INDEX,
+  staticNamedProperties,
+  type DataDescriptorField,
+} from "../shared/object-literal-fields.js";
 import { ts } from "../ts-api.js";
 import { NOT_COERCIBLE } from "./throw-type-error.js";
 
@@ -23,13 +28,9 @@ const ACCESSOR_FIELDS: ReadonlySet<string> = new Set(["get", "set"]);
  * primitive literal (the JS environment's `Object.create`); or (#7338 S4a) any value of a data field, and `get` /
  * `set` spelled as a primitive, which carries no function value.
  */
-export type DescriptorMode = "literal-data" | "no-function";
+export type { DataDescriptorField };
 
-/** One field of a literal descriptor, in source order. */
-export interface DataDescriptorField {
-  readonly name: string;
-  readonly initializer: ts.Expression;
-}
+export type DescriptorMode = "literal-data" | "no-function";
 
 /** One key a define applies, with its inline descriptor's fields in source order. */
 export interface DescriptorDefinition {
@@ -49,25 +50,6 @@ export interface DescriptorDefinitions {
 }
 
 const NOT_AN_OBJECT = "Property description must be an object";
-
-/**
- * The properties of an object literal whose every member is a
- * `name: initializer` assignment with a distinct identifier or string-literal
- * name, in source order; else null.
- */
-function staticNamedProperties(literal: ts.Expression): readonly DataDescriptorField[] | null {
-  if (!ts.isObjectLiteralExpression(literal)) return null;
-  const properties: DataDescriptorField[] = [];
-  for (const property of literal.properties) {
-    if (!ts.isPropertyAssignment(property) || !(ts.isIdentifier(property.name) || ts.isStringLiteral(property.name))) {
-      return null;
-    }
-    const name = property.name.text;
-    if (properties.some((field) => field.name === name)) return null;
-    properties.push({ name, initializer: property.initializer });
-  }
-  return properties;
-}
 
 /**
  * A value that is a primitive by its spelling: a number (signed or not),
@@ -136,8 +118,6 @@ export function keyedDescriptorDefinition(key: ts.Expression, descriptor: ts.Exp
     throws: converted.throws,
   };
 }
-
-const CANONICAL_ARRAY_INDEX = /^(?:0|[1-9]\d*)$/;
 
 /**
  * A literal descriptor map's definitions in source order, else null. A
