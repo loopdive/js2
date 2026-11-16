@@ -10,16 +10,26 @@
 # many agents are actually working.
 #
 # Hardware-matched limits (tunable via env):
-#   JS2WASM_MAX_LOAD    block new spawns when 1-min load >= this   (default: cores-2)
+#   JS2WASM_MAX_LOAD    block new spawns when 1-min load >= this   (default: cores-2; cloud: cores*2)
 #   JS2WASM_MIN_RAM_MB  block new spawns when avail RAM < this MB   (default: 1500)
 # The default leaves ~2 cores free for the lead, IDE, sshd and system so the box
 # stays interactive. Raise JS2WASM_MAX_LOAD to trade responsiveness for throughput.
+#
+# A Claude Code cloud session (CLAUDE_CODE_REMOTE=true) has no interactive user
+# on the box: nobody's SSH or IDE to keep responsive, so cores-2 only throttles
+# the work. On a 4-core container it allowed one agent at a time (measured
+# 2026-11-16: three agents hold the load at 5 to 8). There the default is
+# cores*2, which admits about three; the RAM floor still applies.
 
 INPUT=$(cat)
 
 CORES=$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)
-# Default ceiling = cores-2 (leave headroom), floor of 1.
-DEFAULT_MAX_LOAD=$(( CORES > 2 ? CORES - 2 : 1 ))
+# Default ceiling = cores-2 (leave headroom), floor of 1; cores*2 in a cloud session.
+if [ "${CLAUDE_CODE_REMOTE:-}" = "true" ]; then
+  DEFAULT_MAX_LOAD=$(( CORES * 2 ))
+else
+  DEFAULT_MAX_LOAD=$(( CORES > 2 ? CORES - 2 : 1 ))
+fi
 # Override precedence: env var > .claude/max-load file > cores-2 default.
 # The file knob exists because the hook runs in its own process — an agent
 # session cannot inject JS2WASM_MAX_LOAD into it mid-session. Per-box, gitignored.
