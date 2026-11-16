@@ -51,7 +51,7 @@ function carrierOf(type: IrType): IrType {
   return type.kind === "dynamic" ? CARRIER : type;
 }
 
-/** Rewrite one function; `next` allocates the SSA values the expansions add. */
+/** Rewrite one function; `fresh` allocates the SSA values the expansions add. */
 function legalizeFunction(fn: PreparedIrFunction): PreparedIrFunction {
   const types = nativeAsyncCallableValueTypes(fn);
   let valueCount = fn.valueCount;
@@ -70,7 +70,7 @@ function legalizeFunction(fn: PreparedIrFunction): PreparedIrFunction {
     rand: IrValueId,
     result: IrValueId,
     resultType: IrType,
-  ): IrInstr => ({ kind: "unary", op, rand, result, resultType }) as IrInstr;
+  ): IrInstr => ({ kind: "unary", op, rand, result, resultType });
   const isDynamic = (value: IrValueId): boolean => types.get(value)?.kind === "dynamic";
 
   const expand = (instr: IrInstr): readonly IrInstr[] => {
