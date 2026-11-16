@@ -16986,6 +16986,22 @@
       "nextBoundary": "Separate AST declaration capture and finalizer presentation from prepared-program output association before compiler-layer activation."
     },
     {
+      "path": "src/compiler/prepared-provider-census.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "compiler",
+      "owner": "7354",
+      "nextBoundary": "Prepared presentation runtime census (#7354 R): the presentation's runtime policy and the authentication of each selected provider against the completed physical plan; moves with ir-program-presentation.ts at compiler-layer activation."
+    },
+    {
+      "path": "src/compiler/prepared-physical-signature.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "compiler",
+      "owner": "7354",
+      "nextBoundary": "Prepared presentation physical-signature joins (#7354 R): the completed function slot of a binding and its signature against a physical plan row; moves with ir-program-presentation.ts at compiler-layer activation."
+    },
+    {
       "path": "src/ir/runtime/number-remainder-callables.ts",
       "state": "clean",
       "layer": "ir-runtime"

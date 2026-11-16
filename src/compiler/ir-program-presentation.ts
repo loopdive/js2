@@ -26,12 +26,9 @@ import type { IrType } from "../ir/core/types.js";
 import { runIrProgramDriver } from "./ir-program-driver.js";
 import type { IrProgramDriverResult } from "./ir-program-result.js";
 import type { PreparedWitExport, PreparedWitView } from "../wit-generator.js";
-import {
-  NUMBER_REMAINDER_RUNTIME_PROVIDERS,
-  irNumberRemainderCallableDeclaration,
-} from "../ir/runtime/number-remainder-callables.js";
-import type { RuntimeProviderDefinition } from "../ir/runtime/contracts/manifest.js";
 import { releaseOwnedFunctions } from "../wasm/physical/owned-function-data.js";
+import { runtimeCensus, type NativeSetupSlots } from "./prepared-provider-census.js";
+import { physicalCallableMatches } from "./prepared-physical-signature.js";
 
 export interface IrProgramPresentationRequest {
   readonly preparation: IrWholeProgramPreparationInput;
@@ -167,50 +164,76 @@ function booleanExportSignature(declaration: PrimitiveDeclaration): ExportSignat
   Object.freeze(signature.params);
   return Object.freeze(signature);
 }
-function typeNeedsWidening(type: TypeDef): boolean {
+/** A value a reference widening must treat: a non-defaultable reference, or one outside the native setup. */
+type ReferenceDemand = (value: ValType) => boolean;
+const nondefaultable: ReferenceDemand = (value) => value.kind === "ref";
+function typeNeedsWidening(type: TypeDef, demand: ReferenceDemand): boolean {
   switch (type.kind) {
     case "func":
-      return [...type.params, ...type.results].some((value) => value.kind === "ref");
+      return [...type.params, ...type.results].some(demand);
     case "struct":
-      return type.fields.some((field) => field.type.kind === "ref");
+      return type.fields.some((field) => demand(field.type));
     case "array":
-      return type.element.kind === "ref";
+      return demand(type.element);
     case "rec":
-      return type.types.some(typeNeedsWidening);
+      return type.types.some((row) => typeNeedsWidening(row, demand));
     case "sub":
-      return typeNeedsWidening(type.type);
+      return typeNeedsWidening(type.type, demand);
   }
 }
-function bodyNeedsWidening(body: readonly Instr[], visited = new Set<readonly Instr[]>()): boolean {
+function bodyNeedsWidening(
+  body: readonly Instr[],
+  demand: ReferenceDemand,
+  visited = new Set<readonly Instr[]>(),
+): boolean {
   if (visited.has(body)) return false;
   visited.add(body);
   for (const instruction of body) {
-    if ("blockType" in instruction && instruction.blockType.kind === "val" && instruction.blockType.type.kind === "ref")
+    if ("blockType" in instruction && instruction.blockType.kind === "val" && demand(instruction.blockType.type))
       return true;
     switch (instruction.op) {
       case "block":
       case "loop":
       case "try_table":
-        if (bodyNeedsWidening(instruction.body, visited)) return true;
+        if (bodyNeedsWidening(instruction.body, demand, visited)) return true;
         break;
       case "if":
         if (
-          bodyNeedsWidening(instruction.then, visited) ||
-          (instruction.else && bodyNeedsWidening(instruction.else, visited))
+          bodyNeedsWidening(instruction.then, demand, visited) ||
+          (instruction.else && bodyNeedsWidening(instruction.else, demand, visited))
         )
           return true;
         break;
       case "try":
         if (
-          bodyNeedsWidening(instruction.body, visited) ||
-          instruction.catches.some((row) => bodyNeedsWidening(row.body, visited)) ||
-          (instruction.catchAll && bodyNeedsWidening(instruction.catchAll, visited))
+          bodyNeedsWidening(instruction.body, demand, visited) ||
+          instruction.catches.some((row) => bodyNeedsWidening(row.body, demand, visited)) ||
+          (instruction.catchAll && bodyNeedsWidening(instruction.catchAll, demand, visited))
         )
           return true;
         break;
     }
   }
   return false;
+}
+/**
+ * Whether the module carries a reference value the presentation cannot authenticate. Without a native setup that is
+ * any non-defaultable reference. With one, the setup's own type and global slots are exempt and every other
+ * reference must name a native type slot: function types are interned signatures and may, while a struct/array
+ * type or global outside the setup is the program's own, and the numeric program owns no reference-carrying ones.
+ */
+function referenceDemand(mod: WasmModule, setup: NativeSetupSlots | undefined): boolean {
+  const demand: ReferenceDemand = setup
+    ? (value) => value.kind === "ref" && !setup.types.has(value.typeIdx)
+    : nondefaultable;
+  return (
+    mod.functions.some((fn) => fn.locals.some((local) => demand(local.type)) || bodyNeedsWidening(fn.body, demand)) ||
+    mod.types.some(
+      (type, index) =>
+        !setup?.types.has(index) && typeNeedsWidening(type, type.kind === "func" ? demand : nondefaultable),
+    ) ||
+    mod.globals.some((global, index) => !setup?.globals.has(index) && nondefaultable(global.type))
+  );
 }
 const unsupported = (gaps: readonly IrProgramPresentationGap[]): IrProgramPresentationResult =>
   Object.freeze({ kind: "presentation-unsupported", gaps: Object.freeze([...gaps]) });
@@ -630,70 +653,30 @@ function captureWitExport(
   if (result === "promise") return;
   exports.push(Object.freeze({ externalName, params: Object.freeze(params), result: result ?? null, ...association }));
 }
-/** Numeric finalization admits only exact completed canonical remainder supports. */
-function numberRemainderSupportMatches(
-  program: PreparedIrProgram,
-  emission: EmittedPreparedIrProgram,
-  providers: readonly RuntimeProviderDefinition[],
-): boolean {
-  const physical = emittedPhysicalSetupPlan(emission);
-  const support = emittedSupportFunctionReceipts(emission);
-  if (
-    !physical ||
-    physical.numberRemainders.length !== providers.length ||
-    support.length !== providers.length ||
-    new Set(physical.numberRemainders.map((row) => row.bindingId)).size !== providers.length ||
-    new Set(providers.map((row) => row.id)).size !== providers.length ||
-    new Set(support.map((row) => row.index)).size !== providers.length
-  )
-    return false;
-  return providers.every((provider) => {
-    const canonical = NUMBER_REMAINDER_RUNTIME_PROVIDERS.find((row) => row.id === provider.id);
-    if (
-      !canonical ||
-      preparedIrDataMismatch(canonical, provider) !== undefined ||
-      canonical.implementation.kind !== "runtime-callable" ||
-      provider.dependencies.length ||
-      provider.hostCapabilities.length
-    )
-      return false;
-    const symbol = canonical.implementation.symbol;
-    const resources = physical.numberRemainders.filter((row) => row.symbol === symbol);
-    if (resources.length !== 1) return false;
-    const resource = resources[0]!;
-    const entry = program.abi.entries.find((row) => row.plan.id === resource.bindingId);
-    if (!entry || entry.contract.kind !== "callable") return false;
-    const declaration = irNumberRemainderCallableDeclaration(entry.contract.ref);
-    const slot = emittedProgramBindingIndex(emission, resource.bindingId);
-    return (
-      declaration?.feature === provider.feature &&
-      entry.plan.structuralReferenceKey === resource.referenceKey &&
-      preparedIrDataMismatch(entry.contract.params, declaration.params) === undefined &&
-      preparedIrDataMismatch(entry.contract.results, declaration.results) === undefined &&
-      slot?.space === "function" &&
-      support.some((row) => row.key === resource.bindingId && row.index === slot.index) &&
-      physicalCallableMatches(emission, resource.bindingId, {
-        params: [{ kind: "f64" }, { kind: "f64" }],
-        results: [{ kind: "f64" }],
-      })
-    );
-  });
-}
+/**
+ * The numeric presentation contract. (#7354 R) An authenticated native setup (standalone) owns reference values:
+ * it asks for the detached finalization (`beginPreparedPresentationFinalization`), which widens a data copy and
+ * authenticates the post-state, so the emission the receipts check stays the completed one. Answers whether it is
+ * needed.
+ */
 function checkResourceDemand(
   program: PreparedIrProgram,
   emission: EmittedPreparedIrProgram,
   backend: PreparedIrBackendOptions,
   gap: GapRecorder,
-): void {
+): boolean {
   const mod = emission.module;
   const runtime = program.runtime.filter((row) => row.backend === backend.backend && row.target === backend.target);
+  let native: NativeSetupSlots | undefined;
   if (runtime.length !== 1) gap("runtime", "runtime-projection", "one genuine selected runtime projection is required");
   else {
     const manifest = runtime[0]!.prepared.manifest;
+    const census = runtimeCensus(program, emission, backend, manifest.providers);
+    native = census?.native;
     if (
       manifest.hostCapabilities.length ||
       manifest.hostCapabilityRecords.length ||
-      !numberRemainderSupportMatches(program, emission, manifest.providers) ||
+      !census ||
       runtime[0]!.prepared.functions.some((fn) => fn.asyncPlan || fn.asyncRuntime)
     )
       gap("runtime", "runtime-demand", "host provider or async demand is outside this numeric presentation contract");
@@ -723,16 +706,13 @@ function checkResourceDemand(
       "boundary-metadata",
       "numeric boundary absence must be preserved, not filled with all-other rows",
     );
-  if (
-    mod.functions.some((fn) => fn.locals.some((local) => local.type.kind === "ref") || bodyNeedsWidening(fn.body)) ||
-    mod.types.some(typeNeedsWidening) ||
-    mod.globals.some((global) => global.type.kind === "ref")
-  )
+  if (referenceDemand(mod, native))
     gap(
       "physical",
       "widening-demand",
       "nondefaultable reference widening needs a separately authenticated physical post-state",
     );
+  return native !== undefined;
 }
 function joinStartup(
   program: PreparedIrProgram,
@@ -891,7 +871,7 @@ export function prepareIrProgramPresentation(request: IrProgramPresentationReque
     );
   }
   if (mixed) checkMixedDemand(program, emission, capture.backend, captures, gap);
-  else checkResourceDemand(program, emission, capture.backend, gap);
+  const detached = mixed || checkResourceDemand(program, emission, capture.backend, gap);
   const startup = joinStartup(program, emission, capture.input, gap);
   if (!mod.functions.length || !program.inventory.terminalUnits.length)
     gap("emission", "empty-population", "presentation requires genuine nonempty emitted and terminal populations");
@@ -929,10 +909,10 @@ export function prepareIrProgramPresentation(request: IrProgramPresentationReque
     emission,
     output: Object.freeze({ ...capture.context, preparedStartup: startup }),
     startup,
-    ...(mixed ? { requiresDetachedFinalization: true as const } : {}),
+    ...(detached ? { requiresDetachedFinalization: true as const } : {}),
   });
-  if (mixed)
-    mixedPresentations.set(presentation, {
+  if (detached)
+    detachedPresentations.set(presentation, {
       plan: emittedPhysicalSetupPlan(emission),
       original: observeModuleData(mod),
     });
@@ -974,49 +954,6 @@ function promiseContractMatches(
 }
 function functionImportCount(mod: WasmModule): number {
   return mod.imports.filter((row) => row.desc.kind === "func").length;
-}
-function physicalTypes(
-  emission: EmittedPreparedIrProgram,
-  types: readonly PhysicalSignatureType[],
-): readonly ValType[] | undefined {
-  const result: ValType[] = [];
-  for (const type of types) {
-    if (type.kind === "support-ref") {
-      const slot = emittedProgramBindingIndex(emission, type.ref.binding.bindingId);
-      if (slot?.space !== "type") return undefined;
-      result.push({ kind: type.nullable ? "ref_null" : "ref", typeIdx: slot.index });
-    } else if (
-      type.kind === "vec" ||
-      type.kind === "string" ||
-      type.kind === "closure" ||
-      type.kind === "callable" ||
-      type.kind === "boxed"
-    )
-      return undefined;
-    else result.push(type);
-  }
-  return result;
-}
-function physicalCallableMatches(
-  emission: EmittedPreparedIrProgram,
-  id: IrBindingId,
-  row: { readonly params: readonly PhysicalSignatureType[]; readonly results: readonly PhysicalSignatureType[] },
-): boolean {
-  const slot = emittedProgramBindingIndex(emission, id);
-  if (slot?.space !== "function") return false;
-  const mod = emission.module;
-  const imports = mod.imports.filter((entry) => entry.desc.kind === "func");
-  const typeIdx = slot.index < imports.length ? imports[slot.index]!.desc : mod.functions[slot.index - imports.length];
-  const signature = typeIdx && "typeIdx" in typeIdx ? mod.types[typeIdx.typeIdx] : undefined;
-  const params = physicalTypes(emission, row.params),
-    results = physicalTypes(emission, row.results);
-  return Boolean(
-    signature?.kind === "func" &&
-    params &&
-    results &&
-    preparedIrDataMismatch(params, signature.params) === undefined &&
-    preparedIrDataMismatch(results, signature.results) === undefined,
-  );
 }
 function checkMixedImports(emission: EmittedPreparedIrProgram, plan: PhysicalSetupPlan, gap: GapRecorder): void {
   const imports = emission.module.imports.filter((row) => row.desc.kind === "func");
@@ -1282,9 +1219,9 @@ export interface PreparedPresentationFinalizationReceipt {
   readonly widenedSlots: number;
   readonly originalEmissionUnchanged: true;
 }
-type MixedPresentation = Extract<IrProgramPresentationResult, { kind: "prepared-presentation" }>;
-const mixedPresentations = new WeakMap<
-  MixedPresentation,
+type DetachedPresentation = Extract<IrProgramPresentationResult, { kind: "prepared-presentation" }>;
+const detachedPresentations = new WeakMap<
+  DetachedPresentation,
   { readonly plan: PhysicalSetupPlan; readonly original: readonly DataObservation[] }
 >();
 interface DataObservation {
@@ -1300,7 +1237,7 @@ interface DataObservation {
   readonly byteLength?: number;
 }
 interface FinalizationObservation {
-  readonly presentation: MixedPresentation;
+  readonly presentation: DetachedPresentation;
   readonly plan: PhysicalSetupPlan;
   readonly original: readonly DataObservation[];
   readonly output: readonly DataObservation[];
@@ -1536,11 +1473,11 @@ function wideningSlots(mod: WasmModule): ReadonlyMap<object, ReadonlyMap<Propert
   return result;
 }
 export function beginPreparedPresentationFinalization(
-  presentation: MixedPresentation,
+  presentation: DetachedPresentation,
 ): PreparedPresentationFinalization {
-  const record = mixedPresentations.get(presentation);
+  const record = detachedPresentations.get(presentation);
   if (!record || presentation.requiresDetachedFinalization !== true) finalizationFailure("invalid-presentation");
-  mixedPresentations.delete(presentation);
+  detachedPresentations.delete(presentation);
   const { plan, original } = record;
   for (const row of original) verifyDataObservation(row);
   if (emittedPhysicalSetupPlan(presentation.emission) !== plan) finalizationFailure("invalid-presentation");

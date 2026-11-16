@@ -45,6 +45,7 @@ import {
   type PreparedIrPipelinePresentationResult,
 } from "./compiler/ir-program-presentation.js";
 import { freezePreparedIrValue, PreparedIrProgramInvariantError, type PreparedIrBackendOptions } from "./ir/program.js";
+import { preparedPresentationPolicy } from "./compiler/prepared-provider-census.js";
 import { buildHostImportInventory, summarizeHostImportInventory } from "./host-import-policy.js";
 import { buildCapabilityRequirements, validatePlatformCapabilityRequirements } from "./capability-registry.js";
 import { createJavaScriptAdapterManifest } from "./adapter-manifest.js";
@@ -1159,7 +1160,7 @@ export function runPreparedIrPipelinePresentation(input: PipelineInput): Prepare
       sourceFiles: multiAst?.sourceFiles ?? [entryAst.sourceFile],
       entrySource: entryAst.sourceFile,
       checker: entryAst.checker,
-      policy: { backend: backendOptions.backend, target },
+      policy: preparedPresentationPolicy(backendOptions.backend, target),
       deferTopLevelInit: options.deferTopLevelInit === true,
     },
     backendOptions,
