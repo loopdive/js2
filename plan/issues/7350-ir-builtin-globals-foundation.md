@@ -14,7 +14,7 @@ task_type: implementation
 area: ir
 goal: ir-full-coverage
 depends_on: [7349]
-related: [7349, 7343, 7189, 7127, 7294, 7106, 7342]
+related: [7349, 7352, 7353, 7343, 7189, 7127, 7294, 7106, 7342]
 loc-budget-allow:
   # 2026-11-16 (#7350 G1): +4 in from-ast.ts and +3 in select.ts are the lane capability
   # `native-builtin-globals` in each file's capability union (the JS environment keeps its output) and the
@@ -97,10 +97,13 @@ argument typed dynamic 18, operand families 18, other 14), and 71 stay
 refused at selection, mostly `expr-object-static-operand` (39), for example
 `Object.isExtensible(Math)`.
 
-**`propertyHelper.js`** (899 files): with globals admitted it stops at
+**`propertyHelper.js`**: with globals admitted the harness stops at
 `var verifyPrimordialProperty = verifyProperty` (#7349 S1a) and at
-parameter-carrier refusals. Globals alone free none of those files; they
-need this issue's G4, #7349 S1a and the parameter-carrier work together.
+parameter-carrier refusals. Globals alone free none of the files that include
+it. Corrected 2026-11-16 by a measurement on main `8045884222`: 905 ES5 files
+include the harness; with this issue's G1 + G4, #7349 S1a, #7353 (parameter
+carriers) and #7352 (object literals as open objects) all in place, 151 of
+them become IR-only, and the other 748 have refusals of their own.
 
 **Legacy answers wrongly today** on: a built-in called or constructed through
 a variable (`var S = String; S(5)` traps), `Object.keys` called as a value,
@@ -153,10 +156,9 @@ for those files; each slice re-measures on current main before it starts.
 | G5 | calls and `new` through a built-in value | probes only | #7349 S1a, S6 |
 | G6 | realm writes and deletes (`X.m = v`, `delete X.m`) with the folds gated on them | probes only | |
 
-The 899 `propertyHelper.js` files need G4 together with #7349 S1a and the
-parameter-carrier refusals in that harness; that combination is the largest
-single yield in the ES5 corpus and is measured as its own step once G1 and
-S1a have landed.
+The `propertyHelper.js` harness needs G4 together with #7349 S1a, #7353 and
+#7352; that combination frees 151 files (measured 2026-11-16), not the 899
+an earlier version of this plan implied.
 
 ### Hazards to prove per slice
 
