@@ -165,8 +165,8 @@ describe("#7354 R — the Prepared presentation's provider census", () => {
 
 describe("#7354 R — the census refuses what joins nothing", () => {
   const program = "try { throw 5; } catch (e) {}";
-  const refusal = async () => {
-    const result = await compile(program, options("standalone", "test.js"));
+  const refusal = async (source = program, fileName = "test.js") => {
+    const result = await compile(source, options("standalone", fileName));
     expect(result.success).toBe(false);
     return messages(result).join("\n");
   };
@@ -386,5 +386,40 @@ describe("#7354 R — the census refuses what joins nothing", () => {
   ])("refuses a reference %s that is no native-setup slot", async (_, alter) => {
     census.slots = alter;
     expect(await refusal()).toContain(WIDENING_DEMAND);
+  });
+
+  // Two native providers (box and unbox) make the census compare provider populations; a non-canonical provider
+  // must refuse before that comparison, never reach it.
+  const twoNatives = "export function f(x: number): number { try { throw x * 2; } catch (e) { return e as number; } }";
+  const renamed = (row: RuntimeProviderDefinition) => ({ ...row, id: `${row.id}.renamed` });
+  it.each([
+    [
+      "renames one",
+      twoNatives,
+      "entry.ts",
+      (rows: readonly RuntimeProviderDefinition[]) => rows.map((row) => (native(row) ? renamed(row) : row)),
+    ],
+    [
+      "adds a renamed copy of one",
+      twoNatives,
+      "entry.ts",
+      (rows: readonly RuntimeProviderDefinition[]) => [...rows, renamed(rows.find(native)!)],
+    ],
+    [
+      "alters the feature of one",
+      twoNatives,
+      "entry.ts",
+      (rows: readonly RuntimeProviderDefinition[]) =>
+        rows.map((row) => (native(row) ? { ...row, feature: "js.number.unbox" } : row)),
+    ],
+    [
+      "adds a renamed copy of one",
+      program,
+      "test.js",
+      (rows: readonly RuntimeProviderDefinition[]) => [...rows, renamed(rows.find(native)!)],
+    ],
+  ])("refuses, without throwing, a census that %s native provider: %s", async (_, source, fileName, alter) => {
+    census.providers = alter;
+    expect(await refusal(source, fileName)).toContain(RUNTIME_DEMAND);
   });
 });

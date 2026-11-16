@@ -55,11 +55,12 @@ interface SupportCallableRow {
 /** A declared value type after resolution; a type key that names no native type slot stays unresolved, so it can
  * never equal a completed slot's type. */
 type CompletedValType = ValType | NativeDeclaredValType;
-/** Order-free equality of two populations. */
+/** Order-free equality of two populations of plain data. */
 function samePopulation(left: readonly unknown[], right: readonly unknown[]): boolean {
   const sorted = (rows: readonly unknown[]) =>
     rows
-      .map((row) => [JSON.stringify(row), row] as const)
+      // A one-element array always serializes to a string, whatever the row is.
+      .map((row) => [JSON.stringify([row]), row] as const)
       .sort(([a], [b]) => a.localeCompare(b))
       .map(([, row]) => row);
   return preparedIrDataMismatch(sorted(left), sorted(right)) === undefined;
@@ -204,10 +205,14 @@ function nativeRows(
       results: declaration.signature.results.map((value) => completedValType(slots, value)),
     });
   }
-  const implementations = providers.map((row) =>
-    canonicalProvider(RUNTIME_PROVIDERS, row) ? row.implementation : undefined,
-  );
-  if (!samePopulation(runtime, implementations)) return undefined;
+  if (
+    !providers.every((row) => canonicalProvider(RUNTIME_PROVIDERS, row)) ||
+    !samePopulation(
+      runtime,
+      providers.map((row) => row.implementation),
+    )
+  )
+    return undefined;
   const indices = (space: "type" | "global") =>
     new Set(slots.filter((slot) => slot.declaration.space === space).map((slot) => slot.index));
   return {
