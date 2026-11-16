@@ -8,13 +8,22 @@
  *   physically the host's `externref`).
  * - (#7354 D1) Synchronous functions on standalone WasmGC take and return an
  *   explicitly annotated `any`: the dynamic-value legalization lowers it to the
- *   native `externref` carrier. An inferred or JSDoc `any` is not a contract
- *   here; untyped parameters stay refused until their contracts are sound.
+ *   native `externref` carrier.
+ * - (#7354 P) On that lane a parameter without a TypeScript annotation is the
+ *   dynamic value too. Nothing checks an untyped or JSDoc-typed parameter at
+ *   runtime, and its callers include top-level code, calls with missing
+ *   arguments and calls through values, so no call-site type is a contract.
+ *   An un-annotated result is dynamic where the checker's view of it is not a
+ *   contract either: it is `any`, it comes from a JSDoc `@returns`, or the body
+ *   can run off its end after returning a value (that path returns
+ *   `undefined`). Other un-annotated results keep the producer's inference,
+ *   which the middle end checks against the lowered body.
  */
 import { ts } from "../ts-api.js";
 import type { IrType } from "./core/types.js";
 import type { RuntimeManifestPolicy } from "../runtime/contracts/provider-policy.js";
 import type { ValType } from "../wasm/model/instructions.js";
+import { functionBodyAlwaysTerminates, irFunctionBodyReturnsValue } from "./select.js";
 
 type SourcePolicy = Pick<RuntimeManifestPolicy, "backend" | "target">;
 type DynamicLane = "host-async" | "native" | undefined;
@@ -26,6 +35,11 @@ export function checkerAny(checker: ts.TypeChecker, node: ts.Node): IrType | und
 
 function annotatedAny(checker: ts.TypeChecker, annotation: ts.TypeNode | undefined): boolean {
   return annotation !== undefined && checker.getTypeFromTypeNode(annotation) === checker.getAnyType();
+}
+
+/** A body that returns a value on one path and runs off its end on another also returns `undefined`. */
+function fallsOutAfterValue(body: ts.Block | undefined): boolean {
+  return body !== undefined && irFunctionBodyReturnsValue(body) && !functionBodyAlwaysTerminates(body);
 }
 
 function hostPromiseFulfillment(checker: ts.TypeChecker, type: ts.Type): ts.Type | undefined {
@@ -47,15 +61,16 @@ function dynamicLane(policy: SourcePolicy, isAsync: boolean): DynamicLane {
   return policy.target === "standalone" ? "native" : undefined;
 }
 
-/** The dynamic (or host Promise) contract of an annotated parameter, if its lane admits one. */
+/** The dynamic (or host Promise) contract of a parameter, if its lane admits one; natively also an unannotated one. */
 export function sourceDynamicParameter(
   checker: ts.TypeChecker,
   policy: SourcePolicy,
   isAsync: boolean,
   parameter: ts.ParameterDeclaration,
-  annotation: ts.TypeNode,
 ): IrType | undefined {
   const lane = dynamicLane(policy, isAsync);
+  const annotation = parameter.type;
+  if (annotation === undefined) return lane === "native" ? { kind: "dynamic" } : undefined;
   if (annotatedAny(checker, annotation)) return lane ? checkerAny(checker, parameter.name) : undefined;
   if (lane !== "host-async") return undefined;
   // Preserve logical any independently of a typed Promise's host callable carrier.
@@ -66,7 +81,10 @@ export function sourceDynamicParameter(
   return { kind: "val", val: { kind: "externref" } };
 }
 
-/** The dynamic result contract: `Promise<any>` on a host async frame, an annotated `any` natively. */
+/**
+ * The dynamic result contract: `Promise<any>` on a host async frame; natively an annotated `any`, or an
+ * unannotated result the checker cannot vouch for.
+ */
 export function sourceDynamicResult(
   checker: ts.TypeChecker,
   policy: SourcePolicy,
@@ -78,8 +96,12 @@ export function sourceDynamicResult(
   if (!lane || !signature) return undefined;
   const any = checker.getAnyType();
   const result = checker.getReturnTypeOfSignature(signature);
-  if (lane === "native")
-    return annotatedAny(checker, declaration.type) && result === any ? { kind: "dynamic" } : undefined;
+  if (lane === "native") {
+    const dynamic = declaration.type
+      ? annotatedAny(checker, declaration.type) && result === any
+      : result === any || ts.getJSDocReturnType(declaration) !== undefined || fallsOutAfterValue(declaration.body);
+    return dynamic ? { kind: "dynamic" } : undefined;
+  }
   if (hostPromiseFulfillment(checker, result) !== any) return undefined;
   if (declaration.type && hostPromiseFulfillment(checker, checker.getTypeFromTypeNode(declaration.type)) !== any)
     return undefined;

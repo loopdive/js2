@@ -1383,14 +1383,14 @@ function prepareSourceFunctionSignatures(
     const isAsync = declaration.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword);
     const params =
       family?.params ??
-      declaration.parameters.map((param, index) =>
-        param.type
-          ? (sourceDynamicParameter(checker, policy, !!isAsync, param, param.type) ??
-            checkerCallable(checker, param.type, unit.displayName) ??
-            typeNodeToIr(param.type, unit.displayName))
-          : propagated?.params[index]
-            ? lowerTypeToIrType(propagated.params[index]!)
-            : checkerScalar(checker, param),
+      declaration.parameters.map(
+        (param, index) =>
+          sourceDynamicParameter(checker, policy, !!isAsync, param) ??
+          (param.type
+            ? (checkerCallable(checker, param.type, unit.displayName) ?? typeNodeToIr(param.type, unit.displayName))
+            : propagated?.params[index]
+              ? lowerTypeToIrType(propagated.params[index]!)
+              : checkerScalar(checker, param)),
       );
     if (params.some((type) => !type)) unsupported(`function ${unit.displayName} has an unresolved parameter contract`);
     const returnNode = isAsync ? unwrapPromiseTypeNode(declaration.type) : declaration.type;
