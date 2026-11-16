@@ -942,7 +942,8 @@ export interface IrSelectionOptions extends IrAsyncSelectionOptions {
       | "native-dynamic-loose-equality"
       | "dynamic-method-call-wrapper"
       | "native-global-function-call"
-      | "native-object-statics",
+      | "native-object-statics"
+      | "native-builtin-globals",
   ) => boolean;
   /**
    * #3787 exact global String-constructor identity. This is separate from the
@@ -9077,8 +9078,10 @@ function isAmbientIntrinsicValue(expr: ts.Identifier): boolean {
   return (
     resolver !== null &&
     resolver(expr) === undefined &&
-    builtinGlobalValueAdmitted(expr, (node) => resolver.isLibOnlyBinding(node), {
+    builtinGlobalValueAdmitted(expr, {
+      isLibOnlyBinding: (node) => resolver.isLibOnlyBinding(node),
       builtinProtoCompanionSeeded: () => currentSelectionOptions?.builtinProtoCompanionSeeded === true,
+      supportsBackendCapability: currentSelectionOptions?.supportsBackendCapability,
     }) &&
     currentDynamicRuntimeBuildable &&
     currentDynMemberReadBuildable &&

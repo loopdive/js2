@@ -54,6 +54,7 @@
 
 import { ts } from "../ts-api.js";
 import { isUndeclaredInFile } from "./ambient-intrinsics.js";
+import { hasWithStatement } from "./binding-writes.js";
 import { isPristineIntrinsic, sourceWritesMemberNamed } from "./intrinsic-prototype-writes.js";
 import { outermostTransparent, skipTransparentExpressions } from "./transparent-expressions.js";
 
@@ -197,7 +198,9 @@ function objectStaticCalledOn(value: ts.Expression): string | undefined {
  * would refuse every test. Syntactic: elision runs before a checker exists.
  */
 function objectStaticIsPristine(object: ts.Identifier, name: string): boolean {
-  return isPristineIntrinsic(object) && !sourceWritesMemberNamed(object.getSourceFile(), name);
+  const file = object.getSourceFile();
+  // Any `with` in the file: elision's boundary is file-wide, coarser than the realm-read admission's.
+  return isPristineIntrinsic(object) && !sourceWritesMemberNamed(file, name) && !hasWithStatement(file);
 }
 
 function literalKey(key: ts.Expression, accept: (key: string) => boolean): boolean {

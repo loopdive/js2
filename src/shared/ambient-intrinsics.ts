@@ -10,7 +10,7 @@ import ts from "typescript";
 import { outermostParenthesized } from "./binding-writes.js";
 
 /** `===` and `!==`: positions that observe a value's identity only. */
-export const STRICT_EQUALITY_OPERATORS: ReadonlySet<ts.SyntaxKind> = new Set([
+const STRICT_EQUALITY_OPERATORS: ReadonlySet<ts.SyntaxKind> = new Set([
   ts.SyntaxKind.EqualsEqualsEqualsToken,
   ts.SyntaxKind.ExclamationEqualsEqualsToken,
 ]);

@@ -644,7 +644,12 @@ export interface IrFromAstResolver extends PreparedAsyncFromAstResolver {
    * claim and the lowering read one capability (`number-to-string` for a `+`).
    */
   supportsBackendCapability?(
-    capability: "number-to-string" | "native-regexp" | IrAmbientGlobalFunctionCapability | ObjectStaticCapability,
+    capability:
+      | "number-to-string"
+      | "native-regexp"
+      | "native-builtin-globals"
+      | IrAmbientGlobalFunctionCapability
+      | ObjectStaticCapability,
   ): boolean;
   /**
    * (#7253) The host-free provider legacy calls for a direct ambient
@@ -5269,8 +5274,7 @@ function lowerExprUnchecked(expr: ts.Expression, cx: LowerCtx, hint: IrType): Ir
     }
     // (#7106) An ambient intrinsic as a VALUE: a named read off the realm's
     // global object; the selector's predicate, a refused use demotes below.
-    if (!p && builtinGlobalValueAdmitted(expr, (node) => cx.resolver?.isLibOnlyBinding?.(node) === true, cx.resolver))
-      return lowerAmbientIntrinsicValue(expr, cx);
+    if (!p && builtinGlobalValueAdmitted(expr, cx.resolver ?? {})) return lowerAmbientIntrinsicValue(expr, cx);
     if (!p)
       demoteToLegacy("body-shape-rejected", `ir/from-ast: identifier "${expr.text}" is not in scope in ${cx.funcName}`);
     // Slice 6 part 2 (#1181): slot-bound identifier (let mutated across

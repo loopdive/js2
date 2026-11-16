@@ -70,7 +70,7 @@ export function intrinsicUseVerdicts(source: string, name: string): boolean[] {
   const verdicts: boolean[] = [];
   const visit = (node: ts.Node): void => {
     if (ts.isIdentifier(node) && node.text === name && !ts.isFunctionDeclaration(node.parent)) {
-      verdicts.push(builtinGlobalValueAdmitted(node, libOnly));
+      verdicts.push(builtinGlobalValueAdmitted(node, { isLibOnlyBinding: libOnly }));
     }
     ts.forEachChild(node, visit);
   };

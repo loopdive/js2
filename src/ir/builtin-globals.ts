@@ -10,82 +10,106 @@
  * function closures).
  */
 import { ts } from "../ts-api.js";
-import { nullComparedOperand, nullComparisonFolds, nullValueAdmissible } from "./analysis/operand-admissibility.js";
-import { STRICT_EQUALITY_OPERATORS, isUnshadowedLibBinding } from "../shared/ambient-intrinsics.js";
+import {
+  isEqualityOperator,
+  isStrictEqualityOperator,
+  nullComparedOperand,
+  nullComparisonFolds,
+  nullValueAdmissible,
+} from "./analysis/operand-admissibility.js";
+import { isUnshadowedLibBinding } from "../shared/ambient-intrinsics.js";
 import { outermostParenthesized } from "../shared/binding-writes.js";
 import { isPristineIntrinsic } from "../shared/intrinsic-prototype-writes.js";
 
 /**
  * The built-in globals whose realm property is the value legacy's bare read
- * yields: the ES5 constructors, namespaces and global functions, and `Symbol`.
- * Measured 2026-11-15 on standalone, a legacy `return <Name>` against the
- * module's read and against `globalThis.<Name>`, identical for every entry;
- * `Function` takes the provider-owned `%Function%` when the module reads it
- * bare (`function-intrinsic-carrier.ts`), on both sides alike. The ES2015+
- * constructors (`Map`, `Promise`, `Proxy`, …) are not measured here.
+ * yields, measured with a legacy `return <Name>` against the module's read and
+ * against `globalThis.<Name>`. `Function` takes the provider-owned
+ * `%Function%` when the module reads it bare (`function-intrinsic-carrier.ts`),
+ * on both sides alike.
+ *   - `every-lane`: #7118's names, measured on standalone and the JS
+ *     environment;
+ *   - `standalone`: the rest of the ES5 namespaces and global functions
+ *     (#7350, 2026-11-15), measured on standalone only, so they ask the lane's
+ *     `native-builtin-globals` capability: the JS environment's output stays
+ *     byte-identical.
+ * The ES2015+ constructors (`Map`, `Promise`, `Proxy`, …) are not measured.
  */
-const BUILTIN_GLOBAL_NAMES: ReadonlySet<string> = new Set([
-  "Object",
-  "Function",
-  "Array",
-  "String",
-  "Boolean",
-  "Number",
-  "Symbol",
-  "Math",
-  "JSON",
-  "Date",
-  "RegExp",
-  "Error",
-  "EvalError",
-  "RangeError",
-  "ReferenceError",
-  "SyntaxError",
-  "TypeError",
-  "URIError",
-  "parseInt",
-  "parseFloat",
-  "isNaN",
-  "isFinite",
-  "decodeURI",
-  "decodeURIComponent",
-  "encodeURI",
-  "encodeURIComponent",
-  "escape",
-  "unescape",
+const BUILTIN_GLOBAL_LANES: ReadonlyMap<string, "every-lane" | "standalone"> = new Map([
+  ...[
+    "Object",
+    "Function",
+    "Array",
+    "String",
+    "Boolean",
+    "Number",
+    "Symbol",
+    "Error",
+    "EvalError",
+    "RangeError",
+    "ReferenceError",
+    "SyntaxError",
+    "TypeError",
+    "URIError",
+  ].map((name) => [name, "every-lane"] as const),
+  ...[
+    "Math",
+    "JSON",
+    "Date",
+    "RegExp",
+    "parseInt",
+    "parseFloat",
+    "isNaN",
+    "isFinite",
+    "decodeURI",
+    "decodeURIComponent",
+    "encodeURI",
+    "encodeURIComponent",
+    "escape",
+    "unescape",
+  ].map((name) => [name, "standalone"] as const),
 ]);
 
 /** Also consulted by the codegen `instanceof` arm (`ir-dynamic-instanceof.ts`): the names the realm read admits. */
 export function isBuiltinGlobalName(name: string): boolean {
-  return BUILTIN_GLOBAL_NAMES.has(name);
+  return BUILTIN_GLOBAL_LANES.has(name);
+}
+
+/** What the admission reads from the lane (the selection options and the from-ast resolver both supply it). */
+export interface BuiltinGlobalLane {
+  isLibOnlyBinding?(node: ts.Identifier): boolean;
+  builtinProtoCompanionSeeded?(): boolean;
+  supportsBackendCapability?(capability: "native-builtin-globals"): boolean;
 }
 
 /**
  * The admission. All of:
- *   - a built-in global's name, bound to its lib declaration and declared
- *     nowhere in the file (`isUnshadowedLibBinding`);
+ *   - a built-in global's name the lane measured ({@link BUILTIN_GLOBAL_LANES}),
+ *     bound to its lib declaration and declared nowhere in the file
+ *     (`isUnshadowedLibBinding`);
  *   - the realm keeps its own value under the name (`isPristineIntrinsic`):
- *     no write, delete or define of the name, and no `with`;
+ *     no write, delete or define of the name, and no enclosing `with` body;
  *   - the value reaches only positions whose answer does not depend on a
- *     member the realm may not have seeded: {@link isOpaqueIntrinsicUse}, or
+ *     member the realm may not have seeded: {@link intrinsicUseVerdict}, or
  *     the receiver of an exact `<Namespace>.<staticMethod>` value read
  *     (#7189, {@link isExactStaticMethodValueRead}), or, once the module's
  *     builtin-prototype companion is seeded, of an exact
  *     `<Receiver>.prototype.<method>` value read (#7127,
  *     {@link isExactProtoMethodValueRead}).
  */
-export function builtinGlobalValueAdmitted(
-  node: ts.Identifier,
-  isLibOnlyBinding: (node: ts.Identifier) => boolean,
-  seed?: { builtinProtoCompanionSeeded?(): boolean },
-): boolean {
+export function builtinGlobalValueAdmitted(node: ts.Identifier, lane: BuiltinGlobalLane): boolean {
+  const native = lane.supportsBackendCapability?.("native-builtin-globals") === true;
+  const lanes = BUILTIN_GLOBAL_LANES.get(node.text);
+  if (lanes === undefined || (lanes === "standalone" && !native)) return false;
+  const libOnly = (id: ts.Identifier) => lane.isLibOnlyBinding?.(id) === true;
+  if (!isUnshadowedLibBinding(node, libOnly) || !isPristineIntrinsic(node)) return false;
+  const use = intrinsicUseVerdict(node);
   return (
-    isBuiltinGlobalName(node.text) &&
-    isUnshadowedLibBinding(node, isLibOnlyBinding) &&
-    isPristineIntrinsic(node) &&
-    (isOpaqueIntrinsicUse(node) ||
-      isExactStaticMethodValueRead(node) ||
-      (seed?.builtinProtoCompanionSeeded?.() === true && isExactProtoMethodValueRead(node)))
+    use === "opaque" ||
+    // The JS environment keeps main's claim of a `null` mix, withdrawn after the claim: its output stays identical.
+    (use === "null-mix" && !native) ||
+    isExactStaticMethodValueRead(node) ||
+    (lane.builtinProtoCompanionSeeded?.() === true && isExactProtoMethodValueRead(node))
   );
 }
 
@@ -102,23 +126,21 @@ export function builtinGlobalValueAdmitted(
  *   - `alias`: the value is stored into a local (`var C = x`, `C = x`) or
  *     passed to a same-file function declaration's parameter — `names` are
  *     the bindings that now carry it, to be checked in turn.
+ *   - `null-mix`: an opaque use beside a bare `null`, which from-ast cannot
+ *     lower for a dynamic value: a loose compare with it (`tryFoldNullCompare`)
+ *     or the other branch of a conditional (`nullValueAdmissible`).
  *   - `member`: the receiver of a member/element read (#7123).
  *   - `other`: anything else (`return x`, `[x]`, `"" + x`, an unresolvable
  *     callee, …) — refused rather than reasoned about.
  */
 type UsePosition =
-  | { readonly kind: "opaque" | "member" | "other" }
+  | { readonly kind: "opaque" | "null-mix" | "member" | "other" }
   | { readonly kind: "alias"; readonly names: readonly string[] };
 
 const OPAQUE: UsePosition = { kind: "opaque" };
+const NULL_MIX: UsePosition = { kind: "null-mix" };
 const MEMBER: UsePosition = { kind: "member" };
 const OTHER: UsePosition = { kind: "other" };
-
-const EQUALITY_OPERATORS: ReadonlySet<ts.SyntaxKind> = new Set([
-  ...STRICT_EQUALITY_OPERATORS,
-  ts.SyntaxKind.EqualsEqualsToken,
-  ts.SyntaxKind.ExclamationEqualsToken,
-]);
 
 const FORWARDING_OPERATORS: ReadonlySet<ts.SyntaxKind> = new Set([
   ts.SyntaxKind.BarBarToken,
@@ -141,7 +163,7 @@ function usePosition(node: ts.Expression): UsePosition {
     if (ts.isConditionalExpression(parent) && (parent.whenTrue === child || parent.whenFalse === child)) {
       // The branches share one result: a bare `null` beside the dynamic value has none.
       const other = parent.whenTrue === child ? parent.whenFalse : parent.whenTrue;
-      if (other.kind === ts.SyntaxKind.NullKeyword && !nullValueAdmissible("dynamic")) return OTHER;
+      if (other.kind === ts.SyntaxKind.NullKeyword && !nullValueAdmissible("dynamic")) return NULL_MIX;
       child = parent;
       parent = parent.parent;
       continue;
@@ -162,11 +184,10 @@ function usePosition(node: ts.Expression): UsePosition {
   if (ts.isTypeOfExpression(parent)) return OPAQUE;
   if (ts.isPrefixUnaryExpression(parent) && parent.operator === ts.SyntaxKind.ExclamationToken) return OPAQUE;
   if (ts.isBinaryExpression(parent)) {
-    if (EQUALITY_OPERATORS.has(parent.operatorToken.kind)) {
-      // A loose compare with `null` has no lowering for a dynamic value (`tryFoldNullCompare`).
+    if (isEqualityOperator(parent.operatorToken.kind)) {
       const nullCompare =
         nullComparedOperand(parent) !== null && !nullComparisonFolds(parent.operatorToken.kind, "dynamic");
-      return nullCompare ? OTHER : OPAQUE;
+      return nullCompare ? NULL_MIX : OPAQUE;
     }
     if (parent.operatorToken.kind === ts.SyntaxKind.InstanceOfKeyword && parent.right === child) return OPAQUE;
     if (
@@ -226,7 +247,10 @@ function sameFileFunctionDeclarations(callee: ts.Identifier): ts.FunctionDeclara
   return found;
 }
 
-const opaqueUseCache = new WeakMap<ts.Identifier, boolean>();
+/** Every use the value reaches is opaque; one of them is a `null` mix; or one is refused. */
+type IntrinsicUseVerdict = "opaque" | "null-mix" | "refused";
+
+const useVerdictCache = new WeakMap<ts.Identifier, IntrinsicUseVerdict>();
 
 /**
  * (#7123) Does this intrinsic occurrence reach only opaque uses? A member read
@@ -249,17 +273,19 @@ const opaqueUseCache = new WeakMap<ts.Identifier, boolean>();
  * the Phase-1 scope rules, and a same-named binding elsewhere in the file
  * only over-refuses.
  */
-function isOpaqueIntrinsicUse(node: ts.Identifier): boolean {
-  const cached = opaqueUseCache.get(node);
+function intrinsicUseVerdict(node: ts.Identifier): IntrinsicUseVerdict {
+  const cached = useVerdictCache.get(node);
   if (cached !== undefined) return cached;
-  const result = computeOpaqueIntrinsicUse(node);
-  opaqueUseCache.set(node, result);
+  const result = computeIntrinsicUseVerdict(node);
+  useVerdictCache.set(node, result);
   return result;
 }
 
-function computeOpaqueIntrinsicUse(node: ts.Identifier): boolean {
+function computeIntrinsicUseVerdict(node: ts.Identifier): IntrinsicUseVerdict {
   const position = usePosition(node);
-  if (position.kind !== "alias") return position.kind === "opaque";
+  if (position.kind === "opaque" || position.kind === "null-mix") return position.kind;
+  if (position.kind !== "alias") return "refused";
+  let verdict: IntrinsicUseVerdict = "opaque";
   const carriers = new Set<string>(position.names);
   const pending = [...carriers];
   const sourceFile = node.getSourceFile();
@@ -271,6 +297,10 @@ function computeOpaqueIntrinsicUse(node: ts.Identifier): boolean {
       if (ts.isIdentifier(child) && child.text === carrier && child !== node && isValueRead(child)) {
         const use = usePosition(child);
         if (use.kind === "opaque") return;
+        if (use.kind === "null-mix") {
+          verdict = "null-mix";
+          return;
+        }
         if (use.kind !== "alias") {
           ok = false;
           return;
@@ -286,9 +316,9 @@ function computeOpaqueIntrinsicUse(node: ts.Identifier): boolean {
       ts.forEachChild(child, visit);
     };
     visit(sourceFile);
-    if (!ok) return false;
+    if (!ok) return "refused";
   }
-  return true;
+  return verdict;
 }
 
 /** A read of the binding, not its declaration name or the target of `=`. */
@@ -468,5 +498,5 @@ function isPlainMethodValue(methodAccess: MemberAccess): boolean {
   if (ts.isTypeOfExpression(parent)) return true;
   if (ts.isPrefixUnaryExpression(parent)) return parent.operator === ts.SyntaxKind.ExclamationToken;
   if (ts.isVariableDeclaration(parent)) return parent.initializer === use;
-  return ts.isBinaryExpression(parent) && STRICT_EQUALITY_OPERATORS.has(parent.operatorToken.kind);
+  return ts.isBinaryExpression(parent) && isStrictEqualityOperator(parent.operatorToken.kind);
 }

@@ -43,7 +43,7 @@
  */
 import { forEachChild, ts } from "../ts-api.js";
 import { isUndeclaredInFile, isUnshadowedGlobalConstant } from "./ambient-intrinsics.js";
-import { hasWithStatement, isBindingSiteName, isStoreTarget, skipOuterExpressions } from "./binding-writes.js";
+import { isBindingSiteName, isStoreTarget, skipOuterExpressions } from "./binding-writes.js";
 
 export type PatchableIntrinsic = "Array" | "Boolean" | "Function" | "Number" | "Object" | "RegExp" | "String";
 
@@ -148,14 +148,26 @@ export function sourceWritesMemberNamed(sourceFile: ts.SourceFile, name: string)
  * (#7350) `identifier` reads the realm's own global of its name: nothing in
  * the file declares the name, nothing writes, deletes or defines a member or
  * binding of that name by a literal route (`Math = v`, `globalThis.Math = v`,
- * `delete globalThis.Math`), and no `with` resolves it to an object's
- * property. A write under a computed name is outside this boundary, as for the
- * object statics (#3776). Syntactic: dead-binding elision asks it before a
- * checker exists; a checker consumer also asks for the lib binding.
+ * `delete globalThis.Math`), and no enclosing `with` body can resolve it to an
+ * object's property (a `with` elsewhere in the file does not reach it). A
+ * write under a computed name is outside this boundary, as for the object
+ * statics (#3776). Syntactic: dead-binding elision asks it before a checker
+ * exists; a checker consumer also asks for the lib binding.
  */
 export function isPristineIntrinsic(identifier: ts.Identifier): boolean {
-  const file = identifier.getSourceFile();
-  return isUndeclaredInFile(identifier) && !sourceWritesMemberNamed(file, identifier.text) && !hasWithStatement(file);
+  return (
+    isUndeclaredInFile(identifier) &&
+    !sourceWritesMemberNamed(identifier.getSourceFile(), identifier.text) &&
+    !isInWithBody(identifier)
+  );
+}
+
+/** Inside the body of a `with` statement, where a free name may resolve to the object's property. */
+function isInWithBody(node: ts.Node): boolean {
+  for (let child = node; child.parent !== undefined; child = child.parent) {
+    if (ts.isWithStatement(child.parent) && child.parent.statement === child) return true;
+  }
+  return false;
 }
 
 function prototypeUse(sourceFile: ts.SourceFile): PrototypeUse {
