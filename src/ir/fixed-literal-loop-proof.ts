@@ -147,3 +147,78 @@ export function detectFixedLiteralLoopSafeIndexes(
   }
   return safe;
 }
+
+/**
+ * #2766 — the counted-loop in-bounds proof for the IR. Returns the
+ * `"arrayVar:indexVar"` key when the `for` provably keeps its index in
+ * `[0, array.length)` across the whole body, else `null`.
+ *
+ * This is a *real* proof (per the hybrid invariant — a compiler-checked fact,
+ * not the mere presence of a `: number[]` type), and it is intentionally
+ * STRICTER than legacy's `safeIndexedArrays` population (which checked only the
+ * `i < arr.length` condition + body non-mutation): the IR fast path emits an
+ * UNCHECKED `array.get` that *traps* on OOB, so the proof must also pin the lower
+ * bound. We therefore additionally require a non-negative-literal init and a
+ * strictly-increasing step, giving `0 <= i` at entry, `i` only increases, and
+ * the strict `i < arr.length` condition ⇒ `0 <= i < arr.length` at every body
+ * point. Anything not fully proven returns `null` and gets the SAFE read.
+ */
+export function detectCountedLoopSafeIndex(stmt: ts.ForStatement): string | null {
+  if (!stmt.condition || !ts.isBinaryExpression(stmt.condition)) return null;
+  const cond = stmt.condition;
+  const op = cond.operatorToken.kind;
+  let indexExpr: ts.Expression | undefined;
+  let lengthExpr: ts.Expression | undefined;
+  // Strict `i < arr.length`
+  if (op === ts.SyntaxKind.LessThanToken) {
+    indexExpr = cond.left;
+    lengthExpr = cond.right;
+  } else if (op === ts.SyntaxKind.GreaterThanToken) {
+    // Strict `arr.length > i`
+    indexExpr = cond.right;
+    lengthExpr = cond.left;
+  } else {
+    return null; // `<=` / `>=` would admit `i == arr.length` (OOB)
+  }
+  if (
+    !indexExpr ||
+    !lengthExpr ||
+    !ts.isIdentifier(indexExpr) ||
+    !ts.isPropertyAccessExpression(lengthExpr) ||
+    !ts.isIdentifier(lengthExpr.name) ||
+    lengthExpr.name.text !== "length" ||
+    !ts.isIdentifier(lengthExpr.expression)
+  ) {
+    return null;
+  }
+  const indexVar = indexExpr.text;
+  const arrayVar = lengthExpr.expression.text;
+  // Lower bound: i starts >= 0 and strictly increases.
+  if (!forInitsIndexNonNegative(stmt, indexVar)) return null;
+  if (!isIncreasingStep(stmt.incrementor, indexVar)) return null;
+  // Stability: body must not reassign i / arr / arr.length, call a method on arr
+  // (could change length), or contain a nested function (could capture+mutate).
+  if (loopBodyMutatesIndexOrArray(stmt.statement, indexVar, arrayVar)) return null;
+  return arrayVar + ":" + indexVar;
+}
+
+/**
+ * (#7346) Whether an enclosing counted loop's proof covers `expr` (`s[i]` in
+ * the body of `for (let i = 0; i < s.length; i++)`): from-ast's
+ * `isProvenInBoundsIr` witness for this pair, read off the AST by the
+ * selector.
+ */
+export function countedLoopProvesElementRead(expr: ts.ElementAccessExpression): boolean {
+  if (!ts.isIdentifier(expr.expression) || !ts.isIdentifier(expr.argumentExpression)) return false;
+  const pair = expr.expression.text + ":" + expr.argumentExpression.text;
+  for (let node: ts.Node = expr; !ts.isSourceFile(node.parent); node = node.parent) {
+    if (ts.isFunctionLike(node.parent)) return false;
+    if (
+      ts.isForStatement(node.parent) &&
+      node.parent.statement === node &&
+      detectCountedLoopSafeIndex(node.parent) === pair
+    )
+      return true;
+  }
+  return false;
+}

@@ -32,6 +32,7 @@ import {
   certifiedScriptVarWriteMatches,
 } from "./module-binding-certified-homes.js";
 import { isModuleInitVarList, isTopLevelStatementDeclaration } from "../shared/var-declaration-lists.js";
+import { stringBindingReadIsValue } from "./module-binding-string.js";
 import { bindingDeclarationList } from "./binding-pattern-plan.js";
 import {
   carrierLeafReads,
@@ -861,6 +862,8 @@ interface IrModuleBindingResolverSurface<TIdentity, TInspection> {
   readonly supportsHostNumberToString: boolean;
   /** Prove an initializer/RHS matches the binding's actual IR representation. */
   readonly bindingValueMatches: (node: ts.Identifier, value: ts.Expression) => boolean;
+  /** (#7346) A read of a `string` binding that is an ordinary string value (`module-binding-string.ts`). */
+  readonly readsStringValue: (node: ts.Identifier) => boolean;
   /**
    * Prove an exact source-owned static RegExp carrier for standalone `.test`.
    * General RegExp values remain unsupported module bindings.
@@ -2354,6 +2357,7 @@ export function makeIrLegacyModuleBindingResolver(
 ): IrLegacyModuleBindingResolver {
   const isAmbientBinding = makeIrAmbientBindingPredicate(checker);
   const classifyPrimitiveExpression = makeIrPrimitiveExpressionClassifier(checker);
+  const isLibOnlyBinding = makeIrAmbientBindingPredicate(checker, "every");
   const resolveCapabilityExtern = options.resolveCapabilityExternBinding;
   const stableFunctionCallPlans = new Map<ts.FunctionDeclaration, IrStableFunctionCallPlan | null>();
   const inspectDirectBinding = (node: ts.Identifier, writeValue?: ts.Expression): IrLegacyModuleBindingInspection => {
@@ -2494,7 +2498,9 @@ export function makeIrLegacyModuleBindingResolver(
       }
     },
     isAmbientBinding,
-    isLibOnlyBinding: makeIrAmbientBindingPredicate(checker, "every"),
+    isLibOnlyBinding,
+    readsStringValue: (node: ts.Identifier) =>
+      stringBindingReadIsValue(checker, node, resolve, classifyPrimitiveExpression, isLibOnlyBinding),
     localVariableDeclaration(node: ts.Identifier): ts.VariableDeclaration | undefined {
       try {
         return localVariableDeclaration(node, checker);
@@ -2802,6 +2808,10 @@ export function makeIrModuleBindingResolver(
       ownerAt(node);
       return legacy.bindingValueMatches(node, value);
     },
+    readsStringValue(node: ts.Identifier): boolean {
+      ownerAt(node);
+      return legacy.readsStringValue(node);
+    },
     staticRegExpTestPlan(node: ts.Expression): IrStaticRegExpTestPlan | undefined {
       ownerAt(node);
       const plan = legacy.staticRegExpTestPlan(node);
@@ -2917,6 +2927,7 @@ export function projectIrModuleBindingResolverToLegacy(
     scalarExpressionFamily: (expr: ts.Expression) => resolver.scalarExpressionFamily(expr),
     supportsHostNumberToString: resolver.supportsHostNumberToString,
     bindingValueMatches: (node: ts.Identifier, value: ts.Expression) => resolver.bindingValueMatches(node, value),
+    readsStringValue: (node: ts.Identifier) => resolver.readsStringValue(node),
     staticRegExpTestPlan: (node: ts.Expression) => resolver.staticRegExpTestPlan(node),
     staticNumericArrayPlan: (node: ts.Expression) => resolver.staticNumericArrayPlan(node),
     retainedFunctionMethodPlan: (call: ts.CallExpression) => resolver.retainedFunctionMethodPlan(call),

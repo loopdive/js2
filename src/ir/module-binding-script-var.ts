@@ -53,8 +53,10 @@ function collectScriptVarWrites(
 /**
  * True when `node` is the declaration itself or a module-init use that runs
  * after it, so the script var's slot has been written: a top-level statement
- * after it, outside every function and class body, and not the operand of
- * `typeof` / `delete`.
+ * after it, outside every function and class body. Which operators a home
+ * lets read the slot is the home's own rule: the class-instance, capability,
+ * vec and native-buffer homes refuse a `typeof` / `delete` operand
+ * (`isTypeofOrDeleteOperand`); the string home (#7346) reads `typeof`'s.
  */
 export function scriptVarUseFollowsDeclaration(
   node: ts.Identifier,
@@ -63,10 +65,14 @@ export function scriptVarUseFollowsDeclaration(
   if (node === declaration.name) return true;
   const statement = ts.findAncestor(declaration, ts.isVariableStatement);
   if (statement === undefined || node.pos < statement.end) return false;
-  const parent = outermostParenthesized(node).parent;
-  if (ts.isTypeOfExpression(parent) || ts.isDeleteExpression(parent)) return false;
   for (let current = node.parent; !ts.isSourceFile(current); current = current.parent) {
     if (ts.isFunctionLike(current) || ts.isClassLike(current)) return false;
   }
   return true;
+}
+
+/** True when `node` is the operand of `typeof` / `delete`. */
+export function isTypeofOrDeleteOperand(node: ts.Identifier): boolean {
+  const parent = outermostParenthesized(node).parent;
+  return ts.isTypeOfExpression(parent) || ts.isDeleteExpression(parent);
 }

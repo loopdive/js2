@@ -145,9 +145,6 @@ import { remainderFastPathPlan } from "./analysis/remainder-fast-path.js";
 import { evaluateConstantCondition } from "../codegen/statements/control-flow.js";
 import type { IrClassInstanceInitializer } from "./class-instance-initializers.js";
 import { staticMemberBindingIsUnsound } from "./class-overrides.js";
-// #2766 — reuse the legacy counted-loop proof predicates (pure AST analysis, no
-// codegen state) to port the `safeIndexedArrays` in-bounds proof into the IR.
-import { isIncreasingStep, loopBodyMutatesIndexOrArray } from "./analysis/loop-shape.js";
 import { countedStringAppendPlanIsCurrent } from "./analysis/counted-string-append.js";
 import { stringBuilderSlotPlan } from "./string-builder-shape.js";
 // (#3741) native-i32 slot storage for provably-int32 mutable locals
@@ -204,7 +201,9 @@ import { objectLiteralDataPropertyName, phase1PropertyName } from "./property-ke
 import { collectDynamicStringLocalWidening } from "./dynamic-local-widening.js";
 import { coercibleStandaloneDomArgumentBoundary } from "./dom-boundary.js";
 import { fmodRefFor } from "./fmod-selection.js";
-import { detectFixedLiteralLoopSafeIndexes, forInitsIndexNonNegative } from "./fixed-literal-loop-proof.js";
+// #2766 — the counted-loop proofs (pure AST analysis, no codegen state) that port the
+// `safeIndexedArrays` in-bounds proof into the IR; the selector reads the same proof (#7346).
+import { detectCountedLoopSafeIndex, detectFixedLiteralLoopSafeIndexes } from "./fixed-literal-loop-proof.js";
 import {
   requireMatchingModuleBindingOwner,
   requireMatchingLoweringPlanOwner,
@@ -278,6 +277,7 @@ import {
   hostExternCapability,
   prefixOpCapability,
   stringElementReadLowerable,
+  stringMemberReadLowerable,
 } from "./capability.js";
 import type { IrStandaloneDomOperation } from "./dom-capability.js";
 import type { IrNativeBufferOperation } from "./native-buffer-surface.js";
@@ -6400,8 +6400,7 @@ function lowerPropertyAccess(expr: ts.PropertyAccessExpression, cx: LowerCtx): I
   }
 
   if (recvType.kind === "string") {
-    // Slice 1 — only `.length` is supported on string receivers.
-    if (propName !== "length") {
+    if (!stringMemberReadLowerable(propName)) {
       demoteToLegacy(
         "property-access-unsupported",
         `ir/from-ast: .${propName} on string is not in slice 2 (${cx.funcName})`,
@@ -11767,67 +11766,6 @@ function lowerDoStatement(stmt: ts.DoStatement, cx: LowerCtx): void {
  * instr. The loop variable's binding enters scope before
  * cond/update/body are lowered.
  */
-/**
- * #2766 — does the `for`'s initializer declare `indexVar` with a non-negative
- * numeric-literal initializer (`let i = 0`, `let i = 5`, …)? Part of the
- * counted-loop in-bounds proof's lower-bound half. Conservative: anything that
- * is not a plain non-negative numeric literal (a prefix `-1`, a computed init,
- * an index declared outside the loop) returns false → the read falls to the SAFE
- * lowering rather than being (unsoundly) trusted.
- */
-/**
- * #2766 — the counted-loop in-bounds proof for the IR. Returns the
- * `"arrayVar:indexVar"` key when the `for` provably keeps its index in
- * `[0, array.length)` across the whole body, else `null`.
- *
- * This is a *real* proof (per the hybrid invariant — a compiler-checked fact,
- * not the mere presence of a `: number[]` type), and it is intentionally
- * STRICTER than legacy's `safeIndexedArrays` population (which checked only the
- * `i < arr.length` condition + body non-mutation): the IR fast path emits an
- * UNCHECKED `array.get` that *traps* on OOB, so the proof must also pin the lower
- * bound. We therefore additionally require a non-negative-literal init and a
- * strictly-increasing step, giving `0 <= i` at entry, `i` only increases, and
- * the strict `i < arr.length` condition ⇒ `0 <= i < arr.length` at every body
- * point. Anything not fully proven returns `null` and gets the SAFE read.
- */
-function detectCountedLoopSafeIndex(stmt: ts.ForStatement): string | null {
-  if (!stmt.condition || !ts.isBinaryExpression(stmt.condition)) return null;
-  const cond = stmt.condition;
-  const op = cond.operatorToken.kind;
-  let indexExpr: ts.Expression | undefined;
-  let lengthExpr: ts.Expression | undefined;
-  // Strict `i < arr.length`
-  if (op === ts.SyntaxKind.LessThanToken) {
-    indexExpr = cond.left;
-    lengthExpr = cond.right;
-  } else if (op === ts.SyntaxKind.GreaterThanToken) {
-    // Strict `arr.length > i`
-    indexExpr = cond.right;
-    lengthExpr = cond.left;
-  } else {
-    return null; // `<=` / `>=` would admit `i == arr.length` (OOB)
-  }
-  if (
-    !indexExpr ||
-    !lengthExpr ||
-    !ts.isIdentifier(indexExpr) ||
-    !ts.isPropertyAccessExpression(lengthExpr) ||
-    !ts.isIdentifier(lengthExpr.name) ||
-    lengthExpr.name.text !== "length" ||
-    !ts.isIdentifier(lengthExpr.expression)
-  ) {
-    return null;
-  }
-  const indexVar = indexExpr.text;
-  const arrayVar = lengthExpr.expression.text;
-  // Lower bound: i starts >= 0 and strictly increases.
-  if (!forInitsIndexNonNegative(stmt, indexVar)) return null;
-  if (!isIncreasingStep(stmt.incrementor, indexVar)) return null;
-  // Stability: body must not reassign i / arr / arr.length, call a method on arr
-  // (could change length), or contain a nested function (could capture+mutate).
-  if (loopBodyMutatesIndexOrArray(stmt.statement, indexVar, arrayVar)) return null;
-  return arrayVar + ":" + indexVar;
-}
 
 /**
  * (#3786) The compile-time entry value of a `for` counter, plus the slot the

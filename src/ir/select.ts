@@ -168,6 +168,7 @@ import { collectModuleInitPopulation, makeModuleInitSynthetic, MODULE_INIT_UNIT_
 export { collectModuleInitPopulation, makeModuleInitSynthetic, MODULE_INIT_UNIT_NAME } from "./module-init.js";
 
 import { binaryOpCapability, domSurfaceCapability, hostExternCapability, prefixOpCapability } from "./capability.js";
+import { stringUseRefusal } from "./select-string-uses.js";
 import { nativeBufferOperationParts, type IrNativeBufferSurfacePlan } from "./native-buffer-surface.js";
 import type { IrStandaloneDomCapabilityPlan, IrStandaloneDomOperation } from "./dom-capability.js";
 import { isDirectStandaloneDomMemberCall } from "./dom-boundary.js";
@@ -942,7 +943,8 @@ export interface IrSelectionOptions extends IrAsyncSelectionOptions {
       | "native-dynamic-loose-equality"
       | "dynamic-method-call-wrapper"
       | "native-global-function-call"
-      | "native-object-statics",
+      | "native-object-statics"
+      | "native-string-uses",
   ) => boolean;
   /**
    * #3787 exact global String-constructor identity. This is separate from the
@@ -8119,11 +8121,23 @@ function isUnshadowedUndefinedIdentifier(expr: ts.Expression, scope: ReadonlySet
  * reference-shaped — the host externref handle, or (#4461) the host-free
  * native `$Map` struct. Both carriers take the same consumer discipline: the
  * value is opaque to this shape-only selector, so only positions with a proven
- * lowering may own an expression that touches one.
+ * lowering may own an expression that touches one. (#7346) A string read that
+ * is an ordinary string value is not one: the expression arms judge it.
  */
 function moduleExternBinding(expr: ts.Expression): ReturnType<IrLegacyModuleBindingResolver> {
   const binding = moduleBinding(expr);
-  return binding !== undefined && isIrModuleReferenceValueKind(binding.valueKind) ? binding : undefined;
+  if (binding === undefined || !isIrModuleReferenceValueKind(binding.valueKind)) return undefined;
+  return moduleStringValueRead(expr) ? undefined : binding;
+}
+
+/** (#7346) A read of a `string` binding that is an ordinary string value, on the lane measured for it. */
+function moduleStringValueRead(expr: ts.Expression): boolean {
+  const candidate = unwrapPhase1Parens(expr);
+  return (
+    ts.isIdentifier(candidate) &&
+    nativeStringUses() &&
+    currentModuleBindingResolver?.readsStringValue(candidate) === true
+  );
 }
 
 /** True only for the one module representation whose IR value is a JS boolean. */
@@ -12239,6 +12253,7 @@ function provenIrFamily(expression: ts.Expression, scope: ReadonlySet<string>): 
   if (ts.isIdentifier(expression) && unannotatedLocal(expression) !== undefined) return "unknown";
   if (isScriptVarVecCarrierRead(expression)) return "dynamic";
   if (moduleBinding(expression) !== undefined) {
+    if (moduleStringValueRead(expression)) return "string";
     const slot = obviousModuleValueFamily(expression);
     return slot === "f64" ? "number" : slot === "boolean" ? "boolean" : "unknown";
   }
@@ -12324,6 +12339,17 @@ function phase1NativeBufferVerdict(
   return operands.every((operand) => isPhase1Expr(operand, scope, localClasses));
 }
 
+const nativeStringUses = () => currentSelectionOptions?.supportsBackendCapability?.("native-string-uses") === true;
+
+/** (#7346 step A) `select-string-uses.ts` over the selector's string proof, on the lane measured for it. */
+function selectorRefusesStringUse(expr: ts.Expression, scope: ReadonlySet<string>, classes: ReadonlySet<string>) {
+  const unit = currentSubjectIsModuleInit ? expr.getSourceFile() : currentSelectionSubject;
+  if (unit === null || !nativeStringUses()) return false;
+  const isString = (e: ts.Expression) => binaryOperandFamily(e, scope, classes) === "string";
+  const refusal = stringUseRefusal(expr, isString, unit);
+  return refusal !== undefined && !capabilityNo(refusal.reason, refusal.arm, expr);
+}
+
 function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClasses: ReadonlySet<string>): boolean {
   const nativeBuffer = phase1NativeBufferVerdict(expr, scope, localClasses);
   if (nativeBuffer !== undefined) return nativeBuffer;
@@ -12335,6 +12361,7 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
   ) {
     return shapeNo("expr-module-extern-consumer", expr);
   }
+  if (selectorRefusesStringUse(expr, scope, localClasses)) return false;
   // (#7106 levers R2, S2) A match result's served field goes only where its dynamic value lowers.
   if (
     currentSelectionOptions?.supportsBackendCapability?.("native-regexp") === true &&
