@@ -3,12 +3,7 @@
 import { irCallableBindingKey, irRuntimeFuncRef } from "../../../ir/core/callable-bindings.js";
 import { INTRINSIC_DEFINITIONS } from "../../../ir/core/intrinsics.js";
 import type { IrType } from "../../../ir/core/types.js";
-import {
-  BOOLEAN_BOUNDARY_RUNTIME_PROVIDERS,
-  DYNAMIC_VALUE_RUNTIME_PROVIDERS,
-  EXTERN_BOUNDARY_RUNTIME_PROVIDERS,
-  NUMBER_BOUNDARY_RUNTIME_PROVIDERS,
-} from "../../../ir/runtime/manifest.js";
+import { NUMBER_BOUNDARY_RUNTIME_PROVIDERS, RUNTIME_PROVIDERS } from "../../../ir/runtime/manifest.js";
 import type { RuntimeProviderDefinition } from "../../../ir/runtime/contracts/manifest.js";
 import type {
   BooleanBoundaryIntrinsicId,
@@ -122,13 +117,8 @@ interface NativeIntrinsicRow {
   readonly admitted: boolean;
 }
 
-function canonicalRow(
-  providers: readonly RuntimeProviderDefinition[],
-  feature: NativeIntrinsicRow["feature"],
-  role: string,
-  admitted: boolean,
-): NativeIntrinsicRow {
-  const canonical = providers.filter((row) => row.id === `native.${feature}`);
+function canonicalRow(feature: NativeIntrinsicRow["feature"], role: string, admitted: boolean): NativeIntrinsicRow {
+  const canonical = RUNTIME_PROVIDERS.filter((row) => row.id === `native.${feature}`);
   if (canonical.length !== 1) fail("nonunique canonical " + feature);
   return { feature, provider: canonical[0]!, role: ["values", role], admitted };
 }
@@ -141,23 +131,13 @@ function nativeIntrinsicRows(input: NativeStringValueReservationInput): readonly
   const policy = input.demands.projection.prepared.manifest.policy;
   return [
     ...(["box", "unbox"] as const).map((direction) =>
-      canonicalRow(
-        BOOLEAN_BOUNDARY_RUNTIME_PROVIDERS,
-        `js.boolean.${direction}`,
-        direction + "-boolean",
-        policy.booleanBoundary[direction] === "native",
-      ),
+      canonicalRow(`js.boolean.${direction}`, direction + "-boolean", policy.booleanBoundary[direction] === "native"),
     ),
-    canonicalRow(
-      EXTERN_BOUNDARY_RUNTIME_PROVIDERS,
-      "js.extern.is_undefined",
-      "is-undefined",
-      policy.externIsUndefined.probe === "native",
-    ),
-    canonicalRow(DYNAMIC_VALUE_RUNTIME_PROVIDERS, "js.value.strict_eq", "strict-eq", true),
-    canonicalRow(DYNAMIC_VALUE_RUNTIME_PROVIDERS, "js.value.is_number", "typeof-number", true),
-    canonicalRow(DYNAMIC_VALUE_RUNTIME_PROVIDERS, "js.value.is_boolean", "typeof-boolean", true),
-    canonicalRow(DYNAMIC_VALUE_RUNTIME_PROVIDERS, "js.value.undefined", "undefined-value", true),
+    canonicalRow("js.extern.is_undefined", "is-undefined", policy.externIsUndefined.probe === "native"),
+    canonicalRow("js.value.strict_eq", "strict-eq", true),
+    canonicalRow("js.value.is_number", "typeof-number", true),
+    canonicalRow("js.value.is_boolean", "typeof-boolean", true),
+    canonicalRow("js.value.undefined", "undefined-value", true),
   ];
 }
 

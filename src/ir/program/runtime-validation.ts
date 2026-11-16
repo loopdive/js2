@@ -8,7 +8,6 @@ import { preparedIrDraftAbiLookup } from "./draft-abi-lookup.js";
 import { irProgramRuntimeDemands } from "./runtime-demands.js";
 import { prepareWholeProgramRuntimeManifest } from "./runtime-manifest.js";
 import { preparedIrDataMismatch } from "./data.js";
-import { legalizeDynamicValues } from "./dynamic-value-legalization.js";
 import { PreparedIrProgramInvariantError } from "./errors.js";
 import { type PreparedIrProgram, type PreparedIrProgramRuntimeProjection } from "./prepared-contracts.js";
 
@@ -107,10 +106,7 @@ function assertClockProjection(program: PreparedIrProgram, projection: PreparedI
       );
     }
   };
-  // The projection is the dynamic-value-legalized semantic body; the clock
-  // projection is the only further instruction change it may carry.
-  const legalized = legalizeDynamicValues(program.ir.functions, projection);
-  const before = legalized.kind === "legalized" ? legalized.functions : fail("owners", legalized.detail),
+  const before = program.ir.functions,
     after = projection.prepared.functions;
   if (before.length !== after.length) fail("owners", "function population differs");
   before.forEach((fn, index) => {

@@ -24,7 +24,6 @@ import { preparedIrProgramOwner } from "./owner.js";
 import { preparedIrReadonlyMap } from "./data.js";
 import type { PreparedIrProgramFailure, PreparedIrProgramProducerInput } from "./prepared-contracts.js";
 import { assertPreparedIrProgramPopulation } from "./population.js";
-import { legalizeDynamicValues } from "./dynamic-value-legalization.js";
 import { irRuntimeCallableDeclaration } from "../runtime/callable-declarations.js";
 import {
   collectNativeAsyncCallableDemands,
@@ -150,20 +149,11 @@ export function prepareWholeProgramRuntimeManifest(
 ): PreparedWholeProgramRuntimeManifest {
   const populationFailure = checkFunctionPopulation(input);
   if (populationFailure) return populationFailure;
-  const legalization = legalizeDynamicValues(input.ir.functions, input.policy);
-  if (legalization.kind === "gap")
-    return locatedFailure(input, legalization.unitId, {
-      kind: "unsupported",
-      code: "body-shape-rejected",
-      stage: "build",
-      detail: legalization.detail,
-    });
-  const functions = legalization.functions;
   const sourceLocationsByUnit = new Map<IrUnitId, IntrinsicSourceLocation>();
   const requestOwners = new Map<RuntimeFeature, IrUnitId>();
   const builtinDemands: IrNativeAsyncCallableDemand[] = [];
   const vectorDemands: IrVectorCallableDemand[] = [];
-  for (const fn of functions) {
+  for (const fn of input.ir.functions) {
     try {
       builtinDemands.push(collectNativeAsyncCallableDemands([fn])[0]!);
       vectorDemands.push(collectVectorCallableDemands([fn])[0]!);
@@ -214,7 +204,7 @@ export function prepareWholeProgramRuntimeManifest(
   }
   try {
     const runtime = prepareIrRuntimeManifest({
-      functions,
+      functions: input.ir.functions,
       // Every nonempty function population has exact entries above. Empty manifests contain no use locations.
       sourceFile: "",
       sourceLocationsByUnit,

@@ -6,6 +6,7 @@ import { preparedIrProgramCallableResults } from "./program-callable-contract.js
 import { prepareSourceClosureInvocations } from "./source-closure-invocation.js";
 import {
   checkerAny,
+  legalizeSourceDynamicValues,
   sourceDynamicParameter,
   sourceDynamicResolver,
   sourceDynamicResult,
@@ -1384,7 +1385,7 @@ function prepareSourceFunctionSignatures(
       family?.params ??
       declaration.parameters.map((param, index) =>
         param.type
-          ? (sourceDynamicParameter(checker, policy, !!isAsync, param, param.type) ??
+          ? (sourceDynamicParameter(checker, policy, declaration, param, param.type) ??
             checkerCallable(checker, param.type, unit.displayName) ??
             typeNodeToIr(param.type, unit.displayName))
           : propagated?.params[index]
@@ -1393,7 +1394,7 @@ function prepareSourceFunctionSignatures(
       );
     if (params.some((type) => !type)) unsupported(`function ${unit.displayName} has an unresolved parameter contract`);
     const returnNode = isAsync ? unwrapPromiseTypeNode(declaration.type) : declaration.type;
-    const dynamicResult = sourceDynamicResult(checker, policy, !!isAsync, declaration);
+    const dynamicResult = sourceDynamicResult(checker, policy, declaration);
     const result: IrType | null = certifiedDelays.has(unit.id)
       ? { kind: "extern", className: "Promise" }
       : family
@@ -1806,7 +1807,9 @@ export function prepareIrProgramSources(
           "invalid-prepared-data",
           `certified native Promise-delay ${unit.id} fabricated support bodies or provenance`,
         );
-      functions.push(lowered.main, ...lowered.lifted);
+      functions.push(
+        ...legalizeSourceDynamicValues(input.policy, signatures.values(), [lowered.main, ...lowered.lifted]),
+      );
       appendLiftedSourceProvenance(lowered.liftedUnitProvenance, inventory, unit, derivedUnits);
       if (derivedSourceRows !== undefined) appendSourceMapDerivedRows(derivedSourceRows, lowered, identity, unit);
     }

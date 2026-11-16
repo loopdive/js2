@@ -9,7 +9,7 @@
 import type { PhysicalModuleReservations, FunctionReservation } from "../../../wasm/physical/module-reservations.js";
 import type { IrInstrIntrinsic } from "../../../ir/core/nodes.js";
 import type { NativeValueResourcePlan } from "../../../ir/program/native-value-resources.js";
-import { buildObjectSameValueBody } from "../../../runtime/wasmgc/values/object-same-value-body.js";
+import { buildStrictEqualityBody } from "../../../runtime/wasmgc/values/strict-equality-body.js";
 import { buildIsUndefinedBody } from "../../../runtime/wasmgc/values/primitive-layouts.js";
 import type { NativeStringValueDeclaration } from "../../../runtime/wasmgc/values/native-resource-declaration-types.js";
 import { UNDEF_F64_BITS } from "../../../shared/contracts/f64-value-markers.js";
@@ -137,20 +137,16 @@ export function fillNativeDynamicValueResources(
   requireCompletedNativeValues(tx, values, owner.requirements, owner.dependencies);
   if (pack.strictEq) {
     requireCompletedNativeBooleans(tx, booleans!, values, owner.requirements, owner.dependencies);
-    // Only numbers, booleans and `undefined` reach a dynamic value on this lane,
-    // so the dispatch needs no BigInt or string arm; `undefined` is the one
-    // singleton and compares by identity.
     tx.fillFunction(pack.strictEq, {
       locals: [
         { name: "aa", type: { kind: "anyref" } },
         { name: "ba", type: { kind: "anyref" } },
       ],
-      body: buildObjectSameValueBody({
-        numbers: "strict",
-        typeofNumIdx: values.functions.isNumber.handle,
-        typeofBoolIdx: booleans!.isBoolean.handle,
-        unboxNumIdx: values.functions.unboxNumber.handle,
-        unboxBoolIdx: booleans!.unboxBoolean.handle,
+      body: buildStrictEqualityBody({
+        isNumber: values.functions.isNumber.handle,
+        unboxNumber: values.functions.unboxNumber.handle,
+        isBoolean: booleans!.isBoolean.handle,
+        unboxBoolean: booleans!.unboxBoolean.handle,
       }),
     });
   }

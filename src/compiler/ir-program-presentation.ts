@@ -434,9 +434,12 @@ function checkAbiExports(
   for (const entry of program.abi.entries) {
     const { plan, contract } = entry;
     if (contract.kind === "callable") {
-      // (#7354 D1) The physical plan carries a dynamic contract as `externref` on standalone, or refuses it.
-      const scalars = [...contract.params, ...contract.results].filter((type) => type.kind !== "dynamic");
-      if (!mixed && (contract.promise || scalars.some((type) => type.kind !== "val" || !numeric(type.val))))
+      // (#7354 D1) On standalone an internal callable may carry the legalized dynamic value, an `externref`;
+      // an exported one is still refused by its source declaration capture.
+      const carried = (type: IrType) =>
+        type.kind === "val" &&
+        (numeric(type.val) || (capture.backend.target === "standalone" && type.val.kind === "externref"));
+      if (!mixed && (contract.promise || [...contract.params, ...contract.results].some((type) => !carried(type))))
         gap(
           "abi.callable",
           "non-numeric-contract",

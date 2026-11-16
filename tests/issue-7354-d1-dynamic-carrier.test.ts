@@ -7,9 +7,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as gc from "../src/codegen/index.js";
 import * as linear from "../src/codegen-linear/index.js";
-import type { IrInstr } from "../src/ir/core/nodes.js";
-import { legalizeDynamicValues } from "../src/ir/program/dynamic-value-legalization.js";
-import type { PreparedIrFunction } from "../src/ir/runtime/contracts/prepared.js";
+import type { IrFunction, IrInstr } from "../src/ir/core/nodes.js";
+import type { IrType } from "../src/ir/core/types.js";
+import { DynamicValueGap, legalizeDynamicValues } from "../src/ir/program/dynamic-value-legalization.js";
 import { JS_TAG_IDS } from "../src/ir/runtime/js-tag-domain.js";
 import { instantiatePreparedArtifact } from "../src/test262/test262-prepared-runtime.js";
 import {
@@ -140,7 +140,7 @@ describe("#7354 D1 — the dynamic value on the Prepared standalone path", () =>
 describe("#7354 D1 — the legalization pass", () => {
   const dynamic = { kind: "dynamic" } as const;
   const f64 = { kind: "val", val: { kind: "f64" } } as const;
-  const fn = (instrs: readonly IrInstr[], params = [dynamic] as const): PreparedIrFunction =>
+  const fn = (instrs: readonly IrInstr[], params: readonly IrType[] = [dynamic]): IrFunction =>
     ({
       unitId: "ir-unit:test",
       name: "f",
@@ -149,35 +149,24 @@ describe("#7354 D1 — the legalization pass", () => {
       blocks: [{ id: 0, blockArgs: [], blockArgTypes: [], instrs, terminator: { kind: "return", values: [1] } }],
       exported: false,
       valueCount: 2,
-    }) as unknown as PreparedIrFunction;
-  const standalone = { backend: "wasmgc", target: "standalone" } as const;
+    }) as unknown as IrFunction;
 
   it("rewrites a proven number unbox and the dynamic parameter to the externref carrier", () => {
     const unbox = { kind: "unbox", value: 0, tagId: JS_TAG_IDS.NumberF64, result: 1, resultType: f64 };
-    const out = legalizeDynamicValues([fn([unbox as unknown as IrInstr])], standalone);
-    expect(out.kind).toBe("legalized");
-    if (out.kind !== "legalized") return;
-    expect(out.functions[0]!.params[0]!.type).toEqual({ kind: "val", val: { kind: "externref" } });
-    expect(out.functions[0]!.blocks[0]!.instrs[0]).toMatchObject({
-      kind: "intrinsic",
-      id: "js.number.unbox",
-      args: [0],
-    });
+    const out = legalizeDynamicValues(fn([unbox as unknown as IrInstr]));
+    expect(out.params[0]!.type).toEqual({ kind: "val", val: { kind: "externref" } });
+    expect(out.blocks[0]!.instrs[0]).toMatchObject({ kind: "intrinsic", id: "js.number.unbox", args: [0] });
   });
 
   it("refuses to box a value outside the admitted set (a string)", () => {
     const box = { kind: "box", value: 0, toType: dynamic, result: 1, resultType: dynamic };
-    const out = legalizeDynamicValues([fn([box as unknown as IrInstr], [{ kind: "string" }] as never)], standalone);
-    expect(out).toMatchObject({
-      kind: "gap",
-      detail: "dynamic operation box of a non-primitive value has no Prepared intrinsic",
-    });
+    expect(() => legalizeDynamicValues(fn([box as unknown as IrInstr], [{ kind: "string" }]))).toThrow(
+      new DynamicValueGap("dynamic operation box of a non-primitive value has no Prepared intrinsic"),
+    );
   });
 
-  it("leaves every other projection untouched", () => {
-    const input = [fn([])];
-    const out = legalizeDynamicValues(input, { backend: "wasmgc", target: "host" });
-    expect(out).toEqual({ kind: "legalized", functions: input });
-    expect(out.kind === "legalized" && out.functions[0]).toBe(input[0]);
+  it("returns a function without a dynamic value unchanged", () => {
+    const input = fn([], [f64]);
+    expect(legalizeDynamicValues(input)).toBe(input);
   });
 });

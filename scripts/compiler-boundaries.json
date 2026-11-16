@@ -17022,6 +17022,11 @@
       "layer": "backend-wasmgc"
     },
     {
+      "path": "src/runtime/wasmgc/values/strict-equality-body.ts",
+      "state": "clean",
+      "layer": "native-runtime"
+    },
+    {
       "path": "src/ir/runtime/number-remainder-callables.ts",
       "state": "clean",
       "layer": "ir-runtime"
