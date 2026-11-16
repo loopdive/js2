@@ -18,15 +18,14 @@
  * `undefined` can enter a dynamic value here (every other box refuses), and the
  * runtime functions behind the intrinsics are exact for that set.
  */
+import { irValueTypes } from "../analysis/value-types.js";
 import { INTRINSIC_SIGNATURE_VERSION, INTRINSIC_DEFINITIONS, type IntrinsicId } from "../core/intrinsics.js";
 import { mapNestedBuffers, type IrFunction, type IrInstr, type IrValueId } from "../core/nodes.js";
 import type { IrType } from "../core/types.js";
 import { irRuntimeCallableDeclaration } from "../runtime/callable-declarations.js";
 import { JS_TAG_IDS } from "../runtime/js-tag-domain.js";
-import { nativeAsyncCallableValueTypes } from "../runtime/native-async-callables.js";
 
 const CARRIER: IrType = Object.freeze({ kind: "val", val: Object.freeze({ kind: "externref" }) });
-const F64: IrType = Object.freeze({ kind: "val", val: Object.freeze({ kind: "f64" }) });
 
 /** A dynamic operation the Prepared path has no intrinsic for; the message names it. */
 export class DynamicValueGap extends Error {}
@@ -46,15 +45,11 @@ function carrierOf(type: IrType): IrType {
   return type.kind === "dynamic" ? CARRIER : type;
 }
 
-/**
- * Rewrite one function; `fresh` allocates the SSA values the expansions add.
- * A function without a dynamic value is returned unchanged.
- */
+/** Rewrite one function. A function without a dynamic value is returned unchanged. */
 export function legalizeDynamicValues(fn: IrFunction): IrFunction {
   if (!containsDynamic(fn)) return fn;
-  const types = nativeAsyncCallableValueTypes(fn);
+  const types = irValueTypes(fn);
   let valueCount = fn.valueCount;
-  const fresh = (): IrValueId => valueCount++ as IrValueId;
   const intrinsic = (instr: IrInstr, id: IntrinsicId, args: readonly IrValueId[], result = instr.result): IrInstr => ({
     kind: "intrinsic",
     id,
@@ -64,37 +59,26 @@ export function legalizeDynamicValues(fn: IrFunction): IrFunction {
     resultType: INTRINSIC_DEFINITIONS[id].signature.result,
     ...(instr.site === undefined ? {} : { site: instr.site }),
   });
-  const unary = (
-    op: "i32.eqz" | "f64.convert_i32_s",
-    rand: IrValueId,
-    result: IrValueId,
-    resultType: IrType,
-  ): IrInstr => ({ kind: "unary", op, rand, result, resultType });
   const isDynamic = (value: IrValueId): boolean => types.get(value)?.kind === "dynamic";
 
   const expand = (instr: IrInstr): readonly IrInstr[] => {
     switch (instr.kind) {
       case "box": {
         if (instr.toType.kind !== "dynamic") return [instr];
-        const source = types.get(instr.value);
         if (instr.toType.tag === JS_TAG_IDS.Boolean) return [intrinsic(instr, "js.boolean.box", [instr.value])];
+        const source = types.get(instr.value);
         if (source?.kind === "val" && source.val.kind === "f64")
           return [intrinsic(instr, "js.number.box", [instr.value])];
-        if (source?.kind === "val" && source.val.kind === "i32") {
-          const widened = fresh();
-          return [unary("f64.convert_i32_s", instr.value, widened, F64), intrinsic(instr, "js.number.box", [widened])];
-        }
         return gap(`box of a non-primitive value`);
       }
       case "unbox":
         if (!isDynamic(instr.value)) return [instr];
         if (instr.tagId === JS_TAG_IDS.NumberF64) return [intrinsic(instr, "js.number.unbox", [instr.value])];
-        if (instr.tagId === JS_TAG_IDS.Boolean) return [intrinsic(instr, "js.boolean.unbox", [instr.value])];
         return gap(`unbox of tag ${instr.tagId}`);
+      // Only the `undefined` probe has a source producer here; the number and
+      // Boolean tag tests come from `typeof`, which refuses as `dyn.typeof`.
       case "tag.test":
         if (!isDynamic(instr.value)) return [instr];
-        if (instr.tagId === JS_TAG_IDS.NumberF64) return [intrinsic(instr, "js.value.is_number", [instr.value])];
-        if (instr.tagId === JS_TAG_IDS.Boolean) return [intrinsic(instr, "js.value.is_boolean", [instr.value])];
         if (instr.tagId === JS_TAG_IDS.Undefined) return [intrinsic(instr, "js.extern.is_undefined", [instr.value])];
         return gap(`tag.test of tag ${instr.tagId}`);
       case "dyn.undefined":
@@ -107,10 +91,10 @@ export function legalizeDynamicValues(fn: IrFunction): IrFunction {
       case "dyn.eq": {
         if (instr.loose) return gap("dyn.eq (loose)");
         if (!instr.negate) return [intrinsic(instr, "js.value.strict_eq", [instr.lhs, instr.rhs])];
-        const positive = fresh();
+        const positive = valueCount++ as IrValueId;
         return [
           intrinsic(instr, "js.value.strict_eq", [instr.lhs, instr.rhs], positive),
-          unary("i32.eqz", positive, instr.result!, instr.resultType!),
+          { kind: "unary", op: "i32.eqz", rand: positive, result: instr.result, resultType: instr.resultType },
         ];
       }
       // A front-end dynamic helper (`__ir_dyn_add`, ...) has no runtime declaration.

@@ -9,7 +9,7 @@
 import type { PhysicalModuleReservations, FunctionReservation } from "../../../wasm/physical/module-reservations.js";
 import type { IrInstrIntrinsic } from "../../../ir/core/nodes.js";
 import type { NativeValueResourcePlan } from "../../../ir/program/native-value-resources.js";
-import { buildStrictEqualityBody } from "../../../runtime/wasmgc/values/strict-equality-body.js";
+import { buildObjectSameValueBody } from "../../../runtime/wasmgc/values/object-same-value-body.js";
 import { buildIsUndefinedBody } from "../../../runtime/wasmgc/values/primitive-layouts.js";
 import type { NativeStringValueDeclaration } from "../../../runtime/wasmgc/values/native-resource-declaration-types.js";
 import { UNDEF_F64_BITS } from "../../../shared/contracts/f64-value-markers.js";
@@ -36,22 +36,23 @@ export interface NativeDynamicValueSelection {
 /**
  * The functions the projection's executable dynamic-value intrinsics demand, or
  * `undefined` when it has none. The `undefined` probe counts only when the
- * manifest bound it to the native runtime function, not the host import. Any
- * member of the family needs the native primitive values, even when it adds no
- * function of its own (`js.value.is_number` calls `__typeof_number`).
+ * manifest bound it to the native runtime function, not the host import.
  */
 export function selectNativeDynamicValues(
   intrinsics: readonly IrInstrIntrinsic[],
 ): NativeDynamicValueSelection | undefined {
   const has = (id: string) => intrinsics.some((instruction) => instruction.id === id);
-  const isUndefined = intrinsics.some(
-    (instruction) =>
-      instruction.id === "js.extern.is_undefined" &&
-      instruction.provider?.kind === "callable" &&
-      instruction.provider.target.binding.kind === "runtime",
-  );
-  if (!isUndefined && !intrinsics.some((instruction) => instruction.id.startsWith("js.value."))) return undefined;
-  return { strictEq: has("js.value.strict_eq"), undefinedValue: has("js.value.undefined"), isUndefined };
+  const selection = {
+    strictEq: has("js.value.strict_eq"),
+    undefinedValue: has("js.value.undefined"),
+    isUndefined: intrinsics.some(
+      (instruction) =>
+        instruction.id === "js.extern.is_undefined" &&
+        instruction.provider?.kind === "callable" &&
+        instruction.provider.target.binding.kind === "runtime",
+    ),
+  };
+  return Object.values(selection).some(Boolean) ? selection : undefined;
 }
 
 const EXTERNREF = { kind: "externref" } as const;
@@ -142,11 +143,17 @@ export function fillNativeDynamicValueResources(
         { name: "aa", type: { kind: "anyref" } },
         { name: "ba", type: { kind: "anyref" } },
       ],
-      body: buildStrictEqualityBody({
-        isNumber: values.functions.isNumber.handle,
-        unboxNumber: values.functions.unboxNumber.handle,
-        isBoolean: booleans!.isBoolean.handle,
-        unboxBoolean: booleans!.unboxBoolean.handle,
+      // IsStrictlyEqual (§7.2.15) is SameValue's dispatch with Number::equal. Only numbers, booleans and the
+      // `undefined` singleton enter a Prepared dynamic value, so the BigInt and string arms are absent.
+      body: buildObjectSameValueBody({
+        typeofNumIdx: values.functions.isNumber.handle,
+        typeofBoolIdx: booleans!.isBoolean.handle,
+        unboxNumIdx: values.functions.unboxNumber.handle,
+        unboxBoolIdx: booleans!.unboxBoolean.handle,
+        numberEquality: "number-equal",
+        anyStrTypeIdx: -1,
+        strFlattenIdx: undefined,
+        strEqualsIdx: undefined,
       }),
     });
   }

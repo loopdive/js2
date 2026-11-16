@@ -97,22 +97,50 @@ export function sourceDynamicResolver(policy: SourcePolicy): { readonly resolveD
 }
 
 /**
- * (#7354 D1) A program with a native `any` contract is legalized to the
+ * (#7354 D1) The one rule for a dynamic value leaving the dynamic domain on the
+ * native lane. An `any` expression whose contextual type is not `any` (an
+ * argument for a typed parameter, the value returned from a typed result, the
+ * initializer or assigned value of a typed binding, a property or element of a
+ * typed literal, a conditional branch in such a position) would cross into that
+ * type with no conversion the source wrote. The Prepared path has no checked
+ * unbox yet (a mismatch must convert or throw, never pass), so the flow refuses
+ * by name. An operator that converts explicitly (`+v`, `v * 2`, `v === w`)
+ * gives its operand no contextual type; the legalization expresses it or
+ * refuses it by name.
+ */
+export function refuseImplicitDynamicFlows(
+  checker: ts.TypeChecker,
+  policy: SourcePolicy,
+  declaration: ts.FunctionDeclaration | readonly ts.Statement[],
+): void {
+  if (dynamicLane(policy, undefined) !== "native") return;
+  const any = checker.getAnyType();
+  const visit = (node: ts.Node): void => {
+    if (ts.isExpression(node) && checker.getTypeAtLocation(node) === any) {
+      const contextual = checker.getContextualType(node);
+      if (contextual !== undefined && contextual !== any)
+        throw new IrUnsupportedError(
+          "type-resolution-unsupported",
+          "build",
+          `a dynamic value flows into ${checker.typeToString(contextual)} without a conversion (${ts.SyntaxKind[node.parent.kind]})`,
+        );
+    }
+    ts.forEachChild(node, visit);
+  };
+  ("kind" in declaration ? [declaration] : declaration).forEach(visit);
+}
+
+/**
+ * (#7354 D1) On the native lane every lowered function is legalized to the
  * intrinsic/externref form, and an operation without a Prepared intrinsic is a
- * named refusal of it. A program without one keeps its existing path: from-ast
- * may use dynamic values internally there, and those reach the later stages
- * exactly as before.
+ * named refusal. A function without a dynamic value is returned unchanged, so a
+ * program without one keeps its exact IR.
  */
 export function legalizeSourceDynamicValues(
   policy: SourcePolicy,
-  signatures: Iterable<{ readonly params: readonly IrType[]; readonly returnType: IrType | null }>,
   functions: readonly IrFunction[],
 ): readonly IrFunction[] {
   if (dynamicLane(policy, undefined) !== "native") return functions;
-  const contracted = [...signatures].some(
-    (signature) => signature.returnType?.kind === "dynamic" || signature.params.some((type) => type.kind === "dynamic"),
-  );
-  if (!contracted) return functions;
   try {
     return functions.map(legalizeDynamicValues);
   } catch (error) {

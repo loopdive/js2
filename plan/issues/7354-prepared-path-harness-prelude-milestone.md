@@ -18,8 +18,15 @@ related: [7188, 2949, 3526, 3527, 3518, 7106, 7349, 7350, 7352]
 # policy (`preparedPresentationPolicy`), which replaces the inline `{ backend, target }`
 # policy literal in place; the policy and the provider census live in their own
 # module, src/compiler/prepared-provider-census.ts.
+# 2026-11-16 (slice D1, review round 1): src/ir/from-ast.ts +10, two named
+# declines the Prepared producer reaches because it has no selector (`**` on a
+# dynamic operand, a value-position prefix `++`/`--`); they replace invariant
+# crashes in place and sit in the arms that own them. ir-program-presentation.ts
+# +1: D1's internal externref callable contract admission in the ABI join.
 loc-budget-allow:
   - src/compiler.ts
+  - src/ir/from-ast.ts
+  - src/compiler/ir-program-presentation.ts
 ---
 
 # #7354 — Prepared IR path, milestone 1

@@ -62,12 +62,7 @@ export const BOOLEAN_BOUNDARY_RUNTIME_FEATURES = Object.freeze(["js.boolean.box"
 export const EXTERN_BOUNDARY_RUNTIME_FEATURES = Object.freeze(["js.extern.is_undefined"] as const);
 
 /** (#7354 D1) Dynamic-value feature rows, 1:1 with their intrinsic IDs. */
-export const DYNAMIC_VALUE_RUNTIME_FEATURES = Object.freeze([
-  "js.value.strict_eq",
-  "js.value.is_number",
-  "js.value.is_boolean",
-  "js.value.undefined",
-] as const);
+export const DYNAMIC_VALUE_RUNTIME_FEATURES = Object.freeze(["js.value.strict_eq", "js.value.undefined"] as const);
 
 export const INTRINSIC_RUNTIME_FEATURES = Object.freeze([
   ...NUMERIC_COERCION_RUNTIME_FEATURES,

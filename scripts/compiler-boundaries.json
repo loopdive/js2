@@ -140,7 +140,8 @@
         "src/ir/analysis/dominance.ts",
         "src/ir/analysis/alloc-verification.ts",
         "src/ir/analysis/nested-stackification.ts",
-        "src/ir/analysis/backend-legality.ts"
+        "src/ir/analysis/backend-legality.ts",
+        "src/ir/analysis/value-types.ts"
       ],
       "required": true,
       "entries": [
@@ -162,7 +163,8 @@
         "src/ir/analysis/allocation-evidence/effect-rules.ts",
         "src/ir/analysis/allocation-evidence/census.ts",
         "src/ir/analysis/allocation-evidence/metadata.ts",
-        "src/ir/analysis/allocation-evidence/verify.ts"
+        "src/ir/analysis/allocation-evidence/verify.ts",
+        "src/ir/analysis/value-types.ts"
       ],
       "minModules": 19
     },
@@ -17007,6 +17009,11 @@
       "layer": "ir-program"
     },
     {
+      "path": "src/ir/analysis/value-types.ts",
+      "state": "clean",
+      "layer": "ir-analysis"
+    },
+    {
       "path": "src/ir/runtime/dynamic-value-callables.ts",
       "state": "clean",
       "layer": "ir-runtime"
@@ -17020,11 +17027,6 @@
       "path": "src/backend/wasmgc/resources/native-dynamic-values.ts",
       "state": "clean",
       "layer": "backend-wasmgc"
-    },
-    {
-      "path": "src/runtime/wasmgc/values/strict-equality-body.ts",
-      "state": "clean",
-      "layer": "native-runtime"
     },
     {
       "path": "src/compiler/prepared-physical-signature.ts",

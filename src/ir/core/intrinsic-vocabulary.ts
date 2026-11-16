@@ -87,12 +87,7 @@ export type ExternBoundaryIntrinsicId = (typeof EXTERN_BOUNDARY_INTRINSIC_IDS)[n
  * extern families do not already name. Only the Prepared standalone lane
  * produces them, from its dynamic-value legalization.
  */
-export const DYNAMIC_VALUE_INTRINSIC_IDS = Object.freeze([
-  "js.value.strict_eq",
-  "js.value.is_number",
-  "js.value.is_boolean",
-  "js.value.undefined",
-] as const);
+export const DYNAMIC_VALUE_INTRINSIC_IDS = Object.freeze(["js.value.strict_eq", "js.value.undefined"] as const);
 
 export type DynamicValueIntrinsicId = (typeof DYNAMIC_VALUE_INTRINSIC_IDS)[number];
 

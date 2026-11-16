@@ -127,8 +127,6 @@ export type ExternBoundaryRuntimeProviderId = (typeof EXTERN_BOUNDARY_RUNTIME_PR
 /** (#7354 D1) The dynamic-value operations have one native arm each. */
 export const DYNAMIC_VALUE_RUNTIME_PROVIDER_IDS = Object.freeze([
   "native.js.value.strict_eq",
-  "native.js.value.is_number",
-  "native.js.value.is_boolean",
   "native.js.value.undefined",
 ] as const);
 
