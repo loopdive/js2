@@ -472,3 +472,85 @@ Evidence:
 - **`export default <expression>`** on the Prepared path compiles and exports nothing: `let b = true; export default
   b;` (which G lets through) and `let b = 1; export default b;` (which already did on main). Not for this slice; the
   issue is filed separately.
+
+## Slice ladder after P (measured 2026-11-16)
+
+Replaces the order of slices S, D2, D3, C, B and F in the table above. Source:
+a complete census of the prelude on slice P's branch (`23d4da567e`: V, G, D1
+and P together), which lists every refusal in the three prelude files, not
+only the first (session scratch `irgap/f-design.md`).
+
+**Prelude gaps by mechanism** (sites in `test262-fyi-runtime.js`, `assert.js`
+and `sta.js`):
+
+| mechanism | sites |
+| --- | ---: |
+| strings into the dynamic value (concatenation, literals, compares) | about 40 |
+| built-in globals (`globalThis` 22, `String()` 7, `JSON`, `console`, `Object.prototype.toString.call`, `Array.prototype.map.call`, error constructors, `eval`) | 39 |
+| a function declaration read as a value (`assert`, `compareArray`, `Test262Error`) | 23 |
+| throw and catch with a dynamic value | 17 |
+| an unannotated function expression as a value | 16 |
+| dynamic member read / write | about 16 / 3 |
+| property write / read-and-call on a function object | 10 / 9 |
+| `new` on a plain function / `this` / `instanceof` | 10 / 4 / 2 |
+| call through a dynamic value or local | 10 |
+| `typeof` / ToBoolean / `=== null` | 9 / 8 / 2 |
+| object literal | 4 |
+| dynamic home for a script `var` | 2 |
+
+A passing `assert.sameValue(1, 1)` runs only `sameValue` and `_isSameValue`,
+but module-init runs every top-level statement and the whole prelude must
+compile.
+
+**Slices**, each a whole mechanism, proved by a smallest program through the
+strict Prepared entry that validates and runs:
+
+| slice | content | depends on | proving program |
+| --- | --- | --- | --- |
+| H | A dynamic home for every script `var` without a proven typed home: an `externref` global, `undefined` stored by the module-init prologue, the D1 carrier for globals; also the resolver's value-kind arm that refuses `var x = {…}` and array literals before the home is asked. | D1 | `var x; x = 1; if (x !== 1) throw 1;` |
+| T | ToBoolean, the `=== null` tag test, `typeof` over the admitted values (its string result needs Str). | D1 | `function f(v){ return !v; } if (f(0) !== true \|\| f(1) !== false) throw 1;` |
+| X | Throw and catch with a dynamic value; the catch binding is dynamic; rethrow. | D1 | `function g(v){ try { throw v; } catch (e) { return e; } } if (g(1) !== 1) throw 1;` |
+| Str | Strings in the dynamic value: box a native string, the string arm of strict equality, dynamic `+` and `+=`, `String(x)`, `typeof` results, the string policies of the presentation. | D1 | `function f(a,b){ return a + b; } if (f("a", 1) !== "a1") throw 1;` |
+| Fa | Function values, creation and storage: unannotated closures with P's all-dynamic signature, a declaration as a value, the closure into a dynamic slot, presentation of the closure setup. | H | `var print = function (v) { return v; }; if (print(1) !== 1) throw 1;` |
+| O | Objects as dynamic values: an object literal as a native ordinary object, dynamic member get and set, TypeError on `undefined` / `null`. | H | `var o = { a: 1 }; o.b = 2; if (o.a + o.b !== 3) throw 1;` |
+| Fb | Dynamic call: a call through a value onto the existing closure-call intrinsics, a native IsCallable and its TypeError; a direct typed call when the callee is static. | Fa | `function t(fn){ return fn(2); } if (t(function (x) { return x * 2; }) !== 4) throw 1;` |
+| C | Function objects: properties, `prototype` / `name` / `length`, `this`, `new F()`, `instanceof`, `.constructor`. | Fa, Fb, O | `sta.js` `Test262Error`; `assert.x = function(){return 1}; assert.x() === 1` |
+| B | The built-in globals the prelude names. | Str, O | `assert.js` `formatIdentityFreeValue` |
+| M | The real prelude plus `assert.sameValue(1, 1);` passes in the real runner. | all | |
+
+H, T, X and Str need only D1 and run in parallel. Fa and O follow H and run in
+parallel. Fb follows Fa; C follows Fa, Fb and O; B's parts follow their value
+kinds.
+
+**Function values on this path** (decided): a function value is the existing
+closure struct (funcref, arity, property bag), typed `closure<sig>` while the
+callee is statically known and the D1 `externref` once it reaches a dynamic
+slot. A static callee is called directly; any other call goes through one
+legalization arm onto the existing `js.closure.call:N` / apply-vector
+intrinsics, whose dispatch body legacy already shares. `this` reads the
+`currentThis` global that dispatcher sets; properties live in a native
+ordinary object held in the bag; `new` is create-with-prototype plus a call.
+Each is an intrinsic with a native provider: no host import and no second
+representation.
+
+**Why H is first** (simulated on the 404 positive rows of the sample):
+
+- Making `print` alone presentable moves its 351 rows only to the next global
+  (`$262`).
+- With a dynamic home wherever V refuses, no row stops at `print`, `$262`,
+  `__isArray` or `__globalObject`: 255 stop at ToBoolean in `isPrimitive`
+  (slice T), 118 at object or array literals the resolver refuses before the
+  home is asked (H's second arm), 23 at a `propertyHelper.js` direct call.
+- The simulation stops before the physical plan, so H's global carrier and
+  the module-init store of `undefined` are unmeasured.
+
+**Behind the prelude** (stand-in harness with dynamic parameters, 404 positive
+rows): 10 pass, 379 compile errors, 14 crashes. First gaps: 256 dynamic
+script-var home (object literal 78, `Array.isArray` read 46, call result 32,
+no initialiser 23, string 19, array 18), about 43 built-in globals and
+constructors, 28 calls through a value, about 53 others. The mechanisms that
+finish the prelude are about 85 % of the first per-test work.
+
+**Found on the way, to be filed as their own issues:** an object literal
+inside a function throws an emission invariant error on this path, and 13
+rows with `eval` throw "certified global eval lost an owning predicate".
