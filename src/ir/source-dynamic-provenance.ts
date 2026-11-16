@@ -12,8 +12,7 @@
  * The questions are mutually recursive (a home depends on the values stored in it, a result on the values
  * returned). Each answer is computed once per program. A question met again while it is being answered counts
  * as dynamic, which only ever moves a value into the carrier, never out of it; the one exception is a binding's
- * or function's own direct read or call inside the values it stores or returns (`x = x + 1`): if every other
- * value is typed, so is that one.
+ * own direct read inside the values it stores (`x = x + 1`): if every other value is typed, so is that one.
  */
 import { ts } from "../ts-api.js";
 import { isTopLevelStatementDeclaration } from "../shared/var-declaration-lists.js";
@@ -61,27 +60,32 @@ export function sourceDynamicProvenance(
   const scriptVarHome = (declaration: IrModuleBindingDeclaration) =>
     once(homes, declaration, "dynamic", () => classify(declaration));
 
-  const bindingCarries = (node: ts.Identifier, self: ts.Declaration | undefined): boolean => {
+  const bindingCarries = (node: ts.Identifier, self: ts.VariableDeclaration | undefined): boolean => {
     const declaration = checker.getSymbolAtLocation(node)?.valueDeclaration;
     if (!declaration || declaration === self || !ts.isVariableDeclaration(declaration)) return false;
-    // A script `var` is a global with its own home; a top-level lexical binding's global is typed by the
-    // resolver, which refuses a dynamic store. Any other variable is a local, typed by the value it holds.
+    // A script `var` is a global with its own home; the global of a top-level lexical binding or of an ES
+    // module's `var` is typed by the resolver, which refuses a dynamic store. Any other variable is a local,
+    // typed by the value it holds.
     if (isTopLevelStatementDeclaration(declaration))
-      return (declaration.parent.flags & ts.NodeFlags.BlockScoped) === 0 && scriptVarHome(declaration) === "dynamic";
+      return (
+        (declaration.parent.flags & ts.NodeFlags.BlockScoped) === 0 &&
+        !ts.isExternalModule(declaration.getSourceFile()) &&
+        scriptVarHome(declaration) === "dynamic"
+      );
     return once(locals, declaration, true, () => storesCarry(declaration));
   };
-  const callCarries = (call: ts.CallExpression, self: ts.Declaration | undefined): boolean => {
+  const callCarries = (call: ts.CallExpression): boolean => {
     const callee = ts.isIdentifier(call.expression)
       ? checker.getSymbolAtLocation(call.expression)?.valueDeclaration
       : undefined;
-    if (!callee || callee === self || !ts.isFunctionDeclaration(callee)) return false;
-    return once(results, callee, true, () => resultIsDynamic(callee, (value) => carries(value, callee)));
+    if (!callee || !ts.isFunctionDeclaration(callee)) return false;
+    return once(results, callee, true, () => resultIsDynamic(callee, (value) => carries(value)));
   };
-  const carries = (expression: ts.Expression, self?: ts.Declaration): boolean => {
+  const carries = (expression: ts.Expression, self?: ts.VariableDeclaration): boolean => {
     const node = skipOuterExpressions(expression);
     if (checker.getTypeAtLocation(node) === any) return true;
     if (ts.isIdentifier(node)) return bindingCarries(node, self);
-    if (ts.isCallExpression(node)) return callCarries(node, self);
+    if (ts.isCallExpression(node)) return callCarries(node);
     if (ts.isConditionalExpression(node)) return carries(node.whenTrue, self) || carries(node.whenFalse, self);
     if (!ts.isBinaryExpression(node)) return false;
     switch (node.operatorToken.kind) {
