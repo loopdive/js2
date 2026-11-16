@@ -14,6 +14,45 @@ import {
   requiredPreparedEmission,
   type Test262CompileOptions,
 } from "../src/test262/test262-prepared-entry.js";
+import type { RuntimeProviderDefinition } from "../src/ir/runtime/contracts/manifest.js";
+
+/**
+ * The census runs on the real completed emission; each alteration rewrites one population it is given, so each
+ * check can be shown to refuse on its own. (The emission itself cannot be altered here: its own reservation
+ * census refuses any changed function, global or type before the presentation looks.)
+ */
+type Slots = { readonly types: ReadonlySet<number>; readonly globals: ReadonlySet<number> };
+type Receipt = { readonly key: string; readonly index: number };
+const census = vi.hoisted(() => ({
+  providers: undefined as
+    | undefined
+    | ((providers: readonly RuntimeProviderDefinition[]) => readonly RuntimeProviderDefinition[]),
+  slots: undefined as undefined | ((slots: Slots) => Slots),
+  receipts: undefined as undefined | ((receipts: readonly Receipt[]) => readonly Receipt[]),
+}));
+vi.mock("../src/compiler/prepared-provider-census.js", async (original) => {
+  const real = await original<typeof import("../src/compiler/prepared-provider-census.js")>();
+  return {
+    ...real,
+    providerCensusMatches: (
+      ...[program, emission, backend, providers]: Parameters<typeof real.providerCensusMatches>
+    ) => real.providerCensusMatches(program, emission, backend, census.providers?.(providers) ?? providers),
+    nativeSetupSlots: (...args: Parameters<typeof real.nativeSetupSlots>) => {
+      const slots = real.nativeSetupSlots(...args);
+      return slots && (census.slots?.(slots) ?? slots);
+    },
+  };
+});
+vi.mock("../src/ir/program-consumer.js", async (original) => {
+  const real = await original<typeof import("../src/ir/program-consumer.js")>();
+  return {
+    ...real,
+    emittedSupportFunctionReceipts: (...args: Parameters<typeof real.emittedSupportFunctionReceipts>) => {
+      const receipts = real.emittedSupportFunctionReceipts(...args);
+      return census.receipts?.(receipts) ?? receipts;
+    },
+  };
+});
 
 const base = {
   wholeProgram: Object.freeze({ kind: "prepared-program-required" as const, version: 1 as const }),
@@ -36,7 +75,10 @@ function forbidDirectGenerators(): void {
       throw new Error("strict request entered a direct generator");
     });
 }
-afterEach(() => vi.restoreAllMocks());
+afterEach(() => {
+  vi.restoreAllMocks();
+  census.providers = census.slots = census.receipts = undefined;
+});
 
 const messages = (result: { errors: readonly { message: string }[] }) => result.errors.map((error) => error.message);
 
@@ -108,5 +150,63 @@ describe("#7354 R — the Prepared presentation's provider census", () => {
   it("leaves a numeric-only program on the exact numeric contract (no detached finalization)", async () => {
     const exports = await present("export function f(x: number): number { return x % 3; }", "entry.ts");
     expect((exports.f as (x: number) => number)(7)).toBe(1);
+  });
+});
+
+describe("#7354 R — the census refuses what joins nothing", () => {
+  const program = "try { throw 5; } catch (e) {}";
+  const refusal = async () => {
+    const result = await compile(program, options("standalone", "test.js"));
+    expect(result.success).toBe(false);
+    return messages(result).join("\n");
+  };
+  const native = (row: RuntimeProviderDefinition) => row.id === "native.js.number.box";
+  const RUNTIME_DEMAND = "host provider or async demand is outside this numeric presentation contract";
+  const WIDENING_DEMAND = "nondefaultable reference widening needs a separately authenticated physical post-state";
+
+  it("presents the unaltered program through the same wrappers", async () => {
+    census.providers = (providers) => providers;
+    census.slots = (slots) => slots;
+    census.receipts = (receipts) => receipts;
+    await present(program, "test.js");
+  });
+
+  it.each([
+    ["drops the native provider", (rows: readonly RuntimeProviderDefinition[]) => rows.filter((row) => !native(row))],
+    [
+      "duplicates the native provider",
+      (rows: readonly RuntimeProviderDefinition[]) => [...rows, ...rows.filter(native)],
+    ],
+    [
+      "renames the native provider (same runtime symbol)",
+      (rows: readonly RuntimeProviderDefinition[]) =>
+        rows.map((row) => (native(row) ? { ...row, id: "native.js.number.box.renamed" } : row)),
+    ],
+    [
+      "alters the native provider's canonical definition (same id)",
+      (rows: readonly RuntimeProviderDefinition[]) =>
+        rows.map((row) => (native(row) ? { ...row, supportedTargets: ["standalone", "wasi"] as const } : row)),
+    ],
+  ])("refuses a provider census that %s", async (_, alter) => {
+    census.providers = alter;
+    expect(await refusal()).toContain(RUNTIME_DEMAND);
+  });
+
+  it("refuses a support receipt that joins no provider and no native-setup function", async () => {
+    census.receipts = (receipts) => [...receipts, { key: "foreign-support", index: receipts.length + 100 }];
+    expect(await refusal()).toContain(RUNTIME_DEMAND);
+  });
+
+  it("refuses a support receipt joined under its key at another index", async () => {
+    census.receipts = (receipts) => receipts.map((row, index) => (index === 0 ? { ...row, index: 1000 } : row));
+    expect(await refusal()).toContain(RUNTIME_DEMAND);
+  });
+
+  it.each([
+    ["global", (slots: Slots) => ({ ...slots, globals: new Set<number>() })],
+    ["type", (slots: Slots) => ({ ...slots, types: new Set<number>() })],
+  ])("refuses a reference %s that is no native-setup slot", async (_, alter) => {
+    census.slots = alter;
+    expect(await refusal()).toContain(WIDENING_DEMAND);
   });
 });
