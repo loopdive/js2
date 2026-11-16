@@ -68,13 +68,25 @@ How it is enforced:
    fold the duplicate into the shared helper in the same PR, or file the
    cleanup as its own issue and link it.
 
-## ⚠ IR migration: foundations first (project-lead decision, 2026-11-15)
+## ⚠ IR migration: foundations first (project-lead decisions, 2026-11-15 and 2026-11-16)
 
-**Applies to every session and agent working on the IR migration.** The goal is
-every ES5 test262 file compiling on `--target standalone` with zero legacy
-units. Measured 2026-11-11 to 2026-11-15, narrow slices (one refusal label at a
-time) moved that from 17.5 % to about 19 % of 8,591 files: 2 to 55 files per
-slice, because almost every blocked file carries several reasons.
+**Applies to every session and agent working on the IR migration.**
+
+**The goal is measured on the Prepared whole-program path (decision of
+2026-11-16).** "IR-only" means a test passes under `TEST262_COMPILER_PATH=ir`
+(front door `wholeProgram: { kind: "prepared-program-required" }`), the figure
+the site publishes and CI measures on every merge to main. On 2026-11-16 that
+path passed no positive ES5 test: every test stops inside the shared harness
+prelude. It shares only `lowerFunctionAstToIr` with the ordinary pipeline, not
+the selector or the codegen-backed resolver, so a file with zero legacy units
+in the ordinary pipeline does not count. Current plan:
+`plan/issues/7354-prepared-path-harness-prelude-milestone.md`. New mechanisms
+are built as pure, backend-independent code that both pipelines ask.
+
+Background: until 2026-11-15 the working measure was ES5 files with zero legacy
+units in the ordinary pipeline. Narrow slices (one refusal label at a time)
+moved that from 17.5 % to about 19 % of 8,591 files: 2 to 55 files per slice,
+because almost every blocked file carries several reasons.
 
 - **Build the mechanisms many files need, before narrow slices.** In order of
   measured size: function values and closures, object literals as open
