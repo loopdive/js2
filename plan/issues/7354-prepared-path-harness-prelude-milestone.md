@@ -403,7 +403,8 @@ An adversarial review returned NOT MET: one soundness must-fix and six should-fi
    classifier gains the `sourceFiles` parameter (the resolver has no other way to see the program's files); the
    proof `scriptVarReadsFollowInitializer` now takes a `NamedVariableDeclaration` (finding 4). The test262 runner
    assembles prelude and test into one source, so the goal metric does not move: the 411-row sample is unchanged
-   (below). The three programs, in `.js` and `.ts`, are tests now (refused).
+   (below). The three programs, in `.js` and `.ts`, are tests now (refused). The rule is conservative by design: if
+   the harness prelude ever becomes its own source file, every typed home is refused.
 2. **Outermost owner untested.** The hoisting function is now found structurally — the top-level statement that is a
    function declaration (`ts.findAncestor(node.parent, isHoistedFunction)`) — so there is no innermost/outermost
    choice left to get wrong. Test added: `var r = f()(); var x = 1; function f() { return function () { return x;
@@ -427,14 +428,24 @@ An adversarial review returned NOT MET: one soundness must-fix and six should-fi
    only a hoisted function. Ordinary output is byte-identical (below). **Rebutted: one dynamic-code predicate.** The
    two answer different questions. `hasDynamicScope` (writes collector, ordinary pipeline) asks whether a name may
    resolve outside checker identity (`with`, direct `eval`); the reads proof asks whether code the walk cannot see
-   may run (`eval` by any route, `Function`). `with` hides no read from a name-based walk (a reference in its body
-   is spelled with the name; proof test `var x = 1; with ({}) { x; }` added), and `hasDynamicScope` misses
-   `Function(…)` and indirect `eval`, so neither can replace the other; a union in the writes collector would
-   change the ordinary pipeline's output.
+   may run (`eval` by any route, `Function`). `with` needs no predicate of its own in the proof because of the
+   read rule, not the walk: inside `with` the checker resolves no symbol for `x`, so `isRead` counts a spelling
+   whose symbol does not resolve as a read (round 2 — round 1 counted it as not a read, so the proof accepted `var
+   o = {}; with (o) { x; } var x = 1;`, masked end to end only by TS error 2410 and the IR's refusal of `with`).
+   Proof tests: `with` before the declaration refused, after it proven. `hasDynamicScope` misses `Function(…)` and
+   indirect `eval`, so neither predicate can replace the other; a union in the writes collector would change the
+   ordinary pipeline's output.
 6. **Cost.** `spellingsOf` indexes every identifier and string literal of a file once (a `WeakMap` keyed by source
    file, like `qualifiesCache`); the proof and `callableBefore` read the one name's list instead of walking the
    file.
 7. Recorded under "Known gaps" below.
+
+Round 2 (review verdict MET, three items): the unresolved-symbol read rule above; a precision test pinning
+`callableBefore`'s deferral to hoisted functions only (`var x = 1; var g = function () { f(); }; function f() {
+return x; }` is proven — deferring every callable survived the sweep before); the sole-source sentence in finding 1.
+The call test needs no such rule: it matches spellings by text, never by symbol. `isRead` belongs to the proof,
+whose only caller is the Prepared classifier, so no ordinary-pipeline caller is affected. Mutants on the changed
+lines (unresolved-as-read deleted, resolved-binding deleted, `isCallable` deferral): all killed; 51 tests pass.
 
 Evidence:
 

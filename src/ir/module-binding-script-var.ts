@@ -116,7 +116,8 @@ export function scriptVarReadsFollowInitializer(
     const symbol = ts.isShorthandPropertyAssignment(node.parent)
       ? checker.getShorthandAssignmentValueSymbol(node.parent)
       : checker.getSymbolAtLocation(node);
-    return symbol === binding;
+    // An unresolved name (inside `with`, the checker binds none) may be this binding.
+    return symbol === binding || symbol === undefined;
   };
   return spellingsOf(sourceFile, name.text).every((node) => {
     if (!ts.isIdentifier(node) || !isRead(node)) return true;

@@ -212,8 +212,11 @@ describe("#7354 V — scriptVarReadsFollowInitializer", () => {
     ["a class created after it", "var x = 1; class C { m() { return x; } }"],
     ["a function declaration only named after it", "function f() { return x; } var x = 1; f();"],
     ["a same-named parameter of a function called before it", "function g(x) { return x; } g(1); var x = 1;"],
-    // `with` hides no read from a name-based walk: a reference in its body is spelled with the name.
     ["a with statement after it", "var x = 1; with ({}) { x; }"],
+    [
+      "a function expression calling a hoisted function, created after it",
+      "var x = 1; var g = function () { f(); }; function f() { return x; }",
+    ],
     [
       "a nested function declaration whose name a hoisted function shares",
       "function g() {} g(); var x = 1; var h = function () { function g() { return x; } return g; };",
@@ -238,6 +241,8 @@ describe("#7354 V — scriptVarReadsFollowInitializer", () => {
     ["an escaping global object", "function f() { return x; } var o = this; var x = 1;"],
     ["dynamic code anywhere", 'var x = 1; eval("x");'],
     ["a shorthand property before it", "var o = { x }; var x = 1;"],
+    // Inside `with` the checker resolves no symbol for `x`; an unresolved name may be the binding.
+    ["a with statement before it", "var o = {}; with (o) { x; } var x = 1;"],
     [
       "a closure a hoisted function returns, called before it",
       "var r = f()(); var x = 1; function f() { return function () { return x; }; }",
