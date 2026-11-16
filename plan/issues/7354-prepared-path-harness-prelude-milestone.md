@@ -14,6 +14,12 @@ area: ir, compiler
 goal: ir-full-coverage
 depends_on: []
 related: [7188, 2949, 3526, 3527, 3518, 7106, 7349, 7350, 7352]
+# 2026-11-16 (slice R): src/compiler.ts +1, the import of the Prepared presentation
+# policy (`preparedPresentationPolicy`), which replaces the inline `{ backend, target }`
+# policy literal in place; the policy and the provider census live in their own
+# module, src/compiler/prepared-provider-census.ts.
+loc-budget-allow:
+  - src/compiler.ts
 ---
 
 # #7354 — Prepared IR path, milestone 1
