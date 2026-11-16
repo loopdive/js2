@@ -21,12 +21,14 @@ const preClockOwnerOrder: Readonly<Record<string, readonly string[]>> = {
     "var:NUMBER_BOUNDARY_RUNTIME_FEATURES#0",
     "var:BOOLEAN_BOUNDARY_RUNTIME_FEATURES#0",
     "var:EXTERN_BOUNDARY_RUNTIME_FEATURES#0",
+    "var:DYNAMIC_VALUE_RUNTIME_FEATURES#0",
     "var:INTRINSIC_RUNTIME_FEATURES#0",
     "type:PureMathRuntimeFeature#0",
     "type:NumericCoercionRuntimeFeature#0",
     "type:NumberBoundaryRuntimeFeature#0",
     "type:BooleanBoundaryRuntimeFeature#0",
     "type:ExternBoundaryRuntimeFeature#0",
+    "type:DynamicValueRuntimeFeature#0",
     "type:RuntimeFeature#0",
     "var:PURE_MATH_HOST_CAPABILITIES#0",
     "type:HostCapability#0",
@@ -763,7 +765,8 @@ export function assertIntrinsicSpecialization(read: SourceReader): void {
       ) === JSON.stringify(names.map((name) => [name, undefined, false])),
     "runtime core-contract forwarding",
   );
-  const alias = runtime[14]!;
+  // Index 14 plus the two #7354 D1 dynamic-value declarations.
+  const alias = runtime[16]!;
   requireCondition(
     alias.doc === "" && alias.text === "export type IntrinsicDefinition = CoreIntrinsicDefinition<RuntimeFeature>;",
     "exact runtime specialization",

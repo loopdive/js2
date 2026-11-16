@@ -212,12 +212,15 @@ describe("#3526 F2-S8 string-const contract", () => {
       params: [],
       result: irVal({ kind: "externref" }),
     });
-    // The whole point of the signature: it describes a VALUE. Nothing else in
-    // the catalogue does, so an empty-params row can only be a storage row.
+    // The whole point of the signature: it describes a VALUE. The only rows that
+    // carry it are the string storage rows and (#7354 D1) the dynamic
+    // `undefined` value, which is also a value: nothing goes in.
     const emptyParamRows = (RUNTIME_PROVIDERS as readonly RuntimeProviderDefinition[]).filter(
       (provider) => provider.signature !== undefined && provider.signature.params.length === 0,
     );
-    expect(emptyParamRows.map((provider) => provider.id).sort()).toEqual([...STRING_CONST_RUNTIME_PROVIDER_IDS].sort());
+    expect(emptyParamRows.map((provider) => provider.id).sort()).toEqual(
+      [...STRING_CONST_RUNTIME_PROVIDER_IDS, "native.js.value.undefined"].sort(),
+    );
   });
 
   it("is FOUR-armed — two authorities × two namespaces", () => {
