@@ -652,6 +652,8 @@ Default rule: if the agent's job is "produce one document and exit," it's a suba
 
 **CPU / concurrency cap (the binding limit)**: The real bottleneck on this box is CPU, not RAM — agents are cheap while idle (waiting on the API) but each _active_ one bursts a core during compile/test. With no ceiling, load oversubscribes (it hit 13–16 on 8 cores), which starves sshd and drops interactive SSH sessions. `pre-agent-spawn.sh` therefore hard-blocks a new spawn when the **1-min load average ≥ `cores − 2`** (the `JS2WASM_MAX_LOAD` env var; default leaves ~2 cores for the lead/IDE/sshd/system). It gates on _load_, not a process count, because the harness keeps a warm `claude.exe` pool (`--bg-spare`/`--bg-pty-host`) that makes process-counting a poor proxy for active agents. Raise `JS2WASM_MAX_LOAD` to trade SSH responsiveness for throughput.
 
+**Cloud sessions use a higher cap (project-lead decision, 2026-11-16).** In a Claude Code cloud session (`CLAUDE_CODE_REMOTE=true`) nobody works on the box interactively, so `cores − 2` only throttles the work: on a 4-core container it admitted one agent at a time. There the gate's default is `cores × 2` (three agents hold a 4-core container at load 5 to 8). The RAM floor still applies, and `JS2WASM_MAX_LOAD` or a `.claude/max-load` file still override it.
+
 **Memory budget** (measured peaks via `/proc/[pid]/status` VmHWM):
 
 - Fixed: Cursor ~1,400MB + system ~1,200MB + tech lead ~1,400MB = **~4,000MB**
