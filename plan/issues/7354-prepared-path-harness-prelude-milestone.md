@@ -586,3 +586,107 @@ Evidence:
 - **`export default <expression>`** on the Prepared path compiles and exports nothing: `let b = true; export default
   b;` (which G lets through) and `let b = 1; export default b;` (which already did on main). Not for this slice; the
   issue is filed separately.
+
+## P result
+
+Status 2026-11-16. Branch `claude/7354-p`: `claude/7354-vg` + `claude/7354-d1` (merged up to `3d0c7995c5` and
+`08fcfa7b82`) + P.
+
+### Rule chosen
+
+**On the native lane (internal, synchronous, wasmgc standalone) a parameter without a TypeScript annotation is the
+dynamic value, always.** No call-site proof. Why this one and not "count top-level callers in propagation":
+
+- Propagation (`buildIrUnitTypeMap`) misses more than top-level callers: calls with missing arguments (`f()` makes `v`
+  `undefined`), calls through values, and `arguments`. Counting module-init callers alone is still unsound; a sound
+  typed rule needs all of those proofs plus every source of a multi-file program. Changing the shared propagation
+  would also move ordinary-pipeline output.
+- It buys nothing on the target: a call-site census of every untyped harness parameter (`fyi-runtime`, `assert.js`,
+  `sta.js`, `propertyHelper.js`, `isConstructor.js`) finds none that a proof could type. Each one receives `any` or
+  several types, has short calls, or its function is used as a value (`assert`, `Test262Error`, `verifyProperty`,
+  `compareArray`, `formatIdentityFreeValue`, …). The typed variant is a later optimisation, not a soundness need.
+- JSDoc is not checked at runtime, so `@param {number}` is treated exactly like no annotation.
+
+**Unannotated results.** Propagated results were computed from the unsound parameter types (`return v` came out
+`void` or `boolean`). On the same lane an unannotated result that the body returns is dynamic when the checker
+cannot vouch for it: the checker says `any`, a JSDoc `@returns` names it, or the body can also run off its end
+(`undefined`). Any other unannotated result keeps the producer's inference, which the middle end already validates
+against the lowered body (a disagreement is a refusal, never a conversion).
+
+### Built
+
+- `src/ir/source-dynamic-contracts.ts`: the one contract arm. `sourceDynamicParameter` answers `dynamic` for an
+  unannotated parameter on the native lane (it now takes the parameter alone; the annotation is read from it);
+  `sourceDynamicResult` gains `uncheckedResult` beside the annotated-`any` arm. Both use D1's `dynamicLane`, so an
+  exported function keeps its old contract, and both feed the signatures `legalizeSourceDynamicValues` reads: an
+  untyped parameter triggers the legalization exactly as an explicit `any` does (one trigger rule).
+- `src/ir/program-source.ts`: asks the arm first for every parameter; no growth (8 lines changed, net 0).
+- Other lanes are unchanged: they keep the propagated parameter type, which from-ast checks at every direct call
+  (a mismatch refuses, as the repro did).
+
+### Measured
+
+- `tests/issue-7354-p-parameter-contracts.test.ts`, 19 tests. Acceptance, each run twice (node's answers return, one
+  wrong answer throws): the repro without its JSDoc (`g(true)` → false, `h(0.5)` → false, `h(0)` → true); `id` with a
+  number, a boolean and `undefined` from top level and from a function; `sq(n)` only ever passed numbers (dynamic,
+  `*` converts back); recursion; a parameter reassigned to `true`; a missing argument; a body that runs off its end;
+  a local copied from a parameter; `@returns {void}` on a body with no value; `isNegativeZero` (runs — it is not
+  blocked by any dynamic operation). Refusals: ToBoolean (the repro's original `v ? 1 : 2`, `dyn.truthy`),
+  `arguments` (`dyn.arguments_length`), an extra argument (arity), a call through a value (`var g = f`, no home), a
+  JSDoc `{number}` parameter given a boolean through `any`, a JSDoc `@returns {number}` over an untyped value, the gc
+  target (no carrier: unresolved contract), and a caller in another script or another module (`compileMulti`;
+  refused before the contract matters — the contract reads no call site, so another source cannot unsettle it).
+- Mutation check: 6 mutations (parameter arm off; parameter arm on every lane; result `any` off; JSDoc `@returns`
+  off; fall-out off; the returns-a-value guard off) each fail at least one test.
+- Ordinary-pipeline bytes: the 411-row list, base sources swapped into the same tree: 404 files compiled per target,
+  byte-identical on the JS environment and on `--target standalone` (8 compile errors on both, 15 skipped).
+  Measured at `e61ea49d0b`; P's later edits stay inside `source-dynamic-contracts.ts` and `program-source.ts`, which
+  only the Prepared producer imports (`program-preparation.ts`), so the ordinary pipeline does not load them.
+- Existing tests: prepared-entry, prepared-runtime, #7188, R, D1, V/G and P: 190/190.
+  `issue-3518*`/`issue-3526*` (307 files): 4,722 failing tests on the base (P's two files
+  swapped back), 4,724 with P; the sets differ only in three files with test timeouts on a loaded box
+  (`native-invocation-consumer`, `native-mixed-object-access`, `void-closure-results`). Re-run alone with P, the
+  differing tests pass; the remaining failures there are timeouts (35–45 s each) that also fail on the base..
+- Real runner, 411-row sample: negatives unchanged (14 pass, 1 compile error). **No row
+  stops at "unresolved parameter contract" any more** (394 before). New first-gap tally over the 396 positive rows:
+  - 393 × "module binding X has no exact typed storage: not-direct": `print` 345 (`scripts/test262-fyi-runtime.js:4`,
+    `var print = function (value) { … }` — a function expression), `__isArray` 43 (`harness/propertyHelper.js:27`,
+    `var __isArray = Array.isArray;` — a built-in member), `__globalObject` 5 (`harness/fnGlobalObject.js:9`,
+    `var __globalObject = Function("return this;")();` — the global object). Slices F and B, not a dynamic home:
+    D1's carrier admits only numbers, booleans and `undefined`.
+  - 2 × the switch-case lexical binding (as before), 1 × "callable annotation in DD_operator requires exact required
+    parameter declarations".
+- Operator sweep (69 forms × 7 values, an untyped parameter in a JS function, against node): no wrong answer. Correct:
+  unary `-`/`+`, `-`, `*`, `/`, `%`, `===`/`!==`, relational, bitwise and shifts, `,`, `v++;`/`v--;` statements,
+  `-=`/`*=`, a dynamic local, calls passing the parameter on. Named refusals: ToBoolean (`!`, `?:`, `if`, `&&`,
+  `||`), `typeof`, dynamic `+`/`+=`, loose equality, `~`, `??`, a dynamic value into a typed local or `Math.abs`,
+  `isNaN`/`String`/`Number`, member reads, array/object literals, `switch`. **Two crashes (invariant errors), both
+  shared with an explicit `any` and handed to D1's rework:** `**` with a dynamic operand and prefix `++v`.
+- D1 names P depends on: `dynamicLane`, `checkerAny`, `annotatedAny`, `legalizeSourceDynamicValues` (trigger), and the
+  intrinsics source programs reach: `js.number.box`, `js.number.unbox`, `js.boolean.box`, `js.value.strict_eq`,
+  `js.value.undefined`, `js.extern.is_undefined`. Not reached by any probe: `js.value.is_number`,
+  `js.value.is_boolean`, `js.boolean.unbox`.
+- Gates: typecheck, loc, func, coercion-sites, oracle-ratchet, dead-exports, import-cycles, compiler-boundaries
+  inventory.
+
+### Named gaps (refused, not built here)
+
+- **Unbracketed JSDoc `number`/`string`/`boolean` parameter or `@returns`.** from-ast (`resolveIrType`) treats such a
+  JSDoc tag as authoritative and refuses the dynamic contract ("type override (dynamic) disagrees with annotation").
+  Sound. A Prepared-only from-ast option "JSDoc is not a contract" is a possible later slice (the ordinary pipeline
+  relies on the rule, so it must stay opt-in). In the sample it would matter for the 47 rows that include
+  `propertyHelper.js` (`verifyCallableProperty`'s `@param {number} functionLength`), once those rows get that far.
+- **Dynamic `var` home** (`var x; x = 1`): the resolver already binds a `dynamic` home, but the physical plan refuses
+  a dynamic global ("global x carries non-scalar IR type dynamic; … references global x that the plan cannot
+  reserve"). It needs a globals arm in D1's legalization and physical carrier (`externref` global) and an `undefined`
+  initial value (the `$undefined` singleton, which is not a constant expression today). Follow-up slice.
+- **A parameterless function with an unannotated boolean result** (`function k(){ return 1 === 1; }`): the propagated
+  result lowers without the `boolean` flag and the presentation join refuses ("source declaration and prepared
+  callable slots disagree"). Predates P (same on the base); a function with a parameter is not joined, so harness
+  helpers do not meet it.
+
+### Not verified
+
+- The final re-merge of D1's rework (it changes the legalization's intrinsic set and the dynamic-into-typed rule);
+  the sweep and the sample are on D1 `08fcfa7b82`.
+- The ordinary-pipeline byte comparison after the V/G and D1 re-merges (see the note above on why P cannot move it).
