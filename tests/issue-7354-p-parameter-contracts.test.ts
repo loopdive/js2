@@ -10,6 +10,7 @@ import * as linear from "../src/codegen-linear/index.js";
 import { instantiatePreparedArtifact } from "../src/test262/test262-prepared-runtime.js";
 import {
   compile,
+  compileMulti,
   requiredPreparedEmission,
   type Test262CompileOptions,
 } from "../src/test262/test262-prepared-entry.js";
@@ -106,6 +107,11 @@ describe("#7354 P — an untyped parameter is the dynamic value", () => {
       ["!== 1", "!== 2"],
     ],
     [
+      "a JSDoc `@returns {void}` on a body that returns no value (no result to contract)",
+      "/** @returns {void} */\nfunction check(v) { if (v !== 1) throw 1; }\ncheck(1);",
+      ["check(1);", "check(2);"],
+    ],
+    [
       "the isNegativeZero helper of harness/assert.js",
       "function isNegativeZero(value) { return value === 0 && 1 / value === -Infinity; }\n" +
         "if (!isNegativeZero(-0)) throw 1;\nif (isNegativeZero(0)) throw 2;\nif (isNegativeZero(true)) throw 3;",
@@ -151,5 +157,31 @@ describe("#7354 P — an untyped parameter is the dynamic value", () => {
 
   it("keeps the gc target without a dynamic carrier: an untyped parameter used only from top level has no contract", async () => {
     expect(await refusal(`${ID}if (id(1) !== 1) throw 1;`, "gc")).toContain("unresolved parameter contract");
+  });
+
+  // The contract reads no call site, so a caller in another source cannot unsettle it; today a cross-source call
+  // to such a function is refused before it would matter (a script has no AST-site plan for it, and an exported
+  // function with an untyped parameter has no host contract).
+  it.each([
+    [
+      "a call from another script",
+      {
+        "./a.js": "function h(v) { return v === 0; }\nif (h(0.5) !== false) throw 1;",
+        "./b.js": "if (h(true) !== false) throw 2;",
+      },
+      'direct call to "h" has no exact AST-site plan',
+    ],
+    [
+      "a call from another module",
+      {
+        "./a.js": "export function h(v) { return v === 0; }\nexport var x = h(0.5) ? 1 : 0;",
+        "./b.js": 'import { h } from "./a.js";\nexport var y = h(true) ? 1 : 0;',
+      },
+      "complete synchronous numeric or Boolean function declarations are required",
+    ],
+  ])("refuses %s", async (_name, files, message) => {
+    const result = await compileMulti(files, "./b.js", options());
+    expect(result.success).toBe(false);
+    expect(messages(result).join("\n")).toContain(message);
   });
 });

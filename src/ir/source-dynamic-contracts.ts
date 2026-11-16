@@ -37,9 +37,17 @@ function annotatedAny(checker: ts.TypeChecker, annotation: ts.TypeNode | undefin
   return annotation !== undefined && checker.getTypeFromTypeNode(annotation) === checker.getAnyType();
 }
 
-/** A body that returns a value on one path and runs off its end on another also returns `undefined`. */
-function fallsOutAfterValue(body: ts.Block | undefined): boolean {
-  return body !== undefined && irFunctionBodyReturnsValue(body) && !functionBodyAlwaysTerminates(body);
+/**
+ * A value an unannotated body returns that the checker cannot vouch for: the checker says `any`, a JSDoc
+ * `@returns` (unchecked at runtime) names it, or the body can also run off its end, which returns `undefined`.
+ */
+function uncheckedResult(declaration: ts.FunctionDeclaration, checkerSaysAny: boolean): boolean {
+  const body = declaration.body;
+  return (
+    body !== undefined &&
+    irFunctionBodyReturnsValue(body) &&
+    (checkerSaysAny || ts.getJSDocReturnType(declaration) !== undefined || !functionBodyAlwaysTerminates(body))
+  );
 }
 
 function hostPromiseFulfillment(checker: ts.TypeChecker, type: ts.Type): ts.Type | undefined {
@@ -99,7 +107,7 @@ export function sourceDynamicResult(
   if (lane === "native") {
     const dynamic = declaration.type
       ? annotatedAny(checker, declaration.type) && result === any
-      : result === any || ts.getJSDocReturnType(declaration) !== undefined || fallsOutAfterValue(declaration.body);
+      : uncheckedResult(declaration, result === any);
     return dynamic ? { kind: "dynamic" } : undefined;
   }
   if (hostPromiseFulfillment(checker, result) !== any) return undefined;
