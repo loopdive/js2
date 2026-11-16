@@ -126,54 +126,59 @@ describe("#7354 D1 — the dynamic value on the Prepared standalone path", () =>
     ).toBe(1);
   });
 
+  const flow = (type: string, site: string) => `a dynamic value flows into ${type} without a conversion (${site})`;
+  // A checker `any` the IR types concretely (an untyped parameter with a propagated number type) is no dynamic
+  // value, so the flow rule does not apply to it.
+  it("leaves a checker `any` that the IR typed as a number on its numeric path", async () => {
+    expect(await run("function id(x) { return x; }\nexport function main(): number { return id(3) + 1; }")).toBe(4);
+  });
+
   it.each([
     // The one rule: an `any` expression whose contextual type is not `any` crosses into that type with no
     // conversion the source wrote, and the Prepared path has no checked unbox yet.
-    ["a typed result", "function f(v: any): number { return v; }\n", "return f(3);", "number", "ReturnStatement"],
-    ["a typed result of main", "", "return id(3);", "number", "ReturnStatement"],
+    ["a typed result", "function f(v: any): number { return v; }\n", "return f(3);", flow("number", "ReturnStatement")],
+    ["a typed result of main", "", "return id(3);", flow("number", "ReturnStatement")],
     [
       "a typed result in a branch",
       "function f(c: boolean, v: any): number { if (c) return v; return 2; }\n",
       "return f(true, 3);",
-      "number",
-      "ReturnStatement",
+      flow("number", "ReturnStatement"),
     ],
     [
       "a number parameter",
       "function f(n: number): number { return n; }\n",
       "return f(id(true));",
-      "number",
-      "CallExpression",
+      flow("number", "CallExpression"),
     ],
+    // The other typed positions already refuse while lowering, each by its own name.
     [
       "a boolean parameter",
       "function f(b: boolean): number { return b ? 1 : 0; }\n",
       "return f(id(true));",
-      "boolean",
-      "CallExpression",
+      "arg 0 of call to f is dynamic, expected i32",
     ],
-    ["a typed local", "", "const n: number = id(1); return n;", "number", "VariableDeclaration"],
-    ["an assignment to a typed local", "", "let n = 0; n = id(1); return n;", "number", "BinaryExpression"],
-    // The conditional itself is `any` here, so the flow is named at its typed binding.
+    [
+      "a typed local",
+      "",
+      "const n: number = id(1); return n;",
+      "local 'n' annotated as f64 but initializer is dynamic",
+    ],
+    ["an assignment to a typed local", "", "let n = 0; n = id(1); return n;", 'assignment to "n" (f64) got dynamic'],
     [
       "a typed local through a conditional",
       "",
       "const n: number = 1 > 0 ? id(1) : 2; return n;",
-      "number",
-      "VariableDeclaration",
+      "ternary branches have different types (dynamic vs f64)",
     ],
     [
       "a typed literal property",
       "",
       "const o: { a: number } = { a: id(1) }; return o.a;",
-      "number",
-      "PropertyAssignment",
+      "dynamic operation on a value of composite type",
     ],
-    ["a typed array element", "", "const a: number[] = [id(1)]; return a[0];", "number", "ArrayLiteralExpression"],
-  ])("refuses a dynamic value flowing into %s", async (_label, helper, body, type, site) => {
-    expect(await refusal(`${ID}${helper}export function main(): number {\n  ${body}\n}\n`)).toContain(
-      `a dynamic value flows into ${type} without a conversion (${site})`,
-    );
+    ["a typed array element", "", "const a: number[] = [id(1)]; return a[0];", "resolver cannot register vec"],
+  ])("refuses a dynamic value flowing into %s", async (_label, helper, body, expected) => {
+    expect(await refusal(`${ID}${helper}export function main(): number {\n  ${body}\n}\n`)).toContain(expected);
   });
 
   it.each([

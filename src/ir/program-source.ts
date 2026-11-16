@@ -7,7 +7,6 @@ import { prepareSourceClosureInvocations } from "./source-closure-invocation.js"
 import {
   checkerAny,
   legalizeSourceDynamicValues,
-  refuseImplicitDynamicFlows,
   sourceDynamicParameter,
   sourceDynamicResolver,
   sourceDynamicResult,
@@ -1751,7 +1750,6 @@ export function prepareIrProgramSources(
         : identity.declarationByUnitId.get(unit.id)!;
       if (!ts.isFunctionDeclaration(declaration)) unsupported(`missing declaration producer for ${unit.kind}`);
       const sourceRoots = moduleInit ? (identity.moduleInitPopulationBySourceFile.get(source) ?? []) : declaration;
-      refuseImplicitDynamicFlows(input.checker, input.policy, sourceRoots);
       Object.assign(resolver, prepareSourceBuiltinResolvers(input, sourceRoots));
       const signature = signatures.get(unit.id);
       const lowered = lowerFunctionAstToIr(declaration, {
@@ -1804,7 +1802,9 @@ export function prepareIrProgramSources(
           "invalid-prepared-data",
           `certified native Promise-delay ${unit.id} fabricated support bodies or provenance`,
         );
-      functions.push(...legalizeSourceDynamicValues(input.policy, [lowered.main, ...lowered.lifted]));
+      functions.push(
+        ...legalizeSourceDynamicValues(input.checker, input.policy, sourceRoots, [lowered.main, ...lowered.lifted]),
+      );
       appendLiftedSourceProvenance(lowered.liftedUnitProvenance, inventory, unit, derivedUnits);
       if (derivedSourceRows !== undefined) appendSourceMapDerivedRows(derivedSourceRows, lowered, identity, unit);
     }
