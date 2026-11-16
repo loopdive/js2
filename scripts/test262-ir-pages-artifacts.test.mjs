@@ -283,15 +283,15 @@ async function selectMeasurement(event, day, inputs = {}) {
   assert.equal(output, `run=${selected.run}\n`);
   return selected;
 }
-test("automatic weekly plan has exactly the full IR standalone cell and never Host", async () => {
-  for (let day = 0; day < 7; day++) {
-    const selected = await selectMeasurement("schedule", day);
-    assert.deepEqual(selected, {
-      run: day === 1,
-      cells: day === 1 ? [{ compilerPath: "ir", target: "standalone", chunks: 102 }] : [],
-      promotion: false,
-    });
-  }
+test("every merge to main and every daily run has exactly the full IR standalone cell and never Host", async () => {
+  const measured = { run: true, cells: [{ compilerPath: "ir", target: "standalone", chunks: 102 }], promotion: false };
+  for (let day = 0; day < 7; day++) assert.deepEqual(await selectMeasurement("schedule", day), measured);
+  assert.deepEqual(await selectMeasurement("push", 3, { ACTOR: "a-developer" }), measured);
+});
+test("a bot push and the other events select no IR measurement", async () => {
+  const none = { run: false, cells: [], promotion: false };
+  assert.deepEqual(await selectMeasurement("push", 1, { ACTOR: "github-actions[bot]" }), none);
+  for (const event of ["merge_group", "pull_request"]) assert.deepEqual(await selectMeasurement(event, 1), none);
 });
 test("manual measurement is immediate, explicit and standalone only", async () => {
   assert.equal(
@@ -550,6 +550,17 @@ test("Pages publishes the latest IR editions and rebuilds their history across r
     [".ir-measurement-download/200", ".ir-measurement-download/100"],
   );
   assert.ok(history.runs.every((run) => run.runId === "42" && run.sourceSha === "source"));
+});
+test("Pages keeps one IR measurement per day, the newest", () => {
+  const dated = (id, created_at) => ({ ...mainArtifact(id), created_at });
+  const result = retrieveMeasurements([
+    dated(100, "2026-11-15T09:00:00Z"),
+    dated(200, "2026-11-16T09:00:00Z"),
+    dated(300, "2026-11-16T12:00:00Z"),
+  ]);
+  const downloads = result.commands.filter((command) => command[1] === "run").map((command) => command.at(-1));
+  assert.deepEqual(downloads, [".ir-measurement-download/300", ".ir-measurement-download/100"]);
+  assert.equal(JSON.parse(result.files.get("benchmarks/results/ir/runs/standalone-index.json")).runs.length, 2);
 });
 test("Pages leaves IR editions absent when the retained measurement predates them", () => {
   const result = retrieveMeasurements([mainArtifact(100)]);
