@@ -323,16 +323,37 @@ Status 2026-11-16. Branch `claude/7354-r`, built on origin/main `46e4cf4030`, fi
 - **Policy.** `preparedPresentationPolicy` lives in `src/compiler/prepared-provider-census.ts`. On wasmgc
   standalone, a Prepared presentation now selects the native number boundary (`__box_number` /
   `__unbox_number`). Every other target, and every other runtime family, keeps its default ("unsupported").
-- **Provider census.** `checkResourceDemand` used to refuse every runtime provider. It now calls
-  `providerCensusMatches`, which accepts a provider only if it matches the completed physical plan.
-  A provider that matches nothing still refuses.
-  - A **number remainder** is checked the same way as before.
-  - A **native provider** is accepted only on standalone, and only if all of these hold:
-    - the native setup has exactly one binding whose reference is the provider's runtime callable;
-    - the completed emission resolves that binding to a function slot;
-    - that slot has a completed support receipt.
-  - **Without a native setup** the numeric contract is unchanged: every support function must be a remainder.
-  - The remainder join and `physicalCallableMatches` moved into the new module. They were not otherwise changed.
+- **Census (review rounds 1–2: fail-closed in both directions, every check tested).** `checkResourceDemand` used
+  to refuse every runtime provider. `runtimeCensus` now joins the selected providers and the completed support
+  population one to one, and answers the native setup's slots (or refuses).
+  - **One join of the support population** (`supportPopulationJoins`): every row's completed slot carries the row's
+    signature, and the rows' (slot index, key) pairs equal the receipts' as a multiset — no receipt joins nothing,
+    none joins twice, no row lacks its receipt. Remainders and natives are rows of the same shape. A provider is
+    first checked against its canonical catalogue entry (`preparedIrDataMismatch`; dependency- and
+    capability-free runtime callable).
+  - **The native setup is authenticated from its own plan, not a list of names.** Declarations and published
+    bindings join one to one by key; each binding resolves to a completed slot of its declaration's space.
+    Function declarations become support rows with their declared signature (type keys resolved to the native
+    type slots); global slots carry their declared type and mutability.
+  - **Runtime callables and native providers:** each runtime-bound function is named by its runtime symbol, and
+    those symbols equal the selected native providers' symbols (sorted, so duplicates on either side refuse).
+    Every other native function is a dependency the setup plan declares.
+  - **Reference values (`referenceDemand`, one walk).** With an authenticated native setup, its type and global
+    slots are exempt and every other reference must name a native type slot (struct/array types and globals
+    outside the setup may carry none); without one, any non-defaultable reference refuses. A native setup always
+    asks for the detached finalization.
+  - **Removed as implied (round 2):** distinct provider ids, distinct receipt indices, distinct row keys and the
+    binding count (all implied by the multiset join and the key bijection), the catalogue-uniqueness test (ids
+    are unique in the catalogue), the `""` runtime sentinel, and the "setup but no native rows" clause (its
+    function receipts then join no row).
+  - **Removed as implied (round 3):** the separate missing-slot check (a binding without a function slot has no
+    signature, so the signature comparison refuses it), the "runtime-callable" kind check (implementations are
+    joined as data, `{ kind: "runtime-callable", symbol }`, to the plan's runtime callables), and the "type key
+    resolves" checks (an unresolved key stays a key, which never equals a completed slot type).
+  - `physicalCallableMatches` moved to `src/compiler/prepared-physical-signature.ts` (shared with the async checks);
+    the detached-finalization map is now `detachedPresentations`.
+  - `preparedPresentationPolicy` is the single place the presentation's runtime policy is chosen; D1 adds its
+    boolean and undefined policies there.
 - **Receipt failure ("altered type descriptor native-string-values…flat").**
   - Cause: `finalizePipelineModule` widened reference types in the authenticated emission module in place.
     The receipt check, run again after finalization, then saw an altered reserved type.
@@ -358,6 +379,15 @@ Status 2026-11-16. Branch `claude/7354-r`, built on origin/main `46e4cf4030`, fi
   - A numeric-only program keeps the exact contract.
 - **Mutation check.** With the detached-finalization switch removed, every acceptance test fails with
   "altered type descriptor … flat".
+- **Census refusal tests** (`vi.mock` wrappers over the real census on `try { throw 5; } catch (e) {}`; each
+  alters one input: providers, receipts, the accepted native setup plan, the census target, or the answered slots).
+  Mutation sweep (round 3, 21 checks swept): 20 fail at least one test when deleted alone. The one survivor is
+  main's remainder resource join, now written as implementation equality instead of symbol equality; it belongs
+  with the nine remainder checks moved verbatim from main
+  (`remainderRows`: resource count, unique resource, ABI entry, callable contract, declaration feature,
+  structural reference key, contract params/results) are pre-existing and, as on main, have no failing-remainder
+  test; they are left unchanged. The emission itself cannot be altered: its own reservation census refuses a
+  changed function, global or type first.
 - **Ordinary-pipeline bytes.** I compared 330 sample files against base sources swapped into the same tree.
   - 301 compiled, the rest were skipped as negative, raw or module tests.
   - All 301 are byte-identical on both standalone and the JS environment.
@@ -375,11 +405,9 @@ Status 2026-11-16. Branch `claude/7354-r`, built on origin/main `46e4cf4030`, fi
 
 ### Not verified
 
-- **The census's rejection branch for a native provider is not reached by any source program today.**
-  - On standalone, every provider a presentation can select (number box/unbox, remainders) has a native binding.
-  - So the mutation "accept every native provider" is not caught by a test.
-  - It is kept as fail-closed authentication. D1's dynamic providers will be the first to reach it.
-- **The string pool / reference-global acceptance named in the plan row is not built.** Native string literals
-  are globals, not pool entries. Slice S owns the string policies.
-- **Assumption for D1.** The census looks for native bindings in `nativeStrings.bindings`. D1's string-free value
-  plan must publish its bindings there, or extend `nativeProviderJoins` to read wherever it publishes them.
+- **Reference globals are accepted only as native-setup slots** (`__strlit_0`, `__pow10_f64`, `__undefined` today).
+  The string pool and string-constant policy are not selected; slice S owns them.
+- **The widening lift without a native setup** (mutation of the `!setup` guard) is not reachable from a test: on
+  standalone a reference value always comes with the native setup, and hosts/WASI refuse the box earlier.
+- **D1.** The census reads the native setup from `nativeStrings` (declarations and bindings). D1's resources join
+  as long as they are published there.

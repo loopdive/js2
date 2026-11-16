@@ -17027,6 +17027,14 @@
       "layer": "native-runtime"
     },
     {
+      "path": "src/compiler/prepared-physical-signature.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "compiler",
+      "owner": "7354",
+      "nextBoundary": "Prepared presentation physical-signature joins (#7354 R): the completed function slot of a binding and its signature against a physical plan row; moves with ir-program-presentation.ts at compiler-layer activation."
+    },
+    {
       "path": "src/ir/runtime/number-remainder-callables.ts",
       "state": "clean",
       "layer": "ir-runtime"

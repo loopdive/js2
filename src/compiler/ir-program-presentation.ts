@@ -27,7 +27,8 @@ import { runIrProgramDriver } from "./ir-program-driver.js";
 import type { IrProgramDriverResult } from "./ir-program-result.js";
 import type { PreparedWitExport, PreparedWitView } from "../wit-generator.js";
 import { releaseOwnedFunctions } from "../wasm/physical/owned-function-data.js";
-import { physicalCallableMatches, providerCensusMatches } from "./prepared-provider-census.js";
+import { runtimeCensus, type NativeSetupSlots } from "./prepared-provider-census.js";
+import { physicalCallableMatches } from "./prepared-physical-signature.js";
 
 export interface IrProgramPresentationRequest {
   readonly preparation: IrWholeProgramPreparationInput;
@@ -163,50 +164,76 @@ function booleanExportSignature(declaration: PrimitiveDeclaration): ExportSignat
   Object.freeze(signature.params);
   return Object.freeze(signature);
 }
-function typeNeedsWidening(type: TypeDef): boolean {
+/** A value a reference widening must treat: a non-defaultable reference, or one outside the native setup. */
+type ReferenceDemand = (value: ValType) => boolean;
+const nondefaultable: ReferenceDemand = (value) => value.kind === "ref";
+function typeNeedsWidening(type: TypeDef, demand: ReferenceDemand): boolean {
   switch (type.kind) {
     case "func":
-      return [...type.params, ...type.results].some((value) => value.kind === "ref");
+      return [...type.params, ...type.results].some(demand);
     case "struct":
-      return type.fields.some((field) => field.type.kind === "ref");
+      return type.fields.some((field) => demand(field.type));
     case "array":
-      return type.element.kind === "ref";
+      return demand(type.element);
     case "rec":
-      return type.types.some(typeNeedsWidening);
+      return type.types.some((row) => typeNeedsWidening(row, demand));
     case "sub":
-      return typeNeedsWidening(type.type);
+      return typeNeedsWidening(type.type, demand);
   }
 }
-function bodyNeedsWidening(body: readonly Instr[], visited = new Set<readonly Instr[]>()): boolean {
+function bodyNeedsWidening(
+  body: readonly Instr[],
+  demand: ReferenceDemand,
+  visited = new Set<readonly Instr[]>(),
+): boolean {
   if (visited.has(body)) return false;
   visited.add(body);
   for (const instruction of body) {
-    if ("blockType" in instruction && instruction.blockType.kind === "val" && instruction.blockType.type.kind === "ref")
+    if ("blockType" in instruction && instruction.blockType.kind === "val" && demand(instruction.blockType.type))
       return true;
     switch (instruction.op) {
       case "block":
       case "loop":
       case "try_table":
-        if (bodyNeedsWidening(instruction.body, visited)) return true;
+        if (bodyNeedsWidening(instruction.body, demand, visited)) return true;
         break;
       case "if":
         if (
-          bodyNeedsWidening(instruction.then, visited) ||
-          (instruction.else && bodyNeedsWidening(instruction.else, visited))
+          bodyNeedsWidening(instruction.then, demand, visited) ||
+          (instruction.else && bodyNeedsWidening(instruction.else, demand, visited))
         )
           return true;
         break;
       case "try":
         if (
-          bodyNeedsWidening(instruction.body, visited) ||
-          instruction.catches.some((row) => bodyNeedsWidening(row.body, visited)) ||
-          (instruction.catchAll && bodyNeedsWidening(instruction.catchAll, visited))
+          bodyNeedsWidening(instruction.body, demand, visited) ||
+          instruction.catches.some((row) => bodyNeedsWidening(row.body, demand, visited)) ||
+          (instruction.catchAll && bodyNeedsWidening(instruction.catchAll, demand, visited))
         )
           return true;
         break;
     }
   }
   return false;
+}
+/**
+ * Whether the module carries a reference value the presentation cannot authenticate. Without a native setup that is
+ * any non-defaultable reference. With one, the setup's own type and global slots are exempt and every other
+ * reference must name a native type slot: function types are interned signatures and may, while a struct/array
+ * type or global outside the setup is the program's own, and the numeric program owns no reference-carrying ones.
+ */
+function referenceDemand(mod: WasmModule, setup: NativeSetupSlots | undefined): boolean {
+  const demand: ReferenceDemand = setup
+    ? (value) => value.kind === "ref" && !setup.types.has(value.typeIdx)
+    : nondefaultable;
+  return (
+    mod.functions.some((fn) => fn.locals.some((local) => demand(local.type)) || bodyNeedsWidening(fn.body, demand)) ||
+    mod.types.some(
+      (type, index) =>
+        !setup?.types.has(index) && typeNeedsWidening(type, type.kind === "func" ? demand : nondefaultable),
+    ) ||
+    mod.globals.some((global, index) => !setup?.globals.has(index) && nondefaultable(global.type))
+  );
 }
 const unsupported = (gaps: readonly IrProgramPresentationGap[]): IrProgramPresentationResult =>
   Object.freeze({ kind: "presentation-unsupported", gaps: Object.freeze([...gaps]) });
@@ -628,9 +655,10 @@ function captureWitExport(
   exports.push(Object.freeze({ externalName, params: Object.freeze(params), result: result ?? null, ...association }));
 }
 /**
- * The numeric presentation contract. (#7354 R) A reference type is no refusal on standalone: it asks for the
- * detached finalization (`beginPreparedPresentationFinalization`), which widens a data copy and authenticates the
- * post-state, so the emission the receipts check stays the completed one. Answers whether it is needed.
+ * The numeric presentation contract. (#7354 R) An authenticated native setup (standalone) owns reference values:
+ * it asks for the detached finalization (`beginPreparedPresentationFinalization`), which widens a data copy and
+ * authenticates the post-state, so the emission the receipts check stays the completed one. Answers whether it is
+ * needed.
  */
 function checkResourceDemand(
   program: PreparedIrProgram,
@@ -640,13 +668,16 @@ function checkResourceDemand(
 ): boolean {
   const mod = emission.module;
   const runtime = program.runtime.filter((row) => row.backend === backend.backend && row.target === backend.target);
+  let native: NativeSetupSlots | undefined;
   if (runtime.length !== 1) gap("runtime", "runtime-projection", "one genuine selected runtime projection is required");
   else {
     const manifest = runtime[0]!.prepared.manifest;
+    const census = runtimeCensus(program, emission, backend, manifest.providers);
+    native = census?.native;
     if (
       manifest.hostCapabilities.length ||
       manifest.hostCapabilityRecords.length ||
-      !providerCensusMatches(program, emission, backend, manifest.providers) ||
+      !census ||
       runtime[0]!.prepared.functions.some((fn) => fn.asyncPlan || fn.asyncRuntime)
     )
       gap("runtime", "runtime-demand", "host provider or async demand is outside this numeric presentation contract");
@@ -676,17 +707,13 @@ function checkResourceDemand(
       "boundary-metadata",
       "numeric boundary absence must be preserved, not filled with all-other rows",
     );
-  const widening =
-    mod.functions.some((fn) => fn.locals.some((local) => local.type.kind === "ref") || bodyNeedsWidening(fn.body)) ||
-    mod.types.some(typeNeedsWidening) ||
-    mod.globals.some((global) => global.type.kind === "ref");
-  if (widening && backend.target !== "standalone")
+  if (referenceDemand(mod, native))
     gap(
       "physical",
       "widening-demand",
       "nondefaultable reference widening needs a separately authenticated physical post-state",
     );
-  return widening;
+  return native !== undefined;
 }
 function joinStartup(
   program: PreparedIrProgram,
@@ -886,7 +913,7 @@ export function prepareIrProgramPresentation(request: IrProgramPresentationReque
     ...(detached ? { requiresDetachedFinalization: true as const } : {}),
   });
   if (detached)
-    mixedPresentations.set(presentation, {
+    detachedPresentations.set(presentation, {
       plan: emittedPhysicalSetupPlan(emission),
       original: observeModuleData(mod),
     });
@@ -1193,9 +1220,9 @@ export interface PreparedPresentationFinalizationReceipt {
   readonly widenedSlots: number;
   readonly originalEmissionUnchanged: true;
 }
-type MixedPresentation = Extract<IrProgramPresentationResult, { kind: "prepared-presentation" }>;
-const mixedPresentations = new WeakMap<
-  MixedPresentation,
+type DetachedPresentation = Extract<IrProgramPresentationResult, { kind: "prepared-presentation" }>;
+const detachedPresentations = new WeakMap<
+  DetachedPresentation,
   { readonly plan: PhysicalSetupPlan; readonly original: readonly DataObservation[] }
 >();
 interface DataObservation {
@@ -1211,7 +1238,7 @@ interface DataObservation {
   readonly byteLength?: number;
 }
 interface FinalizationObservation {
-  readonly presentation: MixedPresentation;
+  readonly presentation: DetachedPresentation;
   readonly plan: PhysicalSetupPlan;
   readonly original: readonly DataObservation[];
   readonly output: readonly DataObservation[];
@@ -1447,11 +1474,11 @@ function wideningSlots(mod: WasmModule): ReadonlyMap<object, ReadonlyMap<Propert
   return result;
 }
 export function beginPreparedPresentationFinalization(
-  presentation: MixedPresentation,
+  presentation: DetachedPresentation,
 ): PreparedPresentationFinalization {
-  const record = mixedPresentations.get(presentation);
+  const record = detachedPresentations.get(presentation);
   if (!record || presentation.requiresDetachedFinalization !== true) finalizationFailure("invalid-presentation");
-  mixedPresentations.delete(presentation);
+  detachedPresentations.delete(presentation);
   const { plan, original } = record;
   for (const row of original) verifyDataObservation(row);
   if (emittedPhysicalSetupPlan(presentation.emission) !== plan) finalizationFailure("invalid-presentation");
