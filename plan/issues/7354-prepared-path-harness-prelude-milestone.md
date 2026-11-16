@@ -429,6 +429,7 @@ commits touch only the census and its test).
   `program-source.ts`. It returns the existing `IrScriptVarHome` vocabulary, so the resolver (`scriptVarHomeOf`,
   `directTopLevelDeclaration`) is unchanged. It answers `typed` only, and only when:
   - the checker type is `number` or `boolean`;
+  - the declaration's file is the program's only source (review round 1, below);
   - the binding has exactly one declaration (see "Named gaps");
   - the name is not `undefined`, `NaN` or `Infinity` (non-writable globals: the initializer never stores);
   - `scriptVarReadsFollowInitializer` (new, in `src/ir/module-binding-script-var.ts`, beside
@@ -503,5 +504,85 @@ commits touch only the census and its test).
 - **Slice P is now the first gap of the whole sample.** The harness helpers `isNegativeZero` and `verifyProperty`
   (and `isConstructor`, the console shim's print handle) have untyped parameters, and the Prepared signature pass
   (`prepareSourceFunctionSignatures`) resolves no contract for them.
-- **`export default <expression>`** on the Prepared path compiles and exports nothing (`const n = 1; export default
-  n;` too, so it predates this slice). G lets a boolean reach it. Not verified whether that is a silent loss.
+
+### Review round 1
+
+An adversarial review returned NOT MET: one soundness must-fix and six should-fixes. Fix commit `1032759ec5`.
+
+1. **Must-fix — reads in another script were invisible.** The proof walked only the declaration's file, but every
+   script of a program shares one global scope. Three `compileMulti` programs (`a.js` runs first and reads `x`
+   through a hoisted function, through top-level code, or through an unguarded call; `test.js` declares `var x = 1`)
+   compiled and ran with `x` reading `0`. Fixed with the simplest sound rule: `irOwnedScriptVarHome(checker,
+   sourceFiles)` answers only when the declaration's file is the program's only source. **Signature change**: the
+   classifier gains the `sourceFiles` parameter (the resolver has no other way to see the program's files); the
+   proof `scriptVarReadsFollowInitializer` now takes a `NamedVariableDeclaration` (finding 4). The test262 runner
+   assembles prelude and test into one source, so the goal metric does not move: the 411-row sample is unchanged
+   (below). The three programs, in `.js` and `.ts`, are tests now (refused). The rule is conservative by design: if
+   the harness prelude ever becomes its own source file, every typed home is refused.
+2. **Outermost owner untested.** The hoisting function is now found structurally — the top-level statement that is a
+   function declaration (`ts.findAncestor(node.parent, isHoistedFunction)`) — so there is no innermost/outermost
+   choice left to get wrong. Test added: `var r = f()(); var x = 1; function f() { return function () { return x;
+   }; }` is refused.
+3. **Surviving mutants.** The `isDeclarationFile` filter: killed by a new acceptance test, `var length = 1` (the lib
+   declares `length` too). The `name === undefined` guard: kept and killed by a proof test, `export default
+   function () { return x; } var x = 1;` (an importer in a cycle runs it first). The `|| !symbol?.declarations…`
+   clause in `isRead`: deleted. It was unreachable — a value reference to the name always resolves to the global
+   in a file that declares it — except for a shorthand property, where the checker answers the PROPERTY symbol;
+   that made `var o = { x }; var x = 1;` a proven program (unsound). The read now asks the shorthand's value symbol;
+   test added.
+4. **Dead or duplicate code.** The identifier check is now done once, in the classifier, through a type guard that
+   hands the proof a `NamedVariableDeclaration`. `(owner ?? node).pos` is `node.pos`; `outermostCallableOwner` and
+   its class arm are gone with it. `isHoistedFunction`'s top-level restriction stays: it is what makes a nested
+   declaration a non-hoisted one, and a test now kills its removal (a nested `function g` inside an expression
+   created after the var, while a top-level `g` is called before it). It also now sees through labels: a labelled
+   top-level `function` is hoisted too, and before this round `var r = f(); var x = 1; l: function f() { return x;
+   }` was a proven program at the proof level (the compiler refused it on a TS diagnostic). Test added.
+5. **Structure.** `scriptVarUseFollowsDeclaration` and the typed home's position test now share one helper,
+   `placedAfter(node, statementEnd, defers)`: the certified homes defer every function and class, the typed home
+   only a hoisted function. Ordinary output is byte-identical (below). **Rebutted: one dynamic-code predicate.** The
+   two answer different questions. `hasDynamicScope` (writes collector, ordinary pipeline) asks whether a name may
+   resolve outside checker identity (`with`, direct `eval`); the reads proof asks whether code the walk cannot see
+   may run (`eval` by any route, `Function`). `with` needs no predicate of its own in the proof because of the
+   read rule, not the walk: inside `with` the checker resolves no symbol for `x`, so `isRead` counts a spelling
+   whose symbol does not resolve as a read (round 2 — round 1 counted it as not a read, so the proof accepted `var
+   o = {}; with (o) { x; } var x = 1;`, masked end to end only by TS error 2410 and the IR's refusal of `with`).
+   Proof tests: `with` before the declaration refused, after it proven. `hasDynamicScope` misses `Function(…)` and
+   indirect `eval`, so neither predicate can replace the other; a union in the writes collector would change the
+   ordinary pipeline's output.
+6. **Cost.** `spellingsOf` indexes every identifier and string literal of a file once (a `WeakMap` keyed by source
+   file, like `qualifiesCache`); the proof and `callableBefore` read the one name's list instead of walking the
+   file.
+7. Recorded under "Known gaps" below.
+
+Round 2 (review verdict MET, three items): the unresolved-symbol read rule above; a precision test pinning
+`callableBefore`'s deferral to hoisted functions only (`var x = 1; var g = function () { f(); }; function f() {
+return x; }` is proven — deferring every callable survived the sweep before); the sole-source sentence in finding 1.
+The call test needs no such rule: it matches spellings by text, never by symbol. `isRead` belongs to the proof,
+whose only caller is the Prepared classifier, so no ordinary-pipeline caller is affected. Mutants on the changed
+lines (unresolved-as-read deleted, resolved-binding deleted, `isCallable` deferral): all killed; 51 tests pass.
+
+Evidence:
+
+- `tests/issue-7354-vg-script-var-home.test.ts`: 49 tests pass. Mutation sweep over every boolean guard of the two
+  modules' V code (28 mutants, each deleted or weakened alone): 26 killed. Two survivors, both typed-shape
+  assumptions: the classifier's `isNamedVariableDeclaration` (a `BindingElement` or a pattern declarator never
+  passes the proof's own top-level-statement check; the guard narrows the type the proof takes) and the
+  `ts.isIdentifier` filter on spellings (a string literal never resolves to the binding's symbol, so `isRead`
+  already answers false; the guard narrows the type `isValueReference` takes).
+- Acceptance probes re-run through the strict Prepared entry against node: every accepted program returns node's
+  answer; the reviewer's multi-file repros A–D are refused.
+- Ordinary-pipeline bytes against `origin/claude/7354-r` (its tree extracted beside this one): 597 test262 files
+  (the sample's 419 paths plus the reviewer's 188) and 92 probe programs in two forms, default JS target and
+  `--target standalone`: 791 rows each, all identical (555 test262 binaries per target, the rest compile errors on
+  both).
+- Prepared tests (`test262-prepared-entry`, `test262-prepared-runtime`, #7188, R census, this file): 154/154.
+- 411-row sample through the real runner: 394 at "function X has an unresolved parameter contract", 2 at the
+  switch-case lexical binding, negatives 14 pass and 1 compile error — unchanged.
+- Gates: typecheck, loc, func, coercion-sites, oracle-ratchet, dead-exports, import-cycles, compiler-boundaries
+  inventory.
+
+### Known gaps
+
+- **`export default <expression>`** on the Prepared path compiles and exports nothing: `let b = true; export default
+  b;` (which G lets through) and `let b = 1; export default b;` (which already did on main). Not for this slice; the
+  issue is filed separately.

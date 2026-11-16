@@ -1605,7 +1605,7 @@ export function prepareIrProgramSources(
         allowBuiltinMapExtern: input.policy.target === "host" && input.policy.stringConst?.storage !== "native",
         allowNativeMapStorage: input.policy.stringConst?.storage === "native",
         oracle: input.oracle,
-        scriptVarHome: irOwnedScriptVarHome(input.checker),
+        scriptVarHome: irOwnedScriptVarHome(input.checker, sourceFiles),
       },
       identity,
     );

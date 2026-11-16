@@ -70,84 +70,106 @@ export function scriptVarUseFollowsDeclaration(
 ): boolean {
   if (node === declaration.name) return true;
   const statement = ts.findAncestor(declaration, ts.isVariableStatement);
-  if (statement === undefined || node.pos < statement.end) return false;
-  for (let current = node.parent; !ts.isSourceFile(current); current = current.parent) {
-    if (ts.isFunctionLike(current) || ts.isClassLike(current)) return false;
-  }
-  return true;
+  return statement !== undefined && placedAfter(node, statement.end, isCallable);
 }
+
+/**
+ * `node` sits after `statementEnd` and no enclosing node `defers` may run it from earlier code. A certified home
+ * defers every function and class (`isCallable`); the typed home only a hoisted function (`isHoistedFunction`),
+ * since any other one is created where it stands.
+ */
+function placedAfter(node: ts.Node, statementEnd: number, defers: (enclosing: ts.Node) => boolean): boolean {
+  return node.pos >= statementEnd && ts.findAncestor(node.parent, defers) === undefined;
+}
+
+function isCallable(node: ts.Node): boolean {
+  return ts.isFunctionLike(node) || ts.isClassLike(node);
+}
+
+/** A `var` declarator binding one name, the only shape a script var's typed home can be. */
+export type NamedVariableDeclaration = ts.VariableDeclaration & { readonly name: ts.Identifier };
 
 /**
  * (#7354 V) True when no read of the script var `declaration` can run before its initializer: a typed slot has
  * no `undefined`, so a read of the hoisted binding would answer the slot's zero. The declaration is a top-level
- * statement's, initialized, and every read either runs after the statement (`runsAfter`) or sits in a top-level
- * function declaration nothing before the statement can call (`callableBefore`). Name-based, like
+ * statement's, initialized, and every read either is placed after the statement outside every hoisted function,
+ * or sits in a hoisted function nothing before the statement can call (`callableBefore`). Name-based, like
  * `isAlwaysUndefinedVar`: every reference spelled with the name is a read unless the checker binds it to another
- * declaration of the program, a plain `=` target only writes, and code the walk cannot see (`eval`, `Function`)
- * declines.
+ * symbol, a plain `=` target only writes, and code the walk cannot see (`eval`, `Function`) declines. Only the
+ * declaration's own file is walked: the caller answers for the program's other scripts, which share its global.
  */
-export function scriptVarReadsFollowInitializer(checker: ts.TypeChecker, declaration: ts.VariableDeclaration): boolean {
+export function scriptVarReadsFollowInitializer(
+  checker: ts.TypeChecker,
+  declaration: NamedVariableDeclaration,
+): boolean {
   const { name, initializer } = declaration;
-  if (!ts.isIdentifier(name) || !initializer || !isTopLevelStatementDeclaration(declaration)) return false;
+  if (!initializer || !isTopLevelStatementDeclaration(declaration)) return false;
   const sourceFile = declaration.getSourceFile();
   if (sourceRunsDynamicCode(sourceFile)) return false;
   const statementEnd = declaration.parent.parent.end;
   const binding = checker.getSymbolAtLocation(name);
   const isRead = (node: ts.Identifier): boolean => {
-    if (node.text !== name.text || !isValueReference(node)) return false;
+    if (!isValueReference(node)) return false;
     const user = outermostParenthesized(node);
     if (ts.isBinaryExpression(user.parent) && user.parent.left === user && isPlainAssignment(user.parent)) return false;
-    const symbol = checker.getSymbolAtLocation(node);
-    return symbol === binding || !symbol?.declarations?.some((other) => !other.getSourceFile().isDeclarationFile);
+    // A shorthand property's name resolves to the property; the binding it reads is its value symbol.
+    const symbol = ts.isShorthandPropertyAssignment(node.parent)
+      ? checker.getShorthandAssignmentValueSymbol(node.parent)
+      : checker.getSymbolAtLocation(node);
+    // An unresolved name (inside `with`, the checker binds none) may be this binding.
+    return symbol === binding || symbol === undefined;
   };
-  return spellings(sourceFile, (node) => ts.isIdentifier(node) && isRead(node)).every((read) => {
-    const owner = outermostCallableOwner(read);
-    return owner && isHoistedFunction(owner) ? !callableBefore(owner, statementEnd) : runsAfter(read, statementEnd);
+  return spellingsOf(sourceFile, name.text).every((node) => {
+    if (!ts.isIdentifier(node) || !isRead(node)) return true;
+    const fn = ts.findAncestor(node.parent, isHoistedFunction);
+    return fn ? !callableBefore(fn, statementEnd) : node.pos >= statementEnd;
   });
 }
 
-/** A module-init node after `statementEnd`, or one inside a function or class created there. */
-function runsAfter(node: ts.Node, statementEnd: number): boolean {
-  const owner = outermostCallableOwner(node);
-  if (owner && isHoistedFunction(owner)) return false;
-  return (owner ?? node).pos >= statementEnd;
+/**
+ * Whether code before `statementEnd` may call the hoisted function `fn`: the global object escapes (a computed
+ * member of it may be `fn`), or its name is spelled (a reference, a member name, a string) outside `fn` anywhere
+ * but where `placedAfter` the statement.
+ */
+function callableBefore(fn: ts.FunctionDeclaration, statementEnd: number): boolean {
+  const sourceFile = fn.getSourceFile();
+  // Nameless only as a module's `export default function () {}`, which an importer in a cycle runs first.
+  if (fn.name === undefined || sourceMayWriteGlobalObject(sourceFile)) return true;
+  return spellingsOf(sourceFile, fn.name.text).some(
+    (node) => !isDescendantOf(node, fn) && !placedAfter(node, statementEnd, isHoistedFunction),
+  );
+}
+
+const spellingIndexCache = new WeakMap<ts.SourceFile, ReadonlyMap<string, readonly ts.Node[]>>();
+
+/** Every identifier and string literal of `sourceFile` spelled `text`, in source order; the file is indexed once. */
+function spellingsOf(sourceFile: ts.SourceFile, text: string): readonly ts.Node[] {
+  let index = spellingIndexCache.get(sourceFile);
+  if (index === undefined) {
+    const built = new Map<string, ts.Node[]>();
+    const visit = (node: ts.Node): void => {
+      if (ts.isIdentifier(node) || ts.isStringLiteralLike(node)) {
+        const found = built.get(node.text);
+        if (found) found.push(node);
+        else built.set(node.text, [node]);
+      }
+      ts.forEachChild(node, visit);
+    };
+    ts.forEachChild(sourceFile, visit);
+    spellingIndexCache.set(sourceFile, (index = built));
+  }
+  return index.get(text) ?? [];
 }
 
 /**
- * Whether code before `statementEnd` may call the top-level function `fn`: the global object escapes (a computed
- * member of it may be `fn`), or its name is spelled (a reference, a member name, a string) outside `fn` anywhere
- * but module-init after the statement or a function or class created there.
+ * A function declaration that is a top-level statement, labelled or not: its function exists before the first
+ * statement runs. A nested one is created where its enclosing code runs.
  */
-function callableBefore(fn: ts.FunctionDeclaration, statementEnd: number): boolean {
-  const name = fn.name?.text;
-  const sourceFile = fn.getSourceFile();
-  if (name === undefined || sourceMayWriteGlobalObject(sourceFile)) return true;
-  const spelled = (node: ts.Node) => (ts.isIdentifier(node) || ts.isStringLiteralLike(node)) && node.text === name;
-  return spellings(sourceFile, spelled).some((node) => !isDescendantOf(node, fn) && !runsAfter(node, statementEnd));
-}
-
-/** Every node of `sourceFile` that `matches`, in source order. */
-function spellings(sourceFile: ts.SourceFile, matches: (node: ts.Node) => boolean): ts.Node[] {
-  const found: ts.Node[] = [];
-  const visit = (node: ts.Node): void => {
-    if (matches(node)) found.push(node);
-    ts.forEachChild(node, visit);
-  };
-  ts.forEachChild(sourceFile, visit);
-  return found;
-}
-
-/** The outermost function or class `node` sits in: the code that may run it later than its position. */
-function outermostCallableOwner(node: ts.Node): ts.Node | undefined {
-  let owner: ts.Node | undefined;
-  for (let current = node.parent; !ts.isSourceFile(current); current = current.parent)
-    if (ts.isFunctionLike(current) || ts.isClassLike(current)) owner = current;
-  return owner;
-}
-
-/** A top-level function declaration: its function exists before the first statement runs. */
 function isHoistedFunction(node: ts.Node): node is ts.FunctionDeclaration {
-  return ts.isFunctionDeclaration(node) && ts.isSourceFile(node.parent);
+  if (!ts.isFunctionDeclaration(node)) return false;
+  let statement: ts.Node = node;
+  while (ts.isLabeledStatement(statement.parent)) statement = statement.parent;
+  return ts.isSourceFile(statement.parent);
 }
 
 function isDescendantOf(node: ts.Node, ancestor: ts.Node): boolean {

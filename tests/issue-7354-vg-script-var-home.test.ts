@@ -8,10 +8,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as gc from "../src/codegen/index.js";
 import * as linear from "../src/codegen-linear/index.js";
-import { scriptVarReadsFollowInitializer } from "../src/ir/module-binding-script-var.js";
+import { type NamedVariableDeclaration, scriptVarReadsFollowInitializer } from "../src/ir/module-binding-script-var.js";
 import { instantiatePreparedArtifact } from "../src/test262/test262-prepared-runtime.js";
 import {
   compile,
+  compileMulti,
   requiredPreparedEmission,
   type Test262CompileOptions,
 } from "../src/test262/test262-prepared-entry.js";
@@ -121,6 +122,29 @@ describe("#7354 V — the IR's own typed home for a script var", () => {
     );
   });
 
+  it("presents a script var whose name a lib declaration also declares", async () => {
+    expect(await run("var length = 1; length = length + 1; if (length !== 2) throw 1;")).toBe("returned");
+  });
+
+  // Every script of a program shares one global scope, and the reads proof walks one file: a script that runs
+  // first may read the binding before its initializer, so a typed home needs its file to be the only source.
+  // Each pair compiled before that rule, and ran with `r` reading 0 where JavaScript reads 1 or throws.
+  it.each([
+    ["a hoisted function", "function f() { return x; } var r = -1; try { r = f(); } catch (e) {}"],
+    ["top-level code", "var r = -1; try { r = x; } catch (e) {}"],
+    ["a call without a guard", "function f() { return x; } var r = f();"],
+  ])("refuses a script var another script reads first through %s", async (_, first) => {
+    for (const ext of [".js", ".ts"]) {
+      const result = await compileMulti(
+        { [`a${ext}`]: first, [`test${ext}`]: "var x = 1; if (r === 0) throw 1;" },
+        `test${ext}`,
+        options(`test${ext}`),
+      );
+      expect(result.success).toBe(false);
+      expect(messages(result).join("\n")).toContain(NO_HOME);
+    }
+  });
+
   it("refuses a read of the hoisted binding in a TypeScript script", async () => {
     expect(await refusal("function f(): number { return x; } f(); var x: number = 1;", "entry.ts")).toContain(NO_HOME);
   });
@@ -178,7 +202,7 @@ describe("#7354 V — scriptVarReadsFollowInitializer", () => {
       ts.forEachChild(node, find);
     };
     find(sourceFile);
-    return scriptVarReadsFollowInitializer(program.getTypeChecker(), declaration!);
+    return scriptVarReadsFollowInitializer(program.getTypeChecker(), declaration as NamedVariableDeclaration);
   }
 
   it.each([
@@ -188,6 +212,15 @@ describe("#7354 V — scriptVarReadsFollowInitializer", () => {
     ["a class created after it", "var x = 1; class C { m() { return x; } }"],
     ["a function declaration only named after it", "function f() { return x; } var x = 1; f();"],
     ["a same-named parameter of a function called before it", "function g(x) { return x; } g(1); var x = 1;"],
+    ["a with statement after it", "var x = 1; with ({}) { x; }"],
+    [
+      "a function expression calling a hoisted function, created after it",
+      "var x = 1; var g = function () { f(); }; function f() { return x; }",
+    ],
+    [
+      "a nested function declaration whose name a hoisted function shares",
+      "function g() {} g(); var x = 1; var h = function () { function g() { return x; } return g; };",
+    ],
   ])("proves %s", (_, source) => {
     expect(follows(source)).toBe(true);
   });
@@ -207,6 +240,18 @@ describe("#7354 V — scriptVarReadsFollowInitializer", () => {
     ["a hoisted caller declared after it", "function f() { return x; } g(); var x = 1; function g() { f(); }"],
     ["an escaping global object", "function f() { return x; } var o = this; var x = 1;"],
     ["dynamic code anywhere", 'var x = 1; eval("x");'],
+    ["a shorthand property before it", "var o = { x }; var x = 1;"],
+    // Inside `with` the checker resolves no symbol for `x`; an unresolved name may be the binding.
+    ["a with statement before it", "var o = {}; with (o) { x; } var x = 1;"],
+    [
+      "a closure a hoisted function returns, called before it",
+      "var r = f()(); var x = 1; function f() { return function () { return x; }; }",
+    ],
+    ["a labelled hoisted function called before it", "var r = f(); var x = 1; l: function f() { return x; }"],
+    [
+      "an anonymous default export (an importer in a cycle runs it first)",
+      "export default function () { return x; } var x = 1;",
+    ],
   ])("refuses %s", (_, source) => {
     expect(follows(source)).toBe(false);
   });
