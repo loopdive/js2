@@ -21,7 +21,7 @@ import {
   fillNativeStringValueResources,
 } from "../src/backend/wasmgc/program/native-string-values.js";
 import { fillNativeInvocationResources } from "../src/backend/wasmgc/resources/native-invocation.js";
-import { nativeBooleanAbiBindings } from "../src/backend/wasmgc/program/native-primitive-boundary-abi.js";
+import { nativeIntrinsicAbiBindings } from "../src/backend/wasmgc/program/native-primitive-boundary-abi.js";
 import { collectNativeStringValueDemands } from "../src/ir/program/native-string-value-demands.js";
 import { acceptPreparedIrProgram } from "../src/ir/program-consumer.js";
 import { replayOptions } from "./helpers/ir-whole-program-replay.js";
@@ -101,7 +101,7 @@ describe("genuine getter demands join native values before reservation", () => {
               if (row.kind === "boolean" || row.kind === "false") {
                 expect(f.resources.number!.booleanBoxes).toBe(f.dependencies.booleanBoxes);
                 expect(f.resourceInput.plan.booleans).toEqual({ boxMode: "interned", unbox: true });
-                const binding = nativeBooleanAbiBindings(f.resourceInput, 0);
+                const binding = nativeIntrinsicAbiBindings(f.resourceInput, 0);
                 expect(binding).toHaveLength(1);
                 expect(binding[0]!.reference.binding).toEqual({ kind: "runtime", symbol: "__unbox_boolean" });
               } else expect(f.resourceInput.plan.booleans).toBeUndefined();

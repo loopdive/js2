@@ -6,21 +6,26 @@
  *
  * - Host async frames keep a JS value across `await` (identity transport,
  *   physically the host's `externref`).
- * - (#7354 D1) Synchronous functions on standalone WasmGC take and return an
- *   explicitly annotated `any`: the dynamic-value legalization lowers it to the
- *   native `externref` carrier.
+ * - (#7354 D1) Internal synchronous functions on standalone WasmGC take and
+ *   return an explicitly annotated `any`: the dynamic-value legalization lowers
+ *   it to the native `externref` carrier. An exported `any` is a host boundary
+ *   and keeps its existing contract (the Boolean `any` result, or a refusal).
  * - (#7354 P) On that lane a parameter without a TypeScript annotation is the
  *   dynamic value too. Nothing checks an untyped or JSDoc-typed parameter at
  *   runtime, and its callers include top-level code, calls with missing
  *   arguments and calls through values, so no call-site type is a contract.
- *   An un-annotated result is dynamic where the checker's view of it is not a
- *   contract either: it is `any`, it comes from a JSDoc `@returns`, or the body
- *   can run off its end after returning a value (that path returns
- *   `undefined`). Other un-annotated results keep the producer's inference,
- *   which the middle end checks against the lowered body.
+ *   An unannotated result is dynamic where the checker cannot vouch for the
+ *   value the body returns: it is `any`, a JSDoc `@returns` names it, or the
+ *   body can also run off its end (that path returns `undefined`). Other
+ *   unannotated results keep the producer's inference, which the middle end
+ *   checks against the lowered body. Either contract triggers the legalization
+ *   below like an explicit `any`.
  */
 import { ts } from "../ts-api.js";
 import type { IrType } from "./core/types.js";
+import type { IrFunction } from "./core/nodes.js";
+import { IrUnsupportedError } from "./outcomes.js";
+import { DynamicValueGap, legalizeDynamicValues } from "./program/dynamic-value-legalization.js";
 import type { RuntimeManifestPolicy } from "../runtime/contracts/provider-policy.js";
 import type { ValType } from "../wasm/model/instructions.js";
 import { functionBodyAlwaysTerminates, irFunctionBodyReturnsValue } from "./select.js";
@@ -63,20 +68,21 @@ function hostPromiseFulfillment(checker: ts.TypeChecker, type: ts.Type): ts.Type
   return arguments_.length === 1 ? arguments_[0] : undefined;
 }
 
-function dynamicLane(policy: SourcePolicy, isAsync: boolean): DynamicLane {
+function dynamicLane(policy: SourcePolicy, declaration: ts.FunctionDeclaration | undefined): DynamicLane {
   if (policy.backend !== "wasmgc") return undefined;
-  if (isAsync) return policy.target === "host" ? "host-async" : undefined;
-  return policy.target === "standalone" ? "native" : undefined;
+  const has = (kind: ts.SyntaxKind) => declaration?.modifiers?.some((modifier) => modifier.kind === kind) ?? false;
+  if (has(ts.SyntaxKind.AsyncKeyword)) return policy.target === "host" ? "host-async" : undefined;
+  return policy.target === "standalone" && !has(ts.SyntaxKind.ExportKeyword) ? "native" : undefined;
 }
 
 /** The dynamic (or host Promise) contract of a parameter, if its lane admits one; natively also an unannotated one. */
 export function sourceDynamicParameter(
   checker: ts.TypeChecker,
   policy: SourcePolicy,
-  isAsync: boolean,
+  declaration: ts.FunctionDeclaration,
   parameter: ts.ParameterDeclaration,
 ): IrType | undefined {
-  const lane = dynamicLane(policy, isAsync);
+  const lane = dynamicLane(policy, declaration);
   const annotation = parameter.type;
   if (annotation === undefined) return lane === "native" ? { kind: "dynamic" } : undefined;
   if (annotatedAny(checker, annotation)) return lane ? checkerAny(checker, parameter.name) : undefined;
@@ -96,10 +102,9 @@ export function sourceDynamicParameter(
 export function sourceDynamicResult(
   checker: ts.TypeChecker,
   policy: SourcePolicy,
-  isAsync: boolean,
   declaration: ts.FunctionDeclaration,
 ): IrType | undefined {
-  const lane = dynamicLane(policy, isAsync);
+  const lane = dynamicLane(policy, declaration);
   const signature = checker.getSignatureFromDeclaration(declaration);
   if (!lane || !signature) return undefined;
   const any = checker.getAnyType();
@@ -118,5 +123,30 @@ export function sourceDynamicResult(
 
 /** from-ast lowers a dynamic value only where the lane has its carrier. */
 export function sourceDynamicResolver(policy: SourcePolicy): { readonly resolveDynamic?: () => ValType } {
-  return dynamicLane(policy, false) === "native" ? { resolveDynamic: () => ({ kind: "externref" }) } : {};
+  return dynamicLane(policy, undefined) === "native" ? { resolveDynamic: () => ({ kind: "externref" }) } : {};
+}
+
+/**
+ * (#7354 D1) A program with a native `any` contract is legalized to the
+ * intrinsic/externref form, and an operation without a Prepared intrinsic is a
+ * named refusal of it. A program without one keeps its existing path: from-ast
+ * may use dynamic values internally there, and those reach the later stages
+ * exactly as before.
+ */
+export function legalizeSourceDynamicValues(
+  policy: SourcePolicy,
+  signatures: Iterable<{ readonly params: readonly IrType[]; readonly returnType: IrType | null }>,
+  functions: readonly IrFunction[],
+): readonly IrFunction[] {
+  if (dynamicLane(policy, undefined) !== "native") return functions;
+  const contracted = [...signatures].some(
+    (signature) => signature.returnType?.kind === "dynamic" || signature.params.some((type) => type.kind === "dynamic"),
+  );
+  if (!contracted) return functions;
+  try {
+    return functions.map(legalizeDynamicValues);
+  } catch (error) {
+    if (!(error instanceof DynamicValueGap)) throw error;
+    throw new IrUnsupportedError("type-resolution-unsupported", "build", error.message);
+  }
 }

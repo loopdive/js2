@@ -205,13 +205,14 @@ slice (they override the plan text above where they differ):
 1. **Option B, one legalization pass.** The Prepared backend binds runtime
    functions only through semantic intrinsics, so
    `src/ir/program/dynamic-value-legalization.ts` rewrites the dynamic
-   operations of the wasmgc standalone projection into intrinsics and every
-   `dynamic` type into `externref`. It runs inside
-   `prepareWholeProgramRuntimeManifest` (the per-policy projection, before
-   provider attachment), so the validator's replay reproduces it; the clock
-   witness compares against the legalized body. ABI contracts stay `dynamic`;
-   `preparedDynamicCarrier` is the carrier arm `physicalSignatureConverter`
-   asks (it also keeps the host async identity arm). `from-ast.ts` is
+   operations into intrinsics and every `dynamic` type into `externref`. The
+   source producer runs it on each lowered function when the source policy is
+   wasmgc standalone (`legalizeSourceDynamicValues`), so every later stage
+   (runtime projection, validator replay, clock witness, physical plan) sees an
+   ordinary externref program and `program/runtime-manifest.ts`,
+   `runtime-validation.ts` and `runtime-abi.ts` stay byte-identical (they are
+   complete-source pins of the #3518/#3525 relocation receipts; a first cut ran
+   the pass in the projection and broke 150 receipt tests). `from-ast.ts` is
    unchanged and there is no second `IrDynamicLowering`. This replaces the
    plan's "second `IrDynamicLowering` implementation" bullet.
 2. **The D1 set.** `box` from f64/i32 to `js.number.box`, a Boolean-tagged box
@@ -227,9 +228,9 @@ slice (they override the plan text above where they differ):
    no Prepared intrinsic": loose `==`, `tag.test` Null/NumberI32/String/Object,
    ToBoolean, `typeof`, member access, a box of any non-primitive (strings
    included), `coerce.to_externref`, and a dynamic type nested in a composite.
-   A front-end dynamic helper call (`__ir_dyn_add`, …) was an invariant in
-   `prepareIrProgramRuntimeCallables`; over a dynamic value it is now the same
-   named refusal.
+   A front-end dynamic helper call (`__ir_dyn_add`, …) has no runtime
+   declaration and would reach `prepareIrProgramRuntimeCallables` as an
+   invariant; the pass refuses it by the same name.
    - Soundness rests on the admitted set: only numbers, booleans and
      `undefined` enter a dynamic value. Strict equality therefore has no BigInt
      or string arm; the slice that admits strings must pass the string arm.
@@ -238,11 +239,15 @@ slice (they override the plan text above where they differ):
      the `js.boolean.*` family uses. The provider-row comparison that the
      ordinary-object family carried is now one helper
      (`canonical-provider-mismatch.ts`) both families call.
-   - Bodies are shared: strict equality is `buildObjectSameValueBody` with
-     `numbers: "strict"` (`f64.eq`; `same-value` keeps the bit compare) and the
-     BigInt/string arms optional; the `undefined` probe is the legacy body moved
-     to `buildIsUndefinedBody` (`primitive-layouts.ts`). Legacy calls both with
-     its previous arguments; `__extern_strict_eq` is untouched.
+   - The `undefined` probe is the legacy body moved to `buildIsUndefinedBody`
+     (`primitive-layouts.ts`); legacy calls it with its previous arguments.
+     Strict equality is its own pure body (`strict-equality-body.ts`: number
+     payloads by `f64.eq`, Boolean payloads, else identity). A first cut
+     parameterised `buildObjectSameValueBody` instead, but that file and its
+     options interface are pinned by the #3518 replay receipts
+     (`same-value-nan-correction.ts`, the BigInt carrier port) and called by
+     four test helpers; folding the two dispatches is left for a cleanup that
+     re-pins those receipts. `__extern_strict_eq` is untouched.
    - Boolean unbox from a dynamic value is unreachable from source today; if it
      arrives it meets the existing keyed-Get proof gate in
      `selectNativeBooleans` and refuses, and the presentation does not select
@@ -258,11 +263,13 @@ slice (they override the plan text above where they differ):
 4. **`any` contracts.** `src/ir/source-dynamic-contracts.ts` now holds every
    `any`-contract rule of the Prepared source producer (the host async arm,
    moved unchanged, and the native arm: an explicitly annotated `any`
-   parameter or result of a synchronous wasmgc standalone function), plus
+   parameter or result of an internal (non-exported) synchronous wasmgc
+   standalone function; an exported `any` keeps its existing contract, the
+   source Boolean `any` result or the Phase 1 refusal), plus
    `resolveDynamic`; `program-source.ts` shrank by 37 lines. Untyped and JSDoc
    parameters stay refused (slice P). The presentation's ABI join admits an
-   internal `dynamic` callable contract (the physical plan carries or refuses
-   it); an exported `any` contract stays refused.
+   internal `externref` callable contract on standalone (the legalized dynamic
+   value); an exported `any` contract stays refused.
 5. **`typeof`** stays a named gap (`dyn.typeof`), with a refusal probe.
 6. **Stacked on R.** `preparedPresentationPolicy` additionally selects native
    Boolean boxing and the native `undefined` probe; the `js.value.*` providers
@@ -277,6 +284,32 @@ through the strict Prepared entry, validates and runs: number/boolean/
 ToNumber back to a number; refusal probes for loose equality, the null tag
 test, ToBoolean, dynamic `+`, member reads, `typeof`, an exported `any`
 contract and the gc target; three direct tests of the pass.
+
+### Test pins updated by D1 (closed lists a new intrinsic family changes)
+
+Measured against `origin/main` b29a0f7380: the failing-test sets of every
+`tests/issue-3518*`/`issue-3526*` file and every test naming a touched file
+match main's exactly after these updates.
+
+- `tests/issue-3518-core-vocabulary-seam.test.ts`: `INTRINSIC_IDS` 39 → 43,
+  `DYNAMIC_VALUE_INTRINSIC_IDS` in the canonical value list and the composed
+  order (the facade `src/ir/intrinsics.ts` forwards it like its siblings).
+- `tests/issue-3518-semantic-verification-ownership.test.ts`: successor pin of
+  `INTRINSIC_DEFINITIONS` (51cd8b09…), with a new predecessor-chain step that
+  removes exactly the four `js.value.*` rows to re-derive the #6921 pin
+  (b763d963…), which then re-derives the original; catalogue length 39 → 43.
+  Same mechanism #6921 used for `js.boolean.unbox`.
+- `tests/helpers/ir-historical-runtime-reconstruction.ts`: the reviewed
+  declaration order of `src/ir/runtime/contracts/intrinsics.ts` gains
+  `DYNAMIC_VALUE_RUNTIME_FEATURES` / `DynamicValueRuntimeFeature` after the
+  extern rows.
+- `tests/issue-3526-string-boundary-const.test.ts`: the empty-parameter
+  signature rows are the string storage rows plus `native.js.value.undefined`
+  (also a value: nothing goes in).
+- `tests/issue-3518-native-boolean-consumer.test.ts`,
+  `tests/issue-3518-native-getter-resource-join.test.ts`: the binder is now
+  `nativeIntrinsicAbiBindings` (Boolean plus dynamic-value intrinsics) and its
+  refusals say "native intrinsic ABI".
 
 ## Coordination
 

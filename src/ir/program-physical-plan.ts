@@ -25,8 +25,7 @@ import {
   nativeNumberBinding,
 } from "../backend/wasmgc/program/native-primitive-boundary-abi.js";
 import { planHostNumberBoundary, type HostNumberBoundarySetup } from "./program/host-number-boundary-setup.js";
-import { planHostAsyncDynamicUnits } from "./program/host-async-dynamic.js";
-import { preparedDynamicCarrier } from "./program/dynamic-value-legalization.js";
+import { planHostAsyncDynamicUnits, preparedHostAsyncDynamicCarrier } from "./program/host-async-dynamic.js";
 import { irGlobalBindingKey, irTypeBindingKey, irSupportGlobalRef, irSourceTypeRef } from "./abi-bindings.js";
 import {
   irCallableBindingKey,
@@ -953,8 +952,8 @@ function physicalSignatureConverter(
   program: PreparedIrProgram,
   vectors: NativeVectorResourcePlan,
   gaps: Gaps,
-  native: PhysicalNativeStringSetup | undefined,
-  dynamicCarrier: ReturnType<typeof preparedDynamicCarrier>,
+  native?: PhysicalNativeStringSetup,
+  dynamicUnits: readonly IrUnitId[] = [],
   sourceClosures?: NativeSourceClosureRequirements,
 ) {
   const abi = native ? new ProgramAbiMap(program.inventory, program.derivedUnits) : undefined;
@@ -994,7 +993,9 @@ function physicalSignatureConverter(
         out.push(type);
         continue;
       }
-      const value = scalar(type) ?? dynamicCarrier(type, unitId);
+      const value =
+        scalar(type) ??
+        (unitId !== undefined && dynamicUnits.includes(unitId) ? preparedHostAsyncDynamicCarrier(type) : undefined);
       if (
         type.kind === "support-ref" &&
         native?.formatterScratch &&
@@ -1286,8 +1287,7 @@ export function planPhysicalSetup(
   const nativeIds = new Set(nativeBindings.map((row) => row.entry.id));
   const dynamic = planHostAsyncDynamicUnits(program, projection, asyncFrames);
   for (const gap of dynamic.gaps) gaps.add(gap.detail, gap.unitId);
-  const dynamicCarrier = preparedDynamicCarrier(projection, dynamic.units);
-  const convert = physicalSignatureConverter(program, vectors, gaps, nativeStrings, dynamicCarrier, sourceClosures);
+  const convert = physicalSignatureConverter(program, vectors, gaps, nativeStrings, dynamic.units, sourceClosures);
 
   const functions = planPhysicalFunctionSlots(physical, entries, convert, dynamic.units, gaps);
   const numberRemainders = planNumberRemainders(program, projection);

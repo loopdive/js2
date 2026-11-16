@@ -233,7 +233,6 @@ import {
   semanticCallablePolicyMismatch,
 } from "./callable-declarations.js";
 export { REFERENCE_ERROR_RUNTIME_PROVIDERS } from "./callable-declarations.js";
-export { DYNAMIC_VALUE_RUNTIME_PROVIDERS } from "./dynamic-value-callables.js";
 import {
   ASYNC_OPTIONAL_RUNTIME_FEATURES,
   ASYNC_RUNTIME_FEATURES,

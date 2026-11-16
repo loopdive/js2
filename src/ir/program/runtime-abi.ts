@@ -8,11 +8,7 @@ import { preparedIrProgramOwner } from "./owner.js";
 import { PreparedIrProgramInvariantError } from "./errors.js";
 import type { PreparedIrProgramFailure, PreparedIrProgramProducerInput } from "./prepared-contracts.js";
 import { irRuntimeCallableDeclaration, type IrRuntimeCallableDeclaration } from "../runtime/callable-declarations.js";
-import {
-  collectNativeAsyncCallableDemands,
-  IrNativeAsyncCallableError,
-  nativeAsyncCallableValueTypes,
-} from "../runtime/native-async-callables.js";
+import { collectNativeAsyncCallableDemands, IrNativeAsyncCallableError } from "../runtime/native-async-callables.js";
 import { collectVectorCallableDemands, IrVectorCallableError } from "../runtime/vector-callables.js";
 
 type RuntimeCallableInput = Pick<PreparedIrProgramProducerInput, "inventory" | "ir" | "derivedUnits">;
@@ -54,7 +50,6 @@ export function prepareIrProgramRuntimeCallables(
       });
     }
     let failure: PreparedIrProgramFailure | undefined;
-    let types: ReturnType<typeof nativeAsyncCallableValueTypes> | undefined;
     const buffers = [
       ...fn.blocks.map((block) => block.instrs),
       ...(fn.asyncPlan?.states.map((state) => state.body) ?? []),
@@ -84,31 +79,13 @@ export function prepareIrProgramRuntimeCallables(
               "invalid-prepared-data",
               `runtime demand in ${fn.unitId} has no exact original owner`,
             );
-          // (#7354 D1) A front-end dynamic helper (`__ir_dyn_add`, …) over a dynamic
-          // value is a capability the Prepared path lacks, not a broken program.
-          types ??= nativeAsyncCallableValueTypes(fn);
-          const dynamic =
-            instruction.kind === "call" &&
-            [instruction.resultType, ...instruction.args.map((arg) => types!.get(arg))].some(
-              (type) => type?.kind === "dynamic",
-            );
-          failure = Object.freeze(
-            dynamic
-              ? {
-                  kind: "unsupported",
-                  code: "body-shape-rejected",
-                  stage: "resolve",
-                  detail: `dynamic operation ${ref.name} has no Prepared intrinsic`,
-                  ...owner,
-                }
-              : {
-                  kind: "invariant",
-                  code: "unknown-function-ref",
-                  stage: "resolve",
-                  detail: `runtime callable ${key} has no canonical declaration`,
-                  ...owner,
-                },
-          );
+          failure = Object.freeze({
+            kind: "invariant",
+            code: "unknown-function-ref",
+            stage: "resolve",
+            detail: `runtime callable ${key} has no canonical declaration`,
+            ...owner,
+          });
         });
     if (failure) return failure;
   }

@@ -2,39 +2,34 @@
 
 /**
  * (#7354 D1) Dynamic-value legalization for the Prepared standalone WasmGC
- * projection.
+ * source program.
  *
  * The Prepared backend binds runtime functions only through semantic
  * intrinsics, so the dynamic IR operations from-ast emits (`box` to dynamic,
- * `unbox`, `tag.test`, `dyn.*`) are rewritten here into the intrinsics that name
- * the same meaning, and every `dynamic` type becomes the physical carrier, an
- * `externref`. The pass is total: an operation it cannot express refuses with a
- * named gap instead of reaching the backend. The ABI contracts keep their
- * logical `dynamic` types; the physical plan maps them to the same carrier.
+ * `unbox`, `tag.test`, `dyn.*`) are rewritten into the intrinsics that name
+ * the same meaning, and every `dynamic` type becomes its carrier, an
+ * `externref`. The source producer runs it on each lowered function, so every
+ * later stage (runtime projection, validator replay, physical plan) sees one
+ * ordinary externref program. The pass is total: an operation it cannot
+ * express throws {@link DynamicValueGap} with a name instead of reaching the
+ * backend.
  *
  * Soundness rests on the admitted value set: only numbers, booleans and
  * `undefined` can enter a dynamic value here (every other box refuses), and the
  * runtime functions behind the intrinsics are exact for that set.
  */
 import { INTRINSIC_SIGNATURE_VERSION, INTRINSIC_DEFINITIONS, type IntrinsicId } from "../core/intrinsics.js";
-import { mapNestedBuffers, type IrInstr, type IrValueId } from "../core/nodes.js";
+import { mapNestedBuffers, type IrFunction, type IrInstr, type IrValueId } from "../core/nodes.js";
 import type { IrType } from "../core/types.js";
+import { irRuntimeCallableDeclaration } from "../runtime/callable-declarations.js";
 import { JS_TAG_IDS } from "../runtime/js-tag-domain.js";
 import { nativeAsyncCallableValueTypes } from "../runtime/native-async-callables.js";
-import type { PreparedIrFunction } from "../runtime/contracts/prepared.js";
-import type { RuntimeManifestPolicy } from "../../runtime/contracts/provider-policy.js";
-import type { IrUnitId } from "../../shared/contracts/ir-identity.js";
-import type { ValType } from "../../wasm/model/instructions.js";
-import { preparedHostAsyncDynamicCarrier } from "./host-async-dynamic.js";
 
 const CARRIER: IrType = Object.freeze({ kind: "val", val: Object.freeze({ kind: "externref" }) });
 const F64: IrType = Object.freeze({ kind: "val", val: Object.freeze({ kind: "f64" }) });
 
-export type DynamicValueLegalization =
-  | { readonly kind: "legalized"; readonly functions: readonly PreparedIrFunction[] }
-  | { readonly kind: "gap"; readonly unitId: PreparedIrFunction["unitId"]; readonly detail: string };
-
-class DynamicValueGap extends Error {}
+/** A dynamic operation the Prepared path has no intrinsic for; the message names it. */
+export class DynamicValueGap extends Error {}
 
 function gap(operation: string): never {
   throw new DynamicValueGap(`dynamic operation ${operation} has no Prepared intrinsic`);
@@ -51,8 +46,12 @@ function carrierOf(type: IrType): IrType {
   return type.kind === "dynamic" ? CARRIER : type;
 }
 
-/** Rewrite one function; `fresh` allocates the SSA values the expansions add. */
-function legalizeFunction(fn: PreparedIrFunction): PreparedIrFunction {
+/**
+ * Rewrite one function; `fresh` allocates the SSA values the expansions add.
+ * A function without a dynamic value is returned unchanged.
+ */
+export function legalizeDynamicValues(fn: IrFunction): IrFunction {
+  if (!containsDynamic(fn)) return fn;
   const types = nativeAsyncCallableValueTypes(fn);
   let valueCount = fn.valueCount;
   const fresh = (): IrValueId => valueCount++ as IrValueId;
@@ -114,6 +113,13 @@ function legalizeFunction(fn: PreparedIrFunction): PreparedIrFunction {
           unary("i32.eqz", positive, instr.result!, instr.resultType!),
         ];
       }
+      // A front-end dynamic helper (`__ir_dyn_add`, ...) has no runtime declaration.
+      case "call":
+        return instr.target.binding.kind === "runtime" &&
+          !irRuntimeCallableDeclaration(instr.target) &&
+          [instr.resultType, ...instr.args.map((arg) => types.get(arg))].some((type) => type?.kind === "dynamic")
+          ? gap(instr.target.name)
+          : [instr];
       case "coerce.to_externref":
         return isDynamic(instr.value) ? gap("coerce.to_externref") : [instr];
       default:
@@ -127,7 +133,7 @@ function legalizeFunction(fn: PreparedIrFunction): PreparedIrFunction {
         out.resultType?.kind === "dynamic" ? ({ ...out, resultType: CARRIER } as IrInstr) : out,
       );
     });
-  const legalized: PreparedIrFunction = {
+  const legalized: IrFunction = {
     ...fn,
     params: fn.params.map((param) => ({ ...param, type: carrierOf(param.type) })),
     resultTypes: fn.resultTypes.map(carrierOf),
@@ -142,46 +148,4 @@ function legalizeFunction(fn: PreparedIrFunction): PreparedIrFunction {
   // signature) has no carrier on this projection.
   if (containsDynamic(legalized)) gap("on a value of composite type");
   return legalized;
-}
-
-type ProjectionPolicy = Pick<RuntimeManifestPolicy, "backend" | "target">;
-
-function legalizes(policy: ProjectionPolicy): boolean {
-  return policy.backend === "wasmgc" && policy.target === "standalone";
-}
-
-/**
- * The physical carrier of a logical `dynamic` ABI type: the legalized
- * standalone projection's `externref`, or the host async identity carrier for
- * the host units admitted to it.
- */
-export function preparedDynamicCarrier(policy: ProjectionPolicy, hostUnits: readonly IrUnitId[]) {
-  return (type: IrType, unitId?: IrUnitId): ValType | undefined =>
-    type.kind === "dynamic" && legalizes(policy)
-      ? { kind: "externref" }
-      : unitId !== undefined && hostUnits.includes(unitId)
-        ? preparedHostAsyncDynamicCarrier(type)
-        : undefined;
-}
-
-/** Legalize the standalone WasmGC projection; every other projection is untouched. */
-export function legalizeDynamicValues(
-  functions: readonly PreparedIrFunction[],
-  policy: ProjectionPolicy,
-): DynamicValueLegalization {
-  if (!legalizes(policy)) return { kind: "legalized", functions };
-  const out: PreparedIrFunction[] = [];
-  for (const fn of functions) {
-    if (!containsDynamic(fn)) {
-      out.push(fn);
-      continue;
-    }
-    try {
-      out.push(legalizeFunction(fn));
-    } catch (error) {
-      if (!(error instanceof DynamicValueGap)) throw error;
-      return { kind: "gap", unitId: fn.unitId, detail: error.message };
-    }
-  }
-  return { kind: "legalized", functions: out };
 }
