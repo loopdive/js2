@@ -1,7 +1,7 @@
 ---
 id: 7352
 title: "IR foundation: object literals are open objects; array literals share the typed vec slot"
-status: in-progress
+status: blocked
 sprint: current
 created: 2026-11-16
 updated: 2026-11-16
@@ -209,3 +209,108 @@ Code quality:
 6. The vec home is one module for all element kinds.
 7. A fresh-context adversarial review per slice records its verdict in the
    PR body.
+
+## Parked 2026-11-16
+
+Parked by owner decision: the program goal moved to the prepared-program IR path
+(`TEST262_COMPILER_PATH=ir`, #7188). O1 works in the ordinary pipeline's selector,
+resolver and legacy storage, so it does not move that metric. Branch `claude/7352-o1`,
+head `730979fe30`. It is based on main `78c2ea48c4` plus the plan docs `58c731c93c`.
+No PR.
+
+### What O1 builds
+
+The change has three parts:
+
+- **One home decision.** `isStandaloneOpenObjectLiteral`
+  (`src/codegen/declarations/open-object-literal-home.ts`) applies to a top-level
+  script `var` on standalone whose initializer is a data-only literal.
+  - A data-only literal is what `openObjectLiteralFields` in
+    `src/shared/object-literal-fields.ts` accepts: static names, no array-index
+    key, no `__proto__` / `toString` / `valueOf` key, and no function, class,
+    object or array value.
+  - For such a `var`, legacy's widening pre-pass builds the open `$Object`
+    instead of a struct.
+- **IR side.**
+  - The selector admits the literal on the dynamic home: `isPhase1ObjectLiteral`
+    together with `admitCarrierValues`.
+  - from-ast builds it in `lowerObjectLiteral` by calling `emitOpenCarrierObject`
+    with the field values (`openLiteralFieldValues`).
+  - #7335's served-use proof takes such a binding the same way it takes `{}`.
+- **Verification round (`730979fe30`).**
+  - `src/ir/open-object-field-reads.ts` wraps the selection options at both
+    selector entries. For any expression that reads an open-object binding:
+    - the primitive classifiers, the resolver's `scalarExpressionFamily` and
+      `bindingValueMatches` answer nothing;
+    - a non-carrier slot takes no such value;
+    - a typed return refuses it (`isPhase1ReturnValue`).
+  - Legacy: on standalone, `Object.values` / `Object.entries` join the #6770 S5
+    own-key list calls (`object-own-key-order.ts`). This fixes
+    `Object.values(o).reverse()`, which hit an illegal cast and was also broken
+    on main for literals widened by an expando.
+
+**Where it lives.** Only `lowerObjectLiteral`'s open-literal arm, `openLiteralFieldValues`
+and `emitOpenCarrierObject(fields)` are in from-ast / lowering, the code the prepared
+path shares. Everything else is selector, resolver or legacy-codegen only.
+
+### Measured (standalone, against main `78c2ea48c4`)
+
+| measurement | result |
+| --- | --- |
+| Seeded all-edition sample (3,000 files) | 34 binaries changed. 17 of them are compile-process noise: identical when recompiled in a fresh process. Verdicts on the 34: 0 pass→fail. |
+| Candidates: every file whose harness plus test has an O1 literal (1,057 of 53,575; one file skipped, >570 s on main) | IR-only files 2 → 91 (+89), 0 lost, 0 units newly legacy, 0 new compile errors, post-claim errors 2 → 2. 357 binaries changed. |
+| Verdicts on those 357 (QuickJS + Temporal per tree, `TEST262_FULL_RUNTIME_EVAL=1`) | **7 pass→fail**, 5 fail→pass. |
+| Probe matrix (79 programs, module level and inside a function) | 0 post-claim errors that main lacks; +20 claimed; 0 lost; every wrong answer on head is also wrong on main. |
+| `tests/issue-7352.test.ts` | 18/18 pass. |
+
+### Known open defects (the 7 pass→fail rows)
+
+Both classes are pre-existing legacy gaps for open objects. They already fail on main
+for a literal widened by an expando; O1 makes them reachable for every data-only literal.
+
+1. **Literal properties are stored with `[[Set]]` instead of CreateDataProperty.**
+   - Rows: `language/expressions/object/11.1.5_3-3-1.js` and `11.1.5_4-5-1.js`.
+   - Both legacy `compileObjectLiteralAsExternref` (`__extern_set`) and the IR's
+     `emitPlainObjectWithFields` do this. A non-writable or setter
+     `Object.prototype.prop` then blocks the own property.
+   - Planned fix:
+     - keep the home closed when `sourceMayPatchPrototype(file, "Object")` or
+       `sourceNamesReflectiveRoute(file)` holds. A `[[Set]]` into a fresh object
+       equals a define only while `Object.prototype` is the realm's own;
+     - or switch legacy to `__defineProperty_value(obj, key, v, 0xbf)` on standalone.
+2. **Destructuring assignment from an open object.**
+   - Rows (all under `language/expressions/assignment/dstr/`):
+     `obj-prop-name-evaluation.js`, `obj-rest-computed-property.js`,
+     `obj-rest-computed-property-no-strict.js`, `obj-rest-same-name.js`,
+     `obj-rest-valid-object.js`.
+   - In `compileDestructuringAssignment`, the struct path is chosen from the
+     checker's literal type even though the value is externref. Constant computed
+     keys and `...rest` then read nothing.
+   - Planned fix: send an externref source to the externref arm, which already
+     has `emitObjectRestAssignment` and `__extern_get`. Variable-declaration
+     destructuring already handles rest from an open object.
+
+### Not measured
+
+- Census on the plan's 1,704 carrier files plus 500 IR-only controls (the
+  candidate census above covers the O1 population).
+- JS-environment bytes. Every change is gated to standalone, but no hash run was
+  done.
+- Playground benchmark size and timing.
+- Equivalence gate, and quality steps 13–49. Steps 1–12, the LOC / function /
+  import-cycle / boundaries gates and the 7352 test file are green at `730979fe30`.
+- How much O1 frees in the 322 / 10 / 109 sets.
+
+### Resume steps
+
+1. Merge `origin/main` into `claude/7352-o1`, then re-measure the candidate list.
+   Scratch tools are in `scratchpad/o1/`:
+   - `prefilter.mts` builds the candidate list;
+   - `hchunk.sh` runs the hash census;
+   - `hcmp.py` and `cmp2.py` compare results;
+   - `verd.sh` runs verdicts (rebuild the compiler bundle and QuickJS/Temporal
+     providers per tree first);
+   - `pk.sh` runs the probe matrix, with cases in `cases-*.mjs`.
+2. Fix defect classes 1 and 2. Re-run verdicts on the changed binaries until
+   there are 0 pass→fail.
+3. Run the unmeasured checks above. Then run a fresh-context review and open the PR.
