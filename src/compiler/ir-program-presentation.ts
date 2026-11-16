@@ -27,7 +27,7 @@ import { runIrProgramDriver } from "./ir-program-driver.js";
 import type { IrProgramDriverResult } from "./ir-program-result.js";
 import type { PreparedWitExport, PreparedWitView } from "../wit-generator.js";
 import { releaseOwnedFunctions } from "../wasm/physical/owned-function-data.js";
-import { nativeSetupSlots, providerCensusMatches } from "./prepared-provider-census.js";
+import { runtimeCensus, type NativeSetupSlots } from "./prepared-provider-census.js";
 import { physicalCallableMatches } from "./prepared-physical-signature.js";
 
 export interface IrProgramPresentationRequest {
@@ -164,7 +164,7 @@ function booleanExportSignature(declaration: PrimitiveDeclaration): ExportSignat
   Object.freeze(signature.params);
   return Object.freeze(signature);
 }
-/** A value a reference widening must treat: a non-defaultable reference, optionally outside the native setup. */
+/** A value a reference widening must treat: a non-defaultable reference, or one outside the native setup. */
 type ReferenceDemand = (value: ValType) => boolean;
 const nondefaultable: ReferenceDemand = (value) => value.kind === "ref";
 function typeNeedsWidening(type: TypeDef, demand: ReferenceDemand): boolean {
@@ -217,14 +217,15 @@ function bodyNeedsWidening(
   return false;
 }
 /**
- * Whether the module carries a reference value `demand` selects. Reference types and globals that are completed
- * native-setup slots are the setup's own; every other struct/array type or global carrying a reference demands.
+ * Whether the module carries a reference value the presentation cannot authenticate. Without a native setup that is
+ * any non-defaultable reference. With one, the setup's own type and global slots are exempt and every other
+ * reference must name a native type slot: function types are interned signatures and may, while a struct/array
+ * type or global outside the setup is the program's own, and the numeric program owns no reference-carrying ones.
  */
-function referenceDemand(
-  mod: WasmModule,
-  demand: ReferenceDemand,
-  setup?: { readonly types: ReadonlySet<number>; readonly globals: ReadonlySet<number> },
-): boolean {
+function referenceDemand(mod: WasmModule, setup: NativeSetupSlots | undefined): boolean {
+  const demand: ReferenceDemand = setup
+    ? (value) => value.kind === "ref" && !setup.types.has(value.typeIdx)
+    : nondefaultable;
   return (
     mod.functions.some((fn) => fn.locals.some((local) => demand(local.type)) || bodyNeedsWidening(fn.body, demand)) ||
     mod.types.some(
@@ -650,9 +651,10 @@ function captureWitExport(
   exports.push(Object.freeze({ externalName, params: Object.freeze(params), result: result ?? null, ...association }));
 }
 /**
- * The numeric presentation contract. (#7354 R) A reference type is no refusal on standalone: it asks for the
- * detached finalization (`beginPreparedPresentationFinalization`), which widens a data copy and authenticates the
- * post-state, so the emission the receipts check stays the completed one. Answers whether it is needed.
+ * The numeric presentation contract. (#7354 R) An authenticated native setup (standalone) owns reference values:
+ * it asks for the detached finalization (`beginPreparedPresentationFinalization`), which widens a data copy and
+ * authenticates the post-state, so the emission the receipts check stays the completed one. Answers whether it is
+ * needed.
  */
 function checkResourceDemand(
   program: PreparedIrProgram,
@@ -662,13 +664,16 @@ function checkResourceDemand(
 ): boolean {
   const mod = emission.module;
   const runtime = program.runtime.filter((row) => row.backend === backend.backend && row.target === backend.target);
+  let native: NativeSetupSlots | undefined;
   if (runtime.length !== 1) gap("runtime", "runtime-projection", "one genuine selected runtime projection is required");
   else {
     const manifest = runtime[0]!.prepared.manifest;
+    const census = runtimeCensus(program, emission, backend, manifest.providers);
+    native = census?.native;
     if (
       manifest.hostCapabilities.length ||
       manifest.hostCapabilityRecords.length ||
-      !providerCensusMatches(program, emission, backend, manifest.providers) ||
+      !census ||
       runtime[0]!.prepared.functions.some((fn) => fn.asyncPlan || fn.asyncRuntime)
     )
       gap("runtime", "runtime-demand", "host provider or async demand is outside this numeric presentation contract");
@@ -698,18 +703,13 @@ function checkResourceDemand(
       "boundary-metadata",
       "numeric boundary absence must be preserved, not filled with all-other rows",
     );
-  const widening = referenceDemand(mod, nondefaultable);
-  const setup = widening ? nativeSetupSlots(emission, backend) : undefined;
-  if (
-    widening &&
-    (!setup || referenceDemand(mod, (value) => value.kind === "ref" && !setup.types.has(value.typeIdx), setup))
-  )
+  if (referenceDemand(mod, native))
     gap(
       "physical",
       "widening-demand",
       "nondefaultable reference widening needs a separately authenticated physical post-state",
     );
-  return widening;
+  return native !== undefined;
 }
 function joinStartup(
   program: PreparedIrProgram,
