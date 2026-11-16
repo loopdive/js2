@@ -49,45 +49,51 @@ export function preparedPresentationPolicy(
 interface SupportCallableRow {
   readonly bindingId: IrBindingId;
   readonly key: string;
-  readonly params: readonly ValType[];
-  readonly results: readonly ValType[];
+  readonly params: readonly CompletedValType[];
+  readonly results: readonly CompletedValType[];
 }
+/** A declared value type after resolution; a type key that names no native type slot stays unresolved, so it can
+ * never equal a completed slot's type. */
+type CompletedValType = ValType | NativeDeclaredValType;
+/** Order-free equality of two populations of plain data. */
+function samePopulation(left: readonly unknown[], right: readonly unknown[]): boolean {
+  const sorted = (rows: readonly unknown[]) =>
+    rows
+      // A one-element array always serializes to a string, whatever the row is.
+      .map((row) => [JSON.stringify([row]), row] as const)
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([, row]) => row);
+  return preparedIrDataMismatch(sorted(left), sorted(right)) === undefined;
+}
+const runtimeCallable = (symbol: string) => ({ kind: "runtime-callable", symbol });
 /**
  * The one join of the support population, for remainders and natives alike: every row's completed slot carries
  * its signature, and the rows' (slot index, key) pairs are exactly the receipts' — no receipt joins nothing, none
  * joins twice, and no row lacks its receipt.
  */
 function supportPopulationJoins(emission: EmittedPreparedIrProgram, rows: readonly SupportCallableRow[]): boolean {
-  const joined: [number, string][] = [];
+  const joined: (readonly [number, string])[] = [];
   for (const row of rows) {
     const slot = completedFunctionSlot(emission, row.bindingId);
-    if (
-      !slot ||
-      preparedIrDataMismatch(row.params, slot.params) !== undefined ||
-      preparedIrDataMismatch(row.results, slot.results) !== undefined
-    )
-      return false;
-    joined.push([slot.index, row.key]);
+    // A binding without a completed function slot has no signature, so it fails this comparison too.
+    const signature = slot && [slot.params, slot.results];
+    if (preparedIrDataMismatch([row.params, row.results], signature) !== undefined) return false;
+    joined.push([slot!.index, row.key]);
   }
-  const receipts = emittedSupportFunctionReceipts(emission).map((row): [number, string] => [row.index, row.key]);
-  const order = (left: [number, string], right: [number, string]) =>
-    left[0] - right[0] || left[1].localeCompare(right[1]);
-  return preparedIrDataMismatch(joined.sort(order), receipts.sort(order)) === undefined;
+  const receipts = emittedSupportFunctionReceipts(emission).map((row) => [row.index, row.key] as const);
+  return samePopulation(joined, receipts);
 }
-/** The provider exactly as its canonical catalogue (ids unique) defines it: a dependency-free runtime callable. */
-function canonicalCallable(
-  catalogue: readonly RuntimeProviderDefinition[],
-  provider: RuntimeProviderDefinition,
-): string | undefined {
-  return preparedIrDataMismatch(
-    catalogue.find((row) => row.id === provider.id),
-    provider,
-  ) === undefined &&
-    provider.implementation.kind === "runtime-callable" &&
+/** The provider exactly as its canonical catalogue (ids unique) defines it, free of dependencies and host
+ * capabilities. Its implementation is then joined, as data, to a runtime callable of the physical plan. */
+function canonicalProvider(catalogue: readonly RuntimeProviderDefinition[], provider: RuntimeProviderDefinition) {
+  return (
+    preparedIrDataMismatch(
+      catalogue.find((row) => row.id === provider.id),
+      provider,
+    ) === undefined &&
     !provider.dependencies.length &&
     !provider.hostCapabilities.length
-    ? provider.implementation.symbol
-    : undefined;
+  );
 }
 
 const F64 = Object.freeze({ kind: "f64" as const });
@@ -100,9 +106,10 @@ function remainderRows(
   const resources = emittedPhysicalSetupPlan(emission).numberRemainders;
   if (resources.length !== providers.length) return undefined;
   const rows = providers.map((provider) => {
-    const symbol = canonicalCallable(NUMBER_REMAINDER_RUNTIME_PROVIDERS, provider);
-    const joined = resources.filter((row) => row.symbol === symbol);
-    if (!symbol || joined.length !== 1) return undefined;
+    const joined = resources.filter(
+      (row) => preparedIrDataMismatch(provider.implementation, runtimeCallable(row.symbol)) === undefined,
+    );
+    if (!canonicalProvider(NUMBER_REMAINDER_RUNTIME_PROVIDERS, provider) || joined.length !== 1) return undefined;
     const resource = joined[0]!;
     const entry = program.abi.entries.find((row) => row.plan.id === resource.bindingId);
     if (!entry || entry.contract.kind !== "callable") return undefined;
@@ -150,18 +157,12 @@ function nativeSlots(emission: EmittedPreparedIrProgram, setup: PhysicalNativeSt
   }
   return slots;
 }
-/** A declared value type, its resource type key resolved to the completed native type slot. */
-function completedValType(slots: readonly NativeSlot[], value: NativeDeclaredValType): ValType | undefined {
+/** A declared value type, its resource type key resolved to the completed native type slot it names. */
+function completedValType(slots: readonly NativeSlot[], value: NativeDeclaredValType): CompletedValType {
   if (!("typeKey" in value)) return value;
   const type = slots.find((row) => row.declaration.space === "type" && row.declaration.key === value.typeKey);
-  return type && { kind: value.kind, typeIdx: type.index };
-}
-function completedValTypes(
-  slots: readonly NativeSlot[],
-  values: readonly NativeDeclaredValType[],
-): readonly ValType[] | undefined {
-  const result = values.map((value) => completedValType(slots, value));
-  return result.every((value) => value !== undefined) ? result : undefined;
+  if (!type) return value;
+  return value.kind === "ref" ? { kind: "ref", typeIdx: type.index } : { kind: "ref_null", typeIdx: type.index };
 }
 /** A native global slot carries its declared type and mutability. */
 function nativeGlobalMatches(emission: EmittedPreparedIrProgram, slots: readonly NativeSlot[], slot: NativeSlot) {
@@ -188,27 +189,30 @@ function nativeRows(
   | undefined {
   const slots = nativeSlots(emission, setup);
   if (!slots?.every((slot) => nativeGlobalMatches(emission, slots, slot))) return undefined;
-  const runtime: string[] = [];
+  const runtime: ReturnType<typeof runtimeCallable>[] = [];
   const rows: SupportCallableRow[] = [];
   for (const { declaration, binding } of slots) {
     if (declaration.space !== "function") continue;
     const reference = binding.reference;
     if (reference.kind === "func" && reference.binding.kind === "runtime") {
       if (declaration.name !== reference.binding.symbol) return undefined;
-      runtime.push(reference.binding.symbol);
+      runtime.push(runtimeCallable(reference.binding.symbol));
     }
-    const params = completedValTypes(slots, declaration.signature.params);
-    const results = completedValTypes(slots, declaration.signature.results);
-    if (!params || !results) return undefined;
     rows.push({
       bindingId: binding.entry.id,
       key: declaration.key,
-      params,
-      results,
+      params: declaration.signature.params.map((value) => completedValType(slots, value)),
+      results: declaration.signature.results.map((value) => completedValType(slots, value)),
     });
   }
-  const symbols = providers.map((provider) => canonicalCallable(RUNTIME_PROVIDERS, provider));
-  if (preparedIrDataMismatch(runtime.sort(), [...symbols].sort()) !== undefined) return undefined;
+  if (
+    !providers.every((row) => canonicalProvider(RUNTIME_PROVIDERS, row)) ||
+    !samePopulation(
+      runtime,
+      providers.map((row) => row.implementation),
+    )
+  )
+    return undefined;
   const indices = (space: "type" | "global") =>
     new Set(slots.filter((slot) => slot.declaration.space === space).map((slot) => slot.index));
   return {

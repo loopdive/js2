@@ -237,6 +237,10 @@ Status 2026-11-16. Branch `claude/7354-r`, built on origin/main `46e4cf4030`, fi
     binding count (all implied by the multiset join and the key bijection), the catalogue-uniqueness test (ids
     are unique in the catalogue), the `""` runtime sentinel, and the "setup but no native rows" clause (its
     function receipts then join no row).
+  - **Removed as implied (round 3):** the separate missing-slot check (a binding without a function slot has no
+    signature, so the signature comparison refuses it), the "runtime-callable" kind check (implementations are
+    joined as data, `{ kind: "runtime-callable", symbol }`, to the plan's runtime callables), and the "type key
+    resolves" checks (an unresolved key stays a key, which never equals a completed slot type).
   - `physicalCallableMatches` moved to `src/compiler/prepared-physical-signature.ts` (shared with the async checks);
     the detached-finalization map is now `detachedPresentations`.
   - `preparedPresentationPolicy` is the single place the presentation's runtime policy is chosen; D1 adds its
@@ -268,8 +272,13 @@ Status 2026-11-16. Branch `claude/7354-r`, built on origin/main `46e4cf4030`, fi
   "altered type descriptor … flat".
 - **Census refusal tests** (`vi.mock` wrappers over the real census on `try { throw 5; } catch (e) {}`; each
   alters one input: providers, receipts, the accepted native setup plan, the census target, or the answered slots).
-  Mutation sweep: each of the 17 census checks deleted alone fails at least one test. The emission itself cannot
-  be altered: its own reservation census refuses a changed function, global or type first.
+  Mutation sweep (round 3, 21 checks swept): 20 fail at least one test when deleted alone. The one survivor is
+  main's remainder resource join, now written as implementation equality instead of symbol equality; it belongs
+  with the nine remainder checks moved verbatim from main
+  (`remainderRows`: resource count, unique resource, ABI entry, callable contract, declaration feature,
+  structural reference key, contract params/results) are pre-existing and, as on main, have no failing-remainder
+  test; they are left unchanged. The emission itself cannot be altered: its own reservation census refuses a
+  changed function, global or type first.
 - **Ordinary-pipeline bytes.** I compared 330 sample files against base sources swapped into the same tree.
   - 301 compiled, the rest were skipped as negative, raw or module tests.
   - All 301 are byte-identical on both standalone and the JS environment.
