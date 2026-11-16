@@ -280,3 +280,73 @@ contract and the gc target; three direct tests of the pass.
 a deadline of 2026-11-16 14:00Z are posted on the coordination PR #6583.
 Until then this issue starts with D1 and R, which no claim covers; P, V and G
 overlap #7188 S2 and S4 and start after the deadline or an answer.
+
+## R result
+
+Status 2026-11-16. Branch `claude/7354-r`, built on origin/main `46e4cf4030`, first commit `a37f0c8c00`.
+
+### Built
+
+- **Policy.** `preparedPresentationPolicy` lives in `src/compiler/prepared-provider-census.ts`. On wasmgc
+  standalone, a Prepared presentation now selects the native number boundary (`__box_number` /
+  `__unbox_number`). Every other target, and every other runtime family, keeps its default ("unsupported").
+- **Provider census.** `checkResourceDemand` used to refuse every runtime provider. It now calls
+  `providerCensusMatches`, which accepts a provider only if it matches the completed physical plan.
+  A provider that matches nothing still refuses.
+  - A **number remainder** is checked the same way as before.
+  - A **native provider** is accepted only on standalone, and only if all of these hold:
+    - the native setup has exactly one binding whose reference is the provider's runtime callable;
+    - the completed emission resolves that binding to a function slot;
+    - that slot has a completed support receipt.
+  - **Without a native setup** the numeric contract is unchanged: every support function must be a remainder.
+  - The remainder join and `physicalCallableMatches` moved into the new module. They were not otherwise changed.
+- **Receipt failure ("altered type descriptor native-string-values…flat").**
+  - Cause: `finalizePipelineModule` widened reference types in the authenticated emission module in place.
+    The receipt check, run again after finalization, then saw an altered reserved type.
+  - Fix: on standalone, an emission with reference types now goes through the existing detached finalization
+    (`beginPreparedPresentationFinalization`). It widens a copy and authenticates the result, so the emission
+    is never altered.
+  - Hosts and WASI still refuse reference widening.
+
+### Measured
+
+- **Programs blocked only by R's two points.** These are the probes, all passing in
+  `tests/issue-7354-r-provider-census.test.ts`. Each compiles through the strict prepared entry, validates and runs:
+  - `if (1 !== 1) throw 1;`
+  - `try { throw 1; } catch (e) {}`
+  - `if (1 + 1 !== 2) throw 1;`
+  - a `void` helper that throws its parameter;
+  - `f(x)` that throws `x` (and `f(2)` does throw);
+  - `x % 2` combined with a thrown `x` (a remainder plus the native box);
+  - throw and catch inside an exported function.
+- **Refusal probes.**
+  - On gc and WASI the same throw program refuses: `js.number.box` is unavailable there.
+  - `throw "x"` on standalone still refuses: the string-const policy is not selected.
+  - A numeric-only program keeps the exact contract.
+- **Mutation check.** With the detached-finalization switch removed, every acceptance test fails with
+  "altered type descriptor … flat".
+- **Ordinary-pipeline bytes.** I compared 330 sample files against base sources swapped into the same tree.
+  - 301 compiled, the rest were skipped as negative, raw or module tests.
+  - All 301 are byte-identical on both standalone and the JS environment.
+- **Existing tests.**
+  - `test262-prepared-entry`, `test262-prepared-runtime` and the #7188 test: 58/58 pass.
+  - `issue-3518*` (only the files that reach the changed code, plus chunk 0): the failed-test sets are identical to base.
+    The failures that exist are pre-existing: 953 / 44 / 52 / 11 per chunk on both trees.
+- **Real runner, 411-row sample (`l420.txt`).**
+  - Per-row results are identical to base (0 rows differ).
+  - Negative tests are unchanged: 14 pass, 1 compile error.
+  - First-gap tally: 394 rows stop at "top-level global X needs a numeric source classification" (slices G/V),
+    2 rows at the switch-case lexical binding. So R moves no test262 row yet; the harness prelude stops at G/V first.
+- **Gates.** These pass: typecheck; loc (one dated grant, `src/compiler.ts` +1 for the import); func; coercion-sites;
+  oracle-ratchet; dead-exports; import-cycles; compiler-boundaries (new module classified); quality steps 1–26.
+
+### Not verified
+
+- **The census's rejection branch for a native provider is not reached by any source program today.**
+  - On standalone, every provider a presentation can select (number box/unbox, remainders) has a native binding.
+  - So the mutation "accept every native provider" is not caught by a test.
+  - It is kept as fail-closed authentication. D1's dynamic providers will be the first to reach it.
+- **The string pool / reference-global acceptance named in the plan row is not built.** Native string literals
+  are globals, not pool entries. Slice S owns the string policies.
+- **Assumption for D1.** The census looks for native bindings in `nativeStrings.bindings`. D1's string-free value
+  plan must publish its bindings there, or extend `nativeProviderJoins` to read wherever it publishes them.
