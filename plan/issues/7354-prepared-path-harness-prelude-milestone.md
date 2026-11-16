@@ -700,8 +700,14 @@ against the lowered body (a disagreement is a refusal, never a conversion).
   callable slots disagree"). Predates P (same on the base); a function with a parameter is not joined, so harness
   helpers do not meet it.
 
-### Not verified
+### After the final re-merge (V/G `2081dd516c`, D1 `368c41b7c4`)
 
-- The final re-merge of D1's rework (it changes the legalization's intrinsic set and the dynamic-into-typed rule);
-  the sweep and the sample are on D1 `08fcfa7b82`.
-- The ordinary-pipeline byte comparison after the V/G and D1 re-merges (see the note above on why P cannot move it).
+- Tests of R, D1, V/G, P, prepared entry/runtime and #7188 pass (D1's two timeouts under load pass alone, 46/46).
+- Operator sweep: still no wrong answer; the two crash families are now D1's named refusals (`'**' on a dynamic
+  operand`, `value-position prefix update`). Intrinsics reached are unchanged (the six listed above).
+- 411-row sample: 0 rows at "unresolved parameter contract"; 393 at "not-direct" (`print` 345, `__isArray` 43,
+  `__globalObject` 5); negatives 14 pass.
+- Ordinary-pipeline bytes against `origin/main`: 404 files per target, identical on the JS environment and
+  `--target standalone` (8 compile errors on both, 15 skipped).
+- Gates: typecheck, loc, func, coercion-sites, oracle-ratchet, dead-exports, import-cycles, boundaries inventory.
+- issue-3518\*/3526\* were not re-run after this merge (last run: on D1 `08fcfa7b82`, above).
