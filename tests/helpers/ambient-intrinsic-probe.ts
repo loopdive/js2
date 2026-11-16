@@ -9,7 +9,7 @@ import { expect } from "vitest";
 
 import { compile } from "../../src/index.js";
 import { makeIrAmbientBindingPredicate } from "../../src/ir/module-bindings.js";
-import { isAmbientIntrinsicValueUse } from "../../src/shared/ambient-intrinsics.js";
+import { builtinGlobalValueAdmitted } from "../../src/ir/builtin-globals.js";
 import { buildImports } from "../../src/runtime.js";
 import { ts } from "../../src/ts-api.js";
 
@@ -54,7 +54,7 @@ export async function runModuleInit(
   return { claimed: init?.irBodyEmitted === true, threw };
 }
 
-/** `isAmbientIntrinsicValueUse` for every value occurrence of `name` in `source`, in order. */
+/** `builtinGlobalValueAdmitted` for every value occurrence of `name` in `source`, in order. */
 export function intrinsicUseVerdicts(source: string, name: string): boolean[] {
   const fileName = "/ambient-intrinsic-predicate.js";
   const options: ts.CompilerOptions = { allowJs: true, target: ts.ScriptTarget.ES2022, noResolve: true };
@@ -70,7 +70,7 @@ export function intrinsicUseVerdicts(source: string, name: string): boolean[] {
   const verdicts: boolean[] = [];
   const visit = (node: ts.Node): void => {
     if (ts.isIdentifier(node) && node.text === name && !ts.isFunctionDeclaration(node.parent)) {
-      verdicts.push(isAmbientIntrinsicValueUse(node, libOnly));
+      verdicts.push(builtinGlobalValueAdmitted(node, libOnly));
     }
     ts.forEachChild(node, visit);
   };

@@ -54,8 +54,7 @@
 
 import { ts } from "../ts-api.js";
 import { isUndeclaredInFile } from "./ambient-intrinsics.js";
-import { hasWithStatement } from "./binding-writes.js";
-import { sourceWritesMemberNamed } from "./intrinsic-prototype-writes.js";
+import { isPristineIntrinsic, sourceWritesMemberNamed } from "./intrinsic-prototype-writes.js";
 import { outermostTransparent, skipTransparentExpressions } from "./transparent-expressions.js";
 
 /** The statics that read only the shape of their first argument. */
@@ -198,13 +197,7 @@ function objectStaticCalledOn(value: ts.Expression): string | undefined {
  * would refuse every test. Syntactic: elision runs before a checker exists.
  */
 function objectStaticIsPristine(object: ts.Identifier, name: string): boolean {
-  const file = object.getSourceFile();
-  return (
-    isUndeclaredInFile(object) &&
-    !sourceWritesMemberNamed(file, "Object") &&
-    !sourceWritesMemberNamed(file, name) &&
-    !hasWithStatement(file)
-  );
+  return isPristineIntrinsic(object) && !sourceWritesMemberNamed(object.getSourceFile(), name);
 }
 
 function literalKey(key: ts.Expression, accept: (key: string) => boolean): boolean {

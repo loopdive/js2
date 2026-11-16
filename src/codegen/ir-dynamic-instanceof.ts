@@ -28,7 +28,7 @@
 
 import { ts } from "../ts-api.js";
 import type { ValType } from "../ir/types.js";
-import { isAmbientIntrinsicName } from "../shared/ambient-intrinsics.js";
+import { isBuiltinGlobalName } from "../ir/builtin-globals.js";
 import type { TypeFact } from "../checker/oracle.js";
 import type { CodegenContext } from "./context/types.js";
 import { ERROR_FAMILY_CTOR_NAMES, isBuiltinTypeName } from "./builtin-tags.js";
@@ -126,7 +126,7 @@ function isDynamicTypeFact(kind: TypeFact["kind"]): boolean {
  * SuppressedError fall out because that realm read does not admit them.
  */
 function isInstanceOfErrorIntrinsic(name: string): boolean {
-  return (ERROR_FAMILY_CTOR_NAMES as readonly string[]).includes(name) && isAmbientIntrinsicName(name);
+  return (ERROR_FAMILY_CTOR_NAMES as readonly string[]).includes(name) && isBuiltinGlobalName(name);
 }
 
 /**

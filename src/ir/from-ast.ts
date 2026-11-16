@@ -430,7 +430,7 @@ import {
   irVecNewSizedSymbol,
 } from "./vector-runtime.js";
 import { readEnv } from "../env.js";
-import { isAmbientIntrinsicValueUse } from "../shared/ambient-intrinsics.js";
+import { builtinGlobalValueAdmitted } from "./builtin-globals.js";
 
 interface ResolvedIrVecType {
   readonly lowering: IrVecLowering;
@@ -5269,7 +5269,7 @@ function lowerExprUnchecked(expr: ts.Expression, cx: LowerCtx, hint: IrType): Ir
     }
     // (#7106) An ambient intrinsic as a VALUE: a named read off the realm's
     // global object; the selector's predicate, a refused use demotes below.
-    if (!p && isAmbientIntrinsicValueUse(expr, (node) => cx.resolver?.isLibOnlyBinding?.(node) === true, cx.resolver))
+    if (!p && builtinGlobalValueAdmitted(expr, (node) => cx.resolver?.isLibOnlyBinding?.(node) === true, cx.resolver))
       return lowerAmbientIntrinsicValue(expr, cx);
     if (!p)
       demoteToLegacy("body-shape-rejected", `ir/from-ast: identifier "${expr.text}" is not in scope in ${cx.funcName}`);

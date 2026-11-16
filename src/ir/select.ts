@@ -84,7 +84,7 @@ export { isAsyncIrReady } from "./async-selection.js";
 import { collectIrSafeVarDeclarationLists } from "./function-local-var.js";
 import { isModuleInitVarList } from "../shared/var-declaration-lists.js";
 import { carrierLeafReads, collectIrSafeModuleVarDeclarationLists } from "./module-init-vars.js";
-import { isAmbientIntrinsicValueUse } from "../shared/ambient-intrinsics.js";
+import { builtinGlobalValueAdmitted } from "./builtin-globals.js";
 import { collectDynamicStringLocalWidening } from "./dynamic-local-widening.js";
 import { irDynamicMethodCallNeedsWrapper, irWrapperSymbolIsNameable } from "./dynamic-method-call-names.js";
 import {
@@ -9066,7 +9066,7 @@ function exactNumericExponentiationOperand(
 /**
  * (#7106) An ambient intrinsic (`TypeError`, `Object`) read as a
  * VALUE: a named read off the realm's global object, on the lanes that carry
- * legacy's `globalThis` wrapper. Admission is `isAmbientIntrinsicValueUse`
+ * legacy's `globalThis` wrapper. Admission is `builtinGlobalValueAdmitted`
  * (shared with the from-ast producer: name, lib-only binding, opaque flow —
  * the #7123 member-read refusal, followed through aliases and parameters);
  * the selector adds only the lane checks. A source declaration is never
@@ -9077,7 +9077,7 @@ function isAmbientIntrinsicValue(expr: ts.Identifier): boolean {
   return (
     resolver !== null &&
     resolver(expr) === undefined &&
-    isAmbientIntrinsicValueUse(expr, (node) => resolver.isLibOnlyBinding(node), {
+    builtinGlobalValueAdmitted(expr, (node) => resolver.isLibOnlyBinding(node), {
       builtinProtoCompanionSeeded: () => currentSelectionOptions?.builtinProtoCompanionSeeded === true,
     }) &&
     currentDynamicRuntimeBuildable &&
