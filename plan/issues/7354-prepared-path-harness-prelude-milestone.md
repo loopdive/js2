@@ -886,6 +886,22 @@ prepared entry/runtime and #7188: 235/237 before the pin update, the two being t
 receipt) and `issue-3526-string-boundary-const` (5) fail identically on D1's tip `29d0576590`, so not P's; the
 rest pass.
 
+### Review round 2: MET
+
+Review of `f9385ba314`: MET, no must-fix, no surviving mutant. The three should-fixes are closed:
+
+1. `uncheckedResult`'s comment overstated D1's flow rule. What holds: where the checker reads a JSDoc `@returns`,
+   it is the returned value's contextual type, so a value that may be dynamic is refused at the `return`; where
+   the checker does not attach the tag (in `function id(v){return v} /** @returns {number} */ function f(n){return
+   id(n)}` the comment follows a statement on its line), f's result is typed from its body, `id`'s `any`, and is
+   dynamic through the checker-`any` arm. So the program is sound by that arm, not by the flow rule; it runs and
+   answers node's `true` (test, right and wrong answer). The same program with the tag on its own line still
+   refuses at the flow rule.
+2. The file header's broken wrap at "Other unannotated results" is fixed.
+3. `export { f as g }` with an untyped parameter is pinned: refused by the export join.
+
+Measured: typecheck and gates; P and D1 tests 76/76.
+
 ## Slice ladder after P (measured 2026-11-16)
 
 Replaces the order of slices S, D2, D3, C, B and F in the table above. Source:
