@@ -196,7 +196,7 @@ describe("#7354 D1 — the dynamic value on the Prepared standalone path", () =>
     ["`**`", "return id(2) ** 3;", "'**' on a dynamic operand"],
     ["`**` on the right", "return 2 ** id(3);", "'**' on a dynamic operand"],
     ["a value-position prefix update", "let x: any = id(1); return ++x;", "value-position prefix update"],
-    ["a thrown dynamic value", "try { throw id(1); } catch (e) { return 1; } return 0;", "coerce.to_externref"],
+    // (#7354 X) A thrown dynamic value is expressed now (tests/issue-7354-x-dynamic-throw.test.ts).
     [
       "a dynamic object field",
       "const o = { a: id(1) }; return o.a === 1 ? 1 : 0;",

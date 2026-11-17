@@ -23,7 +23,7 @@
  */
 import { irValueTypes } from "../analysis/value-types.js";
 import { INTRINSIC_SIGNATURE_VERSION, INTRINSIC_DEFINITIONS, type IntrinsicId } from "../core/intrinsics.js";
-import { mapNestedBuffers, type IrFunction, type IrInstr, type IrValueId } from "../core/nodes.js";
+import { forEachInstrDeep, mapNestedBuffers, type IrFunction, type IrInstr, type IrValueId } from "../core/nodes.js";
 import type { IrType } from "../core/types.js";
 import { irRuntimeCallableDeclaration } from "../runtime/callable-declarations.js";
 import { JS_TAG_IDS } from "../runtime/js-tag-domain.js";
@@ -63,6 +63,9 @@ export function legalizeDynamicValues(fn: IrFunction): IrFunction {
     ...(instr.site === undefined ? {} : { site: instr.site }),
   });
   const isDynamic = (value: IrValueId): boolean => types.get(value)?.kind === "dynamic";
+  const thrown = new Set<IrValueId>();
+  for (const block of fn.blocks)
+    for (const instr of block.instrs) forEachInstrDeep(instr, (i) => i.kind === "throw" && thrown.add(i.value));
 
   const expand = (instr: IrInstr): readonly IrInstr[] => {
     switch (instr.kind) {
@@ -117,8 +120,13 @@ export function legalizeDynamicValues(fn: IrFunction): IrFunction {
           [instr.resultType, ...instr.args.map((arg) => types.get(arg))].some((type) => type?.kind === "dynamic")
           ? gap(instr.target.name)
           : [instr];
+      // (#7354 X) The carrier already is the externref exception payload, so a
+      // thrown dynamic value keeps the coercion, which lowers to nothing over
+      // the legalized operand. The catch binding reads the payload back as the
+      // dynamic value: every value an accepted program can throw (a dynamic
+      // value, a boxed number, `null`) is in the admitted set.
       case "coerce.to_externref":
-        return isDynamic(instr.value) ? gap("coerce.to_externref") : [instr];
+        return isDynamic(instr.value) && !thrown.has(instr.result!) ? gap("coerce.to_externref") : [instr];
       default:
         return instr.kind.startsWith("dyn.") ? gap(instr.kind) : [instr];
     }
