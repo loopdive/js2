@@ -34,6 +34,9 @@ related: [7188, 2949, 3526, 3527, 3518, 7106, 7349, 7350, 7352]
 # 2026-11-17 (slice Str, merge onto H): src/compiler/ir-program-presentation.ts +1,
 # `inCall`, the ABI join's admission of a native string in an internal callable
 # contract (string parameters and results), beside H's `carried` it extends.
+# 2026-11-17 (slice Str2): src/compiler.ts +1, `...preparedNumberFormatOptions(...)` in the Prepared
+# backend options: the number formatter's physical policy, chosen in the census module beside
+# `preparedPresentationPolicy` (same import line).
 loc-budget-allow:
   - src/ir/program-physical-plan.ts
   - src/compiler.ts

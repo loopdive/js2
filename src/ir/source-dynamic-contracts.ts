@@ -32,6 +32,7 @@ import type { IrType } from "./core/types.js";
 import type { IrFunction } from "./core/nodes.js";
 import { IrUnsupportedError } from "./outcomes.js";
 import { DynamicValueGap, legalizeDynamicValues } from "./program/dynamic-value-legalization.js";
+import { retargetNumberToString } from "./program/number-to-string-target.js";
 import type { RuntimeManifestPolicy } from "../runtime/contracts/provider-policy.js";
 import type { ValType } from "../wasm/model/instructions.js";
 import { functionBodyAlwaysTerminates, irFunctionBodyReturnsValue } from "./select.js";
@@ -277,9 +278,10 @@ function absentGlobal(checker: ts.TypeChecker, sourceFiles: readonly ts.SourceFi
 
 /**
  * The lib globals some use of which compiles on this path, so `typeof` must not deny them: it refuses by name until
- * their real answer is wired. `Number`: `Number(v)` calls (`prepareNumberConversionResolver`).
+ * their real answer is wired. `Number` and (#7354 Str2) `String`: direct `Number(v)` / `String(v)` calls
+ * (`prepareConversionResolvers`).
  */
-export const PREPARED_PROVIDED_GLOBALS: ReadonlySet<string> = new Set(["Number"]);
+export const PREPARED_PROVIDED_GLOBALS: ReadonlySet<string> = new Set(["Number", "String"]);
 
 /**
  * (#7354 D1) The one rule for a dynamic value leaving the dynamic domain. A
@@ -377,15 +379,18 @@ function legalizeSourceDynamicValues(
       (signature) =>
         signature.returnType?.kind === "dynamic" || signature.params.some((type) => type.kind === "dynamic"),
     );
-  if (!nativeDynamicLane(policy) || !contracted) return functions;
+  if (!nativeDynamicLane(policy)) return functions;
+  // (#7354 Str2) Number::toString has one binding on this lane, typed or dynamic (number-to-string-target.ts).
+  const retargeted = functions.map(retargetNumberToString);
+  if (!contracted) return retargeted;
   let legalized: readonly IrFunction[];
   try {
-    legalized = functions.map(legalizeDynamicValues);
+    legalized = retargeted.map(legalizeDynamicValues);
   } catch (error) {
     if (!(error instanceof DynamicValueGap)) throw error;
     throw new IrUnsupportedError("type-resolution-unsupported", "build", error.message);
   }
-  if (legalized.some((fn, index) => fn !== functions[index])) refuseImplicitDynamicFlows(checker, roots, carries);
+  if (legalized.some((fn, index) => fn !== retargeted[index])) refuseImplicitDynamicFlows(checker, roots, carries);
   return legalized;
 }
 

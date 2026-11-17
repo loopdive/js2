@@ -52,6 +52,7 @@ import type {
 } from "../runtime/wasmgc/values/native-resource-declaration-types.js";
 import type { IrBindingId } from "../shared/contracts/ir-identity.js";
 import { completedFunctionSlot } from "./prepared-physical-signature.js";
+import { numberToStringIntegerBeforeScratch } from "../runtime/wasmgc/values/number-format-bodies.js";
 
 /**
  * (#7354) The runtime policy a Prepared presentation selects. On wasmgc standalone the number boundary is the
@@ -78,6 +79,20 @@ export function preparedPresentationPolicy(
         stringConcat: { concat: "native" },
       }
     : { backend, target };
+}
+
+/**
+ * (#7354 Str2) The number formatter's physical policy, which the backend requires once the program formats a
+ * number (the support batch exists only on wasmgc standalone): the ordinary pipeline's reading, so both pipelines
+ * fill the same `number_toString` body.
+ */
+export function preparedNumberFormatOptions(
+  backend: PreparedIrBackendOptions["backend"],
+  target: PreparedIrBackendOptions["target"],
+): Pick<PreparedIrBackendOptions, "numberFormat"> {
+  return backend === "wasmgc" && target === "standalone"
+    ? { numberFormat: { integerBeforeScratch: numberToStringIntegerBeforeScratch() } }
+    : {};
 }
 
 /** A completed support function: the row's key and its slot's index name exactly one receipt, and the slot

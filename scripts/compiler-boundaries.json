@@ -17049,6 +17049,11 @@
       "layer": "ir-program"
     },
     {
+      "path": "src/ir/program/number-to-string-target.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
       "path": "src/ir/program/typeof-comparisons.ts",
       "state": "clean",
       "layer": "ir-program"
