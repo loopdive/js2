@@ -459,19 +459,18 @@ function emissionFailed(detail: string): never {
   throw new PreparedIrProgramInvariantError("emission-failed", `program emission: ${detail}`);
 }
 
+/** A defined global's initial value. (#7354 H) The dynamic carrier's null is overwritten before any read. */
+const DEFAULT_INITS: Partial<Record<ValType["kind"], Instr>> = {
+  i32: { op: "i32.const", value: 0 },
+  i64: { op: "i64.const", value: 0n },
+  f32: { op: "f32.const", value: 0 },
+  f64: { op: "f64.const", value: 0 },
+  externref: { op: "ref.null.extern" },
+};
+
 function defaultInit(type: ValType): Instr[] {
-  switch (type.kind) {
-    case "i32":
-      return [{ op: "i32.const", value: 0 }];
-    case "i64":
-      return [{ op: "i64.const", value: 0n }];
-    case "f32":
-      return [{ op: "f32.const", value: 0 }];
-    case "f64":
-      return [{ op: "f64.const", value: 0 }];
-    default:
-      return emissionFailed(`no default initializer for global type ${type.kind}`);
-  }
+  const init = DEFAULT_INITS[type.kind];
+  return init ? [init] : emissionFailed(`no default initializer for global type ${type.kind}`);
 }
 
 /**

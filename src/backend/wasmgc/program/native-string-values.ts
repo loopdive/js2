@@ -1,5 +1,5 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
-import type { AllocSiteId } from "../../../ir/core/nodes.js";
+import type { AllocSiteId, IrInstr, IrStringLengthProvider } from "../../../ir/core/nodes.js";
 import {
   IR_CLOSURE_VECTOR_APPLY,
   IR_CLOSURE_UNDEFINED,
@@ -8,6 +8,7 @@ import {
 import type { IrStringEncoding, IrStringConcatMode } from "../../../ir/core/string-types.js";
 import type { IrFuncRef, IrGlobalRef } from "../../../ir/core/value-references.js";
 import type { IrUnitId } from "../../../shared/contracts/ir-identity.js";
+import { preparedStringLenProvider } from "../../../ir/runtime/intrinsic-preparation.js";
 import type { NativeInvocationRequirements } from "../../../ir/program/native-invocation-requirements.js";
 import type { NativeRealmRequirements } from "../../../ir/program/native-realm-requirements.js";
 import {
@@ -23,6 +24,7 @@ import {
   collectNativeStringValueDemands,
   nativeStringsReachCarrier,
   type NativeStringValueDemands,
+  type NativeStringValueLiteralDemand,
 } from "../../../ir/program/native-string-value-demands.js";
 import {
   assertNativeValueResourcePlanFor,
@@ -45,7 +47,10 @@ import type {
   GlobalReservation,
   FunctionReservation,
 } from "../../../wasm/physical/module-reservations.js";
-import { selectNativeStringLiteral } from "../../../runtime/wasmgc/values/string-literal-bodies.js";
+import {
+  selectNativeStringLiteral,
+  type NativeStringLiteralSelection,
+} from "../../../runtime/wasmgc/values/string-literal-bodies.js";
 import {
   declareNativeStringLiteralTypes,
   declareNativeStringLiteralResources,
@@ -239,6 +244,34 @@ function sameDemandTuple(demands: NativeStringValueDemands, index: number, other
   );
 }
 
+/**
+ * The canonical literal one `string.const` demand selects: its encoding evidence (UTF-8 storage only) and the
+ * selection, or why it has none. (#7354 Str) A literal use's cache key is derived from this alone, by the planner
+ * and by the Prepared presentation's census.
+ */
+export function selectNativeLiteralDemand(
+  demand: Extract<NativeStringValueLiteralDemand, { kind: "string.const" }>,
+  utf8Storage: boolean,
+):
+  | { readonly encoding?: IrStringEncoding; readonly selection: NativeStringLiteralSelection }
+  | { readonly detail: string } {
+  let encoding: IrStringEncoding | undefined;
+  if (utf8Storage && demand.allocation.encoding.present) {
+    const evidence = demand.allocation.encoding.value;
+    if (evidence !== "ascii" && evidence !== "utf8-guaranteed" && evidence !== "wtf16")
+      return { detail: "invalid consumed string encoding metadata" };
+    encoding = evidence;
+  }
+  try {
+    return {
+      encoding,
+      selection: selectNativeStringLiteral(utf8Storage, utf8Storage, demand.instruction.value, encoding),
+    };
+  } catch (error) {
+    return { detail: String(error) };
+  }
+}
+
 /** Descriptive selection only; coordinator acceptance remains mandatory. */
 export function planNativeStringValuePhysical(
   demands: NativeStringValueDemands,
@@ -310,19 +343,9 @@ export function planNativeStringValuePhysical(
     if (demand.kind === "extern.regex")
       return located(demands, demand.occurrence, "regex materialization is not supported by native string values");
     const i = demand.instruction;
-    let encoding: IrStringEncoding | undefined;
-    if (options.utf8Storage && demand.allocation.encoding.present) {
-      const evidence = demand.allocation.encoding.value;
-      if (evidence !== "ascii" && evidence !== "utf8-guaranteed" && evidence !== "wtf16")
-        return located(demands, demand.occurrence, "invalid consumed string encoding metadata");
-      encoding = evidence;
-    }
-    let selection: ReturnType<typeof selectNativeStringLiteral>;
-    try {
-      selection = selectNativeStringLiteral(options.utf8Storage, options.utf8Storage, i.value, encoding);
-    } catch (error) {
-      return located(demands, demand.occurrence, String(error));
-    }
+    const selected = selectNativeLiteralDemand(demand, options.utf8Storage);
+    if ("detail" in selected) return located(demands, demand.occurrence, selected.detail);
+    const { encoding, selection } = selected;
     if (
       (i.storage && selection.kind !== "global") ||
       (i.materializer && selection.kind !== "callable") ||
@@ -352,8 +375,7 @@ export function planNativeStringValuePhysical(
     literals.push({ value: i.value, encoding });
     uses.push({ demandIndex: index, cacheKey: selection.key });
   }
-  if (!numeric && !realmLiterals && !uses.length && !outputRequirements.binaryConcat && !equality)
-    return { kind: "none" };
+  if (!numeric && !realmLiterals && !uses.length && !outputRequirements.binaryConcat) return { kind: "none" };
   const entry = demands.program.inventory.sources.find((row) => row.kind === "entry");
   if (!entry) fail("missing canonical entry source");
   const key = "native-string-values:v1:" + JSON.stringify(entry.id);
@@ -774,7 +796,30 @@ export function emitPreparedNativeStringLiteral(
     : [{ op: "call", funcIdx: binding.function.handle }];
 }
 
-/** The scoped emitter may only realize an authenticated concat occurrence of its owner. */
+/**
+ * The scoped emitter may only realize an authenticated occurrence of its owner: one of `occurrences` (indices into
+ * the demand census) in the owner's executable projection that `admits` the emitted request.
+ */
+function requireOwnerOccurrence(
+  tx: PhysicalModuleReservations,
+  pack: NativeStringValueReservations,
+  ownerUnitId: IrUnitId,
+  kind: string,
+  occurrences: (owner: Owner) => readonly number[],
+  admits: (instruction: IrInstr) => boolean,
+): Owner {
+  const owner = completedOwner(tx, pack);
+  const { demands } = owner.input;
+  const admitted = occurrences(owner).some((index) => {
+    const occurrence = demands.occurrences[index]!;
+    const buffer = demands.buffers[occurrence.bufferIndex]!;
+    return buffer.view === "projection" && buffer.ownerUnitId === ownerUnitId && admits(occurrence.instruction);
+  });
+  if (!admitted) fail(kind + " occurrence is outside the closed owner projection");
+  return owner;
+}
+const allOccurrences = (owner: Owner) => owner.input.demands.occurrences.map((_, index) => index);
+
 function emitPreparedNativeStringConcat(
   tx: PhysicalModuleReservations,
   pack: NativeStringValueReservations,
@@ -783,31 +828,68 @@ function emitPreparedNativeStringConcat(
   mode: IrStringConcatMode = "immutable",
   provider?: IrFuncRef,
 ): readonly Instr[] {
-  const owner = completedOwner(tx, pack);
-  const requirements = owner.input.outputRequirements;
-  if (!pack.output || !requirements || mode !== "immutable") fail("concat has no admitted output resource");
-  const admitted = requirements.uses.some((use) => {
-    if (use.kind !== "binary-concat") return false;
-    const occurrence = requirements.demands.occurrences[use.occurrence]!;
-    const buffer = requirements.demands.buffers[occurrence.bufferIndex]!;
-    const instruction = occurrence.instruction;
-    return (
-      buffer.view === "projection" &&
-      buffer.ownerUnitId === ownerUnitId &&
+  if (!pack.output || mode !== "immutable") fail("concat has no admitted output resource");
+  requireOwnerOccurrence(
+    tx,
+    pack,
+    ownerUnitId,
+    "concat",
+    (owner) =>
+      owner.input.outputRequirements?.uses.flatMap((use) => (use.kind === "binary-concat" ? [use.occurrence] : [])) ??
+      [],
+    (instruction) =>
       instruction.kind === "string.concat" &&
       instruction.alloc === alloc &&
       (instruction.concatMode ?? "immutable") === mode &&
-      instruction.provider === provider
-    );
-  });
-  if (!admitted) fail("concat occurrence is outside the closed owner projection");
+      instruction.provider === provider,
+  );
   return [{ op: "call", funcIdx: pack.output.concat.handle }];
 }
 
 /**
- * The string operations of one owner's body, each realised on the owner's admitted native resources: literals and
- * concatenation through their closed occurrence plans; (#7354 Str) `string.eq` calls the lazy equality resource and
- * `string.len` reads the carrier's length field.
+ * (#7354 Str) `string.eq` calls the lazy equality resource, which the plan selects for every executable `string.eq`
+ * (`planNativeStringValuePhysical`), so an admitted occurrence has it.
+ */
+function emitPreparedNativeStringEquals(
+  tx: PhysicalModuleReservations,
+  pack: NativeStringValueReservations,
+  ownerUnitId: IrUnitId,
+  provider?: IrFuncRef,
+): readonly Instr[] {
+  requireOwnerOccurrence(
+    tx,
+    pack,
+    ownerUnitId,
+    "string.eq",
+    allOccurrences,
+    (instruction) => instruction.kind === "string.eq" && instruction.provider === provider,
+  );
+  return [{ op: "call", funcIdx: pack.equality!.equals.handle }];
+}
+
+/** (#7354 Str) `string.len` reads the carrier field the selected `js.string.len` provider names. */
+function emitPreparedNativeStringLength(
+  tx: PhysicalModuleReservations,
+  pack: NativeStringValueReservations,
+  ownerUnitId: IrUnitId,
+  provider?: IrStringLengthProvider,
+): readonly Instr[] {
+  const owner = requireOwnerOccurrence(
+    tx,
+    pack,
+    ownerUnitId,
+    "string.len",
+    allOccurrences,
+    (instruction) => instruction.kind === "string.len" && instruction.provider === provider,
+  );
+  const field = preparedStringLenProvider(owner.input.demands.projection.prepared);
+  if (field?.arm !== "native") fail("string.len has no selected carrier field");
+  return [{ op: "struct.get", typeIdx: pack.strings.layout.anyStrTypeIdx, fieldIdx: field.fieldIndex }];
+}
+
+/**
+ * The string operations of one owner's body, each realised on the owner's admitted native resources and only for
+ * an occurrence of that owner's executable projection.
  */
 export function preparedNativeStringResolver(
   tx: PhysicalModuleReservations,
@@ -825,8 +907,8 @@ export function preparedNativeStringResolver(
     mode?: IrStringConcatMode,
     provider?: IrFuncRef,
   ) => readonly Instr[];
-  readonly emitStringEquals: () => readonly Instr[];
-  readonly emitStringLen: () => readonly Instr[];
+  readonly emitStringEquals: (provider?: IrFuncRef) => readonly Instr[];
+  readonly emitStringLen: (inputEncoding?: IrStringEncoding, provider?: IrStringLengthProvider) => readonly Instr[];
 } {
   return {
     emitStringConst: (value, alloc, storage, materializer) =>
@@ -837,14 +919,7 @@ export function preparedNativeStringResolver(
             emitPreparedNativeStringConcat(tx, pack, ownerUnitId, alloc, mode, provider),
         }
       : {}),
-    emitStringEquals: () => {
-      requireCompletedNativeStringValues(tx, pack);
-      if (!pack.equality) fail("string equality has no admitted resource");
-      return [{ op: "call", funcIdx: pack.equality.equals.handle }];
-    },
-    emitStringLen: () => {
-      requireCompletedNativeStringValues(tx, pack);
-      return [{ op: "struct.get", typeIdx: pack.strings.layout.anyStrTypeIdx, fieldIdx: 0 }];
-    },
+    emitStringEquals: (provider) => emitPreparedNativeStringEquals(tx, pack, ownerUnitId, provider),
+    emitStringLen: (_inputEncoding, provider) => emitPreparedNativeStringLength(tx, pack, ownerUnitId, provider),
   };
 }

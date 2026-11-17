@@ -54,6 +54,7 @@
 //     before the IR runs (allocated by `collectClassDeclaration`). The
 //     `localClasses` set drives that exemption.
 
+import { someReturnedValue } from "./function-returns.js";
 import { ts, forEachChild } from "../ts-api.js";
 import { isStableDirectCallTarget, localIsRewritten } from "./lattice-param-facts.js";
 import { isPlannedScriptVarClosure } from "./function-member-closure-plan.js";
@@ -82,7 +83,7 @@ import {
 } from "./async-selection.js";
 export { isAsyncIrReady } from "./async-selection.js";
 import { collectIrSafeVarDeclarationLists } from "./function-local-var.js";
-import { isModuleInitVarList } from "../shared/var-declaration-lists.js";
+import { isInLoopOfOwnFunction, isModuleInitVarList } from "../shared/var-declaration-lists.js";
 import { carrierLeafReads, collectIrSafeModuleVarDeclarationLists } from "./module-init-vars.js";
 import { isAmbientIntrinsicValueUse } from "../shared/ambient-intrinsics.js";
 import { collectDynamicStringLocalWidening } from "./dynamic-local-widening.js";
@@ -2972,18 +2973,7 @@ export function functionBodyAlwaysTerminates(body: ts.Block): boolean {
  * registered IR signature agree (both mirror legacy's no-result registration).
  */
 export function irFunctionBodyReturnsValue(body: ts.Block): boolean {
-  let found = false;
-  const visit = (node: ts.Node): void => {
-    if (found) return;
-    if (ts.isReturnStatement(node)) {
-      if (node.expression) found = true;
-      return;
-    }
-    if (ts.isFunctionLike(node) || ts.isClassLike(node)) return;
-    ts.forEachChild(node, visit);
-  };
-  ts.forEachChild(body, visit);
-  return found;
+  return someReturnedValue(body, () => true);
 }
 
 // ---------------------------------------------------------------------------
@@ -7218,20 +7208,15 @@ function untypedIdentifierDeclaration(d: ts.VariableDeclaration): boolean {
  * types the `any` binding `externref` and starts it undefined). Only where the
  * function-local var proof already holds (the caller checked the list), the
  * dynamic runtime is buildable, and the declaration is not inside a loop: a
- * re-executed `var x;` keeps its value, while the IR initializes at the
- * declaration point.
+ * re-executed `var x;` keeps its value. Lowering initializes such a `var` at
+ * the function entry (`lowerUninitializedVar`), but this lane does not claim it.
  */
 function uninitializedVarIsDynamicUndefined(d: ts.VariableDeclaration, isLexical: boolean): boolean {
   if (isLexical || currentSubjectIsModuleInit || !currentDynamicRuntimeBuildable) return false;
   // Only in a dynamic-carrier function (a dynamic parameter, so the move-only
   // scan runs and tracks the binding) or a planned member closure with one.
   if (currentDynamicParamNames.size === 0 && currentClosureDynamicParamNames.size === 0) return false;
-  if (!untypedIdentifierDeclaration(d)) return false;
-  for (let cur: ts.Node | undefined = d.parent; cur; cur = cur.parent) {
-    if (ts.isFunctionLike(cur)) return true;
-    if (ts.isIterationStatement(cur, false)) return false;
-  }
-  return false;
+  return untypedIdentifierDeclaration(d) && !isInLoopOfOwnFunction(d);
 }
 
 function isPhase1VarDecl(stmt: ts.VariableStatement, scope: Set<string>, localClasses: ReadonlySet<string>): boolean {

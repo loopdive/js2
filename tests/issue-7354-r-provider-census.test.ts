@@ -18,6 +18,7 @@ import type { RuntimeProviderDefinition } from "../src/ir/runtime/contracts/mani
 import type { PhysicalNativeStringSetup } from "../src/ir/program-physical-plan.js";
 import type { NativeSetupSlots } from "../src/compiler/prepared-provider-census.js";
 import { RUNTIME_PROVIDERS } from "../src/ir/runtime/manifest.js";
+import { preparedIrDataMismatch } from "../src/ir/program/data.js";
 import { NUMBER_REMAINDER_RUNTIME_PROVIDERS } from "../src/ir/runtime/number-remainder-callables.js";
 
 /**
@@ -35,6 +36,7 @@ const census = vi.hoisted(() => ({
   receipts: undefined as undefined | ((receipts: readonly Receipt[]) => readonly Receipt[]),
   setup: undefined as undefined | ((setup: PhysicalNativeStringSetup) => PhysicalNativeStringSetup | undefined),
   target: undefined as undefined | "gc" | "wasi",
+  forged: new WeakMap<object, unknown>(),
 }));
 vi.mock("../src/compiler/prepared-provider-census.js", async (original) => {
   const real = await original<typeof import("../src/compiler/prepared-provider-census.js")>();
@@ -55,11 +57,17 @@ vi.mock("../src/ir/program-consumer.js", async (original) => {
       const receipts = real.emittedSupportFunctionReceipts(...args);
       return census.receipts?.(receipts) ?? receipts;
     },
+    // (#7354 Str) A forged plan is ONE object, as the emission's own plan is: the census, the presentation's record
+    // and its finalization all read the same forgery. (A fresh object per read would be a plan replaced between
+    // presentation and finalization, which the finalization's identity check exists to catch.)
     emittedPhysicalSetupPlan: (...args: Parameters<typeof real.emittedPhysicalSetupPlan>) => {
       const plan = real.emittedPhysicalSetupPlan(...args);
       if (!plan.nativeStrings || !census.setup) return plan;
-      const setup = census.setup(plan.nativeStrings);
-      return setup === plan.nativeStrings ? plan : { ...plan, nativeStrings: setup };
+      if (!census.forged.has(plan)) {
+        const setup = census.setup(plan.nativeStrings);
+        census.forged.set(plan, setup === plan.nativeStrings ? plan : { ...plan, nativeStrings: setup });
+      }
+      return census.forged.get(plan) as typeof plan;
     },
   };
 });
@@ -88,6 +96,7 @@ function forbidDirectGenerators(): void {
 afterEach(() => {
   vi.restoreAllMocks();
   census.providers = census.slots = census.receipts = census.setup = census.target = undefined;
+  census.forged = new WeakMap();
 });
 
 const messages = (result: { errors: readonly { message: string }[] }) => result.errors.map((error) => error.message);
@@ -481,6 +490,47 @@ describe("#7354 D1 — the census on a dynamic-value program", () => {
   });
 });
 
+describe("#7354 H — the census on a script var in the dynamic home", () => {
+  // The program-level demand a dynamic home adds is the `undefined` the module-init stores into it first.
+  const program = "var x; if (x !== undefined) throw 1; x = 2; if (x !== 2) throw 2;";
+  const refusal = async () => {
+    const result = await compile(program, options("standalone", "test.js"));
+    expect(result.success).toBe(false);
+    return messages(result).join("\n");
+  };
+  const RUNTIME_DEMAND = "host provider or async demand is outside this numeric presentation contract";
+  const ID = "native.js.value.undefined";
+
+  it("presents and runs the unaltered program", async () => {
+    const exports = await present(program, "test.js");
+    expect(() => (exports.__module_init as (() => void) | undefined)?.()).not.toThrow();
+  });
+
+  it("refuses a census that drops the undefined value provider", async () => {
+    census.providers = (rows) => rows.filter((row) => row.id !== ID);
+    expect(await refusal()).toContain(RUNTIME_DEMAND);
+  });
+
+  it("refuses a census that renames the undefined value provider", async () => {
+    census.providers = (rows) => rows.map((row) => (row.id === ID ? { ...row, id: `${ID}.renamed` } : row));
+    expect(await refusal()).toContain(RUNTIME_DEMAND);
+  });
+
+  it("refuses a native setup that renames the __js_undefined resource", async () => {
+    census.setup = (setup) =>
+      ({
+        ...setup,
+        resources: {
+          ...setup.resources,
+          declarations: setup.resources.declarations.map((row) =>
+            "name" in row && row.name === "__js_undefined" ? { ...row, name: "__js_undefined_renamed" } : row,
+          ),
+        },
+      }) as never;
+    expect(await refusal()).toContain(RUNTIME_DEMAND);
+  });
+});
+
 describe("#7354 Str — the census on a typed string program", () => {
   const program =
     "function cat(a: string, b: string): string { return a + b; }\n" +
@@ -501,9 +551,118 @@ describe("#7354 Str — the census on a typed string program", () => {
     expect(((await present(program, "entry.ts")).main as () => number)()).toBe(3);
   });
 
-  // No drop test: the IR reaches these providers through its own instructions, not a runtime-bound reference, and
-  // each resource also serves the setup itself (the flatten's empty literal, strict equality's string arm), so a
-  // dropped provider leaves a declared dependency, not a row that joins nothing. A provider always needs its row.
+  // Each string provider joins the executable occurrences that demand it, both ways and with multiplicity.
+  const provider = (id: string) => RUNTIME_PROVIDERS.find((row) => row.id === id)!;
+  it.each(IDS)("refuses a census that drops %s", async (id) => {
+    census.providers = (rows) => rows.filter((row) => row.id !== id);
+    expect(await refusal()).toContain(RUNTIME_DEMAND);
+  });
+
+  it("refuses a census that drops every string provider", async () => {
+    census.providers = (rows) => rows.filter((row) => !IDS.includes(row.id));
+    expect(await refusal()).toContain(RUNTIME_DEMAND);
+  });
+
+  it.each([
+    ["adds the foreign UTF-16 literal provider", "native.js.string.const.utf16"],
+    ["duplicates the literal provider", "native.js.string.const"],
+    ["duplicates the length provider", "native.js.string.len"],
+  ])("refuses a census that %s", async (_, id) => {
+    census.providers = (rows) => [...rows, provider(id)];
+    expect(await refusal()).toContain(RUNTIME_DEMAND);
+  });
+
+  it.each([
+    [
+      "the length provider to a program that never reads a length",
+      "native.js.string.len",
+      "function eq(a: string, b: string): boolean { return a === b; }\n" +
+        "export function main(): number { return eq('a', 'b') ? 1 : 0; }",
+    ],
+    [
+      "the string equality provider to a program with only strict equality of dynamic values",
+      "native.js.string.eq",
+      "function id(v: any): any { return v; }\nexport function main(): number { return id('a') === id('a') ? 1 : 0; }",
+    ],
+  ])("refuses a census that adds %s", async (_, id, source) => {
+    expect(((await present(source, "entry.ts")).main as () => number)()).toBe(id.endsWith("len") ? 0 : 1);
+    census.providers = (rows) => [...rows, provider(id)];
+    const result = await compile(source, options("standalone", "entry.ts"));
+    expect(result.success).toBe(false);
+    expect(messages(result).join("\n")).toContain(RUNTIME_DEMAND);
+  });
+
+  it("refuses a native setup that swaps the names of __str_equals and __str_concat", async () => {
+    const swap: Record<string, string> = { __str_equals: "__str_concat", __str_concat: "__str_equals" };
+    census.setup = declarations((row) =>
+      "name" in row && swap[row.name] ? ({ ...row, name: swap[row.name] } as never) : row,
+    );
+    expect(await refusal()).toContain(RUNTIME_DEMAND);
+  });
+
+  // The number box is a struct too, but its field 0 is the f64 payload, not a length: its slot was not reserved as
+  // the string carrier.
+  it("refuses a length provider joined to the number box relabelled as the string carrier", async () => {
+    const source =
+      "function len(s: string): number { return s.length; }\nfunction id(v: any): any { return v; }\n" +
+      "export function main(): number { return len('ab') + (id(1) === id(1) ? 1 : 0); }";
+    expect(((await present(source, "entry.ts")).main as () => number)()).toBe(3);
+    census.setup = declarations((row) =>
+      row.role[0] === "values" && row.role[1] === "number"
+        ? { ...row, role: ["string-type", "any"] }
+        : row.role[0] === "string-type" && row.role[1] === "any"
+          ? { ...row, role: ["foreign"] }
+          : row,
+    );
+    const result = await compile(source, options("standalone", "entry.ts"));
+    expect(messages(result).join("\n")).toContain(RUNTIME_DEMAND);
+  });
+
+  it("refuses a selected native provider that is neither a string provider nor a runtime callable", async () => {
+    const foreign = RUNTIME_PROVIDERS.find(
+      (row) =>
+        row.implementation.kind !== "runtime-callable" &&
+        !row.feature.startsWith("js.string.") &&
+        !row.dependencies.length &&
+        !row.hostCapabilities.length,
+    )!;
+    census.providers = (rows) => [...rows, foreign];
+    expect(await refusal()).toContain(RUNTIME_DEMAND);
+  });
+
+  it("refuses a native setup with a second function in the string equality role", async () => {
+    census.setup = declarations((row) =>
+      row.role[0] === "flatten" && row.role[1] === "flatten" ? { ...row, role: ["string-equality", "equals"] } : row,
+    );
+    expect(await refusal()).toContain(RUNTIME_DEMAND);
+  });
+
+  it("refuses a native setup with a second string carrier type", async () => {
+    census.setup = declarations((row) =>
+      row.role[0] === "string-type" && row.role[1] === "flat" ? { ...row, role: ["string-type", "any"] } : row,
+    );
+    expect(await refusal()).toContain(RUNTIME_DEMAND);
+  });
+
+  it("refuses a native setup whose literal uses miss one executable string literal", async () => {
+    census.setup = (setup) =>
+      ({
+        ...setup,
+        resources: {
+          ...setup.resources,
+          literalUses: (setup.resources as { literalUses: unknown[] }).literalUses.slice(1),
+        },
+      }) as never;
+    expect(await refusal()).toContain(RUNTIME_DEMAND);
+  });
+
+  it("refuses a native setup that strips the role of one literal global the program uses", async () => {
+    census.setup = declarations((row) =>
+      row.role[0] === "literal-global" && String(row.role[1]).endsWith(":abc") ? { ...row, role: ["foreign"] } : row,
+    );
+    expect(await refusal()).toContain(RUNTIME_DEMAND);
+  });
+
   it.each(IDS)("refuses a census that renames %s", async (id) => {
     census.providers = (rows) => rows.map((row) => (row.id === id ? { ...row, id: `${id}.renamed` } : row));
     expect(await refusal()).toContain(RUNTIME_DEMAND);
@@ -522,5 +681,130 @@ describe("#7354 Str — the census on a typed string program", () => {
   ])("refuses a native setup that declares no %s", async (_, match) => {
     census.setup = declarations((row) => (match(row) ? { ...row, role: ["foreign", ...row.role] } : row));
     expect(await refusal()).toContain(RUNTIME_DEMAND);
+  });
+
+  // (#7354 Str review 2) Every role and name the census reads is the one its completed slot was reserved under, each
+  // literal use is its own occurrence's literal, and the forgeries the review found refuse by name.
+  const role =
+    (...parts: string[]) =>
+    (row: Declaration) =>
+      preparedIrDataMismatch(row.role, parts) === undefined;
+  type Use = { readonly demandIndex: number; readonly cacheKey: string };
+  const uses = (alter: (rows: readonly Use[]) => readonly Use[]) => (setup: PhysicalNativeStringSetup) =>
+    ({ ...setup, resources: { ...setup.resources, literalUses: alter(setup.resources.literalUses) } }) as never;
+  /** Exchanges role and name between the two declarations `left` and `right` match. */
+  const exchange =
+    (left: (row: Declaration) => boolean, right: (row: Declaration) => boolean) =>
+    (setup: PhysicalNativeStringSetup) => {
+      const rows = setup.resources.declarations;
+      const a = rows.find(left)! as Declaration & { name: string };
+      const b = rows.find(right)! as Declaration & { name: string };
+      return declarations((row) =>
+        row === a
+          ? ({ ...a, role: b.role, name: b.name } as never)
+          : row === b
+            ? ({ ...b, role: a.role, name: a.name } as never)
+            : row,
+      )(setup);
+    };
+  /** Adds a second declaration (and binding) of the one `match` finds: same role, name and completed slot. */
+  const duplicate = (match: (row: Declaration) => boolean) => (setup: PhysicalNativeStringSetup) => {
+    const row = setup.resources.declarations.find(match)!;
+    const binding = setup.bindings.find((entry) => entry.resourceKey === row.key)!;
+    return {
+      ...setup,
+      resources: {
+        ...setup.resources,
+        declarations: [...setup.resources.declarations, { ...row, key: `${row.key}:twin` }],
+      },
+      bindings: [...setup.bindings, { ...binding, resourceKey: `${row.key}:twin` }],
+    } as never;
+  };
+
+  it.each([
+    [
+      "the string equality function with the flatten function",
+      role("flatten", "flatten"),
+      role("string-equality", "equals"),
+    ],
+    [
+      "the string equality function with the concatenation",
+      role("output", "concat"),
+      role("string-equality", "equals"),
+    ],
+    ["two literal globals", role("literal-global", "u16:a"), role("literal-global", "u16:bc")],
+  ])("refuses a native setup that exchanges role and name of %s", async (_, left, right) => {
+    census.setup = exchange(left, right);
+    expect(await refusal()).toContain(RUNTIME_DEMAND);
+  });
+
+  it.each([
+    ["the empty literal the setup owns", role("literal-global", "u16:")],
+    ["the flatten function", role("flatten", "flatten")],
+    ["the flatten copy loop", role("flatten", "copy-tree")],
+    ["a string carrier subtype", role("string-type", "cons")],
+  ])("refuses a native setup that strips the role of %s", async (_, match) => {
+    census.setup = declarations((row) => (match(row) ? { ...row, role: ["foreign"] } : row));
+    expect(await refusal()).toContain(RUNTIME_DEMAND);
+  });
+
+  it.each([
+    [
+      "one literal use to another literal's storage",
+      (rows: readonly Use[]) => [{ ...rows[0]!, cacheKey: rows[1]!.cacheKey }, ...rows.slice(1)],
+    ],
+    [
+      "every literal use to one storage",
+      (rows: readonly Use[]) => rows.map((row) => ({ ...row, cacheKey: rows[2]!.cacheKey })),
+    ],
+    [
+      "two literal uses to each other's occurrence",
+      (rows: readonly Use[]) => [
+        { ...rows[0]!, demandIndex: rows[1]!.demandIndex },
+        { ...rows[1]!, demandIndex: rows[0]!.demandIndex },
+        ...rows.slice(2),
+      ],
+    ],
+    [
+      "one literal use to another's occurrence (that occurrence used twice)",
+      (rows: readonly Use[]) => [rows[1]!, ...rows.slice(1)],
+    ],
+  ])("refuses a native setup that repoints %s", async (_, alter) => {
+    census.setup = uses(alter);
+    expect(await refusal()).toContain(RUNTIME_DEMAND);
+  });
+
+  it.each([
+    ["literal global a use names", role("literal-global", "u16:a")],
+    ["string carrier type", role("string-type", "any")],
+  ])("refuses a native setup with a second %s on the same completed slot", async (_, match) => {
+    census.setup = duplicate(match);
+    expect(await refusal()).toContain(RUNTIME_DEMAND);
+  });
+
+  it("refuses a setup function bound as an intrinsic that no by-instruction provider owns", async () => {
+    census.setup = (setup) => {
+      const flatten = setup.resources.declarations.find(role("flatten", "flatten"))!;
+      return {
+        ...declarations((row) => (row === flatten ? { ...row, role: ["foreign"] } : row))(setup),
+        bindings: setup.bindings.map((row) =>
+          row.resourceKey === flatten.key
+            ? { ...row, reference: { ...row.reference, binding: { kind: "intrinsic", symbol: "__str_flatten" } } }
+            : row,
+        ),
+      } as never;
+    };
+    expect(await refusal()).toContain(RUNTIME_DEMAND);
+  });
+
+  // The census authenticates what the presentation consumes; plan data no join reads (here the reservation steps)
+  // leaves the emission it presents untouched, so the forged plan presents the real, unaltered module.
+  it("presents the unaltered emission under a forgery of plan data no join reads", async () => {
+    census.setup = (setup) =>
+      ({
+        ...setup,
+        resources: { ...setup.resources, reservationSteps: [...setup.resources.reservationSteps].reverse() },
+      }) as never;
+    expect(((await present(program, "entry.ts")).main as () => number)()).toBe(3);
   });
 });

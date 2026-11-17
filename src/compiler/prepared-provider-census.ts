@@ -12,10 +12,34 @@ import {
   emittedProgramBindingIndex,
   emittedSupportFunctionReceipts,
 } from "../ir/program-consumer.js";
-import type { NativeStringValueAbiBinding, PhysicalNativeStringSetup } from "../ir/program-physical-plan.js";
+import {
+  nativeRole,
+  type NativeStringValueAbiBinding,
+  type PhysicalNativeStringSetup,
+} from "../ir/program-physical-plan.js";
+import { preparedIrRuntimeAbiAnchor } from "../ir/program-runtime-abi.js";
+import { createIrBindingId } from "../shared/contracts/identity-values.js";
 import { preparedIrDataMismatch } from "../ir/program/data.js";
-import type { RuntimeProviderDefinition } from "../ir/runtime/contracts/manifest.js";
+import type { PreparedIrProgramRuntimeProjection } from "../ir/program/prepared-contracts.js";
+import { collectNativeStringValueDemands } from "../ir/program/native-string-value-demands.js";
+import {
+  irStringConcatDemand,
+  irStringConstDemand,
+  irStringEqDemand,
+  irStringLenDemand,
+} from "../ir/program/runtime-demands.js";
+import type { IrFunction } from "../ir/core/nodes.js";
+import type { RuntimeFeature } from "../ir/runtime/contracts/manifest.js";
+import {
+  STRING_CONCAT_RUNTIME_FEATURES,
+  STRING_CONST_RUNTIME_FEATURES,
+  STRING_EQ_RUNTIME_FEATURES,
+  STRING_LEN_RUNTIME_FEATURES,
+  type RuntimeProviderDefinition,
+} from "../ir/runtime/contracts/manifest.js";
 import { RUNTIME_PROVIDERS } from "../ir/runtime/manifest.js";
+import { selectNativeLiteralDemand } from "../backend/wasmgc/program/native-string-values.js";
+import type { NativeStringLiteralSelection } from "../runtime/wasmgc/values/string-literal-bodies.js";
 import {
   NUMBER_REMAINDER_RUNTIME_PROVIDERS,
   irNumberRemainderCallableDeclaration,
@@ -152,20 +176,37 @@ export interface NativeSetupSlots {
   readonly types: ReadonlySet<number>;
   readonly globals: ReadonlySet<number>;
 }
+/** The binding domain each setup space is reserved in (`irSupportFuncRef`, `irSupportGlobalRef`, `irSourceTypeRef`). */
+const SETUP_BINDING_DOMAINS = { function: "support", global: "global", type: "type" } as const;
 /**
  * Declarations and published bindings of the accepted native setup plan join one to one by key, and the completed
- * emission resolves each binding to a slot of its declaration's space.
+ * emission resolves each binding to a slot of its declaration's space. (#7354 Str) A binding the setup derives
+ * itself (not a runtime or intrinsic callable's) is the one its declaration's space and role derive under the
+ * runtime ABI anchor, so every role the census reads is the one the completed slot was reserved under.
  */
-function nativeSlots(emission: EmittedPreparedIrProgram, setup: PhysicalNativeStringSetup): NativeSlot[] | undefined {
+function nativeSlots(
+  program: PreparedIrProgram,
+  emission: EmittedPreparedIrProgram,
+  setup: PhysicalNativeStringSetup,
+): NativeSlot[] | undefined {
   const { declarations } = setup.resources;
   if (!setup.bindings.every((binding) => declarations.filter((row) => row.key === binding.resourceKey).length === 1))
     return undefined;
+  const anchor = preparedIrRuntimeAbiAnchor(program.inventory).id;
   const slots: NativeSlot[] = [];
   for (const declaration of declarations) {
     const bindings = setup.bindings.filter((row) => row.resourceKey === declaration.key);
     const slot = bindings.length === 1 ? emittedProgramBindingIndex(emission, bindings[0]!.entry.id) : undefined;
     if (slot?.space !== declaration.space) return undefined;
-    slots.push({ declaration, binding: bindings[0]!, index: slot.index });
+    const binding = bindings[0]!;
+    const callable = binding.reference.binding.kind === "runtime" || binding.reference.binding.kind === "intrinsic";
+    const owned = createIrBindingId({
+      ownerId: anchor,
+      domain: SETUP_BINDING_DOMAINS[declaration.space],
+      role: nativeRole(declaration),
+    });
+    if (!callable && binding.entry.id !== owned) return undefined;
+    slots.push({ declaration, binding, index: slot.index });
   }
   return slots;
 }
@@ -184,35 +225,137 @@ function nativeGlobalMatches(emission: EmittedPreparedIrProgram, slots: readonly
   const type = completedValType(slots, declaration.valueType);
   return global.mutable === declaration.mutable && preparedIrDataMismatch(type, global.type) === undefined;
 }
+/** (#7354 Str) The string feature families a Prepared presentation selects (`preparedPresentationPolicy`). */
+const STRING_FEATURES: ReadonlySet<string> = new Set([
+  ...STRING_CONST_RUNTIME_FEATURES,
+  ...STRING_EQ_RUNTIME_FEATURES,
+  ...STRING_LEN_RUNTIME_FEATURES,
+  ...STRING_CONCAT_RUNTIME_FEATURES,
+]);
 /**
- * (#7354 Str) A selected native provider that is not a call is answered by the setup's own storage: a string
- * literal by its interned literal storage, the string length field by its string carrier type.
+ * The string features the executable projection demands, by the manifest's own demand scanners. (The scan-to-feature
+ * table `demandFeatures` is private to `src/ir/program/runtime-manifest.ts`, whose bytes the #3518 validator
+ * relocation receipts pin; these four rows restate its string rows with the family constants.)
  */
-function storageAnswers(slots: readonly NativeSlot[], implementation: RuntimeProviderDefinition["implementation"]) {
-  const declares = (...role: string[]) =>
-    slots.some((slot) => role.every((part, index) => slot.declaration.role[index] === part));
-  if (implementation.kind === "native-global") return declares("literal-global") || declares("literal-materializer");
-  return implementation.kind === "carrier-field" && declares("string-type", "any");
+function demandedStringFeatures(functions: readonly IrFunction[]): RuntimeFeature[] {
+  const constant = irStringConstDemand(functions);
+  const concat = irStringConcatDemand(functions);
+  const demanded: [boolean, RuntimeFeature][] = [
+    [constant.literal, STRING_CONST_RUNTIME_FEATURES[0]],
+    [constant.utf16, STRING_CONST_RUNTIME_FEATURES[1]],
+    [irStringEqDemand(functions), STRING_EQ_RUNTIME_FEATURES[0]],
+    [irStringLenDemand(functions), STRING_LEN_RUNTIME_FEATURES[0]],
+    [concat.immutable, STRING_CONCAT_RUNTIME_FEATURES[0]],
+    [concat.owned, STRING_CONCAT_RUNTIME_FEATURES[1]],
+  ];
+  return demanded.flatMap(([present, feature]) => (present ? [feature] : []));
+}
+/** The setup function that implements a string provider the IR reaches through its own instruction, by role. */
+const STRING_PROVIDER_ROLES: Readonly<Record<string, readonly string[]>> = {
+  "js.string.eq": ["string-equality", "equals"],
+  "js.string.concat": ["output", "concat"],
+};
+/**
+ * The literal storage joins the executable `string.const` occurrences one to one: each literal use is one of them
+ * (none twice, none missing), its cache key is the one that occurrence's own value and encoding select, and that key
+ * names exactly one literal global or materializer of the selected kind.
+ */
+function literalUsesJoin(
+  projection: PreparedIrProgramRuntimeProjection,
+  program: PreparedIrProgram,
+  setup: PhysicalNativeStringSetup,
+  roled: (role: readonly string[]) => readonly NativeSlot[],
+  utf8Storage: boolean,
+): boolean {
+  const demands = collectNativeStringValueDemands(program, projection);
+  const literals = new Map(
+    demands.literals.flatMap((demand, index) =>
+      demand.kind === "string.const" &&
+      demands.buffers[demands.occurrences[demand.occurrence]!.bufferIndex]!.view === "projection"
+        ? [[index, demand] as const]
+        : [],
+    ),
+  );
+  const uses = setup.resources.literalUses;
+  if (
+    !samePopulation(
+      uses.map((use) => use.demandIndex),
+      [...literals.keys()],
+    )
+  )
+    return false;
+  return uses.every((use) => {
+    // The planner selected every executable literal, so each has a selection here.
+    const { selection } = selectNativeLiteralDemand(literals.get(use.demandIndex)!, utf8Storage) as {
+      readonly selection: NativeStringLiteralSelection;
+    };
+    const kind = selection.kind === "global" ? "literal-global" : "literal-materializer";
+    return selection.key === use.cacheKey && roled([kind, use.cacheKey]).length === 1;
+  });
+}
+/**
+ * (#7354 Str) The selected string providers join the executable occurrences that demand them, one provider per
+ * demanded feature (no provider without an occurrence, none twice; the manifest's own demand table), and each joins
+ * what implements it in the native setup:
+ * - the literal storage: `literalUsesJoin`;
+ * - the length field: exactly one string carrier type (the canonical provider names its field);
+ * - a by-instruction callable: exactly one setup function of the provider's role, named by the provider's symbol.
+ * Every role read here is the one its completed slot was reserved under (`nativeSlots`); the only intrinsic-bound
+ * setup function is such a callable.
+ */
+function stringProvidersJoin(
+  projection: PreparedIrProgramRuntimeProjection,
+  program: PreparedIrProgram,
+  setup: PhysicalNativeStringSetup,
+  slots: readonly NativeSlot[],
+  providers: readonly RuntimeProviderDefinition[],
+  utf8Storage: boolean,
+): boolean {
+  const demanded = demandedStringFeatures(projection.prepared.functions);
+  if (
+    !samePopulation(
+      providers.map((row) => row.feature),
+      demanded,
+    )
+  )
+    return false;
+  const roled = (role: readonly string[]) =>
+    slots.filter((slot) => preparedIrDataMismatch(slot.declaration.role, role) === undefined);
+  const owners = providers.flatMap(({ feature }) => roled(STRING_PROVIDER_ROLES[feature] ?? []));
+  if (!slots.every((slot) => slot.binding.reference.binding.kind !== "intrinsic" || owners.includes(slot)))
+    return false;
+  return providers.every(({ feature, implementation }) => {
+    if (implementation.kind === "native-global") return literalUsesJoin(projection, program, setup, roled, utf8Storage);
+    if (implementation.kind === "carrier-field") return roled(["string-type", "any"]).length === 1;
+    // The remaining canonical string providers are the by-instruction callables.
+    const named = roled(STRING_PROVIDER_ROLES[feature] ?? []).map(({ declaration }) =>
+      runtimeCallable(declaration.space === "function" ? declaration.name : ""),
+    );
+    return samePopulation(named, [implementation]);
+  });
 }
 /**
  * The native setup's support rows: every function it declares, with its declared signature. The runtime-bound ones
- * (named by their runtime symbol), together with the functions named by a selected provider's symbol, are exactly
- * the selected native providers' symbols; every other one is a dependency the setup plan itself declares.
+ * (named by their runtime symbol) are exactly the selected native callable providers' symbols, the string providers
+ * join their occurrences (`stringProvidersJoin`), and every other function is a dependency the setup plan declares.
  */
 function nativeRows(
+  projection: PreparedIrProgramRuntimeProjection,
+  program: PreparedIrProgram,
   emission: EmittedPreparedIrProgram,
   setup: PhysicalNativeStringSetup,
   providers: readonly RuntimeProviderDefinition[],
+  utf8Storage: boolean,
 ):
   | {
       readonly rows: readonly SupportCallableRow[];
       readonly slots: NativeSetupSlots;
     }
   | undefined {
-  const slots = nativeSlots(emission, setup);
+  const slots = nativeSlots(program, emission, setup);
   if (!slots?.every((slot) => nativeGlobalMatches(emission, slots, slot))) return undefined;
-  const callables = providers.filter((row) => row.implementation.kind === "runtime-callable");
-  const symbols = new Set(callables.map((row) => (row.implementation as { readonly symbol: string }).symbol));
+  const strings = providers.filter((row) => STRING_FEATURES.has(row.feature));
+  const callables = providers.filter((row) => !strings.includes(row) && row.implementation.kind === "runtime-callable");
   const answered: ReturnType<typeof runtimeCallable>[] = [];
   const rows: SupportCallableRow[] = [];
   for (const { declaration, binding } of slots) {
@@ -221,9 +364,7 @@ function nativeRows(
     if (reference.kind === "func" && reference.binding.kind === "runtime") {
       if (declaration.name !== reference.binding.symbol) return undefined;
       answered.push(runtimeCallable(reference.binding.symbol));
-      // (#7354 Str) A provider the IR reaches through its own instruction (`string.eq`) or an intrinsic reference
-      // (`string.concat`) is answered by the setup function its recipe names after the provider's symbol.
-    } else if (symbols.has(declaration.name)) answered.push(runtimeCallable(declaration.name));
+    }
     rows.push({
       bindingId: binding.entry.id,
       key: declaration.key,
@@ -237,7 +378,8 @@ function nativeRows(
       answered,
       callables.map((row) => row.implementation),
     ) ||
-    !providers.every((row) => callables.includes(row) || storageAnswers(slots, row.implementation))
+    providers.some((row) => !strings.includes(row) && !callables.includes(row)) ||
+    !stringProvidersJoin(projection, program, setup, slots, strings, utf8Storage)
   )
     return undefined;
   const indices = (space: "type" | "global") =>
@@ -265,7 +407,11 @@ export function runtimeCensus(
   const natives = providers.filter((row) => !isRemainder(row));
   const remainders = remainderRows(program, emission, providers.filter(isRemainder));
   const setup = emittedPhysicalSetupPlan(emission).nativeStrings;
-  const native = setup && backend.target === "standalone" ? nativeRows(emission, setup, natives) : undefined;
+  const projection = program.runtime.find((row) => row.backend === backend.backend && row.target === backend.target);
+  const native =
+    setup && projection && backend.target === "standalone"
+      ? nativeRows(projection, program, emission, setup, natives, backend.utf8Storage)
+      : undefined;
   if (!remainders || (!native && natives.length)) return undefined;
   if (!supportPopulationJoins(emission, [...remainders, ...(native?.rows ?? [])])) return undefined;
   return native ? { native: native.slots } : {};

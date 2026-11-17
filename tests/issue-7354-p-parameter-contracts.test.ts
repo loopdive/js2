@@ -3,8 +3,11 @@
 // #7354 slice P — sound contracts for untyped parameters on the Prepared standalone path. A parameter without a
 // TypeScript annotation is the dynamic value (call-site propagation saw no top-level caller, no call with missing
 // arguments and no call through a value, so it was never a contract), and an unannotated result is dynamic where
-// the checker cannot vouch for it: `any`, a JSDoc `@returns`, or a body that can run off its end after a value.
+// the checker cannot vouch for it: `any`, or a body that can run off its end after a value. A JSDoc `@returns` is no
+// contract either way: a converted value returns as typed, an unconverted one meets D1's implicit-flow rule.
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { programDynamicContracts } from "../src/ir/source-dynamic-contracts.js";
+import { ts } from "../src/ts-api.js";
 import * as gc from "../src/codegen/index.js";
 import * as linear from "../src/codegen-linear/index.js";
 import { instantiatePreparedArtifact } from "../src/test262/test262-prepared-runtime.js";
@@ -112,6 +115,23 @@ describe("#7354 P — an untyped parameter is the dynamic value", () => {
       ["check(1);", "check(2);"],
     ],
     [
+      "a JSDoc `@returns {number}` over a value the body converts",
+      "/** @returns {number} */\nfunction f(n) { return n * 1; }\nif (f(true) !== 1) throw 1;",
+      ["f(true) !== 1", "f(true) !== 2"],
+    ],
+    [
+      "a JSDoc `@returns {boolean}` over a comparison",
+      "/** @returns {boolean} */\nfunction f(n) { return n === 1; }\nif (f(1) !== true) throw 1;",
+      ["f(1) !== true", "f(1) !== false"],
+    ],
+    [
+      // The tag follows a statement on its line, so the checker does not attach it: f's result is the `any` of
+      // id's, dynamic by the checker-`any` arm, and returns node's `true`.
+      "a JSDoc `@returns {number}` the checker does not attach, over an untyped value",
+      "function id(v){return v} /** @returns {number} */ function f(n){return id(n)} if (f(true) !== true) throw 1;",
+      ["f(true) !== true", "f(true) !== false"],
+    ],
+    [
       "the isNegativeZero helper of harness/assert.js",
       "function isNegativeZero(value) { return value === 0 && 1 / value === -Infinity; }\n" +
         "if (!isNegativeZero(-0)) throw 1;\nif (isNegativeZero(0)) throw 2;\nif (isNegativeZero(true)) throw 3;",
@@ -136,9 +156,10 @@ describe("#7354 P — an untyped parameter is the dynamic value", () => {
     ],
     ["an extra argument", `${ID}if (id(1, 2) !== 1) throw 1;`, "call to id has 2 args, expected 1"],
     [
+      // (#7354 H) `g` has the dynamic home; a declaration read as a value is slice Fa's.
       "a call through a value",
       `${ID}var g = id;\nif (g(1) !== 1) throw 1;`,
-      "module binding g has no exact typed storage: not-direct",
+      'identifier "id" is not in scope',
     ],
     [
       // JSDoc is not checked at runtime: the contract stays dynamic, and from-ast refuses it against a primitive tag.
@@ -147,11 +168,35 @@ describe("#7354 P — an untyped parameter is the dynamic value", () => {
       "type override (dynamic) disagrees with annotation (f64) at param n of f",
     ],
     [
-      "a JSDoc `@returns` over an untyped value",
-      "/** @returns {number} */\nfunction f(n) { return n; }\nif (f(1) !== 1) throw 1;",
+      // (#7354 H) The returned parameter may be the dynamic value, so the result contract is dynamic, and from-ast
+      // refuses it against the JSDoc type before D1's flow rule would.
+      "a JSDoc `@returns {number}` over an unconverted untyped value",
+      "/** @returns {number} */\nfunction f(n) { return n; }\nf(true);",
       "type override (dynamic) disagrees with annotation (f64) at return type of f",
     ],
   ])("refuses %s", async (_name, source, message) => {
+    expect(await refusal(source)).toContain(message);
+  });
+
+  // The native lane is for functions no host calls (`dynamicLane`): an `export` modifier leaves it, and a function
+  // exported by name keeps the native contract, which the export join refuses.
+  it.each([
+    [
+      "a function exported by name",
+      "function f(x) { return x; }\nexport { f };",
+      "source unit, export ABI and actual function-space export must join exactly",
+    ],
+    [
+      "a function exported under another name",
+      "function f(x) { return x; }\nexport { f as g };",
+      "source unit, export ABI and actual function-space export must join exactly",
+    ],
+    [
+      "an exported default function",
+      "export default function f(x) { return x; }",
+      "complete synchronous numeric or Boolean function declarations are required",
+    ],
+  ])("refuses %s with an untyped parameter", async (_name, source, message) => {
     expect(await refusal(source)).toContain(message);
   });
 
@@ -183,5 +228,39 @@ describe("#7354 P — an untyped parameter is the dynamic value", () => {
     const result = await compileMulti(files, "./b.js", options());
     expect(result.success).toBe(false);
     expect(messages(result).join("\n")).toContain(message);
+  });
+});
+
+/** The two contracts on their own, over a TypeScript source the checker sees, for lanes no program reaches whole. */
+describe("#7354 P — the parameter and result contracts", () => {
+  function declarationOf(source: string): { checker: ts.TypeChecker; file: ts.SourceFile; f: ts.FunctionDeclaration } {
+    const fileName = "/probe.ts";
+    const host = ts.createCompilerHost({ noLib: true });
+    const read = host.getSourceFile;
+    host.getSourceFile = (file, ...rest) =>
+      file === fileName ? ts.createSourceFile(fileName, source, ts.ScriptTarget.ES2020, true) : read(file, ...rest);
+    const program = ts.createProgram([fileName], { noLib: true }, host);
+    const file = program.getSourceFile(fileName)!;
+    return { checker: program.getTypeChecker(), file, f: file.statements.find(ts.isFunctionDeclaration)! };
+  }
+  const STANDALONE = { backend: "wasmgc", target: "standalone" } as const;
+
+  // A host async frame keeps its own contracts: an untyped parameter there is no dynamic value.
+  it("gives an untyped parameter of a host async function no dynamic contract", () => {
+    const { checker, file, f } = declarationOf("async function f(n) { return 1; }");
+    const host = programDynamicContracts(checker, { backend: "wasmgc", target: "host" }, [file]);
+    expect(host.parameter(f, f.parameters[0]!)).toBeUndefined();
+    const sync = declarationOf("function f(n) { return 1; }");
+    const native = programDynamicContracts(sync.checker, STANDALONE, [sync.file]);
+    expect(native.parameter(sync.f, sync.f.parameters[0]!)).toEqual({ kind: "dynamic" });
+  });
+
+  it("keeps an annotated non-any result whose body runs off its end: the annotation is the contract", () => {
+    const { checker, file, f } = declarationOf("function f(v: any): number | undefined { if (v === 1) return 2; }");
+    expect(programDynamicContracts(checker, STANDALONE, [file]).result(f)).toBeUndefined();
+    const bare = declarationOf("function f(v: any) { if (v === 1) return 2; }");
+    expect(programDynamicContracts(bare.checker, STANDALONE, [bare.file]).result(bare.f)).toEqual({
+      kind: "dynamic",
+    });
   });
 });

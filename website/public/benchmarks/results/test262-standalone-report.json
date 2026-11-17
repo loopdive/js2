@@ -12,9 +12,9 @@
   "verifiedExecutionCases": 0,
   "verifiedFrontendCases": 0,
   "unverifiedExecutionCases": 48621,
-  "timestamp": "2026-11-16T18:46:20.401Z",
-  "baseline_generated_at": "2026-11-16T18:46:20.401Z",
-  "baseline_sha": "bbc809eb32771747037894ad5fe616d25b659e24",
+  "timestamp": "2026-11-17T18:08:37.786Z",
+  "baseline_generated_at": "2026-11-17T18:08:37.786Z",
+  "baseline_sha": "0409838769d5fd88ff236cc9112cbe78d99a0c8e",
   "oracle_version": 16,
   "mode": {
     "target": "standalone",
@@ -1846,9 +1846,9 @@
         "sample_files": [
           "test/built-ins/Temporal/Duration/prototype/round/roundingincrement-days-large.js",
           "test/built-ins/Temporal/PlainMonthDay/from/argument-string-calendar-case-insensitive.js",
-          "test/built-ins/Temporal/ZonedDateTime/prototype/since/roundingmode-expand.js",
           "test/built-ins/Temporal/Duration/prototype/round/valid-increments.js",
-          "test/built-ins/Temporal/Duration/prototype/subtract/precision-no-floating-point-loss.js"
+          "test/built-ins/Temporal/Duration/prototype/subtract/precision-no-floating-point-loss.js",
+          "test/built-ins/Temporal/PlainDate/prototype/toLocaleString/return-string.js"
         ],
         "sample_signatures": [
           "assertion_fail:Test262Error: round to 1e8-# days with plain relativeTo: days result: Expected SameValue(«#», «#») to be true",
@@ -2939,15 +2939,15 @@
         "sample_files": [
           "test/language/expressions/arrow-function/scope-param-rest-elem-var-open.js",
           "test/built-ins/Function/prototype/toString/AsyncFunction.js",
-          "test/built-ins/Function/is-a-constructor.js",
           "test/built-ins/Function/internals/Call/class-ctor-realm.js",
+          "test/built-ins/Function/is-a-constructor.js",
           "test/built-ins/Function/prototype/toString/method-class-expression-static.js"
         ],
         "sample_signatures": [
           "assertion_fail:Test262Error: Expected SameValue(«undefined», «\"inside\"») to be true",
           "assertion_fail:Test262Error: Conforms to NativeFunction Syntax: \"null\" (async function anonymous(a, /* a */ b, c /* b */ // ) { /* c */ ; /* d */ // })",
-          "assertion_fail:Test262Error: isConstructor(Function) must return true Expected SameValue(«false», «true») to be true",
           "assertion_fail:Test262Error: Expected a but got a TypeError",
+          "assertion_fail:Test262Error: isConstructor(Function) must return true Expected SameValue(«false», «true») to be true",
           "assertion_fail:Test262Error: Conforms to NativeFunction Syntax: \"null\" ([ /* a */ x /* b */ ] /* c */ ( /* d */ ) /* e */ { /* f */ })"
         ]
       },

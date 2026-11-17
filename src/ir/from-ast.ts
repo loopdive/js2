@@ -332,7 +332,8 @@ import {
 } from "./binding-pattern-plan.js";
 import { lowerPatternPlan, readsNoSource, type PatternLoweringHost } from "./binding-pattern-lowering.js";
 import { literalLeafSource, patternLeafReadsElement, planLiteralPattern } from "./literal-pattern-plan.js";
-import { isModuleInitVarList } from "../shared/var-declaration-lists.js";
+import { isInLoopOfOwnFunction, isModuleInitVarList } from "../shared/var-declaration-lists.js";
+import { isRepeatedVarBinding } from "./function-local-var.js";
 import { objectIntegrityCallFold } from "./object-integrity.js";
 import {
   mixedPrimitiveConditionalArms,
@@ -4411,9 +4412,8 @@ function lowerVariableDeclaration(d: ts.VariableDeclaration, isConst: boolean, c
   const redeclaredModuleVar = isRedeclaredModuleVar(d, name, cx);
   if (redeclaredModuleVar && !d.initializer) return;
   if (!d.initializer && !redeclaredModuleVar && bindUninitializedModuleVar(d, name, cx)) return;
-  if (cx.scope.has(name) && !redeclaredModuleVar) {
+  if ((cx.scope.has(name) || (!cx.moduleBindings?.has(name) && isRepeatedVarBinding(d, name))) && !redeclaredModuleVar)
     demoteToLegacy("body-shape-rejected", `ir/from-ast: redeclaration of '${name}' in ${cx.funcName}`);
-  }
   if (!d.initializer) {
     lowerUninitializedVar(d, name, isConst, cx);
     return;
@@ -4718,8 +4718,8 @@ function bindLocalName(
 }
 
 /**
- * (#7106 Stage 4) `var x;` (selector: untyped, function-local, not in a loop):
- * the dynamic carrier's `undefined`, in a slot when the body reassigns it.
+ * (#7106 Stage 4) `var x;`: the dynamic carrier's `undefined`, in a slot when the body reassigns it. In a loop the
+ * declaration runs again and is no write: the store moves before the loop (#7354); elsewhere it stays (same bytes).
  */
 function lowerUninitializedVar(d: ts.VariableDeclaration, name: string, isConst: boolean, cx: LowerCtx): void {
   const isLexical = (d.parent.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const)) !== 0;
@@ -4729,17 +4729,17 @@ function lowerUninitializedVar(d: ts.VariableDeclaration, name: string, isConst:
       `ir/from-ast: Phase 1 requires an initializer for '${name}' in ${cx.funcName}`,
     );
   }
-  const value = cx.builder.emitDynUndefined();
   if (!cx.mutatedLets.has(name)) {
-    cx.scope.set(name, { kind: "local", value, type: irDynamic() });
+    cx.scope.set(name, { kind: "local", value: cx.builder.emitDynUndefined(), type: irDynamic() });
     return;
   }
   const representation = resolveMutableLocalRepresentation(irDynamic(), true, cx);
-  if (!representation) {
+  if (!representation)
     demoteToLegacy("body-shape-rejected", `ir/from-ast: dynamic var '${name}' has no slot (${cx.funcName})`);
-  }
   const slotIndex = cx.builder.declareSlot(name, representation.storageType);
-  cx.builder.emitSlotWrite(slotIndex, value);
+  const initialize = () => cx.builder.emitSlotWrite(slotIndex, cx.builder.emitDynUndefined());
+  if (isInLoopOfOwnFunction(d)) cx.builder.emitAtBlockHead(initialize);
+  else initialize();
   cx.scope.set(name, {
     kind: "slot",
     slotIndex,
@@ -14254,9 +14254,7 @@ function emitUnaryToNumber(
 function lowerPrefixUnary(expr: ts.PrefixUnaryExpression, cx: LowerCtx): IrValueId {
   if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== expr)
     return withNodeSourceSite(cx, expr, () => lowerPrefixUnary(expr, cx));
-  // (#7354 D1) A value-position `++x`/`--x` has no lowering: the table defers
-  // it, so the selector never claims one. The Prepared producer has no
-  // selector, so it declines by name instead of tripping the guard below.
+  // (#7354 D1) Deferred, so only the selector-less Prepared producer gets here.
   if (expr.operator === ts.SyntaxKind.PlusPlusToken || expr.operator === ts.SyntaxKind.MinusMinusToken)
     demoteToLegacy("body-shape-rejected", `ir/from-ast: value-position prefix update in ${cx.funcName}`);
   // #2135 — capability-table invariant, mirroring `lowerBinary`. A deferred
@@ -15806,9 +15804,7 @@ function emitExactNumericExponentiation(
   right: ts.Expression,
   cx: LowerCtx,
 ): IrValueId {
-  // (#7354 D1) `**` has no dynamic lowering. The selector never claims a
-  // dynamic operand, but the Prepared producer has no selector, so the
-  // operand declines by name instead of tripping the claim invariant below.
+  // (#7354 D1) No dynamic `**`; only the selector-less Prepared producer gets here.
   if (cx.builder.typeOf(lhs).kind === "dynamic" || cx.builder.typeOf(rhs).kind === "dynamic")
     demoteToLegacy("operand-coercion-unsupported", `ir/from-ast: '**' on a dynamic operand in ${cx.funcName}`);
   if (!checkerProvesExactNumericExponentOperand(left, cx) || !checkerProvesExactNumericExponentOperand(right, cx)) {

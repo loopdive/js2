@@ -88,6 +88,17 @@ describe("#7354 Str 1 — typed strings through the presentation", () => {
         'if (g(0) !== "a" || g(1) !== "c") throw 1;',
       ['g(1) !== "c"', 'g(1) !== "a"'],
     ],
+    // (#7354 H) A script `var` lives in the dynamic home; a string literal stored there is boxed.
+    [
+      "a string in a script var's dynamic home",
+      'var s = "ab";\nif (s !== "ab") throw 1;',
+      ['"ab") throw', '"ac") throw'],
+    ],
+    [
+      "a string in a script var's dynamic home, returned by a function",
+      'var s = "ab";\nfunction f() { return s; }\nif (f() !== "ab") throw 1;',
+      ['f() !== "ab"', 'f() !== "ac"'],
+    ],
   ]);
 
   it("concatenates, compares and measures typed string parameters (TypeScript)", async () => {
@@ -103,6 +114,27 @@ describe("#7354 Str 1 — typed strings through the presentation", () => {
     expect((instantiatePreparedArtifact(result).instance.exports.main as () => number)()).toBe(11);
   });
 
+  // (#7354 Str review 1) Equality alone still needs the flatten's empty literal: no concat, no number runtime here.
+  it("compares typed strings with nothing but string.eq", async () => {
+    const result = await compile(
+      "function eq(a: string, b: string): boolean { return a === b; }\n" +
+        "export function main(): number { return (eq('ab', 'ab') ? 1 : 0) + (eq('ab', 'ac') ? 2 : 0); }\n",
+      options("entry.ts"),
+    );
+    expect(messages(result)).toEqual([]);
+    expect((instantiatePreparedArtifact(result).instance.exports.main as () => number)()).toBe(1);
+  });
+
+  // A literal past the array-new-fixed ceiling is a materializer, not a global; the census joins either.
+  it("measures an oversized literal (materializer storage)", async () => {
+    const result = await compile(
+      `function len(s: string): number { return s.length; }\nexport function main(): number { return len("${"x".repeat(10001)}"); }\n`,
+      options("entry.ts"),
+    );
+    expect(messages(result)).toEqual([]);
+    expect((instantiatePreparedArtifact(result).instance.exports.main as () => number)()).toBe(10001);
+  });
+
   it("an uncaught thrown string escapes as an exception", async () => {
     expect(await run('function f() { throw "x"; }\nf();')).toBe("threw");
   });
@@ -114,9 +146,9 @@ describe("#7354 Str 1 — typed strings through the presentation", () => {
       "mutable binding 's' (string) has no slot representation",
     ],
     [
-      "a script-level string var (no string global home)",
-      'var s = "ab";\nif (s !== "ab") throw 1;',
-      "module binding s has no exact typed storage",
+      "the length of a string held in a script var's dynamic home (a member read of the dynamic value)",
+      'var s = "ab";\nif (s.length !== 2) throw 1;',
+      "dynamic operation dyn.member_get has no Prepared intrinsic",
     ],
   ])("refuses %s", async (_, source, detail) => {
     expect(await refusal(source)).toContain(detail);
