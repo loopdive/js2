@@ -1,7 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
 import { spawnSync } from "node:child_process";
-import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import ts from "typescript";
@@ -22,11 +21,9 @@ import type {
   IrCountedStringAppendSiteClaim,
 } from "../src/shared/contracts/ir-counted-string-identity.js";
 import { createIrSourceId, createIrUnitId } from "../src/ir/identity.js";
-import { readCoreVocabularyReceiptSource } from "./helpers/ir-core-vocabulary-evolution.js";
 
 const root = resolve(import.meta.dirname, "..");
-const rawRead = (path: string) => readFileSync(resolve(root, path), "utf8");
-const read = rawRead;
+const read = (path: string) => readFileSync(resolve(root, path), "utf8");
 function parse(path: string, text = read(path)) {
   const tree = ts.createSourceFile(path, text, ts.ScriptTarget.Latest, true);
   expect((tree as ts.SourceFile & { parseDiagnostics: readonly ts.Diagnostic[] }).parseDiagnostics).toEqual([]);
@@ -46,48 +43,56 @@ function declarations(tree: ts.SourceFile) {
     return names.map((name) => [name, node.getText(tree)] as const);
   });
 }
-const digest = (rows: readonly (readonly string[])[]) =>
-  createHash("sha256").update(JSON.stringify(rows)).digest("hex");
+/** The top-level declaration names of a module, one entry per declaration. */
+const declarationNames = (path: string) => declarations(parse(path)).map(([name]) => name);
 
-// Exact declaration-text receipts from acfd3e37b8765c4c4788c1fa94718d62c60e473c
-// (PR 5742). Tests need no historical Git objects or new baseline writer.
-// Retained rows include private state, all functions/classes and catalog data.
+// The declarations PR 5742 moved into the core vocabulary (acfd3e37b8765c4c4788c1fa94718d62c60e473c; names read
+// from its receipt blobs 8429806b..1265c47d). The test guards the living consequence of that move on the current
+// tree: each moved name is declared exactly once in its canonical module, no longer declared in the old module, and
+// still forwarded by the old module. Later additions to either module are outside these lists, so growth cannot
+// break it; whole-file hashes would (#7356).
 const moves = [
   {
     old: "src/ir/intrinsics.ts",
     canonical: "src/ir/core/intrinsic-vocabulary.ts",
     specifier: "./core/intrinsic-vocabulary.js",
-    moved: 12,
-    movedHash: "12c95d79325da6795c51cba7511d4e80b33c6138365b7ee104f9e31d82dab8b4",
-    retained: 44,
-    retainedHash: "6e7eec6bbaef010d054f9f0309cc16f638d35cca139f8b11b85ed456592b4ba6",
+    moved: [
+      "PURE_MATH_INTRINSIC_IDS",
+      "NUMERIC_COERCION_INTRINSIC_IDS",
+      "NUMBER_BOUNDARY_INTRINSIC_IDS",
+      "NumberBoundaryIntrinsicId",
+      "BOOLEAN_BOUNDARY_INTRINSIC_IDS",
+      "BooleanBoundaryIntrinsicId",
+      "EXTERN_BOUNDARY_INTRINSIC_IDS",
+      "ExternBoundaryIntrinsicId",
+      "INTRINSIC_IDS",
+      "IntrinsicId",
+      "INTRINSIC_SIGNATURE_VERSION",
+      "IntrinsicSignatureVersion",
+    ],
   },
   {
     old: "src/ir/async-runtime-providers.ts",
     canonical: "src/ir/core/async-intents.ts",
     specifier: "./core/async-intents.js",
-    moved: 3,
-    movedHash: "d8a4e132d226ef7959c01860234a0a35006e1c8b274fdc7939184e3d6f64846e",
-    retained: 36,
-    retainedHash: "258e2df650b4c63de0b980af3cf246be6aa394f6dcb852a026e63fd8b5b31e58",
+    moved: ["ASYNC_RUNTIME_FEATURES", "ASYNC_OPTIONAL_RUNTIME_FEATURES", "AsyncRuntimeFeature"],
   },
   {
     old: "src/ir/string-runtime.ts",
     canonical: "src/ir/core/string-types.ts",
     specifier: "./core/string-types.js",
-    moved: 2,
-    movedHash: "892c6b176ce446d8b0e9f9f61616e822b56b6cf227e5442a1ae0fc4f593adfb5",
-    retained: 31,
-    retainedHash: "5c81a555626ad6b994806f135f4da8a0d406974245bed7058a8cce0e193417dd",
+    moved: ["IrStringEncoding", "IrStringConcatMode"],
   },
   {
     old: "src/ir/counted-string-append-provenance.ts",
     canonical: "src/shared/contracts/ir-counted-string-identity.ts",
     specifier: "../shared/contracts/ir-counted-string-identity.js",
-    moved: 4,
-    movedHash: "3bca63c8b7bc0b8bac48a30aba9af5dfdef3fd9a25fb95d18a5e573adc7cc333",
-    retained: 32,
-    retainedHash: "43fee73f4c73e2e294c021dd025513a34f2552f58a65f7b3912d2f1b044f07aa",
+    moved: [
+      "irCountedStringAppendSiteIdBrand",
+      "IrCountedStringAppendSiteId",
+      "IrCountedStringAppendSiteIdentity",
+      "IrCountedStringAppendSiteClaim",
+    ],
   },
 ];
 const intrinsicValues = [
@@ -132,31 +137,25 @@ function identity(): IrCountedStringAppendSiteIdentity {
 }
 
 describe("#3518 canonical core vocabulary seam", () => {
-  it.each(moves)("moves exactly $moved declarations from $old and preserves everything retained", (move) => {
-    const canonical = declarations(parse(move.canonical, readCoreVocabularyReceiptSource(move.canonical, rawRead)));
-    const retained = declarations(parse(move.old, readCoreVocabularyReceiptSource(move.old, rawRead)));
-    expect(canonical).toHaveLength(move.moved);
-    expect(new Set(canonical.map(([name]) => name)).size).toBe(move.moved);
-    expect(digest(canonical)).toBe(move.movedHash);
-    expect(retained).toHaveLength(move.retained);
-    expect(digest(retained)).toBe(move.retainedHash);
-    expect(retained.filter(([name]) => canonical.some(([movedName]) => movedName === name))).toEqual([]);
-    const publicNames = canonical.map(([name]) => name).filter((name) => name !== "irCountedStringAppendSiteIdBrand");
-    const forwarded = parse(move.old, readCoreVocabularyReceiptSource(move.old, rawRead)).statements.flatMap((node) => {
-      if (
-        !ts.isExportDeclaration(node) ||
-        !node.moduleSpecifier ||
-        node.moduleSpecifier.getText() !== JSON.stringify(move.specifier)
-      )
-        return [];
-      expect(node.exportClause && ts.isNamedExports(node.exportClause)).toBe(true);
-      if (!node.exportClause || !ts.isNamedExports(node.exportClause)) return [];
-      return node.exportClause.elements.map((element) => {
-        expect(element.propertyName?.text ?? element.name.text).toBe(element.name.text);
-        return element.name.text;
-      });
-    });
-    expect(forwarded.sort()).toEqual(publicNames.sort());
+  it.each(moves)("keeps the declarations moved from $old in $canonical, forwarded", (move) => {
+    const canonical = declarationNames(move.canonical);
+    const old = declarationNames(move.old);
+    for (const name of move.moved) {
+      expect(
+        canonical.filter((declared) => declared === name),
+        `${name} in ${move.canonical}`,
+      ).toHaveLength(1);
+      expect(old, `${name} redeclared in ${move.old}`).not.toContain(name);
+    }
+    const publicNames = move.moved.filter((name) => name !== "irCountedStringAppendSiteIdBrand");
+    // Forwarded by name; a later refactor may route the forward through another module (the async and string
+    // forwarders now re-export from `runtime/async-providers` and `core/string-runtime`).
+    const forwarded = parse(move.old).statements.flatMap((node) =>
+      ts.isExportDeclaration(node) && node.exportClause && ts.isNamedExports(node.exportClause)
+        ? node.exportClause.elements.map((element) => element.name.text)
+        : [],
+    );
+    expect(forwarded).toEqual(expect.arrayContaining(publicNames));
   });
 
   it.each(intrinsicValues)("re-exports the single canonical %s runtime value", (name) => {
@@ -193,7 +192,7 @@ describe("#3518 canonical core vocabulary seam", () => {
   });
 
   it("retains the verbatim Math certification quote and canonical math.pow tuple evidence", () => {
-    const source = rawRead(moves[0]!.canonical);
+    const source = read(moves[0]!.canonical);
     expect(source).toContain("exact-arity f64 Math surface certified by");
     expect(source).toContain('"math.pow",');
     expect(vocabulary.PURE_MATH_INTRINSIC_IDS).toContain("math.pow");
@@ -302,7 +301,7 @@ describe("#3518 canonical core vocabulary seam", () => {
     const forwarders = new Map(
       moves.map((move) => [
         resolve(root, move.old),
-        parse(move.old, rawRead(move.old))
+        parse(move.old, read(move.old))
           .statements.filter(
             (node) =>
               ts.isExportDeclaration(node) && node.moduleSpecifier?.getText() === JSON.stringify(move.specifier),
@@ -314,7 +313,7 @@ describe("#3518 canonical core vocabulary seam", () => {
     // Follow the actual two-hop public aliases. Keep this bounded surface on
     // current source even when declaration receipts use a historical reader.
     function forwardingSurface(path: string, specifier: string, names: readonly string[]) {
-      const file = parse(path, rawRead(path));
+      const file = parse(path, read(path));
       const found: string[] = [];
       const declarations = file.statements.flatMap((node) => {
         if (!ts.isExportDeclaration(node) || node.moduleSpecifier?.getText() !== JSON.stringify(specifier)) return [];
