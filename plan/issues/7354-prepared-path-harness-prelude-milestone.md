@@ -27,8 +27,6 @@ related: [7188, 2949, 3526, 3527, 3518, 7106, 7349, 7350, 7352]
 # dynamic operand, a value-position prefix `++`/`--`); they replace invariant
 # crashes in place and sit in the arms that own them. ir-program-presentation.ts
 # +1: D1's internal externref callable contract admission in the ABI join.
-# 2026-11-17 (slice Str): ir-program-presentation.ts +1, the native-string arm of the
-# same internal-callable admission (`carried`), written beside D1's externref arm.
 loc-budget-allow:
   - src/compiler.ts
   - src/ir/program-source.ts
@@ -788,3 +786,35 @@ steps 3–5 (dynamic `+`, ToString/`String(x)`, `typeof`) are the follow-up slic
   20-string-op program: 38.5 s total, 24.6 s in `emitPreparedNativeStringLiteral`, 16.9 s in the re-plan.
 - Number formatting is a runtime-support batch, which the presentation refuses (`ir-program-presentation.ts`
   `checkResourceDemand`, "source and prepared runtime must independently prove no async/support demand").
+
+### Review round 1
+
+Adversarial review at `4318ee510f`: NOT MET (string semantics correct; the string provider census did not fail
+closed). Fixed:
+
+1. **Must-fix — the census joins string providers to their executable occurrences** (`stringProvidersJoin`,
+   `prepared-provider-census.ts`). The step-1/2 rules (some literal global or string type exists; any setup function
+   named after a provider symbol) are gone. Now:
+   - the selected string providers equal, as a multiset, the string features the executable projection demands
+     (the manifest's own scanners `irStringConstDemand`/`EqDemand`/`LenDemand`/`ConcatDemand`);
+   - the literal provider: every executable `string.const` is one literal use of the plan, and each use names exactly
+     one literal global or materializer by cache key;
+   - the length provider: exactly one string carrier type, whose completed field at the provider's `fieldIndex` is an
+     i32;
+   - `__str_equals` / `__str_concat`: exactly the one setup function of the provider's role, by symbol;
+   - the runtime-bound multiset excludes string providers; any other non-callable native provider refuses.
+   Each case the review listed now refuses by name (16 new census tests; drop tests restored). Mutation sweep over the
+   join (11 mutants: feature population, use count, use join, materializer arm, carrier count, carrier i32, owner
+   join, owner count, non-string non-callable): all killed.
+2. **Must-fix — `string.eq` / `string.len` emitters** share one helper with the concat emitter
+   (`requireOwnerOccurrence`: an occurrence of the owner's executable projection that admits the request, provider
+   included); `string.len` reads `fieldIndex` from the selected carrier-field provider.
+3. Should-fixes: tests for `string.eq` without concat (needs the empty literal) and an oversized literal (materializer);
+   the unreachable `!equality` clause and the redundant `standalone` check of the ABI string arm are gone (the +1 LOC
+   grant on `ir-program-presentation.ts` is given back).
+
+Evidence after the round: Str, R, D1, P, V/G, prepared-entry/runtime, #7188 tests pass; the 11 string-related
+#3518 files pass (base: same); Prepared bytes of the 32 modules the Str and R tests instantiate are identical to
+`4318ee510f`; ordinary bytes on 101 test262 files × 2 targets identical to the base; gates and
+`changed-root-tests.sh` (interpreter engine) pass. The emitters' provider/owner checks have no test (Prepared attaches
+no string provider, so only a forged emission request would reach them).
