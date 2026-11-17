@@ -9,6 +9,7 @@ export {
   NUMBER_BOUNDARY_RUNTIME_FEATURES,
   BOOLEAN_BOUNDARY_RUNTIME_FEATURES,
   EXTERN_BOUNDARY_RUNTIME_FEATURES,
+  DYNAMIC_VALUE_RUNTIME_FEATURES,
   INTRINSIC_RUNTIME_FEATURES,
   PURE_MATH_HOST_CAPABILITIES,
 } from "./runtime/contracts/intrinsics.js";
@@ -18,6 +19,7 @@ export type {
   NumberBoundaryRuntimeFeature,
   BooleanBoundaryRuntimeFeature,
   ExternBoundaryRuntimeFeature,
+  DynamicValueRuntimeFeature,
   RuntimeFeature,
   HostCapability,
   IntrinsicSignature,
@@ -33,6 +35,7 @@ export {
   NUMBER_BOUNDARY_INTRINSIC_IDS,
   BOOLEAN_BOUNDARY_INTRINSIC_IDS,
   EXTERN_BOUNDARY_INTRINSIC_IDS,
+  DYNAMIC_VALUE_INTRINSIC_IDS,
   INTRINSIC_IDS,
   INTRINSIC_SIGNATURE_VERSION,
 } from "./core/intrinsic-vocabulary.js";
@@ -40,6 +43,7 @@ export type {
   NumberBoundaryIntrinsicId,
   BooleanBoundaryIntrinsicId,
   ExternBoundaryIntrinsicId,
+  DynamicValueIntrinsicId,
   IntrinsicId,
   IntrinsicSignatureVersion,
 } from "./core/intrinsic-vocabulary.js";

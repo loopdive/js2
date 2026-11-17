@@ -61,11 +61,15 @@ export const BOOLEAN_BOUNDARY_RUNTIME_FEATURES = Object.freeze(["js.boolean.box"
 /** (#3526 F1-S4) The extern undefined-probe feature row, 1:1 with its one ID. */
 export const EXTERN_BOUNDARY_RUNTIME_FEATURES = Object.freeze(["js.extern.is_undefined"] as const);
 
+/** (#7354 D1) Dynamic-value feature rows, 1:1 with their intrinsic IDs. */
+export const DYNAMIC_VALUE_RUNTIME_FEATURES = Object.freeze(["js.value.strict_eq", "js.value.undefined"] as const);
+
 export const INTRINSIC_RUNTIME_FEATURES = Object.freeze([
   ...NUMERIC_COERCION_RUNTIME_FEATURES,
   ...NUMBER_BOUNDARY_RUNTIME_FEATURES,
   ...BOOLEAN_BOUNDARY_RUNTIME_FEATURES,
   ...EXTERN_BOUNDARY_RUNTIME_FEATURES,
+  ...DYNAMIC_VALUE_RUNTIME_FEATURES,
   ...PURE_MATH_RUNTIME_FEATURES,
 ] as const);
 
@@ -78,6 +82,8 @@ export type NumberBoundaryRuntimeFeature = (typeof NUMBER_BOUNDARY_RUNTIME_FEATU
 export type BooleanBoundaryRuntimeFeature = (typeof BOOLEAN_BOUNDARY_RUNTIME_FEATURES)[number];
 
 export type ExternBoundaryRuntimeFeature = (typeof EXTERN_BOUNDARY_RUNTIME_FEATURES)[number];
+
+export type DynamicValueRuntimeFeature = (typeof DYNAMIC_VALUE_RUNTIME_FEATURES)[number];
 
 export type RuntimeFeature = (typeof INTRINSIC_RUNTIME_FEATURES)[number];
 

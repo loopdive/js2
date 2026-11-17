@@ -33,14 +33,22 @@ import { completedFunctionSlot } from "./prepared-physical-signature.js";
  * (#7354) The runtime policy a Prepared presentation selects. On wasmgc standalone the number boundary is the
  * native value runtime (`__box_number` / `__unbox_number`), which the census below authenticates; every other
  * family and target keeps its default (unsupported). Each further native family the presentation admits is
- * chosen here, beside the census that authenticates it.
+ * chosen here, beside the census that authenticates it: (#7354 D1) the dynamic value also boxes booleans
+ * (`__box_boolean`) and probes `undefined` (`__extern_is_undefined`) natively; its own `js.value.*` operations
+ * have only a native arm and need no policy.
  */
 export function preparedPresentationPolicy(
   backend: PreparedIrBackendOptions["backend"],
   target: PreparedIrBackendOptions["target"],
 ): RuntimeManifestPolicy {
   return backend === "wasmgc" && target === "standalone"
-    ? { backend, target, numberBoundary: { box: "native", unbox: "native" } }
+    ? {
+        backend,
+        target,
+        numberBoundary: { box: "native", unbox: "native" },
+        booleanBoundary: { box: "native" },
+        externIsUndefined: { probe: "native" },
+      }
     : { backend, target };
 }
 

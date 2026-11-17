@@ -423,3 +423,44 @@ describe("#7354 R — the census refuses what joins nothing", () => {
     expect(await refusal(source, fileName)).toContain(RUNTIME_DEMAND);
   });
 });
+
+describe("#7354 D1 — the census on a dynamic-value program", () => {
+  const program =
+    "function id(v: any): any { return v; }\n" +
+    "export function main(): number { return (id(1) === id(1) ? 1 : 0) + (id(undefined) === undefined ? 2 : 0); }";
+  const refusal = async () => {
+    const result = await compile(program, options("standalone", "entry.ts"));
+    expect(result.success).toBe(false);
+    return messages(result).join("\n");
+  };
+  const RUNTIME_DEMAND = "host provider or async demand is outside this numeric presentation contract";
+  const IDS = ["native.js.value.strict_eq", "native.js.value.undefined"];
+
+  it("presents the unaltered program", async () => {
+    expect(((await present(program, "entry.ts")).main as () => number)()).toBe(3);
+  });
+
+  it.each(IDS)("refuses a census that drops %s", async (id) => {
+    census.providers = (rows) => rows.filter((row) => row.id !== id);
+    expect(await refusal()).toContain(RUNTIME_DEMAND);
+  });
+
+  it.each(IDS)("refuses a census that renames %s", async (id) => {
+    census.providers = (rows) => rows.map((row) => (row.id === id ? { ...row, id: `${id}.renamed` } : row));
+    expect(await refusal()).toContain(RUNTIME_DEMAND);
+  });
+
+  it.each(["__js_strict_eq", "__js_undefined"])("refuses a native setup that renames the %s resource", async (name) => {
+    census.setup = (setup) =>
+      ({
+        ...setup,
+        resources: {
+          ...setup.resources,
+          declarations: setup.resources.declarations.map((row) =>
+            "name" in row && row.name === name ? { ...row, name: `${name}_renamed` } : row,
+          ),
+        },
+      }) as never;
+    expect(await refusal()).toContain(RUNTIME_DEMAND);
+  });
+});

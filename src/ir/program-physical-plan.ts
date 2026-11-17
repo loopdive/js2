@@ -21,7 +21,7 @@ import {
 } from "../backend/wasmgc/program/native-invocation-abi.js";
 import { nativeStringOutputAbiBindings } from "../backend/wasmgc/program/native-string-output-abi.js";
 import {
-  nativeBooleanAbiBindings,
+  nativeIntrinsicAbiBindings,
   nativeNumberBinding,
 } from "../backend/wasmgc/program/native-primitive-boundary-abi.js";
 import { planHostNumberBoundary, type HostNumberBoundarySetup } from "./program/host-number-boundary-setup.js";
@@ -689,7 +689,7 @@ function nativeStringSetup(
     const binding = nativeNumberBinding(context, input, baseOrder + index, direction);
     if (binding) add(binding);
   }
-  nativeBooleanAbiBindings(input, baseOrder).forEach(add);
+  nativeIntrinsicAbiBindings(input, baseOrder).forEach(add);
   if (input.plan.output) {
     if (!input.outputRequirements) nativeInvalid("missing output requirements for ABI join");
     const offset = input.plan.declarations.findIndex((row) => row.key === input.plan.output!.declarations[0]?.key);
@@ -1196,12 +1196,11 @@ function missingIntrinsicMaterialization(
       ((nativeStrings &&
         (instruction.id === "js.number.unbox" ||
           (instruction.id === "js.number.box" && projection.prepared.manifest.policy.numberBoundary.box === "native") ||
-          ((instruction.id === "js.boolean.box" || instruction.id === "js.boolean.unbox") &&
-            nativeStrings.bindings.some(
-              (row) =>
-                row.reference.kind === "func" &&
-                irCallableBindingKey(row.reference.binding) === irCallableBindingKey(provider.target.binding),
-            )))) ||
+          nativeStrings.bindings.some(
+            (row) =>
+              row.reference.kind === "func" &&
+              irCallableBindingKey(row.reference.binding) === irCallableBindingKey(provider.target.binding),
+          ))) ||
         (instruction.id === "js.number.box" &&
           hostNumberBoundary?.imports.some(
             (row) => row.referenceKey === irCallableBindingKey(provider.target.binding),

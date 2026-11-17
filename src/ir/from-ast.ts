@@ -14254,6 +14254,9 @@ function emitUnaryToNumber(
 function lowerPrefixUnary(expr: ts.PrefixUnaryExpression, cx: LowerCtx): IrValueId {
   if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== expr)
     return withNodeSourceSite(cx, expr, () => lowerPrefixUnary(expr, cx));
+  // (#7354 D1) Deferred, so only the selector-less Prepared producer gets here.
+  if (expr.operator === ts.SyntaxKind.PlusPlusToken || expr.operator === ts.SyntaxKind.MinusMinusToken)
+    demoteToLegacy("body-shape-rejected", `ir/from-ast: value-position prefix update in ${cx.funcName}`);
   // #2135 — capability-table invariant, mirroring `lowerBinary`. A deferred
   // prefix op post-claim is a selector↔table disagreement (compiler bug).
   assertNotDeferred(
@@ -15801,6 +15804,9 @@ function emitExactNumericExponentiation(
   right: ts.Expression,
   cx: LowerCtx,
 ): IrValueId {
+  // (#7354 D1) No dynamic `**`; only the selector-less Prepared producer gets here.
+  if (cx.builder.typeOf(lhs).kind === "dynamic" || cx.builder.typeOf(rhs).kind === "dynamic")
+    demoteToLegacy("operand-coercion-unsupported", `ir/from-ast: '**' on a dynamic operand in ${cx.funcName}`);
   if (!checkerProvesExactNumericExponentOperand(left, cx) || !checkerProvesExactNumericExponentOperand(right, cx)) {
     throw new IrInvariantError(
       "selection-preparation-mismatch",

@@ -2,34 +2,38 @@
 import type { FuncHandle, Instr, TypeHandle } from "../../../wasm/model/instructions.js";
 
 /** Actual dependencies of the complete existing SameValue dispatch. No provider is inferred from a signature. */
-export interface ObjectSameValueResources {
+export type ObjectSameValueResources = PrimitiveEqualityResources & (BigIntEqualityArm | NoBigIntEqualityArm);
+interface PrimitiveEqualityResources {
   readonly typeofNumIdx: FuncHandle;
   readonly typeofBoolIdx: FuncHandle;
-  readonly typeofBigIdx: FuncHandle;
   readonly unboxNumIdx: FuncHandle;
   readonly unboxBoolIdx: FuncHandle;
-  /** The legacy-i64 case exists only to preserve explicitly selected historical recipes. */
-  readonly bigint:
-    | { readonly kind: "carrier"; readonly equalIdx: FuncHandle }
-    | { readonly kind: "legacy-i64"; readonly toBigIdx: FuncHandle };
+  /**
+   * (#7354 D1) The number rule: SameValue's by default (equal bit patterns, every NaN equal), or
+   * IsStrictlyEqual's Number::equal (`f64.eq`: `NaN !== NaN`, `+0 === -0`).
+   */
+  readonly numberEquality?: "number-equal";
   readonly anyStrTypeIdx: TypeHandle;
   readonly strFlattenIdx: FuncHandle | undefined;
   readonly strEqualsIdx: FuncHandle | undefined;
 }
+interface BigIntEqualityArm {
+  readonly typeofBigIdx: FuncHandle;
+  /** The legacy-i64 case exists only to preserve explicitly selected historical recipes. */
+  readonly bigint:
+    | { readonly kind: "carrier"; readonly equalIdx: FuncHandle }
+    | { readonly kind: "legacy-i64"; readonly toBigIdx: FuncHandle };
+}
+/** (#7354 D1) A comparison no BigInt can reach (the Prepared dynamic value admits none) has no BigInt arm. */
+interface NoBigIntEqualityArm {
+  readonly typeofBigIdx?: undefined;
+  readonly bigint?: undefined;
+}
 
 /** Preserve the donor's complete primitive dispatch, including its exact numeric bit comparison. */
 export function buildObjectSameValueBody(resources: ObjectSameValueResources): Instr[] {
-  const {
-    typeofNumIdx,
-    typeofBoolIdx,
-    typeofBigIdx,
-    unboxNumIdx,
-    unboxBoolIdx,
-    bigint,
-    anyStrTypeIdx,
-    strFlattenIdx,
-    strEqualsIdx,
-  } = resources;
+  const { typeofNumIdx, typeofBoolIdx, unboxNumIdx, unboxBoolIdx, anyStrTypeIdx, strFlattenIdx, strEqualsIdx } =
+    resources;
   const EQ_HEAP = -19; // WasmGC `eq` abstract heap type
 
   // params: a=0, b=1 ; locals: aa=2 (anyref), ba=3 (anyref)
@@ -98,7 +102,7 @@ export function buildObjectSameValueBody(resources: ObjectSameValueResources): I
     { op: "local.set", index: 3 },
     ...stringOrIdentityArm,
   ];
-  const bigintArm = (elseArm: Instr[]): Instr[] => [
+  const bigintArm = ({ typeofBigIdx, bigint }: BigIntEqualityArm, elseArm: Instr[]): Instr[] => [
     ...bothTag(typeofBigIdx),
     {
       op: "if",
@@ -137,31 +141,39 @@ export function buildObjectSameValueBody(resources: ObjectSameValueResources): I
       else: elseArm,
     },
   ];
+  // SameValue numbers: compare f64 bit patterns (NaN==NaN, +0!=-0).
+  const sameValueNumbers: Instr[] = [
+    { op: "local.get", index: 0 },
+    { op: "call", funcIdx: unboxNumIdx },
+    { op: "i64.reinterpret_f64" },
+    { op: "local.get", index: 1 },
+    { op: "call", funcIdx: unboxNumIdx },
+    { op: "i64.reinterpret_f64" },
+    { op: "i64.eq" },
+    // Every NaN payload/sign denotes the same Number value for SameValue.
+    ...[0, 1].flatMap((index): Instr[] => [
+      { op: "local.get", index },
+      { op: "call", funcIdx: unboxNumIdx },
+      { op: "local.get", index },
+      { op: "call", funcIdx: unboxNumIdx },
+      { op: "f64.ne" },
+    ]),
+    { op: "i32.and" },
+    { op: "i32.or" },
+  ];
+  const numberEqual: Instr[] = [
+    { op: "local.get", index: 0 },
+    { op: "call", funcIdx: unboxNumIdx },
+    { op: "local.get", index: 1 },
+    { op: "call", funcIdx: unboxNumIdx },
+    { op: "f64.eq" },
+  ];
   const numberArm = (elseArm: Instr[]): Instr[] => [
     ...bothTag(typeofNumIdx),
     {
       op: "if",
       blockType: { kind: "val", type: { kind: "i32" } },
-      then: [
-        // SameValue numbers: compare f64 bit patterns (NaN==NaN, +0!=-0).
-        { op: "local.get", index: 0 },
-        { op: "call", funcIdx: unboxNumIdx },
-        { op: "i64.reinterpret_f64" },
-        { op: "local.get", index: 1 },
-        { op: "call", funcIdx: unboxNumIdx },
-        { op: "i64.reinterpret_f64" },
-        { op: "i64.eq" },
-        // Every NaN payload/sign denotes the same Number value for SameValue.
-        ...[0, 1].flatMap((index): Instr[] => [
-          { op: "local.get", index },
-          { op: "call", funcIdx: unboxNumIdx },
-          { op: "local.get", index },
-          { op: "call", funcIdx: unboxNumIdx },
-          { op: "f64.ne" },
-        ]),
-        { op: "i32.and" },
-        { op: "i32.or" },
-      ],
+      then: resources.numberEquality === "number-equal" ? numberEqual : sameValueNumbers,
       else: elseArm,
     },
   ];
@@ -178,5 +190,5 @@ export function buildObjectSameValueBody(resources: ObjectSameValueResources): I
       else: rest,
     },
   ];
-  return nullArm(numberArm(boolArm(bigintArm(identityArm))));
+  return nullArm(numberArm(boolArm(resources.bigint === undefined ? identityArm : bigintArm(resources, identityArm))));
 }

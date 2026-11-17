@@ -7,7 +7,11 @@
  */
 import type { Instr, StructTypeDef, ValType } from "../ir/types.js";
 import type { ts } from "../ts-api.js";
-import { buildAnyValueType, buildUndefinedInitializer } from "../runtime/wasmgc/values/primitive-layouts.js";
+import {
+  buildAnyValueType,
+  buildIsUndefinedBody,
+  buildUndefinedInitializer,
+} from "../runtime/wasmgc/values/primitive-layouts.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { allocTempLocal, releaseTempLocal } from "./context/locals.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#1916 S3b) stable-regime minting
@@ -189,47 +193,12 @@ export function buildIsUndefinedExternBody(
   if (!undefinedSingletonActive(ctx)) return undefined;
   if (ctx.anyValueTypeIdx < 0) ensureAnyValueType(ctx);
   if (ctx.anyValueTypeIdx < 0) return undefined;
-  const anyTypeIdx = ctx.anyValueTypeIdx;
-  const boxedNumArm: Instr[] =
-    ctx.nativeBoxNumberTypeIdx >= 0
-      ? [
-          { op: "local.get", index: scratchAnyLocal },
-          { op: "ref.test", typeIdx: ctx.nativeBoxNumberTypeIdx },
-          {
-            op: "if",
-            blockType: { kind: "val", type: { kind: "i32" } },
-            then: [
-              { op: "local.get", index: scratchAnyLocal },
-              { op: "ref.cast", typeIdx: ctx.nativeBoxNumberTypeIdx },
-              { op: "struct.get", typeIdx: ctx.nativeBoxNumberTypeIdx, fieldIdx: 0 },
-              { op: "i64.reinterpret_f64" },
-              { op: "i64.const", value: undefF64Bits },
-              { op: "i64.eq" },
-            ],
-            else: [{ op: "i32.const", value: 0 }],
-          },
-        ]
-      : [{ op: "i32.const", value: 0 }];
-  return [
-    // any = any.convert_extern(v)  (null externref → null anyref: both
-    // ref.tests below answer 0, so null → NOT undefined, as required.)
-    { op: "local.get", index: 0 },
-    { op: "any.convert_extern" },
-    { op: "local.tee", index: scratchAnyLocal },
-    { op: "ref.test", typeIdx: anyTypeIdx },
-    {
-      op: "if",
-      blockType: { kind: "val", type: { kind: "i32" } },
-      then: [
-        { op: "local.get", index: scratchAnyLocal },
-        { op: "ref.cast", typeIdx: anyTypeIdx },
-        { op: "struct.get", typeIdx: anyTypeIdx, fieldIdx: 0 },
-        { op: "i32.const", value: 1 },
-        { op: "i32.eq" },
-      ],
-      else: boxedNumArm,
-    },
-  ];
+  return buildIsUndefinedBody(
+    ctx.anyValueTypeIdx,
+    ctx.nativeBoxNumberTypeIdx >= 0 ? ctx.nativeBoxNumberTypeIdx : undefined,
+    scratchAnyLocal,
+    undefF64Bits,
+  );
 }
 
 /**

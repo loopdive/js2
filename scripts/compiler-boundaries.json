@@ -140,7 +140,8 @@
         "src/ir/analysis/dominance.ts",
         "src/ir/analysis/alloc-verification.ts",
         "src/ir/analysis/nested-stackification.ts",
-        "src/ir/analysis/backend-legality.ts"
+        "src/ir/analysis/backend-legality.ts",
+        "src/ir/analysis/value-types.ts"
       ],
       "required": true,
       "entries": [
@@ -162,7 +163,8 @@
         "src/ir/analysis/allocation-evidence/effect-rules.ts",
         "src/ir/analysis/allocation-evidence/census.ts",
         "src/ir/analysis/allocation-evidence/metadata.ts",
-        "src/ir/analysis/allocation-evidence/verify.ts"
+        "src/ir/analysis/allocation-evidence/verify.ts",
+        "src/ir/analysis/value-types.ts"
       ],
       "minModules": 19
     },
@@ -17000,6 +17002,39 @@
       "destination": "compiler",
       "owner": "7354",
       "nextBoundary": "Prepared presentation runtime census (#7354 R): the presentation's runtime policy and the authentication of each selected provider against the completed physical plan; moves with ir-program-presentation.ts at compiler-layer activation."
+    },
+    {
+      "path": "src/ir/source-dynamic-contracts.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "frontend-ts",
+      "owner": "7354",
+      "nextBoundary": "Checker-certified `any` parameter/result contracts of the Prepared source producer (#7354 D1); moves with program-source.ts under frontend/ts."
+    },
+    {
+      "path": "src/ir/program/dynamic-value-legalization.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
+      "path": "src/ir/analysis/value-types.ts",
+      "state": "clean",
+      "layer": "ir-analysis"
+    },
+    {
+      "path": "src/ir/runtime/dynamic-value-callables.ts",
+      "state": "clean",
+      "layer": "ir-runtime"
+    },
+    {
+      "path": "src/ir/runtime/canonical-provider-mismatch.ts",
+      "state": "clean",
+      "layer": "ir-runtime"
+    },
+    {
+      "path": "src/backend/wasmgc/resources/native-dynamic-values.ts",
+      "state": "clean",
+      "layer": "backend-wasmgc"
     },
     {
       "path": "src/compiler/prepared-physical-signature.ts",
