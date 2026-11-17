@@ -5,7 +5,7 @@
  * that order: the identifier read lowers by switching on the answer, and every other question about a read (the
  * `typeof` of a name nothing resolves) asks the same function, so the two cannot drift. Pure: it emits nothing.
  */
-import type ts from "typescript";
+import ts from "typescript";
 import { isAmbientIntrinsicValueUse } from "../shared/ambient-intrinsics.js";
 import { IrInvariantError } from "./outcomes.js";
 import type { IrFromAstResolver } from "./from-ast.js";
@@ -29,6 +29,11 @@ export type IdentifierRead<Binding> =
   | { readonly kind: "host-global"; readonly global: HostGlobal; readonly certifiedDom: boolean }
   /** An ambient intrinsic as a value, read off the realm's global object (#7106). */
   | { readonly kind: "ambient-intrinsic" }
+  /**
+   * (#7354 Ty) A `typeof` operand no provider resolves, where the resolver states the name is absent from this
+   * program's global environment: its `typeof` is "undefined" (§13.5.3, an unresolvable reference).
+   */
+  | { readonly kind: "absent-global" }
   | { readonly kind: "unresolved" };
 
 interface IdentifierReadContext<Binding> extends FunctionValueLoweringPlans {
@@ -69,5 +74,21 @@ export function classifyIdentifierRead<Binding>(
     };
   if (isAmbientIntrinsicValueUse(expr, (node) => resolver?.isLibOnlyBinding?.(node) === true, resolver))
     return { kind: "ambient-intrinsic" };
-  return { kind: "unresolved" };
+  return isTypeofOperand(expr) && resolver?.unresolvedNameIsAbsent?.(expr) === true
+    ? { kind: "absent-global" }
+    : { kind: "unresolved" };
+}
+
+/** The build-time `typeof` answer for an absent global, from the same classification the read uses. */
+export function absentGlobalTypeof<Binding>(
+  expr: ts.Identifier,
+  cx: IdentifierReadContext<Binding>,
+): "undefined" | undefined {
+  return classifyIdentifierRead(expr, cx).kind === "absent-global" ? "undefined" : undefined;
+}
+
+function isTypeofOperand(expr: ts.Identifier): boolean {
+  let node: ts.Node = expr;
+  while (ts.isParenthesizedExpression(node.parent)) node = node.parent;
+  return ts.isTypeOfExpression(node.parent);
 }

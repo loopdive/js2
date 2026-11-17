@@ -431,7 +431,7 @@ import {
   irVecNewSizedSymbol,
 } from "./vector-runtime.js";
 import { readEnv } from "../env.js";
-import { classifyIdentifierRead } from "./identifier-read.js";
+import { absentGlobalTypeof, classifyIdentifierRead } from "./identifier-read.js";
 
 interface ResolvedIrVecType {
   readonly lowering: IrVecLowering;
@@ -941,6 +941,8 @@ export interface IrFromAstResolver extends PreparedAsyncFromAstResolver {
   isAmbientBinding?(node: ts.Identifier): boolean;
   /** (#7118) Every declaration of the identifier's symbol is a lib one. */
   isLibOnlyBinding?(node: ts.Identifier): boolean;
+  /** (#7354 Ty) Closed world: a name the program does not declare is absent from its global environment. */
+  unresolvedNameIsAbsent?(node: ts.Identifier): boolean;
   /** (#7127) The module's builtin-prototype brand companion is seeded. */
   builtinProtoCompanionSeeded?(): boolean;
   /** (#7106 lever O) The program has a runtime-eval site that may run. */
@@ -5215,6 +5217,7 @@ function lowerExprUnchecked(expr: ts.Expression, cx: LowerCtx, hint: IrType): Ir
       case "module-binding":
         return lowerResolvedModuleBindingRead(expr.text, read.binding, cx);
       case "global-undefined":
+      case "absent-global":
         return cx.builder.emitDynUndefined(JS_TAG_IDS.Undefined);
       case "global-number":
         return cx.builder.emitConst({ kind: "f64", value: read.value }, irVal({ kind: "f64" }));
@@ -14033,7 +14036,10 @@ function lowerConditional(expr: ts.ConditionalExpression, cx: LowerCtx, hint?: I
     return withNodeSourceSite(cx, expr, () => lowerConditional(expr, cx, hint));
   // (#7106 S1b) A constant `typeof <ambient>` condition selects its live arm
   // at build time — the selector admitted exactly that arm.
-  const folded = foldAmbientTypeofComparison(expr.condition, (id) => ambientTypeofIdentifierTagFromAst(id, cx));
+  const folded = foldAmbientTypeofComparison(
+    expr.condition,
+    (id) => ambientTypeofIdentifierTagFromAst(id, cx) ?? absentGlobalTypeof(id, cx),
+  );
   if (folded !== undefined) {
     return lowerExpr(folded ? expr.whenTrue : expr.whenFalse, cx, hint ?? irVal({ kind: "f64" }));
   }
