@@ -27,6 +27,8 @@ related: [7188, 2949, 3526, 3527, 3518, 7106, 7349, 7350, 7352]
 # dynamic operand, a value-position prefix `++`/`--`); they replace invariant
 # crashes in place and sit in the arms that own them. ir-program-presentation.ts
 # +1: D1's internal externref callable contract admission in the ABI join.
+# 2026-11-17 (slice Str): ir-program-presentation.ts +1, the native-string arm of the
+# same internal-callable admission (`carried`), written beside D1's externref arm.
 loc-budget-allow:
   - src/compiler.ts
   - src/ir/program-source.ts
@@ -711,3 +713,78 @@ against the lowered body (a disagreement is a refusal, never a conversion).
   `--target standalone` (8 compile errors on both, 15 skipped).
 - Gates: typecheck, loc, func, coercion-sites, oracle-ratchet, dead-exports, import-cycles, boundaries inventory.
 - issue-3518\*/3526\* were not re-run after this merge (last run: on D1 `08fcfa7b82`, above).
+
+## Str result
+
+Status 2026-11-17. Branch `claude/7354-str` on `claude/7354-p` (`1995dd6ef2`). Steps 1 and 2 of the slice are built;
+steps 3–5 (dynamic `+`, ToString/`String(x)`, `typeof`) are the follow-up slice Str2 (lead decision, below).
+
+### Built
+
+- **Step 1 — typed strings through the presentation.**
+  - `preparedPresentationPolicy` selects native string constants, equality, length and concatenation on wasmgc
+    standalone (not the relational compare: it has no join).
+  - The string value plan (`native-string-values.ts`) joins `string.eq` to the lazy `__str_equals` resource
+    (`native-string-equality.ts`, reused as is) and `string.len` to the carrier's length field.
+    `native-string-output-requirements.ts` no longer refuses those two kinds.
+  - One `preparedNativeStringResolver(tx, pack, unitId)` realises an owner's string operations; `fillPrimaryBody`
+    spreads it (program-consumer.ts shrinks by 11 lines).
+  - R's census: a storage provider (`native-global` literal, `carrier-field` length) is answered by the setup's
+    literal storage or string carrier type; a provider the IR reaches through its own instruction (`string.eq`,
+    `string.concat`) by the setup function named after the provider's symbol. Every other setup function stays a
+    declared dependency, as before.
+  - The ABI join admits a native string in an internal callable contract on standalone, beside D1's externref arm.
+- **Step 2 — a string in the dynamic value.**
+  - The legalization boxes a string as `coerce.to_externref` (the externref that wraps it), the ordinary standalone
+    carrier.
+  - `nativeStringsReachCarrier(demands)` (`native-string-value-demands.ts`): a native string can reach the carrier
+    only through an executable `coerce.to_externref` of a string (its box, a thrown string). When it can, strict
+    equality takes the shared SameValue builder's string arm (code units through flatten + `__str_equals`), which
+    D1 left off; otherwise its body is unchanged.
+
+### Differences from the brief and why
+
+- **No typed string home for a script `var`.** V's classifier can answer the existing `"string"` home soundly with
+  the same reads proof (tried), but the physical plan has no string global ("global s carries non-scalar IR type
+  string") — the same globals arm H builds for dynamic. Left to H/merge; proven with function locals.
+- **A reassigned typed string local** is refused by from-ast ("has no slot representation"): the Prepared resolver
+  has no `resolveString` slot type. Not built (a resolver seam, not a join).
+- **Step 3 needs a second body** (`__ir_dyn_add` = `emitAnyAddFromExternTemps`, entangled with the legacy object
+  runtime); per the lead: Str2 builds a Prepared-native add from shared pure builders.
+
+### Measured
+
+- `tests/issue-7354-str-strings.test.ts` (16 tests): typed string locals, concatenation, a non-ASCII literal,
+  `throw "x"` caught and escaping, strings out of `try`/`catch`; a string through an untyped parameter compared
+  with literals, numbers and `undefined`; fresh concatenations equal by code units through `any`; StringToNumber.
+  Refusals: compare, reassigned string local, script string var, gc target, ToBoolean, `==`, a method call.
+- Sweep (strict entry, against node): 11 operations (`===`, `!==`, against a typed string / number, `* 1`, `- 0`,
+  unary `+`/`-`, `< 2`, `>= 0`) × 19 values (numbers incl. NaN, ±0, ±Infinity; booleans; `undefined`; 9 strings
+  incl. `""`, `" 3 "`, `"0x10"`, `"-0"`, `"Infinity"`) × 4 positions (top level, function, value, condition):
+  44/44 correct. Named gaps for dynamic `+`, `typeof`, `!`, `==`; zero invariant errors, zero invalid Wasm.
+- Ordinary-pipeline bytes, base sources swapped into the same tree: 396 files of the 411-row list compiled, identical
+  on the JS environment and `--target standalone` (8 compile errors on both, 15 skipped).
+- Prepared bytes: every module the prepared-entry/runtime, #7188, R, D1, P and V/G tests instantiate (66) is
+  identical; the one new module is Str's census program.
+- Pins (base vs this branch, failing sets): the 22 #3518/#7139 files that import a touched module, and the changed
+  root tests: identical failing sets except the pins below. Pre-existing on the base (same sets): the core
+  vocabulary seam (source hash of `src/ir/ast-lowering-plans.ts`), semantic-verification ownership (`effects.ts`),
+  string-boundary-const (5), number-format requirements (2), realm requirements (1), and 626 receipt tests in the
+  validator/helper policy-evolution and semantic-provider-boundary files.
+- Pins updated: R (`throw "x"` → the compare refusal; Str census tests), D1 (object box refusal; member read names
+  `dyn.member_get`; `selectNativeDynamicValues` signal), `issue-3518-native-string-output-requirements`
+  (string length is a value-plan join, no output use).
+- 411-row sample: unchanged — 393 × not-direct (`print` 345, `__isArray` 43, `__globalObject` 5), 2 × switch-case
+  binding, 1 × `DD_operator`; negatives 14 pass.
+- Mutation survivors: the `string` kind check and the projection-view check of `nativeStringsReachCarrier` (today
+  every executable `coerce.to_externref` carries a string and the program view mirrors the projection).
+- Gates: typecheck, loc, func, coercion-sites, oracle-ratchet, dead-exports, import-cycles, boundaries inventory.
+
+### Known gaps and hand-over (Str2)
+
+- Every emitted string literal/concat re-authenticates the whole native string plan (`emitPreparedNativeStringLiteral`
+  → `requireCompletedNativeStringValues` → `ownerFor` → `assertNativeStringValueReservationInput` →
+  `planNativeStringValuePhysical` → `assertNativeStringOutputRequirementsCurrent`, twice per literal). Profile of a
+  20-string-op program: 38.5 s total, 24.6 s in `emitPreparedNativeStringLiteral`, 16.9 s in the re-plan.
+- Number formatting is a runtime-support batch, which the presentation refuses (`ir-program-presentation.ts`
+  `checkResourceDemand`, "source and prepared runtime must independently prove no async/support demand").
