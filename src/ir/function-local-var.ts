@@ -58,28 +58,18 @@ function addBindingNames(name: ts.BindingName, counts: Map<string, number>): voi
 }
 
 /**
- * Certify the narrow `var` subset whose observable scope is already
- * representable by IR locals.
- *
- * A plain declaration is modeled in its enclosing block; a C-style for-head
- * is modeled in the ForStatement. Every reference must follow the initializer
- * and remain inside that region. Duplicate bindings and nested-function
- * captures are refused, which excludes hoisting/redeclaration behavior instead
- * of approximating it.
+ * Every binding of a function body (or script) outside nested functions: each name's count over parameters,
+ * variable, function, class and catch declarations at any block depth, and the `var` declarations.
  */
-export function collectIrSafeVarDeclarationLists(
-  fn: ts.FunctionLikeDeclaration,
-  parameterNames: ReadonlySet<string>,
-): ReadonlySet<ts.VariableDeclarationList> {
-  if (!fn.body || !ts.isBlock(fn.body)) return new Set();
-  const body = fn.body;
-
+function collectBindings(
+  body: ts.Node,
+  parameterNames: Iterable<string>,
+): { bindingCounts: Map<string, number>; varDeclarations: ts.VariableDeclaration[]; containsForOf: boolean } {
   const bindingCounts = new Map<string, number>();
   for (const name of parameterNames) bindingCounts.set(name, 1);
   const varDeclarations: ts.VariableDeclaration[] = [];
   let containsForOf = false;
-
-  const collectBindings = (node: ts.Node): void => {
+  const visit = (node: ts.Node): void => {
     if (node !== body && isFunctionBoundary(node)) {
       if (ts.isFunctionDeclaration(node) && node.name) {
         bindingCounts.set(node.name.text, (bindingCounts.get(node.name.text) ?? 0) + 1);
@@ -97,9 +87,54 @@ export function collectIrSafeVarDeclarationLists(
     } else if (ts.isCatchClause(node) && node.variableDeclaration) {
       addBindingNames(node.variableDeclaration.name, bindingCounts);
     }
-    forEachChild(node, collectBindings);
+    forEachChild(node, visit);
   };
-  forEachChild(body, collectBindings);
+  forEachChild(body, visit);
+  return { bindingCounts, varDeclarations, containsForOf };
+}
+
+const repeatedNames = new WeakMap<ts.Node, ReadonlySet<string>>();
+
+/**
+ * (#7354) Whether the `var` `declaration` shares its name with another binding of its function (or script): a
+ * second `var` at any block depth, a parameter, a function, class, catch or lexical declaration. Lowering binds a
+ * `var` in its own block, so a repeat would open a second, separate local where JavaScript has one hoisted binding.
+ */
+export function isRepeatedVarBinding(declaration: ts.VariableDeclaration, name: string): boolean {
+  if (!ts.isVariableDeclarationList(declaration.parent) || !isVarDeclarationList(declaration.parent)) return false;
+  let owner: ts.Node = declaration;
+  while (owner.parent && !isFunctionBoundary(owner)) owner = owner.parent;
+  let names = repeatedNames.get(owner);
+  if (!names) {
+    const body = isFunctionBoundary(owner) ? (owner as ts.FunctionLikeDeclaration).body! : owner;
+    const parameters = new Map<string, number>();
+    if (isFunctionBoundary(owner))
+      for (const parameter of (owner as ts.FunctionLikeDeclaration).parameters)
+        addBindingNames(parameter.name, parameters);
+    const { bindingCounts } = collectBindings(body, parameters.keys());
+    names = new Set([...bindingCounts].flatMap(([name, count]) => (count > 1 ? [name] : [])));
+    repeatedNames.set(owner, names);
+  }
+  return names.has(name);
+}
+
+/**
+ * Certify the narrow `var` subset whose observable scope is already
+ * representable by IR locals.
+ *
+ * A plain declaration is modeled in its enclosing block; a C-style for-head
+ * is modeled in the ForStatement. Every reference must follow the initializer
+ * and remain inside that region. Duplicate bindings and nested-function
+ * captures are refused, which excludes hoisting/redeclaration behavior instead
+ * of approximating it.
+ */
+export function collectIrSafeVarDeclarationLists(
+  fn: ts.FunctionLikeDeclaration,
+  parameterNames: ReadonlySet<string>,
+): ReadonlySet<ts.VariableDeclarationList> {
+  if (!fn.body || !ts.isBlock(fn.body)) return new Set();
+  const body = fn.body;
+  const { bindingCounts, varDeclarations, containsForOf } = collectBindings(body, parameterNames);
   // A `for...of` over a generator that is later withdrawn for ABI parity can
   // leave its newly claimed caller without a compatible IR element carrier.
   // Keep that cross-unit interaction outside this first `var` slice; ordinary
