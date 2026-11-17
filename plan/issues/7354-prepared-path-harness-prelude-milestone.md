@@ -1265,3 +1265,22 @@ Adversarial review at `bbab057818`: T MET, X MET, no must-fix. Should-fixes:
    10 changed root files were run directly and fail only the base's tests.
 
 Verdict MET; every should-fix fixed or rebutted.
+
+### After the merge onto H (`36c1b42ac9`)
+
+- Port onto `programDynamicContracts`: the `resolver` entry gains `dynamicCarrierIsExternref`; the Boolean result
+  contract is `sourceBooleanResult`, asked by `result()` after the dynamic one (the provenance still asks only the
+  dynamic one); the `unknown`-as-untyped rule is dropped: H's provenance already answers "may be dynamic" for a
+  catch binding (a local without an initializer), which covers both the result contract and the flow rule. Two
+  additions beside their siblings: the legalization also runs for roots that bind a catch (a program whose only
+  dynamic value is a catch binding has no dynamic contract), and the flow rule's `passedOn` treats the operands of
+  `||`/`&&` like a comma's result (T makes them yield an operand). H tests updated: `x || 0`, a returned catch
+  binding and a returned `null` run now instead of refusing.
+- Tests: T 34, X 48, H 66, P, D1, V/G, R, prepared entry/runtime, #7188 pass; `changed-root-tests.sh`: all 10
+  files pass. Gates against the H tip pass. Ordinary bytes: 100 files × 2 targets identical to the H head. Sweeps:
+  T 1584/1584, X 227 + 4 named gaps.
+- 411-row sample: negatives 14 pass. First gap over 396 positives: 282 × "dynamic operation dyn.typeof has no
+  Prepared intrinsic" (`isPrimitive`, `harness/assert.js:21`, the prelude's first `typeof`); 84 × "module binding X
+  has no exact typed storage: not-direct" (`obj` 52, `x` 5, `proto` 4, `o` 4, `arr` 3, …); 27 × "direct call to
+  "String" has no exact AST-site plan in verifyProperty"; 2 × switch-case lexical binding; 1 × "unknown class
+  "Test262Error" in isConstructor".
