@@ -755,7 +755,7 @@ a new value throwable must give the dynamic operations its arm.
 
 ### Measured
 
-- Tests: `tests/issue-7354-t-truthiness-null.test.ts` (30), `tests/issue-7354-x-dynamic-throw.test.ts` (39),
+- Tests (round 1 counts): `tests/issue-7354-t-truthiness-null.test.ts` (34), `tests/issue-7354-x-dynamic-throw.test.ts` (48),
   each accepted program run with node's answer (returns) and a wrong one (throws). With D1, P, V/G, R: all pass.
 - Sweeps against node, through the strict entry: T 1584 programs (`!v`, `!!v`, `?:`, `&&`, `||`, `=== null`,
   `!== null`, `null === v`, `=== undefined`, `if`, `if (!v)`, `while`, `for`, `do-while` × 11 values incl. NaN,
@@ -793,9 +793,50 @@ a new value throwable must give the dynamic operations its arm.
 - `typeof v` refuses "dynamic operation dyn.typeof has no Prepared intrinsic" (Str); `isPrimitive` stops there.
 - `v == null` refuses in from-ast ("bare 'null' in non-reference context (f64)"); other loose equality refuses
   as `dyn.eq (loose)`.
-- A boolean (i32) result passed to a dynamic parameter refuses in from-ast ("arg 0 of call to same is i32,
-  expected dynamic"), outside this slice.
+- A boolean (i32) result passed to a dynamic parameter was refused in from-ast; fixed in review round 1 (the
+  Boolean result contract below).
 - Pre-existing on the base: `throw {}` throws `PreparedIrProgramInvariantError` out of `compile()` ("resolver
-  cannot lower object<>").
-- Not verified: the full 3518/3526 failing-set comparison. It ran on T for all 316 files, but the base run was cut
-  by a container restart. Only the changed-root files above were compared on both.
+  cannot lower object<>"); pinned in the X test.
+- No program in the sweeps, the tests or the review probes reaches a `coerce.to_externref` of a dynamic value
+  that a `throw` does not consume (its other from-ast producers — string concatenation, function-object keys,
+  host boundaries — refuse earlier on this lane). The rule is tested on hand-built IR only.
+
+### Review round 1
+
+Adversarial review at `bbab057818`: T MET, X MET, no must-fix. Should-fixes:
+
+1. **Catch-binding payload assumption — fixed (pinned).** Every throw site that could reach a Prepared catch was
+   listed: user `throw` (dynamic, boxed number, `null` admitted; string → `js.string.const is unavailable`;
+   Boolean → "throw val not in slice 9"; object → emission invariant, pre-existing), from-ast TDZ
+   `__new_ReferenceError` (refused: "needs runtime function materialization"), from-ast `__new_TypeError`
+   (dynamic call and member read refuse earlier), runtime bodies (all construct a TypeError — an Error object,
+   for which every dynamic operation the carrier has is exact: truthy, identity, not `undefined`/`null`,
+   ToNumber NaN — except `vector-grow-store.ts`'s `ref.null extern`, unreachable: no vector compiles). Each is
+   pinned in `tests/issue-7354-x-dynamic-throw.test.ts`; the invariant is stated at `sourceDynamicResolver`,
+   where the binding becomes dynamic.
+2. **Other paths of the carrier flag — fixed.** Each refuses today, with a test in the T file: a dynamic for-in
+   head ("dynamic for-in runtime is unavailable"), a function-object property write (`identifier "g" is not in
+   scope` — functions are not values yet), a primitive wrapper's ToPrimitive (`unknown class "Number"`), the
+   `parseInt` externref boundary in `stringToNumber` ("direct call to "parseInt" has no exact AST-site plan").
+3. **Stale strict-equality comment — fixed** (`null` is in the admitted set; the body's null arm).
+4. **`buildToBooleanBody` style — fixed.** An absent arm is `undefined` (like `buildIsUndefinedBody`), no `as`
+   casts; ordinary bytes identical on 50 files, then on all 320, both targets.
+5. **`return e === 3` refused by the join — fixed.** Cause: not the catch binding. An unannotated result the
+   checker types Boolean lowered (through the propagation shared with the ordinary pipeline) to a plain `i32`,
+   and the presentation's source-declaration join requires the Boolean carrier; `function f(){ return 1 === 1; }`
+   failed the same way on the base (P's named gap). `sourceDynamicResult` now answers the Boolean carrier for
+   such a result on the native lane. Both programs run (right answer returns, wrong throws), and a Boolean
+   result now also flows into a dynamic parameter (`same(f(0), true)`).
+6. **Source test for the coercion rule — rebutted:** no source program reaches a non-throw use (above).
+7. **Proofs the restart cut — done.** 3518/3526, all 316 files on HEAD `8a3583bf67` in 8-file chunks (3 slow
+   files run alone; `native-invocation-consumer` and `native-mixed-object-access` exceed the 10-minute
+   foreground cap and were not completed), the base (`1995dd6ef2`, swapped into the tree) on the 120 files that
+   fail on HEAD: identical failing sets except `native-source-closure-consumer`, where both sides lose different
+   35–40 s `STACK_TRACE_ERROR` timeouts under load. Note: `origin/claude/7354-p` moved during the session (P's
+   review rounds), so the earlier base runs were redone against `1995dd6ef2`; with it,
+   `native-string-number-source-admission` fails the same 3 tests on base and HEAD (fixed on P's newer head).
+   `changed-root-tests.sh` stops at `core-vocabulary-seam`'s 4 pre-existing failures ("complete source
+   SHA256/length mismatch: src/ir/ast-lowering-plans.ts", same on the base, fixed on D1's newer head); the other
+   10 changed root files were run directly and fail only the base's tests.
+
+Verdict MET; every should-fix fixed or rebutted.
