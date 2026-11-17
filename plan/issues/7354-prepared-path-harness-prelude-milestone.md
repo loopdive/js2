@@ -788,3 +788,71 @@ steps 3–5 (dynamic `+`, ToString/`String(x)`, `typeof`) are the follow-up slic
   20-string-op program: 38.5 s total, 24.6 s in `emitPreparedNativeStringLiteral`, 16.9 s in the re-plan.
 - Number formatting is a runtime-support batch, which the presentation refuses (`ir-program-presentation.ts`
   `checkResourceDemand`, "source and prepared runtime must independently prove no async/support demand").
+
+## Perf result (2026-11-17)
+
+Branch `claude/7354-perf` on `claude/7354-str`. Change in `src/backend/wasmgc/program/native-string-values.ts` only
+(plus `tests/issue-7354-perf-string-authentication.test.ts`).
+
+### Why every emit re-planned, and what replaces it
+
+`ownerFor` is #3518 fail-closed machinery: before any use of a string pack it proves the retained reservation input
+(demands with the whole program, plan, value/output/invocation/realm requirements) is still what was authenticated —
+by comparing the demands to a frozen snapshot and re-running the whole plan (`assertNativeStringValueReservationInput`).
+That proof is a pure function of the retained input (the issue registries it consults — value plans, output
+requirements, invocation and realm requirements — are append-only and keyed by fresh frozen objects). So:
+
+- `isImmutablePreparedIrValue(owner.input)` walks the retained input once: every reachable object must be frozen
+  plain data (Object/null/Array prototype, data properties only, no functions) or a frozen collection of prepared
+  data. Freezing cannot be undone, so the answer is permanent.
+- The answer is computed BEFORE the checks run on the first use; if it is `true` and the checks pass, the owner is
+  `settled` and later uses skip the snapshot comparison and the re-plan. No key, no cache: input that cannot change
+  cannot go stale. Input that can still change (any unfrozen part) is re-authenticated at every use exactly as before.
+- Unchanged per use: the realm-literal identity check (it reads the caller's live input object), the inventories, the
+  completion checks of every sub-pack, and the physical layout audit.
+- The Prepared producers hand over fully frozen input (measured on the probe program: everything reachable is frozen).
+- Also: an emit checked the pack twice (`requireCompletedNativeStringValues` then `ownerFor` again with nothing in
+  between); it now checks once (`completedOwner`). The per-row `tx.physicalIndex` loops are one `tx.physicalIndices`
+  call (same state, ownership and layout checks; one layout audit instead of one per row).
+- The predicate sits beside its only check, not in `src/ir/program/data.ts`: that file and
+  `tests/issue-3518-program-ownership-runtime-seam.test.ts` are full-file historical pins.
+
+### Measurements (compile time through the strict Prepared entry, one line = literal + concat + length + `===`)
+
+| lines | base (s) | after (s) |
+| ----: | -------: | --------: |
+|     5 |      8.6 |       5.8 |
+|    20 |     71.9 |      16.5 |
+|    50 |    436.0 |      49.9 |
+|   100 |        — |     133.4 |
+|   200 |        — |     428.2 |
+
+CPU profile, 20 lines: base 66.8 s profiled (`ownerFor` 43.0 s, re-plan 29.9 s); after 18.9 s (`ownerFor` 1.7 s,
+re-plan 0.7 s once). The goal (20 lines under 3 s, flat per-op cost) is NOT met: the remaining per-emit cost is the
+physical layout audit. One literal emit runs `PhysicalModuleReservations.#verifyLayout` 63 times (each sub-pack's
+`requireCompleted*` re-checks its dependencies, each with its own audit), and each audit snapshots every filled
+function and global, so it grows with the module — still quadratic. That audit authenticates mutable module storage,
+so it cannot be keyed or memoised; it is a different mechanism (the transaction's) and is left for its own slice.
+Measured experiment (not committed): bracketing the completion check with one audit before and one after and
+skipping the nested audits brings 20 lines to 5.7 s (emit 0.65 s); the rest is one-time plan authentication
+(`preparedIrDataMismatch`/`hasNativeCollectionState` on freshly re-collected demands, ~2.7 s).
+
+### Proofs
+
+- Non-staleness: every refusal test of `tests/issue-3518-native-string-*` and the value-chain consumers fails the
+  same set as base; new tests refuse demands and plan mutated between two emits and after several emits, show the
+  physical audit still refuses an altered global after settling, and pin the predicate on 18 value shapes.
+- Prepared bytes identical to base for the 43 distinct programs of `issue-7354-str-strings`, `test262-prepared-entry`
+  and `test262-prepared-runtime`; ordinary pipeline identical on 200 test262 files × (default, standalone).
+- Failing sets equal to base in all 42 related test files (3518 native-string ×24, realm, number-format, promise,
+  ownership seam, provider-boundary, policy-evolution, …).
+- Mutation survivors: the FrozenSet content walk (no public way to build a FrozenSet with mutable content; kept so
+  the predicate does not depend on that) and `owner.settled = settles` (deleting it only costs time).
+
+### Same pattern nearby
+
+- `emitStringEquals`/`emitStringLen`/concat go through the same `completedOwner` — covered.
+- `requireCompletedNativeValues` → `assertNativeValueResourcePlan` re-derives the value plan from the program at
+  every call (~0.07 s over 20 lines here: cheap today, same shape, not fixed).
+- `readNativeRealmLiteralInput` → `assertNativeRealmRequirementsCurrent` recalculates the realm catalog per use when a
+  realm is present (not on this path's string programs; not fixed).
