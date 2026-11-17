@@ -333,6 +333,7 @@ import {
 import { lowerPatternPlan, readsNoSource, type PatternLoweringHost } from "./binding-pattern-lowering.js";
 import { literalLeafSource, patternLeafReadsElement, planLiteralPattern } from "./literal-pattern-plan.js";
 import { isInLoopOfOwnFunction, isModuleInitVarList } from "../shared/var-declaration-lists.js";
+import { isRepeatedVarBinding } from "./function-local-var.js";
 import { objectIntegrityCallFold } from "./object-integrity.js";
 import {
   mixedPrimitiveConditionalArms,
@@ -4411,9 +4412,8 @@ function lowerVariableDeclaration(d: ts.VariableDeclaration, isConst: boolean, c
   const redeclaredModuleVar = isRedeclaredModuleVar(d, name, cx);
   if (redeclaredModuleVar && !d.initializer) return;
   if (!d.initializer && !redeclaredModuleVar && bindUninitializedModuleVar(d, name, cx)) return;
-  if (cx.scope.has(name) && !redeclaredModuleVar) {
+  if ((cx.scope.has(name) || (!cx.moduleBindings?.has(name) && isRepeatedVarBinding(d, name))) && !redeclaredModuleVar)
     demoteToLegacy("body-shape-rejected", `ir/from-ast: redeclaration of '${name}' in ${cx.funcName}`);
-  }
   if (!d.initializer) {
     lowerUninitializedVar(d, name, isConst, cx);
     return;
@@ -4718,8 +4718,8 @@ function bindLocalName(
 }
 
 /**
- * (#7106 Stage 4) `var x;`: the dynamic carrier's `undefined`, in a slot when the body reassigns it — stored before
- * the loop when the declaration sits in one, where it runs again after a write and is no write (#7354).
+ * (#7106 Stage 4) `var x;`: the dynamic carrier's `undefined`, in a slot when the body reassigns it. In a loop the
+ * declaration runs again and is no write: the store moves before the loop (#7354); elsewhere it stays (same bytes).
  */
 function lowerUninitializedVar(d: ts.VariableDeclaration, name: string, isConst: boolean, cx: LowerCtx): void {
   const isLexical = (d.parent.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const)) !== 0;

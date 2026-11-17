@@ -162,6 +162,37 @@ describe("#7354 H follow-up — a hoisted `var` declaration without initializer"
       "function f(v){ var x = v; var x; return x; } f(1);",
       "redeclaration of 'x' in f",
     ],
+    // Review round 1: a repeat in another block opened a second slot starting at `undefined` (a wrong answer on
+    // main too). Every repeat of a `var` name in its function refuses; none may bind a second local.
+    ...(
+      [
+        ["in a block, then at function level", "if (v === 5) { var x; x = v; } var x; return x * 1;"],
+        [
+          "in two loops",
+          "for (var i = 0; i < 1; i++) { var x; x = v; } for (var j = 0; j < 1; j++) { var x; return x * 1; }",
+        ],
+        ["in a loop, then after it", "for (var i = 0; i < 1; i++) { var x; x = v; } var x; return x * 1;"],
+        [
+          "in both arms of an if in a loop",
+          "for (var i = 0; i < 2; i++) { if (i === 0) { var x; x = v; } else { var x; return x * 1; } }",
+        ],
+        ["in try, catch and finally", "try { var x; x = v; } catch (e) { var x; } finally { var x; } return x * 1;"],
+        ["with an initializer in a block", "var x = 1; { var x = 2; } return x;"],
+        ["after a parameter of the same name", "var v; return v * 1;"],
+        [
+          "as a for-head variable of two loops",
+          "var r = 0; for (var i = 0; i < 2; i++) r = r + i; for (var i = 0; i < 3; i++) r = r + i; return r;",
+        ],
+      ] as const
+    ).map(
+      ([shape, body]) =>
+        [`repeated ${shape}`, `function f(v){ ${body} } f(5);`, /redeclaration of '[xvi]' in f/] as const,
+    ),
+    [
+      "repeated in two script loops",
+      "var r; for (var i = 0; i < 1; i++) { var g; g = 5; } for (var j = 0; j < 1; j++) { var g; r = g; }",
+      "redeclaration of 'g' in <module-init>",
+    ],
     [
       "a script var declared again",
       "var x; x = 1; var x; if (x !== 1) throw 1;",
@@ -178,6 +209,6 @@ describe("#7354 H follow-up — a hoisted `var` declaration without initializer"
       "closure must have a return type annotation (f)",
     ],
   ])("refuses a var %s by name", async (_, program, message) => {
-    expect(await refusal(program)).toContain(message);
+    expect(await refusal(program)).toMatch(message);
   });
 });
