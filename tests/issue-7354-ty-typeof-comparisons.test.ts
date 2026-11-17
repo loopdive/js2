@@ -158,6 +158,13 @@ describe("#7354 Ty — typeof comparisons on the Prepared dynamic value", () => 
       "123",
     ],
     ["a caught null", 'var r = 0;\ntry { throw null; } catch (e) { if (typeof e === "object") r = 1; }', "r", "1"],
+    // The number test alone (no box anywhere) still selects the value resources it binds.
+    [
+      "a caught null tested for a number",
+      'var r = 0;\ntry { throw null; } catch (e) { if (typeof e === "number") r = 1; }',
+      "r",
+      "0",
+    ],
   ])("answers %s like JavaScript", async (_label, declarations, probe, expected) => {
     const wrong = expected === "true" ? "false" : expected === "false" ? "true" : String(Number(expected) + 1);
     await expectLikeNode((right) => `${declarations}\nif (${probe} !== ${right ? expected : wrong}) throw 1;`);
@@ -168,6 +175,7 @@ describe("#7354 Ty — typeof comparisons on the Prepared dynamic value", () => 
     ["a typeof statement", "function f(v) { typeof v; return 1; }\nf(1);"],
     ["a returned typeof", "function f(v) { return typeof v; }\nf(1);"],
     ["a non-literal comparison", "function f(v, w) { return typeof v === w; }\nf(1, 2);"],
+    ["two typeofs compared", "function f(v, w) { return typeof v === typeof w; }\nf(1, 2);"],
     [
       "a typeof also compared with a non-literal",
       'function f(v, w) { var t = typeof v; return t === "number" && t === w; }\nf(1, 2);',
