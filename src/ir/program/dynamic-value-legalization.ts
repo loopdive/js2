@@ -69,14 +69,13 @@ const TYPEOF_KIND = { number: "number", boolean: "boolean", undefined: "undefine
 type CarrierKind = (typeof TYPEOF_KIND)[keyof typeof TYPEOF_KIND];
 const KIND_OF_TYPEOF: ReadonlyMap<string, CarrierKind> = new Map(Object.entries(TYPEOF_KIND));
 
-/** The partition each admitted kind is, and how the carrier tests for it: a runtime predicate or the null test. */
-const KIND_TEST: Readonly<Record<CarrierKind, { readonly tag: TagId; readonly test: IntrinsicId | "ref.is_null" }>> = {
-  number: { tag: JS_TAG_IDS.NumberF64, test: "js.value.is_number" },
-  boolean: { tag: JS_TAG_IDS.Boolean, test: "js.value.is_boolean" },
-  undefined: { tag: JS_TAG_IDS.Undefined, test: "js.extern.is_undefined" },
-  null: { tag: JS_TAG_IDS.Null, test: "ref.is_null" },
+/** How the carrier tests for each admitted kind: a runtime predicate or the null test. */
+const KIND_TEST: Readonly<Record<CarrierKind, IntrinsicId | "ref.is_null">> = {
+  number: "js.value.is_number",
+  boolean: "js.value.is_boolean",
+  undefined: "js.extern.is_undefined",
+  null: "ref.is_null",
 };
-const KINDS = Object.keys(KIND_TEST) as CarrierKind[];
 
 /** The kind a box to the dynamic value admits, from its tag refinement or its operand; `undefined` refuses. */
 function boxedKind(tag: TagId | undefined, source: IrType | undefined): CarrierKind | undefined {
@@ -114,7 +113,7 @@ export function legalizeDynamicValues(fn: IrFunction): IrFunction {
     ];
   };
   const kindTest = (instr: IrInstr, kind: CarrierKind, value: IrValueId, result: IrValueId): IrInstr => {
-    const { test } = KIND_TEST[kind];
+    const test = KIND_TEST[kind];
     return test === "ref.is_null"
       ? { kind: "unary", op: "ref.is_null", rand: value, result, resultType: instr.resultType }
       : intrinsic(instr, test, [value], result);
@@ -140,9 +139,12 @@ export function legalizeDynamicValues(fn: IrFunction): IrFunction {
         if (!isDynamic(instr.value)) return [instr];
         if (instr.tagId === JS_TAG_IDS.NumberF64) return [intrinsic(instr, "js.number.unbox", [instr.value])];
         return gap(`unbox of tag ${instr.tagId}`);
+      // Only the `undefined` and `null` probes have a source producer here; the number and Boolean tests come
+      // from a `typeof` comparison (the `string.eq` arm below).
       case "tag.test": {
         if (!isDynamic(instr.value)) return [instr];
-        const kind = KINDS.find((candidate) => KIND_TEST[candidate].tag === instr.tagId);
+        const kind =
+          instr.tagId === JS_TAG_IDS.Undefined ? "undefined" : instr.tagId === JS_TAG_IDS.Null ? "null" : undefined;
         return kind === undefined
           ? gap(`tag.test of tag ${instr.tagId}`)
           : [kindTest(instr, kind, instr.value, instr.result!)];
