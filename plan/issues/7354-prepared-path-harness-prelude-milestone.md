@@ -892,3 +892,14 @@ Evidence:
     that only the program view has.
 - Gates: typecheck, loc, func, coercion-sites, oracle-ratchet, dead-exports, import-cycles (grant), boundaries
   inventory, and `changed-root-tests.sh` (interpreter engine).
+
+### Review round 3: MET
+
+Fresh adversarial review at `50468e80c0` with the reviewer's own mock: MET, no must-fix.
+- Every forgery is refused by the census itself.
+- The dropped signature join and the dropped carrier-`i32` check are accepted as implied.
+- The manifest-table rebuttal is accepted; the follow-up is #7358.
+- Optional should-fix, not done: the census refusal names no join. Every census join, the string join included,
+  answers `undefined`, and the presentation turns that into the one `runtime-demand` gap. Naming the failing join
+  would change `runtimeCensus`'s result type and the gap call in `ir-program-presentation.ts`, which is at its size
+  budget. That belongs to a census-wide change, not to the string join alone.
