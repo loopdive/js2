@@ -1378,3 +1378,49 @@ Fresh adversarial review at `50468e80c0` with the reviewer's own mock: MET, no m
   answers `undefined`, and the presentation turns that into the one `runtime-demand` gap. Naming the failing join
   would change `runtimeCensus`'s result type and the gap call in `ir-program-presentation.ts`, which is at its size
   budget. That belongs to a census-wide change, not to the string join alone.
+
+### Merged onto main (D1 reworked, P, H) — 2026-11-17
+
+Merged `origin/main` `0409838769` into the branch.
+- **Conflicts.** Three files:
+  - The issue file: both sides kept.
+  - `ir-program-presentation.ts`: string admission in internal callable contracts, as `inCall` beside H's `carried`
+    (+1 line, granted in the frontmatter).
+  - R's census test: H's describe and Str's describe are both kept.
+- **Ported cleanly onto D1's rework.** `selectNativeDynamicValues(intrinsics, stringsCarried)` and the string arm in
+  `buildObjectSameValueBody`'s three string parameters needed no change.
+- **One port for H.** H's provenance (`carries`) now treats string literals as a typed kind, beside the number and
+  Boolean literals. Without it, a literal passed to a typed string parameter refused as "a dynamic value flows into
+  string".
+- **A script `var` holding a string now works through H's dynamic home.** It equals node (two acceptance tests),
+  and its `.length` refuses by name (`dyn.member_get`). H's "holding a string (slice Str)" refusal row is removed.
+
+Evidence after the merge:
+- Tests: Str (20), emitter-requests (9), R (100), D1 (49), P + V/G, H (65), prepared-entry/runtime + #7188 (58)
+  pass. The vitest `onTaskUpdate` RPC timeout appears on the slow string files.
+- `changed-root-tests.sh` (interpreter engine): every changed root file passes. The script hit the time cap before
+  the last file, `str-strings`, which was run directly.
+- Gates against the `origin/main` tip pass: loc and func (with `LOC_GATE_BASE`), coercion-sites, oracle-ratchet,
+  dead-exports, import-cycles, boundaries inventory.
+- Bytes against `origin/main`:
+  - Ordinary: 100 test262 files × {JS environment, standalone} are identical.
+  - Prepared: all 148 modules the D1, P, V/G, H, prepared-entry/runtime, #7188 and R tests instantiate on main are
+    identical. The 5 extra modules are Str's string programs.
+- String sweep (`.tmp/sweep.mts`): 286 programs, compared with node. They cover 16 dynamic-string operations × 4
+  strings × {top level via the dynamic home, function, condition, loop across iterations with a sibling `while`},
+  plus typed string expressions in a function and a loop.
+
+| Outcome | Programs | Detail |
+| --- | --- | --- |
+| OK | 184 | equal to node |
+| `dyn.truthy` (ToBoolean, slice T) | 32 | `&&`/`||` with a string operand in condition position |
+| `operator '&&' requires bool operands` | 16 | from-ast, value position |
+| `operator '\|\|' requires bool operands` | 16 | from-ast, value position |
+| `dyn.typeof` | 16 | |
+| `__ir_dyn_add` | 16 | dynamic `+`, slice Str2 |
+| `source declaration and prepared callable slots disagree` | 6 | a .js function returning a Boolean of a typed string; numeric twins refuse the same way on main |
+
+  Wrong answers: 0. Invariant errors: 0.
+- 411-row sample: all 411 rows have the same status and first gap as `origin/main` (0 differ). The tally is 282
+  `dyn.truthy`, 84 `module binding … has no exact typed storage`, 26 `String` call, 2 switch-case binding,
+  1 `Test262Error`, 1 parse error, 1 `print`, and 14 negatives pass.
