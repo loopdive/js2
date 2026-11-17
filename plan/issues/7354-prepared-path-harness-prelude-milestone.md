@@ -22,12 +22,17 @@ related: [7188, 2949, 3526, 3527, 3518, 7106, 7349, 7350, 7352]
 # `irOwnedScriptVarHome` and the `scriptVarHome` resolver option that passes it; the
 # classifier and its reads proof live in src/ir/module-binding-script-var-home.ts and
 # src/ir/module-binding-script-var.ts. (ir-program-presentation.ts shrinks by 3.)
-# 2026-11-16 (slice D1, review round 1): src/ir/from-ast.ts +10, two named
+# 2026-11-16 (slice D1, review round 1): src/ir/from-ast.ts +6, two named
 # declines the Prepared producer reaches because it has no selector (`**` on a
 # dynamic operand, a value-position prefix `++`/`--`); they replace invariant
 # crashes in place and sit in the arms that own them. ir-program-presentation.ts
 # +1: D1's internal externref callable contract admission in the ABI join.
+# 2026-11-17 (slice H, review round 1): src/ir/program-physical-plan.ts +2, the
+# import of `storesUndefinedFirst` and the source-global arm that admits a null
+# default only when the module-init stores `undefined` first (the check lives in
+# src/ir/program/dynamic-value-legalization.ts beside the store it checks).
 loc-budget-allow:
+  - src/ir/program-physical-plan.ts
   - src/compiler.ts
   - src/ir/program-source.ts
   - src/ir/from-ast.ts
@@ -206,117 +211,257 @@ Code quality:
 
 ## D1 result (2026-11-16)
 
-Branch `claude/7354-d1`, stacked on slice R. Decisions taken before the
-slice (they override the plan text above where they differ):
+Branch `claude/7354-d1`, on `main` after slice R (PR #7268) landed. Decisions
+(they override the plan text above where they differ; review round 1 below
+records what changed after the adversarial review):
 
 1. **Option B, one legalization pass.** The Prepared backend binds runtime
    functions only through semantic intrinsics, so
    `src/ir/program/dynamic-value-legalization.ts` rewrites the dynamic
    operations into intrinsics and every `dynamic` type into `externref`. The
-   source producer runs it on each lowered function when the source policy is
-   wasmgc standalone (`legalizeSourceDynamicValues`), so every later stage
-   (runtime projection, validator replay, clock witness, physical plan) sees an
-   ordinary externref program and `program/runtime-manifest.ts`,
+   source producer runs it on every function it lowers on the wasmgc standalone
+   lane when the program has a native `any` contract
+   (`legalizeSourceDynamicValues`); a function without a dynamic value is
+   returned unchanged. Every later
+   stage (runtime projection, validator replay, clock witness, physical plan)
+   sees an ordinary externref program, and `program/runtime-manifest.ts`,
    `runtime-validation.ts` and `runtime-abi.ts` stay byte-identical (they are
    complete-source pins of the #3518/#3525 relocation receipts; a first cut ran
-   the pass in the projection and broke 150 receipt tests). `from-ast.ts` is
-   unchanged and there is no second `IrDynamicLowering`. This replaces the
-   plan's "second `IrDynamicLowering` implementation" bullet.
-2. **The D1 set.** `box` from f64/i32 to `js.number.box`, a Boolean-tagged box
-   to `js.boolean.box`; `unbox` NumberF64/Boolean to `js.number.unbox` /
-   `js.boolean.unbox`; `tag.test` NumberF64/Boolean/Undefined to
-   `js.value.is_number` / `js.value.is_boolean` / `js.extern.is_undefined`;
-   `dyn.undefined` to `js.value.undefined`; strict `dyn.eq` to
-   `js.value.strict_eq` (+ `i32.eqz` for `!==`). Added beyond the list:
-   `dyn.to_number` to `js.number.unbox`, because `__unbox_number` is exactly
-   ToNumber over the admitted values (number, boolean, `undefined` gives NaN);
-   from-ast emits no numeric unbox, so this is how a dynamic value becomes a
-   number again (`v * 2`). Everything else refuses as "dynamic operation X has
-   no Prepared intrinsic": loose `==`, `tag.test` Null/NumberI32/String/Object,
-   ToBoolean, `typeof`, member access, a box of any non-primitive (strings
-   included), `coerce.to_externref`, and a dynamic type nested in a composite.
-   A front-end dynamic helper call (`__ir_dyn_add`, …) has no runtime
-   declaration and would reach `prepareIrProgramRuntimeCallables` as an
-   invariant; the pass refuses it by the same name.
+   the pass in the projection and broke 150 receipt tests). There is no second
+   `IrDynamicLowering`; this replaces the plan's bullet for it.
+2. **The D1 set.** `box` of an f64 to `js.number.box`, a Boolean-tagged box to
+   `js.boolean.box`; `unbox` NumberF64 and `dyn.to_number` to `js.number.unbox`
+   (`__unbox_number` is exactly ToNumber over the admitted values: number,
+   boolean, `undefined` gives NaN); `tag.test` Undefined to
+   `js.extern.is_undefined`; `dyn.undefined` to `js.value.undefined`; strict
+   `dyn.eq` to `js.value.strict_eq` (+ `i32.eqz` for `!==`). Everything else
+   refuses as "dynamic operation X has no Prepared intrinsic": loose `==`, every
+   other tag test or unbox, ToBoolean, `typeof`, member access, a box of
+   anything but an f64 number or a Boolean (strings included),
+   `coerce.to_externref` of a dynamic value (`Number(v)`, `throw v`), a dynamic
+   type left in a composite, and a front-end dynamic helper (`__ir_dyn_add`, …),
+   which has no runtime declaration.
    - Soundness rests on the admitted set: only numbers, booleans and
-     `undefined` enter a dynamic value. Strict equality therefore has no BigInt
-     or string arm; the slice that admits strings must pass the string arm.
-   - New providers live in `src/ir/runtime/dynamic-value-callables.ts` (one
-     native standalone arm each, no policy); the four ids join the closed lists
-     the `js.boolean.*` family uses. The provider-row comparison that the
-     ordinary-object family carried is now one helper
-     (`canonical-provider-mismatch.ts`) both families call.
-   - The `undefined` probe is the legacy body moved to `buildIsUndefinedBody`
-     (`primitive-layouts.ts`); legacy calls it with its previous arguments.
-     Strict equality is its own pure body (`strict-equality-body.ts`: number
-     payloads by `f64.eq`, Boolean payloads, else identity). A first cut
-     parameterised `buildObjectSameValueBody` instead, but that file and its
-     options interface are pinned by the #3518 replay receipts
-     (`same-value-nan-correction.ts`, the BigInt carrier port) and called by
-     four test helpers; folding the two dispatches is left for a cleanup that
-     re-pins those receipts. `__extern_strict_eq` is untouched.
-   - Boolean unbox from a dynamic value is unreachable from source today; if it
-     arrives it meets the existing keyed-Get proof gate in
-     `selectNativeBooleans` and refuses, and the presentation does not select
-     `booleanBoundary.unbox`.
-3. **Numeric mode.** `selectNativeDynamicValues` (one predicate) puts the
-   native string value plan into its existing numeric mode when the projection
-   has any `js.value.*` intrinsic or a natively bound `js.extern.is_undefined`;
-   `resources/native-dynamic-values.ts` adds `__js_strict_eq`,
-   `__js_undefined` and `__extern_is_undefined` beside the value and Boolean
-   resources. The Boolean predicate pair is reserved whenever strict equality
-   or the Boolean tag test needs it. The `primitive-only` resource plan was not
-   widened (per the handover it has no production caller).
-4. **`any` contracts.** `src/ir/source-dynamic-contracts.ts` now holds every
+     `undefined` enter a dynamic value. Strict equality therefore needs no
+     BigInt or string arm; the slice that admits strings must add the string
+     arm (`buildObjectSameValueBody` already has it).
+   - Providers live in `src/ir/runtime/dynamic-value-callables.ts` (one native
+     standalone arm each, no policy): `js.value.strict_eq` (`__js_strict_eq`)
+     and `js.value.undefined` (`__js_undefined`, a nullary call with its own
+     signature). The provider-row comparison is one helper
+     (`canonical-provider-mismatch.ts`) for the ordinary-object and dynamic-value
+     families.
+   - `__js_strict_eq` is `buildObjectSameValueBody` with the number rule
+     `number-equal` and no BigInt arm; `__extern_is_undefined` is the legacy
+     body moved to `buildIsUndefinedBody` (`primitive-layouts.ts`).
+3. **The one flow rule.** A dynamic value leaves the dynamic domain only
+   through an operation the legalization expresses or refuses by name, or by a
+   conversion the source writes (`+v`, `v * 2`, `v - 1`, bitwise and relational
+   operators, `===`). An `any` expression whose contextual type is not `any`
+   (a typed result, a typed parameter, a typed binding, a typed literal member)
+   would cross into that type with no conversion the source wrote, and the
+   Prepared path has no checked unbox yet: it refuses as "a dynamic value flows
+   into T without a conversion (Site)". The rule runs after lowering, only for
+   a declaration whose lowered functions carry a dynamic value (a checker `any`
+   the IR types concretely, such as an untyped parameter with a propagated
+   number type, is no dynamic value). Typed locals, assignments, conditional
+   branches, typed literal members and Boolean parameters already refuse while
+   lowering, each by its own from-ast name. The ordinary pipeline's ToNumber at
+   typed call arguments (`from-ast.ts`, #2949 S5.P) is unchanged and is never
+   reached on Prepared, because the rule refuses those programs.
+4. **Numeric mode.** `selectNativeDynamicValues` puts the native string value
+   plan into its existing numeric mode when the projection needs strict
+   equality, the `undefined` value, or a natively bound `js.extern.is_undefined`;
+   `resources/native-dynamic-values.ts` adds `__js_strict_eq`, `__js_undefined`
+   and `__extern_is_undefined` beside the value and Boolean resources. Strict
+   equality reserves the Boolean predicate pair. The `primitive-only` resource
+   plan was not widened (it has no production caller).
+5. **`any` contracts.** `src/ir/source-dynamic-contracts.ts` holds every
    `any`-contract rule of the Prepared source producer (the host async arm,
-   moved unchanged, and the native arm: an explicitly annotated `any`
-   parameter or result of an internal (non-exported) synchronous wasmgc
-   standalone function; an exported `any` keeps its existing contract, the
-   source Boolean `any` result or the Phase 1 refusal), plus
-   `resolveDynamic`; `program-source.ts` shrank by 37 lines. Untyped and JSDoc
+   moved unchanged, and the native arm: an explicitly annotated `any` parameter
+   or result of an internal synchronous wasmgc standalone function; an exported
+   `any` keeps its existing contract, the source Boolean `any` result or the
+   Phase 1 refusal), the flow rule and `resolveDynamic`. Untyped and JSDoc
    parameters stay refused (slice P). The presentation's ABI join admits an
-   internal `externref` callable contract on standalone (the legalized dynamic
-   value); an exported `any` contract stays refused.
-5. **`typeof`** stays a named gap (`dyn.typeof`), with a refusal probe.
-6. **Stacked on R.** `preparedPresentationPolicy` additionally selects native
-   Boolean boxing and the native `undefined` probe; the `js.value.*` providers
-   need no policy. The census (`nativeProviderJoins`) accepts all new providers
-   unchanged; `checkResourceDemand` and `emittedSupportFunctionReceipts` were
-   not touched.
+   internal `externref` callable contract on standalone.
+6. **On R.** `preparedPresentationPolicy` also selects native Boolean boxing and
+   the native `undefined` probe; the census authenticates the new providers
+   unchanged.
 
-Proof: `tests/issue-7354-d1-dynamic-carrier.test.ts` (15 tests) compiles
-through the strict Prepared entry, validates and runs: number/boolean/
-`undefined` through `function id(v: any): any`, `===`/`!==` between them,
-`+0 === -0`, `NaN !== NaN`, `1 !== true`, one helper called with three tags,
-ToNumber back to a number; refusal probes for loose equality, the null tag
-test, ToBoolean, dynamic `+`, member reads, `typeof`, an exported `any`
-contract and the gc target; three direct tests of the pass.
+Proof: `tests/issue-7354-d1-dynamic-carrier.test.ts` (49 tests) compiles through
+the strict Prepared entry, validates and runs: number/boolean/`undefined`
+through `function id(v: any): any`; `===` and `!==` over every ordered pair of
+`1, -0, 0, NaN, 1.5, true, false, undefined` against JavaScript; one helper
+with three tags; written conversions back to a number; a branch join and a
+conditional; a dynamic block argument; a propagated-number
+untyped parameter staying numeric; the flow rule skipping a declaration without a dynamic value; a result-only `any` contract. Refusals: every typed flow, loose equality,
+the null tag test, ToBoolean, dynamic `+`, member reads, `typeof`, `**` on
+either side, a value-position prefix update, a thrown dynamic value, a dynamic
+object field, an inferred `any` result, an exported `any`, the gc target.
+Direct tests of the pass (each guard), of the `undefined` probe selection and
+of the policy. `tests/issue-7354-r-provider-census.test.ts` gains R's census on
+a D1 program: dropping or renaming either `js.value.*` provider, or renaming
+either native resource, refuses.
+
+Measured (ordinary bytes at cc8e8eca7c, the rest at 368c41b7c4; the later
+commits touch only the Prepared source producer, tests and this file):
+
+- Ordinary pipeline bytes against `origin/main` (965e3d77eb, R included): 366
+  test262 files (R's 170-file list plus `Object.is`, strict (in)equality,
+  `Array.prototype.includes`, every tenth `Object.defineProperty`,
+  exponentiation and prefix-increment files) × {standalone, JS environment}: 732
+  results identical, 44 compile errors on both trees, 0 throws.
+- Prepared bytes against `origin/main`: the 31 `any`-free programs of
+  `test262-prepared-*`, #7188 and R's tests × {standalone, gc, wasi}: 93
+  results identical.
+- Probe sweep (`.tmp/rv/sweep.mts`, 438 programs: 24 binary operators × left,
+  right and numeric context, 6 unary, 4 updates, 15 compound assignments both
+  ways, 6 condition positions, typed results, locals, assignments, parameters,
+  `Math` arguments, conditionals, literals, `Number()`, `+v`, template, switch,
+  throw; each with 3, `true` and `undefined`): 201 equal node, 235 named
+  refusals, 0 wrong answers, 0 invalid Wasm. Two crashes remain, both
+  `const o: { a: any } = { a: 3 }` — the Prepared object-literal crash that
+  `const o = { a: 1 }` reproduces on `origin/main` without any `any` (Known
+  gaps). The reviewer's 200 probes: 88 equal node (the whole pairwise `===`
+  matrix), 111 named refusals, the same object-literal crash.
+- 411-row ES5 sample through the real runner: `.tmp/myrun.sh` on `l420.txt`, wasmgc
+  standalone: 14 pass, all 14 `negative:` tests (unchanged), 397 compile
+  errors; first gap: 394 "top-level global storage needs a numeric source
+  classification" (slices V/G, not on this branch's base), 2 "switch-case
+  lexical binding", 1 parse error. No row passes that should not.
+- Pin sets: the 335 files of `tests/issue-3518*`, `tests/issue-3526*`, the
+  reviewer's pin-referencing list and R's census test, on this branch and on
+  a `git worktree` of `origin/main` 965e3d77eb (the main this branch merged),
+  in chunks of 25 with 2 forks. Both trees fail about 5,000 tests (source
+  receipts that main itself fails today); the 24 files whose sets differed
+  were re-run alone on both trees. After that: one test of
+  `issue-3518-native-invocation-consumer` fails on main and passes here
+  (timing; it flips between runs), and the 3 tests of
+  `issue-3518-native-string-number-source-admission` that failed here were
+  caused by removing the contract gate, which is restored (item 8; that file
+  now passes in full). No other difference.
+- Mutation sweep (`.tmp/mut2.json`, 43 single-guard mutants of the pass, the
+  contracts, the flow rule, the two from-ast declines, the resources, the
+  providers, the ABI reader demand and the number rule; each run against this
+  file, R's census test and `issue-3518-boolean-return-boundary`, the
+  #3527 async-carrier tests for the lane gate): 43 killed, 0 survivors; the
+  unmutated control fails nothing. The contract gate is killed by
+  `issue-3518-native-string-number-source-admission` (item 8).
+
+### Review round 1 (2026-11-16)
+
+Verdict NOT MET; four must-fixes and six should-fixes. Each, what was done,
+and the evidence:
+
+1. *An `any` returned from a `number` function crashed* (`return[0] type
+   externref not assignable`). Fixed by the flow rule (decision 3): it refuses
+   as "a dynamic value flows into number without a conversion
+   (ReturnStatement)". Tests: typed result, typed result of `main`, typed
+   result in a branch.
+2. *`**` on an `any` operand crashed* (`#4787 ... lost their exact
+   checker-proven number types`). `**` has no dynamic lowering, and the
+   Prepared producer has no selector to keep a dynamic operand away from the
+   #4787 claim invariant: `emitExactNumericExponentiation` now declines
+   "'**' on a dynamic operand" first (the ordinary selector never claims one,
+   so ordinary output is unchanged, measured above). Slice P's sweep found a
+   second crash of the same kind: a value-position prefix `++`/`--` (on any
+   operand, `any` or not) reached the #2135 capability guard; `lowerPrefixUnary`
+   now declines "value-position prefix update" first. Tests for both.
+3. *A dynamic value passed to a `number`/`boolean` parameter was converted
+   silently* (`f(id(true))` answered 1, node 0). Refused by the flow rule
+   (number) and by from-ast's own argument check (boolean); the ordinary
+   pipeline's ToNumber at call arguments is untouched. Written conversions
+   (`+v`, `v * 2`, `f(+v)`) still run (tests).
+4. *The strict-equality body was a copy.* Folded:
+   `ObjectSameValueResources` gains an optional `numberEquality:
+   "number-equal"` and an optional BigInt arm (`typeofBigIdx` with `bigint`,
+   or neither); every legacy caller passes the same fields and gets
+   byte-identical bodies (checked on the builder output for the carrier,
+   legacy-i64 and string-less variants, and by the byte run above).
+   `strict-equality-body.ts` is deleted. The #3518 receipts replay through one
+   new hash-checked inverse step, `beforeStrictEqualityFold`
+   (`tests/helpers/same-value-nan-correction.ts`, 9 spans, current
+   ba1d144b… → the NaN-corrected 32b7cba6…; round 2 named the SameValue
+   number arm `sameValueNumbers` beside `numberEqual`, which keeps 9 spans:
+   the interface split and the re-indented arm are the bulk either way), which `beforeSameValueNaNCorrection`
+   applies first, so the BigInt-port fixture is unchanged.
+5. *`js.value.undefined` borrowed the storage-global signature.* It has its own
+   `NULLARY_TO_EXTERNREF_INTRINSIC_SIGNATURE` (module-local in
+   `core/intrinsics.ts`). The #3526 pin again states that the rows carrying
+   `EXTERNREF_GLOBAL_INTRINSIC_SIGNATURE` are exactly the four string-storage
+   rows; it also pins that the one other empty-parameter row is the
+   `undefined` call with its own signature. The two `manifest.ts` comments now
+   say "the VALUE signature" instead of "the only empty-parameter signature",
+   which a nullary call makes untrue.
+6. *Arms without a source producer.* Removed: `js.value.is_number`,
+   `js.value.is_boolean` (intrinsic, feature, provider, symbol, ABI rows, the
+   Boolean-reader demand), the Boolean unbox arm and the i32 box arm. Disabling
+   the i32 arm changed none of eight i32-producing probes (bitwise results,
+   loop counters, `type i32`); slice P's sweep reached none of the four either.
+   The pass now refuses those operations by name (direct tests).
+7. *`canonicalProviderMismatch` covers 2 of 5 copies; the pass used an async
+   helper.* The pass now takes SSA types from a neutral
+   `irValueTypes` (`src/ir/analysis/value-types.ts`). The other three provider
+   comparisons are not folded: `vectorProviderMismatch` and
+   `nativeAsyncProviderMismatch` are source-hash pinned by the #3518 historical
+   reconstruction (`tests/issue-3518-historical-runtime-reconstruction.test.ts`),
+   and `numberRemainderProviderMismatch` compares with `sameData`, not JSON, so
+   folding it changes behaviour. Both are Known gaps below.
+8. *The native-contract gate has no test.* Kept, now with evidence: a first
+   cut removed it, and `tests/issue-3518-native-string-number-source-admission.test.ts`
+   then failed 3 tests (a string boxed into a dynamic value under unary `+`
+   on a program without an `any` contract, which the existing path handles;
+   the pass refused it as "box of a non-primitive value"). That file is the
+   test that fails without the gate; the docblock names it.
+9. *Mutation survivors.* New direct tests for every guard of the pass, the
+   `undefined` probe selection, the policy, the census, the flow rule and the
+   declines; see the mutation sweep above. The exported-`any` guard (C1) was a
+   false survivor: `tests/issue-3518-boolean-return-boundary.test.ts` kills it
+   (15 failures), because an exported `any` result keeps the source Boolean
+   `any` contract.
+10. This section.
 
 ### Test pins updated by D1 (closed lists a new intrinsic family changes)
 
-Measured against `origin/main` b29a0f7380: the failing-test sets of every
-`tests/issue-3518*`/`issue-3526*` file and every test naming a touched file
-match main's exactly after these updates.
-
-- `tests/issue-3518-core-vocabulary-seam.test.ts`: `INTRINSIC_IDS` 39 → 43,
+- `tests/issue-3518-core-vocabulary-seam.test.ts`: `INTRINSIC_IDS` 39 → 41,
   `DYNAMIC_VALUE_INTRINSIC_IDS` in the canonical value list and the composed
   order (the facade `src/ir/intrinsics.ts` forwards it like its siblings).
 - `tests/issue-3518-semantic-verification-ownership.test.ts`: successor pin of
-  `INTRINSIC_DEFINITIONS` (51cd8b09…), with a new predecessor-chain step that
-  removes exactly the four `js.value.*` rows to re-derive the #6921 pin
-  (b763d963…), which then re-derives the original; catalogue length 39 → 43.
-  Same mechanism #6921 used for `js.boolean.unbox`.
+  `INTRINSIC_DEFINITIONS` (a17fd837…) with a predecessor-chain step that
+  removes exactly the two `js.value.*` rows to re-derive the #6921 pin
+  (b763d963…), which then re-derives the original; catalogue length 39 → 41;
+  the new `NULLARY_TO_EXTERNREF_INTRINSIC_SIGNATURE` declaration (d570d72d…),
+  denominator 93 → 94.
 - `tests/helpers/ir-historical-runtime-reconstruction.ts`: the reviewed
-  declaration order of `src/ir/runtime/contracts/intrinsics.ts` gains
-  `DYNAMIC_VALUE_RUNTIME_FEATURES` / `DynamicValueRuntimeFeature` after the
-  extern rows.
-- `tests/issue-3526-string-boundary-const.test.ts`: the empty-parameter
-  signature rows are the string storage rows plus `native.js.value.undefined`
-  (also a value: nothing goes in).
+  declaration orders gain `DYNAMIC_VALUE_RUNTIME_FEATURES` /
+  `DynamicValueRuntimeFeature` (`runtime/contracts/intrinsics.ts`) and
+  `NULLARY_TO_EXTERNREF_INTRINSIC_SIGNATURE` (`core/intrinsics.ts`).
+- `tests/issue-3526-string-boundary-const.test.ts`: restored to "the VALUE
+  signature's rows are the string storage rows", plus the `undefined` call row
+  (item 5).
+- `tests/helpers/same-value-nan-correction.ts`,
+  `tests/native-same-value-nan-payload.test.ts`: the fold's inverse step
+  (item 4).
 - `tests/issue-3518-native-boolean-consumer.test.ts`,
-  `tests/issue-3518-native-getter-resource-join.test.ts`: the binder is now
-  `nativeIntrinsicAbiBindings` (Boolean plus dynamic-value intrinsics) and its
-  refusals say "native intrinsic ABI".
+  `tests/issue-3518-native-getter-resource-join.test.ts`: the binder is
+  `nativeIntrinsicAbiBindings` and refuses as "native intrinsic ABI".
+
+### Known gaps (D1)
+
+- **Object literals on Prepared.** `const o = { a: 1 }; return o.a` fails to
+  lower ("resolver cannot lower object<a:f64>") on `origin/main`; with an
+  `any` field it is the same crash. Slice C/F territory.
+- **Provider comparisons and SSA type maps.** Three families keep their own
+  canonical-provider comparison (item 7) and about ten modules a private
+  `valueTypesOf`; folding them needs reviewed replay steps for #3518 receipts.
+  Filed as [#7355](7355-ir-runtime-provider-and-ssa-type-helper-folds.md).
+- **Flow rule granularity.** The rule is gated per declaration, not per
+  expression: a checker `any` that the IR typed concretely (`h(2)` with an
+  untyped `h`) still refuses when the same declaration also lowered a dynamic
+  value (pinned by a test; node answers 13). Asking the lowered IR type per
+  expression needs an AST-to-IR value map the producer does not keep.
+- **Checked unbox.** A dynamic value for a typed parameter or result refuses;
+  a later slice may add a checked unbox that converts or throws on a mismatch.
 
 ## Coordination
 
@@ -616,8 +761,8 @@ dynamic value, always.** No call-site proof. Why this one and not "count top-lev
 
 **Unannotated results.** Propagated results were computed from the unsound parameter types (`return v` came out
 `void` or `boolean`). On the same lane an unannotated result that the body returns is dynamic when the checker
-cannot vouch for it: the checker says `any`, a JSDoc `@returns` names it, or the body can also run off its end
-(`undefined`). Any other unannotated result keeps the producer's inference, which the middle end already validates
+cannot vouch for it: the checker says `any`, or the body can also run off its end (`undefined`). (A JSDoc
+`@returns` arm was removed in review round 1, below.) Any other unannotated result keeps the producer's inference, which the middle end already validates
 against the lowered body (a disagreement is a refusal, never a conversion).
 
 ### Built
@@ -711,6 +856,286 @@ against the lowered body (a disagreement is a refusal, never a conversion).
   `--target standalone` (8 compile errors on both, 15 skipped).
 - Gates: typecheck, loc, func, coercion-sites, oracle-ratchet, dead-exports, import-cycles, boundaries inventory.
 - issue-3518\*/3526\* were not re-run after this merge (last run: on D1 `08fcfa7b82`, above).
+
+### Review round 1
+
+Adversarial review of `1995dd6ef2`: quality NOT MET, no soundness failure. Fixed on `claude/7354-p`, one commit
+each, then D1's reworked head `29d0576590` merged in.
+
+1. **JSDoc `@returns` arm deleted** from `uncheckedResult`. It duplicated D1's implicit-flow rule and refused
+   correct programs. `/** @returns {number} */ function f(n){return n*1}` with `f(true)` and `/** @returns
+   {boolean} */ function f(n){return n===1}` with `f(1)` now run and match node (1, true); `@returns {number}`
+   over an unconverted `n` still refuses at the flow rule ("a dynamic value flows into number without a
+   conversion (ReturnStatement)"). The message-pin test is replaced by these three.
+2. `legalizeSourceDynamicValues`'s comment no longer cites "an untyped parameter with a propagated number type"
+   (impossible since P).
+3. `uncheckedResult` takes the body; its only caller refuses a body-less declaration first.
+4. **Export by name:** `dynamicLane` reads the `export` modifier only (which also covers `export default`). A
+   function exported by name (`function f(x){…} export {f}`) keeps the native contract and the presentation's
+   export join refuses it ("source unit, export ABI and actual function-space export must join exactly"). The
+   comment now says so; both refusals are pinned by tests.
+5. **Mutation survivors killed** by direct tests of the contracts: an untyped parameter of a host async
+   function has no dynamic contract (`lane === "native"`), and an annotated non-`any` result whose body runs
+   off its end keeps its annotation (`declaration.type ?`). Each fails with its mutant applied.
+
+Merge of D1 `29d0576590`: conflicts only in `legalizeSourceDynamicValues`'s comment (D1's text, P's trigger and
+last sentence) and this file (all result sections kept). **Pins updated:** D1's two flow-rule tests used
+`function h(x)` as a propagated-number declaration; under P it is dynamic and `x + 1` refuses as a dynamic add.
+`h` takes `x: number` now; the second test pinned the known gap P removes (a concretely typed checker `any` beside
+a dynamic value) and now runs (node 13).
+
+Measured on the merge: typecheck and every gate, also with `LOC_GATE_BASE` = D1's tip; tests of R, V/G, D1, P,
+prepared entry/runtime and #7188: 235/237 before the pin update, the two being those pins; D1 re-run after it 49/49. `changed-root-tests.sh` (interpreter engine):
+`issue-3518-core-vocabulary-seam` is a changed root here (D1 edits it) and fails 4 tests, red on main until PR
+#7278; not patched. Of the other roots, `issue-3518-semantic-verification-ownership` (1, the `effects.ts`
+receipt) and `issue-3526-string-boundary-const` (5) fail identically on D1's tip `29d0576590`, so not P's; the
+rest pass.
+
+### Review round 2: MET
+
+Review of `f9385ba314`: MET, no must-fix, no surviving mutant. The three should-fixes are closed:
+
+1. `uncheckedResult`'s comment overstated D1's flow rule. What holds: where the checker reads a JSDoc `@returns`,
+   it is the returned value's contextual type, so a value that may be dynamic is refused at the `return`; where
+   the checker does not attach the tag (in `function id(v){return v} /** @returns {number} */ function f(n){return
+   id(n)}` the comment follows a statement on its line), f's result is typed from its body, `id`'s `any`, and is
+   dynamic through the checker-`any` arm. So the program is sound by that arm, not by the flow rule; it runs and
+   answers node's `true` (test, right and wrong answer). The same program with the tag on its own line still
+   refuses at the flow rule.
+2. The file header's broken wrap at "Other unannotated results" is fixed.
+3. `export { f as g }` with an untyped parameter is pinned: refused by the export join.
+
+Measured: typecheck and gates; P and D1 tests 76/76.
+
+## Slice ladder after P (measured 2026-11-16)
+
+Replaces the order of slices S, D2, D3, C, B and F in the table above. Source:
+a complete census of the prelude on slice P's branch (`23d4da567e`: V, G, D1
+and P together), which lists every refusal in the three prelude files, not
+only the first (session scratch `irgap/f-design.md`).
+
+**Prelude gaps by mechanism** (sites in `test262-fyi-runtime.js`, `assert.js`
+and `sta.js`):
+
+| mechanism | sites |
+| --- | ---: |
+| strings into the dynamic value (concatenation, literals, compares) | about 40 |
+| built-in globals (`globalThis` 22, `String()` 7, `JSON`, `console`, `Object.prototype.toString.call`, `Array.prototype.map.call`, error constructors, `eval`) | 39 |
+| a function declaration read as a value (`assert`, `compareArray`, `Test262Error`) | 23 |
+| throw and catch with a dynamic value | 17 |
+| an unannotated function expression as a value | 16 |
+| dynamic member read / write | about 16 / 3 |
+| property write / read-and-call on a function object | 10 / 9 |
+| `new` on a plain function / `this` / `instanceof` | 10 / 4 / 2 |
+| call through a dynamic value or local | 10 |
+| `typeof` / ToBoolean / `=== null` | 9 / 8 / 2 |
+| object literal | 4 |
+| dynamic home for a script `var` | 2 |
+
+A passing `assert.sameValue(1, 1)` runs only `sameValue` and `_isSameValue`,
+but module-init runs every top-level statement and the whole prelude must
+compile.
+
+**Slices**, each a whole mechanism, proved by a smallest program through the
+strict Prepared entry that validates and runs:
+
+| slice | content | depends on | proving program |
+| --- | --- | --- | --- |
+| H | A dynamic home for every script `var` without a proven typed home: an `externref` global, `undefined` stored by the module-init prologue, the D1 carrier for globals; also the resolver's value-kind arm that refuses `var x = {…}` and array literals before the home is asked. | D1 | `var x; x = 1; if (x !== 1) throw 1;` |
+| T | ToBoolean, the `=== null` tag test, `typeof` over the admitted values (its string result needs Str). | D1 | `function f(v){ return !v; } if (f(0) !== true \|\| f(1) !== false) throw 1;` |
+| X | Throw and catch with a dynamic value; the catch binding is dynamic; rethrow. | D1 | `function g(v){ try { throw v; } catch (e) { return e; } } if (g(1) !== 1) throw 1;` |
+| Str | Strings in the dynamic value: box a native string, the string arm of strict equality, dynamic `+` and `+=`, `String(x)`, `typeof` results, the string policies of the presentation. | D1 | `function f(a,b){ return a + b; } if (f("a", 1) !== "a1") throw 1;` |
+| Fa | Function values, creation and storage: unannotated closures with P's all-dynamic signature, a declaration as a value, the closure into a dynamic slot, presentation of the closure setup. | H | `var print = function (v) { return v; }; if (print(1) !== 1) throw 1;` |
+| O | Objects as dynamic values: an object literal as a native ordinary object, dynamic member get and set, TypeError on `undefined` / `null`. | H | `var o = { a: 1 }; o.b = 2; if (o.a + o.b !== 3) throw 1;` |
+| Fb | Dynamic call: a call through a value onto the existing closure-call intrinsics, a native IsCallable and its TypeError; a direct typed call when the callee is static. | Fa | `function t(fn){ return fn(2); } if (t(function (x) { return x * 2; }) !== 4) throw 1;` |
+| C | Function objects: properties, `prototype` / `name` / `length`, `this`, `new F()`, `instanceof`, `.constructor`. | Fa, Fb, O | `sta.js` `Test262Error`; `assert.x = function(){return 1}; assert.x() === 1` |
+| B | The built-in globals the prelude names. | Str, O | `assert.js` `formatIdentityFreeValue` |
+| M | The real prelude plus `assert.sameValue(1, 1);` passes in the real runner. | all | |
+
+H, T, X and Str need only D1 and run in parallel. Fa and O follow H and run in
+parallel. Fb follows Fa; C follows Fa, Fb and O; B's parts follow their value
+kinds.
+
+**Function values on this path** (decided): a function value is the existing
+closure struct (funcref, arity, property bag), typed `closure<sig>` while the
+callee is statically known and the D1 `externref` once it reaches a dynamic
+slot. A static callee is called directly; any other call goes through one
+legalization arm onto the existing `js.closure.call:N` / apply-vector
+intrinsics, whose dispatch body legacy already shares. `this` reads the
+`currentThis` global that dispatcher sets; properties live in a native
+ordinary object held in the bag; `new` is create-with-prototype plus a call.
+Each is an intrinsic with a native provider: no host import and no second
+representation.
+
+**Why H is first** (simulated on the 404 positive rows of the sample):
+
+- Making `print` alone presentable moves its 351 rows only to the next global
+  (`$262`).
+- With a dynamic home wherever V refuses, no row stops at `print`, `$262`,
+  `__isArray` or `__globalObject`: 255 stop at ToBoolean in `isPrimitive`
+  (slice T), 118 at object or array literals the resolver refuses before the
+  home is asked (H's second arm), 23 at a `propertyHelper.js` direct call.
+- The simulation stops before the physical plan, so H's global carrier and
+  the module-init store of `undefined` are unmeasured.
+
+**Behind the prelude** (stand-in harness with dynamic parameters, 404 positive
+rows): 10 pass, 379 compile errors, 14 crashes. First gaps: 256 dynamic
+script-var home (object literal 78, `Array.isArray` read 46, call result 32,
+no initialiser 23, string 19, array 18), about 43 built-in globals and
+constructors, 28 calls through a value, about 53 others. The mechanisms that
+finish the prelude are about 85 % of the first per-test work.
+
+**Found on the way, to be filed as their own issues:** an object literal
+inside a function throws an emission invariant error on this path, and 13
+rows with `eval` throw "certified global eval lost an owning predicate".
+
+## H result
+
+Status 2026-11-17. Branch `claude/7354-h` on `claude/7354-p` (merged up to `1995dd6ef2`).
+
+### Built
+
+- **The dynamic home.** `irOwnedScriptVarHome` (`src/ir/module-binding-script-var-home.ts`) answers `dynamic`
+  for every script `var` V cannot prove typed, when the lane has the carrier (wasmgc standalone); the typed
+  home is kept where proven. Still no home: a repeated `var`, a program of several sources, the non-writable
+  global names, the gc target. A JS property declaration on the binding (`Object.defineProperty(obj, …)`,
+  `o.p = v`) is no longer taken for a second declaration (the resolver's own `isJsPropertyDeclarationTarget`,
+  now exported): that, not a value-kind arm, was the "not-direct" of `var obj = {}` (53 sample rows). The
+  resolver's value-kind arm needed no change: given the home, `var o = {…}` already reaches the initializer.
+- **Globals arm of the D1 pass.** `legalizeDynamicGlobals` (`src/ir/program/dynamic-value-legalization.ts`)
+  types each dynamic global as the `externref` carrier and prepends to its storage owner (the script's
+  module-init) `js.value.undefined` + `global.set` for each such global. Physical plan: a source global may be
+  `externref` (it is always this carrier); consumer default initializer `ref.null extern` (never read: the
+  module-init store runs first). Chosen over "null is undefined" because `__extern_is_undefined` and strict
+  equality test the `$AnyValue` undefined singleton, which null is not. Presentation: a global contract and an
+  internal callable slot may be the carrier (one `dynamic` predicate beside `carried`).
+- **Provenance** (`src/ir/source-dynamic-provenance.ts`, new). The checker types `var z = 3` as number even
+  when it holds `undefined`, and so every value read from such a home and passed on (a local, a returned value,
+  a call result, another var, `?:`/`,`/`=`, `||`/`&&`/`??`/`+`). One per-program analysis answers "may this
+  value be the dynamic value": memoised, a cycle counts as dynamic, a binding's own read in its own stores
+  (`x = x + 1`) does not. Every checker-typed decision asks it: the typed home needs every store typed; an
+  unannotated result is dynamic when a returned value may be (P's rule, extended); D1's implicit-flow rule now
+  checks `carries` instead of checker `any`, at the outermost value-passing expression, and a store into a
+  binding that itself carries is no flow. Without this the brief's `function f() { return z; }` was an
+  invariant exception (`return[0] type externref not assignable to declared result f64`).
+- **One contracts object.** `programDynamicContracts(checker, policy, sourceFiles)`
+  (`src/ir/source-dynamic-contracts.ts`) returns `scriptVarHome`, `carries`, `parameter`, `result`,
+  `resolver`, `legalize`; program-source asks only it (it shrinks by 6 lines). `sourceDynamicParameter`,
+  `sourceDynamicResult`, `sourceDynamicResolver` and `legalizeSourceDynamicValues` are module-private now.
+
+### For slices O and Fa
+
+A new value kind needs no home work: the home is already `dynamic` and the store is lowered by from-ast into
+the carrier. Plug in at the store: from-ast's box of the new kind to `dynamic` plus a legalization arm for it
+(`box of a non-primitive value` today), and add the kind's producers to `carries` if their checker type is
+not `any` (a call of a function value, a member read). Hand-over messages measured:
+`var o = {a: 1}` → `proven dynamic binding 'o' initializer has no supported carrier`; `var arr = [1]` →
+`resolver cannot register vec for array literal`; `var s = "x"` → `dynamic operation box of a non-primitive
+value has no Prepared intrinsic`; `var f = function () {}` → `module-level closure binding 'f' not in
+module-init Slice 2 scope`; `var g = Math.max` → `identifier "Math" is not in scope`;
+`function id(v){…} var g = id` → `identifier "id" is not in scope`.
+
+### Measured
+
+- `tests/issue-7354-h-script-var-dynamic-home.test.ts`, 40 tests: 20 programs run twice (node's answer
+  returns, a wrong one throws) — the brief's programs, a var holding number→boolean→undefined, reads in and
+  writes from functions both ways, typed beside dynamic, `var x = 1, y = x`, call results, locals, the store
+  forms, a store cycle, a for-head var; refusals by name for each case above, the gc target, two scripts, typed
+  flows (`Math.abs`, a typed local, TypeScript annotated result/parameter), `+`, ToBoolean, `export var`; an
+  ES module var stays typed; unit tests of the globals arm. R census: 4 tests (the `undefined` provider dropped
+  or renamed, `__js_undefined` renamed → refused).
+- Sweep: 3 declaration forms (no initializer, hoisted read, written by a function) × 9 values (±0, 1, NaN,
+  ±Infinity, true, false, undefined) × 12 operations × 5 positions = 1,620 programs against node: 908 correct
+  (each also throws on a wrong answer), 712 named gaps (254 the parameterless-function slot join P recorded,
+  162 ToBoolean, 135 `typeof`, 135 dynamic `+`, 26 TypeScript diagnostics), 0 wrong, 0 invariant errors,
+  0 invalid Wasm. A rerun of 1,086 rows gave identical verdicts.
+- Mutation check: 38 mutants; 27 killed by H's tests, `x = x + 1`'s self exception by VG/D1. Removed as
+  implied (each survived): the dynamic home's top-level restriction (the producer makes globals only for
+  top-level statements), the flow rule's initializer arm, the conditional-test exclusion, the join's
+  `exported` test. Survivors kept, with reason: lexical exclusion in provenance (a let the proof rejects is
+  read under a TDZ check, which refuses); pending values of locals and results (a local's first store fixes its
+  IR type; recursive results are checker `any`); non-value and unknown stores (for-in/of, patterns, `with`,
+  `eval` refuse elsewhere); returns of nested functions (nested closures refuse).
+- Ordinary-pipeline bytes, the 419-path sample list against the base tree: 396 files byte-identical on the JS
+  environment and `--target standalone`, 8 compile errors on both, 15 skipped. Prepared bytes, every program
+  literal of `test262-prepared-entry`, `-runtime`, #7188 and R tests (42, as .js and .ts): identical except the
+  new H census program (refused on the base).
+- Existing tests: prepared-entry, prepared-runtime, #7188, R, D1, V/G, P and H: 265/265 (before the last
+  property-declaration commit; H and V/G re-run after it: 85/85). `issue-3518*`/`3526*` not run: H adds no
+  intrinsic, provider or resource.
+- Gates: typecheck, loc (no grant: program-source −6, presentation ±0, consumer ±0, physical plan +1 at its
+  ceiling), func, coercion-sites, oracle-ratchet, dead-exports, import-cycles, boundaries inventory (new module
+  classified).
+- Real runner, 411-row sample: negatives unchanged (14 pass). First gap over the 397 failing rows:
+  332 `dyn.truthy` (ToBoolean, slice T — the message names no function; the simulation put it in
+  `isPrimitive`), 47 `direct call to "String"` in `verifyProperty` (propertyHelper.js), 12 `not-direct` (all
+  repeated `var`s: `x` 5, `y` 2, `result`, `fin`, `__result`, `object`, and `var Infinity`), 1 `print` direct
+  call in `__consolePrintHandle__`, 1 `unknown class "Test262Error"` in `isConstructor`, 2 switch-case
+  lexical binding, 1 `DD_operator` callable annotation, 1 TypeScript parse error. No row stops at `print`,
+  `$262`, `__isArray` or `__globalObject` storage. More reach ToBoolean than simulated (332 vs 255): the
+  object-literal rows (`obj` & co.) also run the prelude first and stop there.
+
+### Pins updated
+
+- `issue-7354-vg-script-var-home.test.ts`: the refusals that H now runs moved to H's file; the TypeScript
+  hoisted read now refuses at the flow rule.
+- `issue-7354-p-parameter-contracts.test.ts`: `var g = id` now refuses at the declaration read (Fa).
+
+### Known gaps
+
+- The brief's `var a = 1; var b = a; b = undefined;` is a TypeScript error (`Type 'undefined' is not
+  assignable to type 'number'`) that the strict entry refuses before H; tested as `var b; b = a; …`.
+- Repeated `var` and multi-source programs: no home (startup plan / per-script module-init).
+- A parameterless function returning a dynamic comparison hits P's slot-join gap.
+
+### Review round 1 (H)
+
+Adversarial review of `f510ec7691` against `1995dd6ef2`: NOT MET. First P's review fixes and D1's rework were
+merged in (`14ffa8c311`; the legalization trigger is D1's native contract, which a script var's dynamic home now
+also is, so `legalize` takes the signatures and the globals). Then:
+
+1. **Must-fix: fail-open provenance.** It answered "typed" for every kind it did not model, and read a local's
+   stores through `scriptVarWrites`, which drops block-scoped initializers: `function k() { const a = x; return
+   a; }` kept an f64 result over a carrier body and `compile()` threw an invariant error. Now every expression
+   and binding kind not modelled may be dynamic. Modelled, each with a test a wrong answer fails: checker `any`,
+   script vars (through the classifier, which now answers only for script vars), locals, annotated parameters,
+   calls of source functions, `?:`, `,`, `=`, `||`/`&&`/`??` (and assignments), `+`/`+=`, the other binary
+   operators, number and Boolean literals, prefix operators, a binding's own read in its stores. Kinds no program
+   on this path reaches typed (members, ambient callees, strings, objects, closures, postfix values, catch and
+   ambient bindings) were tried as modelled kinds, survived mutation, and fall to the default instead. The five
+   repros run and match node.
+2. **One authority for a local** (from-ast): it types a local from the value it is created with and refuses a
+   later store of another type, so the provenance answers from that first value (`undefined` without an
+   initializer); stated in the code.
+3. **One return walker**: `someReturnedValue` (`src/ir/function-returns.ts`), used by `irFunctionBodyReturnsValue`
+   (select.ts shrinks by 10) and the result contract.
+4. The presentation calls `nativeDynamicLane` (exported) instead of repeating the target check.
+5. The physical plan admits a null default only when `storesUndefinedFirst` finds the owner's entry block opening
+   with the `undefined` store into that global (dated +2 loc grant for program-physical-plan.ts).
+6. A TypeScript annotation other than `any` keeps the typed home (or none). `var g: number = 0; function s(v:
+   any) { g = v; }` now refuses as on the base, at the binding ("module binding g has no exact typed storage:
+   unsupported", the resolver's retype arm), not at the `0`.
+7. **Not fixed, recorded for slice O:** `var o = 1; Object.defineProperty(o, 'p', {});` throws
+   `IrProgramDriverInvariantError` from `unadmittedObjectDefineProperty` (`src/ir/from-ast.ts`, ~9210): from-ast
+   treats an unadmitted define as selector drift, and the Prepared path has no selector. Turning it into a
+   refusal there would weaken the ordinary pipeline's drift check; the Prepared producer needs its own admission
+   for `Object` statics (slice O). It was reachable before H with a literal target.
+
+Measured after the fixes (`d635f3be69`):
+
+- Tests: H 63, and V/G, P, D1, R, prepared entry/runtime, #7188: 235, all pass.
+- Mutation sweep over the changed analysis (31 mutants): all killed except fail-closed defaults (the pending
+  answers of locals and results, `?? true` without a write list, non-value stores, and the fall-through kinds).
+- Sweep, now with a `const` local position: 1,944 programs, 1,014 correct, 930 named gaps (381 P's
+  parameterless slot join, 189 ToBoolean, 162 `typeof`, 162 dynamic `+`, 36 TypeScript diagnostics), 0 wrong,
+  0 invariant errors.
+- Ordinary-pipeline bytes against `f9385ba314` (P), 180 sample files: identical on both targets, all compiled.
+- 411-row sample: negatives 14 pass; 333 ToBoolean, 47 `String` direct call in `verifyProperty`, 12 repeated-var
+  `not-direct`, 2 switch-case binding, 1 `print` call, 1 `Test262Error`, 1 parse error.
+- Gates (also with the base at P): typecheck, loc, func, coercion-sites, oracle-ratchet, dead-exports,
+  import-cycles, boundaries inventory. `changed-root-tests.sh`: `issue-3518-core-vocabulary-seam` red (main,
+  PR #7278); `issue-3518-semantic-verification-ownership` and `issue-3526-string-boundary-const` fail exactly as
+  on D1's tip; the others pass.
 
 ## T and X result
 

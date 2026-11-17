@@ -190,7 +190,7 @@ describe("#7354 T — ToBoolean and null on the Prepared dynamic value", () => {
   it("refuses a caught value asserted into a typed result by name", async () => {
     const source = "export function f(x: number): number { try { throw x * 2; } catch (e) { return e as number; } }";
     expect(await refusal(source, "standalone", "entry.ts")).toContain(
-      "a dynamic value flows into number without a conversion (AsExpression)",
+      "a dynamic value flows into number without a conversion (ReturnStatement)",
     );
   });
 });

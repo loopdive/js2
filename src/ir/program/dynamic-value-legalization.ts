@@ -23,8 +23,16 @@
  */
 import { irValueTypes } from "../analysis/value-types.js";
 import { INTRINSIC_SIGNATURE_VERSION, INTRINSIC_DEFINITIONS, type IntrinsicId } from "../core/intrinsics.js";
-import { forEachInstrDeep, mapNestedBuffers, type IrFunction, type IrInstr, type IrValueId } from "../core/nodes.js";
+import {
+  forEachInstrDeep,
+  mapNestedBuffers,
+  type IrFunction,
+  type IrGlobalRef,
+  type IrInstr,
+  type IrValueId,
+} from "../core/nodes.js";
 import type { IrType } from "../core/types.js";
+import type { IrUnitId } from "../../shared/contracts/ir-identity.js";
 import { irRuntimeCallableDeclaration } from "../runtime/callable-declarations.js";
 import { JS_TAG_IDS } from "../runtime/js-tag-domain.js";
 
@@ -153,4 +161,59 @@ export function legalizeDynamicValues(fn: IrFunction): IrFunction {
   // signature) has no carrier on this projection.
   if (containsDynamic(legalized)) gap("on a value of composite type");
   return legalized;
+}
+
+/** A source global as the producer hands it over: its storage, and the unit that initialises it. */
+interface SourceGlobal {
+  readonly binding: { readonly globalRef: IrGlobalRef; readonly type: IrType };
+  readonly identity: { readonly storageOwnerUnitId: IrUnitId };
+}
+
+/**
+ * (#7354 H) The globals arm, over functions already legalized. A dynamic global (a script `var` without a
+ * proven typed home) is stored as the carrier. JavaScript hoists such a `var` with the value `undefined`, so
+ * its storage owner, the script's module-init, stores `undefined` before its first statement; nothing runs
+ * before that, so the physical global's own default (a null externref, outside the admitted set) is never
+ * read.
+ */
+export function legalizeDynamicGlobals<Global extends SourceGlobal>(
+  functions: readonly IrFunction[],
+  globals: readonly Global[],
+): { readonly functions: readonly IrFunction[]; readonly globals: readonly Global[] } {
+  const dynamic = globals.filter((global) => global.binding.type.kind === "dynamic");
+  if (dynamic.length === 0) return { functions, globals };
+  return {
+    functions: functions.map((fn) => {
+      const owned = dynamic.filter((global) => global.identity.storageOwnerUnitId === fn.unitId);
+      return owned.length === 0 ? fn : storeUndefinedFirst(fn, owned);
+    }),
+    globals: globals.map((global) =>
+      dynamic.includes(global) ? { ...global, binding: { ...global.binding, type: CARRIER } } : global,
+    ),
+  };
+}
+
+function storeUndefinedFirst(fn: IrFunction, globals: readonly SourceGlobal[]): IrFunction {
+  const value = fn.valueCount as IrValueId;
+  const prologue: IrInstr[] = [
+    {
+      kind: "intrinsic",
+      id: "js.value.undefined",
+      version: INTRINSIC_SIGNATURE_VERSION,
+      args: [],
+      result: value,
+      resultType: INTRINSIC_DEFINITIONS["js.value.undefined"].signature.result,
+    },
+    ...globals.map(
+      (global): IrInstr => ({
+        kind: "global.set",
+        target: global.binding.globalRef,
+        value,
+        result: null,
+        resultType: null,
+      }),
+    ),
+  ];
+  const [entry, ...rest] = fn.blocks;
+  return { ...fn, blocks: [{ ...entry!, instrs: [...prologue, ...entry!.instrs] }, ...rest], valueCount: value + 1 };
 }
