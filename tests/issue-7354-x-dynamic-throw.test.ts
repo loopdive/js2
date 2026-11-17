@@ -119,6 +119,23 @@ describe("#7354 X — throw and catch with the Prepared dynamic value", () => {
     );
   });
 
+  // An unannotated Boolean result is the Boolean carrier (review round 1): it used to lower to a plain i32 that
+  // the source-declaration join refused ("source declaration and prepared callable slots disagree").
+  it.each([
+    ["a comparison on the caught value", "function f() { try { throw 3; } catch (e) { return e === 3; } }"],
+    ["a parameterless comparison", "function f() { return 1 === 1; }"],
+  ])("returns %s as a Boolean", async (_label, f) => {
+    await twice((answer) => `${f}\nif (f() !== ${answer}) throw 1;`, "true", "false");
+  });
+
+  it("passes a Boolean result on to a dynamic parameter", async () => {
+    await twice(
+      (answer) => `${SAME}function f(v) { return !v; }\nif (!same(f(0), ${answer})) throw 1;`,
+      "true",
+      "false",
+    );
+  });
+
   it("catches `throw undefined` at top level", async () => {
     await twice(
       (answer) => `try { throw undefined; } catch (e) { if (e !== ${answer}) throw 1; }`,
@@ -133,9 +150,45 @@ describe("#7354 X — throw and catch with the Prepared dynamic value", () => {
     expect(await run(program)).toBe("threw");
   });
 
-  it("refuses a typed Boolean throw by name", async () => {
-    const result = await compile("try { throw true; } catch (e) { }", options());
-    expect(messages(result).join("\n")).toContain("throw val not in slice 9");
+  // The catch binding is the dynamic value, which is exact only for numbers, booleans, `undefined` and `null`
+  // (and for Error objects, under every operation the carrier has). Each other payload that could reach a catch
+  // refuses before it does; the slice that makes one reachable must give the dynamic operations its arm and
+  // update this list.
+  it.each([
+    ["a typed Boolean throw", "try { throw true; } catch (e) { if (!e) throw 1; }", "throw val not in slice 9"],
+    ["a string throw", "try { throw 'x'; } catch (e) { if (!e) throw 1; }", "js.string.const is unavailable"],
+    [
+      "a TDZ ReferenceError",
+      "function f() { return x; }\ntry { f(); } catch (e) { if (!e) throw 1; }\nlet x = 1;",
+      "runtime callable __new_ReferenceError needs runtime function materialization",
+    ],
+    [
+      "a vector store (the null-vector guard throws a null payload)",
+      "try { var a = [1]; a[5] = 2; } catch (e) { if (!e) throw 1; }",
+      "resolver cannot register vec for array literal",
+    ],
+    [
+      "a call through a dynamic value (a TypeError)",
+      "function f(v) { try { v(); } catch (e) { return e; } }\nf(1);",
+      "dynamic operation __ir_dyn_call_value has no Prepared intrinsic",
+    ],
+    [
+      "a member read of a dynamic value (a TypeError on null)",
+      "function f(v) { try { return v.x; } catch (e) { return 0; } }\nf(null);",
+      "dynamic operation box of a non-primitive value has no Prepared intrinsic",
+    ],
+  ])("refuses %s before it reaches a catch", async (_label, source, expected) => {
+    const result = await compile(source, options());
+    expect(result.success).toBe(false);
+    expect(messages(result).join("\n")).toContain(expected);
+  });
+
+  // Pre-existing on the base: an object throw passes the producer and fails in emission (an invariant, not a
+  // named refusal). Pinned so that the slice which makes it compile meets the catch-binding rule above.
+  it("does not compile an object throw", async () => {
+    await expect(compile("try { throw {}; } catch (e) { if (!e) throw 1; }", options())).rejects.toThrow(
+      "resolver cannot lower object<>",
+    );
   });
 });
 

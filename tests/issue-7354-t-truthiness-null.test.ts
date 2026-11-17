@@ -154,6 +154,27 @@ describe("#7354 T — ToBoolean and null on the Prepared dynamic value", () => {
       "function q(v, w) { return v == w; }\nif (q(1, 1) !== true) throw 1;",
       "dynamic operation dyn.eq (loose) has no Prepared intrinsic",
     ],
+    // The other from-ast paths the externref-carrier flag switches on; each still refuses before it matters.
+    [
+      "a dynamic for-in head",
+      "function f(v) { var r = 0; for (var k in v) { r++; } return r; }\nf(null);",
+      "dynamic for-in runtime is unavailable in f",
+    ],
+    [
+      "a function-object property write",
+      "function g() {}\nfunction h() { g.x = 2; return 0; }\nh();",
+      'identifier "g" is not in scope in h',
+    ],
+    [
+      "a primitive wrapper's ToPrimitive",
+      "function h(v) { return new Number(1) == v; }\nh(1);",
+      'unknown class "Number" in h',
+    ],
+    [
+      "the parseInt externref boundary",
+      "function stringToNumber(v) { return parseInt(v); }\nstringToNumber(5);",
+      'direct call to "parseInt" has no exact AST-site plan in stringToNumber',
+    ],
   ])("refuses %s by name", async (_label, source, expected) => {
     expect(await refusal(source)).toContain(expected);
   });

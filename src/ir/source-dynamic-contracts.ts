@@ -32,6 +32,7 @@ import type { ValType } from "../wasm/model/instructions.js";
 import { functionBodyAlwaysTerminates, irFunctionBodyReturnsValue } from "./select.js";
 
 type SourcePolicy = Pick<RuntimeManifestPolicy, "backend" | "target">;
+const IR_BOOLEAN_RESULT: IrType = Object.freeze({ kind: "val", val: Object.freeze({ kind: "i32", boolean: true }) });
 type DynamicLane = "host-async" | "native" | undefined;
 
 /** Canonical any identity excludes TypeScript's separate error-any recovery type. */
@@ -99,7 +100,10 @@ export function sourceDynamicParameter(
 
 /**
  * The dynamic result contract: `Promise<any>` on a host async frame; natively an annotated `any`, or an
- * unannotated result the checker cannot vouch for.
+ * unannotated result the checker cannot vouch for. (#7354 T/X review) Natively an unannotated result the
+ * checker types Boolean is the Boolean carrier: the propagated result (shared with the ordinary pipeline)
+ * lowers it to a plain `i32`, which the presentation's source-declaration join refuses (`return e === 3`,
+ * `return 1 === 1` in a parameterless function).
  */
 export function sourceDynamicResult(
   checker: ts.TypeChecker,
@@ -115,7 +119,8 @@ export function sourceDynamicResult(
     const dynamic = declaration.type
       ? annotatedAny(checker, declaration.type) && result === any
       : uncheckedResult(declaration, result === any || result === checker.getUnknownType());
-    return dynamic ? { kind: "dynamic" } : undefined;
+    if (dynamic) return { kind: "dynamic" };
+    return !declaration.type && (result.flags & ts.TypeFlags.BooleanLike) !== 0 ? IR_BOOLEAN_RESULT : undefined;
   }
   if (hostPromiseFulfillment(checker, result) !== any) return undefined;
   if (declaration.type && hostPromiseFulfillment(checker, checker.getTypeFromTypeNode(declaration.type)) !== any)
@@ -126,7 +131,11 @@ export function sourceDynamicResult(
 /**
  * from-ast lowers a dynamic value only where the lane has its carrier. (#7354 T) That carrier is the raw
  * `externref`: `null` is its null reference (from-ast's dynamic `null` literal and `=== null` test), and a
- * catch binding reads the exception payload as the dynamic value.
+ * catch binding reads the exception payload as the dynamic value. Invariant: every payload that can reach a
+ * catch is in the admitted set (a dynamic value, a boxed number, `null`) or an Error object, for which every
+ * dynamic operation is exact too. A string, Boolean or object throw, a TDZ ReferenceError and the runtime's
+ * null-vector throw (`ref.null extern`, which would read as `null`) all refuse before a catch today; the
+ * slice that makes one reachable updates tests/issue-7354-x-dynamic-throw.test.ts, which pins each.
  */
 export function sourceDynamicResolver(policy: SourcePolicy): {
   readonly resolveDynamic?: () => ValType;
