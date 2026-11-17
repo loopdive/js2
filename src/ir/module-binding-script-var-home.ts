@@ -58,8 +58,9 @@ export function irOwnedScriptVarHome(
     const own = (other: ts.Declaration) => !other.getSourceFile().isDeclarationFile && !isMemberWriteDeclaration(other);
     if (declarations.filter(own).length !== 1) return undefined;
     const type = checker.getTypeAtLocation(declaration.name);
-    // A TypeScript annotation other than `any` is the binding's contract: it keeps the typed home, and a dynamic
-    // store into it meets the implicit-flow rule at the store.
+    // A TypeScript annotation other than `any` is the binding's contract: the binding gets the typed home or none,
+    // never the dynamic one. A store of a value the checker types `any` into it is then refused by the resolver's
+    // retype rule ("unsupported"), which names the binding.
     const annotated = declaration.type !== undefined && type !== checker.getAnyType();
     if (
       (type.flags & (ts.TypeFlags.NumberLike | ts.TypeFlags.BooleanLike)) !== 0 &&

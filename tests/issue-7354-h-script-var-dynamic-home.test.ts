@@ -9,7 +9,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import * as gc from "../src/codegen/index.js";
 import * as linear from "../src/codegen-linear/index.js";
 import type { IrFunction, IrGlobalRef, IrInstr } from "../src/ir/core/nodes.js";
-import { legalizeDynamicGlobals, storesUndefinedFirst } from "../src/ir/program/dynamic-value-legalization.js";
+import { legalizeDynamicGlobals } from "../src/ir/program/dynamic-value-legalization.js";
 import { instantiatePreparedArtifact } from "../src/test262/test262-prepared-runtime.js";
 import {
   compile,
@@ -333,11 +333,22 @@ describe("#7354 H — the dynamic home of a script var", () => {
     expect(await run(`${program} if (${fails}) throw 1;`, "entry.ts")).toBe("threw");
   });
 
-  // An annotated script var keeps its annotation's home: a dynamic store refuses at the global, not at its `0`.
-  it("keeps an annotated script var typed and refuses its dynamic store", async () => {
-    expect(await refusal("var g: number = 0; function s(v: any) { g = v; } s(1);", "entry.ts")).toContain(
+  // An annotated script var gets its annotation's home or none, never the dynamic one: an `any` store into a typed
+  // one is refused by the resolver's retype rule (not at its `0` initializer), and one read before its initializer
+  // has no home.
+  it.each([
+    [
+      "stores an `any` value into it",
+      "var g: number = 0; function s(v: any) { g = v; } s(1);",
       "module binding g has no exact typed storage: unsupported",
-    );
+    ],
+    [
+      "reads it before its initializer",
+      "function f(): number { return x; } f(); var x: number = 1;",
+      "module binding x has no exact typed storage: not-direct",
+    ],
+  ])("refuses an annotated script var when the program %s", async (_, program, message) => {
+    expect(await refusal(program, "entry.ts")).toContain(message);
   });
 
   it("keeps an ES module var read by a hoisted function typed", async () => {
@@ -412,14 +423,5 @@ describe("#7354 H — legalizeDynamicGlobals", () => {
       f64,
       { kind: "val", val: { kind: "externref" } },
     ]);
-  });
-
-  // The physical plan admits a null default only where this holds.
-  it("proves the undefined store opens the owner, and nothing else", () => {
-    const globals = [global("a", { kind: "dynamic" }, "init")];
-    const out = legalizeDynamicGlobals([fn("init", [marker])], globals);
-    expect(storesUndefinedFirst(out.functions, ref("a"))).toBe(true);
-    expect(storesUndefinedFirst(out.functions, ref("b"))).toBe(false);
-    expect(storesUndefinedFirst([fn("init", [marker])], ref("a"))).toBe(false);
   });
 });

@@ -24,7 +24,6 @@ import { mapNestedBuffers, type IrFunction, type IrGlobalRef, type IrInstr, type
 import type { IrType } from "../core/types.js";
 import type { IrUnitId } from "../../shared/contracts/ir-identity.js";
 import { irRuntimeCallableDeclaration } from "../runtime/callable-declarations.js";
-import { irGlobalBindingKey } from "../core/global-binding-keys.js";
 import { JS_TAG_IDS } from "../runtime/js-tag-domain.js";
 
 const CARRIER: IrType = Object.freeze({ kind: "val", val: Object.freeze({ kind: "externref" }) });
@@ -164,23 +163,6 @@ export function legalizeDynamicGlobals<Global extends SourceGlobal>(
       dynamic.includes(global) ? { ...global, binding: { ...global.binding, type: CARRIER } } : global,
     ),
   };
-}
-
-/**
- * The globals arm's guarantee, checked where a null default is admitted: some function's entry block opens with
- * the `undefined` store into `global`, before any other instruction, so the default is never read.
- */
-export function storesUndefinedFirst(functions: readonly IrFunction[], global: IrGlobalRef): boolean {
-  const key = irGlobalBindingKey(global.binding);
-  return functions.some((fn) => {
-    const [first, ...rest] = fn.blocks[0]!.instrs;
-    if (first?.kind !== "intrinsic" || first.id !== "js.value.undefined") return false;
-    for (const instr of rest) {
-      if (instr.kind !== "global.set" || instr.value !== first.result) return false;
-      if (irGlobalBindingKey(instr.target.binding) === key) return true;
-    }
-    return false;
-  });
 }
 
 function storeUndefinedFirst(fn: IrFunction, globals: readonly SourceGlobal[]): IrFunction {

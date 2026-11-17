@@ -13,7 +13,6 @@
 // Native string declarations are borrowed from the canonical backend recipe;
 // no resource allocation, codegen context or frontend code enters this plan.
 
-import { storesUndefinedFirst } from "./program/dynamic-value-legalization.js";
 import { forEachPreparedIrInstruction } from "./runtime/prepared-instructions.js";
 import {
   planNativeInvocationInput,
@@ -1365,8 +1364,9 @@ export function planPhysicalSetup(
       if (binding.kind === "import") {
         importedGlobals.push({ ...base, module: binding.module, field: binding.field });
       } else if (binding.kind === "source") {
-        if (numeric(type) || (type.kind === "externref" && storesUndefinedFirst(program.ir.functions, contract.ref)))
-          definedGlobals.push(base);
+        // (#7354 H) A reference-typed source global is the dynamic carrier, and its only producer, the globals arm
+        // of the dynamic-value legalization, makes the storage owner store `undefined` into it first.
+        if (numeric(type) || type.kind === "externref") definedGlobals.push(base);
         else gaps.add(`source global ${contract.ref.name} needs a reference-typed default initializer`);
       } else {
         gaps.add(`${binding.kind} global ${contract.ref.name} needs runtime storage materialization`);
