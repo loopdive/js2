@@ -336,8 +336,7 @@ export function planNativeStringValuePhysical(
     literals.push({ value: i.value, encoding });
     uses.push({ demandIndex: index, cacheKey: selection.key });
   }
-  if (!numeric && !realmLiterals && !uses.length && !outputRequirements.binaryConcat && !equality)
-    return { kind: "none" };
+  if (!numeric && !realmLiterals && !uses.length && !outputRequirements.binaryConcat) return { kind: "none" };
   const entry = demands.program.inventory.sources.find((row) => row.kind === "entry");
   if (!entry) fail("missing canonical entry source");
   const key = "native-string-values:v1:" + JSON.stringify(entry.id);

@@ -103,6 +103,27 @@ describe("#7354 Str 1 — typed strings through the presentation", () => {
     expect((instantiatePreparedArtifact(result).instance.exports.main as () => number)()).toBe(11);
   });
 
+  // (#7354 Str review 1) Equality alone still needs the flatten's empty literal: no concat, no number runtime here.
+  it("compares typed strings with nothing but string.eq", async () => {
+    const result = await compile(
+      "function eq(a: string, b: string): boolean { return a === b; }\n" +
+        "export function main(): number { return (eq('ab', 'ab') ? 1 : 0) + (eq('ab', 'ac') ? 2 : 0); }\n",
+      options("entry.ts"),
+    );
+    expect(messages(result)).toEqual([]);
+    expect((instantiatePreparedArtifact(result).instance.exports.main as () => number)()).toBe(1);
+  });
+
+  // A literal past the array-new-fixed ceiling is a materializer, not a global; the census joins either.
+  it("measures an oversized literal (materializer storage)", async () => {
+    const result = await compile(
+      `function len(s: string): number { return s.length; }\nexport function main(): number { return len("${"x".repeat(10001)}"); }\n`,
+      options("entry.ts"),
+    );
+    expect(messages(result)).toEqual([]);
+    expect((instantiatePreparedArtifact(result).instance.exports.main as () => number)()).toBe(10001);
+  });
+
   it("an uncaught thrown string escapes as an exception", async () => {
     expect(await run('function f() { throw "x"; }\nf();')).toBe("threw");
   });
