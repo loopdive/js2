@@ -1136,3 +1136,50 @@ Measured after the fixes (`d635f3be69`):
   import-cycles, boundaries inventory. `changed-root-tests.sh`: `issue-3518-core-vocabulary-seam` red (main,
   PR #7278); `issue-3518-semantic-verification-ownership` and `issue-3526-string-boundary-const` fail exactly as
   on D1's tip; the others pass.
+
+### Review round 2 (H)
+
+Review of `52ca249b28`: NOT MET on one must-fix. D1 `d87fe37e23` (main's #7357 red-pin fixes) was merged into P
+(`53f7b492c2`) and P into H first; then:
+
+1. **Must-fix: `var o = 1; Object.defineProperty(o, 'p', {})` threw** from-ast's drift invariant out of
+   `compile()`. The classifier now exempts only a member write (`o.p = v`, `o[k] = v`, `isMemberWriteDeclaration`,
+   moved to `src/shared/binding-writes.ts` and shared with the resolver's predicate, whose answers are unchanged)
+   and still counts the `Object.defineProperty` call as a second declaration: the binding has no home and the
+   program refuses as "not-direct". Tested, with the member-write form keeping its home. **Cost, handed to slice
+   O:** the `var obj = {}; Object.defineProperty(obj, …)` rows of the sample stop at "not-direct" again (52 `obj`,
+   plus `proto`, `o`, `arr`, … — 84 rows in all) until O admits `Object` statics on this path; O then drops the
+   call form from the declaration count. Known pre-existing crash for O, not fixed here: the literal form
+   `Object.defineProperty(1, 'p', {})` throws the same invariant on the base.
+2. **`storesUndefinedFirst` deleted.** It accepted the store in any function, and no test could reach an
+   `externref` source global without the globals arm's prologue: the arm is that global's only producer and
+   prepends the store in the storage owner itself (unit test). The physical plan states this.
+3. **Annotated var.** Claim and behaviour now agree: an annotation other than `any` gives the typed home or none,
+   and an `any` store into it is refused by the resolver's retype rule naming the binding ("unsupported"). H's own
+   tests pin both refusals, killing the `storesDynamic && !annotated` mutant.
+4. **Fail-open survivors, rebutted.** The code answers "may be dynamic" in all three; only the mutants that answer
+   "typed" survive, because no program on this path observes them: a non-variable binding read as a value (a
+   function, a class, a binding element) and a call of anything but a source function (a member, an ambient or
+   a value callee) are refused by from-ast before their type matters, and a pending local needs an initializer
+   that reaches the local itself (a closure or a TDZ read). The self-read exception is now killed by H's own file
+   (`var y = 1; y = y + 1`).
+
+Measured: H 66 and V/G, P, D1, R, prepared entry/runtime, #7188 tests 303/303; typecheck and gates;
+`changed-root-tests.sh` green; sweep 1,944 programs, 1,014 correct, 0 wrong, 0 invariant errors; ordinary bytes
+on 100 further sample files identical on both targets (92 compiled, 8 compile errors on both).
+
+### Review round 3: MET
+
+Review of `36c1b42ac9`: MET, no must-fix; the three survivors and the deletion accepted. Then `origin/main`
+(`e48947ccb8`, with D1 #7277 and P #7283) was merged in. Final 411-row sample: negatives 14 pass; 282 ToBoolean,
+84 "not-direct" (the `Object.defineProperty` bindings above and the repeated vars), 26 `String` direct call in
+`verifyProperty`, 2 switch-case binding, 1 `Test262Error`, 1 parse error, 1 `print` call.
+
+### Known gaps (H)
+
+- **The physical plan admits any `externref` source global.** After the legalization a dynamic global's type is a
+  plain `externref`; neither the ABI contract nor its intent keeps a dynamic marker, so keying the admission on
+  it needs new plumbing. Today the globals arm is the only producer (it stores `undefined` first). The slice that
+  adds another reference-typed source global must carry a marker (or its own default) and narrow this arm.
+- `Object.defineProperty` on a script var: no home until slice O (above).
+- Repeated `var` and multi-source programs: no home.
