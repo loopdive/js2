@@ -721,8 +721,8 @@ Status 2026-11-17. Branch `claude/7354-tx` on `claude/7354-p` (`1995dd6ef2`): T 
 - **T, ToBoolean.** New intrinsic `js.value.to_boolean` (`(externref) -> i32`), added to every closed list the
   same way as `js.value.strict_eq` (vocabulary, `INTRINSIC_DEFINITIONS`, runtime features, provider ids,
   `dynamic-value-callables.ts` symbol `__is_truthy`, `nativeIntrinsicRows` role `to-boolean`,
-  `native-dynamic-values.ts` row and fill). The legacy `__is_truthy` body moved unchanged into the pure builder
-  `src/runtime/wasmgc/values/to-boolean-body.ts` (`buildToBooleanBody`/`buildToBooleanLocals`); legacy
+  `native-dynamic-values.ts` row and fill). The legacy `__is_truthy` body moved unchanged into the pure builder in
+  `src/runtime/wasmgc/values/primitive-layouts.ts` (`buildToBooleanBody`/`buildToBooleanLocals`); legacy
   `registry/imports.ts` calls it with its old arguments (149 lines shorter), the Prepared fill calls it with
   `$AnyValue` (so `undefined` is falsy), the number and Boolean boxes, and no BigInt or string arm (`-1`).
   Legalization arm: `dyn.truthy` → `js.value.to_boolean`.

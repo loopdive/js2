@@ -10,8 +10,11 @@ import type { PhysicalModuleReservations, FunctionReservation } from "../../../w
 import type { IrInstrIntrinsic } from "../../../ir/core/nodes.js";
 import type { NativeValueResourcePlan } from "../../../ir/program/native-value-resources.js";
 import { buildObjectSameValueBody } from "../../../runtime/wasmgc/values/object-same-value-body.js";
-import { buildIsUndefinedBody } from "../../../runtime/wasmgc/values/primitive-layouts.js";
-import { buildToBooleanBody, buildToBooleanLocals } from "../../../runtime/wasmgc/values/to-boolean-body.js";
+import {
+  buildIsUndefinedBody,
+  buildToBooleanBody,
+  buildToBooleanLocals,
+} from "../../../runtime/wasmgc/values/primitive-layouts.js";
 import type { NativeStringValueDeclaration } from "../../../runtime/wasmgc/values/native-resource-declaration-types.js";
 import { UNDEF_F64_BITS } from "../../../shared/contracts/f64-value-markers.js";
 import {

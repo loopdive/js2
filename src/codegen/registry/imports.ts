@@ -4,7 +4,12 @@ import { isRetiredEcmaScriptExternClass } from "../../host-import-policy.js";
 import { registerWideBigIntTypes } from "../bigint-wide.js";
 import { buildOpenBigIntType } from "../../runtime/wasmgc/values/bigint-carrier-layouts.js";
 import type { Instr, ValType, WasmFunction } from "../../ir/types.js";
-import { buildBoxNumberType, buildBoxBooleanType } from "../../runtime/wasmgc/values/primitive-layouts.js";
+import {
+  buildBoxNumberType,
+  buildBoxBooleanType,
+  buildToBooleanBody,
+  buildToBooleanLocals,
+} from "../../runtime/wasmgc/values/primitive-layouts.js";
 import {
   buildBoxNumberBody,
   buildBoxNumberLocals,
@@ -18,7 +23,6 @@ import {
   buildTypeofBooleanBody,
 } from "../../runtime/wasmgc/values/boolean-bodies.js";
 import { buildBoxBigIntBody, buildTypeofBigIntBody } from "../../runtime/wasmgc/values/bigint-primitive-bodies.js";
-import { buildToBooleanBody, buildToBooleanLocals } from "../../runtime/wasmgc/values/to-boolean-body.js";
 import type { CodegenContext, ExternClassInfo } from "../context/types.js";
 import { resolveWidenedVarKey } from "../widened-var-key.js";
 import { hasLoneSurrogate, hexCodeUnits, STRING_CONSTANTS16_NS } from "../../string-surrogate.js";
