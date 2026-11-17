@@ -225,6 +225,8 @@ export function programDynamicContracts(
     propagatedResult: (declaration, propagated) => {
       if (propagated || !irFunctionBodyReturnsValue(declaration.body!)) return propagated ?? null;
       const result = checker.getReturnTypeOfSignature(checker.getSignatureFromDeclaration(declaration)!);
+      // `return undefined;` is the void result a call reads as `undefined`.
+      if (result.flags & (ts.TypeFlags.Void | ts.TypeFlags.Undefined)) return null;
       throw new IrUnsupportedError(
         "type-resolution-unsupported",
         "build",

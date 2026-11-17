@@ -1423,3 +1423,68 @@ Verdict MET; every should-fix fixed or rebutted.
   has no exact typed storage: not-direct" (`obj` 52, `x` 5, `proto` 4, `o` 4, `arr` 3, …); 27 × "direct call to
   "String" has no exact AST-site plan in verifyProperty"; 2 × switch-case lexical binding; 1 × "unknown class
   "Test262Error" in isConstructor".
+
+### Review round 2 (delta after the port onto H)
+
+**Must-fix: a Boolean (typed) left operand with a dynamic right operand in a VALUE position yielded a Boolean.**
+`function f(b, c) { return (b > 1) && c; }` answered `f(5, 7) === true` (node: 7); the same for `||`, `!a || c`,
+`!(a && b) || c`, `(b > 1) && (c || d)` and TypeScript `n > 1 && c` / `n > 1 || c` with `c: any`.
+
+- **Cause** (the reviewer's reading, confirmed): `lowerLogicalAndOr` (`src/ir/from-ast.ts`) takes its `i32` path
+  whenever the left operand is not dynamic and ToBooleans a dynamic right operand there even outside a condition.
+  Before T that ToBoolean had no intrinsic and refused by name; T's `js.value.to_boolean` made the wrong path run.
+  The `&&` case was wrong before the port; the `||` cases were reopened by the `passedOn` logical arm of the
+  implicit-flow rule (which is right: an operand of `&&`/`||` is the expression's value).
+- **Fix:** the position the lowering already knows decides. Only a boolean position (the `i32` hint: an `if` /
+  loop condition, `?:` test, `!`, a Boolean result) ToBooleans the right operand. In a value position a dynamic
+  right operand stays the value, the typed left operand is boxed into the carrier (`logicalOperandCarrier`, which
+  the dynamic-left arm's right operand now shares), and the result selects one of them (`emitLogicalSelect`, moved
+  to the new `src/ir/logical-select.ts` and shared by all three arms). Each operand is evaluated once, the right one
+  only in its arm. A nested logical right operand gets the carrier hint in a value position, exactly like the left
+  one (`operandHint`, one rule for both sides). A typed number operand still refuses by name ("requires bool
+  operands"); the dynamic result flowing into a typed position refuses by name (`assignment to "r" (f64) got
+  dynamic`). `src/ir/from-ast.ts` shrinks by 12 lines.
+- **Ordinary pipeline:** it reaches `lowerLogicalAndOr` in value positions (instrumented: dynamic hints in
+  `Test262Error`, `isEnumerable`, f64 hints in `<module-init>`), but never with a typed left and a dynamic right
+  operand there — the same programs compile on the ordinary pipeline and answer like node (checked: `(b > 1) && c`,
+  `||`, `!a || c`, `n > 1 && c`, a nested right operand), through legacy. Bytes identical on 100 test262 files ×
+  default and `--target standalone` plus 14 logical programs, against `b08580f01c` (the tx tip with the hoisted-var
+  fix merged, before B).
+- **Sweep** (`.tmp/sweep-b.mts`, not committed): left ∈ {typed Boolean `a > 0`, typed number, dynamic} × right ∈
+  the same × {`&&`, `||`} × 9 positions (returned, assigned to a dynamic local, argument, `… || e`, `e && …`, `if`,
+  `!(…)`, `?:` test, right operand with a side effect that throws), every value pair per program (dynamic: 0, -0,
+  NaN, 1, true, false, undefined, null; number: 0, -0, NaN, 1): 162 programs, **88 equal node, 74 named
+  refusals, 0 wrong, 0 invariant errors**. Refusals: 62 "operator requires bool operands" (a typed number
+  operand), 12 "source Boolean return boundary requires actual canonical Boolean boxing" (`!(…)` returned from an
+  `any` result). (-0 is checked with `!==`, which cannot tell it from 0.) A reduced sweep (Boolean/dynamic ×
+  Boolean/dynamic × both operators × returned / chained / condition, 24 programs) is in the test file.
+- **Mutations:** always ToBoolean the dynamic right operand → 15 tests fail; the `i32` hint for the right operand →
+  the nested-right test fails; the value-select arm is the only path to an accepted value (removing it refuses).
+  Survivor: `logicalOperandCarrier`'s refusal for the left operand (a typed left operand here is `i32`, which
+  always has a carrier).
+
+**Should-fix 1: `function f(n: number) { return n as unknown; }` refused as "call to f returned void used as
+expression".** The ordinary pipeline's propagation types such a result void, so the function lowered as void and
+the call failed later. Now an unannotated function with no result contract whose body returns a value refuses at
+the declaration by name: "function f returns unknown, which has no Prepared result contract" (`object` for `as
+unknown as object`) — `ProgramDynamicContracts.propagatedResult` in `src/ir/source-dynamic-contracts.ts`, called
+where `src/ir/program-source.ts` used to fall back to void. A body that returns only `undefined` (type
+`undefined`/`void`) stays void (pinned by #7188's internal-declaration tests). The dynamic result contract was not
+widened to `unknown`: the implicit-flow rule would then refuse every `return` into the `unknown` context, so it is
+not a clean fit. Cost: such a function called only as a statement compiled before (its value was dropped) and now
+refuses.
+
+**Should-fix 2: seven standalone programs that compiled on H changed Prepared bytes** (un-annotated functions
+returning a Boolean, e.g. `function f(v) { return v === 1; }`). Measured on that program (H vs this branch, WAT
+diff): the function body is identical; the only change is the type section — `f` gets its own function type
+`(func (param externref) (result i32))` instead of sharing the structurally identical type of the runtime's
+`__typeof_number` / `__unbox_boolean`, and the `<module-init>` / `__module_init` type indices shift by one. The
+Boolean result contract makes the result a Boolean-branded `i32`, which the presentation keys separately from a
+plain `i32`. The two types are structurally equal (one-entry recursion groups canonicalize to the same type), so
+the behavior is unchanged; it is right because the result now carries its Boolean meaning to the caller (a caller
+boxes it as a Boolean, not a number). Folding the duplicate type is a possible size clean-up, not a correctness
+issue.
+
+**Also:** the T test helpers yield one event-loop turn before each compile (`compileYielding`): the file now runs
+long enough that vitest's worker RPC timed out between compiles. `tests/issue-7354-x-dynamic-throw.test.ts` and the
+H test show the same unhandled RPC timeout under the current machine load on their base as well (all tests pass).
