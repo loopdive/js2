@@ -18,7 +18,7 @@ related: [7188, 2949, 3526, 3527, 3518, 7106, 7349, 7350, 7352]
 # policy (`preparedPresentationPolicy`), which replaces the inline `{ backend, target }`
 # policy literal in place; the policy and the provider census live in their own
 # module, src/compiler/prepared-provider-census.ts.
-# 2026-11-16 (slice D1, review round 1): src/ir/from-ast.ts +10, two named
+# 2026-11-16 (slice D1, review round 1): src/ir/from-ast.ts +6, two named
 # declines the Prepared producer reaches because it has no selector (`**` on a
 # dynamic operand, a value-position prefix `++`/`--`); they replace invariant
 # crashes in place and sit in the arms that own them. ir-program-presentation.ts
@@ -278,13 +278,13 @@ records what changed after the adversarial review):
    the native `undefined` probe; the census authenticates the new providers
    unchanged.
 
-Proof: `tests/issue-7354-d1-dynamic-carrier.test.ts` (46 tests) compiles through
+Proof: `tests/issue-7354-d1-dynamic-carrier.test.ts` (49 tests) compiles through
 the strict Prepared entry, validates and runs: number/boolean/`undefined`
 through `function id(v: any): any`; `===` and `!==` over every ordered pair of
 `1, -0, 0, NaN, 1.5, true, false, undefined` against JavaScript; one helper
 with three tags; written conversions back to a number; a branch join and a
 conditional; a dynamic block argument; a propagated-number
-untyped parameter staying numeric. Refusals: every typed flow, loose equality,
+untyped parameter staying numeric; the flow rule skipping a declaration without a dynamic value; a result-only `any` contract. Refusals: every typed flow, loose equality,
 the null tag test, ToBoolean, dynamic `+`, member reads, `typeof`, `**` on
 either side, a value-position prefix update, a thrown dynamic value, a dynamic
 object field, an inferred `any` result, an exported `any`, the gc target.
@@ -370,8 +370,10 @@ and the evidence:
    legacy-i64 and string-less variants, and by the byte run above).
    `strict-equality-body.ts` is deleted. The #3518 receipts replay through one
    new hash-checked inverse step, `beforeStrictEqualityFold`
-   (`tests/helpers/same-value-nan-correction.ts`, 4 spans, current
-   c89a35a2… → the NaN-corrected 32b7cba6…), which `beforeSameValueNaNCorrection`
+   (`tests/helpers/same-value-nan-correction.ts`, 9 spans, current
+   ba1d144b… → the NaN-corrected 32b7cba6…; round 2 named the SameValue
+   number arm `sameValueNumbers` beside `numberEqual`, which keeps 9 spans:
+   the interface split and the re-indented arm are the bulk either way), which `beforeSameValueNaNCorrection`
    applies first, so the BigInt-port fixture is unchanged.
 5. *`js.value.undefined` borrowed the storage-global signature.* It has its own
    `NULLARY_TO_EXTERNREF_INTRINSIC_SIGNATURE` (module-local in
@@ -439,16 +441,15 @@ and the evidence:
 - **Object literals on Prepared.** `const o = { a: 1 }; return o.a` fails to
   lower ("resolver cannot lower object<a:f64>") on `origin/main`; with an
   `any` field it is the same crash. Slice C/F territory.
-- **Provider comparisons.** `vectorProviderMismatch`,
-  `nativeAsyncProviderMismatch` and `numberRemainderProviderMismatch` still
-  carry their own copy of the canonical-row comparison (item 7). Folding the
-  first two needs a reviewed re-pin of the #3518 historical reconstruction;
-  the third first needs a decision between `sameData` and JSON equality.
-- **SSA type maps.** About ten modules keep a private `valueTypesOf`
-  (`generator-support.ts`, `intrinsic-preparation.ts`,
-  `async-prepare-ir.ts`, `prepared-component-dependencies.ts`, the async
-  family's `nativeAsyncCallableValueTypes`, …); most sit under relocation
-  receipts. `irValueTypes` is the neutral one to fold them into.
+- **Provider comparisons and SSA type maps.** Three families keep their own
+  canonical-provider comparison (item 7) and about ten modules a private
+  `valueTypesOf`; folding them needs reviewed replay steps for #3518 receipts.
+  Filed as [#7355](7355-ir-runtime-provider-and-ssa-type-helper-folds.md).
+- **Flow rule granularity.** The rule is gated per declaration, not per
+  expression: a checker `any` that the IR typed concretely (`h(2)` with an
+  untyped `h`) still refuses when the same declaration also lowered a dynamic
+  value (pinned by a test; node answers 13). Asking the lowered IR type per
+  expression needs an AST-to-IR value map the producer does not keep.
 - **Checked unbox.** A dynamic value for a typed parameter or result refuses;
   a later slice may add a checked unbox that converts or throws on a mismatch.
 

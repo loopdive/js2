@@ -127,6 +127,29 @@ describe("#7354 D1 — the dynamic value on the Prepared standalone path", () =>
     expect(await run("function id(x) { return x; }\nexport function main(): number { return id(3) + 1; }")).toBe(4);
   });
 
+  it("runs the flow rule only on a declaration that lowered a dynamic value", async () => {
+    const source = `${ID}function h(x) { return x + 1; }
+    function t(): number { return id(1) === 1 ? 10 : 0; }
+    export function main(): number { const n: number = h(2); return n + t(); }`;
+    expect(await run(source)).toBe(13);
+  });
+
+  // Known gap: the rule is gated per declaration, not per expression, so a concretely typed checker `any` beside a
+  // dynamic value in the same declaration still refuses (node: 13).
+  it("refuses a concretely typed checker `any` in a declaration that also lowered a dynamic value", async () => {
+    const source = `${ID}function h(x) { return x + 1; }
+    export function main(): number { const n: number = h(2); return n + (id(1) === 1 ? 10 : 0); }`;
+    expect(await refusal(source)).toContain(
+      "a dynamic value flows into number without a conversion (VariableDeclaration)",
+    );
+  });
+
+  it("legalizes a program whose only `any` contract is a result", async () => {
+    expect(
+      await run("function one(): any { return 1; }\nexport function main(): number { return one() === 1 ? 1 : 0; }"),
+    ).toBe(1);
+  });
+
   it.each([
     // The one rule: an `any` expression whose contextual type is not `any` crosses into that type with no
     // conversion the source wrote, and the Prepared path has no checked unbox yet.
