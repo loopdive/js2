@@ -15,8 +15,8 @@
  *   runtime, and its callers include top-level code, calls with missing
  *   arguments and calls through values, so no call-site type is a contract.
  *   An unannotated result is dynamic where the checker cannot vouch for the
- *   value the body returns: it is `any`, a JSDoc `@returns` names it, or the
- *   body can also run off its end (that path returns `undefined`). Other
+ *   value the body returns: it is `any`, or the body can also run off its end
+ *   (that path returns `undefined`). Other
  *   unannotated results keep the producer's inference, which the middle end
  *   checks against the lowered body. Either contract triggers the legalization
  *   below like an explicit `any`.
@@ -38,6 +38,9 @@ import { functionBodyAlwaysTerminates, irFunctionBodyReturnsValue } from "./sele
 import { sourceDynamicProvenance, type SourceDynamicProvenance } from "./source-dynamic-provenance.js";
 
 type Carries = SourceDynamicProvenance["carries"];
+type Signature = { readonly params: readonly IrType[]; readonly returnType: IrType | null };
+/** A program global as the source producer holds it: only its storage type matters here. */
+type SourceGlobal = { readonly binding: { readonly type: IrType } };
 type SourcePolicy = Pick<RuntimeManifestPolicy, "backend" | "target">;
 type DynamicLane = "host-async" | "native" | undefined;
 
@@ -51,19 +54,16 @@ function annotatedAny(checker: ts.TypeChecker, annotation: ts.TypeNode | undefin
 }
 
 /**
- * A value an unannotated body returns that the checker cannot vouch for: the checker says `any`, a JSDoc
- * `@returns` (unchecked at runtime) names it, the body can also run off its end, which returns `undefined`, or
- * (#7354 H) a returned value may be the dynamic value whatever the checker infers for it.
+/**
+ * A value an unannotated body returns that the checker cannot vouch for: the checker says `any`, the body can
+ * also run off its end, which returns `undefined`, or (#7354 H) a returned value may be the dynamic value
+ * whatever the checker infers for it. A JSDoc `@returns` is no reason: a value the checker cannot vouch for
+ * already meets the implicit-flow rule at the `return`, and any other value is what it says.
  */
-function uncheckedResult(declaration: ts.FunctionDeclaration, checkerSaysAny: boolean, carries: Carries): boolean {
-  const body = declaration.body;
+function uncheckedResult(body: ts.Block, checkerSaysAny: boolean, carries: Carries): boolean {
   return (
-    body !== undefined &&
     irFunctionBodyReturnsValue(body) &&
-    (checkerSaysAny ||
-      ts.getJSDocReturnType(declaration) !== undefined ||
-      !functionBodyAlwaysTerminates(body) ||
-      returnsCarry(body, carries))
+    (checkerSaysAny || !functionBodyAlwaysTerminates(body) || returnsCarry(body, carries))
   );
 }
 
@@ -89,6 +89,11 @@ function hostPromiseFulfillment(checker: ts.TypeChecker, type: ts.Type): ts.Type
   return arguments_.length === 1 ? arguments_[0] : undefined;
 }
 
+/**
+ * The lane of `declaration`'s contracts. The native lane is for functions no host calls: an `export` modifier
+ * (also `export default`) leaves it here. A function exported by name (`export { f }`) keeps the native
+ * contract, and the presentation's export join refuses it, since its slots are not the host's.
+ */
 function dynamicLane(policy: SourcePolicy, declaration: ts.FunctionDeclaration | undefined): DynamicLane {
   if (policy.backend !== "wasmgc") return undefined;
   const has = (kind: ts.SyntaxKind) => declaration?.modifiers?.some((modifier) => modifier.kind === kind) ?? false;
@@ -132,9 +137,10 @@ function sourceDynamicResult(
   const any = checker.getAnyType();
   const result = checker.getReturnTypeOfSignature(signature);
   if (lane === "native") {
+    // The producer refuses a declaration without a body before it asks for a contract.
     const dynamic = declaration.type
       ? annotatedAny(checker, declaration.type) && result === any
-      : uncheckedResult(declaration, result === any, carries);
+      : uncheckedResult(declaration.body!, result === any, carries);
     return dynamic ? { kind: "dynamic" } : undefined;
   }
   if (hostPromiseFulfillment(checker, result) !== any) return undefined;
@@ -157,6 +163,8 @@ export interface ProgramDynamicContracts extends SourceDynamicProvenance {
   readonly resolver: { readonly resolveDynamic?: () => ValType };
   /** {@link legalizeSourceDynamicValues} for the functions lowered from `roots`. */
   readonly legalize: (
+    signatures: Iterable<Signature>,
+    globals: readonly SourceGlobal[],
     roots: ts.FunctionDeclaration | readonly ts.Statement[],
     functions: readonly IrFunction[],
   ) => readonly IrFunction[];
@@ -178,7 +186,8 @@ export function programDynamicContracts(
     parameter: (declaration, parameter) => sourceDynamicParameter(checker, policy, declaration, parameter),
     resolver: nativeDynamicLane(policy) ? { resolveDynamic: () => ({ kind: "externref" }) } : {},
     result: (declaration) => sourceDynamicResult(checker, policy, declaration, provenance.carries),
-    legalize: (roots, functions) => legalizeSourceDynamicValues(checker, policy, roots, functions, provenance.carries),
+    legalize: (signatures, globals, roots, functions) =>
+      legalizeSourceDynamicValues(checker, policy, signatures, globals, roots, functions, provenance.carries),
   };
 }
 
@@ -241,22 +250,34 @@ function storedIntoCarrier(value: ts.Expression, carries: Carries): boolean {
 }
 
 /**
- * (#7354 D1) On the native lane every function lowered from `declaration` is
- * legalized to the intrinsic/externref form; an operation without a Prepared
- * intrinsic is a named refusal. A function without a dynamic value is returned
- * unchanged, so a program without one keeps its exact IR. The flow rule runs
- * only where a dynamic value was lowered: a checker `any` the IR typed
- * concretely (an untyped parameter with a propagated number type) carries no
- * dynamic value.
+ * (#7354 D1) A program with a native `any` contract (since #7354 P also an
+ * untyped parameter's, since #7354 H also a script `var`'s dynamic home) has
+ * every function lowered from `declaration` legalized to the
+ * intrinsic/externref form; an operation without a Prepared
+ * intrinsic is a named refusal. A program without one keeps its existing path:
+ * from-ast also boxes values into dynamic ones internally there (a string under
+ * unary `+`), which later stages already handle
+ * (`issue-3518-native-string-number-source-admission`). A function without a
+ * dynamic value is returned unchanged. The flow rule runs only where a dynamic
+ * value was lowered: in a function without one, no value can leave the dynamic
+ * domain.
  */
 function legalizeSourceDynamicValues(
   checker: ts.TypeChecker,
   policy: SourcePolicy,
+  signatures: Iterable<Signature>,
+  globals: readonly SourceGlobal[],
   declaration: ts.FunctionDeclaration | readonly ts.Statement[],
   functions: readonly IrFunction[],
   carries: Carries,
 ): readonly IrFunction[] {
-  if (!nativeDynamicLane(policy)) return functions;
+  const contracted =
+    globals.some((global) => global.binding.type.kind === "dynamic") ||
+    [...signatures].some(
+      (signature) =>
+        signature.returnType?.kind === "dynamic" || signature.params.some((type) => type.kind === "dynamic"),
+    );
+  if (!nativeDynamicLane(policy) || !contracted) return functions;
   let legalized: readonly IrFunction[];
   try {
     legalized = functions.map(legalizeDynamicValues);
