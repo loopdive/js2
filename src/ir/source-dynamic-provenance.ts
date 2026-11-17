@@ -63,40 +63,34 @@ export function sourceDynamicProvenance(
   const classify = irOwnedScriptVarHome(checker, sourceFiles, dynamicCarrier ? storesCarry : undefined);
   const scriptVarHome = (declaration: IrModuleBindingDeclaration) =>
     once(homes, declaration, "dynamic", () => classify(declaration));
-  // A local is typed by from-ast from the value it is created with; this answer must cover that value and every
-  // later store, so it is never less dynamic than from-ast's (a local without an initializer starts `undefined`).
+  // from-ast is the authority on a local: it types the local from the value it is created with and refuses a
+  // later store of another type. So the local holds the dynamic value exactly when that first value may be it; a
+  // local without an initializer (a catch binding too) starts as `undefined`.
   const localCarries = (declaration: ts.VariableDeclaration): boolean =>
     once(
       locals,
       declaration,
       true,
-      () =>
-        declaration.initializer === undefined ||
-        carries(declaration.initializer, declaration) ||
-        storesCarry(declaration),
+      () => declaration.initializer === undefined || carries(declaration.initializer, declaration),
     );
 
   const bindingCarries = (node: ts.Identifier, self: ts.VariableDeclaration | undefined): boolean => {
     const declaration = checker.getSymbolAtLocation(node)?.valueDeclaration;
     if (declaration === undefined) return true;
     if (declaration === self) return false;
-    // An ambient declaration's checker type is the contract its provider implements (`NaN`, `Math`).
-    if (declaration.getSourceFile().isDeclarationFile) return false;
-    // An untyped parameter is the dynamic value (#7354 P); an annotated one is typed by its annotation, and the
+    // An untyped or `any` parameter is checker `any` (above); an annotated one is typed by its annotation, and the
     // flow rule checks every argument against it.
-    if (ts.isParameter(declaration)) return declaration.type === undefined;
-    if (!ts.isVariableDeclaration(declaration) || ts.isCatchClause(declaration.parent)) return true;
-    // A top-level declaration's storage is a global, whose home the classifier names: only a script `var` can
-    // have the dynamic home (a lexical or ES-module global is typed by the resolver, which refuses a dynamic
-    // store). Any other variable is a local.
+    if (ts.isParameter(declaration)) return false;
+    if (!ts.isVariableDeclaration(declaration)) return true;
+    // A top-level declaration's storage is a global, whose home the classifier names: only a script `var` of the
+    // program can have the dynamic home (a lexical, ES-module or ambient global is typed by its declaration, and
+    // the resolver refuses a dynamic store into it). Any other variable is a local.
     if (isTopLevelStatementDeclaration(declaration)) return scriptVarHome(declaration) === "dynamic";
     return localCarries(declaration);
   };
   const callCarries = (call: ts.CallExpression): boolean => {
     const callee = checker.getSymbolAtLocation(call.expression)?.valueDeclaration;
-    if (callee === undefined) return true;
-    if (callee.getSourceFile().isDeclarationFile) return false;
-    if (!ts.isFunctionDeclaration(callee) || callee.body === undefined) return true;
+    if (callee === undefined || !ts.isFunctionDeclaration(callee) || callee.body === undefined) return true;
     return once(results, callee, true, () => resultIsDynamic(callee, (value) => carries(value)));
   };
   // Fail-closed: a kind not modelled here may be the dynamic value.
@@ -106,31 +100,15 @@ export function sourceDynamicProvenance(
     if (ts.isIdentifier(node)) return bindingCarries(node, self);
     if (ts.isCallExpression(node)) return callCarries(node);
     if (ts.isConditionalExpression(node)) return carries(node.whenTrue, self) || carries(node.whenFalse, self);
-    // A member of a value the IR types is typed too: a dynamic value inside a composite has no carrier. A member
-    // of the dynamic value is refused by the legalization, so it never reaches a typed position.
-    if (ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node))
-      return carries(node.expression, self);
     if (ts.isBinaryExpression(node)) return binaryCarries(node, self);
     switch (node.kind) {
-      // Literals, and values the IR creates with their own type (a fresh object, array, closure or instance only
-      // becomes the dynamic value through a box, which the legalization owns).
+      // Number and Boolean literals, and the prefix operators whose result is a number or a Boolean whatever
+      // the operand (`-v`, `!v`, `++v`). Every other kind (members, calls of anything but a source function, object
+      // and array literals, closures, strings, `this`, `void`) is not modelled yet and may be the dynamic value.
       case ts.SyntaxKind.NumericLiteral:
-      case ts.SyntaxKind.BigIntLiteral:
-      case ts.SyntaxKind.StringLiteral:
-      case ts.SyntaxKind.NoSubstitutionTemplateLiteral:
-      case ts.SyntaxKind.TemplateExpression:
       case ts.SyntaxKind.TrueKeyword:
       case ts.SyntaxKind.FalseKeyword:
-      case ts.SyntaxKind.ObjectLiteralExpression:
-      case ts.SyntaxKind.ArrayLiteralExpression:
-      case ts.SyntaxKind.FunctionExpression:
-      case ts.SyntaxKind.ArrowFunction:
-      case ts.SyntaxKind.NewExpression:
-      // Operators whose result is a number, a Boolean or a string whatever the operand (`-v`, `!v`, `typeof v`).
       case ts.SyntaxKind.PrefixUnaryExpression:
-      case ts.SyntaxKind.PostfixUnaryExpression:
-      case ts.SyntaxKind.TypeOfExpression:
-      case ts.SyntaxKind.DeleteExpression:
         return false;
       default:
         return true;

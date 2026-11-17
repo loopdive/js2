@@ -41,7 +41,7 @@ const messages = (result: { errors: readonly { message: string }[] }) => result.
  * checker's use-before-assignment warning is the only diagnostic a program here may carry: it does not stop the
  * compile, and a read before the initializer is what the dynamic home is for.
  */
-async function run(source: string): Promise<"returned" | "threw"> {
+async function run(source: string, fileName = "test.js"): Promise<"returned" | "threw"> {
   for (const spy of [
     vi.spyOn(gc, "generateModule"),
     vi.spyOn(gc, "generateMultiModule"),
@@ -51,7 +51,7 @@ async function run(source: string): Promise<"returned" | "threw"> {
     spy.mockImplementation(() => {
       throw new Error("strict request entered a direct generator");
     });
-  const result = await compile(source, options());
+  const result = await compile(source, options(fileName));
   expect(
     messages(result).filter((message) => !/^Variable '\w+' is used before being assigned\.$/.test(message)),
   ).toEqual([]);
@@ -277,7 +277,7 @@ describe("#7354 H — the dynamic home of a script var", () => {
     [
       "a binding element",
       "function k() { var [a] = [x]; return a; } var r = k(); var x = 1;",
-      "a dynamic value flows into any without a conversion (ArrayLiteralExpression)",
+      "a dynamic value flows into [any] without a conversion",
     ],
     ["a regular expression", "function k() { return /a/; } k();", "concrete return needs a dynamic box"],
     ["null", "function k() { return null; } k();", "bare 'null' in non-reference context (dynamic)"],
@@ -286,13 +286,43 @@ describe("#7354 H — the dynamic home of a script var", () => {
     expect(await refusal(program)).toContain(message);
   });
 
-  // Modelled kinds stay typed: `void 0` is the undefined value; an ambient global is its declared type.
+  // `void 0` is not modelled: the result is dynamic and still compares like JavaScript.
+  it.each([["void", "function k() { return void 0; }", "k() !== undefined", "k() === undefined"]])(
+    "runs %s returned from an unannotated function",
+    async (_, program, holds, fails) => {
+      expect(await run(`${program} if (${holds}) throw 1;`)).toBe("returned");
+      expect(await run(`${program} if (${fails}) throw 1;`)).toBe("threw");
+    },
+  );
+
+  // Each modelled kind stays typed. The probe is an operation the dynamic value has no intrinsic for yet (`+`,
+  // ToBoolean): a value wrongly taken as dynamic would refuse there instead of running.
   it.each([
-    ["void", "function k() { return void 0; }", "k() !== undefined", "k() === undefined"],
-    ["an ambient global", "function k() { return NaN; }", "k() === k()", "k() !== k()"],
-  ])("runs %s returned from an unannotated function", async (_, program, holds, fails) => {
+    ["a number literal", "function k() { return 2; }", "k() + 1 !== 3", "k() + 1 !== 4"],
+    ["a Boolean literal", "function k(c) { return true; }", "!k(0)", "k(0)"],
+    ["a prefix operator", "function k(c) { return -c; }", "k(1) + 1 !== 0", "k(1) + 1 !== 1"],
+    [
+      "a conditional of typed branches",
+      "function k(c) { return c === 1 ? 2 : 3; }",
+      "k(1) + 1 !== 3",
+      "k(1) + 1 !== 4",
+    ],
+    ["an ambient global", "function k() { return NaN; }", "!(k() + 1 !== k() + 1)", "k() + 1 !== k() + 1"],
+    ["a var only updated by ++", "var y = 1; y++;", "y + 1 !== 3", "y + 1 !== 2"],
+  ])("keeps %s typed", async (_, program, holds, fails) => {
     expect(await run(`${program} if (${holds}) throw 1;`)).toBe("returned");
     expect(await run(`${program} if (${fails}) throw 1;`)).toBe("threw");
+  });
+
+  // TypeScript: an `any` parameter is the dynamic value (checker `any`), an annotated one is typed, and the global
+  // `undefined` has no declaration, so it may be dynamic.
+  it.each([
+    ["stores an `any` parameter", "var y = 1; function s(v: any) { y = v; } s(2);", "y !== 2", "y !== 1"],
+    ["returns an annotated parameter", "function k(n: number) { return n; }", "k(1) + 1 !== 2", "k(1) + 1 !== 3"],
+    ["returns undefined", "function k() { return undefined; } var r = k();", "r !== undefined", "r === undefined"],
+  ])("runs a TypeScript script that %s", async (_, program, holds, fails) => {
+    expect(await run(`${program} if (${holds}) throw 1;`, "entry.ts")).toBe("returned");
+    expect(await run(`${program} if (${fails}) throw 1;`, "entry.ts")).toBe("threw");
   });
 
   // An annotated script var keeps its annotation's home: a dynamic store refuses at the global, not at its `0`.
