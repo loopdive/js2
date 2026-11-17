@@ -176,8 +176,8 @@ export function fillNativeDynamicValueResources(
         internalizeOnce: true,
         boxNumberTypeIdx: values.types.boxedNumber.typeIndex,
         boxBooleanTypeIdx: values.types.boxedBoolean.typeIndex,
-        bigIntTypeIdx: -1,
-        anyStringTypeIdx: -1,
+        bigIntTypeIdx: undefined,
+        anyStringTypeIdx: undefined,
       }),
     });
   if (pack.undefinedValue)

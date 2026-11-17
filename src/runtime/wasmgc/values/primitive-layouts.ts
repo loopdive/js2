@@ -101,19 +101,19 @@ export function buildBoxBooleanType(): StructTypeDef {
 }
 
 /**
- * The carriers a ToBoolean (§7.1.2) ladder can meet. An absent carrier is `-1`: its value cannot reach the
- * caller, so its arm is not emitted.
+ * The carriers a ToBoolean (§7.1.2) ladder can meet. An absent carrier is `undefined`: its value cannot reach
+ * the caller, so its arm is not emitted.
  */
 export interface ToBooleanLayout {
   /** `$AnyValue`: tag 0 (`null`) and 1 (`undefined`) are falsy, every other wrapped tag truthy (#2106 S1). */
-  readonly anyValueTypeIdx: number;
+  readonly anyValueTypeIdx: number | undefined;
   /** (#4173) Internalize the operand once and let the `$AnyValue` test's tee feed the ladder. */
   readonly internalizeOnce: boolean;
   readonly boxNumberTypeIdx: number;
   readonly boxBooleanTypeIdx: number;
-  readonly bigIntTypeIdx: number;
+  readonly bigIntTypeIdx: number | undefined;
   /** `$AnyString` (the length is field 0): `""` is falsy (#2080). */
-  readonly anyStringTypeIdx: number;
+  readonly anyStringTypeIdx: number | undefined;
 }
 
 export function buildToBooleanLocals(): LocalDef[] {
@@ -143,15 +143,15 @@ function arm(typeIdx: number, tail: Instr[]): Instr[] {
 export function buildToBooleanBody(layout: ToBooleanLayout): Instr[] {
   const { anyValueTypeIdx, boxNumberTypeIdx, boxBooleanTypeIdx, bigIntTypeIdx, anyStringTypeIdx } = layout;
   const any = (): Instr => ({ op: "local.get", index: 1 });
+  const internalize = (): Instr[] =>
+    [{ op: "local.get", index: 0 }, { op: "any.convert_extern" }, { op: "local.tee", index: 1 }] satisfies Instr[];
   return [
     { op: "local.get", index: 0 },
     { op: "ref.is_null" },
     { op: "if", blockType: { kind: "empty" }, then: [{ op: "i32.const", value: 0 }, { op: "return" }] },
-    ...(anyValueTypeIdx >= 0
+    ...(anyValueTypeIdx !== undefined
       ? [
-          { op: "local.get", index: 0 } as Instr,
-          { op: "any.convert_extern" } as Instr,
-          { op: "local.tee", index: 1 } as Instr,
+          ...internalize(),
           ...arm(anyValueTypeIdx, [
             { op: "struct.get", typeIdx: anyValueTypeIdx, fieldIdx: 0 },
             { op: "i32.const", value: 1 },
@@ -159,9 +159,7 @@ export function buildToBooleanBody(layout: ToBooleanLayout): Instr[] {
           ]),
         ]
       : []),
-    ...((layout.internalizeOnce && anyValueTypeIdx >= 0
-      ? [any()]
-      : [{ op: "local.get", index: 0 }, { op: "any.convert_extern" }, { op: "local.tee", index: 1 }]) as Instr[]),
+    ...(layout.internalizeOnce && anyValueTypeIdx !== undefined ? [any()] : internalize()),
     // (#3673) An i31 small int cannot be NaN.
     ...arm(-20, [{ op: "i31.get_s" }, { op: "i32.const", value: 0 }, { op: "i32.ne" }]),
     any(),
@@ -177,7 +175,7 @@ export function buildToBooleanBody(layout: ToBooleanLayout): Instr[] {
     ]),
     any(),
     ...arm(boxBooleanTypeIdx, [{ op: "struct.get", typeIdx: boxBooleanTypeIdx, fieldIdx: 0 }]),
-    ...(bigIntTypeIdx >= 0
+    ...(bigIntTypeIdx !== undefined
       ? [
           any(),
           ...arm(bigIntTypeIdx, [
@@ -187,7 +185,7 @@ export function buildToBooleanBody(layout: ToBooleanLayout): Instr[] {
           ]),
         ]
       : []),
-    ...(anyStringTypeIdx >= 0
+    ...(anyStringTypeIdx !== undefined
       ? [
           any(),
           ...arm(anyStringTypeIdx, [

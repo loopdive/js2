@@ -1147,12 +1147,12 @@ export function addUnionImportsAsNativeFuncs(ctx: CodegenContext): void {
     "__is_truthy",
     externrefToI32,
     buildToBooleanBody({
-      anyValueTypeIdx: s1AnyValIdx,
+      anyValueTypeIdx: s1AnyValIdx >= 0 ? s1AnyValIdx : undefined,
       internalizeOnce: ctx.fastStrictEq === true,
       boxNumberTypeIdx: boxNumStructIdx,
       boxBooleanTypeIdx: boxBoolStructIdx,
       bigIntTypeIdx: bigIntStructIdx,
-      anyStringTypeIdx: ctx.anyStrTypeIdx,
+      anyStringTypeIdx: ctx.anyStrTypeIdx >= 0 ? ctx.anyStrTypeIdx : undefined,
     }),
     buildToBooleanLocals(),
   );
