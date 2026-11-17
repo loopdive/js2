@@ -64,6 +64,11 @@ function hostPromiseFulfillment(checker: ts.TypeChecker, type: ts.Type): ts.Type
   return arguments_.length === 1 ? arguments_[0] : undefined;
 }
 
+/**
+ * The lane of `declaration`'s contracts. The native lane is for functions no host calls: an `export` modifier
+ * (also `export default`) leaves it here. A function exported by name (`export { f }`) keeps the native
+ * contract, and the presentation's export join refuses it, since its slots are not the host's.
+ */
 function dynamicLane(policy: SourcePolicy, declaration: ts.FunctionDeclaration | undefined): DynamicLane {
   if (policy.backend !== "wasmgc") return undefined;
   const has = (kind: ts.SyntaxKind) => declaration?.modifiers?.some((modifier) => modifier.kind === kind) ?? false;

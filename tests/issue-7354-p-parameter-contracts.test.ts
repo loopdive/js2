@@ -166,6 +166,23 @@ describe("#7354 P — an untyped parameter is the dynamic value", () => {
     expect(await refusal(source)).toContain(message);
   });
 
+  // The native lane is for functions no host calls (`dynamicLane`): an `export` modifier leaves it, and a function
+  // exported by name keeps the native contract, which the export join refuses.
+  it.each([
+    [
+      "a function exported by name",
+      "function f(x) { return x; }\nexport { f };",
+      "source unit, export ABI and actual function-space export must join exactly",
+    ],
+    [
+      "an exported default function",
+      "export default function f(x) { return x; }",
+      "complete synchronous numeric or Boolean function declarations are required",
+    ],
+  ])("refuses %s with an untyped parameter", async (_name, source, message) => {
+    expect(await refusal(source)).toContain(message);
+  });
+
   it("keeps the gc target without a dynamic carrier: an untyped parameter used only from top level has no contract", async () => {
     expect(await refusal(`${ID}if (id(1) !== 1) throw 1;`, "gc")).toContain("unresolved parameter contract");
   });
