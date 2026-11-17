@@ -1092,7 +1092,7 @@ also is, so `legalize` takes the signatures and the globals). Then:
    later store of another type, so the provenance answers from that first value (`undefined` without an
    initializer); stated in the code.
 3. **One return walker**: `someReturnedValue` (`src/ir/function-returns.ts`), used by `irFunctionBodyReturnsValue`
-   (select.ts shrinks by 11) and the result contract.
+   (select.ts shrinks by 10) and the result contract.
 4. The presentation calls `nativeDynamicLane` (exported) instead of repeating the target check.
 5. The physical plan admits a null default only when `storesUndefinedFirst` finds the owner's entry block opening
    with the `undefined` store into that global (dated +2 loc grant for program-physical-plan.ts).
