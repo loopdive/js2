@@ -28,7 +28,11 @@ import {
   assertNativeValueResourcePlanFor,
   type NativeValueResourcePlan,
 } from "../../../ir/program/native-value-resources.js";
-import { freezePreparedIrValue, preparedIrDataMismatch, preparedIrReadonlyMap } from "../../../ir/program/data.js";
+import {
+  freezePreparedIrValue,
+  preparedIrDataMismatch,
+  preparedIrFrozenCollectionMembers,
+} from "../../../ir/program/data.js";
 import { PreparedIrProgramInvariantError } from "../../../ir/program/errors.js";
 import type { Instr } from "../../../wasm/model/instructions.js";
 import type {
@@ -403,15 +407,12 @@ export function planNativeStringValuePhysical(
   };
 }
 
-// The frozen collections are private to ir/program/data.ts; their prototypes identify them (as `instanceof` would).
-const frozenMapPrototype: unknown = Object.getPrototypeOf(preparedIrReadonlyMap([]));
-const frozenSetPrototype: unknown = Object.getPrototypeOf(freezePreparedIrValue(new Set()));
-
 /**
- * Whether no reachable part of `value` can ever change: frozen arrays and plain objects of data properties, and the
- * frozen collections of prepared data. Freezing cannot be undone, so a `true` answer is permanent and an
- * authentication that reads only such a value needs to run once. Internal slots are not inspected: a check reads a
- * collection's entries only through its prototype, and the only collection prototypes admitted here are frozen ones.
+ * Whether no own part of `value` can ever change: frozen arrays and plain records of data properties, and genuine
+ * frozen collections of prepared data. Freezing cannot be undone, so the answer is permanent. What a record or array
+ * lacks still resolves through `Object.prototype`/`Array.prototype`; `sharedPrototypeState` covers that. Internal
+ * slots are not inspected: a check reads a collection's entries only through its prototype, and the only collections
+ * admitted are branded frozen ones with their own frozen prototype.
  */
 export function isImmutablePreparedIrValue(value: unknown): boolean {
   const visited = new Set<object>();
@@ -419,10 +420,9 @@ export function isImmutablePreparedIrValue(value: unknown): boolean {
     if (typeof item === "function") return false;
     if (item === null || typeof item !== "object" || visited.has(item)) return true;
     visited.add(item);
+    const members = preparedIrFrozenCollectionMembers(item);
+    if (members) return members.every(immutable);
     const prototype = Object.getPrototypeOf(item);
-    if (prototype === frozenMapPrototype)
-      return [...(item as ReadonlyMap<unknown, unknown>)].every(([key, entry]) => immutable(key) && immutable(entry));
-    if (prototype === frozenSetPrototype) return [...(item as ReadonlySet<unknown>)].every(immutable);
     if (
       !Object.isFrozen(item) ||
       (prototype !== (Array.isArray(item) ? Array.prototype : Object.prototype) && prototype !== null)
@@ -436,6 +436,20 @@ export function isImmutablePreparedIrValue(value: unknown): boolean {
   return immutable(value);
 }
 
+/**
+ * The own properties of the two shared prototypes an immutable record or array reads a field it lacks through. A
+ * settled verdict holds only while this is unchanged; a change sends the owner back to full authentication.
+ */
+function sharedPrototypeState(): readonly unknown[] {
+  const state: unknown[] = [];
+  for (const prototype of [Object.prototype, Array.prototype])
+    for (const key of Reflect.ownKeys(prototype)) {
+      const descriptor = Object.getOwnPropertyDescriptor(prototype, key)!;
+      state.push(key, descriptor.value, descriptor.get, descriptor.set);
+    }
+  return state;
+}
+
 interface Owner {
   readonly tx: PhysicalModuleReservations;
   readonly sourceInput: NativeStringValueReservationInput;
@@ -443,8 +457,11 @@ interface Owner {
   readonly snapshot: unknown;
   readonly rows: readonly NativeStringValueResourceRow[];
   filled: boolean;
-  /** The retained input passed its checks while it could no longer change; they hold for every later use. */
-  settled: boolean;
+  /**
+   * Set when the retained input passed its checks while it could no longer change: the shared prototype state they
+   * ran under. The verdict holds for every later use that observes the same state.
+   */
+  settled: readonly unknown[] | undefined;
 }
 const owners = new WeakMap<NativeStringValueReservations, Owner>();
 export function assertNativeStringValueReservationInput(input: NativeStringValueReservationInput): void {
@@ -484,17 +501,21 @@ function ownerFor(tx: PhysicalModuleReservations, pack: NativeStringValueReserva
   const owner = owners.get(pack);
   if (!owner || owner.tx !== tx) fail("foreign or copied string value pack");
   // Decided before the checks below run, so their verdict is over the state that every later call observes.
-  const settles = !owner.settled && isImmutablePreparedIrValue(owner.input);
-  if (!owner.settled) same(owner.input.demands, owner.snapshot, "changed retained string demands");
+  const prototypes = sharedPrototypeState();
+  const settled =
+    owner.settled?.length === prototypes.length &&
+    owner.settled.every((entry, index) => Object.is(entry, prototypes[index]));
+  const settles = !settled && isImmutablePreparedIrValue(owner.input);
+  if (!settled) same(owner.input.demands, owner.snapshot, "changed retained string demands");
   const currentRealm = readNativeRealmLiteralInput(owner.sourceInput, owner.input.plan.literalRequirements.utf8Storage);
   if (
     currentRealm?.realmRequirements !== owner.input.realmRequirements ||
     currentRealm?.realmLiterals !== owner.input.realmLiterals
   )
     fail("changed retained realm literal identities");
-  if (!owner.settled) {
+  if (!settled) {
     assertNativeStringValueReservationInput(owner.input);
-    owner.settled = settles;
+    owner.settled = settles ? prototypes : undefined;
   }
   nativeStringLiteralReservationInventory(tx, pack.strings);
   if (pack.output) nativeStringOutputReservationInventory(tx, pack.output, owner.input.plan.output!);
@@ -645,7 +666,7 @@ export function reserveNativeStringValueResources(
     snapshot: freezePreparedIrValue(input.demands),
     rows: Object.freeze(orderedRows),
     filled: false,
-    settled: false,
+    settled: undefined,
   });
   return pack;
 }
@@ -690,7 +711,7 @@ export function requireCompletedNativeStringValues(
   completedOwner(tx, pack);
   return pack;
 }
-/** Every emit runs this; its nested completion queries share one entry and one exit layout audit. */
+/** Every emit runs this; its nested completion queries share the one layout audit taken after them. */
 function completedOwner(tx: PhysicalModuleReservations, pack: NativeStringValueReservations): Owner {
   return tx.audited(() => checkCompletedOwner(tx, pack));
 }

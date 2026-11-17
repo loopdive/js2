@@ -925,3 +925,42 @@ Proofs:
   - a literal tuple that differs only in its storage reference is refused.
 - Mutation survivors are all performance-only: skipping nested audits, the `audited` wrapper in `completedOwner`,
   the three primitive prefilters (implied by the deep comparison) and the copy-brand fact.
+
+### Review round 1 (2026-11-17)
+
+- **Must-fix: forged frozen collection.** The predicate recognised FrozenMap/FrozenSet by prototype alone. Fixed in
+  `src/ir/program/data.ts`:
+  - The two classes get a private-field brand check (`#map in v` / `#set in v`).
+  - New export `preparedIrFrozenCollectionMembers(v)` returns the members only for a branded instance with the exact
+    prototype, frozen, with no own keys. A subclass carries the brand but has its own prototype, so it is refused.
+    The frozen/no-own-keys checks are implied by brand plus exact prototype, because the constructor freezes `this`
+    (mutation survivor).
+  - `preparedIrDataMismatch`, `immutableCopy` and `freezePreparedIrRuntimeValue` use the brand instead of
+    `instanceof`. This is a drop-in for genuine collections. A borrowed prototype is now a non-data object and is
+    refused, so the reviewer's repro is refused at planning ("stale or mismatched demand census").
+  - Tests: the repro; forged map and set twins over mutable storage; a bare object on the borrowed prototype; a
+    branded subclass that overrides iteration.
+- **SF1, re-entrancy:** `audited` restores the outer flag, so a nested check no longer re-opens the ledger. Test: the
+  reviewer's probe.
+- **SF2, `internFunctionType`:** appending a new type inside `audited` is refused. Cache hits stay allowed, since they
+  are read-only. Test added.
+- **SF3, comments and test names:** they now describe the single trailing audit.
+- **SF4, the copy-brand fact in data.ts:** measured alone, it saves 20 lines 5.96 → 4.91 s and 50 lines 14.4 →
+  10.0 s, so it is kept. data.ts has to change for the must-fix anyway.
+  - Receipts that pin data.ts content: `tests/helpers/ir-runtime-program-relocation.json`, `ir-c1-authority.json`,
+    `ir-ownership-evolution.ts`, `ir-runtime-program-policy-program-validator.json`,
+    `ir-source-map-position-inventory-successor.json`, `ir-deno-post-position-main-successor.json`.
+  - Their consuming tests (ownership seam, provider-boundary, policy-evolution) already fail on base, so the extra
+    breakage is masked and these receipts need a refresh when the stack lands.
+- **SF5, inherited fields:** a settled verdict now records the own-property state of `Object.prototype` and
+  `Array.prototype` that it ran under. Any change re-runs full authentication. Requiring null-prototype records was
+  tried and rejected: the prepared program is built from frozen `Object.prototype` records, so nothing would settle
+  (20 lines took 29 s). Test: adding `Object.prototype.outputRequirements` after settling is refused ("unexpected
+  output requirements"); removing it re-settles.
+- **Results:**
+  - The 24 `issue-3518-native-string-*` files plus str-strings fail the same set as base.
+  - Prepared bytes are identical for the 43 programs. Ordinary bytes are identical on 100 files × 2 targets.
+  - Scaling: 5 lines 2.9 s, 20 lines 4.9 s, 50 lines 10.7 s.
+  - Mutants killed: re-entrant restore, intern guard, prototype state, map/set brand, map/set exact prototype, set
+    member walk, and the brand in `immutableCopy` / `preparedIrDataMismatch` / `freezePreparedIrRuntimeValue`.
+  - Survivors: the implied frozen/no-own-keys check, and the perf-only `owner.settled` assignment.

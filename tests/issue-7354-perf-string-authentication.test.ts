@@ -6,14 +6,14 @@
 // physical layout audit runs at every use either way. These tests pin both halves: a mutation between two emits is
 // refused, and the predicate that decides "can no longer change" rejects every mutable shape.
 //
-// The nested completion queries of one emit share one layout audit on entry and one on exit
-// (`PhysicalModuleReservations.audited`); a write injected between them is refused by the exit audit.
+// The nested completion queries of one emit skip their layout audits and share the one audit taken after them
+// (`PhysicalModuleReservations.audited`); a write injected during the check is refused by that audit.
 import { describe, expect, it, vi } from "vitest";
 import { createEmptyModule } from "../src/ir/types.js";
 import { PhysicalModuleReservations } from "../src/wasm/physical/module-reservations.js";
 import { reserveNativeStringLiteralTypes } from "../src/backend/wasmgc/resources/native-string-literals.js";
 import { collectNativeStringValueDemands } from "../src/ir/program/native-string-value-demands.js";
-import { freezePreparedIrValue, preparedIrReadonlyMap } from "../src/ir/program/data.js";
+import { freezePreparedIrRuntimeValue, freezePreparedIrValue, preparedIrReadonlyMap } from "../src/ir/program/data.js";
 import { prepareIrProgramSources, captureTypedIrProgramInput } from "../src/ir/program-source.js";
 import { prepareTypedIrProgram } from "../src/ir/program-prepare-ir.js";
 import { sourceInput, typedOptions, requireProgram } from "./helpers/typed-program-fixtures.js";
@@ -27,7 +27,7 @@ import {
   type NativeStringValueReservationInput,
 } from "../src/backend/wasmgc/program/native-string-values.js";
 
-// Test seam: a write to module storage from inside the emit's completion check, after the entry audit.
+// Test seam: a write to module storage from inside the emit's completion check, before its closing audit.
 const inject = vi.hoisted(() => ({ write: undefined as (() => void) | undefined }));
 vi.mock("../src/backend/wasmgc/resources/native-string-literals.js", async (original) => {
   const actual = await original<typeof import("../src/backend/wasmgc/resources/native-string-literals.js")>();
@@ -113,7 +113,7 @@ describe("#7354 Perf — one authentication per unchangeable plan state", () => 
     expect(emit).toThrow(/population/);
   });
 
-  it("refuses a write made between the entry and the exit audit of one completion check", () => {
+  it("refuses a write made during one completion check by its closing audit", () => {
     const { emit, tx, pack, module } = filled((demands, plan) => ({ demands, plan }));
     emit();
     const global = module.globals.find((row) => row.init.length > 0)!;
@@ -134,6 +134,114 @@ describe("#7354 Perf — one authentication per unchangeable plan state", () => 
   it("refuses a ledger mutation inside an audited check", () => {
     const { tx } = filled((demands, plan) => ({ demands, plan }));
     expect(() => tx.audited(() => tx.seal())).toThrow(/mutation inside a read-only audited check/);
+  });
+
+  it("keeps refusing ledger mutations after a nested audited check returns", () => {
+    const { tx } = filled((demands, plan) => ({ demands, plan }));
+    expect(() =>
+      tx.audited(() => {
+        tx.audited(() => 1);
+        tx.seal();
+      }),
+    ).toThrow(/mutation inside a read-only audited check/);
+    expect(tx.state).not.toBe("sealed");
+  });
+
+  it("refuses a new function type interned inside an audited check", () => {
+    const tx = new PhysicalModuleReservations(createEmptyModule());
+    expect(() => tx.audited(() => tx.internFunctionType([{ kind: "f64" }], []))).toThrow(
+      /mutation inside a read-only audited check/,
+    );
+  });
+
+  it("re-authenticates a settled plan after a shared prototype gains a field", () => {
+    const { emit, input } = filled((demands, plan) => ({ demands, plan }));
+    emit();
+    expect(input.outputRequirements).toBeUndefined();
+    const prototype = Object.prototype as { outputRequirements?: unknown };
+    prototype.outputRequirements = { demands: input.demands };
+    try {
+      expect(emit).toThrow(/unexpected output requirements/);
+    } finally {
+      Reflect.deleteProperty(prototype, "outputRequirements");
+    }
+    expect(emit()).toEqual(emit());
+  });
+
+  it.each(["map", "set"] as const)("refuses a forged frozen %s over mutable storage", (kind) => {
+    const genuine = kind === "map" ? preparedIrReadonlyMap([["unit", 1]]) : freezePreparedIrValue(new Set(["unit"]));
+    const inner: Map<unknown, unknown> = new Map([["unit", 1]]);
+    const forged = Object.setPrototypeOf(
+      {
+        get size() {
+          return inner.size;
+        },
+        [Symbol.iterator]: () => (kind === "map" ? inner.entries() : inner.keys()),
+      },
+      Object.getPrototypeOf(genuine),
+    );
+    expect(isImmutablePreparedIrValue(Object.freeze(forged))).toBe(false);
+    expect(isImmutablePreparedIrValue(genuine)).toBe(true);
+    // A bare object on the borrowed prototype is not a collection (and is not iterated).
+    expect(isImmutablePreparedIrValue(Object.freeze(Object.create(Object.getPrototypeOf(genuine))))).toBe(false);
+    // A subclass carries the private brand but may override what iteration reads.
+    const Base = Object.getPrototypeOf(genuine).constructor as new (entries: unknown[]) => object;
+    const Sub = class extends Base {
+      [Symbol.iterator]() {
+        return kind === "map" ? inner.entries() : inner.keys();
+      }
+    };
+    expect(isImmutablePreparedIrValue(new Sub(kind === "map" ? [["unit", 1]] : ["unit"]))).toBe(false);
+    // The shared data vocabulary no longer takes the borrowed prototype for a collection either.
+    expect(() => freezePreparedIrValue(forged)).toThrow(/unsupported mutable/);
+    expect(() => freezePreparedIrRuntimeValue(forged)).toThrow(/mutable or executable context state/);
+  });
+
+  // The data vocabulary now brand-checks collections too, so the forged units are refused at planning already.
+  it("refuses the reviewer's forged program units", () => {
+    const demands = demandsOf(`export function run(): string { return "hello"; }`);
+    const program = demands.program as unknown as Record<string, unknown>;
+    const units = program.units as ReadonlyMap<unknown, unknown>;
+    const inner = new Map(units);
+    const forged = Object.setPrototypeOf(
+      {
+        get size() {
+          return inner.size;
+        },
+        get: (key: unknown) => inner.get(key),
+        has: (key: unknown) => inner.has(key),
+        keys: () => inner.keys(),
+        values: () => inner.values(),
+        entries: () => inner.entries(),
+        forEach: (callback: (value: unknown, key: unknown) => void) => inner.forEach(callback),
+        [Symbol.iterator]: () => inner.entries(),
+      },
+      Object.getPrototypeOf(units),
+    );
+    const program2 = Object.freeze({ ...program, units: forged }) as never;
+    expect(() => {
+      const forgedDemands = collectNativeStringValueDemands(program2, demands.projection);
+      const outcome = planNativeStringValuePhysical(forgedDemands, {
+        representation: "native-string",
+        utf8Storage: false,
+      });
+      if (outcome.kind !== "planned") throw new Error("expected a planned string value");
+      const tx = new PhysicalModuleReservations(createEmptyModule());
+      const types = reserveNativeStringLiteralTypes(tx, outcome.plan.key, false);
+      const input = { demands: forgedDemands, plan: outcome.plan };
+      const pack = reserveNativeStringValueResources(tx, input, types);
+      tx.freezeReservations();
+      fillNativeStringValueResources(tx, pack);
+      const demand = forgedDemands.literals[outcome.plan.literalUses[0]!.demandIndex]!;
+      if (demand.kind !== "string.const") throw new Error("expected a string literal demand");
+      const owner = forgedDemands.buffers[forgedDemands.occurrences[demand.occurrence]!.bufferIndex]!.ownerUnitId;
+      const i = demand.instruction;
+      const emit = () => emitPreparedNativeStringLiteral(tx, pack, owner, i.value, i.alloc, i.storage, i.materializer);
+      emit();
+      emit();
+      inner.set("bogus-unit", 1);
+      emit();
+    }).toThrow(/stale or mismatched demand census/);
   });
 
   it("refuses retained demands changed between two emits", () => {
