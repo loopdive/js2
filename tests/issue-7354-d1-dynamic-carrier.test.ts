@@ -127,21 +127,21 @@ describe("#7354 D1 — the dynamic value on the Prepared standalone path", () =>
     expect(await run("function id(x) { return x; }\nexport function main(): number { return id(3) * 1 + 1; }")).toBe(4);
   });
 
+  // (#7354 P) An untyped parameter is dynamic on this lane, so `h` takes a typed one to stay a typed declaration.
   it("runs the flow rule only on a declaration that lowered a dynamic value", async () => {
-    const source = `${ID}function h(x) { return x + 1; }
+    const source = `${ID}function h(x: number) { return x + 1; }
     function t(): number { return id(1) === 1 ? 10 : 0; }
     export function main(): number { const n: number = h(2); return n + t(); }`;
     expect(await run(source)).toBe(13);
   });
 
-  // Known gap: the rule is gated per declaration, not per expression, so a concretely typed checker `any` beside a
-  // dynamic value in the same declaration still refuses (node: 13).
-  it("refuses a concretely typed checker `any` in a declaration that also lowered a dynamic value", async () => {
-    const source = `${ID}function h(x) { return x + 1; }
+  // (#7354 P) This was a known gap: a checker `any` the IR typed concretely (an untyped parameter with a propagated
+  // number type) beside a dynamic value refused. Since P no untyped parameter is typed concretely on this lane, so
+  // the same declaration runs (node: 13).
+  it("runs a typed value beside a dynamic value in one declaration", async () => {
+    const source = `${ID}function h(x: number) { return x + 1; }
     export function main(): number { const n: number = h(2); return n + (id(1) === 1 ? 10 : 0); }`;
-    expect(await refusal(source)).toContain(
-      "a dynamic value flows into number without a conversion (VariableDeclaration)",
-    );
+    expect(await run(source)).toBe(13);
   });
 
   it("legalizes a program whose only `any` contract is a result", async () => {
