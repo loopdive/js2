@@ -456,14 +456,15 @@ function checkAbiExports(
   if (entries.size !== program.abi.entries.length)
     gap("abi", "duplicate-binding", "prepared ABI binding identities are not unique");
   const joinedExports = new Set<string>();
-  // (#7354 D1, H) Internal callables and unexported globals may carry the legalized dynamic value (an externref).
+  // (#7354 D1, H, Str) Internal callables and unexported globals may carry the dynamic externref; callables a string.
   const dynamic = (type: IrType | undefined) =>
     nativeDynamicLane(capture.backend) && type?.kind === "val" && type.val.kind === "externref";
   const carried = (type: IrType) => (type.kind === "val" && numeric(type.val)) || dynamic(type);
+  const inCall = (type: IrType) => type.kind === "string" || carried(type);
   for (const entry of program.abi.entries) {
     const { plan, contract } = entry;
     if (contract.kind === "callable") {
-      if (!mixed && (contract.promise || [...contract.params, ...contract.results].some((type) => !carried(type))))
+      if (!mixed && (contract.promise || [...contract.params, ...contract.results].some((type) => !inCall(type))))
         gap(
           "abi.callable",
           "non-numeric-contract",

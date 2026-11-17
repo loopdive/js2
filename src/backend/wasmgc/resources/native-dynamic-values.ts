@@ -29,6 +29,8 @@ import {
 /** Which of the three functions the projection's intrinsics demand. */
 export interface NativeDynamicValueSelection {
   readonly strictEq: boolean;
+  /** (#7354 Str) A native string can reach the carrier, so strict equality takes the string arm. */
+  readonly strictEqStrings: boolean;
   readonly undefinedValue: boolean;
   readonly isUndefined: boolean;
 }
@@ -40,10 +42,12 @@ export interface NativeDynamicValueSelection {
  */
 export function selectNativeDynamicValues(
   intrinsics: readonly IrInstrIntrinsic[],
+  stringsCarried: boolean,
 ): NativeDynamicValueSelection | undefined {
   const has = (id: string) => intrinsics.some((instruction) => instruction.id === id);
   const selection = {
     strictEq: has("js.value.strict_eq"),
+    strictEqStrings: stringsCarried && has("js.value.strict_eq"),
     undefinedValue: has("js.value.undefined"),
     isUndefined: intrinsics.some(
       (instruction) =>
@@ -88,9 +92,16 @@ export interface NativeDynamicValueReservations {
   readonly undefinedValue?: FunctionReservation;
   readonly isUndefined?: FunctionReservation;
 }
+/** (#7354 Str) The issued string resources strict equality's string arm calls. */
+export interface NativeDynamicValueStrings {
+  readonly anyStrTypeIdx: number;
+  readonly flatten: FunctionReservation;
+  readonly equals: FunctionReservation;
+}
 interface Owner {
   readonly tx: PhysicalModuleReservations;
   readonly values: NativeValueReservations;
+  readonly strings: NativeDynamicValueStrings | undefined;
   readonly booleans: NativeBooleanReservations | undefined;
   readonly requirements: NativeValueResourcePlan;
   readonly dependencies: NativeValueDependencies;
@@ -110,6 +121,7 @@ export function reserveNativeDynamicValueResources(
   booleans: NativeBooleanReservations | undefined,
   requirements: NativeValueResourcePlan,
   dependencies: NativeValueDependencies,
+  strings: NativeDynamicValueStrings | undefined,
 ): NativeDynamicValueReservations {
   if (!key || tx.state !== "reserving") fail("invalid reservation phase/key");
   if (selection.strictEq && !booleans) fail("strict equality requires the Boolean predicates");
@@ -123,7 +135,7 @@ export function reserveNativeDynamicValueResources(
       ]),
     ),
   );
-  owners.set(pack, { tx, values, booleans, requirements, dependencies, filled: false });
+  owners.set(pack, { tx, values, strings, booleans, requirements, dependencies, filled: false });
   return pack;
 }
 
@@ -134,7 +146,7 @@ export function fillNativeDynamicValueResources(
   const owner = owners.get(pack);
   if (!owner || owner.tx !== tx) fail("foreign resource owner");
   if (owner.filled) fail("duplicate fill");
-  const { values, booleans } = owner;
+  const { values, booleans, strings } = owner;
   requireCompletedNativeValues(tx, values, owner.requirements, owner.dependencies);
   if (pack.strictEq) {
     requireCompletedNativeBooleans(tx, booleans!, values, owner.requirements, owner.dependencies);
@@ -143,17 +155,18 @@ export function fillNativeDynamicValueResources(
         { name: "aa", type: { kind: "anyref" } },
         { name: "ba", type: { kind: "anyref" } },
       ],
-      // IsStrictlyEqual (§7.2.15) is SameValue's dispatch with Number::equal. Only numbers, booleans and the
-      // `undefined` singleton enter a Prepared dynamic value, so the BigInt and string arms are absent.
+      // IsStrictlyEqual (§7.2.15) is SameValue's dispatch with Number::equal. No BigInt enters a Prepared dynamic
+      // value, so the BigInt arm is absent; (#7354 Str) the string arm compares code units whenever a native
+      // string can reach the carrier.
       body: buildObjectSameValueBody({
         typeofNumIdx: values.functions.isNumber.handle,
         typeofBoolIdx: booleans!.isBoolean.handle,
         unboxNumIdx: values.functions.unboxNumber.handle,
         unboxBoolIdx: booleans!.unboxBoolean.handle,
         numberEquality: "number-equal",
-        anyStrTypeIdx: -1,
-        strFlattenIdx: undefined,
-        strEqualsIdx: undefined,
+        anyStrTypeIdx: strings?.anyStrTypeIdx ?? -1,
+        strFlattenIdx: strings?.flatten.handle,
+        strEqualsIdx: strings?.equals.handle,
       }),
     });
   }

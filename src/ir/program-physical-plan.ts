@@ -413,7 +413,7 @@ function validateNativeNumberFormatInput(
     nativeInvalid(`formatter support cannot be lowered: ${errors.map((error) => error.message).join("; ")}`);
 }
 
-function nativeRole(declaration: NativeStringValueDeclaration): string {
+export function nativeRole(declaration: NativeStringValueDeclaration): string {
   return "native-string-values:v1:" + JSON.stringify(declaration.role);
 }
 
