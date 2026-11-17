@@ -22,7 +22,14 @@ import { createIrBindingId } from "../shared/contracts/identity-values.js";
 import { preparedIrDataMismatch } from "../ir/program/data.js";
 import type { PreparedIrProgramRuntimeProjection } from "../ir/program/prepared-contracts.js";
 import { collectNativeStringValueDemands } from "../ir/program/native-string-value-demands.js";
-import { irRuntimeDemandedFeatures } from "../ir/program/runtime-manifest.js";
+import {
+  irStringConcatDemand,
+  irStringConstDemand,
+  irStringEqDemand,
+  irStringLenDemand,
+} from "../ir/program/runtime-demands.js";
+import type { IrFunction } from "../ir/core/nodes.js";
+import type { RuntimeFeature } from "../ir/runtime/contracts/manifest.js";
 import {
   STRING_CONCAT_RUNTIME_FEATURES,
   STRING_CONST_RUNTIME_FEATURES,
@@ -225,6 +232,24 @@ const STRING_FEATURES: ReadonlySet<string> = new Set([
   ...STRING_LEN_RUNTIME_FEATURES,
   ...STRING_CONCAT_RUNTIME_FEATURES,
 ]);
+/**
+ * The string features the executable projection demands, by the manifest's own demand scanners. (The scan-to-feature
+ * table `demandFeatures` is private to `src/ir/program/runtime-manifest.ts`, whose bytes the #3518 validator
+ * relocation receipts pin; these four rows restate its string rows with the family constants.)
+ */
+function demandedStringFeatures(functions: readonly IrFunction[]): RuntimeFeature[] {
+  const constant = irStringConstDemand(functions);
+  const concat = irStringConcatDemand(functions);
+  const demanded: [boolean, RuntimeFeature][] = [
+    [constant.literal, STRING_CONST_RUNTIME_FEATURES[0]],
+    [constant.utf16, STRING_CONST_RUNTIME_FEATURES[1]],
+    [irStringEqDemand(functions), STRING_EQ_RUNTIME_FEATURES[0]],
+    [irStringLenDemand(functions), STRING_LEN_RUNTIME_FEATURES[0]],
+    [concat.immutable, STRING_CONCAT_RUNTIME_FEATURES[0]],
+    [concat.owned, STRING_CONCAT_RUNTIME_FEATURES[1]],
+  ];
+  return demanded.flatMap(([present, feature]) => (present ? [feature] : []));
+}
 /** The setup function that implements a string provider the IR reaches through its own instruction, by role. */
 const STRING_PROVIDER_ROLES: Readonly<Record<string, readonly string[]>> = {
   "js.string.eq": ["string-equality", "equals"],
@@ -286,7 +311,7 @@ function stringProvidersJoin(
   providers: readonly RuntimeProviderDefinition[],
   utf8Storage: boolean,
 ): boolean {
-  const demanded = irRuntimeDemandedFeatures(projection.prepared.functions).filter((row) => STRING_FEATURES.has(row));
+  const demanded = demandedStringFeatures(projection.prepared.functions);
   if (
     !samePopulation(
       providers.map((row) => row.feature),
