@@ -151,10 +151,14 @@ describe("#7354 R — the Prepared presentation's provider census", () => {
     expect(messages(result).join("\n")).toContain("js.number.box is unavailable under number-boundary policy");
   });
 
-  it("still refuses a native family the presentation does not select (string constants)", async () => {
-    const result = await compile('if (1 > 2) throw "x";', options("standalone", "test.js"));
+  // (#7354 Str) String constants are selected now; the relational string compare is not.
+  it("still refuses a native family the presentation does not select (string compare)", async () => {
+    const result = await compile(
+      "function lt(a: string, b: string): boolean { return a < b; }\nexport function main(): number { return lt('a', 'b') ? 1 : 0; }",
+      options("standalone", "entry.ts"),
+    );
     expect(result.success).toBe(false);
-    expect(messages(result).join("\n")).toContain("js.string.const is unavailable");
+    expect(messages(result).join("\n")).toContain("js.string.compare is unavailable");
   });
 
   it("leaves a numeric-only program on the exact numeric contract (no detached finalization)", async () => {
@@ -461,6 +465,54 @@ describe("#7354 D1 — the census on a dynamic-value program", () => {
           ),
         },
       }) as never;
+    expect(await refusal()).toContain(RUNTIME_DEMAND);
+  });
+});
+
+describe("#7354 Str — the census on a typed string program", () => {
+  const program =
+    "function cat(a: string, b: string): string { return a + b; }\n" +
+    "function eq(a: string, b: string): boolean { return a === b; }\n" +
+    "export function main(): number { const s = cat('a', 'bc'); return (s.length === 3 ? 1 : 0) + (eq(s, 'abc') ? 2 : 0); }";
+  const refusal = async () => {
+    const result = await compile(program, options("standalone", "entry.ts"));
+    expect(result.success).toBe(false);
+    return messages(result).join("\n");
+  };
+  const RUNTIME_DEMAND = "host provider or async demand is outside this numeric presentation contract";
+  const IDS = ["native.js.string.const", "native.js.string.eq", "native.js.string.len", "native.js.string.concat"];
+  type Declaration = PhysicalNativeStringSetup["resources"]["declarations"][number];
+  const declarations = (alter: (row: Declaration) => Declaration) => (setup: PhysicalNativeStringSetup) =>
+    ({ ...setup, resources: { ...setup.resources, declarations: setup.resources.declarations.map(alter) } }) as never;
+
+  it("presents the unaltered program", async () => {
+    expect(((await present(program, "entry.ts")).main as () => number)()).toBe(3);
+  });
+
+  // The literal storage and the carrier type also serve the setup's own needs (the flatten's empty literal), so only
+  // the two callables can be missed by their absence; the storage providers are refused below by their storage.
+  it.each(["native.js.string.eq", "native.js.string.concat"])("refuses a census that drops %s", async (id) => {
+    census.providers = (rows) => rows.filter((row) => row.id !== id);
+    expect(await refusal()).toContain(RUNTIME_DEMAND);
+  });
+
+  it.each(IDS)("refuses a census that renames %s", async (id) => {
+    census.providers = (rows) => rows.map((row) => (row.id === id ? { ...row, id: `${id}.renamed` } : row));
+    expect(await refusal()).toContain(RUNTIME_DEMAND);
+  });
+
+  it.each(["__str_equals", "__str_concat"])("refuses a native setup that renames the %s resource", async (name) => {
+    census.setup = declarations((row) =>
+      "name" in row && row.name === name ? ({ ...row, name: `${name}_x` } as never) : row,
+    );
+    expect(await refusal()).toContain(RUNTIME_DEMAND);
+  });
+
+  it.each([
+    ["the literal storage", (row: Declaration) => row.role[0] === "literal-global"],
+    ["the string carrier type", (row: Declaration) => row.role[0] === "string-type" && row.role[1] === "any"],
+  ])("refuses a native setup that declares no %s", async (_, match) => {
+    census.setup = declarations((row) => (match(row) ? { ...row, role: ["foreign", ...row.role] } : row));
     expect(await refusal()).toContain(RUNTIME_DEMAND);
   });
 });
