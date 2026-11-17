@@ -1,4 +1,5 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+import { nativeDynamicLane } from "../ir/source-dynamic-contracts.js";
 import { absoluteFuncIndex } from "../emit/resolve-layout.js";
 import { ts } from "../ts-api.js";
 import { checkPreparedPresentationProfile } from "./prepared-pipeline-boundary.js";
@@ -455,10 +456,9 @@ function checkAbiExports(
   if (entries.size !== program.abi.entries.length)
     gap("abi", "duplicate-binding", "prepared ABI binding identities are not unique");
   const joinedExports = new Set<string>();
-  // (#7354 D1, H) On standalone a callable or global may carry the legalized dynamic value whatever the checker
-  // classified; only an internal callable gets that contract, and an exported global is refused by its witness.
+  // (#7354 D1, H) Internal callables and unexported globals may carry the legalized dynamic value (an externref).
   const dynamic = (type: IrType | undefined) =>
-    capture.backend.target === "standalone" && type?.kind === "val" && type.val.kind === "externref";
+    nativeDynamicLane(capture.backend) && type?.kind === "val" && type.val.kind === "externref";
   const carried = (type: IrType) => (type.kind === "val" && numeric(type.val)) || dynamic(type);
   for (const entry of program.abi.entries) {
     const { plan, contract } = entry;

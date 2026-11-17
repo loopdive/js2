@@ -17012,6 +17012,14 @@
       "nextBoundary": "Checker-certified `any` parameter/result contracts of the Prepared source producer (#7354 D1); moves with program-source.ts under frontend/ts."
     },
     {
+      "path": "src/ir/function-returns.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "frontend-ts",
+      "owner": "7354",
+      "nextBoundary": "The return-statement walk of a source function body shared by the selector and the Prepared result contracts (#7354 H); moves with them under frontend/ts."
+    },
+    {
       "path": "src/ir/source-dynamic-provenance.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",

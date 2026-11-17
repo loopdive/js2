@@ -35,6 +35,7 @@ import { DynamicValueGap, legalizeDynamicValues } from "./program/dynamic-value-
 import type { RuntimeManifestPolicy } from "../runtime/contracts/provider-policy.js";
 import type { ValType } from "../wasm/model/instructions.js";
 import { functionBodyAlwaysTerminates, irFunctionBodyReturnsValue } from "./select.js";
+import { someReturnedValue } from "./function-returns.js";
 import { sourceDynamicProvenance, type SourceDynamicProvenance } from "./source-dynamic-provenance.js";
 
 type Carries = SourceDynamicProvenance["carries"];
@@ -63,17 +64,8 @@ function annotatedAny(checker: ts.TypeChecker, annotation: ts.TypeNode | undefin
 function uncheckedResult(body: ts.Block, checkerSaysAny: boolean, carries: Carries): boolean {
   return (
     irFunctionBodyReturnsValue(body) &&
-    (checkerSaysAny || !functionBodyAlwaysTerminates(body) || returnsCarry(body, carries))
+    (checkerSaysAny || !functionBodyAlwaysTerminates(body) || someReturnedValue(body, carries))
   );
-}
-
-/** Some `return` of `body` (not of a nested function) may return the dynamic value. */
-function returnsCarry(body: ts.Block, carries: Carries): boolean {
-  const visit = (node: ts.Node): boolean =>
-    ts.isReturnStatement(node)
-      ? node.expression !== undefined && carries(node.expression)
-      : !ts.isFunctionLike(node) && !ts.isClassLike(node) && ts.forEachChild(node, visit) === true;
-  return ts.forEachChild(body, visit) === true;
 }
 
 function hostPromiseFulfillment(checker: ts.TypeChecker, type: ts.Type): ts.Type | undefined {
@@ -149,7 +141,8 @@ function sourceDynamicResult(
   return { kind: "dynamic" };
 }
 
-function nativeDynamicLane(policy: SourcePolicy): boolean {
+/** The lane has the native dynamic carrier (wasmgc standalone). */
+export function nativeDynamicLane(policy: SourcePolicy): boolean {
   return dynamicLane(policy, undefined) === "native";
 }
 
