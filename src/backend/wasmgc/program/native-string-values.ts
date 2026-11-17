@@ -28,7 +28,7 @@ import {
   assertNativeValueResourcePlanFor,
   type NativeValueResourcePlan,
 } from "../../../ir/program/native-value-resources.js";
-import { freezePreparedIrValue, isImmutablePreparedIrValue, preparedIrDataMismatch } from "../../../ir/program/data.js";
+import { freezePreparedIrValue, preparedIrDataMismatch, preparedIrReadonlyMap } from "../../../ir/program/data.js";
 import { PreparedIrProgramInvariantError } from "../../../ir/program/errors.js";
 import type { Instr } from "../../../wasm/model/instructions.js";
 import type {
@@ -389,6 +389,39 @@ export function planNativeStringValuePhysical(
       reservationSteps: recipes.flatMap((recipe) => recipe.reservationSteps),
     }) as NativeStringValuePhysicalPlan,
   };
+}
+
+// The frozen collections are private to ir/program/data.ts; their prototypes identify them (as `instanceof` would).
+const frozenMapPrototype: unknown = Object.getPrototypeOf(preparedIrReadonlyMap([]));
+const frozenSetPrototype: unknown = Object.getPrototypeOf(freezePreparedIrValue(new Set()));
+
+/**
+ * Whether no reachable part of `value` can ever change: frozen arrays and plain objects of data properties, and the
+ * frozen collections of prepared data. Freezing cannot be undone, so a `true` answer is permanent and an
+ * authentication that reads only such a value needs to run once. Internal slots are not inspected: a check reads a
+ * collection's entries only through its prototype, and the only collection prototypes admitted here are frozen ones.
+ */
+export function isImmutablePreparedIrValue(value: unknown): boolean {
+  const visited = new Set<object>();
+  const immutable = (item: unknown): boolean => {
+    if (typeof item === "function") return false;
+    if (item === null || typeof item !== "object" || visited.has(item)) return true;
+    visited.add(item);
+    const prototype = Object.getPrototypeOf(item);
+    if (prototype === frozenMapPrototype)
+      return [...(item as ReadonlyMap<unknown, unknown>)].every(([key, entry]) => immutable(key) && immutable(entry));
+    if (prototype === frozenSetPrototype) return [...(item as ReadonlySet<unknown>)].every(immutable);
+    if (
+      !Object.isFrozen(item) ||
+      (prototype !== (Array.isArray(item) ? Array.prototype : Object.prototype) && prototype !== null)
+    )
+      return false;
+    return Reflect.ownKeys(item).every((key) => {
+      const descriptor = Object.getOwnPropertyDescriptor(item, key)!;
+      return "value" in descriptor && immutable(descriptor.value);
+    });
+  };
+  return immutable(value);
 }
 
 interface Owner {

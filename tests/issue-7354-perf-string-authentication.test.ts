@@ -10,7 +10,7 @@ import { createEmptyModule } from "../src/ir/types.js";
 import { PhysicalModuleReservations } from "../src/wasm/physical/module-reservations.js";
 import { reserveNativeStringLiteralTypes } from "../src/backend/wasmgc/resources/native-string-literals.js";
 import { collectNativeStringValueDemands } from "../src/ir/program/native-string-value-demands.js";
-import { freezePreparedIrValue, isImmutablePreparedIrValue, preparedIrReadonlyMap } from "../src/ir/program/data.js";
+import { freezePreparedIrValue, preparedIrReadonlyMap } from "../src/ir/program/data.js";
 import { prepareIrProgramSources, captureTypedIrProgramInput } from "../src/ir/program-source.js";
 import { prepareTypedIrProgram } from "../src/ir/program-prepare-ir.js";
 import { sourceInput, typedOptions, requireProgram } from "./helpers/typed-program-fixtures.js";
@@ -19,6 +19,7 @@ import {
   reserveNativeStringValueResources,
   fillNativeStringValueResources,
   emitPreparedNativeStringLiteral,
+  isImmutablePreparedIrValue,
   type NativeStringValueReservationInput,
 } from "../src/backend/wasmgc/program/native-string-values.js";
 
@@ -127,7 +128,9 @@ describe("#7354 Perf — isImmutablePreparedIrValue", () => {
     ["an unfrozen array", frozen({ a: [1] }), false],
     ["a frozen record holding a native Map", frozen({ a: frozen(new Map()) }), false],
     ["a frozen record holding a native Set", frozen({ a: frozen(new Set()) }), false],
-    ["a frozen Map with its prototype erased", frozen(Object.setPrototypeOf(new Map(), Object.prototype)), false],
+    // Its entries are reachable only through Map.prototype, which no authentication applies to a plain object.
+    ["a frozen Map with its prototype erased", frozen(Object.setPrototypeOf(new Map(), Object.prototype)), true],
+    ["a frozen Map", frozen(new Map()), false],
     [
       "a frozen cycle",
       (() => {

@@ -600,10 +600,7 @@ describe("#3518 program ownership implementation seam", () => {
       "owned evidence",
     ]);
     expect(Object.hasOwn(oldProgram, "invalidPreparedData")).toBe(false);
-    // (#7354 Perf) `isImmutablePreparedIrValue` is new data vocabulary, not a historical forward.
-    expect(Object.keys(data).sort()).toEqual(
-      [...dataFunctions, "invalidPreparedData", "isImmutablePreparedIrValue"].sort(),
-    );
+    expect(Object.keys(data).sort()).toEqual([...dataFunctions, "invalidPreparedData"].sort());
     expect(Object.keys(admission).sort()).toEqual(["ownTypedIrProgramInput", "ownTypedIrProgramOptions"]);
     expect(Object.keys(errors)).toEqual(["PreparedIrProgramInvariantError"]);
   });

@@ -219,34 +219,6 @@ export function freezePreparedIrValue(value: unknown): unknown {
   return immutableCopy(value);
 }
 
-/**
- * Whether no reachable part of `value` can ever change: frozen arrays and plain objects of data properties, and this
- * module's frozen collections. Freezing cannot be undone, so a `true` answer is permanent and a check derived only
- * from such a value needs to run once.
- */
-export function isImmutablePreparedIrValue(value: unknown): boolean {
-  const visited = new Set<object>();
-  const immutable = (item: unknown): boolean => {
-    if (typeof item === "function") return false;
-    if (item === null || typeof item !== "object" || visited.has(item)) return true;
-    visited.add(item);
-    if (item instanceof FrozenMap) return [...item].every(([key, entry]) => immutable(key) && immutable(entry));
-    if (item instanceof FrozenSet) return [...item].every(immutable);
-    const prototype = Object.getPrototypeOf(item);
-    if (
-      !Object.isFrozen(item) ||
-      hasNativeCollectionState(item) ||
-      (prototype !== (Array.isArray(item) ? Array.prototype : Object.prototype) && prototype !== null)
-    )
-      return false;
-    return Reflect.ownKeys(item).every((key) => {
-      const descriptor = Object.getOwnPropertyDescriptor(item, key)!;
-      return "value" in descriptor && immutable(descriptor.value);
-    });
-  };
-  return immutable(value);
-}
-
 // Internal collection slots cannot change on an existing object. Only that
 // brand is cached: prototypes, descriptors, values and entries stay live data.
 const nativeCollectionBrand = Object.freeze({
