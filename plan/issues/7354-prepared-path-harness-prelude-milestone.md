@@ -852,6 +852,40 @@ against the lowered body (a disagreement is a refusal, never a conversion).
 - Gates: typecheck, loc, func, coercion-sites, oracle-ratchet, dead-exports, import-cycles, boundaries inventory.
 - issue-3518\*/3526\* were not re-run after this merge (last run: on D1 `08fcfa7b82`, above).
 
+### Review round 1
+
+Adversarial review of `1995dd6ef2`: quality NOT MET, no soundness failure. Fixed on `claude/7354-p`, one commit
+each, then D1's reworked head `29d0576590` merged in.
+
+1. **JSDoc `@returns` arm deleted** from `uncheckedResult`. It duplicated D1's implicit-flow rule and refused
+   correct programs. `/** @returns {number} */ function f(n){return n*1}` with `f(true)` and `/** @returns
+   {boolean} */ function f(n){return n===1}` with `f(1)` now run and match node (1, true); `@returns {number}`
+   over an unconverted `n` still refuses at the flow rule ("a dynamic value flows into number without a
+   conversion (ReturnStatement)"). The message-pin test is replaced by these three.
+2. `legalizeSourceDynamicValues`'s comment no longer cites "an untyped parameter with a propagated number type"
+   (impossible since P).
+3. `uncheckedResult` takes the body; its only caller refuses a body-less declaration first.
+4. **Export by name:** `dynamicLane` reads the `export` modifier only (which also covers `export default`). A
+   function exported by name (`function f(x){…} export {f}`) keeps the native contract and the presentation's
+   export join refuses it ("source unit, export ABI and actual function-space export must join exactly"). The
+   comment now says so; both refusals are pinned by tests.
+5. **Mutation survivors killed** by direct tests of the contracts: an untyped parameter of a host async
+   function has no dynamic contract (`lane === "native"`), and an annotated non-`any` result whose body runs
+   off its end keeps its annotation (`declaration.type ?`). Each fails with its mutant applied.
+
+Merge of D1 `29d0576590`: conflicts only in `legalizeSourceDynamicValues`'s comment (D1's text, P's trigger and
+last sentence) and this file (all result sections kept). **Pins updated:** D1's two flow-rule tests used
+`function h(x)` as a propagated-number declaration; under P it is dynamic and `x + 1` refuses as a dynamic add.
+`h` takes `x: number` now; the second test pinned the known gap P removes (a concretely typed checker `any` beside
+a dynamic value) and now runs (node 13).
+
+Measured on the merge: typecheck and every gate, also with `LOC_GATE_BASE` = D1's tip; tests of R, V/G, D1, P,
+prepared entry/runtime and #7188: 235/237 before the pin update, the two being those pins; D1 re-run after it 49/49. `changed-root-tests.sh` (interpreter engine):
+`issue-3518-core-vocabulary-seam` is a changed root here (D1 edits it) and fails 4 tests, red on main until PR
+#7278; not patched. Of the other roots, `issue-3518-semantic-verification-ownership` (1, the `effects.ts`
+receipt) and `issue-3526-string-boundary-const` (5) fail identically on D1's tip `29d0576590`, so not P's; the
+rest pass.
+
 ## Slice ladder after P (measured 2026-11-16)
 
 Replaces the order of slices S, D2, D3, C, B and F in the table above. Source:
