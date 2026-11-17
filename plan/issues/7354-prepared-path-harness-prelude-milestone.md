@@ -616,8 +616,8 @@ dynamic value, always.** No call-site proof. Why this one and not "count top-lev
 
 **Unannotated results.** Propagated results were computed from the unsound parameter types (`return v` came out
 `void` or `boolean`). On the same lane an unannotated result that the body returns is dynamic when the checker
-cannot vouch for it: the checker says `any`, a JSDoc `@returns` names it, or the body can also run off its end
-(`undefined`). Any other unannotated result keeps the producer's inference, which the middle end already validates
+cannot vouch for it: the checker says `any`, or the body can also run off its end (`undefined`). (A JSDoc
+`@returns` arm was removed in review round 1, below.) Any other unannotated result keeps the producer's inference, which the middle end already validates
 against the lowered body (a disagreement is a refusal, never a conversion).
 
 ### Built

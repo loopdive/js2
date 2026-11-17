@@ -15,8 +15,8 @@
  *   runtime, and its callers include top-level code, calls with missing
  *   arguments and calls through values, so no call-site type is a contract.
  *   An unannotated result is dynamic where the checker cannot vouch for the
- *   value the body returns: it is `any`, a JSDoc `@returns` names it, or the
- *   body can also run off its end (that path returns `undefined`). Other
+ *   value the body returns: it is `any`, or the body can also run off its end
+ *   (that path returns `undefined`). Other
  *   unannotated results keep the producer's inference, which the middle end
  *   checks against the lowered body. Either contract triggers the legalization
  *   below like an explicit `any`.
@@ -43,15 +43,14 @@ function annotatedAny(checker: ts.TypeChecker, annotation: ts.TypeNode | undefin
 }
 
 /**
- * A value an unannotated body returns that the checker cannot vouch for: the checker says `any`, a JSDoc
- * `@returns` (unchecked at runtime) names it, or the body can also run off its end, which returns `undefined`.
+ * A value an unannotated body returns that the checker cannot vouch for: the checker says `any`, or the body
+ * can also run off its end, which returns `undefined`. A JSDoc `@returns` is no reason: a value the checker
+ * cannot vouch for already meets the implicit-flow rule at the `return`, and any other value is what it says.
  */
 function uncheckedResult(declaration: ts.FunctionDeclaration, checkerSaysAny: boolean): boolean {
   const body = declaration.body;
   return (
-    body !== undefined &&
-    irFunctionBodyReturnsValue(body) &&
-    (checkerSaysAny || ts.getJSDocReturnType(declaration) !== undefined || !functionBodyAlwaysTerminates(body))
+    body !== undefined && irFunctionBodyReturnsValue(body) && (checkerSaysAny || !functionBodyAlwaysTerminates(body))
   );
 }
 

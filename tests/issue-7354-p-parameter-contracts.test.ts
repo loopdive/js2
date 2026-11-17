@@ -3,7 +3,8 @@
 // #7354 slice P — sound contracts for untyped parameters on the Prepared standalone path. A parameter without a
 // TypeScript annotation is the dynamic value (call-site propagation saw no top-level caller, no call with missing
 // arguments and no call through a value, so it was never a contract), and an unannotated result is dynamic where
-// the checker cannot vouch for it: `any`, a JSDoc `@returns`, or a body that can run off its end after a value.
+// the checker cannot vouch for it: `any`, or a body that can run off its end after a value. A JSDoc `@returns` is no
+// contract either way: a converted value returns as typed, an unconverted one meets D1's implicit-flow rule.
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as gc from "../src/codegen/index.js";
 import * as linear from "../src/codegen-linear/index.js";
@@ -112,6 +113,16 @@ describe("#7354 P — an untyped parameter is the dynamic value", () => {
       ["check(1);", "check(2);"],
     ],
     [
+      "a JSDoc `@returns {number}` over a value the body converts",
+      "/** @returns {number} */\nfunction f(n) { return n * 1; }\nif (f(true) !== 1) throw 1;",
+      ["f(true) !== 1", "f(true) !== 2"],
+    ],
+    [
+      "a JSDoc `@returns {boolean}` over a comparison",
+      "/** @returns {boolean} */\nfunction f(n) { return n === 1; }\nif (f(1) !== true) throw 1;",
+      ["f(1) !== true", "f(1) !== false"],
+    ],
+    [
       "the isNegativeZero helper of harness/assert.js",
       "function isNegativeZero(value) { return value === 0 && 1 / value === -Infinity; }\n" +
         "if (!isNegativeZero(-0)) throw 1;\nif (isNegativeZero(0)) throw 2;\nif (isNegativeZero(true)) throw 3;",
@@ -147,9 +158,9 @@ describe("#7354 P — an untyped parameter is the dynamic value", () => {
       "type override (dynamic) disagrees with annotation (f64) at param n of f",
     ],
     [
-      "a JSDoc `@returns` over an untyped value",
-      "/** @returns {number} */\nfunction f(n) { return n; }\nif (f(1) !== 1) throw 1;",
-      "type override (dynamic) disagrees with annotation (f64) at return type of f",
+      "a JSDoc `@returns {number}` over an unconverted untyped value",
+      "/** @returns {number} */\nfunction f(n) { return n; }\nf(true);",
+      "a dynamic value flows into number without a conversion (ReturnStatement)",
     ],
   ])("refuses %s", async (_name, source, message) => {
     expect(await refusal(source)).toContain(message);
