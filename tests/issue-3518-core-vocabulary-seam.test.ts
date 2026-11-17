@@ -168,9 +168,9 @@ describe("#3518 canonical core vocabulary seam", () => {
   it("preserves closed intrinsic tuple order, existing guard and definition consumers", () => {
     expect(Object.keys(vocabulary).sort()).toEqual([...intrinsicValues].sort());
     expect(vocabulary.PURE_MATH_INTRINSIC_IDS).toHaveLength(33);
-    // (#7354 D1) +2: the dynamic-value family (strict equality, the `undefined` value).
-    expect(vocabulary.INTRINSIC_IDS).toHaveLength(41);
-    expect(new Set(vocabulary.INTRINSIC_IDS).size).toBe(41);
+    // (#7354 D1) +2: the dynamic-value family (strict equality, the `undefined` value); (#7354 T) +1: ToBoolean.
+    expect(vocabulary.INTRINSIC_IDS).toHaveLength(42);
+    expect(new Set(vocabulary.INTRINSIC_IDS).size).toBe(42);
     expect(vocabulary.BOOLEAN_BOUNDARY_INTRINSIC_IDS).toEqual(["js.boolean.box", "js.boolean.unbox"]);
     expect(intrinsics.INTRINSIC_DEFINITIONS["js.boolean.unbox"].signature).toEqual({
       version: vocabulary.INTRINSIC_SIGNATURE_VERSION,
@@ -258,7 +258,7 @@ describe("#3518 canonical core vocabulary seam", () => {
       const intents = await import('./src/ir/core/async-intents.ts');
       const strings = await import('./src/ir/core/string-types.ts');
       const identity = await import('./src/shared/contracts/ir-counted-string-identity.ts');
-      assert.equal(vocabulary.INTRINSIC_IDS.length, 41);
+      assert.equal(vocabulary.INTRINSIC_IDS.length, 42);
       assert.deepEqual(vocabulary.BOOLEAN_BOUNDARY_INTRINSIC_IDS, ["js.boolean.box", "js.boolean.unbox"]);
       assert.equal(intents.ASYNC_RUNTIME_FEATURES.length, 7);
       assert.deepEqual(Object.keys(strings), []);

@@ -711,3 +711,91 @@ against the lowered body (a disagreement is a refusal, never a conversion).
   `--target standalone` (8 compile errors on both, 15 skipped).
 - Gates: typecheck, loc, func, coercion-sites, oracle-ratchet, dead-exports, import-cycles, boundaries inventory.
 - issue-3518\*/3526\* were not re-run after this merge (last run: on D1 `08fcfa7b82`, above).
+
+## T and X result
+
+Status 2026-11-17. Branch `claude/7354-tx` on `claude/7354-p` (`1995dd6ef2`): T `5310a38b13`, X `01fd76c26c`.
+
+### Built
+
+- **T, ToBoolean.** New intrinsic `js.value.to_boolean` (`(externref) -> i32`), added to every closed list the
+  same way as `js.value.strict_eq` (vocabulary, `INTRINSIC_DEFINITIONS`, runtime features, provider ids,
+  `dynamic-value-callables.ts` symbol `__is_truthy`, `nativeIntrinsicRows` role `to-boolean`,
+  `native-dynamic-values.ts` row and fill). The legacy `__is_truthy` body moved unchanged into the pure builder
+  `src/runtime/wasmgc/values/to-boolean-body.ts` (`buildToBooleanBody`/`buildToBooleanLocals`); legacy
+  `registry/imports.ts` calls it with its old arguments (149 lines shorter), the Prepared fill calls it with
+  `$AnyValue` (so `undefined` is falsy), the number and Boolean boxes, and no BigInt or string arm (`-1`).
+  Legalization arm: `dyn.truthy` → `js.value.to_boolean`.
+- **T, `null`.** The representation is the ordinary standalone pipeline's: the carrier's null reference
+  (`ref.null extern`); `undefined` stays the non-null `$AnyValue` singleton. So strict equality (its null arm),
+  the `undefined` probe (false for null) and ToNumber (`__unbox_number`: null → 0) are exact with no change. The
+  native lane's resolver now answers `dynamicCarrierIsExternref: () => true` (`sourceDynamicResolver`), which
+  turns on from-ast's existing dynamic `null` literal (`box` tagged Null) and `=== null` (`tag.test` Null).
+  Legalization arms: a Null-tagged box → `const null externref`; `tag.test` Null → `unary ref.is_null`.
+- **T, consequence.** The same flag makes from-ast read the catch binding as the dynamic value. Its checker
+  type is `unknown` (strict), so the D1 flow rule (`refuseImplicitDynamicFlows`) now treats `unknown` like
+  `any`: `catch (e) { return e as number; }` refuses by name ("flows into number … (AsExpression)") instead of
+  reaching a middle-end invariant ("early.return value type externref not assignable to declared result f64").
+- **X.** `coerce.to_externref` of a dynamic value whose result a `throw` consumes (found by a deep walk of the
+  function, nested buffers included) is kept: over the legalized `externref` operand it lowers to nothing. Any
+  other coercion of a dynamic value still refuses. P's result rule counts `unknown` like `any`, so a function
+  that returns its catch binding has a dynamic result.
+- `&&`/`||` needed nothing: from-ast already yields the operand (`(0 || 5) === 5`, `(1 && true) === true`,
+  `(undefined || undefined) === undefined` are tested).
+
+Names other slices can rely on: intrinsic `js.value.to_boolean`, provider `native.js.value.to_boolean`, resource
+`__is_truthy` (role `values/to-boolean`), builder `buildToBooleanBody`. `null` needs no new intrinsic: it is
+`ref.null extern` in the carrier. **Str must pass the string type as `anyStringTypeIdx` in the
+`native-dynamic-values.ts` ToBoolean fill** once strings enter the carrier, or `""` reads truthy.
+
+Soundness of the dynamic catch binding: the payload is whatever was thrown. In an accepted Prepared program that
+is a dynamic value, a boxed number (`numericThrow`) or `null`; strings refuse (`js.string.const is unavailable`),
+a typed Boolean throw refuses ("throw val not in slice 9"), objects do not compile (see gaps). A slice that makes
+a new value throwable must give the dynamic operations its arm.
+
+### Measured
+
+- Tests: `tests/issue-7354-t-truthiness-null.test.ts` (30), `tests/issue-7354-x-dynamic-throw.test.ts` (39),
+  each accepted program run with node's answer (returns) and a wrong one (throws). With D1, P, V/G, R: all pass.
+- Sweeps against node, through the strict entry: T 1584 programs (`!v`, `!!v`, `?:`, `&&`, `||`, `=== null`,
+  `!== null`, `null === v`, `=== undefined`, `if`, `if (!v)`, `while`, `for`, `do-while` × 11 values incl. NaN,
+  ±0, ±Infinity, booleans, undefined, null × returned / local / condition / top level), 1584 correct, 0 gaps.
+  X 231 programs (return the caught value, rethrow through nested try/catch/finally, two calls up, top level,
+  ToBoolean / identity / undefined / null test of `e`, literal throws, finally runs, uncaught escape), 227
+  correct, 4 named gaps (typed `throw true/false`). Zero invariant errors, zero invalid Wasm.
+- Mutation check (14 mutations, each alone): 13 killed. Survivor: `internalizeOnce` on the Prepared fill (true and
+  false are both correct; it only chooses whether the operand is internalized once or twice).
+- Ordinary pipeline: 320 test262 files (the ES5 sample list) byte-identical on the default JS target and on
+  `--target standalone` against the base, 312 compiled per target, 8 compile errors on both.
+- Prepared bytes, 37 program literals of prepared-entry/runtime, #7188 and R tests × {entry.ts, test.js} ×
+  {standalone, gc}: identical except one, R's base `catch (e) { return e as number; }`, now the named refusal
+  above (R's test program changed to `catch (e: any) { return e * 1; }`, which the base refused).
+- Changed root tests vs `origin/main` (the `quality` job's set): the same 10 failures on the base and with T/X
+  (`core-vocabulary-seam` 4 × "complete source SHA256/length mismatch: src/ir/ast-lowering-plans.ts",
+  `semantic-verification-ownership` `effectsOf` hash, `string-boundary-const` 5 host-lane import positions).
+- Real runner, 411-row sample: negatives unchanged (14 pass, 1 compile error); first gap unchanged: 393 ×
+  "not-direct" (`print`, `__isArray`, `__globalObject`), 2 switch-case, 1 callable annotation. T and X sit
+  behind slice H's gap; the stepped-past tally was not run.
+- Gates: typecheck, loc, func, coercion-sites, oracle-ratchet, dead-exports, import-cycles.
+
+### Test pins updated
+
+- `issue-3518-core-vocabulary-seam`: `INTRINSIC_IDS` 41 → 42 (two places).
+- `issue-3518-semantic-verification-ownership`: `INTRINSIC_DEFINITIONS` successor pin a17fd837… → bc21ec2c…; the
+  D1 predecessor step removes the three `js.value.*` rows (re-derives b763d963… unchanged); catalogue 41 → 42.
+- `issue-7354-d1-dynamic-carrier`: ToBoolean, null tag test and thrown-value refusals removed (expressed now);
+  `selectNativeDynamicValues` gains `toBoolean: false`.
+- `issue-7354-p-parameter-contracts`: the ToBoolean refusal removed. `issue-7354-r-provider-census`: the census
+  program also tests ToBoolean and its provider/resource drop/rename; `twoNatives` as above.
+
+### Named gaps and not verified
+
+- `typeof v` refuses "dynamic operation dyn.typeof has no Prepared intrinsic" (Str); `isPrimitive` stops there.
+- `v == null` refuses in from-ast ("bare 'null' in non-reference context (f64)"); other loose equality refuses
+  as `dyn.eq (loose)`.
+- A boolean (i32) result passed to a dynamic parameter refuses in from-ast ("arg 0 of call to same is i32,
+  expected dynamic"), outside this slice.
+- Pre-existing on the base: `throw {}` throws `PreparedIrProgramInvariantError` out of `compile()` ("resolver
+  cannot lower object<>").
+- Not verified: the full 3518/3526 failing-set comparison. It ran on T for all 316 files, but the base run was cut
+  by a container restart. Only the changed-root files above were compared on both.
