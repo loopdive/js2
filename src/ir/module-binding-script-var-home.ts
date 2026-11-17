@@ -48,6 +48,10 @@ export function irOwnedScriptVarHome(
   const soleSource = sourceFiles.length === 1 ? sourceFiles[0] : undefined;
   return (declaration) => {
     if (!isNamedVariableDeclaration(declaration)) return undefined;
+    // A script `var` only: the resolver asks for nothing else, but the dynamic provenance asks for every
+    // top-level variable, and a lexical or ES-module global is typed by the resolver.
+    if ((declaration.parent.flags & ts.NodeFlags.BlockScoped) !== 0 || ts.isExternalModule(declaration.getSourceFile()))
+      return undefined;
     if (declaration.getSourceFile() !== soleSource || NON_WRITABLE_GLOBALS.has(declaration.name.text)) return undefined;
     // The startup plan gives every declarator its own binding, so a repeated `var` has no single global yet. A JS
     // property declaration on the binding (`o.p = v`, `Object.defineProperty(o, …)`) declares no second binding.
@@ -56,14 +60,17 @@ export function irOwnedScriptVarHome(
       !other.getSourceFile().isDeclarationFile && !isJsPropertyDeclarationTarget(other);
     if (declarations.filter(own).length !== 1) return undefined;
     const type = checker.getTypeAtLocation(declaration.name);
+    // A TypeScript annotation other than `any` is the binding's contract: it keeps the typed home, and a dynamic
+    // store into it meets the implicit-flow rule at the store.
+    const annotated = declaration.type !== undefined && type !== checker.getAnyType();
     if (
       (type.flags & (ts.TypeFlags.NumberLike | ts.TypeFlags.BooleanLike)) !== 0 &&
       scriptVarReadsFollowInitializer(checker, declaration) &&
-      !storesDynamic?.(declaration)
+      (annotated || !storesDynamic?.(declaration))
     )
       return "typed";
     // A nested `var` answered here stays a module-init local: the producer gives globals to top-level statements only.
-    return storesDynamic ? "dynamic" : undefined;
+    return storesDynamic && !annotated ? "dynamic" : undefined;
   };
 }
 

@@ -172,7 +172,7 @@ describe("#7354 H — the dynamic home of a script var", () => {
     ],
     [
       "returned from an annotated number result (TypeScript)",
-      "function f(): number { return x; } f(); var x: number = 1;",
+      "function f(): number { return x; } f(); var x = 1;",
       "a dynamic value flows into number without a conversion (ReturnStatement)",
     ],
     [
@@ -232,6 +232,75 @@ describe("#7354 H — the dynamic home of a script var", () => {
 
   // An ES module's `var` is not a script var: the resolver types its global, so a function returning it keeps the
   // checker's result (a dynamic one could not flow into `main`'s annotated number).
+  // Review round 1: a function-local `let`/`const` initialised from a dynamic home holds the dynamic value; the
+  // provenance once missed block-scoped initializers and left the result f64 (an invariant error).
+  it.each([
+    ["a const", "function k() { const a = x; return a; } var r = k(); var x = 1;", "r !== undefined", "r !== 1"],
+    ["a let", "function k() { let a = x; return a; } var r = k(); var x = 1;", "r !== undefined", "r !== 1"],
+    [
+      "a let in a block",
+      "function k(c) { if (c === 1) { let a = x; return a; } return 2; } var q = k(1); var x = 1;",
+      "q !== undefined",
+      "q !== 2",
+    ],
+    [
+      "a let copied into a let",
+      "function k() { let a = x; let b = a; return b; } var r = k(); var x = 1;",
+      "r !== undefined",
+      "r !== 1",
+    ],
+    [
+      "a let stored into a var",
+      "var y = 1; function k() { let a = x; return a; } y = k(); var x = 1;",
+      "y !== undefined",
+      "y !== 1",
+    ],
+  ])("runs %s holding a dynamic home's value", async (_, program, holds, fails) => {
+    expect(await run(`${program} if (${holds}) throw 1;`)).toBe("returned");
+    expect(await run(`${program} if (${fails}) throw 1;`)).toBe("threw");
+  });
+
+  // Review round 1: every binding and expression kind the provenance does not model answers "may be dynamic", so
+  // its value meets a named refusal, never a typed slot it does not fit.
+  it.each([
+    [
+      "a local declared without an initializer",
+      "function k() { let a; a = 1; return a; } k();",
+      "requires an initializer",
+    ],
+    [
+      "a catch binding",
+      "function k() { try { throw 1; } catch (e) { return e; } } k();",
+      "concrete return needs a dynamic box",
+    ],
+    [
+      "a binding element",
+      "function k() { var [a] = [x]; return a; } var r = k(); var x = 1;",
+      "a dynamic value flows into any without a conversion (ArrayLiteralExpression)",
+    ],
+    ["a regular expression", "function k() { return /a/; } k();", "concrete return needs a dynamic box"],
+    ["null", "function k() { return null; } k();", "bare 'null' in non-reference context (dynamic)"],
+    ["a function read as a value", "function k() { return k2; } function k2() { return 1; } k();", 'identifier "k2"'],
+  ])("refuses the value of %s returned from an unannotated function", async (_, program, message) => {
+    expect(await refusal(program)).toContain(message);
+  });
+
+  // Modelled kinds stay typed: `void 0` is the undefined value; an ambient global is its declared type.
+  it.each([
+    ["void", "function k() { return void 0; }", "k() !== undefined", "k() === undefined"],
+    ["an ambient global", "function k() { return NaN; }", "k() === k()", "k() !== k()"],
+  ])("runs %s returned from an unannotated function", async (_, program, holds, fails) => {
+    expect(await run(`${program} if (${holds}) throw 1;`)).toBe("returned");
+    expect(await run(`${program} if (${fails}) throw 1;`)).toBe("threw");
+  });
+
+  // An annotated script var keeps its annotation's home: a dynamic store refuses at the global, not at its `0`.
+  it("keeps an annotated script var typed and refuses its dynamic store", async () => {
+    expect(await refusal("var g: number = 0; function s(v: any) { g = v; } s(1);", "entry.ts")).toContain(
+      "module binding g has no exact typed storage: unsupported",
+    );
+  });
+
   it("keeps an ES module var read by a hoisted function typed", async () => {
     const result = await compile(
       "export function main(): number { return f(); }\nfunction f() { return x; }\nvar x = 1;\n",

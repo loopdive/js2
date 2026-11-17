@@ -137,11 +137,9 @@ describe("#7354 V — the IR's own typed home for a script var", () => {
     }
   });
 
-  // (#7354 H) The binding is in the dynamic home now; its read cannot flow into the annotated `number` result.
+  // (#7354 H) An annotated binding keeps its annotation's home or none: the dynamic home is for unannotated ones.
   it("refuses a read of the hoisted binding in a TypeScript script", async () => {
-    expect(await refusal("function f(): number { return x; } f(); var x: number = 1;", "entry.ts")).toContain(
-      "a dynamic value flows into number without a conversion (ReturnStatement)",
-    );
+    expect(await refusal("function f(): number { return x; } f(); var x: number = 1;", "entry.ts")).toContain(NO_HOME);
   });
 });
 
