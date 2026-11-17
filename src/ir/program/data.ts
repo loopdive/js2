@@ -97,15 +97,15 @@ export function preparedIrReadonlyMap<K, V>(entries: Iterable<readonly [K, V]>):
 }
 
 /**
- * The keys and values of a genuine frozen collection (private brand, exact prototype, frozen, no own keys), or
- * undefined for anything else. Its private storage never changes after construction; a borrowed prototype proves
- * nothing.
+ * The keys and values of a genuine frozen collection (private brand and exact prototype), or undefined for anything
+ * else. Its private storage never changes after construction; a borrowed prototype proves nothing.
  */
 export function preparedIrFrozenCollectionMembers(value: object): readonly unknown[] | undefined {
   const prototype = Object.getPrototypeOf(value);
   const map = FrozenMap.branded(value) && prototype === FrozenMap.prototype;
   const set = FrozenSet.branded(value) && prototype === FrozenSet.prototype;
-  if ((!map && !set) || !Object.isFrozen(value) || Reflect.ownKeys(value).length !== 0) return undefined;
+  // Brand + exact prototype suffice: the constructor freezes `this` before anyone holds it, so no own key can exist.
+  if (!map && !set) return undefined;
   return map ? [...(value as ReadonlyMap<unknown, unknown>)].flat() : [...(value as ReadonlySet<unknown>)];
 }
 

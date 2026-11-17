@@ -437,8 +437,12 @@ export function isImmutablePreparedIrValue(value: unknown): boolean {
 }
 
 /**
- * The own properties of the two shared prototypes an immutable record or array reads a field it lacks through. A
- * settled verdict holds only while this is unchanged; a change sends the owner back to full authentication.
+ * The own properties (key, value, getter, setter) of `Object.prototype` and `Array.prototype`, the two shared
+ * prototypes an immutable record or array reads a field it lacks through. A settled verdict holds only while this is
+ * unchanged; a change sends the owner back to full authentication. Nothing else is tracked: the Map/Set/iterator
+ * built-ins and `Function.prototype.call` that the frozen collections and the checks read through are TRUSTED. The
+ * same gap exists without settling: patching `Map.prototype[Symbol.iterator]` after a check is accepted by the
+ * per-use re-check too, because that re-check reads through the same patched built-ins.
  */
 function sharedPrototypeState(): readonly unknown[] {
   const state: unknown[] = [];

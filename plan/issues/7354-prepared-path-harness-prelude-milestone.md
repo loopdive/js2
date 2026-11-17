@@ -786,6 +786,8 @@ steps 3–5 (dynamic `+`, ToString/`String(x)`, `typeof`) are the follow-up slic
   → `requireCompletedNativeStringValues` → `ownerFor` → `assertNativeStringValueReservationInput` →
   `planNativeStringValuePhysical` → `assertNativeStringOutputRequirementsCurrent`, twice per literal). Profile of a
   20-string-op program: 38.5 s total, 24.6 s in `emitPreparedNativeStringLiteral`, 16.9 s in the re-plan.
+- #3518 receipt/pin tests are red on main and hide new breakage (the Perf data.ts edit breaks six more receipts):
+  [#7358](7358-3518-receipt-pin-tests-red-on-main.md), which must land before this stack is complete.
 - Number formatting is a runtime-support batch, which the presentation refuses (`ir-program-presentation.ts`
   `checkResourceDemand`, "source and prepared runtime must independently prove no async/support demand").
 
@@ -964,3 +966,14 @@ Proofs:
   - Mutants killed: re-entrant restore, intern guard, prototype state, map/set brand, map/set exact prototype, set
     member walk, and the brand in `immutableCopy` / `preparedIrDataMismatch` / `freezePreparedIrRuntimeValue`.
   - Survivors: the implied frozen/no-own-keys check, and the perf-only `owner.settled` assignment.
+
+### Review round 2: MET (2026-11-17)
+
+- `preparedIrFrozenCollectionMembers`: the frozen/no-own-keys check is dropped. Brand plus exact prototype suffice,
+  because the constructor freezes `this` before anyone holds it.
+- `sharedPrototypeState` now documents exactly what it tracks: the own properties of `Object.prototype` and
+  `Array.prototype`. The Map/Set/iterator built-ins and `Function.prototype.call` are trusted, not tracked. Base has
+  the same gap, because its per-use re-check reads through the same built-ins.
+- The six data.ts receipt pins and the other red-on-main pin families are filed as
+  [#7358](7358-3518-receipt-pin-tests-red-on-main.md) (priority high, sprint current). It must land before the #7354
+  stack is complete.
