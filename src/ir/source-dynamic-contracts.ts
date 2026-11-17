@@ -125,21 +125,27 @@ function refuseImplicitDynamicFlows(checker: ts.TypeChecker, roots: readonly ts.
 }
 
 /**
- * (#7354 D1) On the native lane every function lowered from `declaration` is
- * legalized to the intrinsic/externref form; an operation without a Prepared
- * intrinsic is a named refusal. A function without a dynamic value is returned
- * unchanged, so a program without one keeps its exact IR. The flow rule runs
- * only where a dynamic value was lowered: a checker `any` the IR typed
- * concretely (an untyped parameter with a propagated number type) carries no
- * dynamic value.
+ * (#7354 D1) A program with a native `any` contract has every function lowered
+ * from `declaration` legalized to the intrinsic/externref form; an operation
+ * without a Prepared intrinsic is a named refusal. A program without one keeps
+ * its existing path: from-ast also boxes values into dynamic ones internally
+ * there (a string under unary `+`), which later stages already handle
+ * (`issue-3518-native-string-number-source-admission`). A function without a
+ * dynamic value is returned unchanged. The flow rule runs only where a dynamic
+ * value was lowered: a checker `any` the IR typed concretely (an untyped
+ * parameter with a propagated number type) carries no dynamic value.
  */
 export function legalizeSourceDynamicValues(
   checker: ts.TypeChecker,
   policy: SourcePolicy,
+  signatures: Iterable<{ readonly params: readonly IrType[]; readonly returnType: IrType | null }>,
   declaration: ts.FunctionDeclaration | readonly ts.Statement[],
   functions: readonly IrFunction[],
 ): readonly IrFunction[] {
-  if (dynamicLane(policy, undefined) !== "native") return functions;
+  const contracted = [...signatures].some(
+    (signature) => signature.returnType?.kind === "dynamic" || signature.params.some((type) => type.kind === "dynamic"),
+  );
+  if (dynamicLane(policy, undefined) !== "native" || !contracted) return functions;
   let legalized: readonly IrFunction[];
   try {
     legalized = functions.map(legalizeDynamicValues);

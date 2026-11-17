@@ -120,12 +120,6 @@ describe("#7354 D1 — the dynamic value on the Prepared standalone path", () =>
     expect(await run(main(body))).toBe(3);
   });
 
-  it("legalizes a dynamic value that no `any` contract introduced", async () => {
-    expect(
-      await run("export function main(): number { let a: any = undefined; return a === undefined ? 1 : 0; }"),
-    ).toBe(1);
-  });
-
   const flow = (type: string, site: string) => `a dynamic value flows into ${type} without a conversion (${site})`;
   // A checker `any` the IR types concretely (an untyped parameter with a propagated number type) is no dynamic
   // value, so the flow rule does not apply to it.
@@ -292,6 +286,14 @@ describe("#7354 D1 — the legalization pass", () => {
     ],
   ])("leaves %s unchanged", (_label, instr) => {
     expect(one(instr, [dynamic, union])).toBe(instr);
+  });
+
+  it("carries a dynamic block argument as the externref carrier", () => {
+    const input = fn([], [dynamic]);
+    const joined = { ...input, blocks: [{ ...input.blocks[0]!, blockArgs: [2], blockArgTypes: [dynamic] }] };
+    expect(legalizeDynamicValues(joined as IrFunction).blocks[0]!.blockArgTypes).toEqual([
+      { kind: "val", val: { kind: "externref" } },
+    ]);
   });
 
   it("refuses a dynamic type left inside a composite type", () => {
