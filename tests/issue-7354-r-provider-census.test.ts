@@ -444,6 +444,18 @@ describe("#7354 D1 — the census on a dynamic-value program", () => {
     expect(((await present(program, "entry.ts")).main as () => number)()).toBe(3);
   });
 
+  // (#7354 Str) No string reaches the carrier here, so strict equality keeps its string-free body and the setup
+  // reserves no string equality.
+  it("reserves no string equality for a program whose dynamic values hold no string", async () => {
+    let roles: string[] = [];
+    census.setup = (setup) => {
+      roles = setup.resources.declarations.map((row) => row.role[0]!);
+      return setup;
+    };
+    await present(program, "entry.ts");
+    expect(roles).not.toContain("string-equality");
+  });
+
   it.each(IDS)("refuses a census that drops %s", async (id) => {
     census.providers = (rows) => rows.filter((row) => row.id !== id);
     expect(await refusal()).toContain(RUNTIME_DEMAND);
