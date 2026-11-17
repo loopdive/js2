@@ -116,9 +116,9 @@ const receipts = [
       // line (c2fb27fe). Full predecessor from b4c116639a7e146e83611a988a8da28d77de9368:
       // 7f139bfe9f6a3b56f9bea3cf7df0e5fc4f2bcba32a7b9964f0e52f4a449cf8b9 (re-derived below).
       // #7354 D1 (2026-11-16): successor pin after the two reviewed js.value.* catalog
-      // lines, #7354 T js.value.to_boolean and #7354 Ty js.value.is_boolean/is_number; its predecessor is the
-      // #6921 pin b763d963… (re-derived below).
-      ["INTRINSIC_DEFINITIONS", "242fb23757c32e2473ff216fe1a9e9723aa03a4ba48ec4c44f89f70ff8225460"],
+      // lines, #7354 T js.value.to_boolean, #7354 Ty js.value.is_boolean/is_number and #7354 Str2
+      // js.value.is_string; its predecessor is the #6921 pin b763d963… (re-derived below).
+      ["INTRINSIC_DEFINITIONS", "1aa2989c4eac4ea784310e6fd6467bc25b4619c8654ef037ec242b5895601bf2"],
       ["INTRINSIC_ID_SET", "690313663dd754be6b5cbc0b686d966754fc23603c3407f4afedba338c20c7b9"],
       ["isIntrinsicId", "42521a6996c08d57bba1a1fdd21aad6c221785e743cccb7707d2b45903d28af7"],
     ],
@@ -404,11 +404,12 @@ describe("semantic implementation preservation", () => {
   // recover the full original declaration hash from b4c116639a7e146e83611a988a8da28d77de9368
   // (via extraction 545923d1c9b0a30476f5a6e0dd7f5078be3c25c0). Production is not touched.
   it("re-derives the original INTRINSIC_DEFINITIONS and signatureMismatch hashes by removing only the reviewed Boolean fragments", () => {
-    // #7354 D1/T/Ty: the five js.value.* catalog lines, later reviewed additions. The
+    // #7354 D1/T/Ty/Str2: the six js.value.* catalog lines, later reviewed additions. The
     // #6921 Boolean step is re-derived from the source with these lines removed.
     const dynamicValueRows =
       '  "js.value.is_boolean": definition("js.value.is_boolean", EXTERNREF_TO_I32_INTRINSIC_SIGNATURE),\n' +
       '  "js.value.is_number": definition("js.value.is_number", EXTERNREF_TO_I32_INTRINSIC_SIGNATURE),\n' +
+      '  "js.value.is_string": definition("js.value.is_string", EXTERNREF_TO_I32_INTRINSIC_SIGNATURE),\n' +
       '  "js.value.strict_eq": definition("js.value.strict_eq", EXTERNREF_PAIR_TO_I32_INTRINSIC_SIGNATURE),\n' +
       '  "js.value.to_boolean": definition("js.value.to_boolean", EXTERNREF_TO_I32_INTRINSIC_SIGNATURE),\n' +
       '  "js.value.undefined": definition("js.value.undefined", NULLARY_TO_EXTERNREF_INTRINSIC_SIGNATURE),\n';
@@ -421,7 +422,7 @@ describe("semantic implementation preservation", () => {
         changed: ['"js.value.undefined", NULLARY_TO', '"js.value.undefined", EXTERNREF_TO'],
         unrelated: ['"math.pow": definition("math.pow",', '"math.pow": definition("math.atan2",'],
         predecessor: "b763d963ec09954cf5d47aa9a95fc4c61312397eaae3061a3f92956a7dfa5108",
-        successor: "242fb23757c32e2473ff216fe1a9e9723aa03a4ba48ec4c44f89f70ff8225460",
+        successor: "1aa2989c4eac4ea784310e6fd6467bc25b4619c8654ef037ec242b5895601bf2",
       },
       {
         path: "src/ir/core/intrinsics.ts",
@@ -517,8 +518,9 @@ describe("canonical export identities and complete catalogs", () => {
     expect(oldIntrinsics.verifyIntrinsicUse).toBe(intrinsic.verifyIntrinsicUse);
     expect(Object.keys(catalog.INTRINSIC_DEFINITIONS)).toEqual(catalog.INTRINSIC_IDS);
     // Original 38 plus the reviewed js.boolean.unbox (#6921, c2fb27fe) and the two
-    // js.value.* rows (#7354 D1), plus js.value.to_boolean (#7354 T) and the two typeof tag tests (#7354 Ty).
-    expect(catalog.INTRINSIC_IDS).toHaveLength(44);
+    // js.value.* rows (#7354 D1), plus js.value.to_boolean (#7354 T), the two typeof tag tests (#7354 Ty) and
+    // the string typeof tag test (#7354 Str2).
+    expect(catalog.INTRINSIC_IDS).toHaveLength(45);
     expect(Object.isFrozen(catalog.INTRINSIC_DEFINITIONS)).toBe(true);
     for (const [id, row] of Object.entries(catalog.INTRINSIC_DEFINITIONS)) {
       expect(row.feature).toBe(id);

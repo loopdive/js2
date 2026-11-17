@@ -161,6 +161,8 @@ describe("#7354 Ty — typeof comparisons on the Prepared dynamic value", () => 
       "t(true) * 100 + t(null) * 10 + t(undefined)",
       "123",
     ],
+    // (#7354 Str2 merge) No native string pack: no string can reach the carrier, the string test is constant false.
+    ["a string test with no string in the program", 'function t(v) { return typeof v === "string"; }', "t(1)", "false"],
     ["a caught null", 'var r = 0;\ntry { throw null; } catch (e) { if (typeof e === "object") r = 1; }', "r", "1"],
     // The number test alone (no box anywhere) still selects the value resources it binds.
     [
@@ -223,10 +225,11 @@ describe("#7354 Ty — typeof comparisons on the Prepared dynamic value", () => 
     );
   });
 
-  // A typed operand's `typeof` is a constant string, and string constants have no Prepared runtime yet.
-  it("refuses typeof of a typed value by name, as before", async () => {
-    expect(await refusal('function f(v) { var n = 1; return typeof n === "number"; }\nf(1);')).toContain(
-      "runtime feature js.string.const is unavailable under string-const policy storage=unsupported",
+  // A typed operand's `typeof` is a constant string; (#7354 Str2 merge) slice Str gave string constants and their
+  // equality a Prepared runtime, so the comparison is answered (it used to refuse at js.string.const).
+  it("answers typeof of a typed value", async () => {
+    await expectLikeNode(
+      (right) => `function f(v) { var n = 1; return typeof n === "number"; }\nif (f(1) !== ${right}) throw 1;`,
     );
   });
 
