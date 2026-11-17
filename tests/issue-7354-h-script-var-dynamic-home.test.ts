@@ -317,6 +317,8 @@ describe("#7354 H — the dynamic home of a script var", () => {
     ],
     ["an ambient global", "function k() { return NaN; }", "!(k() + 1 !== k() + 1)", "k() + 1 !== k() + 1"],
     ["a var only updated by ++", "var y = 1; y++;", "y + 1 !== 3", "y + 1 !== 2"],
+    // Its own read inside its own store does not make a var dynamic.
+    ["a var updated from itself", "var y = 1; y = y + 1;", "y + 1 !== 3", "y + 1 !== 2"],
   ])("keeps %s typed", async (_, program, holds, fails) => {
     expect(await run(`${program} if (${holds}) throw 1;`)).toBe("returned");
     expect(await run(`${program} if (${fails}) throw 1;`)).toBe("threw");
