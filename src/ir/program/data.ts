@@ -11,6 +11,11 @@ class FrozenMap<K, V> implements ReadonlyMap<K, V> {
     Object.freeze(this);
   }
 
+  /** Brand check through the private field: the prototype alone can be borrowed by any object. */
+  static branded(value: object): value is FrozenMap<unknown, unknown> {
+    return #map in value;
+  }
+
   get size(): number {
     return this.#map.size;
   }
@@ -46,6 +51,11 @@ class FrozenSet<T> implements ReadonlySet<T> {
   constructor(values: Iterable<T>) {
     this.#set = new Set(values);
     Object.freeze(this);
+  }
+
+  /** Brand check through the private field: the prototype alone can be borrowed by any object. */
+  static branded(value: object): value is FrozenSet<unknown> {
+    return #set in value;
   }
 
   get size(): number {
@@ -86,6 +96,19 @@ export function preparedIrReadonlyMap<K, V>(entries: Iterable<readonly [K, V]>):
   return new FrozenMap(entries);
 }
 
+/**
+ * The keys and values of a genuine frozen collection (private brand, exact prototype, frozen, no own keys), or
+ * undefined for anything else. Its private storage never changes after construction; a borrowed prototype proves
+ * nothing.
+ */
+export function preparedIrFrozenCollectionMembers(value: object): readonly unknown[] | undefined {
+  const prototype = Object.getPrototypeOf(value);
+  const map = FrozenMap.branded(value) && prototype === FrozenMap.prototype;
+  const set = FrozenSet.branded(value) && prototype === FrozenSet.prototype;
+  if ((!map && !set) || !Object.isFrozen(value) || Reflect.ownKeys(value).length !== 0) return undefined;
+  return map ? [...(value as ReadonlyMap<unknown, unknown>)].flat() : [...(value as ReadonlySet<unknown>)];
+}
+
 /** Exact data comparison for replay/projection evidence, including recursive layouts and collection entries. */
 export function preparedIrDataMismatch(left: unknown, right: unknown): string | undefined {
   const visited = new WeakMap<object, WeakSet<object>>();
@@ -98,14 +121,14 @@ export function preparedIrDataMismatch(left: unknown, right: unknown): string | 
     if (prior?.has(actual)) return undefined;
     if (prior) prior.add(actual);
     else visited.set(expected, new WeakSet([actual]));
-    const expectedMap = expected instanceof FrozenMap || expected instanceof Map;
-    const actualMap = actual instanceof FrozenMap || actual instanceof Map;
+    const expectedMap = FrozenMap.branded(expected) || expected instanceof Map;
+    const actualMap = FrozenMap.branded(actual) || actual instanceof Map;
     if (expectedMap || actualMap) {
       if (!expectedMap || !actualMap) return `${path} (map kind)`;
       return compare([...expected], [...actual], `${path}.entries`);
     }
-    const expectedSet = expected instanceof FrozenSet || expected instanceof Set;
-    const actualSet = actual instanceof FrozenSet || actual instanceof Set;
+    const expectedSet = FrozenSet.branded(expected) || expected instanceof Set;
+    const actualSet = FrozenSet.branded(actual) || actual instanceof Set;
     if (expectedSet || actualSet) {
       if (!expectedSet || !actualSet) return `${path} (set kind)`;
       return compare([...expected], [...actual], `${path}.values`);
@@ -170,7 +193,7 @@ function immutableCopy(
     invalidPreparedData("prepared data must be acyclic outside exact IR class shapes");
   }
   const nextAncestors = new Set(ancestors).add(value);
-  if (value instanceof FrozenMap) {
+  if (FrozenMap.branded(value)) {
     return preparedIrReadonlyMap(
       [...value].map(
         ([key, item]) =>
@@ -178,7 +201,7 @@ function immutableCopy(
       ),
     );
   }
-  if (value instanceof FrozenSet) {
+  if (FrozenSet.branded(value)) {
     return new FrozenSet([...value].map((item) => immutableCopy(item, nextAncestors, activeCopies)));
   }
   if (Array.isArray(value)) return Object.freeze(value.map((item) => immutableCopy(item, nextAncestors, activeCopies)));
@@ -265,12 +288,12 @@ export function freezePreparedIrRuntimeValue<T>(value: T): T {
     }
     if (visited.has(item)) return;
     active.add(item);
-    if (item instanceof FrozenMap) {
+    if (FrozenMap.branded(item)) {
       for (const [key, entry] of item) {
         freeze(key);
         freeze(entry);
       }
-    } else if (item instanceof FrozenSet) {
+    } else if (FrozenSet.branded(item)) {
       for (const entry of item) freeze(entry);
     } else {
       const prototype = Object.getPrototypeOf(item);

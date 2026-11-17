@@ -255,7 +255,7 @@ export class PhysicalModuleReservations {
   #canonicalGroupRegistered = false;
   #importsClosed = false;
   #checkingSelfDefinition = false;
-  /** Inside `audited`: the layout was audited on entry and is audited again on exit. */
+  /** Inside `audited`: nested layout audits are skipped, ledger mutations are refused, one audit runs on exit. */
   #auditing = false;
 
   constructor(module: PhysicalModuleStorage) {
@@ -460,6 +460,7 @@ export class PhysicalModuleReservations {
       return cached;
     }
     if (this.#state !== "reserving") this.#fail(`function signature was not reserved: ${key}`);
+    if (this.#auditing) this.#fail("mutation inside a read-only audited check");
     const index = this.#flatTypes().length;
     // The shared allocator appends to the actual outer record array. Convert
     // only its index coordinate; no cloned type objects or second allocator.
@@ -743,13 +744,15 @@ export class PhysicalModuleReservations {
    * check read was the audited layout, or the call fails.
    */
   audited<T>(check: () => T): T {
+    const outer = this.#auditing;
     this.#auditing = true;
     let result: T;
     try {
       result = check();
     } finally {
-      this.#auditing = false;
+      this.#auditing = outer;
     }
+    // Inside an outer check this is skipped: the outer exit audit covers both.
     this.#verifyLayout();
     return result;
   }
