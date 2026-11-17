@@ -28,7 +28,7 @@ import {
   assertNativeValueResourcePlanFor,
   type NativeValueResourcePlan,
 } from "../../../ir/program/native-value-resources.js";
-import { freezePreparedIrValue, preparedIrDataMismatch } from "../../../ir/program/data.js";
+import { freezePreparedIrValue, isImmutablePreparedIrValue, preparedIrDataMismatch } from "../../../ir/program/data.js";
 import { PreparedIrProgramInvariantError } from "../../../ir/program/errors.js";
 import type { Instr } from "../../../wasm/model/instructions.js";
 import type {
@@ -398,6 +398,8 @@ interface Owner {
   readonly snapshot: unknown;
   readonly rows: readonly NativeStringValueResourceRow[];
   filled: boolean;
+  /** The retained input passed its checks while it could no longer change; they hold for every later use. */
+  settled: boolean;
 }
 const owners = new WeakMap<NativeStringValueReservations, Owner>();
 export function assertNativeStringValueReservationInput(input: NativeStringValueReservationInput): void {
@@ -436,23 +438,26 @@ export function assertNativeStringValueReservationInput(input: NativeStringValue
 function ownerFor(tx: PhysicalModuleReservations, pack: NativeStringValueReservations) {
   const owner = owners.get(pack);
   if (!owner || owner.tx !== tx) fail("foreign or copied string value pack");
-  same(owner.input.demands, owner.snapshot, "changed retained string demands");
+  // Decided before the checks below run, so their verdict is over the state that every later call observes.
+  const settles = !owner.settled && isImmutablePreparedIrValue(owner.input);
+  if (!owner.settled) same(owner.input.demands, owner.snapshot, "changed retained string demands");
   const currentRealm = readNativeRealmLiteralInput(owner.sourceInput, owner.input.plan.literalRequirements.utf8Storage);
   if (
     currentRealm?.realmRequirements !== owner.input.realmRequirements ||
     currentRealm?.realmLiterals !== owner.input.realmLiterals
   )
     fail("changed retained realm literal identities");
-  assertNativeStringValueReservationInput(owner.input);
+  if (!owner.settled) {
+    assertNativeStringValueReservationInput(owner.input);
+    owner.settled = settles;
+  }
   nativeStringLiteralReservationInventory(tx, pack.strings);
   if (pack.output) nativeStringOutputReservationInventory(tx, pack.output, owner.input.plan.output!);
   if (pack.number)
     requireNativeStringNumberReservations(tx, pack.number.scanner, owner.input.valueRequirements!, pack.strings);
-  for (const row of owner.rows) {
-    if (tx.state === "reserving") {
-      if (row.space === "type") tx.assertTypeReservation(row.reservation);
-    } else tx.physicalIndex(row.reservation);
-  }
+  if (tx.state === "reserving") {
+    for (const row of owner.rows) if (row.space === "type") tx.assertTypeReservation(row.reservation);
+  } else tx.physicalIndices(owner.rows.map((row) => row.reservation));
   return owner;
 }
 
@@ -595,6 +600,7 @@ export function reserveNativeStringValueResources(
     snapshot: freezePreparedIrValue(input.demands),
     rows: Object.freeze(orderedRows),
     filled: false,
+    settled: false,
   });
   return pack;
 }
@@ -636,6 +642,10 @@ export function requireCompletedNativeStringValues(
   tx: PhysicalModuleReservations,
   pack: NativeStringValueReservations,
 ): NativeStringValueReservations {
+  completedOwner(tx, pack);
+  return pack;
+}
+function completedOwner(tx: PhysicalModuleReservations, pack: NativeStringValueReservations): Owner {
   const owner = ownerFor(tx, pack);
   if (!owner.filled) fail("incomplete native string value resources");
   requireCompletedNativeStringLiterals(tx, pack.strings);
@@ -666,8 +676,8 @@ export function requireCompletedNativeStringValues(
         pack.number.dependencies,
       );
   }
-  for (const row of owner.rows) tx.physicalIndex(row.reservation);
-  return pack;
+  tx.physicalIndices(owner.rows.map((row) => row.reservation));
+  return owner;
 }
 export function emitPreparedNativeStringLiteral(
   tx: PhysicalModuleReservations,
@@ -678,8 +688,7 @@ export function emitPreparedNativeStringLiteral(
   storage?: IrGlobalRef,
   materializer?: IrFuncRef,
 ): readonly Instr[] {
-  requireCompletedNativeStringValues(tx, pack);
-  const owner = ownerFor(tx, pack);
+  const owner = completedOwner(tx, pack);
   const requested = tuple(ownerUnitId, value, alloc, storage, materializer);
   const index = owner.input.plan.literalUses.findIndex(
     (row) => preparedIrDataMismatch(demandTuple(owner.input.demands, row.demandIndex), requested) === undefined,
@@ -700,8 +709,7 @@ function emitPreparedNativeStringConcat(
   mode: IrStringConcatMode = "immutable",
   provider?: IrFuncRef,
 ): readonly Instr[] {
-  requireCompletedNativeStringValues(tx, pack);
-  const owner = ownerFor(tx, pack);
+  const owner = completedOwner(tx, pack);
   const requirements = owner.input.outputRequirements;
   if (!pack.output || !requirements || mode !== "immutable") fail("concat has no admitted output resource");
   const admitted = requirements.uses.some((use) => {
