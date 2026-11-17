@@ -9,7 +9,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import * as gc from "../src/codegen/index.js";
 import * as linear from "../src/codegen-linear/index.js";
 import type { IrFunction, IrGlobalRef, IrInstr } from "../src/ir/core/nodes.js";
-import { legalizeDynamicGlobals } from "../src/ir/program/dynamic-value-legalization.js";
+import { legalizeDynamicGlobals, storesUndefinedFirst } from "../src/ir/program/dynamic-value-legalization.js";
 import { instantiatePreparedArtifact } from "../src/test262/test262-prepared-runtime.js";
 import {
   compile,
@@ -17,7 +17,8 @@ import {
   requiredPreparedEmission,
   type Test262CompileOptions,
 } from "../src/test262/test262-prepared-entry.js";
-import type { IrUnitId } from "../src/shared/contracts/ir-identity.js";
+import type { IrSourceId, IrUnitId } from "../src/shared/contracts/ir-identity.js";
+import { irModuleGlobalBindingId, irSourceGlobalRef } from "../src/ir/abi-bindings.js";
 
 const options = (fileName = "test.js", target: "standalone" | "gc" = "standalone"): Test262CompileOptions =>
   ({
@@ -323,7 +324,8 @@ describe("#7354 H — the dynamic home of a script var", () => {
 
 describe("#7354 H — legalizeDynamicGlobals", () => {
   const unit = (name: string) => `unit:${name}` as IrUnitId;
-  const ref = (name: string) => ({ name }) as unknown as IrGlobalRef;
+  const ref = (name: string): IrGlobalRef =>
+    irSourceGlobalRef(irModuleGlobalBindingId("ir-source:v1:test" as IrSourceId, name.charCodeAt(0)), name);
   const fn = (name: string, instrs: readonly IrInstr[]): IrFunction =>
     ({
       unitId: unit(name),
@@ -372,5 +374,14 @@ describe("#7354 H — legalizeDynamicGlobals", () => {
       f64,
       { kind: "val", val: { kind: "externref" } },
     ]);
+  });
+
+  // The physical plan admits a null default only where this holds.
+  it("proves the undefined store opens the owner, and nothing else", () => {
+    const globals = [global("a", { kind: "dynamic" }, "init")];
+    const out = legalizeDynamicGlobals([fn("init", [marker])], globals);
+    expect(storesUndefinedFirst(out.functions, ref("a"))).toBe(true);
+    expect(storesUndefinedFirst(out.functions, ref("b"))).toBe(false);
+    expect(storesUndefinedFirst([fn("init", [marker])], ref("a"))).toBe(false);
   });
 });

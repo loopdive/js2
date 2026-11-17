@@ -27,7 +27,12 @@ related: [7188, 2949, 3526, 3527, 3518, 7106, 7349, 7350, 7352]
 # dynamic operand, a value-position prefix `++`/`--`); they replace invariant
 # crashes in place and sit in the arms that own them. ir-program-presentation.ts
 # +1: D1's internal externref callable contract admission in the ABI join.
+# 2026-11-17 (slice H, review round 1): src/ir/program-physical-plan.ts +2, the
+# import of `storesUndefinedFirst` and the source-global arm that admits a null
+# default only when the module-init stores `undefined` first (the check lives in
+# src/ir/program/dynamic-value-legalization.ts beside the store it checks).
 loc-budget-allow:
+  - src/ir/program-physical-plan.ts
   - src/compiler.ts
   - src/ir/program-source.ts
   - src/ir/from-ast.ts
