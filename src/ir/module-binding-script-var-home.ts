@@ -22,7 +22,11 @@
  */
 import { ts } from "../ts-api.js";
 import { type NamedVariableDeclaration, scriptVarReadsFollowInitializer } from "./module-binding-script-var.js";
-import type { IrModuleBindingDeclaration, IrScriptVarHome } from "./module-bindings.js";
+import {
+  isJsPropertyDeclarationTarget,
+  type IrModuleBindingDeclaration,
+  type IrScriptVarHome,
+} from "./module-bindings.js";
 
 /** The global object's non-writable value properties: a script `var` of one of these names never stores. */
 const NON_WRITABLE_GLOBALS: ReadonlySet<string> = new Set(["undefined", "NaN", "Infinity"]);
@@ -45,9 +49,12 @@ export function irOwnedScriptVarHome(
   return (declaration) => {
     if (!isNamedVariableDeclaration(declaration)) return undefined;
     if (declaration.getSourceFile() !== soleSource || NON_WRITABLE_GLOBALS.has(declaration.name.text)) return undefined;
-    // The startup plan gives every declarator its own binding, so a repeated `var` has no single global yet.
+    // The startup plan gives every declarator its own binding, so a repeated `var` has no single global yet. A JS
+    // property declaration on the binding (`o.p = v`, `Object.defineProperty(o, …)`) declares no second binding.
     const declarations = checker.getSymbolAtLocation(declaration.name)?.declarations ?? [];
-    if (declarations.filter((other) => !other.getSourceFile().isDeclarationFile).length !== 1) return undefined;
+    const own = (other: ts.Declaration) =>
+      !other.getSourceFile().isDeclarationFile && !isJsPropertyDeclarationTarget(other);
+    if (declarations.filter(own).length !== 1) return undefined;
     const type = checker.getTypeAtLocation(declaration.name);
     if (
       (type.flags & (ts.TypeFlags.NumberLike | ts.TypeFlags.BooleanLike)) !== 0 &&

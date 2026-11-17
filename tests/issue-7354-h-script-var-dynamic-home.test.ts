@@ -187,6 +187,12 @@ describe("#7354 H — the dynamic home of a script var", () => {
       `${HOISTED_X}var y = 1; y = x || 0;`,
       "dynamic operation dyn.truthy has no Prepared intrinsic",
     ],
+    // A JS property declaration on the binding is no second declaration: the store, not the home, refuses.
+    [
+      "given a property by Object.defineProperty (slice O)",
+      'var obj = {}; Object.defineProperty(obj, "foo", { value: 1 });',
+      "proven dynamic binding 'obj' initializer has no supported carrier",
+    ],
     // A value kind the carrier cannot hold yet is refused at its store, by the slice that owns it.
     [
       "holding an object literal (slice O)",

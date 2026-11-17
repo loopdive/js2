@@ -1178,7 +1178,7 @@ function scriptVarReferenceKind(
 }
 
 // `o` in a JS property declaration on it: `o.p = v`, `o[k] = v`, `Object.defineProperty(o, …)` (#7106 lever S).
-function isJsPropertyDeclarationTarget(candidate: ts.Declaration): boolean {
+export function isJsPropertyDeclarationTarget(candidate: ts.Declaration): boolean {
   const parent = candidate.parent;
   if (!ts.isIdentifier(candidate) || parent === undefined) return false;
   if (ts.isCallExpression(parent)) return parent.arguments[0] === candidate;
