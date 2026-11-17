@@ -21,6 +21,7 @@ import { selectNativeBooleans, type NativeBooleanSelection } from "./native-prim
 import type { PreparedIrProgramFailure } from "../../../ir/program/prepared-contracts.js";
 import {
   collectNativeStringValueDemands,
+  nativeStringsReachCarrier,
   type NativeStringValueDemands,
 } from "../../../ir/program/native-string-value-demands.js";
 import {
@@ -266,6 +267,7 @@ export function planNativeStringValuePhysical(
     });
   const dynamicValues = selectNativeDynamicValues(
     demands.intrinsics.filter((row) => executable(row.occurrence)).map((row) => row.instruction),
+    nativeStringsReachCarrier(demands),
   );
   const numeric =
     invocation ||
@@ -280,7 +282,9 @@ export function planNativeStringValuePhysical(
             row.instruction.provider.target.binding.kind === "runtime" &&
             row.instruction.provider.target.binding.symbol === "__box_number")),
     );
-  const equality = demands.occurrences.some((row, index) => executable(index) && row.instruction.kind === "string.eq");
+  const equality =
+    !!dynamicValues?.strictEqStrings ||
+    demands.occurrences.some((row, index) => executable(index) && row.instruction.kind === "string.eq");
   const literals: { value: string; encoding?: IrStringEncoding }[] = [];
   const uses: { demandIndex: number; cacheKey: string }[] = [];
   const references: { reference: IrGlobalRef | IrFuncRef; key: string }[] = [];
@@ -360,12 +364,12 @@ export function planNativeStringValuePhysical(
     ...(values || output || equality
       ? [declareNativeStringFlattenResources(key + ":flatten", key, options.utf8Storage)]
       : []),
+    ...(equality ? [declareNativeStringEqualityResources(key + ":equality", key)] : []),
     ...(values ? [declareNativeStringNumberResources(entry.id), values] : []),
     ...(boolean.selection && booleanType
       ? [declareNativeBooleanResources(key + ":booleans", booleanType.key, boolean.selection)]
       : []),
     ...(dynamicValues ? [declareNativeDynamicValueResources(key + ":dynamic", dynamicValues)] : []),
-    ...(equality ? [declareNativeStringEqualityResources(key + ":equality", key)] : []),
     ...(output ? [output] : []),
   ];
   return {
@@ -463,6 +467,10 @@ export function reserveNativeStringValueResources(
     input.plan.mode !== "literals" || input.plan.output || input.plan.equality
       ? reserveNativeStringFlattenResources(tx, input.plan.key + ":flatten", strings)
       : undefined;
+  const equality =
+    input.plan.equality && flatten
+      ? reserveNativeStringEqualityResources(tx, input.plan.key + ":equality", flatten, true)
+      : undefined;
   let number: NativeStringValueReservations["number"];
   if (input.plan.mode !== "literals") {
     if (!flatten) fail("number resources require flatten");
@@ -494,6 +502,9 @@ export function reserveNativeStringValueResources(
           booleans,
           input.valueRequirements!,
           dependencies,
+          input.plan.dynamicValues.strictEqStrings
+            ? { anyStrTypeIdx: strings.layout.anyStrTypeIdx, flatten: flatten.flatten, equals: equality!.equals }
+            : undefined,
         )
       : undefined;
     number = Object.freeze({
@@ -506,10 +517,6 @@ export function reserveNativeStringValueResources(
       ...(dynamicValues ? { dynamicValues } : {}),
     });
   }
-  const equality =
-    input.plan.equality && flatten
-      ? reserveNativeStringEqualityResources(tx, input.plan.key + ":equality", flatten, true)
-      : undefined;
   const output =
     input.plan.output && input.outputRequirements && flatten
       ? reserveNativeStringOutputResources(tx, input.outputRequirements, input.plan.output, { strings, flatten })
@@ -538,6 +545,7 @@ export function reserveNativeStringValueResources(
     if (flatten.utf8Decoder) fn(flatten.utf8Decoder);
     fn(flatten.flatten);
   }
+  if (equality) fn(equality.equals);
   if (number) {
     fn(number.scanner.toNumber);
     type(number.scanner.powerArray);
@@ -559,7 +567,6 @@ export function reserveNativeStringValueResources(
     }
     if (number.dynamicValues) Object.values(number.dynamicValues).forEach(fn);
   }
-  if (equality) fn(equality.equals);
   if (output) {
     for (const row of nativeStringOutputReservationInventory(tx, output, input.plan.output!)) {
       if (row.kind === "type") type(row);

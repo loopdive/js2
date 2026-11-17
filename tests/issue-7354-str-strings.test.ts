@@ -135,3 +135,62 @@ describe("#7354 Str 1 — typed strings through the presentation", () => {
     );
   });
 });
+
+/** A TypeScript program whose exported `main` returns node's answer; returns what the Prepared module answers. */
+async function main(source: string): Promise<number> {
+  const result = await compile(source, options("entry.ts"));
+  expect(messages(result)).toEqual([]);
+  return (instantiatePreparedArtifact(result).instance.exports.main as () => number)();
+}
+
+describe("#7354 Str 2 — a string in the dynamic value", () => {
+  accepted([
+    [
+      "an untyped parameter compared with a string literal: a string, a number, undefined",
+      'function s(v) { return v === "x"; }\n' +
+        'if (s("x") !== true || s(1) !== false || s(undefined) !== false || s("y") !== false) throw 1;',
+      ['s("y") !== false', 's("y") !== true'],
+    ],
+    [
+      "a string through a dynamic identity, compared both ways",
+      'function id(v) { return v; }\nif (id("ab") !== "ab" || "ab" !== id("ab") || id("ab") === id("ac")) throw 1;',
+      ['id("ab") === id("ac")', 'id("ab") === id("ab")'],
+    ],
+  ]);
+
+  // A concatenation is a fresh string, never the interned literal: only the code-unit arm makes these equal.
+  it("compares strings by code units, not identity, and never equals a number or undefined", async () => {
+    const source =
+      "function cat(a: string, b: string): string { return a + b; }\n" +
+      "function id(v: any): any { return v; }\n" +
+      "function same(v: any, w: any): boolean { return v === w; }\n" +
+      "export function main(): number {\n" +
+      "  let r = 0;\n" +
+      "  if (same(cat('a', 'b'), 'ab')) r += 1;\n" +
+      "  if (id(cat('a', 'b')) === 'ab') r += 2;\n" +
+      "  if (!same(cat('a', 'b'), 'ac')) r += 4;\n" +
+      "  if (!same(cat('1', ''), 1)) r += 8;\n" +
+      "  if (same(cat('', ''), '')) r += 16;\n" +
+      "  if (!same(cat('', ''), undefined)) r += 32;\n" +
+      "  if (id(cat('a', 'b')) !== cat('a', 'c')) r += 64;\n" +
+      "  return r;\n" +
+      "}\n";
+    expect(await main(source)).toBe(127);
+    // Each emitted string operation re-authenticates the native string plan (#3518), about a second apiece here.
+  }, 180_000);
+
+  it("converts a string in the dynamic value to a number (StringToNumber)", async () => {
+    const source =
+      "function id(v: any): any { return v; }\n" +
+      "export function main(): number { return id('12') * 2 + (id(' 3 ') - 0) + (id('x') * 1 === id('x') * 1 ? 1 : 0); }\n";
+    expect(await main(source)).toBe(27);
+  });
+
+  it.each([
+    ["ToBoolean of a string (slice T)", "function f(v) { return !v; }\nf('a');", "dyn.truthy"],
+    ["loose equality", "function f(v) { return v == 'a'; }\nf('a');", "dyn.eq (loose)"],
+    ["a method call on a dynamic string", "function f(v) { return v.charAt(0); }\nf('a');", "dyn"],
+  ])("refuses %s", async (_, source, detail) => {
+    expect(await refusal(source)).toContain(detail);
+  });
+});
