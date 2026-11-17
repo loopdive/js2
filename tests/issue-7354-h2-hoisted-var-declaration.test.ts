@@ -4,7 +4,9 @@
 // (or script) entry, and the declaration itself is no write. In a loop the declaration runs again after `x` was
 // assigned and must keep that value; the Prepared path used to store `undefined` at the statement on every iteration.
 import { describe, expect, it } from "vitest";
+import { compile as compileOrdinary } from "../src/index.js";
 import { instantiatePreparedArtifact } from "../src/test262/test262-prepared-runtime.js";
+import { assembleHarnessBody, moduleInit } from "./helpers/harness-module-init.js";
 import {
   compile,
   requiredPreparedEmission,
@@ -210,5 +212,35 @@ describe("#7354 H follow-up — a hoisted `var` declaration without initializer"
     ],
   ])("refuses a var %s by name", async (_, program, message) => {
     expect(await refusal(program)).toMatch(message);
+  });
+
+  // Review round 2. Only a `var` repeat refuses: sibling `let` bindings are separate bindings by definition.
+  it("keeps two sibling-block `let` bindings of one name", async () => {
+    const program = (expected: string) =>
+      "function f(v: number) { let r = 0; for (let i = 0; i < 1; i++) { let x = v; r = r + x; } " +
+      `for (let j = 0; j < 1; j++) { let x = v * 2; r = r + x; } return r; } if (f(5) !== ${expected}) throw 1;`;
+    expect(await run(program("15"), "test.ts")).toBe("returned");
+    expect(await run(program("10"), "test.ts")).toBe("threw");
+  });
+
+  // Review round 2. A repeated script `var` with a module home is one global (`isRedeclaredModuleVar`), not a
+  // second local: the ordinary pipeline claims and runs it, so the repeat check must leave it alone.
+  it("leaves a repeated script var with a module home to its one global (ordinary pipeline)", async () => {
+    const source = assembleHarnessBody(
+      "var s = 0;\nfor (var i = 0; i < 2; i++) { s += i; }\nfor (var i = 5; i < 7; i++) { s += i; }\n" +
+        "assert.sameValue(s, 12);\nassert.sameValue(i, 7);",
+    );
+    const result = await compileOrdinary(source, {
+      fileName: "test.js",
+      allowJs: true,
+      skipSemanticDiagnostics: true,
+      trackIrOutcomes: true,
+      deferTopLevelInit: true,
+      target: "standalone",
+    });
+    expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+    expect(moduleInit(result)?.irBodyEmitted).toBe(true);
+    const { instance } = await WebAssembly.instantiate(result.binary, {});
+    (instance.exports.__module_init as () => void)();
   });
 });
