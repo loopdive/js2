@@ -820,3 +820,75 @@ Evidence after the round: Str, R, D1, P, V/G, prepared-entry/runtime, #7188 test
 `4318ee510f`; ordinary bytes on 101 test262 files × 2 targets identical to the base; gates and
 `changed-root-tests.sh` (interpreter engine) pass. The emitters' provider/owner checks have no test (Prepared attaches
 no string provider, so only a forged emission request would reach them).
+
+### Review round 2
+
+Adversarial review at `82d6cb727c`: NOT MET (three forged setups passed the census, then threw
+`invalid-presentation` out of `compile()`). Fixed at `b237a1dca9` + `a26c134013`:
+
+1. **Must-fix 1 — forged setups refuse by name.**
+   - **Why they threw.** R's mock returned a *new* plan object on every `emittedPhysicalSetupPlan` read, so any
+     forgery the census accepted then failed the finalization's identity check (`plan !== record.plan`). In
+     production the plan is one frozen object, so that check is not reachable from a setup. The mock now forges
+     ONE object, like the emission's own plan. With that change, a forgery the census accepts presents the real,
+     unaltered module (test: reversed reservation steps run and answer 3); it never throws.
+   - **(a), (c) and the step further: identity join** (`nativeSlots`). Every binding the setup derives itself
+     (anything that is not a runtime or intrinsic callable's) must be the binding its declaration's space and role
+     derive under the runtime ABI anchor (`createIrBindingId` + `nativeRole`, the derivation of
+     `irSupportFuncRef`/`irSupportGlobalRef`/`irSourceTypeRef`; the name is not part of the id). So every role the
+     census reads is the one its completed slot was reserved under. Refused: equality↔flatten swap (a),
+     equality↔concat swap, two literal globals swapped, the `""` literal's role stripped (c), flatten, copy-tree and
+     a carrier subtype stripped. An intrinsic-bound setup function must be a by-instruction provider's slot (test:
+     flatten rebound as an intrinsic and relabelled).
+   - **Deviation from the decided fix: no separate signature join for eq/concat.** With the identity join, the eq
+     slot is the one reserved as `[string-equality, equals]`, and `supportPopulationJoins` already requires its
+     declared signature to be that slot's completed signature. A provider-signature check therefore cannot be broken
+     by any forged setup; it would be an unkillable mutant, so it was not added. The carrier field's `i32` check was
+     deleted for the same reason (it survived the mutation sweep).
+   - **(b) literal uses join by value** (`literalUsesJoin`). The uses equal the executable `string.const`
+     occurrences one to one (by `collectNativeStringValueDemands`, which replaces `countInstructions`). Each use's
+     cache key must be the key its own occurrence's value and encoding select. `selectNativeLiteralDemand` is moved
+     out of the planner, so planner and census share it. The key must name exactly one storage slot of the selected
+     kind. Refused: one use repointed to another literal, all uses to one key, two uses exchanging occurrences, one
+     occurrence used twice.
+   - **Not joined: labels nothing consumes.** A literal global's *name* is one (it is not in the binding id; a
+     renamed global is accepted and compiles the real module). The reservation steps and type shapes are others.
+2. **Must-fix 2 — emitter checks tested.** `tests/issue-7354-str-emitter-requests.test.ts` (9 tests) issues forged
+   requests through `preparedNativeStringResolver`: the wrong owner for eq/len/concat, another owner's occurrence, a
+   foreign provider for each, and a host-selected length provider. Deleted because implied:
+   - `!pack.equality`: an admitted `string.eq` implies the planned equality resource.
+   - `selected.length === 1` and `field.carrier !== "string"`: the length emitter now uses
+     `preparedStringLenProvider`, and the carrier is typed `"string"`.
+3. **Should-fixes.**
+   - The length emitter shares `preparedStringLenProvider`; this adds one `backend->ir` import edge, granted in the
+     frontmatter.
+   - `countInstructions` is gone.
+   - `hasRole` is now data equality, so the `roleLen` survivor is gone.
+   - `callableKind` is gone: the callable join compares the provider's implementation as data.
+   - The `useOne` survivor is killed by a duplicated literal global on the same slot.
+   - **Rebutted: sharing the manifest's demand→feature table.** `demandFeatures` is private to
+     `src/ir/program/runtime-manifest.ts`, and the #3518 validator relocation receipts byte-pin that file. Exporting a
+     wrapper failed 30 relocation tests, and re-pinning breaks its segment proofs. The census keeps its six scanner
+     rows, now spelled with the family constants.
+
+Evidence:
+- Tests: Str (18), R (96), Str emitter (9), D1 (46), P + V/G (70), prepared-entry/runtime + #7188 (58) pass. The
+  forks report a vitest `onTaskUpdate` RPC timeout under load on the slow string files; every test passed.
+- At `82d6cb727c` with the stable mock, 12 of the new R tests fail (the forgeries are accepted there).
+- 23 #3518 files: all files that import a changed module, plus the string equality/flatten/output/value files.
+  Failing sets are equal to the base: c1-current-source 271, number-format 2, realm-requirements 1,
+  validator-policy-evolution 143, validator-relocation 9, semantic-provider-boundary 349, helper-policy-evolution
+  134. Every other file passes.
+- Bytes against `82d6cb727c`:
+  - Prepared: the 33 modules (30 distinct) the Str and R tests instantiate are identical.
+  - Ordinary: 100 test262 files × {JS environment, standalone} are identical.
+- Mutation sweep, 19 mutants, each run alone:
+  - Census: 12 killed (identity off, runtime/intrinsic exemptions, intrinsic-owner, use population, value key,
+    useOne, kind, carrier count, callable named, demanded population, role equality); carrier `i32` survived and
+    was deleted.
+  - Emitter: owner, eq/len/concat provider and length arm are killed.
+  - **Survivor, justified:** `buffer.view === "projection"` in `requireOwnerOccurrence`. In every reachable program
+    the program view carries the same string instructions as the projection, so no request can name an occurrence
+    that only the program view has.
+- Gates: typecheck, loc, func, coercion-sites, oracle-ratchet, dead-exports, import-cycles (grant), boundaries
+  inventory, and `changed-root-tests.sh` (interpreter engine).
