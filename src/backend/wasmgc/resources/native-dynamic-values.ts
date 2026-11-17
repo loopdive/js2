@@ -151,8 +151,9 @@ export function fillNativeDynamicValueResources(
         { name: "aa", type: { kind: "anyref" } },
         { name: "ba", type: { kind: "anyref" } },
       ],
-      // IsStrictlyEqual (§7.2.15) is SameValue's dispatch with Number::equal. Only numbers, booleans and the
-      // `undefined` singleton enter a Prepared dynamic value, so the BigInt and string arms are absent.
+      // IsStrictlyEqual (§7.2.15) is SameValue's dispatch with Number::equal. Only numbers, booleans, the
+      // `undefined` singleton and the null reference (#7354 T, the body's null arm) enter a Prepared dynamic
+      // value, so the BigInt and string arms are absent.
       body: buildObjectSameValueBody({
         typeofNumIdx: values.functions.isNumber.handle,
         typeofBoolIdx: booleans!.isBoolean.handle,
