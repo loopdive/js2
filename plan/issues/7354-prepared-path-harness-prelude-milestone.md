@@ -1320,7 +1320,7 @@ Status 2026-11-17. Branch `claude/7354-ty` on `claude/7354-tx` (`37366b4667`).
 ### Differences from the brief
 
 - `switch (typeof v)` with only literal cases and `var k = typeof v; k === "x"` are accepted (the same SSA
-  comparisons; tested against node). A non-literal case refuses in from-ast ("switch disc must lower to i32/f64").
+  comparisons; tested against node). Any non-literal case test refuses by name ("switch-case-test-nonliteral", review round 1; before it, only an all-non-literal switch refused).
 - A typed operand (`typeof n` with `n` an f64 local) still refuses ("js.string.const is unavailable"), as on base.
 
 ### Measured
@@ -1355,3 +1355,34 @@ Status 2026-11-17. Branch `claude/7354-ty` on `claude/7354-tx` (`37366b4667`).
 - Pre-existing: an empty source program throws `PreparedIrProgramInvariantError` out of compile() on the Prepared
   standalone entry ("native string/value demands: missing complete owner population").
 - `typeof Number` refuses by name (provided, real tag not wired).
+
+### Review round 1 (Ty)
+
+Adversarial review at `cb7aec7ab6`: NOT MET, one must-fix. Fixed at `9434ede322`:
+
+1. **Must-fix: a switch mixing literal and non-literal case tests gave a wrong answer.** `lowerStringSwitchDispatch`
+   compared only string-literal tests and skipped the rest (never compared, never evaluated); only the selector
+   stopped it, and the Prepared path has none. The selector's case-test admission is now one predicate,
+   `switchCaseTests` (`src/ir/switch-case-tests.ts`), asked by the selector and by from-ast's switch lowering, which
+   refuses by name (`switch-case-test-nonliteral`, `-mixed`, `switch-multiple-defaults`); the two files' duplicate
+   literal helpers fold into it (from-ast −18, select −48 lines). Siblings: the numeric dispatch with a non-constant
+   case used to reach a plain producer-promise `Error` (an exception, not a refusal) and now refuses by name; a
+   string switch with a numeric case was skipped the same way and is now `-mixed` (TypeScript also rejects most such
+   programs). Tests: the repro (last), first, only, a call with a side effect, a numeric switch's non-literal case,
+   default in the middle (runs like node). Mutation: deleting the refusal is killed.
+2. **Catch-payload tie (should-fix): pin.** The catch binding enters the carrier without `boxedKind`; T's per-throw-site
+   payload pins (`tests/issue-7354-x-dynamic-throw.test.ts`) now fail with a message pointing at `TYPEOF_KIND`.
+3. **`tag.test` widening (should-fix): withdrawn.** The arm keeps only its sourced `undefined`/`null` probes; the number
+   and Boolean tests come only from the `string.eq` arm; D1's number-tag refusal pin is restored.
+4. **Fold asks the classifier only (should-fix): rebutted.** `ambientTypeofIdentifierTagFromAst` is not part of the
+   identifier-read order: it answers the ordinary lane's host-provided `AMBIENT_TYPEOF_TAGS` (`isAmbientBinding`),
+   which the read chain never resolves (on that lane the read of `JSON` itself is `unresolved`), and it decides before
+   the operand is lowered (`typeof (JSON)` with parentheses is deliberately not folded there). Moving it into the
+   classifier would make the read answer it too and change which resolver calls run on the ordinary lane; the Ty
+   answer (`absent-global`) already comes only from the classifier.
+
+Measured after the fixes: Ty 72, D1/T/X 126, H/R 134 tests pass; `changed-root-tests.sh` (vs main): 7 of 9 files
+ran inside the 9-minute cap and pass, the other two (X, Ty) pass when run directly; `issue-2952-slice4/6` fail the same
+16 tests on base and HEAD; typecheck, loc, func, coercion, oracle, dead-exports, import-cycles, boundaries pass;
+ordinary bytes identical on 100 files (40 `language/statements/switch`, ES5 sample, typeof/identifier dirs) × JS and
+standalone (77 compile per target, 23 compile errors on both).
