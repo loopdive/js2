@@ -97,6 +97,7 @@ import { attachIrStringConstStorage } from "../src/ir/string-support.js";
 import type { WasmModule } from "../src/ir/types.js";
 import { buildImports } from "../src/runtime.js";
 import { createTestIrFunctionIdentityFactory } from "./helpers/ir-identities.js";
+import { jsFacingExports } from "./helpers/compile.js";
 
 const identities = createTestIrFunctionIdentityFactory("issue-3526-string-boundary-const");
 const STRING: IrType = { kind: "string" };
@@ -174,7 +175,8 @@ function prepare(values: readonly string[], stringConst: StringConstPolicy, name
   return prepared;
 }
 
-function hostLaneModule(source: string): WasmModule {
+/** The default JS environment (native semantic core since #6708 S6-A). */
+function jsEnvironmentModule(source: string): WasmModule {
   return generateModule(analyzeSource(source, "issue-3526-f2s8-const.ts"), { experimentalIR: true }).module;
 }
 
@@ -189,10 +191,12 @@ function orderedImports(module: WasmModule): string[] {
   });
 }
 
+/** (#7357) Read exports the way an embedder does: native-first results cross the compiled JS value adapter. */
 async function instantiate(result: CompileResult): Promise<Record<string, (...args: never[]) => unknown>> {
   const imports = buildImports(result.imports, undefined, result.stringPool);
   const { instance } = await WebAssembly.instantiate(result.binary, imports);
-  return instance.exports as Record<string, (...args: never[]) => unknown>;
+  imports.setInstance?.(instance);
+  return jsFacingExports(result, instance) as Record<string, (...args: never[]) => unknown>;
 }
 
 // --------------------------------------------------------------------------
@@ -411,24 +415,6 @@ describe("#3526 F2-S8 provider policy", () => {
     expect(withDemand).toBeDefined();
     expect(withDemand!.manifest.features).toEqual(["js.string.const"]);
   });
-
-  it("counts a regex literal as demand, so a regex-only module names its namespace", async () => {
-    // The caveat, pinned rather than left implicit: `extern.regex` lowers its
-    // pattern and flags through two `emitStringConst` calls and DOES occupy
-    // `string_constants` globals on the host lane, so the frozen row is honest
-    // about the import. Their EMISSION still goes through the no-storage
-    // fallback — the manifest claims the capability, the seam does not yet
-    // route those two literals through it.
-    const result = await compile(`export function f(s: string): boolean { return /ab+c/i.test(s); }`);
-    expect(result.success).toBe(true);
-    const module = hostLaneModule(`export function f(s: string): boolean { return /ab+c/i.test(s); }`);
-    expect(orderedImports(module).filter((entry) => entry.includes("string_constants"))).toEqual([
-      'global string_constants."f"@0',
-      'global string_constants."ab+c"@1',
-      'global string_constants."i"@2',
-      'global string_constants.""@3',
-    ]);
-  });
 });
 
 // --------------------------------------------------------------------------
@@ -436,36 +422,15 @@ describe("#3526 F2-S8 provider policy", () => {
 // --------------------------------------------------------------------------
 
 describe("#3526 F2-S8 end-to-end behaviour is unchanged", () => {
-  it("binds the host lane's literal at the SAME import position", () => {
-    expect(orderedImports(hostLaneModule(`export function f(): string { return "hello"; }`))).toEqual([
-      'global string_constants."f"@0',
-      'global string_constants."hello"@1',
-      'global string_constants.""@2',
-    ]);
-  });
-
-  it("keeps the string_constants16 namespace INTERLEAVED in scan order", () => {
-    // The two namespaces are one arm: `hasLoneSurrogate` picks per literal, in
-    // the order the collector registered them. A policy that grouped or sorted
-    // by namespace would move these three indices.
-    expect(orderedImports(hostLaneModule(`export function f(): string { return "x\\uD800y"; }`))).toEqual([
-      'global string_constants."f"@0',
-      'global string_constants16."0078d8000079"@1',
-      'global string_constants.""@2',
-    ]);
-  });
-
-  it("keeps the FUNC import ahead of the IR-only literals it mints", () => {
-    // The one fixture where `prepareStrings` mints host globals itself (the
-    // boolean brand's "true"/"false"). Their position — after the collector's
-    // globals and after the `wasm:js-string.concat` func import — is exactly
-    // what a freeze-time registration would have moved.
-    expect(orderedImports(hostLaneModule("export function f(b: boolean): string { return `${b}`; }"))).toEqual([
-      "func wasm:js-string.concat#0",
-      'global string_constants."f"@0',
-      'global string_constants.""@1',
-      'global string_constants."true"@2',
-      'global string_constants."false"@3',
+  // (#7357) Since #6708 S6-A (612cea9864) the default JS environment runs the native semantic core, and since
+  // #6979 S7-a the host-assisted profile that imported `string_constants` globals is a compile error. The literal's
+  // living boundary on this lane is the native one: no string_constants import, the literal read through the value
+  // adapter (see "answers every hazardous literal shape" below).
+  it("binds no string_constants import on the default JS environment", () => {
+    expect(orderedImports(jsEnvironmentModule(`export function f(): string { return "hello"; }`))).toEqual([
+      "func env.__str_from_mem#0",
+      "func env.__str_to_mem#1",
+      "func env.__str_extern_len#2",
     ]);
   });
 
