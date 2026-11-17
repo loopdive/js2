@@ -31,12 +31,17 @@ related: [7188, 2949, 3526, 3527, 3518, 7106, 7349, 7350, 7352]
 # import of `storesUndefinedFirst` and the source-global arm that admits a null
 # default only when the module-init stores `undefined` first (the check lives in
 # src/ir/program/dynamic-value-legalization.ts beside the store it checks).
+# 2026-11-17 (slice Str, merge onto H): src/compiler/ir-program-presentation.ts +1,
+# `inCall`, the ABI join's admission of a native string in an internal callable
+# contract (string parameters and results), beside H's `carried` it extends.
 loc-budget-allow:
   - src/ir/program-physical-plan.ts
   - src/compiler.ts
   - src/ir/program-source.ts
   - src/ir/from-ast.ts
   - src/compiler/ir-program-presentation.ts
+import-cycles-allow:
+  - backend->ir: 119 # 2026-11-17 (#7354 Str review 2): the native string length emitter reads the selected carrier field through the shared preparedStringLenProvider (ir/runtime/intrinsic-preparation.ts) instead of re-implementing it
 ---
 
 # #7354 — Prepared IR path, milestone 1
@@ -1275,3 +1280,239 @@ and the nested-function stop (both above), `push` vs `unshift`.
 correct before and now refuse. The reviewer's untested narrowing: refuse a repeat only when one of its
 declarations has no initializer, or is a `for-in` / `for-of` head or a pattern. The complete answer is one slot
 per `var` name per function (see Known gaps (H)).
+
+## Str result
+
+Status 2026-11-17. Branch `claude/7354-str` on `claude/7354-p` (`1995dd6ef2`). Steps 1 and 2 of the slice are built;
+steps 3–5 (dynamic `+`, ToString/`String(x)`, `typeof`) are the follow-up slice Str2 (lead decision, below).
+
+### Built
+
+- **Step 1 — typed strings through the presentation.**
+  - `preparedPresentationPolicy` selects native string constants, equality, length and concatenation on wasmgc
+    standalone (not the relational compare: it has no join).
+  - The string value plan (`native-string-values.ts`) joins `string.eq` to the lazy `__str_equals` resource
+    (`native-string-equality.ts`, reused as is) and `string.len` to the carrier's length field.
+    `native-string-output-requirements.ts` no longer refuses those two kinds.
+  - One `preparedNativeStringResolver(tx, pack, unitId)` realises an owner's string operations; `fillPrimaryBody`
+    spreads it (program-consumer.ts shrinks by 11 lines).
+  - R's census: a storage provider (`native-global` literal, `carrier-field` length) is answered by the setup's
+    literal storage or string carrier type; a provider the IR reaches through its own instruction (`string.eq`,
+    `string.concat`) by the setup function named after the provider's symbol. Every other setup function stays a
+    declared dependency, as before.
+  - The ABI join admits a native string in an internal callable contract on standalone, beside D1's externref arm.
+- **Step 2 — a string in the dynamic value.**
+  - The legalization boxes a string as `coerce.to_externref` (the externref that wraps it), the ordinary standalone
+    carrier.
+  - `nativeStringsReachCarrier(demands)` (`native-string-value-demands.ts`): a native string can reach the carrier
+    only through an executable `coerce.to_externref` of a string (its box, a thrown string). When it can, strict
+    equality takes the shared SameValue builder's string arm (code units through flatten + `__str_equals`), which
+    D1 left off; otherwise its body is unchanged.
+
+### Differences from the brief and why
+
+- **No typed string home for a script `var`.** V's classifier can answer the existing `"string"` home soundly with
+  the same reads proof (tried), but the physical plan has no string global ("global s carries non-scalar IR type
+  string") — the same globals arm H builds for dynamic. Left to H/merge; proven with function locals.
+- **A reassigned typed string local** is refused by from-ast ("has no slot representation"): the Prepared resolver
+  has no `resolveString` slot type. Not built (a resolver seam, not a join).
+- **Step 3 needs a second body** (`__ir_dyn_add` = `emitAnyAddFromExternTemps`, entangled with the legacy object
+  runtime); per the lead: Str2 builds a Prepared-native add from shared pure builders.
+
+### Measured
+
+- `tests/issue-7354-str-strings.test.ts` (16 tests): typed string locals, concatenation, a non-ASCII literal,
+  `throw "x"` caught and escaping, strings out of `try`/`catch`; a string through an untyped parameter compared
+  with literals, numbers and `undefined`; fresh concatenations equal by code units through `any`; StringToNumber.
+  Refusals: compare, reassigned string local, script string var, gc target, ToBoolean, `==`, a method call.
+- Sweep (strict entry, against node): 11 operations (`===`, `!==`, against a typed string / number, `* 1`, `- 0`,
+  unary `+`/`-`, `< 2`, `>= 0`) × 19 values (numbers incl. NaN, ±0, ±Infinity; booleans; `undefined`; 9 strings
+  incl. `""`, `" 3 "`, `"0x10"`, `"-0"`, `"Infinity"`) × 4 positions (top level, function, value, condition):
+  44/44 correct. Named gaps for dynamic `+`, `typeof`, `!`, `==`; zero invariant errors, zero invalid Wasm.
+- Ordinary-pipeline bytes, base sources swapped into the same tree: 396 files of the 411-row list compiled, identical
+  on the JS environment and `--target standalone` (8 compile errors on both, 15 skipped).
+- Prepared bytes: every module the prepared-entry/runtime, #7188, R, D1, P and V/G tests instantiate (66) is
+  identical; the one new module is Str's census program.
+- Pins (base vs this branch, failing sets): the 22 #3518/#7139 files that import a touched module, and the changed
+  root tests: identical failing sets except the pins below. Pre-existing on the base (same sets): the core
+  vocabulary seam (source hash of `src/ir/ast-lowering-plans.ts`), semantic-verification ownership (`effects.ts`),
+  string-boundary-const (5), number-format requirements (2), realm requirements (1), and 626 receipt tests in the
+  validator/helper policy-evolution and semantic-provider-boundary files.
+- Pins updated: R (`throw "x"` → the compare refusal; Str census tests), D1 (object box refusal; member read names
+  `dyn.member_get`; `selectNativeDynamicValues` signal), `issue-3518-native-string-output-requirements`
+  (string length is a value-plan join, no output use).
+- 411-row sample: unchanged — 393 × not-direct (`print` 345, `__isArray` 43, `__globalObject` 5), 2 × switch-case
+  binding, 1 × `DD_operator`; negatives 14 pass.
+- Mutation survivors: the `string` kind check and the projection-view check of `nativeStringsReachCarrier` (today
+  every executable `coerce.to_externref` carries a string and the program view mirrors the projection).
+- Gates: typecheck, loc, func, coercion-sites, oracle-ratchet, dead-exports, import-cycles, boundaries inventory.
+
+### Known gaps and hand-over (Str2)
+
+- Every emitted string literal/concat re-authenticates the whole native string plan (`emitPreparedNativeStringLiteral`
+  → `requireCompletedNativeStringValues` → `ownerFor` → `assertNativeStringValueReservationInput` →
+  `planNativeStringValuePhysical` → `assertNativeStringOutputRequirementsCurrent`, twice per literal). Profile of a
+  20-string-op program: 38.5 s total, 24.6 s in `emitPreparedNativeStringLiteral`, 16.9 s in the re-plan.
+- Number formatting is a runtime-support batch, which the presentation refuses (`ir-program-presentation.ts`
+  `checkResourceDemand`, "source and prepared runtime must independently prove no async/support demand").
+
+### Review round 1
+
+Adversarial review at `4318ee510f`: NOT MET (string semantics correct; the string provider census did not fail
+closed). Fixed:
+
+1. **Must-fix — the census joins string providers to their executable occurrences** (`stringProvidersJoin`,
+   `prepared-provider-census.ts`). The step-1/2 rules (some literal global or string type exists; any setup function
+   named after a provider symbol) are gone. Now:
+   - the selected string providers equal, as a multiset, the string features the executable projection demands
+     (the manifest's own scanners `irStringConstDemand`/`EqDemand`/`LenDemand`/`ConcatDemand`);
+   - the literal provider: every executable `string.const` is one literal use of the plan, and each use names exactly
+     one literal global or materializer by cache key;
+   - the length provider: exactly one string carrier type, whose completed field at the provider's `fieldIndex` is an
+     i32;
+   - `__str_equals` / `__str_concat`: exactly the one setup function of the provider's role, by symbol;
+   - the runtime-bound multiset excludes string providers; any other non-callable native provider refuses.
+   Each case the review listed now refuses by name (16 new census tests; drop tests restored). Mutation sweep over the
+   join (11 mutants: feature population, use count, use join, materializer arm, carrier count, carrier i32, owner
+   join, owner count, non-string non-callable): all killed.
+2. **Must-fix — `string.eq` / `string.len` emitters** share one helper with the concat emitter
+   (`requireOwnerOccurrence`: an occurrence of the owner's executable projection that admits the request, provider
+   included); `string.len` reads `fieldIndex` from the selected carrier-field provider.
+3. Should-fixes: tests for `string.eq` without concat (needs the empty literal) and an oversized literal (materializer);
+   the unreachable `!equality` clause and the redundant `standalone` check of the ABI string arm are gone (the +1 LOC
+   grant on `ir-program-presentation.ts` is given back).
+
+Evidence after the round: Str, R, D1, P, V/G, prepared-entry/runtime, #7188 tests pass; the 11 string-related
+#3518 files pass (base: same); Prepared bytes of the 32 modules the Str and R tests instantiate are identical to
+`4318ee510f`; ordinary bytes on 101 test262 files × 2 targets identical to the base; gates and
+`changed-root-tests.sh` (interpreter engine) pass. The emitters' provider/owner checks have no test (Prepared attaches
+no string provider, so only a forged emission request would reach them).
+
+### Review round 2
+
+Adversarial review at `82d6cb727c`: NOT MET (three forged setups passed the census, then threw
+`invalid-presentation` out of `compile()`). Fixed at `b237a1dca9` + `a26c134013`:
+
+1. **Must-fix 1 — forged setups refuse by name.**
+   - **Why they threw.** R's mock returned a *new* plan object on every `emittedPhysicalSetupPlan` read, so any
+     forgery the census accepted then failed the finalization's identity check (`plan !== record.plan`). In
+     production the plan is one frozen object, so that check is not reachable from a setup. The mock now forges
+     ONE object, like the emission's own plan. With that change, a forgery the census accepts presents the real,
+     unaltered module (test: reversed reservation steps run and answer 3); it never throws.
+   - **(a), (c) and the step further: identity join** (`nativeSlots`). Every binding the setup derives itself
+     (anything that is not a runtime or intrinsic callable's) must be the binding its declaration's space and role
+     derive under the runtime ABI anchor (`createIrBindingId` + `nativeRole`, the derivation of
+     `irSupportFuncRef`/`irSupportGlobalRef`/`irSourceTypeRef`; the name is not part of the id). So every role the
+     census reads is the one its completed slot was reserved under. Refused: equality↔flatten swap (a),
+     equality↔concat swap, two literal globals swapped, the `""` literal's role stripped (c), flatten, copy-tree and
+     a carrier subtype stripped. An intrinsic-bound setup function must be a by-instruction provider's slot (test:
+     flatten rebound as an intrinsic and relabelled).
+   - **Deviation from the decided fix: no separate signature join for eq/concat.** With the identity join, the eq
+     slot is the one reserved as `[string-equality, equals]`, and `supportPopulationJoins` already requires its
+     declared signature to be that slot's completed signature. A provider-signature check therefore cannot be broken
+     by any forged setup; it would be an unkillable mutant, so it was not added. The carrier field's `i32` check was
+     deleted for the same reason (it survived the mutation sweep).
+   - **(b) literal uses join by value** (`literalUsesJoin`). The uses equal the executable `string.const`
+     occurrences one to one (by `collectNativeStringValueDemands`, which replaces `countInstructions`). Each use's
+     cache key must be the key its own occurrence's value and encoding select. `selectNativeLiteralDemand` is moved
+     out of the planner, so planner and census share it. The key must name exactly one storage slot of the selected
+     kind. Refused: one use repointed to another literal, all uses to one key, two uses exchanging occurrences, one
+     occurrence used twice.
+   - **Not joined: labels nothing consumes.** A literal global's *name* is one (it is not in the binding id; a
+     renamed global is accepted and compiles the real module). The reservation steps and type shapes are others.
+2. **Must-fix 2 — emitter checks tested.** `tests/issue-7354-str-emitter-requests.test.ts` (9 tests) issues forged
+   requests through `preparedNativeStringResolver`: the wrong owner for eq/len/concat, another owner's occurrence, a
+   foreign provider for each, and a host-selected length provider. Deleted because implied:
+   - `!pack.equality`: an admitted `string.eq` implies the planned equality resource.
+   - `selected.length === 1` and `field.carrier !== "string"`: the length emitter now uses
+     `preparedStringLenProvider`, and the carrier is typed `"string"`.
+3. **Should-fixes.**
+   - The length emitter shares `preparedStringLenProvider`; this adds one `backend->ir` import edge, granted in the
+     frontmatter.
+   - `countInstructions` is gone.
+   - `hasRole` is now data equality, so the `roleLen` survivor is gone.
+   - `callableKind` is gone: the callable join compares the provider's implementation as data.
+   - The `useOne` survivor is killed by a duplicated literal global on the same slot.
+   - **Rebutted: sharing the manifest's demand→feature table.** `demandFeatures` is private to
+     `src/ir/program/runtime-manifest.ts`, and the #3518 validator relocation receipts byte-pin that file. Exporting a
+     wrapper failed 30 relocation tests, and re-pinning breaks its segment proofs. The census keeps its six scanner
+     rows, now spelled with the family constants.
+
+Evidence:
+- Tests: Str (18), R (96), Str emitter (9), D1 (46), P + V/G (70), prepared-entry/runtime + #7188 (58) pass. The
+  forks report a vitest `onTaskUpdate` RPC timeout under load on the slow string files; every test passed.
+- At `82d6cb727c` with the stable mock, 12 of the new R tests fail (the forgeries are accepted there).
+- 23 #3518 files: all files that import a changed module, plus the string equality/flatten/output/value files.
+  Failing sets are equal to the base: c1-current-source 271, number-format 2, realm-requirements 1,
+  validator-policy-evolution 143, validator-relocation 9, semantic-provider-boundary 349, helper-policy-evolution
+  134. Every other file passes.
+- Bytes against `82d6cb727c`:
+  - Prepared: the 33 modules (30 distinct) the Str and R tests instantiate are identical.
+  - Ordinary: 100 test262 files × {JS environment, standalone} are identical.
+- Mutation sweep, 19 mutants, each run alone:
+  - Census: 12 killed (identity off, runtime/intrinsic exemptions, intrinsic-owner, use population, value key,
+    useOne, kind, carrier count, callable named, demanded population, role equality); carrier `i32` survived and
+    was deleted.
+  - Emitter: owner, eq/len/concat provider and length arm are killed.
+  - **Survivor, justified:** `buffer.view === "projection"` in `requireOwnerOccurrence`. In every reachable program
+    the program view carries the same string instructions as the projection, so no request can name an occurrence
+    that only the program view has.
+- Gates: typecheck, loc, func, coercion-sites, oracle-ratchet, dead-exports, import-cycles (grant), boundaries
+  inventory, and `changed-root-tests.sh` (interpreter engine).
+
+### Review round 3: MET
+
+Fresh adversarial review at `50468e80c0` with the reviewer's own mock: MET, no must-fix.
+- Every forgery is refused by the census itself.
+- The dropped signature join and the dropped carrier-`i32` check are accepted as implied.
+- The manifest-table rebuttal is accepted; the follow-up is #7358.
+- Optional should-fix, not done: the census refusal names no join. Every census join, the string join included,
+  answers `undefined`, and the presentation turns that into the one `runtime-demand` gap. Naming the failing join
+  would change `runtimeCensus`'s result type and the gap call in `ir-program-presentation.ts`, which is at its size
+  budget. That belongs to a census-wide change, not to the string join alone.
+
+### Merged onto main (D1 reworked, P, H) — 2026-11-17
+
+Merged `origin/main` `0409838769` into the branch.
+- **Conflicts.** Three files:
+  - The issue file: both sides kept.
+  - `ir-program-presentation.ts`: string admission in internal callable contracts, as `inCall` beside H's `carried`
+    (+1 line, granted in the frontmatter).
+  - R's census test: H's describe and Str's describe are both kept.
+- **Ported cleanly onto D1's rework.** `selectNativeDynamicValues(intrinsics, stringsCarried)` and the string arm in
+  `buildObjectSameValueBody`'s three string parameters needed no change.
+- **One port for H.** H's provenance (`carries`) now treats string literals as a typed kind, beside the number and
+  Boolean literals. Without it, a literal passed to a typed string parameter refused as "a dynamic value flows into
+  string".
+- **A script `var` holding a string now works through H's dynamic home.** It equals node (two acceptance tests),
+  and its `.length` refuses by name (`dyn.member_get`). H's "holding a string (slice Str)" refusal row is removed.
+
+Evidence after the merge:
+- Tests: Str (20), emitter-requests (9), R (100), D1 (49), P + V/G, H (65), prepared-entry/runtime + #7188 (58)
+  pass. The vitest `onTaskUpdate` RPC timeout appears on the slow string files.
+- `changed-root-tests.sh` (interpreter engine): every changed root file passes. The script hit the time cap before
+  the last file, `str-strings`, which was run directly.
+- Gates against the `origin/main` tip pass: loc and func (with `LOC_GATE_BASE`), coercion-sites, oracle-ratchet,
+  dead-exports, import-cycles, boundaries inventory.
+- Bytes against `origin/main`:
+  - Ordinary: 100 test262 files × {JS environment, standalone} are identical.
+  - Prepared: all 148 modules the D1, P, V/G, H, prepared-entry/runtime, #7188 and R tests instantiate on main are
+    identical. The 5 extra modules are Str's string programs.
+- String sweep (`.tmp/sweep.mts`): 286 programs, compared with node. They cover 16 dynamic-string operations × 4
+  strings × {top level via the dynamic home, function, condition, loop across iterations with a sibling `while`},
+  plus typed string expressions in a function and a loop.
+
+| Outcome | Programs | Detail |
+| --- | --- | --- |
+| OK | 184 | equal to node |
+| `dyn.truthy` (ToBoolean, slice T) | 32 | `&&`/`||` with a string operand in condition position |
+| `operator '&&' requires bool operands` | 16 | from-ast, value position |
+| `operator '\|\|' requires bool operands` | 16 | from-ast, value position |
+| `dyn.typeof` | 16 | |
+| `__ir_dyn_add` | 16 | dynamic `+`, slice Str2 |
+| `source declaration and prepared callable slots disagree` | 6 | a .js function returning a Boolean of a typed string; numeric twins refuse the same way on main |
+
+  Wrong answers: 0. Invariant errors: 0.
+- 411-row sample: all 411 rows have the same status and first gap as `origin/main` (0 differ). The tally is 282
+  `dyn.truthy`, 84 `module binding … has no exact typed storage`, 26 `String` call, 2 switch-case binding,
+  1 `Test262Error`, 1 parse error, 1 `print`, and 14 negatives pass.

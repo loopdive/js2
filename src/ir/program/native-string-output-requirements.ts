@@ -201,8 +201,13 @@ function selectUse(
       return locate(demands, occurrence, "binary concat requires two logical strings and a nonnull string result");
     return Object.freeze({ occurrence, kind: "binary-concat" });
   }
+  // (#7354 Str) Equality and length are joined by the string value plan (its equality resource and the carrier's
+  // length field), not by an output resource.
   if (
-    (instruction.kind.startsWith("string.") && instruction.kind !== "string.const") ||
+    (instruction.kind.startsWith("string.") &&
+      instruction.kind !== "string.const" &&
+      instruction.kind !== "string.eq" &&
+      instruction.kind !== "string.len") ||
     instruction.kind === "forof.string"
   )
     return locate(demands, occurrence, `${instruction.kind} has no native string output resource join`);

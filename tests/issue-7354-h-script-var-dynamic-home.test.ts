@@ -210,11 +210,6 @@ describe("#7354 H — the dynamic home of a script var", () => {
     ],
     ["holding an array literal", "var arr = [1];", "resolver cannot register vec for array literal"],
     [
-      "holding a string (slice Str)",
-      'var s = "x";',
-      "dynamic operation box of a non-primitive value has no Prepared intrinsic",
-    ],
-    [
       "holding a function expression (slice Fa)",
       "var f = function () {};",
       "module-level closure binding 'f' not in module-init Slice 2 scope",

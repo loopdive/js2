@@ -102,10 +102,12 @@ export function sourceDynamicProvenance(
     if (ts.isConditionalExpression(node)) return carries(node.whenTrue, self) || carries(node.whenFalse, self);
     if (ts.isBinaryExpression(node)) return binaryCarries(node, self);
     switch (node.kind) {
-      // Number and Boolean literals, and the prefix operators whose result is a number or a Boolean whatever
-      // the operand (`-v`, `!v`, `++v`). Every other kind (members, calls of anything but a source function, object
-      // and array literals, closures, strings, `this`, `void`) is not modelled yet and may be the dynamic value.
+      // Number, Boolean and (#7354 Str) string literals, and the prefix operators whose result is a number or a
+      // Boolean whatever the operand (`-v`, `!v`, `++v`). Every other kind (members, calls of anything but a source
+      // function, object and array literals, closures, templates, `this`, `void`) is not modelled yet and may be the
+      // dynamic value.
       case ts.SyntaxKind.NumericLiteral:
+      case ts.SyntaxKind.StringLiteral:
       case ts.SyntaxKind.TrueKeyword:
       case ts.SyntaxKind.FalseKeyword:
       case ts.SyntaxKind.PrefixUnaryExpression:

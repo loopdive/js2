@@ -471,16 +471,19 @@ describe("native string output requirements over the complete prepared family", 
     failure(data.program, /owned string concatenation/);
   });
 
-  it("retains a real source-produced string-length refusal", () => {
+  // (#7354 Str) This pinned the refusal of a source-produced `string.len`. The string value plan joins length (the
+  // carrier's length field) and equality now, so they are no output use; the other string operations still refuse
+  // through the same branch.
+  it("leaves a real source-produced string length to the value plan (no output use)", () => {
     const positive = prepare("off", { "./entry.ts": 'export function value(): string { return "abc"; }' }, false);
     expect(requireOutput(census(positive)).uses).toEqual([]);
-    const unsupported = prepare(
+    const length = prepare(
       "off",
       { "./entry.ts": "export function value(s: string): number { return s.length; }" },
       false,
       { ...policy, stringLen: { len: "native" } },
     );
-    failure(unsupported, /string.len has no native string output/);
+    expect(requireOutput(census(length)).uses).toEqual([]);
   });
 
   it("keeps closed batch arities in first-use order without trusting a name prefix", () => {
