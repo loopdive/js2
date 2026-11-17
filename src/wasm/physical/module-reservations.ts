@@ -255,6 +255,8 @@ export class PhysicalModuleReservations {
   #canonicalGroupRegistered = false;
   #importsClosed = false;
   #checkingSelfDefinition = false;
+  /** Inside `audited`: the layout was audited on entry and is audited again on exit. */
+  #auditing = false;
 
   constructor(module: PhysicalModuleStorage) {
     this.#module = module;
@@ -336,6 +338,7 @@ export class PhysicalModuleReservations {
 
   #require(phase: "reserving" | "filling"): void {
     if (this.#checkingSelfDefinition) this.#fail("reentrant self-type definition");
+    if (this.#auditing) this.#fail("mutation inside a read-only audited check");
     if (this.#state !== phase) this.#fail(`operation requires ${phase}, observed ${this.#state}`);
     this.#verifyLayout();
   }
@@ -374,6 +377,7 @@ export class PhysicalModuleReservations {
   }
 
   #verifyLayout(): void {
+    if (this.#auditing) return;
     for (const key of populationKeys) {
       const actual = this.#module[key];
       const expected = this.#expected[key];
@@ -731,6 +735,23 @@ export class PhysicalModuleReservations {
     this.#require("reserving");
     this.#validateResources();
     this.#state = "filling";
+  }
+
+  /**
+   * Run a read-only check under one layout audit, taken after it, instead of one per nested query. Every ledger
+   * mutation inside is refused and the check's result is returned only after the audit passes, so whatever the
+   * check read was the audited layout, or the call fails.
+   */
+  audited<T>(check: () => T): T {
+    this.#auditing = true;
+    let result: T;
+    try {
+      result = check();
+    } finally {
+      this.#auditing = false;
+    }
+    this.#verifyLayout();
+    return result;
   }
 
   /** Final raw index at this frozen layout; never hand .handle to ProgramAbiMap. */

@@ -221,6 +221,19 @@ function demandTuple(demands: NativeStringValueDemands, index: number) {
   const i = demand.instruction;
   return tuple(owner, i.value, i.alloc, i.storage, i.materializer);
 }
+/**
+ * Exact tuple equality. The primitive fields (compared as the deep comparison does, with Object.is) decide most pairs
+ * without a deep comparison; planning compares all pairs and every emit scans the plan.
+ */
+function sameDemandTuple(demands: NativeStringValueDemands, index: number, other: ReturnType<typeof tuple>): boolean {
+  const own = demandTuple(demands, index);
+  return (
+    Object.is(own.value, other.value) &&
+    Object.is(own.ownerUnitId, other.ownerUnitId) &&
+    Object.is(own.alloc, other.alloc) &&
+    preparedIrDataMismatch(own, other) === undefined
+  );
+}
 
 /** Descriptive selection only; coordinator acceptance remains mandatory. */
 export function planNativeStringValuePhysical(
@@ -328,8 +341,7 @@ export function planNativeStringValuePhysical(
     if (
       uses.some(
         (row) =>
-          preparedIrDataMismatch(demandTuple(demands, row.demandIndex), demandTuple(demands, index)) === undefined &&
-          row.cacheKey !== selection.key,
+          sameDemandTuple(demands, row.demandIndex, demandTuple(demands, index)) && row.cacheKey !== selection.key,
       )
     )
       return located(demands, demand.occurrence, "ambiguous literal emitter tuple");
@@ -678,7 +690,11 @@ export function requireCompletedNativeStringValues(
   completedOwner(tx, pack);
   return pack;
 }
+/** Every emit runs this; its nested completion queries share one entry and one exit layout audit. */
 function completedOwner(tx: PhysicalModuleReservations, pack: NativeStringValueReservations): Owner {
+  return tx.audited(() => checkCompletedOwner(tx, pack));
+}
+function checkCompletedOwner(tx: PhysicalModuleReservations, pack: NativeStringValueReservations): Owner {
   const owner = ownerFor(tx, pack);
   if (!owner.filled) fail("incomplete native string value resources");
   requireCompletedNativeStringLiterals(tx, pack.strings);
@@ -723,8 +739,8 @@ export function emitPreparedNativeStringLiteral(
 ): readonly Instr[] {
   const owner = completedOwner(tx, pack);
   const requested = tuple(ownerUnitId, value, alloc, storage, materializer);
-  const index = owner.input.plan.literalUses.findIndex(
-    (row) => preparedIrDataMismatch(demandTuple(owner.input.demands, row.demandIndex), requested) === undefined,
+  const index = owner.input.plan.literalUses.findIndex((row) =>
+    sameDemandTuple(owner.input.demands, row.demandIndex, requested),
   );
   if (index < 0) fail("literal tuple is outside the closed projection plan");
   const binding = nativeStringLiteralReservationInventory(tx, pack.strings).requests[index]!.binding;

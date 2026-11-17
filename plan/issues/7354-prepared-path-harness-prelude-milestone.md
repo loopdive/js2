@@ -856,3 +856,72 @@ skipping the nested audits brings 20 lines to 5.7 s (emit 0.65 s); the rest is o
   every call (~0.07 s over 20 lines here: cheap today, same shape, not fixed).
 - `readNativeRealmLiteralInput` → `assertNativeRealmRequirementsCurrent` recalculates the realm catalog per use when a
   realm is present (not on this path's string programs; not fixed).
+
+### Step 2 (2026-11-17): the physical audit count, the tuple scans, one copy fact
+
+What changed:
+
+- `PhysicalModuleReservations.audited(check)` (`src/wasm/physical/module-reservations.ts`). It runs a read-only
+  check with the nested layout audits skipped and one audit after it. Two facts make that sound:
+  - every ledger mutation (`#require`) inside the check is refused;
+  - the check's result is returned only after the trailing audit passes.
+
+  So whatever the check read was the audited layout, or the call fails. `completedOwner` (every string emit) uses it:
+  one audit per emit instead of 63. There is no entry audit: an earlier change is caught by the trailing one.
+- Literal tuple matching (`sameDemandTuple`, used by planning's all-pairs ambiguity check and by every emit's plan
+  scan) compares value, owner and alloc with `Object.is` before the deep comparison. That was quadratic in the
+  literal count, and every deep comparison of fresh objects paid four thrown collection-slot probes.
+- `immutableCopy` (`src/ir/program/data.ts`) records "no collection slot" for each null-prototype record it creates,
+  instead of probing for it later. That is a permanent fact of a fresh `Object.create(null)`.
+
+The frozen-entry design was evaluated and not applied. `fillOwnedFunction` already makes bodies permanent, but no
+producer was moved:
+
+- Resource bodies (flatten, scanner, values, literals, equality, dynamic values): fixtures compare
+  `structuredClone(module)` with `toStrictEqual`, which the owned private-prototype arrays fail (#3518 getter
+  invocation).
+- Source primary bodies: `rejects an already-filled source body mutation` expects the audit refusal, not a
+  TypeError.
+- The remainder helper: its test spies on `fillFunction`.
+
+After the count fix, the body share of the audit was small (0.2 s at 20 lines), so (b) was not needed.
+
+| lines | base 4318ee (s) | step 1 (s) | step 2 (s) |
+| ----: | --------------: | ---------: | ---------: |
+|     5 |             8.6 |        5.8 |        2.7 |
+|    20 |            71.9 |       16.5 |        4.4 |
+|    50 |           436.0 |       49.9 |        9.8 |
+|   100 |               — |      133.4 |       19.0 |
+|   200 |               — |      428.2 |       45.4 |
+
+Synthetic program with 100 string literals/concats spread over 25 functions: 137.3 s on base, 7.1 s now, same bytes.
+
+The targets (20 lines < 3 s, 200 lines < 20 s, flat per line) are not met. Per-line cost still rises from ~0.13 s
+to ~0.26 s. CPU profile at 100 lines (30 s profiled):
+
+- `hasNativeCollectionState` 8.4 s: probes on freshly computed objects in `preparedIrDataMismatch`. The callers are
+  one-time currentness checks that re-derive and compare the whole program: object access, census, value plan,
+  output requirements.
+- `planNativeStringValuePhysical` 7.7 s: runs four times per compile (two setup derivations, the reservation check,
+  the settle pass).
+- The audit itself 6.9 s: one per emit, plus `physicalIndex` and inventory audits outside the scope. Each audit is
+  O(module), so the cost is still quadratic in the literal count.
+
+The next levers are those re-derivations (share one derivation per immutable program rather than re-deriving per
+component) and the audit's O(module) walk. Neither is a change to this module alone.
+
+Proofs:
+
+- Failing sets equal base for 112 test files touching the changed modules, in chunks of 4. One base-only failure
+  under load (object-key-foundation) passes alone.
+- Prepared bytes are identical for the 43 programs. Ordinary bytes are identical on 200 test262 files × (default,
+  standalone).
+- New tests:
+  - a filled global altered after 5 emits is refused;
+  - an extra population slot is refused;
+  - a write injected between the check and its trailing audit (through a vitest module mock of the literal
+    completion check) is refused;
+  - a ledger mutation inside `audited` is refused;
+  - a literal tuple that differs only in its storage reference is refused.
+- Mutation survivors are all performance-only: skipping nested audits, the `audited` wrapper in `completedOwner`,
+  the three primitive prefilters (implied by the deep comparison) and the copy-brand fact.

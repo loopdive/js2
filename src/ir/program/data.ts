@@ -212,6 +212,9 @@ function immutableCopy(
     });
   }
   activeCopies.delete(value);
+  // A fresh null-prototype record has no collection slot, now or ever: record the fact instead of probing for it.
+  const { apply, set, cache } = nativeCollectionBrand;
+  apply(set, cache, [copy, false]);
   return Object.freeze(copy);
 }
 
