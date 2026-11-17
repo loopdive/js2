@@ -40,7 +40,7 @@
 // alters emission for regex-using functions and therefore needs its own
 // equivalence-proven slice, not the slice-1 byte-identical move.
 
-import type { IrInstr, IrValueId } from "../core/nodes.js";
+import { forEachNestedBuffer, type IrInstr, type IrValueId } from "../core/nodes.js";
 
 /**
  * Per-instruction effect summary. (#1982 introduced this as `SchedFx`,
@@ -479,7 +479,7 @@ export function verifyEmissionSchedule(
  * - `global.set` — writes observable state.
  */
 export function isSideEffecting(i: IrInstr): boolean {
-  return (
+  const listed =
     i.kind === "raw.wasm" ||
     i.kind === "call" ||
     i.kind === "global.set" ||
@@ -636,6 +636,15 @@ export function isSideEffecting(i: IrInstr): boolean {
     i.kind === "async.throw" ||
     // (#2856) early.return is a control transfer — never droppable.
     // (if.stmt is already seeded above with br.label, #2952 s2.)
-    i.kind === "early.return"
-  );
+    i.kind === "early.return";
+  if (listed) return true;
+  // (#7359) An instruction that runs nested buffers is as side-effecting as what it runs. The statement-level
+  // control kinds listed above stay kept whatever their buffers hold; this rule is what keeps a value `if`
+  // (`a && f();`, an unread `c ? f() : 0`) whose result is unused — without it DCE and the lowerer dropped the
+  // call in its arm.
+  let runsSideEffect = false;
+  forEachNestedBuffer(i, (buffer) => {
+    runsSideEffect ||= buffer.some(isSideEffecting);
+  });
+  return runsSideEffect;
 }
