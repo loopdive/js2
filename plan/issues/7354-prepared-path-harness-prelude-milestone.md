@@ -1071,3 +1071,52 @@ module-init Slice 2 scope`; `var g = Math.max` → `identifier "Math" is not in 
   assignable to type 'number'`) that the strict entry refuses before H; tested as `var b; b = a; …`.
 - Repeated `var` and multi-source programs: no home (startup plan / per-script module-init).
 - A parameterless function returning a dynamic comparison hits P's slot-join gap.
+
+### Review round 1 (H)
+
+Adversarial review of `f510ec7691` against `1995dd6ef2`: NOT MET. First P's review fixes and D1's rework were
+merged in (`14ffa8c311`; the legalization trigger is D1's native contract, which a script var's dynamic home now
+also is, so `legalize` takes the signatures and the globals). Then:
+
+1. **Must-fix: fail-open provenance.** It answered "typed" for every kind it did not model, and read a local's
+   stores through `scriptVarWrites`, which drops block-scoped initializers: `function k() { const a = x; return
+   a; }` kept an f64 result over a carrier body and `compile()` threw an invariant error. Now every expression
+   and binding kind not modelled may be dynamic. Modelled, each with a test a wrong answer fails: checker `any`,
+   script vars (through the classifier, which now answers only for script vars), locals, annotated parameters,
+   calls of source functions, `?:`, `,`, `=`, `||`/`&&`/`??` (and assignments), `+`/`+=`, the other binary
+   operators, number and Boolean literals, prefix operators, a binding's own read in its stores. Kinds no program
+   on this path reaches typed (members, ambient callees, strings, objects, closures, postfix values, catch and
+   ambient bindings) were tried as modelled kinds, survived mutation, and fall to the default instead. The five
+   repros run and match node.
+2. **One authority for a local** (from-ast): it types a local from the value it is created with and refuses a
+   later store of another type, so the provenance answers from that first value (`undefined` without an
+   initializer); stated in the code.
+3. **One return walker**: `someReturnedValue` (`src/ir/function-returns.ts`), used by `irFunctionBodyReturnsValue`
+   (select.ts shrinks by 11) and the result contract.
+4. The presentation calls `nativeDynamicLane` (exported) instead of repeating the target check.
+5. The physical plan admits a null default only when `storesUndefinedFirst` finds the owner's entry block opening
+   with the `undefined` store into that global (dated +2 loc grant for program-physical-plan.ts).
+6. A TypeScript annotation other than `any` keeps the typed home (or none). `var g: number = 0; function s(v:
+   any) { g = v; }` now refuses as on the base, at the binding ("module binding g has no exact typed storage:
+   unsupported", the resolver's retype arm), not at the `0`.
+7. **Not fixed, recorded for slice O:** `var o = 1; Object.defineProperty(o, 'p', {});` throws
+   `IrProgramDriverInvariantError` from `unadmittedObjectDefineProperty` (`src/ir/from-ast.ts`, ~9210): from-ast
+   treats an unadmitted define as selector drift, and the Prepared path has no selector. Turning it into a
+   refusal there would weaken the ordinary pipeline's drift check; the Prepared producer needs its own admission
+   for `Object` statics (slice O). It was reachable before H with a literal target.
+
+Measured after the fixes (`d635f3be69`):
+
+- Tests: H 63, and V/G, P, D1, R, prepared entry/runtime, #7188: 235, all pass.
+- Mutation sweep over the changed analysis (31 mutants): all killed except fail-closed defaults (the pending
+  answers of locals and results, `?? true` without a write list, non-value stores, and the fall-through kinds).
+- Sweep, now with a `const` local position: 1,944 programs, 1,014 correct, 930 named gaps (381 P's
+  parameterless slot join, 189 ToBoolean, 162 `typeof`, 162 dynamic `+`, 36 TypeScript diagnostics), 0 wrong,
+  0 invariant errors.
+- Ordinary-pipeline bytes against `f9385ba314` (P), 180 sample files: identical on both targets, all compiled.
+- 411-row sample: negatives 14 pass; 333 ToBoolean, 47 `String` direct call in `verifyProperty`, 12 repeated-var
+  `not-direct`, 2 switch-case binding, 1 `print` call, 1 `Test262Error`, 1 parse error.
+- Gates (also with the base at P): typecheck, loc, func, coercion-sites, oracle-ratchet, dead-exports,
+  import-cycles, boundaries inventory. `changed-root-tests.sh`: `issue-3518-core-vocabulary-seam` red (main,
+  PR #7278); `issue-3518-semantic-verification-ownership` and `issue-3526-string-boundary-const` fail exactly as
+  on D1's tip; the others pass.
