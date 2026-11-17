@@ -1183,6 +1183,9 @@ Review of `36c1b42ac9`: MET, no must-fix; the three survivors and the deletion a
   adds another reference-typed source global must carry a marker (or its own default) and narrow this arm.
 - `Object.defineProperty` on a script var: no home until slice O (above).
 - Repeated `var` and multi-source programs: no home.
+- **Hand-over for a later "hoisted var" slice:** a function-local `var` repeated anywhere in its function refuses
+  ("redeclaration of 'x'"); one slot per `var` name per function, declared at the entry, would admit it (15 of
+  the 411 sample files contain a repeated `var`). See "Follow-up: hoisted `var` declaration without initializer".
 
 ### Follow-up: hoisted `var` declaration without initializer
 
@@ -1259,3 +1262,16 @@ NOT MET on one must-fix, fixed here.
 - Proofs re-run: ordinary bytes identical on the 100 files × 2 targets and on the 18 repeated-`var` programs;
   Prepared bytes identical on the 15 unaffected programs; gates (also with the base at main); H, V/G, P, D1, R,
   prepared entry/runtime, #7188, #7106 uninitialized/lever L/L2, #3765 pass.
+
+#### Review round 2: MET
+
+No wrong answer, no invariant error. Two tests added for surviving mutants: a repeated script `var` with a module
+home is claimed and runs on the ordinary pipeline (deleting the module-binding exemption fails it), and two
+sibling-block `let x` bindings still compile and run (deleting the "`var` lists only" guard fails it). Accepted
+equivalent mutants: not counting parameters (`cx.scope.has` refuses a repeated parameter first), the loop guard
+and the nested-function stop (both above), `push` vs `unshift`.
+
+**Follow-up, not built here:** the refusal costs reach — two `for (var i = 0; …)` heads in one function were
+correct before and now refuse. The reviewer's untested narrowing: refuse a repeat only when one of its
+declarations has no initializer, or is a `for-in` / `for-of` head or a pattern. The complete answer is one slot
+per `var` name per function (see Known gaps (H)).
