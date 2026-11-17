@@ -24,7 +24,7 @@ export function applySameValueNaNCorrection(source: string, inverse: boolean): s
  * dispatch. Its exact inverse, hash-checked at both ends, re-derives the NaN-corrected source the receipts
  * start from.
  */
-const foldHash = "c89a35a23349696e23912fea48a3660382e218311d1d30890404937015ce5098";
+const foldHash = "ba1d144bde027d097492dcd636c53c681d4f13e94d57e05e848295939f2ae948";
 const foldSpans: readonly (readonly [current: string, previous: string])[] = [
   [
     "/** Actual dependencies of the complete existing SameValue dispatch. No provider is inferred from a signature. */\nexport type ObjectSameValueResources = PrimitiveEqualityResources & (BigIntEqualityArm | NoBigIntEqualityArm);\ninterface PrimitiveEqualityResources {\n  readonly typeofNumIdx: FuncHandle;\n",
@@ -51,11 +51,11 @@ const foldSpans: readonly (readonly [current: string, previous: string])[] = [
     "  ];\n  const bigintArm = (elseArm: Instr[]): Instr[] => [\n    ...bothTag(typeofBigIdx),\n",
   ],
   [
-    '  ];\n  const numberEqual: Instr[] = [\n    { op: "local.get", index: 0 },\n    { op: "call", funcIdx: unboxNumIdx },\n    { op: "local.get", index: 1 },\n    { op: "call", funcIdx: unboxNumIdx },\n    { op: "f64.eq" },\n  ];\n  const numberArm = (elseArm: Instr[]): Instr[] => [\n',
+    '  ];\n  // SameValue numbers: compare f64 bit patterns (NaN==NaN, +0!=-0).\n  const sameValueNumbers: Instr[] = [\n    { op: "local.get", index: 0 },\n    { op: "call", funcIdx: unboxNumIdx },\n    { op: "i64.reinterpret_f64" },\n    { op: "local.get", index: 1 },\n    { op: "call", funcIdx: unboxNumIdx },\n    { op: "i64.reinterpret_f64" },\n    { op: "i64.eq" },\n    // Every NaN payload/sign denotes the same Number value for SameValue.\n    ...[0, 1].flatMap((index): Instr[] => [\n      { op: "local.get", index },\n      { op: "call", funcIdx: unboxNumIdx },\n      { op: "local.get", index },\n      { op: "call", funcIdx: unboxNumIdx },\n      { op: "f64.ne" },\n    ]),\n    { op: "i32.and" },\n    { op: "i32.or" },\n  ];\n  const numberEqual: Instr[] = [\n    { op: "local.get", index: 0 },\n    { op: "call", funcIdx: unboxNumIdx },\n    { op: "local.get", index: 1 },\n    { op: "call", funcIdx: unboxNumIdx },\n    { op: "f64.eq" },\n  ];\n  const numberArm = (elseArm: Instr[]): Instr[] => [\n',
     "  ];\n  const numberArm = (elseArm: Instr[]): Instr[] => [\n",
   ],
   [
-    '      blockType: { kind: "val", type: { kind: "i32" } },\n      then:\n        resources.numberEquality === "number-equal"\n          ? numberEqual\n          : [\n              // SameValue numbers: compare f64 bit patterns (NaN==NaN, +0!=-0).\n              { op: "local.get", index: 0 },\n              { op: "call", funcIdx: unboxNumIdx },\n              { op: "i64.reinterpret_f64" },\n              { op: "local.get", index: 1 },\n              { op: "call", funcIdx: unboxNumIdx },\n              { op: "i64.reinterpret_f64" },\n              { op: "i64.eq" },\n              // Every NaN payload/sign denotes the same Number value for SameValue.\n              ...[0, 1].flatMap((index): Instr[] => [\n                { op: "local.get", index },\n                { op: "call", funcIdx: unboxNumIdx },\n                { op: "local.get", index },\n                { op: "call", funcIdx: unboxNumIdx },\n                { op: "f64.ne" },\n              ]),\n              { op: "i32.and" },\n              { op: "i32.or" },\n            ],\n      else: elseArm,\n',
+    '      blockType: { kind: "val", type: { kind: "i32" } },\n      then: resources.numberEquality === "number-equal" ? numberEqual : sameValueNumbers,\n      else: elseArm,\n',
     '      blockType: { kind: "val", type: { kind: "i32" } },\n      then: [\n        // SameValue numbers: compare f64 bit patterns (NaN==NaN, +0!=-0).\n        { op: "local.get", index: 0 },\n        { op: "call", funcIdx: unboxNumIdx },\n        { op: "i64.reinterpret_f64" },\n        { op: "local.get", index: 1 },\n        { op: "call", funcIdx: unboxNumIdx },\n        { op: "i64.reinterpret_f64" },\n        { op: "i64.eq" },\n        // Every NaN payload/sign denotes the same Number value for SameValue.\n        ...[0, 1].flatMap((index): Instr[] => [\n          { op: "local.get", index },\n          { op: "call", funcIdx: unboxNumIdx },\n          { op: "local.get", index },\n          { op: "call", funcIdx: unboxNumIdx },\n          { op: "f64.ne" },\n        ]),\n        { op: "i32.and" },\n        { op: "i32.or" },\n      ],\n      else: elseArm,\n',
   ],
   [

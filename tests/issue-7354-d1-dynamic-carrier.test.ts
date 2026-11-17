@@ -120,17 +120,34 @@ describe("#7354 D1 — the dynamic value on the Prepared standalone path", () =>
     expect(await run(main(body))).toBe(3);
   });
 
-  it("legalizes a dynamic value that no `any` contract introduced", async () => {
-    expect(
-      await run("export function main(): number { let a: any = undefined; return a === undefined ? 1 : 0; }"),
-    ).toBe(1);
-  });
-
   const flow = (type: string, site: string) => `a dynamic value flows into ${type} without a conversion (${site})`;
   // (#7354 P) An untyped parameter is the dynamic value, never a propagated number, so the result of `id` is
   // dynamic too and reaches a number only through an explicit ToNumber.
   it("returns an untyped parameter as the dynamic value, which ToNumber turns back into a number", async () => {
     expect(await run("function id(x) { return x; }\nexport function main(): number { return id(3) * 1 + 1; }")).toBe(4);
+  });
+
+  it("runs the flow rule only on a declaration that lowered a dynamic value", async () => {
+    const source = `${ID}function h(x) { return x + 1; }
+    function t(): number { return id(1) === 1 ? 10 : 0; }
+    export function main(): number { const n: number = h(2); return n + t(); }`;
+    expect(await run(source)).toBe(13);
+  });
+
+  // Known gap: the rule is gated per declaration, not per expression, so a concretely typed checker `any` beside a
+  // dynamic value in the same declaration still refuses (node: 13).
+  it("refuses a concretely typed checker `any` in a declaration that also lowered a dynamic value", async () => {
+    const source = `${ID}function h(x) { return x + 1; }
+    export function main(): number { const n: number = h(2); return n + (id(1) === 1 ? 10 : 0); }`;
+    expect(await refusal(source)).toContain(
+      "a dynamic value flows into number without a conversion (VariableDeclaration)",
+    );
+  });
+
+  it("legalizes a program whose only `any` contract is a result", async () => {
+    expect(
+      await run("function one(): any { return 1; }\nexport function main(): number { return one() === 1 ? 1 : 0; }"),
+    ).toBe(1);
   });
 
   it.each([
@@ -297,6 +314,14 @@ describe("#7354 D1 — the legalization pass", () => {
     ],
   ])("leaves %s unchanged", (_label, instr) => {
     expect(one(instr, [dynamic, union])).toBe(instr);
+  });
+
+  it("carries a dynamic block argument as the externref carrier", () => {
+    const input = fn([], [dynamic]);
+    const joined = { ...input, blocks: [{ ...input.blocks[0]!, blockArgs: [2], blockArgTypes: [dynamic] }] };
+    expect(legalizeDynamicValues(joined as IrFunction).blocks[0]!.blockArgTypes).toEqual([
+      { kind: "val", val: { kind: "externref" } },
+    ]);
   });
 
   it("refuses a dynamic type left inside a composite type", () => {

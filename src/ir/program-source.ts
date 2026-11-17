@@ -1805,7 +1805,10 @@ export function prepareIrProgramSources(
           `certified native Promise-delay ${unit.id} fabricated support bodies or provenance`,
         );
       functions.push(
-        ...legalizeSourceDynamicValues(input.checker, input.policy, sourceRoots, [lowered.main, ...lowered.lifted]),
+        ...legalizeSourceDynamicValues(input.checker, input.policy, signatures.values(), sourceRoots, [
+          lowered.main,
+          ...lowered.lifted,
+        ]),
       );
       appendLiftedSourceProvenance(lowered.liftedUnitProvenance, inventory, unit, derivedUnits);
       if (derivedSourceRows !== undefined) appendSourceMapDerivedRows(derivedSourceRows, lowered, identity, unit);
