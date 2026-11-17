@@ -132,6 +132,8 @@ describe("#7354 H — the dynamic home of a script var", () => {
         "k() !== 1",
         "k() !== 2",
       ],
+      // A nested `var` is a module-init local, not a global: it gets no home at all.
+      ["declared in a for head (a module-init local)", "for (var i = 0; i < 2; i++) {}", "i !== 2", "i !== 3"],
       // A typed home needs every stored value typed: each of these stores may be the dynamic value.
       ["stored from an untyped parameter", "var y = 1; function s(v) { y = v; } s(2);", "y !== 2", "y !== 1"],
       ["stored from a conditional of dynamic reads", "%svar y = 1; y = e === undefined ? x : x;", "y !== 1", "y !== 2"],

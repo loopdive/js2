@@ -455,8 +455,8 @@ function checkAbiExports(
   if (entries.size !== program.abi.entries.length)
     gap("abi", "duplicate-binding", "prepared ABI binding identities are not unique");
   const joinedExports = new Set<string>();
-  // (#7354 D1, H) On standalone an internal callable or global may carry the legalized dynamic value whatever the
-  // checker classified; an exported callable is refused by its declaration capture, a global by its export witness.
+  // (#7354 D1, H) On standalone a callable or global may carry the legalized dynamic value whatever the checker
+  // classified; only an internal callable gets that contract, and an exported global is refused by its witness.
   const dynamic = (type: IrType | undefined) =>
     capture.backend.target === "standalone" && type?.kind === "val" && type.val.kind === "externref";
   const carried = (type: IrType) => (type.kind === "val" && numeric(type.val)) || dynamic(type);
@@ -474,7 +474,7 @@ function checkAbiExports(
         plan.intent.kind === "callable" && plan.intent.origin === "source" ? plan.intent.unitId : undefined;
       const declaration = unitId && captures.get(unitId);
       const joins = (slot: PresentationSlot, type: IrType | undefined) =>
-        sourceSlotMatches(slot, type) || (declaration?.slots === "primitive" && !declaration.exported && dynamic(type));
+        sourceSlotMatches(slot, type) || dynamic(type);
       if (
         declaration?.slots === "primitive" &&
         (contract.params.length !== declaration.params.length ||

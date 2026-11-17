@@ -21,7 +21,6 @@
  * so a common core would either change legacy's answer or inherit its zero.
  */
 import { ts } from "../ts-api.js";
-import { isTopLevelStatementDeclaration } from "../shared/var-declaration-lists.js";
 import { type NamedVariableDeclaration, scriptVarReadsFollowInitializer } from "./module-binding-script-var.js";
 import type { IrModuleBindingDeclaration, IrScriptVarHome } from "./module-bindings.js";
 
@@ -56,8 +55,8 @@ export function irOwnedScriptVarHome(
       !storesDynamic?.(declaration)
     )
       return "typed";
-    // The global exists for a top-level statement's declarator only; a nested `var` is a module-init local.
-    return storesDynamic && isTopLevelStatementDeclaration(declaration) ? "dynamic" : undefined;
+    // A nested `var` answered here stays a module-init local: the producer gives globals to top-level statements only.
+    return storesDynamic ? "dynamic" : undefined;
   };
 }
 

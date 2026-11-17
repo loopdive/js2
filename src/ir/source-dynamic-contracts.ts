@@ -213,21 +213,25 @@ function refuseImplicitDynamicFlows(checker: ts.TypeChecker, roots: readonly ts.
   roots.forEach(visit);
 }
 
-/** `node`'s value is its parent's (a parenthesis, a conditional's branch, a comma's result): the parent's flow counts. */
+/**
+ * `node`'s value is its parent's (a parenthesis, a conditional's branch, a comma's result): the parent's flow
+ * counts. A conditional's test has no contextual type, so skipping it too loses no check.
+ */
 function passedOn(node: ts.Expression): boolean {
   const { parent } = node;
   return (
     ts.isParenthesizedExpression(parent) ||
-    (ts.isConditionalExpression(parent) && parent.condition !== node) ||
+    ts.isConditionalExpression(parent) ||
     (ts.isBinaryExpression(parent) && parent.operatorToken.kind === ts.SyntaxKind.CommaToken && parent.right === node)
   );
 }
 
-/** `value` is a variable's initializer or the value of a plain `=` into a binding that may hold the dynamic value. */
+/**
+ * `value` is stored by a plain `=` into a binding that may hold the dynamic value. (An initializer has a contextual
+ * type only under an annotation, and an annotated binding is typed by it: from-ast refuses the dynamic store.)
+ */
 function storedIntoCarrier(value: ts.Expression, carries: Carries): boolean {
   const { parent } = value;
-  if (ts.isVariableDeclaration(parent))
-    return parent.initializer === value && ts.isIdentifier(parent.name) && carries(parent.name);
   return (
     ts.isBinaryExpression(parent) &&
     parent.right === value &&
