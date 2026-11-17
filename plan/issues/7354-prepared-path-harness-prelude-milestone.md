@@ -1705,3 +1705,46 @@ Proofs:
 - The six data.ts receipt pins and the other red-on-main pin families are filed as
   [#7358](7358-3518-receipt-pin-tests-red-on-main.md) (priority high, sprint current). It must land before the #7354
   stack is complete.
+
+### After the merge onto Str (2026-11-17)
+
+Perf (`8e92e8c3cb`, built on Str `4318ee510f`) merged with the reviewed Str (`eeb2e28a24`, PR #7291), then with main
+after #7291 landed. Main since the Str tip changed only benchmark artifacts and the LOC baseline.
+
+What the port changed:
+
+- One conflict in `native-string-values.ts`: Str had folded the concat emitter's occurrence scan into
+  `requireOwnerOccurrence`, the shared check of concat, `string.eq` and `string.len`. Str's structure is kept. Its
+  completion check (`requireCompletedNativeStringValues` and then `ownerFor` again) is now Perf's `completedOwner`. So
+  every string emit (literal, concat, equality, length) runs one owner check, takes the settled-owner fast path, and
+  does ONE `audited` layout audit. No check of either side is removed: Str's occurrence admission and Perf's realm
+  identity, inventory and completion checks all still run on every emit.
+- Issue file: Str's review sections first, Perf's after them; the frontmatter grants are Str's (Perf added none).
+- `data.ts`, `module-reservations.ts` and the census test merged without conflict.
+
+Scaling through the strict Prepared entry (one line = literal + concat + length + `===`, standalone):
+
+| lines | before: Str `eeb2e28a24` (s) | after (s) |
+| ----: | ---------------------------: | --------: |
+|     5 |                          9.3 |       1.8 |
+|    20 |                         76.4 |       3.6 |
+|    50 |      not finished in 480 s |       7.7 |
+
+Before and after produce the same binary at 5 and 20 lines.
+
+Proofs:
+
+- Gates: typecheck, LOC and function budgets with the base at the Str tip and at the main tip, coercion sites,
+  oracle ratchet, dead exports and import cycles are all green.
+- Tests pass: Perf, Str strings, Str emitter requests, R census (100), D1, P, V/G, H, H2, prepared entry and runtime,
+  and #7188.
+- The 24 `issue-3518-native-string-*` files, run in chunks of 4, fail the same 67 tests (same sets) as the Str tip.
+- Prepared bytes are identical to the Str tip for all 90 compiles of the Str strings, prepared-entry and D1 test
+  files: 45 binaries and the refusal messages of the rest.
+- Ordinary bytes are identical on 60 test262 files × (default, standalone).
+- Forgeries still refuse:
+  - Perf's: a forged frozen map or set; a mutation after a nested `audited` returns; demands or plan changed between
+    two emits.
+  - Str's: swapping the names of `__str_equals` and `__str_concat` (the census has no equals/flatten swap); repointing
+    a literal use to another literal's storage; stripping the role of the `""` literal global.
+- `changed-root-tests.sh` (interpreter engine): green.
