@@ -68,6 +68,13 @@ import {
   type NativeStringNumberReservations,
 } from "../resources/native-string-number.js";
 import {
+  declareNativeStringEqualityResources,
+  reserveNativeStringEqualityResources,
+  fillNativeStringEqualityResources,
+  requireCompletedNativeStringEquality,
+  type NativeStringEqualityReservations,
+} from "../resources/native-string-equality.js";
+import {
   declareNativeValueResources,
   reserveNativeValueResources,
   fillNativeValueResources,
@@ -121,6 +128,8 @@ export interface NativeStringValuePhysicalPlan {
   readonly mode: "literals" | "number-boundary" | "realm-bootstrap";
   readonly booleans?: NativeBooleanSelection;
   readonly dynamicValues?: NativeDynamicValueSelection;
+  /** (#7354 Str) An executable `string.eq` joins the lazy equality resource. */
+  readonly equality?: true;
   readonly output?: NativeStringOutputPhysicalPlan;
   readonly literalRequirements: NativeStringLiteralRequirements;
   readonly literalUses: readonly { readonly demandIndex: number; readonly cacheKey: string }[];
@@ -150,6 +159,7 @@ export type NativeStringValueResourceRow =
 export interface NativeStringValueReservations {
   readonly strings: NativeStringLiteralReservations;
   readonly flatten?: NativeStringFlattenReservations;
+  readonly equality?: NativeStringEqualityReservations;
   readonly output?: NativeStringOutputReservations;
   readonly number?: {
     readonly flatten: NativeStringFlattenReservations;
@@ -270,6 +280,7 @@ export function planNativeStringValuePhysical(
             row.instruction.provider.target.binding.kind === "runtime" &&
             row.instruction.provider.target.binding.symbol === "__box_number")),
     );
+  const equality = demands.occurrences.some((row, index) => executable(index) && row.instruction.kind === "string.eq");
   const literals: { value: string; encoding?: IrStringEncoding }[] = [];
   const uses: { demandIndex: number; cacheKey: string }[] = [];
   const references: { reference: IrGlobalRef | IrFuncRef; key: string }[] = [];
@@ -321,7 +332,8 @@ export function planNativeStringValuePhysical(
     literals.push({ value: i.value, encoding });
     uses.push({ demandIndex: index, cacheKey: selection.key });
   }
-  if (!numeric && !realmLiterals && !uses.length && !outputRequirements.binaryConcat) return { kind: "none" };
+  if (!numeric && !realmLiterals && !uses.length && !outputRequirements.binaryConcat && !equality)
+    return { kind: "none" };
   const entry = demands.program.inventory.sources.find((row) => row.kind === "entry");
   if (!entry) fail("missing canonical entry source");
   const key = "native-string-values:v1:" + JSON.stringify(entry.id);
@@ -332,7 +344,8 @@ export function planNativeStringValuePhysical(
         flattenKey: key + ":flatten",
       })
     : undefined;
-  if (numeric || realmLiterals || output) literals.push({ value: "", encoding: "wtf16" });
+  // Flattening needs the canonical empty literal.
+  if (numeric || realmLiterals || output || equality) literals.push({ value: "", encoding: "wtf16" });
   if (invocation) literals.push({ value: "TypeError" }, { value: "Value is not callable" });
   if (outputRequirements.batchArities.length) literals.push({ value: "undefined" });
   if (realmLiterals) literals.push(...realmLiterals.literals);
@@ -344,12 +357,15 @@ export function planNativeStringValuePhysical(
   const recipes = [
     declareNativeStringLiteralTypes(key, options.utf8Storage),
     declareNativeStringLiteralResources(literalRequirements),
-    ...(values || output ? [declareNativeStringFlattenResources(key + ":flatten", key, options.utf8Storage)] : []),
+    ...(values || output || equality
+      ? [declareNativeStringFlattenResources(key + ":flatten", key, options.utf8Storage)]
+      : []),
     ...(values ? [declareNativeStringNumberResources(entry.id), values] : []),
     ...(boolean.selection && booleanType
       ? [declareNativeBooleanResources(key + ":booleans", booleanType.key, boolean.selection)]
       : []),
     ...(dynamicValues ? [declareNativeDynamicValueResources(key + ":dynamic", dynamicValues)] : []),
+    ...(equality ? [declareNativeStringEqualityResources(key + ":equality", key)] : []),
     ...(output ? [output] : []),
   ];
   return {
@@ -361,6 +377,7 @@ export function planNativeStringValuePhysical(
       mode: numeric ? "number-boundary" : realmLiterals ? "realm-bootstrap" : "literals",
       ...(boolean.selection ? { booleans: boolean.selection } : {}),
       ...(dynamicValues ? { dynamicValues } : {}),
+      ...(equality ? { equality } : {}),
       ...(output ? { output } : {}),
       literalRequirements,
       literalUses: uses,
@@ -443,7 +460,7 @@ export function reserveNativeStringValueResources(
   assertNativeStringValueReservationInput(input);
   const strings = reserveNativeStringLiteralResources(tx, input.plan.literalRequirements, types);
   const flatten =
-    input.plan.mode !== "literals" || input.plan.output
+    input.plan.mode !== "literals" || input.plan.output || input.plan.equality
       ? reserveNativeStringFlattenResources(tx, input.plan.key + ":flatten", strings)
       : undefined;
   let number: NativeStringValueReservations["number"];
@@ -489,6 +506,10 @@ export function reserveNativeStringValueResources(
       ...(dynamicValues ? { dynamicValues } : {}),
     });
   }
+  const equality =
+    input.plan.equality && flatten
+      ? reserveNativeStringEqualityResources(tx, input.plan.key + ":equality", flatten, true)
+      : undefined;
   const output =
     input.plan.output && input.outputRequirements && flatten
       ? reserveNativeStringOutputResources(tx, input.outputRequirements, input.plan.output, { strings, flatten })
@@ -497,6 +518,7 @@ export function reserveNativeStringValueResources(
     strings,
     ...(flatten ? { flatten } : {}),
     ...(number ? { number } : {}),
+    ...(equality ? { equality } : {}),
     ...(output ? { output } : {}),
   });
   const census = nativeStringLiteralReservationInventory(tx, strings);
@@ -537,6 +559,7 @@ export function reserveNativeStringValueResources(
     }
     if (number.dynamicValues) Object.values(number.dynamicValues).forEach(fn);
   }
+  if (equality) fn(equality.equals);
   if (output) {
     for (const row of nativeStringOutputReservationInventory(tx, output, input.plan.output!)) {
       if (row.kind === "type") type(row);
@@ -591,6 +614,7 @@ export function fillNativeStringValueResources(
     if (pack.number.booleans) fillNativeBooleanResources(tx, pack.number.booleans);
     if (pack.number.dynamicValues) fillNativeDynamicValueResources(tx, pack.number.dynamicValues);
   }
+  if (pack.equality) fillNativeStringEqualityResources(tx, pack.equality);
   if (pack.output) fillNativeStringOutputResources(tx, pack.output);
   owner.filled = true;
 }
@@ -609,6 +633,7 @@ export function requireCompletedNativeStringValues(
   if (!owner.filled) fail("incomplete native string value resources");
   requireCompletedNativeStringLiterals(tx, pack.strings);
   if (pack.flatten) requireCompletedNativeStringFlatten(tx, pack.flatten, pack.strings);
+  if (pack.equality) requireCompletedNativeStringEquality(tx, pack.equality, pack.strings);
   if (pack.output) requireCompletedNativeStringOutput(tx, pack.output);
   if (pack.number) {
     if (!owner.input.valueRequirements) fail("number resources lost their issued value requirements");
@@ -660,7 +685,7 @@ export function emitPreparedNativeStringLiteral(
 }
 
 /** The scoped emitter may only realize an authenticated concat occurrence of its owner. */
-export function emitPreparedNativeStringConcat(
+function emitPreparedNativeStringConcat(
   tx: PhysicalModuleReservations,
   pack: NativeStringValueReservations,
   ownerUnitId: IrUnitId,
@@ -688,4 +713,49 @@ export function emitPreparedNativeStringConcat(
   });
   if (!admitted) fail("concat occurrence is outside the closed owner projection");
   return [{ op: "call", funcIdx: pack.output.concat.handle }];
+}
+
+/**
+ * The string operations of one owner's body, each realised on the owner's admitted native resources: literals and
+ * concatenation through their closed occurrence plans; (#7354 Str) `string.eq` calls the lazy equality resource and
+ * `string.len` reads the carrier's length field.
+ */
+export function preparedNativeStringResolver(
+  tx: PhysicalModuleReservations,
+  pack: NativeStringValueReservations,
+  ownerUnitId: IrUnitId,
+): {
+  readonly emitStringConst: (
+    value: string,
+    alloc?: AllocSiteId,
+    storage?: IrGlobalRef,
+    materializer?: IrFuncRef,
+  ) => readonly Instr[];
+  readonly emitStringConcat?: (
+    alloc?: AllocSiteId,
+    mode?: IrStringConcatMode,
+    provider?: IrFuncRef,
+  ) => readonly Instr[];
+  readonly emitStringEquals: () => readonly Instr[];
+  readonly emitStringLen: () => readonly Instr[];
+} {
+  return {
+    emitStringConst: (value, alloc, storage, materializer) =>
+      emitPreparedNativeStringLiteral(tx, pack, ownerUnitId, value, alloc, storage, materializer),
+    ...(pack.output
+      ? {
+          emitStringConcat: (alloc, mode, provider) =>
+            emitPreparedNativeStringConcat(tx, pack, ownerUnitId, alloc, mode, provider),
+        }
+      : {}),
+    emitStringEquals: () => {
+      requireCompletedNativeStringValues(tx, pack);
+      if (!pack.equality) fail("string equality has no admitted resource");
+      return [{ op: "call", funcIdx: pack.equality.equals.handle }];
+    },
+    emitStringLen: () => {
+      requireCompletedNativeStringValues(tx, pack);
+      return [{ op: "struct.get", typeIdx: pack.strings.layout.anyStrTypeIdx, fieldIdx: 0 }];
+    },
+  };
 }

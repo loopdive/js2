@@ -48,6 +48,10 @@ export function preparedPresentationPolicy(
         numberBoundary: { box: "native", unbox: "native" },
         booleanBoundary: { box: "native" },
         externIsUndefined: { probe: "native" },
+        stringConst: { storage: "native" },
+        stringEq: { eq: "native" },
+        stringLen: { len: "native" },
+        stringConcat: { concat: "native" },
       }
     : { backend, target };
 }
@@ -181,9 +185,28 @@ function nativeGlobalMatches(emission: EmittedPreparedIrProgram, slots: readonly
   return global.mutable === declaration.mutable && preparedIrDataMismatch(type, global.type) === undefined;
 }
 /**
+ * (#7354 Str) A selected native provider that is not a call is answered by the setup's own storage: a string
+ * literal by its interned literal storage, the string length field by its string carrier type.
+ */
+function storageAnswers(slots: readonly NativeSlot[], implementation: RuntimeProviderDefinition["implementation"]) {
+  const declares = (...role: string[]) => slots.some((slot) => hasRole(slot.declaration, role));
+  if (implementation.kind === "native-global") return declares("literal-global") || declares("literal-materializer");
+  return implementation.kind === "carrier-field" && declares("string-type", "any");
+}
+const hasRole = (declaration: NativeStringValueDeclaration, role: readonly string[]) =>
+  role.every((part, index) => declaration.role[index] === part);
+/**
+ * (#7354 Str) The setup functions that implement a selected provider the IR reaches through its own instruction
+ * (`string.eq`) or an intrinsic reference (`string.concat`) rather than a runtime-bound reference.
+ */
+const PROVIDER_ROLES: readonly (readonly string[])[] = [
+  ["string-equality", "equals"],
+  ["output", "concat"],
+];
+/**
  * The native setup's support rows: every function it declares, with its declared signature. The runtime-bound ones
- * (named by their runtime symbol) are exactly the selected native providers' symbols; every other one is a
- * dependency the setup plan itself declares.
+ * (named by their runtime symbol) and the provider roles are exactly the selected native providers' symbols; every
+ * other one is a dependency the setup plan itself declares.
  */
 function nativeRows(
   emission: EmittedPreparedIrProgram,
@@ -197,15 +220,17 @@ function nativeRows(
   | undefined {
   const slots = nativeSlots(emission, setup);
   if (!slots?.every((slot) => nativeGlobalMatches(emission, slots, slot))) return undefined;
-  const runtime: ReturnType<typeof runtimeCallable>[] = [];
+  const callables = providers.filter((row) => row.implementation.kind === "runtime-callable");
+  const answered: ReturnType<typeof runtimeCallable>[] = [];
   const rows: SupportCallableRow[] = [];
   for (const { declaration, binding } of slots) {
     if (declaration.space !== "function") continue;
     const reference = binding.reference;
     if (reference.kind === "func" && reference.binding.kind === "runtime") {
       if (declaration.name !== reference.binding.symbol) return undefined;
-      runtime.push(runtimeCallable(reference.binding.symbol));
-    }
+      answered.push(runtimeCallable(reference.binding.symbol));
+    } else if (PROVIDER_ROLES.some((role) => hasRole(declaration, role)))
+      answered.push(runtimeCallable(declaration.name));
     rows.push({
       bindingId: binding.entry.id,
       key: declaration.key,
@@ -216,9 +241,10 @@ function nativeRows(
   if (
     !providers.every((row) => canonicalProvider(RUNTIME_PROVIDERS, row)) ||
     !samePopulation(
-      runtime,
-      providers.map((row) => row.implementation),
-    )
+      answered,
+      callables.map((row) => row.implementation),
+    ) ||
+    !providers.every((row) => callables.includes(row) || storageAnswers(slots, row.implementation))
   )
     return undefined;
   const indices = (space: "type" | "global") =>
