@@ -1775,15 +1775,7 @@ export class IrFunctionBuilder {
 
   /** Read a slot by its index. Returns the SSA value of the load. */
   emitSlotRead(slotIndex: number): IrValueId {
-    const slot = this.slotDefs[slotIndex];
-    if (!slot) {
-      throw new Error(`IrFunctionBuilder: slot.read with unknown index ${slotIndex} (func ${this.id.name})`);
-    }
-    const result = this.allocator.fresh();
-    const resultType = irVal(slot.type);
-    this.valueTypes.set(result, resultType);
-    this.pushInstr({ kind: "slot.read", slotIndex, result, resultType });
-    return result;
+    return this.emitSlotReadAs(slotIndex, irVal(this.slotDef(slotIndex, "read").type));
   }
 
   /**
@@ -1800,10 +1792,7 @@ export class IrFunctionBuilder {
    * identifier handler — see the `slot` arm of `ScopeBinding`.
    */
   emitSlotReadAs(slotIndex: number, asType: IrType): IrValueId {
-    const slot = this.slotDefs[slotIndex];
-    if (!slot) {
-      throw new Error(`IrFunctionBuilder: slot.read with unknown index ${slotIndex} (func ${this.id.name})`);
-    }
+    this.slotDef(slotIndex, "read");
     const result = this.allocator.fresh();
     this.valueTypes.set(result, asType);
     this.pushInstr({ kind: "slot.read", slotIndex, result, resultType: asType });
@@ -1812,11 +1801,14 @@ export class IrFunctionBuilder {
 
   /** Write a value to a slot by its index. */
   emitSlotWrite(slotIndex: number, value: IrValueId): void {
-    const slot = this.slotDefs[slotIndex];
-    if (!slot) {
-      throw new Error(`IrFunctionBuilder: slot.write with unknown index ${slotIndex} (func ${this.id.name})`);
-    }
+    this.slotDef(slotIndex, "write");
     this.pushInstr({ kind: "slot.write", slotIndex, value, result: null, resultType: null });
+  }
+
+  private slotDef(slotIndex: number, op: "read" | "write"): IrSlotDef {
+    const slot = this.slotDefs[slotIndex];
+    if (!slot) throw new Error(`IrFunctionBuilder: slot.${op} with unknown index ${slotIndex} (func ${this.id.name})`);
+    return slot;
   }
 
   // --- vec ops (slice 6 — #1169e) -----------------------------------------
@@ -1923,6 +1915,14 @@ export class IrFunctionBuilder {
       this.bodyBuffer = previous;
     }
     return buffer;
+  }
+
+  /**
+   * Emit at the head of the open block. A loop under construction collects its body in a buffer and becomes one
+   * instruction of the open block, so code emitted here from inside the body runs once, before the loop.
+   */
+  emitAtBlockHead(emit: () => void): void {
+    this.requireBlock().instrs.unshift(...this.collectBodyInstrs(emit));
   }
 
   emitForOfVec(args: {

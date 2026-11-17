@@ -1188,6 +1188,98 @@ Review of `36c1b42ac9`: MET, no must-fix; the three survivors and the deletion a
   adds another reference-typed source global must carry a marker (or its own default) and narrow this arm.
 - `Object.defineProperty` on a script var: no home until slice O (above).
 - Repeated `var` and multi-source programs: no home.
+- **Hand-over for a later "hoisted var" slice:** a function-local `var` repeated anywhere in its function refuses
+  ("redeclaration of 'x'"); one slot per `var` name per function, declared at the entry, would admit it (15 of
+  the 411 sample files contain a repeated `var`). See "Follow-up: hoisted `var` declaration without initializer".
+
+### Follow-up: hoisted `var` declaration without initializer
+
+A review after H found a wrong answer: `var x;` without initializer inside a loop body was reset to `undefined` on
+every iteration (`function f(v){ var r = 0; for (…) { var x; if (i === 0) x = v; else r = x * 1; } return r; }`
+answered `undefined`, node 5).
+
+- **Cause.** `lowerUninitializedVar` (`src/ir/from-ast.ts`) wrote the slot's `undefined` at the declaration
+  statement. In JavaScript the declaration is hoisted and a `var x;` without initializer is no write, so a loop
+  that runs it again must keep the value. The ordinary pipeline never lowers such a declaration in a loop: its
+  selector (`uninitializedVarIsDynamicUndefined`, `src/ir/select.ts`) claims `var x;` only outside loops. The
+  Prepared path has no selector and reached it.
+- **Where it exists.** On `origin/main` (`f1903049a7`) already, for a loop `var x;` whose read flows into a
+  dynamic result (a typed first store `x = 5`, a boolean, a TypeScript `any` function): node returns, ours threw.
+  H widened the reach (a dynamic `return r`, `x * 1`, script loops in the module-init): 14 of the 30 family probes
+  were wrong on H, 3 on main.
+- **Fix.** The slot of a `var x;` in a loop of its own function (or script) takes its `undefined` once, before
+  the loop: `IrFunctionBuilder.emitAtBlockHead` (`src/ir/builder.ts`) prepends to the open block. A loop under
+  construction collects its body in a buffer and becomes one instruction of that block (no block is terminated
+  inside a buffer), so the head of the open block runs once, before the loop, and dominates every read (a read
+  after the loop is out of scope). Outside a loop the declaration runs once, before every read (a read before it is out of scope and refuses
+  by name), so it keeps its place — that is the arm the ordinary pipeline reaches, so its bytes do not change. The
+  loop test is one shared helper, `isInLoopOfOwnFunction` (`src/shared/var-declaration-lists.ts`), which the
+  selector's inline walk now calls. The builder's three slot lookups became one `slotDef` (room for the new
+  method within the size budget).
+- **Measured.** Family probes (for / while / do bodies, nested loops, `switch` / `try` / `try…catch` / labelled
+  block in a loop, labelled `continue`, a typed and a boolean first store, a read in the first iteration, a loop
+  after an early return, script `for` / `while` loops, TypeScript): all equal node. Named refusals: a read after
+  the declaring loop or before the declaration (`identifier "x" is not in scope`), a re-declaration after an
+  assignment (`redeclaration of 'x'`, script: `has no exact typed storage: not-direct`), a script loop var read by
+  a function (not a module binding: `identifier "g" is not in scope in h`), closures (`must have a return type
+  annotation`). Ordinary bytes identical on 100 test262 files (loops with `var` declarations, `&&` / `||`) × default
+  and `--target standalone` plus six direct programs (instrumented: the non-loop arm is reached, the loop arm
+  never); Prepared bytes identical on 15 unaffected programs × both targets. Mutations: the loop guard (15 tests
+  fail), the selector's loop guard (`issue-7106-uninitialized-var` fails). Expected survivors, reasoned and not
+  run: prepending vs appending to the open block, and the helper's stop at a nested function — both equivalent on
+  the Prepared path (any place before the loop is right); the second would only change what the ordinary selector
+  claims. A first version prepended to block 0 (the function entry); writing into the open block instead survived
+  every test, including a loop after an early return (block 0 already finished), so the simpler form was kept.
+- Tests: `tests/issue-7354-h2-hoisted-var-declaration.test.ts`.
+
+#### Review round 1
+
+NOT MET on one must-fix, fixed here.
+
+- **Must-fix: a repeated `var x;` in another block opened a second slot** that started at `undefined` (also wrong
+  on main): `if (v === 5) { var x; x = v; } var x; return x * 1` and the same with two loops, a loop and a
+  declaration after it, both arms of an `if` in a loop, and two script loops. from-ast binds a `var` in its own
+  block, so only a repeat in an enclosing scope met the "redeclaration" check. **Fix:** every `var` whose name has
+  another binding in its function or script (a second `var` at any block depth, a parameter, a function, class,
+  catch or lexical declaration) refuses as "redeclaration of 'x'". The count is the selector's own binding count
+  (`collectBindings` in `src/ir/function-local-var.ts`, now shared by `collectIrSafeVarDeclarationLists` and the new
+  `isRepeatedVarBinding`); a script var with a module home is exempt (its repeat is the same global,
+  `isRedeclaredModuleVar`; deleting the exemption fails the #7106 lever L tests). One slot per name (hoisting
+  every `var` to the entry) was not chosen: the typed, SSA, i32-promoted and captured `var` arms would each need
+  it, which is more than this fix should carry. The ordinary pipeline never lowers a repeated `var` (its selector
+  claims only lists with a binding count of 1), so its bytes do not change.
+- **Cost:** `for (var i = 0; …) {} for (var i = 0; …) {}` in a function compiled correctly before (each head
+  initializes its slot) and now refuses. The prelude has no repeated `var` (0 found by the same predicate), and every
+  positive row of the 411-row sample stops in the prelude today, so no row's first gap moves; 15 of the sample's
+  test files contain a repeated `var` and will stop there once they get past the prelude.
+- **Family** (each a named refusal, `redeclaration of '<name>'`, tested): repeats across sibling and nested
+  blocks, loop then after the loop, two loops, both `if`/`else` arms in a loop, `try`/`catch`/`finally`, a repeat
+  with an initializer in a block, a repeat of a parameter, two `for (var i …)` heads, two script loops. Refused
+  earlier by other named gaps: blocks as non-tail statements, a `switch` on a dynamic value, a function
+  declaration beside a `var` of its name (TypeScript's "Duplicate identifier"). Single declarations unchanged.
+- **Mutation sweep follow-ups:** the loop guard (store before the loop only in a loop) has no observable effect on
+  the Prepared path — outside a loop both places are right; it keeps the ordinary pipeline's in-place code (and
+  bytes), stated in `lowerUninitializedVar`'s comment. The helper's stop at a nested function is what makes its
+  answer correct (a nested function's `var` runs once per call); removing it is unobservable on the Prepared path
+  (the inner function's own block head is also before the loop) and only makes the ordinary selector more
+  conservative — no test kills it. `push` vs `unshift` is equivalent. The selector's loop exclusion is killed by
+  `tests/issue-7106-uninitialized-var.test.ts`.
+- Proofs re-run: ordinary bytes identical on the 100 files × 2 targets and on the 18 repeated-`var` programs;
+  Prepared bytes identical on the 15 unaffected programs; gates (also with the base at main); H, V/G, P, D1, R,
+  prepared entry/runtime, #7188, #7106 uninitialized/lever L/L2, #3765 pass.
+
+#### Review round 2: MET
+
+No wrong answer, no invariant error. Two tests added for surviving mutants: a repeated script `var` with a module
+home is claimed and runs on the ordinary pipeline (deleting the module-binding exemption fails it), and two
+sibling-block `let x` bindings still compile and run (deleting the "`var` lists only" guard fails it). Accepted
+equivalent mutants: not counting parameters (`cx.scope.has` refuses a repeated parameter first), the loop guard
+and the nested-function stop (both above), `push` vs `unshift`.
+
+**Follow-up, not built here:** the refusal costs reach — two `for (var i = 0; …)` heads in one function were
+correct before and now refuse. The reviewer's untested narrowing: refuse a repeat only when one of its
+declarations has no initializer, or is a `for-in` / `for-of` head or a pattern. The complete answer is one slot
+per `var` name per function (see Known gaps (H)).
 
 ## Str result
 
