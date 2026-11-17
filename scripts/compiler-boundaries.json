@@ -13019,6 +13019,14 @@
       "nextBoundary": "The source facts every write-certified script-var home shares (#7252, #7274, #7292): its writes and whether a use follows the declaration. Moves with the frontend inventory when it is split from ir-core."
     },
     {
+      "path": "src/ir/module-binding-script-var-home.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "7354",
+      "nextBoundary": "The IR-owned script-var home of the Prepared path (#7354 V): a checker-type and source-use classifier answering the resolver's IrScriptVarHome. Moves with the frontend inventory when it is split from ir-core."
+    },
+    {
       "path": "src/ir/module-binding-class-instance.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",

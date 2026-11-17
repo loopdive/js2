@@ -18,6 +18,10 @@ related: [7188, 2949, 3526, 3527, 3518, 7106, 7349, 7350, 7352]
 # policy (`preparedPresentationPolicy`), which replaces the inline `{ backend, target }`
 # policy literal in place; the policy and the provider census live in their own
 # module, src/compiler/prepared-provider-census.ts.
+# 2026-11-16 (slices V and G): src/ir/program-source.ts +2, the import of
+# `irOwnedScriptVarHome` and the `scriptVarHome` resolver option that passes it; the
+# classifier and its reads proof live in src/ir/module-binding-script-var-home.ts and
+# src/ir/module-binding-script-var.ts. (ir-program-presentation.ts shrinks by 3.)
 # 2026-11-16 (slice D1, review round 1): src/ir/from-ast.ts +6, two named
 # declines the Prepared producer reaches because it has no selector (`**` on a
 # dynamic operand, a value-position prefix `++`/`--`); they replace invariant
@@ -25,6 +29,7 @@ related: [7188, 2949, 3526, 3527, 3518, 7106, 7349, 7350, 7352]
 # +1: D1's internal externref callable contract admission in the ABI join.
 loc-budget-allow:
   - src/compiler.ts
+  - src/ir/program-source.ts
   - src/ir/from-ast.ts
   - src/compiler/ir-program-presentation.ts
 ---
@@ -558,3 +563,255 @@ Status 2026-11-16. Branch `claude/7354-r`, built on origin/main `46e4cf4030`, fi
   standalone a reference value always comes with the native setup, and hosts/WASI refuse the box earlier.
 - **D1.** The census reads the native setup from `nativeStrings` (declarations and bindings). D1's resources join
   as long as they are published there.
+
+## V and G result
+
+Status 2026-11-16. Branch `claude/7354-vg`, built on `claude/7354-r` (merged up to `0a77aa57d9`; the comparisons below were measured against R at `15c6513ce7`, whose later
+commits touch only the census and its test).
+
+### Built
+
+- **V — an IR-owned home for a script `var`.** The Prepared resolver now passes its own `scriptVarHome`
+  (`irOwnedScriptVarHome`, new `src/ir/module-binding-script-var-home.ts`) through the existing resolver option in
+  `program-source.ts`. It returns the existing `IrScriptVarHome` vocabulary, so the resolver (`scriptVarHomeOf`,
+  `directTopLevelDeclaration`) is unchanged. It answers `typed` only, and only when:
+  - the checker type is `number` or `boolean`;
+  - the declaration's file is the program's only source (review round 1, below);
+  - the binding has exactly one declaration (see "Named gaps");
+  - the name is not `undefined`, `NaN` or `Infinity` (non-writable globals: the initializer never stores);
+  - `scriptVarReadsFollowInitializer` (new, in `src/ir/module-binding-script-var.ts`, beside
+    `scriptVarUseFollowsDeclaration`) holds.
+- **Hoisting soundness — refuse unless proven.** A typed global has no `undefined`; a read of the hoisted binding
+  would answer `0`/`false` where JS answers `undefined`. So every read must either run after the declaring
+  top-level statement (module-init after it, or inside a function or class created after it), or sit in a top-level
+  function declaration that nothing before the statement can call. "Can call" is name-based: the function's name
+  spelled anywhere outside the function (reference, member name, string) other than in code that runs after the
+  statement, or an escaping global object (`sourceMayWriteGlobalObject`), counts as a call. `eval`/`Function`
+  anywhere (`sourceRunsDynamicCode`) declines. A same-named reference the checker binds to another declaration
+  (a parameter, a local) is not a read; a plain `x = v` only writes.
+- **Not shared with legacy's `scriptVarHome`.** Legacy reads back the carrier of the `__mod_<name>` slot its own
+  allocation chose, and its typed slot reads an unwritten binding as `0` (its pre-init analysis,
+  `moduleVarDirectPreInitValueIsObserved`, skips reads in functions and positions by the name, so `var x = x + 1`
+  passes it). A shared core would either change legacy's output or inherit those answers.
+- **G — internal globals.** `capturePresentation` raises "top-level global storage needs a numeric source
+  classification" only for an `export var` that is not numeric. Any other top-level global is the IR's own storage,
+  as #7188 S1's internal functions. `export { b }` of a non-numeric global is still refused at the export join (its
+  witness must be numeric). The #7188 residual about the `exported` predicate does not apply: the capture visits only
+  top-level statements and reads the statement's own `export` modifier, so a `namespace` member is never a row.
+- `isValueReference` (`src/shared/intrinsic-prototype-writes.ts`) is now exported and used for the reads scan, so
+  `src/ir` gains no import edge to `src/checker` (the import-cycle gate counted `ir->checker` 7 → 8 with
+  `checker/binder.ts`'s twin).
+
+### Measured
+
+- `tests/issue-7354-vg-script-var-home.test.ts`, 39 tests. Acceptance programs run through the strict Prepared entry,
+  each twice (the JS value returns, a wrong value throws): `var x = 1; x = x + 1;`; a var read and written from a
+  function and from top-level code; a var read by a function declared above it and called after it; `var b = true;
+  b = !b;`; a var written by a function before its declaration runs. G: an internal `let` boolean behind a numeric
+  export runs; `export var b = true`, `export { b }` and `export { b as alias }` are refused; `export var x = 1` still
+  exports.
+- Refusal probes: a call before the initializer, a call through another hoisted function, a read in the own
+  statement, a repeated `var`, a `var` without initializer, a string var, `s++` on a string var, `var Infinity = 1`,
+  and the TypeScript form; plus 19 unit cases of the reads proof.
+- Mutation check: 17 mutations (each guard of the reads proof, the classifier's type, repeat and non-writable
+  guards, the capture gap in both directions, the export-join witness) each fail at least one test.
+- Ordinary-pipeline bytes: the 411-row list, base sources swapped into the same tree. 396 files compiled per target,
+  all byte-identical on the JS environment and on `--target standalone`; 16 are compile errors on both trees, 15
+  skipped (negative, raw, module).
+- Existing tests: `test262-prepared-entry`, `test262-prepared-runtime`, #7188, R and this file: 144/144 (after merging R
+  `0a77aa57d9`).
+  `issue-3518*` / `issue-3526*` (307 files, base and new sources swapped into the same tree, 3 forks on a loaded box):
+  4,724 failing tests on base, 4,743 on this branch, the same set except 31 tests in three files that timed out on
+  one side only (`native-invocation-consumer`, `void-closure-results` on this branch; `native-ref-cell-consumer` on
+  base). Run alone on this branch, those three files pass 82/82.
+- Real runner, 411-row sample (`l420.txt`), wasmgc standalone:
+  - negatives unchanged: 14 pass, 1 compile error;
+  - first-gap tally: **394 rows stop at "function X has an unresolved parameter contract" (slice P)**, 2 at the
+    switch-case lexical binding (as before). By function, over the 396 positive rows: `isNegativeZero` 347,
+    `verifyProperty` 47, `isConstructor` 1, `__consolePrintHandle__` 1. The G/V gap is gone from the sample.
+- Gates: typecheck; loc (one dated grant: `program-source.ts` +2, the import and the option;
+  `ir-program-presentation.ts` shrinks by 3); func; coercion-sites; oracle-ratchet; dead-exports; import-cycles;
+  compiler-boundaries inventory (new module classified); ir-dialect.
+
+### Named gaps (refused, not built here)
+
+- **String home** (`var s = "a"`): slice S (the presentation selects no string policy).
+- **Dynamic home** (`var u; u = 1`, `var print = function …`): slice D1 (no Prepared dynamic carrier).
+- **Repeated `var`** (`var x = 1; var x = 2;`): the startup plan gives every declarator its own binding id, so a
+  second declaration has no single storage. Before this slice it was refused as `not-direct`; giving it a home
+  without changing the plan reaches a Prepared invariant, so the classifier declines it.
+- **Nested `var`** (in a block or `for` head): unchanged. These are already module-init locals on the base. A `for`
+  head's var read after the loop runs correctly; a block's var read outside the block, or any nested var read from a
+  function, is refused ("identifier … is not in scope").
+- **`var x = 1, y = x`** and a TypeScript `var x: number;` assigned later: refused (statement granularity; no
+  initializer).
+
+### Observed, not acted on
+
+- **Slice P is now the first gap of the whole sample.** The harness helpers `isNegativeZero` and `verifyProperty`
+  (and `isConstructor`, the console shim's print handle) have untyped parameters, and the Prepared signature pass
+  (`prepareSourceFunctionSignatures`) resolves no contract for them.
+
+### Review round 1
+
+An adversarial review returned NOT MET: one soundness must-fix and six should-fixes. Fix commit `1032759ec5`.
+
+1. **Must-fix — reads in another script were invisible.** The proof walked only the declaration's file, but every
+   script of a program shares one global scope. Three `compileMulti` programs (`a.js` runs first and reads `x`
+   through a hoisted function, through top-level code, or through an unguarded call; `test.js` declares `var x = 1`)
+   compiled and ran with `x` reading `0`. Fixed with the simplest sound rule: `irOwnedScriptVarHome(checker,
+   sourceFiles)` answers only when the declaration's file is the program's only source. **Signature change**: the
+   classifier gains the `sourceFiles` parameter (the resolver has no other way to see the program's files); the
+   proof `scriptVarReadsFollowInitializer` now takes a `NamedVariableDeclaration` (finding 4). The test262 runner
+   assembles prelude and test into one source, so the goal metric does not move: the 411-row sample is unchanged
+   (below). The three programs, in `.js` and `.ts`, are tests now (refused). The rule is conservative by design: if
+   the harness prelude ever becomes its own source file, every typed home is refused.
+2. **Outermost owner untested.** The hoisting function is now found structurally — the top-level statement that is a
+   function declaration (`ts.findAncestor(node.parent, isHoistedFunction)`) — so there is no innermost/outermost
+   choice left to get wrong. Test added: `var r = f()(); var x = 1; function f() { return function () { return x;
+   }; }` is refused.
+3. **Surviving mutants.** The `isDeclarationFile` filter: killed by a new acceptance test, `var length = 1` (the lib
+   declares `length` too). The `name === undefined` guard: kept and killed by a proof test, `export default
+   function () { return x; } var x = 1;` (an importer in a cycle runs it first). The `|| !symbol?.declarations…`
+   clause in `isRead`: deleted. It was unreachable — a value reference to the name always resolves to the global
+   in a file that declares it — except for a shorthand property, where the checker answers the PROPERTY symbol;
+   that made `var o = { x }; var x = 1;` a proven program (unsound). The read now asks the shorthand's value symbol;
+   test added.
+4. **Dead or duplicate code.** The identifier check is now done once, in the classifier, through a type guard that
+   hands the proof a `NamedVariableDeclaration`. `(owner ?? node).pos` is `node.pos`; `outermostCallableOwner` and
+   its class arm are gone with it. `isHoistedFunction`'s top-level restriction stays: it is what makes a nested
+   declaration a non-hoisted one, and a test now kills its removal (a nested `function g` inside an expression
+   created after the var, while a top-level `g` is called before it). It also now sees through labels: a labelled
+   top-level `function` is hoisted too, and before this round `var r = f(); var x = 1; l: function f() { return x;
+   }` was a proven program at the proof level (the compiler refused it on a TS diagnostic). Test added.
+5. **Structure.** `scriptVarUseFollowsDeclaration` and the typed home's position test now share one helper,
+   `placedAfter(node, statementEnd, defers)`: the certified homes defer every function and class, the typed home
+   only a hoisted function. Ordinary output is byte-identical (below). **Rebutted: one dynamic-code predicate.** The
+   two answer different questions. `hasDynamicScope` (writes collector, ordinary pipeline) asks whether a name may
+   resolve outside checker identity (`with`, direct `eval`); the reads proof asks whether code the walk cannot see
+   may run (`eval` by any route, `Function`). `with` needs no predicate of its own in the proof because of the
+   read rule, not the walk: inside `with` the checker resolves no symbol for `x`, so `isRead` counts a spelling
+   whose symbol does not resolve as a read (round 2 — round 1 counted it as not a read, so the proof accepted `var
+   o = {}; with (o) { x; } var x = 1;`, masked end to end only by TS error 2410 and the IR's refusal of `with`).
+   Proof tests: `with` before the declaration refused, after it proven. `hasDynamicScope` misses `Function(…)` and
+   indirect `eval`, so neither predicate can replace the other; a union in the writes collector would change the
+   ordinary pipeline's output.
+6. **Cost.** `spellingsOf` indexes every identifier and string literal of a file once (a `WeakMap` keyed by source
+   file, like `qualifiesCache`); the proof and `callableBefore` read the one name's list instead of walking the
+   file.
+7. Recorded under "Known gaps" below.
+
+Round 2 (review verdict MET, three items): the unresolved-symbol read rule above; a precision test pinning
+`callableBefore`'s deferral to hoisted functions only (`var x = 1; var g = function () { f(); }; function f() {
+return x; }` is proven — deferring every callable survived the sweep before); the sole-source sentence in finding 1.
+The call test needs no such rule: it matches spellings by text, never by symbol. `isRead` belongs to the proof,
+whose only caller is the Prepared classifier, so no ordinary-pipeline caller is affected. Mutants on the changed
+lines (unresolved-as-read deleted, resolved-binding deleted, `isCallable` deferral): all killed; 51 tests pass.
+
+Evidence:
+
+- `tests/issue-7354-vg-script-var-home.test.ts`: 49 tests pass. Mutation sweep over every boolean guard of the two
+  modules' V code (28 mutants, each deleted or weakened alone): 26 killed. Two survivors, both typed-shape
+  assumptions: the classifier's `isNamedVariableDeclaration` (a `BindingElement` or a pattern declarator never
+  passes the proof's own top-level-statement check; the guard narrows the type the proof takes) and the
+  `ts.isIdentifier` filter on spellings (a string literal never resolves to the binding's symbol, so `isRead`
+  already answers false; the guard narrows the type `isValueReference` takes).
+- Acceptance probes re-run through the strict Prepared entry against node: every accepted program returns node's
+  answer; the reviewer's multi-file repros A–D are refused.
+- Ordinary-pipeline bytes against `origin/claude/7354-r` (its tree extracted beside this one): 597 test262 files
+  (the sample's 419 paths plus the reviewer's 188) and 92 probe programs in two forms, default JS target and
+  `--target standalone`: 791 rows each, all identical (555 test262 binaries per target, the rest compile errors on
+  both).
+- Prepared tests (`test262-prepared-entry`, `test262-prepared-runtime`, #7188, R census, this file): 154/154.
+- 411-row sample through the real runner: 394 at "function X has an unresolved parameter contract", 2 at the
+  switch-case lexical binding, negatives 14 pass and 1 compile error — unchanged.
+- Gates: typecheck, loc, func, coercion-sites, oracle-ratchet, dead-exports, import-cycles, compiler-boundaries
+  inventory.
+
+### Known gaps
+
+- **`export default <expression>`** on the Prepared path compiles and exports nothing: `let b = true; export default
+  b;` (which G lets through) and `let b = 1; export default b;` (which already did on main). Not for this slice; the
+  issue is filed separately.
+
+## Slice ladder after P (measured 2026-11-16)
+
+Replaces the order of slices S, D2, D3, C, B and F in the table above. Source:
+a complete census of the prelude on slice P's branch (`23d4da567e`: V, G, D1
+and P together), which lists every refusal in the three prelude files, not
+only the first (session scratch `irgap/f-design.md`).
+
+**Prelude gaps by mechanism** (sites in `test262-fyi-runtime.js`, `assert.js`
+and `sta.js`):
+
+| mechanism | sites |
+| --- | ---: |
+| strings into the dynamic value (concatenation, literals, compares) | about 40 |
+| built-in globals (`globalThis` 22, `String()` 7, `JSON`, `console`, `Object.prototype.toString.call`, `Array.prototype.map.call`, error constructors, `eval`) | 39 |
+| a function declaration read as a value (`assert`, `compareArray`, `Test262Error`) | 23 |
+| throw and catch with a dynamic value | 17 |
+| an unannotated function expression as a value | 16 |
+| dynamic member read / write | about 16 / 3 |
+| property write / read-and-call on a function object | 10 / 9 |
+| `new` on a plain function / `this` / `instanceof` | 10 / 4 / 2 |
+| call through a dynamic value or local | 10 |
+| `typeof` / ToBoolean / `=== null` | 9 / 8 / 2 |
+| object literal | 4 |
+| dynamic home for a script `var` | 2 |
+
+A passing `assert.sameValue(1, 1)` runs only `sameValue` and `_isSameValue`,
+but module-init runs every top-level statement and the whole prelude must
+compile.
+
+**Slices**, each a whole mechanism, proved by a smallest program through the
+strict Prepared entry that validates and runs:
+
+| slice | content | depends on | proving program |
+| --- | --- | --- | --- |
+| H | A dynamic home for every script `var` without a proven typed home: an `externref` global, `undefined` stored by the module-init prologue, the D1 carrier for globals; also the resolver's value-kind arm that refuses `var x = {…}` and array literals before the home is asked. | D1 | `var x; x = 1; if (x !== 1) throw 1;` |
+| T | ToBoolean, the `=== null` tag test, `typeof` over the admitted values (its string result needs Str). | D1 | `function f(v){ return !v; } if (f(0) !== true \|\| f(1) !== false) throw 1;` |
+| X | Throw and catch with a dynamic value; the catch binding is dynamic; rethrow. | D1 | `function g(v){ try { throw v; } catch (e) { return e; } } if (g(1) !== 1) throw 1;` |
+| Str | Strings in the dynamic value: box a native string, the string arm of strict equality, dynamic `+` and `+=`, `String(x)`, `typeof` results, the string policies of the presentation. | D1 | `function f(a,b){ return a + b; } if (f("a", 1) !== "a1") throw 1;` |
+| Fa | Function values, creation and storage: unannotated closures with P's all-dynamic signature, a declaration as a value, the closure into a dynamic slot, presentation of the closure setup. | H | `var print = function (v) { return v; }; if (print(1) !== 1) throw 1;` |
+| O | Objects as dynamic values: an object literal as a native ordinary object, dynamic member get and set, TypeError on `undefined` / `null`. | H | `var o = { a: 1 }; o.b = 2; if (o.a + o.b !== 3) throw 1;` |
+| Fb | Dynamic call: a call through a value onto the existing closure-call intrinsics, a native IsCallable and its TypeError; a direct typed call when the callee is static. | Fa | `function t(fn){ return fn(2); } if (t(function (x) { return x * 2; }) !== 4) throw 1;` |
+| C | Function objects: properties, `prototype` / `name` / `length`, `this`, `new F()`, `instanceof`, `.constructor`. | Fa, Fb, O | `sta.js` `Test262Error`; `assert.x = function(){return 1}; assert.x() === 1` |
+| B | The built-in globals the prelude names. | Str, O | `assert.js` `formatIdentityFreeValue` |
+| M | The real prelude plus `assert.sameValue(1, 1);` passes in the real runner. | all | |
+
+H, T, X and Str need only D1 and run in parallel. Fa and O follow H and run in
+parallel. Fb follows Fa; C follows Fa, Fb and O; B's parts follow their value
+kinds.
+
+**Function values on this path** (decided): a function value is the existing
+closure struct (funcref, arity, property bag), typed `closure<sig>` while the
+callee is statically known and the D1 `externref` once it reaches a dynamic
+slot. A static callee is called directly; any other call goes through one
+legalization arm onto the existing `js.closure.call:N` / apply-vector
+intrinsics, whose dispatch body legacy already shares. `this` reads the
+`currentThis` global that dispatcher sets; properties live in a native
+ordinary object held in the bag; `new` is create-with-prototype plus a call.
+Each is an intrinsic with a native provider: no host import and no second
+representation.
+
+**Why H is first** (simulated on the 404 positive rows of the sample):
+
+- Making `print` alone presentable moves its 351 rows only to the next global
+  (`$262`).
+- With a dynamic home wherever V refuses, no row stops at `print`, `$262`,
+  `__isArray` or `__globalObject`: 255 stop at ToBoolean in `isPrimitive`
+  (slice T), 118 at object or array literals the resolver refuses before the
+  home is asked (H's second arm), 23 at a `propertyHelper.js` direct call.
+- The simulation stops before the physical plan, so H's global carrier and
+  the module-init store of `undefined` are unmeasured.
+
+**Behind the prelude** (stand-in harness with dynamic parameters, 404 positive
+rows): 10 pass, 379 compile errors, 14 crashes. First gaps: 256 dynamic
+script-var home (object literal 78, `Array.isArray` read 46, call result 32,
+no initialiser 23, string 19, array 18), about 43 built-in globals and
+constructors, 28 calls through a value, about 53 others. The mechanisms that
+finish the prelude are about 85 % of the first per-test work.
+
+**Found on the way, to be filed as their own issues:** an object literal
+inside a function throws an emission invariant error on this path, and 13
+rows with `eval` throw "certified global eval lost an owning predicate".
