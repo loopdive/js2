@@ -31,10 +31,12 @@ import {
   type IrInstr,
   type IrValueId,
 } from "../core/nodes.js";
+import type { TagId } from "../core/tag-domain.js";
 import type { IrType } from "../core/types.js";
 import type { IrUnitId } from "../../shared/contracts/ir-identity.js";
 import { irRuntimeCallableDeclaration } from "../runtime/callable-declarations.js";
 import { JS_TAG_IDS } from "../runtime/js-tag-domain.js";
+import { typeofComparisons } from "./typeof-comparisons.js";
 
 const CARRIER: IrType = Object.freeze({ kind: "val", val: Object.freeze({ kind: "externref" }) });
 
@@ -56,6 +58,33 @@ function carrierOf(type: IrType): IrType {
   return type.kind === "dynamic" ? CARRIER : type;
 }
 
+/**
+ * (#7354 Ty) `typeof`'s answer for each kind of value the carrier admits, keyed by the answer so that no two
+ * kinds can share one (`typeof null` is "object": an admitted object kind must merge with that row). The
+ * admitted kinds ARE this table's values: the box arm admits a value only as one of them (`boxedKind`), so a
+ * slice that admits strings, functions or objects must add its kind here. That is what makes the `typeof`
+ * comparison arm sound: a literal no row answers ("string", "function", a typo) is constant false.
+ */
+const TYPEOF_KIND = { number: "number", boolean: "boolean", undefined: "undefined", object: "null" } as const;
+type CarrierKind = (typeof TYPEOF_KIND)[keyof typeof TYPEOF_KIND];
+const KIND_OF_TYPEOF: ReadonlyMap<string, CarrierKind> = new Map(Object.entries(TYPEOF_KIND));
+
+/** The partition each admitted kind is, and how the carrier tests for it: a runtime predicate or the null test. */
+const KIND_TEST: Readonly<Record<CarrierKind, { readonly tag: TagId; readonly test: IntrinsicId | "ref.is_null" }>> = {
+  number: { tag: JS_TAG_IDS.NumberF64, test: "js.value.is_number" },
+  boolean: { tag: JS_TAG_IDS.Boolean, test: "js.value.is_boolean" },
+  undefined: { tag: JS_TAG_IDS.Undefined, test: "js.extern.is_undefined" },
+  null: { tag: JS_TAG_IDS.Null, test: "ref.is_null" },
+};
+const KINDS = Object.keys(KIND_TEST) as CarrierKind[];
+
+/** The kind a box to the dynamic value admits, from its tag refinement or its operand; `undefined` refuses. */
+function boxedKind(tag: TagId | undefined, source: IrType | undefined): CarrierKind | undefined {
+  if (tag === JS_TAG_IDS.Boolean) return "boolean";
+  if (tag === JS_TAG_IDS.Null) return "null";
+  return source?.kind === "val" && source.val.kind === "f64" ? "number" : undefined;
+}
+
 /** Rewrite one function. A function without a dynamic value is returned unchanged. */
 export function legalizeDynamicValues(fn: IrFunction): IrFunction {
   if (!containsDynamic(fn)) return fn;
@@ -74,35 +103,71 @@ export function legalizeDynamicValues(fn: IrFunction): IrFunction {
   const thrown = new Set<IrValueId>();
   for (const block of fn.blocks)
     for (const instr of block.instrs) forEachInstrDeep(instr, (i) => i.kind === "throw" && thrown.add(i.value));
+  const typeofs = typeofComparisons(fn);
+  // `!==`/`!=`: the positive test into a fresh value, then its negation into the comparison's result.
+  const withSense = (instr: IrInstr, negate: boolean, positive: (result: IrValueId) => IrInstr): IrInstr[] => {
+    if (!negate) return [positive(instr.result!)];
+    const value = valueCount++ as IrValueId;
+    return [
+      positive(value),
+      { kind: "unary", op: "i32.eqz", rand: value, result: instr.result, resultType: instr.resultType },
+    ];
+  };
+  const kindTest = (instr: IrInstr, kind: CarrierKind, value: IrValueId, result: IrValueId): IrInstr => {
+    const { test } = KIND_TEST[kind];
+    return test === "ref.is_null"
+      ? { kind: "unary", op: "ref.is_null", rand: value, result, resultType: instr.resultType }
+      : intrinsic(instr, test, [value], result);
+  };
 
   const expand = (instr: IrInstr): readonly IrInstr[] => {
     switch (instr.kind) {
       case "box": {
         if (instr.toType.kind !== "dynamic") return [instr];
-        if (instr.toType.tag === JS_TAG_IDS.Boolean) return [intrinsic(instr, "js.boolean.box", [instr.value])];
-        // The Null partition has one value, the carrier's null reference.
-        if (instr.toType.tag === JS_TAG_IDS.Null)
-          return [{ kind: "const", value: { kind: "null", ty: CARRIER }, result: instr.result, resultType: CARRIER }];
-        const source = types.get(instr.value);
-        if (source?.kind === "val" && source.val.kind === "f64")
-          return [intrinsic(instr, "js.number.box", [instr.value])];
-        return gap(`box of a non-primitive value`);
+        switch (boxedKind(instr.toType.tag, types.get(instr.value))) {
+          case "boolean":
+            return [intrinsic(instr, "js.boolean.box", [instr.value])];
+          // The Null partition has one value, the carrier's null reference.
+          case "null":
+            return [{ kind: "const", value: { kind: "null", ty: CARRIER }, result: instr.result, resultType: CARRIER }];
+          case "number":
+            return [intrinsic(instr, "js.number.box", [instr.value])];
+          default:
+            return gap(`box of a non-primitive value`);
+        }
       }
       case "unbox":
         if (!isDynamic(instr.value)) return [instr];
         if (instr.tagId === JS_TAG_IDS.NumberF64) return [intrinsic(instr, "js.number.unbox", [instr.value])];
         return gap(`unbox of tag ${instr.tagId}`);
-      // Only the `undefined` and `null` probes have a source producer here; the
-      // number and Boolean tag tests come from `typeof`, which refuses as
-      // `dyn.typeof`.
-      case "tag.test":
+      case "tag.test": {
         if (!isDynamic(instr.value)) return [instr];
-        if (instr.tagId === JS_TAG_IDS.Undefined) return [intrinsic(instr, "js.extern.is_undefined", [instr.value])];
-        if (instr.tagId === JS_TAG_IDS.Null)
+        const kind = KINDS.find((candidate) => KIND_TEST[candidate].tag === instr.tagId);
+        return kind === undefined
+          ? gap(`tag.test of tag ${instr.tagId}`)
+          : [kindTest(instr, kind, instr.value, instr.result!)];
+      }
+      // (#7354 Ty) `typeof v <op> "literal"` is a tag test on `v`; the `typeof` string and the literal are
+      // consumed by it. A literal no admitted kind answers is constant: `v` was already evaluated.
+      case "string.eq": {
+        const comparison = typeofs.comparisons.get(instr.result!);
+        if (comparison === undefined) return [instr];
+        const kind = KIND_OF_TYPEOF.get(comparison.literal);
+        if (kind === undefined)
           return [
-            { kind: "unary", op: "ref.is_null", rand: instr.value, result: instr.result, resultType: instr.resultType },
+            {
+              kind: "const",
+              value: { kind: "bool", value: comparison.negate },
+              result: instr.result,
+              resultType: instr.resultType,
+            },
           ];
-        return gap(`tag.test of tag ${instr.tagId}`);
+        return withSense(instr, comparison.negate, (result) => kindTest(instr, kind, comparison.operand, result));
+      }
+      case "dyn.typeof":
+        return typeofs.consumed.has(instr.result!) ? [] : gap("dyn.typeof");
+      case "string.const":
+        return typeofs.consumed.has(instr.result!) ? [] : [instr];
       case "dyn.undefined":
         return [intrinsic(instr, "js.value.undefined", [])];
       case "dyn.truthy":
@@ -114,12 +179,9 @@ export function legalizeDynamicValues(fn: IrFunction): IrFunction {
         return [intrinsic(instr, "js.number.unbox", [instr.value])];
       case "dyn.eq": {
         if (instr.loose) return gap("dyn.eq (loose)");
-        if (!instr.negate) return [intrinsic(instr, "js.value.strict_eq", [instr.lhs, instr.rhs])];
-        const positive = valueCount++ as IrValueId;
-        return [
-          intrinsic(instr, "js.value.strict_eq", [instr.lhs, instr.rhs], positive),
-          { kind: "unary", op: "i32.eqz", rand: positive, result: instr.result, resultType: instr.resultType },
-        ];
+        return withSense(instr, instr.negate, (result) =>
+          intrinsic(instr, "js.value.strict_eq", [instr.lhs, instr.rhs], result),
+        );
       }
       // A front-end dynamic helper (`__ir_dyn_add`, ...) has no runtime declaration.
       case "call":

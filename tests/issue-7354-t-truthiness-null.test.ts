@@ -132,18 +132,8 @@ describe("#7354 T — ToBoolean and null on the Prepared dynamic value", () => {
     expect(await run(program(3 - answer))).toBe("threw");
   });
 
-  // typeof answers a string (slice Str); loose equality other than a tag test is not lowered.
+  // Loose equality other than a tag test is not lowered (`typeof` comparisons: slice Ty's tests).
   it.each([
-    [
-      "typeof",
-      'function p(v) { return typeof v !== "object"; }\nif (!p(1)) throw 1;',
-      "dynamic operation dyn.typeof has no Prepared intrinsic",
-    ],
-    [
-      "isPrimitive (blocked by typeof)",
-      'function isPrimitive(v) { return !v || (typeof v !== "object" && typeof v !== "function"); }\nif (!isPrimitive(1)) throw 1;',
-      "dynamic operation dyn.typeof has no Prepared intrinsic",
-    ],
     [
       "`== null`",
       "function q(v) { return v == null; }\nif (q(undefined) !== true) throw 1;",
