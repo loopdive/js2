@@ -66,8 +66,7 @@ import {
   publishNativeStringValueOutput,
   fillNativeStringValueResources,
   requireCompletedNativeStringValues,
-  emitPreparedNativeStringLiteral,
-  emitPreparedNativeStringConcat,
+  preparedNativeStringResolver,
   type NativeStringValueReservationInput,
 } from "../backend/wasmgc/program/native-string-values.js";
 import { collectNativeStringValueDemands } from "./program/native-string-value-demands.js";
@@ -937,17 +936,7 @@ function fillPrimaryBody(
       ? { ...resolver, resolveDynamic: () => declared.dynamicCarrier! }
       : resolver;
     const ownerResolver: IrLowerResolver = nativePack
-      ? {
-          ...scopedResolver,
-          ...(nativePack.output
-            ? ({
-                emitStringConcat: (alloc, mode, provider) =>
-                  emitPreparedNativeStringConcat(reservations, nativePack, fn.unitId, alloc, mode, provider),
-              } satisfies Pick<IrLowerResolver, "emitStringConcat">)
-            : {}),
-          emitStringConst: (value, alloc, storage, materializer) =>
-            emitPreparedNativeStringLiteral(reservations, nativePack, fn.unitId, value, alloc, storage, materializer),
-        }
+      ? { ...scopedResolver, ...preparedNativeStringResolver(reservations, nativePack, fn.unitId) }
       : scopedResolver;
     fillPreparedPrimaryUnit(
       reservations,

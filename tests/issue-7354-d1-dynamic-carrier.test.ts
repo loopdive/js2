@@ -206,8 +206,8 @@ describe("#7354 D1 — the dynamic value on the Prepared standalone path", () =>
       "return add(id(1), id(2)) === 3 ? 1 : 0;",
       "dynamic operation __ir_dyn_add has no Prepared intrinsic",
     ],
-    // The property key enters the dynamic value as a string: outside the admitted set.
-    ["a member read", "return id(1).x === 1 ? 1 : 0;", "dynamic operation box of a non-primitive value"],
+    // (#7354 Str) The property key enters the dynamic value as a string now; the member read itself has no intrinsic.
+    ["a member read", "return id(1).x === 1 ? 1 : 0;", "dynamic operation dyn.member_get has no Prepared intrinsic"],
     // typeof answers a string: a later slice, with string equality.
     ["typeof", 'return typeof id(1) === "number" ? 1 : 0;', "dynamic operation dyn.typeof has no Prepared intrinsic"],
     ["`**`", "return id(2) ** 3;", "'**' on a dynamic operand"],
@@ -273,9 +273,10 @@ describe("#7354 D1 — the legalization pass", () => {
     expect(out.blocks[0]!.instrs[0]).toMatchObject({ kind: "intrinsic", id: "js.number.unbox", args: [0] });
   });
 
-  it("refuses to box a value outside the admitted set (a string)", () => {
+  // (#7354 Str) A string is admitted now (its box is the externref that wraps it); an object still is not.
+  it("refuses to box a value outside the admitted set (an object)", () => {
     const box = { kind: "box", value: 1, toType: dynamic, result: 2, resultType: dynamic };
-    expect(() => one(box, [dynamic, { kind: "string" }])).toThrow(
+    expect(() => one(box, [dynamic, { kind: "object", shape: { fields: [] } } as unknown as IrType])).toThrow(
       new DynamicValueGap("dynamic operation box of a non-primitive value has no Prepared intrinsic"),
     );
   });
@@ -344,9 +345,11 @@ describe("#7354 D1 — the native dynamic-value resources", () => {
     }) as unknown as IrInstrIntrinsic;
 
   it("reserves the `undefined` probe only when the manifest bound it to the native function", () => {
-    expect(selectNativeDynamicValues([probe("host")])).toBeUndefined();
-    expect(selectNativeDynamicValues([probe("runtime")])).toEqual({
+    // (#7354 Str) A carried string selects strict equality's string arm only together with strict equality.
+    expect(selectNativeDynamicValues([probe("host")], true)).toBeUndefined();
+    expect(selectNativeDynamicValues([probe("runtime")], true)).toEqual({
       strictEq: false,
+      strictEqStrings: false,
       toBoolean: false,
       undefinedValue: false,
       isUndefined: true,

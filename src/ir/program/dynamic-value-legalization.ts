@@ -86,6 +86,17 @@ export function legalizeDynamicValues(fn: IrFunction): IrFunction {
         const source = types.get(instr.value);
         if (source?.kind === "val" && source.val.kind === "f64")
           return [intrinsic(instr, "js.number.box", [instr.value])];
+        // (#7354 Str) A native string is its own carrier payload: the externref that wraps it.
+        if (source?.kind === "string")
+          return [
+            {
+              kind: "coerce.to_externref",
+              value: instr.value,
+              result: instr.result,
+              resultType: CARRIER,
+              ...(instr.site === undefined ? {} : { site: instr.site }),
+            },
+          ];
         return gap(`box of a non-primitive value`);
       }
       case "unbox":
