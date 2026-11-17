@@ -432,6 +432,7 @@ import {
 } from "./vector-runtime.js";
 import { readEnv } from "../env.js";
 import { absentGlobalTypeof, classifyIdentifierRead } from "./identifier-read.js";
+import { numericCaseTestValue, stringCaseTestValue, switchCaseTests } from "./switch-case-tests.js";
 
 interface ResolvedIrVecType {
   readonly lowering: IrVecLowering;
@@ -13015,10 +13016,14 @@ function lowerSwitchStatement(stmt: ts.SwitchStatement, cx: LowerCtx): void {
     return;
   }
   const clauses = stmt.caseBlock.clauses;
+  // The selector's own predicate: the Prepared path has no selector, and the string dispatch skips non-literals.
+  const caseTests = switchCaseTests(stmt);
+  if (caseTests.kind === "rejected")
+    throw new IrUnsupportedError("body-shape-rejected", "build", `ir/from-ast: ${caseTests.reason} in ${cx.funcName}`);
   const stringTestTexts = clauses.map((clause) =>
-    ts.isCaseClause(clause) ? stringLiteralCaseTestValue(clause.expression) : null,
+    ts.isCaseClause(clause) ? stringCaseTestValue(clause.expression) : null,
   );
-  const isStringSwitch = stringTestTexts.some((text) => text !== null);
+  const isStringSwitch = caseTests.kind === "string";
 
   // #2952 slice 6b — a STRING-tested switch reuses the numeric ladder by
   // computing a dispatch INDEX first: `disc` is compared against each case's
@@ -13054,7 +13059,7 @@ function lowerSwitchStatement(stmt: ts.SwitchStatement, cx: LowerCtx): void {
       // String switch: the test IS the clause index (the dispatch chain
       // above already resolved the literal comparison). Numeric switch:
       // the literal's value, as slice 4.
-      const v = dispatch ? k : numericLiteralValue(clause.expression);
+      const v = dispatch ? k : numericCaseTestValue(clause.expression);
       if (v === null) {
         // invariant (producer-promise): the selector's own gate already decided this predicate — #4502.
         throw new Error(
@@ -13140,33 +13145,6 @@ function lowerStringSwitchDispatch(
     cx.builder.emitIfStmt({ cond: matched, then, else: [] });
   }
   return { disc: cx.builder.emitSlotRead(matchSlot) };
-}
-
-/**
- * #2952 slice 6b — the text of a string-literal case test. `null` for any
- * other expression shape (numeric literals take the slice-4 path; everything
- * else is selector-rejected).
- */
-function stringLiteralCaseTestValue(expr: ts.Expression): string | null {
-  if (ts.isStringLiteral(expr) || ts.isNoSubstitutionTemplateLiteral(expr)) return expr.text;
-  return null;
-}
-
-/**
- * #2952 slice 4 — the numeric value of a literal case test: a plain
- * NumericLiteral or a prefix-minus NumericLiteral. `null` for any other
- * expression shape (the selector mirror rejects those).
- */
-function numericLiteralValue(expr: ts.Expression): number | null {
-  if (ts.isNumericLiteral(expr)) return Number(expr.text.replace(/_/g, ""));
-  if (
-    ts.isPrefixUnaryExpression(expr) &&
-    expr.operator === ts.SyntaxKind.MinusToken &&
-    ts.isNumericLiteral(expr.operand)
-  ) {
-    return -Number(expr.operand.text.replace(/_/g, ""));
-  }
-  return null;
 }
 
 /**

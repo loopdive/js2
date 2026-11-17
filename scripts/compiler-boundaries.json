@@ -1994,6 +1994,14 @@
   ],
   "files": [
     {
+      "path": "src/ir/switch-case-tests.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "7354-prepared-path",
+      "nextBoundary": "Frontend switch case-test admission shared by the selector and from-ast; moves with from-ast's frontend half."
+    },
+    {
       "path": "src/ir/identifier-read.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",

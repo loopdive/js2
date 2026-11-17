@@ -190,9 +190,35 @@ describe("#7354 Ty — typeof comparisons on the Prepared dynamic value", () => 
     expect(await refusal(source)).toContain("dynamic operation dyn.typeof has no Prepared intrinsic");
   });
 
-  it("refuses a switch on the typeof with a non-literal case by name (from-ast)", async () => {
-    expect(await refusal("function f(v, w) { switch (typeof v) { case w: return 1; } return 2; }\nf(1, 2);")).toContain(
-      "ir/from-ast: switch disc must lower to i32/f64 in f",
+  // The string dispatch compares only literal tests; any other case test (first, last, only, or a call) refuses by
+  // name instead of being skipped — never compared, its expression never evaluated (a wrong answer, review round 1).
+  it.each([
+    [
+      "last",
+      'function t(v) { var s = "boolean"; switch (typeof v) { case "number": return 1; case s: return 2; } return 3; }\nt(true);',
+    ],
+    [
+      "first",
+      'function t(v, w) { switch (typeof v) { case w: return 1; case "number": return 2; } return 3; }\nt(1, 2);',
+    ],
+    ["only", "function t(v, w) { switch (typeof v) { case w: return 1; } return 3; }\nt(1, 2);"],
+    [
+      "a call with a side effect",
+      'var n = 0;\nfunction g(w) { n = 1; return w; }\nfunction t(v) { switch (typeof v) { case "number": return 1; case g(v): return 2; } return 3; }\nt(true);',
+    ],
+    [
+      "a numeric switch's",
+      "function t(v) { var k = 1; switch (v * 1) { case 1: return 1; case k: return 2; } return 3; }\nt(1);",
+    ],
+  ])("refuses a non-literal case test (%s) by name", async (_label, source) => {
+    expect(await refusal(source)).toContain("ir/from-ast: switch-case-test-nonliteral in t");
+  });
+
+  it("answers a switch on the typeof with the default clause in the middle", async () => {
+    await expectLikeNode(
+      (right) =>
+        'function t(v) { switch (typeof v) { case "number": return 1; default: return 4; case "boolean": return 2; } }\n' +
+        `if (t(true) * 10 + t(null) !== ${right ? 24 : 21}) throw 1;`,
     );
   });
 
