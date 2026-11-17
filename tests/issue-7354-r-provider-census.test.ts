@@ -464,3 +464,44 @@ describe("#7354 D1 — the census on a dynamic-value program", () => {
     expect(await refusal()).toContain(RUNTIME_DEMAND);
   });
 });
+
+describe("#7354 H — the census on a script var in the dynamic home", () => {
+  // The program-level demand a dynamic home adds is the `undefined` the module-init stores into it first.
+  const program = "var x; if (x !== undefined) throw 1; x = 2; if (x !== 2) throw 2;";
+  const refusal = async () => {
+    const result = await compile(program, options("standalone", "test.js"));
+    expect(result.success).toBe(false);
+    return messages(result).join("\n");
+  };
+  const RUNTIME_DEMAND = "host provider or async demand is outside this numeric presentation contract";
+  const ID = "native.js.value.undefined";
+
+  it("presents and runs the unaltered program", async () => {
+    const exports = await present(program, "test.js");
+    expect(() => (exports.__module_init as (() => void) | undefined)?.()).not.toThrow();
+  });
+
+  it("refuses a census that drops the undefined value provider", async () => {
+    census.providers = (rows) => rows.filter((row) => row.id !== ID);
+    expect(await refusal()).toContain(RUNTIME_DEMAND);
+  });
+
+  it("refuses a census that renames the undefined value provider", async () => {
+    census.providers = (rows) => rows.map((row) => (row.id === ID ? { ...row, id: `${ID}.renamed` } : row));
+    expect(await refusal()).toContain(RUNTIME_DEMAND);
+  });
+
+  it("refuses a native setup that renames the __js_undefined resource", async () => {
+    census.setup = (setup) =>
+      ({
+        ...setup,
+        resources: {
+          ...setup.resources,
+          declarations: setup.resources.declarations.map((row) =>
+            "name" in row && row.name === "__js_undefined" ? { ...row, name: "__js_undefined_renamed" } : row,
+          ),
+        },
+      }) as never;
+    expect(await refusal()).toContain(RUNTIME_DEMAND);
+  });
+});
