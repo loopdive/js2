@@ -2,8 +2,8 @@
 
 /**
  * (#7354 D1) The dynamic value's own runtime functions on the Prepared
- * standalone lane: strict equality, ToBoolean (#7354 T), the `undefined` value
- * and the `undefined` probe. Every body is a shared pure builder; the number and Boolean carrier
+ * standalone lane: strict equality, ToBoolean (#7354 T), the `undefined` value,
+ * the `undefined` probe and (#7354 Ty) the string `typeof` test. Every body is a shared pure builder; the number and Boolean carrier
  * functions they call are the issued primitive owners', never a lookalike.
  */
 import type { PhysicalModuleReservations, FunctionReservation } from "../../../wasm/physical/module-reservations.js";
@@ -11,6 +11,7 @@ import type { IrInstrIntrinsic } from "../../../ir/core/nodes.js";
 import type { NativeValueResourcePlan } from "../../../ir/program/native-value-resources.js";
 import { buildObjectSameValueBody } from "../../../runtime/wasmgc/values/object-same-value-body.js";
 import {
+  buildExternRefTestBody,
   buildIsUndefinedBody,
   buildToBooleanBody,
   buildToBooleanLocals,
@@ -38,6 +39,8 @@ export interface NativeDynamicValueSelection {
   readonly toBoolean: boolean;
   readonly undefinedValue: boolean;
   readonly isUndefined: boolean;
+  /** (#7354 Ty) `typeof v === "string"`. */
+  readonly isString: boolean;
 }
 
 /**
@@ -61,6 +64,7 @@ export function selectNativeDynamicValues(
         instruction.provider?.kind === "callable" &&
         instruction.provider.target.binding.kind === "runtime",
     ),
+    isString: has("js.value.is_string"),
   };
   return Object.values(selection).some(Boolean) ? selection : undefined;
 }
@@ -72,6 +76,7 @@ const ROWS = [
   ["toBoolean", "to-boolean", "__is_truthy", { params: [EXTERNREF], results: [I32] }],
   ["undefinedValue", "undefined-value", "__js_undefined", { params: [], results: [EXTERNREF] }],
   ["isUndefined", "is-undefined", "__extern_is_undefined", { params: [EXTERNREF], results: [I32] }],
+  ["isString", "typeof-string", "__typeof_string", { params: [EXTERNREF], results: [I32] }],
 ] as const;
 
 export function declareNativeDynamicValueResources(key: string, selection: NativeDynamicValueSelection) {
@@ -99,6 +104,7 @@ export interface NativeDynamicValueReservations {
   readonly toBoolean?: FunctionReservation;
   readonly undefinedValue?: FunctionReservation;
   readonly isUndefined?: FunctionReservation;
+  readonly isString?: FunctionReservation;
 }
 /** (#7354 Str) The issued string resources strict equality's string arm calls. */
 export interface NativeDynamicValueStrings {
@@ -208,6 +214,15 @@ export function fillNativeDynamicValueResources(
         1,
         UNDEF_F64_BITS,
       ),
+    });
+  // (#7354 Ty) Without a native string pack no string can reach the carrier, so the test is constant false.
+  if (pack.isString)
+    tx.fillFunction(pack.isString, {
+      locals: [],
+      body:
+        carrierStrings.kind === "native-string"
+          ? buildExternRefTestBody(carrierStrings.stringPack.layout.anyStrTypeIdx)
+          : [{ op: "i32.const", value: 0 }],
     });
   owner.filled = true;
 }

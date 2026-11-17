@@ -86,9 +86,13 @@ export type ExternBoundaryIntrinsicId = (typeof EXTERN_BOUNDARY_INTRINSIC_IDS)[n
  * number/boolean box, the `undefined` singleton or, since T, the null
  * reference for `null`) that the number, boolean and
  * extern families do not already name. Only the Prepared standalone lane
- * produces them, from its dynamic-value legalization.
+ * produces them, from its dynamic-value legalization. (#7354 Ty) The
+ * `is_*` tag tests answer `typeof v === "number"` / `"boolean"` / `"string"`.
  */
 export const DYNAMIC_VALUE_INTRINSIC_IDS = Object.freeze([
+  "js.value.is_boolean",
+  "js.value.is_number",
+  "js.value.is_string",
   "js.value.strict_eq",
   "js.value.to_boolean",
   "js.value.undefined",

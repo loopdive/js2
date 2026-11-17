@@ -37,6 +37,7 @@ import type { ValType } from "../wasm/model/instructions.js";
 import { functionBodyAlwaysTerminates, irFunctionBodyReturnsValue } from "./select.js";
 import { someReturnedValue } from "./function-returns.js";
 import { sourceDynamicProvenance, type SourceDynamicProvenance } from "./source-dynamic-provenance.js";
+import { isUndeclaredInFile } from "../shared/ambient-intrinsics.js";
 
 type Carries = SourceDynamicProvenance["carries"];
 type Signature = { readonly params: readonly IrType[]; readonly returnType: IrType | null };
@@ -192,7 +193,11 @@ export interface ProgramDynamicContracts extends SourceDynamicProvenance {
    * all refuse before a catch today; the slice that makes one reachable updates
    * tests/issue-7354-x-dynamic-throw.test.ts, which pins each.
    */
-  readonly resolver: { readonly resolveDynamic?: () => ValType; readonly dynamicCarrierIsExternref?: () => boolean };
+  readonly resolver: {
+    readonly resolveDynamic?: () => ValType;
+    readonly dynamicCarrierIsExternref?: () => boolean;
+    readonly unresolvedNameIsAbsent?: (node: ts.Identifier) => boolean;
+  };
   /** {@link legalizeSourceDynamicValues} for the functions lowered from `roots`. */
   readonly legalize: (
     signatures: Iterable<Signature>,
@@ -217,7 +222,11 @@ export function programDynamicContracts(
     ...provenance,
     parameter: (declaration, parameter) => sourceDynamicParameter(checker, policy, declaration, parameter),
     resolver: nativeDynamicLane(policy)
-      ? { resolveDynamic: () => ({ kind: "externref" }), dynamicCarrierIsExternref: () => true }
+      ? {
+          resolveDynamic: () => ({ kind: "externref" }),
+          dynamicCarrierIsExternref: () => true,
+          unresolvedNameIsAbsent: (node) => absentGlobal(checker, sourceFiles, node),
+        }
       : {},
     result: (declaration) =>
       sourceDynamicResult(checker, policy, declaration, provenance.carries) ??
@@ -234,9 +243,43 @@ export function programDynamicContracts(
       );
     },
     legalize: (signatures, globals, roots, functions) =>
-      legalizeSourceDynamicValues(checker, policy, signatures, globals, roots, functions, provenance.carries),
+      legalizeSourceDynamicValues(
+        checker,
+        policy,
+        signatures,
+        globals,
+        roots,
+        functions,
+        provenance.carries,
+        sourceFiles,
+      ),
   };
 }
+
+/**
+ * (#7354 Ty) The Prepared program is closed: its global environment holds the program's own declarations and the
+ * providers from-ast's read names, nothing else (no host object). So `typeof X` of a global the program does not
+ * declare (only lib declarations, or none at all) answers "undefined". That is a statement about THIS environment,
+ * which provides no such global yet, not ECMAScript's answer (node says `typeof Math === "object"`). It is sound
+ * because (1) every value, member, call or `new` use of such a name refuses by name, so no program can use what
+ * `typeof` denied — tests/issue-7354-ty-typeof-comparisons.test.ts pins that for every name of
+ * `AMBIENT_TYPEOF_TAGS`, and the slice that provides one adds it to `PREPARED_PROVIDED_GLOBALS`; and (2) the error
+ * is in the safe direction: a test asserting the global exists fails. The shape that could pass falsely is a test
+ * whose assertions all sit under `if (typeof X !== "undefined")` (none in ES5; two in later editions, measured).
+ * A script's top-level `function Error() {}` is reported by the checker as the lib declarations alone, hence the
+ * file check.
+ */
+function absentGlobal(checker: ts.TypeChecker, sourceFiles: readonly ts.SourceFile[], node: ts.Identifier): boolean {
+  if (PREPARED_PROVIDED_GLOBALS.has(node.text) || !isUndeclaredInFile(node)) return false;
+  const declarations = checker.getSymbolAtLocation(node)?.declarations ?? [];
+  return !declarations.some((declaration) => sourceFiles.includes(declaration.getSourceFile()));
+}
+
+/**
+ * The lib globals some use of which compiles on this path, so `typeof` must not deny them: it refuses by name until
+ * their real answer is wired. `Number`: `Number(v)` calls (`prepareNumberConversionResolver`).
+ */
+export const PREPARED_PROVIDED_GLOBALS: ReadonlySet<string> = new Set(["Number"]);
 
 /**
  * (#7354 D1) The one rule for a dynamic value leaving the dynamic domain. A
@@ -303,7 +346,8 @@ function storedIntoCarrier(value: ts.Expression, carries: Carries): boolean {
 /**
  * (#7354 D1) A program with a native `any` contract (since #7354 P also an
  * untyped parameter's, since #7354 H also a script `var`'s dynamic home, since
- * #7354 T a catch binding, which reads the exception payload as the dynamic value) has
+ * #7354 T a catch binding, which reads the exception payload as the dynamic value, since #7354 Ty a `typeof` of
+ * a name the program does not declare, whose operand is the `undefined` value) has
  * every function lowered from `declaration` legalized to the
  * intrinsic/externref form; an operation without a Prepared
  * intrinsic is a named refusal. A program without one keeps its existing path:
@@ -322,10 +366,12 @@ function legalizeSourceDynamicValues(
   declaration: ts.FunctionDeclaration | readonly ts.Statement[],
   functions: readonly IrFunction[],
   carries: Carries,
+  sourceFiles: readonly ts.SourceFile[],
 ): readonly IrFunction[] {
   const roots = "kind" in declaration ? [declaration] : declaration;
   const contracted =
     roots.some(bindsCatch) ||
+    roots.some((root) => readsTypeofOfAbsentGlobal(checker, sourceFiles, root)) ||
     globals.some((global) => global.binding.type.kind === "dynamic") ||
     [...signatures].some(
       (signature) =>
@@ -341,6 +387,20 @@ function legalizeSourceDynamicValues(
   }
   if (legalized.some((fn, index) => fn !== functions[index])) refuseImplicitDynamicFlows(checker, roots, carries);
   return legalized;
+}
+
+/** `node` holds `typeof <name>` of an absent global (nested functions included). */
+function readsTypeofOfAbsentGlobal(
+  checker: ts.TypeChecker,
+  sourceFiles: readonly ts.SourceFile[],
+  node: ts.Node,
+): boolean {
+  if (ts.isTypeOfExpression(node)) {
+    let operand: ts.Expression = node.expression;
+    while (ts.isParenthesizedExpression(operand)) operand = operand.expression;
+    if (ts.isIdentifier(operand) && absentGlobal(checker, sourceFiles, operand)) return true;
+  }
+  return ts.forEachChild(node, (child) => readsTypeofOfAbsentGlobal(checker, sourceFiles, child)) === true;
 }
 
 /** `node` holds a `catch` clause with a binding (nested functions included: they are lowered from the same roots). */
