@@ -188,12 +188,20 @@ describe("#7354 H — the dynamic home of a script var", () => {
       `${HOISTED_X}var y = 1; y = x || 0;`,
       "dynamic operation dyn.truthy has no Prepared intrinsic",
     ],
-    // A JS property declaration on the binding is no second declaration: the store, not the home, refuses.
+    // A member write on the binding is no second declaration: the binding keeps its home and the write refuses.
+    [
+      "given a property by a member write (slice O)",
+      "var o; o = 1; function p() { o.q = 2; }",
+      "property assignment on dynamic is not in slice 4",
+    ],
+    // `Object.defineProperty(o, …)` still counts as a declaration: the Prepared path admits no `Object` static yet,
+    // so the binding has no home and refuses by name instead of reaching from-ast's drift invariant.
     [
       "given a property by Object.defineProperty (slice O)",
       'var obj = {}; Object.defineProperty(obj, "foo", { value: 1 });',
-      "proven dynamic binding 'obj' initializer has no supported carrier",
+      NO_HOME,
     ],
+    ["of a number given a property by Object.defineProperty", "var o = 1; Object.defineProperty(o, 'p', {});", NO_HOME],
     // A value kind the carrier cannot hold yet is refused at its store, by the slice that owns it.
     [
       "holding an object literal (slice O)",

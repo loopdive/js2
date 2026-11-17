@@ -548,3 +548,13 @@ export function bindingIsUniqueAndNeverWritten(id: ts.Identifier, declaration: t
   visit(id.getSourceFile());
   return !written && bindings === 1 && ownBinding;
 }
+
+/** `o` where a JS member write on it (`o.p = v`, `o[k] = v`) declares a property, which the checker counts. */
+export function isMemberWriteDeclaration(candidate: ts.Node): boolean {
+  const parent = candidate.parent;
+  return (
+    ts.isIdentifier(candidate) &&
+    (ts.isPropertyAccessExpression(parent) || ts.isElementAccessExpression(parent)) &&
+    parent.expression === candidate
+  );
+}

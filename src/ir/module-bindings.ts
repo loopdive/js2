@@ -4,6 +4,7 @@
 // selector and AST→IR builder. This module is deliberately leaf-shaped so the
 // fallback gate can import it without pulling in codegen/index.ts.
 
+import { isMemberWriteDeclaration } from "../shared/binding-writes.js";
 import { isExternalDeclaredClass } from "../checker/type-mapper.js";
 import { TsCheckerOracle, type TypeOracle } from "../checker/oracle.js";
 import { ts } from "../ts-api.js";
@@ -1178,13 +1179,10 @@ function scriptVarReferenceKind(
 }
 
 // `o` in a JS property declaration on it: `o.p = v`, `o[k] = v`, `Object.defineProperty(o, …)` (#7106 lever S).
-export function isJsPropertyDeclarationTarget(candidate: ts.Declaration): boolean {
+function isJsPropertyDeclarationTarget(candidate: ts.Declaration): boolean {
   const parent = candidate.parent;
-  if (!ts.isIdentifier(candidate) || parent === undefined) return false;
-  if (ts.isCallExpression(parent)) return parent.arguments[0] === candidate;
-  return (
-    (ts.isPropertyAccessExpression(parent) || ts.isElementAccessExpression(parent)) && parent.expression === candidate
-  );
+  if (ts.isIdentifier(candidate) && ts.isCallExpression(parent)) return parent.arguments[0] === candidate;
+  return isMemberWriteDeclaration(candidate);
 }
 
 function localVariableDeclaration(node: ts.Identifier, checker: ts.TypeChecker): ts.VariableDeclaration | undefined {
