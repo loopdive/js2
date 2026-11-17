@@ -1409,7 +1409,7 @@ function prepareSourceFunctionSignatures(
                   checkerCallable(checker, returnNode, unit.displayName) ??
                   typeNodeToIr(returnNode, unit.displayName))
                 : (checkerInferredCallableResult(checker, declaration, unit.displayName) ??
-                  (propagated ? lowerTypeToIrType(propagated.returnType) : null));
+                  dynamic.propagatedResult(declaration, propagated && lowerTypeToIrType(propagated.returnType)));
     bodyResults.set(unit.id, result);
     const callableResults = preparedIrProgramCallableResults({
       funcKind: isAsync ? "async" : "regular",
