@@ -1,5 +1,5 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
-import type { AllocSiteId } from "../../../ir/core/nodes.js";
+import type { AllocSiteId, IrInstr, IrStringLengthProvider } from "../../../ir/core/nodes.js";
 import {
   IR_CLOSURE_VECTOR_APPLY,
   IR_CLOSURE_UNDEFINED,
@@ -691,7 +691,31 @@ export function emitPreparedNativeStringLiteral(
     : [{ op: "call", funcIdx: binding.function.handle }];
 }
 
-/** The scoped emitter may only realize an authenticated concat occurrence of its owner. */
+/**
+ * The scoped emitter may only realize an authenticated occurrence of its owner: one of `occurrences` (indices into
+ * the demand census) in the owner's executable projection that `admits` the emitted request.
+ */
+function requireOwnerOccurrence(
+  tx: PhysicalModuleReservations,
+  pack: NativeStringValueReservations,
+  ownerUnitId: IrUnitId,
+  kind: string,
+  occurrences: (owner: Owner) => readonly number[],
+  admits: (instruction: IrInstr) => boolean,
+): Owner {
+  requireCompletedNativeStringValues(tx, pack);
+  const owner = ownerFor(tx, pack);
+  const { demands } = owner.input;
+  const admitted = occurrences(owner).some((index) => {
+    const occurrence = demands.occurrences[index]!;
+    const buffer = demands.buffers[occurrence.bufferIndex]!;
+    return buffer.view === "projection" && buffer.ownerUnitId === ownerUnitId && admits(occurrence.instruction);
+  });
+  if (!admitted) fail(kind + " occurrence is outside the closed owner projection");
+  return owner;
+}
+const allOccurrences = (owner: Owner) => owner.input.demands.occurrences.map((_, index) => index);
+
 function emitPreparedNativeStringConcat(
   tx: PhysicalModuleReservations,
   pack: NativeStringValueReservations,
@@ -700,32 +724,69 @@ function emitPreparedNativeStringConcat(
   mode: IrStringConcatMode = "immutable",
   provider?: IrFuncRef,
 ): readonly Instr[] {
-  requireCompletedNativeStringValues(tx, pack);
-  const owner = ownerFor(tx, pack);
-  const requirements = owner.input.outputRequirements;
-  if (!pack.output || !requirements || mode !== "immutable") fail("concat has no admitted output resource");
-  const admitted = requirements.uses.some((use) => {
-    if (use.kind !== "binary-concat") return false;
-    const occurrence = requirements.demands.occurrences[use.occurrence]!;
-    const buffer = requirements.demands.buffers[occurrence.bufferIndex]!;
-    const instruction = occurrence.instruction;
-    return (
-      buffer.view === "projection" &&
-      buffer.ownerUnitId === ownerUnitId &&
+  if (!pack.output || mode !== "immutable") fail("concat has no admitted output resource");
+  requireOwnerOccurrence(
+    tx,
+    pack,
+    ownerUnitId,
+    "concat",
+    (owner) =>
+      owner.input.outputRequirements?.uses.flatMap((use) => (use.kind === "binary-concat" ? [use.occurrence] : [])) ??
+      [],
+    (instruction) =>
       instruction.kind === "string.concat" &&
       instruction.alloc === alloc &&
       (instruction.concatMode ?? "immutable") === mode &&
-      instruction.provider === provider
-    );
-  });
-  if (!admitted) fail("concat occurrence is outside the closed owner projection");
+      instruction.provider === provider,
+  );
   return [{ op: "call", funcIdx: pack.output.concat.handle }];
 }
 
+/** (#7354 Str) `string.eq` calls the lazy equality resource. */
+function emitPreparedNativeStringEquals(
+  tx: PhysicalModuleReservations,
+  pack: NativeStringValueReservations,
+  ownerUnitId: IrUnitId,
+  provider?: IrFuncRef,
+): readonly Instr[] {
+  if (!pack.equality) fail("string equality has no admitted resource");
+  requireOwnerOccurrence(
+    tx,
+    pack,
+    ownerUnitId,
+    "string.eq",
+    allOccurrences,
+    (instruction) => instruction.kind === "string.eq" && instruction.provider === provider,
+  );
+  return [{ op: "call", funcIdx: pack.equality.equals.handle }];
+}
+
+/** (#7354 Str) `string.len` reads the carrier field the selected `js.string.len` provider names. */
+function emitPreparedNativeStringLength(
+  tx: PhysicalModuleReservations,
+  pack: NativeStringValueReservations,
+  ownerUnitId: IrUnitId,
+  provider?: IrStringLengthProvider,
+): readonly Instr[] {
+  const owner = requireOwnerOccurrence(
+    tx,
+    pack,
+    ownerUnitId,
+    "string.len",
+    allOccurrences,
+    (instruction) => instruction.kind === "string.len" && instruction.provider === provider,
+  );
+  const selected = owner.input.demands.projection.prepared.manifest.providers.filter(
+    (row) => row.feature === "js.string.len",
+  );
+  const field = selected.length === 1 ? selected[0]!.implementation : undefined;
+  if (field?.kind !== "carrier-field" || field.carrier !== "string") fail("string.len has no selected carrier field");
+  return [{ op: "struct.get", typeIdx: pack.strings.layout.anyStrTypeIdx, fieldIdx: field.fieldIndex }];
+}
+
 /**
- * The string operations of one owner's body, each realised on the owner's admitted native resources: literals and
- * concatenation through their closed occurrence plans; (#7354 Str) `string.eq` calls the lazy equality resource and
- * `string.len` reads the carrier's length field.
+ * The string operations of one owner's body, each realised on the owner's admitted native resources and only for
+ * an occurrence of that owner's executable projection.
  */
 export function preparedNativeStringResolver(
   tx: PhysicalModuleReservations,
@@ -743,8 +804,8 @@ export function preparedNativeStringResolver(
     mode?: IrStringConcatMode,
     provider?: IrFuncRef,
   ) => readonly Instr[];
-  readonly emitStringEquals: () => readonly Instr[];
-  readonly emitStringLen: () => readonly Instr[];
+  readonly emitStringEquals: (provider?: IrFuncRef) => readonly Instr[];
+  readonly emitStringLen: (inputEncoding?: IrStringEncoding, provider?: IrStringLengthProvider) => readonly Instr[];
 } {
   return {
     emitStringConst: (value, alloc, storage, materializer) =>
@@ -755,14 +816,7 @@ export function preparedNativeStringResolver(
             emitPreparedNativeStringConcat(tx, pack, ownerUnitId, alloc, mode, provider),
         }
       : {}),
-    emitStringEquals: () => {
-      requireCompletedNativeStringValues(tx, pack);
-      if (!pack.equality) fail("string equality has no admitted resource");
-      return [{ op: "call", funcIdx: pack.equality.equals.handle }];
-    },
-    emitStringLen: () => {
-      requireCompletedNativeStringValues(tx, pack);
-      return [{ op: "struct.get", typeIdx: pack.strings.layout.anyStrTypeIdx, fieldIdx: 0 }];
-    },
+    emitStringEquals: (provider) => emitPreparedNativeStringEquals(tx, pack, ownerUnitId, provider),
+    emitStringLen: (_inputEncoding, provider) => emitPreparedNativeStringLength(tx, pack, ownerUnitId, provider),
   };
 }
