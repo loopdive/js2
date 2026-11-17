@@ -158,9 +158,8 @@ function refuseImplicitDynamicFlows(checker: ts.TypeChecker, roots: readonly ts.
  * legalized to the intrinsic/externref form; an operation without a Prepared
  * intrinsic is a named refusal. A function without a dynamic value is returned
  * unchanged, so a program without one keeps its exact IR. The flow rule runs
- * only where a dynamic value was lowered: a checker `any` the IR typed
- * concretely (an untyped parameter with a propagated number type) carries no
- * dynamic value.
+ * only where a dynamic value was lowered: in a function without one, no value
+ * can leave the dynamic domain.
  */
 export function legalizeSourceDynamicValues(
   checker: ts.TypeChecker,
