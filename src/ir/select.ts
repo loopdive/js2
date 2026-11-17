@@ -54,6 +54,7 @@
 //     before the IR runs (allocated by `collectClassDeclaration`). The
 //     `localClasses` set drives that exemption.
 
+import { someReturnedValue } from "./function-returns.js";
 import { ts, forEachChild } from "../ts-api.js";
 import { isStableDirectCallTarget, localIsRewritten } from "./lattice-param-facts.js";
 import { isPlannedScriptVarClosure } from "./function-member-closure-plan.js";
@@ -2972,18 +2973,7 @@ export function functionBodyAlwaysTerminates(body: ts.Block): boolean {
  * registered IR signature agree (both mirror legacy's no-result registration).
  */
 export function irFunctionBodyReturnsValue(body: ts.Block): boolean {
-  let found = false;
-  const visit = (node: ts.Node): void => {
-    if (found) return;
-    if (ts.isReturnStatement(node)) {
-      if (node.expression) found = true;
-      return;
-    }
-    if (ts.isFunctionLike(node) || ts.isClassLike(node)) return;
-    ts.forEachChild(node, visit);
-  };
-  ts.forEachChild(body, visit);
-  return found;
+  return someReturnedValue(body, () => true);
 }
 
 // ---------------------------------------------------------------------------
