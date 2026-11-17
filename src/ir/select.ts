@@ -83,7 +83,7 @@ import {
 } from "./async-selection.js";
 export { isAsyncIrReady } from "./async-selection.js";
 import { collectIrSafeVarDeclarationLists } from "./function-local-var.js";
-import { isModuleInitVarList } from "../shared/var-declaration-lists.js";
+import { isInLoopOfOwnFunction, isModuleInitVarList } from "../shared/var-declaration-lists.js";
 import { carrierLeafReads, collectIrSafeModuleVarDeclarationLists } from "./module-init-vars.js";
 import { isAmbientIntrinsicValueUse } from "../shared/ambient-intrinsics.js";
 import { collectDynamicStringLocalWidening } from "./dynamic-local-widening.js";
@@ -7208,20 +7208,15 @@ function untypedIdentifierDeclaration(d: ts.VariableDeclaration): boolean {
  * types the `any` binding `externref` and starts it undefined). Only where the
  * function-local var proof already holds (the caller checked the list), the
  * dynamic runtime is buildable, and the declaration is not inside a loop: a
- * re-executed `var x;` keeps its value, while the IR initializes at the
- * declaration point.
+ * re-executed `var x;` keeps its value. Lowering initializes such a `var` at
+ * the function entry (`lowerUninitializedVar`), but this lane does not claim it.
  */
 function uninitializedVarIsDynamicUndefined(d: ts.VariableDeclaration, isLexical: boolean): boolean {
   if (isLexical || currentSubjectIsModuleInit || !currentDynamicRuntimeBuildable) return false;
   // Only in a dynamic-carrier function (a dynamic parameter, so the move-only
   // scan runs and tracks the binding) or a planned member closure with one.
   if (currentDynamicParamNames.size === 0 && currentClosureDynamicParamNames.size === 0) return false;
-  if (!untypedIdentifierDeclaration(d)) return false;
-  for (let cur: ts.Node | undefined = d.parent; cur; cur = cur.parent) {
-    if (ts.isFunctionLike(cur)) return true;
-    if (ts.isIterationStatement(cur, false)) return false;
-  }
-  return false;
+  return untypedIdentifierDeclaration(d) && !isInLoopOfOwnFunction(d);
 }
 
 function isPhase1VarDecl(stmt: ts.VariableStatement, scope: Set<string>, localClasses: ReadonlySet<string>): boolean {

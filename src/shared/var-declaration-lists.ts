@@ -60,6 +60,16 @@ export function isTopLevelStatementDeclaration(declaration: ts.Node): boolean {
   return statement !== undefined && ts.isVariableStatement(statement) && ts.isSourceFile(statement.parent);
 }
 
+/**
+ * Whether `node` sits in a loop of its own function (or script), so its statement may run more than once: a
+ * `var x;` there is reached again after `x` was written, and must not reset it.
+ */
+export function isInLoopOfOwnFunction(node: ts.Node): boolean {
+  for (let cur = node.parent; cur && !ts.isFunctionLike(cur); cur = cur.parent)
+    if (ts.isIterationStatement(cur, false)) return true;
+  return false;
+}
+
 /** Every modelled `var` list in `statement`, in source order. */
 export function moduleInitVarLists(statement: ts.Statement): ts.VariableDeclarationList[] {
   const lists: ts.VariableDeclarationList[] = [];
