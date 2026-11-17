@@ -332,7 +332,7 @@ import {
 } from "./binding-pattern-plan.js";
 import { lowerPatternPlan, readsNoSource, type PatternLoweringHost } from "./binding-pattern-lowering.js";
 import { literalLeafSource, patternLeafReadsElement, planLiteralPattern } from "./literal-pattern-plan.js";
-import { isModuleInitVarList } from "../shared/var-declaration-lists.js";
+import { isInLoopOfOwnFunction, isModuleInitVarList } from "../shared/var-declaration-lists.js";
 import { objectIntegrityCallFold } from "./object-integrity.js";
 import {
   mixedPrimitiveConditionalArms,
@@ -4718,8 +4718,8 @@ function bindLocalName(
 }
 
 /**
- * (#7106 Stage 4) `var x;` (selector: untyped, function-local, not in a loop):
- * the dynamic carrier's `undefined`, in a slot when the body reassigns it.
+ * (#7106 Stage 4) `var x;`: the dynamic carrier's `undefined`, in a slot when the body reassigns it — stored before
+ * the loop when the declaration sits in one, where it runs again after a write and is no write (#7354).
  */
 function lowerUninitializedVar(d: ts.VariableDeclaration, name: string, isConst: boolean, cx: LowerCtx): void {
   const isLexical = (d.parent.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const)) !== 0;
@@ -4729,17 +4729,17 @@ function lowerUninitializedVar(d: ts.VariableDeclaration, name: string, isConst:
       `ir/from-ast: Phase 1 requires an initializer for '${name}' in ${cx.funcName}`,
     );
   }
-  const value = cx.builder.emitDynUndefined();
   if (!cx.mutatedLets.has(name)) {
-    cx.scope.set(name, { kind: "local", value, type: irDynamic() });
+    cx.scope.set(name, { kind: "local", value: cx.builder.emitDynUndefined(), type: irDynamic() });
     return;
   }
   const representation = resolveMutableLocalRepresentation(irDynamic(), true, cx);
-  if (!representation) {
+  if (!representation)
     demoteToLegacy("body-shape-rejected", `ir/from-ast: dynamic var '${name}' has no slot (${cx.funcName})`);
-  }
   const slotIndex = cx.builder.declareSlot(name, representation.storageType);
-  cx.builder.emitSlotWrite(slotIndex, value);
+  const initialize = () => cx.builder.emitSlotWrite(slotIndex, cx.builder.emitDynUndefined());
+  if (isInLoopOfOwnFunction(d)) cx.builder.emitAtBlockHead(initialize);
+  else initialize();
   cx.scope.set(name, {
     kind: "slot",
     slotIndex,

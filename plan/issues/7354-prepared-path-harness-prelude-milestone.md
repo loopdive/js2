@@ -1137,6 +1137,93 @@ Measured after the fixes (`d635f3be69`):
   PR #7278); `issue-3518-semantic-verification-ownership` and `issue-3526-string-boundary-const` fail exactly as
   on D1's tip; the others pass.
 
+### Review round 2 (H)
+
+Review of `52ca249b28`: NOT MET on one must-fix. D1 `d87fe37e23` (main's #7357 red-pin fixes) was merged into P
+(`53f7b492c2`) and P into H first; then:
+
+1. **Must-fix: `var o = 1; Object.defineProperty(o, 'p', {})` threw** from-ast's drift invariant out of
+   `compile()`. The classifier now exempts only a member write (`o.p = v`, `o[k] = v`, `isMemberWriteDeclaration`,
+   moved to `src/shared/binding-writes.ts` and shared with the resolver's predicate, whose answers are unchanged)
+   and still counts the `Object.defineProperty` call as a second declaration: the binding has no home and the
+   program refuses as "not-direct". Tested, with the member-write form keeping its home. **Cost, handed to slice
+   O:** the `var obj = {}; Object.defineProperty(obj, …)` rows of the sample stop at "not-direct" again (52 `obj`,
+   plus `proto`, `o`, `arr`, … — 84 rows in all) until O admits `Object` statics on this path; O then drops the
+   call form from the declaration count. Known pre-existing crash for O, not fixed here: the literal form
+   `Object.defineProperty(1, 'p', {})` throws the same invariant on the base.
+2. **`storesUndefinedFirst` deleted.** It accepted the store in any function, and no test could reach an
+   `externref` source global without the globals arm's prologue: the arm is that global's only producer and
+   prepends the store in the storage owner itself (unit test). The physical plan states this.
+3. **Annotated var.** Claim and behaviour now agree: an annotation other than `any` gives the typed home or none,
+   and an `any` store into it is refused by the resolver's retype rule naming the binding ("unsupported"). H's own
+   tests pin both refusals, killing the `storesDynamic && !annotated` mutant.
+4. **Fail-open survivors, rebutted.** The code answers "may be dynamic" in all three; only the mutants that answer
+   "typed" survive, because no program on this path observes them: a non-variable binding read as a value (a
+   function, a class, a binding element) and a call of anything but a source function (a member, an ambient or
+   a value callee) are refused by from-ast before their type matters, and a pending local needs an initializer
+   that reaches the local itself (a closure or a TDZ read). The self-read exception is now killed by H's own file
+   (`var y = 1; y = y + 1`).
+
+Measured: H 66 and V/G, P, D1, R, prepared entry/runtime, #7188 tests 303/303; typecheck and gates;
+`changed-root-tests.sh` green; sweep 1,944 programs, 1,014 correct, 0 wrong, 0 invariant errors; ordinary bytes
+on 100 further sample files identical on both targets (92 compiled, 8 compile errors on both).
+
+### Review round 3: MET
+
+Review of `36c1b42ac9`: MET, no must-fix; the three survivors and the deletion accepted. Then `origin/main`
+(`e48947ccb8`, with D1 #7277 and P #7283) was merged in. Final 411-row sample: negatives 14 pass; 282 ToBoolean,
+84 "not-direct" (the `Object.defineProperty` bindings above and the repeated vars), 26 `String` direct call in
+`verifyProperty`, 2 switch-case binding, 1 `Test262Error`, 1 parse error, 1 `print` call.
+
+### Known gaps (H)
+
+- **The physical plan admits any `externref` source global.** After the legalization a dynamic global's type is a
+  plain `externref`; neither the ABI contract nor its intent keeps a dynamic marker, so keying the admission on
+  it needs new plumbing. Today the globals arm is the only producer (it stores `undefined` first). The slice that
+  adds another reference-typed source global must carry a marker (or its own default) and narrow this arm.
+- `Object.defineProperty` on a script var: no home until slice O (above).
+- Repeated `var` and multi-source programs: no home.
+
+### Follow-up: hoisted `var` declaration without initializer
+
+A review after H found a wrong answer: `var x;` without initializer inside a loop body was reset to `undefined` on
+every iteration (`function f(v){ var r = 0; for (…) { var x; if (i === 0) x = v; else r = x * 1; } return r; }`
+answered `undefined`, node 5).
+
+- **Cause.** `lowerUninitializedVar` (`src/ir/from-ast.ts`) wrote the slot's `undefined` at the declaration
+  statement. In JavaScript the declaration is hoisted and a `var x;` without initializer is no write, so a loop
+  that runs it again must keep the value. The ordinary pipeline never lowers such a declaration in a loop: its
+  selector (`uninitializedVarIsDynamicUndefined`, `src/ir/select.ts`) claims `var x;` only outside loops. The
+  Prepared path has no selector and reached it.
+- **Where it exists.** On `origin/main` (`f1903049a7`) already, for a loop `var x;` whose read flows into a
+  dynamic result (a typed first store `x = 5`, a boolean, a TypeScript `any` function): node returns, ours threw.
+  H widened the reach (a dynamic `return r`, `x * 1`, script loops in the module-init): 14 of the 30 family probes
+  were wrong on H, 3 on main.
+- **Fix.** The slot of a `var x;` in a loop of its own function (or script) takes its `undefined` once, before
+  the loop: `IrFunctionBuilder.emitAtBlockHead` (`src/ir/builder.ts`) prepends to the open block. A loop under
+  construction collects its body in a buffer and becomes one instruction of that block (no block is terminated
+  inside a buffer), so the head of the open block runs once, before the loop, and dominates every read (a read
+  after the loop is out of scope). Outside a loop the declaration runs once, before every read (a read before it is out of scope and refuses
+  by name), so it keeps its place — that is the arm the ordinary pipeline reaches, so its bytes do not change. The
+  loop test is one shared helper, `isInLoopOfOwnFunction` (`src/shared/var-declaration-lists.ts`), which the
+  selector's inline walk now calls. The builder's three slot lookups became one `slotDef` (room for the new
+  method within the size budget).
+- **Measured.** Family probes (for / while / do bodies, nested loops, `switch` / `try` / `try…catch` / labelled
+  block in a loop, labelled `continue`, a typed and a boolean first store, a read in the first iteration, a loop
+  after an early return, script `for` / `while` loops, TypeScript): all equal node. Named refusals: a read after
+  the declaring loop or before the declaration (`identifier "x" is not in scope`), a re-declaration after an
+  assignment (`redeclaration of 'x'`, script: `has no exact typed storage: not-direct`), a script loop var read by
+  a function (not a module binding: `identifier "g" is not in scope in h`), closures (`must have a return type
+  annotation`). Ordinary bytes identical on 100 test262 files (loops with `var` declarations, `&&` / `||`) × default
+  and `--target standalone` plus six direct programs (instrumented: the non-loop arm is reached, the loop arm
+  never); Prepared bytes identical on 15 unaffected programs × both targets. Mutations: the loop guard (15 tests
+  fail), the selector's loop guard (`issue-7106-uninitialized-var` fails). Expected survivors, reasoned and not
+  run: prepending vs appending to the open block, and the helper's stop at a nested function — both equivalent on
+  the Prepared path (any place before the loop is right); the second would only change what the ordinary selector
+  claims. A first version prepended to block 0 (the function entry); writing into the open block instead survived
+  every test, including a loop after an early return (block 0 already finished), so the simpler form was kept.
+- Tests: `tests/issue-7354-h2-hoisted-var-declaration.test.ts`.
+
 ## T and X result
 
 Status 2026-11-17. Branch `claude/7354-tx` on `claude/7354-p` (`1995dd6ef2`): T `5310a38b13`, X `01fd76c26c`.
