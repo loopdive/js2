@@ -287,11 +287,8 @@ describe("#7354 D1 — the legalization pass", () => {
 
   it.each([
     ["a Boolean unbox", { kind: "unbox", value: 0, tagId: JS_TAG_IDS.Boolean, result: 1, resultType: i32 }, "unbox"],
-    [
-      "a number tag test",
-      { kind: "tag.test", value: 0, tagId: JS_TAG_IDS.NumberF64, result: 1, resultType: i32 },
-      "tag",
-    ],
+    // (#7354 Ty) The number and Boolean tag tests are the `typeof` intrinsics now; a string is not admitted.
+    ["a string tag test", { kind: "tag.test", value: 0, tagId: JS_TAG_IDS.String, result: 1, resultType: i32 }, "tag"],
     [
       "a dynamic externref coercion",
       { kind: "coerce.to_externref", value: 0, result: 1, resultType: dynamic },
