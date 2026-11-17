@@ -333,6 +333,7 @@ import {
 import { lowerPatternPlan, readsNoSource, type PatternLoweringHost } from "./binding-pattern-lowering.js";
 import { literalLeafSource, patternLeafReadsElement, planLiteralPattern } from "./literal-pattern-plan.js";
 import { isInLoopOfOwnFunction, isModuleInitVarList } from "../shared/var-declaration-lists.js";
+import { emitLogicalSelect } from "./logical-select.js";
 import { isRepeatedVarBinding } from "./function-local-var.js";
 import { objectIntegrityCallFold } from "./object-integrity.js";
 import {
@@ -15657,22 +15658,10 @@ function lowerLogicalAndOr(expr: ts.BinaryExpression, op: ts.SyntaxKind, cx: Low
     const rhsCx: LowerCtx = { ...cx, scope: new Map(skippedScope) };
     let rhs!: IrValueId;
     const rhsBody = cx.builder.collectBodyInstrs(() => {
-      let rawRhs = lowerExpr(expr.right, rhsCx, irDynamic());
-      const rhsType = cx.builder.typeOf(rawRhs);
-      if (rhsType.kind !== "dynamic") {
-        const boxed = boxConcreteToDynamic(rawRhs, rhsType, expr.right, cx);
-        if (boxed === null) {
-          demoteToLegacy(
-            "logical-value-unsupported",
-            `ir/from-ast: operator '${opName}' right operand of ${describeIrType(rhsType)} has no dynamic carrier in ${cx.funcName}`,
-          );
-        }
-        rawRhs = boxed;
-      }
-      rhs = rawRhs;
+      rhs = logicalOperandCarrier(lowerExpr(expr.right, rhsCx, irDynamic()), expr.right, "right", opName, cx);
     });
     joinScopeStringEncodingFacts(cx.scope, [rhsCx.scope, skippedScope]);
-    return emitLogicalSelect(isAnd, cond, rawLhs, rhsBody, rhs, irDynamic(), cx);
+    return emitLogicalSelect(cx.builder, isAnd, { cond, lhs: rawLhs, rhsBody, rhs }, irDynamic());
   }
   const lhs =
     lhsType.kind === "dynamic" ? cx.builder.emitDynTruthy(rawLhs) : asVal(lhsType)?.kind === "i32" ? rawLhs : null;
@@ -15715,14 +15704,8 @@ function lowerLogicalAndOr(expr: ts.BinaryExpression, op: ts.SyntaxKind, cx: Low
   // yielded in the carrier too (only a boolean position reaches here with a
   // dynamic left operand, so `lhs` is the typed left value).
   if (cx.builder.typeOf(rhs).kind === "dynamic") {
-    const boxedLhs = boxConcreteToDynamic(lhs, lhsType, expr.left, cx);
-    if (boxedLhs === null) {
-      demoteToLegacy(
-        "logical-value-unsupported",
-        `ir/from-ast: operator '${opName}' left operand of ${describeIrType(lhsType)} has no dynamic carrier in ${cx.funcName}`,
-      );
-    }
-    return emitLogicalSelect(isAnd, lhs, boxedLhs, rhsBody, rhs, irDynamic(), cx);
+    const boxedLhs = logicalOperandCarrier(lhs, expr.left, "left", opName, cx);
+    return emitLogicalSelect(cx.builder, isAnd, { cond: lhs, lhs: boxedLhs, rhsBody, rhs }, irDynamic());
   }
   if (asVal(cx.builder.typeOf(rhs))?.kind !== "i32") {
     demoteToLegacy(
@@ -15735,28 +15718,27 @@ function lowerLogicalAndOr(expr: ts.BinaryExpression, op: ts.SyntaxKind, cx: Low
   // carry it. Native integer operands retain the existing unbranded result.
   const joinedType =
     irTypeIsBoolean(cx.builder.typeOf(lhs)) && irTypeIsBoolean(cx.builder.typeOf(rhs)) ? irBool() : resultType;
-  return emitLogicalSelect(isAnd, lhs, lhs, rhsBody, rhs, joinedType, cx);
+  return emitLogicalSelect(cx.builder, isAnd, { cond: lhs, lhs, rhsBody, rhs }, joinedType);
 }
 
-/**
- * Select an `&&` / `||` result on `cond` (the left operand's truth): for `&&`
- * the right operand when it holds, else `lhs`; for `||` the reverse. The right
- * operand's instructions run only in its arm. The empty arm yields the
- * already-materialized `lhs` (the lowerer records it as a cross-block use,
- * like `lowerNullish`'s else arm).
- */
-function emitLogicalSelect(
-  isAnd: boolean,
-  cond: IrValueId,
-  lhs: IrValueId,
-  rhsBody: IrInstr[],
-  rhs: IrValueId,
-  resultType: IrType,
+/** An `&&` / `||` operand in the dynamic carrier (boxed when typed), or a refusal by name. */
+function logicalOperandCarrier(
+  value: IrValueId,
+  operand: ts.Expression,
+  side: "left" | "right",
+  opName: string,
   cx: LowerCtx,
 ): IrValueId {
-  return isAnd
-    ? cx.builder.emitIfElse({ cond, then: rhsBody, thenValue: rhs, else: [], elseValue: lhs, resultType })
-    : cx.builder.emitIfElse({ cond, then: [], thenValue: lhs, else: rhsBody, elseValue: rhs, resultType });
+  const type = cx.builder.typeOf(value);
+  if (type.kind === "dynamic") return value;
+  const boxed = boxConcreteToDynamic(value, type, operand, cx);
+  if (boxed === null) {
+    demoteToLegacy(
+      "logical-value-unsupported",
+      `ir/from-ast: operator '${opName}' ${side} operand of ${describeIrType(type)} has no dynamic carrier in ${cx.funcName}`,
+    );
+  }
+  return boxed;
 }
 
 function checkerProvesExactNumericExponentOperand(expr: ts.Expression, cx: LowerCtx): boolean {
