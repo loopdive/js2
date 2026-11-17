@@ -711,3 +711,102 @@ against the lowered body (a disagreement is a refusal, never a conversion).
   `--target standalone` (8 compile errors on both, 15 skipped).
 - Gates: typecheck, loc, func, coercion-sites, oracle-ratchet, dead-exports, import-cycles, boundaries inventory.
 - issue-3518\*/3526\* were not re-run after this merge (last run: on D1 `08fcfa7b82`, above).
+
+## H result
+
+Status 2026-11-17. Branch `claude/7354-h` on `claude/7354-p` (merged up to `1995dd6ef2`).
+
+### Built
+
+- **The dynamic home.** `irOwnedScriptVarHome` (`src/ir/module-binding-script-var-home.ts`) answers `dynamic`
+  for every script `var` V cannot prove typed, when the lane has the carrier (wasmgc standalone); the typed
+  home is kept where proven. Still no home: a repeated `var`, a program of several sources, the non-writable
+  global names, the gc target. A JS property declaration on the binding (`Object.defineProperty(obj, …)`,
+  `o.p = v`) is no longer taken for a second declaration (the resolver's own `isJsPropertyDeclarationTarget`,
+  now exported): that, not a value-kind arm, was the "not-direct" of `var obj = {}` (53 sample rows). The
+  resolver's value-kind arm needed no change: given the home, `var o = {…}` already reaches the initializer.
+- **Globals arm of the D1 pass.** `legalizeDynamicGlobals` (`src/ir/program/dynamic-value-legalization.ts`)
+  types each dynamic global as the `externref` carrier and prepends to its storage owner (the script's
+  module-init) `js.value.undefined` + `global.set` for each such global. Physical plan: a source global may be
+  `externref` (it is always this carrier); consumer default initializer `ref.null extern` (never read: the
+  module-init store runs first). Chosen over "null is undefined" because `__extern_is_undefined` and strict
+  equality test the `$AnyValue` undefined singleton, which null is not. Presentation: a global contract and an
+  internal callable slot may be the carrier (one `dynamic` predicate beside `carried`).
+- **Provenance** (`src/ir/source-dynamic-provenance.ts`, new). The checker types `var z = 3` as number even
+  when it holds `undefined`, and so every value read from such a home and passed on (a local, a returned value,
+  a call result, another var, `?:`/`,`/`=`, `||`/`&&`/`??`/`+`). One per-program analysis answers "may this
+  value be the dynamic value": memoised, a cycle counts as dynamic, a binding's own read in its own stores
+  (`x = x + 1`) does not. Every checker-typed decision asks it: the typed home needs every store typed; an
+  unannotated result is dynamic when a returned value may be (P's rule, extended); D1's implicit-flow rule now
+  checks `carries` instead of checker `any`, at the outermost value-passing expression, and a store into a
+  binding that itself carries is no flow. Without this the brief's `function f() { return z; }` was an
+  invariant exception (`return[0] type externref not assignable to declared result f64`).
+- **One contracts object.** `programDynamicContracts(checker, policy, sourceFiles)`
+  (`src/ir/source-dynamic-contracts.ts`) returns `scriptVarHome`, `carries`, `parameter`, `result`,
+  `resolver`, `legalize`; program-source asks only it (it shrinks by 6 lines). `sourceDynamicParameter`,
+  `sourceDynamicResult`, `sourceDynamicResolver` and `legalizeSourceDynamicValues` are module-private now.
+
+### For slices O and Fa
+
+A new value kind needs no home work: the home is already `dynamic` and the store is lowered by from-ast into
+the carrier. Plug in at the store: from-ast's box of the new kind to `dynamic` plus a legalization arm for it
+(`box of a non-primitive value` today), and add the kind's producers to `carries` if their checker type is
+not `any` (a call of a function value, a member read). Hand-over messages measured:
+`var o = {a: 1}` → `proven dynamic binding 'o' initializer has no supported carrier`; `var arr = [1]` →
+`resolver cannot register vec for array literal`; `var s = "x"` → `dynamic operation box of a non-primitive
+value has no Prepared intrinsic`; `var f = function () {}` → `module-level closure binding 'f' not in
+module-init Slice 2 scope`; `var g = Math.max` → `identifier "Math" is not in scope`;
+`function id(v){…} var g = id` → `identifier "id" is not in scope`.
+
+### Measured
+
+- `tests/issue-7354-h-script-var-dynamic-home.test.ts`, 40 tests: 20 programs run twice (node's answer
+  returns, a wrong one throws) — the brief's programs, a var holding number→boolean→undefined, reads in and
+  writes from functions both ways, typed beside dynamic, `var x = 1, y = x`, call results, locals, the store
+  forms, a store cycle, a for-head var; refusals by name for each case above, the gc target, two scripts, typed
+  flows (`Math.abs`, a typed local, TypeScript annotated result/parameter), `+`, ToBoolean, `export var`; an
+  ES module var stays typed; unit tests of the globals arm. R census: 4 tests (the `undefined` provider dropped
+  or renamed, `__js_undefined` renamed → refused).
+- Sweep: 3 declaration forms (no initializer, hoisted read, written by a function) × 9 values (±0, 1, NaN,
+  ±Infinity, true, false, undefined) × 12 operations × 5 positions = 1,620 programs against node: 908 correct
+  (each also throws on a wrong answer), 712 named gaps (254 the parameterless-function slot join P recorded,
+  162 ToBoolean, 135 `typeof`, 135 dynamic `+`, 26 TypeScript diagnostics), 0 wrong, 0 invariant errors,
+  0 invalid Wasm. A rerun of 1,086 rows gave identical verdicts.
+- Mutation check: 38 mutants; 27 killed by H's tests, `x = x + 1`'s self exception by VG/D1. Removed as
+  implied (each survived): the dynamic home's top-level restriction (the producer makes globals only for
+  top-level statements), the flow rule's initializer arm, the conditional-test exclusion, the join's
+  `exported` test. Survivors kept, with reason: lexical exclusion in provenance (a let the proof rejects is
+  read under a TDZ check, which refuses); pending values of locals and results (a local's first store fixes its
+  IR type; recursive results are checker `any`); non-value and unknown stores (for-in/of, patterns, `with`,
+  `eval` refuse elsewhere); returns of nested functions (nested closures refuse).
+- Ordinary-pipeline bytes, the 419-path sample list against the base tree: 396 files byte-identical on the JS
+  environment and `--target standalone`, 8 compile errors on both, 15 skipped. Prepared bytes, every program
+  literal of `test262-prepared-entry`, `-runtime`, #7188 and R tests (42, as .js and .ts): identical except the
+  new H census program (refused on the base).
+- Existing tests: prepared-entry, prepared-runtime, #7188, R, D1, V/G, P and H: 265/265 (before the last
+  property-declaration commit; H and V/G re-run after it: 85/85). `issue-3518*`/`3526*` not run: H adds no
+  intrinsic, provider or resource.
+- Gates: typecheck, loc (no grant: program-source −6, presentation ±0, consumer ±0, physical plan +1 at its
+  ceiling), func, coercion-sites, oracle-ratchet, dead-exports, import-cycles, boundaries inventory (new module
+  classified).
+- Real runner, 411-row sample: negatives unchanged (14 pass). First gap over the 397 failing rows:
+  332 `dyn.truthy` (ToBoolean, slice T — the message names no function; the simulation put it in
+  `isPrimitive`), 47 `direct call to "String"` in `verifyProperty` (propertyHelper.js), 12 `not-direct` (all
+  repeated `var`s: `x` 5, `y` 2, `result`, `fin`, `__result`, `object`, and `var Infinity`), 1 `print` direct
+  call in `__consolePrintHandle__`, 1 `unknown class "Test262Error"` in `isConstructor`, 2 switch-case
+  lexical binding, 1 `DD_operator` callable annotation, 1 TypeScript parse error. No row stops at `print`,
+  `$262`, `__isArray` or `__globalObject` storage. More reach ToBoolean than simulated (332 vs 255): the
+  object-literal rows (`obj` & co.) also run the prelude first and stop there.
+
+### Pins updated
+
+- `issue-7354-vg-script-var-home.test.ts`: the refusals that H now runs moved to H's file; the TypeScript
+  hoisted read now refuses at the flow rule.
+- `issue-7354-p-parameter-contracts.test.ts`: `var g = id` now refuses at the declaration read (Fa).
+
+### Known gaps
+
+- The brief's `var a = 1; var b = a; b = undefined;` is a TypeScript error (`Type 'undefined' is not
+  assignable to type 'number'`) that the strict entry refuses before H; tested as `var b; b = a; …`.
+- Repeated `var` and multi-source programs: no home (startup plan / per-script module-init).
+- A parameterless function returning a dynamic comparison hits P's slot-join gap.
