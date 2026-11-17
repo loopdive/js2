@@ -329,6 +329,64 @@ describe("#7354 T review round 2 — `&&` / `||` with a typed left and a dynamic
   });
 });
 
+// Review round 3: a `&&` / `||` whose value is unused dropped its right operand (pre-existing on H for typed code,
+// root fix #7359). Every right operand here runs or is skipped exactly as in JavaScript; a counter program runs
+// twice, node's count (returns) and a wrong one (throws). The full cross product (432 programs) is in the record.
+describe("#7354 T review round 3 — an unused `&&` / `||` keeps its right operand", () => {
+  const HEAD =
+    "var n = 0; function inc(v){ n = n * 1 + 1; return v; } function boom(v){ if (v) throw 9; return v; } " +
+    "function id(v){ return v; } ";
+  const POSITIONS = {
+    statement: (e: string) => `function f(a, b){ ${e}; return n; } var r = f(@A, 1);`,
+    "an unread local": (e: string) => `function f(a, b){ var u = ${e}; return n; } var r = f(@A, 1);`,
+    "the top level": (e: string) => `var a = id(@A); var b = id(1); ${e}; var r = n;`,
+    "a loop": (e: string) =>
+      `function f(a, b){ for (var i = 0; i < 2; i = i + 1) { ${e}; } return n; } var r = f(@A, 1);`,
+  };
+  const cases = ["&&", "||"].flatMap((op) =>
+    ["(a > 0)", "a"].flatMap((left) =>
+      ["inc(b)", "(inc(b) > 0)"].flatMap((right) =>
+        Object.keys(POSITIONS).map((position) => [op, left, right, position] as const),
+      ),
+    ),
+  );
+
+  it.each(cases)("`%s` with left %s and right %s in %s", async (op, left, right, position) => {
+    const at = POSITIONS[position as keyof typeof POSITIONS];
+    // `a` is 1 for `&&` and 0 for `||`: the right operand runs (node counts how often).
+    const counter = HEAD + at(`${left} ${op} ${right}`).replace("@A", op === "&&" ? "1" : "0");
+    const count = new Function(`${counter} return n;`)() as number;
+    expect(count).toBeGreaterThan(0);
+    expect(await run(`${counter} if (r !== ${count}) throw 1;`)).toBe("returned");
+    expect(await run(`${counter} if (r !== ${count + 1}) throw 1;`)).toBe("threw");
+    const throwing = HEAD + at(`${left} ${op} ${right.replace("inc", "boom")}`);
+    expect(await run(throwing.replace("@A", op === "&&" ? "1" : "0"))).toBe("threw");
+    expect(await run(throwing.replace("@A", op === "&&" ? "0" : "1"))).toBe("returned");
+  });
+
+  it.each(["&&", "||"])("refuses a typed number left operand of an unused `%s` by name", async (op) => {
+    expect(await refusal(`${HEAD}function f(a, b){ (a * 1) ${op} inc(b); return n; } f(1, 1);`)).toContain(
+      `operator '${op}' requires bool operands in f`,
+    );
+  });
+});
+
+// The merge with slice Str: a native string reaches the carrier, so ToBoolean takes the string arm (empty is falsy).
+describe("#7354 T after Str — ToBoolean of a carried string", () => {
+  it.each([
+    ["a conditional", 'function f(v) { return v ? 1 : 2; }\nif (f("") !== @R || f("a") !== @W) throw 1;', "2", "1"],
+    ["an if", 'function f(v) { if (v) return 1; return 2; }\nif (f("") !== @R || f("a") !== @W) throw 1;', "2", "1"],
+    ["`||` yields an operand", 'function o(x, y) { return x || y; }\nif (o("", 5) !== @R) throw 1;', "5", '""'],
+    ["`!v`", 'function f(v) { return !v; }\nif (f("") !== @R || f("a") !== @W) throw 1;', "true", "false"],
+  ])("answers %s like JavaScript", async (_label, template, right, wrong) => {
+    const program = (r: string, w: string) => template.replaceAll("@R", r).replaceAll("@W", w);
+    expect(node(program(right, wrong))).toBe("returned");
+    expect(await run(program(right, wrong))).toBe("returned");
+    expect(node(program(wrong, right))).toBe("threw");
+    expect(await run(program(wrong, right))).toBe("threw");
+  });
+});
+
 describe("#7354 T — the legalization arms", () => {
   const dynamic = { kind: "dynamic" } as const;
   const externref = { kind: "val", val: { kind: "externref" } } as const;

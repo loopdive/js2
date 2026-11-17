@@ -1524,6 +1524,31 @@ issue.
 long enough that vitest's worker RPC timed out between compiles. `tests/issue-7354-x-dynamic-throw.test.ts` and the
 H test show the same unhandled RPC timeout under the current machine load on their base as well (all tests pass).
 
+### Review round 3
+
+**Verdict NOT MET on one must-fix, pre-existing on H:** a `&&` / `||` whose value is unused dropped its right
+operand. `function f(a, b){ a > 0 && boom(b); return 0; } f(1, 1);` returned (node throws); the same with `||`, at
+top level, in an unread local and with a counter (`inc` never ran). The reviewer confirmed value and condition
+positions and evaluation order correct over a 270-program cross product; a `?:` statement was correct.
+
+- **Cause and fix:** #7359 (the H follow-up record "unused `&&` / `||` keeps its right operand"): the value `if` was
+  the only buffer-bearing IR kind `isSideEffecting` judged without its buffers, so DCE and the lowerer dropped it
+  when its result was unused. It existed on main for typed TypeScript and on the ordinary pipeline; T made the
+  dynamic forms reachable. Merged here from `claude/7354-logical-unused`.
+- **Sweep** (`.tmp/tsweep.mts`, not committed): `&&` / `||` × left ∈ {typed Boolean `(a > 0)`, dynamic `a`, typed
+  number `(a * 1)`} × right ∈ {dynamic `inc(b)`, typed Boolean `(inc(b) > 0)`, typed number `(inc(b) * 1)`} ×
+  {statement, unread local, top level, loop body} × a ∈ {0, 1} × (counter, wrong counter, throwing call): 432
+  programs, **240 equal node, 192 named refusals ("operator '&&' requires bool operands" — every typed number
+  operand), 0 wrong**; without the fix 80 were wrong. Tests: "review round 3" in
+  `tests/issue-7354-t-truthiness-null.test.ts` (both operators × Boolean / dynamic left × dynamic / Boolean right ×
+  the four positions, counter and throw, plus the typed number refusal; 32 of them fail without the fix).
+- **Merge with Str (main `f8cfc8c0ff`):** Str lets a native string reach the dynamic carrier, and T's ToBoolean body
+  had no string arm (`function f(v){ return v ? 1 : 0; } f("")` answered 1 after a plain merge). ToBoolean now takes
+  the string arm (empty is falsy) whenever the value lane carries native strings
+  (`src/backend/wasmgc/resources/native-dynamic-values.ts`); the selection keeps Str's `strictEqStrings` beside T's
+  `toBoolean`. Tests: "T after Str" (conditional, `if`, `||` operand, `!v` on `""` / `"a"`; all 4 fail without the
+  arm).
+
 ## Str result
 
 Status 2026-11-17. Branch `claude/7354-str` on `claude/7354-p` (`1995dd6ef2`). Steps 1 and 2 of the slice are built;
