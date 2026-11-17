@@ -10,8 +10,16 @@
  *   return an explicitly annotated `any`: the dynamic-value legalization lowers
  *   it to the native `externref` carrier. An exported `any` is a host boundary
  *   and keeps its existing contract (the Boolean `any` result, or a refusal).
- *   An inferred or JSDoc `any` is not a contract here; untyped parameters stay
- *   refused until their contracts are sound.
+ * - (#7354 P) On that lane a parameter without a TypeScript annotation is the
+ *   dynamic value too. Nothing checks an untyped or JSDoc-typed parameter at
+ *   runtime, and its callers include top-level code, calls with missing
+ *   arguments and calls through values, so no call-site type is a contract.
+ *   An unannotated result is dynamic where the checker cannot vouch for the
+ *   value the body returns: it is `any`, or the body can also run off its end
+ *   (that path returns `undefined`). Other unannotated results keep the
+ *   producer's inference, which the middle end checks against the lowered
+ *   body. Either contract triggers the legalization below like an explicit
+ *   `any`.
  */
 import { ts } from "../ts-api.js";
 import type { IrType } from "./core/types.js";
@@ -20,6 +28,7 @@ import { IrUnsupportedError } from "./outcomes.js";
 import { DynamicValueGap, legalizeDynamicValues } from "./program/dynamic-value-legalization.js";
 import type { RuntimeManifestPolicy } from "../runtime/contracts/provider-policy.js";
 import type { ValType } from "../wasm/model/instructions.js";
+import { functionBodyAlwaysTerminates, irFunctionBodyReturnsValue } from "./select.js";
 
 type SourcePolicy = Pick<RuntimeManifestPolicy, "backend" | "target">;
 type DynamicLane = "host-async" | "native" | undefined;
@@ -31,6 +40,17 @@ export function checkerAny(checker: ts.TypeChecker, node: ts.Node): IrType | und
 
 function annotatedAny(checker: ts.TypeChecker, annotation: ts.TypeNode | undefined): boolean {
   return annotation !== undefined && checker.getTypeFromTypeNode(annotation) === checker.getAnyType();
+}
+
+/**
+ * A value an unannotated body returns that the checker cannot vouch for: the checker says `any`, or the body
+ * can also run off its end, which returns `undefined`. A JSDoc `@returns` adds no arm: where the checker reads
+ * it, it is the returned value's contextual type, so a value that may be dynamic is refused by the
+ * implicit-flow rule at the `return`; where the checker does not attach it to the declaration, the result is
+ * typed from the body, and an `any` body makes it dynamic through the first arm.
+ */
+function uncheckedResult(body: ts.Block, checkerSaysAny: boolean): boolean {
+  return irFunctionBodyReturnsValue(body) && (checkerSaysAny || !functionBodyAlwaysTerminates(body));
 }
 
 function hostPromiseFulfillment(checker: ts.TypeChecker, type: ts.Type): ts.Type | undefined {
@@ -46,6 +66,11 @@ function hostPromiseFulfillment(checker: ts.TypeChecker, type: ts.Type): ts.Type
   return arguments_.length === 1 ? arguments_[0] : undefined;
 }
 
+/**
+ * The lane of `declaration`'s contracts. The native lane is for functions no host calls: an `export` modifier
+ * (also `export default`) leaves it here. A function exported by name (`export { f }`) keeps the native
+ * contract, and the presentation's export join refuses it, since its slots are not the host's.
+ */
 function dynamicLane(policy: SourcePolicy, declaration: ts.FunctionDeclaration | undefined): DynamicLane {
   if (policy.backend !== "wasmgc") return undefined;
   const has = (kind: ts.SyntaxKind) => declaration?.modifiers?.some((modifier) => modifier.kind === kind) ?? false;
@@ -53,15 +78,16 @@ function dynamicLane(policy: SourcePolicy, declaration: ts.FunctionDeclaration |
   return policy.target === "standalone" && !has(ts.SyntaxKind.ExportKeyword) ? "native" : undefined;
 }
 
-/** The dynamic (or host Promise) contract of an annotated parameter, if its lane admits one. */
+/** The dynamic (or host Promise) contract of a parameter, if its lane admits one; natively also an unannotated one. */
 export function sourceDynamicParameter(
   checker: ts.TypeChecker,
   policy: SourcePolicy,
   declaration: ts.FunctionDeclaration,
   parameter: ts.ParameterDeclaration,
-  annotation: ts.TypeNode,
 ): IrType | undefined {
   const lane = dynamicLane(policy, declaration);
+  const annotation = parameter.type;
+  if (annotation === undefined) return lane === "native" ? { kind: "dynamic" } : undefined;
   if (annotatedAny(checker, annotation)) return lane ? checkerAny(checker, parameter.name) : undefined;
   if (lane !== "host-async") return undefined;
   // Preserve logical any independently of a typed Promise's host callable carrier.
@@ -72,7 +98,10 @@ export function sourceDynamicParameter(
   return { kind: "val", val: { kind: "externref" } };
 }
 
-/** The dynamic result contract: `Promise<any>` on a host async frame, an annotated `any` natively. */
+/**
+ * The dynamic result contract: `Promise<any>` on a host async frame; natively an annotated `any`, or an
+ * unannotated result the checker cannot vouch for.
+ */
 export function sourceDynamicResult(
   checker: ts.TypeChecker,
   policy: SourcePolicy,
@@ -83,8 +112,13 @@ export function sourceDynamicResult(
   if (!lane || !signature) return undefined;
   const any = checker.getAnyType();
   const result = checker.getReturnTypeOfSignature(signature);
-  if (lane === "native")
-    return annotatedAny(checker, declaration.type) && result === any ? { kind: "dynamic" } : undefined;
+  if (lane === "native") {
+    // The producer refuses a declaration without a body before it asks for a contract.
+    const dynamic = declaration.type
+      ? annotatedAny(checker, declaration.type) && result === any
+      : uncheckedResult(declaration.body!, result === any);
+    return dynamic ? { kind: "dynamic" } : undefined;
+  }
   if (hostPromiseFulfillment(checker, result) !== any) return undefined;
   if (declaration.type && hostPromiseFulfillment(checker, checker.getTypeFromTypeNode(declaration.type)) !== any)
     return undefined;
@@ -125,15 +159,16 @@ function refuseImplicitDynamicFlows(checker: ts.TypeChecker, roots: readonly ts.
 }
 
 /**
- * (#7354 D1) A program with a native `any` contract has every function lowered
- * from `declaration` legalized to the intrinsic/externref form; an operation
- * without a Prepared intrinsic is a named refusal. A program without one keeps
- * its existing path: from-ast also boxes values into dynamic ones internally
- * there (a string under unary `+`), which later stages already handle
+ * (#7354 D1) A program with a native `any` contract (since #7354 P also an
+ * untyped parameter's) has every function lowered from `declaration`
+ * legalized to the intrinsic/externref form; an operation without a Prepared
+ * intrinsic is a named refusal. A program without one keeps its existing path:
+ * from-ast also boxes values into dynamic ones internally there (a string under
+ * unary `+`), which later stages already handle
  * (`issue-3518-native-string-number-source-admission`). A function without a
  * dynamic value is returned unchanged. The flow rule runs only where a dynamic
- * value was lowered: a checker `any` the IR typed concretely (an untyped
- * parameter with a propagated number type) carries no dynamic value.
+ * value was lowered: in a function without one, no value can leave the dynamic
+ * domain.
  */
 export function legalizeSourceDynamicValues(
   checker: ts.TypeChecker,
