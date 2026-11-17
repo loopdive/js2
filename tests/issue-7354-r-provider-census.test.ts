@@ -501,9 +501,117 @@ describe("#7354 Str — the census on a typed string program", () => {
     expect(((await present(program, "entry.ts")).main as () => number)()).toBe(3);
   });
 
-  // No drop test: the IR reaches these providers through its own instructions, not a runtime-bound reference, and
-  // each resource also serves the setup itself (the flatten's empty literal, strict equality's string arm), so a
-  // dropped provider leaves a declared dependency, not a row that joins nothing. A provider always needs its row.
+  // Each string provider joins the executable occurrences that demand it, both ways and with multiplicity.
+  const provider = (id: string) => RUNTIME_PROVIDERS.find((row) => row.id === id)!;
+  it.each(IDS)("refuses a census that drops %s", async (id) => {
+    census.providers = (rows) => rows.filter((row) => row.id !== id);
+    expect(await refusal()).toContain(RUNTIME_DEMAND);
+  });
+
+  it("refuses a census that drops every string provider", async () => {
+    census.providers = (rows) => rows.filter((row) => !IDS.includes(row.id));
+    expect(await refusal()).toContain(RUNTIME_DEMAND);
+  });
+
+  it.each([
+    ["adds the foreign UTF-16 literal provider", "native.js.string.const.utf16"],
+    ["duplicates the literal provider", "native.js.string.const"],
+    ["duplicates the length provider", "native.js.string.len"],
+  ])("refuses a census that %s", async (_, id) => {
+    census.providers = (rows) => [...rows, provider(id)];
+    expect(await refusal()).toContain(RUNTIME_DEMAND);
+  });
+
+  it.each([
+    [
+      "the length provider to a program that never reads a length",
+      "native.js.string.len",
+      "function eq(a: string, b: string): boolean { return a === b; }\n" +
+        "export function main(): number { return eq('a', 'b') ? 1 : 0; }",
+    ],
+    [
+      "the string equality provider to a program with only strict equality of dynamic values",
+      "native.js.string.eq",
+      "function id(v: any): any { return v; }\nexport function main(): number { return id('a') === id('a') ? 1 : 0; }",
+    ],
+  ])("refuses a census that adds %s", async (_, id, source) => {
+    expect(((await present(source, "entry.ts")).main as () => number)()).toBe(id.endsWith("len") ? 0 : 1);
+    census.providers = (rows) => [...rows, provider(id)];
+    const result = await compile(source, options("standalone", "entry.ts"));
+    expect(result.success).toBe(false);
+    expect(messages(result).join("\n")).toContain(RUNTIME_DEMAND);
+  });
+
+  it("refuses a native setup that swaps the names of __str_equals and __str_concat", async () => {
+    const swap: Record<string, string> = { __str_equals: "__str_concat", __str_concat: "__str_equals" };
+    census.setup = declarations((row) =>
+      "name" in row && swap[row.name] ? ({ ...row, name: swap[row.name] } as never) : row,
+    );
+    expect(await refusal()).toContain(RUNTIME_DEMAND);
+  });
+
+  // The number box is a struct too, but its field 0 is the f64 payload, not a length.
+  it("refuses a length provider joined to a carrier whose field is no i32", async () => {
+    const source =
+      "function len(s: string): number { return s.length; }\nfunction id(v: any): any { return v; }\n" +
+      "export function main(): number { return len('ab') + (id(1) === id(1) ? 1 : 0); }";
+    expect(((await present(source, "entry.ts")).main as () => number)()).toBe(3);
+    census.setup = declarations((row) =>
+      row.role[0] === "values" && row.role[1] === "number"
+        ? { ...row, role: ["string-type", "any"] }
+        : row.role[0] === "string-type" && row.role[1] === "any"
+          ? { ...row, role: ["foreign"] }
+          : row,
+    );
+    const result = await compile(source, options("standalone", "entry.ts"));
+    expect(messages(result).join("\n")).toContain(RUNTIME_DEMAND);
+  });
+
+  it("refuses a selected native provider that is neither a string provider nor a runtime callable", async () => {
+    const foreign = RUNTIME_PROVIDERS.find(
+      (row) =>
+        row.implementation.kind !== "runtime-callable" &&
+        !row.feature.startsWith("js.string.") &&
+        !row.dependencies.length &&
+        !row.hostCapabilities.length,
+    )!;
+    census.providers = (rows) => [...rows, foreign];
+    expect(await refusal()).toContain(RUNTIME_DEMAND);
+  });
+
+  it("refuses a native setup with a second function in the string equality role", async () => {
+    census.setup = declarations((row) =>
+      row.role[0] === "flatten" && row.role[1] === "flatten" ? { ...row, role: ["string-equality", "equals"] } : row,
+    );
+    expect(await refusal()).toContain(RUNTIME_DEMAND);
+  });
+
+  it("refuses a native setup with a second string carrier type", async () => {
+    census.setup = declarations((row) =>
+      row.role[0] === "string-type" && row.role[1] === "flat" ? { ...row, role: ["string-type", "any"] } : row,
+    );
+    expect(await refusal()).toContain(RUNTIME_DEMAND);
+  });
+
+  it("refuses a native setup whose literal uses miss one executable string literal", async () => {
+    census.setup = (setup) =>
+      ({
+        ...setup,
+        resources: {
+          ...setup.resources,
+          literalUses: (setup.resources as { literalUses: unknown[] }).literalUses.slice(1),
+        },
+      }) as never;
+    expect(await refusal()).toContain(RUNTIME_DEMAND);
+  });
+
+  it("refuses a native setup that strips the role of one literal global the program uses", async () => {
+    census.setup = declarations((row) =>
+      row.role[0] === "literal-global" && String(row.role[1]).endsWith(":abc") ? { ...row, role: ["foreign"] } : row,
+    );
+    expect(await refusal()).toContain(RUNTIME_DEMAND);
+  });
+
   it.each(IDS)("refuses a census that renames %s", async (id) => {
     census.providers = (rows) => rows.map((row) => (row.id === id ? { ...row, id: `${id}.renamed` } : row));
     expect(await refusal()).toContain(RUNTIME_DEMAND);
