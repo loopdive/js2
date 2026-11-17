@@ -1994,6 +1994,14 @@
   ],
   "files": [
     {
+      "path": "src/ir/identifier-read.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "7354-prepared-path",
+      "nextBoundary": "Frontend identifier-read resolution order (scope, module binding, global constants, host and ambient globals), shared by from-ast's read and its typeof fold; moves with from-ast's frontend half."
+    },
+    {
       "path": "src/ir/function-object-lowering.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
