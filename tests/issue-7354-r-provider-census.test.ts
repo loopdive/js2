@@ -489,13 +489,9 @@ describe("#7354 Str — the census on a typed string program", () => {
     expect(((await present(program, "entry.ts")).main as () => number)()).toBe(3);
   });
 
-  // The literal storage and the carrier type also serve the setup's own needs (the flatten's empty literal), so only
-  // the two callables can be missed by their absence; the storage providers are refused below by their storage.
-  it.each(["native.js.string.eq", "native.js.string.concat"])("refuses a census that drops %s", async (id) => {
-    census.providers = (rows) => rows.filter((row) => row.id !== id);
-    expect(await refusal()).toContain(RUNTIME_DEMAND);
-  });
-
+  // No drop test: the IR reaches these providers through its own instructions, not a runtime-bound reference, and
+  // each resource also serves the setup itself (the flatten's empty literal, strict equality's string arm), so a
+  // dropped provider leaves a declared dependency, not a row that joins nothing. A provider always needs its row.
   it.each(IDS)("refuses a census that renames %s", async (id) => {
     census.providers = (rows) => rows.map((row) => (row.id === id ? { ...row, id: `${id}.renamed` } : row));
     expect(await refusal()).toContain(RUNTIME_DEMAND);
