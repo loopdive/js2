@@ -16,10 +16,10 @@
  *   arguments and calls through values, so no call-site type is a contract.
  *   An unannotated result is dynamic where the checker cannot vouch for the
  *   value the body returns: it is `any`, or the body can also run off its end
- *   (that path returns `undefined`). Other
- *   unannotated results keep the producer's inference, which the middle end
- *   checks against the lowered body. Either contract triggers the legalization
- *   below like an explicit `any`.
+ *   (that path returns `undefined`). Other unannotated results keep the
+ *   producer's inference, which the middle end checks against the lowered
+ *   body. Either contract triggers the legalization below like an explicit
+ *   `any`.
  * - (#7354 H) On that lane a script `var` without a proven typed home lives in
  *   the carrier whatever the checker infers for it, so "the checker cannot
  *   vouch" also covers every value read from such a home and passed on
@@ -55,11 +55,12 @@ function annotatedAny(checker: ts.TypeChecker, annotation: ts.TypeNode | undefin
 }
 
 /**
-/**
  * A value an unannotated body returns that the checker cannot vouch for: the checker says `any`, the body can
  * also run off its end, which returns `undefined`, or (#7354 H) a returned value may be the dynamic value
- * whatever the checker infers for it. A JSDoc `@returns` is no reason: a value the checker cannot vouch for
- * already meets the implicit-flow rule at the `return`, and any other value is what it says.
+ * whatever the checker infers for it. A JSDoc `@returns` adds no arm: where the checker reads it, it is the
+ * returned value's contextual type, so a value that may be dynamic meets the implicit-flow rule at the `return`
+ * (or, under #7354 H, makes the result dynamic, which from-ast refuses against the tag); where the checker does
+ * not attach it to the declaration, the result is typed from the body.
  */
 function uncheckedResult(body: ts.Block, checkerSaysAny: boolean, carries: Carries): boolean {
   return (

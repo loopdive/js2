@@ -125,6 +125,13 @@ describe("#7354 P — an untyped parameter is the dynamic value", () => {
       ["f(1) !== true", "f(1) !== false"],
     ],
     [
+      // The tag follows a statement on its line, so the checker does not attach it: f's result is the `any` of
+      // id's, dynamic by the checker-`any` arm, and returns node's `true`.
+      "a JSDoc `@returns {number}` the checker does not attach, over an untyped value",
+      "function id(v){return v} /** @returns {number} */ function f(n){return id(n)} if (f(true) !== true) throw 1;",
+      ["f(true) !== true", "f(true) !== false"],
+    ],
+    [
       "the isNegativeZero helper of harness/assert.js",
       "function isNegativeZero(value) { return value === 0 && 1 / value === -Infinity; }\n" +
         "if (!isNegativeZero(-0)) throw 1;\nif (isNegativeZero(0)) throw 2;\nif (isNegativeZero(true)) throw 3;",
@@ -177,6 +184,11 @@ describe("#7354 P — an untyped parameter is the dynamic value", () => {
     [
       "a function exported by name",
       "function f(x) { return x; }\nexport { f };",
+      "source unit, export ABI and actual function-space export must join exactly",
+    ],
+    [
+      "a function exported under another name",
+      "function f(x) { return x; }\nexport { f as g };",
       "source unit, export ABI and actual function-space export must join exactly",
     ],
     [
