@@ -24,6 +24,7 @@ import { preparedIrProgramOwner } from "./owner.js";
 import { preparedIrReadonlyMap } from "./data.js";
 import type { PreparedIrProgramFailure, PreparedIrProgramProducerInput } from "./prepared-contracts.js";
 import { assertPreparedIrProgramPopulation } from "./population.js";
+import { irProgramRuntimeDemands } from "./runtime-demands.js";
 import { irRuntimeCallableDeclaration } from "../runtime/callable-declarations.js";
 import {
   collectNativeAsyncCallableDemands,
@@ -104,6 +105,11 @@ function demandFeatures(demand: IrRuntimeManifestDemands): readonly RuntimeFeatu
     features.push(HOST_CALLBACK_WRAP_RUNTIME_FEATURES[0]);
   if (demand.functionPrototypeCallDemand) features.push(FUNCTION_PROTOTYPE_CALL_RUNTIME_FEATURES[0]);
   return features;
+}
+
+/** (#7354 Str) The features the semantic scans of `functions` demand, through the same table the freeze reads. */
+export function irRuntimeDemandedFeatures(functions: readonly IrFunction[]): readonly RuntimeFeature[] {
+  return demandFeatures(mergeDemands(functions.map(irProgramRuntimeDemands)));
 }
 
 function mergeDemands(demands: readonly IrRuntimeManifestDemands[]): IrRuntimeManifestDemands {

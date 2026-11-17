@@ -8,6 +8,7 @@ import {
 import type { IrStringEncoding, IrStringConcatMode } from "../../../ir/core/string-types.js";
 import type { IrFuncRef, IrGlobalRef } from "../../../ir/core/value-references.js";
 import type { IrUnitId } from "../../../shared/contracts/ir-identity.js";
+import { preparedStringLenProvider } from "../../../ir/runtime/intrinsic-preparation.js";
 import type { NativeInvocationRequirements } from "../../../ir/program/native-invocation-requirements.js";
 import type { NativeRealmRequirements } from "../../../ir/program/native-realm-requirements.js";
 import {
@@ -23,6 +24,7 @@ import {
   collectNativeStringValueDemands,
   nativeStringsReachCarrier,
   type NativeStringValueDemands,
+  type NativeStringValueLiteralDemand,
 } from "../../../ir/program/native-string-value-demands.js";
 import {
   assertNativeValueResourcePlanFor,
@@ -41,7 +43,10 @@ import type {
   GlobalReservation,
   FunctionReservation,
 } from "../../../wasm/physical/module-reservations.js";
-import { selectNativeStringLiteral } from "../../../runtime/wasmgc/values/string-literal-bodies.js";
+import {
+  selectNativeStringLiteral,
+  type NativeStringLiteralSelection,
+} from "../../../runtime/wasmgc/values/string-literal-bodies.js";
 import {
   declareNativeStringLiteralTypes,
   declareNativeStringLiteralResources,
@@ -222,6 +227,34 @@ function demandTuple(demands: NativeStringValueDemands, index: number) {
   return tuple(owner, i.value, i.alloc, i.storage, i.materializer);
 }
 
+/**
+ * The canonical literal one `string.const` demand selects: its encoding evidence (UTF-8 storage only) and the
+ * selection, or why it has none. (#7354 Str) A literal use's cache key is derived from this alone, by the planner
+ * and by the Prepared presentation's census.
+ */
+export function selectNativeLiteralDemand(
+  demand: Extract<NativeStringValueLiteralDemand, { kind: "string.const" }>,
+  utf8Storage: boolean,
+):
+  | { readonly encoding?: IrStringEncoding; readonly selection: NativeStringLiteralSelection }
+  | { readonly detail: string } {
+  let encoding: IrStringEncoding | undefined;
+  if (utf8Storage && demand.allocation.encoding.present) {
+    const evidence = demand.allocation.encoding.value;
+    if (evidence !== "ascii" && evidence !== "utf8-guaranteed" && evidence !== "wtf16")
+      return { detail: "invalid consumed string encoding metadata" };
+    encoding = evidence;
+  }
+  try {
+    return {
+      encoding,
+      selection: selectNativeStringLiteral(utf8Storage, utf8Storage, demand.instruction.value, encoding),
+    };
+  } catch (error) {
+    return { detail: String(error) };
+  }
+}
+
 /** Descriptive selection only; coordinator acceptance remains mandatory. */
 export function planNativeStringValuePhysical(
   demands: NativeStringValueDemands,
@@ -293,19 +326,9 @@ export function planNativeStringValuePhysical(
     if (demand.kind === "extern.regex")
       return located(demands, demand.occurrence, "regex materialization is not supported by native string values");
     const i = demand.instruction;
-    let encoding: IrStringEncoding | undefined;
-    if (options.utf8Storage && demand.allocation.encoding.present) {
-      const evidence = demand.allocation.encoding.value;
-      if (evidence !== "ascii" && evidence !== "utf8-guaranteed" && evidence !== "wtf16")
-        return located(demands, demand.occurrence, "invalid consumed string encoding metadata");
-      encoding = evidence;
-    }
-    let selection: ReturnType<typeof selectNativeStringLiteral>;
-    try {
-      selection = selectNativeStringLiteral(options.utf8Storage, options.utf8Storage, i.value, encoding);
-    } catch (error) {
-      return located(demands, demand.occurrence, String(error));
-    }
+    const selected = selectNativeLiteralDemand(demand, options.utf8Storage);
+    if ("detail" in selected) return located(demands, demand.occurrence, selected.detail);
+    const { encoding, selection } = selected;
     if (
       (i.storage && selection.kind !== "global") ||
       (i.materializer && selection.kind !== "callable") ||
@@ -741,14 +764,16 @@ function emitPreparedNativeStringConcat(
   return [{ op: "call", funcIdx: pack.output.concat.handle }];
 }
 
-/** (#7354 Str) `string.eq` calls the lazy equality resource. */
+/**
+ * (#7354 Str) `string.eq` calls the lazy equality resource, which the plan selects for every executable `string.eq`
+ * (`planNativeStringValuePhysical`), so an admitted occurrence has it.
+ */
 function emitPreparedNativeStringEquals(
   tx: PhysicalModuleReservations,
   pack: NativeStringValueReservations,
   ownerUnitId: IrUnitId,
   provider?: IrFuncRef,
 ): readonly Instr[] {
-  if (!pack.equality) fail("string equality has no admitted resource");
   requireOwnerOccurrence(
     tx,
     pack,
@@ -757,7 +782,7 @@ function emitPreparedNativeStringEquals(
     allOccurrences,
     (instruction) => instruction.kind === "string.eq" && instruction.provider === provider,
   );
-  return [{ op: "call", funcIdx: pack.equality.equals.handle }];
+  return [{ op: "call", funcIdx: pack.equality!.equals.handle }];
 }
 
 /** (#7354 Str) `string.len` reads the carrier field the selected `js.string.len` provider names. */
@@ -775,11 +800,8 @@ function emitPreparedNativeStringLength(
     allOccurrences,
     (instruction) => instruction.kind === "string.len" && instruction.provider === provider,
   );
-  const selected = owner.input.demands.projection.prepared.manifest.providers.filter(
-    (row) => row.feature === "js.string.len",
-  );
-  const field = selected.length === 1 ? selected[0]!.implementation : undefined;
-  if (field?.kind !== "carrier-field" || field.carrier !== "string") fail("string.len has no selected carrier field");
+  const field = preparedStringLenProvider(owner.input.demands.projection.prepared);
+  if (field?.arm !== "native") fail("string.len has no selected carrier field");
   return [{ op: "struct.get", typeIdx: pack.strings.layout.anyStrTypeIdx, fieldIdx: field.fieldIndex }];
 }
 
