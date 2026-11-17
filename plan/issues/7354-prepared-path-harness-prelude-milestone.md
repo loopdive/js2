@@ -1621,6 +1621,8 @@ steps 3–5 (dynamic `+`, ToString/`String(x)`, `typeof`) are the follow-up slic
   → `requireCompletedNativeStringValues` → `ownerFor` → `assertNativeStringValueReservationInput` →
   `planNativeStringValuePhysical` → `assertNativeStringOutputRequirementsCurrent`, twice per literal). Profile of a
   20-string-op program: 38.5 s total, 24.6 s in `emitPreparedNativeStringLiteral`, 16.9 s in the re-plan.
+- #3518 receipt/pin tests are red on main and hide new breakage (the Perf data.ts edit breaks six more receipts):
+  [#7358](7358-3518-receipt-pin-tests-red-on-main.md), which must land before this stack is complete.
 - Number formatting is a runtime-support batch, which the presentation refuses (`ir-program-presentation.ts`
   `checkResourceDemand`, "source and prepared runtime must independently prove no async/support demand").
 
@@ -1886,3 +1888,233 @@ ran inside the 9-minute cap and pass, the other two (X, Ty) pass when run direct
 16 tests on base and HEAD; typecheck, loc, func, coercion, oracle, dead-exports, import-cycles, boundaries pass;
 ordinary bytes identical on 100 files (40 `language/statements/switch`, ES5 sample, typeof/identifier dirs) × JS and
 standalone (77 compile per target, 23 compile errors on both).
+
+## Perf result (2026-11-17)
+
+Branch `claude/7354-perf` on `claude/7354-str`. Change in `src/backend/wasmgc/program/native-string-values.ts` only
+(plus `tests/issue-7354-perf-string-authentication.test.ts`).
+
+### Why every emit re-planned, and what replaces it
+
+`ownerFor` is #3518 fail-closed machinery: before any use of a string pack it proves the retained reservation input
+(demands with the whole program, plan, value/output/invocation/realm requirements) is still what was authenticated —
+by comparing the demands to a frozen snapshot and re-running the whole plan (`assertNativeStringValueReservationInput`).
+That proof is a pure function of the retained input (the issue registries it consults — value plans, output
+requirements, invocation and realm requirements — are append-only and keyed by fresh frozen objects). So:
+
+- `isImmutablePreparedIrValue(owner.input)` walks the retained input once: every reachable object must be frozen
+  plain data (Object/null/Array prototype, data properties only, no functions) or a frozen collection of prepared
+  data. Freezing cannot be undone, so the answer is permanent.
+- The answer is computed BEFORE the checks run on the first use; if it is `true` and the checks pass, the owner is
+  `settled` and later uses skip the snapshot comparison and the re-plan. No key, no cache: input that cannot change
+  cannot go stale. Input that can still change (any unfrozen part) is re-authenticated at every use exactly as before.
+- Unchanged per use: the realm-literal identity check (it reads the caller's live input object), the inventories, the
+  completion checks of every sub-pack, and the physical layout audit.
+- The Prepared producers hand over fully frozen input (measured on the probe program: everything reachable is frozen).
+- Also: an emit checked the pack twice (`requireCompletedNativeStringValues` then `ownerFor` again with nothing in
+  between); it now checks once (`completedOwner`). The per-row `tx.physicalIndex` loops are one `tx.physicalIndices`
+  call (same state, ownership and layout checks; one layout audit instead of one per row).
+- The predicate sits beside its only check, not in `src/ir/program/data.ts`: that file and
+  `tests/issue-3518-program-ownership-runtime-seam.test.ts` are full-file historical pins.
+
+### Measurements (compile time through the strict Prepared entry, one line = literal + concat + length + `===`)
+
+| lines | base (s) | after (s) |
+| ----: | -------: | --------: |
+|     5 |      8.6 |       5.8 |
+|    20 |     71.9 |      16.5 |
+|    50 |    436.0 |      49.9 |
+|   100 |        — |     133.4 |
+|   200 |        — |     428.2 |
+
+CPU profile, 20 lines: base 66.8 s profiled (`ownerFor` 43.0 s, re-plan 29.9 s); after 18.9 s (`ownerFor` 1.7 s,
+re-plan 0.7 s once). The goal (20 lines under 3 s, flat per-op cost) is NOT met: the remaining per-emit cost is the
+physical layout audit. One literal emit runs `PhysicalModuleReservations.#verifyLayout` 63 times (each sub-pack's
+`requireCompleted*` re-checks its dependencies, each with its own audit), and each audit snapshots every filled
+function and global, so it grows with the module — still quadratic. That audit authenticates mutable module storage,
+so it cannot be keyed or memoised; it is a different mechanism (the transaction's) and is left for its own slice.
+Measured experiment (not committed): bracketing the completion check with one audit before and one after and
+skipping the nested audits brings 20 lines to 5.7 s (emit 0.65 s); the rest is one-time plan authentication
+(`preparedIrDataMismatch`/`hasNativeCollectionState` on freshly re-collected demands, ~2.7 s).
+
+### Proofs
+
+- Non-staleness: every refusal test of `tests/issue-3518-native-string-*` and the value-chain consumers fails the
+  same set as base; new tests refuse demands and plan mutated between two emits and after several emits, show the
+  physical audit still refuses an altered global after settling, and pin the predicate on 18 value shapes.
+- Prepared bytes identical to base for the 43 distinct programs of `issue-7354-str-strings`, `test262-prepared-entry`
+  and `test262-prepared-runtime`; ordinary pipeline identical on 200 test262 files × (default, standalone).
+- Failing sets equal to base in all 42 related test files (3518 native-string ×24, realm, number-format, promise,
+  ownership seam, provider-boundary, policy-evolution, …).
+- Mutation survivors: the FrozenSet content walk (no public way to build a FrozenSet with mutable content; kept so
+  the predicate does not depend on that) and `owner.settled = settles` (deleting it only costs time).
+
+### Same pattern nearby
+
+- `emitStringEquals`/`emitStringLen`/concat go through the same `completedOwner` — covered.
+- `requireCompletedNativeValues` → `assertNativeValueResourcePlan` re-derives the value plan from the program at
+  every call (~0.07 s over 20 lines here: cheap today, same shape, not fixed).
+- `readNativeRealmLiteralInput` → `assertNativeRealmRequirementsCurrent` recalculates the realm catalog per use when a
+  realm is present (not on this path's string programs; not fixed).
+
+### Step 2 (2026-11-17): the physical audit count, the tuple scans, one copy fact
+
+What changed:
+
+- `PhysicalModuleReservations.audited(check)` (`src/wasm/physical/module-reservations.ts`). It runs a read-only
+  check with the nested layout audits skipped and one audit after it. Two facts make that sound:
+  - every ledger mutation (`#require`) inside the check is refused;
+  - the check's result is returned only after the trailing audit passes.
+
+  So whatever the check read was the audited layout, or the call fails. `completedOwner` (every string emit) uses it:
+  one audit per emit instead of 63. There is no entry audit: an earlier change is caught by the trailing one.
+- Literal tuple matching (`sameDemandTuple`, used by planning's all-pairs ambiguity check and by every emit's plan
+  scan) compares value, owner and alloc with `Object.is` before the deep comparison. That was quadratic in the
+  literal count, and every deep comparison of fresh objects paid four thrown collection-slot probes.
+- `immutableCopy` (`src/ir/program/data.ts`) records "no collection slot" for each null-prototype record it creates,
+  instead of probing for it later. That is a permanent fact of a fresh `Object.create(null)`.
+
+The frozen-entry design was evaluated and not applied. `fillOwnedFunction` already makes bodies permanent, but no
+producer was moved:
+
+- Resource bodies (flatten, scanner, values, literals, equality, dynamic values): fixtures compare
+  `structuredClone(module)` with `toStrictEqual`, which the owned private-prototype arrays fail (#3518 getter
+  invocation).
+- Source primary bodies: `rejects an already-filled source body mutation` expects the audit refusal, not a
+  TypeError.
+- The remainder helper: its test spies on `fillFunction`.
+
+After the count fix, the body share of the audit was small (0.2 s at 20 lines), so (b) was not needed.
+
+| lines | base 4318ee (s) | step 1 (s) | step 2 (s) |
+| ----: | --------------: | ---------: | ---------: |
+|     5 |             8.6 |        5.8 |        2.7 |
+|    20 |            71.9 |       16.5 |        4.4 |
+|    50 |           436.0 |       49.9 |        9.8 |
+|   100 |               — |      133.4 |       19.0 |
+|   200 |               — |      428.2 |       45.4 |
+
+Synthetic program with 100 string literals/concats spread over 25 functions: 137.3 s on base, 7.1 s now, same bytes.
+
+The targets (20 lines < 3 s, 200 lines < 20 s, flat per line) are not met. Per-line cost still rises from ~0.13 s
+to ~0.26 s. CPU profile at 100 lines (30 s profiled):
+
+- `hasNativeCollectionState` 8.4 s: probes on freshly computed objects in `preparedIrDataMismatch`. The callers are
+  one-time currentness checks that re-derive and compare the whole program: object access, census, value plan,
+  output requirements.
+- `planNativeStringValuePhysical` 7.7 s: runs four times per compile (two setup derivations, the reservation check,
+  the settle pass).
+- The audit itself 6.9 s: one per emit, plus `physicalIndex` and inventory audits outside the scope. Each audit is
+  O(module), so the cost is still quadratic in the literal count.
+
+The next levers are those re-derivations (share one derivation per immutable program rather than re-deriving per
+component) and the audit's O(module) walk. Neither is a change to this module alone.
+
+Proofs:
+
+- Failing sets equal base for 112 test files touching the changed modules, in chunks of 4. One base-only failure
+  under load (object-key-foundation) passes alone.
+- Prepared bytes are identical for the 43 programs. Ordinary bytes are identical on 200 test262 files × (default,
+  standalone).
+- New tests:
+  - a filled global altered after 5 emits is refused;
+  - an extra population slot is refused;
+  - a write injected between the check and its trailing audit (through a vitest module mock of the literal
+    completion check) is refused;
+  - a ledger mutation inside `audited` is refused;
+  - a literal tuple that differs only in its storage reference is refused.
+- Mutation survivors are all performance-only: skipping nested audits, the `audited` wrapper in `completedOwner`,
+  the three primitive prefilters (implied by the deep comparison) and the copy-brand fact.
+
+### Review round 1 (2026-11-17)
+
+- **Must-fix: forged frozen collection.** The predicate recognised FrozenMap/FrozenSet by prototype alone. Fixed in
+  `src/ir/program/data.ts`:
+  - The two classes get a private-field brand check (`#map in v` / `#set in v`).
+  - New export `preparedIrFrozenCollectionMembers(v)` returns the members only for a branded instance with the exact
+    prototype, frozen, with no own keys. A subclass carries the brand but has its own prototype, so it is refused.
+    The frozen/no-own-keys checks are implied by brand plus exact prototype, because the constructor freezes `this`
+    (mutation survivor).
+  - `preparedIrDataMismatch`, `immutableCopy` and `freezePreparedIrRuntimeValue` use the brand instead of
+    `instanceof`. This is a drop-in for genuine collections. A borrowed prototype is now a non-data object and is
+    refused, so the reviewer's repro is refused at planning ("stale or mismatched demand census").
+  - Tests: the repro; forged map and set twins over mutable storage; a bare object on the borrowed prototype; a
+    branded subclass that overrides iteration.
+- **SF1, re-entrancy:** `audited` restores the outer flag, so a nested check no longer re-opens the ledger. Test: the
+  reviewer's probe.
+- **SF2, `internFunctionType`:** appending a new type inside `audited` is refused. Cache hits stay allowed, since they
+  are read-only. Test added.
+- **SF3, comments and test names:** they now describe the single trailing audit.
+- **SF4, the copy-brand fact in data.ts:** measured alone, it saves 20 lines 5.96 → 4.91 s and 50 lines 14.4 →
+  10.0 s, so it is kept. data.ts has to change for the must-fix anyway.
+  - Receipts that pin data.ts content: `tests/helpers/ir-runtime-program-relocation.json`, `ir-c1-authority.json`,
+    `ir-ownership-evolution.ts`, `ir-runtime-program-policy-program-validator.json`,
+    `ir-source-map-position-inventory-successor.json`, `ir-deno-post-position-main-successor.json`.
+  - Their consuming tests (ownership seam, provider-boundary, policy-evolution) already fail on base, so the extra
+    breakage is masked and these receipts need a refresh when the stack lands.
+- **SF5, inherited fields:** a settled verdict now records the own-property state of `Object.prototype` and
+  `Array.prototype` that it ran under. Any change re-runs full authentication. Requiring null-prototype records was
+  tried and rejected: the prepared program is built from frozen `Object.prototype` records, so nothing would settle
+  (20 lines took 29 s). Test: adding `Object.prototype.outputRequirements` after settling is refused ("unexpected
+  output requirements"); removing it re-settles.
+- **Results:**
+  - The 24 `issue-3518-native-string-*` files plus str-strings fail the same set as base.
+  - Prepared bytes are identical for the 43 programs. Ordinary bytes are identical on 100 files × 2 targets.
+  - Scaling: 5 lines 2.9 s, 20 lines 4.9 s, 50 lines 10.7 s.
+  - Mutants killed: re-entrant restore, intern guard, prototype state, map/set brand, map/set exact prototype, set
+    member walk, and the brand in `immutableCopy` / `preparedIrDataMismatch` / `freezePreparedIrRuntimeValue`.
+  - Survivors: the implied frozen/no-own-keys check, and the perf-only `owner.settled` assignment.
+
+### Review round 2: MET (2026-11-17)
+
+- `preparedIrFrozenCollectionMembers`: the frozen/no-own-keys check is dropped. Brand plus exact prototype suffice,
+  because the constructor freezes `this` before anyone holds it.
+- `sharedPrototypeState` now documents exactly what it tracks: the own properties of `Object.prototype` and
+  `Array.prototype`. The Map/Set/iterator built-ins and `Function.prototype.call` are trusted, not tracked. Base has
+  the same gap, because its per-use re-check reads through the same built-ins.
+- The six data.ts receipt pins and the other red-on-main pin families are filed as
+  [#7358](7358-3518-receipt-pin-tests-red-on-main.md) (priority high, sprint current). It must land before the #7354
+  stack is complete.
+
+### After the merge onto Str (2026-11-17)
+
+Perf (`8e92e8c3cb`, built on Str `4318ee510f`) merged with the reviewed Str (`eeb2e28a24`, PR #7291), then with main
+after #7291 landed. Main since the Str tip changed only benchmark artifacts and the LOC baseline.
+
+What the port changed:
+
+- One conflict in `native-string-values.ts`: Str had folded the concat emitter's occurrence scan into
+  `requireOwnerOccurrence`, the shared check of concat, `string.eq` and `string.len`. Str's structure is kept. Its
+  completion check (`requireCompletedNativeStringValues` and then `ownerFor` again) is now Perf's `completedOwner`. So
+  every string emit (literal, concat, equality, length) runs one owner check, takes the settled-owner fast path, and
+  does ONE `audited` layout audit. No check of either side is removed: Str's occurrence admission and Perf's realm
+  identity, inventory and completion checks all still run on every emit.
+- Issue file: Str's review sections first, Perf's after them; the frontmatter grants are Str's (Perf added none).
+- `data.ts`, `module-reservations.ts` and the census test merged without conflict.
+
+Scaling through the strict Prepared entry (one line = literal + concat + length + `===`, standalone):
+
+| lines | before: Str `eeb2e28a24` (s) | after (s) |
+| ----: | ---------------------------: | --------: |
+|     5 |                          9.3 |       1.8 |
+|    20 |                         76.4 |       3.6 |
+|    50 |      not finished in 480 s |       7.7 |
+
+Before and after produce the same binary at 5 and 20 lines.
+
+Proofs:
+
+- Gates: typecheck, LOC and function budgets with the base at the Str tip and at the main tip, coercion sites,
+  oracle ratchet, dead exports and import cycles are all green.
+- Tests pass: Perf, Str strings, Str emitter requests, R census (100), D1, P, V/G, H, H2, prepared entry and runtime,
+  and #7188.
+- The 24 `issue-3518-native-string-*` files, run in chunks of 4, fail the same 67 tests (same sets) as the Str tip.
+- Prepared bytes are identical to the Str tip for all 90 compiles of the Str strings, prepared-entry and D1 test
+  files: 45 binaries and the refusal messages of the rest.
+- Ordinary bytes are identical on 60 test262 files × (default, standalone).
+- Forgeries still refuse:
+  - Perf's: a forged frozen map or set; a mutation after a nested `audited` returns; demands or plan changed between
+    two emits.
+  - Str's: swapping the names of `__str_equals` and `__str_concat` (the census has no equals/flatten swap); repointing
+    a literal use to another literal's storage; stripping the role of the `""` literal global.
+- `changed-root-tests.sh` (interpreter engine): green.
