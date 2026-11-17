@@ -47,11 +47,8 @@ function annotatedAny(checker: ts.TypeChecker, annotation: ts.TypeNode | undefin
  * can also run off its end, which returns `undefined`. A JSDoc `@returns` is no reason: a value the checker
  * cannot vouch for already meets the implicit-flow rule at the `return`, and any other value is what it says.
  */
-function uncheckedResult(declaration: ts.FunctionDeclaration, checkerSaysAny: boolean): boolean {
-  const body = declaration.body;
-  return (
-    body !== undefined && irFunctionBodyReturnsValue(body) && (checkerSaysAny || !functionBodyAlwaysTerminates(body))
-  );
+function uncheckedResult(body: ts.Block, checkerSaysAny: boolean): boolean {
+  return irFunctionBodyReturnsValue(body) && (checkerSaysAny || !functionBodyAlwaysTerminates(body));
 }
 
 function hostPromiseFulfillment(checker: ts.TypeChecker, type: ts.Type): ts.Type | undefined {
@@ -109,9 +106,10 @@ export function sourceDynamicResult(
   const any = checker.getAnyType();
   const result = checker.getReturnTypeOfSignature(signature);
   if (lane === "native") {
+    // The producer refuses a declaration without a body before it asks for a contract.
     const dynamic = declaration.type
       ? annotatedAny(checker, declaration.type) && result === any
-      : uncheckedResult(declaration, result === any);
+      : uncheckedResult(declaration.body!, result === any);
     return dynamic ? { kind: "dynamic" } : undefined;
   }
   if (hostPromiseFulfillment(checker, result) !== any) return undefined;
