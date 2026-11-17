@@ -323,7 +323,7 @@ function capturePresentation(request: IrProgramPresentationRequest, gap: GapReco
   )
     gap("codegenOptions.link", "option-association", "resolved link collection must agree with captured options");
   const declarations: DeclarationCapture[] = [];
-  const globals: { sourceFile: string; start: number; end: number; name: string; numeric: boolean }[] = [];
+  const globals: GlobalCapture[] = [];
   function classify(type: ts.Type): "number" | "boolean" | "void" | undefined {
     if ((type.flags & ts.TypeFlags.NumberLike) !== 0) return "number";
     if ((type.flags & ts.TypeFlags.BooleanLike) !== 0) return "boolean";
@@ -333,22 +333,19 @@ function capturePresentation(request: IrProgramPresentationRequest, gap: GapReco
   for (const source of input.sourceFiles) {
     for (const statement of source.statements) {
       if (!ts.isVariableStatement(statement)) continue;
+      // (#7354 G) Only an exported global has a host contract; any other is the IR's own storage (#7188 S1). An
+      // `export { name }` of one is refused at the export join, whose witness must be numeric.
+      const exported = statement.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword);
       for (const declaration of statement.declarationList.declarations) {
-        if (ts.isIdentifier(declaration.name))
-          globals.push({
+        if (!ts.isIdentifier(declaration.name)) continue;
+        const span = { sourceFile: source.fileName, start: declaration.getStart(source), end: declaration.end };
+        const numeric = classify(input.checker.getTypeAtLocation(declaration)) === "number";
+        if (exported && !numeric)
+          gap("declaration", "non-numeric-boundary", "top-level global storage needs a numeric source classification", {
             sourceFile: source.fileName,
-            start: declaration.getStart(source),
-            end: declaration.end,
-            name: declaration.name.text,
-            numeric: classify(input.checker.getTypeAtLocation(declaration)) === "number",
           });
+        globals.push({ ...span, name: declaration.name.text, numeric });
       }
-    }
-    for (const row of globals.filter((row) => row.sourceFile === source.fileName)) {
-      if (!row.numeric)
-        gap("declaration", "non-numeric-boundary", "top-level global storage needs a numeric source classification", {
-          sourceFile: source.fileName,
-        });
     }
     const visit = (node: ts.Node): void => {
       if (ts.isFunctionDeclaration(node) && node.body) {
