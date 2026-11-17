@@ -183,12 +183,7 @@ describe("#7354 D1 — the dynamic value on the Prepared standalone path", () =>
 
   it.each([
     ["loose equality", "return id(1) == id(1) ? 1 : 0;", "dynamic operation dyn.eq (loose) has no Prepared intrinsic"],
-    [
-      "the null tag test",
-      "return id(1) === null ? 1 : 0;",
-      "dynamic operation tag.test of tag 0 has no Prepared intrinsic",
-    ],
-    ["ToBoolean", "return id(1) ? 1 : 0;", "dynamic operation dyn.truthy has no Prepared intrinsic"],
+    // (#7354 T) The null tag test and ToBoolean are expressed now (tests/issue-7354-t-truthiness-null.test.ts).
     [
       "dynamic +",
       "return add(id(1), id(2)) === 3 ? 1 : 0;",
@@ -327,6 +322,7 @@ describe("#7354 D1 — the native dynamic-value resources", () => {
     expect(selectNativeDynamicValues([probe("host")])).toBeUndefined();
     expect(selectNativeDynamicValues([probe("runtime")])).toEqual({
       strictEq: false,
+      toBoolean: false,
       undefinedValue: false,
       isUndefined: true,
     });

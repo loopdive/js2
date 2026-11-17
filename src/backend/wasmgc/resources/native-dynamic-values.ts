@@ -2,8 +2,8 @@
 
 /**
  * (#7354 D1) The dynamic value's own runtime functions on the Prepared
- * standalone lane: strict equality, the `undefined` value and the `undefined`
- * probe. Every body is a shared pure builder; the number and Boolean carrier
+ * standalone lane: strict equality, ToBoolean (#7354 T), the `undefined` value
+ * and the `undefined` probe. Every body is a shared pure builder; the number and Boolean carrier
  * functions they call are the issued primitive owners', never a lookalike.
  */
 import type { PhysicalModuleReservations, FunctionReservation } from "../../../wasm/physical/module-reservations.js";
@@ -11,6 +11,7 @@ import type { IrInstrIntrinsic } from "../../../ir/core/nodes.js";
 import type { NativeValueResourcePlan } from "../../../ir/program/native-value-resources.js";
 import { buildObjectSameValueBody } from "../../../runtime/wasmgc/values/object-same-value-body.js";
 import { buildIsUndefinedBody } from "../../../runtime/wasmgc/values/primitive-layouts.js";
+import { buildToBooleanBody, buildToBooleanLocals } from "../../../runtime/wasmgc/values/to-boolean-body.js";
 import type { NativeStringValueDeclaration } from "../../../runtime/wasmgc/values/native-resource-declaration-types.js";
 import { UNDEF_F64_BITS } from "../../../shared/contracts/f64-value-markers.js";
 import {
@@ -26,9 +27,10 @@ import {
   type NativeValueReservations,
 } from "./native-values.js";
 
-/** Which of the three functions the projection's intrinsics demand. */
+/** Which of the functions the projection's intrinsics demand. */
 export interface NativeDynamicValueSelection {
   readonly strictEq: boolean;
+  readonly toBoolean: boolean;
   readonly undefinedValue: boolean;
   readonly isUndefined: boolean;
 }
@@ -44,6 +46,7 @@ export function selectNativeDynamicValues(
   const has = (id: string) => intrinsics.some((instruction) => instruction.id === id);
   const selection = {
     strictEq: has("js.value.strict_eq"),
+    toBoolean: has("js.value.to_boolean"),
     undefinedValue: has("js.value.undefined"),
     isUndefined: intrinsics.some(
       (instruction) =>
@@ -59,6 +62,7 @@ const EXTERNREF = { kind: "externref" } as const;
 const I32 = { kind: "i32" } as const;
 const ROWS = [
   ["strictEq", "strict-eq", "__js_strict_eq", { params: [EXTERNREF, EXTERNREF], results: [I32] }],
+  ["toBoolean", "to-boolean", "__is_truthy", { params: [EXTERNREF], results: [I32] }],
   ["undefinedValue", "undefined-value", "__js_undefined", { params: [], results: [EXTERNREF] }],
   ["isUndefined", "is-undefined", "__extern_is_undefined", { params: [EXTERNREF], results: [I32] }],
 ] as const;
@@ -85,6 +89,7 @@ export function declareNativeDynamicValueResources(key: string, selection: Nativ
 
 export interface NativeDynamicValueReservations {
   readonly strictEq?: FunctionReservation;
+  readonly toBoolean?: FunctionReservation;
   readonly undefinedValue?: FunctionReservation;
   readonly isUndefined?: FunctionReservation;
 }
@@ -157,6 +162,20 @@ export function fillNativeDynamicValueResources(
       }),
     });
   }
+  // The admitted carriers are the number and Boolean boxes, the `undefined` singleton and the null reference;
+  // no BigInt or string reaches a Prepared dynamic value, so those arms are absent.
+  if (pack.toBoolean)
+    tx.fillFunction(pack.toBoolean, {
+      locals: buildToBooleanLocals(),
+      body: buildToBooleanBody({
+        anyValueTypeIdx: values.types.anyValue.typeIndex,
+        internalizeOnce: true,
+        boxNumberTypeIdx: values.types.boxedNumber.typeIndex,
+        boxBooleanTypeIdx: values.types.boxedBoolean.typeIndex,
+        bigIntTypeIdx: -1,
+        anyStringTypeIdx: -1,
+      }),
+    });
   if (pack.undefinedValue)
     tx.fillFunction(pack.undefinedValue, {
       locals: [],

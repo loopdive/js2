@@ -121,28 +121,39 @@ export function sourceDynamicResult(
   return { kind: "dynamic" };
 }
 
-/** from-ast lowers a dynamic value only where the lane has its carrier. */
-export function sourceDynamicResolver(policy: SourcePolicy): { readonly resolveDynamic?: () => ValType } {
-  return dynamicLane(policy, undefined) === "native" ? { resolveDynamic: () => ({ kind: "externref" }) } : {};
+/**
+ * from-ast lowers a dynamic value only where the lane has its carrier. (#7354 T) That carrier is the raw
+ * `externref`: `null` is its null reference (from-ast's dynamic `null` literal and `=== null` test), and a
+ * catch binding reads the exception payload as the dynamic value.
+ */
+export function sourceDynamicResolver(policy: SourcePolicy): {
+  readonly resolveDynamic?: () => ValType;
+  readonly dynamicCarrierIsExternref?: () => boolean;
+} {
+  return dynamicLane(policy, undefined) === "native"
+    ? { resolveDynamic: () => ({ kind: "externref" }), dynamicCarrierIsExternref: () => true }
+    : {};
 }
 
 /**
  * (#7354 D1) The one rule for a dynamic value leaving the dynamic domain. An
- * `any` expression whose contextual type is not `any` (an argument for a typed
+ * `any` expression (or, since T, an `unknown` one: a catch binding is the
+ * dynamic value) whose contextual type is neither (an argument for a typed
  * parameter, the value returned from a typed result, the initializer or
  * assigned value of a typed binding, a property or element of a typed literal)
  * would cross into that type with no conversion the source wrote. The Prepared
  * path has no checked unbox yet (a mismatch must convert or throw, never pass),
- * so the flow refuses by name. An operator that converts explicitly (`+v`,
+ * so the flow refuses by name; a type assertion (`e as number`) converts
+ * nothing and is such a flow. An operator that converts explicitly (`+v`,
  * `v * 2`, `v === w`) gives its operand no contextual type; the legalization
  * expresses it or refuses it by name.
  */
 function refuseImplicitDynamicFlows(checker: ts.TypeChecker, roots: readonly ts.Node[]): void {
-  const any = checker.getAnyType();
+  const untyped = (type: ts.Type | undefined) => type === checker.getAnyType() || type === checker.getUnknownType();
   const visit = (node: ts.Node): void => {
-    if (ts.isExpression(node) && checker.getTypeAtLocation(node) === any) {
+    if (ts.isExpression(node) && untyped(checker.getTypeAtLocation(node))) {
       const contextual = checker.getContextualType(node);
-      if (contextual !== undefined && contextual !== any)
+      if (contextual !== undefined && !untyped(contextual))
         throw new IrUnsupportedError(
           "type-resolution-unsupported",
           "build",

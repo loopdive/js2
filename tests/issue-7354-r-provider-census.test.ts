@@ -390,7 +390,8 @@ describe("#7354 R — the census refuses what joins nothing", () => {
 
   // Two native providers (box and unbox) make the census compare provider populations; a non-canonical provider
   // must refuse before that comparison, never reach it.
-  const twoNatives = "export function f(x: number): number { try { throw x * 2; } catch (e) { return e as number; } }";
+  // (#7354 T) The catch binding is the dynamic value, so the conversion back to a number is the explicit ToNumber.
+  const twoNatives = "export function f(x: number): number { try { throw x * 2; } catch (e: any) { return e * 1; } }";
   const renamed = (row: RuntimeProviderDefinition) => ({ ...row, id: `${row.id}.renamed` });
   it.each([
     [
@@ -424,20 +425,20 @@ describe("#7354 R — the census refuses what joins nothing", () => {
   });
 });
 
-describe("#7354 D1 — the census on a dynamic-value program", () => {
+describe("#7354 D1/T — the census on a dynamic-value program", () => {
   const program =
     "function id(v: any): any { return v; }\n" +
-    "export function main(): number { return (id(1) === id(1) ? 1 : 0) + (id(undefined) === undefined ? 2 : 0); }";
+    "export function main(): number { return (id(1) === id(1) ? 1 : 0) + (id(undefined) === undefined ? 2 : 0) + (id(1) ? 4 : 0); }";
   const refusal = async () => {
     const result = await compile(program, options("standalone", "entry.ts"));
     expect(result.success).toBe(false);
     return messages(result).join("\n");
   };
   const RUNTIME_DEMAND = "host provider or async demand is outside this numeric presentation contract";
-  const IDS = ["native.js.value.strict_eq", "native.js.value.undefined"];
+  const IDS = ["native.js.value.strict_eq", "native.js.value.to_boolean", "native.js.value.undefined"];
 
   it("presents the unaltered program", async () => {
-    expect(((await present(program, "entry.ts")).main as () => number)()).toBe(3);
+    expect(((await present(program, "entry.ts")).main as () => number)()).toBe(7);
   });
 
   it.each(IDS)("refuses a census that drops %s", async (id) => {
@@ -450,17 +451,20 @@ describe("#7354 D1 — the census on a dynamic-value program", () => {
     expect(await refusal()).toContain(RUNTIME_DEMAND);
   });
 
-  it.each(["__js_strict_eq", "__js_undefined"])("refuses a native setup that renames the %s resource", async (name) => {
-    census.setup = (setup) =>
-      ({
-        ...setup,
-        resources: {
-          ...setup.resources,
-          declarations: setup.resources.declarations.map((row) =>
-            "name" in row && row.name === name ? { ...row, name: `${name}_renamed` } : row,
-          ),
-        },
-      }) as never;
-    expect(await refusal()).toContain(RUNTIME_DEMAND);
-  });
+  it.each(["__js_strict_eq", "__is_truthy", "__js_undefined"])(
+    "refuses a native setup that renames the %s resource",
+    async (name) => {
+      census.setup = (setup) =>
+        ({
+          ...setup,
+          resources: {
+            ...setup.resources,
+            declarations: setup.resources.declarations.map((row) =>
+              "name" in row && row.name === name ? { ...row, name: `${name}_renamed` } : row,
+            ),
+          },
+        }) as never;
+      expect(await refusal()).toContain(RUNTIME_DEMAND);
+    },
+  );
 });
