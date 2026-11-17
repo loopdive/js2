@@ -358,6 +358,7 @@ describe("#7354 D1 — the native dynamic-value resources", () => {
       toBoolean: false,
       undefinedValue: false,
       isUndefined: true,
+      isString: false,
     });
   });
 
