@@ -2241,6 +2241,8 @@ Delta review at `7ffc4e1087`: NOT MET, one must-fix and two should-fixes.
   - Fixing it means changing shared from-ast code, which changes ordinary-pipeline output for these programs; that
     would be a correctness fix. The review brief says to stop and report in that case, so the decision is with the
     lead.
+  - **Fixed by [#7361](7361-typeof-static-answer-from-hinted-operand.md)**, its own fix off `main` (branch
+    `claude/7361-typeof-static`). Ty gets it through `main` once it lands; it is not merged here.
 - **Should-fix 1, done:** `KIND_TEST.string` is the named sentinel `"refuse"`, not `undefined`. A missing literal in
   `KIND_OF_TYPEOF` still means constant false, and the two meanings no longer share one value.
 - **Should-fix 2, done:** the `dyn.to_number` comment now names the string arm (StringToNumber). The header
