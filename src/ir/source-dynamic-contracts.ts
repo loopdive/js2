@@ -44,6 +44,7 @@ type Signature = { readonly params: readonly IrType[]; readonly returnType: IrTy
 type SourceGlobal = { readonly binding: { readonly type: IrType } };
 type SourcePolicy = Pick<RuntimeManifestPolicy, "backend" | "target">;
 type DynamicLane = "host-async" | "native" | undefined;
+const IR_BOOLEAN_RESULT: IrType = Object.freeze({ kind: "val", val: Object.freeze({ kind: "i32", boolean: true }) });
 
 /** Canonical any identity excludes TypeScript's separate error-any recovery type. */
 export function checkerAny(checker: ts.TypeChecker, node: ts.Node): IrType | undefined {
@@ -142,6 +143,25 @@ function sourceDynamicResult(
   return { kind: "dynamic" };
 }
 
+/**
+ * (#7354 T/X review) Natively an unannotated result the checker types Boolean, and that is not dynamic, is the
+ * Boolean carrier: the propagated result (shared with the ordinary pipeline) lowers it to a plain `i32`, which the
+ * presentation's source-declaration join refuses (`return e === 3`, `return 1 === 1` in a parameterless function).
+ */
+function sourceBooleanResult(
+  checker: ts.TypeChecker,
+  policy: SourcePolicy,
+  declaration: ts.FunctionDeclaration,
+): IrType | undefined {
+  const signature = checker.getSignatureFromDeclaration(declaration);
+  return dynamicLane(policy, declaration) === "native" &&
+    declaration.type === undefined &&
+    signature !== undefined &&
+    (checker.getReturnTypeOfSignature(signature).flags & ts.TypeFlags.BooleanLike) !== 0
+    ? IR_BOOLEAN_RESULT
+    : undefined;
+}
+
 /** The lane has the native dynamic carrier (wasmgc standalone). */
 export function nativeDynamicLane(policy: SourcePolicy): boolean {
   return dynamicLane(policy, undefined) === "native";
@@ -151,10 +171,28 @@ export function nativeDynamicLane(policy: SourcePolicy): boolean {
 export interface ProgramDynamicContracts extends SourceDynamicProvenance {
   /** The dynamic (or host Promise) contract of a parameter of `declaration`, if any. */
   readonly parameter: (declaration: ts.FunctionDeclaration, parameter: ts.ParameterDeclaration) => IrType | undefined;
-  /** The dynamic result contract of `declaration`, if any. */
+  /** The dynamic result contract of `declaration`, or natively its Boolean carrier, if any. */
   readonly result: (declaration: ts.FunctionDeclaration) => IrType | undefined;
-  /** from-ast lowers a dynamic value only where the lane has its carrier. */
-  readonly resolver: { readonly resolveDynamic?: () => ValType };
+  /**
+   * An unannotated result typed by the ordinary pipeline's propagation (`propagated`). Where it has no type, the
+   * result is void when the body returns no value, else a refusal naming the checker's type (`return n as
+   * unknown`) rather than a void result a call would trip over later.
+   */
+  readonly propagatedResult: (
+    declaration: ts.FunctionDeclaration,
+    propagated: IrType | null | undefined,
+  ) => IrType | null;
+  /**
+   * from-ast lowers a dynamic value only where the lane has its carrier. (#7354 T) That carrier is the raw
+   * `externref`: `null` is its null reference (from-ast's dynamic `null` literal and `=== null` test), and a
+   * catch binding reads the exception payload as the dynamic value (provenance models it: a local without an
+   * initializer). Invariant: every payload that can reach a catch is in the admitted set (a dynamic value, a boxed
+   * number, `null`) or an Error object, for which every dynamic operation is exact too. A string, Boolean or object
+   * throw, a TDZ ReferenceError and the runtime's null-vector throw (`ref.null extern`, which would read as `null`)
+   * all refuse before a catch today; the slice that makes one reachable updates
+   * tests/issue-7354-x-dynamic-throw.test.ts, which pins each.
+   */
+  readonly resolver: { readonly resolveDynamic?: () => ValType; readonly dynamicCarrierIsExternref?: () => boolean };
   /** {@link legalizeSourceDynamicValues} for the functions lowered from `roots`. */
   readonly legalize: (
     signatures: Iterable<Signature>,
@@ -178,8 +216,23 @@ export function programDynamicContracts(
   return {
     ...provenance,
     parameter: (declaration, parameter) => sourceDynamicParameter(checker, policy, declaration, parameter),
-    resolver: nativeDynamicLane(policy) ? { resolveDynamic: () => ({ kind: "externref" }) } : {},
-    result: (declaration) => sourceDynamicResult(checker, policy, declaration, provenance.carries),
+    resolver: nativeDynamicLane(policy)
+      ? { resolveDynamic: () => ({ kind: "externref" }), dynamicCarrierIsExternref: () => true }
+      : {},
+    result: (declaration) =>
+      sourceDynamicResult(checker, policy, declaration, provenance.carries) ??
+      sourceBooleanResult(checker, policy, declaration),
+    propagatedResult: (declaration, propagated) => {
+      if (propagated || !irFunctionBodyReturnsValue(declaration.body!)) return propagated ?? null;
+      const result = checker.getReturnTypeOfSignature(checker.getSignatureFromDeclaration(declaration)!);
+      // `return undefined;` is the void result a call reads as `undefined`.
+      if (result.flags & (ts.TypeFlags.Void | ts.TypeFlags.Undefined)) return null;
+      throw new IrUnsupportedError(
+        "type-resolution-unsupported",
+        "build",
+        `function ${declaration.name?.text} returns ${checker.typeToString(result)}, which has no Prepared result contract`,
+      );
+    },
     legalize: (signatures, globals, roots, functions) =>
       legalizeSourceDynamicValues(checker, policy, signatures, globals, roots, functions, provenance.carries),
   };
@@ -217,15 +270,19 @@ function refuseImplicitDynamicFlows(checker: ts.TypeChecker, roots: readonly ts.
 }
 
 /**
- * `node`'s value is its parent's (a parenthesis, a conditional's branch, a comma's result): the parent's flow
- * counts. A conditional's test has no contextual type, so skipping it too loses no check.
+ * `node`'s value is its parent's (a parenthesis, a conditional's branch, a comma's result, since #7354 T an
+ * operand of `||`/`&&`, which yields one of its operands): the parent's flow counts. A conditional's test has no
+ * contextual type, so skipping it too loses no check.
  */
 function passedOn(node: ts.Expression): boolean {
   const { parent } = node;
+  if (ts.isParenthesizedExpression(parent) || ts.isConditionalExpression(parent)) return true;
+  if (!ts.isBinaryExpression(parent)) return false;
+  const operator = parent.operatorToken.kind;
   return (
-    ts.isParenthesizedExpression(parent) ||
-    ts.isConditionalExpression(parent) ||
-    (ts.isBinaryExpression(parent) && parent.operatorToken.kind === ts.SyntaxKind.CommaToken && parent.right === node)
+    (operator === ts.SyntaxKind.CommaToken && parent.right === node) ||
+    operator === ts.SyntaxKind.BarBarToken ||
+    operator === ts.SyntaxKind.AmpersandAmpersandToken
   );
 }
 
@@ -245,7 +302,8 @@ function storedIntoCarrier(value: ts.Expression, carries: Carries): boolean {
 
 /**
  * (#7354 D1) A program with a native `any` contract (since #7354 P also an
- * untyped parameter's, since #7354 H also a script `var`'s dynamic home) has
+ * untyped parameter's, since #7354 H also a script `var`'s dynamic home, since
+ * #7354 T a catch binding, which reads the exception payload as the dynamic value) has
  * every function lowered from `declaration` legalized to the
  * intrinsic/externref form; an operation without a Prepared
  * intrinsic is a named refusal. A program without one keeps its existing path:
@@ -265,7 +323,9 @@ function legalizeSourceDynamicValues(
   functions: readonly IrFunction[],
   carries: Carries,
 ): readonly IrFunction[] {
+  const roots = "kind" in declaration ? [declaration] : declaration;
   const contracted =
+    roots.some(bindsCatch) ||
     globals.some((global) => global.binding.type.kind === "dynamic") ||
     [...signatures].some(
       (signature) =>
@@ -279,7 +339,13 @@ function legalizeSourceDynamicValues(
     if (!(error instanceof DynamicValueGap)) throw error;
     throw new IrUnsupportedError("type-resolution-unsupported", "build", error.message);
   }
-  if (legalized.some((fn, index) => fn !== functions[index]))
-    refuseImplicitDynamicFlows(checker, "kind" in declaration ? [declaration] : declaration, carries);
+  if (legalized.some((fn, index) => fn !== functions[index])) refuseImplicitDynamicFlows(checker, roots, carries);
   return legalized;
+}
+
+/** `node` holds a `catch` clause with a binding (nested functions included: they are lowered from the same roots). */
+function bindsCatch(node: ts.Node): boolean {
+  return (
+    (ts.isCatchClause(node) && node.variableDeclaration !== undefined) || ts.forEachChild(node, bindsCatch) === true
+  );
 }

@@ -14,13 +14,23 @@
  * express throws {@link DynamicValueGap} with a name instead of reaching the
  * backend.
  *
- * Soundness rests on the admitted value set: only numbers, booleans and
- * `undefined` can enter a dynamic value here (every other box refuses), and the
- * runtime functions behind the intrinsics are exact for that set.
+ * Soundness rests on the admitted value set: only numbers, booleans,
+ * `undefined` and `null` can enter a dynamic value here (every other box
+ * refuses), and the runtime functions behind the intrinsics are exact for that
+ * set. (#7354 T) `null` is the carrier's null reference, as on the ordinary
+ * standalone pipeline; `undefined` is the non-null singleton, so the two stay
+ * apart under strict equality and the `undefined` probe.
  */
 import { irValueTypes } from "../analysis/value-types.js";
 import { INTRINSIC_SIGNATURE_VERSION, INTRINSIC_DEFINITIONS, type IntrinsicId } from "../core/intrinsics.js";
-import { mapNestedBuffers, type IrFunction, type IrGlobalRef, type IrInstr, type IrValueId } from "../core/nodes.js";
+import {
+  forEachInstrDeep,
+  mapNestedBuffers,
+  type IrFunction,
+  type IrGlobalRef,
+  type IrInstr,
+  type IrValueId,
+} from "../core/nodes.js";
 import type { IrType } from "../core/types.js";
 import type { IrUnitId } from "../../shared/contracts/ir-identity.js";
 import { irRuntimeCallableDeclaration } from "../runtime/callable-declarations.js";
@@ -61,12 +71,18 @@ export function legalizeDynamicValues(fn: IrFunction): IrFunction {
     ...(instr.site === undefined ? {} : { site: instr.site }),
   });
   const isDynamic = (value: IrValueId): boolean => types.get(value)?.kind === "dynamic";
+  const thrown = new Set<IrValueId>();
+  for (const block of fn.blocks)
+    for (const instr of block.instrs) forEachInstrDeep(instr, (i) => i.kind === "throw" && thrown.add(i.value));
 
   const expand = (instr: IrInstr): readonly IrInstr[] => {
     switch (instr.kind) {
       case "box": {
         if (instr.toType.kind !== "dynamic") return [instr];
         if (instr.toType.tag === JS_TAG_IDS.Boolean) return [intrinsic(instr, "js.boolean.box", [instr.value])];
+        // The Null partition has one value, the carrier's null reference.
+        if (instr.toType.tag === JS_TAG_IDS.Null)
+          return [{ kind: "const", value: { kind: "null", ty: CARRIER }, result: instr.result, resultType: CARRIER }];
         const source = types.get(instr.value);
         if (source?.kind === "val" && source.val.kind === "f64")
           return [intrinsic(instr, "js.number.box", [instr.value])];
@@ -87,17 +103,24 @@ export function legalizeDynamicValues(fn: IrFunction): IrFunction {
         if (!isDynamic(instr.value)) return [instr];
         if (instr.tagId === JS_TAG_IDS.NumberF64) return [intrinsic(instr, "js.number.unbox", [instr.value])];
         return gap(`unbox of tag ${instr.tagId}`);
-      // Only the `undefined` probe has a source producer here; the number and
-      // Boolean tag tests come from `typeof`, which refuses as `dyn.typeof`.
+      // Only the `undefined` and `null` probes have a source producer here; the
+      // number and Boolean tag tests come from `typeof`, which refuses as
+      // `dyn.typeof`.
       case "tag.test":
         if (!isDynamic(instr.value)) return [instr];
         if (instr.tagId === JS_TAG_IDS.Undefined) return [intrinsic(instr, "js.extern.is_undefined", [instr.value])];
+        if (instr.tagId === JS_TAG_IDS.Null)
+          return [
+            { kind: "unary", op: "ref.is_null", rand: instr.value, result: instr.result, resultType: instr.resultType },
+          ];
         return gap(`tag.test of tag ${instr.tagId}`);
       case "dyn.undefined":
         return [intrinsic(instr, "js.value.undefined", [])];
-      // ToNumber over the admitted set (number, boolean, undefined) is exactly the
-      // primitive unboxer: a number reads its payload, a boolean 0/1, the
-      // `undefined` singleton NaN.
+      case "dyn.truthy":
+        return [intrinsic(instr, "js.value.to_boolean", [instr.value])];
+      // ToNumber over the admitted set (number, boolean, undefined, null) is
+      // exactly the primitive unboxer: a number reads its payload, a boolean
+      // 0/1, the `undefined` singleton NaN, the null reference 0.
       case "dyn.to_number":
         return [intrinsic(instr, "js.number.unbox", [instr.value])];
       case "dyn.eq": {
@@ -116,8 +139,13 @@ export function legalizeDynamicValues(fn: IrFunction): IrFunction {
           [instr.resultType, ...instr.args.map((arg) => types.get(arg))].some((type) => type?.kind === "dynamic")
           ? gap(instr.target.name)
           : [instr];
+      // (#7354 X) The carrier already is the externref exception payload, so a
+      // thrown dynamic value keeps the coercion, which lowers to nothing over
+      // the legalized operand. The catch binding reads the payload back as the
+      // dynamic value: every value an accepted program can throw (a dynamic
+      // value, a boxed number, `null`) is in the admitted set.
       case "coerce.to_externref":
-        return isDynamic(instr.value) ? gap("coerce.to_externref") : [instr];
+        return isDynamic(instr.value) && !thrown.has(instr.result!) ? gap("coerce.to_externref") : [instr];
       default:
         return instr.kind.startsWith("dyn.") ? gap(instr.kind) : [instr];
     }

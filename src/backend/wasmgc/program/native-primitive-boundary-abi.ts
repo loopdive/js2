@@ -132,6 +132,7 @@ function nativeIntrinsicRows(input: NativeStringValueReservationInput): readonly
     ),
     canonicalRow("js.extern.is_undefined", "is-undefined", policy.externIsUndefined.probe === "native"),
     canonicalRow("js.value.strict_eq", "strict-eq", true),
+    canonicalRow("js.value.to_boolean", "to-boolean", true),
     canonicalRow("js.value.undefined", "undefined-value", true),
   ];
 }
