@@ -96,26 +96,31 @@ describe("#7354 Ty — typeof comparisons on the Prepared dynamic value", () => 
 
   // One program per literal: every operator, both operand orders, every value. `bad` counts the answers that
   // differ from node's; the wrong program expects every answer negated, so each check must have run.
-  it.each(LITERALS)('answers typeof v <op> "%s" like JavaScript', async (literal) => {
-    const functions = OPERATORS.flatMap((op, index) => [
-      `function l${index}(v) { return typeof v ${op} "${literal}"; }`,
-      `function r${index}(v) { return "${literal}" ${op} typeof v; }`,
-    ]);
-    const checks = (right: boolean) =>
-      OPERATORS.flatMap((op, index) =>
-        VALUES.flatMap((value) => {
-          const expected = answer(`typeof (${value}) ${op} "${literal}"`);
-          const sent = right ? expected : String(expected !== "true");
-          return [
-            `if (l${index}(${value}) !== ${sent}) bad = bad + 1;`,
-            `if (r${index}(${value}) !== ${sent}) bad = bad + 1;`,
-          ];
-        }),
+  it.each(LITERALS)(
+    'answers typeof v <op> "%s" like JavaScript',
+    async (literal) => {
+      const functions = OPERATORS.flatMap((op, index) => [
+        `function l${index}(v) { return typeof v ${op} "${literal}"; }`,
+        `function r${index}(v) { return "${literal}" ${op} typeof v; }`,
+      ]);
+      const checks = (right: boolean) =>
+        OPERATORS.flatMap((op, index) =>
+          VALUES.flatMap((value) => {
+            const expected = answer(`typeof (${value}) ${op} "${literal}"`);
+            const sent = right ? expected : String(expected !== "true");
+            return [
+              `if (l${index}(${value}) !== ${sent}) bad = bad + 1;`,
+              `if (r${index}(${value}) !== ${sent}) bad = bad + 1;`,
+            ];
+          }),
+        );
+      await expectLikeNode((right) =>
+        [...functions, "var bad = 0;", ...checks(right), "if (bad !== 0) throw bad;"].join("\n"),
       );
-    await expectLikeNode((right) =>
-      [...functions, "var bad = 0;", ...checks(right), "if (bad !== 0) throw bad;"].join("\n"),
-    );
-  });
+      // (#7354 Str2 merge) Two compiles of ~180 checks with string values: about 15 s alone, more under load.
+    },
+    120_000,
+  );
 
   // TypeScript warns (the literal is outside `typeof`'s answers) but the program compiles; JavaScript says false.
   it("answers a literal no value has (a typo) as false", async () => {
