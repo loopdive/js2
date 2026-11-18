@@ -1591,7 +1591,7 @@ export function prepareIrProgramSources(
       sourceFiles,
       identityContext: identity,
     });
-    const dynamicContracts = programDynamicContracts(input.checker, input.policy, sourceFiles);
+    const dynamicContracts = programDynamicContracts(input.checker, input.policy, sourceFiles, allocations);
     const moduleResolver = makeIrIdentityModuleBindingResolver(
       input.checker,
       {

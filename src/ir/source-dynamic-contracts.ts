@@ -33,6 +33,7 @@ import type { IrFunction } from "./core/nodes.js";
 import { IrUnsupportedError } from "./outcomes.js";
 import { DynamicValueGap, legalizeDynamicValues } from "./program/dynamic-value-legalization.js";
 import { retargetNumberToString } from "./program/number-to-string-target.js";
+import type { AllocSiteRegistry } from "./analysis/alloc-registry.js";
 import type { RuntimeManifestPolicy } from "../runtime/contracts/provider-policy.js";
 import type { ValType } from "../wasm/model/instructions.js";
 import { functionBodyAlwaysTerminates, irFunctionBodyReturnsValue } from "./select.js";
@@ -212,6 +213,7 @@ export function programDynamicContracts(
   checker: ts.TypeChecker,
   policy: SourcePolicy,
   sourceFiles: readonly ts.SourceFile[],
+  allocations: AllocSiteRegistry,
 ): ProgramDynamicContracts {
   const provenance = sourceDynamicProvenance(
     checker,
@@ -253,6 +255,7 @@ export function programDynamicContracts(
         functions,
         provenance.carries,
         sourceFiles,
+        allocations,
       ),
   };
 }
@@ -369,6 +372,7 @@ function legalizeSourceDynamicValues(
   functions: readonly IrFunction[],
   carries: Carries,
   sourceFiles: readonly ts.SourceFile[],
+  allocations: AllocSiteRegistry,
 ): readonly IrFunction[] {
   const roots = "kind" in declaration ? [declaration] : declaration;
   const contracted =
@@ -385,7 +389,7 @@ function legalizeSourceDynamicValues(
   if (!contracted) return retargeted;
   let legalized: readonly IrFunction[];
   try {
-    legalized = retargeted.map(legalizeDynamicValues);
+    legalized = retargeted.map((fn) => legalizeDynamicValues(fn, allocations));
   } catch (error) {
     if (!(error instanceof DynamicValueGap)) throw error;
     throw new IrUnsupportedError("type-resolution-unsupported", "build", error.message);

@@ -89,9 +89,10 @@ describe("#7354 Str2 — String(x) on the Prepared path", () => {
 
   it.each([
     [
+      // ToString's number arm calls the native formatter, which the presentation does not admit yet.
       "a dynamic operand",
       "function f(x) { return String(x); }\nf(1);",
-      "dynamic operation dyn.to_string has no Prepared intrinsic",
+      "host provider or async demand is outside this numeric presentation contract",
     ],
     ["no argument", "var s = String();", 'direct call to "String" has no exact AST-site plan'],
     ["String.fromCharCode", "var s = String.fromCharCode(65);", 'identifier "String" is not in scope'],

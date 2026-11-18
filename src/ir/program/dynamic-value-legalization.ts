@@ -22,6 +22,7 @@
  * apart under strict equality and the `undefined` probe.
  */
 import { irValueTypes } from "../analysis/value-types.js";
+import type { AllocSiteRegistry } from "../analysis/alloc-registry.js";
 import { INTRINSIC_SIGNATURE_VERSION, INTRINSIC_DEFINITIONS, type IntrinsicId } from "../core/intrinsics.js";
 import {
   forEachInstrDeep,
@@ -37,6 +38,7 @@ import type { IrUnitId } from "../../shared/contracts/ir-identity.js";
 import { irRuntimeCallableDeclaration } from "../runtime/callable-declarations.js";
 import { JS_TAG_IDS } from "../runtime/js-tag-domain.js";
 import { typeofComparisons } from "./typeof-comparisons.js";
+import { PREPARED_NUMBER_TO_STRING } from "./number-to-string-target.js";
 
 const CARRIER: IrType = Object.freeze({ kind: "val", val: Object.freeze({ kind: "externref" }) });
 
@@ -84,6 +86,23 @@ const KIND_TEST: Readonly<Record<CarrierKind, IntrinsicId | "ref.is_null">> = {
   null: "ref.is_null",
 };
 
+/**
+ * (#7354 Str2) How ToString (§7.1.17) answers each admitted kind, in the order `dyn.to_string`'s chain tests them:
+ * the native string it carries, the number formatter, "true"/"false", or the kind's own name. A `Record` over the
+ * kinds, so a slice that admits a kind must say how it prints; the last kind is reached untested because the chain
+ * is total over this table.
+ */
+const TO_STRING_ARM: Readonly<Record<CarrierKind, "as-string" | "format" | "boolean" | "name">> = {
+  string: "as-string",
+  number: "format",
+  boolean: "boolean",
+  undefined: "name",
+  null: "name",
+};
+const TO_STRING_ORDER = Object.keys(TO_STRING_ARM) as readonly CarrierKind[];
+const STRING: IrType = Object.freeze({ kind: "string" });
+const TEST_RESULT: IrType = INTRINSIC_DEFINITIONS["js.value.is_string"].signature.result;
+
 /** The kind a box to the dynamic value admits, from its tag refinement or its operand; `undefined` refuses. */
 function boxedKind(tag: TagId | undefined, source: IrType | undefined): CarrierKind | undefined {
   if (tag === JS_TAG_IDS.Boolean) return "boolean";
@@ -92,8 +111,11 @@ function boxedKind(tag: TagId | undefined, source: IrType | undefined): CarrierK
   return source?.kind === "val" && source.val.kind === "f64" ? "number" : undefined;
 }
 
-/** Rewrite one function. A function without a dynamic value is returned unchanged. */
-export function legalizeDynamicValues(fn: IrFunction): IrFunction {
+/**
+ * Rewrite one function. A function without a dynamic value is returned unchanged. `allocations` is the source's
+ * registry: (#7354 Str2) ToString's literal arms are string allocation sites.
+ */
+export function legalizeDynamicValues(fn: IrFunction, allocations: AllocSiteRegistry): IrFunction {
   if (!containsDynamic(fn)) return fn;
   const types = irValueTypes(fn);
   let valueCount = fn.valueCount;
@@ -120,11 +142,92 @@ export function legalizeDynamicValues(fn: IrFunction): IrFunction {
       { kind: "unary", op: "i32.eqz", rand: value, result: instr.result, resultType: instr.resultType },
     ];
   };
-  const kindTest = (instr: IrInstr, kind: CarrierKind, value: IrValueId, result: IrValueId): IrInstr => {
+  const kindTest = (
+    instr: IrInstr,
+    kind: CarrierKind,
+    value: IrValueId,
+    result: IrValueId,
+    resultType = instr.resultType,
+  ): IrInstr => {
     const test = KIND_TEST[kind];
     return test === "ref.is_null"
-      ? { kind: "unary", op: "ref.is_null", rand: value, result, resultType: instr.resultType }
+      ? { kind: "unary", op: "ref.is_null", rand: value, result, resultType }
       : intrinsic(instr, test, [value], result);
+  };
+  const fresh = (): IrValueId => valueCount++ as IrValueId;
+  const text = (value: string, result: IrValueId): IrInstr => ({
+    kind: "string.const",
+    value,
+    result,
+    resultType: STRING,
+    alloc: allocations.fresh("string", STRING),
+  });
+  const branch = (
+    cond: IrValueId,
+    then: (r: IrValueId) => IrInstr[],
+    else_: (r: IrValueId) => IrInstr[],
+    result: IrValueId,
+  ): IrInstr => {
+    const thenValue = fresh();
+    const elseValue = fresh();
+    return {
+      kind: "if",
+      cond,
+      then: then(thenValue),
+      thenValue,
+      else: else_(elseValue),
+      elseValue,
+      result,
+      resultType: STRING,
+    };
+  };
+  // (#7354 Str2) ToString of the once-evaluated `value`, one arm per admitted kind (`TO_STRING_ARM`).
+  const toStringArm = (instr: IrInstr, kind: CarrierKind, value: IrValueId, result: IrValueId): IrInstr[] => {
+    switch (TO_STRING_ARM[kind]) {
+      case "as-string":
+        return [intrinsic(instr, "js.value.as_string", [value], result)];
+      case "format": {
+        const number = fresh();
+        return [
+          intrinsic(instr, "js.number.unbox", [value], number),
+          { kind: "call", target: PREPARED_NUMBER_TO_STRING, args: [number], result, resultType: STRING },
+        ];
+      }
+      case "boolean": {
+        const flag = fresh();
+        return [
+          // ToBoolean of a Boolean is its payload; it needs no unbox policy.
+          intrinsic(instr, "js.value.to_boolean", [value], flag),
+          branch(
+            flag,
+            (r) => [text("true", r)],
+            (r) => [text("false", r)],
+            result,
+          ),
+        ];
+      }
+      case "name":
+        return [text(kind, result)];
+    }
+  };
+  const toStringChain = (
+    instr: IrInstr,
+    kinds: readonly CarrierKind[],
+    value: IrValueId,
+    result: IrValueId,
+  ): IrInstr[] => {
+    const [kind, ...rest] = kinds;
+    if (rest.length === 0) return toStringArm(instr, kind!, value, result);
+    const cond = fresh();
+    return [
+      kindTest(instr, kind!, value, cond, TEST_RESULT),
+      branch(
+        cond,
+        (r) => toStringArm(instr, kind!, value, r),
+        (r) => toStringChain(instr, rest, value, r),
+        result,
+      ),
+    ];
   };
 
   const expand = (instr: IrInstr): readonly IrInstr[] => {
@@ -191,6 +294,8 @@ export function legalizeDynamicValues(fn: IrFunction): IrFunction {
         return typeofs.consumed.has(instr.result!) ? [] : [instr];
       case "dyn.undefined":
         return [intrinsic(instr, "js.value.undefined", [])];
+      case "dyn.to_string":
+        return toStringChain(instr, TO_STRING_ORDER, instr.value, instr.result!);
       case "dyn.truthy":
         return [intrinsic(instr, "js.value.to_boolean", [instr.value])];
       // ToNumber over the admitted set (number, boolean, undefined, null) is

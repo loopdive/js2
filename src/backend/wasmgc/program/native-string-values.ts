@@ -409,7 +409,7 @@ export function planNativeStringValuePhysical(
     ...(boolean.selection && booleanType
       ? [declareNativeBooleanResources(key + ":booleans", booleanType.key, boolean.selection)]
       : []),
-    ...(dynamicValues ? [declareNativeDynamicValueResources(key + ":dynamic", dynamicValues)] : []),
+    ...(dynamicValues ? [declareNativeDynamicValueResources(key + ":dynamic", dynamicValues, key)] : []),
     ...(output ? [output] : []),
   ];
   return {

@@ -13,6 +13,7 @@ import { irRuntimeFuncRef } from "../src/ir/core/callable-bindings.js";
 import type { IrFunction, IrInstr, IrInstrIntrinsic } from "../src/ir/core/nodes.js";
 import type { IrType } from "../src/ir/core/types.js";
 import { DynamicValueGap, legalizeDynamicValues } from "../src/ir/program/dynamic-value-legalization.js";
+import { AllocSiteRegistry } from "../src/ir/analysis/alloc-registry.js";
 import { dynamicValuePolicyMismatch } from "../src/ir/runtime/dynamic-value-callables.js";
 import { JS_TAG_IDS } from "../src/ir/runtime/js-tag-domain.js";
 import { instantiatePreparedArtifact } from "../src/test262/test262-prepared-runtime.js";
@@ -21,6 +22,8 @@ import {
   requiredPreparedEmission,
   type Test262CompileOptions,
 } from "../src/test262/test262-prepared-entry.js";
+
+const legalize = (fn: IrFunction): IrFunction => legalizeDynamicValues(fn, new AllocSiteRegistry());
 
 const options = (target: "standalone" | "gc"): Test262CompileOptions =>
   ({
@@ -269,11 +272,11 @@ describe("#7354 D1 — the legalization pass", () => {
       valueCount: 3,
     }) as unknown as IrFunction;
   const one = (instr: object, params?: readonly IrType[]) =>
-    legalizeDynamicValues(fn([instr as unknown as IrInstr], params)).blocks[0]!.instrs[0];
+    legalize(fn([instr as unknown as IrInstr], params)).blocks[0]!.instrs[0];
 
   it("rewrites a proven number unbox and the dynamic parameter to the externref carrier", () => {
     const unbox = { kind: "unbox", value: 0, tagId: JS_TAG_IDS.NumberF64, result: 1, resultType: f64 };
-    const out = legalizeDynamicValues(fn([unbox as unknown as IrInstr]));
+    const out = legalize(fn([unbox as unknown as IrInstr]));
     expect(out.params[0]!.type).toEqual({ kind: "val", val: { kind: "externref" } });
     expect(out.blocks[0]!.instrs[0]).toMatchObject({ kind: "intrinsic", id: "js.number.unbox", args: [0] });
   });
@@ -320,21 +323,21 @@ describe("#7354 D1 — the legalization pass", () => {
   it("carries a dynamic block argument as the externref carrier", () => {
     const input = fn([], [dynamic]);
     const joined = { ...input, blocks: [{ ...input.blocks[0]!, blockArgs: [2], blockArgTypes: [dynamic] }] };
-    expect(legalizeDynamicValues(joined as IrFunction).blocks[0]!.blockArgTypes).toEqual([
+    expect(legalize(joined as IrFunction).blocks[0]!.blockArgTypes).toEqual([
       { kind: "val", val: { kind: "externref" } },
     ]);
   });
 
   it("refuses a dynamic type left inside a composite type", () => {
     const vec = { kind: "vec", element: dynamic, nullable: false } as unknown as IrType;
-    expect(() => legalizeDynamicValues(fn([], [dynamic, vec]))).toThrow(
+    expect(() => legalize(fn([], [dynamic, vec]))).toThrow(
       new DynamicValueGap("dynamic operation on a value of composite type has no Prepared intrinsic"),
     );
   });
 
   it("returns a function without a dynamic value unchanged", () => {
     const input = fn([], [f64]);
-    expect(legalizeDynamicValues(input)).toBe(input);
+    expect(legalize(input)).toBe(input);
   });
 });
 
@@ -359,6 +362,7 @@ describe("#7354 D1 — the native dynamic-value resources", () => {
       undefinedValue: false,
       isUndefined: true,
       isString: false,
+      asString: false,
     });
   });
 

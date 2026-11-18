@@ -13,7 +13,8 @@ import { IR_ASYNC_NUMBER_TO_STRING_FN } from "../core/async-callables.js";
 import { mapNestedBuffers, type IrFunction, type IrInstr } from "../core/nodes.js";
 import { IR_NUMBER_TO_STRING_FN } from "../core/string-runtime.js";
 
-const FORMATTER = irIntrinsicFuncRef(IR_ASYNC_NUMBER_TO_STRING_FN);
+/** The formatter binding; `dyn.to_string`'s number arm (dynamic-value-legalization.ts) calls it directly. */
+export const PREPARED_NUMBER_TO_STRING = irIntrinsicFuncRef(IR_ASYNC_NUMBER_TO_STRING_FN);
 
 /** Retarget every `IR_NUMBER_TO_STRING_FN` call of `fn` (nested buffers included); `fn` itself when it has none. */
 export function retargetNumberToString(fn: IrFunction): IrFunction {
@@ -28,7 +29,7 @@ export function retargetNumberToString(fn: IrFunction): IrFunction {
       )
         return nested;
       changed = true;
-      return { ...nested, target: FORMATTER };
+      return { ...nested, target: PREPARED_NUMBER_TO_STRING };
     });
     return mapped.every((instr, index) => instr === buffer[index]) ? buffer : mapped;
   };
