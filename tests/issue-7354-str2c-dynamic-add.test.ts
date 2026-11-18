@@ -1,0 +1,251 @@
+// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+//
+// #7354 slice Str2-c step 2 — dynamic `+` and `+=` on the Prepared path. The legalization expands the front end's
+// `__ir_dyn_add` (`addition` in `src/ir/program/dynamic-value-legalization.ts`): a string on either side
+// concatenates the ToStrings, otherwise the ToNumbers are summed; operands of a known kind take only their arms.
+// Every program is checked against node twice: the right answer returns, a wrong one throws.
+import { afterEach, describe, expect, it, vi } from "vitest";
+import * as gc from "../src/codegen/index.js";
+import * as linear from "../src/codegen-linear/index.js";
+import { instantiatePreparedArtifact } from "../src/test262/test262-prepared-runtime.js";
+import {
+  compile,
+  requiredPreparedEmission,
+  type Test262CompileOptions,
+} from "../src/test262/test262-prepared-entry.js";
+
+const options = (target: "standalone" | "gc" = "standalone"): Test262CompileOptions =>
+  ({
+    wholeProgram: Object.freeze({ kind: "prepared-program-required" as const, version: 1 as const }),
+    backend: "wasmgc",
+    target,
+    sourceMap: false,
+    optimize: false,
+    emitWat: false,
+    fileName: "test.js",
+    allowJs: true,
+  }) as Test262CompileOptions;
+
+afterEach(() => vi.restoreAllMocks());
+const messages = (result: { errors: readonly { message: string }[] }) => result.errors.map((error) => error.message);
+
+async function run(source: string): Promise<"returned" | "threw"> {
+  for (const spy of [vi.spyOn(gc, "generateModule"), vi.spyOn(linear, "generateLinearModule")])
+    spy.mockImplementation(() => {
+      throw new Error("strict request entered a direct generator");
+    });
+  const result = await compile(source, options());
+  expect(messages(result)).toEqual([]);
+  expect(requiredPreparedEmission(result)).toBeDefined();
+  try {
+    (instantiatePreparedArtifact(result).instance.exports.__module_init as (() => void) | undefined)?.();
+    return "returned";
+  } catch (error) {
+    expect((error as object).constructor.name).toBe("Exception");
+    return "threw";
+  }
+}
+function node(source: string): "returned" | "threw" {
+  try {
+    new Function(source)();
+    return "returned";
+  } catch {
+    return "threw";
+  }
+}
+async function expectLikeNode(program: (right: boolean) => string) {
+  expect(node(program(true))).toBe("returned");
+  expect(await run(program(true))).toBe("returned");
+  expect(node(program(false))).toBe("threw");
+  expect(await run(program(false))).toBe("threw");
+}
+
+const VALUES = ["1", "0", "-0", "0 / 0", "-1 / 0", "1.5", "true", "false", "undefined", "null", '""', '"a"', '" 12 "'];
+const value = (text: string): unknown => new Function(`return ${text};`)();
+/** A check that `r` is exactly `expected` (kind, value, the sign of zero, NaN). */
+function exact(r: string, expected: unknown): string {
+  if (typeof expected === "string") return `(typeof ${r} === "string" && ${r} === ${JSON.stringify(expected)})`;
+  const n = expected as number;
+  if (Number.isNaN(n)) return `(typeof ${r} === "number" && ${r} !== ${r})`;
+  if (n === 0) return `(typeof ${r} === "number" && ${r} === 0 && 1 / ${r} ${Object.is(n, -0) ? "<" : ">"} 0)`;
+  return `(typeof ${r} === "number" && ${r} === ${Object.is(n, Infinity) ? "1 / 0" : Object.is(n, -Infinity) ? "-1 / 0" : String(n)})`;
+}
+/** The wrong expectation: another kind of answer. */
+const wrongOf = (expected: unknown): unknown => (typeof expected === "string" ? 0 : String(expected));
+const PAIRS = VALUES.flatMap((a) => VALUES.map((b) => [a, b] as const));
+const chunks = <T>(rows: readonly T[], size: number) =>
+  Array.from({ length: Math.ceil(rows.length / size) }, (_, i) => rows.slice(i * size, i * size + size));
+
+// Each string literal in a Prepared program costs most of a second to compile today (the native string output
+// audit per literal occurrence, see the issue file), so the sweep checks every pair once against node (the right
+// answers return) and proves the check itself with one wrong answer per position (it throws).
+async function expectRight(program: string) {
+  expect(node(program)).toBe("returned");
+  expect(await run(program)).toBe("returned");
+}
+const sum = (a: string, b: string) => (value(a) as number) + (value(b) as number);
+const checks = (rows: readonly (readonly [string, string])[], site: (a: string, b: string) => string) =>
+  rows.map(([a, b], i) => `${site(a, b)}if (!${exact("r", sum(a, b))}) throw ${i};`);
+const POSITIONS: readonly [string, string, (a: string, b: string) => string, number][] = [
+  ["returned from a function", "function f(a, b) { return a + b; }\nvar r;", (a, b) => `r = f(${a}, ${b}); `, 1],
+  // A site per pair: top level over dynamic globals, every 13th pair.
+  ["at top level", "var g; var h; var r;", (a, b) => `g = ${a}; h = ${b}; r = g + h; `, 13],
+];
+
+describe("#7354 Str2-c — dynamic + over the carrier's cross product, like node", () => {
+  describe.each(POSITIONS)("%s", (_label, declarations, site, stride) => {
+    const pairs = PAIRS.filter((_, i) => i % stride === 0);
+    it.each(chunks(pairs, 43).map((rows, index) => [index, rows] as const))(
+      "pairs chunk %i",
+      async (_i, rows) => {
+        await expectRight([declarations, ...checks(rows, site)].join("\n"));
+      },
+      150_000,
+    );
+    it.each([
+      ["a number", "1", "2", 3, 4],
+      ["a string", '"a"', "null", "anull", "a null"],
+    ])("throws on a wrong answer (%s)", async (_k, a, b, right, wrong) => {
+      await expectLikeNode((ok) =>
+        [declarations, `${site(a, b)}if (!${exact("r", ok ? right : wrong)}) throw 1;`].join("\n"),
+      );
+    });
+  });
+
+  it("answers every pair as a condition (ToBoolean of the sum)", async () => {
+    await expectLikeNode((right) =>
+      [
+        "function f(a, b) { if (a + b) return 1; return 0; }",
+        ...PAIRS.map(([a, b], i) => {
+          const truthy = Boolean(sum(a, b));
+          return `if (f(${a}, ${b}) !== ${(!right && i === PAIRS.length - 1 ? !truthy : truthy) ? 1 : 0}) throw ${i};`;
+        }),
+      ].join("\n"),
+    );
+  }, 200_000);
+});
+
+describe("#7354 Str2-c — dynamic + with operands of a known kind", () => {
+  it.each([
+    [
+      "typed number + dynamic",
+      "function f(v) { var n = 2 * 1; return n + v; }",
+      ["1", '"a"', "true", "null", "undefined"],
+    ],
+    [
+      "dynamic + typed number",
+      "function f(v) { var n = 2 * 1; return v + n; }",
+      ["1", '"a"', "true", "null", "undefined"],
+    ],
+    ["typed string + dynamic", 'function f(v) { var s = "x"; return s + v; }', ["1", '"a"', "true", "null", "-0"]],
+    [
+      "dynamic + typed string",
+      'function f(v) { var s = "x"; return v + s; }',
+      ["1", '"a"', "false", "undefined", "0 / 0"],
+    ],
+    [
+      "literal + dynamic + literal",
+      "function f(v) { return '\"' + v + '\"'; }",
+      ["1.5", '"a"', "true", "null", "1e21"],
+    ],
+    [
+      "typed boolean + dynamic",
+      "function f(v) { var b = 1 < 2; return b + v; }",
+      ["1", '"a"', "true", "null", "undefined"],
+    ],
+  ])("answers %s", async (_label, declaration, values) => {
+    const f = new Function(`${declaration}; return f;`)() as (v: unknown) => unknown;
+    await expectLikeNode((right) =>
+      [
+        declaration,
+        ...values.map((v, i) => {
+          const expected = f(value(v));
+          return `if (!${exact(`f(${v})`, !right && i === values.length - 1 ? wrongOf(expected) : expected)}) throw ${i};`;
+        }),
+      ].join("\n"),
+    );
+  });
+
+  it("keeps typed + typed as before (no dynamic expansion)", async () => {
+    await expectLikeNode((ok) => `var a = 1; var b = 2;\nif (a + b !== ${ok ? 3 : 4}) throw 1;`);
+  });
+});
+
+describe("#7354 Str2-c — dynamic + statements, order, loops and +=", () => {
+  it.each([
+    [
+      "evaluates left before right, once each",
+      'var log = ""; function l(v) { log += "l"; return v; } function r(v) { log += "r"; return v; } function f(a, b) { return l(a) + r(b); }',
+      'f(1, "x") + f(null, 2)',
+      '"1xnull2"',
+      '"1xnull2 "',
+      'log === "lrlr"',
+    ],
+    [
+      "the assert.js message shape (non-ASCII literal)",
+      'function m(actual, expected) { return "Expected SameValue(«" + actual + "», «" + expected + "») to be true"; }',
+      'm(1, "1")',
+      '"Expected SameValue(«1», «1») to be true"',
+      '"Expected SameValue(«1», «\\"1\\"») to be true"',
+      "true",
+    ],
+    [
+      "formatIdentityFreeValue's string arm",
+      "function q(value) { return '\"' + value + '\"'; }",
+      'q("ab") + q(-0)',
+      '"\\"ab\\"\\"0\\""',
+      '"\\"ab\\"\\"-0\\""',
+      "true",
+    ],
+    ["String(value) + n", 'function b(value) { return String(value) + "n"; }', "b(12)", '"12n"', '"12"', "true"],
+    [
+      "+= number then string on a dynamic var",
+      "function f(a, b) { var s = a; s += 1; s += b; s += 2; return s; }",
+      'f(1, "x")',
+      '"2x2"',
+      '"2x2 "',
+      "true",
+    ],
+    [
+      "+= across loop iterations, kind changing",
+      'function f(v) { var s = v; for (var i = 0; i < 4; i++) { s += i === 2 ? "|" : i; } return s; }',
+      "f(1) + f(null)",
+      '"2|3null01|3"',
+      '"2|3null01|4"',
+      "true",
+    ],
+    [
+      "nested loops and sibling blocks",
+      "function f(v) { var t = v; for (var i = 0; i < 2; i++) { for (var j = 0; j < 2; j++) { if (j) { t = t + j; } else { t = j + t; } } } return t; }",
+      'f(1) + "/" + f("s")',
+      '"3/0s10s1"',
+      '"3/0s10s2"',
+      "true",
+    ],
+    [
+      "inside switch and try/catch/finally",
+      'function f(v) { var t = ""; switch (typeof v) { case "number": t = v + 1; break; default: t = v + "!"; } try { t = t + v; throw t; } catch (e) { t = e + "c"; } finally { t = t + "f"; } return t; }',
+      'f(1) + f("a")',
+      '"21cfa!acf"',
+      '"21cfa!ac"',
+      "true",
+    ],
+  ])("%s", async (_label, declarations, expression, right, wrong, after) => {
+    await expectLikeNode(
+      (ok) => `${declarations}\nif (${expression} !== ${ok ? right : wrong} || !(${after})) throw 1;`,
+    );
+  });
+
+  // The addition's value unused: its operands still run, a throwing operand still throws.
+  it.each([
+    ["an expression statement", "a + g(b);"],
+    ["an unread local", "var t = a + g(b);"],
+    ["a += on an unread local", "var t = a; t += g(b);"],
+  ])("evaluates the operands of %s", async (_label, statement) => {
+    await expectLikeNode(
+      (right) =>
+        `function g(v) { if (v === 1) throw 7; return v; }\nfunction t(a, b) { ${statement} return 1; }\n` +
+        `var r = 0;\ntry { t("x", 1); } catch (e) { r = 1; }\nif (r !== ${right ? 1 : 0}) throw 1;`,
+    );
+  });
+});

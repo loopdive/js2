@@ -145,8 +145,8 @@ function legalizationBuilders(fn: IrFunction, allocations: AllocSiteRegistry, ty
     resultType: INTRINSIC_DEFINITIONS[id].signature.result,
     ...(instr.site === undefined ? {} : { site: instr.site }),
   });
-  // (#7354 Str2-c) The kind a box to the dynamic value proves for its result: a `+` operand of a known kind takes
-  // only that kind's arm.
+  // (#7354 Str2-c) The kind a box to the dynamic value (or a concatenation, below) proves for its result: a `+`
+  // operand of a known kind takes only that kind's arm.
   const boxed = new Map<IrValueId, CarrierKind>();
   for (const block of fn.blocks)
     for (const root of block.instrs)
@@ -285,7 +285,12 @@ function legalizationBuilders(fn: IrFunction, allocations: AllocSiteRegistry, ty
       ];
     };
     const roles = operands.map((value) => kindsOf(value).map((kind) => ADD_ROLE[kind]));
-    if (roles.some((role) => role.every((r) => r === "concat"))) return concat(result);
+    if (roles.some((role) => role.every((r) => r === "concat"))) {
+      // A concatenation is a known string to the next `+` of a chain (`"a" + v + "b"`). Legalization meets a value's
+      // definition before its uses, so the next site reads this.
+      boxed.set(result, "string");
+      return concat(result);
+    }
     const tested = operands.flatMap((value) =>
       kindsOf(value)
         .filter((kind) => ADD_ROLE[kind] === "concat")
