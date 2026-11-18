@@ -2251,3 +2251,72 @@ A sync `String(x)` (or `typeof`-free `"" + n`) program now reaches the formatter
    (`src/frontend/builtins/prepare-number-format.ts:22`). So no program presents the formatter today; on standalone no
    async program presents at all; on host a mixed program presents without the census (host lane, being retired).
    The name `async.native.number-to-string` is historical; a rename touches the hash-pinned declarations (#7358).
+
+### Str2-c result (2026-11-18): the number formatter is admitted; dynamic `+` not started
+
+Step 1 of the brief only (formatter admission). Step 2 (dynamic `+` / `+=`) is not started: step 1 was about L, the
+brief's stop rule applies. Head after this section: see the branch.
+
+Built (`src/compiler/prepared-formatter-census.ts`, new, 143 lines; `prepared-provider-census.ts` +54;
+`ir-program-presentation.ts` unchanged in size, one call per gap):
+
+| Hand-over gap | How it is admitted |
+| --- | --- |
+| 3 census | `nativeRows` runs `nativeSlots` over the formatter setup too (one slot population for both setups, one row per function, the same `supportPopulationJoins`). A kernel / radix-body function keeps the batch's support binding id (`canonicalSupportRole`; a type or global with a kernel role stays setup-derived). The provider: the setup's unique `["number-format","native-to-string"]` role, bound to the adapter's intrinsic reference, answers the adapter's canonical provider (by feature, `formatterJoins`) — no function-name join; the existing provider/answer population comparison then requires it selected exactly once. Demand: `irNumberFormatDemandOwners(program.ir.functions)`; without demand no batch is admitted. New, for both setups: one declaration per completed slot (a second declaration on a Ryu type/global slot was accepted before). |
+| 2 widening | Falls out of 3: the formatter setup's type/global slots (Ryu table type, `inverse`, `powers`) join the census's `NativeSetupSlots`. |
+| 1 ABI | `callableCarried(program, contract, carried)` (census module): a `support-ref` is carried only when it equals the canonical scratch type (data) on a contract whose reference is a canonical kernel's (data). |
+| 4 support batch | `unjoinedSupport(program, native)`: a batch is admitted only beside native slots the census answered; the census (`batchJoins`) requires exactly one batch, kind `number-format-radix-v1`, `sourceId` = runtime ABI anchor, scratch / kernels / implementation declaration = `numberFormatRadixSupportDeclarations(anchor)`, body unit = canonical owner unit = the setup's `support.unitId`, `support.reference` canonical, `support.bindingId` = the radix-body slot's entry, `demandOwners` = the program's formatter-calling units. asyncPlan/asyncRuntime/asyncFunctions checks unchanged. |
+| scratch | The string setup binds its data type twice when it carries `formatterScratch`; `formatterScratchBinding` accepts exactly the canonical scratch reference plus the setup's own derived reference (`{kind:"source", bindingId: owned}`), with `formatterScratch` equal to the canonical scratch type; the slot is the data declaration's (one declaration per slot does the rest). |
+
+Deviations from the hand-over, and why: no kernel/adapter binding-id or name join — the mutation sweep showed the
+emission's support receipt join (slot + key + signature) already refuses every such forgery, so those checks were
+deleted as implied (rule: survivors are deleted when implied); the adapter answers its provider by feature
+instead of by the declaration's name. Gap 4 is checked inside the census (one call in the presentation).
+
+Proofs:
+- Acceptance (`tests/issue-7354-str2c-formatter-census.test.ts`, `tests/issue-7354-str2-to-string.test.ts`; right
+  answer returns, wrong throws, node agrees): typed `String(n)`, `String(v)` over number / -0 / NaN / -Infinity /
+  1e21 / 0.1 / boolean / undefined / null / string, a template literal's number, a loop across iterations, the
+  formatter alone (string layout setup), unused `String(h(v))` still throws from `h`.
+- Number sweep against node: 265 numbers (powers of ten 1e-10..1e25 and ±, 1.5eN, 2^31/2^32/±2^53 ±5, subnormals,
+  max, round-trip decimals, 80 random) × {dynamic `String(v)`, typed `String(n)`}: 0 wrong.
+- Forgeries (census replayed on one compiled program; six categories also end to end through compile(), refusal
+  by name, no exception): for each of the 16 formatter rows (5 kernels, radix body, radix thunk, finalize,
+  to-string, adapter, 6 Ryu) drop the binding, drop the row (end to end), duplicate, add a second row, relabel,
+  move to another key; 8 binding swaps; adapter reference / runtime-bound; support binding / unit / reference;
+  Ryu global mutability; kernel signature; Ryu type/global relabelled as a kernel; scratch: absent, nullability,
+  either binding dropped, derived duplicated, both canonical, derived under another id, on another entry,
+  relabelled, present without a formatter; provider dropped / duplicated / renamed / feature relabelled / replaced;
+  receipts dropped / duplicated / swapped; batch zero / two / kind / source / scratch / kernel dropped / kernels
+  swapped / implementation declaration / implementation unit / no or extra demand owner, a batch on a
+  formatter-free program; `support-ref` on the radix body, another support type / nullability on a kernel, a
+  kernel contract under a foreign reference. 173 tests.
+- Mutation sweep over every new check (52 mutations): 0 survivors after deleting the implied ones listed above
+  (`unjoinedSupport`'s `&& !native` is killed by R's numeric-only program).
+- Prepared bytes of 11 previously accepted programs (numeric, throw, box, strings, dynamic, typeof, typeof
+  comparison, script var, loop, string ternary, `String("ab")`) and one refusal: identical against bc71ae2e9b.
+  A program without a formatter call selects no formatter provider and has no batch (tested).
+- Ordinary pipeline: 100 test262 files of the sample × {JS, standalone}: bytes identical against bc71ae2e9b
+  (the change is Prepared-presentation only).
+- Gates: typecheck, loc, func, coercion, oracle ratchet, dead exports, import cycles, compiler-boundaries inventory
+  (new module registered): pass. Tests green: str2c, Str2, R, prepared entry/runtime, #7188, D1, P, VG, X, T, Str,
+  Str emitter, H, H2, H3, Ty, Perf (each file run alone or in small groups; every run printed vitest's
+  `Timeout calling "onTaskUpdate"` RPC error under machine load, with all tests passing). No intrinsic, provider
+  or resource added, so no pinned closed list changed.
+
+411-row sample: 14 negatives pass; first gap unchanged by design — 282 × "dynamic operation __ir_dyn_add has no
+Prepared intrinsic" (`harness/assert.js:27`, `'"' + value + '"'`), 52 × module binding `obj` not-direct
+(+ `x` 5, `proto` 4, `o` 4, `arr` 3, others ≤2), 26 × `identifier "assert" is not in scope in verifyProperty`,
+2 × switch-case lexical binding, 1 × `unknown class "Test262Error"` (isConstructor).
+
+Not verified: compile time of a prelude-sized test that reaches the formatter (none does until dynamic `+`);
+`--utf8-storage` with the formatter; multi-file (`compileMulti`) formatter programs. The census forgeries replay
+the census on captured inputs (end-to-end for one per category); the census test file takes ~4 min.
+
+Hand-over for step 2 (dynamic `+`): every ToString arm now runs, so `+` can be expanded in
+`dynamic-value-legalization.ts` beside `dyn.to_string` from existing pieces — `js.value.is_string` on both
+operands, `kindChain`/`toStringArm` + `string.concat`, else `js.number.unbox` (ToNumber) + `f64.add` + `js.number.box`
+— needing no new intrinsic, census row or pin. The brief asks for one intrinsic with a native provider instead;
+its body would have to call the formatter, i.e. a dependency of the dynamic-value resources on the formatter setup
+that this census does not authenticate yet. The cost to weigh: the IR expansion inlines two five-arm chains per
+site (282 prelude rows hit `+` sites; measure compile time first).
