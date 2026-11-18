@@ -31,7 +31,11 @@ import {
   type NativeValueResourcePlan,
 } from "../../../ir/program/native-value-resources.js";
 import { freezePreparedIrValue, preparedIrDataMismatch } from "../../../ir/program/data.js";
-import { checkUnlessSettled, type PreparedIrSettlement } from "../../../ir/program/settled-verdict.js";
+import {
+  checkUnlessSettled,
+  PreparedIrSettledChecks,
+  type PreparedIrSettlement,
+} from "../../../ir/program/settled-verdict.js";
 import { PreparedIrProgramInvariantError } from "../../../ir/program/errors.js";
 import type { Instr } from "../../../wasm/model/instructions.js";
 import type {
@@ -440,7 +444,12 @@ interface Owner {
   readonly authentication: PreparedIrSettlement;
 }
 const owners = new WeakMap<NativeStringValueReservations, Owner>();
+/** A re-plan of the whole program: settled per input object, so the foundation and the reservation share it. */
+const currentInputs = new PreparedIrSettledChecks<NativeStringValueReservationInput>();
 export function assertNativeStringValueReservationInput(input: NativeStringValueReservationInput): void {
+  currentInputs.check(input, () => checkReservationInput(input));
+}
+function checkReservationInput(input: NativeStringValueReservationInput): void {
   const realm = readNativeRealmLiteralInput(input, input.plan.literalRequirements.utf8Storage);
   const outcome = planNativeStringValuePhysical(
     input.demands,
@@ -727,16 +736,19 @@ export function emitPreparedNativeStringLiteral(
   storage?: IrGlobalRef,
   materializer?: IrFuncRef,
 ): readonly Instr[] {
-  const owner = completedOwner(tx, pack);
-  const requested = tuple(ownerUnitId, value, alloc, storage, materializer);
-  const index = owner.input.plan.literalUses.findIndex((row) =>
-    sameDemandTuple(owner.input.demands, row.demandIndex, requested),
-  );
-  if (index < 0) fail("literal tuple is outside the closed projection plan");
-  const binding = nativeStringLiteralReservationInventory(tx, pack.strings).requests[index]!.binding;
-  return binding.kind === "global"
-    ? [{ op: "global.get", index: tx.physicalIndex(binding.global) }]
-    : [{ op: "call", funcIdx: binding.function.handle }];
+  // The literal's inventory and index queries share the completion check's one trailing layout audit.
+  return tx.audited((): readonly Instr[] => {
+    const owner = checkCompletedOwner(tx, pack);
+    const requested = tuple(ownerUnitId, value, alloc, storage, materializer);
+    const index = owner.input.plan.literalUses.findIndex((row) =>
+      sameDemandTuple(owner.input.demands, row.demandIndex, requested),
+    );
+    if (index < 0) fail("literal tuple is outside the closed projection plan");
+    const binding = nativeStringLiteralReservationInventory(tx, pack.strings).requests[index]!.binding;
+    return binding.kind === "global"
+      ? [{ op: "global.get", index: tx.physicalIndex(binding.global) }]
+      : [{ op: "call", funcIdx: binding.function.handle }];
+  });
 }
 
 /**

@@ -24,6 +24,7 @@ import {
 import { assertIrRuntimeSupport, type IrNumberFormatRadixSupport } from "./runtime-support.js";
 import { preparedIrDataMismatch } from "./data.js";
 import { PreparedIrProgramInvariantError } from "./errors.js";
+import { PreparedIrSettledChecks } from "./settled-verdict.js";
 
 export interface NativeNumberFormatRequirementInput {
   readonly program: PreparedIrProgram;
@@ -198,7 +199,14 @@ export function assertNativeNumberFormatRequirementsCurrent(
 ): void {
   if (requirements.program !== input.program || requirements.projection !== input.projection)
     fail("foreign borrowed program or projection");
-  const current = deriveNativeNumberFormatRequirements(input);
+  if (input.integerBeforeScratch !== requirements.integerBeforeScratch) fail("stale formatter batch or option");
+  // The re-derivation reads only the three input fields the requirements carry and equal, so it is a function of
+  // the requirements alone.
+  currentRequirements.check(requirements, () => checkCurrent(requirements));
+}
+const currentRequirements = new PreparedIrSettledChecks<NativeNumberFormatRequirements>();
+function checkCurrent(requirements: NativeNumberFormatRequirements): void {
+  const current = deriveNativeNumberFormatRequirements(requirements);
   if (
     !current ||
     current.batch !== requirements.batch ||
