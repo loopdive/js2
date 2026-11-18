@@ -9,8 +9,7 @@
  * or when the source type is `undefined`/`void`, which every lowering of it holds (the operand is still lowered
  * for its effects). Any other disagreement is not provable here.
  */
-import type ts from "typescript";
-import { jsTagOfFact, TsCheckerOracle, type JsTag, type TypeOracle } from "../checker/oracle.js";
+import type { JsTag } from "../checker/oracle.js";
 import type { IrType } from "./core/types.js";
 
 export type StaticTypeof =
@@ -32,30 +31,10 @@ function irTypeofTag(type: IrType): string | null {
   return null;
 }
 
-/**
- * The source type's tag. A union whose members share one tag (`1 | 2`, the answers of `typeof`) has it too, unless
- * it also holds `null` or `undefined`, which the fact keeps beside its parts (`c ? void 0 : 1` is number parts plus
- * `undefinable`).
- */
-function sourceTypeofTag(oracle: TypeOracle, operand: ts.Expression): JsTag | "mixed" {
-  const fact = oracle.typeFactOf(operand);
-  if (fact.kind !== "union") return jsTagOfFact(fact) ?? "mixed";
-  if (fact.nullable || fact.undefinable) return "mixed";
-  const memberTags = new Set(fact.parts.map(jsTagOfFact));
-  const [only] = memberTags;
-  return memberTags.size === 1 && only !== undefined ? only : "mixed";
-}
-
-/** `types` is the lane's oracle, or its checker: the Prepared producer hands from-ast a checker without an oracle. */
-export function staticTypeofOf(
-  irType: IrType,
-  operand: ts.Expression,
-  types: { readonly oracle?: TypeOracle; readonly checker?: ts.TypeChecker },
-): StaticTypeof {
+/** `sourceTag` is the oracle's `uniformJsTagOfFact` of the operand's type ("mixed" without an oracle). */
+export function staticTypeofOf(irType: IrType, sourceTag: JsTag | "mixed"): StaticTypeof {
   const irTag = irTypeofTag(irType);
   if (irTag === null) return { kind: "varies" };
-  const oracle = types.oracle ?? (types.checker ? new TsCheckerOracle(types.checker) : undefined);
-  const sourceTag = oracle ? sourceTypeofTag(oracle, operand) : "mixed";
   if (sourceTag === irTag || sourceTag === "undefined") return { kind: "static", tag: sourceTag };
   return { kind: "unproven", irTag, sourceTag };
 }

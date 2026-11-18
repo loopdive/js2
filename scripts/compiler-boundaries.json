@@ -12283,6 +12283,14 @@
       "nextBoundary": "Pure TypeScript-AST fold shared by the selector and from-ast (#7106 S1b); moves with the frontend inventory split."
     },
     {
+      "path": "src/ir/typeof-static-answer.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "3518-coordinator",
+      "nextBoundary": "The static `typeof` answer from an IR type checked against the oracle's source tag (#7361); moves with from-ast's typeof lowering."
+    },
+    {
       "path": "src/ir/ambient-global-function-call.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",

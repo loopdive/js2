@@ -106,7 +106,7 @@ import { exactGlobalEvalStatement } from "../eval-call-shape.js";
 import { resolveOrdinaryObjectClosureSignature } from "./ordinary-object-closure-signatures.js";
 import { isDirectObjectCreateNullCall } from "../frontend/builtins/prepare-object-create.js";
 
-import { TsCheckerOracle, type TypeOracle } from "../checker/oracle.js";
+import { TsCheckerOracle, uniformJsTagOfFact, type TypeOracle } from "../checker/oracle.js";
 import {
   IR_DYN_ADD_FN,
   IR_DYN_GE_FN,
@@ -6026,7 +6026,9 @@ function lowerTypeOf(expr: ts.TypeOfExpression, cx: LowerCtx): IrValueId {
   }
   const inner = lowerExpr(expr.expression, cx, irVal({ kind: "f64" }));
   const innerType = cx.builder.typeOf(inner);
-  const answer = staticTypeofOf(innerType, expr.expression, cx);
+  // The Prepared producer hands from-ast a checker without an oracle.
+  const oracle = cx.oracle ?? (cx.checker ? new TsCheckerOracle(cx.checker) : undefined);
+  const answer = staticTypeofOf(innerType, oracle ? uniformJsTagOfFact(oracle.typeFactOf(expr.expression)) : "mixed");
   if (answer.kind === "static") return cx.builder.emitStringConst(answer.tag);
   if (answer.kind === "unproven")
     demoteToLegacy(

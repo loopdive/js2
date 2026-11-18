@@ -1221,6 +1221,18 @@ export function isSyntacticallyBooleanExpr(
   return false;
 }
 
+/**
+ * (#7361) The tag every value of a fact has. A union whose members share one tag (`1 | 2`, the answers of
+ * `typeof`) has it too, unless it also holds `null` or `undefined`, which the fact keeps beside its parts
+ * (`c ? void 0 : 1` is number parts plus `undefinable`).
+ */
+export function uniformJsTagOfFact(fact: TypeFact): JsTag | "mixed" {
+  if (fact.kind !== "union") return jsTagOfFact(fact) ?? "mixed";
+  if (fact.nullable || fact.undefinable) return "mixed";
+  const [only, ...rest] = fact.parts.map(jsTagOfFact);
+  return only !== undefined && rest.every((tag) => tag === only) ? only : "mixed";
+}
+
 /** Fact → static JS tag, when unambiguous. */
 export function jsTagOfFact(fact: TypeFact): JsTag | undefined {
   switch (fact.kind) {
