@@ -2016,3 +2016,48 @@ positions and evaluation order correct over a 270-program cross product; a `?:` 
   (`src/backend/wasmgc/resources/native-dynamic-values.ts`); the selection keeps Str's `strictEqStrings` beside T's
   `toBoolean`. Tests: "T after Str" (conditional, `if`, `||` operand, `!v` on `""` / `"a"`; all 4 fail without the
   arm).
+
+### Review round 4: MET
+
+T MET, X MET at `838688fd5f`, no must-fix.
+
+- **Strings and ToBoolean:** 120 string-ToBoolean programs equal node — values `""`, `"a"`, `" "`, `"0"`, `"false"`,
+  `"\0"` and a 3000-character string × positions `if`, `!`, `!!`, `?:`, `while`, `&&` / `||` as condition and as
+  value. The reviewer found no path by which a string reaches ToBoolean without the string arm. X with strings is
+  correct.
+- **Census:** forgeries of the `to_boolean` provider, of `__is_truthy` and of the five string type rows are refused
+  by name.
+- **Re-runs:** the 94 T probes and the 127 X probes of the earlier rounds, no regression. Both mutants of the string
+  arm are killed.
+
+Should-fixes, both recorded under "Known gaps (T and X)" below:
+
+- (a) the confusing refusal of an `any`-annotated local holding a string or a number;
+- (b) the "redeclaration of 'e'" refusal of a catch parameter that shadows a `var`.
+
+### Known gaps (T and X)
+
+- **(a) An `any` local outside every dynamic contract refuses without naming its cause.** `function g(c: number):
+  number { let v: any = c > 0 ? "" : 1; return v ? 1 : 2; } if (g(1) !== 2) throw 1;` (`test.ts`, standalone)
+  refuses "wasmgc:standalone physical setup cannot be materialized (1 gap): body g has no accepted host async dynamic
+  carrier". The same refusal is on main without T (checked on `c105fc1cc0`).
+  - **Cause:** `legalizeSourceDynamicValues` (`src/ir/source-dynamic-contracts.ts`) legalizes a program only when it
+    has a dynamic contract: an `any` / untyped parameter or result, a dynamic script `var`, or a catch binding. That
+    gate is deliberate — from-ast also boxes values into dynamic ones internally in programs without a contract
+    (pinned by `issue-3518-native-string-number-source-admission`). Here the only dynamic value is an annotated
+    local, so `g` stays unlegalized. The first stage that sees the leftover dynamic type is the host async planner
+    (`src/ir/program/host-async-dynamic.ts`), and its message is about host async frames.
+  - **Why not fixed here:** naming the cause means making the contract gate recognise an `any`-annotated local and
+    then re-sweeping the flow rule over such locals. That is a change of the gate, not of one message. Rewording only
+    the planner's message would still not say what caused it.
+  - Without `: any`, or in a `.js` file, from-ast refuses earlier by name: "ternary branches have different types
+    (string vs f64)".
+- **gc target, pre-existing: an invariant error out of `compile()`.** `var c = 1; let v: any = c > 0 ? "" : 1; if
+  (v) throw 1;` (`t.ts`, target `gc`) throws `IrProgramDriverInvariantError` "ir/from-ast: #5092 dynamic carrier is
+  unavailable or incompatible in <module-init>". The same happens on `c105fc1cc0` (main plus #7359, without T). The
+  same program on standalone compiles and answers like node. Found while checking (a); not touched here.
+- **(b) A catch parameter shadowing a `var` refuses.** `function f(v){ var e = 5; try { throw v; } catch (e) { }
+  return e; }` refuses "redeclaration of 'e'". This comes from the hoisted-var fix (#7290): a catch parameter counts
+  as a second binding of the `var` name. It belongs to the "one slot per `var` name per function" follow-up (see
+  Known gaps (H)) and is left unchanged.
+
