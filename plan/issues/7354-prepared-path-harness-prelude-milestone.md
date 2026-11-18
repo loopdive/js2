@@ -2320,3 +2320,118 @@ operands, `kindChain`/`toStringArm` + `string.concat`, else `js.number.unbox` (T
 its body would have to call the formatter, i.e. a dependency of the dynamic-value resources on the formatter setup
 that this census does not authenticate yet. The cost to weigh: the IR expansion inlines two five-arm chains per
 site (282 prelude rows hit `+` sites; measure compile time first).
+
+### Str2-c step 2 (2026-11-18): dynamic `+` and `+=`
+
+**Compile time is the headline finding: it grows roughly quadratically with the number of dynamic `+` sites.**
+Measured in-process through the strict entry, standalone:
+
+| program | compile | module size |
+| --- | --- | --- |
+| 1 site, both operands unknown | 6.0 s | 23,635 B |
+| 5 sites, both unknown | 24.6 s | 24,391 B |
+| 20 sites, both unknown | 235 s | 27,312 B |
+| 1 site, string + unknown | 4.5 s | 23,092 B |
+| 20 sites, string + unknown | 224 s | 26,754 B |
+
+The module grows only about 190 B per site; the time is the emission's per-occurrence string-literal audit. Each
+ToString chain carries four literal occurrences ("true", "false", "undefined", "null"), and each occurrence
+re-authenticates the native string output plan. Profile of 6 unknown + unknown sites (36 s total), top inclusive
+entries:
+
+| ms | entry |
+| --- | --- |
+| 21,094 | `assertNativeStringOutputRequirementsCurrent` |
+| 17,337 | `checkCompletedOwner` / `completedOwner` (`native-string-values.ts`) |
+| 15,304 | `emitStringConst` → `emitPreparedNativeStringLiteral` |
+| 11,773 | `authenticateCensus` |
+| 13,587 self | `hasNativeCollectionState` (`data.ts`) |
+
+Not fixed in this step, as instructed. No sample test compiles past assert.js yet, so no sample test pays this
+cost today. A prelude-sized test that reaches emission will, and will take far longer than 15 s.
+
+Built:
+- The legalization expands the front end's `__ir_dyn_add` (the binary `+` and both `+=` arms) in
+  `src/ir/program/dynamic-value-legalization.ts`, through one builder, `addition`, beside `dyn.to_string`. No new
+  intrinsic, provider or census row.
+- If either operand is a string, the addition concatenates `kindChain`/`toStringArm` (the chain `dyn.to_string`
+  uses, no second copy), then `string.concat` and `coerce.to_externref`. Otherwise it boxes
+  `js.number.unbox(l) + js.number.unbox(r)`.
+- The operands are the call's SSA arguments, so each is evaluated once, left before right.
+- `ADD_ROLE` is a `Record` over `CarrierKind` (concat for string, numeric for every other kind). It ties
+  ToPrimitive-is-identity to the admitted kinds: a slice that admits an object kind must add a row here.
+- Known kinds come from the box that defines an operand (`boxedKind`), or from an earlier concatenation's result,
+  which is a known string. The effect:
+  - a known string side concatenates with no test;
+  - only a side that may hold a string is tested (`js.value.is_string`, `i32.or` over both);
+  - a typed number or boolean side takes only its own ToString arm;
+  - `"a" + v + "b"` formats `v` once and tests nothing.
+- Typed + typed is unchanged. The function's builders moved to `legalizationBuilders` (function-budget split).
+  `IR_DYN_ADD_FN` moved to the shared leaf `src/shared/contracts/dynamic-add-helper.ts`; codegen re-exports it, so
+  there is no new codegen→ir edge.
+
+Proofs (`tests/issue-7354-str2c-dynamic-add.test.ts`; right answer returns, wrong throws, node agrees):
+- **Cross product.** 13 values {1, 0, -0, NaN, -Infinity, 1.5, true, false, undefined, null, "", "a", " 12 "}
+  squared, i.e. 169 pairs, returned from a function. Each result is checked by kind and value, including the sign
+  of zero and NaN.
+- **Other positions.** Every 13th pair at top level over dynamic globals; every 3rd pair as a condition.
+- **Known kinds.** Typed number / string / boolean on either side; the literal + dynamic + literal shape.
+- **Order and loops.** Left-before-right evaluation, once each; the assert.js message shape with « »;
+  `formatIdentityFreeValue`'s string arm; `String(value) + "n"`; `+=` from number to string on a dynamic var;
+  `+=` across loop iterations with the kind changing; nested loops with sibling if/else blocks; switch and
+  try/catch/finally.
+- **Unused results.** An unused sum, an unread local and an unread `+=` still run their operands, and a throwing
+  operand still throws.
+- **Typed + typed.** Keeps its answer.
+- **Pins updated** (own commit): D1's "dynamic +" refusal row is removed (D1's unused `add` helper with it); H's
+  "added to" refusal becomes a run.
+
+Mutations:
+- Killed: ADD_ROLE.string set to numeric; the `i32.or` over both tests dropped; the string-test filter inverted.
+- Survivors, as these are performance shortcuts rather than correctness checks:
+  - the concat-without-test shortcut;
+  - recording a concatenation's result as a known string.
+- Survivor reached by no program today: the `tested.length === 0` sum. Both operands would need a known
+  non-string kind, and the front end always passes one unboxed dynamic operand.
+- Not run: a full sweep over every condition. Each run of this test file costs minutes.
+
+Refusals left, by name:
+- `ir/from-ast: '+' operands not provably both-number or string-concatenable (unprovable/…)` for:
+  - the results of untyped calls (`f(1) + f(2)`);
+  - a dynamic script global written from a function (`g = g + "x"`).
+  Both are pinned in the test file. The front end makes a `+` dynamic only over operands it knows are dynamic.
+- `dyn.member_get` (the next gap, below).
+
+Gates: typecheck, loc, func, coercion, oracle ratchet, dead exports, import cycles, compiler-boundaries inventory —
+pass.
+
+Tests: str2c dynamic-add (all, run in groups), Str2, Ty, Str, Str emitter, H, H2, H3, D1, P, VG, X, T, Perf, R,
+prepared entry/runtime, #7188, #7223 equivalence — pass. `tests/issue-2949-s5-5-dyn-arith.test.ts` "`+` stays
+EXCLUDED…" fails identically on bc71ae2e9b (pre-existing; its `x - "a"` expectation, unrelated).
+
+Bytes: ordinary pipeline is identical on 100 sample files × JS and standalone. Prepared bytes of the 12 programs
+are identical to bc71ae2e9b.
+
+411-row sample (14 negatives pass):
+
+| rows | first gap |
+| --- | --- |
+| 282 | "dynamic operation dyn.member_get has no Prepared intrinsic" — moved off `__ir_dyn_add` and still on `harness/assert.js:27`: the other arm of `typeof JSON !== "undefined" ? JSON.stringify(value) : '"' + value + '"'`, i.e. the `JSON.stringify` read |
+| 52 | module binding `obj` not-direct |
+| 26 | `identifier "assert" is not in scope in verifyProperty` |
+| 5 | `x` not-direct |
+| 4 | `proto` not-direct |
+| 4 | `o` not-direct |
+| 3 | `arr` not-direct |
+| 2 | switch-case lexical binding |
+| 1 | `unknown class "Test262Error"` |
+
+Compile time per row is still small (median 38 ms, max 743 ms), because every row stops in legalization, before
+emission.
+
+Not verified:
+- The full 15-value cross product: 1/0 and "1" were dropped to keep the test runnable.
+- The test file's total runtime: about 12 minutes in groups here, which is too heavy for CI until the literal
+  audit cost is fixed.
+- `--utf8-storage`.
+- `compileMulti`.
