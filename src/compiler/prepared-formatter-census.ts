@@ -10,13 +10,16 @@
 
 import type { PreparedIrProgram } from "../ir/program.js";
 import type { NativeStringValueAbiBinding, PhysicalNativeNumberFormatSetup } from "../ir/program-physical-plan.js";
-import { preparedIrRuntimeAbiAnchor, preparedIrRuntimeCallableBindingId } from "../ir/program-runtime-abi.js";
+import { preparedIrRuntimeAbiAnchor } from "../ir/program-runtime-abi.js";
 import { preparedIrDataMismatch } from "../ir/program/data.js";
 import { numberFormatRadixSupportDeclarations } from "../ir/program/formatter-support.js";
-import { irNumberFormatDemandOwners } from "../ir/program/runtime-support.js";
+import { irNumberFormatDemandOwners, type IrFormatterKernelRole } from "../ir/program/runtime-support.js";
 import type { IrType } from "../ir/core/types.js";
 import type { IrFuncRef } from "../ir/core/value-references.js";
-import { NATIVE_ASYNC_CALLABLE_DECLARATIONS } from "../ir/runtime/native-async-callables.js";
+import {
+  NATIVE_ASYNC_CALLABLE_DECLARATIONS,
+  NATIVE_ASYNC_CALLABLE_RUNTIME_PROVIDERS,
+} from "../ir/runtime/native-async-callables.js";
 import type { RuntimeProviderDefinition } from "../ir/runtime/contracts/manifest.js";
 import type { NativeStringValueDeclaration } from "../runtime/wasmgc/values/native-resource-declaration-types.js";
 
@@ -24,33 +27,31 @@ const same = (left: unknown, right: unknown) => preparedIrDataMismatch(left, rig
 const canonical = (program: PreparedIrProgram) =>
   numberFormatRadixSupportDeclarations(preparedIrRuntimeAbiAnchor(program.inventory).id);
 const ADAPTER = NATIVE_ASYNC_CALLABLE_DECLARATIONS.find((row) => row.feature === "async.native.number-to-string")!;
+const ADAPTER_PROVIDER = NATIVE_ASYNC_CALLABLE_RUNTIME_PROVIDERS.find((row) => row.feature === ADAPTER.feature)!;
 const ADAPTER_ROLE = ["number-format", "native-to-string"] as const;
 
-/** The canonical support callable a formatter setup role names: a kernel by its role, the radix body. */
-function supportCallable(program: PreparedIrProgram, role: readonly string[]): IrFuncRef | undefined {
-  if (role.length !== 2 || role[0] !== "number-format") return undefined;
-  const { kernels, implementation } = canonical(program);
-  return role[1] === "radix-body" ? implementation.ref : kernels.find((kernel) => kernel.role === role[1])?.ref;
-}
+/** The formatter setup roles of the batch's support callables: the kernels and the radix body. */
+const SUPPORT_ROLES: readonly (readonly string[])[] = [
+  ...(["new", "get", "set", "fin", "trap"] as const satisfies readonly IrFormatterKernelRole[]),
+  "radix-body",
+].map((role) => ["number-format", role]);
 
 /**
- * A setup binding that is a canonical support callable: the support reference of its declaration's role, bound
- * under that reference's own binding id (the kernels and the radix body keep the batch's ids, not setup-derived
- * ones).
+ * A formatter setup function bound under the batch's own support binding id (a kernel, the radix body) rather
+ * than a setup-derived one. Its identity is joined like every setup function's, which needs no binding id: the
+ * emission's support receipt at the binding's slot carries the declaration's key, and the slot its signature
+ * (`supportPopulationJoins`), so a binding moved to another function's entry joins nothing.
  */
-export function canonicalSupportBinding(
-  program: PreparedIrProgram,
-  declaration: NativeStringValueDeclaration,
-  binding: NativeStringValueAbiBinding,
-): boolean {
-  const ref = supportCallable(program, declaration.role);
-  return ref?.binding.kind === "support" && binding.entry.id === ref.binding.bindingId && same(binding.reference, ref);
+export function canonicalSupportRole(declaration: NativeStringValueDeclaration): boolean {
+  return declaration.space === "function" && SUPPORT_ROLES.some((role) => same(declaration.role, role));
 }
 
 /**
- * The string data type is also the formatter's scratch when the program formats a number: two bindings share the
- * scratch's entry, the canonical scratch reference and the setup's own derived one (`owned`). Answers the canonical
- * binding; undefined for anything else, including a single binding where the scratch pair is due.
+ * The string data type is also the formatter's scratch when the program formats a number: it is bound twice, by the
+ * canonical scratch reference, whose slot the census reads, and by the setup's own derived reference (`owned`).
+ * Answers the canonical binding; undefined for anything else, including a single binding where the scratch pair is
+ * due. Its slot needs no further check: every other type slot of the setups is another declaration's, and the census
+ * admits one declaration per slot (`nativeRows`).
  */
 export function formatterScratchBinding(
   program: PreparedIrProgram,
@@ -62,19 +63,12 @@ export function formatterScratchBinding(
   const reference = bindings.filter((row) => same(row.reference, scratch.type.ref));
   const derived = bindings.filter((row) => !reference.includes(row));
   if (!same(scratchType, scratch.type) || reference.length !== 1 || derived.length !== 1) return undefined;
-  const [own] = derived;
-  return reference[0]!.entry.id === scratch.type.ref.binding.bindingId &&
-    same(own!.entry, reference[0]!.entry) &&
-    own!.reference.kind === "type" &&
-    own!.reference.binding.kind === "source" &&
-    own!.reference.binding.bindingId === owned
-    ? reference[0]
-    : undefined;
+  return same(derived[0]!.reference.binding, { kind: "source", bindingId: owned }) ? reference[0] : undefined;
 }
 
 /** Whether a native setup declaration is the formatter scratch's string data type. */
 export function isFormatterScratch(program: PreparedIrProgram, declaration: NativeStringValueDeclaration): boolean {
-  return declaration.space === "type" && same(declaration.role, canonical(program).scratch.stringDataRole);
+  return same(declaration.role, canonical(program).scratch.stringDataRole);
 }
 
 /**
@@ -103,8 +97,8 @@ function batchJoins(
 ): boolean {
   const batches = program.runtimeSupport?.batches ?? [];
   const declared = canonical(program);
-  const body = slots.filter((slot) => same(slot.declaration.role, ["number-format", "radix-body"]));
-  if (batches.length !== 1 || body.length !== 1) return false;
+  const body = slots.find((slot) => same(slot.declaration.role, ["number-format", "radix-body"]));
+  if (batches.length !== 1) return false;
   const [batch] = batches;
   return (
     batch!.kind === "number-format-radix-v1" &&
@@ -115,43 +109,35 @@ function batchJoins(
     batch!.implementation.body.unitId === declared.ownerUnitId &&
     formatter.support.unitId === declared.ownerUnitId &&
     same(formatter.support.reference, declared.implementation.ref) &&
-    formatter.support.bindingId === body[0]!.binding.entry.id &&
+    formatter.support.bindingId === body?.binding.entry.id &&
     same(batch!.demandOwners, irNumberFormatDemandOwners(program.ir.functions))
   );
 }
 
 /**
- * The formatter joins its demand: a program with a direct formatter call has the provider, the scratch, the
- * formatter setup and its batch; one without has none of them. The provider is answered by the setup's unique
- * adapter role, bound to the adapter's own intrinsic reference and runtime binding id; that adapter is the setup's
- * only intrinsic-bound function. Answers the runtime callable the provider names (none without demand), or
- * undefined when anything joins nothing.
+ * The formatter joins its demand: a program with a direct formatter call has the formatter setup and its batch, one
+ * without has no batch. The setup's unique adapter role is bound to the adapter's own intrinsic reference; it
+ * answers the adapter's canonical provider, which the census then requires selected exactly once (no provider
+ * without demand, none twice). Its slot, like every setup function's, needs no binding-id check: the support receipt
+ * at that slot carries the role's declaration key (`supportPopulationJoins`). Answers the provider implementations
+ * the formatter answers, or undefined when anything joins nothing.
  */
 export function formatterJoins(
   program: PreparedIrProgram,
-  scratchType: IrType | undefined,
   formatter: PhysicalNativeNumberFormatSetup | undefined,
   slots: readonly FormatterSlot[],
-  providers: readonly RuntimeProviderDefinition[],
-): readonly { readonly kind: "runtime-callable"; readonly symbol: string }[] | undefined {
-  const provided = providers.filter((row) => row.feature === ADAPTER.feature);
-  const demanded = irNumberFormatDemandOwners(program.ir.functions).length > 0;
-  if (!demanded)
-    return !provided.length && !formatter && scratchType === undefined && !program.runtimeSupport?.batches.length
-      ? []
-      : undefined;
+): readonly RuntimeProviderDefinition["implementation"][] | undefined {
+  // Without demand only the batch needs a check here: a provider then answers no runtime callable, a scratch no
+  // second binding, and a formatter setup's functions no support receipt, so the census refuses each of them.
+  if (irNumberFormatDemandOwners(program.ir.functions).length === 0)
+    return program.runtimeSupport?.batches.length ? undefined : [];
   const adapters = slots.filter((slot) => same(slot.declaration.role, ADAPTER_ROLE));
-  const adapter = adapters[0];
   if (
-    !formatter ||
-    provided.length !== 1 ||
     adapters.length !== 1 ||
-    adapter!.declaration.space !== "function" ||
-    !same(adapter!.binding.reference, ADAPTER.ref) ||
-    adapter!.binding.entry.id !== preparedIrRuntimeCallableBindingId(program.inventory, ADAPTER.ref) ||
-    slots.some((slot) => slot.binding.reference.binding.kind === "intrinsic" && slot !== adapter) ||
-    !batchJoins(program, formatter, slots)
+    !same(adapters[0]!.binding.reference, ADAPTER.ref) ||
+    // A formatter setup's slots exist only beside the setup itself.
+    !batchJoins(program, formatter!, slots)
   )
     return undefined;
-  return [{ kind: "runtime-callable", symbol: adapter!.declaration.name }];
+  return [ADAPTER_PROVIDER.implementation];
 }

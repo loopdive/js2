@@ -19,7 +19,7 @@ import {
   type PhysicalNativeStringSetup,
 } from "../ir/program-physical-plan.js";
 import {
-  canonicalSupportBinding,
+  canonicalSupportRole,
   formatterJoins,
   formatterKernelScratch,
   formatterScratchBinding,
@@ -125,7 +125,7 @@ function samePopulation(left: readonly unknown[], right: readonly unknown[]): bo
       .map(([, row]) => row);
   return preparedIrDataMismatch(sorted(left), sorted(right)) === undefined;
 }
-const runtimeCallable = (symbol: string) => ({ kind: "runtime-callable", symbol });
+const runtimeCallable = (symbol: string) => ({ kind: "runtime-callable" as const, symbol });
 /**
  * The one join of the support population, for remainders and natives alike: every row's completed slot carries
  * its signature, and the rows' (slot index, key) pairs are exactly the receipts' — no receipt joins nothing, none
@@ -240,8 +240,7 @@ function nativeSlots(
     const slot = binding && emittedProgramBindingIndex(emission, binding.entry.id);
     if (!binding || slot?.space !== declaration.space) return undefined;
     const callable = binding.reference.binding.kind === "runtime" || binding.reference.binding.kind === "intrinsic";
-    if (!scratch && !callable && binding.entry.id !== owned && !canonicalSupportBinding(program, declaration, binding))
-      return undefined;
+    if (!scratch && !callable && binding.entry.id !== owned && !canonicalSupportRole(declaration)) return undefined;
     slots.push({ declaration, binding, index: slot.index });
   }
   return slots;
@@ -401,8 +400,8 @@ function nativeRows(
     return undefined;
   const strings = providers.filter((row) => STRING_FEATURES.has(row.feature));
   const callables = providers.filter((row) => !strings.includes(row) && row.implementation.kind === "runtime-callable");
-  const formatterCallables = formatterJoins(program, setup.formatterScratch, formatter, formatted!, providers);
-  const answered: ReturnType<typeof runtimeCallable>[] = [...(formatterCallables ?? [])];
+  const formatterCallables = formatterJoins(program, formatter, formatted!);
+  const answered: RuntimeProviderDefinition["implementation"][] = [...(formatterCallables ?? [])];
   const rows: SupportCallableRow[] = [];
   for (const { declaration, binding } of slots) {
     if (declaration.space !== "function") continue;

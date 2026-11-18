@@ -413,6 +413,20 @@ describe("#7354 Str2-c — the census refuses a forged formatter setup", () => {
           ),
         ),
     ],
+    // Only a function keeps the batch's binding id: a type or global relabelled as a kernel is still setup-derived.
+    ...(["table-type", "inverse"] as const).map(
+      (role) =>
+        [
+          `the Ryu ${role} relabelled as a kernel`,
+          (setup: Setup) =>
+            withDeclarations(
+              setup,
+              setup.resources.declarations.map((d) =>
+                d === roleOf(setup, ["number-ryu", role]) ? { ...d, role: ["number-format", "new"] } : d,
+              ),
+            ),
+        ] as const,
+    ),
   ])("refuses %s altered", async (_label, alter) => {
     forge.formatter = alter;
     await refused(RUNTIME_DEMAND);
@@ -668,6 +682,12 @@ describe("#7354 Str2-c — a program without a formatter call presents as before
     expect(await run('var s = "a" + "b";\nif (s !== "ab") throw 1;')).toBe("returned");
     expect(seen?.runtimeSupport).toBeUndefined();
     expect(providers.map((row) => row.id)).not.toContain("native.async.number-to-string");
+  });
+
+  it("refuses a support batch on a program without a formatter call", async () => {
+    const support = censusInputs.census[0].runtimeSupport;
+    forge.program = (program) => ({ ...program, runtimeSupport: support }) as PreparedIrProgram;
+    await refusedOnCompile(RUNTIME_DEMAND, 'var s = "a";\nif (s !== "a") throw 1;');
   });
 });
 
