@@ -176,22 +176,8 @@ describe("#7354 Ty — typeof comparisons on the Prepared dynamic value", () => 
     await expectLikeNode((right) => `${declarations}\nif (${probe} !== ${right ? expected : wrong}) throw 1;`);
   });
 
-  it.each([
-    ["an unused typeof", "function f(v) { var s = typeof v; return 1; }\nf(1);"],
-    ["a typeof statement", "function f(v) { typeof v; return 1; }\nf(1);"],
-    ["a returned typeof", "function f(v) { return typeof v; }\nf(1);"],
-    ["a non-literal comparison", "function f(v, w) { return typeof v === w; }\nf(1, 2);"],
-    ["two typeofs compared", "function f(v, w) { return typeof v === typeof w; }\nf(1, 2);"],
-    [
-      "a typeof also compared with a non-literal",
-      'function f(v, w) { var t = typeof v; return t === "number" && t === w; }\nf(1, 2);',
-    ],
-    ["a typeof also returned", 'function f(v) { var t = typeof v; if (t === "number") {} return t; }\nf(1);'],
-    ["a template literal operand", 'function f(v) { return `${typeof v}` === "number"; }\nf(1);'],
-    ["a concatenation", 'function f(v) { return typeof v + "" === "number"; }\nf(1);'],
-  ])("refuses %s by name", async (_label, source) => {
-    expect(await refusal(source)).toContain("dynamic operation dyn.typeof has no Prepared intrinsic");
-  });
+  // (#7354 Str2) A `typeof` read any other way (assigned, returned, concatenated, compared with a non-literal or with
+  // another `typeof`) is its answer string now: tests/issue-7354-str2-to-string.test.ts proves each position.
 
   // The string dispatch compares only literal tests; any other case test (first, last, only, or a call) refuses by
   // name instead of being skipped — never compared, its expression never evaluated (a wrong answer, review round 1).

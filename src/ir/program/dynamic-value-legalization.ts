@@ -99,7 +99,11 @@ const TO_STRING_ARM: Readonly<Record<CarrierKind, "as-string" | "format" | "bool
   undefined: "name",
   null: "name",
 };
-const TO_STRING_ORDER = Object.keys(TO_STRING_ARM) as readonly CarrierKind[];
+const KIND_ORDER = Object.keys(TO_STRING_ARM) as readonly CarrierKind[];
+/** (#7354 Str2) `typeof`'s answer for each admitted kind: `TYPEOF_KIND` read backwards (`typeof null` is "object"). */
+const TYPEOF_NAME = Object.fromEntries(Object.entries(TYPEOF_KIND).map(([answer, kind]) => [kind, answer])) as Readonly<
+  Record<CarrierKind, string>
+>;
 const STRING: IrType = Object.freeze({ kind: "string" });
 const TEST_RESULT: IrType = INTRINSIC_DEFINITIONS["js.value.is_string"].signature.result;
 
@@ -210,21 +214,24 @@ export function legalizeDynamicValues(fn: IrFunction, allocations: AllocSiteRegi
         return [text(kind, result)];
     }
   };
-  const toStringChain = (
+  // A string per admitted kind of the once-evaluated `value`: a chain of tag tests in `KIND_ORDER`, the last kind
+  // untested (the chain is total over the kinds), each arm answering into its own value.
+  const kindChain = (
     instr: IrInstr,
-    kinds: readonly CarrierKind[],
     value: IrValueId,
     result: IrValueId,
+    arm: (kind: CarrierKind, result: IrValueId) => IrInstr[],
+    kinds: readonly CarrierKind[] = KIND_ORDER,
   ): IrInstr[] => {
     const [kind, ...rest] = kinds;
-    if (rest.length === 0) return toStringArm(instr, kind!, value, result);
+    if (rest.length === 0) return arm(kind!, result);
     const cond = fresh();
     return [
       kindTest(instr, kind!, value, cond, TEST_RESULT),
       branch(
         cond,
-        (r) => toStringArm(instr, kind!, value, r),
-        (r) => toStringChain(instr, rest, value, r),
+        (r) => arm(kind!, r),
+        (r) => kindChain(instr, value, r, arm, rest),
         result,
       ),
     ];
@@ -288,14 +295,18 @@ export function legalizeDynamicValues(fn: IrFunction, allocations: AllocSiteRegi
           ];
         return withSense(instr, comparison.negate, (result) => kindTest(instr, kind, comparison.operand, result));
       }
+      // (#7354 Str2) A `typeof` read other than by a literal comparison is its answer string.
       case "dyn.typeof":
-        return typeofs.consumed.has(instr.result!) ? [] : gap("dyn.typeof");
+        if (typeofs.consumed.has(instr.result!)) return [];
+        return kindChain(instr, instr.value, instr.result!, (kind, result) => [text(TYPEOF_NAME[kind], result)]);
       case "string.const":
         return typeofs.consumed.has(instr.result!) ? [] : [instr];
       case "dyn.undefined":
         return [intrinsic(instr, "js.value.undefined", [])];
       case "dyn.to_string":
-        return toStringChain(instr, TO_STRING_ORDER, instr.value, instr.result!);
+        return kindChain(instr, instr.value, instr.result!, (kind, result) =>
+          toStringArm(instr, kind, instr.value, result),
+        );
       case "dyn.truthy":
         return [intrinsic(instr, "js.value.to_boolean", [instr.value])];
       // ToNumber over the admitted set (number, boolean, undefined, null) is

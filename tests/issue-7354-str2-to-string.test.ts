@@ -164,3 +164,93 @@ describe("#7354 Str2 — String(x) on the Prepared path", () => {
     expect(await refusal('var s = String("a");', "gc")).not.toContain("dyn.to_string");
   });
 });
+
+// Every value the carrier holds, and node's `typeof` of it: the reference each program is checked against.
+const VALUES = ["1", "-0", "0 / 0", "true", "false", "undefined", "null", "''", "'a'"] as const;
+const typeofOf = (value: string): string => typeof new Function(`return ${value};`)();
+// A `typeof` of a different kind than `value`'s: the wrong answer each program must throw on.
+const otherTypeof = (value: string): string => (typeofOf(value) === "number" ? "string" : "number");
+
+describe("#7354 Str2 — typeof as a value on the Prepared dynamic value", () => {
+  // One program per position: every value, checked against node; the wrong program expects another kind each time.
+  it.each([
+    ["returned", "function t(v) { return typeof v; }", (v: string) => `t(${v})`],
+    ["assigned to a local", "function t(v) { var k = typeof v; return k; }", (v: string) => `t(${v})`],
+    [
+      "passed as an argument",
+      "function id(s) { return s; }\nfunction t(v) { return id(typeof v); }",
+      (v: string) => `t(${v})`,
+    ],
+    ["at top level", "var g;", (v: string) => `(g = ${v}, typeof g)`],
+  ])("answers typeof %s", async (_label, declarations, probe) => {
+    await expectLikeNode((right) =>
+      [
+        declarations,
+        ...VALUES.map((v) => `if (${probe(v)} !== "${right ? typeofOf(v) : otherTypeof(v)}") throw 1;`),
+      ].join("\n"),
+    );
+  });
+
+  it.each([
+    ["concatenated with a typed string", 'function t(v) { return "x" + typeof v; }', "t(null)", '"xobject"', '"xnull"'],
+    ["compared with a non-literal", "function t(v, k) { return typeof v === k; }", 't(1, "number")', "true", "false"],
+    [
+      "compared with a non-literal (miss)",
+      "function t(v, k) { return typeof v === k; }",
+      't(1, "string")',
+      "false",
+      "true",
+    ],
+    // Ty refused this; it was a wrong answer once. Same kinds, different kinds, and null against undefined.
+    [
+      "two typeofs (same kind)",
+      "function t(v, w) { return typeof v === typeof w; }",
+      "t(true, false)",
+      "true",
+      "false",
+    ],
+    ["two typeofs (other kind)", "function t(v, w) { return typeof v === typeof w; }", 't(1, "1")', "false", "true"],
+    [
+      "two typeofs (null, undefined)",
+      "function t(v, w) { return typeof v !== typeof w; }",
+      "t(null, undefined)",
+      "true",
+      "false",
+    ],
+    [
+      "a typeof also compared with a literal",
+      'function t(v, w) { var k = typeof v; return k === "number" && k === w; }',
+      't(1, "number")',
+      "true",
+      "false",
+    ],
+    [
+      "across loop iterations",
+      'function t(v) { var c = 0; for (var i = 0; i < 3; i++) { var k = typeof v; if (k === "number") c = c + 1; v = i === 0 ? "s" : 1; } return c; }',
+      "t(1)",
+      "2",
+      "3",
+    ],
+    [
+      "the prelude's switch (formatIdentityFreeValue)",
+      "function f(value) { switch (value === null ? 'null' : typeof value) { case 'string': return 1; case 'number': return 2; case 'boolean': case 'undefined': case 'null': return 3; } return 4; }",
+      'f("a") * 10000 + f(1) * 1000 + f(true) * 100 + f(null) * 10 + f(undefined)',
+      "12333",
+      "12334",
+    ],
+  ])("answers typeof %s", async (_label, declarations, probe, right, wrong) => {
+    await expectLikeNode((ok) => `${declarations}\nif (${probe} !== ${ok ? right : wrong}) throw 1;`);
+  });
+
+  // The operand is evaluated once, even when the answer is unused (statement position, or a local nobody reads).
+  it.each([
+    ["a typeof statement", "typeof g(v);"],
+    ["an unread local", "var s = typeof g(v);"],
+  ])("evaluates the operand of %s", async (_label, statement) => {
+    await expectLikeNode(
+      (right) =>
+        `function g(v) { if (v === 1) throw 7; return v; }\nfunction t(v) { ${statement} return 1; }\n` +
+        `var r = 0;\ntry { t(1); } catch (e) { r = 1; }\nif (r !== ${right ? 1 : 0}) throw 1;`,
+    );
+  });
+});

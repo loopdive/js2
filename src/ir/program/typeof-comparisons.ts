@@ -29,7 +29,7 @@ interface TypeofComparisons {
   /**
    * The `typeof` results and literals that only these comparisons read: once the comparisons are tag tests,
    * nothing consumes them. A `typeof` result read anywhere else (assigned, returned, compared with a
-   * non-literal) is not here, so it still reaches the legalization's `dyn.typeof` refusal.
+   * non-literal) is not here, so (#7354 Str2) the legalization materializes its answer string.
    */
   readonly consumed: ReadonlySet<IrValueId>;
 }
