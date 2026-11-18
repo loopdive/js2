@@ -39,6 +39,7 @@ import { irRuntimeCallableDeclaration } from "../runtime/callable-declarations.j
 import { JS_TAG_IDS } from "../runtime/js-tag-domain.js";
 import { typeofComparisons } from "./typeof-comparisons.js";
 import { PREPARED_NUMBER_TO_STRING } from "./number-to-string-target.js";
+import { IR_DYN_ADD_FN } from "../core/runtime-symbols.js";
 
 const CARRIER: IrType = Object.freeze({ kind: "val", val: Object.freeze({ kind: "externref" }) });
 
@@ -104,7 +105,21 @@ const KIND_ORDER = Object.keys(TO_STRING_ARM) as readonly CarrierKind[];
 const TYPEOF_NAME = Object.fromEntries(Object.entries(TYPEOF_KIND).map(([answer, kind]) => [kind, answer])) as Readonly<
   Record<CarrierKind, string>
 >;
+/**
+ * (#7354 Str2-c) How `+` (§13.15.3) takes each admitted kind after ToPrimitive, which is the identity on every kind
+ * here because all are primitives: a string makes the addition a concatenation, any other kind is summed through
+ * ToNumber. A `Record` over the kinds, so a slice admitting an object kind must give it a row, and an object has none
+ * until `+` applies ToPrimitive to it.
+ */
+const ADD_ROLE: Readonly<Record<CarrierKind, "concat" | "numeric">> = {
+  number: "numeric",
+  boolean: "numeric",
+  string: "concat",
+  undefined: "numeric",
+  null: "numeric",
+};
 const STRING: IrType = Object.freeze({ kind: "string" });
+const F64: IrType = Object.freeze({ kind: "val", val: Object.freeze({ kind: "f64" }) });
 const TEST_RESULT: IrType = INTRINSIC_DEFINITIONS["js.value.is_string"].signature.result;
 
 /** The kind a box to the dynamic value admits, from its tag refinement or its operand; `undefined` refuses. */
@@ -116,12 +131,10 @@ function boxedKind(tag: TagId | undefined, source: IrType | undefined): CarrierK
 }
 
 /**
- * Rewrite one function. A function without a dynamic value is returned unchanged. `allocations` is the source's
- * registry: (#7354 Str2) ToString's literal arms are string allocation sites.
+ * The instruction builders of one function's legalization: fresh values after the function's own, intrinsic
+ * calls, kind tests and the per-kind chains (`kindChain`) that ToString, `typeof` and (#7354 Str2-c) `+` share.
  */
-export function legalizeDynamicValues(fn: IrFunction, allocations: AllocSiteRegistry): IrFunction {
-  if (!containsDynamic(fn)) return fn;
-  const types = irValueTypes(fn);
+function legalizationBuilders(fn: IrFunction, allocations: AllocSiteRegistry, types: ReturnType<typeof irValueTypes>) {
   let valueCount = fn.valueCount;
   const intrinsic = (instr: IrInstr, id: IntrinsicId, args: readonly IrValueId[], result = instr.result): IrInstr => ({
     kind: "intrinsic",
@@ -132,19 +145,18 @@ export function legalizeDynamicValues(fn: IrFunction, allocations: AllocSiteRegi
     resultType: INTRINSIC_DEFINITIONS[id].signature.result,
     ...(instr.site === undefined ? {} : { site: instr.site }),
   });
-  const isDynamic = (value: IrValueId): boolean => types.get(value)?.kind === "dynamic";
-  const thrown = new Set<IrValueId>();
+  // (#7354 Str2-c) The kind a box to the dynamic value proves for its result: a `+` operand of a known kind takes
+  // only that kind's arm.
+  const boxed = new Map<IrValueId, CarrierKind>();
   for (const block of fn.blocks)
-    for (const instr of block.instrs) forEachInstrDeep(instr, (i) => i.kind === "throw" && thrown.add(i.value));
-  const typeofs = typeofComparisons(fn);
-  // `!==`/`!=`: the positive test into a fresh value, then its negation into the comparison's result.
-  const withSense = (instr: IrInstr, negate: boolean, positive: (result: IrValueId) => IrInstr): IrInstr[] => {
-    if (!negate) return [positive(instr.result!)];
-    const value = valueCount++ as IrValueId;
-    return [
-      positive(value),
-      { kind: "unary", op: "i32.eqz", rand: value, result: instr.result, resultType: instr.resultType },
-    ];
+    for (const root of block.instrs)
+      forEachInstrDeep(root, (i) => {
+        const kind = i.kind === "box" && i.toType.kind === "dynamic" && boxedKind(i.toType.tag, types.get(i.value));
+        if (kind) boxed.set(i.result!, kind);
+      });
+  const kindsOf = (value: IrValueId): readonly CarrierKind[] => {
+    const kind = boxed.get(value);
+    return kind ? [kind] : KIND_ORDER;
   };
   const kindTest = (
     instr: IrInstr,
@@ -171,6 +183,7 @@ export function legalizeDynamicValues(fn: IrFunction, allocations: AllocSiteRegi
     then: (r: IrValueId) => IrInstr[],
     else_: (r: IrValueId) => IrInstr[],
     result: IrValueId,
+    resultType: IrType = STRING,
   ): IrInstr => {
     const thenValue = fresh();
     const elseValue = fresh();
@@ -182,7 +195,7 @@ export function legalizeDynamicValues(fn: IrFunction, allocations: AllocSiteRegi
       else: else_(elseValue),
       elseValue,
       result,
-      resultType: STRING,
+      resultType,
     };
   };
   // (#7354 Str2) ToString of the once-evaluated `value`, one arm per admitted kind (`TO_STRING_ARM`).
@@ -234,6 +247,91 @@ export function legalizeDynamicValues(fn: IrFunction, allocations: AllocSiteRegi
         (r) => kindChain(instr, value, r, arm, rest),
         result,
       ),
+    ];
+  };
+  const stringOf = (instr: IrInstr, value: IrValueId, result: IrValueId): IrInstr[] =>
+    kindChain(instr, value, result, (kind, r) => toStringArm(instr, kind, value, r), kindsOf(value));
+  /**
+   * (#7354 Str2-c) The dynamic `+` of two once-evaluated operands (`ADD_ROLE`): a string on either side concatenates
+   * their ToStrings, otherwise the ToNumbers are summed; either answer is boxed back into the carrier. An operand of
+   * a known kind takes only its own arms: a known string makes the whole addition a concatenation without a test,
+   * and only a side that may hold a string is tested.
+   */
+  const addition = (instr: IrInstr, operands: readonly IrValueId[], result: IrValueId): IrInstr[] => {
+    const concat = (r: IrValueId): IrInstr[] => {
+      const [left, right, text] = [fresh(), fresh(), fresh()];
+      return [
+        ...stringOf(instr, operands[0]!, left),
+        ...stringOf(instr, operands[1]!, right),
+        {
+          kind: "string.concat",
+          lhs: left,
+          rhs: right,
+          result: text,
+          resultType: STRING,
+          alloc: allocations.fresh("string", STRING),
+          concatMode: "immutable",
+        },
+        { kind: "coerce.to_externref", value: text, result: r, resultType: CARRIER },
+      ];
+    };
+    const sum = (r: IrValueId): IrInstr[] => {
+      const [left, right, total] = [fresh(), fresh(), fresh()];
+      return [
+        intrinsic(instr, "js.number.unbox", [operands[0]!], left),
+        intrinsic(instr, "js.number.unbox", [operands[1]!], right),
+        { kind: "binary", op: "f64.add", lhs: left, rhs: right, result: total, resultType: F64 },
+        intrinsic(instr, "js.number.box", [total], r),
+      ];
+    };
+    const roles = operands.map((value) => kindsOf(value).map((kind) => ADD_ROLE[kind]));
+    if (roles.some((role) => role.every((r) => r === "concat"))) return concat(result);
+    const tested = operands.flatMap((value) =>
+      kindsOf(value)
+        .filter((kind) => ADD_ROLE[kind] === "concat")
+        .map((kind) => ({ kind, value })),
+    );
+    if (tested.length === 0) return sum(result);
+    const tests = tested.map(({ kind, value }) => {
+      const cond = fresh();
+      return { cond, instrs: [kindTest(instr, kind, value, cond, TEST_RESULT)] };
+    });
+    const conds: IrInstr[] = tests.flatMap((test) => test.instrs);
+    let cond = tests[0]!.cond;
+    for (const test of tests.slice(1)) {
+      const either = fresh();
+      conds.push({ kind: "binary", op: "i32.or", lhs: cond, rhs: test.cond, result: either, resultType: TEST_RESULT });
+      cond = either;
+    }
+    return [...conds, branch(cond, concat, sum, result, CARRIER)];
+  };
+  return { intrinsic, fresh, kindTest, text, kindChain, toStringArm, addition, valueCount: () => valueCount };
+}
+
+/**
+ * Rewrite one function. A function without a dynamic value is returned unchanged. `allocations` is the source's
+ * registry: (#7354 Str2) ToString's literal arms are string allocation sites.
+ */
+export function legalizeDynamicValues(fn: IrFunction, allocations: AllocSiteRegistry): IrFunction {
+  if (!containsDynamic(fn)) return fn;
+  const types = irValueTypes(fn);
+  const { intrinsic, fresh, kindTest, text, kindChain, toStringArm, addition, valueCount } = legalizationBuilders(
+    fn,
+    allocations,
+    types,
+  );
+  const isDynamic = (value: IrValueId): boolean => types.get(value)?.kind === "dynamic";
+  const thrown = new Set<IrValueId>();
+  for (const block of fn.blocks)
+    for (const instr of block.instrs) forEachInstrDeep(instr, (i) => i.kind === "throw" && thrown.add(i.value));
+  const typeofs = typeofComparisons(fn);
+  // `!==`/`!=`: the positive test into a fresh value, then its negation into the comparison's result.
+  const withSense = (instr: IrInstr, negate: boolean, positive: (result: IrValueId) => IrInstr): IrInstr[] => {
+    if (!negate) return [positive(instr.result!)];
+    const value = fresh();
+    return [
+      positive(value),
+      { kind: "unary", op: "i32.eqz", rand: value, result: instr.result, resultType: instr.resultType },
     ];
   };
 
@@ -320,8 +418,11 @@ export function legalizeDynamicValues(fn: IrFunction, allocations: AllocSiteRegi
           intrinsic(instr, "js.value.strict_eq", [instr.lhs, instr.rhs], result),
         );
       }
-      // A front-end dynamic helper (`__ir_dyn_add`, ...) has no runtime declaration.
+      // A front-end dynamic helper (`__ir_dyn_lt`, ...) has no runtime declaration; (#7354 Str2-c) `__ir_dyn_add`
+      // is the dynamic `+`, expanded here.
       case "call":
+        if (instr.target.binding.kind === "runtime" && instr.target.binding.symbol === IR_DYN_ADD_FN)
+          return addition(instr, instr.args, instr.result!);
         return instr.target.binding.kind === "runtime" &&
           !irRuntimeCallableDeclaration(instr.target) &&
           [instr.resultType, ...instr.args.map((arg) => types.get(arg))].some((type) => type?.kind === "dynamic")
@@ -354,7 +455,7 @@ export function legalizeDynamicValues(fn: IrFunction, allocations: AllocSiteRegi
       blockArgTypes: block.blockArgTypes.map(carrierOf),
       instrs: mapBuffer(block.instrs),
     })),
-    valueCount,
+    valueCount: valueCount(),
   };
   // Any `dynamic` left (inside a composite type, an async frame, a closure
   // signature) has no carrier on this projection.
