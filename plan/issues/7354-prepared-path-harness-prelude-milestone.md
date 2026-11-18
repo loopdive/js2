@@ -1281,6 +1281,36 @@ correct before and now refuse. The reviewer's untested narrowing: refuse a repea
 declarations has no initializer, or is a `for-in` / `for-of` head or a pattern. The complete answer is one slot
 per `var` name per function (see Known gaps (H)).
 
+### Follow-up: unused `&&` / `||` keeps its right operand
+
+The slice-T review found a wrong answer that predates T: a `&&` / `||` whose value is unused dropped its right
+operand (`a > 0 && boom(b);` never called `boom`; node throws, ours returned). Root cause and fix are their own
+issue, **#7359** (`plan/issues/7359-dce-keeps-effectful-value-if.md`), because the ordinary pipeline had the same
+wrong answer in plain TypeScript on both targets.
+
+- **Cause.** A logical expression lowers to a value `if` (`lowerLogicalAndOr`, `src/ir/from-ast.ts`), the only
+  buffer-bearing IR kind missing from `isSideEffecting`, so DCE and the lowerer judged it by its kind alone and
+  dropped it, call and all, when its result was unused. `?:` in statement position was correct because
+  `lowerDiscardedExpression` lowers it to an `if.stmt`; an unread `const r = c ? f() : 0` was wrong too.
+- **Fix.** One rule in `isSideEffecting` (`src/ir/analysis/effects.ts`): an instruction that runs nested buffers is
+  as side-effecting as what it runs. The statement-level control kinds stay always-kept; an `if` with pure arms is
+  still dropped.
+- **Siblings checked.** `?:` statement (`if.stmt`, correct before), unread `?:` local (wrong before, fixed), comma
+  (its left operand is lowered as a discarded expression, correct), loops / `try` / `switch` / labelled blocks
+  (always kept), optional call `c?.m();` (correct before and after, ordinary). `x ?? f()` with
+  `x: number | undefined` is wrong on the ordinary pipeline in value position too (`return x ?? inc()` gives NaN,
+  node 7): the legacy path stores `number | undefined` as f64 — a different defect, reported, not touched here.
+- **Measured.** Prepared: `tests/issue-7354-h3-unused-logical-operand.test.ts`, 9 forms × 6 positions × (counter,
+  throw), 108 tests, 74 fail on main. Ordinary sweep (generated, 429 programs × default and standalone): 0 wrong
+  after, the same Prepared rows run or refuse by name (`no exact typed storage`, `__ir_dyn_add has no Prepared
+  intrinsic`, `__new_ReferenceError` for a typed counter — so the Prepared counter is a local the right operand
+  assigns). Ordinary bytes on 300 test262 files × 2 targets and the 13 playground examples × 2 targets: identical
+  (the JS test262 shapes do not reach the IR value `if` with an unused result). Prepared bytes identical on the 22
+  compiling rows of 14 unaffected programs × gc / standalone (the prepared-entry/runtime numeric programs, `&&` /
+  `||` in value, return and condition position, a pure unused `&&` and `?:`, a `?:` statement, h2 loops); they
+  change for the repro programs, where the unused effectful `if` is now kept. Equivalence files on logical /
+  conditional / optional / DCE shapes (23 files): failing set equals `scripts/equivalence-baseline.json`.
+
 ## Str result
 
 Status 2026-11-17. Branch `claude/7354-str` on `claude/7354-p` (`1995dd6ef2`). Steps 1 and 2 of the slice are built;
