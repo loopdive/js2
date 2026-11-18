@@ -183,11 +183,7 @@ describe("#7354 H — the dynamic home of a script var", () => {
     ],
     // An operation on the dynamic value the legalization has no intrinsic for (slices Str and T).
     ["added to", `${HOISTED_X}var y = 1; y = x + 1;`, "dynamic operation __ir_dyn_add has no Prepared intrinsic"],
-    [
-      "tested for truth",
-      `${HOISTED_X}var y = 1; y = x || 0;`,
-      "dynamic operation dyn.truthy has no Prepared intrinsic",
-    ],
+    // (#7354 T) `x || 0` runs now (below).
     // A member write on the binding is no second declaration: the binding keeps its home and the write refuses.
     [
       "given a property by a member write (slice O)",
@@ -259,6 +255,21 @@ describe("#7354 H — the dynamic home of a script var", () => {
       "y !== undefined",
       "y !== 1",
     ],
+    // (#7354 T) ToBoolean, and `||` yielding its operand.
+    ["tested for truth", `${HOISTED_X}var y = 1; y = x || 0;`, "y !== 1", "y !== 0"],
+    // (#7354 T/X) A catch binding and `null` are dynamic values now.
+    [
+      "a catch binding returned from an unannotated function",
+      "function k() { try { throw 1; } catch (e) { return e; } } var r = k();",
+      "r !== 1",
+      "r !== 2",
+    ],
+    [
+      "null returned from an unannotated function",
+      "function k() { return null; } var r = k();",
+      "r !== null",
+      "r === null",
+    ],
   ])("runs %s holding a dynamic home's value", async (_, program, holds, fails) => {
     expect(await run(`${program} if (${holds}) throw 1;`)).toBe("returned");
     expect(await run(`${program} if (${fails}) throw 1;`)).toBe("threw");
@@ -273,17 +284,11 @@ describe("#7354 H — the dynamic home of a script var", () => {
       "requires an initializer",
     ],
     [
-      "a catch binding",
-      "function k() { try { throw 1; } catch (e) { return e; } } k();",
-      "concrete return needs a dynamic box",
-    ],
-    [
       "a binding element",
       "function k() { var [a] = [x]; return a; } var r = k(); var x = 1;",
       "a dynamic value flows into [any] without a conversion",
     ],
     ["a regular expression", "function k() { return /a/; } k();", "concrete return needs a dynamic box"],
-    ["null", "function k() { return null; } k();", "bare 'null' in non-reference context (dynamic)"],
     ["a function read as a value", "function k() { return k2; } function k2() { return 1; } k();", 'identifier "k2"'],
   ])("refuses the value of %s returned from an unannotated function", async (_, program, message) => {
     expect(await refusal(program)).toContain(message);

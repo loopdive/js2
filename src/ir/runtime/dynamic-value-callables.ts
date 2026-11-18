@@ -13,11 +13,12 @@ import type { RuntimeManifestPolicy } from "../../runtime/contracts/provider-pol
 /**
  * (#7354 D1) The physical function behind each dynamic-value operation. The
  * two predicates are the existing primitive-carrier tests the native value and
- * Boolean resources already define; equality and the `undefined` value are the
- * dynamic-value resources' own functions.
+ * Boolean resources already define; equality, ToBoolean (#7354 T) and the
+ * `undefined` value are the dynamic-value resources' own functions.
  */
 const SYMBOLS: Readonly<Record<DynamicValueRuntimeFeature, string>> = Object.freeze({
   "js.value.strict_eq": "__js_strict_eq",
+  "js.value.to_boolean": "__is_truthy",
   "js.value.undefined": "__js_undefined",
 });
 

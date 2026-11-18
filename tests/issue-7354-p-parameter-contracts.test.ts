@@ -144,11 +144,8 @@ describe("#7354 P — an untyped parameter is the dynamic value", () => {
   });
 
   it.each([
-    [
-      "ToBoolean of the dynamic parameter (the repro's original `v ? 1 : 2`)",
-      "function h(v) { return v ? 1 : 2; }\nif (h(0.5) !== 1) throw 1;",
-      "dynamic operation dyn.truthy has no Prepared intrinsic",
-    ],
+    // (#7354 T) ToBoolean of the dynamic parameter (the repro's original `v ? 1 : 2`) is expressed now
+    // (tests/issue-7354-t-truthiness-null.test.ts).
     [
       "`arguments`",
       "function f(v) { return arguments.length; }\nif (f(1) !== 1) throw 1;",

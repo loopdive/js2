@@ -83,11 +83,16 @@ export type ExternBoundaryIntrinsicId = (typeof EXTERN_BOUNDARY_INTRINSIC_IDS)[n
 
 /**
  * (#7354 D1) Operations on the dynamic value (an `externref` carrying a
- * number/boolean box or the `undefined` singleton) that the number, boolean and
+ * number/boolean box, the `undefined` singleton or, since T, the null
+ * reference for `null`) that the number, boolean and
  * extern families do not already name. Only the Prepared standalone lane
  * produces them, from its dynamic-value legalization.
  */
-export const DYNAMIC_VALUE_INTRINSIC_IDS = Object.freeze(["js.value.strict_eq", "js.value.undefined"] as const);
+export const DYNAMIC_VALUE_INTRINSIC_IDS = Object.freeze([
+  "js.value.strict_eq",
+  "js.value.to_boolean",
+  "js.value.undefined",
+] as const);
 
 export type DynamicValueIntrinsicId = (typeof DYNAMIC_VALUE_INTRINSIC_IDS)[number];
 

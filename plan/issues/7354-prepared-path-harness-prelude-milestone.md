@@ -1778,3 +1778,286 @@ Proofs:
   - Str's: swapping the names of `__str_equals` and `__str_concat` (the census has no equals/flatten swap); repointing
     a literal use to another literal's storage; stripping the role of the `""` literal global.
 - `changed-root-tests.sh` (interpreter engine): green.
+
+## T and X result
+
+Status 2026-11-17. Branch `claude/7354-tx` on `claude/7354-p` (`1995dd6ef2`): T `5310a38b13`, X `01fd76c26c`.
+
+### Built
+
+- **T, ToBoolean.** New intrinsic `js.value.to_boolean` (`(externref) -> i32`), added to every closed list the
+  same way as `js.value.strict_eq` (vocabulary, `INTRINSIC_DEFINITIONS`, runtime features, provider ids,
+  `dynamic-value-callables.ts` symbol `__is_truthy`, `nativeIntrinsicRows` role `to-boolean`,
+  `native-dynamic-values.ts` row and fill). The legacy `__is_truthy` body moved unchanged into the pure builder in
+  `src/runtime/wasmgc/values/primitive-layouts.ts` (`buildToBooleanBody`/`buildToBooleanLocals`); legacy
+  `registry/imports.ts` calls it with its old arguments (149 lines shorter), the Prepared fill calls it with
+  `$AnyValue` (so `undefined` is falsy), the number and Boolean boxes, and no BigInt or string arm (`-1`).
+  Legalization arm: `dyn.truthy` → `js.value.to_boolean`.
+- **T, `null`.** The representation is the ordinary standalone pipeline's: the carrier's null reference
+  (`ref.null extern`); `undefined` stays the non-null `$AnyValue` singleton. So strict equality (its null arm),
+  the `undefined` probe (false for null) and ToNumber (`__unbox_number`: null → 0) are exact with no change. The
+  native lane's resolver now answers `dynamicCarrierIsExternref: () => true` (`sourceDynamicResolver`), which
+  turns on from-ast's existing dynamic `null` literal (`box` tagged Null) and `=== null` (`tag.test` Null).
+  Legalization arms: a Null-tagged box → `const null externref`; `tag.test` Null → `unary ref.is_null`.
+- **T, consequence.** The same flag makes from-ast read the catch binding as the dynamic value. Its checker
+  type is `unknown` (strict), so the D1 flow rule (`refuseImplicitDynamicFlows`) now treats `unknown` like
+  `any`: `catch (e) { return e as number; }` refuses by name ("flows into number … (AsExpression)") instead of
+  reaching a middle-end invariant ("early.return value type externref not assignable to declared result f64").
+- **X.** `coerce.to_externref` of a dynamic value whose result a `throw` consumes (found by a deep walk of the
+  function, nested buffers included) is kept: over the legalized `externref` operand it lowers to nothing. Any
+  other coercion of a dynamic value still refuses. P's result rule counts `unknown` like `any`, so a function
+  that returns its catch binding has a dynamic result.
+- `&&`/`||` needed nothing: from-ast already yields the operand (`(0 || 5) === 5`, `(1 && true) === true`,
+  `(undefined || undefined) === undefined` are tested).
+
+Names other slices can rely on: intrinsic `js.value.to_boolean`, provider `native.js.value.to_boolean`, resource
+`__is_truthy` (role `values/to-boolean`), builder `buildToBooleanBody`. `null` needs no new intrinsic: it is
+`ref.null extern` in the carrier. **Str must pass the string type as `anyStringTypeIdx` in the
+`native-dynamic-values.ts` ToBoolean fill** once strings enter the carrier, or `""` reads truthy.
+
+Soundness of the dynamic catch binding: the payload is whatever was thrown. In an accepted Prepared program that
+is a dynamic value, a boxed number (`numericThrow`) or `null`; strings refuse (`js.string.const is unavailable`),
+a typed Boolean throw refuses ("throw val not in slice 9"), objects do not compile (see gaps). A slice that makes
+a new value throwable must give the dynamic operations its arm.
+
+### Measured
+
+- Tests (round 1 counts): `tests/issue-7354-t-truthiness-null.test.ts` (34), `tests/issue-7354-x-dynamic-throw.test.ts` (48),
+  each accepted program run with node's answer (returns) and a wrong one (throws). With D1, P, V/G, R: all pass.
+- Sweeps against node, through the strict entry: T 1584 programs (`!v`, `!!v`, `?:`, `&&`, `||`, `=== null`,
+  `!== null`, `null === v`, `=== undefined`, `if`, `if (!v)`, `while`, `for`, `do-while` × 11 values incl. NaN,
+  ±0, ±Infinity, booleans, undefined, null × returned / local / condition / top level), 1584 correct, 0 gaps.
+  X 231 programs (return the caught value, rethrow through nested try/catch/finally, two calls up, top level,
+  ToBoolean / identity / undefined / null test of `e`, literal throws, finally runs, uncaught escape), 227
+  correct, 4 named gaps (typed `throw true/false`). Zero invariant errors, zero invalid Wasm.
+- Mutation check (14 mutations, each alone): 13 killed. Survivor: `internalizeOnce` on the Prepared fill (true and
+  false are both correct; it only chooses whether the operand is internalized once or twice).
+- Ordinary pipeline: 320 test262 files (the ES5 sample list) byte-identical on the default JS target and on
+  `--target standalone` against the base, 312 compiled per target, 8 compile errors on both.
+- Prepared bytes, 37 program literals of prepared-entry/runtime, #7188 and R tests × {entry.ts, test.js} ×
+  {standalone, gc}: identical except one, R's base `catch (e) { return e as number; }`, now the named refusal
+  above (R's test program changed to `catch (e: any) { return e * 1; }`, which the base refused).
+- Changed root tests vs `origin/main` (the `quality` job's set): the same 10 failures on the base and with T/X
+  (`core-vocabulary-seam` 4 × "complete source SHA256/length mismatch: src/ir/ast-lowering-plans.ts",
+  `semantic-verification-ownership` `effectsOf` hash, `string-boundary-const` 5 host-lane import positions).
+- Real runner, 411-row sample: negatives unchanged (14 pass, 1 compile error); first gap unchanged: 393 ×
+  "not-direct" (`print`, `__isArray`, `__globalObject`), 2 switch-case, 1 callable annotation. T and X sit
+  behind slice H's gap; the stepped-past tally was not run.
+- Gates: typecheck, loc, func, coercion-sites, oracle-ratchet, dead-exports, import-cycles.
+
+### Test pins updated
+
+- `issue-3518-core-vocabulary-seam`: `INTRINSIC_IDS` 41 → 42 (two places).
+- `issue-3518-semantic-verification-ownership`: `INTRINSIC_DEFINITIONS` successor pin a17fd837… → bc21ec2c…; the
+  D1 predecessor step removes the three `js.value.*` rows (re-derives b763d963… unchanged); catalogue 41 → 42.
+- `issue-7354-d1-dynamic-carrier`: ToBoolean, null tag test and thrown-value refusals removed (expressed now);
+  `selectNativeDynamicValues` gains `toBoolean: false`.
+- `issue-7354-p-parameter-contracts`: the ToBoolean refusal removed. `issue-7354-r-provider-census`: the census
+  program also tests ToBoolean and its provider/resource drop/rename; `twoNatives` as above.
+
+### Named gaps and not verified
+
+- `typeof v` refuses "dynamic operation dyn.typeof has no Prepared intrinsic" (Str); `isPrimitive` stops there.
+- `v == null` refuses in from-ast ("bare 'null' in non-reference context (f64)"); other loose equality refuses
+  as `dyn.eq (loose)`.
+- A boolean (i32) result passed to a dynamic parameter was refused in from-ast; fixed in review round 1 (the
+  Boolean result contract below).
+- Pre-existing on the base: `throw {}` throws `PreparedIrProgramInvariantError` out of `compile()` ("resolver
+  cannot lower object<>"); pinned in the X test.
+- No program in the sweeps, the tests or the review probes reaches a `coerce.to_externref` of a dynamic value
+  that a `throw` does not consume (its other from-ast producers — string concatenation, function-object keys,
+  host boundaries — refuse earlier on this lane). The rule is tested on hand-built IR only.
+
+### Review round 1
+
+Adversarial review at `bbab057818`: T MET, X MET, no must-fix. Should-fixes:
+
+1. **Catch-binding payload assumption — fixed (pinned).** Every throw site that could reach a Prepared catch was
+   listed: user `throw` (dynamic, boxed number, `null` admitted; string → `js.string.const is unavailable`;
+   Boolean → "throw val not in slice 9"; object → emission invariant, pre-existing), from-ast TDZ
+   `__new_ReferenceError` (refused: "needs runtime function materialization"), from-ast `__new_TypeError`
+   (dynamic call and member read refuse earlier), runtime bodies (all construct a TypeError — an Error object,
+   for which every dynamic operation the carrier has is exact: truthy, identity, not `undefined`/`null`,
+   ToNumber NaN — except `vector-grow-store.ts`'s `ref.null extern`, unreachable: no vector compiles). Each is
+   pinned in `tests/issue-7354-x-dynamic-throw.test.ts`; the invariant is stated at `sourceDynamicResolver`,
+   where the binding becomes dynamic.
+2. **Other paths of the carrier flag — fixed.** Each refuses today, with a test in the T file: a dynamic for-in
+   head ("dynamic for-in runtime is unavailable"), a function-object property write (`identifier "g" is not in
+   scope` — functions are not values yet), a primitive wrapper's ToPrimitive (`unknown class "Number"`), the
+   `parseInt` externref boundary in `stringToNumber` ("direct call to "parseInt" has no exact AST-site plan").
+3. **Stale strict-equality comment — fixed** (`null` is in the admitted set; the body's null arm).
+4. **`buildToBooleanBody` style — fixed.** An absent arm is `undefined` (like `buildIsUndefinedBody`), no `as`
+   casts; ordinary bytes identical on 50 files, then on all 320, both targets.
+5. **`return e === 3` refused by the join — fixed.** Cause: not the catch binding. An unannotated result the
+   checker types Boolean lowered (through the propagation shared with the ordinary pipeline) to a plain `i32`,
+   and the presentation's source-declaration join requires the Boolean carrier; `function f(){ return 1 === 1; }`
+   failed the same way on the base (P's named gap). `sourceDynamicResult` now answers the Boolean carrier for
+   such a result on the native lane. Both programs run (right answer returns, wrong throws), and a Boolean
+   result now also flows into a dynamic parameter (`same(f(0), true)`).
+6. **Source test for the coercion rule — rebutted:** no source program reaches a non-throw use (above).
+7. **Proofs the restart cut — done.** 3518/3526, all 316 files on HEAD `8a3583bf67` in 8-file chunks (3 slow
+   files run alone; `native-invocation-consumer` and `native-mixed-object-access` exceed the 10-minute
+   foreground cap and were not completed), the base (`1995dd6ef2`, swapped into the tree) on the 120 files that
+   fail on HEAD: identical failing sets except `native-source-closure-consumer`, where both sides lose different
+   35–40 s `STACK_TRACE_ERROR` timeouts under load. Note: `origin/claude/7354-p` moved during the session (P's
+   review rounds), so the earlier base runs were redone against `1995dd6ef2`; with it,
+   `native-string-number-source-admission` fails the same 3 tests on base and HEAD (fixed on P's newer head).
+   `changed-root-tests.sh` stops at `core-vocabulary-seam`'s 4 pre-existing failures ("complete source
+   SHA256/length mismatch: src/ir/ast-lowering-plans.ts", same on the base, fixed on D1's newer head); the other
+   10 changed root files were run directly and fail only the base's tests.
+
+Verdict MET; every should-fix fixed or rebutted.
+
+### After the merge onto H (`36c1b42ac9`)
+
+- Port onto `programDynamicContracts`: the `resolver` entry gains `dynamicCarrierIsExternref`; the Boolean result
+  contract is `sourceBooleanResult`, asked by `result()` after the dynamic one (the provenance still asks only the
+  dynamic one); the `unknown`-as-untyped rule is dropped: H's provenance already answers "may be dynamic" for a
+  catch binding (a local without an initializer), which covers both the result contract and the flow rule. Two
+  additions beside their siblings: the legalization also runs for roots that bind a catch (a program whose only
+  dynamic value is a catch binding has no dynamic contract), and the flow rule's `passedOn` treats the operands of
+  `||`/`&&` like a comma's result (T makes them yield an operand). H tests updated: `x || 0`, a returned catch
+  binding and a returned `null` run now instead of refusing.
+- Tests: T 34, X 48, H 66, P, D1, V/G, R, prepared entry/runtime, #7188 pass; `changed-root-tests.sh`: all 10
+  files pass. Gates against the H tip pass. Ordinary bytes: 100 files × 2 targets identical to the H head. Sweeps:
+  T 1584/1584, X 227 + 4 named gaps.
+- 411-row sample: negatives 14 pass. First gap over 396 positives: 282 × "dynamic operation dyn.typeof has no
+  Prepared intrinsic" (`isPrimitive`, `harness/assert.js:21`, the prelude's first `typeof`); 84 × "module binding X
+  has no exact typed storage: not-direct" (`obj` 52, `x` 5, `proto` 4, `o` 4, `arr` 3, …); 27 × "direct call to
+  "String" has no exact AST-site plan in verifyProperty"; 2 × switch-case lexical binding; 1 × "unknown class
+  "Test262Error" in isConstructor".
+
+### Review round 2 (delta after the port onto H)
+
+**Must-fix: a Boolean (typed) left operand with a dynamic right operand in a VALUE position yielded a Boolean.**
+`function f(b, c) { return (b > 1) && c; }` answered `f(5, 7) === true` (node: 7); the same for `||`, `!a || c`,
+`!(a && b) || c`, `(b > 1) && (c || d)` and TypeScript `n > 1 && c` / `n > 1 || c` with `c: any`.
+
+- **Cause** (the reviewer's reading, confirmed): `lowerLogicalAndOr` (`src/ir/from-ast.ts`) takes its `i32` path
+  whenever the left operand is not dynamic and ToBooleans a dynamic right operand there even outside a condition.
+  Before T that ToBoolean had no intrinsic and refused by name; T's `js.value.to_boolean` made the wrong path run.
+  The `&&` case was wrong before the port; the `||` cases were reopened by the `passedOn` logical arm of the
+  implicit-flow rule (which is right: an operand of `&&`/`||` is the expression's value).
+- **Fix:** the position the lowering already knows decides. Only a boolean position (the `i32` hint: an `if` /
+  loop condition, `?:` test, `!`, a Boolean result) ToBooleans the right operand. In a value position a dynamic
+  right operand stays the value, the typed left operand is boxed into the carrier (`logicalOperandCarrier`, which
+  the dynamic-left arm's right operand now shares), and the result selects one of them (`emitLogicalSelect`, moved
+  to the new `src/ir/logical-select.ts` and shared by all three arms). Each operand is evaluated once, the right one
+  only in its arm. A nested logical right operand gets the carrier hint in a value position, exactly like the left
+  one (`operandHint`, one rule for both sides). A typed number operand still refuses by name ("requires bool
+  operands"); the dynamic result flowing into a typed position refuses by name (`assignment to "r" (f64) got
+  dynamic`). `src/ir/from-ast.ts` shrinks by 12 lines.
+- **Ordinary pipeline:** it reaches `lowerLogicalAndOr` in value positions (instrumented: dynamic hints in
+  `Test262Error`, `isEnumerable`, f64 hints in `<module-init>`), but never with a typed left and a dynamic right
+  operand there — the same programs compile on the ordinary pipeline and answer like node (checked: `(b > 1) && c`,
+  `||`, `!a || c`, `n > 1 && c`, a nested right operand), through legacy. Bytes identical on 100 test262 files ×
+  default and `--target standalone` plus 14 logical programs, against `b08580f01c` (the tx tip with the hoisted-var
+  fix merged, before B).
+- **Sweep** (`.tmp/sweep-b.mts`, not committed): left ∈ {typed Boolean `a > 0`, typed number, dynamic} × right ∈
+  the same × {`&&`, `||`} × 9 positions (returned, assigned to a dynamic local, argument, `… || e`, `e && …`, `if`,
+  `!(…)`, `?:` test, right operand with a side effect that throws), every value pair per program (dynamic: 0, -0,
+  NaN, 1, true, false, undefined, null; number: 0, -0, NaN, 1): 162 programs, **88 equal node, 74 named
+  refusals, 0 wrong, 0 invariant errors**. Refusals: 62 "operator requires bool operands" (a typed number
+  operand), 12 "source Boolean return boundary requires actual canonical Boolean boxing" (`!(…)` returned from an
+  `any` result). (-0 is checked with `!==`, which cannot tell it from 0.) A reduced sweep (Boolean/dynamic ×
+  Boolean/dynamic × both operators × returned / chained / condition, 24 programs) is in the test file.
+- **Mutations:** always ToBoolean the dynamic right operand → 15 tests fail; the `i32` hint for the right operand →
+  the nested-right test fails; the value-select arm is the only path to an accepted value (removing it refuses).
+  Survivor: `logicalOperandCarrier`'s refusal for the left operand (a typed left operand here is `i32`, which
+  always has a carrier).
+
+**Should-fix 1: `function f(n: number) { return n as unknown; }` refused as "call to f returned void used as
+expression".** The ordinary pipeline's propagation types such a result void, so the function lowered as void and
+the call failed later. Now an unannotated function with no result contract whose body returns a value refuses at
+the declaration by name: "function f returns unknown, which has no Prepared result contract" (`object` for `as
+unknown as object`) — `ProgramDynamicContracts.propagatedResult` in `src/ir/source-dynamic-contracts.ts`, called
+where `src/ir/program-source.ts` used to fall back to void. A body that returns only `undefined` (type
+`undefined`/`void`) stays void (pinned by #7188's internal-declaration tests). The dynamic result contract was not
+widened to `unknown`: the implicit-flow rule would then refuse every `return` into the `unknown` context, so it is
+not a clean fit. Cost: such a function called only as a statement compiled before (its value was dropped) and now
+refuses.
+
+**Should-fix 2: seven standalone programs that compiled on H changed Prepared bytes** (un-annotated functions
+returning a Boolean, e.g. `function f(v) { return v === 1; }`). Measured on that program (H vs this branch, WAT
+diff): the function body is identical; the only change is the type section — `f` gets its own function type
+`(func (param externref) (result i32))` instead of sharing the structurally identical type of the runtime's
+`__typeof_number` / `__unbox_boolean`, and the `<module-init>` / `__module_init` type indices shift by one. The
+Boolean result contract makes the result a Boolean-branded `i32`, which the presentation keys separately from a
+plain `i32`. The two types are structurally equal (one-entry recursion groups canonicalize to the same type), so
+the behavior is unchanged; it is right because the result now carries its Boolean meaning to the caller (a caller
+boxes it as a Boolean, not a number). Folding the duplicate type is a possible size clean-up, not a correctness
+issue.
+
+**Also:** the T test helpers yield one event-loop turn before each compile (`compileYielding`): the file now runs
+long enough that vitest's worker RPC timed out between compiles. `tests/issue-7354-x-dynamic-throw.test.ts` and the
+H test show the same unhandled RPC timeout under the current machine load on their base as well (all tests pass).
+
+### Review round 3
+
+**Verdict NOT MET on one must-fix, pre-existing on H:** a `&&` / `||` whose value is unused dropped its right
+operand. `function f(a, b){ a > 0 && boom(b); return 0; } f(1, 1);` returned (node throws); the same with `||`, at
+top level, in an unread local and with a counter (`inc` never ran). The reviewer confirmed value and condition
+positions and evaluation order correct over a 270-program cross product; a `?:` statement was correct.
+
+- **Cause and fix:** #7359 (the H follow-up record "unused `&&` / `||` keeps its right operand"): the value `if` was
+  the only buffer-bearing IR kind `isSideEffecting` judged without its buffers, so DCE and the lowerer dropped it
+  when its result was unused. It existed on main for typed TypeScript and on the ordinary pipeline; T made the
+  dynamic forms reachable. Merged here from `claude/7354-logical-unused`.
+- **Sweep** (`.tmp/tsweep.mts`, not committed): `&&` / `||` × left ∈ {typed Boolean `(a > 0)`, dynamic `a`, typed
+  number `(a * 1)`} × right ∈ {dynamic `inc(b)`, typed Boolean `(inc(b) > 0)`, typed number `(inc(b) * 1)`} ×
+  {statement, unread local, top level, loop body} × a ∈ {0, 1} × (counter, wrong counter, throwing call): 432
+  programs, **240 equal node, 192 named refusals ("operator '&&' requires bool operands" — every typed number
+  operand), 0 wrong**; without the fix 80 were wrong. Tests: "review round 3" in
+  `tests/issue-7354-t-truthiness-null.test.ts` (both operators × Boolean / dynamic left × dynamic / Boolean right ×
+  the four positions, counter and throw, plus the typed number refusal; 32 of them fail without the fix).
+- **Merge with Str (main `f8cfc8c0ff`):** Str lets a native string reach the dynamic carrier, and T's ToBoolean body
+  had no string arm (`function f(v){ return v ? 1 : 0; } f("")` answered 1 after a plain merge). ToBoolean now takes
+  the string arm (empty is falsy) whenever the value lane carries native strings
+  (`src/backend/wasmgc/resources/native-dynamic-values.ts`); the selection keeps Str's `strictEqStrings` beside T's
+  `toBoolean`. Tests: "T after Str" (conditional, `if`, `||` operand, `!v` on `""` / `"a"`; all 4 fail without the
+  arm).
+
+### Review round 4: MET
+
+T MET, X MET at `838688fd5f`, no must-fix.
+
+- **Strings and ToBoolean:** 120 string-ToBoolean programs equal node — values `""`, `"a"`, `" "`, `"0"`, `"false"`,
+  `"\0"` and a 3000-character string × positions `if`, `!`, `!!`, `?:`, `while`, `&&` / `||` as condition and as
+  value. The reviewer found no path by which a string reaches ToBoolean without the string arm. X with strings is
+  correct.
+- **Census:** forgeries of the `to_boolean` provider, of `__is_truthy` and of the five string type rows are refused
+  by name.
+- **Re-runs:** the 94 T probes and the 127 X probes of the earlier rounds, no regression. Both mutants of the string
+  arm are killed.
+
+Should-fixes, both recorded under "Known gaps (T and X)" below:
+
+- (a) the confusing refusal of an `any`-annotated local holding a string or a number;
+- (b) the "redeclaration of 'e'" refusal of a catch parameter that shadows a `var`.
+
+### Known gaps (T and X)
+
+- **(a) An `any` local outside every dynamic contract refuses without naming its cause.** `function g(c: number):
+  number { let v: any = c > 0 ? "" : 1; return v ? 1 : 2; } if (g(1) !== 2) throw 1;` (`test.ts`, standalone)
+  refuses "wasmgc:standalone physical setup cannot be materialized (1 gap): body g has no accepted host async dynamic
+  carrier". The same refusal is on main without T (checked on `c105fc1cc0`).
+  - **Cause:** `legalizeSourceDynamicValues` (`src/ir/source-dynamic-contracts.ts`) legalizes a program only when it
+    has a dynamic contract: an `any` / untyped parameter or result, a dynamic script `var`, or a catch binding. That
+    gate is deliberate — from-ast also boxes values into dynamic ones internally in programs without a contract
+    (pinned by `issue-3518-native-string-number-source-admission`). Here the only dynamic value is an annotated
+    local, so `g` stays unlegalized. The first stage that sees the leftover dynamic type is the host async planner
+    (`src/ir/program/host-async-dynamic.ts`), and its message is about host async frames.
+  - **Why not fixed here:** naming the cause means making the contract gate recognise an `any`-annotated local and
+    then re-sweeping the flow rule over such locals. That is a change of the gate, not of one message. Rewording only
+    the planner's message would still not say what caused it.
+  - Without `: any`, or in a `.js` file, from-ast refuses earlier by name: "ternary branches have different types
+    (string vs f64)".
+- **gc target, pre-existing: an invariant error out of `compile()`.** `var c = 1; let v: any = c > 0 ? "" : 1; if
+  (v) throw 1;` (`t.ts`, target `gc`) throws `IrProgramDriverInvariantError` "ir/from-ast: #5092 dynamic carrier is
+  unavailable or incompatible in <module-init>". The same happens on `c105fc1cc0` (main plus #7359, without T). The
+  same program on standalone compiles and answers like node. Found while checking (a); not touched here.
+- **(b) A catch parameter shadowing a `var` refuses.** `function f(v){ var e = 5; try { throw v; } catch (e) { }
+  return e; }` refuses "redeclaration of 'e'". This comes from the hoisted-var fix (#7290): a catch parameter counts
+  as a second binding of the `var` name. It belongs to the "one slot per `var` name per function" follow-up (see
+  Known gaps (H)) and is left unchanged.
+

@@ -218,8 +218,8 @@ describe("#7354 Str 2 — a string in the dynamic value", () => {
     expect(await main(source)).toBe(27);
   });
 
+  // ToBoolean of a string is slice T's (merged): tested in `tests/issue-7354-t-truthiness-null.test.ts`, "T after Str".
   it.each([
-    ["ToBoolean of a string (slice T)", "function f(v) { return !v; }\nf('a');", "dyn.truthy"],
     ["loose equality", "function f(v) { return v == 'a'; }\nf('a');", "dyn.eq (loose)"],
     ["a method call on a dynamic string", "function f(v) { return v.charAt(0); }\nf('a');", "dyn"],
   ])("refuses %s", async (_, source, detail) => {
