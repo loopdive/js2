@@ -295,9 +295,10 @@ export function planNativeStringValuePhysical(
   const invocationRequirements = nativeStringInvocationRequirements(demands, options.utf8Storage, expectedInvocation);
   const boolean = selectNativeBooleans(demands, invocationRequirements);
   if (boolean.gap) return located(demands, boolean.gap.occurrence, boolean.gap.detail);
-  const outputRequirements = deriveNativeStringOutputRequirements(demands, {
-    emptyIdentity: options.stringConcatEmptyIdentity ?? true,
-  });
+  const outputRequirements = deriveNativeStringOutputRequirements(
+    demands,
+    Object.freeze({ emptyIdentity: options.stringConcatEmptyIdentity ?? true }),
+  );
   if ("kind" in outputRequirements) return outputRequirements;
   const invocation =
     !!invocationRequirements ||

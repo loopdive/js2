@@ -75,3 +75,22 @@ export function checkUnlessSettled(holder: PreparedIrSettlement, input: unknown,
   check();
   holder.settled = settles ? prototypes : undefined;
 }
+
+/**
+ * The holder for a check that holds by construction when its subject is issued (a fresh derivation is its own
+ * re-derivation): settled at once if `input` can no longer change, else checked at every use.
+ */
+export function settledAtIssue(input: unknown): PreparedIrSettlement {
+  return { settled: isImmutablePreparedIrValue(input) ? sharedPrototypeState() : undefined };
+}
+
+/** The settled verdicts of ONE check, each held by the input object it was reached over. */
+export class PreparedIrSettledChecks<Input extends object> {
+  readonly #holders = new WeakMap<Input, PreparedIrSettlement>();
+
+  check(input: Input, check: () => void): void {
+    let holder = this.#holders.get(input);
+    if (!holder) this.#holders.set(input, (holder = { settled: undefined }));
+    checkUnlessSettled(holder, input, check);
+  }
+}
