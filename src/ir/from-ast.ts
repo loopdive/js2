@@ -310,6 +310,7 @@ import {
 import { collectLatticeParamFacts, latticeAdditiveFact, type LatticeParamFacts } from "./lattice-param-facts.js";
 import { tryEmitUnrolledReduction } from "./reduction-unroll.js";
 import { demoteToLegacy, IrInvariantError, IrUnsupportedError } from "./outcomes.js";
+import { staticTypeofOf } from "./typeof-static-answer.js";
 import {
   boxWrapper,
   emitToPrimitive,
@@ -6025,36 +6026,23 @@ function lowerTypeOf(expr: ts.TypeOfExpression, cx: LowerCtx): IrValueId {
   }
   const inner = lowerExpr(expr.expression, cx, irVal({ kind: "f64" }));
   const innerType = cx.builder.typeOf(inner);
-  const tag = staticTypeOfFor(innerType);
-  if (tag === null) {
-    if (innerType.kind === "dynamic") {
-      const families = exactDynamicPrimitiveTypeofFamilies(expr.expression, cx);
-      if (families !== null) return lowerExactDynamicPrimitiveTypeof(inner, families, cx);
-      // #7104 — the general case: every partition through the lane's `__typeof`.
-      return cx.builder.emitDynTypeof(inner);
-    }
+  const answer = staticTypeofOf(innerType, expr.expression, cx);
+  if (answer.kind === "static") return cx.builder.emitStringConst(answer.tag);
+  if (answer.kind === "unproven")
     demoteToLegacy(
       "operand-coercion-unsupported",
-      `ir/from-ast: typeof of non-static IrType (${describeIrType(innerType)}) is deferred (${cx.funcName})`,
+      `ir/from-ast: typeof operand lowered as ${answer.irTag} has source type ${answer.sourceTag} (${cx.funcName})`,
     );
+  if (innerType.kind === "dynamic") {
+    const families = exactDynamicPrimitiveTypeofFamilies(expr.expression, cx);
+    if (families !== null) return lowerExactDynamicPrimitiveTypeof(inner, families, cx);
+    // #7104 — the general case: every partition through the lane's `__typeof`.
+    return cx.builder.emitDynTypeof(inner);
   }
-  return cx.builder.emitStringConst(tag);
-}
-
-/**
- * Map an IR type to the JS `typeof` tag string that any value of that type
- * would produce at runtime. Returns `null` for types whose runtime tag
- * varies (unions, boxed, references) — those need a runtime dispatch and
- * are out of slice 1's scope.
- */
-function staticTypeOfFor(t: IrType): string | null {
-  if (t.kind === "string") return "string";
-  if (t.kind === "vec") return "object";
-  if (t.kind === "val") {
-    if (t.val.kind === "f64" || t.val.kind === "f32" || t.val.kind === "i64") return "number";
-    if (t.val.kind === "i32") return "boolean"; // i32 represents bool in slice 1
-  }
-  return null;
+  demoteToLegacy(
+    "operand-coercion-unsupported",
+    `ir/from-ast: typeof of non-static IrType (${describeIrType(innerType)}) is deferred (${cx.funcName})`,
+  );
 }
 
 /**
