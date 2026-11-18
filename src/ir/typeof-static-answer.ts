@@ -10,7 +10,7 @@
  * for its effects). Any other disagreement is not provable here.
  */
 import type ts from "typescript";
-import { TsCheckerOracle, type TypeOracle } from "../checker/oracle.js";
+import { jsTagOfFact, TsCheckerOracle, type JsTag, type TypeOracle } from "../checker/oracle.js";
 import type { IrType } from "./core/types.js";
 
 export type StaticTypeof =
@@ -32,6 +32,15 @@ function irTypeofTag(type: IrType): string | null {
   return null;
 }
 
+/** The source type's tag; a union whose members share one tag (`1 | 2`, the answers of `typeof`) has it too. */
+function sourceTypeofTag(oracle: TypeOracle, operand: ts.Expression): JsTag | "mixed" {
+  const tag = oracle.staticJsTypeOf(operand);
+  if (tag !== "mixed") return tag;
+  const memberTags = new Set(oracle.unionPartsOf(operand)?.map(jsTagOfFact));
+  const [only] = memberTags;
+  return memberTags.size === 1 && only !== undefined ? only : "mixed";
+}
+
 /** `types` is the lane's oracle, or its checker: the Prepared producer hands from-ast a checker without an oracle. */
 export function staticTypeofOf(
   irType: IrType,
@@ -41,7 +50,7 @@ export function staticTypeofOf(
   const irTag = irTypeofTag(irType);
   if (irTag === null) return { kind: "varies" };
   const oracle = types.oracle ?? (types.checker ? new TsCheckerOracle(types.checker) : undefined);
-  const sourceTag = oracle?.staticJsTypeOf(operand) ?? "mixed";
+  const sourceTag = oracle ? sourceTypeofTag(oracle, operand) : "mixed";
   if (sourceTag === irTag || sourceTag === "undefined") return { kind: "static", tag: sourceTag };
   return { kind: "unproven", irTag, sourceTag };
 }
