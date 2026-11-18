@@ -392,7 +392,13 @@ function nativeRows(
   const owned = nativeSlots(program, emission, setup);
   const formatted = formatter ? nativeSlots(program, emission, formatter) : [];
   const slots = owned && formatted && [...owned, ...formatted];
-  if (!slots?.every((slot) => nativeGlobalMatches(emission, slots, slot))) return undefined;
+  // (#7354 Str2-c) One declaration per completed slot, across both setups: no row is a second name for another's.
+  if (
+    !slots ||
+    new Set(slots.map((slot) => `${slot.declaration.space}:${slot.index}`)).size !== slots.length ||
+    !slots.every((slot) => nativeGlobalMatches(emission, slots, slot))
+  )
+    return undefined;
   const strings = providers.filter((row) => STRING_FEATURES.has(row.feature));
   const callables = providers.filter((row) => !strings.includes(row) && row.implementation.kind === "runtime-callable");
   const formatterCallables = formatterJoins(program, setup.formatterScratch, formatter, formatted!, providers);

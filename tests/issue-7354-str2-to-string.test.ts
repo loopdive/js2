@@ -88,12 +88,6 @@ describe("#7354 Str2 — String(x) on the Prepared path", () => {
   });
 
   it.each([
-    [
-      // ToString's number arm calls the native formatter, which the presentation does not admit yet.
-      "a dynamic operand",
-      "function f(x) { return String(x); }\nf(1);",
-      "host provider or async demand is outside this numeric presentation contract",
-    ],
     ["no argument", "var s = String();", 'direct call to "String" has no exact AST-site plan'],
     ["String.fromCharCode", "var s = String.fromCharCode(65);", 'identifier "String" is not in scope'],
     ["new String", 'var s = new String("a");', 'unknown class "String"'],
@@ -146,18 +140,14 @@ describe("#7354 Str2 — String(x) on the Prepared path", () => {
     expect(messages(result).join("\n")).toContain('direct call to "String" has no exact AST-site plan');
   });
 
-  // A typed number is formatted by the native formatter, which the presentation does not admit yet.
-  it("refuses String of a typed number by name, never with an exception", async () => {
-    expect(await refusal("var s = String(1);")).toContain(
-      "host provider or async demand is outside this numeric presentation contract",
-    );
-  });
-
-  // The same formatter answers a template literal's number (it used to be an invariant error out of compile()).
-  it("refuses a template literal's number by name, never with an exception", async () => {
-    expect(await refusal("var n = 1;\nvar s = `${n}`;")).toContain(
-      "host provider or async demand is outside this numeric presentation contract",
-    );
+  // (#7354 Str2-c) The native formatter is admitted: a typed number, a dynamic operand's number arm, and a template
+  // literal's number (once an invariant error out of compile()) format like node.
+  it.each([
+    ["a typed number", "var s = String(1.5);", '"1.5"', '"1.50"'],
+    ["a dynamic operand", "function f(x) { return String(x); }\nvar s = f(-0);", '"0"', '"-0"'],
+    ["a template literal's number", "var n = 1e21;\nvar s = `${n}`;", '"1e+21"', '"1e21"'],
+  ])("answers String of %s", async (_label, program, right, wrong) => {
+    await expectLikeNode((ok) => `${program}\nif (s !== ${ok ? right : wrong}) throw 1;`);
   });
 
   it("keeps the gc target's contract", async () => {
