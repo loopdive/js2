@@ -2177,3 +2177,77 @@ prove no async/support demand" (`runtimeSupport.batches`). `String()` (no argume
 Object-literal throw: invariant error out of compile() ("resolver cannot lower object<a:f64>"), pinned. Mutation:
 the declaration file check, the retarget and the string tag test are killed by tests; the ToString arms,
 `__js_as_string` and the string carrier in the ABI join cannot run until (c) and are unverified survivors.
+
+### Str2 step 4: `typeof` as a value (2026-11-18)
+
+A `dyn.typeof` that is not consumed by a literal comparison materializes its answer string with the same kind chain
+as ToString (`kindChain` in `src/ir/program/dynamic-value-legalization.ts`; arms `TYPEOF_NAME[kind]`, i.e.
+`TYPEOF_KIND` read backwards, so `typeof null` is "object" and a new kind cannot be missed). Proven against node
+(right answer returns, wrong throws): every carrier value returned / in a local / as an argument / at top level,
+`"x" + typeof v`, `typeof v === k`, `typeof a === typeof b` (same kind, other kind, null vs undefined), a local also
+compared with a literal, loop iterations, the prelude's `switch (value === null ? 'null' : typeof value)`, statement
+position and an unread local with a throwing operand (the throw still happens). Prepared bytes of 14 unaffected
+programs (numeric, dynamic, throw, script var, typeof comparison, strings, loops; 11 compile, 3 refuse with the same
+message) identical against the branch base 33f5e33878. Mutations killed: answer table inverted, chain cut one kind
+short, the `String` declaration file check. Survivors: removing the `consumed` skip (only adds a dead chain);
+`node.parent.expression === node` in `isAmbientStringBinding` (an argument `String` refuses as a value read anyway).
+A Ty "like JavaScript" program (`"object"`) timed out at 35 s once inside a combined two-file run under load; it
+takes 15 s alone, and the whole Ty file passes alone.
+
+411-row sample after step 4 (14 negatives pass): 282 x "dynamic operation __ir_dyn_add has no Prepared intrinsic"
+(first: `harness/assert.js:27`, `'"' + value + '"'` in `formatIdentityFreeValue`'s string arm), 84 x "module binding X
+has no exact typed storage: not-direct" (`obj` 52, `x` 5, `proto` 4, `o` 4, `arr` 3), 26 x `ir/from-ast: identifier
+"assert" is not in scope` (`verifyProperty`), 2 x switch-case lexical binding, 1 x `unknown class "Test262Error"`.
+Dynamic `+` is not local: its number arm needs ToString's formatter, i.e. Str2-c.
+
+### Hand-over: admitting the number formatter (Str2-c)
+
+A sync `String(x)` (or `typeof`-free `"" + n`) program now reaches the formatter through one binding,
+`async.native.number-to-string` (`src/ir/program/number-to-string-target.ts`), and meets five presentation gaps.
+
+1. 3 x "promise/reference callable contracts require an explicit boundary producer" —
+   `src/compiler/ir-program-presentation.ts:467-471` (`checkAbiExports`): every callable ABI entry's params/results
+   must pass `inCall` (number, the dynamic externref, or `string`). The formatter kernels' entries
+   (`numberFormatRadixSupportDeclarations`, `src/ir/program/formatter-support.ts:45-49`: `__nfd_new` result,
+   `__nfd_get`/`__nfd_set`/`__nfd_fin` first param) carry the scratch type `support-ref`
+   (`number-format-radix:scratch`, the string owner's mutable i16 data array). "Explicit boundary producer" names no
+   existing mechanism: the only bypass is `mixed` (`!mixed &&` on the same line). Smallest sound admission: `inCall`
+   also accepts a `support-ref` equal (data identity) to the canonical scratch type of the program's entry anchor,
+   and only on an entry whose ref is one of the canonical kernel refs (binding identity) — the predicate in the
+   census module, one call in the presentation. Not: admitting `support-ref` generally, or classifying the program
+   as mixed.
+2. "nondefaultable reference widening needs a separately authenticated physical post-state" — line 708-712,
+   `referenceDemand` (line 226): any function local/body/type using a `ref` outside the census's `NativeSetupSlots`
+   (types/globals) counts. It fires because the census returned nothing; with the string owner alone (slice R/Str),
+   `nativeRows` hands its authenticated type/global slots back and the string refs are exempt. Admission: the census
+   also returns the formatter setup's authenticated type slots (the Ryu table type) and globals (Ryu
+   `inverse`/`powers`) — downstream of 3. Not: exempting `ref`s by type shape.
+3. "host provider or async demand is outside this numeric presentation contract" — line 673-681, `runtimeCensus`
+   (`src/compiler/prepared-provider-census.ts`, `nativeRows`/`supportPopulationJoins`) returns undefined: (a) the
+   provider `native.async.number-to-string` (`src/ir/runtime/native-async-callables.ts:82`, runtime-callable
+   `__ir_number_toString_native`) is answered by no runtime-bound setup function — its setup binding is
+   intrinsic-bound (`nativeFormatterSetup`, `src/ir/program-physical-plan.ts:840-940`, association
+   `native-to-string`, origin "intrinsic"); (b) the formatter setup (`emittedPhysicalSetupPlan(emission)
+   .nativeNumberFormat`: finalize, `__nfd_*`, trap, radix-body, radix-thunk, Ryu, `number_toString`, adapter) has
+   support receipts but no census rows; (c) `nativeSlots` accepts only runtime/intrinsic or anchor-derived bindings,
+   while the kernels and radix-body are `support` refs with the canonical declarations' own binding ids. Admission:
+   run `nativeSlots` over the formatter setup too, accepting a `support` binding only when its id equals the
+   canonical declaration's (`numberFormatRadixSupportDeclarations(anchor)` kernels / implementation); rows for each
+   function (slot + signature + receipt, the same `supportPopulationJoins`); answer the provider with the unique
+   declaration of role `["number-format","native-to-string"]` whose reference equals the canonical adapter
+   declaration's ref, and require the provider iff a direct formatter call exists (`irNumberFormatDemandOwners`);
+   authenticate the scratch entry (type slot = the string owner's data type slot, as
+   `planNativeNumberFormatScratch` does at physical-plan time). Forgeries: drop/add/duplicate/swap/relabel each row,
+   the provider, the scratch. Not: joining by function name.
+4. "source and prepared runtime must independently prove no async/support demand" — line 683-688: any
+   `program.runtimeSupport.batches` refuses. Replace only the batch half (keep asyncPlan/asyncRuntime/asyncFunctions):
+   exactly one batch, kind `number-format-radix-v1`, its declarations equal to
+   `numberFormatRadixSupportDeclarations(batch.sourceId)` with `sourceId` the runtime ABI anchor, its implementation
+   body's unit = the setup's `support.unitId` and its emitted slot = the census-authenticated radix-body row, its
+   `demandOwners` = the program's formatter-calling units, and admitted only when 3 authenticated the setup.
+5. The wasmgc:host async lane is not a consumer to reuse: `mixed` (captured Promise-result callables, line 846)
+   skips `checkResourceDemand` (line 873) and the ABI contract check (line 467), and `checkMixedDemand` (line 1175)
+   requires wasmgc:host, while the support batch requires wasmgc:standalone
+   (`src/frontend/builtins/prepare-number-format.ts:22`). So no program presents the formatter today; on standalone no
+   async program presents at all; on host a mixed program presents without the census (host lane, being retired).
+   The name `async.native.number-to-string` is historical; a rename touches the hash-pinned declarations (#7358).
