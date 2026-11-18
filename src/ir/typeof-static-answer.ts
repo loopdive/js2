@@ -32,11 +32,16 @@ function irTypeofTag(type: IrType): string | null {
   return null;
 }
 
-/** The source type's tag; a union whose members share one tag (`1 | 2`, the answers of `typeof`) has it too. */
+/**
+ * The source type's tag. A union whose members share one tag (`1 | 2`, the answers of `typeof`) has it too, unless
+ * it also holds `null` or `undefined`, which the fact keeps beside its parts (`c ? void 0 : 1` is number parts plus
+ * `undefinable`).
+ */
 function sourceTypeofTag(oracle: TypeOracle, operand: ts.Expression): JsTag | "mixed" {
-  const tag = oracle.staticJsTypeOf(operand);
-  if (tag !== "mixed") return tag;
-  const memberTags = new Set(oracle.unionPartsOf(operand)?.map(jsTagOfFact));
+  const fact = oracle.typeFactOf(operand);
+  if (fact.kind !== "union") return jsTagOfFact(fact) ?? "mixed";
+  if (fact.nullable || fact.undefinable) return "mixed";
+  const memberTags = new Set(fact.parts.map(jsTagOfFact));
   const [only] = memberTags;
   return memberTags.size === 1 && only !== undefined ? only : "mixed";
 }
