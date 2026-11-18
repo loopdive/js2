@@ -114,6 +114,11 @@ describe.each(["gc", "standalone"] as const)("#7361 — typeof answers like Java
     ["ts", "", tagOf("(1 as unknown as string)")],
     // Only the live arm of a constant `typeof <ambient>` test is lowered, as the selector admitted.
     ["js", "", FOLDED],
+    // Review round 2: `void` under an assertion outside `typeof` keeps main's operand family (parens only), so
+    // these stay on the IR path as on main. Their answers are wrong on main too ("Known, not this change").
+    ["ts", "", "return (void 0)! === undefined ? 1 : 2;"],
+    ["ts", "", "return (void 0 as any) == null ? 1 : 2;"],
+    ["ts", "", "var x: number = 1; x = (void 0 as any); return x !== x ? 1 : x === undefined ? 3 : 2;"],
   ] as const)("keeps %s `%s %s` on the IR path", async (ext, declarations, body) => {
     expect((await compileOrdinary(ext, declarations, body, target)).irCompiledFuncs).toContain("g");
   });
@@ -165,6 +170,19 @@ describe("#7361 — typeof on the Prepared path", () => {
       "var c = 1;\nif (typeof (c ? void 0 : 1) !== @A) throw 1;",
       '"undefined"',
       '"number"',
+    ],
+    // A nested `?:` is split at every level, not only where an arm is itself `void`.
+    [
+      "a nested `?:` reaching its `void 0`",
+      "var c = 1, d = 1;\nif (typeof (c ? (d ? void 0 : 1) : 2) !== @A) throw 1;",
+      '"undefined"',
+      '"number"',
+    ],
+    [
+      "a nested `?:` reaching its inner number",
+      "var c = 1, d = 0;\nif (typeof (c ? (d ? void 0 : 1) : 2) !== @A) throw 1;",
+      '"number"',
+      '"undefined"',
     ],
     [
       "the number arm of that `?:`",
