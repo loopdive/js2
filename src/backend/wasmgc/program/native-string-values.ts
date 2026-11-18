@@ -30,7 +30,11 @@ import {
   assertNativeValueResourcePlanFor,
   type NativeValueResourcePlan,
 } from "../../../ir/program/native-value-resources.js";
-import { freezePreparedIrValue, preparedIrDataMismatch } from "../../../ir/program/data.js";
+import {
+  freezePreparedIrValue,
+  preparedIrDataMismatch,
+  preparedIrFrozenCollectionMembers,
+} from "../../../ir/program/data.js";
 import { PreparedIrProgramInvariantError } from "../../../ir/program/errors.js";
 import type { Instr } from "../../../wasm/model/instructions.js";
 import type {
@@ -226,6 +230,19 @@ function demandTuple(demands: NativeStringValueDemands, index: number) {
   const i = demand.instruction;
   return tuple(owner, i.value, i.alloc, i.storage, i.materializer);
 }
+/**
+ * Exact tuple equality. The primitive fields (compared as the deep comparison does, with Object.is) decide most pairs
+ * without a deep comparison; planning compares all pairs and every emit scans the plan.
+ */
+function sameDemandTuple(demands: NativeStringValueDemands, index: number, other: ReturnType<typeof tuple>): boolean {
+  const own = demandTuple(demands, index);
+  return (
+    Object.is(own.value, other.value) &&
+    Object.is(own.ownerUnitId, other.ownerUnitId) &&
+    Object.is(own.alloc, other.alloc) &&
+    preparedIrDataMismatch(own, other) === undefined
+  );
+}
 
 /**
  * The canonical literal one `string.const` demand selects: its encoding evidence (UTF-8 storage only) and the
@@ -351,8 +368,7 @@ export function planNativeStringValuePhysical(
     if (
       uses.some(
         (row) =>
-          preparedIrDataMismatch(demandTuple(demands, row.demandIndex), demandTuple(demands, index)) === undefined &&
-          row.cacheKey !== selection.key,
+          sameDemandTuple(demands, row.demandIndex, demandTuple(demands, index)) && row.cacheKey !== selection.key,
       )
     )
       return located(demands, demand.occurrence, "ambiguous literal emitter tuple");
@@ -413,6 +429,53 @@ export function planNativeStringValuePhysical(
   };
 }
 
+/**
+ * Whether no own part of `value` can ever change: frozen arrays and plain records of data properties, and genuine
+ * frozen collections of prepared data. Freezing cannot be undone, so the answer is permanent. What a record or array
+ * lacks still resolves through `Object.prototype`/`Array.prototype`; `sharedPrototypeState` covers that. Internal
+ * slots are not inspected: a check reads a collection's entries only through its prototype, and the only collections
+ * admitted are branded frozen ones with their own frozen prototype.
+ */
+export function isImmutablePreparedIrValue(value: unknown): boolean {
+  const visited = new Set<object>();
+  const immutable = (item: unknown): boolean => {
+    if (typeof item === "function") return false;
+    if (item === null || typeof item !== "object" || visited.has(item)) return true;
+    visited.add(item);
+    const members = preparedIrFrozenCollectionMembers(item);
+    if (members) return members.every(immutable);
+    const prototype = Object.getPrototypeOf(item);
+    if (
+      !Object.isFrozen(item) ||
+      (prototype !== (Array.isArray(item) ? Array.prototype : Object.prototype) && prototype !== null)
+    )
+      return false;
+    return Reflect.ownKeys(item).every((key) => {
+      const descriptor = Object.getOwnPropertyDescriptor(item, key)!;
+      return "value" in descriptor && immutable(descriptor.value);
+    });
+  };
+  return immutable(value);
+}
+
+/**
+ * The own properties (key, value, getter, setter) of `Object.prototype` and `Array.prototype`, the two shared
+ * prototypes an immutable record or array reads a field it lacks through. A settled verdict holds only while this is
+ * unchanged; a change sends the owner back to full authentication. Nothing else is tracked: the Map/Set/iterator
+ * built-ins and `Function.prototype.call` that the frozen collections and the checks read through are TRUSTED. The
+ * same gap exists without settling: patching `Map.prototype[Symbol.iterator]` after a check is accepted by the
+ * per-use re-check too, because that re-check reads through the same patched built-ins.
+ */
+function sharedPrototypeState(): readonly unknown[] {
+  const state: unknown[] = [];
+  for (const prototype of [Object.prototype, Array.prototype])
+    for (const key of Reflect.ownKeys(prototype)) {
+      const descriptor = Object.getOwnPropertyDescriptor(prototype, key)!;
+      state.push(key, descriptor.value, descriptor.get, descriptor.set);
+    }
+  return state;
+}
+
 interface Owner {
   readonly tx: PhysicalModuleReservations;
   readonly sourceInput: NativeStringValueReservationInput;
@@ -420,6 +483,11 @@ interface Owner {
   readonly snapshot: unknown;
   readonly rows: readonly NativeStringValueResourceRow[];
   filled: boolean;
+  /**
+   * Set when the retained input passed its checks while it could no longer change: the shared prototype state they
+   * ran under. The verdict holds for every later use that observes the same state.
+   */
+  settled: readonly unknown[] | undefined;
 }
 const owners = new WeakMap<NativeStringValueReservations, Owner>();
 export function assertNativeStringValueReservationInput(input: NativeStringValueReservationInput): void {
@@ -458,23 +526,30 @@ export function assertNativeStringValueReservationInput(input: NativeStringValue
 function ownerFor(tx: PhysicalModuleReservations, pack: NativeStringValueReservations) {
   const owner = owners.get(pack);
   if (!owner || owner.tx !== tx) fail("foreign or copied string value pack");
-  same(owner.input.demands, owner.snapshot, "changed retained string demands");
+  // Decided before the checks below run, so their verdict is over the state that every later call observes.
+  const prototypes = sharedPrototypeState();
+  const settled =
+    owner.settled?.length === prototypes.length &&
+    owner.settled.every((entry, index) => Object.is(entry, prototypes[index]));
+  const settles = !settled && isImmutablePreparedIrValue(owner.input);
+  if (!settled) same(owner.input.demands, owner.snapshot, "changed retained string demands");
   const currentRealm = readNativeRealmLiteralInput(owner.sourceInput, owner.input.plan.literalRequirements.utf8Storage);
   if (
     currentRealm?.realmRequirements !== owner.input.realmRequirements ||
     currentRealm?.realmLiterals !== owner.input.realmLiterals
   )
     fail("changed retained realm literal identities");
-  assertNativeStringValueReservationInput(owner.input);
+  if (!settled) {
+    assertNativeStringValueReservationInput(owner.input);
+    owner.settled = settles ? prototypes : undefined;
+  }
   nativeStringLiteralReservationInventory(tx, pack.strings);
   if (pack.output) nativeStringOutputReservationInventory(tx, pack.output, owner.input.plan.output!);
   if (pack.number)
     requireNativeStringNumberReservations(tx, pack.number.scanner, owner.input.valueRequirements!, pack.strings);
-  for (const row of owner.rows) {
-    if (tx.state === "reserving") {
-      if (row.space === "type") tx.assertTypeReservation(row.reservation);
-    } else tx.physicalIndex(row.reservation);
-  }
+  if (tx.state === "reserving") {
+    for (const row of owner.rows) if (row.space === "type") tx.assertTypeReservation(row.reservation);
+  } else tx.physicalIndices(owner.rows.map((row) => row.reservation));
   return owner;
 }
 
@@ -617,6 +692,7 @@ export function reserveNativeStringValueResources(
     snapshot: freezePreparedIrValue(input.demands),
     rows: Object.freeze(orderedRows),
     filled: false,
+    settled: undefined,
   });
   return pack;
 }
@@ -658,6 +734,14 @@ export function requireCompletedNativeStringValues(
   tx: PhysicalModuleReservations,
   pack: NativeStringValueReservations,
 ): NativeStringValueReservations {
+  completedOwner(tx, pack);
+  return pack;
+}
+/** Every emit runs this; its nested completion queries share the one layout audit taken after them. */
+function completedOwner(tx: PhysicalModuleReservations, pack: NativeStringValueReservations): Owner {
+  return tx.audited(() => checkCompletedOwner(tx, pack));
+}
+function checkCompletedOwner(tx: PhysicalModuleReservations, pack: NativeStringValueReservations): Owner {
   const owner = ownerFor(tx, pack);
   if (!owner.filled) fail("incomplete native string value resources");
   requireCompletedNativeStringLiterals(tx, pack.strings);
@@ -688,8 +772,8 @@ export function requireCompletedNativeStringValues(
         pack.number.dependencies,
       );
   }
-  for (const row of owner.rows) tx.physicalIndex(row.reservation);
-  return pack;
+  tx.physicalIndices(owner.rows.map((row) => row.reservation));
+  return owner;
 }
 export function emitPreparedNativeStringLiteral(
   tx: PhysicalModuleReservations,
@@ -700,11 +784,10 @@ export function emitPreparedNativeStringLiteral(
   storage?: IrGlobalRef,
   materializer?: IrFuncRef,
 ): readonly Instr[] {
-  requireCompletedNativeStringValues(tx, pack);
-  const owner = ownerFor(tx, pack);
+  const owner = completedOwner(tx, pack);
   const requested = tuple(ownerUnitId, value, alloc, storage, materializer);
-  const index = owner.input.plan.literalUses.findIndex(
-    (row) => preparedIrDataMismatch(demandTuple(owner.input.demands, row.demandIndex), requested) === undefined,
+  const index = owner.input.plan.literalUses.findIndex((row) =>
+    sameDemandTuple(owner.input.demands, row.demandIndex, requested),
   );
   if (index < 0) fail("literal tuple is outside the closed projection plan");
   const binding = nativeStringLiteralReservationInventory(tx, pack.strings).requests[index]!.binding;
@@ -725,8 +808,7 @@ function requireOwnerOccurrence(
   occurrences: (owner: Owner) => readonly number[],
   admits: (instruction: IrInstr) => boolean,
 ): Owner {
-  requireCompletedNativeStringValues(tx, pack);
-  const owner = ownerFor(tx, pack);
+  const owner = completedOwner(tx, pack);
   const { demands } = owner.input;
   const admitted = occurrences(owner).some((index) => {
     const occurrence = demands.occurrences[index]!;
