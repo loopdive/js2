@@ -3,8 +3,9 @@
 // #7354 slice Ty — `typeof v <op> "literal"` on the Prepared dynamic value. from-ast lowers it as a string
 // comparison of `dyn.typeof` with a constant; the dynamic-value legalization answers it with a tag test on `v`
 // (the native `__typeof_number` / `__typeof_boolean` predicates, the `undefined` probe, the null test for
-// "object"), so no string is needed. A literal no admitted kind answers ("function", "string", a typo) is
-// constant. A `typeof` result used any other way still refuses as `dyn.typeof` (slice Str2).
+// "object"), so no string is needed. A literal no admitted kind answers ("function", a typo) is constant. Strings
+// are admitted (slice Str) but the native lane has no string predicate yet, so a test for "string" refuses by name.
+// A `typeof` result used any other way still refuses as `dyn.typeof` (slice Str2).
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as gc from "../src/codegen/index.js";
 import * as linear from "../src/codegen-linear/index.js";
@@ -76,8 +77,8 @@ async function expectLikeNode(program: (right: boolean) => string) {
   expect(await run(program(false))).toBe("threw");
 }
 
-const VALUES = ["1", "0", "-0", "0 / 0", "1 / 0", "true", "false", "undefined", "null"] as const;
-const LITERALS = ["number", "boolean", "undefined", "object", "function", "string", "symbol", "bigint"] as const;
+const VALUES = ["1", "0", "-0", "0 / 0", "1 / 0", "true", "false", "undefined", "null", '""', '"a"'] as const;
+const LITERALS = ["number", "boolean", "undefined", "object", "function", "symbol", "bigint"] as const;
 const OPERATORS = ["===", "!==", "==", "!="] as const;
 const answer = (expression: string): string => String(new Function(`return ${expression};`)());
 
@@ -95,26 +96,42 @@ describe("#7354 Ty — typeof comparisons on the Prepared dynamic value", () => 
 
   // One program per literal: every operator, both operand orders, every value. `bad` counts the answers that
   // differ from node's; the wrong program expects every answer negated, so each check must have run.
-  it.each(LITERALS)('answers typeof v <op> "%s" like JavaScript', async (literal) => {
-    const functions = OPERATORS.flatMap((op, index) => [
-      `function l${index}(v) { return typeof v ${op} "${literal}"; }`,
-      `function r${index}(v) { return "${literal}" ${op} typeof v; }`,
-    ]);
-    const checks = (right: boolean) =>
-      OPERATORS.flatMap((op, index) =>
-        VALUES.flatMap((value) => {
-          const expected = answer(`typeof (${value}) ${op} "${literal}"`);
-          const sent = right ? expected : String(expected !== "true");
-          return [
-            `if (l${index}(${value}) !== ${sent}) bad = bad + 1;`,
-            `if (r${index}(${value}) !== ${sent}) bad = bad + 1;`,
-          ];
-        }),
+  it.each(LITERALS)(
+    'answers typeof v <op> "%s" like JavaScript',
+    async (literal) => {
+      const functions = OPERATORS.flatMap((op, index) => [
+        `function l${index}(v) { return typeof v ${op} "${literal}"; }`,
+        `function r${index}(v) { return "${literal}" ${op} typeof v; }`,
+      ]);
+      const checks = (right: boolean) =>
+        OPERATORS.flatMap((op, index) =>
+          VALUES.flatMap((value) => {
+            const expected = answer(`typeof (${value}) ${op} "${literal}"`);
+            const sent = right ? expected : String(expected !== "true");
+            return [
+              `if (l${index}(${value}) !== ${sent}) bad = bad + 1;`,
+              `if (r${index}(${value}) !== ${sent}) bad = bad + 1;`,
+            ];
+          }),
+        );
+      await expectLikeNode((right) =>
+        [...functions, "var bad = 0;", ...checks(right), "if (bad !== 0) throw bad;"].join("\n"),
       );
-    await expectLikeNode((right) =>
-      [...functions, "var bad = 0;", ...checks(right), "if (bad !== 0) throw bad;"].join("\n"),
-    );
-  });
+      // Four compiles of 176 checks each: ~15 s alone, past the default timeout on a loaded machine.
+    },
+    120_000,
+  );
+
+  // (#7354 Str) Strings are in the carrier, so "string" is an admitted kind: its test refuses instead of answering
+  // false, in both operand orders and under every operator.
+  it.each(OPERATORS.flatMap((op) => [`typeof v ${op} "string"`, `"string" ${op} typeof v`]))(
+    "refuses %s by name",
+    async (comparison) => {
+      expect(await refusal(`function f(v) { return ${comparison}; }\nf(1);`)).toContain(
+        "dynamic operation typeof test for string has no Prepared intrinsic",
+      );
+    },
+  );
 
   // TypeScript warns (the literal is outside `typeof`'s answers) but the program compiles; JavaScript says false.
   it("answers a literal no value has (a typo) as false", async () => {
@@ -222,10 +239,24 @@ describe("#7354 Ty — typeof comparisons on the Prepared dynamic value", () => 
     );
   });
 
-  // A typed operand's `typeof` is a constant string, and string constants have no Prepared runtime yet.
-  it("refuses typeof of a typed value by name, as before", async () => {
-    expect(await refusal('function f(v) { var n = 1; return typeof n === "number"; }\nf(1);')).toContain(
-      "runtime feature js.string.const is unavailable under string-const policy storage=unsupported",
+  // A typed operand's `typeof` is a constant string; with string constants and equality on the Prepared path
+  // (slice Str) it compares like any two strings.
+  it.each([
+    ["number", "var n = 1;"],
+    ["Boolean", "var n = true;"],
+    ["string", 'var n = "a";'],
+  ])("answers typeof of a typed %s like JavaScript", async (_label, declaration) => {
+    const functions = ["number", "boolean", "string", "object"].map((literal) => {
+      const body = `${declaration} return typeof n === "${literal}";`;
+      return { name: `f${literal}`, body, expected: answer(`(function () { ${body} })()`) };
+    });
+    await expectLikeNode((right) =>
+      functions
+        .map(({ name, body, expected }) => {
+          const sent = right ? expected : String(expected !== "true");
+          return `function ${name}() { ${body} }\nif (${name}() !== ${sent}) throw 1;`;
+        })
+        .join("\n"),
     );
   });
 
