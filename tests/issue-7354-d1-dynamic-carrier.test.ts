@@ -204,11 +204,7 @@ describe("#7354 D1 — the dynamic value on the Prepared standalone path", () =>
   it.each([
     ["loose equality", "return id(1) == id(1) ? 1 : 0;", "dynamic operation dyn.eq (loose) has no Prepared intrinsic"],
     // (#7354 T) The null tag test and ToBoolean are expressed now (tests/issue-7354-t-truthiness-null.test.ts).
-    [
-      "dynamic +",
-      "return add(id(1), id(2)) === 3 ? 1 : 0;",
-      "dynamic operation __ir_dyn_add has no Prepared intrinsic",
-    ],
+    // (#7354 Str2-c) Dynamic `+` is expressed now (tests/issue-7354-str2c-dynamic-add.test.ts).
     // (#7354 Str) The property key enters the dynamic value as a string now; the member read itself has no intrinsic.
     ["a member read", "return id(1).x === 1 ? 1 : 0;", "dynamic operation dyn.member_get has no Prepared intrinsic"],
     // (#7354 Ty, Str2) A typeof comparison and a typeof value are expressed now
@@ -223,8 +219,7 @@ describe("#7354 D1 — the dynamic value on the Prepared standalone path", () =>
       "dynamic operation on a value of composite type has no Prepared intrinsic",
     ],
   ])("refuses %s by name", async (_label, body, expected) => {
-    const add = body.includes("add(") ? "function add(a: any, b: any): any {\n  return a + b;\n}\n" : "";
-    expect(await refusal(`${ID}${add}export function main(): number {\n  ${body}\n}\n`)).toContain(expected);
+    expect(await refusal(`${ID}export function main(): number {\n  ${body}\n}\n`)).toContain(expected);
   });
 
   it.each([
