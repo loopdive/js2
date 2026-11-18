@@ -61,7 +61,7 @@ import {
 import { IR_ASYNC_CONSOLE_LOG_STRING_FN, IR_ASYNC_NUMBER_TO_STRING_FN } from "./async-semantic-runtime.js";
 import { ts, forEachChild } from "../ts-api.js";
 import { isPlannedScriptVarClosure } from "./function-member-closure-plan.js";
-import { isLexicalBindingWrite } from "../shared/binding-writes.js";
+import { isLexicalBindingWrite, skipOuterExpressions } from "../shared/binding-writes.js";
 import { isLogicalAssignmentFunctionTarget } from "./logical-assignment-name-targets.js";
 import {
   additiveOperandsProvable,
@@ -88,6 +88,8 @@ import {
   slotWriteVerdict,
   conditionalJoinArmFamily,
   conditionalJoinFamily,
+  hasValueVoidLeaf,
+  isValueVoid,
   throwOperandAdmissible,
   type AdditiveLane,
   type AdditiveProof,
@@ -106,7 +108,7 @@ import { exactGlobalEvalStatement } from "../eval-call-shape.js";
 import { resolveOrdinaryObjectClosureSignature } from "./ordinary-object-closure-signatures.js";
 import { isDirectObjectCreateNullCall } from "../frontend/builtins/prepare-object-create.js";
 
-import { TsCheckerOracle, uniformJsTagOfFact, type TypeOracle } from "../checker/oracle.js";
+import { TsCheckerOracle, type TypeOracle } from "../checker/oracle.js";
 import {
   IR_DYN_ADD_FN,
   IR_DYN_GE_FN,
@@ -310,7 +312,6 @@ import {
 import { collectLatticeParamFacts, latticeAdditiveFact, type LatticeParamFacts } from "./lattice-param-facts.js";
 import { tryEmitUnrolledReduction } from "./reduction-unroll.js";
 import { demoteToLegacy, IrInvariantError, IrUnsupportedError } from "./outcomes.js";
-import { staticTypeofOf } from "./typeof-static-answer.js";
 import {
   boxWrapper,
   emitToPrimitive,
@@ -5940,21 +5941,6 @@ function templateSubstitutionToString(value: IrValueId, source: ts.Expression, c
   return asString;
 }
 
-/** Strip the type-erased assertion wrappers `lowerExpr` already lowers through. */
-function unwrapMixedPrimitiveProjection(expr: ts.Expression): ts.Expression {
-  let current = expr;
-  while (
-    ts.isParenthesizedExpression(current) ||
-    ts.isAsExpression(current) ||
-    ts.isTypeAssertionExpression(current) ||
-    ts.isSatisfiesExpression(current) ||
-    ts.isNonNullExpression(current)
-  ) {
-    current = current.expression;
-  }
-  return current;
-}
-
 /**
  * #5092 — the two arm families `typeof`'s runtime tag dispatch may test.
  *
@@ -5978,7 +5964,7 @@ function exactDynamicPrimitiveTypeofFamilies(
 ): readonly [IrPrimitiveExpressionFamily, IrPrimitiveExpressionFamily] | null {
   if (!cx.checker) return null;
   try {
-    const candidate = unwrapMixedPrimitiveProjection(expression);
+    const candidate = skipOuterExpressions(expression);
     if (ts.isConditionalExpression(candidate)) {
       const proof = proveMixedPrimitiveConditional(candidate, cx);
       return proof === null ? null : [proof.whenTrue, proof.whenFalse];
@@ -6012,40 +5998,71 @@ function lowerExactDynamicPrimitiveTypeof(
   );
 }
 
-/**
- * Lower `typeof <expr>` by static fold (slice 1), plus #5092's exact runtime
- * tag dispatch for a two-family primitive dynamic carrier.
- */
 function lowerTypeOf(expr: ts.TypeOfExpression, cx: LowerCtx): IrValueId {
   if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== expr)
     return withNodeSourceSite(cx, expr, () => lowerTypeOf(expr, cx));
-  // (#7106 S1b) `typeof <unshadowed ambient global>` is a constant tag — the
-  // same proof the selector's `ambientTypeofTag` demanded.
-  if (ts.isIdentifier(expr.expression)) {
-    const ambientTag = ambientTypeofIdentifierTagFromAst(expr.expression, cx);
+  return (hasValueVoidLeaf(expr.expression) ? lowerTypeOfVoidLeaves : lowerTypeOfValue)(expr.expression, cx);
+}
+
+/**
+ * (#7361) Under {@link lowerTypeOfValue}'s f64 hint `void x` is its NaN sentinel, which reads "number", so an
+ * operand with a value-`void` leaf is split at its leaves (`typeof (a, b)` is `a` then `typeof b`; `typeof (c ? a :
+ * b)` is `c ? typeof a : typeof b`): a `void x` leaf runs `x` and is "undefined", every other leaf answers itself.
+ */
+function lowerTypeOfVoidLeaves(operand: ts.Expression, cx: LowerCtx): IrValueId {
+  const e = skipOuterExpressions(operand);
+  if (ts.isVoidExpression(e)) {
+    lowerDiscardedExpression(e.expression, cx);
+    return cx.builder.emitStringConst("undefined");
+  }
+  if (ts.isBinaryExpression(e) && e.operatorToken.kind === ts.SyntaxKind.CommaToken) {
+    lowerDiscardedExpression(e.left, cx);
+    return lowerTypeOfVoidLeaves(e.right, cx);
+  }
+  if (!ts.isConditionalExpression(e)) return lowerTypeOfValue(e, cx);
+  // As in `lowerConditional`: the selector admitted only the live arm of a constant `typeof <ambient>` test.
+  const folded = foldAmbientTypeofComparison(e.condition, (id) => ambientTypeofIdentifierTagFromAst(id, cx));
+  if (folded !== undefined) return lowerTypeOfVoidLeaves(folded ? e.whenTrue : e.whenFalse, cx);
+  return lowerConditionalBranches(e, cx, lowerTypeOfVoidLeaves, () => ({ kind: "string" }));
+}
+
+/**
+ * Lower `typeof <operand>` by static fold (slice 1), plus #5092's exact runtime
+ * tag dispatch for a two-family primitive dynamic carrier.
+ */
+function lowerTypeOfValue(operand: ts.Expression, cx: LowerCtx): IrValueId {
+  // (#7106 S1b) `typeof <unshadowed ambient global>` is a constant tag: the selector's `ambientTypeofTag` proof.
+  if (ts.isIdentifier(operand)) {
+    const ambientTag = ambientTypeofIdentifierTagFromAst(operand, cx);
     if (ambientTag !== undefined) return cx.builder.emitStringConst(ambientTag);
   }
-  const inner = lowerExpr(expr.expression, cx, irVal({ kind: "f64" }));
+  const inner = lowerExpr(operand, cx, irVal({ kind: "f64" }));
   const innerType = cx.builder.typeOf(inner);
-  // The Prepared producer hands from-ast a checker without an oracle.
-  const oracle = cx.oracle ?? (cx.checker ? new TsCheckerOracle(cx.checker) : undefined);
-  const answer = staticTypeofOf(innerType, oracle ? uniformJsTagOfFact(oracle.typeFactOf(expr.expression)) : "mixed");
-  if (answer.kind === "static") return cx.builder.emitStringConst(answer.tag);
-  if (answer.kind === "unproven")
+  const tag = staticTypeOfFor(innerType);
+  if (tag === null) {
+    if (innerType.kind === "dynamic") {
+      const families = exactDynamicPrimitiveTypeofFamilies(operand, cx);
+      if (families !== null) return lowerExactDynamicPrimitiveTypeof(inner, families, cx);
+      // #7104 — the general case: every partition through the lane's `__typeof`.
+      return cx.builder.emitDynTypeof(inner);
+    }
     demoteToLegacy(
       "operand-coercion-unsupported",
-      `ir/from-ast: typeof operand lowered as ${answer.irTag} has source type ${answer.sourceTag} (${cx.funcName})`,
+      `ir/from-ast: typeof of non-static IrType (${describeIrType(innerType)}) is deferred (${cx.funcName})`,
     );
-  if (innerType.kind === "dynamic") {
-    const families = exactDynamicPrimitiveTypeofFamilies(expr.expression, cx);
-    if (families !== null) return lowerExactDynamicPrimitiveTypeof(inner, families, cx);
-    // #7104 — the general case: every partition through the lane's `__typeof`.
-    return cx.builder.emitDynTypeof(inner);
   }
-  demoteToLegacy(
-    "operand-coercion-unsupported",
-    `ir/from-ast: typeof of non-static IrType (${describeIrType(innerType)}) is deferred (${cx.funcName})`,
-  );
+  return cx.builder.emitStringConst(tag);
+}
+
+/** The `typeof` tag every value of an IR type has, or `null` when it varies (unions, boxed, references). */
+function staticTypeOfFor(t: IrType): string | null {
+  if (t.kind === "string") return "string";
+  if (t.kind === "vec") return "object";
+  if (t.kind === "val") {
+    if (t.val.kind === "f64" || t.val.kind === "f32" || t.val.kind === "i64") return "number";
+    if (t.val.kind === "i32") return "boolean"; // i32 represents bool in slice 1
+  }
+  return null;
 }
 
 /**
@@ -13668,7 +13685,7 @@ function proveExactMixedPrimitiveWrapperCall(
       ? cx.resolver?.isAmbientStringBinding?.(expr.expression) === true
       : cx.resolver?.isAmbientBinding?.(expr.expression) === true;
   if (!ambient) return null;
-  const argument = unwrapMixedPrimitiveProjection(expr.arguments[0]!);
+  const argument = skipOuterExpressions(expr.arguments[0]!);
   if (!ts.isConditionalExpression(argument)) return null;
   // (2026-08-28 review repair) Same fail-closed treatment as `lowerConditional`:
   // an ambient `String`/`Number` over a CLAIMED mixed conditional whose proof
@@ -15393,7 +15410,7 @@ function lowerBinaryOperands(
     }
     // (#7066) Beside a proven string, a mixed-primitive conditional is its `String(c ? a : b)`:
     // ToPrimitive is the identity on primitive arms, so the `+` stays an unboxed string.
-    const conditional = unwrapMixedPrimitiveProjection(operand);
+    const conditional = skipOuterExpressions(operand);
     if (otherProof === "string" && ts.isConditionalExpression(conditional)) {
       const mixed = requireMixedPrimitiveConditionalProof(conditional, "string `+` operand", cx);
       if (mixed !== null) return lowerConvertedMixedConditional({ kind: "String", conditional, mixed }, cx);
@@ -16105,15 +16122,6 @@ function irOperandFamily(t: IrType, operand: ts.Expression): OperandFamily {
     default:
       return "other";
   }
-}
-
-/** A value `void x` (through parens and a comma's right side): the f64 NaN sentinel for `undefined`. */
-function isValueVoid(operand: ts.Expression): boolean {
-  let candidate = peelParensExpr(operand);
-  while (ts.isBinaryExpression(candidate) && candidate.operatorToken.kind === ts.SyntaxKind.CommaToken) {
-    candidate = peelParensExpr(candidate.right);
-  }
-  return ts.isVoidExpression(candidate);
 }
 
 /** The dynamic `+` (`IR_DYN_ADD_FN`) over two carrier operands: the binary `+` and both `+=` arms. */

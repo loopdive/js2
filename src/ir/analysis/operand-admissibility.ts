@@ -669,6 +669,27 @@ export function conditionalJoinArmFamily(arm: ts.Expression): OperandFamily | nu
   return ts.isVoidExpression(e) ? "undefined" : null;
 }
 
+/** A value `void x` ({@link valueLeafOf}): from-ast's f64 NaN sentinel for `undefined`. */
+export function isValueVoid(operand: ts.Expression): boolean {
+  return ts.isVoidExpression(valueLeafOf(operand));
+}
+
+/** (#7361) {@link isValueVoid}, or a `?:` with such a leaf in an arm. */
+export function hasValueVoidLeaf(operand: ts.Expression): boolean {
+  const leaf = valueLeafOf(operand);
+  if (ts.isConditionalExpression(leaf)) return hasValueVoidLeaf(leaf.whenTrue) || hasValueVoidLeaf(leaf.whenFalse);
+  return ts.isVoidExpression(leaf);
+}
+
+/** The expression that gives an operand its value: through parens, type assertions and a comma's right side. */
+function valueLeafOf(operand: ts.Expression): ts.Expression {
+  let candidate = skipOuterExpressions(operand);
+  while (ts.isBinaryExpression(candidate) && candidate.operatorToken.kind === ts.SyntaxKind.CommaToken) {
+    candidate = skipOuterExpressions(candidate.right);
+  }
+  return candidate;
+}
+
 /**
  * (#7113) The family a conditional VALUE joins its two arms on. Equal
  * families join as themselves. A dynamic arm joins a boxable arm
