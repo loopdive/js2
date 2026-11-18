@@ -39,7 +39,7 @@ import { irRuntimeCallableDeclaration } from "../runtime/callable-declarations.j
 import { JS_TAG_IDS } from "../runtime/js-tag-domain.js";
 import { typeofComparisons } from "./typeof-comparisons.js";
 import { PREPARED_NUMBER_TO_STRING } from "./number-to-string-target.js";
-import { IR_DYN_ADD_FN } from "../core/runtime-symbols.js";
+import { IR_DYN_ADD_FN } from "../../shared/contracts/dynamic-add-helper.js";
 
 const CARRIER: IrType = Object.freeze({ kind: "val", val: Object.freeze({ kind: "externref" }) });
 

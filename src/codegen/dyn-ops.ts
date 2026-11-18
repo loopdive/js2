@@ -9,7 +9,7 @@ import {
   ensureAnyToExternHelper,
   ensureExternStrictEqHelper,
 } from "./any-helpers.js";
-import { IR_DYN_ADD_FN } from "../ir/core/runtime-symbols.js";
+import { IR_DYN_ADD_FN } from "../shared/contracts/dynamic-add-helper.js";
 import { ensureExternLooseEqHelper } from "./helpers/loose-equality-to-primitive.js";
 import type { CodegenContext } from "./context/types.js";
 import { jsValueBoundary } from "./context/types.js";

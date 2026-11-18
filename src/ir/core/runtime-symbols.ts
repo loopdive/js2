@@ -5,5 +5,3 @@ export const IR_STRING_COMPARE_FN = "__ir_str_compare";
 export const JSSTR_CHARCODEAT_FN = "__jsstr_charCodeAt";
 export const NATIVE_CHARCODEAT_FN = "__str_charCodeAt";
 export const FUNCTION_PROTOTYPE_CALL_HELPER = "__function_prototype_call";
-/** The front end's dynamic `+` over two carrier operands (#7354 Str2-c: the Prepared legalization expands it). */
-export const IR_DYN_ADD_FN = "__ir_dyn_add";
