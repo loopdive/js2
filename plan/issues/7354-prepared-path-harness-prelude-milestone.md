@@ -2121,3 +2121,59 @@ Proofs:
   - Str's: swapping the names of `__str_equals` and `__str_concat` (the census has no equals/flatten swap); repointing
     a literal use to another literal's storage; stripping the role of the `""` literal global.
 - `changed-root-tests.sh` (interpreter engine): green.
+
+## Str2 result (2026-11-18, partial: steps (a) and (b) of four)
+
+Branch `claude/7354-str2` = `claude/7354-tx` + Ty + Perf (merges keep every result section) + the commits below.
+Stopped before the census admission of the number formatter, by the lead's rule ("stop after (b) if (c) needs more
+than L"): (c) needs five presentation joins, listed under Known gaps.
+
+Built:
+- Merge join (Ty x Str): `TYPEOF_KIND` lists the string kind; `typeof v === "string"` is a tag test, new intrinsic
+  `js.value.is_string` -> dynamic-value resource `__typeof_string`, body the new shared `buildExternRefTestBody`
+  (`src/runtime/wasmgc/values/primitive-layouts.ts`), which the ordinary `__typeof_string` and BigInt `typeof` now
+  compose too (same ops). Object-literal throw tested with `typeof` pinned at its invariant error (Known gaps).
+- (a) `String(v)`: `prepareConversionResolvers` (`src/frontend/builtins/prepare-number-conversion.ts`, one body
+  shared with the `Number(v)` plan) answers `isAmbientStringBinding` for the callee of a direct lib call; from-ast's
+  existing `tryLowerAmbientStringToStringCall` lowers it. The `String` plan is not invalidated by an escape (the
+  prelude has `String: globalThis.String` and `map.call(a, String)`): every rebinding refuses by name on this closed
+  path (pinned), and any source file declaring `String` loses the plan (the checker reports a script's
+  `function String` as the lib's; without the file check that was a wrong answer). `String` joins
+  `PREPARED_PROVIDED_GLOBALS`. Typed Number::toString (`IR_NUMBER_TO_STRING_FN`: `String(1)`, a template's number)
+  is retargeted to the one formatter binding `async.native.number-to-string` (`src/ir/program/number-to-string-target.ts`;
+  the "async" in the name is historical — renaming it means renaming the hash-pinned declaration in
+  `src/ir/runtime/native-async-callables.ts` and `IR_ASYNC_NUMBER_TO_STRING_FN`, #7358 territory). It used to be an
+  invariant error out of compile() (templates did this on base already); now a named presentation refusal. The
+  Prepared backend options carry the formatter's integer policy (`preparedNumberFormatOptions`, one env reading
+  shared with codegen: `numberToStringIntegerBeforeScratch`).
+- (b) `dyn.to_string` -> an IR `if` chain in the legalization, table `TO_STRING_ARM` (a Record over `CarrierKind`;
+  the last kind is reached untested because the chain is total): string -> new intrinsic `js.value.as_string`
+  (resource `__js_as_string`, `any.convert_extern; ref.cast AnyString`, string result resolved by type key in the
+  recipe and the ABI join); number -> `js.number.unbox` + direct call to the formatter binding; boolean ->
+  ToBoolean (its payload, no unbox policy) choosing "true"/"false"; undefined/null -> their names (string
+  allocation sites from the source registry, now passed to the legalization). `v` is one SSA value; the chain has
+  no effect of its own, so DCE of an unused result cannot drop an operand evaluation. Verified with the number arm
+  stubbed locally; as committed, every `dyn.to_string` refuses at the presentation by name.
+
+Measurements: 411-row sample (14 negatives pass every time): base 308 x `String` no plan (282
+`formatIdentityFreeValue`, 26 `verifyProperty`); after (a) and after (b) 282 x `dyn.typeof has no Prepared intrinsic`
+(`formatIdentityFreeValue`'s `switch (value === null ? 'null' : typeof value)`, assert.js:25 — a bare `typeof` value,
+step 4), 84 module binding not-direct, 26 `assert` not in scope (`verifyProperty`). Ordinary bytes identical on 310
+files (180 of the sample, String/typeof/template/addition dirs) x JS and standalone (13 CE on both). Tests: all
+slice tests, prepared entry/runtime, #7188, #7359, 3518 pins green. Pins: INTRINSIC_IDS 44 -> 46; INTRINSIC_DEFINITIONS
+successor -> c9f06f27 (predecessor step removes the two new rows); declaration receipt + EXTERNREF_TO_STRING (94 -> 95);
+D1 selection pin; D1/P call sites pass an allocation registry.
+
+Lane (lead's question): `mixed` is decided by captured callables with a Promise result; a sync program that calls the
+formatter is not mixed, so it goes through `checkResourceDemand`. `checkMixedDemand` refuses any mixed program
+outside wasmgc:host, so no async program presents on the standalone Prepared path; on the host target a mixed program
+skips the census (host lane, sunset) — not reproduced here.
+
+Known gaps: (c) census admission of the formatter. A sync `String(x)` program meets five presentation gaps: 3 x
+"promise/reference callable contracts require an explicit boundary producer" (the kernels' scratch `support-ref`
+contracts in `checkAbiExports`), "nondefaultable reference widening needs a separately authenticated physical
+post-state", the census ("host provider or async demand ..."), and "source and prepared runtime must independently
+prove no async/support demand" (`runtimeSupport.batches`). `String()` (no argument) refuses ("no exact AST-site plan").
+Object-literal throw: invariant error out of compile() ("resolver cannot lower object<a:f64>"), pinned. Mutation:
+the declaration file check, the retarget and the string tag test are killed by tests; the ToString arms,
+`__js_as_string` and the string carrier in the ABI join cannot run until (c) and are unverified survivors.
