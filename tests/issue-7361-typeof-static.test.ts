@@ -1,80 +1,95 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 //
-// #7361 — `typeof` lowers its operand under an f64 hint, and its static answer came from the IR type that the
-// lowering produced: `typeof void 0` was "number". The answer now comes from the operand's source type (the
-// oracle), which must agree with the IR type; an `undefined`/`void` source type answers "undefined".
+// #7361 — `typeof` lowers its operand under an f64 hint and answers from the IR type the lowering produced, so a
+// value `void x` (the f64 NaN sentinel) read as "number". An operand with a value-`void` leaf is now split at its
+// leaves: a `void x` leaf runs `x` once and answers "undefined", every other leaf keeps the IR-type answer. No
+// TypeScript type is consulted: a cast that lies must not change the answer (review round 1).
 import { describe, expect, it } from "vitest";
+import ts from "typescript";
 import { compile } from "../src/index.js";
 import { buildImports } from "../src/runtime.js";
 import { compile as compilePrepared, type Test262CompileOptions } from "../src/test262/test262-prepared-entry.js";
 import { instantiatePreparedArtifact } from "../src/test262/test262-prepared-runtime.js";
 
-// [shape, declarations, body of `g()`]. Each body returns a boolean or a number; node's answer is the reference.
-const PROGRAMS: readonly (readonly [string, string, string])[] = [
-  ["`void 0` vs undefined", "", 'return typeof void 0 === "undefined";'],
-  ["`void 0` vs number", "", 'return typeof void 0 === "number";'],
-  ["`void 1` vs number", "", 'return typeof void 1 !== "number";'],
-  ["`void` of a string", "", 'return typeof void "a" === "undefined";'],
-  ["`void` of a Boolean", "", 'return typeof void true === "undefined";'],
-  ["`?:` of two `void 0`", "var c = 1;", 'return typeof (c ? void 0 : void 0) === "undefined";'],
-  [
-    "nested `?:` of `void 0`",
-    "var c = 1, d = 0;",
-    'return typeof (c ? (d ? void 0 : void 0) : void 0) === "undefined";',
-  ],
-  ["`?:` of `void 0` and a number", "var c = 1;", 'return typeof (c ? void 0 : 1) === "undefined";'],
-  ["`?:` of a number and `void 0`", "var c = 0;", 'return typeof (c ? 1 : void 0) === "undefined";'],
-  ["`?:` of two numbers", "var c = 1;", 'return typeof (c ? 1 : 2) === "number";'],
-  ["`?:` of two Booleans", "var c = 1;", 'return typeof (c ? true : false) === "boolean";'],
-  ["a comma ending in `void 0`", "", 'return typeof (0, void 0) === "undefined";'],
-  ["a comma ending in a number", "", 'return typeof (void 0, 1) === "number";'],
-  ["`typeof typeof`", "", 'return typeof typeof void 0 === "string";'],
-  ["`!void 0`", "", 'return typeof !void 0 === "boolean";'],
-  ["`-void 0`", "", 'return typeof -void 0 === "number";'],
-  ["an i32 `|`", "var x = 7;", 'return typeof (x | 0) === "number";'],
-  ["a comparison", "var a = 1, b = 2;", 'return typeof (a < b) === "boolean";'],
-  ["a typed local", "", 'var k = 1; return typeof k === "number";'],
-  ["`undefined`", "", 'return typeof undefined === "undefined";'],
-  ["`null`", "", 'return typeof null === "object";'],
+const TAG_INDEX =
+  't === "undefined" ? 1 : t === "number" ? 2 : t === "boolean" ? 3 : t === "string" ? 4 : t === "object" ? 5 : 6';
+const tagOf = (operand: string): string => `var t = typeof ${operand}; return ${TAG_INDEX};`;
+const F = "var n = 0; function f() { n = n + 1; return 1; }";
+const FOLDED = 'return typeof (typeof JSON === "undefined" ? null : void 0) === "undefined";';
+
+// [shape, file extension, declarations, body of `g()`]. Each body returns a boolean or a number; node answers.
+const PROGRAMS: readonly (readonly [string, "js" | "ts", string, string])[] = [
+  ["`void 0` vs undefined", "js", "", 'return typeof void 0 === "undefined";'],
+  ["`void 0` vs number", "js", "", 'return "number" !== typeof void 0;'],
+  ["`void` of a string", "js", "", tagOf('void "a"')],
+  ["`void` of a Boolean", "js", "", tagOf("void true")],
+  ["parenthesized `void 0`", "js", "", tagOf("((void 0))")],
+  ["`void void 0`", "js", "", tagOf("void void 0")],
+  ["a comma ending in `void 0`", "js", "", 'return typeof (0, void 0) === "undefined";'],
+  ["a comma ending in a number", "js", "", tagOf("(void 0, 1)")],
+  ["`?:` of two `void 0`", "js", "var c = 1;", 'return typeof (c ? void 0 : void 0) === "undefined";'],
+  ["nested `?:` of `void 0`", "js", "var c = 1, d = 0;", tagOf("(c ? (d ? void 0 : void 0) : void 0)")],
+  ["`?:` of `void 0` and a number (void taken)", "js", "var c = 1;", tagOf("(c ? void 0 : 1)")],
+  ["`?:` of `void 0` and a number (number taken)", "js", "var c = 0;", tagOf("(c ? void 0 : 1)")],
+  ["`?:` of `void 0` and a string", "js", "var c = 0;", tagOf('(c ? void 0 : "s")')],
+  ["`?:` of two numbers", "js", "var c = 1;", tagOf("(c ? 1 : 2)")],
+  ["a `?:` folded on `typeof JSON`", "js", "", FOLDED],
+  ["`typeof typeof void 0`", "js", "", tagOf("typeof void 0")],
+  ["`!void 0`", "js", "", tagOf("!void 0")],
+  ["`-void 0`", "js", "", tagOf("-void 0")],
+  ["an i32 `|`", "js", "var x = 7;", tagOf("(x | 0)")],
+  ["a comparison", "js", "var a = 1, b = 2;", tagOf("(a < b)")],
+  ["`undefined`", "js", "", tagOf("undefined")],
+  ["`null`", "js", "", tagOf("null")],
   [
     "a switch on `typeof void 0`",
+    "js",
     "",
     'switch (typeof void 0) { case "undefined": return 1; case "number": return 2; } return 3;',
   ],
   // The operand runs exactly once, also when the answer is static.
-  [
-    "`void f()` (runs f once)",
-    "var n = 0; function f() { n = n + 1; return 1; }",
-    'var r = typeof void f() === "undefined"; return r && n === 1;',
-  ],
-  [
-    "a comma calling f (runs f once)",
-    "var n = 0; function f() { n = n + 1; return 1; }",
-    'return typeof (f(), void 0) === "undefined" && n === 1;',
-  ],
+  ["`void f()` runs f once", "js", F, 'var r = typeof void f() === "undefined"; return r && n === 1;'],
+  ["a comma calling f runs f once", "js", F, 'return typeof (f(), void 0) === "undefined" && n === 1;'],
+  ["an unused `typeof void f()` runs f once", "js", F, "typeof void f(); return n;"],
   [
     "`void` of a throwing call",
+    "js",
     "function f() { throw 1; }",
     "try { typeof void f(); return false; } catch (e) { return true; }",
   ],
+  // Review round 1, item 1: an untyped parameter the IR infers as a number from its call site.
+  ["a parameter compared with number", "js", 'function k(x) { return typeof x === "number" ? 1 : 0; }', "return k(1);"],
   [
-    "a switch on `typeof void f()` (runs f once)",
-    "var n = 0; function f() { n = n + 1; }",
-    'switch (typeof void f()) { case "undefined": return n; default: return -1; }',
+    "a parameter narrowed by typeof",
+    "js",
+    'function k(x) { if (typeof x === "number") return x + 1; return 0; }',
+    "return k(1);",
   ],
+  ["an `any` parameter", "ts", 'function k(x: any) { return typeof x === "number" ? 1 : 0; }', "return k(1);"],
+  // Review round 1, items 2 and 3: casts that lie answer from the value, not the cast.
+  ["a number cast to undefined", "ts", "", tagOf("((1 as any) as undefined)")],
+  ["a number cast to string", "ts", "", tagOf("(1 as unknown as string)")],
+  ["a string cast to boolean", "ts", "", tagOf('("a" as any as boolean)')],
+  ["a Boolean cast to number", "ts", "", tagOf("(true as any as number)")],
+  ["`void 0` cast to number", "ts", "", tagOf("(void 0 as any as number)")],
 ];
 
 const nodeAnswer = (declarations: string, body: string): unknown =>
-  new Function(`${declarations}\nfunction g() { ${body} }\nreturn g();`)();
+  new Function(ts.transpile(`${declarations}\nfunction g() { ${body} }\nreturn g();`))();
 
-/** Compile through the ordinary pipeline and call `g`; an i32 Boolean reads as a Boolean. */
-async function runOrdinary(declarations: string, body: string, target: "gc" | "standalone"): Promise<unknown> {
+async function compileOrdinary(ext: "js" | "ts", declarations: string, body: string, target: "gc" | "standalone") {
   const result = await compile(`${declarations}\nexport function g() { ${body} }`, {
-    fileName: "test.js",
+    fileName: `test.${ext}`,
     allowJs: true,
     ...(target === "standalone" ? { target } : {}),
   });
   if (!result.success) throw new Error(result.errors.map((error) => error.message).join(" | "));
+  return result;
+}
+
+/** Compile through the ordinary pipeline and call `g`; an i32 Boolean reads as a Boolean. */
+async function runOrdinary(ext: "js" | "ts", declarations: string, body: string, target: "gc" | "standalone") {
+  const result = await compileOrdinary(ext, declarations, body, target);
   const built = buildImports(result.imports, {}, result.stringPool);
   const imports = target === "standalone" ? {} : built;
   const { instance } = await WebAssembly.instantiate(result.binary, imports as unknown as WebAssembly.Imports);
@@ -83,23 +98,23 @@ async function runOrdinary(declarations: string, body: string, target: "gc" | "s
 }
 
 describe.each(["gc", "standalone"] as const)("#7361 — typeof answers like JavaScript (%s)", (target) => {
-  it.each(PROGRAMS)("%s", async (_, declarations, body) => {
+  it.each(PROGRAMS)("%s", async (_, ext, declarations, body) => {
     const expected = nodeAnswer(declarations, body);
-    const actual = await runOrdinary(declarations, body, target);
+    const actual = await runOrdinary(ext, declarations, body, target);
     expect(typeof expected === "boolean" ? actual === 1 || actual === true : actual).toBe(expected);
   });
 
-  // A union whose members share one tag still has a static answer: the function stays on the IR path.
+  // The answer is static on the IR path; neither a void leaf nor a lying cast sends the function to legacy.
   it.each([
-    ["`?:` of two numbers", "var c = 1;", 'return typeof (c ? 1 : 2) === "number";'],
-    ["`typeof typeof`", "", 'return typeof typeof void 0 === "string";'],
-  ])("keeps %s on the IR path", async (_, declarations, body) => {
-    const result = await compile(`${declarations}\nexport function g() { ${body} }`, {
-      fileName: "test.js",
-      allowJs: true,
-      ...(target === "standalone" ? { target } : {}),
-    });
-    expect(result.irCompiledFuncs).toContain("g");
+    ["js", "", 'return typeof void 0 === "undefined";'],
+    ["js", "", 'return typeof (0, void 0) === "undefined";'],
+    ["js", "var c = 1;", 'return typeof (c ? void 0 : void 0) === "undefined";'],
+    ["ts", "", tagOf("(void 0 as any as number)")],
+    ["ts", "", tagOf("(1 as unknown as string)")],
+    // Only the live arm of a constant `typeof <ambient>` test is lowered, as the selector admitted.
+    ["js", "", FOLDED],
+  ] as const)("keeps %s `%s %s` on the IR path", async (ext, declarations, body) => {
+    expect((await compileOrdinary(ext, declarations, body, target)).irCompiledFuncs).toContain("g");
   });
 });
 
@@ -115,19 +130,6 @@ const preparedOptions = {
 } as Test262CompileOptions;
 
 describe("#7361 — typeof on the Prepared path", () => {
-  // The right answer returns, the wrong one throws: a pass cannot come from a check that never ran.
-  // [shape, program expecting @A, node's answer, a wrong answer]
-  const programs: readonly (readonly [string, string, string, string])[] = [
-    [
-      "a switch on `typeof void 0`",
-      'function g() { switch (typeof void 0) { case "undefined": return 1; case "number": return 2; } return 3; }\n' +
-        "if (g() !== @A) throw 1;",
-      "1",
-      "2",
-    ],
-    ["`typeof void 0` at top level", "if (typeof void 0 !== @A) throw 1;", '"undefined"', '"number"'],
-  ];
-
   async function run(source: string): Promise<"returned" | "threw"> {
     const result = await compilePrepared(source, preparedOptions);
     expect(result.errors.map((error) => error.message)).toEqual([]);
@@ -139,21 +141,56 @@ describe("#7361 — typeof on the Prepared path", () => {
     }
   }
 
-  it.each(programs)("answers %s like JavaScript", async (_, program, right, wrong) => {
+  // The right answer returns, the wrong one throws: a pass cannot come from a check that never ran.
+  // [shape, program expecting @A, node's answer, a wrong answer]
+  it.each([
+    ["`typeof void 0` at top level", "if (typeof void 0 !== @A) throw 1;", '"undefined"', '"number"'],
+    [
+      "a switch on `typeof void 0`",
+      'function g() { switch (typeof void 0) { case "undefined": return 1; case "number": return 2; } return 3; }\n' +
+        "if (g() !== @A) throw 1;",
+      "1",
+      "2",
+    ],
+    [
+      "`?:` of two `void 0`",
+      "var c = 1;\nif (typeof (c ? void 0 : void 0) !== @A) throw 1;",
+      '"undefined"',
+      '"number"',
+    ],
+    // Main answered "number" here: the selector keeps this shape off the ordinary IR path, Prepared has none.
+    [
+      "`?:` of `void 0` and a number",
+      "var c = 1;\nif (typeof (c ? void 0 : 1) !== @A) throw 1;",
+      '"undefined"',
+      '"number"',
+    ],
+    [
+      "the number arm of that `?:`",
+      "var c = 0;\nif (typeof (c ? void 0 : 1) !== @A) throw 1;",
+      '"number"',
+      '"undefined"',
+    ],
+    [
+      "`void` of a throwing call",
+      "function f() { throw 1; }\nvar r = 0;\ntry { typeof void f(); } catch (e) { r = 1; }\nif (r !== @A) throw 1;",
+      "1",
+      "0",
+    ],
+  ])("answers %s like JavaScript", async (_, program, right, wrong) => {
     expect(await run(program.replace("@A", right))).toBe("returned");
     expect(await run(program.replace("@A", wrong))).toBe("threw");
   });
 
-  // `c ? void 0 : 1` lowers to an f64 (`void 0` as NaN), but its source type is number OR undefined: the f64 does
-  // not prove "number". The Prepared path has no selector to send it elsewhere, so it refuses by name.
-  it("refuses an operand whose source type holds undefined beside a number by name", async () => {
+  // A leaf beside `void` that has no static answer keeps its own refusal, by name.
+  it("refuses a dynamic leaf beside a `void` leaf by name", async () => {
     const result = await compilePrepared(
-      'var c = 1;\nif (typeof (c ? void 0 : 1) !== "undefined") throw 1;',
+      'var c = 1;\nfunction g(x) { return typeof (c ? void 0 : x); }\nif (g(1) !== "undefined") throw 1;',
       preparedOptions,
     );
     expect(result.success).toBe(false);
     expect(result.errors.map((error) => error.message).join("\n")).toContain(
-      "typeof operand lowered as number has source type mixed",
+      "dynamic operation dyn.typeof has no Prepared intrinsic",
     );
   });
 });
