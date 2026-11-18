@@ -15,11 +15,12 @@
  * backend.
  *
  * Soundness rests on the admitted value set: only numbers, booleans,
- * `undefined`, `null` and (#7354 Str) native strings can enter a dynamic value
- * here (every other box refuses), and the runtime functions behind the intrinsics are exact for that
- * set. (#7354 T) `null` is the carrier's null reference, as on the ordinary
- * standalone pipeline; `undefined` is the non-null singleton, so the two stay
- * apart under strict equality and the `undefined` probe.
+ * `undefined`, `null` and (#7354 Str) native strings can enter a dynamic
+ * value here (every other box refuses), and the runtime functions behind the
+ * intrinsics are exact for that set. (#7354 T) `null` is the carrier's null
+ * reference, as on the ordinary standalone pipeline; `undefined` is the
+ * non-null singleton, so the two stay apart under strict equality and the
+ * `undefined` probe.
  */
 import { irValueTypes } from "../analysis/value-types.js";
 import { INTRINSIC_SIGNATURE_VERSION, INTRINSIC_DEFINITIONS, type IntrinsicId } from "../core/intrinsics.js";
@@ -76,15 +77,16 @@ type CarrierKind = (typeof TYPEOF_KIND)[keyof typeof TYPEOF_KIND];
 const KIND_OF_TYPEOF: ReadonlyMap<string, CarrierKind> = new Map(Object.entries(TYPEOF_KIND));
 
 /**
- * How the carrier tests for each admitted kind: a runtime predicate or the null test. The native lane has no
- * string predicate resource yet, so a test for a string refuses by name rather than answering false.
+ * How the carrier tests for each admitted kind: a runtime predicate, the null test, or `"refuse"`. The native
+ * lane has no string predicate resource yet, so a test for a string refuses by name rather than answering false.
+ * The refusal is a named entry, not a missing one: a missing literal in `KIND_OF_TYPEOF` means constant false.
  */
-const KIND_TEST: Readonly<Record<CarrierKind, IntrinsicId | "ref.is_null" | undefined>> = {
+const KIND_TEST: Readonly<Record<CarrierKind, IntrinsicId | "ref.is_null" | "refuse">> = {
   number: "js.value.is_number",
   boolean: "js.value.is_boolean",
   undefined: "js.extern.is_undefined",
   null: "ref.is_null",
-  string: undefined,
+  string: "refuse",
 };
 
 /** The kind a box to the dynamic value admits, from its tag refinement or its operand; `undefined` refuses. */
@@ -125,7 +127,7 @@ export function legalizeDynamicValues(fn: IrFunction): IrFunction {
   };
   const kindTest = (instr: IrInstr, kind: CarrierKind, value: IrValueId, result: IrValueId): IrInstr => {
     const test = KIND_TEST[kind];
-    if (test === undefined) return gap(`typeof test for ${kind}`);
+    if (test === "refuse") return gap(`typeof test for ${kind}`);
     return test === "ref.is_null"
       ? { kind: "unary", op: "ref.is_null", rand: value, result, resultType: instr.resultType }
       : intrinsic(instr, test, [value], result);
@@ -197,9 +199,10 @@ export function legalizeDynamicValues(fn: IrFunction): IrFunction {
         return [intrinsic(instr, "js.value.undefined", [])];
       case "dyn.truthy":
         return [intrinsic(instr, "js.value.to_boolean", [instr.value])];
-      // ToNumber over the admitted set (number, boolean, undefined, null) is
-      // exactly the primitive unboxer: a number reads its payload, a boolean
-      // 0/1, the `undefined` singleton NaN, the null reference 0.
+      // ToNumber over the admitted set is exactly the primitive unboxer: a
+      // number reads its payload, a boolean 0/1, the `undefined` singleton
+      // NaN, the null reference 0, and (#7354 Str) a native string goes
+      // through StringToNumber.
       case "dyn.to_number":
         return [intrinsic(instr, "js.number.unbox", [instr.value])];
       case "dyn.eq": {

@@ -2214,3 +2214,35 @@ the branch (`d3a59deb11`); the tests follow in `4acb90ccd8`.
 - **Known gap: `throw {}` is still an invariant error.** It throws out of `compile()` with "resolver cannot lower
   object<>" rather than refusing by name. The review's should-fix (pin a named refusal) cannot be test-only: the
   refusal needs a source change. X's existing pin keeps the invariant observed.
+
+### Delta review
+
+Delta review at `7ffc4e1087`: NOT MET, one must-fix and two should-fixes.
+
+- **Must-fix: `typeof void 0` answers "number". Not fixed here: the ordinary pipeline has the same wrong answer.**
+  - `lowerTypeOf` (`src/ir/from-ast.ts`) lowers its operand with an f64 hint, and `staticTypeOfFor` answers from
+    the IR type, so it says "number".
+  - Probed on the Prepared path and on the ordinary pipeline (default and `--target standalone`); each program
+    returns a value from a function and is compared with node (`.tmp/typeof-probe.mts`).
+  - Wrong answers on all three trees (Ty, `origin/claude/7354-tx`, `origin/main`) and all three lanes, except
+    Prepared on main, which refuses where the table says "refuses":
+
+    | Program | Ty / tx Prepared | main Prepared | ordinary default / standalone (main, tx, Ty) |
+    | --- | --- | --- | --- |
+    | `typeof void 0 === "undefined"` / `=== "number"` | wrong | refuses | wrong |
+    | `typeof (c ? void 0 : void 0)` | wrong | refuses | wrong |
+    | `typeof (0, void 0)` | wrong | refuses | wrong |
+    | `switch (typeof void 0)` | wrong | wrong | wrong |
+    | `typeof (c ? void 0 : 1)` | wrong | refuses | correct |
+    | `typeof void f()` | refuses (`__ir_dyn_add`) | refuses | wrong |
+
+  - Correct everywhere: `typeof undefined`, `null`, a call returning `undefined`, literals, `!0`, `-x`, typed
+    locals and `NaN`.
+  - Fixing it means changing shared from-ast code, which changes ordinary-pipeline output for these programs; that
+    would be a correctness fix. The review brief says to stop and report in that case, so the decision is with the
+    lead.
+- **Should-fix 1, done:** `KIND_TEST.string` is the named sentinel `"refuse"`, not `undefined`. A missing literal in
+  `KIND_OF_TYPEOF` still means constant false, and the two meanings no longer share one value.
+- **Should-fix 2, done:** the `dyn.to_number` comment now names the string arm (StringToNumber). The header
+  paragraph Str edited is rewrapped.
+- After the fixes: typecheck passes and Ty's 81 tests pass.
