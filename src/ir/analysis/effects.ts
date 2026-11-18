@@ -477,8 +477,13 @@ export function verifyEmissionSchedule(
  * - `call` — conservatively treated as having side effects. Purity analysis
  *    is a later pass.
  * - `global.set` — writes observable state.
+ *
+ * (#7359) The kind list must follow `effectsOf`: every listed leaf kind is one `effectsOf` classifies as writing
+ * (heap or a slot) or control, except the documented divergence `extern.regex`; the listed
+ * statement-level control kinds are kept whatever their buffers hold. A new kind is classified in `effectsOf`
+ * first; a buffer-bearing kind not listed here is judged by `effectsOf` of its buffers (the clause at the end).
  */
-export function isSideEffecting(i: IrInstr): boolean {
+export function isSideEffecting(i: IrInstr, cache: Map<IrInstr, IrEffects> = new Map()): boolean {
   const listed =
     i.kind === "raw.wasm" ||
     i.kind === "call" ||
@@ -638,13 +643,17 @@ export function isSideEffecting(i: IrInstr): boolean {
     // (if.stmt is already seeded above with br.label, #2952 s2.)
     i.kind === "early.return";
   if (listed) return true;
-  // (#7359) An instruction that runs nested buffers is as side-effecting as what it runs. The statement-level
-  // control kinds listed above stay kept whatever their buffers hold; this rule is what keeps a value `if`
-  // (`a && f();`, an unread `c ? f() : 0`) whose result is unused — without it DCE and the lowerer dropped the
-  // call in its arm.
-  let runsSideEffect = false;
-  forEachNestedBuffer(i, (buffer) => {
-    runsSideEffect ||= buffer.some(isSideEffecting);
+  // (#7359) An instruction that runs nested buffers is as side-effecting as what it runs, and `effectsOf` is the
+  // one authority on what that is: it is kept when its buffers write the heap or a slot (`effectsOf` gives every
+  // throw, control transfer and opaque op `writesHeap` too); buffers that only read go with an unused result. The statement-level control kinds listed above stay kept
+  // whatever their buffers hold; this rule keeps a value `if` (`a && f();`, an unread `c ? f() : 0`), which DCE and
+  // the lowerer used to drop with the call in its arm. `cache` is the caller's `effectsOf` cache, so a nested chain
+  // is classified once, not once per level.
+  let runsBuffers = false;
+  forEachNestedBuffer(i, () => {
+    runsBuffers = true;
   });
-  return runsSideEffect;
+  if (!runsBuffers) return false;
+  const fx = effectsOf(i, cache);
+  return fx.writesHeap || fx.writeSlots.size > 0;
 }
