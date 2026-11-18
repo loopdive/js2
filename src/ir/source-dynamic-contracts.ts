@@ -175,6 +175,15 @@ export interface ProgramDynamicContracts extends SourceDynamicProvenance {
   /** The dynamic result contract of `declaration`, or natively its Boolean carrier, if any. */
   readonly result: (declaration: ts.FunctionDeclaration) => IrType | undefined;
   /**
+   * An unannotated result typed by the ordinary pipeline's propagation (`propagated`). Where it has no type, the
+   * result is void when the body returns no value, else a refusal naming the checker's type (`return n as
+   * unknown`) rather than a void result a call would trip over later.
+   */
+  readonly propagatedResult: (
+    declaration: ts.FunctionDeclaration,
+    propagated: IrType | null | undefined,
+  ) => IrType | null;
+  /**
    * from-ast lowers a dynamic value only where the lane has its carrier. (#7354 T) That carrier is the raw
    * `externref`: `null` is its null reference (from-ast's dynamic `null` literal and `=== null` test), and a
    * catch binding reads the exception payload as the dynamic value (provenance models it: a local without an
@@ -222,6 +231,17 @@ export function programDynamicContracts(
     result: (declaration) =>
       sourceDynamicResult(checker, policy, declaration, provenance.carries) ??
       sourceBooleanResult(checker, policy, declaration),
+    propagatedResult: (declaration, propagated) => {
+      if (propagated || !irFunctionBodyReturnsValue(declaration.body!)) return propagated ?? null;
+      const result = checker.getReturnTypeOfSignature(checker.getSignatureFromDeclaration(declaration)!);
+      // `return undefined;` is the void result a call reads as `undefined`.
+      if (result.flags & (ts.TypeFlags.Void | ts.TypeFlags.Undefined)) return null;
+      throw new IrUnsupportedError(
+        "type-resolution-unsupported",
+        "build",
+        `function ${declaration.name?.text} returns ${checker.typeToString(result)}, which has no Prepared result contract`,
+      );
+    },
     legalize: (signatures, globals, roots, functions) =>
       legalizeSourceDynamicValues(
         checker,

@@ -150,14 +150,29 @@ describe("#7354 X — throw and catch with the Prepared dynamic value", () => {
     expect(await run(program)).toBe("threw");
   });
 
-  // The catch binding is the dynamic value, which is exact only for numbers, booleans, `undefined` and `null`
-  // (and for Error objects, under every operation the carrier has). Each other payload that could reach a catch
-  // refuses before it does; the slice that makes one reachable must give the dynamic operations its arm and
-  // update this list. (#7354 Ty) The catch binding enters the carrier without the box arm's `boxedKind`, so this list
-  // is also what keeps `TYPEOF_KIND` (the `typeof` answers of the admitted kinds) complete.
+  // (#7354 T review round 3, after the merge with Str) A thrown native string reaches the catch: strict equality
+  // and ToBoolean both have its arm.
+  it.each([
+    ["`=== 'x'`", "try { throw 'x'; } catch (e) { if ((e === 'x') !== @A) throw 1; }", "true", "false"],
+    ["ToBoolean of 'x'", "try { throw 'x'; } catch (e) { if (!e !== @A) throw 1; }", "false", "true"],
+    ["ToBoolean of ''", "try { throw ''; } catch (e) { if (!e !== @A) throw 1; }", "true", "false"],
+    [
+      "a string through `||`",
+      "function g(v) { throw v; } try { g(''); } catch (e) { if ((e || 7) !== @A) throw 1; }",
+      "7",
+      "''",
+    ],
+  ])("catches a thrown string: %s", async (_label, template, right, wrong) => {
+    await twice((answer) => template.replace("@A", answer), right, wrong);
+  });
+
+  // The catch binding is the dynamic value, which is exact only for numbers, booleans, `undefined`, `null` and
+  // native strings (and for Error objects, under every operation the carrier has). Each other payload that could
+  // reach a catch refuses before it does; the slice that makes one reachable must give the dynamic operations its
+  // arm and update this list. (#7354 Ty) The catch binding enters the carrier without the box arm's `boxedKind`,
+  // so this list is also what keeps `TYPEOF_KIND` (the `typeof` answers of the admitted kinds) complete.
   it.each([
     ["a typed Boolean throw", "try { throw true; } catch (e) { if (!e) throw 1; }", "throw val not in slice 9"],
-    ["a string throw", "try { throw 'x'; } catch (e) { if (!e) throw 1; }", "js.string.const is unavailable"],
     [
       "a TDZ ReferenceError",
       "function f() { return x; }\ntry { f(); } catch (e) { if (!e) throw 1; }\nlet x = 1;",
@@ -176,7 +191,8 @@ describe("#7354 X — throw and catch with the Prepared dynamic value", () => {
     [
       "a member read of a dynamic value (a TypeError on null)",
       "function f(v) { try { return v.x; } catch (e) { return 0; } }\nf(null);",
-      "dynamic operation box of a non-primitive value has no Prepared intrinsic",
+      // (after the merge with Str) the read itself now refuses first
+      "dynamic operation dyn.member_get has no Prepared intrinsic",
     ],
   ])("refuses %s before it reaches a catch", async (_label, source, expected) => {
     const result = await compile(source, options());

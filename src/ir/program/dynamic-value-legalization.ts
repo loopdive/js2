@@ -15,8 +15,8 @@
  * backend.
  *
  * Soundness rests on the admitted value set: only numbers, booleans,
- * `undefined` and `null` can enter a dynamic value here (every other box
- * refuses), and the runtime functions behind the intrinsics are exact for that
+ * `undefined`, `null` and (#7354 Str) native strings can enter a dynamic value
+ * here (every other box refuses), and the runtime functions behind the intrinsics are exact for that
  * set. (#7354 T) `null` is the carrier's null reference, as on the ordinary
  * standalone pipeline; `undefined` is the non-null singleton, so the two stay
  * apart under strict equality and the `undefined` probe.
@@ -62,25 +62,36 @@ function carrierOf(type: IrType): IrType {
  * (#7354 Ty) `typeof`'s answer for each kind of value the carrier admits, keyed by the answer so that no two
  * kinds can share one (`typeof null` is "object": an admitted object kind must merge with that row). The
  * admitted kinds ARE this table's values: the box arm admits a value only as one of them (`boxedKind`), so a
- * slice that admits strings, functions or objects must add its kind here. That is what makes the `typeof`
- * comparison arm sound: a literal no row answers ("string", "function", a typo) is constant false.
+ * slice that admits functions or objects must add its kind here, as Str did for strings. That is what makes
+ * the `typeof` comparison arm sound: a literal no row answers ("function", "symbol", a typo) is constant false.
  */
-const TYPEOF_KIND = { number: "number", boolean: "boolean", undefined: "undefined", object: "null" } as const;
+const TYPEOF_KIND = {
+  number: "number",
+  boolean: "boolean",
+  undefined: "undefined",
+  object: "null",
+  string: "string",
+} as const;
 type CarrierKind = (typeof TYPEOF_KIND)[keyof typeof TYPEOF_KIND];
 const KIND_OF_TYPEOF: ReadonlyMap<string, CarrierKind> = new Map(Object.entries(TYPEOF_KIND));
 
-/** How the carrier tests for each admitted kind: a runtime predicate or the null test. */
-const KIND_TEST: Readonly<Record<CarrierKind, IntrinsicId | "ref.is_null">> = {
+/**
+ * How the carrier tests for each admitted kind: a runtime predicate or the null test. The native lane has no
+ * string predicate resource yet, so a test for a string refuses by name rather than answering false.
+ */
+const KIND_TEST: Readonly<Record<CarrierKind, IntrinsicId | "ref.is_null" | undefined>> = {
   number: "js.value.is_number",
   boolean: "js.value.is_boolean",
   undefined: "js.extern.is_undefined",
   null: "ref.is_null",
+  string: undefined,
 };
 
 /** The kind a box to the dynamic value admits, from its tag refinement or its operand; `undefined` refuses. */
 function boxedKind(tag: TagId | undefined, source: IrType | undefined): CarrierKind | undefined {
   if (tag === JS_TAG_IDS.Boolean) return "boolean";
   if (tag === JS_TAG_IDS.Null) return "null";
+  if (source?.kind === "string") return "string";
   return source?.kind === "val" && source.val.kind === "f64" ? "number" : undefined;
 }
 
@@ -114,6 +125,7 @@ export function legalizeDynamicValues(fn: IrFunction): IrFunction {
   };
   const kindTest = (instr: IrInstr, kind: CarrierKind, value: IrValueId, result: IrValueId): IrInstr => {
     const test = KIND_TEST[kind];
+    if (test === undefined) return gap(`typeof test for ${kind}`);
     return test === "ref.is_null"
       ? { kind: "unary", op: "ref.is_null", rand: value, result, resultType: instr.resultType }
       : intrinsic(instr, test, [value], result);
@@ -131,6 +143,17 @@ export function legalizeDynamicValues(fn: IrFunction): IrFunction {
             return [{ kind: "const", value: { kind: "null", ty: CARRIER }, result: instr.result, resultType: CARRIER }];
           case "number":
             return [intrinsic(instr, "js.number.box", [instr.value])];
+          // (#7354 Str) A native string is its own carrier payload: the externref that wraps it.
+          case "string":
+            return [
+              {
+                kind: "coerce.to_externref",
+                value: instr.value,
+                result: instr.result,
+                resultType: CARRIER,
+                ...(instr.site === undefined ? {} : { site: instr.site }),
+              },
+            ];
           default:
             return gap(`box of a non-primitive value`);
         }

@@ -17201,6 +17201,14 @@
       "nextBoundary": "Pure TS-AST scan of logical-assignment NamedEvaluation targets feeding the IR lowerer's legacy demotion (#7040); move behind the frontend-ts boundary with the mutation pre-pass."
     },
     {
+      "path": "src/ir/logical-select.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "3518-coordinator",
+      "nextBoundary": "The `&&`/`||` result selection over the IR builder (#7354); moves with the builder when pure IR contracts are separated from frontend and backend dependencies."
+    },
+    {
       "path": "src/ir/function-member-closure-plan.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",

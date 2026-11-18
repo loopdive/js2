@@ -31,12 +31,17 @@ related: [7188, 2949, 3526, 3527, 3518, 7106, 7349, 7350, 7352]
 # import of `storesUndefinedFirst` and the source-global arm that admits a null
 # default only when the module-init stores `undefined` first (the check lives in
 # src/ir/program/dynamic-value-legalization.ts beside the store it checks).
+# 2026-11-17 (slice Str, merge onto H): src/compiler/ir-program-presentation.ts +1,
+# `inCall`, the ABI join's admission of a native string in an internal callable
+# contract (string parameters and results), beside H's `carried` it extends.
 loc-budget-allow:
   - src/ir/program-physical-plan.ts
   - src/compiler.ts
   - src/ir/program-source.ts
   - src/ir/from-ast.ts
   - src/compiler/ir-program-presentation.ts
+import-cycles-allow:
+  - backend->ir: 119 # 2026-11-17 (#7354 Str review 2): the native string length emitter reads the selected carrier field through the shared preparedStringLenProvider (ir/runtime/intrinsic-preparation.ts) instead of re-implementing it
 ---
 
 # #7354 — Prepared IR path, milestone 1
@@ -1137,6 +1142,643 @@ Measured after the fixes (`d635f3be69`):
   PR #7278); `issue-3518-semantic-verification-ownership` and `issue-3526-string-boundary-const` fail exactly as
   on D1's tip; the others pass.
 
+### Review round 2 (H)
+
+Review of `52ca249b28`: NOT MET on one must-fix. D1 `d87fe37e23` (main's #7357 red-pin fixes) was merged into P
+(`53f7b492c2`) and P into H first; then:
+
+1. **Must-fix: `var o = 1; Object.defineProperty(o, 'p', {})` threw** from-ast's drift invariant out of
+   `compile()`. The classifier now exempts only a member write (`o.p = v`, `o[k] = v`, `isMemberWriteDeclaration`,
+   moved to `src/shared/binding-writes.ts` and shared with the resolver's predicate, whose answers are unchanged)
+   and still counts the `Object.defineProperty` call as a second declaration: the binding has no home and the
+   program refuses as "not-direct". Tested, with the member-write form keeping its home. **Cost, handed to slice
+   O:** the `var obj = {}; Object.defineProperty(obj, …)` rows of the sample stop at "not-direct" again (52 `obj`,
+   plus `proto`, `o`, `arr`, … — 84 rows in all) until O admits `Object` statics on this path; O then drops the
+   call form from the declaration count. Known pre-existing crash for O, not fixed here: the literal form
+   `Object.defineProperty(1, 'p', {})` throws the same invariant on the base.
+2. **`storesUndefinedFirst` deleted.** It accepted the store in any function, and no test could reach an
+   `externref` source global without the globals arm's prologue: the arm is that global's only producer and
+   prepends the store in the storage owner itself (unit test). The physical plan states this.
+3. **Annotated var.** Claim and behaviour now agree: an annotation other than `any` gives the typed home or none,
+   and an `any` store into it is refused by the resolver's retype rule naming the binding ("unsupported"). H's own
+   tests pin both refusals, killing the `storesDynamic && !annotated` mutant.
+4. **Fail-open survivors, rebutted.** The code answers "may be dynamic" in all three; only the mutants that answer
+   "typed" survive, because no program on this path observes them: a non-variable binding read as a value (a
+   function, a class, a binding element) and a call of anything but a source function (a member, an ambient or
+   a value callee) are refused by from-ast before their type matters, and a pending local needs an initializer
+   that reaches the local itself (a closure or a TDZ read). The self-read exception is now killed by H's own file
+   (`var y = 1; y = y + 1`).
+
+Measured: H 66 and V/G, P, D1, R, prepared entry/runtime, #7188 tests 303/303; typecheck and gates;
+`changed-root-tests.sh` green; sweep 1,944 programs, 1,014 correct, 0 wrong, 0 invariant errors; ordinary bytes
+on 100 further sample files identical on both targets (92 compiled, 8 compile errors on both).
+
+### Review round 3: MET
+
+Review of `36c1b42ac9`: MET, no must-fix; the three survivors and the deletion accepted. Then `origin/main`
+(`e48947ccb8`, with D1 #7277 and P #7283) was merged in. Final 411-row sample: negatives 14 pass; 282 ToBoolean,
+84 "not-direct" (the `Object.defineProperty` bindings above and the repeated vars), 26 `String` direct call in
+`verifyProperty`, 2 switch-case binding, 1 `Test262Error`, 1 parse error, 1 `print` call.
+
+### Known gaps (H)
+
+- **The physical plan admits any `externref` source global.** After the legalization a dynamic global's type is a
+  plain `externref`; neither the ABI contract nor its intent keeps a dynamic marker, so keying the admission on
+  it needs new plumbing. Today the globals arm is the only producer (it stores `undefined` first). The slice that
+  adds another reference-typed source global must carry a marker (or its own default) and narrow this arm.
+- `Object.defineProperty` on a script var: no home until slice O (above).
+- Repeated `var` and multi-source programs: no home.
+- **Hand-over for a later "hoisted var" slice:** a function-local `var` repeated anywhere in its function refuses
+  ("redeclaration of 'x'"); one slot per `var` name per function, declared at the entry, would admit it (15 of
+  the 411 sample files contain a repeated `var`). See "Follow-up: hoisted `var` declaration without initializer".
+
+### Follow-up: hoisted `var` declaration without initializer
+
+A review after H found a wrong answer: `var x;` without initializer inside a loop body was reset to `undefined` on
+every iteration (`function f(v){ var r = 0; for (…) { var x; if (i === 0) x = v; else r = x * 1; } return r; }`
+answered `undefined`, node 5).
+
+- **Cause.** `lowerUninitializedVar` (`src/ir/from-ast.ts`) wrote the slot's `undefined` at the declaration
+  statement. In JavaScript the declaration is hoisted and a `var x;` without initializer is no write, so a loop
+  that runs it again must keep the value. The ordinary pipeline never lowers such a declaration in a loop: its
+  selector (`uninitializedVarIsDynamicUndefined`, `src/ir/select.ts`) claims `var x;` only outside loops. The
+  Prepared path has no selector and reached it.
+- **Where it exists.** On `origin/main` (`f1903049a7`) already, for a loop `var x;` whose read flows into a
+  dynamic result (a typed first store `x = 5`, a boolean, a TypeScript `any` function): node returns, ours threw.
+  H widened the reach (a dynamic `return r`, `x * 1`, script loops in the module-init): 14 of the 30 family probes
+  were wrong on H, 3 on main.
+- **Fix.** The slot of a `var x;` in a loop of its own function (or script) takes its `undefined` once, before
+  the loop: `IrFunctionBuilder.emitAtBlockHead` (`src/ir/builder.ts`) prepends to the open block. A loop under
+  construction collects its body in a buffer and becomes one instruction of that block (no block is terminated
+  inside a buffer), so the head of the open block runs once, before the loop, and dominates every read (a read
+  after the loop is out of scope). Outside a loop the declaration runs once, before every read (a read before it is out of scope and refuses
+  by name), so it keeps its place — that is the arm the ordinary pipeline reaches, so its bytes do not change. The
+  loop test is one shared helper, `isInLoopOfOwnFunction` (`src/shared/var-declaration-lists.ts`), which the
+  selector's inline walk now calls. The builder's three slot lookups became one `slotDef` (room for the new
+  method within the size budget).
+- **Measured.** Family probes (for / while / do bodies, nested loops, `switch` / `try` / `try…catch` / labelled
+  block in a loop, labelled `continue`, a typed and a boolean first store, a read in the first iteration, a loop
+  after an early return, script `for` / `while` loops, TypeScript): all equal node. Named refusals: a read after
+  the declaring loop or before the declaration (`identifier "x" is not in scope`), a re-declaration after an
+  assignment (`redeclaration of 'x'`, script: `has no exact typed storage: not-direct`), a script loop var read by
+  a function (not a module binding: `identifier "g" is not in scope in h`), closures (`must have a return type
+  annotation`). Ordinary bytes identical on 100 test262 files (loops with `var` declarations, `&&` / `||`) × default
+  and `--target standalone` plus six direct programs (instrumented: the non-loop arm is reached, the loop arm
+  never); Prepared bytes identical on 15 unaffected programs × both targets. Mutations: the loop guard (15 tests
+  fail), the selector's loop guard (`issue-7106-uninitialized-var` fails). Expected survivors, reasoned and not
+  run: prepending vs appending to the open block, and the helper's stop at a nested function — both equivalent on
+  the Prepared path (any place before the loop is right); the second would only change what the ordinary selector
+  claims. A first version prepended to block 0 (the function entry); writing into the open block instead survived
+  every test, including a loop after an early return (block 0 already finished), so the simpler form was kept.
+- Tests: `tests/issue-7354-h2-hoisted-var-declaration.test.ts`.
+
+#### Review round 1
+
+NOT MET on one must-fix, fixed here.
+
+- **Must-fix: a repeated `var x;` in another block opened a second slot** that started at `undefined` (also wrong
+  on main): `if (v === 5) { var x; x = v; } var x; return x * 1` and the same with two loops, a loop and a
+  declaration after it, both arms of an `if` in a loop, and two script loops. from-ast binds a `var` in its own
+  block, so only a repeat in an enclosing scope met the "redeclaration" check. **Fix:** every `var` whose name has
+  another binding in its function or script (a second `var` at any block depth, a parameter, a function, class,
+  catch or lexical declaration) refuses as "redeclaration of 'x'". The count is the selector's own binding count
+  (`collectBindings` in `src/ir/function-local-var.ts`, now shared by `collectIrSafeVarDeclarationLists` and the new
+  `isRepeatedVarBinding`); a script var with a module home is exempt (its repeat is the same global,
+  `isRedeclaredModuleVar`; deleting the exemption fails the #7106 lever L tests). One slot per name (hoisting
+  every `var` to the entry) was not chosen: the typed, SSA, i32-promoted and captured `var` arms would each need
+  it, which is more than this fix should carry. The ordinary pipeline never lowers a repeated `var` (its selector
+  claims only lists with a binding count of 1), so its bytes do not change.
+- **Cost:** `for (var i = 0; …) {} for (var i = 0; …) {}` in a function compiled correctly before (each head
+  initializes its slot) and now refuses. The prelude has no repeated `var` (0 found by the same predicate), and every
+  positive row of the 411-row sample stops in the prelude today, so no row's first gap moves; 15 of the sample's
+  test files contain a repeated `var` and will stop there once they get past the prelude.
+- **Family** (each a named refusal, `redeclaration of '<name>'`, tested): repeats across sibling and nested
+  blocks, loop then after the loop, two loops, both `if`/`else` arms in a loop, `try`/`catch`/`finally`, a repeat
+  with an initializer in a block, a repeat of a parameter, two `for (var i …)` heads, two script loops. Refused
+  earlier by other named gaps: blocks as non-tail statements, a `switch` on a dynamic value, a function
+  declaration beside a `var` of its name (TypeScript's "Duplicate identifier"). Single declarations unchanged.
+- **Mutation sweep follow-ups:** the loop guard (store before the loop only in a loop) has no observable effect on
+  the Prepared path — outside a loop both places are right; it keeps the ordinary pipeline's in-place code (and
+  bytes), stated in `lowerUninitializedVar`'s comment. The helper's stop at a nested function is what makes its
+  answer correct (a nested function's `var` runs once per call); removing it is unobservable on the Prepared path
+  (the inner function's own block head is also before the loop) and only makes the ordinary selector more
+  conservative — no test kills it. `push` vs `unshift` is equivalent. The selector's loop exclusion is killed by
+  `tests/issue-7106-uninitialized-var.test.ts`.
+- Proofs re-run: ordinary bytes identical on the 100 files × 2 targets and on the 18 repeated-`var` programs;
+  Prepared bytes identical on the 15 unaffected programs; gates (also with the base at main); H, V/G, P, D1, R,
+  prepared entry/runtime, #7188, #7106 uninitialized/lever L/L2, #3765 pass.
+
+#### Review round 2: MET
+
+No wrong answer, no invariant error. Two tests added for surviving mutants: a repeated script `var` with a module
+home is claimed and runs on the ordinary pipeline (deleting the module-binding exemption fails it), and two
+sibling-block `let x` bindings still compile and run (deleting the "`var` lists only" guard fails it). Accepted
+equivalent mutants: not counting parameters (`cx.scope.has` refuses a repeated parameter first), the loop guard
+and the nested-function stop (both above), `push` vs `unshift`.
+
+**Follow-up, not built here:** the refusal costs reach — two `for (var i = 0; …)` heads in one function were
+correct before and now refuse. The reviewer's untested narrowing: refuse a repeat only when one of its
+declarations has no initializer, or is a `for-in` / `for-of` head or a pattern. The complete answer is one slot
+per `var` name per function (see Known gaps (H)).
+
+### Follow-up: unused `&&` / `||` keeps its right operand
+
+The slice-T review found a wrong answer that predates T: a `&&` / `||` whose value is unused dropped its right
+operand (`a > 0 && boom(b);` never called `boom`; node throws, ours returned). Root cause and fix are their own
+issue, **#7359** (`plan/issues/7359-dce-keeps-effectful-value-if.md`), because the ordinary pipeline had the same
+wrong answer in plain TypeScript on both targets.
+
+- **Cause.** A logical expression lowers to a value `if` (`lowerLogicalAndOr`, `src/ir/from-ast.ts`), the only
+  buffer-bearing IR kind missing from `isSideEffecting`, so DCE and the lowerer judged it by its kind alone and
+  dropped it, call and all, when its result was unused. `?:` in statement position was correct because
+  `lowerDiscardedExpression` lowers it to an `if.stmt`; an unread `const r = c ? f() : 0` was wrong too.
+- **Fix.** One rule in `isSideEffecting` (`src/ir/analysis/effects.ts`): an instruction that runs nested buffers is
+  as side-effecting as what it runs. The statement-level control kinds stay always-kept; an `if` with pure arms is
+  still dropped.
+- **Siblings checked.** `?:` statement (`if.stmt`, correct before), unread `?:` local (wrong before, fixed), comma
+  (its left operand is lowered as a discarded expression, correct), loops / `try` / `switch` / labelled blocks
+  (always kept), optional call `c?.m();` (correct before and after, ordinary). `x ?? f()` with
+  `x: number | undefined` is wrong on the ordinary pipeline in value position too (`return x ?? inc()` gives NaN,
+  node 7): the legacy path stores `number | undefined` as f64 — a different defect, reported, not touched here.
+- **Measured.** Prepared: `tests/issue-7354-h3-unused-logical-operand.test.ts`, 9 forms × 6 positions × (counter,
+  throw), 108 tests, 74 fail on main. Ordinary sweep (generated, 429 programs × default and standalone): 0 wrong
+  after, the same Prepared rows run or refuse by name (`no exact typed storage`, `__ir_dyn_add has no Prepared
+  intrinsic`, `__new_ReferenceError` for a typed counter — so the Prepared counter is a local the right operand
+  assigns). Ordinary bytes on 300 test262 files × 2 targets and the 13 playground examples × 2 targets: identical
+  (the JS test262 shapes do not reach the IR value `if` with an unused result). Prepared bytes identical on the 22
+  compiling rows of 14 unaffected programs × gc / standalone (the prepared-entry/runtime numeric programs, `&&` /
+  `||` in value, return and condition position, a pure unused `&&` and `?:`, a `?:` statement, h2 loops); they
+  change for the repro programs, where the unused effectful `if` is now kept. Equivalence files on logical /
+  conditional / optional / DCE shapes (23 files): failing set equals `scripts/equivalence-baseline.json`.
+
+## Str result
+
+Status 2026-11-17. Branch `claude/7354-str` on `claude/7354-p` (`1995dd6ef2`). Steps 1 and 2 of the slice are built;
+steps 3–5 (dynamic `+`, ToString/`String(x)`, `typeof`) are the follow-up slice Str2 (lead decision, below).
+
+### Built
+
+- **Step 1 — typed strings through the presentation.**
+  - `preparedPresentationPolicy` selects native string constants, equality, length and concatenation on wasmgc
+    standalone (not the relational compare: it has no join).
+  - The string value plan (`native-string-values.ts`) joins `string.eq` to the lazy `__str_equals` resource
+    (`native-string-equality.ts`, reused as is) and `string.len` to the carrier's length field.
+    `native-string-output-requirements.ts` no longer refuses those two kinds.
+  - One `preparedNativeStringResolver(tx, pack, unitId)` realises an owner's string operations; `fillPrimaryBody`
+    spreads it (program-consumer.ts shrinks by 11 lines).
+  - R's census: a storage provider (`native-global` literal, `carrier-field` length) is answered by the setup's
+    literal storage or string carrier type; a provider the IR reaches through its own instruction (`string.eq`,
+    `string.concat`) by the setup function named after the provider's symbol. Every other setup function stays a
+    declared dependency, as before.
+  - The ABI join admits a native string in an internal callable contract on standalone, beside D1's externref arm.
+- **Step 2 — a string in the dynamic value.**
+  - The legalization boxes a string as `coerce.to_externref` (the externref that wraps it), the ordinary standalone
+    carrier.
+  - `nativeStringsReachCarrier(demands)` (`native-string-value-demands.ts`): a native string can reach the carrier
+    only through an executable `coerce.to_externref` of a string (its box, a thrown string). When it can, strict
+    equality takes the shared SameValue builder's string arm (code units through flatten + `__str_equals`), which
+    D1 left off; otherwise its body is unchanged.
+
+### Differences from the brief and why
+
+- **No typed string home for a script `var`.** V's classifier can answer the existing `"string"` home soundly with
+  the same reads proof (tried), but the physical plan has no string global ("global s carries non-scalar IR type
+  string") — the same globals arm H builds for dynamic. Left to H/merge; proven with function locals.
+- **A reassigned typed string local** is refused by from-ast ("has no slot representation"): the Prepared resolver
+  has no `resolveString` slot type. Not built (a resolver seam, not a join).
+- **Step 3 needs a second body** (`__ir_dyn_add` = `emitAnyAddFromExternTemps`, entangled with the legacy object
+  runtime); per the lead: Str2 builds a Prepared-native add from shared pure builders.
+
+### Measured
+
+- `tests/issue-7354-str-strings.test.ts` (16 tests): typed string locals, concatenation, a non-ASCII literal,
+  `throw "x"` caught and escaping, strings out of `try`/`catch`; a string through an untyped parameter compared
+  with literals, numbers and `undefined`; fresh concatenations equal by code units through `any`; StringToNumber.
+  Refusals: compare, reassigned string local, script string var, gc target, ToBoolean, `==`, a method call.
+- Sweep (strict entry, against node): 11 operations (`===`, `!==`, against a typed string / number, `* 1`, `- 0`,
+  unary `+`/`-`, `< 2`, `>= 0`) × 19 values (numbers incl. NaN, ±0, ±Infinity; booleans; `undefined`; 9 strings
+  incl. `""`, `" 3 "`, `"0x10"`, `"-0"`, `"Infinity"`) × 4 positions (top level, function, value, condition):
+  44/44 correct. Named gaps for dynamic `+`, `typeof`, `!`, `==`; zero invariant errors, zero invalid Wasm.
+- Ordinary-pipeline bytes, base sources swapped into the same tree: 396 files of the 411-row list compiled, identical
+  on the JS environment and `--target standalone` (8 compile errors on both, 15 skipped).
+- Prepared bytes: every module the prepared-entry/runtime, #7188, R, D1, P and V/G tests instantiate (66) is
+  identical; the one new module is Str's census program.
+- Pins (base vs this branch, failing sets): the 22 #3518/#7139 files that import a touched module, and the changed
+  root tests: identical failing sets except the pins below. Pre-existing on the base (same sets): the core
+  vocabulary seam (source hash of `src/ir/ast-lowering-plans.ts`), semantic-verification ownership (`effects.ts`),
+  string-boundary-const (5), number-format requirements (2), realm requirements (1), and 626 receipt tests in the
+  validator/helper policy-evolution and semantic-provider-boundary files.
+- Pins updated: R (`throw "x"` → the compare refusal; Str census tests), D1 (object box refusal; member read names
+  `dyn.member_get`; `selectNativeDynamicValues` signal), `issue-3518-native-string-output-requirements`
+  (string length is a value-plan join, no output use).
+- 411-row sample: unchanged — 393 × not-direct (`print` 345, `__isArray` 43, `__globalObject` 5), 2 × switch-case
+  binding, 1 × `DD_operator`; negatives 14 pass.
+- Mutation survivors: the `string` kind check and the projection-view check of `nativeStringsReachCarrier` (today
+  every executable `coerce.to_externref` carries a string and the program view mirrors the projection).
+- Gates: typecheck, loc, func, coercion-sites, oracle-ratchet, dead-exports, import-cycles, boundaries inventory.
+
+### Known gaps and hand-over (Str2)
+
+- Every emitted string literal/concat re-authenticates the whole native string plan (`emitPreparedNativeStringLiteral`
+  → `requireCompletedNativeStringValues` → `ownerFor` → `assertNativeStringValueReservationInput` →
+  `planNativeStringValuePhysical` → `assertNativeStringOutputRequirementsCurrent`, twice per literal). Profile of a
+  20-string-op program: 38.5 s total, 24.6 s in `emitPreparedNativeStringLiteral`, 16.9 s in the re-plan.
+- #3518 receipt/pin tests are red on main and hide new breakage (the Perf data.ts edit breaks six more receipts):
+  [#7358](7358-3518-receipt-pin-tests-red-on-main.md), which must land before this stack is complete.
+- Number formatting is a runtime-support batch, which the presentation refuses (`ir-program-presentation.ts`
+  `checkResourceDemand`, "source and prepared runtime must independently prove no async/support demand").
+
+### Review round 1
+
+Adversarial review at `4318ee510f`: NOT MET (string semantics correct; the string provider census did not fail
+closed). Fixed:
+
+1. **Must-fix — the census joins string providers to their executable occurrences** (`stringProvidersJoin`,
+   `prepared-provider-census.ts`). The step-1/2 rules (some literal global or string type exists; any setup function
+   named after a provider symbol) are gone. Now:
+   - the selected string providers equal, as a multiset, the string features the executable projection demands
+     (the manifest's own scanners `irStringConstDemand`/`EqDemand`/`LenDemand`/`ConcatDemand`);
+   - the literal provider: every executable `string.const` is one literal use of the plan, and each use names exactly
+     one literal global or materializer by cache key;
+   - the length provider: exactly one string carrier type, whose completed field at the provider's `fieldIndex` is an
+     i32;
+   - `__str_equals` / `__str_concat`: exactly the one setup function of the provider's role, by symbol;
+   - the runtime-bound multiset excludes string providers; any other non-callable native provider refuses.
+   Each case the review listed now refuses by name (16 new census tests; drop tests restored). Mutation sweep over the
+   join (11 mutants: feature population, use count, use join, materializer arm, carrier count, carrier i32, owner
+   join, owner count, non-string non-callable): all killed.
+2. **Must-fix — `string.eq` / `string.len` emitters** share one helper with the concat emitter
+   (`requireOwnerOccurrence`: an occurrence of the owner's executable projection that admits the request, provider
+   included); `string.len` reads `fieldIndex` from the selected carrier-field provider.
+3. Should-fixes: tests for `string.eq` without concat (needs the empty literal) and an oversized literal (materializer);
+   the unreachable `!equality` clause and the redundant `standalone` check of the ABI string arm are gone (the +1 LOC
+   grant on `ir-program-presentation.ts` is given back).
+
+Evidence after the round: Str, R, D1, P, V/G, prepared-entry/runtime, #7188 tests pass; the 11 string-related
+#3518 files pass (base: same); Prepared bytes of the 32 modules the Str and R tests instantiate are identical to
+`4318ee510f`; ordinary bytes on 101 test262 files × 2 targets identical to the base; gates and
+`changed-root-tests.sh` (interpreter engine) pass. The emitters' provider/owner checks have no test (Prepared attaches
+no string provider, so only a forged emission request would reach them).
+
+### Review round 2
+
+Adversarial review at `82d6cb727c`: NOT MET (three forged setups passed the census, then threw
+`invalid-presentation` out of `compile()`). Fixed at `b237a1dca9` + `a26c134013`:
+
+1. **Must-fix 1 — forged setups refuse by name.**
+   - **Why they threw.** R's mock returned a *new* plan object on every `emittedPhysicalSetupPlan` read, so any
+     forgery the census accepted then failed the finalization's identity check (`plan !== record.plan`). In
+     production the plan is one frozen object, so that check is not reachable from a setup. The mock now forges
+     ONE object, like the emission's own plan. With that change, a forgery the census accepts presents the real,
+     unaltered module (test: reversed reservation steps run and answer 3); it never throws.
+   - **(a), (c) and the step further: identity join** (`nativeSlots`). Every binding the setup derives itself
+     (anything that is not a runtime or intrinsic callable's) must be the binding its declaration's space and role
+     derive under the runtime ABI anchor (`createIrBindingId` + `nativeRole`, the derivation of
+     `irSupportFuncRef`/`irSupportGlobalRef`/`irSourceTypeRef`; the name is not part of the id). So every role the
+     census reads is the one its completed slot was reserved under. Refused: equality↔flatten swap (a),
+     equality↔concat swap, two literal globals swapped, the `""` literal's role stripped (c), flatten, copy-tree and
+     a carrier subtype stripped. An intrinsic-bound setup function must be a by-instruction provider's slot (test:
+     flatten rebound as an intrinsic and relabelled).
+   - **Deviation from the decided fix: no separate signature join for eq/concat.** With the identity join, the eq
+     slot is the one reserved as `[string-equality, equals]`, and `supportPopulationJoins` already requires its
+     declared signature to be that slot's completed signature. A provider-signature check therefore cannot be broken
+     by any forged setup; it would be an unkillable mutant, so it was not added. The carrier field's `i32` check was
+     deleted for the same reason (it survived the mutation sweep).
+   - **(b) literal uses join by value** (`literalUsesJoin`). The uses equal the executable `string.const`
+     occurrences one to one (by `collectNativeStringValueDemands`, which replaces `countInstructions`). Each use's
+     cache key must be the key its own occurrence's value and encoding select. `selectNativeLiteralDemand` is moved
+     out of the planner, so planner and census share it. The key must name exactly one storage slot of the selected
+     kind. Refused: one use repointed to another literal, all uses to one key, two uses exchanging occurrences, one
+     occurrence used twice.
+   - **Not joined: labels nothing consumes.** A literal global's *name* is one (it is not in the binding id; a
+     renamed global is accepted and compiles the real module). The reservation steps and type shapes are others.
+2. **Must-fix 2 — emitter checks tested.** `tests/issue-7354-str-emitter-requests.test.ts` (9 tests) issues forged
+   requests through `preparedNativeStringResolver`: the wrong owner for eq/len/concat, another owner's occurrence, a
+   foreign provider for each, and a host-selected length provider. Deleted because implied:
+   - `!pack.equality`: an admitted `string.eq` implies the planned equality resource.
+   - `selected.length === 1` and `field.carrier !== "string"`: the length emitter now uses
+     `preparedStringLenProvider`, and the carrier is typed `"string"`.
+3. **Should-fixes.**
+   - The length emitter shares `preparedStringLenProvider`; this adds one `backend->ir` import edge, granted in the
+     frontmatter.
+   - `countInstructions` is gone.
+   - `hasRole` is now data equality, so the `roleLen` survivor is gone.
+   - `callableKind` is gone: the callable join compares the provider's implementation as data.
+   - The `useOne` survivor is killed by a duplicated literal global on the same slot.
+   - **Rebutted: sharing the manifest's demand→feature table.** `demandFeatures` is private to
+     `src/ir/program/runtime-manifest.ts`, and the #3518 validator relocation receipts byte-pin that file. Exporting a
+     wrapper failed 30 relocation tests, and re-pinning breaks its segment proofs. The census keeps its six scanner
+     rows, now spelled with the family constants.
+
+Evidence:
+- Tests: Str (18), R (96), Str emitter (9), D1 (46), P + V/G (70), prepared-entry/runtime + #7188 (58) pass. The
+  forks report a vitest `onTaskUpdate` RPC timeout under load on the slow string files; every test passed.
+- At `82d6cb727c` with the stable mock, 12 of the new R tests fail (the forgeries are accepted there).
+- 23 #3518 files: all files that import a changed module, plus the string equality/flatten/output/value files.
+  Failing sets are equal to the base: c1-current-source 271, number-format 2, realm-requirements 1,
+  validator-policy-evolution 143, validator-relocation 9, semantic-provider-boundary 349, helper-policy-evolution
+  134. Every other file passes.
+- Bytes against `82d6cb727c`:
+  - Prepared: the 33 modules (30 distinct) the Str and R tests instantiate are identical.
+  - Ordinary: 100 test262 files × {JS environment, standalone} are identical.
+- Mutation sweep, 19 mutants, each run alone:
+  - Census: 12 killed (identity off, runtime/intrinsic exemptions, intrinsic-owner, use population, value key,
+    useOne, kind, carrier count, callable named, demanded population, role equality); carrier `i32` survived and
+    was deleted.
+  - Emitter: owner, eq/len/concat provider and length arm are killed.
+  - **Survivor, justified:** `buffer.view === "projection"` in `requireOwnerOccurrence`. In every reachable program
+    the program view carries the same string instructions as the projection, so no request can name an occurrence
+    that only the program view has.
+- Gates: typecheck, loc, func, coercion-sites, oracle-ratchet, dead-exports, import-cycles (grant), boundaries
+  inventory, and `changed-root-tests.sh` (interpreter engine).
+
+### Review round 3: MET
+
+Fresh adversarial review at `50468e80c0` with the reviewer's own mock: MET, no must-fix.
+- Every forgery is refused by the census itself.
+- The dropped signature join and the dropped carrier-`i32` check are accepted as implied.
+- The manifest-table rebuttal is accepted; the follow-up is #7358.
+- Optional should-fix, not done: the census refusal names no join. Every census join, the string join included,
+  answers `undefined`, and the presentation turns that into the one `runtime-demand` gap. Naming the failing join
+  would change `runtimeCensus`'s result type and the gap call in `ir-program-presentation.ts`, which is at its size
+  budget. That belongs to a census-wide change, not to the string join alone.
+
+### Merged onto main (D1 reworked, P, H) — 2026-11-17
+
+Merged `origin/main` `0409838769` into the branch.
+- **Conflicts.** Three files:
+  - The issue file: both sides kept.
+  - `ir-program-presentation.ts`: string admission in internal callable contracts, as `inCall` beside H's `carried`
+    (+1 line, granted in the frontmatter).
+  - R's census test: H's describe and Str's describe are both kept.
+- **Ported cleanly onto D1's rework.** `selectNativeDynamicValues(intrinsics, stringsCarried)` and the string arm in
+  `buildObjectSameValueBody`'s three string parameters needed no change.
+- **One port for H.** H's provenance (`carries`) now treats string literals as a typed kind, beside the number and
+  Boolean literals. Without it, a literal passed to a typed string parameter refused as "a dynamic value flows into
+  string".
+- **A script `var` holding a string now works through H's dynamic home.** It equals node (two acceptance tests),
+  and its `.length` refuses by name (`dyn.member_get`). H's "holding a string (slice Str)" refusal row is removed.
+
+Evidence after the merge:
+- Tests: Str (20), emitter-requests (9), R (100), D1 (49), P + V/G, H (65), prepared-entry/runtime + #7188 (58)
+  pass. The vitest `onTaskUpdate` RPC timeout appears on the slow string files.
+- `changed-root-tests.sh` (interpreter engine): every changed root file passes. The script hit the time cap before
+  the last file, `str-strings`, which was run directly.
+- Gates against the `origin/main` tip pass: loc and func (with `LOC_GATE_BASE`), coercion-sites, oracle-ratchet,
+  dead-exports, import-cycles, boundaries inventory.
+- Bytes against `origin/main`:
+  - Ordinary: 100 test262 files × {JS environment, standalone} are identical.
+  - Prepared: all 148 modules the D1, P, V/G, H, prepared-entry/runtime, #7188 and R tests instantiate on main are
+    identical. The 5 extra modules are Str's string programs.
+- String sweep (`.tmp/sweep.mts`): 286 programs, compared with node. They cover 16 dynamic-string operations × 4
+  strings × {top level via the dynamic home, function, condition, loop across iterations with a sibling `while`},
+  plus typed string expressions in a function and a loop.
+
+| Outcome | Programs | Detail |
+| --- | --- | --- |
+| OK | 184 | equal to node |
+| `dyn.truthy` (ToBoolean, slice T) | 32 | `&&`/`||` with a string operand in condition position |
+| `operator '&&' requires bool operands` | 16 | from-ast, value position |
+| `operator '\|\|' requires bool operands` | 16 | from-ast, value position |
+| `dyn.typeof` | 16 | |
+| `__ir_dyn_add` | 16 | dynamic `+`, slice Str2 |
+| `source declaration and prepared callable slots disagree` | 6 | a .js function returning a Boolean of a typed string; numeric twins refuse the same way on main |
+
+  Wrong answers: 0. Invariant errors: 0.
+- 411-row sample: all 411 rows have the same status and first gap as `origin/main` (0 differ). The tally is 282
+  `dyn.truthy`, 84 `module binding … has no exact typed storage`, 26 `String` call, 2 switch-case binding,
+  1 `Test262Error`, 1 parse error, 1 `print`, and 14 negatives pass.
+
+## Perf result (2026-11-17)
+
+Branch `claude/7354-perf` on `claude/7354-str`. Change in `src/backend/wasmgc/program/native-string-values.ts` only
+(plus `tests/issue-7354-perf-string-authentication.test.ts`).
+
+### Why every emit re-planned, and what replaces it
+
+`ownerFor` is #3518 fail-closed machinery: before any use of a string pack it proves the retained reservation input
+(demands with the whole program, plan, value/output/invocation/realm requirements) is still what was authenticated —
+by comparing the demands to a frozen snapshot and re-running the whole plan (`assertNativeStringValueReservationInput`).
+That proof is a pure function of the retained input (the issue registries it consults — value plans, output
+requirements, invocation and realm requirements — are append-only and keyed by fresh frozen objects). So:
+
+- `isImmutablePreparedIrValue(owner.input)` walks the retained input once: every reachable object must be frozen
+  plain data (Object/null/Array prototype, data properties only, no functions) or a frozen collection of prepared
+  data. Freezing cannot be undone, so the answer is permanent.
+- The answer is computed BEFORE the checks run on the first use; if it is `true` and the checks pass, the owner is
+  `settled` and later uses skip the snapshot comparison and the re-plan. No key, no cache: input that cannot change
+  cannot go stale. Input that can still change (any unfrozen part) is re-authenticated at every use exactly as before.
+- Unchanged per use: the realm-literal identity check (it reads the caller's live input object), the inventories, the
+  completion checks of every sub-pack, and the physical layout audit.
+- The Prepared producers hand over fully frozen input (measured on the probe program: everything reachable is frozen).
+- Also: an emit checked the pack twice (`requireCompletedNativeStringValues` then `ownerFor` again with nothing in
+  between); it now checks once (`completedOwner`). The per-row `tx.physicalIndex` loops are one `tx.physicalIndices`
+  call (same state, ownership and layout checks; one layout audit instead of one per row).
+- The predicate sits beside its only check, not in `src/ir/program/data.ts`: that file and
+  `tests/issue-3518-program-ownership-runtime-seam.test.ts` are full-file historical pins.
+
+### Measurements (compile time through the strict Prepared entry, one line = literal + concat + length + `===`)
+
+| lines | base (s) | after (s) |
+| ----: | -------: | --------: |
+|     5 |      8.6 |       5.8 |
+|    20 |     71.9 |      16.5 |
+|    50 |    436.0 |      49.9 |
+|   100 |        — |     133.4 |
+|   200 |        — |     428.2 |
+
+CPU profile, 20 lines: base 66.8 s profiled (`ownerFor` 43.0 s, re-plan 29.9 s); after 18.9 s (`ownerFor` 1.7 s,
+re-plan 0.7 s once). The goal (20 lines under 3 s, flat per-op cost) is NOT met: the remaining per-emit cost is the
+physical layout audit. One literal emit runs `PhysicalModuleReservations.#verifyLayout` 63 times (each sub-pack's
+`requireCompleted*` re-checks its dependencies, each with its own audit), and each audit snapshots every filled
+function and global, so it grows with the module — still quadratic. That audit authenticates mutable module storage,
+so it cannot be keyed or memoised; it is a different mechanism (the transaction's) and is left for its own slice.
+Measured experiment (not committed): bracketing the completion check with one audit before and one after and
+skipping the nested audits brings 20 lines to 5.7 s (emit 0.65 s); the rest is one-time plan authentication
+(`preparedIrDataMismatch`/`hasNativeCollectionState` on freshly re-collected demands, ~2.7 s).
+
+### Proofs
+
+- Non-staleness: every refusal test of `tests/issue-3518-native-string-*` and the value-chain consumers fails the
+  same set as base; new tests refuse demands and plan mutated between two emits and after several emits, show the
+  physical audit still refuses an altered global after settling, and pin the predicate on 18 value shapes.
+- Prepared bytes identical to base for the 43 distinct programs of `issue-7354-str-strings`, `test262-prepared-entry`
+  and `test262-prepared-runtime`; ordinary pipeline identical on 200 test262 files × (default, standalone).
+- Failing sets equal to base in all 42 related test files (3518 native-string ×24, realm, number-format, promise,
+  ownership seam, provider-boundary, policy-evolution, …).
+- Mutation survivors: the FrozenSet content walk (no public way to build a FrozenSet with mutable content; kept so
+  the predicate does not depend on that) and `owner.settled = settles` (deleting it only costs time).
+
+### Same pattern nearby
+
+- `emitStringEquals`/`emitStringLen`/concat go through the same `completedOwner` — covered.
+- `requireCompletedNativeValues` → `assertNativeValueResourcePlan` re-derives the value plan from the program at
+  every call (~0.07 s over 20 lines here: cheap today, same shape, not fixed).
+- `readNativeRealmLiteralInput` → `assertNativeRealmRequirementsCurrent` recalculates the realm catalog per use when a
+  realm is present (not on this path's string programs; not fixed).
+
+### Step 2 (2026-11-17): the physical audit count, the tuple scans, one copy fact
+
+What changed:
+
+- `PhysicalModuleReservations.audited(check)` (`src/wasm/physical/module-reservations.ts`). It runs a read-only
+  check with the nested layout audits skipped and one audit after it. Two facts make that sound:
+  - every ledger mutation (`#require`) inside the check is refused;
+  - the check's result is returned only after the trailing audit passes.
+
+  So whatever the check read was the audited layout, or the call fails. `completedOwner` (every string emit) uses it:
+  one audit per emit instead of 63. There is no entry audit: an earlier change is caught by the trailing one.
+- Literal tuple matching (`sameDemandTuple`, used by planning's all-pairs ambiguity check and by every emit's plan
+  scan) compares value, owner and alloc with `Object.is` before the deep comparison. That was quadratic in the
+  literal count, and every deep comparison of fresh objects paid four thrown collection-slot probes.
+- `immutableCopy` (`src/ir/program/data.ts`) records "no collection slot" for each null-prototype record it creates,
+  instead of probing for it later. That is a permanent fact of a fresh `Object.create(null)`.
+
+The frozen-entry design was evaluated and not applied. `fillOwnedFunction` already makes bodies permanent, but no
+producer was moved:
+
+- Resource bodies (flatten, scanner, values, literals, equality, dynamic values): fixtures compare
+  `structuredClone(module)` with `toStrictEqual`, which the owned private-prototype arrays fail (#3518 getter
+  invocation).
+- Source primary bodies: `rejects an already-filled source body mutation` expects the audit refusal, not a
+  TypeError.
+- The remainder helper: its test spies on `fillFunction`.
+
+After the count fix, the body share of the audit was small (0.2 s at 20 lines), so (b) was not needed.
+
+| lines | base 4318ee (s) | step 1 (s) | step 2 (s) |
+| ----: | --------------: | ---------: | ---------: |
+|     5 |             8.6 |        5.8 |        2.7 |
+|    20 |            71.9 |       16.5 |        4.4 |
+|    50 |           436.0 |       49.9 |        9.8 |
+|   100 |               — |      133.4 |       19.0 |
+|   200 |               — |      428.2 |       45.4 |
+
+Synthetic program with 100 string literals/concats spread over 25 functions: 137.3 s on base, 7.1 s now, same bytes.
+
+The targets (20 lines < 3 s, 200 lines < 20 s, flat per line) are not met. Per-line cost still rises from ~0.13 s
+to ~0.26 s. CPU profile at 100 lines (30 s profiled):
+
+- `hasNativeCollectionState` 8.4 s: probes on freshly computed objects in `preparedIrDataMismatch`. The callers are
+  one-time currentness checks that re-derive and compare the whole program: object access, census, value plan,
+  output requirements.
+- `planNativeStringValuePhysical` 7.7 s: runs four times per compile (two setup derivations, the reservation check,
+  the settle pass).
+- The audit itself 6.9 s: one per emit, plus `physicalIndex` and inventory audits outside the scope. Each audit is
+  O(module), so the cost is still quadratic in the literal count.
+
+The next levers are those re-derivations (share one derivation per immutable program rather than re-deriving per
+component) and the audit's O(module) walk. Neither is a change to this module alone.
+
+Proofs:
+
+- Failing sets equal base for 112 test files touching the changed modules, in chunks of 4. One base-only failure
+  under load (object-key-foundation) passes alone.
+- Prepared bytes are identical for the 43 programs. Ordinary bytes are identical on 200 test262 files × (default,
+  standalone).
+- New tests:
+  - a filled global altered after 5 emits is refused;
+  - an extra population slot is refused;
+  - a write injected between the check and its trailing audit (through a vitest module mock of the literal
+    completion check) is refused;
+  - a ledger mutation inside `audited` is refused;
+  - a literal tuple that differs only in its storage reference is refused.
+- Mutation survivors are all performance-only: skipping nested audits, the `audited` wrapper in `completedOwner`,
+  the three primitive prefilters (implied by the deep comparison) and the copy-brand fact.
+
+### Review round 1 (2026-11-17)
+
+- **Must-fix: forged frozen collection.** The predicate recognised FrozenMap/FrozenSet by prototype alone. Fixed in
+  `src/ir/program/data.ts`:
+  - The two classes get a private-field brand check (`#map in v` / `#set in v`).
+  - New export `preparedIrFrozenCollectionMembers(v)` returns the members only for a branded instance with the exact
+    prototype, frozen, with no own keys. A subclass carries the brand but has its own prototype, so it is refused.
+    The frozen/no-own-keys checks are implied by brand plus exact prototype, because the constructor freezes `this`
+    (mutation survivor).
+  - `preparedIrDataMismatch`, `immutableCopy` and `freezePreparedIrRuntimeValue` use the brand instead of
+    `instanceof`. This is a drop-in for genuine collections. A borrowed prototype is now a non-data object and is
+    refused, so the reviewer's repro is refused at planning ("stale or mismatched demand census").
+  - Tests: the repro; forged map and set twins over mutable storage; a bare object on the borrowed prototype; a
+    branded subclass that overrides iteration.
+- **SF1, re-entrancy:** `audited` restores the outer flag, so a nested check no longer re-opens the ledger. Test: the
+  reviewer's probe.
+- **SF2, `internFunctionType`:** appending a new type inside `audited` is refused. Cache hits stay allowed, since they
+  are read-only. Test added.
+- **SF3, comments and test names:** they now describe the single trailing audit.
+- **SF4, the copy-brand fact in data.ts:** measured alone, it saves 20 lines 5.96 → 4.91 s and 50 lines 14.4 →
+  10.0 s, so it is kept. data.ts has to change for the must-fix anyway.
+  - Receipts that pin data.ts content: `tests/helpers/ir-runtime-program-relocation.json`, `ir-c1-authority.json`,
+    `ir-ownership-evolution.ts`, `ir-runtime-program-policy-program-validator.json`,
+    `ir-source-map-position-inventory-successor.json`, `ir-deno-post-position-main-successor.json`.
+  - Their consuming tests (ownership seam, provider-boundary, policy-evolution) already fail on base, so the extra
+    breakage is masked and these receipts need a refresh when the stack lands.
+- **SF5, inherited fields:** a settled verdict now records the own-property state of `Object.prototype` and
+  `Array.prototype` that it ran under. Any change re-runs full authentication. Requiring null-prototype records was
+  tried and rejected: the prepared program is built from frozen `Object.prototype` records, so nothing would settle
+  (20 lines took 29 s). Test: adding `Object.prototype.outputRequirements` after settling is refused ("unexpected
+  output requirements"); removing it re-settles.
+- **Results:**
+  - The 24 `issue-3518-native-string-*` files plus str-strings fail the same set as base.
+  - Prepared bytes are identical for the 43 programs. Ordinary bytes are identical on 100 files × 2 targets.
+  - Scaling: 5 lines 2.9 s, 20 lines 4.9 s, 50 lines 10.7 s.
+  - Mutants killed: re-entrant restore, intern guard, prototype state, map/set brand, map/set exact prototype, set
+    member walk, and the brand in `immutableCopy` / `preparedIrDataMismatch` / `freezePreparedIrRuntimeValue`.
+  - Survivors: the implied frozen/no-own-keys check, and the perf-only `owner.settled` assignment.
+
+### Review round 2: MET (2026-11-17)
+
+- `preparedIrFrozenCollectionMembers`: the frozen/no-own-keys check is dropped. Brand plus exact prototype suffice,
+  because the constructor freezes `this` before anyone holds it.
+- `sharedPrototypeState` now documents exactly what it tracks: the own properties of `Object.prototype` and
+  `Array.prototype`. The Map/Set/iterator built-ins and `Function.prototype.call` are trusted, not tracked. Base has
+  the same gap, because its per-use re-check reads through the same built-ins.
+- The six data.ts receipt pins and the other red-on-main pin families are filed as
+  [#7358](7358-3518-receipt-pin-tests-red-on-main.md) (priority high, sprint current). It must land before the #7354
+  stack is complete.
+
+### After the merge onto Str (2026-11-17)
+
+Perf (`8e92e8c3cb`, built on Str `4318ee510f`) merged with the reviewed Str (`eeb2e28a24`, PR #7291), then with main
+after #7291 landed. Main since the Str tip changed only benchmark artifacts and the LOC baseline.
+
+What the port changed:
+
+- One conflict in `native-string-values.ts`: Str had folded the concat emitter's occurrence scan into
+  `requireOwnerOccurrence`, the shared check of concat, `string.eq` and `string.len`. Str's structure is kept. Its
+  completion check (`requireCompletedNativeStringValues` and then `ownerFor` again) is now Perf's `completedOwner`. So
+  every string emit (literal, concat, equality, length) runs one owner check, takes the settled-owner fast path, and
+  does ONE `audited` layout audit. No check of either side is removed: Str's occurrence admission and Perf's realm
+  identity, inventory and completion checks all still run on every emit.
+- Issue file: Str's review sections first, Perf's after them; the frontmatter grants are Str's (Perf added none).
+- `data.ts`, `module-reservations.ts` and the census test merged without conflict.
+
+Scaling through the strict Prepared entry (one line = literal + concat + length + `===`, standalone):
+
+| lines | before: Str `eeb2e28a24` (s) | after (s) |
+| ----: | ---------------------------: | --------: |
+|     5 |                          9.3 |       1.8 |
+|    20 |                         76.4 |       3.6 |
+|    50 |      not finished in 480 s |       7.7 |
+
+Before and after produce the same binary at 5 and 20 lines.
+
+Proofs:
+
+- Gates: typecheck, LOC and function budgets with the base at the Str tip and at the main tip, coercion sites,
+  oracle ratchet, dead exports and import cycles are all green.
+- Tests pass: Perf, Str strings, Str emitter requests, R census (100), D1, P, V/G, H, H2, prepared entry and runtime,
+  and #7188.
+- The 24 `issue-3518-native-string-*` files, run in chunks of 4, fail the same 67 tests (same sets) as the Str tip.
+- Prepared bytes are identical to the Str tip for all 90 compiles of the Str strings, prepared-entry and D1 test
+  files: 45 binaries and the refusal messages of the rest.
+- Ordinary bytes are identical on 60 test262 files × (default, standalone).
+- Forgeries still refuse:
+  - Perf's: a forged frozen map or set; a mutation after a nested `audited` returns; demands or plan changed between
+    two emits.
+  - Str's: swapping the names of `__str_equals` and `__str_concat` (the census has no equals/flatten swap); repointing
+    a literal use to another literal's storage; stripping the role of the `""` literal global.
+- `changed-root-tests.sh` (interpreter engine): green.
+
 ## T and X result
 
 Status 2026-11-17. Branch `claude/7354-tx` on `claude/7354-p` (`1995dd6ef2`): T `5310a38b13`, X `01fd76c26c`.
@@ -1284,6 +1926,140 @@ Verdict MET; every should-fix fixed or rebutted.
   has no exact typed storage: not-direct" (`obj` 52, `x` 5, `proto` 4, `o` 4, `arr` 3, …); 27 × "direct call to
   "String" has no exact AST-site plan in verifyProperty"; 2 × switch-case lexical binding; 1 × "unknown class
   "Test262Error" in isConstructor".
+
+### Review round 2 (delta after the port onto H)
+
+**Must-fix: a Boolean (typed) left operand with a dynamic right operand in a VALUE position yielded a Boolean.**
+`function f(b, c) { return (b > 1) && c; }` answered `f(5, 7) === true` (node: 7); the same for `||`, `!a || c`,
+`!(a && b) || c`, `(b > 1) && (c || d)` and TypeScript `n > 1 && c` / `n > 1 || c` with `c: any`.
+
+- **Cause** (the reviewer's reading, confirmed): `lowerLogicalAndOr` (`src/ir/from-ast.ts`) takes its `i32` path
+  whenever the left operand is not dynamic and ToBooleans a dynamic right operand there even outside a condition.
+  Before T that ToBoolean had no intrinsic and refused by name; T's `js.value.to_boolean` made the wrong path run.
+  The `&&` case was wrong before the port; the `||` cases were reopened by the `passedOn` logical arm of the
+  implicit-flow rule (which is right: an operand of `&&`/`||` is the expression's value).
+- **Fix:** the position the lowering already knows decides. Only a boolean position (the `i32` hint: an `if` /
+  loop condition, `?:` test, `!`, a Boolean result) ToBooleans the right operand. In a value position a dynamic
+  right operand stays the value, the typed left operand is boxed into the carrier (`logicalOperandCarrier`, which
+  the dynamic-left arm's right operand now shares), and the result selects one of them (`emitLogicalSelect`, moved
+  to the new `src/ir/logical-select.ts` and shared by all three arms). Each operand is evaluated once, the right one
+  only in its arm. A nested logical right operand gets the carrier hint in a value position, exactly like the left
+  one (`operandHint`, one rule for both sides). A typed number operand still refuses by name ("requires bool
+  operands"); the dynamic result flowing into a typed position refuses by name (`assignment to "r" (f64) got
+  dynamic`). `src/ir/from-ast.ts` shrinks by 12 lines.
+- **Ordinary pipeline:** it reaches `lowerLogicalAndOr` in value positions (instrumented: dynamic hints in
+  `Test262Error`, `isEnumerable`, f64 hints in `<module-init>`), but never with a typed left and a dynamic right
+  operand there — the same programs compile on the ordinary pipeline and answer like node (checked: `(b > 1) && c`,
+  `||`, `!a || c`, `n > 1 && c`, a nested right operand), through legacy. Bytes identical on 100 test262 files ×
+  default and `--target standalone` plus 14 logical programs, against `b08580f01c` (the tx tip with the hoisted-var
+  fix merged, before B).
+- **Sweep** (`.tmp/sweep-b.mts`, not committed): left ∈ {typed Boolean `a > 0`, typed number, dynamic} × right ∈
+  the same × {`&&`, `||`} × 9 positions (returned, assigned to a dynamic local, argument, `… || e`, `e && …`, `if`,
+  `!(…)`, `?:` test, right operand with a side effect that throws), every value pair per program (dynamic: 0, -0,
+  NaN, 1, true, false, undefined, null; number: 0, -0, NaN, 1): 162 programs, **88 equal node, 74 named
+  refusals, 0 wrong, 0 invariant errors**. Refusals: 62 "operator requires bool operands" (a typed number
+  operand), 12 "source Boolean return boundary requires actual canonical Boolean boxing" (`!(…)` returned from an
+  `any` result). (-0 is checked with `!==`, which cannot tell it from 0.) A reduced sweep (Boolean/dynamic ×
+  Boolean/dynamic × both operators × returned / chained / condition, 24 programs) is in the test file.
+- **Mutations:** always ToBoolean the dynamic right operand → 15 tests fail; the `i32` hint for the right operand →
+  the nested-right test fails; the value-select arm is the only path to an accepted value (removing it refuses).
+  Survivor: `logicalOperandCarrier`'s refusal for the left operand (a typed left operand here is `i32`, which
+  always has a carrier).
+
+**Should-fix 1: `function f(n: number) { return n as unknown; }` refused as "call to f returned void used as
+expression".** The ordinary pipeline's propagation types such a result void, so the function lowered as void and
+the call failed later. Now an unannotated function with no result contract whose body returns a value refuses at
+the declaration by name: "function f returns unknown, which has no Prepared result contract" (`object` for `as
+unknown as object`) — `ProgramDynamicContracts.propagatedResult` in `src/ir/source-dynamic-contracts.ts`, called
+where `src/ir/program-source.ts` used to fall back to void. A body that returns only `undefined` (type
+`undefined`/`void`) stays void (pinned by #7188's internal-declaration tests). The dynamic result contract was not
+widened to `unknown`: the implicit-flow rule would then refuse every `return` into the `unknown` context, so it is
+not a clean fit. Cost: such a function called only as a statement compiled before (its value was dropped) and now
+refuses.
+
+**Should-fix 2: seven standalone programs that compiled on H changed Prepared bytes** (un-annotated functions
+returning a Boolean, e.g. `function f(v) { return v === 1; }`). Measured on that program (H vs this branch, WAT
+diff): the function body is identical; the only change is the type section — `f` gets its own function type
+`(func (param externref) (result i32))` instead of sharing the structurally identical type of the runtime's
+`__typeof_number` / `__unbox_boolean`, and the `<module-init>` / `__module_init` type indices shift by one. The
+Boolean result contract makes the result a Boolean-branded `i32`, which the presentation keys separately from a
+plain `i32`. The two types are structurally equal (one-entry recursion groups canonicalize to the same type), so
+the behavior is unchanged; it is right because the result now carries its Boolean meaning to the caller (a caller
+boxes it as a Boolean, not a number). Folding the duplicate type is a possible size clean-up, not a correctness
+issue.
+
+**Also:** the T test helpers yield one event-loop turn before each compile (`compileYielding`): the file now runs
+long enough that vitest's worker RPC timed out between compiles. `tests/issue-7354-x-dynamic-throw.test.ts` and the
+H test show the same unhandled RPC timeout under the current machine load on their base as well (all tests pass).
+
+### Review round 3
+
+**Verdict NOT MET on one must-fix, pre-existing on H:** a `&&` / `||` whose value is unused dropped its right
+operand. `function f(a, b){ a > 0 && boom(b); return 0; } f(1, 1);` returned (node throws); the same with `||`, at
+top level, in an unread local and with a counter (`inc` never ran). The reviewer confirmed value and condition
+positions and evaluation order correct over a 270-program cross product; a `?:` statement was correct.
+
+- **Cause and fix:** #7359 (the H follow-up record "unused `&&` / `||` keeps its right operand"): the value `if` was
+  the only buffer-bearing IR kind `isSideEffecting` judged without its buffers, so DCE and the lowerer dropped it
+  when its result was unused. It existed on main for typed TypeScript and on the ordinary pipeline; T made the
+  dynamic forms reachable. Merged here from `claude/7354-logical-unused`.
+- **Sweep** (`.tmp/tsweep.mts`, not committed): `&&` / `||` × left ∈ {typed Boolean `(a > 0)`, dynamic `a`, typed
+  number `(a * 1)`} × right ∈ {dynamic `inc(b)`, typed Boolean `(inc(b) > 0)`, typed number `(inc(b) * 1)`} ×
+  {statement, unread local, top level, loop body} × a ∈ {0, 1} × (counter, wrong counter, throwing call): 432
+  programs, **240 equal node, 192 named refusals ("operator '&&' requires bool operands" — every typed number
+  operand), 0 wrong**; without the fix 80 were wrong. Tests: "review round 3" in
+  `tests/issue-7354-t-truthiness-null.test.ts` (both operators × Boolean / dynamic left × dynamic / Boolean right ×
+  the four positions, counter and throw, plus the typed number refusal; 32 of them fail without the fix).
+- **Merge with Str (main `f8cfc8c0ff`):** Str lets a native string reach the dynamic carrier, and T's ToBoolean body
+  had no string arm (`function f(v){ return v ? 1 : 0; } f("")` answered 1 after a plain merge). ToBoolean now takes
+  the string arm (empty is falsy) whenever the value lane carries native strings
+  (`src/backend/wasmgc/resources/native-dynamic-values.ts`); the selection keeps Str's `strictEqStrings` beside T's
+  `toBoolean`. Tests: "T after Str" (conditional, `if`, `||` operand, `!v` on `""` / `"a"`; all 4 fail without the
+  arm).
+
+### Review round 4: MET
+
+T MET, X MET at `838688fd5f`, no must-fix.
+
+- **Strings and ToBoolean:** 120 string-ToBoolean programs equal node — values `""`, `"a"`, `" "`, `"0"`, `"false"`,
+  `"\0"` and a 3000-character string × positions `if`, `!`, `!!`, `?:`, `while`, `&&` / `||` as condition and as
+  value. The reviewer found no path by which a string reaches ToBoolean without the string arm. X with strings is
+  correct.
+- **Census:** forgeries of the `to_boolean` provider, of `__is_truthy` and of the five string type rows are refused
+  by name.
+- **Re-runs:** the 94 T probes and the 127 X probes of the earlier rounds, no regression. Both mutants of the string
+  arm are killed.
+
+Should-fixes, both recorded under "Known gaps (T and X)" below:
+
+- (a) the confusing refusal of an `any`-annotated local holding a string or a number;
+- (b) the "redeclaration of 'e'" refusal of a catch parameter that shadows a `var`.
+
+### Known gaps (T and X)
+
+- **(a) An `any` local outside every dynamic contract refuses without naming its cause.** `function g(c: number):
+  number { let v: any = c > 0 ? "" : 1; return v ? 1 : 2; } if (g(1) !== 2) throw 1;` (`test.ts`, standalone)
+  refuses "wasmgc:standalone physical setup cannot be materialized (1 gap): body g has no accepted host async dynamic
+  carrier". The same refusal is on main without T (checked on `c105fc1cc0`).
+  - **Cause:** `legalizeSourceDynamicValues` (`src/ir/source-dynamic-contracts.ts`) legalizes a program only when it
+    has a dynamic contract: an `any` / untyped parameter or result, a dynamic script `var`, or a catch binding. That
+    gate is deliberate — from-ast also boxes values into dynamic ones internally in programs without a contract
+    (pinned by `issue-3518-native-string-number-source-admission`). Here the only dynamic value is an annotated
+    local, so `g` stays unlegalized. The first stage that sees the leftover dynamic type is the host async planner
+    (`src/ir/program/host-async-dynamic.ts`), and its message is about host async frames.
+  - **Why not fixed here:** naming the cause means making the contract gate recognise an `any`-annotated local and
+    then re-sweeping the flow rule over such locals. That is a change of the gate, not of one message. Rewording only
+    the planner's message would still not say what caused it.
+  - Without `: any`, or in a `.js` file, from-ast refuses earlier by name: "ternary branches have different types
+    (string vs f64)".
+- **gc target, pre-existing: an invariant error out of `compile()`.** `var c = 1; let v: any = c > 0 ? "" : 1; if
+  (v) throw 1;` (`t.ts`, target `gc`) throws `IrProgramDriverInvariantError` "ir/from-ast: #5092 dynamic carrier is
+  unavailable or incompatible in <module-init>". The same happens on `c105fc1cc0` (main plus #7359, without T). The
+  same program on standalone compiles and answers like node. Found while checking (a); not touched here.
+- **(b) A catch parameter shadowing a `var` refuses.** `function f(v){ var e = 5; try { throw v; } catch (e) { }
+  return e; }` refuses "redeclaration of 'e'". This comes from the hoisted-var fix (#7290): a catch parameter counts
+  as a second binding of the `var` name. It belongs to the "one slot per `var` name per function" follow-up (see
+  Known gaps (H)) and is left unchanged.
 
 ## Ty result
 

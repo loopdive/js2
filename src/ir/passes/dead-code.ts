@@ -40,7 +40,7 @@ import { retireAllocsIn } from "./alloc-discipline.js";
 // #2134 slice 1 — the DCE side-effect facet moved (verbatim) into the unified
 // effect model (`../effects.ts`, beside the scheduler's `effectsOf` table).
 // Re-exported so existing importers keep working.
-import { isSideEffecting } from "../effects.js";
+import { isSideEffecting, type IrEffects } from "../effects.js";
 export { isSideEffecting };
 
 /**
@@ -53,13 +53,15 @@ export function deadCode(fn: IrFunction, registry?: AllocSiteRegistry): IrFuncti
   const reachable = computeReachable(fn);
 
   // --- Phase 2: compute live values within reachable blocks. -------------
-  const live = computeLiveValues(fn, reachable);
+  // One `effectsOf` cache per run: a nested chain of value `if`s is classified once (#7359).
+  const effects = new Map<IrInstr, IrEffects>();
+  const live = computeLiveValues(fn, reachable, effects);
 
   // (#1925) Does this instr or anything inside its nested buffers get removed?
   // The `live` set is already deep (#1922), so an interior instr's keep-status
   // is globally correct; we just have to look inside buffers to detect it.
   const removesAnything = (instr: IrInstr): boolean => {
-    if (!shouldKeep(instr, live)) return true;
+    if (!shouldKeep(instr, live, effects)) return true;
     let found = false;
     forEachNestedBuffer(instr, (buffer) => {
       for (const sub of buffer) if (removesAnything(sub)) found = true;
@@ -88,7 +90,7 @@ export function deadCode(fn: IrFunction, registry?: AllocSiteRegistry): IrFuncti
   // do not see stale ids.
   if (registry) {
     const retireDead = (instr: IrInstr): void => {
-      if (!shouldKeep(instr, live)) {
+      if (!shouldKeep(instr, live, effects)) {
         retireAllocsIn(instr, registry); // retires the instr + everything nested
         return;
       }
@@ -116,7 +118,7 @@ export function deadCode(fn: IrFunction, registry?: AllocSiteRegistry): IrFuncti
     let changed = false;
     const kept: IrInstr[] = [];
     for (const instr of buffer) {
-      if (!shouldKeep(instr, live)) {
+      if (!shouldKeep(instr, live, effects)) {
         changed = true;
         continue;
       }
@@ -185,7 +187,11 @@ function successors(t: IrTerminator): readonly number[] {
 // Liveness
 // ---------------------------------------------------------------------------
 
-function computeLiveValues(fn: IrFunction, reachable: ReadonlySet<number>): Set<IrValueId> {
+function computeLiveValues(
+  fn: IrFunction,
+  reachable: ReadonlySet<number>,
+  effects: Map<IrInstr, IrEffects>,
+): Set<IrValueId> {
   const live = new Set<IrValueId>();
 
   // Seed: terminator uses + operands of side-effecting instructions.
@@ -193,7 +199,7 @@ function computeLiveValues(fn: IrFunction, reachable: ReadonlySet<number>): Set<
     const block = fn.blocks[id]!;
     for (const v of collectTerminatorUses(block.terminator)) live.add(v);
     for (const instr of block.instrs) {
-      if (isSideEffecting(instr)) {
+      if (isSideEffecting(instr, effects)) {
         // Deep: a side-effecting control-flow instr (loop / try / for-of)
         // executes its nested buffers, so values referenced only inside
         // those buffers are live. (#1922 — the per-kind ad-hoc walkers used
@@ -230,8 +236,8 @@ function computeLiveValues(fn: IrFunction, reachable: ReadonlySet<number>): Set<
   return live;
 }
 
-function shouldKeep(i: IrInstr, live: ReadonlySet<IrValueId>): boolean {
-  if (isSideEffecting(i)) return true;
+function shouldKeep(i: IrInstr, live: ReadonlySet<IrValueId>, effects: Map<IrInstr, IrEffects>): boolean {
+  if (isSideEffecting(i, effects)) return true;
   if (i.result === null) return true; // void-producing but not side-effecting — keep to be safe
   return live.has(i.result);
 }

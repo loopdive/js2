@@ -1,5 +1,5 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
-import type { AllocSiteId } from "../../../ir/core/nodes.js";
+import type { AllocSiteId, IrInstr, IrStringLengthProvider } from "../../../ir/core/nodes.js";
 import {
   IR_CLOSURE_VECTOR_APPLY,
   IR_CLOSURE_UNDEFINED,
@@ -8,6 +8,7 @@ import {
 import type { IrStringEncoding, IrStringConcatMode } from "../../../ir/core/string-types.js";
 import type { IrFuncRef, IrGlobalRef } from "../../../ir/core/value-references.js";
 import type { IrUnitId } from "../../../shared/contracts/ir-identity.js";
+import { preparedStringLenProvider } from "../../../ir/runtime/intrinsic-preparation.js";
 import type { NativeInvocationRequirements } from "../../../ir/program/native-invocation-requirements.js";
 import type { NativeRealmRequirements } from "../../../ir/program/native-realm-requirements.js";
 import {
@@ -21,13 +22,19 @@ import { selectNativeBooleans, type NativeBooleanSelection } from "./native-prim
 import type { PreparedIrProgramFailure } from "../../../ir/program/prepared-contracts.js";
 import {
   collectNativeStringValueDemands,
+  nativeStringsReachCarrier,
   type NativeStringValueDemands,
+  type NativeStringValueLiteralDemand,
 } from "../../../ir/program/native-string-value-demands.js";
 import {
   assertNativeValueResourcePlanFor,
   type NativeValueResourcePlan,
 } from "../../../ir/program/native-value-resources.js";
-import { freezePreparedIrValue, preparedIrDataMismatch } from "../../../ir/program/data.js";
+import {
+  freezePreparedIrValue,
+  preparedIrDataMismatch,
+  preparedIrFrozenCollectionMembers,
+} from "../../../ir/program/data.js";
 import { PreparedIrProgramInvariantError } from "../../../ir/program/errors.js";
 import type { Instr } from "../../../wasm/model/instructions.js";
 import type {
@@ -40,7 +47,10 @@ import type {
   GlobalReservation,
   FunctionReservation,
 } from "../../../wasm/physical/module-reservations.js";
-import { selectNativeStringLiteral } from "../../../runtime/wasmgc/values/string-literal-bodies.js";
+import {
+  selectNativeStringLiteral,
+  type NativeStringLiteralSelection,
+} from "../../../runtime/wasmgc/values/string-literal-bodies.js";
 import {
   declareNativeStringLiteralTypes,
   declareNativeStringLiteralResources,
@@ -67,6 +77,13 @@ import {
   requireCompletedNativeStringNumber,
   type NativeStringNumberReservations,
 } from "../resources/native-string-number.js";
+import {
+  declareNativeStringEqualityResources,
+  reserveNativeStringEqualityResources,
+  fillNativeStringEqualityResources,
+  requireCompletedNativeStringEquality,
+  type NativeStringEqualityReservations,
+} from "../resources/native-string-equality.js";
 import {
   declareNativeValueResources,
   reserveNativeValueResources,
@@ -121,6 +138,8 @@ export interface NativeStringValuePhysicalPlan {
   readonly mode: "literals" | "number-boundary" | "realm-bootstrap";
   readonly booleans?: NativeBooleanSelection;
   readonly dynamicValues?: NativeDynamicValueSelection;
+  /** (#7354 Str) An executable `string.eq` joins the lazy equality resource. */
+  readonly equality?: true;
   readonly output?: NativeStringOutputPhysicalPlan;
   readonly literalRequirements: NativeStringLiteralRequirements;
   readonly literalUses: readonly { readonly demandIndex: number; readonly cacheKey: string }[];
@@ -150,6 +169,7 @@ export type NativeStringValueResourceRow =
 export interface NativeStringValueReservations {
   readonly strings: NativeStringLiteralReservations;
   readonly flatten?: NativeStringFlattenReservations;
+  readonly equality?: NativeStringEqualityReservations;
   readonly output?: NativeStringOutputReservations;
   readonly number?: {
     readonly flatten: NativeStringFlattenReservations;
@@ -210,6 +230,47 @@ function demandTuple(demands: NativeStringValueDemands, index: number) {
   const i = demand.instruction;
   return tuple(owner, i.value, i.alloc, i.storage, i.materializer);
 }
+/**
+ * Exact tuple equality. The primitive fields (compared as the deep comparison does, with Object.is) decide most pairs
+ * without a deep comparison; planning compares all pairs and every emit scans the plan.
+ */
+function sameDemandTuple(demands: NativeStringValueDemands, index: number, other: ReturnType<typeof tuple>): boolean {
+  const own = demandTuple(demands, index);
+  return (
+    Object.is(own.value, other.value) &&
+    Object.is(own.ownerUnitId, other.ownerUnitId) &&
+    Object.is(own.alloc, other.alloc) &&
+    preparedIrDataMismatch(own, other) === undefined
+  );
+}
+
+/**
+ * The canonical literal one `string.const` demand selects: its encoding evidence (UTF-8 storage only) and the
+ * selection, or why it has none. (#7354 Str) A literal use's cache key is derived from this alone, by the planner
+ * and by the Prepared presentation's census.
+ */
+export function selectNativeLiteralDemand(
+  demand: Extract<NativeStringValueLiteralDemand, { kind: "string.const" }>,
+  utf8Storage: boolean,
+):
+  | { readonly encoding?: IrStringEncoding; readonly selection: NativeStringLiteralSelection }
+  | { readonly detail: string } {
+  let encoding: IrStringEncoding | undefined;
+  if (utf8Storage && demand.allocation.encoding.present) {
+    const evidence = demand.allocation.encoding.value;
+    if (evidence !== "ascii" && evidence !== "utf8-guaranteed" && evidence !== "wtf16")
+      return { detail: "invalid consumed string encoding metadata" };
+    encoding = evidence;
+  }
+  try {
+    return {
+      encoding,
+      selection: selectNativeStringLiteral(utf8Storage, utf8Storage, demand.instruction.value, encoding),
+    };
+  } catch (error) {
+    return { detail: String(error) };
+  }
+}
 
 /** Descriptive selection only; coordinator acceptance remains mandatory. */
 export function planNativeStringValuePhysical(
@@ -256,6 +317,7 @@ export function planNativeStringValuePhysical(
     });
   const dynamicValues = selectNativeDynamicValues(
     demands.intrinsics.filter((row) => executable(row.occurrence)).map((row) => row.instruction),
+    nativeStringsReachCarrier(demands),
   );
   const numeric =
     invocation ||
@@ -272,6 +334,9 @@ export function planNativeStringValuePhysical(
             row.instruction.provider.target.binding.kind === "runtime" &&
             row.instruction.provider.target.binding.symbol === "__box_number")),
     );
+  const equality =
+    !!dynamicValues?.strictEqStrings ||
+    demands.occurrences.some((row, index) => executable(index) && row.instruction.kind === "string.eq");
   const literals: { value: string; encoding?: IrStringEncoding }[] = [];
   const uses: { demandIndex: number; cacheKey: string }[] = [];
   const references: { reference: IrGlobalRef | IrFuncRef; key: string }[] = [];
@@ -280,19 +345,9 @@ export function planNativeStringValuePhysical(
     if (demand.kind === "extern.regex")
       return located(demands, demand.occurrence, "regex materialization is not supported by native string values");
     const i = demand.instruction;
-    let encoding: IrStringEncoding | undefined;
-    if (options.utf8Storage && demand.allocation.encoding.present) {
-      const evidence = demand.allocation.encoding.value;
-      if (evidence !== "ascii" && evidence !== "utf8-guaranteed" && evidence !== "wtf16")
-        return located(demands, demand.occurrence, "invalid consumed string encoding metadata");
-      encoding = evidence;
-    }
-    let selection: ReturnType<typeof selectNativeStringLiteral>;
-    try {
-      selection = selectNativeStringLiteral(options.utf8Storage, options.utf8Storage, i.value, encoding);
-    } catch (error) {
-      return located(demands, demand.occurrence, String(error));
-    }
+    const selected = selectNativeLiteralDemand(demand, options.utf8Storage);
+    if ("detail" in selected) return located(demands, demand.occurrence, selected.detail);
+    const { encoding, selection } = selected;
     if (
       (i.storage && selection.kind !== "global") ||
       (i.materializer && selection.kind !== "callable") ||
@@ -315,8 +370,7 @@ export function planNativeStringValuePhysical(
     if (
       uses.some(
         (row) =>
-          preparedIrDataMismatch(demandTuple(demands, row.demandIndex), demandTuple(demands, index)) === undefined &&
-          row.cacheKey !== selection.key,
+          sameDemandTuple(demands, row.demandIndex, demandTuple(demands, index)) && row.cacheKey !== selection.key,
       )
     )
       return located(demands, demand.occurrence, "ambiguous literal emitter tuple");
@@ -334,7 +388,8 @@ export function planNativeStringValuePhysical(
         flattenKey: key + ":flatten",
       })
     : undefined;
-  if (numeric || realmLiterals || output) literals.push({ value: "", encoding: "wtf16" });
+  // Flattening needs the canonical empty literal.
+  if (numeric || realmLiterals || output || equality) literals.push({ value: "", encoding: "wtf16" });
   if (invocation) literals.push({ value: "TypeError" }, { value: "Value is not callable" });
   if (outputRequirements.batchArities.length) literals.push({ value: "undefined" });
   if (realmLiterals) literals.push(...realmLiterals.literals);
@@ -346,7 +401,10 @@ export function planNativeStringValuePhysical(
   const recipes = [
     declareNativeStringLiteralTypes(key, options.utf8Storage),
     declareNativeStringLiteralResources(literalRequirements),
-    ...(values || output ? [declareNativeStringFlattenResources(key + ":flatten", key, options.utf8Storage)] : []),
+    ...(values || output || equality
+      ? [declareNativeStringFlattenResources(key + ":flatten", key, options.utf8Storage)]
+      : []),
+    ...(equality ? [declareNativeStringEqualityResources(key + ":equality", key)] : []),
     ...(values ? [declareNativeStringNumberResources(entry.id), values] : []),
     ...(boolean.selection && booleanType
       ? [declareNativeBooleanResources(key + ":booleans", booleanType.key, boolean.selection)]
@@ -363,6 +421,7 @@ export function planNativeStringValuePhysical(
       mode: numeric ? "number-boundary" : realmLiterals ? "realm-bootstrap" : "literals",
       ...(boolean.selection ? { booleans: boolean.selection } : {}),
       ...(dynamicValues ? { dynamicValues } : {}),
+      ...(equality ? { equality } : {}),
       ...(output ? { output } : {}),
       literalRequirements,
       literalUses: uses,
@@ -372,6 +431,53 @@ export function planNativeStringValuePhysical(
   };
 }
 
+/**
+ * Whether no own part of `value` can ever change: frozen arrays and plain records of data properties, and genuine
+ * frozen collections of prepared data. Freezing cannot be undone, so the answer is permanent. What a record or array
+ * lacks still resolves through `Object.prototype`/`Array.prototype`; `sharedPrototypeState` covers that. Internal
+ * slots are not inspected: a check reads a collection's entries only through its prototype, and the only collections
+ * admitted are branded frozen ones with their own frozen prototype.
+ */
+export function isImmutablePreparedIrValue(value: unknown): boolean {
+  const visited = new Set<object>();
+  const immutable = (item: unknown): boolean => {
+    if (typeof item === "function") return false;
+    if (item === null || typeof item !== "object" || visited.has(item)) return true;
+    visited.add(item);
+    const members = preparedIrFrozenCollectionMembers(item);
+    if (members) return members.every(immutable);
+    const prototype = Object.getPrototypeOf(item);
+    if (
+      !Object.isFrozen(item) ||
+      (prototype !== (Array.isArray(item) ? Array.prototype : Object.prototype) && prototype !== null)
+    )
+      return false;
+    return Reflect.ownKeys(item).every((key) => {
+      const descriptor = Object.getOwnPropertyDescriptor(item, key)!;
+      return "value" in descriptor && immutable(descriptor.value);
+    });
+  };
+  return immutable(value);
+}
+
+/**
+ * The own properties (key, value, getter, setter) of `Object.prototype` and `Array.prototype`, the two shared
+ * prototypes an immutable record or array reads a field it lacks through. A settled verdict holds only while this is
+ * unchanged; a change sends the owner back to full authentication. Nothing else is tracked: the Map/Set/iterator
+ * built-ins and `Function.prototype.call` that the frozen collections and the checks read through are TRUSTED. The
+ * same gap exists without settling: patching `Map.prototype[Symbol.iterator]` after a check is accepted by the
+ * per-use re-check too, because that re-check reads through the same patched built-ins.
+ */
+function sharedPrototypeState(): readonly unknown[] {
+  const state: unknown[] = [];
+  for (const prototype of [Object.prototype, Array.prototype])
+    for (const key of Reflect.ownKeys(prototype)) {
+      const descriptor = Object.getOwnPropertyDescriptor(prototype, key)!;
+      state.push(key, descriptor.value, descriptor.get, descriptor.set);
+    }
+  return state;
+}
+
 interface Owner {
   readonly tx: PhysicalModuleReservations;
   readonly sourceInput: NativeStringValueReservationInput;
@@ -379,6 +485,11 @@ interface Owner {
   readonly snapshot: unknown;
   readonly rows: readonly NativeStringValueResourceRow[];
   filled: boolean;
+  /**
+   * Set when the retained input passed its checks while it could no longer change: the shared prototype state they
+   * ran under. The verdict holds for every later use that observes the same state.
+   */
+  settled: readonly unknown[] | undefined;
 }
 const owners = new WeakMap<NativeStringValueReservations, Owner>();
 export function assertNativeStringValueReservationInput(input: NativeStringValueReservationInput): void {
@@ -417,23 +528,30 @@ export function assertNativeStringValueReservationInput(input: NativeStringValue
 function ownerFor(tx: PhysicalModuleReservations, pack: NativeStringValueReservations) {
   const owner = owners.get(pack);
   if (!owner || owner.tx !== tx) fail("foreign or copied string value pack");
-  same(owner.input.demands, owner.snapshot, "changed retained string demands");
+  // Decided before the checks below run, so their verdict is over the state that every later call observes.
+  const prototypes = sharedPrototypeState();
+  const settled =
+    owner.settled?.length === prototypes.length &&
+    owner.settled.every((entry, index) => Object.is(entry, prototypes[index]));
+  const settles = !settled && isImmutablePreparedIrValue(owner.input);
+  if (!settled) same(owner.input.demands, owner.snapshot, "changed retained string demands");
   const currentRealm = readNativeRealmLiteralInput(owner.sourceInput, owner.input.plan.literalRequirements.utf8Storage);
   if (
     currentRealm?.realmRequirements !== owner.input.realmRequirements ||
     currentRealm?.realmLiterals !== owner.input.realmLiterals
   )
     fail("changed retained realm literal identities");
-  assertNativeStringValueReservationInput(owner.input);
+  if (!settled) {
+    assertNativeStringValueReservationInput(owner.input);
+    owner.settled = settles ? prototypes : undefined;
+  }
   nativeStringLiteralReservationInventory(tx, pack.strings);
   if (pack.output) nativeStringOutputReservationInventory(tx, pack.output, owner.input.plan.output!);
   if (pack.number)
     requireNativeStringNumberReservations(tx, pack.number.scanner, owner.input.valueRequirements!, pack.strings);
-  for (const row of owner.rows) {
-    if (tx.state === "reserving") {
-      if (row.space === "type") tx.assertTypeReservation(row.reservation);
-    } else tx.physicalIndex(row.reservation);
-  }
+  if (tx.state === "reserving") {
+    for (const row of owner.rows) if (row.space === "type") tx.assertTypeReservation(row.reservation);
+  } else tx.physicalIndices(owner.rows.map((row) => row.reservation));
   return owner;
 }
 
@@ -445,8 +563,12 @@ export function reserveNativeStringValueResources(
   assertNativeStringValueReservationInput(input);
   const strings = reserveNativeStringLiteralResources(tx, input.plan.literalRequirements, types);
   const flatten =
-    input.plan.mode !== "literals" || input.plan.output
+    input.plan.mode !== "literals" || input.plan.output || input.plan.equality
       ? reserveNativeStringFlattenResources(tx, input.plan.key + ":flatten", strings)
+      : undefined;
+  const equality =
+    input.plan.equality && flatten
+      ? reserveNativeStringEqualityResources(tx, input.plan.key + ":equality", flatten, true)
       : undefined;
   let number: NativeStringValueReservations["number"];
   if (input.plan.mode !== "literals") {
@@ -479,6 +601,9 @@ export function reserveNativeStringValueResources(
           booleans,
           input.valueRequirements!,
           dependencies,
+          input.plan.dynamicValues.strictEqStrings
+            ? { anyStrTypeIdx: strings.layout.anyStrTypeIdx, flatten: flatten.flatten, equals: equality!.equals }
+            : undefined,
         )
       : undefined;
     number = Object.freeze({
@@ -499,6 +624,7 @@ export function reserveNativeStringValueResources(
     strings,
     ...(flatten ? { flatten } : {}),
     ...(number ? { number } : {}),
+    ...(equality ? { equality } : {}),
     ...(output ? { output } : {}),
   });
   const census = nativeStringLiteralReservationInventory(tx, strings);
@@ -518,6 +644,7 @@ export function reserveNativeStringValueResources(
     if (flatten.utf8Decoder) fn(flatten.utf8Decoder);
     fn(flatten.flatten);
   }
+  if (equality) fn(equality.equals);
   if (number) {
     fn(number.scanner.toNumber);
     type(number.scanner.powerArray);
@@ -567,6 +694,7 @@ export function reserveNativeStringValueResources(
     snapshot: freezePreparedIrValue(input.demands),
     rows: Object.freeze(orderedRows),
     filled: false,
+    settled: undefined,
   });
   return pack;
 }
@@ -593,6 +721,7 @@ export function fillNativeStringValueResources(
     if (pack.number.booleans) fillNativeBooleanResources(tx, pack.number.booleans);
     if (pack.number.dynamicValues) fillNativeDynamicValueResources(tx, pack.number.dynamicValues);
   }
+  if (pack.equality) fillNativeStringEqualityResources(tx, pack.equality);
   if (pack.output) fillNativeStringOutputResources(tx, pack.output);
   owner.filled = true;
 }
@@ -607,10 +736,19 @@ export function requireCompletedNativeStringValues(
   tx: PhysicalModuleReservations,
   pack: NativeStringValueReservations,
 ): NativeStringValueReservations {
+  completedOwner(tx, pack);
+  return pack;
+}
+/** Every emit runs this; its nested completion queries share the one layout audit taken after them. */
+function completedOwner(tx: PhysicalModuleReservations, pack: NativeStringValueReservations): Owner {
+  return tx.audited(() => checkCompletedOwner(tx, pack));
+}
+function checkCompletedOwner(tx: PhysicalModuleReservations, pack: NativeStringValueReservations): Owner {
   const owner = ownerFor(tx, pack);
   if (!owner.filled) fail("incomplete native string value resources");
   requireCompletedNativeStringLiterals(tx, pack.strings);
   if (pack.flatten) requireCompletedNativeStringFlatten(tx, pack.flatten, pack.strings);
+  if (pack.equality) requireCompletedNativeStringEquality(tx, pack.equality, pack.strings);
   if (pack.output) requireCompletedNativeStringOutput(tx, pack.output);
   if (pack.number) {
     if (!owner.input.valueRequirements) fail("number resources lost their issued value requirements");
@@ -636,8 +774,8 @@ export function requireCompletedNativeStringValues(
         pack.number.dependencies,
       );
   }
-  for (const row of owner.rows) tx.physicalIndex(row.reservation);
-  return pack;
+  tx.physicalIndices(owner.rows.map((row) => row.reservation));
+  return owner;
 }
 export function emitPreparedNativeStringLiteral(
   tx: PhysicalModuleReservations,
@@ -648,11 +786,10 @@ export function emitPreparedNativeStringLiteral(
   storage?: IrGlobalRef,
   materializer?: IrFuncRef,
 ): readonly Instr[] {
-  requireCompletedNativeStringValues(tx, pack);
-  const owner = ownerFor(tx, pack);
+  const owner = completedOwner(tx, pack);
   const requested = tuple(ownerUnitId, value, alloc, storage, materializer);
-  const index = owner.input.plan.literalUses.findIndex(
-    (row) => preparedIrDataMismatch(demandTuple(owner.input.demands, row.demandIndex), requested) === undefined,
+  const index = owner.input.plan.literalUses.findIndex((row) =>
+    sameDemandTuple(owner.input.demands, row.demandIndex, requested),
   );
   if (index < 0) fail("literal tuple is outside the closed projection plan");
   const binding = nativeStringLiteralReservationInventory(tx, pack.strings).requests[index]!.binding;
@@ -661,8 +798,31 @@ export function emitPreparedNativeStringLiteral(
     : [{ op: "call", funcIdx: binding.function.handle }];
 }
 
-/** The scoped emitter may only realize an authenticated concat occurrence of its owner. */
-export function emitPreparedNativeStringConcat(
+/**
+ * The scoped emitter may only realize an authenticated occurrence of its owner: one of `occurrences` (indices into
+ * the demand census) in the owner's executable projection that `admits` the emitted request.
+ */
+function requireOwnerOccurrence(
+  tx: PhysicalModuleReservations,
+  pack: NativeStringValueReservations,
+  ownerUnitId: IrUnitId,
+  kind: string,
+  occurrences: (owner: Owner) => readonly number[],
+  admits: (instruction: IrInstr) => boolean,
+): Owner {
+  const owner = completedOwner(tx, pack);
+  const { demands } = owner.input;
+  const admitted = occurrences(owner).some((index) => {
+    const occurrence = demands.occurrences[index]!;
+    const buffer = demands.buffers[occurrence.bufferIndex]!;
+    return buffer.view === "projection" && buffer.ownerUnitId === ownerUnitId && admits(occurrence.instruction);
+  });
+  if (!admitted) fail(kind + " occurrence is outside the closed owner projection");
+  return owner;
+}
+const allOccurrences = (owner: Owner) => owner.input.demands.occurrences.map((_, index) => index);
+
+function emitPreparedNativeStringConcat(
   tx: PhysicalModuleReservations,
   pack: NativeStringValueReservations,
   ownerUnitId: IrUnitId,
@@ -670,24 +830,98 @@ export function emitPreparedNativeStringConcat(
   mode: IrStringConcatMode = "immutable",
   provider?: IrFuncRef,
 ): readonly Instr[] {
-  requireCompletedNativeStringValues(tx, pack);
-  const owner = ownerFor(tx, pack);
-  const requirements = owner.input.outputRequirements;
-  if (!pack.output || !requirements || mode !== "immutable") fail("concat has no admitted output resource");
-  const admitted = requirements.uses.some((use) => {
-    if (use.kind !== "binary-concat") return false;
-    const occurrence = requirements.demands.occurrences[use.occurrence]!;
-    const buffer = requirements.demands.buffers[occurrence.bufferIndex]!;
-    const instruction = occurrence.instruction;
-    return (
-      buffer.view === "projection" &&
-      buffer.ownerUnitId === ownerUnitId &&
+  if (!pack.output || mode !== "immutable") fail("concat has no admitted output resource");
+  requireOwnerOccurrence(
+    tx,
+    pack,
+    ownerUnitId,
+    "concat",
+    (owner) =>
+      owner.input.outputRequirements?.uses.flatMap((use) => (use.kind === "binary-concat" ? [use.occurrence] : [])) ??
+      [],
+    (instruction) =>
       instruction.kind === "string.concat" &&
       instruction.alloc === alloc &&
       (instruction.concatMode ?? "immutable") === mode &&
-      instruction.provider === provider
-    );
-  });
-  if (!admitted) fail("concat occurrence is outside the closed owner projection");
+      instruction.provider === provider,
+  );
   return [{ op: "call", funcIdx: pack.output.concat.handle }];
+}
+
+/**
+ * (#7354 Str) `string.eq` calls the lazy equality resource, which the plan selects for every executable `string.eq`
+ * (`planNativeStringValuePhysical`), so an admitted occurrence has it.
+ */
+function emitPreparedNativeStringEquals(
+  tx: PhysicalModuleReservations,
+  pack: NativeStringValueReservations,
+  ownerUnitId: IrUnitId,
+  provider?: IrFuncRef,
+): readonly Instr[] {
+  requireOwnerOccurrence(
+    tx,
+    pack,
+    ownerUnitId,
+    "string.eq",
+    allOccurrences,
+    (instruction) => instruction.kind === "string.eq" && instruction.provider === provider,
+  );
+  return [{ op: "call", funcIdx: pack.equality!.equals.handle }];
+}
+
+/** (#7354 Str) `string.len` reads the carrier field the selected `js.string.len` provider names. */
+function emitPreparedNativeStringLength(
+  tx: PhysicalModuleReservations,
+  pack: NativeStringValueReservations,
+  ownerUnitId: IrUnitId,
+  provider?: IrStringLengthProvider,
+): readonly Instr[] {
+  const owner = requireOwnerOccurrence(
+    tx,
+    pack,
+    ownerUnitId,
+    "string.len",
+    allOccurrences,
+    (instruction) => instruction.kind === "string.len" && instruction.provider === provider,
+  );
+  const field = preparedStringLenProvider(owner.input.demands.projection.prepared);
+  if (field?.arm !== "native") fail("string.len has no selected carrier field");
+  return [{ op: "struct.get", typeIdx: pack.strings.layout.anyStrTypeIdx, fieldIdx: field.fieldIndex }];
+}
+
+/**
+ * The string operations of one owner's body, each realised on the owner's admitted native resources and only for
+ * an occurrence of that owner's executable projection.
+ */
+export function preparedNativeStringResolver(
+  tx: PhysicalModuleReservations,
+  pack: NativeStringValueReservations,
+  ownerUnitId: IrUnitId,
+): {
+  readonly emitStringConst: (
+    value: string,
+    alloc?: AllocSiteId,
+    storage?: IrGlobalRef,
+    materializer?: IrFuncRef,
+  ) => readonly Instr[];
+  readonly emitStringConcat?: (
+    alloc?: AllocSiteId,
+    mode?: IrStringConcatMode,
+    provider?: IrFuncRef,
+  ) => readonly Instr[];
+  readonly emitStringEquals: (provider?: IrFuncRef) => readonly Instr[];
+  readonly emitStringLen: (inputEncoding?: IrStringEncoding, provider?: IrStringLengthProvider) => readonly Instr[];
+} {
+  return {
+    emitStringConst: (value, alloc, storage, materializer) =>
+      emitPreparedNativeStringLiteral(tx, pack, ownerUnitId, value, alloc, storage, materializer),
+    ...(pack.output
+      ? {
+          emitStringConcat: (alloc, mode, provider) =>
+            emitPreparedNativeStringConcat(tx, pack, ownerUnitId, alloc, mode, provider),
+        }
+      : {}),
+    emitStringEquals: (provider) => emitPreparedNativeStringEquals(tx, pack, ownerUnitId, provider),
+    emitStringLen: (_inputEncoding, provider) => emitPreparedNativeStringLength(tx, pack, ownerUnitId, provider),
+  };
 }
