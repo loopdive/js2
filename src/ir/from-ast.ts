@@ -88,7 +88,6 @@ import {
   slotWriteVerdict,
   conditionalJoinArmFamily,
   conditionalJoinFamily,
-  hasValueVoidLeaf,
   isValueVoid,
   throwOperandAdmissible,
   type AdditiveLane,
@@ -97,7 +96,7 @@ import {
   type OperandFamily,
   type PrimitiveProof,
 } from "./analysis/operand-admissibility.js"; // (#7144)
-import { producesCarrier } from "./analysis/carrier-expression.js";
+import { everyYieldedValue, producesCarrier } from "./analysis/carrier-expression.js";
 import { IR_CLOSURE_UNDEFINED } from "./core/closure-invocation-callables.js";
 import {
   fixedClosureParameters,
@@ -6001,12 +6000,13 @@ function lowerExactDynamicPrimitiveTypeof(
 function lowerTypeOf(expr: ts.TypeOfExpression, cx: LowerCtx): IrValueId {
   if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== expr)
     return withNodeSourceSite(cx, expr, () => lowerTypeOf(expr, cx));
-  return (hasValueVoidLeaf(expr.expression) ? lowerTypeOfVoidLeaves : lowerTypeOfValue)(expr.expression, cx);
+  const voidLeaf = !everyYieldedValue(expr.expression, (value) => !ts.isVoidExpression(skipOuterExpressions(value)));
+  return (voidLeaf ? lowerTypeOfVoidLeaves : lowerTypeOfValue)(expr.expression, cx);
 }
 
 /**
  * (#7361) Under {@link lowerTypeOfValue}'s f64 hint `void x` is its NaN sentinel, which reads "number", so an
- * operand with a value-`void` leaf is split at its leaves (`typeof (a, b)` is `a` then `typeof b`; `typeof (c ? a :
+ * operand yielding a `void` value is split at its leaves (`typeof (a, b)` is `a` then `typeof b`; `typeof (c ? a :
  * b)` is `c ? typeof a : typeof b`): a `void x` leaf runs `x` and is "undefined", every other leaf answers itself.
  */
 function lowerTypeOfVoidLeaves(operand: ts.Expression, cx: LowerCtx): IrValueId {
@@ -6019,10 +6019,9 @@ function lowerTypeOfVoidLeaves(operand: ts.Expression, cx: LowerCtx): IrValueId 
     lowerDiscardedExpression(e.left, cx);
     return lowerTypeOfVoidLeaves(e.right, cx);
   }
-  if (!ts.isConditionalExpression(e)) return lowerTypeOfValue(e, cx);
-  // As in `lowerConditional`: the selector admitted only the live arm of a constant `typeof <ambient>` test.
-  const folded = foldAmbientTypeofComparison(e.condition, (id) => ambientTypeofIdentifierTagFromAst(id, cx));
-  if (folded !== undefined) return lowerTypeOfVoidLeaves(folded ? e.whenTrue : e.whenFalse, cx);
+  if (!ts.isConditionalExpression(e)) return lowerTypeOfValue(operand, cx);
+  const liveArm = foldedAmbientConditionArm(e, cx);
+  if (liveArm !== undefined) return lowerTypeOfVoidLeaves(liveArm, cx);
   return lowerConditionalBranches(e, cx, lowerTypeOfVoidLeaves, () => ({ kind: "string" }));
 }
 
@@ -13966,6 +13965,12 @@ function ambientTypeofIdentifierTagFromAst(id: ts.Identifier, cx: LowerCtx): "ob
   return tag;
 }
 
+/** (#7106 S1b) The constant verdict of a `?:` test on `typeof <ambient>`: the selector admitted only the live arm. */
+function foldedAmbientConditionArm(expr: ts.ConditionalExpression, cx: LowerCtx): ts.Expression | undefined {
+  const folded = foldAmbientTypeofComparison(expr.condition, (id) => ambientTypeofIdentifierTagFromAst(id, cx));
+  return folded === undefined ? undefined : folded ? expr.whenTrue : expr.whenFalse;
+}
+
 /**
  * (#7106 Stage 4, #7113) The selector's `dynamicConditionalValueArms` shape:
  * one arm is bound to the dynamic carrier (or is a nested conditional of this
@@ -14069,12 +14074,8 @@ function lowerConditionalBranches(
 function lowerConditional(expr: ts.ConditionalExpression, cx: LowerCtx, hint?: IrType): IrValueId {
   if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== expr)
     return withNodeSourceSite(cx, expr, () => lowerConditional(expr, cx, hint));
-  // (#7106 S1b) A constant `typeof <ambient>` condition selects its live arm
-  // at build time — the selector admitted exactly that arm.
-  const folded = foldAmbientTypeofComparison(expr.condition, (id) => ambientTypeofIdentifierTagFromAst(id, cx));
-  if (folded !== undefined) {
-    return lowerExpr(folded ? expr.whenTrue : expr.whenFalse, cx, hint ?? irVal({ kind: "f64" }));
-  }
+  const liveArm = foldedAmbientConditionArm(expr, cx);
+  if (liveArm !== undefined) return lowerExpr(liveArm, cx, hint ?? irVal({ kind: "f64" }));
   const dynamicJoin = tryLowerDynamicConditionalValue(expr, cx);
   if (dynamicJoin !== null) return dynamicJoin;
   const mixedProof = requireMixedPrimitiveConditionalProof(expr, "mixed conditional", cx);

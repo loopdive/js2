@@ -669,25 +669,18 @@ export function conditionalJoinArmFamily(arm: ts.Expression): OperandFamily | nu
   return ts.isVoidExpression(e) ? "undefined" : null;
 }
 
-/** A value `void x` ({@link valueLeafOf}): from-ast's f64 NaN sentinel for `undefined`. */
+/**
+ * A value `void x` through parens and a comma's right side: from-ast's f64 NaN sentinel for `undefined`, the
+ * `undefined` family of an f64 (`irOperandFamily`). Parens only, like the selector's operand families.
+ */
 export function isValueVoid(operand: ts.Expression): boolean {
-  return ts.isVoidExpression(valueLeafOf(operand));
-}
-
-/** (#7361) {@link isValueVoid}, or a `?:` with such a leaf in an arm. */
-export function hasValueVoidLeaf(operand: ts.Expression): boolean {
-  const leaf = valueLeafOf(operand);
-  if (ts.isConditionalExpression(leaf)) return hasValueVoidLeaf(leaf.whenTrue) || hasValueVoidLeaf(leaf.whenFalse);
-  return ts.isVoidExpression(leaf);
-}
-
-/** The expression that gives an operand its value: through parens, type assertions and a comma's right side. */
-function valueLeafOf(operand: ts.Expression): ts.Expression {
-  let candidate = skipOuterExpressions(operand);
-  while (ts.isBinaryExpression(candidate) && candidate.operatorToken.kind === ts.SyntaxKind.CommaToken) {
-    candidate = skipOuterExpressions(candidate.right);
+  let candidate = operand;
+  for (;;) {
+    while (ts.isParenthesizedExpression(candidate)) candidate = candidate.expression;
+    if (!ts.isBinaryExpression(candidate) || candidate.operatorToken.kind !== ts.SyntaxKind.CommaToken) break;
+    candidate = candidate.right;
   }
-  return candidate;
+  return ts.isVoidExpression(candidate);
 }
 
 /**
