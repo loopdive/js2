@@ -20,6 +20,7 @@ import { collectNativeStringValueDemands, type NativeStringValueDemands } from "
 import { freezePreparedIrValue, preparedIrDataMismatch } from "./data.js";
 import { PreparedIrProgramInvariantError } from "./errors.js";
 import { assertPreparedIrProgramPopulation } from "./population.js";
+import { checkUnlessSettled, type PreparedIrSettlement } from "./settled-verdict.js";
 
 export interface NativeStringOutputOptions {
   readonly emptyIdentity: boolean;
@@ -42,6 +43,8 @@ interface IssuedRequirements {
   readonly options: NativeStringOutputOptions;
   readonly snapshot: unknown;
   readonly metadataCurrent: readonly (() => boolean)[];
+  /** The checks below, settled once the requirements (with their demands) and options can no longer change. */
+  readonly authentication: PreparedIrSettlement;
 }
 const issued = new WeakMap<NativeStringOutputRequirements, IssuedRequirements>();
 
@@ -385,6 +388,7 @@ export function deriveNativeStringOutputRequirements(
       options,
       snapshot: freezePreparedIrValue(demands),
       metadataCurrent: metadataIdentityChecks(demands.allocations),
+      authentication: { settled: undefined },
     });
   return result;
 }
@@ -393,9 +397,11 @@ export function deriveNativeStringOutputRequirements(
 export function assertNativeStringOutputRequirementsCurrent(requirements: NativeStringOutputRequirements): void {
   const source = issued.get(requirements);
   if (!source || requirements.demands !== source.demands) fail("unissued or foreign output requirements");
-  same(source.demands, source.snapshot, "borrowed program, instruction or metadata changed after selection");
-  if (source.metadataCurrent.some((check) => !check())) fail("borrowed allocation metadata identity changed");
-  const current = calculate(source.demands, source.options);
-  if (!("demands" in current)) fail("output requirements are no longer supported");
-  same(requirements, current, "stale output selections or options");
+  checkUnlessSettled(source.authentication, Object.freeze([requirements, source.options]), () => {
+    same(source.demands, source.snapshot, "borrowed program, instruction or metadata changed after selection");
+    if (source.metadataCurrent.some((check) => !check())) fail("borrowed allocation metadata identity changed");
+    const current = calculate(source.demands, source.options);
+    if (!("demands" in current)) fail("output requirements are no longer supported");
+    same(requirements, current, "stale output selections or options");
+  });
 }
