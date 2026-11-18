@@ -27,6 +27,7 @@ const PROGRAMS: readonly (readonly [string, "js" | "ts", string, string])[] = [
   ["`void void 0`", "js", "", tagOf("void void 0")],
   ["a comma ending in `void 0`", "js", "", 'return typeof (0, void 0) === "undefined";'],
   ["a comma ending in a number", "js", "", tagOf("(void 0, 1)")],
+  ["a comma ending in a parenthesized `void 0`", "js", "", tagOf("(0, (void 0))")],
   ["`?:` of two `void 0`", "js", "var c = 1;", 'return typeof (c ? void 0 : void 0) === "undefined";'],
   ["nested `?:` of `void 0`", "js", "var c = 1, d = 0;", tagOf("(c ? (d ? void 0 : void 0) : void 0)")],
   ["`?:` of `void 0` and a number (void taken)", "js", "var c = 1;", tagOf("(c ? void 0 : 1)")],
