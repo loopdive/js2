@@ -2162,3 +2162,55 @@ ran inside the 9-minute cap and pass, the other two (X, Ty) pass when run direct
 16 tests on base and HEAD; typecheck, loc, func, coercion, oracle, dead-exports, import-cycles, boundaries pass;
 ordinary bytes identical on 100 files (40 `language/statements/switch`, ES5 sample, typeof/identifier dirs) × JS and
 standalone (77 compile per target, 23 compile errors on both).
+
+### Merge onto current T/X
+
+Merged `origin/claude/7354-tx` `b7e09b74bd` (main with Str, Perf, the DCE fix #7359 and the T/X review fixes) into
+the branch (`d3a59deb11`); the tests follow in `4acb90ccd8`.
+
+- **Conflicts.** Four files:
+  - this issue file: T/X's later sections first, "Ty result" last;
+  - `dynamic-value-legalization.ts`, the box arm: Str's string box (`coerce.to_externref`) became the `"string"` case
+    of Ty's `boxedKind()` switch;
+  - D1's refusal table: Str's member-read row (`dyn.member_get`) and Ty's `typeof` row are both kept;
+  - X's catch-payload pins: Str's thrown-string tests and Ty's `TYPEOF_KIND` sentence are both kept.
+- **Port forced by the tie: `"string"`.** Strings are in the carrier now, so `boxedKind()` must return a kind for a
+  string box. That means `TYPEOF_KIND` gains `string: "string"`, and `KIND_TEST` (a `Record` over the kinds) needs an
+  entry for it. The native lane has no string predicate resource (`__typeof_string` exists only as a legacy host
+  import). So the entry is `undefined`, and the test refuses by name: `dynamic operation typeof test for string has
+  no Prepared intrinsic`. This applies under all four operators and in both operand orders, even in a program where
+  no string reaches the carrier. It is never constant false. Building a real predicate would need a new intrinsic,
+  provider and resource, plus the census and pin updates; that is left to Str2.
+  - Cost on the sample: none. No row stops there (the prelude's one `typeof … === "string"`, in
+    `test262-fyi-runtime.js`, sits behind a member read that refuses first).
+- **Typed operands now compile.** `typeof n === "<lit>"` for a typed number, Boolean or string local is a constant
+  string compared with Str's string equality. It answers like node for "number", "boolean", "string" and "object".
+  This replaces the old pin, which expected "js.string.const is unavailable".
+- **Results.**
+  - Ty test: 81 pass. The table has 7 literals × 4 operators × 2 orders × 11 values, now including `""` and `"a"`,
+    against node; it also has 8 `"string"` refusals and 3 typed-operand programs. Each table program has a 120 s
+    timeout: alone it takes about 15 s, but it went past 35 s under load.
+  - Other tests pass: T 108, X 51, D1+P 72, R 110, Str 28, Perf 33, H/H2/H3 207, V/G + prepared entry/runtime +
+    #7188 103, and 3518 seam/ownership 56 (with the interpreter engine). The 7354 files ran one by one rather than
+    through `changed-root-tests.sh`; the set is the same 10 changed root files.
+  - Gates pass: typecheck, loc, func, coercion-sites, oracle-ratchet, dead-exports, import-cycles and the boundaries
+    inventory. Loc and func also pass with `LOC_GATE_BASE=origin/main` (`f7daa0d342`).
+  - Mutation: removing the string arm of `boxedKind()` is killed by the table. Removing the refusal is a type error.
+  - Ordinary bytes are identical to `origin/claude/7354-tx` on 100 test262 files (all 16 of `expressions/typeof`, 34
+    of `statements/switch`, and 50 of the logical/try/conditional ES5 sample), for both the JS environment and
+    `--target standalone`. On both sides, 6 files are compile errors per target.
+- **411-row sample, first gaps after the merge.** The tally is unchanged from before the merge. Negatives: 14 pass.
+
+  | Rows | First gap |
+  | ---: | --- |
+  | 282 | `ir/from-ast: direct call to "String" has no exact AST-site plan in formatIdentityFreeValue` |
+  | 84 | `module binding X has no exact typed storage: not-direct` (obj 52, x 5, proto 4, o 4, arr 3, …) |
+  | 26 | `ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty` |
+  | 2 | `'f' is not defined — switch-case lexical binding does not leak out of the switch block` |
+  | 1 | `unknown class "Test262Error"` in isConstructor |
+  | 1 | parse error (`Expression expected.`) |
+  | 1 | `print` |
+
+- **Known gap: `throw {}` is still an invariant error.** It throws out of `compile()` with "resolver cannot lower
+  object<>" rather than refusing by name. The review's should-fix (pin a named refusal) cannot be test-only: the
+  refusal needs a source change. X's existing pin keeps the invariant observed.
