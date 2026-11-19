@@ -29,8 +29,8 @@ const emit = (source: string) =>
 // No historical git object or worktree is needed to run these controls.
 const declarationHashes = {
   IrModuleInitTarget: "1f40aa94a89bd5d8768ae1d902df0fa4c6000a45ac8292ba52598a565528c1f0",
-  IrModuleInitInvocationKind: "9bc80e3a6113e23879ba7b2ecc103b77819adf22b595d28a3cfac60baa1caa98",
-  IrModuleInitInvocationPolicy: "0a635d38f99deb089927e2d722155c1369fc88eec3283cdd817c81bd5a911ccb",
+  IrModuleInitInvocationKind: "0f6c592a0301159f147248537430e88a5b5fe05ca18f2af0c811e46ec0d69251",
+  IrModuleInitInvocationPolicy: "098c8af7be52ef521266ae9bebfe68073478d36a912d398d6a57de022af80018",
   IrModuleBindingDeclarationKind: "1a3d8caecabb77561384072ea74de0b93ef3b7e5334bab27e0febca35c5ff3ca",
   IrModuleInitBindingIntent: "81fd9d27beff749996b661c0fe5d109b04e54e53aef2442183e37af6044650ab",
   IrModuleInitLiveSeedIntent: "85dedcbf91c64f32592bce329bb27cd0577c0e2e863de2c47bb97a838265ed18",

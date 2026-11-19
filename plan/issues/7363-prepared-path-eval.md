@@ -17,8 +17,12 @@ depends_on: []
 related: [7354, 7106, 7345, 3630]
 # 2026-11-19 (review RV7310, round 2): the realm-eval proof is dropped. from-ast +3 lines, all in lowerCall: the
 # Prepared refusal, which asks the lexical walk `resolvesToSourceBinding` (src/ir/analysis/ast-scope.ts).
+# 2026-11-19 (slice A, A1): +1 line each in program-physical-plan.ts and ir-program-presentation.ts, the import of
+# `runsAtStartup` (module-init-plan.ts), the one predicate both startup consumers ask; no logic grows there.
 loc-budget-allow:
   - src/ir/from-ast.ts
+  - src/ir/program-physical-plan.ts
+  - src/compiler/ir-program-presentation.ts
 func-budget-allow:
   - src/ir/from-ast.ts::lowerCall
 ---
@@ -311,3 +315,13 @@ Findings:
   check gains the rule in the same PR.
 - 12 statement texts are `with (…) {…}` (`S12.10_A4_*`) and 2 call `Function`: they qualify as sites but also need
   those foundations.
+
+### A1 result (2026-11-19)
+
+- `"called"` and `exactlyOnce: boolean` in `src/ir/program/startup.ts`; the verifier rule and `runsAtStartup` in
+  `src/ir/module-init-plan.ts`; `planPhysicalStartup` and `joinStartup` ask it. `fillStartupAdapter` and
+  `postStartupCallableUnits` are unchanged.
+- No producer yet: only A2's relation decides that a source is called, so `invocationPolicy` and
+  `buildIrModuleInitPlan` take `"called"` in A2. `tests/issue-7363-called-module-init.test.ts` marks one script's
+  real plan called by wrapping `buildIrModuleInitPlan` and re-verifying the result.
+- Mutation: each of the five new conditions, reverted alone, turns at least one of its five tests red.

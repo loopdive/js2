@@ -504,9 +504,17 @@ export function verifyIrModuleInitPlan(plan: IrModuleInitPlan, sourceFile: ts.So
   if (plan.executable !== (plan.liveSeeds.length > 0 || plan.evaluations.length > 0)) {
     throw new IrModuleInitPlanInvariantError("invalid-invocation", "executable flag disagrees with planned entries");
   }
-  if ((plan.invocation.kind === "none") !== !plan.executable || plan.invocation.exactlyOnce !== true) {
+  if (
+    (plan.invocation.kind === "none") !== !plan.executable ||
+    plan.invocation.exactlyOnce !== (plan.invocation.kind !== "called")
+  ) {
     throw new IrModuleInitPlanInvariantError("invalid-invocation", "module-init invocation policy is inconsistent");
   }
+}
+
+/** Whether the program's startup adapter runs this source's init; a called init runs at its call site instead. */
+export function runsAtStartup(plan: IrModuleInitPlan): boolean {
+  return plan.executable && plan.invocation.kind !== "called";
 }
 
 function duplicates(values: readonly string[], label: string): void {
