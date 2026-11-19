@@ -1,16 +1,18 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
 /**
- * (#7350 B2a) The own-property population of the global object in the realm's edition
- * (`NATIVE_REALM_EDITION` in the catalog: ECMA-262 §19.1–19.4, plus Annex B.2.1 `escape` / `unescape`). Semantic data
- * only, like the realm catalog it references by intrinsic id; it is the one table that says which globals exist
- * and what `typeof` answers for them.
+ * (#7350 B2a) The own-property population of the global object: every global the test262 runner's classifier
+ * counts as a language global. That is ECMA-262 §19.1–19.4 plus Annex B.2.1 `escape` / `unescape` in the realm's
+ * edition (`NATIVE_REALM_EDITION` in the catalog), and the globals of the draft after it, which the runner
+ * scores as standard although no edition has ratified them. Semantic data only, like the realm catalog it
+ * references by intrinsic id; it is the one table that says which globals exist and what `typeof` answers for
+ * them.
  *
  * It is a sibling of `NATIVE_REALM_CATALOG` and not rows of it: the realm's literal plan interns every catalog
  * row's names into every realm binary. An intrinsic the catalog has a row for has its complete property
  * population there; any other intrinsic named here is identity only (see {@link nativeRealmGlobalSurface}).
  */
-import { NATIVE_REALM_CATALOG } from "./native-realm-catalog.js";
+import { NATIVE_REALM_CATALOG, NATIVE_REALM_EDITION } from "./native-realm-catalog.js";
 
 /**
  * How a callable answers `new`. `"none"`: no [[Construct]] (the §19.2 functions). `"ordinary"`: a constructor.
@@ -35,6 +37,12 @@ export type NativeRealmGlobalValue =
 
 export interface NativeRealmGlobal {
   readonly name: string;
+  /**
+   * The ECMA-262 edition the row is read from, not the one that introduced the global: the realm's edition for
+   * every global that edition defines, the draft after it for a global only the draft defines. A property of the
+   * row, not a filter: a draft row answers `typeof` like any other.
+   */
+  readonly edition: number;
   /** Every global is non-enumerable; the value properties of §19.1 other than `globalThis` are frozen. */
   readonly writable: boolean;
   readonly configurable: boolean;
@@ -44,6 +52,7 @@ export interface NativeRealmGlobal {
   readonly value: NativeRealmGlobalValue;
 }
 
+type Row = Omit<NativeRealmGlobal, "edition">;
 type Callable = readonly [name: string, length: number, construct?: NativeRealmConstruct];
 
 /** §19.2 function properties. */
@@ -110,10 +119,17 @@ const CONSTRUCTORS: readonly Callable[] = [
   ["WeakSet", 0],
 ];
 
+/** §19.3 constructor properties only the draft defines: explicit resource management. */
+const DRAFT_CONSTRUCTORS: readonly Callable[] = [
+  ["AsyncDisposableStack", 0],
+  ["DisposableStack", 0],
+  ["SuppressedError", 3],
+];
+
 /** §19.4 other properties. */
 const NAMESPACES: readonly string[] = ["Atomics", "JSON", "Math", "Reflect", "Temporal"];
 
-const property = (name: string, value: NativeRealmGlobalValue, legacy = false): NativeRealmGlobal => ({
+const property = (name: string, value: NativeRealmGlobalValue, legacy = false): Row => ({
   name,
   writable: true,
   configurable: true,
@@ -122,17 +138,21 @@ const property = (name: string, value: NativeRealmGlobalValue, legacy = false): 
 });
 const callable =
   (fallback: NativeRealmConstruct, legacy = false) =>
-  ([name, length, construct = fallback]: Callable): NativeRealmGlobal =>
+  ([name, length, construct = fallback]: Callable): Row =>
     property(name, { kind: "function", id: `%${name}%`, length, construct }, legacy);
-const frozen = (name: string, value: NativeRealmGlobalValue): NativeRealmGlobal => ({
+const frozen = (name: string, value: NativeRealmGlobalValue): Row => ({
   name,
   writable: false,
   configurable: false,
   value,
 });
+const inEdition =
+  (edition: number) =>
+  (row: Row): NativeRealmGlobal =>
+    Object.freeze({ ...row, edition, value: Object.freeze(row.value) });
 
-export const NATIVE_REALM_GLOBALS: readonly NativeRealmGlobal[] = Object.freeze(
-  [
+export const NATIVE_REALM_GLOBALS: readonly NativeRealmGlobal[] = Object.freeze([
+  ...[
     property("globalThis", { kind: "global-object" }),
     frozen("Infinity", { kind: "number", value: Infinity }),
     frozen("NaN", { kind: "number", value: NaN }),
@@ -141,15 +161,16 @@ export const NATIVE_REALM_GLOBALS: readonly NativeRealmGlobal[] = Object.freeze(
     ...LEGACY_FUNCTIONS.map(callable("none", true)),
     ...CONSTRUCTORS.map(callable("ordinary")),
     ...NAMESPACES.map((name) => property(name, { kind: "namespace", id: `%${name}%` })),
-  ].map((row) => Object.freeze({ ...row, value: Object.freeze(row.value) })),
-);
+  ].map(inEdition(NATIVE_REALM_EDITION)),
+  ...DRAFT_CONSTRUCTORS.map(callable("ordinary")).map(inEdition(NATIVE_REALM_EDITION + 1)),
+]);
 
 const BY_NAME: ReadonlyMap<string, NativeRealmGlobal> = new Map(NATIVE_REALM_GLOBALS.map((row) => [row.name, row]));
 
 /**
- * `typeof` of the global's initial value. `"not-a-language-global"` when the name is not a global ECMA-262
- * defines in the realm's edition (`console`, `print`, `document`): that is no `typeof` answer — the host may
- * define the name — so the caller refuses.
+ * `typeof` of the global's initial value. `"not-a-language-global"` when the table has no row: the name is
+ * host-only (`console`, `print`, `document`). That is no `typeof` answer — the host may define the name — so
+ * the caller refuses.
  */
 export function nativeRealmGlobalTypeof(
   name: string,
