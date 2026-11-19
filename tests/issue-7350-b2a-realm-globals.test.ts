@@ -91,7 +91,8 @@ const isConstructor = (value: unknown): boolean => {
 };
 const newThrows = (value: unknown): boolean => {
   try {
-    new (value as new () => unknown)();
+    const Constructor = value as new () => unknown;
+    new Constructor();
     return false;
   } catch (error) {
     return error instanceof TypeError;
