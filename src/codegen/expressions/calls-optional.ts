@@ -67,8 +67,7 @@ export function compileOptionalCallExpression(
     const valueCall = compileOptionalValueReceiverCall(ctx, fctx, expr, propAccess, objType, resultType);
     if (valueCall !== undefined) return valueCall;
     fctx.body.push({ op: "drop" });
-    let shortType: ValType = resultType;
-    if (shortType.kind === "ref") shortType = { kind: "ref_null", typeIdx: shortType.typeIdx };
+    const shortType = nullableJoin(resultType);
     fctx.body.push(...defaultValueInstrs(shortType));
     return shortType;
   }
@@ -263,11 +262,7 @@ export function compileOptionalCallExpression(
   ) {
     const delegated = compileHeldReceiverMethodCall(ctx, fctx, expr, propAccess, tmp);
     if (delegated !== undefined) {
-      if (delegated === VOID_RESULT || delegated === null) {
-        fctx.body.push(...defaultValueInstrs(resultType));
-      } else {
-        resultType = delegated;
-      }
+      resultType = settleDelegatedResult(fctx, delegated, resultType);
       methodResolved = true;
     }
   }
@@ -288,11 +283,7 @@ export function compileOptionalCallExpression(
         type: objType,
       });
       if (delegated !== undefined) {
-        if (delegated !== null && delegated !== VOID_RESULT) {
-          resultType = delegated;
-        } else if (delegated === VOID_RESULT) {
-          fctx.body.push(...defaultValueInstrs(resultType));
-        }
+        resultType = settleDelegatedResult(fctx, delegated, resultType);
         methodResolved = true;
       }
     }
@@ -303,7 +294,7 @@ export function compileOptionalCallExpression(
   const elseInstrs = fctx.body;
   popBody(fctx, savedBody);
 
-  if (resultType.kind === "ref") resultType = { kind: "ref_null", typeIdx: resultType.typeIdx };
+  resultType = nullableJoin(resultType);
 
   fctx.body.push({
     op: "if",
@@ -434,19 +425,21 @@ function compileOptionalValueReceiverCall(
   const receiverLocal = allocLocal(fctx, `__optcall_${fctx.locals.length}`, receiverType);
   const savedBody = pushBody(fctx);
   const delegated = compileHeldReceiverMethodCall(ctx, fctx, expr, propAccess, receiverLocal);
-  const callType: ValType =
-    delegated === undefined || delegated === null || delegated === VOID_RESULT ? resultType : delegated;
-  if (delegated === null || delegated === VOID_RESULT) fctx.body.push(...defaultValueInstrs(callType));
+  if (delegated === undefined) {
+    popBody(fctx, savedBody);
+    return undefined;
+  }
+  const callType = settleDelegatedResult(fctx, delegated, resultType);
   const callInstrs = fctx.body;
   popBody(fctx, savedBody);
-  if (delegated === undefined) return undefined;
+  // A receiver that cannot be nullish is a primitive: the call always runs, on the held value.
   if (!holdsUndefined) {
     fctx.body.push({ op: "local.set", index: receiverLocal }, ...callInstrs);
     return callType;
   }
   fctx.body.push({ op: "local.tee", index: receiverLocal });
   emitIsUndefF64(fctx.body);
-  const joined: ValType = callType.kind === "ref" ? { kind: "ref_null", typeIdx: callType.typeIdx } : callType;
+  const joined = nullableJoin(callType);
   fctx.body.push({
     op: "if",
     blockType: { kind: "val", type: joined },
@@ -454,6 +447,22 @@ function compileOptionalValueReceiverCall(
     else: callInstrs,
   });
   return joined;
+}
+
+/** The result of a short-circuiting branch joined with a default: a non-null reference widens to its nullable form. */
+function nullableJoin(type: ValType): ValType {
+  return type.kind === "ref" ? { kind: "ref_null", typeIdx: type.typeIdx } : type;
+}
+
+/** The type a delegated call leaves on the stack: a value-less result (`void`, a failed compile) pushes a default. */
+function settleDelegatedResult(
+  fctx: FunctionContext,
+  delegated: ValType | null | typeof VOID_RESULT,
+  fallback: ValType,
+): ValType {
+  if (delegated !== null && delegated !== VOID_RESULT) return delegated;
+  fctx.body.push(...defaultValueInstrs(fallback));
+  return fallback;
 }
 
 /**
