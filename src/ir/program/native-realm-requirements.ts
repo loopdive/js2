@@ -20,10 +20,10 @@ import {
 
 /**
  * (#7354) The families of source calls the realm serves, walked once into `sourceCalls`. A family is its
- * `SourceCallFamily` here (`ordinary-object-source-calls.ts`) and its rows in the backend's table of realm functions
- * (`native-realm-source-calls.ts`).
+ * `SourceCallFamily` here (`ordinary-object-source-calls.ts`) and its rows in the realm's served-row table
+ * (`native-source-objects.ts`).
  */
-const REALM_SOURCE_CALL_FAMILIES = [ORDINARY_OBJECT_SOURCE_CALLS] as const;
+const REALM_SOURCE_CALL_FAMILIES = Object.freeze([ORDINARY_OBJECT_SOURCE_CALLS] as const);
 type FamilyFeature<T> = T extends SourceCallFamily<infer F> ? F : never;
 export type RealmSourceCallFeature = FamilyFeature<(typeof REALM_SOURCE_CALL_FAMILIES)[number]>;
 

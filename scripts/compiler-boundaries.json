@@ -13759,7 +13759,7 @@
       "nextBoundary": "Separate pure IR contracts from frontend inventory and physical/backend dependencies."
     },
     {
-      "path": "src/ir/property-key-fold.ts",
+      "path": "src/shared/property-key-fold.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
       "destination": "ir-core",
@@ -16643,11 +16643,6 @@
     },
     {
       "path": "src/backend/wasmgc/resources/native-source-objects.ts",
-      "state": "clean",
-      "layer": "backend-wasmgc"
-    },
-    {
-      "path": "src/backend/wasmgc/resources/native-realm-source-calls.ts",
       "state": "clean",
       "layer": "backend-wasmgc"
     },
