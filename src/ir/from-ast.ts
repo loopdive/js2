@@ -434,6 +434,7 @@ import {
 } from "./vector-runtime.js";
 import { readEnv } from "../env.js";
 import { classifyIdentifierRead } from "./identifier-read.js";
+import type { UnresolvedGlobalTypeof } from "./source-dynamic-contracts.js";
 import { numericCaseTestValue, stringCaseTestValue, switchCaseTests } from "./switch-case-tests.js";
 
 interface ResolvedIrVecType {
@@ -944,8 +945,8 @@ export interface IrFromAstResolver extends PreparedAsyncFromAstResolver {
   isAmbientBinding?(node: ts.Identifier): boolean;
   /** (#7118) Every declaration of the identifier's symbol is a lib one. */
   isLibOnlyBinding?(node: ts.Identifier): boolean;
-  /** (#7354 Ty) Closed world: a name the program does not declare is absent from its global environment. */
-  unresolvedNameIsAbsent?(node: ts.Identifier): boolean;
+  /** (#7354 Ty) The `typeof` answer for a global the program does not declare (see `unresolvedGlobalTypeof`). */
+  unresolvedGlobalTypeof?(node: ts.Identifier): UnresolvedGlobalTypeof | undefined;
   /** (#7127) The module's builtin-prototype brand companion is seeded. */
   builtinProtoCompanionSeeded?(): boolean;
   /** (#7106 lever O) The program has a runtime-eval site that may run. */
@@ -5219,8 +5220,14 @@ function lowerExprUnchecked(expr: ts.Expression, cx: LowerCtx, hint: IrType): Ir
       case "module-binding":
         return lowerResolvedModuleBindingRead(expr.text, read.binding, cx);
       case "global-undefined":
-      case "absent-global":
         return cx.builder.emitDynUndefined(JS_TAG_IDS.Undefined);
+      case "global-typeof":
+        // invariant: `lowerTypeOf` answers a `typeof` of such a name before lowering its operand.
+        throw new IrInvariantError(
+          "selection-preparation-mismatch",
+          "build",
+          `ir/from-ast: typeof ${expr.text} was lowered as a read (${cx.funcName})`,
+        );
       case "global-number":
         return cx.builder.emitConst({ kind: "f64", value: read.value }, irVal({ kind: "f64" }));
       case "host-global": {
@@ -5998,6 +6005,10 @@ function lowerTypeOf(expr: ts.TypeOfExpression, cx: LowerCtx): IrValueId {
     const ambientTag = ambientTypeofIdentifierTagFromAst(expr.expression, cx);
     if (ambientTag !== undefined) return cx.builder.emitStringConst(ambientTag);
   }
+  // (#7354 Ty) So is a global the program does not declare, on the Prepared path (also parenthesized).
+  const operand = peelParensExpr(expr.expression);
+  const globalTag = ts.isIdentifier(operand) ? globalTypeofTag(operand, cx) : undefined;
+  if (globalTag !== undefined) return cx.builder.emitStringConst(globalTag);
   const inner = lowerExpr(expr.expression, cx, irVal({ kind: "f64" }));
   const innerType = cx.builder.typeOf(inner);
   const tag = staticTypeOfFor(innerType);
@@ -13900,6 +13911,19 @@ function boxMixedConditionalArm(
   return boxed;
 }
 
+/** (#7354 Ty) The `typeof` answer the read classifier gives a global the program does not declare, or a refusal. */
+function globalTypeofTag(id: ts.Identifier, cx: LowerCtx): string | undefined {
+  const read = classifyIdentifierRead(id, cx);
+  if (read.kind !== "global-typeof") return undefined;
+  if (read.tag === "refuse")
+    throw new IrUnsupportedError(
+      "type-resolution-unsupported",
+      "build",
+      `ir/from-ast: typeof of the host global ${id.text} has no Prepared answer (${cx.funcName})`,
+    );
+  return read.tag;
+}
+
 /** (#7106 S1b) from-ast's half of the `typeof <ambient>` fold proof (see `lowerTypeOf`). */
 function ambientTypeofIdentifierTagFromAst(id: ts.Identifier, cx: LowerCtx): "object" | "function" | undefined {
   if (cx.scope.get(id.text) !== undefined) return undefined;
@@ -14017,9 +14041,7 @@ function lowerConditional(expr: ts.ConditionalExpression, cx: LowerCtx, hint?: I
   // at build time — the selector admitted exactly that arm.
   const folded = foldAmbientTypeofComparison(
     expr.condition,
-    (id) =>
-      ambientTypeofIdentifierTagFromAst(id, cx) ??
-      (classifyIdentifierRead(id, cx).kind === "absent-global" ? "undefined" : undefined),
+    (id) => ambientTypeofIdentifierTagFromAst(id, cx) ?? globalTypeofTag(id, cx),
   );
   if (folded !== undefined) {
     return lowerExpr(folded ? expr.whenTrue : expr.whenFalse, cx, hint ?? irVal({ kind: "f64" }));
