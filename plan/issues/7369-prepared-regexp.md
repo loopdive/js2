@@ -117,8 +117,11 @@ No behaviour change: the compiled output is byte-identical.
     their shape.
   - A realm row per callable in the `ADAPTERS` table of
     `src/backend/wasmgc/resources/native-source-objects.ts` (lane S3's binding
-    arm, branch `claude/7354-realm`). The row resolves the R0 operands from the
-    physical ledger and calls the R0 builders.
+    arm, branch `claude/7354-realm`), in that table's row shape
+    `{ signature, body(dependencies, fill) }`. The row resolves the R0 operands
+    from the physical ledger and calls the R0 builders.
+  - Admission: `src/ir/regexp-literal-admission.ts` decides which literals the
+    Prepared producer lowers to `js.regexp.create`.
 - **Reuses.** The R0 builders and layouts; the shared admission rule
   `src/ir/regexp-literal-admission.ts` (branch `claude/7354-crashes`, #7364),
   so the Prepared producer and the selector ask one question; the pattern
@@ -167,4 +170,54 @@ No behaviour change: the compiled output is byte-identical.
 Measured 2026-11-19 on branch `claude/7369-regexp-vm-bodies`, base
 `origin/main` `89e47482`.
 
-RESULT_PLACEHOLDER
+**Byte identity.** `node scripts/check-regexp-byte-identity.mjs --base <origin/main
+tree> --head . --jobs 1 --cache .tmp/bi-cache`: 2,691 files × 3 targets = 8,073
+comparisons, **0 differences**.
+
+| Target       | Compiled on base | Failed on base | Differ on head |
+| ------------ | ---------------: | -------------: | -------------: |
+| default      |            2,159 |            532 |              0 |
+| `standalone` |            2,160 |            531 |              0 |
+| `linear`     |            2,130 |            561 |              0 |
+
+The script exits `INCONCLUSIVE` (code 2), not `IDENTICAL`, for one file:
+`staging/sm/RegExp/regress-yarr-regexp.js` exhausts a 3 GB compiler heap on
+both trees, so its process dies and all three of its outcomes are recorded as
+`crash SIGABRT`. Compiled one target at a time with `.tmp/one.mjs`, `linear` is
+identical on both trees (`bf29245d…`), and default and `standalone` run out of
+heap on both trees. The file asks for `x{2147483648}`. That is a crash on
+`main` already, in the compile-time half this PR does not touch. Net: 8,071
+comparisons proven identical, 2 not comparable on either tree.
+
+The first full run, at `--jobs 2` with V8's default heap and 150-file chunks,
+died at the last base chunk on V8's heap limit. The script now gives each
+compiler process a 3 GB heap and 100-file chunks. When a process dies, the
+script reruns the file it died on alone, in a fresh process, and then the rest
+of the chunk. `--cache` keys finished chunks by tree content, so a head-only
+edit recompiles only the head.
+
+**Tests.** The 65 `tests/*regex*` / `*regexp*` files, `npx vitest run
+--maxWorkers=1`, on the branch and on the base tree: 1,133 tests, 1,084 pass and
+the same 12 fail on both sides. The failure-set diff is empty.
+
+**Size.** The new modules hold 2,433 lines; `src/` grows by a net 294.
+
+| File                                                | Before | After |
+| --------------------------------------------------- | -----: | ----: |
+| `src/codegen/native-regex.ts`                       |  4,396 | 2,489 |
+| `src/codegen/regexp-standalone.ts`                  |  6,659 | 6,616 |
+| `src/codegen/regex/bytecode.ts`                     |    172 |   111 |
+| `src/codegen/regex/vm.ts`                           |    313 |   303 |
+| `src/codegen/regex-runtime/linear-search.ts`        |    539 |   500 |
+| `src/codegen/regex-scratch-pool.ts`                 |    226 |   153 |
+| `src/codegen/helpers/host-regexp-search.ts`         |    246 |   241 |
+| `src/codegen/string-isregexp-guard.ts`              |    179 |   177 |
+| `src/runtime/wasmgc/values/regexp-vm-arms.ts`       |      — | 1,041 |
+| `src/runtime/wasmgc/values/regexp-vm-bodies.ts`     |      — |   647 |
+| `src/runtime/wasmgc/values/regexp-search-body.ts`   |      — |   527 |
+| `src/runtime/wasmgc/values/regexp-carrier-layouts.ts` |    — |   107 |
+| `src/runtime/contracts/regexp-bytecode.ts`          |      — |   111 |
+
+The largest new function is `rawLiteralAltSearch` at 172 lines, and no new file
+exceeds 1,500 lines. The LOC and function budgets pass with no grant, against
+both the merge base and `LOC_GATE_BASE=origin/main`.
