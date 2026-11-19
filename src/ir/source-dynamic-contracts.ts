@@ -333,6 +333,7 @@ export function programDynamicContracts(
         functions,
         allocations,
         provenance.carries,
+        sourceFiles,
       ),
   };
 }
@@ -411,8 +412,10 @@ function storedIntoCarrier(value: ts.Expression, carries: Carries): boolean {
  * (`issue-3518-native-string-number-source-admission`). A function without a
  * dynamic value is returned unchanged. The flow rule runs only where a dynamic
  * value was lowered: in a function without one, no value can leave the dynamic
- * domain. (#7354 O1) Every function's throws are checked either way: a catch in
- * any group reads the payload as the dynamic value.
+ * domain. (#7354 O1) In a program that binds a catch, every function's throws
+ * are checked either way: that catch, in whichever group, reads the payload as
+ * the dynamic value. Without one, no source code reads a payload, so a throw the
+ * compiler synthesizes (a TDZ `ReferenceError`) keeps its own.
  */
 function legalizeSourceDynamicValues(
   checker: ts.TypeChecker,
@@ -423,6 +426,7 @@ function legalizeSourceDynamicValues(
   functions: readonly IrFunction[],
   allocations: RetypableAllocations,
   carries: Carries,
+  sourceFiles: readonly ts.SourceFile[],
 ): readonly IrFunction[] {
   const roots = "kind" in declaration ? [declaration] : declaration;
   const contracted =
@@ -435,8 +439,9 @@ function legalizeSourceDynamicValues(
   if (!nativeDynamicLane(policy)) return functions;
   let legalized: readonly IrFunction[] = functions;
   try {
+    const catches = sourceFiles.some((file) => holds(file, bindsCatch));
     if (contracted) legalized = functions.map(legalizeDynamicValues);
-    functions.forEach(refuseUnadmittedThrows);
+    if (catches) functions.forEach(refuseUnadmittedThrows);
   } catch (error) {
     if (!(error instanceof DynamicValueGap)) throw error;
     throw new IrUnsupportedError("type-resolution-unsupported", "build", error.message);
