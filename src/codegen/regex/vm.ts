@@ -3,7 +3,8 @@
  * #1539 Phase 2a — Reference backtracking VM (pure TypeScript).
  *
  * This is the executable specification for the Wasm interpreter
- * (`__regex_run` in `src/codegen/native-regex.ts`). The Wasm version mirrors
+ * (`__regex_run`, built by `src/runtime/wasmgc/values/regexp-vm-bodies.ts`).
+ * The Wasm version mirrors
  * this control flow opcode-for-opcode, so unit tests can validate the
  * parse→compile→run pipeline without compiling any Wasm. Keeping the
  * algorithm here also documents exactly what the hand-authored Wasm must do.
@@ -18,29 +19,18 @@
  * `runAt` on the sub-program at the current position (atomic — no backtrack
  * entries leak into the outer attempt).
  */
+import {
+  REGEX_STEP_CAP,
+  REGEX_STEP_CAP_LEN_SATURATION,
+  REGEX_STEP_CAP_PER_UNIT,
+} from "../../runtime/contracts/regexp-bytecode.js";
 import { ReOp } from "./bytecode.js";
 import { isLinearSafe, searchLinear } from "./linear.js";
 import { asciiFold, assertionHolds, classMatch, forwardCodePoint, unitMatches } from "./match-units.js";
 
-/** Matches the Wasm VM's step cap. Tunable; documented in the issue. */
-export const REGEX_STEP_CAP = 1_000_000;
-
-/**
- * (#3549) Per-input-unit budget on top of the base cap. The cap exists to
- * stop RUNAWAY BACKTRACKING (super-linear in the subject), but a flat cap
- * also killed legitimate LINEAR matches over long subjects: `^\p{L}+$`(u)
- * costs a measured ~5 steps/unit (CLASS+SPLIT over the surrogate-alternation
- * program), so the flat 1M cap tripped at ~200k units — and the
- * `RegExp/property-escapes` conformance tests match complement strings of
- * ~1.1M units (304/311 failed exactly here). A length-LINEAR budget keeps
- * the guard: catastrophic patterns are Ω(n²)/Ω(2ⁿ), so on any subject long
- * enough to earn a raised budget they still exceed it (10k-unit subject:
- * n² = 100M ≫ 1M + 50·10k = 1.5M). 50/unit is ~10× the measured legitimate
- * cost. The length term saturates at 20M units so the i32 budget in the Wasm
- * VM cannot overflow (1M + 50·20M ≈ 1.0G < 2³¹−1).
- */
-export const REGEX_STEP_CAP_PER_UNIT = 50;
-export const REGEX_STEP_CAP_LEN_SATURATION = 20_000_000;
+// The budget numbers are part of the bytecode contract (the Wasm VM bodies sit
+// below this file); this VM is where the formula is specified and tested.
+export { REGEX_STEP_CAP, REGEX_STEP_CAP_LEN_SATURATION, REGEX_STEP_CAP_PER_UNIT };
 
 /** The shared budget formula — used by BOTH this mirror VM and the Wasm VM. */
 export function regexStepBudget(len: number): number {
