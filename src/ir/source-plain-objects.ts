@@ -9,16 +9,7 @@
  */
 import { ts } from "../ts-api.js";
 import { objectLiteralDataPropertyName } from "./property-key-fold.js";
-
-export interface ProgramObjects {
-  /** The program builds ordinary objects: the dynamic value admits the object kind. */
-  readonly present: boolean;
-  /** `undefined` when the objects and the built-in prototypes are plain, else the first reason they are not. */
-  readonly unplain: string | undefined;
-}
-
-/** A program that builds no ordinary object. */
-export const NO_OBJECTS: ProgramObjects = Object.freeze({ present: false, unplain: undefined });
+import type { ProgramObjects } from "./program/dynamic-value-kinds.js";
 
 /** Own keys whose definition changes what OrdinaryToPrimitive or a prototype lookup answers. */
 const CONVERSION_KEYS: ReadonlySet<string> = new Set(["toString", "valueOf", "__proto__"]);
