@@ -102,42 +102,60 @@ to one shared module both pipelines ask, instead of a second copy.
 
 ### Slice 1 — the invariant becomes a named refusal (this PR)
 
-- One predicate decides whether an `eval` callee is the realm's: `isRealmEval` on the resolver, answered on the
-  Prepared path by `prepareRealmEvalResolver` (`src/frontend/eval/realm-eval.ts`, beside the Number plan's proof).
-  The symbol must be the lib's alone, and no source may rebind the global binding. Its rebinding rules are
-  program-wide and conservative: a top-level declaration named `eval`, any use other than as a callee
-  (`evalCalleeCall`, `src/eval-call-shape.ts`), `globalThis`, or an `eval` property name or string.
-  - A checker-only test is not enough: the checker reports a script's `var eval = f` as a duplicate and keeps
-    resolving the name to the lib (review RV7310 M1).
-- `lowerCall`: on the realm's eval, the Prepared resolver has no provider, so the statement refuses by name:
-  `ir/from-ast: eval statement has no eval provider in <fn>` (`call-resolution-unsupported`). Any other `eval` is an
-  ordinary callee. A resolver with a provider (the ordinary pipeline) keeps its certified-eval branch and invariant
-  unchanged.
+- Slice 1 asks one LEXICAL question: does the source itself bind this `eval`? `resolvesToSourceBinding`
+  (`src/ir/analysis/ast-scope.ts`) walks the enclosing scopes on the file's existing scope collectors, with
+  hoisting. It needs no checker. The forms it covers:
+  - `var`, including its binding patterns;
+  - function declarations, including block functions (Annex B.3.3 hoists them in sloppy code, so the walk leans
+    to "bound");
+  - `class`;
+  - parameters, including patterns and defaults;
+  - `catch` bindings, including patterns;
+  - `let`/`const` in blocks, switch cases and loop heads;
+  - imports;
+  - the own name of a named function or class expression.
+- `lowerCall`: on a resolver with a provider (the ordinary pipeline), the certified-eval branch and its invariant
+  are unchanged. Otherwise:
+  - an eval statement whose `eval` the source does not bind refuses by name:
+    `ir/from-ast: eval statement has no eval provider in <fn>` (`call-resolution-unsupported`);
+  - a bound `eval` is an ordinary callee.
+- Not slice 1's question: whether the global `eval` still holds the realm's %eval% when the call runs. That is
+  answered at run time (slice 2). A static whole-program "never rebound" proof was tried and dropped at review
+  RV7310: JavaScript can rebind the global by too many routes (destructuring, computed keys, `defineProperty`,
+  `Function`, another file), and the real harness prelude uses `globalThis`.
 - Proving program: `tests/issue-7363-prepared-eval-refusal.test.ts`.
   - Literal, in-function, computed and `(0, eval)` statements refuse by name through the strict entry.
-  - Each of these stops at its own call gap, never at the eval refusal or the invariant:
-    - hoisted top-level and local `var eval`;
-    - a hoisted top-level `function eval`;
-    - a parameter, a catch binding and a block binding;
-    - a later alias, a `globalThis` use, an `.eval` property write, and an `"eval"` string.
+  - Every shadow form above stops at its own first gap, asserted by message.
+  - A non-lexical rebinding (`globalThis.eval = f`, `this.eval = f`) still refuses as eval.
+  - A direct table of `resolvesToSourceBinding` over each declaration form.
   - The ordinary pipeline's invariant still throws when a provider-bearing resolver disagrees.
-- Quality criterion: one predicate for "this `eval` is the realm's", asked by slice 1 and by slice 2's direct-eval
-  test. The proof follows the Number plan's existing pattern; it is not a second copy of that analysis.
+- Quality criterion: no second scope walk. The question extends `ast-scope.ts`'s collectors, and slice 2 asks the
+  same predicate.
 
-### Slice 2 — direct eval of a string literal as a certified nested program
+### Slice 2 — direct literal eval behind a run-time %eval% identity test
 
-- The front end parses the literal's program text at compile time: the PerformEval parse (§19.2.1.1) and its static
-  early errors.
-- The parsed text is lowered as a nested program of the calling function, in the caller's variable environment
-  (non-strict) or in its own (strict).
-- A literal that is a static SyntaxError lowers to a throw of a SyntaxError.
-- Owner: a new `src/ir/eval-literal.ts` beside `from-ast`. `eval-early-errors.ts` and the pure half of
-  `eval-script.ts` move to `src/frontend/eval/` and are imported by both pipelines. Legacy's re-exports keep its
-  bytes identical.
-- Proving program: expression, statement and `var`-declaring literal evals at top level and in a function, each
-  checked against node (right answer returns, wrong one throws), plus a static SyntaxError literal.
-- Quality criterion: one parse/early-error implementation for both pipelines; `eval-inline.ts` loses its copy of
-  the declaration-name walk.
+- A direct eval is `eval(…)` whose callee VALUE is %eval% (§13.3.6.1), which is a run-time fact.
+- Each admitted site does three things:
+  - it reads the global binding `eval` (`dyn.member_get(dyn.global_object, "eval")`, lane S5's global object,
+    `NATIVE_REALM_GLOBALS` row %eval%, PR #7315);
+  - it compares that value by reference with the realm intrinsic %eval%: `js.value.strict_eq` against a B2b realm
+    intrinsic (lane S5, branch `claude/7350-b2b`; working name `js.realm.intrinsic`);
+  - if they are equal, it runs the precompiled literal text; if not, it makes an ordinary call of that value.
+- Sound against every rebinding route, and it works under the real prelude. Until the realm intrinsic exists,
+  slice 2 stays refused by name.
+- The precompiled text has two forms:
+  - a literal that is a static SyntaxError (`foldedEvalStaticSyntaxError`, `src/frontend/eval/script.ts`) throws
+    a SyntaxError at run time at the site, never at compile time;
+  - a top-level sloppy literal is a called script source of the program (Slice A below).
+- Proving program: each form checked against node (the right answer returns, a wrong one throws), plus a rebound
+  `eval` taking the ordinary-call arm.
+- Acceptance (review RV7310 should-fix): the identity test reads the callee through the real environment chain, not
+  through slice 1's lexical answer. An `eval` that slice 1 calls unbound is not therefore %eval%:
+  - `eval("var eval = g"); eval("1")`: an earlier sloppy direct eval declared a var `eval`, so the second call is an
+    ordinary call of `g`;
+  - `with (o) { eval("1") }`: an `eval` property of `o` is the callee;
+  - `eval("1"); { function eval() {} }` (Annex B lean): slice 1 treats `eval` as bound. The answer must match node
+    in sloppy and in strict code.
 
 ### Later (own slices, measured first)
 
@@ -155,18 +173,19 @@ to one shared module both pipelines ask, instead of a second copy.
 
 ## Slice 1 result (2026-11-19)
 
-- `src/ir/from-ast.ts` `lowerCall` and the resolver contract, `src/frontend/eval/realm-eval.ts`, `evalCalleeCall`;
-  the test file above, 15 tests, green. Mutation: deleting any of the six rules of the proof (declaration,
-  non-callee use, `globalThis`, property name, string, symbol identity) turns a test red.
-- S9's list of the 196 files that crashed (`plan/log/es5-ir-only-census-2026-11-19-lists/crash-eval-owning-predicate.tsv`,
-  PR #7308) re-measured on this head with `scripts/ir-census/prepared-census.mts --harness stand-in`: 196 of 196 now
-  stop at `ir/from-ast: eval statement has no eval provider` in the test body; none throws.
-- Ordinary pipeline bytes identical against `origin/main` on 98 test262 files (70 eval-census files, 28
-  Array built-ins) × default and standalone.
-- `tests/issue-7106-runtime-eval-a2c-global-eval-arm.test.ts`, `tests/issue-1164-es5-eval-slice.test.ts` and
-  `tests/test262-prepared-entry.test.ts` pass.
+- `lowerCall` (`src/ir/from-ast.ts`, +3 lines); `resolvesToSourceBinding` (`src/ir/analysis/ast-scope.ts`, +61);
+  92 tests, green.
+- Mutation: removing any of 13 declaration rules of the walk turns tests red. The rules are own locals and params,
+  var and top-level, a named expression's own name, block and file, switch case, loop head, catch, binding
+  patterns, class, default import, namespace import, named imports, and block function declarations.
+- S9's 196 crash files (`crash-eval-owning-predicate.tsv`, PR #7308):
+  - stand-in harness: 196 of 196 stop at `ir/from-ast: eval statement has no eval provider` in the test body;
+  - real harness: all 196 stop earlier, in `assert.js` (`dynamic operation dyn.typeof has no Prepared intrinsic`);
+  - none throws.
+- Ordinary-pipeline bytes are identical to `origin/main` on 102 test262 files × default and standalone.
+- The eval test files fail the same set as `origin/main` (46 failures there, pre-existing).
 - Expression-position literal eval still refuses with the generic `direct call to "eval" has no exact AST-site
-  plan`. Slice 2 gives it the eval label.
+  plan`; slice 2 gives it the eval label.
 
 
 ## Slice A — a top-level literal direct eval is a called script source
