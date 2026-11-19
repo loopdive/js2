@@ -16120,6 +16120,10 @@ function boxConcreteToDynamic(v: IrValueId, t: IrType, operand: ts.Expression, c
   if (family === "number" || (asVal(t) !== null && ts.isNumericLiteral(operand))) {
     return cx.builder.emitBox(v, irDynamic(JS_TAG_IDS.NumberF64));
   }
+  // (#7354 O2) An object literal the Prepared path builds as an ordinary object.
+  const literal = peelParensExpr(operand);
+  if (ts.isObjectLiteralExpression(literal) && cx.resolver?.preparedOrdinaryObjectLiteral?.(literal) === true)
+    return cx.builder.emitBox(v, irDynamic(JS_TAG_IDS.Object));
   return null;
 }
 

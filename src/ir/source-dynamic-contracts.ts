@@ -37,6 +37,7 @@ import {
   refuseUnadmittedThrows,
 } from "./program/dynamic-value-legalization.js";
 import { retargetNumberToString } from "./program/number-to-string-target.js";
+import { programObjects, type ProgramObjects } from "./source-plain-objects.js";
 import type { AllocSiteRegistry } from "./analysis/alloc-registry.js";
 import type { RuntimeManifestPolicy } from "../runtime/contracts/provider-policy.js";
 import type { ValType } from "../wasm/model/instructions.js";
@@ -219,6 +220,8 @@ export function programDynamicContracts(
   sourceFiles: readonly ts.SourceFile[],
   allocations: AllocSiteRegistry,
 ): ProgramDynamicContracts {
+  // (#7354 O2) Whether the program builds objects, and whether they are plain: one answer every group asks.
+  const objects = programObjects(checker, sourceFiles);
   const provenance = sourceDynamicProvenance(
     checker,
     sourceFiles,
@@ -260,6 +263,7 @@ export function programDynamicContracts(
         provenance.carries,
         sourceFiles,
         allocations,
+        objects,
       ),
   };
 }
@@ -378,6 +382,7 @@ function legalizeSourceDynamicValues(
   carries: Carries,
   sourceFiles: readonly ts.SourceFile[],
   allocations: AllocSiteRegistry,
+  objects: ProgramObjects,
 ): readonly IrFunction[] {
   const roots = "kind" in declaration ? [declaration] : declaration;
   const contracted =
@@ -393,7 +398,7 @@ function legalizeSourceDynamicValues(
   const retargeted = functions.map(retargetNumberToString);
   let legalized: readonly IrFunction[] = retargeted;
   try {
-    if (contracted) legalized = retargeted.map((fn) => legalizeDynamicValues(fn, allocations));
+    if (contracted) legalized = retargeted.map((fn) => legalizeDynamicValues(fn, allocations, objects));
     retargeted.forEach(refuseUnadmittedThrows);
   } catch (error) {
     if (!(error instanceof DynamicValueGap)) throw error;
