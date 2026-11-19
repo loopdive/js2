@@ -37,7 +37,14 @@ related: [7188, 2949, 3526, 3527, 3518, 7106, 7349, 7350, 7352]
 # 2026-11-17 (slice Str2): src/compiler.ts +1, `...preparedNumberFormatOptions(...)` in the Prepared
 # backend options: the number formatter's physical policy, chosen in the census module beside
 # `preparedPresentationPolicy` (same import line).
+# 2026-11-19 (slice O, step O1): src/ir/program-consumer.ts +20, the emission wiring of the realm's
+# source-object family: the second `reconcileNativeCallBindings` call (the reconciler itself is the renamed,
+# shared invocation one), the realm-slot record on the emission observation with its one reader
+# `emittedNativeRealmSlots` (the record lives beside the consumer-private observation map; the slot computation
+# itself, `nativeRealmCompletedSlots`, lives in native-realm.ts) and the imports. The two native binding lists
+# fold through `plannedNativeCallBindings` (program-physical-plan.ts) instead of growing each.
 loc-budget-allow:
+  - src/ir/program-consumer.ts
   - src/ir/program-physical-plan.ts
   - src/compiler.ts
   - src/ir/program-source.ts

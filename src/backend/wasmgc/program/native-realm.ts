@@ -127,6 +127,11 @@ import {
   nativeBuiltinFunctionReservationInventory,
 } from "../resources/native-builtin-functions.js";
 
+import {
+  reserveNativeSourceObjectResources,
+  fillNativeSourceObjectResources,
+} from "../resources/native-source-objects.js";
+
 function fail(detail: string): never {
   throw Error("native realm composition: " + detail);
 }
@@ -428,6 +433,12 @@ function reserveKernelResources(tx: PhysicalModuleReservations, pack: NativeReal
     descriptorDependencies,
   };
   const kernel = reserveNativeBuiltinFunctionResources(tx, kernelDependencies);
+  const sourceObjects = reserveNativeSourceObjectResources(
+    tx,
+    key,
+    pack.requirements.description.objectUses.map((use) => use.feature),
+    { layouts, storage, descriptors, kernel },
+  );
   return {
     equality,
     booleans,
@@ -445,6 +456,7 @@ function reserveKernelResources(tx: PhysicalModuleReservations, pack: NativeReal
     descriptorDependencies,
     kernel,
     kernelDependencies,
+    sourceObjects,
   };
 }
 /** Consumer retains genuine source binding/lowering authority; no callback can attest its completion. */
@@ -495,6 +507,7 @@ export function nativeRealmReservationInventory(tx: PhysicalModuleReservations, 
     ...nativeObjectSameValueReservationInventory(tx, k.sameValue, k.sameValueDependencies).functions,
     ...nativeObjectDescriptorReservationInventory(tx, k.descriptors, k.descriptorDependencies).functions,
     ...kernel.functions,
+    ...k.sourceObjects.adapters.values(),
   ];
   const types: TypeReservation[] = [
     ...substrate.types,
@@ -548,11 +561,28 @@ export function fillNativeRealmResources(tx: PhysicalModuleReservations, pack: N
     fillNativeObjectSameValueResources(tx, k.sameValue);
     fillNativeObjectDescriptorResources(tx, k.descriptors, k.kernel.exception);
     fillNativeBuiltinFunctionResources(tx, k.kernel);
+    fillNativeSourceObjectResources(tx, k.sourceObjects);
     owner.phase = "complete";
   } catch (error) {
     owner.phase = "failed";
     throw error;
   }
+}
+/** (#7354 O1) The completed slots of the realm's resources, which its own completion check authenticated. */
+export interface EmittedNativeRealmSlots {
+  readonly functions: ReadonlySet<number>;
+  readonly types: ReadonlySet<number>;
+  readonly globals: ReadonlySet<number>;
+}
+/** The physical indices of the realm's completed functions, types and globals. */
+export function nativeRealmCompletedSlots(
+  tx: PhysicalModuleReservations,
+  pack: NativeRealmReservations,
+): EmittedNativeRealmSlots {
+  const { functions, types, globals } = nativeRealmReservationInventory(tx, pack);
+  const indices = (tokens: readonly (FunctionReservation | TypeReservation | GlobalReservation)[]) =>
+    new Set(tx.physicalIndices(tokens));
+  return Object.freeze({ functions: indices(functions), types: indices(types), globals: indices(globals) });
 }
 /** This certifies bootstrap resources only. The consumer separately authenticates its real source bodies. */
 export function requireCompletedNativeRealmBootstrap(
