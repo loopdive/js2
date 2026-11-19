@@ -138,7 +138,7 @@ export function carrierLeafReads(
 }
 
 /**
- * (#7365 1b) Every declarator of the script `var` `name` names, in source order, when each is a module-init
+ * (#7372 1b) Every declarator of the script `var` `name` names, in source order, when each is a module-init
  * binding's own (a top-level statement's or a modelled list's, `moduleInitBindings`): one binding with one
  * global, the first declarator its canonical identity, as the resolver's `uniqueTopLevelVariableDeclaration`
  * picks it. A JS member write on the binding (`o.p = v`) declares no binding. `undefined` when any declaration

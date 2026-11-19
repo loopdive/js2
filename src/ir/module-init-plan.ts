@@ -474,7 +474,7 @@ export function buildIrModuleInitPlan(input: BuildIrModuleInitPlanInput): IrModu
 }
 
 /**
- * (#7365 1b) A repeated script `var` is one binding: a later declarator records no binding of its own, and its
+ * (#7372 1b) A repeated script `var` is one binding: a later declarator records no binding of its own, and its
  * statement initializes the first declarator's global. Answers that first declarator's ordinal.
  */
 function redeclaredScriptVarOrdinal(
@@ -489,7 +489,7 @@ function redeclaredScriptVarOrdinal(
 }
 
 /**
- * (#7365) The bindings of the script `var`s a nested modelled list declares (a block, branch, loop, `try` or
+ * (#7372) The bindings of the script `var`s a nested modelled list declares (a block, branch, loop, `try` or
  * `switch` of top-level code) and of pattern leaves: their ordinals follow every top-level statement's
  * (`moduleBindingDeclarationOrder`), and each is `undefined` from instantiation, as a top-level `var` is.
  */

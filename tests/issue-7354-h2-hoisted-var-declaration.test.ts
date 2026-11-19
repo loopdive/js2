@@ -127,7 +127,7 @@ describe("#7354 H follow-up — a hoisted `var` declaration without initializer"
       "f() !== 5",
       "f() !== undefined",
     ],
-    // (#7365) The nested script `var` is the global the function reads.
+    // (#7372) The nested script `var` is the global the function reads.
     [
       "a script loop var read by a function",
       "var r; function h(){ return g; } for (var i = 0; i < 2; i = i + 1) { var g; if (i === 0) g = 5; else r = h(); }",
@@ -197,7 +197,7 @@ describe("#7354 H follow-up — a hoisted `var` declaration without initializer"
       ([shape, body]) =>
         [`repeated ${shape}`, `function f(v){ ${body} } f(5);`, /redeclaration of '[xvi]' in f/] as const,
     ),
-    // (#7365) A nested and a repeated script `var` are one global: `tests/issue-7365-nested-script-var.test.ts`
+    // (#7372) A nested and a repeated script `var` are one global: `tests/issue-7372-nested-script-var.test.ts`
     // runs the two script programs this list refused.
     [
       "read by a closure",

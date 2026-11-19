@@ -92,7 +92,7 @@ export type NamedVariableDeclaration = ts.VariableDeclaration & { readonly name:
 /**
  * (#7354 V) True when no read of the script var `declaration` can run before its initializer: a typed slot has
  * no `undefined`, so a read of the hoisted binding would answer the slot's zero. The declaration is a top-level
- * statement's or (#7365) a top-level `for (;;)` head's, initialized, and every read either is placed after its
+ * statement's or (#7372) a top-level `for (;;)` head's, initialized, and every read either is placed after its
  * list outside every hoisted function, or sits in a hoisted function nothing before the list can call
  * (`callableBefore`). Name-based, like
  * `isAlwaysUndefinedVar`: every reference spelled with the name is a read unless the checker binds it to another
@@ -128,7 +128,7 @@ export function scriptVarReadsFollowInitializer(
 }
 
 /**
- * (#7365) Whether the declarator's list is a top-level statement's or a top-level `for (;;)` head's: either runs
+ * (#7372) Whether the declarator's list is a top-level statement's or a top-level `for (;;)` head's: either runs
  * once, before every later top-level statement and, for a head, before the loop's test, body and update.
  */
 function runsBeforeLaterTopLevelCode(declaration: ts.VariableDeclaration): boolean {

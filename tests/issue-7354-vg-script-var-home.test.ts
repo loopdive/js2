@@ -102,8 +102,8 @@ describe("#7354 V — the IR's own typed home for a script var", () => {
   });
 
   // (#7354 H) A script var V cannot prove (a read before the initializer, no initializer, a string) now gets the
-  // dynamic home: `tests/issue-7354-h-script-var-dynamic-home.test.ts` runs those programs. (#7365 1b) A repeated
-  // `var` is one binding: `tests/issue-7365-nested-script-var.test.ts` runs it.
+  // dynamic home: `tests/issue-7354-h-script-var-dynamic-home.test.ts` runs those programs. (#7372 1b) A repeated
+  // `var` is one binding: `tests/issue-7372-nested-script-var.test.ts` runs it.
 
   it("refuses a var of a non-writable global, whose write never lands", async () => {
     expect(await refusal("var Infinity = 1; if (Infinity === 1) throw 1;")).toContain(

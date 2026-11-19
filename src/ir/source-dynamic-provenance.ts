@@ -84,7 +84,7 @@ export function sourceDynamicProvenance(
     if (!ts.isVariableDeclaration(declaration)) return true;
     // A top-level declaration's storage is a global, whose home the classifier names: only a script `var` of the
     // program can have the dynamic home (a lexical, ES-module or ambient global is typed by its declaration, and
-    // the resolver refuses a dynamic store into it). (#7365) So is a script `var` nested in top-level code. Any
+    // the resolver refuses a dynamic store into it). (#7372) So is a script `var` nested in top-level code. Any
     // other variable is a local.
     if (isTopLevelStatementDeclaration(declaration) || isModuleInitVarList(declaration.parent))
       return scriptVarHome(declaration) === "dynamic";

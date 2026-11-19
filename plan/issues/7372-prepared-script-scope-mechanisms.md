@@ -1,5 +1,5 @@
 ---
-id: 7365
+id: 7372
 title: "Prepared IR path: script-scope mechanisms (nested var, block functions, undeclared globals, delete)"
 status: in-progress
 sprint: current
@@ -16,12 +16,10 @@ depends_on: [7354]
 related: [7354, 7106]
 ---
 
-# #7365 — Prepared IR path: script-scope mechanisms
+# #7372 — Prepared IR path: script-scope mechanisms
 
-> Id note (2026-11-19): `7365` is the id `claim-issue.mjs --allocate --dry-run` previewed, and the reserving call
-> was denied by this session's permission layer. `--check 7365` now reads RESERVED by `ttraenkler/c-lead` at
-> 13:25:14Z, which is ANOTHER lane's reservation, not this one. This issue must be renumbered (file, test file,
-> code comments) to a reserved id before it is pushed.
+> Id: #7372, reserved for this lane by the C lead (2026-11-19 14:50Z). The local commits first used #7365, a
+> dry-run preview that turned out to be lane S6's reservation; renumbered in the commit that adds this note.
 
 ## Problem
 
@@ -115,7 +113,7 @@ after evaluating it. A member `delete` is a named refusal unless slice O's objec
 
 - Proving programs run: `if (true) { var x = 1; } if (x !== 1) throw 1;` returns and `x !== 2` throws;
   `if (false) { var y = 1; } if (y !== undefined) throw 1;` returns.
-- `tests/issue-7365-nested-script-var.test.ts`: 18 programs, each run twice through the strict Prepared entry with
+- `tests/issue-7372-nested-script-var.test.ts`: 18 programs, each run twice through the strict Prepared entry with
   node's verdict asserted on the same source (right answer returns, wrong throws); 4 named refusals.
 - `tests/issue-7354-h2-hoisted-var-declaration.test.ts` pins updated: the script-loop repeated `var` now refuses as
   `not-direct`; the script-loop var read by a function now runs (`r === 5`, node agrees).
@@ -155,7 +153,7 @@ Built (no new module; one shared predicate replaces the home's own declaration c
 
 Measured:
 
-- `tests/issue-7365-nested-script-var.test.ts`: +9 programs for repeated `var`s (both run, node agrees), 30 tests.
+- `tests/issue-7372-nested-script-var.test.ts`: +9 programs for repeated `var`s (both run, node agrees), 30 tests.
   The test helper tolerates the checker's `Subsequent variable declarations must have the same type` on legal JS
   (`var x = 1; var x;`), which does not stop the compile.
 - Pins moved into this file: H's "declared twice", VG's "declared twice", H2's two script repeats.

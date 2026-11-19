@@ -1,6 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 //
-// #7365 slice 1 — a `var` nested in top-level code (a block, `if`, loop, `try`, `switch` or label of a script) on
+// #7372 slice 1 — a `var` nested in top-level code (a block, `if`, loop, `try`, `switch` or label of a script) on
 // the Prepared whole-program path. It belongs to the script scope wherever its statement is, so it has the same
 // global as a top-level `var` (slice H's home): `undefined` from instantiation, visible after its block and to
 // every function. A top-level `for (;;)` head keeps the typed home when every read follows it. Slice 1b: a repeated
@@ -21,7 +21,7 @@ function nodeVerdict(source: string): "returned" | "threw" {
   }
 }
 
-describe("#7365 slice 1 — a var nested in top-level code", () => {
+describe("#7372 slice 1 — a var nested in top-level code", () => {
   // Each program runs with node's answer (returns) and a wrong one (throws); node is asked both times too.
   it.each([
     ["in a taken branch", "if (true) { var x = 1; }", "x !== 1", "x !== 2"],

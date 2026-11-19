@@ -1658,7 +1658,7 @@ export function prepareIrProgramSources(
       diagnostic,
     );
     for (const source of sourceFiles) {
-      // (#7365) Each module-init binding: a nested script `var` is a global too, a repeated one shares its first's.
+      // (#7372) Each module-init binding: a nested script `var` is a global too, a repeated one shares its first's.
       for (const bound of source.statements.flatMap(moduleInitBindings)) {
         const declaration = "unmapped" in bound ? bound.unmapped : bound.declaration;
         diagnostic.active = requireIrPlanningOwnerUnitId(identity, declaration);

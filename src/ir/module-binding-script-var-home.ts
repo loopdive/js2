@@ -50,7 +50,7 @@ export function irOwnedScriptVarHome(
     if ((declaration.parent.flags & ts.NodeFlags.BlockScoped) !== 0 || ts.isExternalModule(declaration.getSourceFile()))
       return undefined;
     if (declaration.getSourceFile() !== soleSource || NON_WRITABLE_GLOBALS.has(declaration.name.text)) return undefined;
-    // (#7365 1b) A repeated `var` is one binding: the home is its first declarator's, each later one a write.
+    // (#7372 1b) A repeated `var` is one binding: the home is its first declarator's, each later one a write.
     // `Object.defineProperty(o, …)` still counts as a second declaration: the Prepared path admits no `Object`
     // static yet (slice O), and from-ast takes an unadmitted one for selector drift, so the binding must stay
     // without a home and refuse by name.
@@ -66,7 +66,7 @@ export function irOwnedScriptVarHome(
       (annotated || !storesDynamic?.(declaration))
     )
       return "typed";
-    // (#7365) A `var` nested in top-level code has the same global; its reads never follow a proven initializer.
+    // (#7372) A `var` nested in top-level code has the same global; its reads never follow a proven initializer.
     return storesDynamic && !annotated ? "dynamic" : undefined;
   };
 }
