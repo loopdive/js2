@@ -156,6 +156,8 @@ describe("#7354 X — throw and catch with the Prepared dynamic value", () => {
     ["`=== 'x'`", "try { throw 'x'; } catch (e) { if ((e === 'x') !== @A) throw 1; }", "true", "false"],
     ["ToBoolean of 'x'", "try { throw 'x'; } catch (e) { if (!e !== @A) throw 1; }", "false", "true"],
     ["ToBoolean of ''", "try { throw ''; } catch (e) { if (!e !== @A) throw 1; }", "true", "false"],
+    // (#7354 Str2 merge) TYPEOF_KIND lists the string kind.
+    ["typeof 'x'", "try { throw 'x'; } catch (e) { if ((typeof e === 'string') !== @A) throw 1; }", "true", "false"],
     [
       "a string through `||`",
       "function g(v) { throw v; } try { g(''); } catch (e) { if ((e || 7) !== @A) throw 1; }",
@@ -216,7 +218,8 @@ describe("#7354 X — throw and catch with the Prepared dynamic value", () => {
     expect(result.errors.map((error) => error.message).join("\n")).toContain(OBJECT_THROW);
   });
 
-  // The same rule for a literal thrown from a callee whose declaration group has no catch of its own.
+  // (#7354 Ty review) The same invariant for a populated literal thrown from a callee and tested with `typeof`: the
+  // slice that admits object payloads must add the object kind to TYPEOF_KIND (it merges with the `null` row).
   it("does not compile an object-literal throw tested with typeof", async () => {
     const result = await compile(
       'function f() { throw { a: 1 }; }\ntry { f(); } catch (e) { if (typeof e !== "object") throw 1; }',

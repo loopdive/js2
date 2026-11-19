@@ -34,6 +34,9 @@ related: [7188, 2949, 3526, 3527, 3518, 7106, 7349, 7350, 7352]
 # 2026-11-17 (slice Str, merge onto H): src/compiler/ir-program-presentation.ts +1,
 # `inCall`, the ABI join's admission of a native string in an internal callable
 # contract (string parameters and results), beside H's `carried` it extends.
+# 2026-11-17 (slice Str2): src/compiler.ts +1, `...preparedNumberFormatOptions(...)` in the Prepared
+# backend options: the number formatter's physical policy, chosen in the census module beside
+# `preparedPresentationPolicy` (same import line).
 # 2026-11-19 (slice Fa): src/ir/from-ast.ts +33, the Prepared function-value arms
 # beside their siblings: the `dynamicClosureSignature` / `staticFunctionValue`
 # resolver hooks, the static closure kept on a script var's `moduleGlobal` scope
@@ -2484,3 +2487,534 @@ Fresh-context review on the merge of Ty with main
 from-ast's identifier read (B1's `builtinGlobalValueAdmitted` moved into the classifier's ambient-intrinsic arm),
 from-ast imports, and the #7350 issue file (both sections kept). Grant: `ir->runtime` 10 → 11 for the table import
 (frontmatter). The PR must not release before #7361, #7315 and B1 are on main.
+
+## Str2 result (2026-11-18, partial: steps (a) and (b) of four)
+
+Branch `claude/7354-str2` = `claude/7354-tx` + Ty + Perf (merges keep every result section) + the commits below.
+Stopped before the census admission of the number formatter, by the lead's rule ("stop after (b) if (c) needs more
+than L"): (c) needs five presentation joins, listed under Known gaps.
+
+Built:
+- Merge join (Ty x Str): `TYPEOF_KIND` lists the string kind; `typeof v === "string"` is a tag test, new intrinsic
+  `js.value.is_string` -> dynamic-value resource `__typeof_string`, body the new shared `buildExternRefTestBody`
+  (`src/runtime/wasmgc/values/primitive-layouts.ts`), which the ordinary `__typeof_string` and BigInt `typeof` now
+  compose too (same ops). Object-literal throw tested with `typeof` pinned at its invariant error (Known gaps).
+- (a) `String(v)`: `prepareConversionResolvers` (`src/frontend/builtins/prepare-number-conversion.ts`, one body
+  shared with the `Number(v)` plan) answers `isAmbientStringBinding` for the callee of a direct lib call; from-ast's
+  existing `tryLowerAmbientStringToStringCall` lowers it. The `String` plan is not invalidated by an escape (the
+  prelude has `String: globalThis.String` and `map.call(a, String)`): every rebinding refuses by name on this closed
+  path (pinned), and any source file declaring `String` loses the plan (the checker reports a script's
+  `function String` as the lib's; without the file check that was a wrong answer). `String` joins
+  `PREPARED_PROVIDED_GLOBALS`. Typed Number::toString (`IR_NUMBER_TO_STRING_FN`: `String(1)`, a template's number)
+  is retargeted to the one formatter binding `async.native.number-to-string` (`src/ir/program/number-to-string-target.ts`;
+  the "async" in the name is historical — renaming it means renaming the hash-pinned declaration in
+  `src/ir/runtime/native-async-callables.ts` and `IR_ASYNC_NUMBER_TO_STRING_FN`, #7358 territory). It used to be an
+  invariant error out of compile() (templates did this on base already); now a named presentation refusal. The
+  Prepared backend options carry the formatter's integer policy (`preparedNumberFormatOptions`, one env reading
+  shared with codegen: `numberToStringIntegerBeforeScratch`).
+- (b) `dyn.to_string` -> an IR `if` chain in the legalization, table `TO_STRING_ARM` (a Record over `CarrierKind`;
+  the last kind is reached untested because the chain is total): string -> new intrinsic `js.value.as_string`
+  (resource `__js_as_string`, `any.convert_extern; ref.cast AnyString`, string result resolved by type key in the
+  recipe and the ABI join); number -> `js.number.unbox` + direct call to the formatter binding; boolean ->
+  ToBoolean (its payload, no unbox policy) choosing "true"/"false"; undefined/null -> their names (string
+  allocation sites from the source registry, now passed to the legalization). `v` is one SSA value; the chain has
+  no effect of its own, so DCE of an unused result cannot drop an operand evaluation. Verified with the number arm
+  stubbed locally; as committed, every `dyn.to_string` refuses at the presentation by name.
+
+Measurements: 411-row sample (14 negatives pass every time): base 308 x `String` no plan (282
+`formatIdentityFreeValue`, 26 `verifyProperty`); after (a) and after (b) 282 x `dyn.typeof has no Prepared intrinsic`
+(`formatIdentityFreeValue`'s `switch (value === null ? 'null' : typeof value)`, assert.js:25 — a bare `typeof` value,
+step 4), 84 module binding not-direct, 26 `assert` not in scope (`verifyProperty`). Ordinary bytes identical on 310
+files (180 of the sample, String/typeof/template/addition dirs) x JS and standalone (13 CE on both). Tests: all
+slice tests, prepared entry/runtime, #7188, #7359, 3518 pins green. Pins: INTRINSIC_IDS 44 -> 46; INTRINSIC_DEFINITIONS
+successor -> c9f06f27 (predecessor step removes the two new rows); declaration receipt + EXTERNREF_TO_STRING (94 -> 95);
+D1 selection pin; D1/P call sites pass an allocation registry.
+
+Lane (lead's question): `mixed` is decided by captured callables with a Promise result; a sync program that calls the
+formatter is not mixed, so it goes through `checkResourceDemand`. `checkMixedDemand` refuses any mixed program
+outside wasmgc:host, so no async program presents on the standalone Prepared path; on the host target a mixed program
+skips the census (host lane, sunset) — not reproduced here.
+
+Known gaps: (c) census admission of the formatter. A sync `String(x)` program meets five presentation gaps: 3 x
+"promise/reference callable contracts require an explicit boundary producer" (the kernels' scratch `support-ref`
+contracts in `checkAbiExports`), "nondefaultable reference widening needs a separately authenticated physical
+post-state", the census ("host provider or async demand ..."), and "source and prepared runtime must independently
+prove no async/support demand" (`runtimeSupport.batches`). `String()` (no argument) refuses ("no exact AST-site plan").
+Object-literal throw: invariant error out of compile() ("resolver cannot lower object<a:f64>"), pinned. Mutation:
+the declaration file check, the retarget and the string tag test are killed by tests; the ToString arms,
+`__js_as_string` and the string carrier in the ABI join cannot run until (c) and are unverified survivors.
+
+### Str2 step 4: `typeof` as a value (2026-11-18)
+
+A `dyn.typeof` that is not consumed by a literal comparison materializes its answer string with the same kind chain
+as ToString (`kindChain` in `src/ir/program/dynamic-value-legalization.ts`; arms `TYPEOF_NAME[kind]`, i.e.
+`TYPEOF_KIND` read backwards, so `typeof null` is "object" and a new kind cannot be missed). Proven against node
+(right answer returns, wrong throws): every carrier value returned / in a local / as an argument / at top level,
+`"x" + typeof v`, `typeof v === k`, `typeof a === typeof b` (same kind, other kind, null vs undefined), a local also
+compared with a literal, loop iterations, the prelude's `switch (value === null ? 'null' : typeof value)`, statement
+position and an unread local with a throwing operand (the throw still happens). Prepared bytes of 14 unaffected
+programs (numeric, dynamic, throw, script var, typeof comparison, strings, loops; 11 compile, 3 refuse with the same
+message) identical against the branch base 33f5e33878. Mutations killed: answer table inverted, chain cut one kind
+short, the `String` declaration file check. Survivors: removing the `consumed` skip (only adds a dead chain);
+`node.parent.expression === node` in `isAmbientStringBinding` (an argument `String` refuses as a value read anyway).
+A Ty "like JavaScript" program (`"object"`) timed out at 35 s once inside a combined two-file run under load; it
+takes 15 s alone, and the whole Ty file passes alone.
+
+411-row sample after step 4 (14 negatives pass): 282 x "dynamic operation __ir_dyn_add has no Prepared intrinsic"
+(first: `harness/assert.js:27`, `'"' + value + '"'` in `formatIdentityFreeValue`'s string arm), 84 x "module binding X
+has no exact typed storage: not-direct" (`obj` 52, `x` 5, `proto` 4, `o` 4, `arr` 3), 26 x `ir/from-ast: identifier
+"assert" is not in scope` (`verifyProperty`), 2 x switch-case lexical binding, 1 x `unknown class "Test262Error"`.
+Dynamic `+` is not local: its number arm needs ToString's formatter, i.e. Str2-c.
+
+### Hand-over: admitting the number formatter (Str2-c)
+
+A sync `String(x)` (or `typeof`-free `"" + n`) program now reaches the formatter through one binding,
+`async.native.number-to-string` (`src/ir/program/number-to-string-target.ts`), and meets five presentation gaps.
+
+1. 3 x "promise/reference callable contracts require an explicit boundary producer" —
+   `src/compiler/ir-program-presentation.ts:467-471` (`checkAbiExports`): every callable ABI entry's params/results
+   must pass `inCall` (number, the dynamic externref, or `string`). The formatter kernels' entries
+   (`numberFormatRadixSupportDeclarations`, `src/ir/program/formatter-support.ts:45-49`: `__nfd_new` result,
+   `__nfd_get`/`__nfd_set`/`__nfd_fin` first param) carry the scratch type `support-ref`
+   (`number-format-radix:scratch`, the string owner's mutable i16 data array). "Explicit boundary producer" names no
+   existing mechanism: the only bypass is `mixed` (`!mixed &&` on the same line). Smallest sound admission: `inCall`
+   also accepts a `support-ref` equal (data identity) to the canonical scratch type of the program's entry anchor,
+   and only on an entry whose ref is one of the canonical kernel refs (binding identity) — the predicate in the
+   census module, one call in the presentation. Not: admitting `support-ref` generally, or classifying the program
+   as mixed.
+2. "nondefaultable reference widening needs a separately authenticated physical post-state" — line 708-712,
+   `referenceDemand` (line 226): any function local/body/type using a `ref` outside the census's `NativeSetupSlots`
+   (types/globals) counts. It fires because the census returned nothing; with the string owner alone (slice R/Str),
+   `nativeRows` hands its authenticated type/global slots back and the string refs are exempt. Admission: the census
+   also returns the formatter setup's authenticated type slots (the Ryu table type) and globals (Ryu
+   `inverse`/`powers`) — downstream of 3. Not: exempting `ref`s by type shape.
+3. "host provider or async demand is outside this numeric presentation contract" — line 673-681, `runtimeCensus`
+   (`src/compiler/prepared-provider-census.ts`, `nativeRows`/`supportPopulationJoins`) returns undefined: (a) the
+   provider `native.async.number-to-string` (`src/ir/runtime/native-async-callables.ts:82`, runtime-callable
+   `__ir_number_toString_native`) is answered by no runtime-bound setup function — its setup binding is
+   intrinsic-bound (`nativeFormatterSetup`, `src/ir/program-physical-plan.ts:840-940`, association
+   `native-to-string`, origin "intrinsic"); (b) the formatter setup (`emittedPhysicalSetupPlan(emission)
+   .nativeNumberFormat`: finalize, `__nfd_*`, trap, radix-body, radix-thunk, Ryu, `number_toString`, adapter) has
+   support receipts but no census rows; (c) `nativeSlots` accepts only runtime/intrinsic or anchor-derived bindings,
+   while the kernels and radix-body are `support` refs with the canonical declarations' own binding ids. Admission:
+   run `nativeSlots` over the formatter setup too, accepting a `support` binding only when its id equals the
+   canonical declaration's (`numberFormatRadixSupportDeclarations(anchor)` kernels / implementation); rows for each
+   function (slot + signature + receipt, the same `supportPopulationJoins`); answer the provider with the unique
+   declaration of role `["number-format","native-to-string"]` whose reference equals the canonical adapter
+   declaration's ref, and require the provider iff a direct formatter call exists (`irNumberFormatDemandOwners`);
+   authenticate the scratch entry (type slot = the string owner's data type slot, as
+   `planNativeNumberFormatScratch` does at physical-plan time). Forgeries: drop/add/duplicate/swap/relabel each row,
+   the provider, the scratch. Not: joining by function name.
+4. "source and prepared runtime must independently prove no async/support demand" — line 683-688: any
+   `program.runtimeSupport.batches` refuses. Replace only the batch half (keep asyncPlan/asyncRuntime/asyncFunctions):
+   exactly one batch, kind `number-format-radix-v1`, its declarations equal to
+   `numberFormatRadixSupportDeclarations(batch.sourceId)` with `sourceId` the runtime ABI anchor, its implementation
+   body's unit = the setup's `support.unitId` and its emitted slot = the census-authenticated radix-body row, its
+   `demandOwners` = the program's formatter-calling units, and admitted only when 3 authenticated the setup.
+5. The wasmgc:host async lane is not a consumer to reuse: `mixed` (captured Promise-result callables, line 846)
+   skips `checkResourceDemand` (line 873) and the ABI contract check (line 467), and `checkMixedDemand` (line 1175)
+   requires wasmgc:host, while the support batch requires wasmgc:standalone
+   (`src/frontend/builtins/prepare-number-format.ts:22`). So no program presents the formatter today; on standalone no
+   async program presents at all; on host a mixed program presents without the census (host lane, being retired).
+   The name `async.native.number-to-string` is historical; a rename touches the hash-pinned declarations (#7358).
+
+### Str2-c result (2026-11-18): the number formatter is admitted; dynamic `+` not started
+
+Step 1 of the brief only (formatter admission). Step 2 (dynamic `+` / `+=`) is not started: step 1 was about L, the
+brief's stop rule applies. Head after this section: see the branch.
+
+Built (`src/compiler/prepared-formatter-census.ts`, new, 143 lines; `prepared-provider-census.ts` +54;
+`ir-program-presentation.ts` unchanged in size, one call per gap):
+
+| Hand-over gap | How it is admitted |
+| --- | --- |
+| 3 census | `nativeRows` runs `nativeSlots` over the formatter setup too (one slot population for both setups, one row per function, the same `supportPopulationJoins`). A kernel / radix-body function keeps the batch's support binding id (`canonicalSupportRole`; a type or global with a kernel role stays setup-derived). The provider: the setup's unique `["number-format","native-to-string"]` role, bound to the adapter's intrinsic reference, answers the adapter's canonical provider (by feature, `formatterJoins`) — no function-name join; the existing provider/answer population comparison then requires it selected exactly once. Demand: `irNumberFormatDemandOwners(program.ir.functions)`; without demand no batch is admitted. New, for both setups: one declaration per completed slot (a second declaration on a Ryu type/global slot was accepted before). |
+| 2 widening | Falls out of 3: the formatter setup's type/global slots (Ryu table type, `inverse`, `powers`) join the census's `NativeSetupSlots`. |
+| 1 ABI | `callableCarried(program, contract, carried)` (census module): a `support-ref` is carried only when it equals the canonical scratch type (data) on a contract whose reference is a canonical kernel's (data). |
+| 4 support batch | `unjoinedSupport(program, native)`: a batch is admitted only beside native slots the census answered; the census (`batchJoins`) requires exactly one batch, kind `number-format-radix-v1`, `sourceId` = runtime ABI anchor, scratch / kernels / implementation declaration = `numberFormatRadixSupportDeclarations(anchor)`, body unit = canonical owner unit = the setup's `support.unitId`, `support.reference` canonical, `support.bindingId` = the radix-body slot's entry, `demandOwners` = the program's formatter-calling units. asyncPlan/asyncRuntime/asyncFunctions checks unchanged. |
+| scratch | The string setup binds its data type twice when it carries `formatterScratch`; `formatterScratchBinding` accepts exactly the canonical scratch reference plus the setup's own derived reference (`{kind:"source", bindingId: owned}`), with `formatterScratch` equal to the canonical scratch type; the slot is the data declaration's (one declaration per slot does the rest). |
+
+Deviations from the hand-over, and why: no kernel/adapter binding-id or name join — the mutation sweep showed the
+emission's support receipt join (slot + key + signature) already refuses every such forgery, so those checks were
+deleted as implied (rule: survivors are deleted when implied); the adapter answers its provider by feature
+instead of by the declaration's name. Gap 4 is checked inside the census (one call in the presentation).
+
+Proofs:
+- Acceptance (`tests/issue-7354-str2c-formatter-census.test.ts`, `tests/issue-7354-str2-to-string.test.ts`; right
+  answer returns, wrong throws, node agrees): typed `String(n)`, `String(v)` over number / -0 / NaN / -Infinity /
+  1e21 / 0.1 / boolean / undefined / null / string, a template literal's number, a loop across iterations, the
+  formatter alone (string layout setup), unused `String(h(v))` still throws from `h`.
+- Number sweep against node: 265 numbers (powers of ten 1e-10..1e25 and ±, 1.5eN, 2^31/2^32/±2^53 ±5, subnormals,
+  max, round-trip decimals, 80 random) × {dynamic `String(v)`, typed `String(n)`}: 0 wrong.
+- Forgeries (census replayed on one compiled program; six categories also end to end through compile(), refusal
+  by name, no exception): for each of the 16 formatter rows (5 kernels, radix body, radix thunk, finalize,
+  to-string, adapter, 6 Ryu) drop the binding, drop the row (end to end), duplicate, add a second row, relabel,
+  move to another key; 8 binding swaps; adapter reference / runtime-bound; support binding / unit / reference;
+  Ryu global mutability; kernel signature; Ryu type/global relabelled as a kernel; scratch: absent, nullability,
+  either binding dropped, derived duplicated, both canonical, derived under another id, on another entry,
+  relabelled, present without a formatter; provider dropped / duplicated / renamed / feature relabelled / replaced;
+  receipts dropped / duplicated / swapped; batch zero / two / kind / source / scratch / kernel dropped / kernels
+  swapped / implementation declaration / implementation unit / no or extra demand owner, a batch on a
+  formatter-free program; `support-ref` on the radix body, another support type / nullability on a kernel, a
+  kernel contract under a foreign reference. 173 tests.
+- Mutation sweep over every new check (52 mutations): 0 survivors after deleting the implied ones listed above
+  (`unjoinedSupport`'s `&& !native` is killed by R's numeric-only program).
+- Prepared bytes of 11 previously accepted programs (numeric, throw, box, strings, dynamic, typeof, typeof
+  comparison, script var, loop, string ternary, `String("ab")`) and one refusal: identical against bc71ae2e9b.
+  A program without a formatter call selects no formatter provider and has no batch (tested).
+- Ordinary pipeline: 100 test262 files of the sample × {JS, standalone}: bytes identical against bc71ae2e9b
+  (the change is Prepared-presentation only).
+- Gates: typecheck, loc, func, coercion, oracle ratchet, dead exports, import cycles, compiler-boundaries inventory
+  (new module registered): pass. Tests green: str2c, Str2, R, prepared entry/runtime, #7188, D1, P, VG, X, T, Str,
+  Str emitter, H, H2, H3, Ty, Perf (each file run alone or in small groups; every run printed vitest's
+  `Timeout calling "onTaskUpdate"` RPC error under machine load, with all tests passing). No intrinsic, provider
+  or resource added, so no pinned closed list changed.
+
+411-row sample: 14 negatives pass; first gap unchanged by design — 282 × "dynamic operation __ir_dyn_add has no
+Prepared intrinsic" (`harness/assert.js:27`, `'"' + value + '"'`), 52 × module binding `obj` not-direct
+(+ `x` 5, `proto` 4, `o` 4, `arr` 3, others ≤2), 26 × `identifier "assert" is not in scope in verifyProperty`,
+2 × switch-case lexical binding, 1 × `unknown class "Test262Error"` (isConstructor).
+
+Not verified: compile time of a prelude-sized test that reaches the formatter (none does until dynamic `+`);
+`--utf8-storage` with the formatter; multi-file (`compileMulti`) formatter programs. The census forgeries replay
+the census on captured inputs (end-to-end for one per category); the census test file takes ~4 min.
+
+Hand-over for step 2 (dynamic `+`): every ToString arm now runs, so `+` can be expanded in
+`dynamic-value-legalization.ts` beside `dyn.to_string` from existing pieces — `js.value.is_string` on both
+operands, `kindChain`/`toStringArm` + `string.concat`, else `js.number.unbox` (ToNumber) + `f64.add` + `js.number.box`
+— needing no new intrinsic, census row or pin. The brief asks for one intrinsic with a native provider instead;
+its body would have to call the formatter, i.e. a dependency of the dynamic-value resources on the formatter setup
+that this census does not authenticate yet. The cost to weigh: the IR expansion inlines two five-arm chains per
+site (282 prelude rows hit `+` sites; measure compile time first).
+
+### Str2-c step 2 (2026-11-18): dynamic `+` and `+=`
+
+**Compile time is the headline finding: it grows roughly quadratically with the number of dynamic `+` sites.**
+Measured in-process through the strict entry, standalone:
+
+| program | compile | module size |
+| --- | --- | --- |
+| 1 site, both operands unknown | 6.0 s | 23,635 B |
+| 5 sites, both unknown | 24.6 s | 24,391 B |
+| 20 sites, both unknown | 235 s | 27,312 B |
+| 1 site, string + unknown | 4.5 s | 23,092 B |
+| 20 sites, string + unknown | 224 s | 26,754 B |
+
+The module grows only about 190 B per site; the time is the emission's per-occurrence string-literal audit. Each
+ToString chain carries four literal occurrences ("true", "false", "undefined", "null"), and each occurrence
+re-authenticates the native string output plan. Profile of 6 unknown + unknown sites (36 s total), top inclusive
+entries:
+
+| ms | entry |
+| --- | --- |
+| 21,094 | `assertNativeStringOutputRequirementsCurrent` |
+| 17,337 | `checkCompletedOwner` / `completedOwner` (`native-string-values.ts`) |
+| 15,304 | `emitStringConst` → `emitPreparedNativeStringLiteral` |
+| 11,773 | `authenticateCensus` |
+| 13,587 self | `hasNativeCollectionState` (`data.ts`) |
+
+Not fixed in this step, as instructed. No sample test compiles past assert.js yet, so no sample test pays this
+cost today. A prelude-sized test that reaches emission will, and will take far longer than 15 s.
+
+Built:
+- The legalization expands the front end's `__ir_dyn_add` (the binary `+` and both `+=` arms) in
+  `src/ir/program/dynamic-value-legalization.ts`, through one builder, `addition`, beside `dyn.to_string`. No new
+  intrinsic, provider or census row.
+- If either operand is a string, the addition concatenates `kindChain`/`toStringArm` (the chain `dyn.to_string`
+  uses, no second copy), then `string.concat` and `coerce.to_externref`. Otherwise it boxes
+  `js.number.unbox(l) + js.number.unbox(r)`.
+- The operands are the call's SSA arguments, so each is evaluated once, left before right.
+- `ADD_ROLE` is a `Record` over `CarrierKind` (concat for string, numeric for every other kind). It ties
+  ToPrimitive-is-identity to the admitted kinds: a slice that admits an object kind must add a row here.
+- Known kinds come from the box that defines an operand (`boxedKind`), or from an earlier concatenation's result,
+  which is a known string. The effect:
+  - a known string side concatenates with no test;
+  - only a side that may hold a string is tested (`js.value.is_string`, `i32.or` over both);
+  - a typed number or boolean side takes only its own ToString arm;
+  - `"a" + v + "b"` formats `v` once and tests nothing.
+- Typed + typed is unchanged. The function's builders moved to `legalizationBuilders` (function-budget split).
+  `IR_DYN_ADD_FN` moved to the shared leaf `src/shared/contracts/dynamic-add-helper.ts`; codegen re-exports it, so
+  there is no new codegen→ir edge.
+
+Proofs (`tests/issue-7354-str2c-dynamic-add.test.ts`; right answer returns, wrong throws, node agrees):
+- **Cross product.** 13 values {1, 0, -0, NaN, -Infinity, 1.5, true, false, undefined, null, "", "a", " 12 "}
+  squared, i.e. 169 pairs, returned from a function. Each result is checked by kind and value, including the sign
+  of zero and NaN.
+- **Other positions.** Every 13th pair at top level over dynamic globals; every 3rd pair as a condition.
+- **Known kinds.** Typed number / string / boolean on either side; the literal + dynamic + literal shape.
+- **Order and loops.** Left-before-right evaluation, once each; the assert.js message shape with « »;
+  `formatIdentityFreeValue`'s string arm; `String(value) + "n"`; `+=` from number to string on a dynamic var;
+  `+=` across loop iterations with the kind changing; nested loops with sibling if/else blocks; switch and
+  try/catch/finally.
+- **Unused results.** An unused sum, an unread local and an unread `+=` still run their operands, and a throwing
+  operand still throws.
+- **Typed + typed.** Keeps its answer.
+- **Pins updated** (own commit): D1's "dynamic +" refusal row is removed (D1's unused `add` helper with it); H's
+  "added to" refusal becomes a run.
+
+Mutations:
+- Killed: ADD_ROLE.string set to numeric; the `i32.or` over both tests dropped; the string-test filter inverted.
+- Survivors, as these are performance shortcuts rather than correctness checks:
+  - the concat-without-test shortcut;
+  - recording a concatenation's result as a known string.
+- Survivor reached by no program today: the `tested.length === 0` sum. Both operands would need a known
+  non-string kind, and the front end always passes one unboxed dynamic operand.
+- Not run: a full sweep over every condition. Each run of this test file costs minutes.
+
+Refusals left, by name:
+- `ir/from-ast: '+' operands not provably both-number or string-concatenable (unprovable/…)` for:
+  - the results of untyped calls (`f(1) + f(2)`);
+  - a dynamic script global written from a function (`g = g + "x"`).
+  Both are pinned in the test file. The front end makes a `+` dynamic only over operands it knows are dynamic.
+- `dyn.member_get` (the next gap, below).
+
+Gates: typecheck, loc, func, coercion, oracle ratchet, dead exports, import cycles, compiler-boundaries inventory —
+pass.
+
+Tests: str2c dynamic-add (all, run in groups), Str2, Ty, Str, Str emitter, H, H2, H3, D1, P, VG, X, T, Perf, R,
+prepared entry/runtime, #7188, #7223 equivalence — pass. `tests/issue-2949-s5-5-dyn-arith.test.ts` "`+` stays
+EXCLUDED…" fails identically on bc71ae2e9b (pre-existing; its `x - "a"` expectation, unrelated).
+
+Bytes: ordinary pipeline is identical on 100 sample files × JS and standalone. Prepared bytes of the 12 programs
+are identical to bc71ae2e9b.
+
+411-row sample (14 negatives pass):
+
+| rows | first gap |
+| --- | --- |
+| 282 | "dynamic operation dyn.member_get has no Prepared intrinsic" — moved off `__ir_dyn_add` and still on `harness/assert.js:27`: the other arm of `typeof JSON !== "undefined" ? JSON.stringify(value) : '"' + value + '"'`, i.e. the `JSON.stringify` read |
+| 52 | module binding `obj` not-direct |
+| 26 | `identifier "assert" is not in scope in verifyProperty` |
+| 5 | `x` not-direct |
+| 4 | `proto` not-direct |
+| 4 | `o` not-direct |
+| 3 | `arr` not-direct |
+| 2 | switch-case lexical binding |
+| 1 | `unknown class "Test262Error"` |
+
+Compile time per row is still small (median 38 ms, max 743 ms), because every row stops in legalization, before
+emission.
+
+Not verified:
+- The full 15-value cross product: 1/0 and "1" were dropped to keep the test runnable.
+- The test file's total runtime: about 12 minutes in groups here, which is too heavy for CI until the literal
+  audit cost is fixed.
+- `--utf8-storage`.
+- `compileMulti`.
+
+## Slice O: Implementation Plan (2026-11-19)
+
+Branch `claude/7354-o` on `claude/7354-perf2` (`503ff2cb4d`). Lead decision of 2026-11-19: option A, in four steps
+O1 to O4 (these are this slice's steps, not #7352's parked ordinary-pipeline slice of the same name).
+
+### What exists, measured on the base
+
+- `var o = { a: 1 }` (script level) refuses: "proven dynamic binding 'o' initializer has no supported carrier".
+- `function f(){ var o = { a: 1 }; return o.a; }` is accepted and then fails at emission: "resolver cannot lower
+  object<a:f64>" (the closed-struct `object.new` the ordinary selector would have refused; the "object literal inside
+  a function throws an emission invariant error" of the P census).
+- `var o; o.x` refuses: "dynamic operation dyn.member_get has no Prepared intrinsic".
+- The source contracts `js.object.{create-default, create-null, create-with-prototype, define-data, define-accessor,
+  define-attributes, get, has}` (`src/ir/runtime/ordinary-object-callables.ts`) are declared, but none materializes:
+  an accessor literal fails with "intrinsic callable js.object.get … needs runtime function materialization"
+  (`program-physical-plan.ts`, the fall-through of the required-callable loop). There is no `set`.
+- The realm (`src/backend/wasmgc/program/native-realm.ts`) is reserved whenever a program has a `js.object.*` use.
+  Its builtin-object kernel (`native-builtin-functions.ts`) already owns the object protocol the source needs:
+  `objectPrototype` (the realm's Object.prototype, initialized on first use), `lookup` / `get` over ordinary
+  `$Object`s and builtin function objects (status + value, accessor entries dispatched through `method0`),
+  `has`; the storage pack owns `createWithPrototype`; the descriptor pack owns `defineData`. With no source
+  closures the realm builds its own closure population (`beginRealm`), so a program without closures needs nothing
+  from slice Fa.
+- `reserveNativeObjectGetResources` and the provenance gaps in `native-object-access-requirements.ts` belong to an
+  older design (static creation provenance per receiver). #3518 has no live claim (released 2026-09-03).
+
+### Target structure
+
+- **One public object family on the realm, one binding arm.** A new resource module
+  `src/backend/wasmgc/resources/native-source-objects.ts` reserves, inside the realm kernel's reservation, one
+  public function per `js.object.*` feature the program uses, with exactly the declared signature. Each is a thin
+  adapter over the kernel/storage/descriptor function that already implements it (bodies in a pure builder module
+  `src/runtime/wasmgc/values/source-object-bodies.ts`):
+  - `create-default` = `createWithPrototype(objectPrototype())` (an explicit Object.prototype link, so the kernel's
+    lookup never meets the "implicit prototype" state);
+  - `define-data` = the descriptor pack's `defineData` (CreateDataProperty on the literal's fresh object);
+  - `get` = kernel `get`, status folded (absent answers `undefined`; status 2/3 cannot occur for a receiver
+    built by `create-default`, and the adapter makes that a trap with a named invariant comment);
+  - O3 adds `set` = OrdinarySet here, beside `get`.
+- **Plan side.** `program-physical-plan.ts`: the required-callable loop's fall-through gains one arm for the
+  ordinary-object family, fed by a binding list built like `nativeInvocationAbiBindings` (one row per distinct
+  call route, resource key `<realm key>:source-object:<feature>`). The two binding builders share one helper
+  (`nativeCallableAbiBindings`) instead of a second copy.
+- **Consumer side.** `program-consumer.ts`: `reconcileInvocationBindings` becomes the one
+  `reconcileNativeBindings(rows, functions, context)` used for invocation and source-object rows.
+- **Front end (O1).** The Prepared resolver's ordinary-object plan (`src/frontend/builtins/prepare-ordinary-object-access.ts`)
+  extends from accessor literals to data-only literals; from-ast's existing `lowerOrdinaryDescriptorLiteral` (renamed
+  `lowerOrdinaryObjectLiteral`, it already lowers data members through `define-data` with mask 191) builds them. No
+  second literal lowering.
+- **Dynamic value (O2).** `dynamic-value-legalization.ts` gains the `object` carrier kind as one row in each
+  `Record<CarrierKind, …>` table (`KIND_TEST`, `TO_STRING_ARM`, `ADD_ROLE`, typeof answer). A box of an ordinary
+  object is the externref itself. Its kind test is a new `js.value.is_object` intrinsic in the dynamic-value
+  family (`dynamic-value-callables.ts`, one row). `+` and ToString on an object refuse by name until
+  ToPrimitive exists (the table row says so).
+- **Member access (O3/O4).** `dyn.member_get` / `dyn.member_set` legalize to one kind chain built by the existing
+  `kindChain`: `undefined`/`null` → TypeError (`emitThrowTypeErrorIfNullish`'s message), object →
+  `js.object.get`/`set`, a primitive kind → refusal by name at legalization ("member read of a primitive needs
+  its wrapper prototype"), recorded as the next gap for slice B / #7350.
+
+### Reused, and what duplicate goes
+
+- Reused: the realm kernel's object protocol, the storage and descriptor packs, the dynamic-value tables and
+  `kindChain`, `lowerOrdinaryDescriptorLiteral`, the invocation binding builder and reconciliation.
+- Removed duplicate: the per-family binding builder/reconciler pair becomes one parameterised pair. The static
+  provenance gaps that the runtime-typed adapters make obsolete are deleted, not bypassed (each named in the step's
+  commit).
+
+### Acceptance
+
+- O1: `function f(){ var o = { a: 1 }; return o.a; } if (f() !== 1) throw 1;` validates and runs through the
+  strict entry; a wrong answer throws; node agrees.
+- O2: `var o = { a: 1 }; if (o.a !== 1) throw 1;` at script level.
+- O3: the ladder's program `var o = { a: 1 }; o.b = 2; if (o.a + o.b !== 3) throw 1;`.
+- O4: `var o; o.x` throws a catchable TypeError; `var s = "a"; s.length` refuses by name.
+- Each step: refusals left pinned by name in `tests/issue-7354-o-objects.test.ts`; mutation checks on every new
+  table row and arm; ordinary-pipeline bytes identical on the 100-file sample × JS and standalone; the 411-row
+  sample tallied before and after.
+- Code quality: one binding arm and one reconciler for every native callable family; one row per kind in each
+  dynamic-value table; no adapter re-implements a kernel algorithm; no file or function over its budget without a
+  dated grant.
+
+## Slice C: Implementation Plan (2026-11-19)
+
+Branch `claude/7354-c`. Base for this plan: `claude/7354-o` at `3adb860fc8` (O's plan, on Perf2). `claude/7354-fa`
+and the realm branch were not on origin when this was written; C1 is built on Fa's head once it is pushed, with O
+merged in.
+
+### Measured
+
+- Census of lane S9 (main `ee3fcdd610`, 8,717 positive ES5 files through the Prepared entry, stand-in harness):
+  "new on a plain function / this" is the first gap of 924 files (`new Test262Error` 606, `this` outside a method
+  264). In the real prelude: property write / read-and-call on a function object 10 / 9 sites, `new` on a plain
+  function / `this` / `instanceof` 10 / 4 / 2.
+- On the base, through the strict entry:
+  - `function F(){ this.a = 1; } var o = new F();` refuses: "'this' reference outside an instance method body (F)".
+    The Prepared caller of `lowerFunctionAstToIr` (`program-source.ts`) passes no `ambientThisStrict`, so
+    `bindEntryThis` never runs.
+  - `function F(){} new F() instanceof F` refuses: `unknown class "F" in <module-init>` (no declaration value yet:
+    Fa).
+  - `function f(){} f.x = 2;` refuses: `identifier "f" is not in scope in <module-init>` (Fa).
+
+### What exists
+
+- The closure struct (`closure-layouts.ts`): `func`, `$arity`, `$bag` (mutable externref, null at birth), captures.
+  Source closures keep `$bag` null; only the realm's builtin function kernel fills it, with `createNull()` and
+  `length` / `name` seeded by `defineDataBody` (`builtin-function-bodies.ts`).
+- `__current_this` (`native-invocation.ts`): reserved by the invocation substrate. `__call_fn_method_N` and the
+  apply-vector body install the receiver and restore it in `catchAll`. Nothing on the native path reads it.
+- The IR front end already has the operations: `dyn.current_this{strict}` (`bindEntryThis`), `dyn.construct`,
+  `dyn.instanceof_fn`, and `function-object-lowering.ts` (member get / set / call on a function value through
+  `dyn.member_get` / `dyn.member_set` and a closure call with the object as receiver). On the Prepared path none of
+  them legalizes: the dynamic-value legalization has no arm for them.
+- The realm kernel: `createWithPrototype`, `objectPrototype`, `get` / `lookup` / `has`, `defineData`, the
+  prototype chain walk (`prototype-chain-bodies.ts`). It has no `[[Construct]]` for source functions, no
+  OrdinaryHasInstance and no per-function `prototype` / `constructor` setup (its `construct` slot always throws).
+- Legacy keeps `F.prototype` in a per-function module global (`fnctorPrototypeObject`) and a closure-to-prototype
+  side table. **Not reused**: the decided representation keeps it in the bag, as an ordinary property.
+
+### Representation (decided in this issue, restated)
+
+A function object is the source closure struct. Its own properties live in a native ordinary object held in
+`$bag`, whose `[[Prototype]]` is the realm's `Function.prototype`. A source function's bag is filled once, when its
+closure is created as a value (the Fa site that makes a declaration or expression into a value): `length`, `name`,
+then for a constructible function `prototype`, a fresh ordinary object whose own `constructor` is the closure. This
+is the spec's order (OrdinaryFunctionCreate, SetFunctionName, MakeConstructor), so own-key order needs no special
+case. `this` is `__current_this`; `new` is create-with-prototype plus the existing closure call.
+
+### Target structure
+
+- **Contracts, one family.** `src/ir/runtime/function-object-callables.ts`, the sibling of
+  `ordinary-object-callables.ts`, in the same shape (one table of `js.function.*` features, the same standalone
+  wasmgc admission):
+  - `js.function.init(closure, name, length, flags) -> void` (fills the bag; `flags` = constructible);
+  - `js.function.construct:N(callee, ...N) -> EXT`, named and parsed like `js.closure.call:N` (one helper pair
+    in `closure-invocation-callables.ts` becomes parameterised by prefix, not copied);
+  - `js.function.has-instance(value, callee) -> BOOL` (OrdinaryHasInstance);
+  - `js.function.this(strict) -> EXT`, the legalization of `dyn.current_this`.
+- **Bodies, pure builders.** `src/runtime/wasmgc/values/source-function-object-bodies.ts`, adapters over the
+  kernel only:
+  - `init` = `createWithPrototype(functionPrototype)`, then the builtin kernel's `length` / `name` seeding (that
+    body is lifted to take the name and length as operands instead of a second copy), then MakeConstructor with
+    `defineData` (`constructor`: writable, non-enumerable, configurable; `prototype`: writable,
+    non-enumerable, non-configurable);
+  - `construct:N` = IsConstructor (closure kind and the constructible bit), `get(F, "prototype")`, fall back to
+    `objectPrototype` when that is not an object, `createWithPrototype`, then the existing `js.closure.call:N`
+    with the new object as receiver; an object result replaces it. One builder parameterised by N, generated next
+    to the call:N builder;
+  - `has-instance` = the TypeErrors for a non-callable F and a non-object `F.prototype`, then the kernel's
+    prototype chain walk;
+  - `this` = `global.get __current_this`; the sloppy arm maps `undefined` / `null` to the realm global object
+    (open question below).
+- **Plan and consumer side.** No new arm: O's shared `nativeCallableAbiBindings` and the one
+  `reconcileNativeBindings` take the function family as one more row (resource key
+  `<realm key>:source-function:<feature>`). `__current_this` is already reserved by the invocation substrate;
+  the `this` body asks for it there.
+- **Dynamic value.** `dynamic-value-legalization.ts`: the `function` carrier kind is one row in each
+  `Record<CarrierKind, …>` table (Fa adds the box; if Fa does not, C adds the row: kind test
+  `js.value.is_callable`, `typeof` answer "function"). O3/O4's member chain gains the `function` row:
+  get / set on `js.function.object(v)` with `v` as receiver. `dyn.construct`, `dyn.instanceof_fn` and
+  `dyn.current_this` each get one legalization arm onto the family above.
+- **Front end.** `program-source.ts` passes `ambientThisStrict` (from `irFunctionCodeStrictness`'s source rule)
+  for every plain function declaration and expression, so the existing `bindEntryThis` runs. The ordinary
+  pipeline's self-guarded-constructor gates stay as they are (its bytes stay identical); the Prepared path asks
+  only "is the callee a function value", which Fa answers.
+
+### Plan change (2026-11-19, approved by the lead)
+
+The realm kernel routes every property operation (`lookup`, `get`, `findOwn`, `getPrototypeOf`, ...) through
+`match`, which recognises only builtin function objects; a source closure falls through to status 3 (unknown).
+So a source closure becomes a kernel function object instead of gaining its own accessor: `match` gets one
+source-closure arm (`ref.test` of the realm's closure root), whose bag is the closure's `$bag` and whose
+`[[Prototype]]` is the realm's `Function.prototype`. Member get / set on a function value then is the existing
+`js.object.get` / `set` with the closure as the object, and `js.function.object` is dropped. The `function` carrier
+kind (its `typeof`, ToString, `+` and kind-test rows) is Fa's (PR #7309), which admits function values into the
+carrier; C builds on it.
+
+### Order
+
+- **C1**: `new F(a)` with `this.x = a` in F, `o.constructor === F`, `o instanceof F`.
+  Proving: `function F(a){ this.a = a; } var o = new F(1); if (o.a !== 1 || o.constructor !== F || !(o instanceof F)) throw 1;`
+  and `sta.js`'s `Test262Error` with `new Test262Error("m").message === "m"`. Depends on Fa (F as a value) and O1 to
+  O3 (`this.a = a` is a member set on an object).
+- **C2**: get / set / call on a function object: `assert.x = function(){ return 1; }; if (assert.x() !== 1) throw 1;`.
+  Depends on Fb (the call through the read value with `assert` as receiver).
+- **C3**: `F.prototype.m = function(){ return this.a; }; new F(2).m() === 2`. C1 + C2 composed; no new mechanism is
+  expected, and a gap found here is named, not patched in a call site.
+- **C4**: `F.name === "F"`, `F.length === 2`, and the attributes (`delete F.length`, non-writable `name`).
+
+### Reused, and what duplicate goes
+
+- Reused: the closure struct and its `$bag`; the invocation substrate's `__current_this` and the call:N /
+  apply-vector dispatch; the realm kernel's object protocol and prototype walk; the builtin kernel's
+  `length` / `name` seeding; the IR operations `dyn.current_this`, `dyn.construct`, `dyn.instanceof_fn` and
+  `function-object-lowering.ts`; O's binding arm, reconciler and kind chain.
+- Removed duplicate: the `js.closure.call:N` name helpers become one prefix-parameterised pair shared with
+  `js.function.construct:N`; the bag seeding of builtin and source functions becomes one body.
+
+### Acceptance
+
+- Each step's proving program validates and runs through the strict Prepared entry; a wrong answer throws; node
+  agrees. Tests in `tests/issue-7354-c-function-objects.test.ts`, with the refusals still left pinned by name
+  (e.g. `new` on a non-constructor value throws a TypeError; `instanceof` with a non-object `prototype`).
+- Mutation checks on every new arm and table row (removing the arm turns its test red).
+- Ordinary-pipeline bytes identical on the 100-file sample, default and standalone, against the base.
+- After each step, S9's stand-in census on the files that carried the label: where they stop next.
+- **Code quality:** one contract family, one bodies module, no second binding arm or reconciler; one row per
+  kind in each dynamic-value table; `construct:N` and `call:N` share their naming and their builder pattern; no
+  adapter re-implements a kernel algorithm; no file or function over its budget without a dated grant.
+
+### Open questions
+
+1. A sloppy function's `this` with an `undefined` receiver is the global object. The native realm has none today
+   (S5 / S10). Until it has, C1's sloppy arm throws a named internal error instead of returning `undefined`.
+   `Test262Error` reads `this` only under `new`, so C1's proof does not reach that arm.
+2. A function value is filled by `js.function.init` where Fa makes it a value. If Fa creates a value in more than
+   one place, the call goes into Fa's one helper, not into each site.

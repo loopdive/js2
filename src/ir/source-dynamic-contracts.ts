@@ -37,6 +37,8 @@ import {
   legalizeDynamicValues,
   refuseUnadmittedThrows,
 } from "./program/dynamic-value-legalization.js";
+import { retargetNumberToString } from "./program/number-to-string-target.js";
+import type { AllocSiteRegistry } from "./analysis/alloc-registry.js";
 import type { RuntimeManifestPolicy } from "../runtime/contracts/provider-policy.js";
 import type { ValType } from "../wasm/model/instructions.js";
 import { functionBodyAlwaysTerminates, irFunctionBodyReturnsValue } from "./select.js";
@@ -287,7 +289,7 @@ export function programDynamicContracts(
   checker: ts.TypeChecker,
   policy: SourcePolicy,
   sourceFiles: readonly ts.SourceFile[],
-  allocations: Parameters<typeof legalizeDynamicAllocations>[1],
+  allocations: AllocSiteRegistry,
 ): ProgramDynamicContracts {
   const provenance = sourceDynamicProvenance(
     checker,
@@ -445,7 +447,7 @@ function legalizeSourceDynamicValues(
   globals: readonly SourceGlobal[],
   declaration: ts.FunctionDeclaration | readonly ts.Statement[],
   functions: readonly IrFunction[],
-  allocations: Parameters<typeof legalizeDynamicAllocations>[1],
+  allocations: AllocSiteRegistry,
   carries: Carries,
 ): readonly IrFunction[] {
   const roots = "kind" in declaration ? [declaration] : declaration;
@@ -458,15 +460,17 @@ function legalizeSourceDynamicValues(
         signature.returnType?.kind === "dynamic" || signature.params.some((type) => type.kind === "dynamic"),
     );
   if (!nativeDynamicLane(policy)) return functions;
-  let legalized: readonly IrFunction[] = functions;
+  // (#7354 Str2) Number::toString has one binding on this lane, typed or dynamic (number-to-string-target.ts).
+  const retargeted = functions.map(retargetNumberToString);
+  let legalized: readonly IrFunction[] = retargeted;
   try {
-    if (contracted) legalized = functions.map(legalizeDynamicValues);
-    functions.forEach(refuseUnadmittedThrows);
+    if (contracted) legalized = retargeted.map((fn) => legalizeDynamicValues(fn, allocations));
+    retargeted.forEach(refuseUnadmittedThrows);
   } catch (error) {
     if (!(error instanceof DynamicValueGap)) throw error;
     throw new IrUnsupportedError("type-resolution-unsupported", "build", error.message);
   }
-  if (legalized.some((fn, index) => fn !== functions[index])) refuseImplicitDynamicFlows(checker, roots, carries);
+  if (legalized.some((fn, index) => fn !== retargeted[index])) refuseImplicitDynamicFlows(checker, roots, carries);
   legalizeDynamicAllocations(legalized, allocations);
   return legalized;
 }

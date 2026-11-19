@@ -2,8 +2,8 @@
 
 /**
  * (#7354 D1) The dynamic value's own runtime functions on the Prepared
- * standalone lane: strict equality, ToBoolean (#7354 T), the `undefined` value
- * and the `undefined` probe. Every body is a shared pure builder; the number and Boolean carrier
+ * standalone lane: strict equality, ToBoolean (#7354 T), the `undefined` value,
+ * the `undefined` probe and (#7354 Ty) the string `typeof` test. Every body is a shared pure builder; the number and Boolean carrier
  * functions they call are the issued primitive owners', never a lookalike.
  */
 import type { PhysicalModuleReservations, FunctionReservation } from "../../../wasm/physical/module-reservations.js";
@@ -11,11 +11,20 @@ import type { IrInstrIntrinsic } from "../../../ir/core/nodes.js";
 import type { NativeValueResourcePlan } from "../../../ir/program/native-value-resources.js";
 import { buildObjectSameValueBody } from "../../../runtime/wasmgc/values/object-same-value-body.js";
 import {
+  buildExternRefTestBody,
   buildIsUndefinedBody,
   buildToBooleanBody,
   buildToBooleanLocals,
 } from "../../../runtime/wasmgc/values/primitive-layouts.js";
-import type { NativeStringValueDeclaration } from "../../../runtime/wasmgc/values/native-resource-declaration-types.js";
+import type {
+  NativeDeclaredValType,
+  NativeStringValueDeclaration,
+} from "../../../runtime/wasmgc/values/native-resource-declaration-types.js";
+import {
+  nativeStringLiteralReservationInventory,
+  nativeStringTypeKeys,
+  type NativeStringLiteralReservations,
+} from "./native-string-literals.js";
 import { UNDEF_F64_BITS } from "../../../shared/contracts/f64-value-markers.js";
 import {
   executeNativeResourceRecipe,
@@ -38,6 +47,10 @@ export interface NativeDynamicValueSelection {
   readonly toBoolean: boolean;
   readonly undefinedValue: boolean;
   readonly isUndefined: boolean;
+  /** (#7354 Ty) `typeof v === "string"`. */
+  readonly isString: boolean;
+  /** (#7354 Str2) The native string of a string-kinded value (ToString's string arm). */
+  readonly asString: boolean;
 }
 
 /**
@@ -61,6 +74,8 @@ export function selectNativeDynamicValues(
         instruction.provider?.kind === "callable" &&
         instruction.provider.target.binding.kind === "runtime",
     ),
+    isString: has("js.value.is_string"),
+    asString: has("js.value.as_string"),
   };
   return Object.values(selection).some(Boolean) ? selection : undefined;
 }
@@ -72,16 +87,28 @@ const ROWS = [
   ["toBoolean", "to-boolean", "__is_truthy", { params: [EXTERNREF], results: [I32] }],
   ["undefinedValue", "undefined-value", "__js_undefined", { params: [], results: [EXTERNREF] }],
   ["isUndefined", "is-undefined", "__extern_is_undefined", { params: [EXTERNREF], results: [I32] }],
+  ["isString", "typeof-string", "__typeof_string", { params: [EXTERNREF], results: [I32] }],
+  // (#7354 Str2) The result is the string owner's AnyString type, resolved by key.
+  ["asString", "as-string", "__js_as_string", { params: [EXTERNREF], results: ["any-string"] }],
 ] as const;
 
-export function declareNativeDynamicValueResources(key: string, selection: NativeDynamicValueSelection) {
+/** `stringKey` names the native string owner whose AnyString type `as_string` answers. */
+export function declareNativeDynamicValueResources(
+  key: string,
+  selection: NativeDynamicValueSelection,
+  stringKey: string,
+) {
+  const anyString: NativeDeclaredValType = { kind: "ref", typeKey: nativeStringTypeKeys(stringKey).any };
   const declarations: NativeStringValueDeclaration[] = ROWS.filter(([field]) => selection[field]).map(
     ([, role, name, signature]) => ({
       key: key + ":" + role,
       role: ["values", role],
       space: "function",
       name,
-      signature: { params: [...signature.params], results: [...signature.results] },
+      signature: {
+        params: [...signature.params],
+        results: signature.results.map((type) => (type === "any-string" ? anyString : type)),
+      },
     }),
   );
   return freezeNativeResourceRecipe({
@@ -99,6 +126,8 @@ export interface NativeDynamicValueReservations {
   readonly toBoolean?: FunctionReservation;
   readonly undefinedValue?: FunctionReservation;
   readonly isUndefined?: FunctionReservation;
+  readonly isString?: FunctionReservation;
+  readonly asString?: FunctionReservation;
 }
 /** (#7354 Str) The issued string resources strict equality's string arm calls. */
 export interface NativeDynamicValueStrings {
@@ -120,6 +149,12 @@ function fail(detail: string): never {
   throw new Error("native dynamic value resources: " + detail);
 }
 
+/** The dynamic-value lane's value resources always depend on the native string owner (native-string-values.ts). */
+function carrierStringPack(dependencies: NativeValueDependencies): NativeStringLiteralReservations {
+  if (dependencies.strings.kind !== "native-string") fail("the dynamic value requires the native string owner");
+  return dependencies.strings.stringPack;
+}
+
 /** Strict equality reads Boolean payloads, so it requires the issued Boolean predicates. */
 export function reserveNativeDynamicValueResources(
   tx: PhysicalModuleReservations,
@@ -134,7 +169,13 @@ export function reserveNativeDynamicValueResources(
   if (!key || tx.state !== "reserving") fail("invalid reservation phase/key");
   if (selection.strictEq && !booleans) fail("strict equality requires the Boolean predicates");
   requireNativeValueReservations(tx, values, requirements, dependencies);
-  const records = executeNativeResourceRecipe(tx, declareNativeDynamicValueResources(key, selection));
+  const stringPack = carrierStringPack(dependencies);
+  const { typePack } = nativeStringLiteralReservationInventory(tx, stringPack);
+  const records = executeNativeResourceRecipe(
+    tx,
+    declareNativeDynamicValueResources(key, selection, typePack.key),
+    new Map(typePack.types.map((token) => [token.key, token])),
+  );
   const pack: NativeDynamicValueReservations = Object.freeze(
     Object.fromEntries(
       ROWS.filter(([field]) => selection[field]).map(([field, role]) => [
@@ -208,6 +249,14 @@ export function fillNativeDynamicValueResources(
         1,
         UNDEF_F64_BITS,
       ),
+    });
+  const anyStrTypeIdx = carrierStringPack(owner.dependencies).layout.anyStrTypeIdx;
+  if (pack.isString) tx.fillFunction(pack.isString, { locals: [], body: buildExternRefTestBody(anyStrTypeIdx) });
+  // Called only on a value `is_string` answered: the cast cannot fail.
+  if (pack.asString)
+    tx.fillFunction(pack.asString, {
+      locals: [],
+      body: [{ op: "local.get", index: 0 }, { op: "any.convert_extern" }, { op: "ref.cast", typeIdx: anyStrTypeIdx }],
     });
   owner.filled = true;
 }

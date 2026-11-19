@@ -76,8 +76,9 @@ async function expectLikeNode(program: (right: boolean) => string, warnings: rea
   expect(await run(program(false), warnings as string[])).toBe("threw");
 }
 
-const VALUES = ["1", "0", "-0", "0 / 0", "1 / 0", "true", "false", "undefined", "null", '""', '"a"'] as const;
-const LITERALS = ["number", "boolean", "undefined", "object", "function", "symbol", "bigint"] as const;
+// (#7354 Str2 merge) Slice Str admitted native strings into the carrier, so `typeof v === "string"` is a real tag test.
+const VALUES = ["1", "0", "-0", "0 / 0", "1 / 0", "true", "false", "undefined", "null", "''", "'a'"] as const;
+const LITERALS = ["number", "boolean", "undefined", "object", "function", "string", "symbol", "bigint"] as const;
 const OPERATORS = ["===", "!==", "==", "!="] as const;
 const answer = (expression: string): string => String(new Function(`return ${expression};`)());
 
@@ -116,20 +117,9 @@ describe("#7354 Ty — typeof comparisons on the Prepared dynamic value", () => 
       await expectLikeNode((right) =>
         [...functions, "var bad = 0;", ...checks(right), "if (bad !== 0) throw bad;"].join("\n"),
       );
-      // Four compiles of 176 checks each: ~15 s alone, past the default timeout on a loaded machine.
+      // (#7354 Str2 merge) Two compiles of ~180 checks with string values: about 15 s alone, more under load.
     },
     120_000,
-  );
-
-  // (#7354 Str) Strings are in the carrier, so "string" is an admitted kind: its test refuses instead of answering
-  // false, in both operand orders and under every operator.
-  it.each(OPERATORS.flatMap((op) => [`typeof v ${op} "string"`, `"string" ${op} typeof v`]))(
-    "refuses %s by name",
-    async (comparison) => {
-      expect(await refusal(`function f(v) { return ${comparison}; }\nf(1);`)).toContain(
-        "dynamic operation typeof test for string has no Prepared intrinsic",
-      );
-    },
   );
 
   // TypeScript warns (the literal is outside `typeof`'s answers) but the program compiles; JavaScript says false.
@@ -176,6 +166,8 @@ describe("#7354 Ty — typeof comparisons on the Prepared dynamic value", () => 
       "t(true) * 100 + t(null) * 10 + t(undefined)",
       "123",
     ],
+    // (#7354 Str2 merge) No native string pack: no string can reach the carrier, the string test is constant false.
+    ["a string test with no string in the program", 'function t(v) { return typeof v === "string"; }', "t(1)", "false"],
     ["a caught null", 'var r = 0;\ntry { throw null; } catch (e) { if (typeof e === "object") r = 1; }', "r", "1"],
     // The number test alone (no box anywhere) still selects the value resources it binds.
     [
@@ -189,22 +181,8 @@ describe("#7354 Ty — typeof comparisons on the Prepared dynamic value", () => 
     await expectLikeNode((right) => `${declarations}\nif (${probe} !== ${right ? expected : wrong}) throw 1;`);
   });
 
-  it.each([
-    ["an unused typeof", "function f(v) { var s = typeof v; return 1; }\nf(1);"],
-    ["a typeof statement", "function f(v) { typeof v; return 1; }\nf(1);"],
-    ["a returned typeof", "function f(v) { return typeof v; }\nf(1);"],
-    ["a non-literal comparison", "function f(v, w) { return typeof v === w; }\nf(1, 2);"],
-    ["two typeofs compared", "function f(v, w) { return typeof v === typeof w; }\nf(1, 2);"],
-    [
-      "a typeof also compared with a non-literal",
-      'function f(v, w) { var t = typeof v; return t === "number" && t === w; }\nf(1, 2);',
-    ],
-    ["a typeof also returned", 'function f(v) { var t = typeof v; if (t === "number") {} return t; }\nf(1);'],
-    ["a template literal operand", 'function f(v) { return `${typeof v}` === "number"; }\nf(1);'],
-    ["a concatenation", 'function f(v) { return typeof v + "" === "number"; }\nf(1);'],
-  ])("refuses %s by name", async (_label, source) => {
-    expect(await refusal(source)).toContain("dynamic operation dyn.typeof has no Prepared intrinsic");
-  });
+  // (#7354 Str2) A `typeof` read any other way (assigned, returned, concatenated, compared with a non-literal or with
+  // another `typeof`) is its answer string now: tests/issue-7354-str2-to-string.test.ts proves each position.
 
   // The string dispatch compares only literal tests; any other case test (first, last, only, or a call) refuses by
   // name instead of being skipped — never compared, its expression never evaluated (a wrong answer, review round 1).

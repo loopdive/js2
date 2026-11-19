@@ -1,6 +1,8 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
 import { ts } from "../ts-api.js";
+import { functionLikeReferencesOwnThis } from "../codegen/helpers/body-references-own-this.js";
+import { isStrictContext } from "../codegen/helpers/is-strict-function.js";
 import { sourceBooleanAnyResult, assertSourceBooleanAnyReturns } from "../frontend/boolean-return-boundary.js";
 import { preparedIrProgramCallableResults } from "./program-callable-contract.js";
 import { prepareSourceClosureInvocations } from "./source-closure-invocation.js";
@@ -55,7 +57,7 @@ import { postStartupCallableUnits } from "./program-startup-proof.js";
 import { makeIrIdentityImportedFunctionResolver } from "./imported-functions.js";
 import { makeIrPromiseDelayResolver } from "./promise-delay.js";
 import { prepareOrdinaryObjectAccessResolver } from "../frontend/builtins/prepare-ordinary-object-access.js";
-import { prepareNumberConversionResolver } from "../frontend/builtins/prepare-number-conversion.js";
+import { prepareConversionResolvers } from "../frontend/builtins/prepare-number-conversion.js";
 import { prepareRealmEvalResolver } from "../frontend/eval/realm-eval.js";
 import { prepareObjectCreateResolver } from "../frontend/builtins/prepare-object-create.js";
 import { prepareNativeStringOutputResolver } from "../frontend/builtins/prepare-string-output.js";
@@ -1427,7 +1429,7 @@ function prepareSourceBuiltinResolvers(
   roots: ts.FunctionDeclaration | readonly ts.Statement[],
 ) {
   return {
-    ...prepareNumberConversionResolver(input.checker, input.sourceFiles, roots),
+    ...prepareConversionResolvers(input.checker, input.sourceFiles, roots),
     ...prepareRealmEvalResolver(input.checker, input.sourceFiles),
     ...prepareOrdinaryObjectAccessResolver(input.checker, input.sourceFiles, roots),
     ...(input.policy.target === "standalone" && input.policy.backend === "wasmgc"
@@ -1547,6 +1549,22 @@ function prepareStartupDirectCalls(
     ) ?? [])
       visit(statement);
   }
+}
+
+/**
+ * The lowering options of a function unit: its contracted signature and (#7354 C) OrdinaryCallBindThis, which binds
+ * `this` once at entry in a body that reads its own `this`.
+ */
+function functionUnitLowering(
+  declaration: ts.FunctionDeclaration,
+  paramTypeOverrides: readonly IrType[],
+  returnTypeOverride: IrType | null,
+) {
+  return {
+    paramTypeOverrides,
+    returnTypeOverride,
+    ...(functionLikeReferencesOwnThis(declaration) ? { ambientThisStrict: isStrictContext(declaration) } : {}),
+  };
 }
 
 export function prepareIrProgramSources(
@@ -1789,7 +1807,7 @@ export function prepareIrProgramSources(
                   .map((global) => [global.binding.globalName, { ...global.binding, ownerUnitId: unit.id }]),
               ),
             }
-          : { paramTypeOverrides: signature!.params, returnTypeOverride: bodyResults.get(unit.id)! }),
+          : functionUnitLowering(declaration, signature!.params, bodyResults.get(unit.id)!)),
         numericLocalScalarForDecl: (declaration) =>
           checkerScalar(input.checker, declaration)?.kind === "val" &&
           (input.checker.getTypeAtLocation(declaration).flags & ts.TypeFlags.NumberLike) !== 0

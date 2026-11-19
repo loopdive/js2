@@ -2339,6 +2339,11 @@
       "layer": "foundation"
     },
     {
+      "path": "src/shared/contracts/dynamic-add-helper.ts",
+      "state": "clean",
+      "layer": "foundation"
+    },
+    {
       "path": "src/ir/analysis/contracts/allocations.ts",
       "state": "clean",
       "layer": "ir-analysis"
@@ -17053,6 +17058,14 @@
       "nextBoundary": "Prepared presentation runtime census (#7354 R): the presentation's runtime policy and the authentication of each selected provider against the completed physical plan; moves with ir-program-presentation.ts at compiler-layer activation."
     },
     {
+      "path": "src/compiler/prepared-formatter-census.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "compiler",
+      "owner": "7354",
+      "nextBoundary": "The number formatter's part of the Prepared provider census (#7354 Str2-c): joins the formatter setup, scratch, adapter provider and runtime-support batch to their canonical declarations; moves with prepared-provider-census.ts at compiler-layer activation."
+    },
+    {
       "path": "src/ir/source-dynamic-contracts.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
@@ -17078,6 +17091,11 @@
     },
     {
       "path": "src/ir/program/dynamic-value-legalization.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
+      "path": "src/ir/program/number-to-string-target.ts",
       "state": "clean",
       "layer": "ir-program"
     },

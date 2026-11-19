@@ -9,6 +9,7 @@ import {
   ensureAnyToExternHelper,
   ensureExternStrictEqHelper,
 } from "./any-helpers.js";
+import { IR_DYN_ADD_FN } from "../shared/contracts/dynamic-add-helper.js";
 import { ensureExternLooseEqHelper } from "./helpers/loose-equality-to-primitive.js";
 import type { CodegenContext } from "./context/types.js";
 import { jsValueBoundary } from "./context/types.js";
@@ -29,7 +30,7 @@ import {
   IR_DYN_CALL_VALUE_FN,
 } from "../shared/contracts/dynamic-call-helpers.js";
 
-export const IR_DYN_ADD_FN = "__ir_dyn_add";
+export { IR_DYN_ADD_FN };
 export const IR_DYN_LT_FN = "__ir_dyn_lt";
 export const IR_DYN_LE_FN = "__ir_dyn_le";
 export const IR_DYN_GT_FN = "__ir_dyn_gt";
