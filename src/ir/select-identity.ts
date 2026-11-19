@@ -40,7 +40,7 @@ import {
   type IrFnctorArgumentProjectionAuthority,
 } from "./fnctor-argument-projection.js";
 import { claimPreparedTimerShims } from "./injected-timer-shim.js";
-import { demoteOnLegacyCallerPolicy } from "./legacy-caller-policy.js";
+import { bridgeLegacyCalleePolicy, demoteOnLegacyCallerPolicy } from "./legacy-caller-policy.js";
 import {
   exactPreparedAccessorSyntaxKey,
   isBoundedPreparedAccessorClass,
@@ -107,6 +107,7 @@ export interface IrIdentityModuleInitAssessment extends IrIdentityUnitLabel {
   readonly stmtCount: number;
   readonly reason: IrFallbackReason | null;
   readonly detail?: string;
+  readonly legacyCallees?: ReadonlySet<IrUnitId>;
 }
 
 export interface IrIdentitySelection {
@@ -116,6 +117,12 @@ export interface IrIdentitySelection {
   readonly classMembers?: ReadonlyMap<IrUnitId, IrIdentityClassMemberClaim>;
   readonly fallbacks?: ReadonlyMap<IrUnitId, IrIdentityFallback>;
   readonly localCallees?: ReadonlyMap<IrUnitId, ReadonlySet<IrUnitId>>;
+  /**
+   * (#7333) Unclaimed callees that claimed units (module-init included) call
+   * through their legacy body; each carries the certified ABI that admits the
+   * edge. Absent when none.
+   */
+  readonly legacyCallees?: ReadonlySet<IrUnitId>;
   /** Exact admitted fnctor allocation sites owned by claimed function units. */
   readonly fnctorAdmissions?: ReadonlyMap<IrUnitId, ReadonlyArray<IrFnctorAdmission>>;
   /** Dormant exact call-argument evidence collected from the complete function population. */
@@ -360,6 +367,28 @@ function legacyCallerAbiIsProjectedForIdentity(
 ): boolean {
   const declaration = functions.find(({ unit }) => unit.unitId === unitId)?.declaration;
   return declaration !== undefined && options.legacyCallerAbiIsProjected?.(declaration) === true;
+}
+
+/** (#7333) An unclaimed callee an IR caller calls through its legacy body. */
+function legacyCalleeIsBridged(
+  options: IrIdentitySelectionOptions,
+  functions: ReadonlyArray<IndexedFunction>,
+  unitId: IrUnitId,
+): boolean {
+  return bridgeLegacyCalleePolicy(options) && legacyCallerAbiIsProjectedForIdentity(options, functions, unitId);
+}
+
+/** (#7333) The unclaimed callees the claimed units, module-init included, call. */
+function collectLegacyCallees(
+  claimed: ReadonlyMap<IrUnitId, unknown>,
+  localCallees: ReadonlyMap<IrUnitId, ReadonlySet<IrUnitId>> | undefined,
+  moduleInit: IrIdentityModuleInitAssessment | undefined,
+): Set<IrUnitId> {
+  const legacyCallees = new Set(moduleInit?.legacyCallees);
+  for (const unitId of claimed.keys()) {
+    for (const callee of localCallees?.get(unitId) ?? []) if (!claimed.has(callee)) legacyCallees.add(callee);
+  }
+  return legacyCallees;
 }
 
 interface IdentityCallGraph {
@@ -742,12 +771,21 @@ function assessIdentityModuleInit(
   for (const [name, candidates] of functionsByName) {
     if (candidates.length === 1 && claimed.has(candidates[0]!.unit.unitId)) claimedNames.add(name);
   }
-  const assessment = assessModuleInit(sourceFile, claimedNames, uniqueFunctions, localClasses, helperTypes);
+  const { legacyCallees, ...assessment } = assessModuleInit(
+    sourceFile,
+    claimedNames,
+    uniqueFunctions,
+    localClasses,
+    helperTypes,
+  );
   return {
     unitId: moduleInitId,
     displayName: terminal.displayName,
     legacyMatchName: terminal.legacyMatchName,
     ...assessment,
+    ...(legacyCallees && assessment.reason === null
+      ? { legacyCallees: new Set([...legacyCallees].map((name) => functionsByName.get(name)![0]!.unit.unitId)) }
+      : {}),
   };
 }
 
@@ -1477,7 +1515,9 @@ export function planIrCompilationByIdentity(
           demoteOnLegacyCaller &&
           !legacyCallerAbiIsProjected &&
           [...(graph.callers.get(unitId) ?? [])].some((caller) => !claimed.has(caller));
-        const unsafeCallee = [...(graph.callees.get(unitId) ?? [])].some((callee) => !claimed.has(callee));
+        const unsafeCallee = [...(graph.callees.get(unitId) ?? [])].some(
+          (callee) => !claimed.has(callee) && !legacyCalleeIsBridged(options, functions, callee),
+        );
         if (!unsafeCaller && !unsafeCallee) continue;
         claimed.delete(unitId);
         if (trackFallbacks) reasons.set(unitId, "call-graph-closure");
@@ -1511,6 +1551,8 @@ export function planIrCompilationByIdentity(
     helperTypes,
   );
 
+  const legacyCallees = collectLegacyCallees(claimed, localCallees, moduleInit);
+
   const fallbacks = trackFallbacks
     ? new Map(
         [...reasons].map(([unitId, reason]) => {
@@ -1531,6 +1573,7 @@ export function planIrCompilationByIdentity(
     ...(classClaims.size ? { classMembers: classClaims } : {}),
     ...(fallbacks ? { fallbacks } : {}),
     ...(localCallees ? { localCallees } : {}),
+    ...(legacyCallees.size > 0 ? { legacyCallees } : {}),
     ...(fnctorAdmissions ? { fnctorAdmissions } : {}),
     ...(fnctorArgumentProjections ? { fnctorArgumentProjections } : {}),
     ...(countedStringAppendPlans ? { countedStringAppendPlans } : {}),

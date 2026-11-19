@@ -43,3 +43,12 @@ export function jsHostExternsEnabled(options: HostExternsOptions | undefined): b
 export function demoteOnLegacyCallerPolicy(options: HostExternsOptions | undefined): boolean {
   return options?.jsHostExterns !== true;
 }
+
+/**
+ * (#7333) May an IR caller call an unclaimed callee through its legacy body?
+ * The same lanes and the same per-declaration `legacyCallerAbiIsProjected`
+ * certificate as the caller direction; the JS-host lane keeps its output.
+ */
+export function bridgeLegacyCalleePolicy(options: HostExternsOptions | undefined): boolean {
+  return options?.jsHostExterns !== true;
+}

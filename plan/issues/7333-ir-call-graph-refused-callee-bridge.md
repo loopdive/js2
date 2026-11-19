@@ -1,7 +1,7 @@
 ---
 id: 7333
 title: "IR: a call-graph-closure caller should call a selection-refused callee as it calls a withdrawn one"
-status: ready
+status: in-progress
 sprint: Backlog
 created: 2026-11-07
 updated: 2026-11-07
@@ -13,6 +13,20 @@ task_type: implementation
 area: ir
 goal: ir-full-coverage
 related: [7324, 7147]
+loc-budget-allow:
+  # 2026-11-19 (S8, WIP) — the callee-direction bridge: select.ts +16 and
+  #   select-identity.ts +26 (one shared predicate at three gates, and the
+  #   published legacyCallees set); codegen/index.ts +36 (the override
+  #   computation moves into resolveIrFunctionOverride, now shared by claimed
+  #   units and legacy callees). Re-measured before the PR leaves WIP.
+  - src/ir/select.ts
+  - src/ir/select-identity.ts
+  - src/codegen/index.ts
+func-budget-allow:
+  # 2026-11-19 (S8, WIP) — planIrCompilationByIdentity +5: the callee test of
+  #   the closure loop and the published legacyCallees field; the set itself
+  #   is built by collectLegacyCallees.
+  - src/ir/select-identity.ts::planIrCompilationByIdentity
 ---
 
 # #7333 — a selection-refused callee should not cascade to its IR callers
@@ -73,3 +87,44 @@ refused unit, not its callers.
       identical wherever the route set is unchanged.
 - [ ] The rule lives in the call-graph gate or the callee-resolution seam it
       shares with from-ast. There is no per-shape special case.
+
+## Implementation Plan
+
+Reproduced on main `ee3fcdd6` (2026-11-19): both shapes give `t` refused and
+`<module-init>` refused (`call-graph-closure`) on gc, standalone and wasi.
+
+**Rule.** The caller direction of the call-graph closure already has a
+per-declaration certificate, `legacyCallerAbiIsProjected`: the callee's
+legacy callable has exactly the ABI the IR projects for it. The same fact
+makes the callee direction safe: an IR caller's `call` to a refused callee
+lands in the callee's pre-allocated legacy slot with a matching signature.
+So an unclaimed callee whose declaration carries the certificate is not a
+blocking edge; it is a *legacy callee* the caller calls through its legacy
+body. Host-free lanes only (`legacyCalleeBridgePolicy`, next to the
+caller-direction policy), so gc output stays byte-identical.
+
+**Where it lives (no new mechanism, three existing seams):**
+
+1. Selection — `src/ir/legacy-caller-policy.ts` gains the lane policy; the
+   three gates that read callee edges consult it with the existing
+   certificate: the structural closure (`select.ts` step 2), the identity
+   closure (`select-identity.ts`) and the module-init gate
+   (`assessModuleInit`, shared by both). The identity selection publishes
+   the admitted edges as `legacyCallees` (unit ids).
+2. Signatures — the per-function override computation in
+   `src/codegen/index.ts` moves out of the 200-line planning function into
+   `resolveIrFunctionOverride`, and serves claimed units and legacy callees
+   alike (no second copy of the signature rules).
+3. Direct-call plans — `projectIrIntegrationLoweringPlans`
+   (`src/codegen/ir-overlay-identity.ts`) adds the legacy callees as call
+   targets (never owners); `collectIrDirectCallLoweringPlansByIdentity`
+   takes the target set separately from the owner set. Integration already
+   binds a planned unit target to its registered slot
+   (`bindPlannedUnitTarget`), so nothing changes below.
+
+**Quality acceptance.** One predicate decides both directions; no per-shape
+case; no new file; the planning function shrinks.
+
+**Measurement.** 700-file seeded ES5 sample (seed 7106, the census
+population), `--target standalone`, original harness, compiled and run:
+base main `ee3fcdd6` vs head.

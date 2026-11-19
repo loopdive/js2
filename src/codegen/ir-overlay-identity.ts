@@ -59,11 +59,17 @@ export interface IrOverlayIdentityFunctionClaim {
   readonly typeEntry: TypeMapEntry;
 }
 
+export type IrOverlayIdentityLegacyCallee = Omit<IrOverlayIdentityFunctionClaim, "typeEntry"> & {
+  readonly typeEntry: TypeMapEntry | undefined;
+};
+
 export interface IrOverlayIdentityPlan {
   readonly identityContext: IrPlanningIdentityContext;
   readonly identitySelection: IrIdentitySelection;
   readonly selectionProjection: IrLegacySelectionProjection;
   readonly functionClaims: readonly IrOverlayIdentityFunctionClaim[];
+  /** (#7333) Refused functions that claimed units call through their legacy body. */
+  readonly legacyCallees: readonly IrOverlayIdentityLegacyCallee[];
   /** Complete unambiguous terminal projection, including rejected units and module init. */
   readonly unitIdByLegacyName: ReadonlyMap<string, IrUnitId>;
   readonly functionUnitIdByLegacyName: ReadonlyMap<string, IrUnitId>;
@@ -152,6 +158,16 @@ export function planIrOverlayByIdentity(
     declarationByLegacyName.set(legacyName, declaration);
   }
 
+  const legacyCallees: IrOverlayIdentityLegacyCallee[] = [];
+  for (const unitId of identitySelection.legacyCallees ?? []) {
+    const declaration = identityContext.declarationByUnitId.get(unitId);
+    const legacyName = identitySelection.units.get(unitId)?.legacyMatchName;
+    if (!declaration || !ts.isFunctionDeclaration(declaration) || legacyName === undefined) {
+      mismatch(`legacy callee ${unitId} has no exact function declaration in ${sourceFile.fileName}`);
+    }
+    legacyCallees.push({ unitId, legacyName, declaration, typeEntry: maps.unitTypeMap.get(unitId) });
+  }
+
   for (const [unitId, unit] of identitySelection.units) {
     if (selectionProjection.omittedUnitIds.has(unitId)) continue;
     if (unitIdByLegacyName.has(unit.legacyMatchName)) {
@@ -172,6 +188,7 @@ export function planIrOverlayByIdentity(
     identitySelection,
     selectionProjection,
     functionClaims,
+    legacyCallees,
     unitIdByLegacyName,
     functionUnitIdByLegacyName,
     declarationByLegacyName,
@@ -321,6 +338,7 @@ export function projectIrIntegrationLoweringPlans(
   plan: {
     readonly identityPlan: IrOverlayIdentityPlan;
     readonly overrideMapByUnitId: IrIntegrationLoweringPlans["signaturesByUnitId"];
+    readonly legacyCalleeSignaturesByUnitId?: IrIntegrationLoweringPlans["signaturesByUnitId"];
     readonly directCallResolver?: IrIdentityImportedFunctionResolver;
     readonly directCalls?: IrIntegrationLoweringPlans["directCalls"];
     readonly classShapesById?: IrIntegrationLoweringPlans["classShapesById"];
@@ -373,9 +391,19 @@ export function projectIrIntegrationLoweringPlans(
     const signature = callableSignaturesByUnitId.get(unitId);
     if (signature) callableSignaturesByUnitId.set(unitId, { ...signature, returnType: irVal({ kind: "externref" }) });
   }
+  // (#7333) A legacy callee is a call target, never an owner.
+  const targetSignaturesByUnitId = new Map([
+    ...callableSignaturesByUnitId,
+    ...(plan.legacyCalleeSignaturesByUnitId ?? []),
+  ]);
+  const targetUnitIds = new Set([...activeOwnerUnitIds, ...(plan.legacyCalleeSignaturesByUnitId?.keys() ?? [])]);
   const directCallTargets = new Map<string, IrDirectCallTarget>();
-  for (const { unitId, legacyName } of ownerProjection.entries) {
-    const signature = callableSignaturesByUnitId.get(unitId);
+  const targetEntries = [
+    ...ownerProjection.entries,
+    ...plan.identityPlan.legacyCallees.filter(({ unitId }) => targetUnitIds.has(unitId)),
+  ];
+  for (const { unitId, legacyName } of targetEntries) {
+    const signature = targetSignaturesByUnitId.get(unitId);
     if (!signature) continue;
     directCallTargets.set(legacyName, {
       target: irUnitFuncRef({ unitId, name: legacyName }),
@@ -412,7 +440,8 @@ export function projectIrIntegrationLoweringPlans(
             identityContext: identity,
             resolver,
             activeOwnerUnitIds,
-            signaturesByUnitId: callableSignaturesByUnitId,
+            activeTargetUnitIds: targetUnitIds,
+            signaturesByUnitId: targetSignaturesByUnitId,
             targetsByLegacyName: directCallTargets,
           }))
             collected.set(...entry);

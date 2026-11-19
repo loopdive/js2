@@ -2,8 +2,8 @@
 //
 // #7324 — calls inside a lifted closure pass the same call-graph gate as the
 // enclosing unit's own calls, for the module-init and ordinary functions alike.
-// A variable, an ambient function or an unclaimed function declaration called
-// from the closure has no direct-call plan, so selection refuses the unit
+// A variable or an ambient function called from the closure has no
+// direct-call plan, so selection refuses the unit
 // instead of claiming it and letting from-ast withdraw it. A claimed function
 // declaration, a call through the closure's own parameter and (#7287) a
 // statement call through an uninitialized script `var` keep the IR route.
@@ -47,13 +47,8 @@ const REFUSED: Record<string, Case> = {
     `let getter = 3; assert.throws(TypeError, function () { getter(); });`,
   ),
   "module-init: an ambient function": moduleInitCase(`assert.throws(SyntaxError, function () { RegExp("(?-m:a)"); });`),
-  "module-init: an unclaimed function declaration": moduleInitCase(`function f({ w: { x } = undefined }) {}
-assert.throws(TypeError, function () { f(); });`),
-  "function: an unclaimed function declaration": functionCase(
-    `function f(o: any): number { const { w: { x } = {} as any } = o; return 1; }
-function t(x: number): number { const c = (y: number): number => f(y); return c(x); }
-t(1);`,
-  ),
+  // (#7333) An unclaimed function declaration with a certified legacy ABI is
+  // called through its legacy body: tests/issue-7333-legacy-callee-bridge.test.ts.
   "function: an ambient function": functionCase(
     `function t(x: number): number { const c = (y: number): number => { RegExp("a"); return y; }; return c(x); }
 t(1);`,

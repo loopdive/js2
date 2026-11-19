@@ -116,7 +116,7 @@ import {
   type IrFuncRef,
   type IrType,
 } from "../ir/nodes.js";
-import type { LatticeType } from "../ir/propagate.js";
+import type { LatticeType, TypeMapEntry } from "../ir/propagate.js";
 import {
   classifyIrFailure,
   IrInvariantError,
@@ -2599,6 +2599,76 @@ export function formatIrPathFallbackDiagnostic(
 // preserves the opt-out pipeline's type-index and body-emission behavior.
 // ---------------------------------------------------------------------------
 
+/**
+ * The IR signature of one source function: annotations first, then its TypeMap
+ * row. Claimed units get it as their override; (#7333) legacy callees get it as
+ * the call signature an IR caller uses for their certified legacy body.
+ */
+function resolveIrFunctionOverride(
+  ctx: CodegenContext,
+  declaration: ts.FunctionDeclaration,
+  entry: TypeMapEntry | undefined,
+  deps: {
+    readonly returnsPromiseDelay: boolean;
+    readonly classShapeSidecar: IrClassShapeSidecar;
+    readonly resolveImplicitParamType: ReturnType<typeof makeIrImplicitParamTypeResolver>;
+  },
+): { params: IrType[]; returnType: IrType | null } {
+  const { classShapeSidecar, resolveImplicitParamType } = deps;
+  // Slice 7a (#1169f) — generator functions return an externref
+  // (the JS Generator-like object built by `__create_generator`)
+  // regardless of the source-level annotation
+  // (`Generator<number>`, `IterableIterator<T>`, etc.). The IR
+  // lowerer enforces this; the override map needs to agree so
+  // the cross-function `calleeTypes` lookup sees the right
+  // signature. Bypass `resolvePositionType` for the return type
+  // — `Generator<T>` doesn't resolve as `IrType.object` and
+  // would otherwise drop the generator from `safeSelection`.
+  const isGenerator = !!declaration.asteriskToken;
+  // (#1373b C-1) IR-claimed async fns (sync-pass-through model) register
+  // the raw `T` unwrapped from the `Promise<T>` annotation — matching
+  // the declaration pre-pass's `unwrapPromiseType` result type, so the
+  // IR-lowered signature equals the legacy-registered one (the #1796
+  // call-site contract stays intact). The selector only claims asyncs
+  // with an explicit `Promise<T>` annotation, so the unwrap is non-null
+  // for every claimed async fn.
+  const isAsyncFn = !isGenerator && hasAsyncModifier(declaration);
+  const asyncUnwrapped = isAsyncFn ? unwrapPromiseTypeNode(declaration.type) : null;
+  const effectiveReturnNode = isAsyncFn ? (asyncUnwrapped ?? undefined) : declaration.type;
+  // Slice 14 (#1228) — VoidKeyword return: bypass resolvePositionType
+  // (it has no representation for void in IrType) and set returnType
+  // to null. The lowerer treats null returnType as "no result".
+  // Mirrors the selector's `resolveReturnType` void arm: an unannotated
+  // body with no value-returning `return` registers no result, as legacy
+  // does — otherwise the lattice-dynamic `externref` result withdraws every
+  // such claim on `abi-signature-parity` (test262 harness, 2026-10-20).
+  const isVoidReturn =
+    !isGenerator &&
+    (effectiveReturnNode?.kind === ts.SyntaxKind.VoidKeyword ||
+      (effectiveReturnNode === undefined &&
+        !isAsyncFn &&
+        declaration.body !== undefined &&
+        (entry?.returnType === undefined ||
+          entry.returnType.kind === "unknown" ||
+          entry.returnType.kind === "dynamic") &&
+        !irFunctionBodyReturnsValue(declaration.body)));
+  const returnType: IrType | null = deps.returnsPromiseDelay
+    ? ({ kind: "extern", className: "Promise" } as IrType)
+    : isGenerator
+      ? ({ kind: "val", val: { kind: "externref" } } as IrType)
+      : isVoidReturn
+        ? null
+        : functionReturnsWidenedValue(ctx, declaration)
+          ? irDynamic()
+          : resolvePositionType(effectiveReturnNode, entry?.returnType, ctx, classShapeSidecar);
+  const params: IrType[] = [];
+  for (let i = 0; i < declaration.parameters.length; i++) {
+    const p = declaration.parameters[i]!;
+    params.push(resolveIrOverrideParamType(p, entry?.params[i], ctx, classShapeSidecar, resolveImplicitParamType));
+  }
+  return { params, returnType };
+}
+
 export interface IrOverlayPlan {
   readonly identityPlan: irOverlayIdentity.IrOverlayIdentityPlan;
   readonly functionClaimsByUnitId: ReadonlyMap<IrUnitId, IrExactFunctionClaim>;
@@ -2608,6 +2678,8 @@ export interface IrOverlayPlan {
   readonly classShapesById: ReadonlyMap<IrClassId, import("../ir/nodes.js").IrClassShape>;
   readonly overrideMapByUnitId: ReadonlyMap<IrUnitId, { params: IrType[]; returnType: IrType | null }>;
   readonly overrideMap: Map<string, { params: IrType[]; returnType: IrType | null }>;
+  /** (#7333) Call signatures of the certified legacy bodies claimed units call. */
+  readonly legacyCalleeSignaturesByUnitId: ReadonlyMap<IrUnitId, { params: IrType[]; returnType: IrType | null }>;
   readonly safeSelection: {
     funcs: Set<string>;
     classMembers?: ReadonlySet<string>;
@@ -3446,58 +3518,11 @@ function planIrOverlay(
   const declByName = identityPlan.declarationByLegacyName;
   for (const { unitId, legacyName: name, declaration, typeEntry: entry } of identityPlan.functionClaims) {
     try {
-      // Slice 7a (#1169f) — generator functions return an externref
-      // (the JS Generator-like object built by `__create_generator`)
-      // regardless of the source-level annotation
-      // (`Generator<number>`, `IterableIterator<T>`, etc.). The IR
-      // lowerer enforces this; the override map needs to agree so
-      // the cross-function `calleeTypes` lookup sees the right
-      // signature. Bypass `resolvePositionType` for the return type
-      // — `Generator<T>` doesn't resolve as `IrType.object` and
-      // would otherwise drop the generator from `safeSelection`.
-      const isGenerator = !!declaration.asteriskToken;
-      // (#1373b C-1) IR-claimed async fns (sync-pass-through model) register
-      // the raw `T` unwrapped from the `Promise<T>` annotation — matching
-      // the declaration pre-pass's `unwrapPromiseType` result type, so the
-      // IR-lowered signature equals the legacy-registered one (the #1796
-      // call-site contract stays intact). The selector only claims asyncs
-      // with an explicit `Promise<T>` annotation, so the unwrap is non-null
-      // for every claimed async fn.
-      const isAsyncFn = !isGenerator && hasAsyncModifier(declaration);
-      const asyncUnwrapped = isAsyncFn ? unwrapPromiseTypeNode(declaration.type) : null;
-      const effectiveReturnNode = isAsyncFn ? (asyncUnwrapped ?? undefined) : declaration.type;
-      // Slice 14 (#1228) — VoidKeyword return: bypass resolvePositionType
-      // (it has no representation for void in IrType) and set returnType
-      // to null. The lowerer treats null returnType as "no result".
-      // Mirrors the selector's `resolveReturnType` void arm: an unannotated
-      // body with no value-returning `return` registers no result, as legacy
-      // does — otherwise the lattice-dynamic `externref` result withdraws every
-      // such claim on `abi-signature-parity` (test262 harness, 2026-10-20).
-      const isVoidReturn =
-        !isGenerator &&
-        (effectiveReturnNode?.kind === ts.SyntaxKind.VoidKeyword ||
-          (effectiveReturnNode === undefined &&
-            !isAsyncFn &&
-            declaration.body !== undefined &&
-            (entry?.returnType === undefined ||
-              entry.returnType.kind === "unknown" ||
-              entry.returnType.kind === "dynamic") &&
-            !irFunctionBodyReturnsValue(declaration.body)));
-      const returnType: IrType | null = promiseDelayByOwner.has(unitId)
-        ? ({ kind: "extern", className: "Promise" } as IrType)
-        : isGenerator
-          ? ({ kind: "val", val: { kind: "externref" } } as IrType)
-          : isVoidReturn
-            ? null
-            : functionReturnsWidenedValue(ctx, declaration)
-              ? irDynamic()
-              : resolvePositionType(effectiveReturnNode, entry?.returnType, ctx, classShapeSidecar);
-      const params: IrType[] = [];
-      for (let i = 0; i < declaration.parameters.length; i++) {
-        const p = declaration.parameters[i]!;
-        params.push(resolveIrOverrideParamType(p, entry?.params[i], ctx, classShapeSidecar, resolveImplicitParamType));
-      }
-      const override = { params, returnType };
+      const override = resolveIrFunctionOverride(ctx, declaration, entry, {
+        returnsPromiseDelay: promiseDelayByOwner.has(unitId),
+        classShapeSidecar,
+        resolveImplicitParamType,
+      });
       overrideMapByUnitId.set(unitId, override);
       overrideMap.set(name, override);
       identityPlan.safeFunctionUnitIds.add(unitId);
@@ -3536,6 +3561,16 @@ function planIrOverlay(
       reportErrorNoNode(ctx, hard ? `Codegen error: ${resolveDiag}` : resolveDiag, hard ? "error" : "warning");
     }
   }
+  const legacyCalleeSignaturesByUnitId = new Map<IrUnitId, { params: IrType[]; returnType: IrType | null }>(
+    identityPlan.legacyCallees.map(({ unitId, declaration, typeEntry }) => [
+      unitId,
+      resolveIrFunctionOverride(ctx, declaration, typeEntry, {
+        returnsPromiseDelay: promiseDelayByOwner.has(unitId),
+        classShapeSidecar,
+        resolveImplicitParamType,
+      }),
+    ]),
+  );
   // Only request IR compilation for functions we successfully built
   // overrides for (the selector may have claimed more, but if we
   // couldn't map types safely we leave them to legacy).
@@ -3650,6 +3685,7 @@ function planIrOverlay(
     classShapesById,
     overrideMapByUnitId,
     overrideMap,
+    legacyCalleeSignaturesByUnitId,
     safeSelection,
     logFallbacks,
     preparationFailuresByUnitId,

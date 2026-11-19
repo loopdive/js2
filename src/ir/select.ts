@@ -95,7 +95,7 @@ import {
 } from "./array-prototype-borrow-call.js";
 import type { IrCountedStringAppendPlan } from "./analysis/counted-string-append.js";
 import { stringBuilderForcedLegacy } from "./string-builder-shape.js";
-import { demoteOnLegacyCallerPolicy, jsHostExternsEnabled } from "./legacy-caller-policy.js";
+import { bridgeLegacyCalleePolicy, demoteOnLegacyCallerPolicy, jsHostExternsEnabled } from "./legacy-caller-policy.js";
 import { planArrayLiteralSpread } from "./array-spread-shape.js";
 import { objectLiteralDataPropertyName, phase1PropertyName } from "./property-key-fold.js";
 import {
@@ -515,6 +515,8 @@ export interface IrModuleInitAssessment {
   /** (#2856 Step-1 parity) Reject-arm detail for `body-shape-rejected`,
    *  populated only when `JS2WASM_IR_SHAPE_DIAG=1`. */
   readonly detail?: string;
+  /** (#7333) Unclaimed callees the unit calls through their legacy body; absent when none. */
+  readonly legacyCallees?: ReadonlySet<string>;
 }
 
 export interface IrSelectionOptions extends IrAsyncSelectionOptions {
@@ -583,6 +585,8 @@ export interface IrSelectionOptions extends IrAsyncSelectionOptions {
    * Standalone/WASI normally close claims over local callers. A production
    * planner may exempt a callee when its direct callable and IR overlay share
    * one fully certified ABI, making a legacy caller's pre-emitted call safe.
+   * (#7333) The same certificate admits the callee direction: an IR caller
+   * may call a refused callee's legacy body through its pre-allocated slot.
    */
   readonly legacyCallerAbiIsProjected?: (declaration: ts.FunctionDeclaration) => boolean;
   /** Whether this backend configuration has the runtime bridges required by
@@ -971,6 +975,15 @@ function legacyCallerAbiIsProjected(
 ): boolean {
   const declaration = declarations.get(name);
   return declaration !== undefined && options?.legacyCallerAbiIsProjected?.(declaration) === true;
+}
+
+/** (#7333) An unclaimed callee an IR caller calls through its legacy body. */
+function legacyCalleeIsBridged(
+  options: IrSelectionOptions | undefined,
+  declarations: ReadonlyMap<string, ts.FunctionDeclaration>,
+  name: string,
+): boolean {
+  return bridgeLegacyCalleePolicy(options) && legacyCallerAbiIsProjected(options, declarations, name);
 }
 
 export function planIrCompilation(
@@ -1396,7 +1409,7 @@ export function planIrCompilation(
       }
       if (safe) {
         for (const c of myCallees) {
-          if (!claimed.has(c)) {
+          if (!claimed.has(c) && !legacyCalleeIsBridged(options, declByName, c)) {
             safe = false;
             break;
           }
@@ -14224,12 +14237,15 @@ export function assessModuleInit(
     const callee = graph.externalCallees.get(syntheticName);
     return { stmtCount: population.length, reason: "external-call", ...(callee ? { detail: `callee:${callee}` } : {}) };
   }
+  const legacyCallees = new Set<string>();
   for (const callee of graph.callees.get(syntheticName) ?? []) {
-    if (!claimedFuncs.has(callee)) {
+    if (claimedFuncs.has(callee)) continue;
+    if (!legacyCalleeIsBridged(currentSelectionOptions, declByName, callee)) {
       return { stmtCount: population.length, reason: "call-graph-closure" };
     }
+    legacyCallees.add(callee);
   }
-  return { stmtCount: population.length, reason: null };
+  return { stmtCount: population.length, reason: null, ...(legacyCallees.size > 0 ? { legacyCallees } : {}) };
 }
 
 /**

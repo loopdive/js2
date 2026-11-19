@@ -194,6 +194,8 @@ export interface IrIdentityDirectCallCollectionOptions {
   readonly identityContext: IrPlanningIdentityContext;
   readonly resolver: IrIdentityImportedFunctionResolver;
   readonly activeOwnerUnitIds: ReadonlySet<IrUnitId>;
+  /** Targets beyond the active owners: (#7333) legacy callees. Defaults to the owners. */
+  readonly activeTargetUnitIds?: ReadonlySet<IrUnitId>;
   readonly signaturesByUnitId: ReadonlyMap<IrUnitId, IrClosureSignature>;
   readonly targetsByLegacyName: ReadonlyMap<string, IrDirectCallTarget>;
 }
@@ -276,6 +278,7 @@ export function collectIrDirectCallLoweringPlansByIdentity(
   options: IrIdentityDirectCallCollectionOptions,
 ): ReadonlyMap<ts.CallExpression, IrDirectCallLoweringPlan> {
   const { identityContext, resolver, activeOwnerUnitIds, signaturesByUnitId, targetsByLegacyName } = options;
+  const activeTargetUnitIds = options.activeTargetUnitIds ?? activeOwnerUnitIds;
   const owner = requireActiveDirectCallTerminal(identityContext, activeOwnerUnitIds, ownerUnitId, "owner");
   const sourceFile = identityContext.sourceFileBySourceId.get(owner.sourceId);
   if (!sourceFile || identityContext.sourceIdBySourceFile.get(sourceFile) !== owner.sourceId) {
@@ -298,7 +301,7 @@ export function collectIrDirectCallLoweringPlansByIdentity(
           if (retained) {
             const target = requireActiveDirectCallTerminal(
               identityContext,
-              activeOwnerUnitIds,
+              activeTargetUnitIds,
               resolved.targetUnitId,
               "target",
             );
