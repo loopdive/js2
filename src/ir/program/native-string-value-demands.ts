@@ -12,6 +12,7 @@ import type { IrAsyncStateId } from "../core/async-plan.js";
 import type { PreparedIrFunction } from "../runtime/contracts/prepared.js";
 import type { AllocRegistrySnapshot, AllocRegistryMetadataSnapshot } from "../analysis/contracts/allocations.js";
 import { AllocSiteRegistry, ALLOC_NAMESPACES } from "../analysis/alloc-registry.js";
+import { irValueTypes } from "../analysis/value-types.js";
 import type { IrUnitId } from "../../shared/contracts/ir-identity.js";
 import type { PreparedIrProgram, PreparedIrProgramRuntimeProjection } from "./prepared-contracts.js";
 import { PreparedIrProgramInvariantError } from "./errors.js";
@@ -270,5 +271,20 @@ export function collectNativeStringValueDemands(
     occurrences: Object.freeze(occurrences),
     literals: Object.freeze(literals),
     intrinsics: Object.freeze(intrinsics),
+  });
+}
+
+/**
+ * (#7354 Str) Whether a native string can reach the dynamic carrier in the executable projection: every route there
+ * (the box of a string into a dynamic value, a thrown string) is a `coerce.to_externref` of a string-typed value.
+ */
+export function nativeStringsReachCarrier(demands: NativeStringValueDemands): boolean {
+  const types = new Map<IrUnitId, ReturnType<typeof irValueTypes>>();
+  return demands.occurrences.some((row) => {
+    const buffer = demands.buffers[row.bufferIndex]!;
+    if (buffer.view !== "projection" || row.instruction.kind !== "coerce.to_externref") return false;
+    const owner = demands.owners.find((candidate) => candidate.unitId === buffer.ownerUnitId)!;
+    if (!types.has(owner.unitId)) types.set(owner.unitId, irValueTypes(owner.projectedFunction));
+    return types.get(owner.unitId)!.get(row.instruction.value)?.kind === "string";
   });
 }

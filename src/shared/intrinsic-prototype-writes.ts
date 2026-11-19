@@ -264,7 +264,7 @@ function referencedName(node: ts.Node): string | undefined {
 }
 
 /** An identifier that reads a binding: not a declared name, a member or property name, a label or a type. */
-function isValueReference(identifier: ts.Identifier): boolean {
+export function isValueReference(identifier: ts.Identifier): boolean {
   const parent = identifier.parent;
   if (ts.isShorthandPropertyAssignment(parent)) return true;
   if (isBindingSiteName(identifier) || (parent as { readonly name?: ts.Node }).name === identifier) return false;

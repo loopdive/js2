@@ -1899,26 +1899,32 @@ jobs:
 
   compiler-path-measurement-plan:
     name: select full-corpus IR standalone measurement
-    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    # Every merge to main is measured, as the legacy lane is: a shard takes
+    # about 80 s because a file the IR does not fully lower is refused at
+    # compile time, so the whole matrix costs about 2 runner-hours. The daily
+    # schedule covers days without a test262-relevant push.
+    if: github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     outputs:
       run: ${{ steps.plan.outputs.run }}
     steps:
-      - name: Select weekly or explicit measurement
+      - name: Select automatic or explicit measurement
         id: plan
         env:
           EVENT_NAME: ${{ github.event_name }}
+          ACTOR: ${{ github.actor }}
           MEASUREMENT: ${{ inputs.compiler_path_measurement }}
           COMPILER_PATH: ${{ inputs.compiler_path }}
           MEASUREMENT_TARGET: ${{ inputs.measurement_target }}
         run: |
           node --input-type=module <<'NODE'
           // IR_MEASUREMENT_PLAN_START
-          const scheduled = process.env.EVENT_NAME === 'schedule' && new Date().getUTCDay() === 1;
+          const scheduled = process.env.EVENT_NAME === 'schedule';
+          const merged = process.env.EVENT_NAME === 'push' && process.env.ACTOR !== 'github-actions[bot]';
           const manual = process.env.EVENT_NAME === 'workflow_dispatch' && process.env.MEASUREMENT === 'true';
           if (manual && (process.env.COMPILER_PATH !== 'ir' || process.env.MEASUREMENT_TARGET !== 'standalone'))
             throw new Error('Only IR standalone is supported; JS Host results are historical');
-          const run = scheduled || manual;
+          const run = scheduled || merged || manual;
           const cells = run ? [{ compilerPath: 'ir', target: 'standalone', chunks: 102 }] : [];
           console.log(JSON.stringify({ run, cells, promotion: false }));
           const { appendFileSync } = await import('node:fs');
@@ -2240,7 +2246,8 @@ jobs:
           name: test262-ir-standalone-measurement
           path: ir-measurement
           if-no-files-found: error
-          retention-days: 90
+          # The daily run carries the 90-day history; per-merge runs only keep the site current.
+          retention-days: ${{ github.event_name == 'push' && 14 || 90 }}
 
   test262-shard:
     # Heavy 102-shard standalone test262 (#2519) fires ONLY for baseline/manual contexts

@@ -16,7 +16,7 @@ import { replayOptions } from "./helpers/ir-whole-program-replay.js";
 import type { RuntimeManifestPolicy } from "../src/ir/runtime-manifest.js";
 import type { PreparedIrProgram } from "../src/ir/program/prepared-contracts.js";
 import { createEmptyModule } from "../src/ir/types.js";
-import { nativeBooleanAbiBindings } from "../src/backend/wasmgc/program/native-primitive-boundary-abi.js";
+import { nativeIntrinsicAbiBindings } from "../src/backend/wasmgc/program/native-primitive-boundary-abi.js";
 import { PhysicalModuleReservations } from "../src/wasm/physical/module-reservations.js";
 import { deriveNativeValueResourcePlan } from "../src/ir/program/native-value-resources.js";
 import { reserveNativeStringLiteralTypes } from "../src/backend/wasmgc/resources/native-string-literals.js";
@@ -246,7 +246,7 @@ describe("actual native Boolean boundary through the public consumer", () => {
         invocationRequirements: selected.invocationRequirements,
         valueRequirements: deriveNativeValueResourcePlan(program, projection, "native-string"),
       };
-      expect(() => nativeBooleanAbiBindings(input, 0)).toThrow(/native Boolean ABI: manifest provider differs/);
+      expect(() => nativeIntrinsicAbiBindings(input, 0)).toThrow(/native intrinsic ABI: manifest provider differs/);
     },
   );
 });

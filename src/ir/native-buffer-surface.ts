@@ -31,7 +31,7 @@ import {
   outermostParenthesized,
   stripParens,
 } from "../shared/binding-writes.js";
-import { scriptVarUseFollowsDeclaration } from "./module-binding-script-var.js";
+import { isTypeofOrDeleteOperand, scriptVarUseFollowsDeclaration } from "./module-binding-script-var.js";
 import {
   makeIrNativeBufferOperands,
   nativeBufferMember,
@@ -224,7 +224,8 @@ function certifyBufferVars(
     if (!ts.isIdentifier(candidate)) return undefined;
     const symbol = checker.getSymbolAtLocation(candidate);
     const binding = symbol === undefined ? undefined : certified.get(symbol);
-    return binding && scriptVarUseFollowsDeclaration(candidate, binding.declaration) ? binding.cls : undefined;
+    const follows = binding && scriptVarUseFollowsDeclaration(candidate, binding.declaration);
+    return follows && !isTypeofOrDeleteOperand(candidate) ? binding.cls : undefined;
   };
   const callMember = (call: ts.CallExpression): AdmittedCall | undefined => {
     const access = sites.calls.get(call);

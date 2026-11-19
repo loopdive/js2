@@ -89,6 +89,8 @@ const CLAIMED: Record<string, string> = {
   // test row answers it, and the open object's member read answers `toString` as the realm's.
   "parenthesized inherited toString read, probed": `var o = {}; if ((o).toString === undefined) { throw "inherited"; } var probe = o.hasOwnProperty("zz");`,
   "aliased inherited toString read, probed": `var o = {}; var p = o; if (p.toString === undefined) { throw "alias"; } var probe = o.hasOwnProperty("zz");`,
+  // (#7346) A string var is an ordinary string value, so `o[k]` reads the own property with its key.
+  "element read through a string var, probed": `var o = {}; ${DEFINE} var k = 'p'; if (o[k] !== 1) { throw "elem"; } var probe = o.hasOwnProperty("zz");`,
 };
 
 /**
@@ -141,10 +143,6 @@ const REFUSED: Record<string, { readonly source: string; readonly detail: string
   "Object.setPrototypeOf on the binding": {
     source: `var o = {}; Object.setPrototypeOf(o, { p: 1 }); if (o.p !== 1) { throw "proto"; }`,
     detail: "expr-ident-not-in-scope",
-  },
-  "element read": {
-    source: `var o = {}; ${DEFINE} var k = 'p'; if (o[k] !== 1) { throw "elem"; }`,
-    detail: "expr-module-extern-consumer",
   },
   "ToPropertyKey-running key": {
     source: `var o = {}; ${DEFINE} if (!o.hasOwnProperty({ toString: function () { return 'p'; } })) { throw "key"; }`,

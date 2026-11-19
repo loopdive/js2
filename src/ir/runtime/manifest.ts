@@ -115,6 +115,7 @@ import {
   ORDINARY_OBJECT_RUNTIME_PROVIDER_IDS,
   NATIVE_ASYNC_CALLABLE_RUNTIME_FEATURES,
   NATIVE_ASYNC_CALLABLE_RUNTIME_PROVIDER_IDS,
+  DYNAMIC_VALUE_RUNTIME_PROVIDER_IDS,
   type RuntimeFeature,
   type HostCapabilityId,
   type RuntimeBackendRequirement,
@@ -275,6 +276,7 @@ import { type IntrinsicEffectEvidence, verifyIntrinsicUse } from "../analysis/in
 import {
   EXTERN_BOUNDARY_RUNTIME_FEATURES,
   BOOLEAN_BOUNDARY_RUNTIME_FEATURES,
+  INTRINSIC_RUNTIME_FEATURES,
   NUMBER_BOUNDARY_RUNTIME_FEATURES,
   NUMERIC_COERCION_RUNTIME_FEATURES,
   PURE_MATH_HOST_CAPABILITIES,
@@ -931,8 +933,8 @@ function stringConcatManyProviderId(policy: StringConcatPolicy): StringConcatMan
  * which keeps the demand honest on both lanes with one policy.
  *
  * All four carry {@link EXTERNREF_GLOBAL_INTRINSIC_SIGNATURE} — the catalogue's
- * only empty-parameter signature, and the one place a row states a VALUE shape
- * instead of a call.
+ * VALUE signature, and the one place a row states a VALUE shape instead of a
+ * call. (#7354 D1) The one nullary call, `js.value.undefined`, carries its own.
  */
 export const STRING_CONST_RUNTIME_PROVIDERS: readonly RuntimeProviderDefinition[] = Object.freeze([
   numberBoundaryProvider(
@@ -1332,9 +1334,9 @@ export const FUNCTION_PROTOTYPE_CALL_RUNTIME_PROVIDERS: readonly RuntimeProvider
     // Reusing `EXTERNREF_GLOBAL_INTRINSIC_SIGNATURE` for its `() -> externref`
     // shape would ALSO have broken a deliberate F2-S8 invariant (measured, not
     // predicted): that signature means "a GLOBAL holding an externref VALUE", and
-    // F2-S8 pins the string-const family as the catalogue's ONLY empty-parameter
-    // rows precisely so an empty-params row can only ever be a storage row. A
-    // nullary CALL is not a storage row, so it must not borrow that spelling.
+    // F2-S8 pins the string-const family as the catalogue's ONLY rows carrying it
+    // precisely so that signature can only ever be a storage row. A nullary CALL
+    // is not a storage row, so it must not borrow that spelling.
     undefined,
     { kind: "runtime-callable", symbol: "__function_prototype_call" },
     [],
@@ -1380,10 +1382,7 @@ export const RUNTIME_PROVIDERS: readonly RuntimeProviderDefinition[] = Object.fr
 );
 
 const FEATURE_SET: ReadonlySet<string> = new Set([
-  ...NUMERIC_COERCION_RUNTIME_FEATURES,
-  ...NUMBER_BOUNDARY_RUNTIME_FEATURES,
-  ...BOOLEAN_BOUNDARY_RUNTIME_FEATURES,
-  ...EXTERN_BOUNDARY_RUNTIME_FEATURES,
+  ...INTRINSIC_RUNTIME_FEATURES,
   ...GENERATOR_NUMBER_BOX_RUNTIME_FEATURES,
   ...STRING_COMPARE_RUNTIME_FEATURES,
   ...STRING_EQ_RUNTIME_FEATURES,
@@ -1395,7 +1394,6 @@ const FEATURE_SET: ReadonlySet<string> = new Set([
   ...HOST_CALLBACK_WRAP_RUNTIME_FEATURES,
   ...FUNCTION_PROTOTYPE_CALL_RUNTIME_FEATURES,
   ...REFERENCE_ERROR_RUNTIME_FEATURES,
-  ...PURE_MATH_RUNTIME_FEATURES,
   ...NATIVE_ASYNC_CALLABLE_RUNTIME_FEATURES,
   ...VECTOR_CALLABLE_RUNTIME_FEATURES,
   ...ORDINARY_OBJECT_RUNTIME_FEATURES,
@@ -1409,6 +1407,7 @@ const PROVIDER_ID_SET: ReadonlySet<string> = new Set([
   ...NUMBER_BOUNDARY_RUNTIME_PROVIDER_IDS,
   ...BOOLEAN_BOUNDARY_RUNTIME_PROVIDER_IDS,
   ...EXTERN_BOUNDARY_RUNTIME_PROVIDER_IDS,
+  ...DYNAMIC_VALUE_RUNTIME_PROVIDER_IDS,
   ...GENERATOR_NUMBER_BOX_RUNTIME_PROVIDER_IDS,
   ...STRING_COMPARE_RUNTIME_PROVIDER_IDS,
   ...STRING_EQ_RUNTIME_PROVIDER_IDS,

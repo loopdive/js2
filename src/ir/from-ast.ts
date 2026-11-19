@@ -145,9 +145,6 @@ import { remainderFastPathPlan } from "./analysis/remainder-fast-path.js";
 import { evaluateConstantCondition } from "../codegen/statements/control-flow.js";
 import type { IrClassInstanceInitializer } from "./class-instance-initializers.js";
 import { staticMemberBindingIsUnsound } from "./class-overrides.js";
-// #2766 — reuse the legacy counted-loop proof predicates (pure AST analysis, no
-// codegen state) to port the `safeIndexedArrays` in-bounds proof into the IR.
-import { isIncreasingStep, loopBodyMutatesIndexOrArray } from "./analysis/loop-shape.js";
 import { countedStringAppendPlanIsCurrent } from "./analysis/counted-string-append.js";
 import { stringBuilderSlotPlan } from "./string-builder-shape.js";
 // (#3741) native-i32 slot storage for provably-int32 mutable locals
@@ -204,7 +201,9 @@ import { objectLiteralDataPropertyName, phase1PropertyName } from "./property-ke
 import { collectDynamicStringLocalWidening } from "./dynamic-local-widening.js";
 import { coercibleStandaloneDomArgumentBoundary } from "./dom-boundary.js";
 import { fmodRefFor } from "./fmod-selection.js";
-import { detectFixedLiteralLoopSafeIndexes, forInitsIndexNonNegative } from "./fixed-literal-loop-proof.js";
+// #2766 — the counted-loop proofs (pure AST analysis, no codegen state) that port the
+// `safeIndexedArrays` in-bounds proof into the IR; the selector reads the same proof (#7346).
+import { detectCountedLoopSafeIndex, detectFixedLiteralLoopSafeIndexes } from "./fixed-literal-loop-proof.js";
 import {
   requireMatchingModuleBindingOwner,
   requireMatchingLoweringPlanOwner,
@@ -278,6 +277,7 @@ import {
   hostExternCapability,
   prefixOpCapability,
   stringElementReadLowerable,
+  stringMemberReadLowerable,
 } from "./capability.js";
 import type { IrStandaloneDomOperation } from "./dom-capability.js";
 import type { IrNativeBufferOperation } from "./native-buffer-surface.js";
@@ -332,7 +332,9 @@ import {
 } from "./binding-pattern-plan.js";
 import { lowerPatternPlan, readsNoSource, type PatternLoweringHost } from "./binding-pattern-lowering.js";
 import { literalLeafSource, patternLeafReadsElement, planLiteralPattern } from "./literal-pattern-plan.js";
-import { isModuleInitVarList } from "../shared/var-declaration-lists.js";
+import { isInLoopOfOwnFunction, isModuleInitVarList } from "../shared/var-declaration-lists.js";
+import { emitLogicalSelect } from "./logical-select.js";
+import { isRepeatedVarBinding } from "./function-local-var.js";
 import { objectIntegrityCallFold } from "./object-integrity.js";
 import {
   mixedPrimitiveConditionalArms,
@@ -4416,9 +4418,8 @@ function lowerVariableDeclaration(d: ts.VariableDeclaration, isConst: boolean, c
   const redeclaredModuleVar = isRedeclaredModuleVar(d, name, cx);
   if (redeclaredModuleVar && !d.initializer) return;
   if (!d.initializer && !redeclaredModuleVar && bindUninitializedModuleVar(d, name, cx)) return;
-  if (cx.scope.has(name) && !redeclaredModuleVar) {
+  if ((cx.scope.has(name) || (!cx.moduleBindings?.has(name) && isRepeatedVarBinding(d, name))) && !redeclaredModuleVar)
     demoteToLegacy("body-shape-rejected", `ir/from-ast: redeclaration of '${name}' in ${cx.funcName}`);
-  }
   if (!d.initializer) {
     lowerUninitializedVar(d, name, isConst, cx);
     return;
@@ -4723,8 +4724,8 @@ function bindLocalName(
 }
 
 /**
- * (#7106 Stage 4) `var x;` (selector: untyped, function-local, not in a loop):
- * the dynamic carrier's `undefined`, in a slot when the body reassigns it.
+ * (#7106 Stage 4) `var x;`: the dynamic carrier's `undefined`, in a slot when the body reassigns it. In a loop the
+ * declaration runs again and is no write: the store moves before the loop (#7354); elsewhere it stays (same bytes).
  */
 function lowerUninitializedVar(d: ts.VariableDeclaration, name: string, isConst: boolean, cx: LowerCtx): void {
   const isLexical = (d.parent.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const)) !== 0;
@@ -4734,17 +4735,17 @@ function lowerUninitializedVar(d: ts.VariableDeclaration, name: string, isConst:
       `ir/from-ast: Phase 1 requires an initializer for '${name}' in ${cx.funcName}`,
     );
   }
-  const value = cx.builder.emitDynUndefined();
   if (!cx.mutatedLets.has(name)) {
-    cx.scope.set(name, { kind: "local", value, type: irDynamic() });
+    cx.scope.set(name, { kind: "local", value: cx.builder.emitDynUndefined(), type: irDynamic() });
     return;
   }
   const representation = resolveMutableLocalRepresentation(irDynamic(), true, cx);
-  if (!representation) {
+  if (!representation)
     demoteToLegacy("body-shape-rejected", `ir/from-ast: dynamic var '${name}' has no slot (${cx.funcName})`);
-  }
   const slotIndex = cx.builder.declareSlot(name, representation.storageType);
-  cx.builder.emitSlotWrite(slotIndex, value);
+  const initialize = () => cx.builder.emitSlotWrite(slotIndex, cx.builder.emitDynUndefined());
+  if (isInLoopOfOwnFunction(d)) cx.builder.emitAtBlockHead(initialize);
+  else initialize();
   cx.scope.set(name, {
     kind: "slot",
     slotIndex,
@@ -6404,8 +6405,7 @@ function lowerPropertyAccess(expr: ts.PropertyAccessExpression, cx: LowerCtx): I
   }
 
   if (recvType.kind === "string") {
-    // Slice 1 — only `.length` is supported on string receivers.
-    if (propName !== "length") {
+    if (!stringMemberReadLowerable(propName)) {
       demoteToLegacy(
         "property-access-unsupported",
         `ir/from-ast: .${propName} on string is not in slice 2 (${cx.funcName})`,
@@ -11771,67 +11771,6 @@ function lowerDoStatement(stmt: ts.DoStatement, cx: LowerCtx): void {
  * instr. The loop variable's binding enters scope before
  * cond/update/body are lowered.
  */
-/**
- * #2766 — does the `for`'s initializer declare `indexVar` with a non-negative
- * numeric-literal initializer (`let i = 0`, `let i = 5`, …)? Part of the
- * counted-loop in-bounds proof's lower-bound half. Conservative: anything that
- * is not a plain non-negative numeric literal (a prefix `-1`, a computed init,
- * an index declared outside the loop) returns false → the read falls to the SAFE
- * lowering rather than being (unsoundly) trusted.
- */
-/**
- * #2766 — the counted-loop in-bounds proof for the IR. Returns the
- * `"arrayVar:indexVar"` key when the `for` provably keeps its index in
- * `[0, array.length)` across the whole body, else `null`.
- *
- * This is a *real* proof (per the hybrid invariant — a compiler-checked fact,
- * not the mere presence of a `: number[]` type), and it is intentionally
- * STRICTER than legacy's `safeIndexedArrays` population (which checked only the
- * `i < arr.length` condition + body non-mutation): the IR fast path emits an
- * UNCHECKED `array.get` that *traps* on OOB, so the proof must also pin the lower
- * bound. We therefore additionally require a non-negative-literal init and a
- * strictly-increasing step, giving `0 <= i` at entry, `i` only increases, and
- * the strict `i < arr.length` condition ⇒ `0 <= i < arr.length` at every body
- * point. Anything not fully proven returns `null` and gets the SAFE read.
- */
-function detectCountedLoopSafeIndex(stmt: ts.ForStatement): string | null {
-  if (!stmt.condition || !ts.isBinaryExpression(stmt.condition)) return null;
-  const cond = stmt.condition;
-  const op = cond.operatorToken.kind;
-  let indexExpr: ts.Expression | undefined;
-  let lengthExpr: ts.Expression | undefined;
-  // Strict `i < arr.length`
-  if (op === ts.SyntaxKind.LessThanToken) {
-    indexExpr = cond.left;
-    lengthExpr = cond.right;
-  } else if (op === ts.SyntaxKind.GreaterThanToken) {
-    // Strict `arr.length > i`
-    indexExpr = cond.right;
-    lengthExpr = cond.left;
-  } else {
-    return null; // `<=` / `>=` would admit `i == arr.length` (OOB)
-  }
-  if (
-    !indexExpr ||
-    !lengthExpr ||
-    !ts.isIdentifier(indexExpr) ||
-    !ts.isPropertyAccessExpression(lengthExpr) ||
-    !ts.isIdentifier(lengthExpr.name) ||
-    lengthExpr.name.text !== "length" ||
-    !ts.isIdentifier(lengthExpr.expression)
-  ) {
-    return null;
-  }
-  const indexVar = indexExpr.text;
-  const arrayVar = lengthExpr.expression.text;
-  // Lower bound: i starts >= 0 and strictly increases.
-  if (!forInitsIndexNonNegative(stmt, indexVar)) return null;
-  if (!isIncreasingStep(stmt.incrementor, indexVar)) return null;
-  // Stability: body must not reassign i / arr / arr.length, call a method on arr
-  // (could change length), or contain a nested function (could capture+mutate).
-  if (loopBodyMutatesIndexOrArray(stmt.statement, indexVar, arrayVar)) return null;
-  return arrayVar + ":" + indexVar;
-}
 
 /**
  * (#3786) The compile-time entry value of a `for` counter, plus the slot the
@@ -14320,6 +14259,9 @@ function emitUnaryToNumber(
 function lowerPrefixUnary(expr: ts.PrefixUnaryExpression, cx: LowerCtx): IrValueId {
   if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== expr)
     return withNodeSourceSite(cx, expr, () => lowerPrefixUnary(expr, cx));
+  // (#7354 D1) Deferred, so only the selector-less Prepared producer gets here.
+  if (expr.operator === ts.SyntaxKind.PlusPlusToken || expr.operator === ts.SyntaxKind.MinusMinusToken)
+    demoteToLegacy("body-shape-rejected", `ir/from-ast: value-position prefix update in ${cx.funcName}`);
   // #2135 — capability-table invariant, mirroring `lowerBinary`. A deferred
   // prefix op post-claim is a selector↔table disagreement (compiler bug).
   assertNotDeferred(
@@ -15694,55 +15636,36 @@ function lowerLogicalAndOr(expr: ts.BinaryExpression, op: ts.SyntaxKind, cx: Low
   const isAnd = op === ts.SyntaxKind.AmpersandAmpersandToken;
   const opName = isAnd ? "&&" : "||";
 
-  // (#7106 item 1) A nested logical on the left (`a && a.x || b`) must keep
-  // its VALUE form outside a boolean position: an `i32` hint would ToBoolean
-  // it and the outer selection would lose the carrier.
-  let leftExpr: ts.Expression = expr.left;
-  while (ts.isParenthesizedExpression(leftExpr)) leftExpr = leftExpr.expression;
-  const nestedLogicalLeft =
-    ts.isBinaryExpression(leftExpr) &&
-    (leftExpr.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandToken ||
-      leftExpr.operatorToken.kind === ts.SyntaxKind.BarBarToken);
-  const leftWantsCarrier =
-    hint?.kind === "dynamic" || (nestedLogicalLeft && !(hint !== undefined && asVal(hint)?.kind === "i32"));
-  const rawLhs = lowerExpr(expr.left, cx, leftWantsCarrier ? irDynamic() : irVal({ kind: "i32" }));
+  // (#7106 item 1) A nested logical operand (`a && a.x || b`) must keep its
+  // VALUE form outside a boolean position (the `i32` hint: an `if` condition, a
+  // boolean return): an `i32` hint would ToBoolean it and the outer selection
+  // would lose the carrier. (#7354) The same holds for the right operand.
+  const booleanPosition = hint !== undefined && asVal(hint)?.kind === "i32";
+  const operandHint = (operand: ts.Expression): IrType => {
+    while (ts.isParenthesizedExpression(operand)) operand = operand.expression;
+    const nestedLogical =
+      ts.isBinaryExpression(operand) &&
+      (operand.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandToken ||
+        operand.operatorToken.kind === ts.SyntaxKind.BarBarToken);
+    return hint?.kind === "dynamic" || (nestedLogical && !booleanPosition) ? irDynamic() : irVal({ kind: "i32" });
+  };
+  const rawLhs = lowerExpr(expr.left, cx, operandHint(expr.left));
   const lhsType = cx.builder.typeOf(rawLhs);
   // (#7106 S3b) `dyn || v` / `dyn && v` as a VALUE: §13.13.1 — evaluate the
   // left carrier once, ToBoolean it, and select it or the (boxed) right
-  // operand. Only a boolean position (an `if` condition, a boolean return:
-  // the `i32` hint) keeps the ToBoolean'd `i32` form below. The selector
-  // admits only a dynamic-parameter left operand with a dynamic or boxable
-  // right operand.
-  const booleanPosition = hint !== undefined && asVal(hint)?.kind === "i32";
+  // operand. Only a boolean position keeps the ToBoolean'd `i32` form below.
+  // The selector admits only a dynamic-parameter left operand with a dynamic
+  // or boxable right operand.
   if (lhsType.kind === "dynamic" && !booleanPosition) {
     const cond = cx.builder.emitDynTruthy(rawLhs);
     const skippedScope = new Map(cx.scope);
     const rhsCx: LowerCtx = { ...cx, scope: new Map(skippedScope) };
     let rhs!: IrValueId;
     const rhsBody = cx.builder.collectBodyInstrs(() => {
-      let rawRhs = lowerExpr(expr.right, rhsCx, irDynamic());
-      const rhsType = cx.builder.typeOf(rawRhs);
-      if (rhsType.kind !== "dynamic") {
-        const boxed = boxConcreteToDynamic(rawRhs, rhsType, expr.right, cx);
-        if (boxed === null) {
-          demoteToLegacy(
-            "logical-value-unsupported",
-            `ir/from-ast: operator '${opName}' right operand of ${describeIrType(rhsType)} has no dynamic carrier in ${cx.funcName}`,
-          );
-        }
-        rawRhs = boxed;
-      }
-      rhs = rawRhs;
+      rhs = logicalOperandCarrier(lowerExpr(expr.right, rhsCx, irDynamic()), expr.right, "right", opName, cx);
     });
     joinScopeStringEncodingFacts(cx.scope, [rhsCx.scope, skippedScope]);
-    return cx.builder.emitIfElse({
-      cond,
-      then: isAnd ? rhsBody : [],
-      thenValue: isAnd ? rhs : rawLhs,
-      else: isAnd ? [] : rhsBody,
-      elseValue: isAnd ? rawLhs : rhs,
-      resultType: irDynamic(),
-    });
+    return emitLogicalSelect(cx.builder, isAnd, { cond, lhs: rawLhs, rhsBody, rhs }, irDynamic());
   }
   const lhs =
     lhsType.kind === "dynamic" ? cx.builder.emitDynTruthy(rawLhs) : asVal(lhsType)?.kind === "i32" ? rawLhs : null;
@@ -15761,10 +15684,11 @@ function lowerLogicalAndOr(expr: ts.BinaryExpression, op: ts.SyntaxKind, cx: Low
   const rhsCx: LowerCtx = { ...cx, scope: new Map(skippedScope) };
   let rhs!: IrValueId;
   const rhsBody = cx.builder.collectBodyInstrs(() => {
-    const rawRhs = lowerExpr(expr.right, rhsCx, resultType);
+    const rawRhs = lowerExpr(expr.right, rhsCx, operandHint(expr.right));
     const rhsType = cx.builder.typeOf(rawRhs);
     if (rhsType.kind === "dynamic") {
-      rhs = cx.builder.emitDynTruthy(rawRhs);
+      // (#7354) As a VALUE, `bool && dyn` is the right operand itself, not its truth.
+      rhs = booleanPosition ? cx.builder.emitDynTruthy(rawRhs) : rawRhs;
     } else if (asVal(rhsType)?.kind === "i32") {
       rhs = rawRhs;
     } else if (lhsType.kind === "dynamic" && boxConcreteToDynamic(rawRhs, rhsType, expr.right, cx) !== null) {
@@ -15779,41 +15703,46 @@ function lowerLogicalAndOr(expr: ts.BinaryExpression, op: ts.SyntaxKind, cx: Low
       );
     }
   });
+  joinScopeStringEncodingFacts(cx.scope, [rhsCx.scope, skippedScope]);
+  // (#7354) `bool && dyn` as a VALUE: the left operand, when it decides, is
+  // yielded in the carrier too (only a boolean position reaches here with a
+  // dynamic left operand, so `lhs` is the typed left value).
+  if (cx.builder.typeOf(rhs).kind === "dynamic") {
+    const boxedLhs = logicalOperandCarrier(lhs, expr.left, "left", opName, cx);
+    return emitLogicalSelect(cx.builder, isAnd, { cond: lhs, lhs: boxedLhs, rhsBody, rhs }, irDynamic());
+  }
   if (asVal(cx.builder.typeOf(rhs))?.kind !== "i32") {
     demoteToLegacy(
       "logical-value-unsupported",
       `ir/from-ast: operator '${opName}' requires bool operands in ${cx.funcName}`,
     );
   }
-  joinScopeStringEncodingFacts(cx.scope, [rhsCx.scope, skippedScope]);
 
   // A value join preserves the Boolean brand only when both actual operands
   // carry it. Native integer operands retain the existing unbranded result.
   const joinedType =
     irTypeIsBoolean(cx.builder.typeOf(lhs)) && irTypeIsBoolean(cx.builder.typeOf(rhs)) ? irBool() : resultType;
+  return emitLogicalSelect(cx.builder, isAnd, { cond: lhs, lhs, rhsBody, rhs }, joinedType);
+}
 
-  // `cond = lhs`. For `&&`, the rhs is the then-arm (lhs truthy) and lhs is the
-  // else-arm value. For `||`, lhs is the then-arm value and rhs is the
-  // else-arm. The empty arm yields the already-materialized `lhs` (the lowerer
-  // records it as a cross-block use, like `lowerNullish`'s else arm).
-  if (isAnd) {
-    return cx.builder.emitIfElse({
-      cond: lhs,
-      then: rhsBody,
-      thenValue: rhs,
-      else: [],
-      elseValue: lhs,
-      resultType: joinedType,
-    });
+/** An `&&` / `||` operand in the dynamic carrier (boxed when typed), or a refusal by name. */
+function logicalOperandCarrier(
+  value: IrValueId,
+  operand: ts.Expression,
+  side: "left" | "right",
+  opName: string,
+  cx: LowerCtx,
+): IrValueId {
+  const type = cx.builder.typeOf(value);
+  if (type.kind === "dynamic") return value;
+  const boxed = boxConcreteToDynamic(value, type, operand, cx);
+  if (boxed === null) {
+    demoteToLegacy(
+      "logical-value-unsupported",
+      `ir/from-ast: operator '${opName}' ${side} operand of ${describeIrType(type)} has no dynamic carrier in ${cx.funcName}`,
+    );
   }
-  return cx.builder.emitIfElse({
-    cond: lhs,
-    then: [],
-    thenValue: lhs,
-    else: rhsBody,
-    elseValue: rhs,
-    resultType: joinedType,
-  });
+  return boxed;
 }
 
 function checkerProvesExactNumericExponentOperand(expr: ts.Expression, cx: LowerCtx): boolean {
@@ -15867,6 +15796,9 @@ function emitExactNumericExponentiation(
   right: ts.Expression,
   cx: LowerCtx,
 ): IrValueId {
+  // (#7354 D1) No dynamic `**`; only the selector-less Prepared producer gets here.
+  if (cx.builder.typeOf(lhs).kind === "dynamic" || cx.builder.typeOf(rhs).kind === "dynamic")
+    demoteToLegacy("operand-coercion-unsupported", `ir/from-ast: '**' on a dynamic operand in ${cx.funcName}`);
   if (!checkerProvesExactNumericExponentOperand(left, cx) || !checkerProvesExactNumericExponentOperand(right, cx)) {
     throw new IrInvariantError(
       "selection-preparation-mismatch",

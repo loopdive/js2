@@ -535,7 +535,7 @@ export function lowerIrFunctionBody<S, Slot>(
     visitLexicalBuffer(block.instrs, region);
     for (const value of collectTerminatorUses(block)) recordLexicalUse(value, region, block.instrs.length);
   }
-  const nestedPureEffects = new Map<IrInstr, IrEffects>();
+  const instrEffects = new Map<IrInstr, IrEffects>();
   for (const value of [...crossBlock]) {
     const defRegion = lexicalDefRegion.get(value);
     const useRegions = lexicalUseRegions.get(value);
@@ -548,7 +548,7 @@ export function lowerIrFunctionBody<S, Slot>(
       useRegions.size !== 1 ||
       !useRegions.has(defRegion) ||
       lexicalUseCounts.get(value) !== 1 ||
-      !effectsArePure(effectsOf(def, nestedPureEffects))
+      !effectsArePure(effectsOf(def, instrEffects))
     ) {
       continue;
     }
@@ -650,7 +650,7 @@ export function lowerIrFunctionBody<S, Slot>(
         const instr = instrs[i];
         const r = instr.result;
         const uses = r === null ? 0 : (totalUses.get(r) ?? 0);
-        if (r === null || crossBlock.has(r) || (uses === 0 && isSideEffecting(instr))) {
+        if (r === null || crossBlock.has(r) || (uses === 0 && isSideEffecting(instr, instrEffects))) {
           emissionIdx[i] = i; // emitted in place by emitBlockBody
           continue;
         }
@@ -1070,7 +1070,7 @@ export function lowerIrFunctionBody<S, Slot>(
         emitInstrTree(bodyInstr, target);
         emitter.emitLocalSet(localIdx.get(bodyInstr.result)!, target);
         materialized.add(bodyInstr.result);
-      } else if ((totalUses.get(bodyInstr.result) ?? 0) === 0 && isSideEffecting(bodyInstr)) {
+      } else if ((totalUses.get(bodyInstr.result) ?? 0) === 0 && isSideEffecting(bodyInstr, instrEffects)) {
         // (#2856) Zero-use side-effecting instr inside a nested buffer —
         // same eager emit + drop contract as `emitBlockBody`. Without this
         // arm, a statement-position call whose unused NON-VOID result never
@@ -1625,7 +1625,7 @@ export function lowerIrFunctionBody<S, Slot>(
               emitInstrTree(bodyInstr, target);
               emitter.emitLocalSet(localIdx.get(bodyInstr.result)!, target);
               materialized.add(bodyInstr.result);
-            } else if ((totalUses.get(bodyInstr.result) ?? 0) === 0 && isSideEffecting(bodyInstr)) {
+            } else if ((totalUses.get(bodyInstr.result) ?? 0) === 0 && isSideEffecting(bodyInstr, instrEffects)) {
               // (#2856) Zero-use side-effecting instr inside a nested buffer —
               // same eager emit + drop contract as `emitBlockBody` (a
               // statement-position extern/host call whose unused result would
@@ -3187,7 +3187,7 @@ export function lowerIrFunctionBody<S, Slot>(
                 index: localIdx.get(bodyInstr.result)!,
               });
               materialized.add(bodyInstr.result);
-            } else if ((totalUses.get(bodyInstr.result) ?? 0) === 0 && isSideEffecting(bodyInstr)) {
+            } else if ((totalUses.get(bodyInstr.result) ?? 0) === 0 && isSideEffecting(bodyInstr, instrEffects)) {
               // (#2856) Zero-use side-effecting instr — eager emit + drop,
               // same contract as `emitBlockBody` (see the if-arm variant).
               emitInstrTree(bodyInstr, target as unknown as S);
@@ -3552,7 +3552,7 @@ export function lowerIrFunctionBody<S, Slot>(
               emitInstrTree(bodyInstr, target);
               emitter.emitLocalSet(localIdx.get(bodyInstr.result)!, target);
               materialized.add(bodyInstr.result);
-            } else if ((totalUses.get(bodyInstr.result) ?? 0) === 0 && isSideEffecting(bodyInstr)) {
+            } else if ((totalUses.get(bodyInstr.result) ?? 0) === 0 && isSideEffecting(bodyInstr, instrEffects)) {
               // (#2856) Zero-use side-effecting instr — eager emit + drop,
               // same contract as `emitBlockBody` (see the if-arm variant).
               emitInstrTree(bodyInstr, target);
@@ -3839,7 +3839,7 @@ export function lowerIrFunctionBody<S, Slot>(
       // from the operand stack. The DCE pass already keeps these instrs
       // live in the IR; this is the matching emission contract.
       const useCount = totalUses.get(instr.result) ?? 0;
-      if (useCount === 0 && isSideEffecting(instr)) {
+      if (useCount === 0 && isSideEffecting(instr, instrEffects)) {
         emitInstrTree(instr, out);
         emitter.emitDrop(out);
       }

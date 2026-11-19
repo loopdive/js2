@@ -91,9 +91,13 @@ it("SameValue treats different NaN payloads as equal and signed zeros as distinc
 
 it("replays only the exact semantic correction before historical receipts", async () => {
   const { readFileSync } = await import("node:fs");
-  const { sameValueNaNPath, applySameValueNaNCorrection, beforeSameValueNaNCorrection } =
+  const { sameValueNaNPath, applySameValueNaNCorrection, beforeSameValueNaNCorrection, beforeStrictEqualityFold } =
     await import("./helpers/same-value-nan-correction.js");
-  const current = readFileSync(new URL("../" + sameValueNaNPath, import.meta.url), "utf8");
+  // #7354 D1: the strict-equality fold is a later reviewed edit; its inverse yields the NaN-corrected source.
+  const folded = readFileSync(new URL("../" + sameValueNaNPath, import.meta.url), "utf8");
+  const current = beforeStrictEqualityFold(folded);
+  expect(beforeSameValueNaNCorrection(sameValueNaNPath, folded)).toBe(applySameValueNaNCorrection(current, true));
+  expect(() => beforeStrictEqualityFold(folded.replace('op: "f64.eq"', 'op: "f64.ne"'))).toThrow("source mismatch");
   const before = applySameValueNaNCorrection(current, true);
   expect(before).not.toBe(current);
   expect(applySameValueNaNCorrection(before, false)).toBe(current);

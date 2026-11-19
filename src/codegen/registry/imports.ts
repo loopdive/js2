@@ -4,7 +4,12 @@ import { isRetiredEcmaScriptExternClass } from "../../host-import-policy.js";
 import { registerWideBigIntTypes } from "../bigint-wide.js";
 import { buildOpenBigIntType } from "../../runtime/wasmgc/values/bigint-carrier-layouts.js";
 import type { Instr, ValType, WasmFunction } from "../../ir/types.js";
-import { buildBoxNumberType, buildBoxBooleanType } from "../../runtime/wasmgc/values/primitive-layouts.js";
+import {
+  buildBoxNumberType,
+  buildBoxBooleanType,
+  buildToBooleanBody,
+  buildToBooleanLocals,
+} from "../../runtime/wasmgc/values/primitive-layouts.js";
 import {
   buildBoxNumberBody,
   buildBoxNumberLocals,
@@ -1137,153 +1142,19 @@ export function addUnionImportsAsNativeFuncs(ctx: CodegenContext): void {
     ],
   );
 
-  // 7. __is_truthy(externref) -> i32
-  //    null → 0; boxed number → value !== 0 && !NaN; boxed bool → value;
-  //    anything else (other refs) → 1 (any non-null ref is truthy in JS).
+  // 7. __is_truthy(externref) -> i32 — ToBoolean, shared with the Prepared dynamic value (#7354 T).
   registerNative(
     "__is_truthy",
     externrefToI32,
-    [
-      // if (ref.is_null param) return 0
-      { op: "local.get", index: 0 },
-      { op: "ref.is_null" },
-      {
-        op: "if",
-        blockType: { kind: "empty" },
-        then: [{ op: "i32.const", value: 0 }, { op: "return" }],
-      },
-      // (#2106 S1) `$AnyValue` box: tag 0 (null) / 1 (undefined) → FALSY
-      // (§7.1.2); other wrapped tags (5 string / 6 object) keep the non-null-
-      // ref default (truthy). Without this arm the non-null `$undefined`
-      // singleton would be truthy — `if (undefined)` taking the then-branch.
-      // (#4173, flag-gated) The legacy body internalized the operand TWICE
-      // (once for this arm, once for the ladder below); with `fastStrictEq`
-      // on, convert once and let the teed value feed whichever test is next.
-      ...(s1AnyValIdx >= 0
-        ? ([
-            { op: "local.get", index: 0 },
-            { op: "any.convert_extern" },
-            { op: "local.tee", index: 1 },
-            { op: "ref.test", typeIdx: s1AnyValIdx },
-            {
-              op: "if",
-              blockType: { kind: "empty" },
-              then: [
-                { op: "local.get", index: 1 },
-                { op: "ref.cast", typeIdx: s1AnyValIdx },
-                { op: "struct.get", typeIdx: s1AnyValIdx, fieldIdx: 0 },
-                { op: "i32.const", value: 1 },
-                { op: "i32.gt_u" },
-                { op: "return" },
-              ],
-            },
-          ] satisfies Instr[])
-        : []),
-      // any = any.convert_extern(param) — skipped under fastStrictEq when the
-      // $AnyValue arm above already converted (local 1 holds the anyref).
-      ...((ctx.fastStrictEq === true && s1AnyValIdx >= 0
-        ? [{ op: "local.get", index: 1 }]
-        : [
-            { op: "local.get", index: 0 },
-            { op: "any.convert_extern" },
-            { op: "local.tee", index: 1 },
-          ]) satisfies Instr[]),
-      // (#3673) i31 small int → value !== 0 (no NaN possible in i31).
-      { op: "ref.test", typeIdx: -20 },
-      {
-        op: "if",
-        blockType: { kind: "empty" },
-        then: [
-          { op: "local.get", index: 1 },
-          { op: "ref.cast", typeIdx: -20 },
-          { op: "i31.get_s" },
-          { op: "i32.const", value: 0 },
-          { op: "i32.ne" },
-          { op: "return" },
-        ],
-      },
-      { op: "local.get", index: 1 },
-      // boxed number? → value !== 0 && value === value
-      { op: "ref.test", typeIdx: boxNumStructIdx },
-      {
-        op: "if",
-        blockType: { kind: "empty" },
-        then: [
-          { op: "local.get", index: 1 },
-          { op: "ref.cast", typeIdx: boxNumStructIdx },
-          { op: "struct.get", typeIdx: boxNumStructIdx, fieldIdx: 0 },
-          { op: "local.tee", index: 2 },
-          // value !== 0
-          { op: "f64.const", value: 0 },
-          { op: "f64.ne" },
-          { op: "local.get", index: 2 },
-          // value === value (NaN check — NaN !== NaN)
-          { op: "local.get", index: 2 },
-          { op: "f64.eq" },
-          { op: "i32.and" },
-          { op: "return" },
-        ],
-      },
-      // boxed bool? → value
-      { op: "local.get", index: 1 },
-      { op: "ref.test", typeIdx: boxBoolStructIdx },
-      {
-        op: "if",
-        blockType: { kind: "empty" },
-        then: [
-          { op: "local.get", index: 1 },
-          { op: "ref.cast", typeIdx: boxBoolStructIdx },
-          { op: "struct.get", typeIdx: boxBoolStructIdx, fieldIdx: 0 },
-          { op: "return" },
-        ],
-      },
-      // boxed bigint? → value !== 0n
-      { op: "local.get", index: 1 },
-      { op: "ref.test", typeIdx: bigIntStructIdx },
-      {
-        op: "if",
-        blockType: { kind: "empty" },
-        then: [
-          { op: "local.get", index: 1 },
-          { op: "ref.cast", typeIdx: bigIntStructIdx },
-          { op: "struct.get", typeIdx: bigIntStructIdx, fieldIdx: 0 },
-          { op: "i64.eqz" },
-          { op: "i32.eqz" },
-          { op: "return" },
-        ],
-      },
-      // (#2080) native string? → length !== 0 (ToBoolean §7.1.2: "" → false).
-      // In standalone/nativeStrings mode an `any`-held string is a $AnyString
-      // (the supertype of $NativeString / $ConsString, all carrying $len at
-      // field 0) wrapped as externref — NOT a $AnyValue box. Without this arm
-      // it falls through to the "any non-null ref → truthy" default, so the
-      // empty string is wrongly truthy. Guarded on anyStrTypeIdx so the GC /
-      // host-string path (no native-string type registered) is unaffected.
-      ...(ctx.anyStrTypeIdx >= 0
-        ? ([
-            { op: "local.get", index: 1 },
-            { op: "ref.test", typeIdx: ctx.anyStrTypeIdx },
-            {
-              op: "if",
-              blockType: { kind: "empty" },
-              then: [
-                { op: "local.get", index: 1 },
-                { op: "ref.cast", typeIdx: ctx.anyStrTypeIdx },
-                { op: "struct.get", typeIdx: ctx.anyStrTypeIdx, fieldIdx: 0 },
-                { op: "i32.const", value: 0 },
-                { op: "i32.ne" },
-                { op: "return" },
-              ],
-            },
-          ] satisfies Instr[])
-        : []),
-      // any other non-null ref → truthy
-      { op: "i32.const", value: 1 },
-    ],
-    [
-      { name: "$any_temp", type: { kind: "anyref" } as ValType },
-      { name: "$f64_temp", type: { kind: "f64" } },
-    ],
+    buildToBooleanBody({
+      anyValueTypeIdx: s1AnyValIdx >= 0 ? s1AnyValIdx : undefined,
+      internalizeOnce: ctx.fastStrictEq === true,
+      boxNumberTypeIdx: boxNumStructIdx,
+      boxBooleanTypeIdx: boxBoolStructIdx,
+      bigIntTypeIdx: bigIntStructIdx,
+      anyStringTypeIdx: ctx.anyStrTypeIdx >= 0 ? ctx.anyStrTypeIdx : undefined,
+    }),
+    buildToBooleanLocals(),
   );
 
   // 8. __typeof_number(externref) -> i32 — `ref.test $box_number_struct`.

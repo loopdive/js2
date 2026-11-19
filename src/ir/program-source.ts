@@ -4,7 +4,9 @@ import { ts } from "../ts-api.js";
 import { sourceBooleanAnyResult, assertSourceBooleanAnyReturns } from "../frontend/boolean-return-boundary.js";
 import { preparedIrProgramCallableResults } from "./program-callable-contract.js";
 import { prepareSourceClosureInvocations } from "./source-closure-invocation.js";
+import { checkerAny, programDynamicContracts, type ProgramDynamicContracts } from "./source-dynamic-contracts.js";
 import type { TypedIrProgramInput } from "./program/input-contracts.js";
+import { legalizeDynamicGlobals } from "./program/dynamic-value-legalization.js";
 import type { TypeOracle } from "../checker/oracle.js";
 import { AllocSiteRegistry } from "./analysis/alloc-registry.js";
 import { irModuleGlobalBindingId, irModuleTdzGlobalBindingId, irSourceGlobalRef } from "./abi-bindings.js";
@@ -1046,49 +1048,6 @@ function checkerInferredCallableResult(
   return result;
 }
 
-/** Canonical any identity excludes TypeScript's separate error-any recovery type. */
-function checkerAny(checker: ts.TypeChecker, node: ts.Node): IrType | undefined {
-  return checker.getTypeAtLocation(node) === checker.getAnyType() ? { kind: "dynamic" } : undefined;
-}
-
-function hostPromiseFulfillment(checker: ts.TypeChecker, type: ts.Type): ts.Type | undefined {
-  const ambient = checker.resolveName("Promise", undefined, ts.SymbolFlags.Type, false);
-  if (
-    !ambient?.declarations?.length ||
-    !ambient.declarations.every((declaration) => declaration.getSourceFile().isDeclarationFile)
-  )
-    return undefined;
-  // Checking the resolved symbol admits aliases, but not source classes or structural thenables.
-  if ((type.flags & ts.TypeFlags.Object) === 0 || type.getSymbol() !== ambient) return undefined;
-  const arguments_ = checker.getTypeArguments(type as ts.TypeReference);
-  return arguments_.length === 1 ? arguments_[0] : undefined;
-}
-
-/** Preserve logical any independently of a typed Promise's host callable carrier. */
-function hostAsyncParameter(checker: ts.TypeChecker, parameter: ts.ParameterDeclaration): IrType | undefined {
-  if (!parameter.type) return undefined;
-  const declared = checker.getTypeFromTypeNode(parameter.type);
-  if (declared === checker.getAnyType()) return checkerAny(checker, parameter.name);
-  for (const type of [declared, checker.getTypeAtLocation(parameter.name)]) {
-    const fulfillment = hostPromiseFulfillment(checker, type);
-    if (!fulfillment || (fulfillment.flags & ts.TypeFlags.NumberLike) === 0) return undefined;
-  }
-  return { kind: "val", val: { kind: "externref" } };
-}
-
-function hostAsyncAnyResult(checker: ts.TypeChecker, declaration: ts.FunctionDeclaration): IrType | undefined {
-  const signature = checker.getSignatureFromDeclaration(declaration);
-  if (!signature) return undefined;
-  if (hostPromiseFulfillment(checker, checker.getReturnTypeOfSignature(signature)) !== checker.getAnyType())
-    return undefined;
-  if (
-    declaration.type &&
-    hostPromiseFulfillment(checker, checker.getTypeFromTypeNode(declaration.type)) !== checker.getAnyType()
-  )
-    return undefined;
-  return { kind: "dynamic" };
-}
-
 function storageType(identity: IrModuleBindingIdentity): IrType {
   const value = identity.valueKind;
   switch (value.kind) {
@@ -1398,7 +1357,6 @@ function validateNativePromiseDelaySourceLowering(
 /** Keep callable carriers separate from semantic fulfillment signatures. */
 function prepareSourceFunctionSignatures(
   checker: ts.TypeChecker,
-  policy: RuntimeManifestPolicy,
   inventory: IrUnitInventory,
   identity: ReturnType<typeof buildIrPlanningIdentityContext>,
   types: ReturnType<typeof buildIrUnitTypeMap>,
@@ -1406,6 +1364,7 @@ function prepareSourceFunctionSignatures(
   nativeFamily: NativeAsyncSourceFamilies | undefined,
   signatures: Map<IrUnitId, { params: readonly IrType[]; returnType: IrType | null }>,
   bodyResults: Map<IrUnitId, IrType | null>,
+  dynamic: ProgramDynamicContracts,
   diagnostic: SourceDiagnosticOwner,
 ): void {
   for (const unit of inventory.terminalUnits) {
@@ -1417,21 +1376,20 @@ function prepareSourceFunctionSignatures(
     const propagated = types.get(unit.id);
     const family = nativeFamily?.functions.get(unit.id);
     const isAsync = declaration.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword);
-    const hostAsync = isAsync && policy.backend === "wasmgc" && policy.target === "host";
     const params =
       family?.params ??
-      declaration.parameters.map((param, index) =>
-        param.type
-          ? ((hostAsync ? hostAsyncParameter(checker, param) : undefined) ??
-            checkerCallable(checker, param.type, unit.displayName) ??
-            typeNodeToIr(param.type, unit.displayName))
-          : propagated?.params[index]
-            ? lowerTypeToIrType(propagated.params[index]!)
-            : checkerScalar(checker, param),
+      declaration.parameters.map(
+        (param, index) =>
+          dynamic.parameter(declaration, param) ??
+          (param.type
+            ? (checkerCallable(checker, param.type, unit.displayName) ?? typeNodeToIr(param.type, unit.displayName))
+            : propagated?.params[index]
+              ? lowerTypeToIrType(propagated.params[index]!)
+              : checkerScalar(checker, param)),
       );
     if (params.some((type) => !type)) unsupported(`function ${unit.displayName} has an unresolved parameter contract`);
     const returnNode = isAsync ? unwrapPromiseTypeNode(declaration.type) : declaration.type;
-    const dynamicResult = hostAsync ? hostAsyncAnyResult(checker, declaration) : undefined;
+    const dynamicResult = dynamic.result(declaration);
     const result: IrType | null = certifiedDelays.has(unit.id)
       ? { kind: "extern", className: "Promise" }
       : family
@@ -1451,7 +1409,7 @@ function prepareSourceFunctionSignatures(
                   checkerCallable(checker, returnNode, unit.displayName) ??
                   typeNodeToIr(returnNode, unit.displayName))
                 : (checkerInferredCallableResult(checker, declaration, unit.displayName) ??
-                  (propagated ? lowerTypeToIrType(propagated.returnType) : null));
+                  dynamic.propagatedResult(declaration, propagated && lowerTypeToIrType(propagated.returnType)));
     bodyResults.set(unit.id, result);
     const callableResults = preparedIrProgramCallableResults({
       funcKind: isAsync ? "async" : "regular",
@@ -1633,6 +1591,7 @@ export function prepareIrProgramSources(
       sourceFiles,
       identityContext: identity,
     });
+    const dynamicContracts = programDynamicContracts(input.checker, input.policy, sourceFiles);
     const moduleResolver = makeIrIdentityModuleBindingResolver(
       input.checker,
       {
@@ -1641,6 +1600,7 @@ export function prepareIrProgramSources(
         allowBuiltinMapExtern: input.policy.target === "host" && input.policy.stringConst?.storage !== "native",
         allowNativeMapStorage: input.policy.stringConst?.storage === "native",
         oracle: input.oracle,
+        scriptVarHome: dynamicContracts.scriptVarHome,
       },
       identity,
     );
@@ -1686,7 +1646,6 @@ export function prepareIrProgramSources(
       : undefined;
     prepareSourceFunctionSignatures(
       input.checker,
-      input.policy,
       inventory,
       identity,
       types,
@@ -1694,6 +1653,7 @@ export function prepareIrProgramSources(
       nativeFamily,
       signatures,
       bodyResults,
+      dynamicContracts,
       diagnostic,
     );
     for (const source of sourceFiles) {
@@ -1778,6 +1738,7 @@ export function prepareIrProgramSources(
           return resultType ? { resultType, operandType } : null;
         },
         ...family?.resolver,
+        ...dynamicContracts.resolver,
       };
       const source = identity.sourceFileBySourceId.get(unit.sourceId)!;
       const moduleInit = unit.kind === "module-init";
@@ -1785,13 +1746,8 @@ export function prepareIrProgramSources(
         ? makeModuleInitSynthetic(identity.moduleInitPopulationBySourceFile.get(source) ?? [])
         : identity.declarationByUnitId.get(unit.id)!;
       if (!ts.isFunctionDeclaration(declaration)) unsupported(`missing declaration producer for ${unit.kind}`);
-      Object.assign(
-        resolver,
-        prepareSourceBuiltinResolvers(
-          input,
-          moduleInit ? (identity.moduleInitPopulationBySourceFile.get(source) ?? []) : declaration,
-        ),
-      );
+      const sourceRoots = moduleInit ? (identity.moduleInitPopulationBySourceFile.get(source) ?? []) : declaration;
+      Object.assign(resolver, prepareSourceBuiltinResolvers(input, sourceRoots));
       const signature = signatures.get(unit.id);
       const lowered = lowerFunctionAstToIr(declaration, {
         booleanReturnBoundary: sourceBooleanAnyResult(input.checker, declaration) ? declaration : undefined,
@@ -1843,7 +1799,9 @@ export function prepareIrProgramSources(
           "invalid-prepared-data",
           `certified native Promise-delay ${unit.id} fabricated support bodies or provenance`,
         );
-      functions.push(lowered.main, ...lowered.lifted);
+      functions.push(
+        ...dynamicContracts.legalize(signatures.values(), globals, sourceRoots, [lowered.main, ...lowered.lifted]),
+      );
       appendLiftedSourceProvenance(lowered.liftedUnitProvenance, inventory, unit, derivedUnits);
       if (derivedSourceRows !== undefined) appendSourceMapDerivedRows(derivedSourceRows, lowered, identity, unit);
     }
@@ -1859,15 +1817,16 @@ export function prepareIrProgramSources(
       sourceMapProjector === undefined
         ? undefined
         : finishSourceMapCatalog(sourceMapProjector, derivedSourceRows!, derivedUnits);
+    const dynamic = legalizeDynamicGlobals(functions, globals);
     const prepared: IrProgramSourcePreparation = {
       kind: "prepared",
       ...(sourceMap === undefined ? {} : { sourceMap }),
       inventory,
-      ir: { functions },
+      ir: { functions: dynamic.functions },
       derivedUnits,
       startup,
       callables: callGraph.records,
-      globals,
+      globals: dynamic.globals,
       allocations,
     };
     if (sourceMap !== undefined) assertPreparedSourceMap(prepared);

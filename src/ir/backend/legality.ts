@@ -42,7 +42,8 @@ export type IrBackendTargetCapability =
   | "dynamic-method-call-wrapper"
   | "native-global-function-call"
   | "native-object-statics"
-  | "native-builtin-globals";
+  | "native-builtin-globals"
+  | "native-string-uses";
 
 /**
  * The target facts needed by pre-claim capability checks. Keep this smaller
@@ -179,6 +180,10 @@ export function supportsIrBackendTargetCapability(
     // (#7350) The built-in globals read off the realm beyond #7118's names
     // (`ir/builtin-globals.ts`), measured on host-free standalone only.
     case "native-builtin-globals":
+    case "native-string-uses":
+      // (#7346) The selector's string-use rules (`select-string-uses.ts`) and a
+      // string module binding read as an ordinary string value
+      // (`module-binding-string.ts`), measured on host-free standalone only.
       return (
         profile.backend === "wasmgc" &&
         profile.fast !== true &&

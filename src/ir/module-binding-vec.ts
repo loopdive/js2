@@ -15,7 +15,11 @@
  */
 import { ts } from "../ts-api.js";
 import { isStoreTarget, outermostParenthesized, stripParens } from "../shared/binding-writes.js";
-import { scriptVarUseFollowsDeclaration, scriptVarWrites } from "./module-binding-script-var.js";
+import {
+  isTypeofOrDeleteOperand,
+  scriptVarUseFollowsDeclaration,
+  scriptVarWrites,
+} from "./module-binding-script-var.js";
 import type { IrModuleBindingValueKind } from "./module-binding-value-kinds.js";
 
 export type VecValueKind = Extract<IrModuleBindingValueKind, { kind: "vec" }>;
@@ -65,7 +69,7 @@ export function vecWriteMatches(
  */
 export function vecUseSupported(node: ts.Identifier, declaration: ts.VariableDeclaration | ts.BindingElement): boolean {
   if (node === declaration.name) return true;
-  if (!scriptVarUseFollowsDeclaration(node, declaration)) return false;
+  if (!scriptVarUseFollowsDeclaration(node, declaration) || isTypeofOrDeleteOperand(node)) return false;
   const receiver = outermostParenthesized(node);
   const access = receiver.parent;
   if (!(ts.isElementAccessExpression(access) || ts.isPropertyAccessExpression(access))) return false;

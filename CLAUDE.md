@@ -68,13 +68,25 @@ How it is enforced:
    fold the duplicate into the shared helper in the same PR, or file the
    cleanup as its own issue and link it.
 
-## ⚠ IR migration: foundations first (project-lead decision, 2026-11-15)
+## ⚠ IR migration: foundations first (project-lead decisions, 2026-11-15 and 2026-11-16)
 
-**Applies to every session and agent working on the IR migration.** The goal is
-every ES5 test262 file compiling on `--target standalone` with zero legacy
-units. Measured 2026-11-11 to 2026-11-15, narrow slices (one refusal label at a
-time) moved that from 17.5 % to about 19 % of 8,591 files: 2 to 55 files per
-slice, because almost every blocked file carries several reasons.
+**Applies to every session and agent working on the IR migration.**
+
+**The goal is measured on the Prepared whole-program path (decision of
+2026-11-16).** "IR-only" means a test passes under `TEST262_COMPILER_PATH=ir`
+(front door `wholeProgram: { kind: "prepared-program-required" }`), the figure
+the site publishes and CI measures on every merge to main. On 2026-11-16 that
+path passed no positive ES5 test: every test stops inside the shared harness
+prelude. It shares only `lowerFunctionAstToIr` with the ordinary pipeline, not
+the selector or the codegen-backed resolver, so a file with zero legacy units
+in the ordinary pipeline does not count. Current plan:
+`plan/issues/7354-prepared-path-harness-prelude-milestone.md`. New mechanisms
+are built as pure, backend-independent code that both pipelines ask.
+
+Background: until 2026-11-15 the working measure was ES5 files with zero legacy
+units in the ordinary pipeline. Narrow slices (one refusal label at a time)
+moved that from 17.5 % to about 19 % of 8,591 files: 2 to 55 files per slice,
+because almost every blocked file carries several reasons.
 
 - **Build the mechanisms many files need, before narrow slices.** In order of
   measured size: function values and closures, object literals as open
@@ -639,6 +651,8 @@ Default rule: if the agent's job is "produce one document and exit," it's a suba
 **RAM monitoring**: Use `free -m` "available" column (not "free"). "free" excludes reclaimable disk cache. Hooks check "available" before allowing agent spawns.
 
 **CPU / concurrency cap (the binding limit)**: The real bottleneck on this box is CPU, not RAM — agents are cheap while idle (waiting on the API) but each _active_ one bursts a core during compile/test. With no ceiling, load oversubscribes (it hit 13–16 on 8 cores), which starves sshd and drops interactive SSH sessions. `pre-agent-spawn.sh` therefore hard-blocks a new spawn when the **1-min load average ≥ `cores − 2`** (the `JS2WASM_MAX_LOAD` env var; default leaves ~2 cores for the lead/IDE/sshd/system). It gates on _load_, not a process count, because the harness keeps a warm `claude.exe` pool (`--bg-spare`/`--bg-pty-host`) that makes process-counting a poor proxy for active agents. Raise `JS2WASM_MAX_LOAD` to trade SSH responsiveness for throughput.
+
+**Cloud sessions use a higher cap (project-lead decision, 2026-11-16).** In a Claude Code cloud session (`CLAUDE_CODE_REMOTE=true`) nobody works on the box interactively, so `cores − 2` only throttles the work: on a 4-core container it admitted one agent at a time. There the gate's default is `cores × 2` (three agents hold a 4-core container at load 5 to 8). The RAM floor still applies, and `JS2WASM_MAX_LOAD`, or the per-box gitignored `max-load` file the hook reads from the `.claude` directory, still override it.
 
 **Memory budget** (measured peaks via `/proc/[pid]/status` VmHWM):
 

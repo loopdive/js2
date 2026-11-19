@@ -368,6 +368,16 @@ export function collectStringLiteralLens(
 }
 
 /**
+ * (#7346) The member a string value answers as a read (not a call's callee):
+ * from-ast's string receiver arm lowers `.length` alone; its methods are
+ * calls. The selector refuses any other read of a proven string here, so the
+ * claim is never withdrawn.
+ */
+export function stringMemberReadLowerable(property: string): boolean {
+  return property === "length";
+}
+
+/**
  * (#2972) Is this string element read LOWERABLE by the IR's
  * proven-in-bounds charAt arm? The receiver must be an identifier, and the
  * index must be proven in `[0, s.length)` by EITHER of two independent

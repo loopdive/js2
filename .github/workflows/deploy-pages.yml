@@ -154,8 +154,12 @@ jobs:
           // Edition artifacts are optional (older measurements predate them): absent means unmeasured.
           const optional = path => { try { return JSON.parse(readFileSync(path, 'utf8')); } catch { return undefined; } };
           let latest;
+          // Main is measured on every merge; the history keeps the newest valid measurement of each day.
+          const days = new Set();
           for (const artifact of artifacts.filter(a => !a.expired && a.workflow_run?.head_branch === 'main')
               .sort((a, b) => b.id - a.id)) {
+            const day = artifact.created_at?.slice(0, 10) ?? artifact.id;
+            if (days.has(day)) continue;
             const execution = api(`repos/${repository}/actions/runs/${artifact.workflow_run.id}`);
             if (execution.name !== 'Test262 Sharded' || execution.status !== 'completed' ||
                 execution.head_repository?.full_name !== repository) continue;
@@ -182,6 +186,7 @@ jobs:
                 status.baseline_sha !== report.baseline_sha ||
                 (status.state === 'unavailable' && (typeof status.reason !== 'string' || !status.reason)))
               throw new Error('IR status contradicts its actual requested result');
+            days.add(day);
             const { categories, ...metadata } = report;
             const row = { ...metadata, runId: String(execution.id), sourceSha: execution.head_sha };
             if (report.measurementState === 'measured') {

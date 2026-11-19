@@ -21,7 +21,7 @@ import {
 } from "../backend/wasmgc/program/native-invocation-abi.js";
 import { nativeStringOutputAbiBindings } from "../backend/wasmgc/program/native-string-output-abi.js";
 import {
-  nativeBooleanAbiBindings,
+  nativeIntrinsicAbiBindings,
   nativeNumberBinding,
 } from "../backend/wasmgc/program/native-primitive-boundary-abi.js";
 import { planHostNumberBoundary, type HostNumberBoundarySetup } from "./program/host-number-boundary-setup.js";
@@ -413,7 +413,7 @@ function validateNativeNumberFormatInput(
     nativeInvalid(`formatter support cannot be lowered: ${errors.map((error) => error.message).join("; ")}`);
 }
 
-function nativeRole(declaration: NativeStringValueDeclaration): string {
+export function nativeRole(declaration: NativeStringValueDeclaration): string {
   return "native-string-values:v1:" + JSON.stringify(declaration.role);
 }
 
@@ -689,7 +689,7 @@ function nativeStringSetup(
     const binding = nativeNumberBinding(context, input, baseOrder + index, direction);
     if (binding) add(binding);
   }
-  nativeBooleanAbiBindings(input, baseOrder).forEach(add);
+  nativeIntrinsicAbiBindings(input, baseOrder).forEach(add);
   if (input.plan.output) {
     if (!input.outputRequirements) nativeInvalid("missing output requirements for ABI join");
     const offset = input.plan.declarations.findIndex((row) => row.key === input.plan.output!.declarations[0]?.key);
@@ -1196,12 +1196,11 @@ function missingIntrinsicMaterialization(
       ((nativeStrings &&
         (instruction.id === "js.number.unbox" ||
           (instruction.id === "js.number.box" && projection.prepared.manifest.policy.numberBoundary.box === "native") ||
-          ((instruction.id === "js.boolean.box" || instruction.id === "js.boolean.unbox") &&
-            nativeStrings.bindings.some(
-              (row) =>
-                row.reference.kind === "func" &&
-                irCallableBindingKey(row.reference.binding) === irCallableBindingKey(provider.target.binding),
-            )))) ||
+          nativeStrings.bindings.some(
+            (row) =>
+              row.reference.kind === "func" &&
+              irCallableBindingKey(row.reference.binding) === irCallableBindingKey(provider.target.binding),
+          ))) ||
         (instruction.id === "js.number.box" &&
           hostNumberBoundary?.imports.some(
             (row) => row.referenceKey === irCallableBindingKey(provider.target.binding),
@@ -1365,8 +1364,10 @@ export function planPhysicalSetup(
       if (binding.kind === "import") {
         importedGlobals.push({ ...base, module: binding.module, field: binding.field });
       } else if (binding.kind === "source") {
-        if (!numeric(type)) gaps.add(`source global ${contract.ref.name} needs a reference-typed default initializer`);
-        else definedGlobals.push(base);
+        // (#7354 H) A reference-typed source global is the dynamic carrier, and its only producer, the globals arm
+        // of the dynamic-value legalization, makes the storage owner store `undefined` into it first.
+        if (numeric(type) || type.kind === "externref") definedGlobals.push(base);
+        else gaps.add(`source global ${contract.ref.name} needs a reference-typed default initializer`);
       } else {
         gaps.add(`${binding.kind} global ${contract.ref.name} needs runtime storage materialization`);
       }

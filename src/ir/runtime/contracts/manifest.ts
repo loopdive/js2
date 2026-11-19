@@ -124,6 +124,15 @@ export const EXTERN_BOUNDARY_RUNTIME_PROVIDER_IDS = Object.freeze([
 
 export type ExternBoundaryRuntimeProviderId = (typeof EXTERN_BOUNDARY_RUNTIME_PROVIDER_IDS)[number];
 
+/** (#7354 D1) The dynamic-value operations have one native arm each. */
+export const DYNAMIC_VALUE_RUNTIME_PROVIDER_IDS = Object.freeze([
+  "native.js.value.strict_eq",
+  "native.js.value.to_boolean",
+  "native.js.value.undefined",
+] as const);
+
+export type DynamicValueRuntimeProviderId = (typeof DYNAMIC_VALUE_RUNTIME_PROVIDER_IDS)[number];
+
 /**
  * (#3526 F1-S3) The generator return seam's boxing requirement.
  *
@@ -446,6 +455,7 @@ export type RuntimeProviderId =
   | NumberBoundaryRuntimeProviderId
   | BooleanBoundaryRuntimeProviderId
   | ExternBoundaryRuntimeProviderId
+  | DynamicValueRuntimeProviderId
   | GeneratorNumberBoxRuntimeProviderId
   | StringCompareRuntimeProviderId
   | StringEqRuntimeProviderId

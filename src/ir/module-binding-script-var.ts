@@ -2,8 +2,8 @@
 /**
  * The source facts a write-certified SCRIPT `var` home rests on, shared by
  * every certifier of one (#7252's class instance, #7292's string vec, #7274's
- * native buffers): where the binding is written, and whether a use reads a slot
- * that has been written.
+ * native buffers, #7354's IR-owned typed home): where the binding is written,
+ * and whether a use reads a slot that has been written.
  */
 import { ts } from "../ts-api.js";
 import {
@@ -12,6 +12,12 @@ import {
   outermostParenthesized,
   type IdentifierWrite,
 } from "../shared/binding-writes.js";
+import {
+  isValueReference,
+  sourceMayWriteGlobalObject,
+  sourceRunsDynamicCode,
+} from "../shared/intrinsic-prototype-writes.js";
+import { isTopLevelStatementDeclaration } from "../shared/var-declaration-lists.js";
 
 const scriptVarWritesCache = new WeakMap<ts.VariableDeclaration, readonly IdentifierWrite[] | null>();
 
@@ -53,8 +59,10 @@ function collectScriptVarWrites(
 /**
  * True when `node` is the declaration itself or a module-init use that runs
  * after it, so the script var's slot has been written: a top-level statement
- * after it, outside every function and class body, and not the operand of
- * `typeof` / `delete`.
+ * after it, outside every function and class body. Which operators a home
+ * lets read the slot is the home's own rule: the class-instance, capability,
+ * vec and native-buffer homes refuse a `typeof` / `delete` operand
+ * (`isTypeofOrDeleteOperand`); the string home (#7346) reads `typeof`'s.
  */
 export function scriptVarUseFollowsDeclaration(
   node: ts.Identifier,
@@ -62,11 +70,118 @@ export function scriptVarUseFollowsDeclaration(
 ): boolean {
   if (node === declaration.name) return true;
   const statement = ts.findAncestor(declaration, ts.isVariableStatement);
-  if (statement === undefined || node.pos < statement.end) return false;
-  const parent = outermostParenthesized(node).parent;
-  if (ts.isTypeOfExpression(parent) || ts.isDeleteExpression(parent)) return false;
-  for (let current = node.parent; !ts.isSourceFile(current); current = current.parent) {
-    if (ts.isFunctionLike(current) || ts.isClassLike(current)) return false;
+  return statement !== undefined && placedAfter(node, statement.end, isCallable);
+}
+
+/**
+ * `node` sits after `statementEnd` and no enclosing node `defers` may run it from earlier code. A certified home
+ * defers every function and class (`isCallable`); the typed home only a hoisted function (`isHoistedFunction`),
+ * since any other one is created where it stands.
+ */
+function placedAfter(node: ts.Node, statementEnd: number, defers: (enclosing: ts.Node) => boolean): boolean {
+  return node.pos >= statementEnd && ts.findAncestor(node.parent, defers) === undefined;
+}
+
+function isCallable(node: ts.Node): boolean {
+  return ts.isFunctionLike(node) || ts.isClassLike(node);
+}
+
+/** A `var` declarator binding one name, the only shape a script var's typed home can be. */
+export type NamedVariableDeclaration = ts.VariableDeclaration & { readonly name: ts.Identifier };
+
+/**
+ * (#7354 V) True when no read of the script var `declaration` can run before its initializer: a typed slot has
+ * no `undefined`, so a read of the hoisted binding would answer the slot's zero. The declaration is a top-level
+ * statement's, initialized, and every read either is placed after the statement outside every hoisted function,
+ * or sits in a hoisted function nothing before the statement can call (`callableBefore`). Name-based, like
+ * `isAlwaysUndefinedVar`: every reference spelled with the name is a read unless the checker binds it to another
+ * symbol, a plain `=` target only writes, and code the walk cannot see (`eval`, `Function`) declines. Only the
+ * declaration's own file is walked: the caller answers for the program's other scripts, which share its global.
+ */
+export function scriptVarReadsFollowInitializer(
+  checker: ts.TypeChecker,
+  declaration: NamedVariableDeclaration,
+): boolean {
+  const { name, initializer } = declaration;
+  if (!initializer || !isTopLevelStatementDeclaration(declaration)) return false;
+  const sourceFile = declaration.getSourceFile();
+  if (sourceRunsDynamicCode(sourceFile)) return false;
+  const statementEnd = declaration.parent.parent.end;
+  const binding = checker.getSymbolAtLocation(name);
+  const isRead = (node: ts.Identifier): boolean => {
+    if (!isValueReference(node)) return false;
+    const user = outermostParenthesized(node);
+    if (ts.isBinaryExpression(user.parent) && user.parent.left === user && isPlainAssignment(user.parent)) return false;
+    // A shorthand property's name resolves to the property; the binding it reads is its value symbol.
+    const symbol = ts.isShorthandPropertyAssignment(node.parent)
+      ? checker.getShorthandAssignmentValueSymbol(node.parent)
+      : checker.getSymbolAtLocation(node);
+    // An unresolved name (inside `with`, the checker binds none) may be this binding.
+    return symbol === binding || symbol === undefined;
+  };
+  return spellingsOf(sourceFile, name.text).every((node) => {
+    if (!ts.isIdentifier(node) || !isRead(node)) return true;
+    const fn = ts.findAncestor(node.parent, isHoistedFunction);
+    return fn ? !callableBefore(fn, statementEnd) : node.pos >= statementEnd;
+  });
+}
+
+/**
+ * Whether code before `statementEnd` may call the hoisted function `fn`: the global object escapes (a computed
+ * member of it may be `fn`), or its name is spelled (a reference, a member name, a string) outside `fn` anywhere
+ * but where `placedAfter` the statement.
+ */
+function callableBefore(fn: ts.FunctionDeclaration, statementEnd: number): boolean {
+  const sourceFile = fn.getSourceFile();
+  // Nameless only as a module's `export default function () {}`, which an importer in a cycle runs first.
+  if (fn.name === undefined || sourceMayWriteGlobalObject(sourceFile)) return true;
+  return spellingsOf(sourceFile, fn.name.text).some(
+    (node) => !isDescendantOf(node, fn) && !placedAfter(node, statementEnd, isHoistedFunction),
+  );
+}
+
+const spellingIndexCache = new WeakMap<ts.SourceFile, ReadonlyMap<string, readonly ts.Node[]>>();
+
+/** Every identifier and string literal of `sourceFile` spelled `text`, in source order; the file is indexed once. */
+function spellingsOf(sourceFile: ts.SourceFile, text: string): readonly ts.Node[] {
+  let index = spellingIndexCache.get(sourceFile);
+  if (index === undefined) {
+    const built = new Map<string, ts.Node[]>();
+    const visit = (node: ts.Node): void => {
+      if (ts.isIdentifier(node) || ts.isStringLiteralLike(node)) {
+        const found = built.get(node.text);
+        if (found) found.push(node);
+        else built.set(node.text, [node]);
+      }
+      ts.forEachChild(node, visit);
+    };
+    ts.forEachChild(sourceFile, visit);
+    spellingIndexCache.set(sourceFile, (index = built));
   }
-  return true;
+  return index.get(text) ?? [];
+}
+
+/**
+ * A function declaration that is a top-level statement, labelled or not: its function exists before the first
+ * statement runs. A nested one is created where its enclosing code runs.
+ */
+function isHoistedFunction(node: ts.Node): node is ts.FunctionDeclaration {
+  if (!ts.isFunctionDeclaration(node)) return false;
+  let statement: ts.Node = node;
+  while (ts.isLabeledStatement(statement.parent)) statement = statement.parent;
+  return ts.isSourceFile(statement.parent);
+}
+
+function isDescendantOf(node: ts.Node, ancestor: ts.Node): boolean {
+  return ts.findAncestor(node, (current) => current === ancestor) !== undefined;
+}
+
+function isPlainAssignment(expression: ts.BinaryExpression): boolean {
+  return expression.operatorToken.kind === ts.SyntaxKind.EqualsToken;
+}
+
+/** True when `node` is the operand of `typeof` / `delete`. */
+export function isTypeofOrDeleteOperand(node: ts.Identifier): boolean {
+  const parent = outermostParenthesized(node).parent;
+  return ts.isTypeOfExpression(parent) || ts.isDeleteExpression(parent);
 }

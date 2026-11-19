@@ -54,6 +54,7 @@
 //     before the IR runs (allocated by `collectClassDeclaration`). The
 //     `localClasses` set drives that exemption.
 
+import { someReturnedValue } from "./function-returns.js";
 import { ts, forEachChild } from "../ts-api.js";
 import { isStableDirectCallTarget, localIsRewritten } from "./lattice-param-facts.js";
 import { isPlannedScriptVarClosure } from "./function-member-closure-plan.js";
@@ -82,7 +83,7 @@ import {
 } from "./async-selection.js";
 export { isAsyncIrReady } from "./async-selection.js";
 import { collectIrSafeVarDeclarationLists } from "./function-local-var.js";
-import { isModuleInitVarList } from "../shared/var-declaration-lists.js";
+import { isInLoopOfOwnFunction, isModuleInitVarList } from "../shared/var-declaration-lists.js";
 import { carrierLeafReads, collectIrSafeModuleVarDeclarationLists } from "./module-init-vars.js";
 import { builtinGlobalValueAdmitted } from "./builtin-globals.js";
 import { collectDynamicStringLocalWidening } from "./dynamic-local-widening.js";
@@ -168,6 +169,7 @@ import { collectModuleInitPopulation, makeModuleInitSynthetic, MODULE_INIT_UNIT_
 export { collectModuleInitPopulation, makeModuleInitSynthetic, MODULE_INIT_UNIT_NAME } from "./module-init.js";
 
 import { binaryOpCapability, domSurfaceCapability, hostExternCapability, prefixOpCapability } from "./capability.js";
+import { stringUseRefusal } from "./select-string-uses.js";
 import { nativeBufferOperationParts, type IrNativeBufferSurfacePlan } from "./native-buffer-surface.js";
 import type { IrStandaloneDomCapabilityPlan, IrStandaloneDomOperation } from "./dom-capability.js";
 import { isDirectStandaloneDomMemberCall } from "./dom-boundary.js";
@@ -943,7 +945,8 @@ export interface IrSelectionOptions extends IrAsyncSelectionOptions {
       | "dynamic-method-call-wrapper"
       | "native-global-function-call"
       | "native-object-statics"
-      | "native-builtin-globals",
+      | "native-builtin-globals"
+      | "native-string-uses",
   ) => boolean;
   /**
    * #3787 exact global String-constructor identity. This is separate from the
@@ -2971,18 +2974,7 @@ export function functionBodyAlwaysTerminates(body: ts.Block): boolean {
  * registered IR signature agree (both mirror legacy's no-result registration).
  */
 export function irFunctionBodyReturnsValue(body: ts.Block): boolean {
-  let found = false;
-  const visit = (node: ts.Node): void => {
-    if (found) return;
-    if (ts.isReturnStatement(node)) {
-      if (node.expression) found = true;
-      return;
-    }
-    if (ts.isFunctionLike(node) || ts.isClassLike(node)) return;
-    ts.forEachChild(node, visit);
-  };
-  ts.forEachChild(body, visit);
-  return found;
+  return someReturnedValue(body, () => true);
 }
 
 // ---------------------------------------------------------------------------
@@ -7217,20 +7209,15 @@ function untypedIdentifierDeclaration(d: ts.VariableDeclaration): boolean {
  * types the `any` binding `externref` and starts it undefined). Only where the
  * function-local var proof already holds (the caller checked the list), the
  * dynamic runtime is buildable, and the declaration is not inside a loop: a
- * re-executed `var x;` keeps its value, while the IR initializes at the
- * declaration point.
+ * re-executed `var x;` keeps its value. Lowering initializes such a `var` at
+ * the function entry (`lowerUninitializedVar`), but this lane does not claim it.
  */
 function uninitializedVarIsDynamicUndefined(d: ts.VariableDeclaration, isLexical: boolean): boolean {
   if (isLexical || currentSubjectIsModuleInit || !currentDynamicRuntimeBuildable) return false;
   // Only in a dynamic-carrier function (a dynamic parameter, so the move-only
   // scan runs and tracks the binding) or a planned member closure with one.
   if (currentDynamicParamNames.size === 0 && currentClosureDynamicParamNames.size === 0) return false;
-  if (!untypedIdentifierDeclaration(d)) return false;
-  for (let cur: ts.Node | undefined = d.parent; cur; cur = cur.parent) {
-    if (ts.isFunctionLike(cur)) return true;
-    if (ts.isIterationStatement(cur, false)) return false;
-  }
-  return false;
+  return untypedIdentifierDeclaration(d) && !isInLoopOfOwnFunction(d);
 }
 
 function isPhase1VarDecl(stmt: ts.VariableStatement, scope: Set<string>, localClasses: ReadonlySet<string>): boolean {
@@ -8120,11 +8107,23 @@ function isUnshadowedUndefinedIdentifier(expr: ts.Expression, scope: ReadonlySet
  * reference-shaped — the host externref handle, or (#4461) the host-free
  * native `$Map` struct. Both carriers take the same consumer discipline: the
  * value is opaque to this shape-only selector, so only positions with a proven
- * lowering may own an expression that touches one.
+ * lowering may own an expression that touches one. (#7346) A string read that
+ * is an ordinary string value is not one: the expression arms judge it.
  */
 function moduleExternBinding(expr: ts.Expression): ReturnType<IrLegacyModuleBindingResolver> {
   const binding = moduleBinding(expr);
-  return binding !== undefined && isIrModuleReferenceValueKind(binding.valueKind) ? binding : undefined;
+  if (binding === undefined || !isIrModuleReferenceValueKind(binding.valueKind)) return undefined;
+  return moduleStringValueRead(expr) ? undefined : binding;
+}
+
+/** (#7346) A read of a `string` binding that is an ordinary string value, on the lane measured for it. */
+function moduleStringValueRead(expr: ts.Expression): boolean {
+  const candidate = unwrapPhase1Parens(expr);
+  return (
+    ts.isIdentifier(candidate) &&
+    nativeStringUses() &&
+    currentModuleBindingResolver?.readsStringValue(candidate) === true
+  );
 }
 
 /** True only for the one module representation whose IR value is a JS boolean. */
@@ -12242,6 +12241,7 @@ function provenIrFamily(expression: ts.Expression, scope: ReadonlySet<string>): 
   if (ts.isIdentifier(expression) && unannotatedLocal(expression) !== undefined) return "unknown";
   if (isScriptVarVecCarrierRead(expression)) return "dynamic";
   if (moduleBinding(expression) !== undefined) {
+    if (moduleStringValueRead(expression)) return "string";
     const slot = obviousModuleValueFamily(expression);
     return slot === "f64" ? "number" : slot === "boolean" ? "boolean" : "unknown";
   }
@@ -12327,6 +12327,17 @@ function phase1NativeBufferVerdict(
   return operands.every((operand) => isPhase1Expr(operand, scope, localClasses));
 }
 
+const nativeStringUses = () => currentSelectionOptions?.supportsBackendCapability?.("native-string-uses") === true;
+
+/** (#7346 step A) `select-string-uses.ts` over the selector's string proof, on the lane measured for it. */
+function selectorRefusesStringUse(expr: ts.Expression, scope: ReadonlySet<string>, classes: ReadonlySet<string>) {
+  const unit = currentSubjectIsModuleInit ? expr.getSourceFile() : currentSelectionSubject;
+  if (unit === null || !nativeStringUses()) return false;
+  const isString = (e: ts.Expression) => binaryOperandFamily(e, scope, classes) === "string";
+  const refusal = stringUseRefusal(expr, isString, unit);
+  return refusal !== undefined && !capabilityNo(refusal.reason, refusal.arm, expr);
+}
+
 function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClasses: ReadonlySet<string>): boolean {
   const nativeBuffer = phase1NativeBufferVerdict(expr, scope, localClasses);
   if (nativeBuffer !== undefined) return nativeBuffer;
@@ -12338,6 +12349,7 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
   ) {
     return shapeNo("expr-module-extern-consumer", expr);
   }
+  if (selectorRefusesStringUse(expr, scope, localClasses)) return false;
   // (#7106 levers R2, S2) A match result's served field goes only where its dynamic value lowers.
   if (
     currentSelectionOptions?.supportsBackendCapability?.("native-regexp") === true &&

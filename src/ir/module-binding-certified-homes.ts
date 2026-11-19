@@ -11,7 +11,7 @@
  */
 import { ts } from "../ts-api.js";
 import { classInstanceValueKind, classInstanceWriteMatches } from "./module-binding-class-instance.js";
-import { scriptVarUseFollowsDeclaration } from "./module-binding-script-var.js";
+import { isTypeofOrDeleteOperand, scriptVarUseFollowsDeclaration } from "./module-binding-script-var.js";
 import type { IrModuleBindingValueKind, IrScriptVarHome } from "./module-binding-value-kinds.js";
 import { vecUseSupported, vecValueKind, vecWriteMatches } from "./module-binding-vec.js";
 import { regExpMatchUseSupported, regExpMatchWriteMatches, type ClassifyPrimitive } from "./regexp-match-uses.js";
@@ -60,5 +60,5 @@ export function certifiedScriptVarUse(
   if (kind.kind === "vec") return vecUseSupported(node, declaration);
   if (kind.kind === "regexp-match") return regExpMatchUseSupported(node, declaration, classify);
   const certified = capabilityCertified || kind.kind === "class-instance";
-  return !certified || scriptVarUseFollowsDeclaration(node, declaration);
+  return !certified || (scriptVarUseFollowsDeclaration(node, declaration) && !isTypeofOrDeleteOperand(node));
 }
