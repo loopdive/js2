@@ -122,4 +122,16 @@ after evaluating it. A member `delete` is a named refusal unless slice O's objec
 - Ordinary-pipeline bytes: 100 test262 files with nested `var`s × default and standalone, against an `origin/main`
   export: identical (176 binaries, 24 identical compile errors).
 - Gates: typecheck, loc, func (also against `origin/main`), coercion-sites, oracle-ratchet, dead-exports.
-- Census re-run on the 245 files: not done (needs S9's list and script).
+- Census re-run on S9's 245 files (S9's `prepared-census.mts --harness stand-in`, this tree): **0 files move**;
+  all 245 still stop at `module-init unit contains a nested var declaration`. That label is not what slice 1
+  built: it is raised for a `var` list the module-init does NOT model. Classified by construct: 188 a top-level
+  `for (var k in …)` head, 47 a `var` in a `with` body, 8 both, 1 a `for-of` head, 1 a catch-parameter
+  redeclaration. Slice 1 fixed the modelled lists (block/branch/loop/`try`/`switch` bodies), which the census
+  counted under no label of its own.
+- Consequence for the label: `for-in` itself has no Prepared lowering (`function f(){ for (var k in [1,2]) {} }`
+  → `dynamic for-in runtime is unavailable`), and 25 of the first 40 files iterate an object (`newObj`), so the
+  188 need slice O's objects plus a for-in enumeration runtime, not a script-scope change. Modelling the head
+  `var` as a script global is a few lines once that exists. `with` (55) stays deferred.
+- The other three lists (S9 @ `54d5a075`) carry one first-gap detail each: block FunctionDeclaration 69
+  (`unsupported body statement FunctionDeclaration`), undeclared global 53 (42 `assignment to undeclared
+  identifier`, 11 compound assignment), `delete` 37 (`delete has no IR lowering`). Slices 2–4 not started.
