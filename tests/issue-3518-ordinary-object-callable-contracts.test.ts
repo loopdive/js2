@@ -19,6 +19,8 @@ const CONTRACTS = [
   ["js.object.define-attributes", [REF, REF, FLAGS], []],
   ["js.object.get", [REF, REF, REF], [REF]],
   ["js.object.has", [REF, REF], [BOOL]],
+  // (#7354 O4) the dynamic-value legalization's RequireObjectCoercible TypeError
+  ["js.object.create-type-error", [REF], [REF]],
 ] as const;
 /** (#7352 arrays) The index contracts; their shape and binding are checked in tests/issue-7352-a-arrays.test.ts. */
 const ARRAY_FEATURES = ["js.object.create-array", "js.object.get-index", "js.object.set-index"];

@@ -68,10 +68,19 @@ function same(left: unknown, right: unknown, detail: string): void {
 function original(value: IrValueId, definitions: ReadonlyMap<IrValueId, Definition>): Definition | undefined {
   return nativeValueOriginal(value, definitions, () => fail("cyclic representation-only SSA alias"));
 }
+/** The contracts that create an ordinary object, (#7352 arrays) an Array included. */
+const CREATION_FEATURES: ReadonlySet<string> = new Set([
+  "js.object.create-default",
+  "js.object.create-null",
+  "js.object.create-with-prototype",
+  "js.object.create-array",
+]);
 function createFeature(row: Definition | undefined): OrdinaryObjectRuntimeFeature | undefined {
   if (row?.instruction.kind !== "call") return undefined;
   const feature = irOrdinaryObjectCallableDeclaration(row.instruction.target)?.feature;
-  return feature?.startsWith("js.object.create-") ? (feature as OrdinaryObjectRuntimeFeature) : undefined;
+  return feature !== undefined && CREATION_FEATURES.has(feature)
+    ? (feature as OrdinaryObjectRuntimeFeature)
+    : undefined;
 }
 function mask(call: IrInstrCall, definitions: ReadonlyMap<IrValueId, Definition>): number | undefined {
   const row = definitions.get(call.args[call.args.length - 1]!);
