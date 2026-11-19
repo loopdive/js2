@@ -323,15 +323,19 @@ lists and this section records where the files stop next.
    `a[1.0]` and `a[-0]` are index 1 and 0; `a[1.5]`, `a[-1]`, `a[2**32 - 1]` are ordinary keys and take the
    string-keyed path with ToString of the number). No other parser of array indices.
 3. **"Bytes unchanged without arrays" is proven on realm programs too**: S3's O test programs compile to
-   identical binaries on S3's head and on this branch.
+   identical binaries on S3's head and on this branch. Measured 2026-11-19, `282eab42` (S3) vs `7c8ae510`: 32 non-array
+   Prepared programs (the O, O2, Str2, T and X tests' programs, right and wrong answers, plus 3 refusals) have
+   the same outcome on both; all 26 binaries are sha256-equal (20 of them realm-sized). Closures and `Number(v)`
+   have no compiling program on either side yet, so they are not covered. Script `.tmp/bytes-realm-compare.mts`.
 4. **The typed-read shortcut's precondition is checked by the compiler** (`onlyRead` in
    `prepare-ordinary-object-access.ts`: every reference of the binding is its declaration or a plain read;
    only a function's binding). The verdict of the review hunting this class in S3's object shortcut (#7312) is
    applied here when it lands.
 5. **Kind.** An array is the carrier's `object` kind (`typeof` "object"); `Array.isArray` is a separate brand
-   test (`ref.test $Array`), one intrinsic used where source calls it. Agreed with S3 (proposal sent
-   2026-11-19); the producer admits `create-array` values through the same admission as `create-default`, and a
-   program that creates arrays is not "plain" for ToString/ToNumber until A3 brings `join`.
+   test (`ref.test $Array`), one intrinsic used where source calls it. Agreed with S3 on 2026-11-19 and built:
+   `boxedKind` admits the object kind over a `js.object.create-array` value as over `create-default`
+   (`dynamic-value-kinds.ts`), and an array literal makes a program unplain, "array ToPrimitive needs
+   Array.prototype.join" (`source-plain-objects.ts`), until A3 brings `join`.
 
 ### Acceptance
 

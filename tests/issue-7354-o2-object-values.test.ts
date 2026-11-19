@@ -190,6 +190,8 @@ describe("#7354 O2 — whether a program's objects are plain", () => {
     ["the Object global", "export const t = typeof Object;", "the program names 'Object'"],
     ["the String global", "export const s = String(1);", "the program names 'String'"],
     ["globalThis", "export const g = globalThis;", "the program names 'globalThis'"],
+    // (#7352 arrays) An array is the object kind; its ToPrimitive is `join`, not "[object Object]".
+    ["an array literal", "export const a = [1];", "array ToPrimitive needs Array.prototype.join"],
   ])("is not plain with %s", (_label, source, reason) => {
     expect(objects(source).unplain).toBe(reason);
   });

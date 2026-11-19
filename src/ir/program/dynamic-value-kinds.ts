@@ -106,6 +106,7 @@ export function plainObjectRefusal(objects: ProgramObjects): string | undefined 
   return provedKinds && objects.unplain === undefined ? undefined : `ToPrimitive of an object (${objects.unplain})`;
 }
 
+const OBJECT_PRODUCERS: ReadonlySet<string> = new Set(["js.object.create-default", "js.object.create-array"]);
 /** The kinds a value of a program may be: the object kind only where the program builds objects. */
 export function admittedKinds(objects: ProgramObjects): readonly CarrierKind[] {
   return objects.present ? KIND_ORDER : KIND_ORDER.filter((kind) => kind !== "object");
@@ -113,7 +114,8 @@ export function admittedKinds(objects: ProgramObjects): readonly CarrierKind[] {
 
 /**
  * The kind a box to the dynamic value admits, from its tag refinement and its operand; `undefined` refuses. An object
- * box is admitted only over the value `js.object.create-default` answered (`definition`).
+ * box is admitted only over the value an object producer answered (`definition`): `js.object.create-default`, or
+ * (#7352 arrays) `js.object.create-array`, whose Array is the same kind.
  */
 export function boxedKind(
   tag: TagId | undefined,
@@ -124,7 +126,7 @@ export function boxedKind(
   if (tag === JS_TAG_IDS.Null) return "null";
   if (tag === JS_TAG_IDS.Object)
     return definition?.kind === "call" &&
-      irOrdinaryObjectCallableDeclaration(definition.target)?.feature === "js.object.create-default"
+      OBJECT_PRODUCERS.has(irOrdinaryObjectCallableDeclaration(definition.target)?.feature ?? "")
       ? "object"
       : undefined;
   if (source?.kind === "string") return "string";
