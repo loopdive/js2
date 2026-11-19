@@ -572,8 +572,10 @@ export interface IrFromAstResolver extends PreparedAsyncFromAstResolver {
   sourceClosureInvocation?(expression: ts.CallExpression): SourceClosureInvocationPlan | undefined;
   /** Exact higher-order parameter certified by the complete source invocation proof. */
   sourceClosureCallableParameter?(node: ts.FunctionTypeNode): boolean;
-  /** (#7106 A2c) The runtime-eval support function a certified global eval statement calls with its source. */
+  /** (#7106 A2c) The runtime-eval function a certified global eval calls; absent: no provider (#7363, Prepared). */
   globalEvalTarget?(call: ts.CallExpression): IrFuncRef | null;
+  /** (#7363) Whether this `eval` identifier is the realm's eval, never shadowed or rebound (`prepareRealmEvalResolver`). */
+  isRealmEval?(identifier: ts.Identifier): boolean;
   /** Exact pre-scanned sparse constructor sites. */
   isHoleyArrayConstructor?(expr: ts.NewExpression): boolean;
   /** Exact direct filter consumers of those sparse constructors. */
@@ -7737,11 +7739,13 @@ function lowerCall(expr: ts.CallExpression, cx: LowerCtx, statementPosition = fa
     demoteToLegacy("call-resolution-unsupported", `ir/from-ast: optional call (?.()) not in slice 11 (${cx.funcName})`);
   }
   const globalEval = exactGlobalEvalStatement(expr);
-  if (globalEval) {
-    const target = cx.resolver?.globalEvalTarget?.(expr);
+  if (globalEval && cx.resolver?.isRealmEval?.(globalEval.evalIdentifier) === true)
+    demoteToLegacy("call-resolution-unsupported", `ir/from-ast: eval statement has no eval provider in ${cx.funcName}`);
+  if (globalEval && cx.resolver?.globalEvalTarget) {
+    const target = cx.resolver.globalEvalTarget(expr);
     if (
       !statementPosition ||
-      cx.resolver?.isAmbientBinding?.(globalEval.evalIdentifier) !== true ||
+      cx.resolver.isAmbientBinding?.(globalEval.evalIdentifier) !== true ||
       cx.scope.has("eval") ||
       !target
     ) {

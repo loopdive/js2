@@ -37,6 +37,26 @@ function exactIndirectEvalIdentifier(call: ts.CallExpression): ts.Identifier | u
 }
 
 /**
+ * The call that `identifier` (spelled `eval`) is the callee of, directly (`eval(…)`, `(eval)(…)`) or as the indirect
+ * `(0, eval)(…)`; undefined for any other use of the name.
+ */
+export function evalCalleeCall(identifier: ts.Identifier): ts.CallExpression | undefined {
+  let node: ts.Node = identifier;
+  while (
+    ts.isParenthesizedExpression(node.parent) ||
+    (ts.isBinaryExpression(node.parent) &&
+      node.parent.operatorToken.kind === ts.SyntaxKind.CommaToken &&
+      node.parent.right === node)
+  )
+    node = node.parent;
+  const call = node.parent;
+  if (!ts.isCallExpression(call) || call.expression !== node) return undefined;
+  return stripParentheses(call.expression) === identifier || exactIndirectEvalIdentifier(call) === identifier
+    ? call
+    : undefined;
+}
+
+/**
  * Return the complete statement-position shape: the call result is directly
  * discarded by an expression statement and the one source argument is not
  * spread. A parenthesized `(eval)(source)` is still a direct eval (§13.3.6.1).
