@@ -21,14 +21,6 @@ function sameData(expected: unknown, actual: unknown): boolean {
   });
 }
 
-/** The canonical row a provider names by id or feature, if any. */
-export function canonicalProviderRow(
-  rows: readonly RuntimeProviderDefinition[],
-  provider: RuntimeProviderDefinition,
-): RuntimeProviderDefinition | undefined {
-  return rows.find((row) => row.id === provider.id || row.feature === provider.feature);
-}
-
 /**
  * A provider that names a canonical row by id or feature must equal that row
  * field for field; list fields compare as sets. `undefined` means the provider
@@ -39,7 +31,7 @@ export function canonicalProviderMismatch(
   provider: RuntimeProviderDefinition,
   family: string,
 ): string | undefined {
-  const canonical = canonicalProviderRow(rows, provider);
+  const canonical = rows.find((row) => row.id === provider.id || row.feature === provider.feature);
   if (!canonical) return undefined;
   for (const field of ["id", "feature", "signature", "implementation"] as const)
     if (!sameData(canonical[field], provider[field])) return `${family} provider ${field} mismatch`;

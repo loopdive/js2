@@ -110,22 +110,20 @@ main's.
 
 ## Result (2026-11-19, base `origin/main` ee3fcdd610)
 
-- **Provider comparison.** `canonicalProviderRow` and `canonicalProviderMismatch` (`canonical-provider-mismatch.ts`)
-  serve the ordinary-object, dynamic-value, vector, number-remainder and native-async families. `sameData` is the
-  shared field comparison. The native-async "foreign clock projection" answer stays in its family module.
-- **SSA value types.** `forEachIrValueDefinition` and `irValueTypes` (`analysis/value-types.ts`) replace the private
-  walks in `generator-support.ts`, `prepared-component-dependencies.ts`, `prepared-dynamic-support.ts` and
-  `linear-memory-plan.ts`. `nativeAsyncCallableValueTypes` is now the walker plus its conflict check.
+- **Provider comparison.** `canonicalProviderMismatch` (`canonical-provider-mismatch.ts`) serves the
+  ordinary-object, dynamic-value and number-remainder families, with number-remainder's `sameData` as the shared field
+  comparison. Vector and native-async keep their own copies: their files are source-pinned (see RV7340 below).
+- **SSA value types.** `irValueTypes` (`analysis/value-types.ts`, unchanged) replaces the private walks in
+  `prepared-component-dependencies.ts`, `prepared-dynamic-support.ts` and `linear-memory-plan.ts`. Those walks
+  skipped a block argument without a type; `IrBlock.blockArgTypes` is parallel to `blockArgs` by contract (checked
+  in `integration.ts`), so the skip was a branch for a case that cannot occur.
 - **Left as they are.**
   - `intrinsic-preparation.ts`'s `valueTypesOf`: its whole-file source pin (`runtime-preparation-relocation`) is
     live and green on main, so folding it would break a receipt.
   - `async-prepare-ir.ts` and `async-linear-prepare.ts`: these are shallow walks, and folding them would add
     entries, which is a behaviour change.
   - `program-native-async-resources.ts`: it reads occurrence records, not the function.
-- **Pinned files touched.** `vector-callables.ts` and `native-async-callables.ts` are source-pinned by the #3518
-  historical reconstruction (`tests/issue-3518-historical-*`). That family fails all 596 rows on main and fails the
-  same 596 here, so no receipt that passes changes.
-- **Net −82 lines in `src/`** (9 files, +73/−155).
+- **Lines in `src/`.** The first cut was net −82 lines over 9 files; after RV7340 round 1 it is 5 files, +30/−91.
 - **Tests.** The whole unit suite ran on base and branch in 8 chunks (14,095 rows in chunks 0–4 and 6–7). Chunk 5
   ran per file with a 6 GB heap, because it runs out of memory as a batch.
   - No test that passes on base fails on the branch. 12 rows first read as branch-only failures; they pass
@@ -133,4 +131,20 @@ main's.
   - Pass/fail counts: `issue-3526*` 373/33 on both; `issue-7354-*` 649/0 on both.
   - `issue-3518-program-abi-seam` runs out of memory on both trees.
 - **Byte identity.** 100 test262 files × gc/standalone, binaries identical (200/200).
+
+## Review round 1 (RV7340, 2026-11-19, on aad4c56365): BLOCKER
+
+| finding | answer |
+| --- | --- |
+| Must-fix: `vector-callables.ts`, `native-async-callables.ts` and `generator-support.ts` are source-pinned. Their receipts pass on base and failed on head, hidden by families already red on main. | Fixed: the three files are back to base, and their sha256 prefixes (`b594f734`, `31b3cb6a`, `afc937aa`) match the pins again. Their folds wait for #7417's rework of the #3518 receipts. `forEachIrValueDefinition` and `canonicalProviderRow` lost their second user, so they are gone and `value-types.ts` is unchanged. |
+| Should-fix: the shared comparison moved from `JSON.stringify` to `sameData`. Key-reordered rows are now accepted; `toJSON` forgeries and explicit-`undefined` fields are rejected. | **Decision: keep `sameData`.** A provider row is finite data, and a custom serializer must not be able to stand in for it, which is the rule number-remainder already had. It now holds for ordinary-object and dynamic-value too. Vector and native-async keep `JSON.stringify` until they can be folded. `tests/issue-7355-canonical-provider-mismatch.test.ts` pins it per family: 9 rows. On base, the 6 ordinary-object and dynamic-value rows fail; the 3 number-remainder rows pass, since that family already compared as data. |
+| Nit: `value-types.ts` made a third copy of the "block + async-state bodies" list. | Gone: `value-types.ts` is back to base, and the list stays only in the two pinned files and `linear-integration.ts`, as before. |
+
+Round-1 measurements on the fixed tree:
+
+- **Tests.** 44 test files that import a changed module (the all-red #3518 historical reconstruction excluded) ran
+  per file with a 6 GB heap on base and on this tree: 3,209 rows each. The only difference is the 6 new pins.
+- **Byte identity.** 100 test262 files × gc/standalone: 200/200 identical to base.
+- **Gates.** loc and func (also at origin/main), coercion sites, oracle ratchet, dead exports and import cycles all
+  exit 0.
 

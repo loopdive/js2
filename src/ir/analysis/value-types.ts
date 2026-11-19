@@ -4,31 +4,19 @@ import { forEachInstrDeep, type IrFunction, type IrValueId } from "../core/nodes
 import type { IrType } from "../core/types.js";
 
 /**
- * Visit each SSA definition of `fn` with its type: parameters, async-plan values, typed block arguments, and
- * instruction results in block and async-plan state bodies, nested buffers included.
+ * The type each SSA value of `fn` is defined with: parameters, async-plan
+ * values, block arguments and instruction results, nested buffers included.
  */
-export function forEachIrValueDefinition(fn: IrFunction, visit: (value: IrValueId, type: IrType) => void): void {
-  for (const param of fn.params) visit(param.value, param.type);
-  for (const value of fn.asyncPlan?.values ?? []) visit(value.value, value.type);
-  for (const block of fn.blocks)
-    block.blockArgs.forEach((value, index) => {
-      const type = block.blockArgTypes[index];
-      if (type) visit(value, type);
-    });
-  const bodies = [
-    ...fn.blocks.map((block) => block.instrs),
-    ...(fn.asyncPlan?.states.map((state) => state.body) ?? []),
-  ];
-  for (const body of bodies)
-    for (const root of body)
-      forEachInstrDeep(root, (instr) => {
-        if (instr.result !== null && instr.resultType) visit(instr.result, instr.resultType);
-      });
-}
-
-/** The type each SSA value of `fn` is defined with ({@link forEachIrValueDefinition}); a later definition wins. */
 export function irValueTypes(fn: IrFunction): ReadonlyMap<IrValueId, IrType> {
   const types = new Map<IrValueId, IrType>();
-  forEachIrValueDefinition(fn, (value, type) => types.set(value, type));
+  for (const param of fn.params) types.set(param.value, param.type);
+  for (const value of fn.asyncPlan?.values ?? []) types.set(value.value, value.type);
+  for (const block of fn.blocks) {
+    block.blockArgs.forEach((value, index) => types.set(value, block.blockArgTypes[index]!));
+    for (const root of block.instrs)
+      forEachInstrDeep(root, (instr) => {
+        if (instr.result !== null && instr.resultType) types.set(instr.result, instr.resultType);
+      });
+  }
   return types;
 }

@@ -8,7 +8,6 @@ import { irVecElemSetSymbol } from "../core/vector-runtime.js";
 import type { IrUnitId } from "../../shared/contracts/ir-identity.js";
 import type { RuntimeManifestPolicy } from "../../runtime/contracts/provider-policy.js";
 import type { IrRuntimeCallableDeclaration } from "./callable-declarations.js";
-import { canonicalProviderMismatch } from "./canonical-provider-mismatch.js";
 import type { RuntimeFeature, RuntimeProviderDefinition } from "./contracts/manifest.js";
 import {
   nativeAsyncCallMismatch,
@@ -49,7 +48,15 @@ export const VECTOR_CALLABLE_RUNTIME_PROVIDERS: readonly RuntimeProviderDefiniti
 ]);
 
 export function vectorProviderMismatch(provider: RuntimeProviderDefinition): string | undefined {
-  return canonicalProviderMismatch(VECTOR_CALLABLE_RUNTIME_PROVIDERS, provider, "vector callable");
+  const canonical = VECTOR_CALLABLE_RUNTIME_PROVIDERS[0]!;
+  if (provider.id !== canonical.id && provider.feature !== canonical.feature) return undefined;
+  for (const field of ["id", "feature", "signature", "implementation"] as const)
+    if (JSON.stringify(provider[field]) !== JSON.stringify(canonical[field]))
+      return `vector callable provider ${field} mismatch`;
+  for (const field of ["dependencies", "hostCapabilities", "supportedTargets", "supportedBackends"] as const)
+    if (JSON.stringify([...provider[field]].sort()) !== JSON.stringify([...canonical[field]].sort()))
+      return `vector callable provider ${field} mismatch`;
+  return undefined;
 }
 
 /** Vector admission is independent of string storage and async frame intents. */
