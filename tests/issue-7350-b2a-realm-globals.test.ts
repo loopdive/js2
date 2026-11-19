@@ -19,12 +19,24 @@ import {
 } from "../src/runtime/contracts/native-realm-globals.js";
 
 const DRAFT = NATIVE_REALM_EDITION + 1;
-const callable = (id: string, length: number, edition = NATIVE_REALM_EDITION) =>
+const callable = (
+  id: string,
+  length: number,
+  edition = NATIVE_REALM_EDITION,
+  [prototype, parent] = ["%Function.prototype%", "%Object.prototype%"],
+) =>
   ({
     edition,
     writable: true,
     configurable: true,
-    value: { kind: "function", id, length, construct: "ordinary" },
+    value: {
+      kind: "function",
+      id,
+      length,
+      construct: "ordinary",
+      prototype,
+      prototypeObject: { id: id.slice(0, -1) + ".prototype%", prototype: parent },
+    },
   }) as const;
 
 /**
@@ -32,7 +44,7 @@ const callable = (id: string, length: number, edition = NATIVE_REALM_EDITION) =>
  * explicit-resource-management globals of the draft (node 25 has them, node 22 does not).
  */
 const SPEC_ROWS: Record<string, Omit<NativeRealmGlobal, "name">> = {
-  Float16Array: callable("%Float16Array%", 3),
+  Float16Array: callable("%Float16Array%", 3, NATIVE_REALM_EDITION, ["%TypedArray%", "%TypedArray.prototype%"]),
   Temporal: {
     edition: NATIVE_REALM_EDITION,
     writable: true,
@@ -41,7 +53,7 @@ const SPEC_ROWS: Record<string, Omit<NativeRealmGlobal, "name">> = {
   },
   AsyncDisposableStack: callable("%AsyncDisposableStack%", 0, DRAFT),
   DisposableStack: callable("%DisposableStack%", 0, DRAFT),
-  SuppressedError: callable("%SuppressedError%", 3, DRAFT),
+  SuppressedError: callable("%SuppressedError%", 3, DRAFT, ["%Error%", "%Error.prototype%"]),
 };
 
 /**
@@ -97,6 +109,15 @@ const newThrows = (value: unknown): boolean => {
   }
 };
 
+/** node's object for an intrinsic id the table links to (`null` is no object). */
+function intrinsic(id: string | null): unknown {
+  if (id === null) return null;
+  const path = id.slice(1, -1).split(".");
+  const root =
+    path[0] === "TypedArray" ? Object.getPrototypeOf(Int8Array) : (globalThis as Record<string, unknown>)[path[0]!];
+  return path.slice(1).reduce((object, key) => (object as Record<string, unknown>)[key], root);
+}
+
 const present = NATIVE_REALM_GLOBALS.filter((row) => Object.hasOwn(globalThis, row.name));
 
 describe("#7350 B2a — the global object's population", () => {
@@ -117,6 +138,13 @@ describe("#7350 B2a — the global object's population", () => {
       expect(value.construct !== "none").toBe(isConstructor(fn));
       // An ordinary constructor may also throw on missing arguments (`new Proxy()`), so only "throws" is pinned.
       if (value.construct === "throws") expect(newThrows(fn)).toBe(true);
+      // (#7350 B2b) The links the realm builds the callable's identity surface from.
+      expect(Object.getPrototypeOf(fn)).toBe(intrinsic(value.prototype));
+      expect(value.prototypeObject === null).toBe(!Object.hasOwn(fn, "prototype"));
+      if (value.prototypeObject) {
+        expect(fn.prototype).toBe(intrinsic(value.prototypeObject.id));
+        expect(Object.getPrototypeOf(fn.prototype)).toBe(intrinsic(value.prototypeObject.prototype));
+      }
     }
   });
 

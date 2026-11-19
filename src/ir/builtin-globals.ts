@@ -20,12 +20,26 @@ import {
 import { builtinGlobalLanes } from "../shared/ambient-intrinsics.js";
 import { outermostParenthesized } from "../shared/binding-writes.js";
 import { isPristineIntrinsic } from "../shared/intrinsic-prototype-writes.js";
+import { makeIrAmbientBindingPredicate } from "./module-bindings.js";
 
 /** What the admission reads from the lane (the selection options and the from-ast resolver both supply it). */
 export interface BuiltinGlobalLane {
   isLibOnlyBinding?(node: ts.Identifier): boolean;
   builtinProtoCompanionSeeded?(): boolean;
   supportsBackendCapability?(capability: "native-builtin-globals"): boolean;
+}
+
+/**
+ * (#7350 B2b) The lane the Prepared standalone path answers, as the ordinary standalone pipeline does: lib-only
+ * bindings, and the `native-builtin-globals` capability.
+ */
+export function preparedBuiltinGlobalLane(
+  checker: ts.TypeChecker,
+): Required<Omit<BuiltinGlobalLane, "builtinProtoCompanionSeeded">> {
+  return {
+    isLibOnlyBinding: makeIrAmbientBindingPredicate(checker, "every"),
+    supportsBackendCapability: (capability) => capability === "native-builtin-globals",
+  };
 }
 
 /**

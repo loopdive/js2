@@ -10,6 +10,7 @@ import {
   BUILTIN_FUNCTION_REALM_FIELD,
   BUILTIN_FUNCTION_PROTOTYPE_FIELD,
   BUILTIN_FUNCTION_INITIAL_NAME_FIELD,
+  BUILTIN_IDENTITY_ONLY_FLAG,
 } from "./builtin-function-layouts.js";
 
 export interface BuiltinFunctionEntryOperands {
@@ -22,7 +23,18 @@ export interface BuiltinFunctionEntryOperands {
   readonly initialName: readonly Instr[];
   readonly initialLength: number;
   readonly userFormalCount: number;
-  readonly behavior: "function-prototype" | "throw-type-error";
+  readonly id: string;
+  readonly behavior: "function-prototype" | "throw-type-error" | "unavailable";
+  /** "object-prototype", "function-prototype", or the id of an earlier entry. */
+  readonly prototype: string;
+  readonly constructible: boolean;
+  readonly prototypeObject?: { readonly id: string; readonly prototype: string | null };
+}
+/** (#7350 B2b) What the identity entries' `prototype` objects are built with; present only with such entries. */
+export interface BuiltinFunctionIdentityOperands {
+  readonly createWithPrototype: FuncHandle;
+  readonly prototypeKey: readonly Instr[];
+  readonly constructorKey: readonly Instr[];
 }
 export interface BuiltinFunctionBodyOperands {
   readonly rootTypeIdx: number;
@@ -50,6 +62,7 @@ export interface BuiltinFunctionBodyOperands {
   readonly nameKey: readonly Instr[];
   readonly errors: readonly (readonly Instr[])[];
   readonly entries: readonly BuiltinFunctionEntryOperands[];
+  readonly identity?: BuiltinFunctionIdentityOperands;
 }
 export type BuiltinFunctionDefinition = { locals: LocalDef[]; body: Instr[] };
 const get = (index: number): Instr => ({ op: "local.get", index });
@@ -108,7 +121,91 @@ export function buildBuiltinFunctionMatchDefinition(d: BuiltinFunctionBodyOperan
     ],
   };
 }
+/** The externref of `entry`'s singleton. */
+const singleton = (entry: BuiltinFunctionEntryOperands): Instr[] => [
+  global(entry.singleton),
+  { op: "extern.convert_any" },
+];
+/** (#7350 B2b) `object.flags |= identityOnly`, for the externref `object` produces (`BUILTIN_IDENTITY_ONLY_FLAG`). */
+export function markIdentityOnly(objectTypeIdx: number, object: () => Instr[]): Instr[] {
+  const cast = (): Instr[] => [...object(), { op: "any.convert_extern" }, { op: "ref.cast", typeIdx: objectTypeIdx }];
+  return [
+    ...cast(),
+    ...cast(),
+    { op: "struct.get", typeIdx: objectTypeIdx, fieldIdx: 4 },
+    { op: "i32.const", value: BUILTIN_IDENTITY_ONLY_FLAG },
+    { op: "i32.or" },
+    { op: "struct.set", typeIdx: objectTypeIdx, fieldIdx: 4 },
+  ];
+}
+/** DefinePropertyOrThrow of a data property with the descriptor word `flags`; the answer is dropped. */
+function defineData(
+  d: BuiltinFunctionBodyOperands,
+  object: Instr[],
+  key: readonly Instr[],
+  value: Instr[],
+  flags: number,
+) {
+  return [
+    ...object,
+    ...structuredClone(key),
+    ...value,
+    { op: "f64.const", value: flags },
+    call(d.defineDataBody),
+    { op: "drop" },
+  ] as Instr[];
+}
+/** Descriptor words: `length`/`name` (configurable), a constructor's `prototype` (none), `constructor` (W, C). */
+const FUNCTION_METADATA = 0xbc,
+  CONSTRUCTOR_PROTOTYPE = 0xb8,
+  PROTOTYPE_CONSTRUCTOR = 0xbd;
+/**
+ * (#7350 B2b) An identity entry's seed after its `length` and `name`: the identity mark on its own properties, and its
+ * own `prototype` object — a realm anchor, or a fresh object (kept in `locals`) whose `constructor` links back.
+ */
+function identitySeed(
+  d: BuiltinFunctionBodyOperands,
+  entry: BuiltinFunctionEntryOperands,
+  bag: () => Instr[],
+  locals: Map<string, number>,
+): Instr[] {
+  const body = markIdentityOnly(d.objectTypeIdx, bag);
+  const object = entry.prototypeObject;
+  if (object === undefined) return body;
+  const identity = d.identity!;
+  const anchor = (id: string | null): Instr[] =>
+    id === "%Object.prototype%"
+      ? [global(d.objectPrototype)]
+      : id === "%Function.prototype%"
+        ? singleton(d.entries[0]!)
+        : [{ op: "local.get", index: locals.get(id!)! }];
+  if (object.id === "%Function.prototype%")
+    body.push(...markIdentityOnly(d.objectTypeIdx, () => functionPrototypeBag(d)));
+  else if (object.id !== "%Object.prototype%") {
+    const local = locals.size;
+    body.push(
+      ...anchor(object.prototype),
+      { op: "any.convert_extern" },
+      { op: "ref.cast", typeIdx: d.objectTypeIdx },
+      call(identity.createWithPrototype),
+      { op: "local.set", index: local },
+    );
+    locals.set(object.id, local);
+    body.push(
+      ...markIdentityOnly(d.objectTypeIdx, () => anchor(object.id)),
+      ...defineData(d, anchor(object.id), identity.constructorKey, singleton(entry), PROTOTYPE_CONSTRUCTOR),
+    );
+  }
+  body.push(...defineData(d, bag(), identity.prototypeKey, anchor(object.id), CONSTRUCTOR_PROTOTYPE));
+  return body;
+}
+const functionPrototypeBag = (d: BuiltinFunctionBodyOperands): Instr[] => [
+  global(d.entries[0]!.singleton),
+  { op: "ref.as_non_null" },
+  { op: "struct.get", typeIdx: d.entries[0]!.typeIdx, fieldIdx: CLOSURE_BAG_FIELD_IDX },
+];
 export function buildBuiltinFunctionInitializer(d: BuiltinFunctionBodyOperands): BuiltinFunctionDefinition {
+  const byId = new Map(d.entries.map((entry) => [entry.id, entry]));
   const allocate: Instr[] = [
     { op: "struct.new", typeIdx: d.realmTypeIdx },
     { op: "global.set", index: d.realm },
@@ -120,9 +217,9 @@ export function buildBuiltinFunctionInitializer(d: BuiltinFunctionBodyOperands):
       call(d.createNull),
       { op: "i32.const", value: 0 },
       { op: "i32.const", value: entry.metadataId },
-      ...(entry.behavior === "function-prototype"
+      ...(entry.prototype === "object-prototype"
         ? [global(d.objectPrototype)]
-        : [global(d.entries[0]!.singleton), { op: "extern.convert_any" } as Instr]),
+        : singleton(entry.prototype === "function-prototype" ? d.entries[0]! : byId.get(entry.prototype)!)),
       global(d.realm),
       { op: "ref.as_non_null" },
       ...structuredClone(entry.initialName),
@@ -130,6 +227,7 @@ export function buildBuiltinFunctionInitializer(d: BuiltinFunctionBodyOperands):
       { op: "global.set", index: entry.singleton },
     ]),
   ];
+  const prototypeObjects = new Map<string, number>();
   const seed: Instr[] = d.entries.flatMap((entry) => {
     const bag = (): Instr[] => [
       global(entry.singleton),
@@ -137,21 +235,22 @@ export function buildBuiltinFunctionInitializer(d: BuiltinFunctionBodyOperands):
       { op: "struct.get", typeIdx: entry.typeIdx, fieldIdx: CLOSURE_BAG_FIELD_IDX },
     ];
     const body: Instr[] = [
-      ...bag(),
-      ...structuredClone(d.lengthKey),
-      { op: "f64.const", value: entry.initialLength },
-      call(d.boxNumber),
-      { op: "f64.const", value: 0xbc },
-      call(d.defineDataBody),
-      { op: "drop" },
-      ...bag(),
-      ...structuredClone(d.nameKey),
-      ...structuredClone(entry.initialName),
-      { op: "extern.convert_any" },
-      { op: "f64.const", value: 0xbc },
-      call(d.defineDataBody),
-      { op: "drop" },
+      ...defineData(
+        d,
+        bag(),
+        d.lengthKey,
+        [{ op: "f64.const", value: entry.initialLength }, call(d.boxNumber)],
+        FUNCTION_METADATA,
+      ),
+      ...defineData(
+        d,
+        bag(),
+        d.nameKey,
+        [...structuredClone(entry.initialName), { op: "extern.convert_any" }],
+        FUNCTION_METADATA,
+      ),
     ];
+    if (entry.behavior === "unavailable") body.push(...identitySeed(d, entry, bag, prototypeObjects));
     if (entry.behavior === "throw-type-error")
       body.push(
         ...bag(),
@@ -171,7 +270,7 @@ export function buildBuiltinFunctionInitializer(d: BuiltinFunctionBodyOperands):
     return body;
   });
   return {
-    locals: [],
+    locals: [...prototypeObjects.keys()].map((id) => ({ name: id, type: { kind: "externref" } })),
     body: [
       global(d.state),
       { op: "i32.const", value: -1 },
@@ -204,6 +303,26 @@ export function buildBuiltinFunctionSingletonDefinition(
     body: [call(d.initializer), global(entry.singleton), { op: "ref.as_non_null" }, { op: "extern.convert_any" }],
   };
 }
+/**
+ * [[Construct]] of a kernel function: (#7350 B2b) an identity constructor's algorithm is not implemented, so it aborts;
+ * every other function is not a constructor (a TypeError).
+ */
+export function buildBuiltinFunctionConstructDefinition(d: BuiltinFunctionBodyOperands): BuiltinFunctionDefinition {
+  const constructible = d.entries.flatMap((entry, ordinal) => (entry.constructible ? [ordinal + 1] : []));
+  return {
+    locals: [],
+    body: [
+      ...constructible.flatMap((ordinal): Instr[] => [
+        get(0),
+        call(d.match),
+        { op: "i32.const", value: ordinal },
+        { op: "i32.eq" },
+        { op: "if", blockType: { kind: "empty" }, then: [{ op: "unreachable" }] },
+      ]),
+      ...builtinFailure(d, 1),
+    ],
+  };
+}
 /** No source argc/this/extras or active-realm global is touched by this transport. */
 export function buildBuiltinFunctionLiftedDefinition(
   d: BuiltinFunctionBodyOperands,
@@ -229,6 +348,8 @@ export function buildBuiltinFunctionAlgorithmDefinition(
   d: BuiltinFunctionBodyOperands,
   behavior: BuiltinFunctionEntryOperands["behavior"],
 ): BuiltinFunctionDefinition {
+  // (#7350 B2b) An identity entry's algorithm is not implemented: calling it aborts, never a catchable error.
+  if (behavior === "unavailable") return { locals: [], body: [{ op: "unreachable" }] };
   return { locals: [], body: behavior === "function-prototype" ? builtinUndefined(d) : builtinFailure(d, 2) };
 }
 export function buildBuiltinFunctionCallDefinition(d: BuiltinFunctionBodyOperands): BuiltinFunctionDefinition {

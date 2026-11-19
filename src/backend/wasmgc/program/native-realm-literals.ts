@@ -6,6 +6,7 @@ import {
 import type { IrStringEncoding } from "../../../ir/core/string-types.js";
 import { NATIVE_BUILTIN_FUNCTION_LITERALS } from "../resources/native-builtin-function-requests.js";
 import { NATIVE_OBJECT_DESCRIPTOR_LITERALS } from "../resources/native-object-descriptors.js";
+import { nativeRealmGlobalCallables } from "../../../runtime/contracts/native-realm-globals.js";
 
 export interface NativeRealmLiteralPlan {
   readonly requirements: NativeRealmRequirements;
@@ -36,6 +37,9 @@ export function planNativeRealmLiterals(
       "Value is not callable",
       ...NATIVE_BUILTIN_FUNCTION_LITERALS,
       ...NATIVE_OBJECT_DESCRIPTOR_LITERALS,
+      // (#7350 B2b) The global object's keys, and the names of the callables they reach (a NativeError's %Error%).
+      ...requirements.description.globalKeys,
+      ...nativeRealmGlobalCallables(requirements.description.globalKeys).map((row) => row.name),
       ...catalog.intrinsics.flatMap((row) => [
         ...(row.callable ? [row.callable.initialName] : []),
         ...row.properties.flatMap((property) => [

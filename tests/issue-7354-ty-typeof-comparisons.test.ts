@@ -9,6 +9,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import * as gc from "../src/codegen/index.js";
 import * as linear from "../src/codegen-linear/index.js";
 import { AMBIENT_TYPEOF_TAGS } from "../src/ir/ambient-typeof.js";
+import { builtinGlobalLanes } from "../src/shared/ambient-intrinsics.js";
 import { PREPARED_PROVIDED_GLOBALS } from "../src/ir/source-dynamic-contracts.js";
 import { instantiatePreparedArtifact } from "../src/test262/test262-prepared-runtime.js";
 import {
@@ -239,23 +240,25 @@ async function expectAnswer(program: (right: boolean) => string, warnings: reado
 
 // #7354 Ty step 2 — `typeof` of a global the program does not declare. The Prepared program is closed: a lib global
 // this path does not provide is absent from its environment, so `typeof` answers "undefined" (not ECMAScript's
-// answer for the real global: node says `typeof JSON === "object"`). Every other use of such a name refuses by name,
-// which the pin below checks for every name of the ambient `typeof` table.
+// answer for the real global: node says `typeof Reflect === "object"`). Every other use of such a name refuses by
+// name, which the pin below checks for every name of the ambient `typeof` table. (#7350 B2b) A global G1's admission
+// reads off the realm's global object (`builtinGlobalLanes`: `JSON`, `Math`, the ES5 constructors) is provided: its
+// `typeof` is node's.
 describe("#7354 Ty — typeof of an absent global on the Prepared path", () => {
   it.each([
-    ["the assert.js conditional", 'function f(v) { return typeof JSON !== "undefined" ? 1 : 2; }', "f(0)", "2"],
-    // The dead arm is not lowered: `JSON.stringify` alone refuses on this path.
+    ["the assert.js conditional", 'function f(v) { return typeof Reflect !== "undefined" ? 1 : 2; }', "f(0)", "2"],
+    // The dead arm is not lowered: `Promise.resolve` alone refuses on this path.
     [
       "the assert.js conditional with its dead arm",
-      'function f(v) { return typeof JSON !== "undefined" ? JSON.stringify(v) : 2; }',
+      'function f(v) { return typeof Promise !== "undefined" ? Promise.resolve(v) : 2; }',
       "f(0) === 2",
       "true",
     ],
-    ["a condition", 'var r = 0;\nif (typeof JSON !== "undefined") r = 1;', "r", "0"],
-    ["a reversed condition", 'var r = 0;\nif ("undefined" === typeof Math) r = 1;', "r", "1"],
-    ["a value-position boolean", 'function f(v) { return typeof JSON === "undefined"; }', "f(0)", "true"],
+    ["a condition", 'var r = 0;\nif (typeof Reflect !== "undefined") r = 1;', "r", "0"],
+    ["a reversed condition", 'var r = 0;\nif ("undefined" === typeof Promise) r = 1;', "r", "1"],
+    ["a value-position boolean", 'function f(v) { return typeof Reflect === "undefined"; }', "f(0)", "true"],
     ["a top-level value", 'var r = typeof Reflect !== "object";', "r", "true"],
-    ["a parenthesized operand", 'var r = typeof (JSON) === "undefined";', "r", "true"],
+    ["a parenthesized operand", 'var r = typeof (Reflect) === "undefined";', "r", "true"],
     // A program binding keeps its own answer: a parameter, and a dynamic local, named like the global.
     ["a parameter named Math", 'function f(Math) { return typeof Math === "number"; }', "f(1)", "true"],
     ["a local named JSON", 'function f(v) { var JSON = v; return typeof JSON === "boolean"; }', "f(true)", "true"],
@@ -318,33 +321,55 @@ describe("#7354 Ty — typeof of an absent global on the Prepared path", () => {
     );
   });
 
-  // The pin. A name this path provides through some use cannot be denied by `typeof`: it refuses by name.
-  it.each([...PREPARED_PROVIDED_GLOBALS])("refuses typeof of the provided global %s by name", async (name) => {
-    expect(await refusal(`if (typeof ${name} !== "undefined") throw 1;`)).toContain(
-      `identifier "${name}" is not in scope`,
+  // The pin. A name this path provides through some use cannot be denied by `typeof`: (#7350 B2b) G1's realm read
+  // answers it.
+  it("answers typeof of the provided globals like node", { timeout: 120_000 }, async () => {
+    const names = [...PREPARED_PROVIDED_GLOBALS];
+    await expectLikeNode(
+      (right) => `if ((${names.map((name) => `typeof ${name} === "function"`).join(" && ")}) !== ${right}) throw 1;`,
     );
+  });
+
+  // (#7350 B2b) A name of the table G1's admission reads off the realm's global object answers like node; its value
+  // is the global object's property, and a member, call or `new` of it refuses by name.
+  const realmGlobals = Object.entries(AMBIENT_TYPEOF_TAGS).filter(
+    ([name]) => builtinGlobalLanes(name) !== undefined && !PREPARED_PROVIDED_GLOBALS.has(name),
+  );
+  it("answers typeof of every realm global of the table like node", { timeout: 120_000 }, async () => {
+    const reads = realmGlobals.map(([name], index) => `var r${index} = ${name};`).join("\n");
+    const tests = realmGlobals.map(([name, tag]) => `typeof ${name} === "${tag}"`).join(" && ");
+    await expectLikeNode((right) => `${reads}\nif ((${tests}) !== ${right}) throw 1;`);
+  });
+  it.each(realmGlobals)("refuses every member use of the realm global %s", async (name, tag) => {
+    for (const use of [
+      `var r = ${name}.length;`,
+      `${name}.toString();`,
+      ...(tag === "function" ? [`${name}();`, `new ${name}();`] : []),
+    ])
+      expect((await compile(`function f(v) { ${use} return v; }\nf(1);`, options())).success, use).toBe(false);
   });
 
   // Every other name of the table is absent: `typeof` says so, and every use of it must refuse. When a later slice
   // makes a use compile, this fails and names the fix.
-  it.each(Object.entries(AMBIENT_TYPEOF_TAGS).filter(([name]) => !PREPARED_PROVIDED_GLOBALS.has(name)))(
-    "answers typeof of the absent global %s as undefined, and refuses every use of it",
-    async (name, tag) => {
-      await expectAnswer((right) => `if ((typeof ${name} === "undefined") !== ${right}) throw 1;`);
-      const uses = [
-        `var r = ${name};`,
-        `var r = ${name}.length;`,
-        `${name}.toString();`,
-        ...(tag === "function" ? [`${name}();`, `new ${name}();`] : []),
-      ];
-      for (const use of uses) {
-        const result = await compile(`function f(v) { ${use} return v; }\nf(1);`, options());
-        expect(
-          result.success,
-          `${name} is now provided on the Prepared path (\`${use}\` compiles): add it to PREPARED_PROVIDED_GLOBALS ` +
-            `so \`typeof ${name}\` answers its real type`,
-        ).toBe(false);
-      }
-    },
-  );
+  it.each(
+    Object.entries(AMBIENT_TYPEOF_TAGS).filter(
+      ([name]) => builtinGlobalLanes(name) === undefined && !PREPARED_PROVIDED_GLOBALS.has(name),
+    ),
+  )("answers typeof of the absent global %s as undefined, and refuses every use of it", async (name, tag) => {
+    await expectAnswer((right) => `if ((typeof ${name} === "undefined") !== ${right}) throw 1;`);
+    const uses = [
+      `var r = ${name};`,
+      `var r = ${name}.length;`,
+      `${name}.toString();`,
+      ...(tag === "function" ? [`${name}();`, `new ${name}();`] : []),
+    ];
+    for (const use of uses) {
+      const result = await compile(`function f(v) { ${use} return v; }\nf(1);`, options());
+      expect(
+        result.success,
+        `${name} is now provided on the Prepared path (\`${use}\` compiles): add it to PREPARED_PROVIDED_GLOBALS ` +
+          `so \`typeof ${name}\` answers its real type`,
+      ).toBe(false);
+    }
+  });
 });

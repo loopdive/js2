@@ -5,7 +5,7 @@ import {
   buildBuiltinFunctionEntryGet,
   type BuiltinFunctionPropertyOperands,
 } from "./builtin-function-property-bodies.js";
-import { BUILTIN_FUNCTION_PROTOTYPE_FIELD } from "./builtin-function-layouts.js";
+import { BUILTIN_FUNCTION_PROTOTYPE_FIELD, BUILTIN_IDENTITY_ONLY_FLAG } from "./builtin-function-layouts.js";
 
 export interface BuiltinFunctionPrototypeOperands extends BuiltinFunctionPropertyOperands {
   readonly getPrototypeOf: FuncHandle;
@@ -49,9 +49,21 @@ function ordinaryParent(d: BuiltinFunctionPrototypeOperands, cursor: number, nex
     },
   ];
 }
+/** (#7350 B2b) `missing` when the externref `object` carries the identity mark: its own miss is unknown. */
+function identityOnlyMiss(d: BuiltinFunctionPrototypeOperands, object: Instr[], missing: Instr[]): Instr[] {
+  return [
+    ...object,
+    { op: "any.convert_extern" },
+    { op: "ref.cast", typeIdx: d.objectTypeIdx },
+    { op: "struct.get", typeIdx: d.objectTypeIdx, fieldIdx: 4 },
+    n(BUILTIN_IDENTITY_ONLY_FLAG),
+    { op: "i32.and" },
+    { op: "if", blockType: empty, then: missing },
+  ];
+}
 /**
  * Native bounded lookup: 0 absent, 1 present, 2 missing realm parent/population,
- * 3 unknown carrier. The owner admits only an effectively final ordinary type;
+ * 3 unknown carrier, (#7350 B2b) 4 a miss among an identity-only object's own properties. The owner admits only an effectively final ordinary type;
  * extensible roots need an authenticated heterogeneous own-property dispatcher.
  */
 export function buildBuiltinFunctionLookup(d: BuiltinFunctionPrototypeOperands): BuiltinFunctionDefinition {
@@ -82,7 +94,18 @@ export function buildBuiltinFunctionLookup(d: BuiltinFunctionPrototypeOperands):
           {
             op: "if",
             blockType: empty,
-            then: [get(2), get(1), call(d.findOwn), set(3), get(2), call(d.getPrototypeOf), set(4)],
+            then: [
+              get(2),
+              get(1),
+              call(d.findOwn),
+              set(3),
+              get(3),
+              { op: "ref.is_null" },
+              { op: "if", blockType: empty, then: identityOnlyMiss(d, [get(2), call(d.bag)], missing(4)) },
+              get(2),
+              call(d.getPrototypeOf),
+              set(4),
+            ],
             else: [
               get(2),
               { op: "any.convert_extern" },
@@ -96,7 +119,11 @@ export function buildBuiltinFunctionLookup(d: BuiltinFunctionPrototypeOperands):
               // Do not follow a parent or report its incompleteness until the own entry misses.
               get(3),
               { op: "ref.is_null" },
-              { op: "if", blockType: empty, then: ordinaryParent(d, 2, 4, missing(2)) },
+              {
+                op: "if",
+                blockType: empty,
+                then: [...identityOnlyMiss(d, [get(2)], missing(4)), ...ordinaryParent(d, 2, 4, missing(2))],
+              },
             ],
           },
           get(3),

@@ -41,7 +41,9 @@ import { PREPARED_NUMBER_TO_STRING } from "./number-to-string-target.js";
 import { IR_DYN_ADD_FN } from "../../shared/contracts/dynamic-add-helper.js";
 import { NO_OBJECTS, type ProgramObjects } from "../source-plain-objects.js";
 import { gap } from "./dynamic-value-gap.js";
-import { dynamicMemberRead } from "./dynamic-member-read.js";
+import { dynamicMemberRead, globalObjectRead } from "./dynamic-member-read.js";
+import { irIntrinsicFuncRef } from "../core/callable-bindings.js";
+import { nativeRealmGlobalTypeof } from "../../runtime/contracts/native-realm-globals.js";
 import {
   ADD_ROLE,
   KIND_TEST,
@@ -51,11 +53,14 @@ import {
   TYPEOF_NAME,
   admittedKinds,
   boxedKind,
+  callableObjectRefusal,
   plainObjectRefusal,
   type CarrierKind,
 } from "./dynamic-value-kinds.js";
 
 const CARRIER: IrType = Object.freeze({ kind: "val", val: Object.freeze({ kind: "externref" }) });
+/** (#7350 B2b) The `typeof` literals an object kind holding a callable would answer wrongly. */
+const CALLABLE_TYPEOFS: ReadonlySet<string> = new Set(["object", "function"]);
 
 export { DynamicValueGap } from "./dynamic-value-gap.js";
 
@@ -110,7 +115,8 @@ function legalizationBuilders(
       : undefined;
   const boxed = new Map<IrValueId, CarrierKind>();
   for (const i of definitions.values()) {
-    const kind = i.kind === "box" && kindOfBox(i);
+    // (#7350 B2b) The realm's global object is an ordinary object.
+    const kind = i.kind === "dyn.global_object" ? "object" : i.kind === "box" && kindOfBox(i);
     if (kind) boxed.set(i.result!, kind);
   }
   const kindsOf = (value: IrValueId): readonly CarrierKind[] => {
@@ -222,8 +228,20 @@ function legalizationBuilders(
   };
   /** (#7354 O2) OrdinaryToPrimitive of a plain object (`TO_STRING_ARM`), or the named refusal. */
   const plainObjectToPrimitive = (): string => {
-    const refusal = plainObjectRefusal(objects, "ToPrimitive of an object");
+    const refusal =
+      plainObjectRefusal(objects, "ToPrimitive of an object") ??
+      callableObjectRefusal(objects, "ToPrimitive of an object");
     return refusal === undefined ? "[object Object]" : gap(refusal);
+  };
+  /** (#7350 B2b) `typeof` of a global read off the realm's global object: the table's answer (the read is exact). */
+  const globalTypeof = (value: IrValueId): string | undefined => {
+    const name = globalObjectRead(definitions, value);
+    return name === undefined ? undefined : nativeRealmGlobalTypeof(name);
+  };
+  /** (#7350 B2b) A `typeof` the kind chain would answer wrongly for a callable held as the object kind refuses. */
+  const refuseCallableTypeof = (value: IrValueId, operation: string): void => {
+    const refusal = kindsOf(value).includes("object") ? callableObjectRefusal(objects, operation) : undefined;
+    if (refusal !== undefined) gap(refusal);
   };
   /** (#7354 O2) ToNumber of the once-evaluated `value` (`TO_NUMBER_ARM`): a plain object's is NaN. */
   const toNumber = (instr: IrInstr, value: IrValueId, result: IrValueId): IrInstr[] => {
@@ -340,6 +358,8 @@ function legalizationBuilders(
     kindChain,
     toStringArm,
     toNumber,
+    globalTypeof,
+    refuseCallableTypeof,
     memberRead,
     addition,
     admitted,
@@ -434,12 +454,18 @@ export function legalizeDynamicValues(
       case "string.eq": {
         const comparison = typeofs.comparisons.get(instr.result!);
         if (comparison === undefined) return [instr];
-        const kinds = KINDS_OF_TYPEOF.get(comparison.literal)?.filter((kind) => builders.admitted.includes(kind));
-        if (kinds === undefined || kinds.length === 0)
+        const known = builders.globalTypeof(comparison.operand);
+        if (known === undefined && CALLABLE_TYPEOFS.has(comparison.literal))
+          builders.refuseCallableTypeof(
+            comparison.operand,
+            `typeof of an object compared with "${comparison.literal}"`,
+          );
+        const kinds = KINDS_OF_TYPEOF.get(comparison.literal)?.filter((kind) => builders.admitted.includes(kind)) ?? [];
+        if (known !== undefined || kinds.length === 0)
           return [
             {
               kind: "const",
-              value: { kind: "bool", value: comparison.negate },
+              value: { kind: "bool", value: (known === comparison.literal) !== comparison.negate },
               result: instr.result,
               resultType: instr.resultType,
             },
@@ -447,9 +473,23 @@ export function legalizeDynamicValues(
         return withSense(instr, comparison.negate, (result) => anyKind(instr, kinds, comparison.operand, result));
       }
       // (#7354 Str2) A `typeof` read other than by a literal comparison is its answer string.
-      case "dyn.typeof":
+      case "dyn.typeof": {
         if (typeofs.consumed.has(instr.result!)) return [];
+        const known = builders.globalTypeof(instr.value);
+        if (known !== undefined) return [text(known, instr.result!)];
+        builders.refuseCallableTypeof(instr.value, "typeof of an object");
         return kindChain(instr, instr.value, instr.result!, (kind, result) => [text(TYPEOF_NAME[kind], result)]);
+      }
+      case "dyn.global_object":
+        return [
+          {
+            kind: "call",
+            target: irIntrinsicFuncRef("js.object.global"),
+            args: [],
+            result: instr.result,
+            resultType: CARRIER,
+          },
+        ];
       case "string.const":
         return typeofs.consumed.has(instr.result!) ? [] : [instr];
       case "dyn.undefined":

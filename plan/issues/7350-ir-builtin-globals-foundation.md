@@ -21,6 +21,9 @@ loc-budget-allow:
   # selector's lane object; the admission itself moved out of both callers into `ir/builtin-globals.ts`.
   - src/ir/from-ast.ts
   - src/ir/select.ts
+  # 2026-11-19 (#7350 B2b): +6 in program-source.ts is the Prepared resolver's lane answer for G1's admission
+  # (`preparedBuiltinGlobalLane`, one import and one spread beside the standalone-only object-create resolver).
+  - src/ir/program-source.ts
 ---
 
 # #7350 — IR foundation: built-in globals as values

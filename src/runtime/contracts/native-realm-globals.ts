@@ -31,6 +31,10 @@ export type NativeRealmGlobalValue =
       readonly id: string;
       readonly length: number;
       readonly construct: NativeRealmConstruct;
+      /** [[Prototype]]: %Function.prototype%, except a NativeError's (%Error%) and a TypedArray's (%TypedArray%). */
+      readonly prototype: string;
+      /** The function's own `prototype` property: that object and its [[Prototype]]; `null` without one (§19.2, Proxy). */
+      readonly prototypeObject: { readonly id: string; readonly prototype: string | null } | null;
     }
   /** §19.4 `Atomics`, `JSON`, `Math`, `Reflect`, and `Temporal` (ES2026). */
   | { readonly kind: "namespace"; readonly id: string };
@@ -51,6 +55,10 @@ export interface NativeRealmGlobal {
   readonly legacy?: true;
   readonly value: NativeRealmGlobalValue;
 }
+
+export type NativeRealmGlobalCallable = NativeRealmGlobal & {
+  readonly value: Extract<NativeRealmGlobalValue, { readonly kind: "function" }>;
+};
 
 type Row = Omit<NativeRealmGlobal, "edition">;
 type Callable = readonly [name: string, length: number, construct?: NativeRealmConstruct];
@@ -129,6 +137,32 @@ const DRAFT_CONSTRUCTORS: readonly Callable[] = [
 /** §19.4 other properties. */
 const NAMESPACES: readonly string[] = ["Atomics", "JSON", "Math", "Reflect", "Temporal"];
 
+/** §20.5.6 and §20.5.7: the constructors whose [[Prototype]] is %Error%. */
+const ERROR_SUBCLASSES: ReadonlySet<string> = new Set([
+  "AggregateError",
+  "EvalError",
+  "RangeError",
+  "ReferenceError",
+  "SuppressedError",
+  "SyntaxError",
+  "TypeError",
+  "URIError",
+]);
+/** §23.2.6: the constructors whose [[Prototype]] is %TypedArray%. */
+const TYPED_ARRAYS: ReadonlySet<string> = new Set(
+  CONSTRUCTORS.flatMap(([name]) => (name.endsWith("Array") && name !== "Array" ? [name] : [])),
+);
+/** The [[Prototype]] of `name`'s function object, and its own `prototype` object. */
+function prototypes(
+  name: string,
+  construct: NativeRealmConstruct,
+): readonly [string, { readonly id: string; readonly prototype: string | null } | null] {
+  const family = ERROR_SUBCLASSES.has(name) ? "Error" : TYPED_ARRAYS.has(name) ? "TypedArray" : undefined;
+  const parent = name === "Object" ? null : family ? `%${family}.prototype%` : "%Object.prototype%";
+  const object = construct === "none" || name === "Proxy" ? null : { id: `%${name}.prototype%`, prototype: parent };
+  return [family ? `%${family}%` : "%Function.prototype%", object];
+}
+
 const property = (name: string, value: NativeRealmGlobalValue, legacy = false): Row => ({
   name,
   writable: true,
@@ -138,8 +172,10 @@ const property = (name: string, value: NativeRealmGlobalValue, legacy = false): 
 });
 const callable =
   (fallback: NativeRealmConstruct, legacy = false) =>
-  ([name, length, construct = fallback]: Callable): Row =>
-    property(name, { kind: "function", id: `%${name}%`, length, construct }, legacy);
+  ([name, length, construct = fallback]: Callable): Row => {
+    const [prototype, prototypeObject] = prototypes(name, construct);
+    return property(name, { kind: "function", id: `%${name}%`, length, construct, prototype, prototypeObject }, legacy);
+  };
 const frozen = (name: string, value: NativeRealmGlobalValue): Row => ({
   name,
   writable: false,
@@ -202,4 +238,50 @@ const TABLE_IDS: ReadonlySet<string> = new Set(
 export function nativeRealmGlobalSurface(id: string): "complete" | "identity" {
   if (!TABLE_IDS.has(id)) throw new Error(`native realm globals: ${id} is not a global intrinsic`);
   return CATALOG_IDS.has(id) ? "complete" : "identity";
+}
+
+/** The global's row, or `undefined` for a name that is no language global. */
+export function nativeRealmGlobal(name: string): NativeRealmGlobal | undefined {
+  return BY_NAME.get(name);
+}
+
+/** The intrinsics an identity row's objects link to that the realm builds. */
+const MODELED_LINKS: ReadonlySet<string | null> = new Set([
+  null,
+  "%Function.prototype%",
+  "%Object.prototype%",
+  "%Error%",
+  "%Error.prototype%",
+]);
+
+/**
+ * (#7350 B2b) Why the realm cannot answer a read of the global `name` off the global object, or `undefined` when it
+ * can: a callable or a namespace with its identity surface (a callable's name, length, `prototype` and `constructor`
+ * link; every other member an uncatchable abort). A complete intrinsic (%Object%, %Function%) has the same identity
+ * surface until its catalog population has realm algorithms. A callable linked to an intrinsic no global names
+ * (%TypedArray%) waits for that intrinsic, and a value row for a read that reaches it.
+ */
+export function nativeRealmGlobalReadRefusal(name: string): string | undefined {
+  const value = BY_NAME.get(name)?.value;
+  if (value === undefined) return `'${name}' is not a language global`;
+  if (value.kind === "namespace") return undefined;
+  if (value.kind !== "function") return `the global '${name}' is a ${value.kind} value`;
+  const link = [value.prototype, value.prototypeObject?.prototype ?? null].find((id) => !MODELED_LINKS.has(id));
+  return link === undefined ? undefined : `${value.id} links to ${link}, which the realm does not build`;
+}
+
+/**
+ * (#7350 B2b) The callables a realm holding the globals `names` builds, each after the callables its [[Prototype]] and
+ * its `prototype` object link to (a NativeError after %Error%), in that order.
+ */
+export function nativeRealmGlobalCallables(names: readonly string[]): readonly NativeRealmGlobalCallable[] {
+  const ordered: NativeRealmGlobalCallable[] = [];
+  const add = (name: string): void => {
+    const row = BY_NAME.get(name)!;
+    if (row.value.kind !== "function" || ordered.includes(row as NativeRealmGlobalCallable)) return;
+    if (row.value.prototype !== "%Function.prototype%") add(row.value.prototype.slice(1, -1));
+    ordered.push(row as NativeRealmGlobalCallable);
+  };
+  names.forEach(add);
+  return ordered;
 }

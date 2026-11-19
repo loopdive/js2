@@ -2,7 +2,7 @@
 import type { AllocSiteId, IrClosureSignature, IrInstr, IrInstrCall, IrType, IrValueId } from "../core/nodes.js";
 import type { IrUnitId } from "../../shared/contracts/ir-identity.js";
 import { AllocSiteRegistry } from "../analysis/alloc-registry.js";
-import { irOrdinaryObjectCallableDeclaration } from "../runtime/ordinary-object-callables.js";
+import { irOrdinaryObjectCallableDeclaration, isOrdinaryObjectProducer } from "../runtime/ordinary-object-callables.js";
 import type { OrdinaryObjectRuntimeFeature } from "../runtime/contracts/manifest.js";
 import { nativeAsyncCallableValueTypes, nativeAsyncCallMismatch } from "../runtime/native-async-callables.js";
 import { collectNativeStringValueDemands, type NativeStringValueDemands } from "./native-string-value-demands.js";
@@ -26,6 +26,8 @@ export interface NativeObjectAccessUse {
   /** A real create-call occurrence, not a fabricated structural allocation ID. */
   readonly creationOccurrence?: number;
   readonly descriptorMask?: number;
+  /** (#7350 B2b) The key, when a string constant produces it: the global object's population is the keys read. */
+  readonly key?: string;
 }
 export interface NativeObjectGetterDemand {
   readonly getOccurrence: number;
@@ -73,7 +75,8 @@ function createFeature(row: Definition | undefined): OrdinaryObjectRuntimeFeatur
   const feature = irOrdinaryObjectCallableDeclaration(row.instruction.target)?.feature;
   return feature === "js.object.create-default" ||
     feature === "js.object.create-null" ||
-    feature === "js.object.create-with-prototype"
+    feature === "js.object.create-with-prototype" ||
+    feature === "js.object.global"
     ? feature
     : undefined;
 }
@@ -265,7 +268,7 @@ function calculate(demands: NativeStringValueDemands) {
     const gap = (detail: string) => gaps.push({ occurrence, unitId, detail });
     const mismatch = nativeAsyncCallMismatch(call, declaration, types);
     if (mismatch) fail("ordinary callable differs from canonical declaration: " + mismatch);
-    const creation = feature.startsWith("js.object.create-")
+    const creation = isOrdinaryObjectProducer(feature)
       ? { instruction: call, occurrence }
       : original(call.args[0]!, definitions);
     const creationOccurrence = createFeature(creation) ? creation!.occurrence : undefined;
@@ -282,8 +285,9 @@ function calculate(demands: NativeStringValueDemands) {
       else if (feature === "js.object.define-accessor" && !(descriptorMask & 768))
         fail("accessor descriptor has no explicit getter/setter presence");
     }
-    if (!feature.startsWith("js.object.create-")) {
-      const key = original(call.args[1]!, definitions)?.instruction;
+    let key: IrInstr | undefined;
+    if (!isOrdinaryObjectProducer(feature)) {
+      key = original(call.args[1]!, definitions)?.instruction;
       const keyType = key?.resultType;
       if (
         key?.kind !== "string.const" &&
@@ -298,6 +302,7 @@ function calculate(demands: NativeStringValueDemands) {
       ownerUnitId: unitId,
       feature,
       ...(creationOccurrence === undefined ? {} : { creationOccurrence }),
+      ...(key?.kind === "string.const" ? { key: key.value } : {}),
       ...(descriptorMask === undefined ? {} : { descriptorMask }),
     });
   }

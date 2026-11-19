@@ -18,16 +18,27 @@ import {
 } from "../../../ir/program/native-realm-requirements.js";
 import type { NativeRealmIntrinsic } from "../../../runtime/contracts/native-realm-catalog.js";
 
+/**
+ * One builtin function object. `"unavailable"` (#7350 B2b) is an identity row: a global the realm names whose
+ * algorithm it does not implement. Its name, length, [[Prototype]] and own `prototype` object are real; a call or
+ * construct and a read of any other own member abort uncatchably.
+ */
 export interface NativeBuiltinFunctionRequirement {
   readonly id: string;
-  readonly behavior: "function-prototype" | "throw-type-error";
+  readonly behavior: "function-prototype" | "throw-type-error" | "unavailable";
   readonly signatureId: string;
   readonly metadataId: string;
   readonly initialName: string;
   readonly initialLength: number;
   readonly userFormalCount: number;
-  readonly prototype: "object-prototype" | "function-prototype";
-  readonly constructible: false;
+  /** A realm anchor, or (an identity row) the id of an earlier identity row. */
+  readonly prototype: string;
+  readonly constructible: boolean;
+  /**
+   * An identity row's own `prototype` property: a realm anchor (`%Object.prototype%`, `%Function.prototype%`) or a
+   * fresh object whose [[Prototype]] is `%Object.prototype%` or an earlier row's fresh prototype object.
+   */
+  readonly prototypeObject?: { readonly id: string; readonly prototype: string | null };
   readonly aliases: readonly string[];
 }
 export interface NativeBuiltinFunctionRequirements {
@@ -115,7 +126,9 @@ function validateRequirements(input: NativeBuiltinFunctionRequirements): void {
   if (Object.keys(input).some((key) => key !== "key" && key !== "intrinsics")) fail("unknown requirement field");
   const ids = new Set<string>(),
     aliases = new Set<string>(),
-    behaviors = new Set<string>();
+    behaviors = new Set<string>(),
+    identities = new Set<string>(),
+    prototypeObjects = new Set<string>(["%Object.prototype%"]);
   for (const row of input.intrinsics) {
     if (
       Object.keys(row).some(
@@ -130,27 +143,14 @@ function validateRequirements(input: NativeBuiltinFunctionRequirements): void {
             "userFormalCount",
             "prototype",
             "constructible",
+            "prototypeObject",
             "aliases",
           ].includes(key),
       )
     )
       fail("unsupported dynamic naming, async, or constructor requirement");
-    if (!["function-prototype", "throw-type-error"].includes(row.behavior) || behaviors.has(row.behavior))
-      fail("unavailable or duplicate intrinsic behavior");
-    behaviors.add(row.behavior);
-    if (
-      typeof row.initialName !== "string" ||
-      row.initialName !== "" ||
-      !Number.isSafeInteger(row.initialLength) ||
-      row.initialLength !== 0 ||
-      row.userFormalCount !== 0
-    )
-      fail("unsupported intrinsic name/length/formal metadata (dynamic and infinite lengths require another owner)");
-    if (
-      row.constructible !== false ||
-      row.prototype !== (row.behavior === "function-prototype" ? "object-prototype" : "function-prototype")
-    )
-      fail("unsupported prototype role or construct capability");
+    if (row.behavior === "unavailable") validateIdentityRow(row, identities, prototypeObjects);
+    else validateBootstrapRow(row, behaviors);
     for (const id of [row.id, row.signatureId, row.metadataId]) {
       if (typeof id !== "string" || !id || ids.has(id)) fail("missing or duplicate request identity");
       ids.add(id);
@@ -164,6 +164,53 @@ function validateRequirements(input: NativeBuiltinFunctionRequirements): void {
   if (input.intrinsics[0]?.behavior !== "function-prototype")
     fail("Function.prototype must establish the realm anchor");
 }
+/** The realm's two bootstrap behaviors: each once, nameless, non-constructible, on its fixed anchor. */
+function validateBootstrapRow(row: NativeBuiltinFunctionRequirement, behaviors: Set<string>): void {
+  if (!["function-prototype", "throw-type-error"].includes(row.behavior) || behaviors.has(row.behavior))
+    fail("unavailable or duplicate intrinsic behavior");
+  behaviors.add(row.behavior);
+  if (
+    typeof row.initialName !== "string" ||
+    row.initialName !== "" ||
+    !Number.isSafeInteger(row.initialLength) ||
+    row.initialLength !== 0 ||
+    row.userFormalCount !== 0
+  )
+    fail("unsupported intrinsic name/length/formal metadata (dynamic and infinite lengths require another owner)");
+  if (
+    row.constructible !== false ||
+    row.prototypeObject !== undefined ||
+    row.prototype !== (row.behavior === "function-prototype" ? "object-prototype" : "function-prototype")
+  )
+    fail("unsupported prototype role or construct capability");
+}
+/** An identity row links only to the realm's anchors and to identity rows before it. */
+function validateIdentityRow(
+  row: NativeBuiltinFunctionRequirement,
+  identities: Set<string>,
+  prototypeObjects: Set<string>,
+): void {
+  if (
+    typeof row.initialName !== "string" ||
+    !Number.isSafeInteger(row.initialLength) ||
+    row.initialLength < 0 ||
+    row.userFormalCount !== 0 ||
+    typeof row.constructible !== "boolean"
+  )
+    fail("invalid identity name/length/construct metadata");
+  if (row.prototype !== "function-prototype" && !identities.has(row.prototype))
+    fail("identity [[Prototype]] is not an anchor or an earlier identity row");
+  const object = row.prototypeObject;
+  if (object !== undefined) {
+    const anchor = ANCHOR_PROTOTYPES[object.id as keyof typeof ANCHOR_PROTOTYPES];
+    if (anchor !== undefined ? object.prototype !== anchor : !prototypeObjects.has(object.prototype!))
+      fail("identity prototype object links outside the realm");
+    if (anchor === undefined) prototypeObjects.add(object.id);
+  }
+  identities.add(row.id);
+}
+/** The realm anchors an identity row's `prototype` may be, with their own [[Prototype]]. */
+const ANCHOR_PROTOTYPES = { "%Object.prototype%": null, "%Function.prototype%": "%Object.prototype%" } as const;
 function freezeData<T>(value: T): T {
   if (value && typeof value === "object") {
     Object.values(value).forEach(freezeData);

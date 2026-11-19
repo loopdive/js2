@@ -91,12 +91,24 @@ describe("#7354 Str2 — String(x) on the Prepared path", () => {
     ["no argument", "var s = String();", 'direct call to "String" has no exact AST-site plan'],
     ["String.fromCharCode", "var s = String.fromCharCode(65);", 'identifier "String" is not in scope'],
     ["new String", 'var s = new String("a");', 'unknown class "String"'],
-    // An alias reads `String` as a value, which has no Prepared answer (the plan is also invalidated program-wide).
-    ["a call beside an alias", 'var S = String;\nvar s = String("a");', 'identifier "String" is not in scope'],
-    ["typeof String", 'if (typeof String !== "function") throw 1;', 'identifier "String" is not in scope'],
   ])("refuses %s by name", async (_label, source, expected) => {
     expect(await refusal(source)).toContain(expected);
   });
+
+  // (#7350 B2b) `String` read as a value is the realm's global object's property (G1's read), beside a direct call.
+  it.each([
+    [
+      "a call beside an alias",
+      (ok: boolean) => `var S = String;\nvar s = String("a");\nif ((s === "a" && S === String) !== ${ok}) throw 1;`,
+    ],
+    ["typeof String", (ok: boolean) => `if ((typeof String === "function") !== ${ok}) throw 1;`],
+  ])(
+    "answers %s like node",
+    async (_label, program) => {
+      await expectLikeNode(program);
+    },
+    120_000,
+  );
 
   // The `String` plan trusts that the closed program cannot rebind the ambient `String` (it is not invalidated by an
   // escape, which the harness prelude has). Each way to rebind it refuses by name, and a program declaring its own

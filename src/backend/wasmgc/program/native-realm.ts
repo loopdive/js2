@@ -59,8 +59,10 @@ import {
 import {
   declareNativeBuiltinFunctionRequests,
   requireNativeBuiltinFunctionRequests,
+  type NativeBuiltinFunctionRequirement,
   type NativeBuiltinFunctionRequests,
 } from "../resources/native-builtin-function-requests.js";
+import { nativeRealmGlobalCallables } from "../../../runtime/contracts/native-realm-globals.js";
 import {
   declareNativeClosureResources,
   instantiateNativeClosureRequirements,
@@ -299,7 +301,7 @@ function beginRealm(
   });
   const requests = declareNativeBuiltinFunctionRequests(
     tx,
-    { key: key + ":builtins", intrinsics },
+    { key: key + ":builtins", intrinsics: [...intrinsics, ...identityIntrinsics(requirements, intrinsics.length)] },
     {
       arguments: substrate.arguments,
       argumentPlan: substrate.argumentPlan,
@@ -333,6 +335,25 @@ function beginRealm(
   });
   owners.set(pack, { tx, input, vectors, vectorPlan, requirements, strings, population, phase: "foundation" });
   return pack;
+}
+/**
+ * (#7350 B2b) The kernel rows of the callables the program reads off the global object: identity rows, numbered after
+ * the bootstrap rows.
+ */
+function identityIntrinsics(requirements: NativeRealmRequirements, offset: number): NativeBuiltinFunctionRequirement[] {
+  return nativeRealmGlobalCallables(requirements.description.globalKeys).map(({ name, value }, index) => ({
+    id: value.id,
+    behavior: "unavailable" as const,
+    signatureId: "realm:signature:" + (offset + index),
+    metadataId: "realm:metadata:" + (offset + index),
+    initialName: name,
+    initialLength: value.length,
+    userFormalCount: 0,
+    prototype: value.prototype === "%Function.prototype%" ? "function-prototype" : value.prototype,
+    constructible: value.construct !== "none",
+    ...(value.prototypeObject ? { prototypeObject: value.prototypeObject } : {}),
+    aliases: [value.id],
+  }));
 }
 /** Preserve unselected reservation order; selected realms authenticate before the first write. */
 export function reserveNativeProgramFoundation(
@@ -433,12 +454,12 @@ function reserveKernelResources(tx: PhysicalModuleReservations, pack: NativeReal
     descriptorDependencies,
   };
   const kernel = reserveNativeBuiltinFunctionResources(tx, kernelDependencies);
-  const sourceObjects = reserveNativeSourceObjectResources(
-    tx,
-    key,
-    pack.requirements.description.objectUses.map((use) => use.feature),
-    { layouts, storage, descriptors, kernel },
-  );
+  const sourceObjects = reserveNativeSourceObjectResources(tx, pack.requirements.description, {
+    layouts,
+    storage,
+    descriptors,
+    kernel,
+  });
   return {
     equality,
     booleans,
@@ -524,6 +545,7 @@ export function nativeRealmReservationInventory(tx: PhysicalModuleReservations, 
   const globals: GlobalReservation[] = [
     ...symbols.resources.flatMap((row) => (row.reservation.kind === "global" ? [row.reservation] : [])),
     ...kernel.globals,
+    ...k.sourceObjects.caches.values(),
   ];
   requireNativeBooleanReservations(
     tx,

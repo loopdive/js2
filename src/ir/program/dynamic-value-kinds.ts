@@ -121,6 +121,15 @@ export function plainObjectRefusal(objects: ProgramObjects, operation: string): 
   return provedKinds && objects.unplain === undefined ? undefined : `${operation} (${objects.unplain})`;
 }
 
+/**
+ * (#7350 B2b) The verdict on `operation` for an object kind that may hold a callable (a built-in function read off the
+ * realm's global object): `typeof` would answer "object" and OrdinaryToPrimitive "[object Object]" for it, so both
+ * refuse by name until a function kind of the carrier answers them.
+ */
+export function callableObjectRefusal(objects: ProgramObjects, operation: string): string | undefined {
+  return objects.callable === undefined ? undefined : `${operation} (${objects.callable})`;
+}
+
 /** The kinds a value of a program may be: the object kind only where the program builds objects. */
 export function admittedKinds(objects: ProgramObjects): readonly CarrierKind[] {
   return objects.present ? KIND_ORDER : KIND_ORDER.filter((kind) => kind !== "object");

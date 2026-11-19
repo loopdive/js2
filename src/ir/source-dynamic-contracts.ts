@@ -29,7 +29,7 @@
  */
 import { ts } from "../ts-api.js";
 import type { IrType } from "./core/types.js";
-import type { IrFunction } from "./core/nodes.js";
+import { forEachInstrDeep, type IrFunction } from "./core/nodes.js";
 import { IrUnsupportedError } from "./outcomes.js";
 import {
   DynamicValueGap,
@@ -389,6 +389,7 @@ function legalizeSourceDynamicValues(
   const contracted =
     roots.some(bindsCatch) ||
     roots.some((root) => readsTypeofOfAbsentGlobal(checker, sourceFiles, root)) ||
+    functions.some(readsGlobalObject) ||
     globals.some((global) => global.binding.type.kind === "dynamic") ||
     [...signatures].some(
       (signature) =>
@@ -408,6 +409,14 @@ function legalizeSourceDynamicValues(
   }
   if (legalized.some((fn, index) => fn !== retargeted[index])) refuseImplicitDynamicFlows(checker, roots, carries);
   return legalized;
+}
+
+/** (#7350 B2b) `fn` reads the realm's global object (G1's built-in global read), which only legalization expresses. */
+function readsGlobalObject(fn: IrFunction): boolean {
+  let reads = false;
+  for (const block of fn.blocks)
+    for (const root of block.instrs) forEachInstrDeep(root, (instr) => (reads ||= instr.kind === "dyn.global_object"));
+  return reads;
 }
 
 /** `node` holds `typeof <name>` of an absent global (nested functions included). */

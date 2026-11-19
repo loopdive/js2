@@ -21,6 +21,8 @@ const CONTRACTS = [
   ["js.object.has", [REF, REF], [BOOL]],
   // (#7354 O4) the dynamic-value legalization's RequireObjectCoercible TypeError
   ["js.object.create-type-error", [REF], [REF]],
+  // (#7350 B2b) the realm's global object
+  ["js.object.global", [], [REF]],
 ] as const;
 
 describe("ordinary object semantic contracts", () => {

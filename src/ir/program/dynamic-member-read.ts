@@ -11,6 +11,7 @@ import { irIntrinsicFuncRef } from "../core/callable-bindings.js";
 import { BUILTIN_REACHABLE_KEYS, isArrayIndexKey } from "./builtin-prototype-keys.js";
 import { MEMBER_READ_ARM, plainObjectRefusal, type CarrierKind } from "./dynamic-value-kinds.js";
 import { gap } from "./dynamic-value-gap.js";
+import { nativeRealmGlobalReadRefusal } from "../../runtime/contracts/native-realm-globals.js";
 import type { ProgramObjects } from "../source-plain-objects.js";
 
 /** The legalization builders a member read is written with. */
@@ -43,6 +44,14 @@ function constantKey(definitions: ReadonlyMap<IrValueId, IrInstr>, key: IrValueI
   return text?.kind === "string.const" ? text.value : undefined;
 }
 
+/** (#7350 B2b) The global a read off the realm's global object names (G1's lowering), or `undefined`. */
+export function globalObjectRead(definitions: ReadonlyMap<IrValueId, IrInstr>, value: IrValueId): string | undefined {
+  const read = definitions.get(value);
+  return read?.kind === "dyn.member_get" && definitions.get(read.recv)?.kind === "dyn.global_object"
+    ? constantKey(definitions, read.key)
+    : undefined;
+}
+
 /** The read of `key` off the once-evaluated `receiver` into `result`. */
 export function dynamicMemberRead(
   b: MemberReadBuilders,
@@ -53,8 +62,6 @@ export function dynamicMemberRead(
   result: IrValueId,
 ): IrInstr[] {
   const name = constantKey(b.definitions, key) ?? gap("dyn.member_get with a computed key");
-  const refusal = plainObjectRefusal(program.objects, `member read '${name}'`);
-  if (refusal !== undefined) gap(refusal);
   const call = (
     feature: "js.object.create-type-error" | "js.object.get",
     args: IrValueId[],
@@ -66,6 +73,15 @@ export function dynamicMemberRead(
     result: r,
     resultType: b.carrier,
   });
+  // (#7350 B2b) The global object's own data property, which the realm defines for every key read off it: no prototype
+  // is reached, and G1's admission proved the program leaves the property as the realm defined it.
+  if (b.definitions.get(receiver)?.kind === "dyn.global_object") {
+    const unread = nativeRealmGlobalReadRefusal(name);
+    if (unread !== undefined) gap(`read of the global '${name}' (${unread})`);
+    return [call("js.object.get", [receiver, key, receiver], result)];
+  }
+  const refusal = plainObjectRefusal(program.objects, `member read '${name}'`);
+  if (refusal !== undefined) gap(refusal);
   const arm = (kind: CarrierKind, r: IrValueId): IrInstr[] => {
     switch (MEMBER_READ_ARM[kind]) {
       case "type-error": {

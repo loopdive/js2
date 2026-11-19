@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import { NATIVE_REALM_CATALOG } from "../../runtime/contracts/native-realm-catalog.js";
 import type { IrUnitId } from "../../shared/contracts/ir-identity.js";
+import { irOrdinaryObjectCallableDeclaration } from "../runtime/ordinary-object-callables.js";
 import { irNumberConversionCallableDeclaration } from "../runtime/number-conversion-callable.js";
 import { nativeAsyncCallableValueTypes, nativeAsyncCallMismatch } from "../runtime/native-async-callables.js";
 import { freezePreparedIrValue, preparedIrDataMismatch } from "./data.js";
@@ -23,6 +24,8 @@ export interface NativeRealmDescription {
   readonly sourceSignatureIds: readonly string[];
   readonly sourceAllocationOccurrences: readonly number[];
   readonly objectUses: NativeObjectAccessRequirements["uses"];
+  /** (#7350 B2b) The global object's own data properties: exactly the constant keys the program reads off it. */
+  readonly globalKeys: readonly string[];
   readonly numberUses: readonly {
     readonly occurrence: number;
     readonly semanticOccurrence: number;
@@ -79,6 +82,22 @@ function numberUses(access: NativeObjectAccessRequirements): NativeRealmDescript
     });
   });
 }
+function globalKeys(access: NativeObjectAccessRequirements): readonly string[] {
+  const readsGlobal = (use: NativeObjectAccessRequirements["uses"][number]): boolean => {
+    const creation =
+      use.creationOccurrence === undefined ? undefined : access.demands.occurrences[use.creationOccurrence];
+    return (
+      creation?.instruction.kind === "call" &&
+      irOrdinaryObjectCallableDeclaration(creation.instruction.target)?.feature === "js.object.global"
+    );
+  };
+  const keys = access.uses.flatMap((use) =>
+    use.feature === "js.object.get" && readsGlobal(use)
+      ? [use.key ?? fail("global object read without a constant key")]
+      : [],
+  );
+  return [...new Set(keys)].sort();
+}
 function calculate(
   program: PreparedIrProgram,
   projection: PreparedIrProgramRuntimeProjection,
@@ -107,6 +126,7 @@ function calculate(
     sourceSignatureIds: source?.signatures.map((row) => row.id) ?? [],
     sourceAllocationOccurrences: source?.allocations.map((row) => row.occurrence) ?? [],
     objectUses: access.uses,
+    globalKeys: globalKeys(access),
     numberUses: numbers,
     unavailable: [
       ...NATIVE_REALM_CATALOG.intrinsics.flatMap((row) =>

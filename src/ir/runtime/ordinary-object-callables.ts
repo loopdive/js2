@@ -59,7 +59,14 @@ const DECLARATIONS: Readonly<Record<OrdinaryObjectRuntimeFeature, IrRuntimeCalla
   // (#7354 O4) A TypeError the realm builds, its message a native string: the dynamic-value legalization's
   // RequireObjectCoercible.
   "js.object.create-type-error": declaration("js.object.create-type-error", [EXTERNAL], [EXTERNAL]),
+  // (#7350 B2b) The realm's global object (§9.3.1 [[GlobalObject]]), built once: the value `dyn.global_object` names.
+  "js.object.global": declaration("js.object.global", [], [EXTERNAL]),
 });
+
+/** (#7350 B2b) The contracts that answer an object of their own: the creations and the realm's global object. */
+export function isOrdinaryObjectProducer(feature: OrdinaryObjectRuntimeFeature): boolean {
+  return feature.startsWith("js.object.create-") || feature === "js.object.global";
+}
 
 /** Exact semantic binding only; neither display names nor runtime aliases qualify. */
 export function irOrdinaryObjectCallableDeclaration(ref: IrFuncRef): IrRuntimeCallableDeclaration | undefined {

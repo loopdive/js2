@@ -9,16 +9,23 @@
  */
 import { ts } from "../ts-api.js";
 import { objectLiteralDataPropertyName } from "./property-key-fold.js";
+import { builtinGlobalValueAdmitted, preparedBuiltinGlobalLane } from "./builtin-globals.js";
+import { nativeRealmGlobalTypeof } from "../runtime/contracts/native-realm-globals.js";
 
 export interface ProgramObjects {
   /** The program builds ordinary objects: the dynamic value admits the object kind. */
   readonly present: boolean;
   /** `undefined` when the objects and the built-in prototypes are plain, else the first reason they are not. */
   readonly unplain: string | undefined;
+  /**
+   * (#7350 B2b) `undefined` when no value of the object kind is callable, else the first reason one may be: the
+   * program reads a built-in function off the realm's global object.
+   */
+  readonly callable: string | undefined;
 }
 
 /** A program that builds no ordinary object. */
-export const NO_OBJECTS: ProgramObjects = Object.freeze({ present: false, unplain: undefined });
+export const NO_OBJECTS: ProgramObjects = Object.freeze({ present: false, unplain: undefined, callable: undefined });
 
 /** Own keys whose definition changes what OrdinaryToPrimitive or a prototype lookup answers. */
 const CONVERSION_KEYS: ReadonlySet<string> = new Set(["toString", "valueOf", "__proto__"]);
@@ -71,6 +78,15 @@ function memberWriteReason(checker: ts.TypeChecker, write: ts.BinaryExpression):
 export function programObjects(checker: ts.TypeChecker, sourceFiles: readonly ts.SourceFile[]): ProgramObjects {
   let present = false;
   let unplain: string | undefined;
+  let callable: string | undefined;
+  const lane = preparedBuiltinGlobalLane(checker);
+  // (#7350 B2b) A built-in global read as a value is the realm's global object's property: an object, or a callable.
+  const readsBuiltinGlobal = (node: ts.Node): void => {
+    if (!ts.isIdentifier(node) || !builtinGlobalValueAdmitted(node, lane)) return;
+    present = true;
+    if (nativeRealmGlobalTypeof(node.text) === "function")
+      callable ??= `the program reads the built-in function '${node.text}'`;
+  };
   const reasonAt = (node: ts.Node): string | undefined => {
     if (ts.isObjectLiteralExpression(node)) {
       present = true;
@@ -95,8 +111,9 @@ export function programObjects(checker: ts.TypeChecker, sourceFiles: readonly ts
   const visit = (node: ts.Node): void => {
     const reason = reasonAt(node);
     unplain ??= reason;
+    readsBuiltinGlobal(node);
     ts.forEachChild(node, visit);
   };
   sourceFiles.forEach(visit);
-  return { present, unplain };
+  return { present, unplain, callable };
 }

@@ -40,6 +40,7 @@ import { buildIrModuleInitPlan } from "./module-init-plan.js";
 import type { IrModuleInitPlan } from "./program/startup.js";
 import { makeModuleInitSynthetic } from "./module-init.js";
 import { makeIrIdentityModuleBindingResolver, type IrModuleBindingIdentity } from "./module-bindings.js";
+import { preparedBuiltinGlobalLane } from "./builtin-globals.js";
 import type { IrDirectCallLoweringPlan, ModuleBindingGlobal } from "./ast-lowering-plans.js";
 import type { PreparedIrFunction as IrFunction, PreparedIrModule as IrModule } from "./runtime/contracts/prepared.js";
 import type { IrType } from "./core/types.js";
@@ -1425,11 +1426,16 @@ function prepareSourceBuiltinResolvers(
   input: IrProgramSourceInput,
   roots: ts.FunctionDeclaration | readonly ts.Statement[],
 ) {
+  const standalone = input.policy.target === "standalone" && input.policy.backend === "wasmgc";
   return {
     ...prepareConversionResolvers(input.checker, input.sourceFiles, roots),
     ...prepareOrdinaryObjectAccessResolver(input.checker, input.sourceFiles, roots),
-    ...(input.policy.target === "standalone" && input.policy.backend === "wasmgc"
-      ? prepareObjectCreateResolver(input.checker, input.sourceFiles, roots)
+    ...(standalone
+      ? {
+          ...prepareObjectCreateResolver(input.checker, input.sourceFiles, roots),
+          // (#7350 B2b) G1's one admission (`builtinGlobalValueAdmitted`) claims a built-in global read here too.
+          ...preparedBuiltinGlobalLane(input.checker),
+        }
       : {}),
   };
 }

@@ -23,10 +23,10 @@ import {
   buildBuiltinFunctionMatchDefinition,
   buildBuiltinFunctionLiftedDefinition,
   buildBuiltinFunctionCallDefinition,
+  buildBuiltinFunctionConstructDefinition,
   buildBuiltinFunctionMethodDefinition,
   buildBuiltinFunctionSingletonDefinition,
   buildBuiltinFunctionSlotDefinition,
-  builtinFailure,
 } from "../../../runtime/wasmgc/values/builtin-function-bodies.js";
 import {
   buildBuiltinFunctionFindOwn,
@@ -471,6 +471,15 @@ function operands(
     lengthKey: literal("length"),
     nameKey: literal("name"),
     errors: NATIVE_BUILTIN_FUNCTION_LITERALS.slice(3).map((text) => literal(text)),
+    ...(pack.requests.requirements.intrinsics.some((row) => row.behavior === "unavailable")
+      ? {
+          identity: {
+            createWithPrototype: dd.storage.createWithPrototype.handle,
+            prototypeKey: literal("prototype"),
+            constructorKey: literal("constructor"),
+          },
+        }
+      : {}),
     entries: pack.entries.map((entry, index) => ({
       ...pack.requests.requirements.intrinsics[index]!,
       typeIdx: entry.type.typeIndex,
@@ -520,7 +529,7 @@ export function fillNativeBuiltinFunctionResources(
   fill("initialize", buildBuiltinFunctionInitializer(d));
   fill("match", buildBuiltinFunctionMatchDefinition(d));
   fill("callVector", buildBuiltinFunctionCallDefinition(d));
-  fill("construct", { locals: [], body: builtinFailure(d, 1) });
+  fill("construct", buildBuiltinFunctionConstructDefinition(d));
   for (const [role, slot] of [
     ["bag", "bag"],
     ["arity", "arity"],
