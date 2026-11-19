@@ -68,8 +68,8 @@ Legacy codegen only (no `src/ir/` change; the IR paths refuse these shapes, see 
 - **Three nullish tests ask it, none adds its own test:** `compileNullishCoalescing` (`??`,
   `expressions/logical-ops.ts`) and both `??=` arms of `expressions/operator-assignment.ts` (the variable arm and
   `emitLogicalAssignmentPattern`, which now takes its target expression, as every caller already had it). Each
-  emits `emitIsUndefF64` instead of folding an f64 to "never nullish". The bits compare is exact, so a genuine `NaN`
-  stays a number. `===`/`==` (`binary-ops.ts`) and `typeof` already tested the sentinel and are unchanged.
+  emits `emitIsUndefF64` instead of folding an f64 to "never nullish". The bits compare is exact, so an ordinary NaN
+  (`0 / 0`, `NaN`) stays a number; a NaN read from data with the sentinel's exact bits does not (#7367). `===`/`==` (`binary-ops.ts`) and `typeof` already tested the sentinel and are unchanged.
 - **Duplicate removed.** `??` and the variable `??=` arm each spelled out the same reference nullish test
   (`ref.is_null` or `__extern_is_undefined`); it is now one helper, `emitRefIsNullish` in `logical-ops.ts`, used by
   both (same bytes). The property `??=` arm tests `__extern_is_undefined` only for `externref` and stays as it is.
@@ -110,3 +110,15 @@ An **uninitialised module global** `let g: number | undefined;` starts as `f64.c
 slot's initial value is wrong. A Wasm global initializer must be a constant expression, so the fix is either an
 exact-bits `f64.const` of `UNDEF_F64_BITS` or a module-init store; not taken here. Needs its own issue id
 (allocation was not available to this lane).
+
+## Review round 1 (RV7307, 2026-11-19, on 80908eb248)
+
+| finding | answer |
+| --- | --- |
+| 1 (must-fix) `x ?? "d"` / `{}` / `1n` / `true` lost the number: `nullishJoinCarrier` had no arm for an f64 left side, so the left arm was coerced into the right arm's type. | Fixed: an f64 left arm joins at `externref` (or at `$AnyValue` when that is the right arm), which boxes the number; booleans keep their boolean box. Tests: every right-hand kind (string, object, BigInt, boolean, null, number) × defined/undefined left, both targets. |
+| 2 (should-fix) `x! ?? 7`, `(x as number) ?? 7` stayed NaN. | Fixed: `f64MayHoldUndefined` also asks the operand under `skipOuterExpressions` (the shared peel from `shared/binding-writes.ts`, as #7361 uses). Tests for `x!`, `as`, parentheses, `satisfies`. |
+| 2 (should-fix) `x?.toFixed(1)` on `number \| undefined`. | Not fixed here: a different defect, already on main. `compileOptionalCallExpression` treats every non-reference receiver as nullish and returns `undefined` even for `x = 2` (also for `x?: number`). The predicate is the same, but the defined arm needs a method call on a value receiver held in a temp, which that module has no lowering for. Needs its own issue (id requested from the lead). |
+| 3 (should-fix) "a genuine NaN never matches the sentinel" is false. | Corrected in `value-tags.ts`, this file and the test header; filed as #7367 (DataView / Float64Array reads of the sentinel's bits). Not fixed here. |
+
+Also seen while testing finding 1, already on main: `b === 1n` with `b: number | bigint` folds to `false` (the
+value is a correct BigInt box; `typeof b` answers `"bigint"`). The BigInt test row therefore checks `typeof`.
