@@ -1,10 +1,11 @@
 ---
 id: 7355
 title: "Fold the duplicated canonical-provider comparisons and SSA value-type maps of the IR runtime"
-status: ready
-sprint: Backlog
+status: done
+sprint: current
 created: 2026-11-17
-updated: 2026-11-17
+updated: 2026-11-19
+completed: 2026-11-19
 priority: low
 horizon: s
 feasibility: medium
@@ -106,3 +107,30 @@ One provider comparison and one definition walker, each with every non-pinned co
 module keeps a comparison loop or a private SSA walk it could share. Bytes identical on a 100-file test262 sample ×
 gc/standalone; failing-test sets of `tests/issue-3518*`, `tests/issue-3526*` and `tests/issue-7354-*` equal to
 main's.
+
+## Result (2026-11-19, base `origin/main` ee3fcdd610)
+
+- **Provider comparison.** `canonicalProviderRow` and `canonicalProviderMismatch` (`canonical-provider-mismatch.ts`)
+  serve the ordinary-object, dynamic-value, vector, number-remainder and native-async families. `sameData` is the
+  shared field comparison. The native-async "foreign clock projection" answer stays in its family module.
+- **SSA value types.** `forEachIrValueDefinition` and `irValueTypes` (`analysis/value-types.ts`) replace the private
+  walks in `generator-support.ts`, `prepared-component-dependencies.ts`, `prepared-dynamic-support.ts` and
+  `linear-memory-plan.ts`. `nativeAsyncCallableValueTypes` is now the walker plus its conflict check.
+- **Left as they are.**
+  - `intrinsic-preparation.ts`'s `valueTypesOf`: its whole-file source pin (`runtime-preparation-relocation`) is
+    live and green on main, so folding it would break a receipt.
+  - `async-prepare-ir.ts` and `async-linear-prepare.ts`: these are shallow walks, and folding them would add
+    entries, which is a behaviour change.
+  - `program-native-async-resources.ts`: it reads occurrence records, not the function.
+- **Pinned files touched.** `vector-callables.ts` and `native-async-callables.ts` are source-pinned by the #3518
+  historical reconstruction (`tests/issue-3518-historical-*`). That family fails all 596 rows on main and fails the
+  same 596 here, so no receipt that passes changes.
+- **Net −82 lines in `src/`** (9 files, +73/−155).
+- **Tests.** The whole unit suite ran on base and branch in 8 chunks (14,095 rows in chunks 0–4 and 6–7). Chunk 5
+  ran per file with a 6 GB heap, because it runs out of memory as a batch.
+  - No test that passes on base fails on the branch. 12 rows first read as branch-only failures; they pass
+    133/133 on both trees when re-run alone, so they were load timeouts.
+  - Pass/fail counts: `issue-3526*` 373/33 on both; `issue-7354-*` 649/0 on both.
+  - `issue-3518-program-abi-seam` runs out of memory on both trees.
+- **Byte identity.** 100 test262 files × gc/standalone, binaries identical (200/200).
+
