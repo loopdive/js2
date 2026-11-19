@@ -63,6 +63,16 @@ const fixtures = [
     },
     causes: ["1", "value * 10", "value * 10 + 3"],
   },
+  {
+    // (#7354 O1) A literal is an ordinary realm object: its `js.object.*` calls carry the literal's and the read's
+    // own source origins, as the closed-struct `object.new` did.
+    name: "ordinary object literal and its member read",
+    files: {
+      "./entry.ts":
+        "export function build(value: number): number { const object = { value }; return object.value + 1; }",
+    },
+    causes: ["{ value }", "object.value"],
+  },
 ] satisfies { name: string; files: Record<string, string>; causes: string[] }[];
 
 type Mapped = IrProgramSourcePreparation & { readonly sourceMap?: IrPreparedSourceMap };
@@ -273,7 +283,9 @@ describe("B3 genuine source-produced frontend origins", () => {
         expect(plain.kind).toBe("unsupported");
         if (plain.kind === "prepared") throw new Error("original refusal disappeared");
         expect(plain.detail).toContain(
-          fixture === fixtures[2] ? 'captures non-local binding "x"' : "object method name not in prepared scope",
+          // (#7354 O1) The method's literal is now an ordinary realm object, so the call through it refuses at the
+          // dynamic receiver instead of at the closed shape's method scope.
+          fixture === fixtures[2] ? 'captures non-local binding "x"' : "method call .read(...) on externref",
         );
         expect(
           prepareIrProgramSources({ ...retained.input, sourceMap: retained.request } as IrProgramSourceInput),
