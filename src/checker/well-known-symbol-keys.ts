@@ -1,12 +1,13 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 /**
- * (#7410) The function name a symbol-keyed property gives, recovered from the source key.
+ * (#7410, #7427) The keys a symbol-keyed property has where the program can observe them, recovered from the source key.
  *
  * TypeScript names a `[Symbol.replace]` member `__@replace@<id>`, where `<id>` comes from its process-global
  * symbol counter. The id depends on how many compiles the process ran before, so a runtime string built from that
  * escaped name is both wrong and dependent on compile order.
  */
 import { ts } from "../ts-api.js";
+import { wellKnownSymbolId } from "../runtime/contracts/well-known-symbols.js";
 import { isCurrentCompilerLibrarySourceFile } from "./index.js";
 
 const ESCAPED_SYMBOL_KEY = /^__@(.+)@\d+$/;
@@ -40,12 +41,34 @@ function wellKnownSymbolKeyName(checker: ts.TypeChecker, property: ts.Symbol): s
 }
 
 /**
- * The `name` SetFunctionName (§10.2.9) gives a function stored under `property`: `"[Symbol.replace]"` for a
- * well-known symbol and the name itself for a string key. Any other symbol key answers undefined, because its
- * description is a runtime value.
+ * A string key's name, or `spell` of the well-known symbol a symbol-keyed property names. Any other symbol key
+ * answers undefined: its identity is a runtime value.
  */
-export function functionNameForKey(checker: ts.TypeChecker, property: ts.Symbol): string | undefined {
+function keyOfProperty(
+  checker: ts.TypeChecker,
+  property: ts.Symbol,
+  spell: (wellKnownName: string) => string | undefined,
+): string | undefined {
   if (!ESCAPED_SYMBOL_KEY.test(property.escapedName as string)) return property.name;
   const name = wellKnownSymbolKeyName(checker, property);
-  return name === undefined ? undefined : `[Symbol.${name}]`;
+  return name === undefined ? undefined : spell(name);
+}
+
+/**
+ * The `name` SetFunctionName (§10.2.9) gives a function stored under `property`: `"[Symbol.replace]"` for a
+ * well-known symbol and the name itself for a string key.
+ */
+export function functionNameForKey(checker: ts.TypeChecker, property: ts.Symbol): string | undefined {
+  return keyOfProperty(checker, property, (name) => `[Symbol.${name}]`);
+}
+
+/**
+ * (#7427) The key a built-in prototype member has in the native-prototype tables: `@@<id>` (`WELL_KNOWN_SYMBOL_IDS`)
+ * for a well-known symbol and the name itself for a string key.
+ */
+export function memberKeyForProperty(checker: ts.TypeChecker, property: ts.Symbol): string | undefined {
+  return keyOfProperty(checker, property, (name) => {
+    const id = wellKnownSymbolId(name);
+    return id === undefined ? undefined : `@@${id}`;
+  });
 }

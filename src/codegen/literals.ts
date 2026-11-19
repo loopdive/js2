@@ -132,6 +132,7 @@ import { widenUndefinedDefaultParamSlot } from "./destructuring-params.js";
 import { widenAsyncThenableResults } from "./async-thenable-return.js"; // (#5371)
 import { readEnv } from "../env.js";
 import { recordObjectLiteralCarrier } from "./object-model/anon-expando-bag-slot.js";
+import { WELL_KNOWN_SYMBOL_IDS, wellKnownSymbolId } from "../runtime/contracts/well-known-symbols.js";
 /**
  * Check if a TS expression is "undefined-like" — OmittedExpression (array hole),
  * undefined keyword, identifier `undefined`, void expression, or any of the
@@ -2702,41 +2703,19 @@ export function resolvePropertyNameText(ctx: CodegenContext, prop: ts.ObjectLite
 }
 
 /**
- * Well-known symbol IDs — fixed i32 constants used internally.
- * User-created symbols start at ID 100 via the global counter.
- */
-const WELL_KNOWN_SYMBOLS: Record<string, number> = {
-  iterator: 1,
-  hasInstance: 2,
-  toPrimitive: 3,
-  toStringTag: 4,
-  species: 5,
-  isConcatSpreadable: 6,
-  match: 7,
-  replace: 8,
-  search: 9,
-  split: 10,
-  unscopables: 11,
-  asyncIterator: 12,
-  dispose: 13,
-  asyncDispose: 14,
-  matchAll: 15,
-};
-
-/**
  * Map a well-known Symbol property name (e.g. "iterator") to a reserved
  * property key string "@@iterator" for use as struct field names.
  */
 export function resolveWellKnownSymbol(name: string): string | undefined {
-  if (name in WELL_KNOWN_SYMBOLS) return `@@${name}`;
-  return undefined;
+  return wellKnownSymbolId(name) === undefined ? undefined : `@@${name}`;
 }
 
 /**
- * Get the i32 constant for a well-known symbol, or undefined if not well-known.
+ * Get the i32 constant for a well-known symbol, or undefined if not well-known. User-created symbols start at
+ * ID 100 via the global counter. (#7427) The table is `WELL_KNOWN_SYMBOL_IDS`, shared with the runtime.
  */
 export function getWellKnownSymbolId(name: string): number | undefined {
-  return WELL_KNOWN_SYMBOLS[name];
+  return wellKnownSymbolId(name);
 }
 
 /**
@@ -2748,7 +2727,7 @@ export function getWellKnownSymbolId(name: string): number | undefined {
  * not need a second hand-maintained mapping.
  */
 export function wellKnownSymbolName(id: number): string | undefined {
-  for (const [name, value] of Object.entries(WELL_KNOWN_SYMBOLS)) {
+  for (const [name, value] of Object.entries(WELL_KNOWN_SYMBOL_IDS)) {
     if (value === id) return name;
   }
   return undefined;

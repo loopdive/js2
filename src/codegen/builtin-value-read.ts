@@ -99,6 +99,7 @@ import { emitExternrefSlotToAnyStr } from "./native-string-slot-bridge.js";
 import { emitNativeReflectTargetGuard } from "./reflect-target-guard.js";
 import { sourceShadowsGlobalName } from "./source-function-members.js"; // (#5194 review F2)
 import { sourceWritesRegExpProtoSymbol } from "./regexp-proto-symbol-writes.js"; // (#6651 B9)
+import { wellKnownSymbolId as getWellKnownSymbolId } from "../runtime/contracts/well-known-symbols.js"; // (#7427) the shared table
 
 export const BUILTIN_CTOR_NAMES = new Set([
   "Object",
@@ -168,33 +169,6 @@ export const BUILTIN_CTOR_NAMES = new Set([
   // handler (loud located refusal standalone, `__get_builtin` under gc/host).
   "SuppressedError",
 ]);
-
-// Well-known Symbol IDs (inlined from literals.ts to avoid circular deps)
-const WELL_KNOWN_SYMBOLS: Record<string, number> = {
-  iterator: 1,
-  hasInstance: 2,
-  toPrimitive: 3,
-  toStringTag: 4,
-  species: 5,
-  isConcatSpreadable: 6,
-  match: 7,
-  replace: 8,
-  search: 9,
-  split: 10,
-  unscopables: 11,
-  asyncIterator: 12,
-  dispose: 13,
-  asyncDispose: 14,
-  // (#3573) `matchAll` drifted out of this mirror of the literals.ts table
-  // (id 15 there) — its absence made `hasNativeBuiltinConstantHandler` refuse
-  // `Symbol.matchAll` value reads under --target standalone even though the
-  // downstream constant emitter supports it. Keep in sync with literals.ts.
-  matchAll: 15,
-};
-
-function getWellKnownSymbolId(name: string): number | undefined {
-  return WELL_KNOWN_SYMBOLS[name];
-}
 
 /**
  * (#1888 S6-c) Math/Number constant property names that have a Wasm-native
