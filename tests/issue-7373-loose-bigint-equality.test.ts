@@ -18,10 +18,10 @@ async function runMain(source: string, target: Target): Promise<number> {
   return (instance.exports.main as () => number)();
 }
 
-/** `main()` scores `b == 1n`, `b != 1n`, `1n == b`, `1n != b` as the bits 1, 2, 4, 8. */
-const program = (type: string, value: string): string =>
+/** `main()` scores `b == k`, `b != k`, `k == b`, `k != b` as the bits 1, 2, 4, 8. */
+const program = (type: string, value: string, k = "1n"): string =>
   `function g(): ${type} { return ${value} as any; } export function main(): number { const b = g(); ` +
-  "return (b == 1n ? 1 : 0) + (b != 1n ? 2 : 0) + (1n == b ? 4 : 0) + (1n != b ? 8 : 0); }";
+  `return (b == ${k} ? 1 : 0) + (b != ${k} ? 2 : 0) + (${k} == b ? 4 : 0) + (${k} != b ? 8 : 0); }`;
 
 const EQUAL = 1 + 4;
 const UNEQUAL = 2 + 8;
@@ -34,7 +34,7 @@ const PROGRAMS: readonly (readonly [string, string, number])[] = [
     [`\`${type}\` holding 0n`, program(type, "0n"), UNEQUAL] as const,
     [`\`${type}\` holding -1n`, program(type, "-1n"), UNEQUAL] as const,
     [`\`${type}\` holding the number 1`, program(type, "1"), EQUAL] as const,
-    [`\`${type}\` holding null`, program(type, "null"), UNEQUAL] as const,
+    [`\`${type}\` holding null, against 0n`, program(type, "null", "0n"), UNEQUAL] as const,
   ]),
   ['`any` holding the string "1"', program("any", '"1"'), EQUAL],
   ['`unknown` holding the string "1"', program("unknown", '"1"'), EQUAL],

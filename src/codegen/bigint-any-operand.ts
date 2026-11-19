@@ -95,10 +95,10 @@ export function emitStandaloneAnyBigIntBinary(
 
 /**
  * (#7373) `==` / `!=` when exactly one side is statically BigInt and the other may hold a BigInt at run time
- * (`typeMayBeBigInt`). A BigInt there is compared as a BigInt (§7.2.15 step 1). `null` / `undefined` (a null
- * externref) are loosely equal only to each other (steps 2–3), so they answer `false` before ToNumber would turn
- * `null` into 0. Anything else keeps the static mixed arm's ToNumber comparison. Returns `undefined` having
- * emitted nothing when a helper is unavailable.
+ * (`typeMayBeBigInt`). A BigInt there is compared as a BigInt (§7.2.15 step 1). `null` (a null externref) is loosely
+ * equal only to `null` / `undefined` (steps 2–3), so it answers `false` before ToNumber would turn it into 0.
+ * Anything else, `undefined` included (ToNumber gives NaN), keeps the static mixed arm's ToNumber comparison.
+ * Returns `undefined` having emitted nothing when a helper is unavailable.
  */
 export function emitMaybeBigIntLooseEquality(
   ctx: CodegenContext,

@@ -99,7 +99,7 @@ so a BigInt on the dynamic side is never equal to anything.
 
 - RV7339 round 1: `null == 0n` (an `any`, `unknown` or `number | bigint` holding `null`) answered true through this
   arm's ToNumber fallback (ToNumber(null) is 0). The fallback now answers false for a null externref first, since
-  §7.2.15 makes `null` / `undefined` loosely equal only to each other. Pinned by 6 test rows (3 types × gc/standalone);
+  §7.2.15 makes `null` / `undefined` loosely equal only to each other. Pinned by 6 test rows (null against 0n, 3 types × gc/standalone), which fail without the guard (RV7339 round 2: the first cut compared null with 1n, which was already false);
   the 200-row byte sample is unchanged.
 
 Left open (unchanged by this fix, same answer before and after; pre-existing rows are listed in #7403):
