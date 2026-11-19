@@ -33,13 +33,20 @@ describe("source-owned ordinary property reads", () => {
     "export function run(){let object={get value(){return 7;}};return object.value;}",
     "export function run(){const source={get value(){return 7;}};const object=source;return object.value;}",
     "export function run(object:{value:number}){return object.value;}",
-    "export function run(){const object={value:7};return object.value;}",
     "export function run(){const object={get value(){return 'seven';}};return object.value;}",
     "export function run(){const object={get value(){return 7;}};return object?.value;}",
-    "export function run(){const object={get value(){return 7;}};{const object={value:9};return object.value;}}",
   ])("refuses an unproven receiver/carrier: %s", (source) => {
     const p = prepare(source);
     expect(p.sites.map(p.resolver.preparedOrdinaryPropertyRead)).toEqual([undefined]);
+  });
+  // (#7354 O1) A data-only literal whose binding is only read as `o.k` holds its own initializers: its reads are
+  // planned too, through the binding the checker resolves (here the inner one).
+  it.each([
+    "export function run(){const object={value:7};return object.value;}",
+    "export function run(){const object={get value(){return 7;}};{const object={value:9};return object.value;}}",
+  ])("admits a data-only literal receiver: %s", (source) => {
+    const p = prepare(source);
+    expect(p.sites.map(p.resolver.preparedOrdinaryPropertyRead)).toEqual([expected]);
   });
   it("refuses imported descriptor receiver", () => {
     const p = prepare('import {object} from "./other";export function run(){return object.value;}', {

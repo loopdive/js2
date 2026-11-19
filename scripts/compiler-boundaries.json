@@ -326,6 +326,7 @@
         "src/backend/wasmgc/resources/native-prototype-layouts.ts",
         "src/backend/wasmgc/resources/native-prototype-seeder-bindings.ts",
         "src/backend/wasmgc/resources/native-object-get.ts",
+        "src/backend/wasmgc/resources/native-source-objects.ts",
         "src/backend/wasmgc/program/native-primitive-boundary-abi.ts",
         "src/backend/wasmgc/resources/native-primitive-wrapper-layouts.ts",
         "src/backend/wasmgc/resources/native-primitive-wrapper-storage.ts",
@@ -417,6 +418,7 @@
         "src/runtime/wasmgc/values/closure-vector-apply-body.ts",
         "src/runtime/wasmgc/values/object-same-value-body.ts",
         "src/runtime/wasmgc/values/ordinary-object-access-bodies.ts",
+        "src/runtime/wasmgc/values/source-object-bodies.ts",
         "src/runtime/wasmgc/values/ordinary-object-descriptor-accessor.ts",
         "src/runtime/wasmgc/values/ordinary-object-descriptor-common.ts",
         "src/runtime/wasmgc/values/ordinary-object-descriptor-data.ts",
@@ -15209,6 +15211,11 @@
       "layer": "native-runtime"
     },
     {
+      "path": "src/runtime/wasmgc/values/source-object-bodies.ts",
+      "state": "clean",
+      "layer": "native-runtime"
+    },
+    {
       "path": "src/runtime/wasmgc/values/ordinary-object-descriptor-accessor.ts",
       "state": "clean",
       "layer": "native-runtime"
@@ -16595,6 +16602,11 @@
     },
     {
       "path": "src/backend/wasmgc/resources/native-object-get.ts",
+      "state": "clean",
+      "layer": "backend-wasmgc"
+    },
+    {
+      "path": "src/backend/wasmgc/resources/native-source-objects.ts",
       "state": "clean",
       "layer": "backend-wasmgc"
     },
