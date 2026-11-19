@@ -111,6 +111,7 @@ function physicalCarrier(type: IrType, stringKey: string) {
   if (type.kind === "val" && !Object.hasOwn(type, "typeRef") && type.val.kind === "i32")
     return { kind: "i32" as const };
   if (type.kind === "val" && !Object.hasOwn(type, "typeRef") && type.val.kind === "externref") return type.val;
+  if (type.kind === "val" && !Object.hasOwn(type, "typeRef") && type.val.kind === "f64") return type.val;
   if (type.kind === "string") return { kind: "ref" as const, typeKey: nativeStringTypeKeys(stringKey).any };
   return fail("canonical intrinsic contract has an unexpected carrier");
 }
@@ -141,6 +142,7 @@ function nativeIntrinsicRows(input: NativeStringValueReservationInput): readonly
     ),
     canonicalRow("js.extern.is_undefined", "is-undefined", policy.externIsUndefined.probe === "native"),
     canonicalRow("js.value.as_string", "as-string", true),
+    canonicalRow("js.value.char_at", "char-at", true),
     canonicalRow("js.value.is_boolean", "typeof-boolean", true),
     canonicalRow("js.value.is_number", "typeof-number", true),
     canonicalRow("js.value.is_string", "typeof-string", true),

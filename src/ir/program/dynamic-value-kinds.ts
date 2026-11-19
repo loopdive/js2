@@ -94,12 +94,13 @@ export const TO_NUMBER_ARM: Readonly<Record<CarrierKind, "unbox" | "plain-object
 /**
  * (#7354 O4) How a member read (§13.3.2.1, GetV) answers each receiver kind: `undefined` and `null` throw a TypeError
  * (RequireObjectCoercible); an object is the realm's [[Get]]; a primitive reaches only built-in prototypes, so a key
- * none of them names reads `undefined` (`builtin-prototype-keys.ts`).
+ * none of them names reads `undefined` (`builtin-prototype-keys.ts`). (#7352) A string first answers its own
+ * properties (§10.4.3): `length` and its code units at the array indices below it.
  */
-export const MEMBER_READ_ARM: Readonly<Record<CarrierKind, "type-error" | "get" | "primitive">> = {
+export const MEMBER_READ_ARM: Readonly<Record<CarrierKind, "type-error" | "get" | "string-own" | "primitive">> = {
   number: "primitive",
   boolean: "primitive",
-  string: "primitive",
+  string: "string-own",
   undefined: "type-error",
   null: "type-error",
   object: "get",

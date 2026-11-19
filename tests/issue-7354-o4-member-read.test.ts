@@ -71,6 +71,8 @@ const PROGRAMS: readonly [string, string][] = [
   ["a member read through an unannotated parameter", "function g(v) { return v.a; } if (g({ a: 3 }) !== 3) throw 1;"],
   ["a primitive's absent member", 'function g(v) { return v.q; } if (g("a") !== undefined) throw 1;'],
   ["a number's absent member", "function g(v) { return v.q; } if (g(1) !== undefined) throw 1;"],
+  // (#7352) A string's own `length`.
+  ["a string's length", 'var s = "a"; if (s.length !== 1) throw 1;'],
 ];
 
 describe("#7354 O4 — a member read of the dynamic value", () => {
@@ -104,9 +106,9 @@ describe("#7354 O4 — a member read of the dynamic value", () => {
 
   it.each([
     [
-      "a string's length",
-      'var s = "a"; var n = s.length;',
-      "member read 'length' of a string needs its wrapper prototype",
+      "a String.prototype method",
+      'var s = "a"; var n = s.charAt;',
+      "member read 'charAt' of a string needs its wrapper prototype",
     ],
     ["an Object.prototype method", "var o = { a: 1 }; var t = o.toString;", "member read 'toString'"],
     ["a computed key", 'var o = { a: 1 }; var k = "a"; var v = o[k];', "dyn.member_get with a computed key"],

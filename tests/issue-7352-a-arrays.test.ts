@@ -145,9 +145,10 @@ describe("#7352 arrays — array literals are Array exotic objects of the realm"
 
   // Each refusal names the slice that removes it (the plan in the #7352 issue file).
   it("refuses what the later slices build, by name", async () => {
-    // A2: an Array through P's dynamic parameter, which may hold a string, whose index needs its wrapper (slice B).
+    // An Array through P's dynamic parameter: the element and `length` an object answers may be any value, an Array
+    // among them, so `+` needs an Array's ToPrimitive (A3).
     expect(await refusal("function f(x) { return x[1] + x.length; } if (f([1, 2, 3]) !== 5) throw 1;")).toContain(
-      "member read '1' of a string needs its wrapper prototype",
+      "ToPrimitive of an object (array ToPrimitive needs Array.prototype.join)",
     );
     // A constant number key that is no array index needs ToString of a number, which the realm cannot reach.
     expect(await refusal("var a = [1, 2]; var x = a[1.5];")).toContain(
@@ -323,6 +324,12 @@ describe("#7352 A2 — a script var holding an Array", () => {
       "var a = [1, 2, 3]; a.length = 1; if (a.length !== 1 || a[1] !== undefined) throw 1;",
       "a.length !== 3",
     ],
+    // A write of another kind (here a closure's) keeps every kind: a number's index reads `undefined`.
+    [
+      "an index read of a var a closure may set to a number",
+      "var a = [1, 2]; function f(v) { a = v; } f(1); if (a[0] !== undefined) throw 1;",
+      "a[0] === undefined",
+    ],
   ])(
     "%s",
     async (_label, source, wrongCheck) => {
@@ -345,10 +352,6 @@ describe("#7352 A2 — a script var holding an Array", () => {
     // The realm throws the RangeError under its own exception tag, which a source catch does not handle yet.
     expect(await refusal("var a = [1, 2, 3]; try { a.length = -1; } catch {}")).toContain(
       "member write 'length' (ArraySetLength's RangeError) in a program that catches",
-    );
-    // A write of another kind (here a closure's) keeps every kind, and the string arm refuses.
-    expect(await refusal("var a = [1, 2]; function f(v) { a = v; } f(1); var x = a[0];")).toContain(
-      "member read '0' of a string needs its wrapper prototype",
     );
     // A write through the global object takes the binding's home away before any kind is asked.
     expect(await refusal("var a = [1, 2]; function id(x) { return x; } this.a = id(1); var x = a[0];")).toContain(

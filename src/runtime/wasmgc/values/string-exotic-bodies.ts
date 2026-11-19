@@ -41,6 +41,20 @@ const set = (index: number): Instr => ({ op: "local.set", index });
 const integer = (value: number): Instr => ({ op: "i32.const", value });
 const noIndex = (): Instr[] => [{ op: "i64.const", value: -1n }, { op: "return" }];
 
+/** The immutable length-one view of the flat string in local `flat` at the in-bounds code-unit `index`. */
+function codeUnitView(nativeStrTypeIdx: number, flat: number, index: readonly Instr[]): Instr[] {
+  return [
+    integer(1),
+    get(flat),
+    { op: "struct.get", typeIdx: nativeStrTypeIdx, fieldIdx: 1 },
+    ...index,
+    { op: "i32.add" },
+    get(flat),
+    { op: "struct.get", typeIdx: nativeStrTypeIdx, fieldIdx: 2 },
+    { op: "struct.new", typeIdx: nativeStrTypeIdx },
+  ];
+}
+
 /**
  * (canonical PropertyKey externref) -> unsigned array index as i64, or -1.
  * This is exact for all indices 0..2^32-2. It neither coerces keys nor uses the
@@ -178,20 +192,69 @@ export function buildStringVirtualOwnDescriptorDefinition(input: StringVirtualDe
       set(4),
       get(1),
       { op: "any.convert_extern" }, // descriptor key
-      integer(1),
-      get(4),
-      { op: "struct.get", typeIdx: d.nativeStrTypeIdx, fieldIdx: 1 },
-      get(3),
-      { op: "i32.wrap_i64" },
-      { op: "i32.add" },
-      get(4),
-      { op: "struct.get", typeIdx: d.nativeStrTypeIdx, fieldIdx: 2 },
-      { op: "struct.new", typeIdx: d.nativeStrTypeIdx }, // immutable length-one view
+      ...codeUnitView(d.nativeStrTypeIdx, 4, [get(3), { op: "i32.wrap_i64" }]),
       integer(2),
       integer(0), // flags: enumerable; virtual entries have no creation sequence
       { op: "ref.null", typeIdx: -18 },
       { op: "ref.null", typeIdx: -18 },
       { op: "struct.new", typeIdx: d.propEntryTypeIdx },
+    ],
+  };
+}
+
+export interface StringCodeUnitReadBindings {
+  readonly anyStrTypeIdx: number;
+  readonly nativeStrTypeIdx: number;
+  readonly flattenIdx: number;
+  /** The global holding the `undefined` value. */
+  readonly undefinedGlobalIdx: number;
+}
+
+/**
+ * (externref string, f64 number key) -> externref: (#7352) a string primitive's own property at a number key
+ * (§10.4.3.5 StringGetOwnProperty), its length-one view at an array index below its length, else `undefined`. A
+ * number names an index exactly when it is an integer in range (CanonicalNumericIndexString of a number is the
+ * number; -0 is index 0); NaN fails every comparison and the integer test.
+ */
+export function buildStringCodeUnitReadDefinition(input: StringCodeUnitReadBindings): {
+  locals: LocalDef[];
+  body: Instr[];
+} {
+  const d = capture(input, ["anyStrTypeIdx", "nativeStrTypeIdx", "flattenIdx", "undefinedGlobalIdx"]);
+  return {
+    locals: [
+      { name: "string", type: { kind: "ref", typeIdx: d.anyStrTypeIdx } },
+      { name: "flat", type: { kind: "ref", typeIdx: d.nativeStrTypeIdx } },
+    ],
+    body: [
+      get(0),
+      { op: "any.convert_extern" },
+      { op: "ref.cast", typeIdx: d.anyStrTypeIdx },
+      set(2),
+      get(1),
+      { op: "f64.const", value: 0 },
+      { op: "f64.lt" },
+      get(1),
+      get(2),
+      { op: "struct.get", typeIdx: d.anyStrTypeIdx, fieldIdx: 0 },
+      { op: "f64.convert_i32_u" },
+      { op: "f64.ge" },
+      { op: "i32.or" },
+      get(1),
+      get(1),
+      { op: "f64.trunc" },
+      { op: "f64.ne" },
+      { op: "i32.or" },
+      {
+        op: "if",
+        blockType: { kind: "empty" },
+        then: [{ op: "global.get", index: d.undefinedGlobalIdx }, { op: "extern.convert_any" }, { op: "return" }],
+      },
+      get(2),
+      { op: "call", funcIdx: d.flattenIdx },
+      set(3),
+      ...codeUnitView(d.nativeStrTypeIdx, 3, [get(1), { op: "i32.trunc_f64_u" }]),
+      { op: "extern.convert_any" },
     ],
   };
 }

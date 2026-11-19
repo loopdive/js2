@@ -3,13 +3,15 @@
 /**
  * (#7354 D1) The dynamic value's own runtime functions on the Prepared
  * standalone lane: strict equality, ToBoolean (#7354 T), the `undefined` value,
- * the `undefined` probe and (#7354 Ty) the string `typeof` test. Every body is a shared pure builder; the number and Boolean carrier
- * functions they call are the issued primitive owners', never a lookalike.
+ * the `undefined` probe, (#7354 Ty) the string `typeof` test and (#7352) a string's own index read. Every body is a
+ * shared pure builder; the number and Boolean carrier functions they call are the issued primitive owners', never a
+ * lookalike.
  */
 import type { PhysicalModuleReservations, FunctionReservation } from "../../../wasm/physical/module-reservations.js";
 import type { IrInstrIntrinsic } from "../../../ir/core/nodes.js";
 import type { NativeValueResourcePlan } from "../../../ir/program/native-value-resources.js";
 import { buildObjectSameValueBody } from "../../../runtime/wasmgc/values/object-same-value-body.js";
+import { buildStringCodeUnitReadDefinition } from "../../../runtime/wasmgc/values/string-exotic-bodies.js";
 import {
   buildExternRefTestBody,
   buildIsUndefinedBody,
@@ -51,6 +53,8 @@ export interface NativeDynamicValueSelection {
   readonly isString: boolean;
   /** (#7354 Str2) The native string of a string-kinded value (ToString's string arm). */
   readonly asString: boolean;
+  /** (#7352) A string-kinded value's own property at a number key. */
+  readonly charAt: boolean;
 }
 
 /**
@@ -76,12 +80,14 @@ export function selectNativeDynamicValues(
     ),
     isString: has("js.value.is_string"),
     asString: has("js.value.as_string"),
+    charAt: has("js.value.char_at"),
   };
   return Object.values(selection).some(Boolean) ? selection : undefined;
 }
 
 const EXTERNREF = { kind: "externref" } as const;
 const I32 = { kind: "i32" } as const;
+const F64 = { kind: "f64" } as const;
 const ROWS = [
   ["strictEq", "strict-eq", "__js_strict_eq", { params: [EXTERNREF, EXTERNREF], results: [I32] }],
   ["toBoolean", "to-boolean", "__is_truthy", { params: [EXTERNREF], results: [I32] }],
@@ -90,6 +96,7 @@ const ROWS = [
   ["isString", "typeof-string", "__typeof_string", { params: [EXTERNREF], results: [I32] }],
   // (#7354 Str2) The result is the string owner's AnyString type, resolved by key.
   ["asString", "as-string", "__js_as_string", { params: [EXTERNREF], results: ["any-string"] }],
+  ["charAt", "char-at", "__js_char_at", { params: [EXTERNREF, F64], results: [EXTERNREF] }],
 ] as const;
 
 /** `stringKey` names the native string owner whose AnyString type `as_string` answers. */
@@ -128,17 +135,18 @@ export interface NativeDynamicValueReservations {
   readonly isUndefined?: FunctionReservation;
   readonly isString?: FunctionReservation;
   readonly asString?: FunctionReservation;
+  readonly charAt?: FunctionReservation;
 }
-/** (#7354 Str) The issued string resources strict equality's string arm calls. */
+/** The issued string resources the bodies call. */
 export interface NativeDynamicValueStrings {
-  readonly anyStrTypeIdx: number;
   readonly flatten: FunctionReservation;
-  readonly equals: FunctionReservation;
+  /** (#7354 Str) Present exactly when strict equality takes its string arm (`strictEqStrings`). */
+  readonly equals: FunctionReservation | undefined;
 }
 interface Owner {
   readonly tx: PhysicalModuleReservations;
   readonly values: NativeValueReservations;
-  readonly strings: NativeDynamicValueStrings | undefined;
+  readonly strings: NativeDynamicValueStrings;
   readonly booleans: NativeBooleanReservations | undefined;
   readonly requirements: NativeValueResourcePlan;
   readonly dependencies: NativeValueDependencies;
@@ -164,7 +172,7 @@ export function reserveNativeDynamicValueResources(
   booleans: NativeBooleanReservations | undefined,
   requirements: NativeValueResourcePlan,
   dependencies: NativeValueDependencies,
-  strings: NativeDynamicValueStrings | undefined,
+  strings: NativeDynamicValueStrings,
 ): NativeDynamicValueReservations {
   if (!key || tx.state !== "reserving") fail("invalid reservation phase/key");
   if (selection.strictEq && !booleans) fail("strict equality requires the Boolean predicates");
@@ -213,9 +221,10 @@ export function fillNativeDynamicValueResources(
         unboxNumIdx: values.functions.unboxNumber.handle,
         unboxBoolIdx: booleans!.unboxBoolean.handle,
         numberEquality: "number-equal",
-        anyStrTypeIdx: strings?.anyStrTypeIdx ?? -1,
-        strFlattenIdx: strings?.flatten.handle,
-        strEqualsIdx: strings?.equals.handle,
+        // The string arm is built exactly when string equality is issued.
+        anyStrTypeIdx: carrierStringPack(owner.dependencies).layout.anyStrTypeIdx,
+        strFlattenIdx: strings.flatten.handle,
+        strEqualsIdx: strings.equals?.handle,
       }),
     });
   }
@@ -250,14 +259,24 @@ export function fillNativeDynamicValueResources(
         UNDEF_F64_BITS,
       ),
     });
-  const anyStrTypeIdx = carrierStringPack(owner.dependencies).layout.anyStrTypeIdx;
+  const { anyStrTypeIdx, nativeStrTypeIdx } = carrierStringPack(owner.dependencies).layout;
   if (pack.isString) tx.fillFunction(pack.isString, { locals: [], body: buildExternRefTestBody(anyStrTypeIdx) });
-  // Called only on a value `is_string` answered: the cast cannot fail.
+  // The string reads are called only on a value `is_string` answered: their casts cannot fail.
   if (pack.asString)
     tx.fillFunction(pack.asString, {
       locals: [],
       body: [{ op: "local.get", index: 0 }, { op: "any.convert_extern" }, { op: "ref.cast", typeIdx: anyStrTypeIdx }],
     });
+  if (pack.charAt)
+    tx.fillFunction(
+      pack.charAt,
+      buildStringCodeUnitReadDefinition({
+        anyStrTypeIdx,
+        nativeStrTypeIdx,
+        flattenIdx: strings.flatten.handle,
+        undefinedGlobalIdx: tx.physicalIndex(values.globals.undefined),
+      }),
+    );
   owner.filled = true;
 }
 

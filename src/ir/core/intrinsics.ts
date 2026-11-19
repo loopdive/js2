@@ -96,6 +96,16 @@ const EXTERNREF_TO_STRING_INTRINSIC_SIGNATURE: IntrinsicSignature = Object.freez
 });
 
 /**
+ * (#7352) `(externref, f64) -> externref` — a string-kinded dynamic value's own property at a number key: its
+ * one-code-unit string at an array index below its length, else `undefined`.
+ */
+const EXTERNREF_F64_TO_EXTERNREF_INTRINSIC_SIGNATURE: IntrinsicSignature = Object.freeze({
+  version: INTRINSIC_SIGNATURE_VERSION,
+  params: Object.freeze([EXTERNREF_TYPE, F64_TYPE]),
+  result: EXTERNREF_TYPE,
+});
+
+/**
  * `(externref, externref) -> i32` — the exact ABI of the string relational
  * compare helper, shared by the `env.string_compare` host import and the
  * host-free `__str_compare` Wasm helper. Both answer a -1/0/1 lexicographic
@@ -221,6 +231,7 @@ export const INTRINSIC_DEFINITIONS: Readonly<Record<IntrinsicId, IntrinsicDefini
   "js.boolean.unbox": definition("js.boolean.unbox", EXTERNREF_TO_BOOLEAN_INTRINSIC_SIGNATURE),
   "js.extern.is_undefined": definition("js.extern.is_undefined", EXTERNREF_TO_I32_INTRINSIC_SIGNATURE),
   "js.value.as_string": definition("js.value.as_string", EXTERNREF_TO_STRING_INTRINSIC_SIGNATURE),
+  "js.value.char_at": definition("js.value.char_at", EXTERNREF_F64_TO_EXTERNREF_INTRINSIC_SIGNATURE),
   "js.value.is_boolean": definition("js.value.is_boolean", EXTERNREF_TO_I32_INTRINSIC_SIGNATURE),
   "js.value.is_number": definition("js.value.is_number", EXTERNREF_TO_I32_INTRINSIC_SIGNATURE),
   "js.value.is_string": definition("js.value.is_string", EXTERNREF_TO_I32_INTRINSIC_SIGNATURE),

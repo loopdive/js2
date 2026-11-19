@@ -384,6 +384,37 @@ The real prelude's `var failures = []` (propertyHelper.js) has its home: `failur
 inside a function pass; `failures.push(1)` refuses ("__ir_dyn_method_call_1 has no Prepared intrinsic"), so
 Array.prototype.push is its next gap.
 
+### String own properties on a dynamic receiver (2026-11-19, branch `claude/7354-arrays-strprops`)
+
+Lead decision: a member read of the dynamic value answers a string's own properties (§10.4.3) before its
+prototypes, so an untyped parameter that may be a string no longer blocks `x.length` / `x[i]`.
+
+- `MEMBER_READ_ARM.string` is a new arm `string-own` (`dynamic-value-kinds.ts`); `dynamic-member-read.ts`
+  `stringOwnRead`: `length` is `js.value.as_string` + the existing `string.len` (its Prepared provider is the native
+  carrier field) + `js.number.box`; a number key, or a constant string key `isArrayIndexKey` accepts, is the new
+  dynamic-value intrinsic `js.value.char_at` `(externref, f64) -> externref`. Any other key falls to the primitive
+  arm: `undefined`, or the existing refusal "… of a string needs its wrapper prototype" for a String.prototype /
+  Object.prototype key. `length` left `BUILTIN_REACHABLE_KEYS.string` (it is own, not inherited).
+- `js.value.char_at` is one row in each closed list of the dynamic-value family (vocabulary, definitions, runtime
+  feature, provider id, `__js_char_at`, `nativeIntrinsicRows` role `char-at`, `native-dynamic-values.ts` row). Its
+  body `buildStringCodeUnitReadDefinition` (`string-exotic-bodies.ts`) is the String exotic object's own code-unit
+  read on a primitive: the bounds test on the AnyString length, the existing flatten, and the length-one view now
+  shared with `buildStringVirtualOwnDescriptorDefinition` (`codeUnitView`, factored out, same instructions). A number
+  names an index iff it is an integer in `[0, length)` (-0 is 0); any other number's ToString names no prototype
+  key, so `undefined` is exact under the pristine-prototype precondition. The dynamic-value resources now always get
+  the flatten reservation; strict equality's string arm still keys on string equality being issued.
+- Member write on a string is unchanged (A2: sloppy no-op, strict TypeError).
+- Still refused: A2 program 4 on an Array, `f([1, 2, 3])` with `x[1] + x.length`, and the stand-in
+  `compareArray` over Arrays: an object's [[Get]] answer may be an Array, so `+` (ToString arm) and the loop's
+  `i < a.length` (ToNumber arm) need an Array's ToPrimitive: "ToPrimitive of an object (array ToPrimitive needs
+  Array.prototype.join)", from `plainObjectToPrimitive` / `objectToPrimitiveRefusal` in
+  `dynamic-value-legalization.ts` / `dynamic-value-kinds.ts` (A3). The same reads without the loop
+  (`a.length !== b.length || a[0] !== b[0]`) and `compareArray` over strings run.
+- Tests: `tests/issue-7352-string-own-props.test.ts` (7 programs × right/wrong, 3 refusals). Pins flipped to running
+  programs with node's answer: O4 "a string's length", Str "the length of a string held in a script var's dynamic
+  home", A2 "an index read of a var a closure may set to a number"; the A2 program-4 pin now names the ToPrimitive
+  refusal; O4's refusal pin is now `s.charAt`.
+
 ### Acceptance
 
 - Each slice's proving program validates and runs through the strict Prepared entry: the right answer returns,

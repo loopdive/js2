@@ -101,6 +101,14 @@ describe("#7354 Str 1 — typed strings through the presentation", () => {
     ],
   ]);
 
+  // (#7352) A member read of the dynamic value answers a string's own `length`. Its nullish arms' TypeError reserves
+  // the realm, so each compile takes seconds, not the typed cases' milliseconds.
+  it("the length of a string held in a script var's dynamic home", async () => {
+    const source = 'var s = "ab";\nif (s.length !== 2) throw 1;';
+    expect(await run(source)).toBe("returned");
+    expect(await run(source.replace("s.length !== 2", "s.length !== 3"))).toBe("threw");
+  }, 180_000);
+
   it("concatenates, compares and measures typed string parameters (TypeScript)", async () => {
     const source =
       "function cat(a: string, b: string): string { return a + b; }\n" +
@@ -144,11 +152,6 @@ describe("#7354 Str 1 — typed strings through the presentation", () => {
       "a reassigned typed string local (from-ast has no string slot on this path)",
       'function h() { var s = "p"; s = s + "q"; return s; }\nh();',
       "mutable binding 's' (string) has no slot representation",
-    ],
-    [
-      "the length of a string held in a script var's dynamic home (a member read of the dynamic value)",
-      'var s = "ab";\nif (s.length !== 2) throw 1;',
-      "dynamic operation member read 'length' of a string needs its wrapper prototype has no Prepared intrinsic",
     ],
   ])("refuses %s", async (_, source, detail) => {
     expect(await refusal(source)).toContain(detail);

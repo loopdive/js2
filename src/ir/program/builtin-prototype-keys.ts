@@ -112,18 +112,18 @@ const ARRAY_PROTOTYPE = [
 ];
 
 /**
- * The keys a read of each value reaches through built-in prototypes (or, for a string, its own exotic keys). An
- * Array's own `length` shadows %Array.prototype%'s.
+ * The keys a read of each value reaches through built-in prototypes. An Array's own `length` shadows
+ * %Array.prototype%'s, and a string's own `length` and indices (`MEMBER_READ_ARM`'s `string-own`) String.prototype's.
  */
 export const BUILTIN_REACHABLE_KEYS = {
   object: new Set(OBJECT_PROTOTYPE),
   array: new Set([...OBJECT_PROTOTYPE, ...ARRAY_PROTOTYPE]),
   number: new Set([...OBJECT_PROTOTYPE, ...NUMBER_PROTOTYPE]),
   boolean: new Set(OBJECT_PROTOTYPE),
-  string: new Set([...OBJECT_PROTOTYPE, ...STRING_PROTOTYPE, "length"]),
+  string: new Set([...OBJECT_PROTOTYPE, ...STRING_PROTOTYPE]),
 } as const satisfies Readonly<Record<string, ReadonlySet<string>>>;
 
-/** A canonical array index (§6.1.7): a string's own indexed character. */
+/** A canonical array index (§6.1.7): an Array's element, a string's own indexed code unit. */
 export function isArrayIndexKey(key: string): boolean {
   return /^(0|[1-9][0-9]*)$/.test(key) && Number(key) < 2 ** 32 - 1;
 }
