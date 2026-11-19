@@ -277,3 +277,36 @@ the repository).
   `built-ins/global/S10.2.3_A1.2_T4.js`; all three pass on both trees.
 - `tests/issue-7294-builtin-proto-member-provider.test.ts` fails the same 4 rows on main `ee3fcdd610` as on
   the branch (`operand-coercion-unsupported` on `Object.is`); not caused by G1.
+
+## Slice B (Prepared path), plan — 2026-11-19
+
+Scope correction from the lead (2026-11-19, CLAUDE.md "IR migration: foundations first"): from here on each
+slice is accepted by a proving program through the strict Prepared entry (`wholeProgram: { kind:
+"prepared-program-required" }`, standalone, validates and runs), and its mechanism is pure code both
+pipelines ask. The order follows the #7354 ladder's slice B (the built-in globals the harness prelude names).
+
+Probe on main `ee3fcdd610`, strict entry, standalone: `String(v)` refuses with "direct call to String has no
+exact AST-site plan"; `typeof JSON` and `var E = TypeError` with "identifier … is not in scope"; `new
+TypeError(…)` with "unknown class TypeError"; `globalThis` and `console` are not in scope. The Prepared
+resolver (`ir/program-source.ts`) answers none of the lib-binding questions the from-ast arms ask.
+
+| step | content | depends on | proving program |
+| --- | --- | --- | --- |
+| B1a | One per-identifier lib-binding predicate: `integration.ts`'s private `makeAmbientStringBindingPredicate` folds into `makeIrAmbientBindingPredicate` (`ir/module-bindings.ts`) as the quantifier `every-or-unresolved`. Pure refactor. | G1 | none; output byte-identical |
+| B1b | The Prepared resolver answers `isAmbientStringBinding` from the same predicate, so `String(x)` takes the existing `tryLowerAmbientStringToStringCall` arm. | B1a, S2 `claude/7354-perf2` (`dyn.to_string`, number formatter) | `function f(v){ return String(v); } if (f(1) !== "1") throw 1;` |
+| B2 | `dyn.global_object` on the Prepared path (the realm's global object as a dynamic value); the resolver answers `isLibOnlyBinding`, so G1's admission (`builtinGlobalValueAdmitted`) and its lowering (`dyn.member_get(dyn.global_object, name)`) serve both pipelines. | B1a, S3 `claude/7354-realm`, S3 O4 (`dyn.member_get` kind chain) | `var E = TypeError; if (E !== TypeError) throw 1;`, `if (typeof JSON !== "object") throw 1;` |
+| B3 | `globalThis` and `console` (absent on standalone) as values: `typeof console`, `globalThis.X`. | B2 | measured after B2 |
+
+Measured during B1b's probe (experiment, not committed): with `isAmbientStringBinding` answered,
+`String("ab")` and `String(true)` already run on main; `String(1)` stops with an invariant crash in the
+number formatter (`__ir_number_to_string` undeclared), as `` `${1}` `` does on main today. That is why B1b
+waits for S2's formatter instead of landing on main with a crash path.
+
+**B1a target structure.** Module: `ir/module-bindings.ts`, which already owns the checker-only
+ambient-binding predicate and is imported by both pipelines (`ir/integration.ts`, `ir/program-source.ts`).
+Removes: the private copy in `ir/integration.ts` (same body, except that an unresolved name answers `true`).
+Not folded, on purpose: `prepare-number-conversion.ts`'s canonical check asks a different fact (every
+declaration in the compiler's own library, `isCurrentCompilerLibrarySourceFile`, not any declaration file),
+and the type-symbol checks (`isAmbientRegExp`, `isNativeMapStorageType`) ask about a type's symbol, not a
+binding. Quality criterion: one per-identifier lib-binding predicate remains; no new helper; output
+byte-identical (100 sampled test262 files, default and standalone).
