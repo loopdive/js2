@@ -670,20 +670,6 @@ export function conditionalJoinArmFamily(arm: ts.Expression): OperandFamily | nu
 }
 
 /**
- * A value `void x` through parens and a comma's right side: from-ast's f64 NaN sentinel for `undefined`, the
- * `undefined` family of an f64 (`irOperandFamily`). Parens only, like the selector's operand families.
- */
-export function isValueVoid(operand: ts.Expression): boolean {
-  let candidate = operand;
-  for (;;) {
-    while (ts.isParenthesizedExpression(candidate)) candidate = candidate.expression;
-    if (!ts.isBinaryExpression(candidate) || candidate.operatorToken.kind !== ts.SyntaxKind.CommaToken) break;
-    candidate = candidate.right;
-  }
-  return ts.isVoidExpression(candidate);
-}
-
-/**
  * (#7113) The family a conditional VALUE joins its two arms on. Equal
  * families join as themselves. A dynamic arm joins a boxable arm
  * ({@link boxableIntoDynamic}) on the carrier: from-ast boxes the concrete arm

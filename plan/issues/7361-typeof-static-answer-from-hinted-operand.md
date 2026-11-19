@@ -4,7 +4,7 @@ title: "IR `typeof` answered from the hinted IR type: `typeof void 0` was \"numb
 status: done
 sprint: current
 created: 2026-11-18
-updated: 2026-11-18
+updated: 2026-11-19
 completed: 2026-11-18
 priority: high
 horizon: s
@@ -13,7 +13,14 @@ reasoning_effort: high
 task_type: bugfix
 area: ir
 goal: ir-full-coverage
-related: [7354, 7106, 7104]
+related: [7354, 7106, 7104, 7362]
+# 2026-11-19 (review round 3): src/ir/from-ast.ts +8 over main. The round-3 nit returns `isValueVoid` (8 lines, one
+# caller) from operand-admissibility.ts to from-ast.ts unchanged, and the should-fix gives the split's own leaf
+# question (`hasTypeofVoidLeaf`) the split's peel instead of the general `everyYieldedValue`. Both are typeof-local
+# and have one caller each, so exporting them from another module to save lines is what the nit rejected; the
+# comma test is folded into the shared `isCommaExpression` (src/shared/binding-writes.ts) at five sites.
+loc-budget-allow:
+  - src/ir/from-ast.ts
 ---
 
 # #7361 — `typeof` answered from the hinted IR type: `typeof void 0` was "number"
@@ -73,17 +80,15 @@ its reading of the NaN sentinel is not. The IR already recognises that sentinel 
     arm runs, and each arm gets its own scope copy.
   - The fold of a constant `typeof <ambient>` test (the selector admitted only the live arm) is one helper,
     `foldedAmbientConditionArm`, used by `lowerConditional` and by the split.
-- **The leaf question.** "Can the operand yield a `void x` value?" is a "some" over the shared walker
-  `everyYieldedValue` (`src/ir/analysis/carrier-expression.ts`: `?:` arms, comma and `=` right sides). Each leaf is
-  peeled of assertions (`skipOuterExpressions`) only inside this question.
-  - An `=` leaf (`typeof (y = void 0)`) passes the question, but the split does not open it. It goes to
-    `lowerTypeOfValue` exactly as on main.
-- **`isValueVoid` keeps main's reach.** Parens and a comma's right side only, matching the selector's operand
-  families; `irOperandFamily` is its only caller.
-  - It moves unchanged to `src/ir/analysis/operand-admissibility.ts`, beside `conditionalJoinArmFamily`.
-  - `conditionalJoinArmFamily` stays separate. It classifies ONE `?:` arm into a family (string, number or boolean
-    literal, or `void`) for the dynamic join, and walks nothing. `isValueVoid` asks one question of one value through
-    commas. Neither is a yielded-value walk.
+- **The leaf question.** "Can the operand yield a `void x` value?" (`hasTypeofVoidLeaf`) takes the split's own
+  steps: the same peel (`skipOuterExpressions`: parens, `as`, `<T>`, `satisfies`, `!`), a comma's right side and
+  both arms of a `?:`. The question and the split therefore agree on every wrapper (review round 3).
+  - It does not use the general walker `everyYieldedValue`: that one peels parens only and follows an `=`'s right
+    side, which the split cannot open, so the two disagreed (`typeof ((0, void 0) as any)` was "number").
+  - An `=` operand (`typeof (y = void 0)`) is a leaf and goes to `lowerTypeOfValue` exactly as on main.
+- **`isValueVoid` keeps main's reach and place.** Parens and a comma's right side only, matching the selector's
+  operand families; `irOperandFamily` is its only caller, so it stays a private function in `from-ast.ts`, unchanged
+  from main (review round 3).
 - **Duplicate removed.** from-ast's private `unwrapMixedPrimitiveProjection` had the same body as the shared
   `skipOuterExpressions`, so it is folded into it.
 - **Byte identity.** An operand with no `void` leaf goes to `lowerTypeOfValue` exactly as before.
@@ -91,8 +96,8 @@ its reading of the NaN sentinel is not. The IR already recognises that sentinel 
   refusals are the ones each leaf's own lowering already had.
 - **Removed from round 1.** `src/ir/typeof-static-answer.ts`, `uniformJsTagOfFact` in `src/checker/oracle.ts`, the
   fallback `TsCheckerOracle`, and the `compiler-boundaries.json` entry.
-- **Quality criterion.** No new module. `from-ast.ts` stays inside its LOC budget. One walker answers the leaf
-  question.
+- **Quality criterion.** No new module. `from-ast.ts` grows by 8 lines (granted in the frontmatter, review round
+  3). The leaf question takes exactly the split's steps; the comma test is one shared `isCommaExpression`.
 
 ### Round 1 (superseded)
 
@@ -188,8 +193,9 @@ Measured on this branch, merged with `origin/main` `c5497e48c6`. "Main" means th
    from the IR type, as on main (tested).
 3. **Lying casts went to legacy** (`1 as unknown as string`, `"a" as any as boolean`, `true as any as number`).
    - They stay on the IR path with main's answer (tested, including an IR-path assertion).
-   - Assertions are transparent to typeof's own `void` question, so `void 0 as any as number` answers "undefined".
-     It was wrong on main.
+   - typeof's own `void` question peels assertions from a `void` leaf, so `void 0 as any as number` answers
+     "undefined"; it was wrong on main. (Until review round 3 it did not look through an assertion around a comma
+     or `?:`, so the split and the question disagreed there.)
 4. **Mutation survivors.** See Result.
 
 ### Review round 2
@@ -217,6 +223,20 @@ Measured on this branch, merged with `origin/main` `c5497e48c6`. "Main" means th
      {`utf8Storage` off, on}, all compile through legacy: a string assignment in one arm and a `charCodeAt` read in
      the other. The Prepared path has no string locals. The mutation therefore survives.
 
+### Review round 3: APPROVE at `93802dbcd3`, findings fixed
+
+1. **Should-fix: the leaf question did not look through `as`/`!` around a comma or `?:`.** The split did, so
+   `typeof ((0, void 0) as any)` (also `!`, `<any>`, `satisfies`) answered "number" on the IR path, both targets.
+   The question now takes the split's own steps through the same peel (see Implementation Plan). The four wrapper shapes and a cast `?:` are tested
+   against node on both targets; one pins the IR path.
+   - This reverses round 2, item 2 (the leaf question as a "some" over `everyYieldedValue`): that walker has
+     different wrapper and `=` rules from the split, which is how the two came apart.
+2. **Nit: `isValueVoid` exported for one caller.** Back in `from-ast.ts` exactly as on main;
+   `operand-admissibility.ts` is no longer touched.
+3. **Nit: `lowerTypeOf` lost its doc comment.** Restored, with the reason for the split.
+4. **Legacy drops `typeof`'s operand effects** (found by the reviewer, not this change): filed as
+   [#7362](7362-legacy-typeof-drops-operand-side-effects.md), listed under Known.
+
 ### Known, not this change
 
 These are wrong on main and on this branch:
@@ -236,5 +256,9 @@ These are wrong on main and on this branch:
 - the legacy generator answers 0 for
   `function g(c: number) { var s = "é一"; var r = 0; var t = typeof (c ? (s = "ab", void 0) : (r = s.charCodeAt(1), void 0)); return r; }`
   with `g(0)` (node: 19968). This was found while probing item 4 and is not related to `typeof` lowering in the IR.
+
+- legacy answers `typeof` statically without running its operand in a value position:
+  `var t = typeof (n = 5, void 0); return t === "undefined" ? n : -1;` gives 0 (node: 5); the same for
+  `typeof void f()` (#7362).
 
 On the Prepared path, `typeof` of a dynamic value is still refused by name (`dyn.typeof has no Prepared intrinsic`).

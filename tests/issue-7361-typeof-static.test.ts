@@ -73,6 +73,12 @@ const PROGRAMS: readonly (readonly [string, "js" | "ts", string, string])[] = [
   ["a string cast to boolean", "ts", "", tagOf('("a" as any as boolean)')],
   ["a Boolean cast to number", "ts", "", tagOf("(true as any as number)")],
   ["`void 0` cast to number", "ts", "", tagOf("(void 0 as any as number)")],
+  // Review round 3: the question whether to split looks through the same wrappers as the split.
+  ["a comma ending in `void 0`, cast", "ts", "", tagOf("((0, void 0) as any)")],
+  ["a comma ending in `void 0`, non-null", "ts", "", tagOf("((0, void 0)!)")],
+  ["a comma ending in `void 0`, angle cast", "ts", "", tagOf("(<any>(0, void 0))")],
+  ["a comma ending in `void 0`, satisfies", "ts", "", tagOf("((0, void 0) satisfies any)")],
+  ["a `?:` of `void 0`, cast", "ts", "var c = 1;", tagOf("((c ? void 0 : void 0) as any)")],
 ];
 
 const nodeAnswer = (declarations: string, body: string): unknown =>
@@ -112,6 +118,7 @@ describe.each(["gc", "standalone"] as const)("#7361 — typeof answers like Java
     ["js", "var c = 1;", 'return typeof (c ? void 0 : void 0) === "undefined";'],
     ["ts", "", tagOf("(void 0 as any as number)")],
     ["ts", "", tagOf("(1 as unknown as string)")],
+    ["ts", "", tagOf("((0, void 0) as any)")],
     // Only the live arm of a constant `typeof <ambient>` test is lowered, as the selector admitted.
     ["js", "", FOLDED],
     // Review round 2: `void` under an assertion outside `typeof` keeps main's operand family (parens only), so

@@ -61,7 +61,7 @@ import {
 import { IR_ASYNC_CONSOLE_LOG_STRING_FN, IR_ASYNC_NUMBER_TO_STRING_FN } from "./async-semantic-runtime.js";
 import { ts, forEachChild } from "../ts-api.js";
 import { isPlannedScriptVarClosure } from "./function-member-closure-plan.js";
-import { isLexicalBindingWrite, skipOuterExpressions } from "../shared/binding-writes.js";
+import { isCommaExpression, isLexicalBindingWrite, skipOuterExpressions } from "../shared/binding-writes.js";
 import { isLogicalAssignmentFunctionTarget } from "./logical-assignment-name-targets.js";
 import {
   additiveOperandsProvable,
@@ -88,7 +88,6 @@ import {
   slotWriteVerdict,
   conditionalJoinArmFamily,
   conditionalJoinFamily,
-  isValueVoid,
   throwOperandAdmissible,
   type AdditiveLane,
   type AdditiveProof,
@@ -96,7 +95,7 @@ import {
   type OperandFamily,
   type PrimitiveProof,
 } from "./analysis/operand-admissibility.js"; // (#7144)
-import { everyYieldedValue, producesCarrier } from "./analysis/carrier-expression.js";
+import { producesCarrier } from "./analysis/carrier-expression.js";
 import { IR_CLOSURE_UNDEFINED } from "./core/closure-invocation-callables.js";
 import {
   fixedClosureParameters,
@@ -2658,7 +2657,7 @@ function lowerDiscardedExpression(expr: ts.Expression, cx: LowerCtx): void {
     for (const element of expr.elements) lowerDiscardedExpression(element, cx);
     return;
   }
-  if (ts.isBinaryExpression(expr) && expr.operatorToken.kind === ts.SyntaxKind.CommaToken) {
+  if (isCommaExpression(expr)) {
     lowerDiscardedExpression(expr.left, cx);
     lowerDiscardedExpression(expr.right, cx);
     return;
@@ -5997,17 +5996,23 @@ function lowerExactDynamicPrimitiveTypeof(
   );
 }
 
+/** Lower `typeof <expr>`; a `void x` leaf is its f64 NaN sentinel under the value's hint, so it is split (#7361). */
 function lowerTypeOf(expr: ts.TypeOfExpression, cx: LowerCtx): IrValueId {
   if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== expr)
     return withNodeSourceSite(cx, expr, () => lowerTypeOf(expr, cx));
-  const voidLeaf = !everyYieldedValue(expr.expression, (value) => !ts.isVoidExpression(skipOuterExpressions(value)));
-  return (voidLeaf ? lowerTypeOfVoidLeaves : lowerTypeOfValue)(expr.expression, cx);
+  return (hasTypeofVoidLeaf(expr.expression) ? lowerTypeOfVoidLeaves : lowerTypeOfValue)(expr.expression, cx);
+}
+
+/** (#7361) Whether {@link lowerTypeOfVoidLeaves} reaches a `void x` leaf: its peel, its comma and `?:` steps. */
+function hasTypeofVoidLeaf(operand: ts.Expression): boolean {
+  const e = skipOuterExpressions(operand);
+  if (ts.isConditionalExpression(e)) return hasTypeofVoidLeaf(e.whenTrue) || hasTypeofVoidLeaf(e.whenFalse);
+  return isCommaExpression(e) ? hasTypeofVoidLeaf(e.right) : ts.isVoidExpression(e);
 }
 
 /**
- * (#7361) Under {@link lowerTypeOfValue}'s f64 hint `void x` is its NaN sentinel, which reads "number", so an
- * operand yielding a `void` value is split at its leaves (`typeof (a, b)` is `a` then `typeof b`; `typeof (c ? a :
- * b)` is `c ? typeof a : typeof b`): a `void x` leaf runs `x` and is "undefined", every other leaf answers itself.
+ * (#7361) `typeof` split at its operand's leaves (`typeof (a, b)` is `a` then `typeof b`; `typeof (c ? a : b)` is
+ * `c ? typeof a : typeof b`): a `void x` leaf runs `x` and is "undefined", every other leaf answers itself.
  */
 function lowerTypeOfVoidLeaves(operand: ts.Expression, cx: LowerCtx): IrValueId {
   const e = skipOuterExpressions(operand);
@@ -6015,7 +6020,7 @@ function lowerTypeOfVoidLeaves(operand: ts.Expression, cx: LowerCtx): IrValueId 
     lowerDiscardedExpression(e.expression, cx);
     return cx.builder.emitStringConst("undefined");
   }
-  if (ts.isBinaryExpression(e) && e.operatorToken.kind === ts.SyntaxKind.CommaToken) {
+  if (isCommaExpression(e)) {
     lowerDiscardedExpression(e.left, cx);
     return lowerTypeOfVoidLeaves(e.right, cx);
   }
@@ -6025,10 +6030,7 @@ function lowerTypeOfVoidLeaves(operand: ts.Expression, cx: LowerCtx): IrValueId 
   return lowerConditionalBranches(e, cx, lowerTypeOfVoidLeaves, () => ({ kind: "string" }));
 }
 
-/**
- * Lower `typeof <operand>` by static fold (slice 1), plus #5092's exact runtime
- * tag dispatch for a two-family primitive dynamic carrier.
- */
+/** `typeof <operand>` by static fold (slice 1), or #5092's exact tag dispatch for a two-family dynamic carrier. */
 function lowerTypeOfValue(operand: ts.Expression, cx: LowerCtx): IrValueId {
   // (#7106 S1b) `typeof <unshadowed ambient global>` is a constant tag: the selector's `ambientTypeofTag` proof.
   if (ts.isIdentifier(operand)) {
@@ -12271,7 +12273,7 @@ function lowerForUpdateExpr(expr: ts.Expression, cx: LowerCtx): void {
   // dispatcher so both keep the mutation lowerings (`lowerIncrementDecrement`,
   // `lowerIdentifierAssignment`, `lowerCompoundAssignment`) rather than the
   // value-expression fallback.
-  if (ts.isBinaryExpression(expr) && expr.operatorToken.kind === ts.SyntaxKind.CommaToken) {
+  if (isCommaExpression(expr)) {
     lowerForUpdateExpr(expr.left, cx);
     lowerForUpdateExpr(expr.right, cx);
     return;
@@ -16123,6 +16125,13 @@ function irOperandFamily(t: IrType, operand: ts.Expression): OperandFamily {
     default:
       return "other";
   }
+}
+
+/** A value `void x` (through parens and a comma's right side): the f64 NaN sentinel for `undefined`. */
+function isValueVoid(operand: ts.Expression): boolean {
+  let candidate = peelParensExpr(operand);
+  while (isCommaExpression(candidate)) candidate = peelParensExpr(candidate.right);
+  return ts.isVoidExpression(candidate);
 }
 
 /** The dynamic `+` (`IR_DYN_ADD_FN`) over two carrier operands: the binary `+` and both `+=` arms. */
