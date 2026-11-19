@@ -1,0 +1,53 @@
+built-ins/Function/prototype/apply/S15.3.4.3_A5_T4.js	ir/from-ast: assignment to undeclared identifier "f" in <module-init>
+built-ins/Infinity/S15.1.1.2_A2_T2.js	ir/from-ast: assignment to undeclared identifier "Infinity" in <module-init>
+built-ins/Math/round/S15.8.2.15_A6.js	ir/from-ast: assignment to undeclared identifier "x" in <module-init>
+built-ins/NaN/S15.1.1.1_A2_T2.js	ir/from-ast: assignment to undeclared identifier "NaN" in <module-init>
+language/directive-prologue/func-decl-final-runtime.js	ir/from-ast: assignment to undeclared identifier "test262unresolvable" in fun
+language/directive-prologue/func-decl-not-first-runtime.js	ir/from-ast: assignment to undeclared identifier "test262unresolvable" in fun
+language/expressions/assignment/11.13.1-4-1.js	ir/from-ast: assignment to undeclared identifier "__ES3_1_test_suite_test_11_13_1_unique_id_3__" in foo
+language/expressions/assignment/S11.13.1_A2.1_T2.js	ir/from-ast: assignment to undeclared identifier "x" in <module-init>
+language/expressions/assignment/S11.13.1_A4_T2.js	ir/from-ast: assignment to undeclared identifier "x" in <module-init>
+language/expressions/call/S11.2.4_A1.4_T3.js	ir/from-ast: assignment to undeclared identifier "x" in <module-init>
+language/expressions/compound-assignment/S11.13.2_A2.1_T3.1.js	ir/from-ast: compound assign to undeclared identifier "x" in <module-init>
+language/expressions/compound-assignment/S11.13.2_A2.1_T3.10.js	ir/from-ast: compound assign to undeclared identifier "x" in <module-init>
+language/expressions/compound-assignment/S11.13.2_A2.1_T3.11.js	ir/from-ast: compound assign to undeclared identifier "x" in <module-init>
+language/expressions/compound-assignment/S11.13.2_A2.1_T3.2.js	ir/from-ast: compound assign to undeclared identifier "x" in <module-init>
+language/expressions/compound-assignment/S11.13.2_A2.1_T3.3.js	ir/from-ast: compound assign to undeclared identifier "x" in <module-init>
+language/expressions/compound-assignment/S11.13.2_A2.1_T3.4.js	ir/from-ast: compound assign to undeclared identifier "x" in <module-init>
+language/expressions/compound-assignment/S11.13.2_A2.1_T3.5.js	ir/from-ast: compound assign to undeclared identifier "x" in <module-init>
+language/expressions/compound-assignment/S11.13.2_A2.1_T3.6.js	ir/from-ast: compound assign to undeclared identifier "x" in <module-init>
+language/expressions/compound-assignment/S11.13.2_A2.1_T3.7.js	ir/from-ast: compound assign to undeclared identifier "x" in <module-init>
+language/expressions/compound-assignment/S11.13.2_A2.1_T3.8.js	ir/from-ast: compound assign to undeclared identifier "x" in <module-init>
+language/expressions/compound-assignment/S11.13.2_A2.1_T3.9.js	ir/from-ast: compound assign to undeclared identifier "x" in <module-init>
+language/expressions/division/S11.5.2_A2.4_T4.js	ir/from-ast: assignment to undeclared identifier "y" in <module-init>
+language/expressions/does-not-equals/S11.9.2_A2.4_T4.js	ir/from-ast: assignment to undeclared identifier "y" in <module-init>
+language/expressions/equals/S11.9.1_A2.4_T4.js	ir/from-ast: assignment to undeclared identifier "y" in <module-init>
+language/expressions/greater-than-or-equal/S11.8.4_A2.4_T4.js	ir/from-ast: assignment to undeclared identifier "y" in <module-init>
+language/expressions/greater-than/S11.8.2_A2.4_T4.js	ir/from-ast: assignment to undeclared identifier "y" in <module-init>
+language/expressions/in/S11.8.7_A2.4_T4.js	ir/from-ast: assignment to undeclared identifier "NUMBER" in <module-init>
+language/expressions/left-shift/S11.7.1_A2.4_T4.js	ir/from-ast: assignment to undeclared identifier "y" in <module-init>
+language/expressions/less-than-or-equal/S11.8.3_A2.4_T4.js	ir/from-ast: assignment to undeclared identifier "y" in <module-init>
+language/expressions/less-than/S11.8.1_A2.4_T4.js	ir/from-ast: assignment to undeclared identifier "y" in <module-init>
+language/expressions/modulus/S11.5.3_A2.4_T4.js	ir/from-ast: assignment to undeclared identifier "y" in <module-init>
+language/expressions/multiplication/S11.5.1_A2.4_T4.js	ir/from-ast: assignment to undeclared identifier "y" in <module-init>
+language/expressions/right-shift/S11.7.2_A2.4_T4.js	ir/from-ast: assignment to undeclared identifier "y" in <module-init>
+language/expressions/strict-does-not-equals/S11.9.5_A2.4_T4.js	ir/from-ast: assignment to undeclared identifier "y" in <module-init>
+language/expressions/strict-equals/S11.9.4_A2.4_T4.js	ir/from-ast: assignment to undeclared identifier "y" in <module-init>
+language/expressions/subtraction/S11.6.2_A2.4_T4.js	ir/from-ast: assignment to undeclared identifier "y" in <module-init>
+language/expressions/unsigned-right-shift/S11.7.3_A2.4_T4.js	ir/from-ast: assignment to undeclared identifier "y" in <module-init>
+language/global-code/S10.4.1_A1_T2.js	ir/from-ast: assignment to undeclared identifier "x" in <module-init>
+language/statements/for/S12.6.3_A10.1_T1.js	ir/from-ast: assignment to undeclared identifier "__in__deepest__loop" in <module-init>
+language/statements/for/S12.6.3_A10.1_T2.js	ir/from-ast: assignment to undeclared identifier "__in__deepest__loop" in <module-init>
+language/statements/for/S12.6.3_A10_T1.js	ir/from-ast: assignment to undeclared identifier "__in__deepest__loop" in <module-init>
+language/statements/for/S12.6.3_A10_T2.js	ir/from-ast: assignment to undeclared identifier "__in__deepest__loop" in <module-init>
+language/statements/for/S12.6.3_A13.js	ir/from-ast: assignment to undeclared identifier "index" in <module-init>
+language/statements/function/S13.2.1_A6_T2.js	ir/from-ast: assignment to undeclared identifier "__func" in <module-init>
+language/statements/function/S13.2.1_A7_T3.js	ir/from-ast: assignment to undeclared identifier "x" in __func
+language/statements/function/S13.2.1_A7_T4.js	ir/from-ast: assignment to undeclared identifier "x" in <module-init>
+language/statements/function/S13.2.2_A17_T3.js	ir/from-ast: assignment to undeclared identifier "p1" in <module-init>
+language/statements/if/S12.5_A5.js	ir/from-ast: assignment to undeclared identifier "__func" in <module-init>
+language/statements/variable/S12.2_A10.js	ir/from-ast: assignment to undeclared identifier "__ind" in <module-init>
+language/statements/variable/S12.2_A12.js	ir/from-ast: assignment to undeclared identifier "x" in <module-init>
+language/statements/variable/S12.2_A6_T1.js	ir/from-ast: assignment to undeclared identifier "intry__var" in <module-init>
+language/statements/variable/S12.2_A6_T2.js	ir/from-ast: assignment to undeclared identifier "intry__intry__var" in <module-init>
+language/statements/variable/S12.2_A7.js	ir/from-ast: assignment to undeclared identifier "infor_var" in <module-init>
