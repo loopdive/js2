@@ -67,8 +67,7 @@ export function compileOptionalCallExpression(
     const valueCall = compileOptionalValueReceiverCall(ctx, fctx, expr, propAccess, objType, resultType);
     if (valueCall !== undefined) return valueCall;
     fctx.body.push({ op: "drop" });
-    let shortType: ValType = resultType;
-    if (shortType.kind === "ref") shortType = { kind: "ref_null", typeIdx: shortType.typeIdx };
+    const shortType = nullableJoin(resultType);
     fctx.body.push(...defaultValueInstrs(shortType));
     return shortType;
   }
@@ -266,11 +265,7 @@ export function compileOptionalCallExpression(
   ) {
     const delegated = compileReceiverMethodCall(ctx, fctx, expr, propAccess);
     if (delegated !== undefined) {
-      if (delegated === VOID_RESULT || delegated === null) {
-        fctx.body.push(...defaultValueInstrs(resultType));
-      } else {
-        resultType = delegated;
-      }
+      resultType = settleDelegatedResult(fctx, delegated, resultType);
       methodResolved = true;
     }
   }
@@ -291,11 +286,7 @@ export function compileOptionalCallExpression(
         type: objType,
       });
       if (delegated !== undefined) {
-        if (delegated !== null && delegated !== VOID_RESULT) {
-          resultType = delegated;
-        } else if (delegated === VOID_RESULT) {
-          fctx.body.push(...defaultValueInstrs(resultType));
-        }
+        resultType = settleDelegatedResult(fctx, delegated, resultType);
         methodResolved = true;
       }
     }
@@ -306,7 +297,7 @@ export function compileOptionalCallExpression(
   const elseInstrs = fctx.body;
   popBody(fctx, savedBody);
 
-  if (resultType.kind === "ref") resultType = { kind: "ref_null", typeIdx: resultType.typeIdx };
+  resultType = nullableJoin(resultType);
 
   fctx.body.push({
     op: "if",
@@ -420,8 +411,9 @@ function isPrimitiveMethodReceiver(type: ts.Type): boolean {
 /**
  * (#7370) `x?.m(args)` on a receiver that lowered to a Wasm value type, with its value on the stack. A receiver that
  * can hold `undefined` (`f64MayHoldUndefined`) short-circuits on the sentinel; one whose static type admits neither
- * `null` nor `undefined` is a primitive and the method always runs. Any other value slot is left to the caller. The call goes through the ordinary receiver-method ladder, which re-reads the
- * receiver, so only a repeatable one is taken. `undefined` leaves the stack untouched for the caller's fallback.
+ * `null` nor `undefined` is a primitive and the method always runs. Any other value slot is left to the caller. The
+ * call goes through the ordinary receiver-method ladder, which re-reads the receiver, so only a repeatable one is
+ * taken. `undefined` leaves the stack untouched for the caller's fallback.
  */
 function compileOptionalValueReceiverCall(
   ctx: CodegenContext,
@@ -437,18 +429,20 @@ function compileOptionalValueReceiverCall(
   if (!holdsUndefined && (nullability.nullable || nullability.undefinable)) return undefined;
   const savedBody = pushBody(fctx);
   const delegated = compileReceiverMethodCall(ctx, fctx, expr, propAccess);
-  const callType: ValType =
-    delegated === undefined || delegated === null || delegated === VOID_RESULT ? resultType : delegated;
-  if (delegated === null || delegated === VOID_RESULT) fctx.body.push(...defaultValueInstrs(callType));
+  if (delegated === undefined) {
+    popBody(fctx, savedBody);
+    return undefined;
+  }
+  const callType = settleDelegatedResult(fctx, delegated, resultType);
   const callInstrs = fctx.body;
   popBody(fctx, savedBody);
-  if (delegated === undefined) return undefined;
+  // A primitive receiver cannot be nullish, so its value is only the ladder's input: the call re-reads it.
   if (!holdsUndefined) {
     fctx.body.push({ op: "drop" }, ...callInstrs);
     return callType;
   }
   emitIsUndefF64(fctx.body);
-  const joined: ValType = callType.kind === "ref" ? { kind: "ref_null", typeIdx: callType.typeIdx } : callType;
+  const joined = nullableJoin(callType);
   fctx.body.push({
     op: "if",
     blockType: { kind: "val", type: joined },
@@ -456,6 +450,22 @@ function compileOptionalValueReceiverCall(
     else: callInstrs,
   });
   return joined;
+}
+
+/** The result of a short-circuiting branch joined with a default: a non-null reference widens to its nullable form. */
+function nullableJoin(type: ValType): ValType {
+  return type.kind === "ref" ? { kind: "ref_null", typeIdx: type.typeIdx } : type;
+}
+
+/** The type a delegated call leaves on the stack: a value-less result (`void`, a failed compile) pushes a default. */
+function settleDelegatedResult(
+  fctx: FunctionContext,
+  delegated: ValType | null | typeof VOID_RESULT,
+  fallback: ValType,
+): ValType {
+  if (delegated !== null && delegated !== VOID_RESULT) return delegated;
+  fctx.body.push(...defaultValueInstrs(fallback));
+  return fallback;
 }
 
 /** An optional-method receiver that can be read twice observably safely. */
