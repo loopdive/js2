@@ -9,6 +9,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import * as gc from "../src/codegen/index.js";
 import * as linear from "../src/codegen-linear/index.js";
 import { instantiatePreparedArtifact } from "../src/test262/test262-prepared-runtime.js";
+import { createEmptyModule } from "../src/ir/types.js";
+import { emitBinary } from "../src/emit/binary.js";
+import { PhysicalModuleReservations } from "../src/wasm/physical/module-reservations.js";
+import { buildSourceObjectGetDefinition } from "../src/runtime/wasmgc/values/source-object-bodies.js";
 import {
   compile,
   requiredPreparedEmission,
@@ -118,4 +122,45 @@ describe("#7354 O — object literals are ordinary objects of the realm", () => 
       "semantic intrinsic js.boolean.unbox is unavailable",
     );
   }, 120_000);
+});
+
+// The kernel's [[Get]] answers (status, value): 0 found, 1 absent (value is `undefined`), 2 and 3 the incomplete
+// states no source object reaches. The adapter returns the value of a complete answer and traps on the others.
+describe("#7354 O — the js.object.get adapter over the kernel's [[Get]]", () => {
+  const ext = { kind: "externref" } as const;
+  function adapter(answer: (target: unknown, key: unknown, receiver: unknown) => readonly [number, unknown]) {
+    const module = createEmptyModule(),
+      tx = new PhysicalModuleReservations(module);
+    const get = tx.reserveFunctionImport("kernel:get", "kernel", "get", {
+      params: [ext, ext, ext],
+      results: [{ kind: "i32" }, ext],
+    });
+    const fn = tx.reserveFunction("adapter:get", "get", { params: [ext, ext, ext], results: [ext] });
+    tx.freezeReservations();
+    tx.fillFunction(fn, buildSourceObjectGetDefinition({ get: get.handle }));
+    tx.defineExport("export:get", "get", fn);
+    tx.seal();
+    const wasm = new WebAssembly.Module(emitBinary(module) as BufferSource);
+    return new WebAssembly.Instance(wasm, { kernel: { get: answer } }).exports.get as (...args: unknown[]) => unknown;
+  }
+  const target = {},
+    key = {},
+    receiver = {},
+    value = {};
+
+  it.each([0, 1])("returns the value of a complete answer (status %i), forwarding all three operands", (status) => {
+    const seen: unknown[][] = [];
+    const get = adapter((...args) => {
+      seen.push(args);
+      return [status, value];
+    });
+    expect(get(target, key, receiver)).toBe(value);
+    expect(seen).toHaveLength(1);
+    expect(seen[0]!.map((operand, i) => operand === [target, key, receiver][i])).toEqual([true, true, true]);
+  });
+
+  it.each([2, 3, 0x7fffffff, -1])("traps on an incomplete answer (status %i)", (status) => {
+    const get = adapter(() => [status, value]);
+    expect(() => get(target, key, receiver)).toThrow(WebAssembly.RuntimeError);
+  });
 });
