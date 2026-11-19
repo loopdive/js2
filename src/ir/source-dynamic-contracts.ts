@@ -31,7 +31,11 @@ import { ts } from "../ts-api.js";
 import type { IrType } from "./core/types.js";
 import type { IrFunction } from "./core/nodes.js";
 import { IrUnsupportedError } from "./outcomes.js";
-import { DynamicValueGap, legalizeDynamicValues } from "./program/dynamic-value-legalization.js";
+import {
+  DynamicValueGap,
+  legalizeDynamicValues,
+  refuseUnadmittedThrows,
+} from "./program/dynamic-value-legalization.js";
 import type { RuntimeManifestPolicy } from "../runtime/contracts/provider-policy.js";
 import type { ValType } from "../wasm/model/instructions.js";
 import { functionBodyAlwaysTerminates, irFunctionBodyReturnsValue } from "./select.js";
@@ -312,7 +316,8 @@ function storedIntoCarrier(value: ts.Expression, carries: Carries): boolean {
  * (`issue-3518-native-string-number-source-admission`). A function without a
  * dynamic value is returned unchanged. The flow rule runs only where a dynamic
  * value was lowered: in a function without one, no value can leave the dynamic
- * domain.
+ * domain. (#7354 O1) Every function's throws are checked either way: a catch in
+ * any group reads the payload as the dynamic value.
  */
 function legalizeSourceDynamicValues(
   checker: ts.TypeChecker,
@@ -331,10 +336,11 @@ function legalizeSourceDynamicValues(
       (signature) =>
         signature.returnType?.kind === "dynamic" || signature.params.some((type) => type.kind === "dynamic"),
     );
-  if (!nativeDynamicLane(policy) || !contracted) return functions;
-  let legalized: readonly IrFunction[];
+  if (!nativeDynamicLane(policy)) return functions;
+  let legalized: readonly IrFunction[] = functions;
   try {
-    legalized = functions.map(legalizeDynamicValues);
+    if (contracted) legalized = functions.map(legalizeDynamicValues);
+    functions.forEach(refuseUnadmittedThrows);
   } catch (error) {
     if (!(error instanceof DynamicValueGap)) throw error;
     throw new IrUnsupportedError("type-resolution-unsupported", "build", error.message);
