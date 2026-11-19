@@ -23,6 +23,7 @@ node scripts/ir-census/prepared-analyze.mjs --rows .tmp/ir-census/integ-<sha>-st
 |---|---|---:|---|---:|---:|
 | main (baseline) | `ee3fcdd610` | 0 | `dyn.typeof` in `assert.js` (6,536) | 148 | 495 |
 | 1 | `bc07f68fc0` | 0 | `typeof test for function` in `assert.js` (6,536) | 153 | 16 |
+| 3 | `43f5fb1ffd` | 0 | `typeof test for function` in `assert.js` (6,536) | 154 | 15 |
 
 ## Round 1: `bc07f68fc0` (2026-11-19)
 
@@ -68,3 +69,43 @@ node scripts/ir-census/prepared-analyze.mjs --rows .tmp/ir-census/integ-<sha>-st
 
 Rows were written twice by an accidental double start of the run; they were
 deduplicated, and the two copies of every file agreed.
+
+## Round 3: `43f5fb1ffd` (2026-11-19)
+
+Adds slice C (`96c46eb826`, carrying O `4a31677561`), perf2 (`ec0843a754`)
+and the reworked Fb (`5770d7dedd`, Fa rework `1474338c53`). Round 2 was not
+sent for measurement.
+
+- **Real prelude:** still 0 pass, the same 6,536-file `assert.js` wall (the
+  cross-lane `typeof` alarm). New: the `propertyHelper.js` gap moved from the
+  `String()` call to `identifier "assert" is not in scope in verifyProperty`
+  (383).
+- **Stand-in: 154 pass** (+1, −0 against round 1): gained
+  `language/function-code/S10.2.1_A5.1_T1.js`. Crashes 16 → 15.
+- **The 873 `assert.throws` files got past the stand-in:** "box of a native
+  call result" is gone, as S8 expected. They now stop in the test body:
+  built-in global as a value (`ReferenceError` 161 is the
+  `assert.throws(ReferenceError, …)` argument), a call through a value (114),
+  `new` on an unknown class (111), and `var obj = {…}`.
+- **`propertyHelper.js` includes:** 383 files now stop at its
+  `var failures = []` (array literals in an include, O), instead of at
+  `String()`.
+- New refusals sorted: `dyn.current_this` (109, slice C) and the integration
+  alarm "+ / ToString of a function value" (17, Fa × Str2 / Ty per-kind
+  tables).
+
+| # | first gap (stand-in) | slice · issue | files |
+|---|---|---|---:|
+| 1 | script `var` initialised with an object literal | O · #7352 | 1,587 |
+| 2 | built-in global as a value (`Object` 498, `ReferenceError` 161) | B · #7350 | 1,272 |
+| 3 | `new` on a plain function, `this` (`new Test262Error` 750) | C · #7349 | 1,036 |
+| 4 | array literals (`propertyHelper.js` `failures` 383) | O · #7352 | 647 |
+| 5 | built-in constructor `new X` | B · #7350 | 494 |
+| 6 | call through a value | Fb · #7349 | 484 |
+| 7 | RegExp (literal provider, constructor, methods) | B · #7369 | 411 |
+| 8 | built-in call or method | B · #7350 | 318 |
+| 9 | `eval` | #7363 | 313 |
+| 10 | script `var` initialised with an array literal | O · #7352 | 258 |
+| 11 | for-in head `var` | O follow-up, for-in runtime | 206 |
+| 12 | repeated script `var` (not yet in this tree) | #7372 slice 1b | 195 |
+| | everything else | | 1,342 |
