@@ -964,6 +964,8 @@ export interface IrFromAstResolver extends PreparedAsyncFromAstResolver {
   preparedOrdinaryObjectLiteral?(literal: ts.ObjectLiteralExpression): boolean;
   /** (#7352 arrays) The literal is an Array exotic object of the realm on the Prepared path. */
   preparedArrayLiteral?(literal: ts.ArrayLiteralExpression): boolean;
+  /** (#7352 A3) `Array.isArray(x)` of an object or the dynamic value is the realm's `$Array` brand test. */
+  preparedArrayBrandTest?(call: ts.CallExpression): boolean;
   /** (#7352 arrays) A typed read of a planned array element: its constant index and logical result. */
   preparedArrayElementRead?(
     expression: ts.ElementAccessExpression,
@@ -9502,7 +9504,14 @@ function isAmbientReceiver(receiver: ts.Identifier, isDirectModuleBinding: boole
 }
 
 /** (#7106) `static-predicates/lowering.ts`'s view of this lowering context. */
-function staticPredicateHost(cx: LowerCtx): IrStaticPredicateHost {
+function staticPredicateHost(cx: LowerCtx, call: ts.CallExpression): IrStaticPredicateHost {
+  // (#7352 A3) The dynamic value's carrier is the externref the brand test reads.
+  const arrayBrandTest: IrStaticPredicateHost["arrayBrandTest"] = (value, family) =>
+    cx.builder.emitCall(
+      irIntrinsicFuncRef("js.object.is-array"),
+      [family === "dynamic" ? cx.builder.emitCoerceToExternref(value) : value],
+      IR_BOOL,
+    )!;
   return {
     builder: cx.builder,
     funcName: cx.funcName,
@@ -9511,6 +9520,7 @@ function staticPredicateHost(cx: LowerCtx): IrStaticPredicateHost {
       const value = lowerExpr(operand, cx, IR_F64);
       return { value, family: irOperandFamily(typeOfValue(value, cx), operand) };
     },
+    ...(cx.resolver?.preparedArrayBrandTest?.(call) === true ? { arrayBrandTest } : {}),
   };
 }
 
@@ -9876,10 +9886,10 @@ function lowerMethodCall(expr: ts.CallExpression, cx: LowerCtx, statementPositio
     demoteToLegacy("method-call-unsupported", `ir/from-ast: Math.${methodName} not in IR whitelist (${cx.funcName})`);
   }
   // (#7106) `Number.isNaN(x)`, `Object.is(a, b)`, `Array.isArray(x)`: typed by operand family, like Math above.
-  const staticPredicate = staticPredicatePlan(expr, (receiver) =>
+  const predicate = staticPredicatePlan(expr, (receiver) =>
     isAmbientReceiver(receiver, receiverIsDirectModuleBinding, cx),
   );
-  if (staticPredicate !== undefined) return lowerStaticPredicateCall(expr, staticPredicate, staticPredicateHost(cx));
+  if (predicate !== undefined) return lowerStaticPredicateCall(expr, predicate, staticPredicateHost(cx, expr));
 
   // (#3144) `C.m(args)` — static method call on a locally-declared class.
   // Recognised BEFORE receiver lowering (like the Math/console arms above):

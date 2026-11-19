@@ -19,6 +19,10 @@
  *   - `Array.isArray` of a primitive is `false`.
  * A missing argument is `undefined`. `./selection.ts` admits only operands of
  * these families and at most the plan's arity of them.
+ *
+ * (#7352 A3) Where Arrays are the realm's Array exotic objects (the Prepared
+ * path), `Array.isArray` of an object or of the dynamic value is the realm's
+ * brand test (`IrStaticPredicateHost.arrayBrandTest`).
  */
 
 import type { IrFunctionBuilder } from "../builder.js";
@@ -76,6 +80,8 @@ export interface IrStaticPredicateHost {
   isUnshadowedGlobal(operand: ts.Expression, name: string): boolean;
   /** Lower an operand unboxed; `family` is the lowered value's `irOperandFamily`. */
   lowerOperand(operand: ts.Expression): { readonly value: IrValueId; readonly family: OperandFamily };
+  /** (#7352 A3) IsArray of a `BRANDED_FAMILIES` value, on a lane whose Arrays carry the realm's brand. */
+  readonly arrayBrandTest?: (value: IrValueId, family: OperandFamily) => IrValueId;
 }
 
 interface Operand {
@@ -90,6 +96,8 @@ const F64: IrType = irVal({ kind: "f64" });
 const I64: IrType = irVal({ kind: "i64" });
 /** The families a lowered operand may have: `./selection.ts` admits only these. */
 export const LOWERED_FAMILIES: ReadonlySet<OperandFamily> = new Set(["number", "string", "boolean"]);
+/** (#7352 A3) The families `Array.isArray` brand-tests: an object's externref and the dynamic value. */
+const BRANDED_FAMILIES: ReadonlySet<OperandFamily> = new Set(["externref", "dynamic"]);
 
 export function lowerStaticPredicateCall(
   call: ts.CallExpression,
@@ -103,17 +111,19 @@ export function lowerStaticPredicateCall(
       argument === undefined
         ? "undefined"
         : staticPredicateLiteralFamily(argument, (operand) => host.isUnshadowedGlobal(operand, "undefined"));
-    operands.push(literal !== undefined ? { family: literal } : lowerOperand(argument!, host));
+    operands.push(literal !== undefined ? { family: literal } : lowerOperand(argument!, plan, host));
   }
   const b = host.builder;
   const [x, y] = operands as [Operand, Operand | undefined];
   if (plan.test === "same-value") return sameValue(x, y!, b);
+  if (BRANDED_FAMILIES.has(x.family)) return host.arrayBrandTest!(x.value!, x.family);
   return plan.test !== "array" && x.family === "number" ? numberTest(plan.test, x.value!, b) : booleanConst(false, b);
 }
 
-function lowerOperand(argument: ts.Expression, host: IrStaticPredicateHost): Operand {
+function lowerOperand(argument: ts.Expression, plan: IrStaticPredicatePlan, host: IrStaticPredicateHost): Operand {
   const operand = host.lowerOperand(argument);
-  if (!LOWERED_FAMILIES.has(operand.family)) {
+  const branded = plan.test === "array" && host.arrayBrandTest !== undefined && BRANDED_FAMILIES.has(operand.family);
+  if (!branded && !LOWERED_FAMILIES.has(operand.family)) {
     demoteToLegacy(
       "operand-coercion-unsupported",
       `ir/from-ast: static predicate operand lowered as ${operand.family} (${host.funcName})`,

@@ -47,7 +47,8 @@ function declaration(
  * (#7352 arrays) `create-array` is ArrayCreate(length) on %Array.prototype%; `get-index` / `set-index` are [[Get]]
  * / [[Set]] with an array-index key, an integer f64, so an index reaches an Array's elements without a key string.
  * `set-length` is ArraySetLength on an Array; its length operand is ToNumber of the written value, which the
- * operation checks against its ToUint32 (a RangeError when they differ).
+ * operation checks against its ToUint32 (a RangeError when they differ). `is-array` is `Array.isArray` (§15.4.3.2):
+ * whether a value is an Array exotic object, the realm's `$Array` brand.
  */
 const DECLARATIONS: Readonly<Record<OrdinaryObjectRuntimeFeature, IrRuntimeCallableDeclaration>> = Object.freeze({
   "js.object.create-default": declaration("js.object.create-default", [], [EXTERNAL]),
@@ -69,6 +70,7 @@ const DECLARATIONS: Readonly<Record<OrdinaryObjectRuntimeFeature, IrRuntimeCalla
   "js.object.get-index": declaration("js.object.get-index", [EXTERNAL, NUMBER, EXTERNAL], [EXTERNAL]),
   "js.object.set-index": declaration("js.object.set-index", [EXTERNAL, NUMBER, EXTERNAL], []),
   "js.object.set-length": declaration("js.object.set-length", [EXTERNAL, NUMBER], []),
+  "js.object.is-array": declaration("js.object.is-array", [EXTERNAL], [BOOLEAN]),
 });
 
 /** Exact semantic binding only; neither display names nor runtime aliases qualify. */

@@ -7,15 +7,18 @@
  *     and a body (`source-object-bodies.ts`) over the storage pack and the builtin-object kernel; or
  *   - binds a realm function as it is (`define-data`: the descriptor pack's public define; (#7354 O4)
  *     `create-type-error`: the invocation substrate's TypeError constructor).
- * (#7352 arrays) `create-array`, `get-index`, `set-index` and `set-length` are adapters on the kernel's Array exotic
- * object (`array-exotic-bodies.ts`, `array-index-bodies.ts`, `array-length-bodies.ts`); the functions they share
- * are the `HELPERS` entries, which this pack reserves, fills and completes with its adapters.
+ * (#7352 arrays) `create-array`, `get-index`, `set-index`, `set-length` and `is-array` are adapters on the kernel's
+ * Array exotic object (`array-exotic-bodies.ts`, `array-index-bodies.ts`, `array-length-bodies.ts`); the functions
+ * they share are the `HELPERS` entries, which this pack reserves, fills and completes with its adapters.
  * A contract without a row here has no native source provider yet.
  */
 import type { FuncHandle, ValType } from "../../../wasm/model/instructions.js";
 import type { FunctionReservation, PhysicalModuleReservations } from "../../../wasm/physical/module-reservations.js";
 import type { OrdinaryObjectRuntimeFeature } from "../../../ir/runtime/contracts/manifest.js";
-import { buildArrayCreateDefinition } from "../../../runtime/wasmgc/values/array-exotic-bodies.js";
+import {
+  buildArrayCreateDefinition,
+  buildArrayIsArrayDefinition,
+} from "../../../runtime/wasmgc/values/array-exotic-bodies.js";
 import {
   buildArrayGetIndexDefinition,
   buildArraySetIndexDefinition,
@@ -177,6 +180,11 @@ const ROWS = {
           { op: "throw", tagIdx: tx.physicalIndex(d.kernel.exception) },
         ],
       }),
+  },
+  "js.object.is-array": {
+    signature: { params: [EXTERNREF], results: [I32] },
+    array: true,
+    body: (d, { tx }) => buildArrayIsArrayDefinition(arrayOperands(d, tx)),
   },
 } as const satisfies Readonly<Partial<Record<OrdinaryObjectRuntimeFeature, Row>>>;
 /** A contract the realm serves. */

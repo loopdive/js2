@@ -23,7 +23,13 @@ const CONTRACTS = [
   ["js.object.create-type-error", [REF], [REF]],
 ] as const;
 /** (#7352 arrays) The index contracts; their shape and binding are checked in tests/issue-7352-a-arrays.test.ts. */
-const ARRAY_FEATURES = ["js.object.create-array", "js.object.get-index", "js.object.set-index", "js.object.set-length"];
+const ARRAY_FEATURES = [
+  "js.object.create-array",
+  "js.object.get-index",
+  "js.object.set-index",
+  "js.object.set-length",
+  "js.object.is-array",
+];
 
 describe("ordinary object semantic contracts", () => {
   it("declares prototype modes, descriptor presence, original receiver and boolean Has independently", () => {

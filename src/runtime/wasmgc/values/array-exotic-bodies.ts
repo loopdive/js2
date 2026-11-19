@@ -7,7 +7,8 @@
  * canonical index string, so a sparse or huge index never allocates. A read looks in the vector, then in the map.
  *
  * Every body here is a pure builder over physical operands: the layout readers the sibling modules share, the
- * kernel's own-property arm (`buildArrayOwnEntry`), the initializer step and `js.object.create-array`. The index
+ * kernel's own-property arm (`buildArrayOwnEntry`), the initializer step, `js.object.create-array` and
+ * `js.object.is-array`. The index
  * contracts are in `array-index-bodies.ts`, ArraySetLength in `array-length-bodies.ts`.
  */
 import type { FuncHandle, Instr } from "../../../wasm/model/instructions.js";
@@ -279,4 +280,9 @@ export function buildArrayCreateDefinition(d: ArrayExoticOperands): SourceObject
       { op: "extern.convert_any" },
     ],
   };
+}
+
+/** `js.object.is-array(value)`: IsArray (§15.4.3.2), the `$Array` brand; null and every primitive fail it. */
+export function buildArrayIsArrayDefinition(d: ArrayExoticOperands): SourceObjectDefinition {
+  return { locals: [], body: arrayTest(d, 0) };
 }
