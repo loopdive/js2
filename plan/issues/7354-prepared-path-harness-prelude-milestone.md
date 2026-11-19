@@ -2514,3 +2514,147 @@ one-time whole-program compares and snapshot copies (`planNativeStringValuePhysi
   refresh (#7358).
 - One O(module) audit per function body remains (quadratic in the number of functions, small constant).
 - Not verified: the 20/50-site and 400-line outputs against base (base too slow), `--utf8-storage`, `compileMulti`.
+
+## Prelude gap map (2026-11-19, base 2f3bb36368)
+
+Measured on `claude/7354-tj` (base `claude/7354-perf2` @ 2f3bb36368: slices H, T, X, Str, Ty, Str2 incl. dynamic `+`,
+Perf2). Replaces f-design.md §1 (measured 2026-11-16 on P). Evidence: `scratchpad/tj/` (absolute
+`/tmp/claude-0/-home-user-js2/e23e8075-250b-5af5-a17c-83ff851063bc/scratchpad/tj/`): `census.js` (prelude + the
+function-expression bodies as `FX_<name>` declarations, same file as on 11-16; the prelude files are unchanged since),
+`mystep.py` (the step-past edits, 4 rounds), `hack.py` (env-gated census hacks, never committed), `c0..c4.out`,
+`ph.out` (propertyHelper), `mech/` (one-mechanism probes), `step-full*.js`, `irgap-tj1-results-tj1.jsonl` (sample).
+
+**Method.** As on 11-16: `FD_CENSUS=1` makes the producer continue past a failing unit and the legalization list
+every refused operation of a function, so one compile gives every unit's first refusal (and the complete legalization
+list of a unit that gets through from-ast). Compile options are the runner's (`test.js`, `allowJs`,
+`skipSemanticDiagnostics`, `deferTopLevelInit`, `scriptGoal`). Top-level statements one at a time (`only.mts`). Each
+stopper is stepped past by an edit in a copy (`H(a,b,c){return a}` stand-ins), then re-censused.
+
+**The Tj premise did not hold.** `typeof JSON` already has one answer on this path: the Prepared resolver has no
+`isAmbientBinding`, so `AMBIENT_TYPEOF_TAGS` never answers there and the fold, the value form and the comparison all
+use Ty's `absentGlobalTypeof`. `formatIdentityFreeValue` (exactly as assert.js) compiles and returns `'"a"'`. Pinned
+by one test in `tests/issue-7354-ty-typeof-comparisons.test.ts` (mutation "fold answers object" killed). The 282-row
+`dyn.member_get` is **A:46 `err.name`** (catch binding) in `formatSimpleValue`, not A:27.
+
+Line refs: `F` = `scripts/test262-fyi-runtime.js`, `A` = `harness/assert.js`, `S` = `harness/sta.js`,
+`P` = `harness/propertyHelper.js`. `[L]` = legalization refusal (`dynamic operation X has no Prepared intrinsic`).
+
+### 1a. Top-level statements (module-init)
+
+The globals loop no longer refuses anything in the prelude: `print` and `$262` have dynamic homes (H).
+
+| # | stmt | first refusal (exact) | after stepping (mechanism probes in `mech/`) |
+|---|---|---|---|
+| 0 | F:4 `var print = function (value) {…}` | `module-level closure binding 'print' not in module-init Slice 2 scope` | — (unannotated function expression into a script var) |
+| 1 | F:8 `var $262 = {…}` | F:9 `identifier "globalThis" is not in scope` | members `function () {}`: `closure must have a return type annotation`; then the object literal into a dynamic var: `proven dynamic binding 'o' initializer has no supported carrier` |
+| 2–6 | A:64/74/95/111/147 `assert._isSameValue / sameValue / notSameValue / throws / compareArray = function…` | `identifier "assert" is not in scope` | property write on a function object; unannotated function expression as the stored value |
+| 7 | A:178 `compareArray.format = function…` | `identifier "compareArray" is not in scope` | same as 2 |
+| 8–9 | A:182/184 `assert._formatIdentityFreeValue = formatIdentityFreeValue`, `assert._toString = formatSimpleValue` | `identifier "assert" is not in scope` | declaration read as a value on the right too |
+| 10–11 | S:18 `Test262Error.prototype.toString = function…`, S:22 `Test262Error.thrower = function…` | `identifier "Test262Error" is not in scope` | `.prototype` read on a function object; property write; closure |
+| 12 | body `assert.sameValue(1, 1);` | `identifier "assert" is not in scope` | property read on a function object + call through it |
+
+### 1b. Function bodies (first refusal, then the rest after stepping past)
+
+Compile now (were gaps on 11-16): `isNegativeZero`, `isPrimitive`, `formatIdentityFreeValue`, `_isSameValue`,
+`IsHTMLDDA`, `gc`, `$DONOTEVALUATE`. After stepping only the constructs below (no string / `+` / typeof / ToBoolean
+stand-ins any more): `assert`, `sameValue`, `notSameValue`, `throws`, `format`, `toString`, `thrower`,
+`detachArrayBuffer`, `evalScript`, `compareArray`, `compareArray` method all compile.
+
+| unit | first refusal (exact) | then (stepped) |
+|---|---|---|
+| F:4 print body | `identifier "console" is not in scope` | — |
+| F:15 createRealm | F:25 `closure must have a return type annotation` (`mkerr = function(){ return function(msg){ this.message = msg } }`) | `mkerr` as a value (`identifier "H" is not in scope` = declaration as value); `identifier "globalThis" is not in scope` (22 reads); `concrete return needs a dynamic box` (`return realm`, object literal); `[L]` `dyn.member_get` ×5 (`$262.X`, F:73–77) + `composite dynamic left` (object literals with dynamic fields) |
+| F:81 evalScript | F:83 `direct call to "__js2wasm_global_script_eval" has no exact AST-site plan` | F:89 `instanceof RHS class "ReferenceError" has no projected shape`; F:93 `direct call to "eval" has no exact AST-site plan`. (`typeof error.message`/`.indexOf` stepped together with instanceof; rethrow compiles) |
+| F:98 detachArrayBuffer | F:104 `property assignment on dynamic is not in slice 4` (`buffer.__detached__ = true`; `typeof structuredClone` now folds) | F:107 `direct call to "structuredClone" has no exact AST-site plan` |
+| A:40 formatSimpleValue | `[L]` `dyn.member_get` (A:46 `err.name`) | `[L]` `dyn.object_tag` (A:47 `Object.prototype.toString.call(value)`); complete list. `String(value)`, the catch, `=== 'TypeError'`, rethrow compile |
+| A:53 assert | A:59 `identifier "assert" is not in scope` (`assert._toString(…)`) | A:59 `'+' operands not provably both-number or string-concatenable (string/unprovable)` (the untyped call result); A:61 `unknown class "Test262Error"` |
+| A:74 sameValue | A:76 `assert` not in scope (`assert._isSameValue`) | A:87 `'+' … (string/unprovable)` with `assert._toString(…)` ×2; `new Test262Error` ×2. (`message + '…' + error` with the catch binding compiles: `mech/n01`) |
+| A:95 notSameValue | A:96 `assert` not in scope | `'+' … unprovable` ×2 (A:106); `new Test262Error` |
+| A:111 throws | A:114 `unknown class "Test262Error"` | `[L]` complete: `__ir_dyn_call_value` ×2 + `__ir_dyn_call_box` (A:125 `func()`), `dyn.member_get` ×5 (A:130/132 `thrown.constructor`, `.name` ×2, A:143 `expectedErrorConstructor.name`). `typeof thrown`, `thrown === null`, catch, all `+=` compile |
+| A:147 compareArray method | A:159 `identifier "compareArray" is not in scope` (`compareArray(actual, expected)`: a declaration with an expando) | A:162 `compareArray.format` read; A:163 `format(…)` call through a local + `'+' … unprovable`; `[L]` `__ir_dyn_method_call_0` (A:151 `message.toString()`) |
+| A:166 compareArray | A:171 `assert` not in scope | `[L]` `dyn.member_get` ×5 (`a.length` ×2, `b.length`, `b[i]`, `a[i]`) |
+| A:178 format body | A:179 `'+' … unprovable` (`Array.prototype.map.call(arrayLike, String).join(", ")`) | the built-in call chain itself (`Array` not in scope on 11-16) |
+| S:13 Test262Error | S:14 `instanceof RHS class "Test262Error" has no projected shape` | S:14 `new Test262Error`; S:15 `'this' reference outside an instance method body` (+ member write on `this`) |
+| S:18 toString body | S:19 `'+' … unprovable` (`"Test262Error: " + this.message`) | `this` |
+| S:22 thrower body | `unknown class "Test262Error"` | — |
+| P (26 sample rows) | `verifyProperty`: `identifier "assert" is not in scope` | other first refusals (`ph.out`): `isConfigurable` `delete has no IR lowering`; `isEnumerable` `dynamic for-in runtime is unavailable`; `isWritable` `instanceof RHS class "TypeError"` alone, `[L] dyn.arguments_length` (P:183 `arguments.length`) — inside the full census `#5092 then arm proved number but lowered as dynamic` (an `IrInvariantError`, not reproduced strictly, see below); `verifyCallableProperty` `type override (dynamic) disagrees with annotation (f64) at param functionLength`; `verifyAccessorProperty` `verifyProperty` as a value; 7 × `verify*` `unknown class "Test262Error"`; `verifyPrimordialCallableProperty` `object has no field "label"` |
+
+### 1c. Mechanisms (static sites in F+A+S; first-refusal hits)
+
+| mechanism | sites | first refusal of | state |
+|---|---:|---|---|
+| **Function declaration read as a value** (`assert` ×15, `compareArray` ×2, `Test262Error` ×2, `formatSimpleValue`/`formatIdentityFreeValue` RHS ×2, body) | 22 | 11 stmts + body; assert, sameValue, notSameValue, compareArray, compareArray method | open — most frequent first gap |
+| **Property write on a function object** (`assert.X =` ×7, `compareArray.format`, `Test262Error.prototype.toString`, `Test262Error.thrower`) | 10 | (behind the value read) | open |
+| **Property read on a function object + call through it** (`assert._isSameValue` ×3, `assert._toString` ×5, `compareArray.format`, `Test262Error.prototype`, body) | 11 | (behind the value read) | open |
+| **Unannotated function expression as a value** (script var 1, `$262` members 5, property stores 8, `mkerr` + nested 2) | 16 | stmt 0, createRealm | open |
+| **`+` with an untyped call result / `this.message`** (`'…' + assert._toString(x)` ×5, `format(x)` ×2, `map…join`, `this.message`) | 9 | format, toString | open (Str2-c's named refusal; dynamic `+` itself is done) |
+| **Call through a dynamic value / local** (`func()`, `mkerr()` ×7, `format()` ×2) | 10 | — (`[L] __ir_dyn_call_*`) | open |
+| **`new` on a plain function** (`new Test262Error`) | 10 | throws, thrower | open |
+| **`instanceof`** (user `Test262Error` S:14; built-in `ReferenceError` F:89) | 2 | Test262Error | open |
+| **`this` in a plain function** (S:14, S:15, S:19, F:27) | 4 | — | open |
+| **Member read on a dynamic value** (`err.name`, `thrown.constructor` ×2, `.name` ×3, `a.length`/`b.length`/`[i]` ×5, `$262.X` ×5, `error.message` ×2) | 19 | **formatSimpleValue (282 sample rows)** | open |
+| **Member write on a dynamic value** (`buffer.__detached__`, `this.message` ×2) | 3 | detachArrayBuffer | open |
+| **Method call on a dynamic value** (`message.toString()`, `error.message.indexOf`) | 2 | — | open |
+| **`dyn.object_tag`** (`Object.prototype.toString.call(value)`) | 1 | — | open |
+| **Object literal as a value** (`$262`, `realmGlobal`, `realm`, `{transfer:[…]}`) | 4 | — | open (+ the crash below) |
+| **Remaining built-in globals** (`globalThis` 22, `console` 1, `structuredClone` call 1, `__js2wasm_global_script_eval` 1, `eval` 1, `Array.prototype.map.call` 1, `ReferenceError` 1) | 28 | print, $262, evalScript | open |
+| Dynamic script-var home (`print`, `$262`, globals loop) | 2 | — | **done** (H) |
+| ToBoolean of a dynamic value (`!v`, `if (v)`, `v \|\| ""`) | 8 | — | **done** (isPrimitive compiles) |
+| `typeof` of a dynamic value, incl. the catch binding; `typeof <absent global>` | 11 | — | **done** (Ty, Str2) |
+| `String(v)` calls | 6 | — | **done** (Str2) |
+| Strings in the dynamic value; dynamic `+`/`+=` with dynamic or catch-binding operands | ~40 | — | **done** (Str, Str2-c) |
+| `=== null`, throw / catch / rethrow of a dynamic value | ~19 | — | **done** (X/T; `mech/m22` runs) |
+| `JSON` (typeof + dead `JSON.stringify` arm) | 2 | — | **done** (Ty) |
+
+### Exceptions out of compile() instead of a named refusal
+
+- `function g() { var o = { a: 1 }; return o.a; } g();` → `PreparedIrProgramInvariantError: program emission:
+  wasmgc:standalone accepted body … and then failed to lower it: ir/lower: resolver cannot lower object<a:f64> (g)`
+  (`mech/m06-objlit-local.js`; still open since 11-16).
+- Not an exception, but an invariant class surfacing as a unit refusal in the census: `isWritable` (P:175 ternary)
+  `#5092 then arm proved number but lowered as dynamic` (`IrInvariantError` "selection-preparation-mismatch",
+  from-ast.ts:13661). Not reproduced in strict isolation (there the first refusal is `instanceof … "TypeError"`), so
+  whether it can escape compile() is **not verified**.
+- The 11-16 eval-row crash (`certified global eval lost an owning predicate`) does not occur in the sample any more.
+
+### 411-row ES5 sample on this base (60 s per row)
+
+Negatives 14 pass; 397 compile errors; no exceptions, no timeouts. Compile time per row: median 45 ms, max 811 ms
+(every row stops before emission).
+
+| rows | first gap (exact) | where |
+|---:|---|---|
+| 282 (+3 with an earlier diagnostic) | `dynamic operation dyn.member_get has no Prepared intrinsic` | A:46 `err.name` in `formatSimpleValue` |
+| 84 | `module binding X has no exact typed storage: not-direct` (`obj` 52, `x` 5, `proto` 4, `o` 4, `arr` 3, `arrObj` 2, `y` 2, 12 others ×1) | the test body's globals loop |
+| 26 | `ir/from-ast: identifier "assert" is not in scope in verifyProperty` | P (propertyHelper.js) |
+| 2 | `'f' is not defined — switch-case lexical binding does not leak out of the switch block` | test body |
+| 1 | `ir/from-ast: unknown class "Test262Error" in isConstructor` | `isConstructor.js` include |
+| 1 | `Expression expected.` | parse error in the body |
+| 1 | `direct call to "print" has no exact AST-site plan in __consolePrintHandle__` | runner print hook |
+
+With every gap of 1b stepped past and the top-level statements removed, the prelude plus a direct
+`FX_sameValue(1, 1)` compiles in ~11 s (second compile 10 s) through the strict entry and runs right (returns) and
+wrong (`FX_sameValue(1, 2)` throws) — `step-full.js`, `step-full-wrong.js`.
+
+### What `assert.sameValue(1, 1);` needs (compile time vs run time)
+
+The Prepared path compiles the whole program, so **every** unit above must compile before the trivial test can:
+compile time needs all 15 open mechanisms of 1c (or a slice that compiles a unit it cannot lower as a named trap,
+which no slice proposes). At run time the test reaches only module-init and `sameValue` → `_isSameValue`:
+
+| needed at run time | only at compile time (failure paths, `$262`, propertyHelper) |
+|---|---|
+| function declaration as a value; property write / read on a function object and call through it; unannotated function expression as a value (stored as a property, script var `print`, `$262` members); object literal as a value (`$262`); `globalThis` as a value (`$262.global`) | call through a dynamic value; `new` / `instanceof` / `this` on a plain function; member read / write / method call on a dynamic value; `dyn.object_tag`; `+` with an untyped call result; `console`, `structuredClone`, `eval`, the private script eval, `Array.prototype.map.call`, `ReferenceError`, `globalThis.X` member reads |
+
+So the minimal ordering is: the function-object family first (it is both the most frequent first refusal and the
+whole run-time path), then the compile-time-only families, cheapest being the ones that may refuse at run time
+(member read on a dynamic value as a checked operation would unblock the 282 rows' first gap but not the test).
+
+### Not verified
+
+- Whether the `isWritable` invariant can escape compile() (above).
+- `createRealm`'s FX copy carries 4 of the 22 `globalThis` reads and 2 of the 7 `mkerr()` calls (same as 11-16).
+- Several steps removed two constructs at once (`new Test262Error` everywhere in round 1; `instanceof ReferenceError`
+  with `typeof error.message` / `.indexOf`), so the "then" order inside those units is by source, not by measurement.
+- Why `verifyProperty` precedes `formatSimpleValue` for the 26 propertyHelper rows (unit order of the runner's
+  concatenation; not inspected).
