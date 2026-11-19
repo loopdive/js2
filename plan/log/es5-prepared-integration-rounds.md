@@ -25,6 +25,7 @@ node scripts/ir-census/prepared-analyze.mjs --rows .tmp/ir-census/integ-<sha>-st
 | 1 | `bc07f68fc0` | 0 | `typeof test for function` in `assert.js` (6,536) | 153 | 16 |
 | 3 | `43f5fb1ffd` | 0 | `typeof test for function` in `assert.js` (6,536) | 154 | 15 |
 | 4 | `87655f3f65` | 0 | `dyn.json_stringify` in `assert.js` (6,722) | 155 | 15 |
+| 5 | `94abeb8347` | 0 | ToPrimitive of an object in `assert.js` (6,714) | 163 | 18 |
 
 ## Round 1: `bc07f68fc0` (2026-11-19)
 
@@ -130,3 +131,42 @@ scope `dd8e3628`).
   built-in global as a value 1,281 (B), `new` / `this` 1,155 (C;
   `new Test262Error` 867), array literals 652 (O), `new X` 506 (B), call
   through a value 484 (Fb), RegExp 420, built-in call 326, `eval` 313.
+
+## Round 5: `94abeb8347` (2026-11-19)
+
+Adds the new slice C (`abc2e61834`, carrying O2 `be567b01`): the per-kind
+tables move to `src/ir/program/dynamic-value-kinds.ts`, and a function is a
+possible kind only in a program that creates one. The integration-only
+function rows are gone.
+
+- **Real prelude:** still 0 pass. The `JSON.stringify` wall is gone; 6,714
+  files now stop at "ToPrimitive of an object (an object property holds a
+  function) has no Prepared intrinsic" in `assert.js`.
+- **Stand-in: 163 pass** (+8, −0 against round 4): gained
+  `harness/assert-notsamevalue-objects.js`, `harness/assert-samevalue-same.js`,
+  `language/expressions/compound-assignment/add-whitespace.js`,
+  `language/expressions/object/S11.1.5_A4.1.js`, `S11.1.5_A4.2.js`,
+  `language/statements/for/12.6.3_2-3-a-ii-1.js`,
+  `language/statements/try/12.14-4.js`,
+  `language/types/reference/8.7.2-3-1-s.js`. Crashes 15 → 18.
+- **`var obj = {…}` fell from 1,589 to 1,069 first gaps** (O2). Many of those
+  files now stop at ToPrimitive of an object: 708 first gaps, 697 of them in
+  the stand-in's `__assert_sameValue`. That function computes `1 / actual` to
+  tell `-0` from `+0`, as the real `assert.js` does (line 67), so the gap is
+  real, not an artefact of the stand-in.
+
+| # | first gap (stand-in) | slice · issue | files |
+|---|---|---|---:|
+| 1 | built-in global as a value (`Object` 464, `ReferenceError` 159) | B · #7350 | 1,244 |
+| 2 | `new` on a plain function, `this` (`new Test262Error` 906) | C · #7349 | 1,182 |
+| 3 | script `var` initialised with an object literal | O · #7352 | 1,069 |
+| 4 | ToPrimitive of an object (697 in `__assert_sameValue`) | O2 · #7354 slice O | 708 |
+| 5 | array literals (`propertyHelper.js` `failures` 383) | O · #7352 | 570 |
+| 6 | built-in constructor `new X` | B · #7350 | 476 |
+| 7 | call through a value | Fb · #7349 | 456 |
+| 8 | RegExp | B · #7369 | 403 |
+| 9 | built-in call or method | B · #7350 | 343 |
+| 10 | `eval` | #7363 | 315 |
+| 11 | script `var` initialised with an array literal | O · #7352 | 258 |
+| 12 | other | | 215 |
+| | everything else | | 1,478 |

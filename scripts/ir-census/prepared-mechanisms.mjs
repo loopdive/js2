@@ -29,6 +29,7 @@ export const MECHANISMS = {
   "Object static not admitted": "#7368",
   "compound assignment with a non-numeric RHS": "#7375",
   "boxing a native call result": "Fb follow-up · #7349",
+  "ToPrimitive of an object": "O2 · #7354 slice O",
   "function value in + or ToString": "integration alarm: Fa × Str2 / Ty per-kind tables",
   "script-var home: repeated var": "S10 · #7372 slice 1b",
   "script-var home: object literal": "O · #7352",
@@ -161,6 +162,7 @@ export function mechanismOf(row, text) {
   if (/compound assign RHS has no numeric carrier/.test(d)) return "compound assignment with a non-numeric RHS";
   if (/dyn\.arguments_length/.test(d)) return "arguments object";
   if (/box of a native call result/.test(d)) return "boxing a native call result";
+  if (/ToPrimitive of an object/.test(d)) return "ToPrimitive of an object";
   if (/dyn\.current_this/.test(d)) return "new on a plain function, this, instanceof";
   if (/(?:\+|ToString) of a function value/.test(d)) return "function value in + or ToString";
   const binding =
