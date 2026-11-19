@@ -40,6 +40,7 @@ import { IR_DYN_CALL_BOX_FN } from "../../shared/contracts/dynamic-call-helpers.
 import type { IrUnitId } from "../../shared/contracts/ir-identity.js";
 import { irRuntimeCallableDeclaration } from "../runtime/callable-declarations.js";
 import { JS_TAG_IDS } from "../runtime/js-tag-domain.js";
+import type { TagId } from "../core/tag-domain.js";
 
 const CARRIER: IrType = Object.freeze({ kind: "val", val: Object.freeze({ kind: "externref" }) });
 
@@ -85,6 +86,31 @@ function carrierClosureInstr(instr: IrInstr): IrInstr {
   };
 }
 
+/**
+ * (#7354 Ty, Fa) `typeof`'s answer for each kind of value the carrier admits, keyed by the answer so that no two kinds
+ * share one (`typeof null` is "object": an admitted object kind must merge with that row). The admitted kinds ARE this
+ * table's values: a value enters the carrier only as one of them (`boxedKind` and the function-value projection both
+ * go through `admit`, exhaustive by type), so a slice that admits a kind adds its row here and every per-kind table
+ * (`Record<CarrierKind, …>`) must then give it a row before the program compiles.
+ */
+const TYPEOF_KIND = {
+  number: "number",
+  boolean: "boolean",
+  string: "string",
+  undefined: "undefined",
+  object: "null",
+  function: "function",
+} as const;
+type CarrierKind = (typeof TYPEOF_KIND)[keyof typeof TYPEOF_KIND];
+
+/** The kind a box to the dynamic value admits, from its tag refinement or its operand; `undefined` refuses. */
+function boxedKind(tag: TagId | undefined, source: IrType | undefined): CarrierKind | undefined {
+  if (tag === JS_TAG_IDS.Boolean) return "boolean";
+  if (tag === JS_TAG_IDS.Null) return "null";
+  if (source?.kind === "string") return "string";
+  return source?.kind === "val" && source.val.kind === "f64" ? "number" : undefined;
+}
+
 /** Rewrite one function. A function without a dynamic value is returned unchanged. */
 export function legalizeDynamicValues(fn: IrFunction): IrFunction {
   if (!containsDynamic(fn)) return fn;
@@ -100,31 +126,42 @@ export function legalizeDynamicValues(fn: IrFunction): IrFunction {
     ...(instr.site === undefined ? {} : { site: instr.site }),
   });
   const isDynamic = (value: IrValueId): boolean => types.get(value)?.kind === "dynamic";
+  /** A value entering the carrier as `kind`; a value of no admitted kind refuses. */
+  const admit = (kind: CarrierKind | undefined, instr: IrInstr, value: IrValueId): readonly IrInstr[] => {
+    switch (kind) {
+      case "boolean":
+        return [intrinsic(instr, "js.boolean.box", [value])];
+      // The Null partition has one value, the carrier's null reference.
+      case "null":
+        return [{ kind: "const", value: { kind: "null", ty: CARRIER }, result: instr.result, resultType: CARRIER }];
+      case "number":
+        return [intrinsic(instr, "js.number.box", [value])];
+      // (#7354 Str) A native string, and (#7354 Fa) a function value's closure, are their own payload: the externref
+      // that wraps it.
+      case "string":
+      case "function":
+        return [
+          {
+            kind: "coerce.to_externref",
+            value,
+            result: instr.result,
+            resultType: CARRIER,
+            ...(instr.site === undefined ? {} : { site: instr.site }),
+          },
+        ];
+      // `undefined` enters only as `dyn.undefined`, never by a box.
+      case "undefined":
+      case undefined:
+        return gap(`box of a non-primitive value`);
+    }
+  };
 
   const expand = (instr: IrInstr): readonly IrInstr[] => {
     switch (instr.kind) {
-      case "box": {
-        if (instr.toType.kind !== "dynamic") return [instr];
-        if (instr.toType.tag === JS_TAG_IDS.Boolean) return [intrinsic(instr, "js.boolean.box", [instr.value])];
-        // The Null partition has one value, the carrier's null reference.
-        if (instr.toType.tag === JS_TAG_IDS.Null)
-          return [{ kind: "const", value: { kind: "null", ty: CARRIER }, result: instr.result, resultType: CARRIER }];
-        const source = types.get(instr.value);
-        if (source?.kind === "val" && source.val.kind === "f64")
-          return [intrinsic(instr, "js.number.box", [instr.value])];
-        // (#7354 Str) A native string is its own carrier payload: the externref that wraps it.
-        if (source?.kind === "string")
-          return [
-            {
-              kind: "coerce.to_externref",
-              value: instr.value,
-              result: instr.result,
-              resultType: CARRIER,
-              ...(instr.site === undefined ? {} : { site: instr.site }),
-            },
-          ];
-        return gap(`box of a non-primitive value`);
-      }
+      case "box":
+        return instr.toType.kind === "dynamic"
+          ? admit(boxedKind(instr.toType.tag, types.get(instr.value)), instr, instr.value)
+          : [instr];
       case "unbox":
         if (!isDynamic(instr.value)) return [instr];
         if (instr.tagId === JS_TAG_IDS.NumberF64) return [intrinsic(instr, "js.number.unbox", [instr.value])];
@@ -166,15 +203,7 @@ export function legalizeDynamicValues(fn: IrFunction): IrFunction {
           instr.target.name === IR_DYN_CALL_BOX_FN &&
           types.get(instr.args[0]!)?.kind === "callable"
         )
-          return [
-            {
-              kind: "coerce.to_externref",
-              value: instr.args[0]!,
-              result: instr.result,
-              resultType: CARRIER,
-              ...(instr.site === undefined ? {} : { site: instr.site }),
-            },
-          ];
+          return admit("function", instr, instr.args[0]!);
         // A front-end dynamic helper (`__ir_dyn_add`, ...) has no runtime declaration.
         return instr.target.binding.kind === "runtime" &&
           !irRuntimeCallableDeclaration(instr.target) &&

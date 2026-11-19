@@ -127,6 +127,12 @@ describe("#7354 Fa — function values on the Prepared path", () => {
       "f() !== 3",
     ],
     [
+      "of the function kind: ToBoolean true, strict equality by reference",
+      "var f = function () {}; var g = function () {};",
+      "!f || f !== f || f === g || g === f",
+      "f !== g",
+    ],
+    [
       "thrown and caught",
       "var f = function () {}; var c; try { throw f; } catch (e) { c = e; }",
       "c !== f || !c",
@@ -192,7 +198,15 @@ describe("#7354 Fa — function values on the Prepared path", () => {
       "function g() { var x = 1; var f = function () { return x; }; x = 2; return f(); } g();",
       'captures non-local binding "x"',
     ],
-    // `typeof` is a string producer (slice Str2); a declaration read as a value is not built yet.
+    // ToString and `+` of a function value have no arm yet (the source text is the function's own string).
+    [
+      "`+` with a string",
+      'var f = function () {}; var s = f + "";',
+      "dynamic operation __ir_dyn_add has no Prepared intrinsic",
+    ],
+    ["`String(f)`", "var f = function () {}; var s = String(f);", 'direct call to "String" has no exact AST-site plan'],
+    // `typeof` is a string producer (slice Str2; its kind table must answer "function"); a declaration read as a
+    // value is not built yet.
     ["`typeof`", "var f = function () {}; var t = typeof f;", "dynamic operation dyn.typeof has no Prepared intrinsic"],
     [
       "a function declaration read as a value",
