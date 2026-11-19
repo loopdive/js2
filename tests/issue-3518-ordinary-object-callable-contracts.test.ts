@@ -19,6 +19,8 @@ const CONTRACTS = [
   ["js.object.define-attributes", [REF, REF, FLAGS], []],
   ["js.object.get", [REF, REF, REF], [REF]],
   ["js.object.has", [REF, REF], [BOOL]],
+  // (#7354 O4) the dynamic-value legalization's RequireObjectCoercible TypeError
+  ["js.object.create-type-error", [REF], [REF]],
 ] as const;
 
 describe("ordinary object semantic contracts", () => {
