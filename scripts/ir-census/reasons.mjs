@@ -8,8 +8,9 @@
  *   detail lists them, `code@arm:Kind «text» | …`, under
  *   `JS2WASM_IR_MODULE_INIT_ALL_REJECTS=1`);
  * - any other unit contributes the label of its first refusal;
- * - a unit that failed after the claim (stage past `select`) is
- *   `post-claim(<stage>)`.
+ * - a unit that failed after the claim is `post-claim(<stage>)` (`isPostClaim`:
+ *   past `select`, except the runtime-eval late-preparation boundary, which
+ *   refuses before any lowering and keeps its own label).
  *
  * A label is the selector arm, refined where the arm alone hides the lever:
  * the identifier for `expr-ident-not-in-scope` and `expr-new-ctor-unknown`,
@@ -64,12 +65,17 @@ export function refusalLabel(part, code) {
   return code ?? (text.slice(0, 60) || "no-detail");
 }
 
+/** A legacy unit the IR claimed and then withdrew (from-ast or later). */
+export function isPostClaim(unit) {
+  return unit.stage !== "select" && unit.code !== "late-preparation-unsupported";
+}
+
 /** The set of reason labels of one compiled, blocked census row. */
 export function fileReasons(row) {
   const reasons = new Set();
   for (const unit of row.legacy) {
     if (unit.origin.startsWith("harness:")) reasons.add(unit.origin);
-    else if (unit.stage !== "select") reasons.add(`post-claim(${unit.stage})`);
+    else if (isPostClaim(unit)) reasons.add(`post-claim(${unit.stage})`);
     else if (unit.kind === "module-init") {
       for (const part of (unit.detail ?? "").split(" | ")) reasons.add(refusalLabel(part, unit.code));
     } else reasons.add(refusalLabel(unit.detail ?? "", unit.code));

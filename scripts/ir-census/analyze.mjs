@@ -17,7 +17,7 @@ import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { LEVERS, leverOf } from "./levers.mjs";
-import { fileReasons } from "./reasons.mjs";
+import { fileReasons, isPostClaim } from "./reasons.mjs";
 
 function arg(flag, fallback) {
   const index = process.argv.indexOf(flag);
@@ -58,7 +58,7 @@ function headline(rows) {
     irOnlyRun: irOnly.filter((row) => row.standalone).length,
     irOnlyPass: irOnly.filter(passing).length,
     blocked: blocked.length,
-    postClaimFiles: done.filter((row) => row.postClaim > 0).length,
+    postClaimFiles: done.filter((row) => row.legacy.some(isPostClaim)).length,
     reasons: reasonCounts.size,
     histogram,
     reasonCounts,
