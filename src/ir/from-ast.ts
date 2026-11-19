@@ -197,7 +197,7 @@ import {
   isCapturedByOrdinaryDescriptor,
 } from "./closure-captures.js";
 import { planArrayLiteralSpread } from "./array-spread-shape.js";
-import { objectLiteralDataPropertyName, phase1PropertyName } from "./property-key-fold.js";
+import { objectLiteralDataPropertyName, phase1PropertyName } from "../shared/property-key-fold.js";
 import { collectDynamicStringLocalWidening } from "./dynamic-local-widening.js";
 import { coercibleStandaloneDomArgumentBoundary } from "./dom-boundary.js";
 import { fmodRefFor } from "./fmod-selection.js";
@@ -6760,7 +6760,7 @@ function lowerOrdinaryObjectLiteral(expr: ts.ObjectLiteralExpression, cx: LowerC
     else if (ts.isShorthandPropertyAssignment(property)) value = lowerExpr(property.name, cx, IR_F64);
     else demoteToLegacy("body-shape-rejected", "unsupported ordinary descriptor member");
     const type = cx.builder.typeOf(value);
-    const boxed = boundaryBox(value, type, cx);
+    const boxed = boundaryBox(value, type, cx, true);
     if (type.kind === "closure") value = cx.builder.emitCallablePack(value, type.signature);
     else if (boxed !== null) value = boxed;
     else if (asVal(type)?.kind === "f64") value = cx.builder.emitBox(value, irDynamic(JS_TAG_IDS.NumberF64));
@@ -17269,6 +17269,19 @@ function analyseCaptures(
 // ---------------------------------------------------------------------------
 
 /**
+ * A number or, where the position admits one (#7354 O1: an ordinary object's member, not a throw), a Boolean crossing
+ * into an externref position under the number-boundary projection (the `numericThrow` option): its boundary box, never
+ * a dynamic value, so a program without one stays free of them. `null` everywhere else.
+ */
+function boundaryBox(value: IrValueId, type: IrType, cx: LowerCtx, admitsBoolean: boolean): IrValueId | null {
+  if (cx.numericThrow !== "number-boundary" || type.kind !== "val") return null;
+  if (type.val.kind === "f64" && (type.signed ?? true)) return cx.builder.emitIntrinsic("js.number.box", [value]);
+  if (admitsBoolean && type.val.kind === "i32" && type.val.boolean === true)
+    return cx.builder.emitIntrinsic("js.boolean.box", [value]);
+  return null;
+}
+
+/**
  * Slice 9 (#1169h): lower a `throw <expr>;` statement. The thrown value
  * is coerced to externref (the `__exn` tag's signature is
  * `(externref)`) before the IR `throw` instr.
@@ -17292,18 +17305,6 @@ function analyseCaptures(
  * embedding the throw within a try buffer (where the catch_all wrapping
  * implicitly catches the unreachability).
  */
-/**
- * A number or (#7354 O1) Boolean crossing into an externref position under the number-boundary projection (the
- * `numericThrow` option): its boundary box, never a dynamic value, so a program without one stays free of them.
- * `null` everywhere else.
- */
-function boundaryBox(value: IrValueId, type: IrType, cx: LowerCtx): IrValueId | null {
-  if (cx.numericThrow !== "number-boundary" || type.kind !== "val") return null;
-  if (type.val.kind === "f64" && (type.signed ?? true)) return cx.builder.emitIntrinsic("js.number.box", [value]);
-  if (type.val.kind === "i32" && type.val.boolean === true) return cx.builder.emitIntrinsic("js.boolean.box", [value]);
-  return null;
-}
-
 function lowerThrowStatement(stmt: ts.ThrowStatement, cx: LowerCtx): void {
   if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== stmt) {
     withNodeSourceSite(cx, stmt, () => lowerThrowStatement(stmt, cx));
@@ -17314,7 +17315,7 @@ function lowerThrowStatement(stmt: ts.ThrowStatement, cx: LowerCtx): void {
   }
   const value = lowerExpr(stmt.expression, cx, irVal({ kind: "externref" }));
   const valueType = cx.builder.typeOf(value);
-  const boxed = asVal(valueType)?.kind === "f64" ? boundaryBox(value, valueType, cx) : null;
+  const boxed = boundaryBox(value, valueType, cx, false);
   if (boxed !== null) {
     cx.builder.emitThrow(boxed);
     return;
