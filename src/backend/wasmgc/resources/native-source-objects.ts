@@ -2,18 +2,19 @@
 /**
  * (#7354 O1) The public source-object functions on the realm. A source program reaches an ordinary object only
  * through the `js.object.*` contracts (`ordinary-object-callables.ts`); each contract it calls binds one function
- * here, whose signature is the contract's and whose algorithm is the realm's own:
- *   - `define-data` is the descriptor pack's public define, bound as it is, and (#7354 O4) `create-type-error` the
- *     invocation substrate's TypeError constructor;
- *   - `create-default` and `get` are adapters (`source-object-bodies.ts`) over the storage pack and the builtin-object
- *     kernel;
- *   - (#7352 arrays) `create-array`, `get-index`, `set-index` and `set-length` act on the kernel's Array exotic
- *     object (`array-exotic-bodies.ts`, `array-index-bodies.ts`, `array-length-bodies.ts`) and share the helper
- *     functions of `HELPERS`.
+ * here, whose signature is the contract's and whose algorithm is the realm's own. A row either
+ *   - adapts the realm (`create-default`, `get`): a function this module reserves, with the contract's signature
+ *     and a body (`source-object-bodies.ts`) over the storage pack and the builtin-object kernel; or
+ *   - binds a realm function as it is (`define-data`: the descriptor pack's public define; (#7354 O4)
+ *     `create-type-error`: the invocation substrate's TypeError constructor).
+ * (#7352 arrays) `create-array`, `get-index`, `set-index` and `set-length` are adapters on the kernel's Array exotic
+ * object (`array-exotic-bodies.ts`, `array-index-bodies.ts`, `array-length-bodies.ts`); the functions they share
+ * are the `HELPERS` entries, which this pack reserves, fills and completes with its adapters.
  * A contract without a row here has no native source provider yet.
  */
+import type { FuncHandle, ValType } from "../../../wasm/model/instructions.js";
 import type { FunctionReservation, PhysicalModuleReservations } from "../../../wasm/physical/module-reservations.js";
-import type { ValType } from "../../../wasm/model/instructions.js";
+import type { OrdinaryObjectRuntimeFeature } from "../../../ir/runtime/contracts/manifest.js";
 import { buildArrayCreateDefinition } from "../../../runtime/wasmgc/values/array-exotic-bodies.js";
 import {
   buildArrayGetIndexDefinition,
@@ -22,7 +23,6 @@ import {
 import { buildArraySetLengthDefinition } from "../../../runtime/wasmgc/values/array-length-bodies.js";
 import { buildStringIndexKeyDefinition } from "../../../runtime/wasmgc/values/string-index-key-body.js";
 import { buildVectorGrowStoreBody } from "../../../runtime/wasmgc/values/vector-grow-store.js";
-import type { OrdinaryObjectRuntimeFeature } from "../../../ir/runtime/contracts/manifest.js";
 import {
   buildSourceObjectCreateDefinition,
   buildSourceObjectGetDefinition,
@@ -38,6 +38,13 @@ import type { NativeObjectDescriptorReservations } from "./native-object-descrip
 import type { NativeObjectLayoutReservations } from "./native-object-layouts.js";
 import type { NativeObjectStorageReservations } from "./native-object-storage.js";
 
+export interface NativeSourceObjectDependencies {
+  readonly layouts: NativeObjectLayoutReservations;
+  readonly storage: NativeObjectStorageReservations;
+  readonly descriptors: NativeObjectDescriptorReservations;
+  readonly kernel: NativeBuiltinFunctionReservations;
+  readonly errors: NativeErrorReservations;
+}
 const EXTERNREF = { kind: "externref" } as const;
 const I32 = { kind: "i32" } as const;
 /** An index or a length: an f64. */
@@ -50,7 +57,7 @@ interface Signature {
 const arrayOperands = ({ kernel }: NativeSourceObjectDependencies, tx: PhysicalModuleReservations) =>
   nativeBuiltinFunctionArrayOperands(tx, kernel) ?? fail("array contract without the realm's array layout");
 
-/** A function several adapters call: its signature over the element vector's type, and its body. */
+/** (#7352 arrays) A function several adapters call: its signature over the element vector's type, and its body. */
 interface Helper {
   readonly signature: (vectorTypeIdx: number) => Signature;
   readonly body: (
@@ -58,7 +65,7 @@ interface Helper {
     tx: PhysicalModuleReservations,
   ) => SourceObjectDefinition;
 }
-/** (#7352 arrays) The helpers of the array adapters. One is reserved when an adapter that lists it is. */
+/** (#7352 arrays) The helpers of the array adapters. One is reserved when a row that lists it is. */
 const HELPERS = {
   /** (vector, index, value): the shared vector grow/store helper over the element vector, gaps filled with holes. */
   "element-store": {
@@ -96,23 +103,25 @@ type HelperName = keyof typeof HELPERS;
  */
 const INVALID_ARRAY_LENGTH: NativeErrorKind = { name: "RangeError", tag: -12, message: "Invalid array length" };
 
-/** What a body reads at fill time beyond the packs: the transaction and the helpers its row lists. */
-interface AdapterFill {
+/** What an adapter body reads at fill time beyond the packs: the transaction and the helpers its row lists. */
+interface RowFill {
   readonly tx: PhysicalModuleReservations;
-  readonly helper: (name: HelperName) => number;
+  readonly helper: (name: HelperName) => FuncHandle;
 }
-/** One adapter: the contract signature it reserves, its body over the realm's packs, and what else it needs. */
-interface Adapter {
-  readonly signature: Signature;
-  readonly body: (dependencies: NativeSourceObjectDependencies, fill: AdapterFill) => SourceObjectDefinition;
-  /** (#7352 arrays) The body acts on an `$Array`: the realm declares that layout when the contract is used. */
-  readonly array?: true;
-  readonly helpers?: readonly HelperName[];
-  /** String literals the body reads; the realm's literal plan declares them with the contract. */
-  readonly literals?: readonly string[];
-}
-/** The adapters this module owns. A new realm-served contract is one row. */
-const ADAPTERS = {
+/** An adapter (the contract signature it reserves, its body over the realm's packs) or a bound realm function. */
+type Row =
+  | {
+      readonly signature: Signature;
+      readonly body: (dependencies: NativeSourceObjectDependencies, fill: RowFill) => SourceObjectDefinition;
+      /** (#7352 arrays) The body acts on an `$Array`: the realm declares that layout when the contract is used. */
+      readonly array?: true;
+      readonly helpers?: readonly HelperName[];
+      /** String literals the body reads; the realm's literal plan declares them with the contract. */
+      readonly literals?: readonly string[];
+    }
+  | { readonly binds: (dependencies: NativeSourceObjectDependencies) => FunctionReservation };
+/** The contracts the realm serves. A new realm-served contract is one row. */
+const ROWS = {
   "js.object.create-default": {
     signature: { params: [], results: [EXTERNREF] },
     body: ({ layouts, storage, kernel }) =>
@@ -122,6 +131,8 @@ const ADAPTERS = {
         createWithPrototype: storage.createWithPrototype.handle,
       }),
   },
+  "js.object.define-data": { binds: ({ descriptors }) => descriptors.defineData },
+  "js.object.create-type-error": { binds: ({ errors }) => errors.newTypeError },
   "js.object.get": {
     signature: { params: [EXTERNREF, EXTERNREF, EXTERNREF], results: [EXTERNREF] },
     body: ({ kernel }) => buildSourceObjectGetDefinition({ get: kernel.functions.get.handle }),
@@ -167,47 +178,77 @@ const ADAPTERS = {
         ],
       }),
   },
-} as const satisfies Readonly<Record<string, Adapter>>;
-type Adapted = keyof typeof ADAPTERS;
-const isAdapted = (feature: OrdinaryObjectRuntimeFeature): feature is Adapted => Object.hasOwn(ADAPTERS, feature);
-const adapter = (feature: Adapted): Adapter => ADAPTERS[feature];
+} as const satisfies Readonly<Partial<Record<OrdinaryObjectRuntimeFeature, Row>>>;
+/** A contract the realm serves. */
+export type NativeSourceObjectFeature = keyof typeof ROWS;
+const isServed = (feature: OrdinaryObjectRuntimeFeature): feature is NativeSourceObjectFeature =>
+  Object.hasOwn(ROWS, feature);
+const servedKey = (realmKey: string, feature: NativeSourceObjectFeature) => realmKey + ":source-objects:" + feature;
+/** The adapter rows of `features`; a bound row has no body, helpers or literals of its own. */
+const adapterRows = (features: readonly OrdinaryObjectRuntimeFeature[]) =>
+  features.filter(isServed).flatMap((feature) => {
+    const row: Row = ROWS[feature];
+    return "body" in row ? [row] : [];
+  });
 
 /**
- * The reservation key of the function that serves `feature` in the realm keyed `realmKey`, or `undefined` when the
- * contract has no native source provider. The physical plan's binding rows and the reservations below both use it.
+ * The key the program's call rows bind for `feature` in the realm keyed `realmKey`, or `undefined` when the contract
+ * has no native source provider.
  */
 export function nativeSourceObjectResourceKey(
   realmKey: string,
   feature: OrdinaryObjectRuntimeFeature,
 ): string | undefined {
-  if (feature === "js.object.define-data") return realmKey + ":descriptors:define-data";
-  // (#7354 O4) The invocation substrate's errors pack builds the realm's TypeError.
-  if (feature === "js.object.create-type-error") return realmKey + ":invocation-substrate:errors:new-TypeError";
-  return isAdapted(feature) ? realmKey + ":source-objects:" + feature : undefined;
+  return isServed(feature) ? servedKey(realmKey, feature) : undefined;
 }
 /** (#7352 arrays) Whether a contract of `features` acts on an `$Array`. */
 export function nativeSourceObjectsUseArrays(features: readonly OrdinaryObjectRuntimeFeature[]): boolean {
-  return features.some((feature) => isAdapted(feature) && adapter(feature).array === true);
+  return adapterRows(features).some((row) => row.array === true);
 }
 /** The string literals the adapters of `features` read. */
 export function nativeSourceObjectLiterals(features: readonly OrdinaryObjectRuntimeFeature[]): readonly string[] {
-  return features.filter(isAdapted).flatMap((feature) => adapter(feature).literals ?? []);
+  return adapterRows(features).flatMap((row) => row.literals ?? []);
 }
 
-export interface NativeSourceObjectDependencies {
-  readonly layouts: NativeObjectLayoutReservations;
-  readonly storage: NativeObjectStorageReservations;
-  readonly descriptors: NativeObjectDescriptorReservations;
-  readonly kernel: NativeBuiltinFunctionReservations;
-  readonly errors: NativeErrorReservations;
+/** The function serving one called contract, under the key its call rows bind. */
+export interface NativeSourceObjectFunction {
+  readonly feature: NativeSourceObjectFeature;
+  readonly key: string;
+  readonly token: FunctionReservation;
+}
+/** (#7352 arrays) A helper function the served adapters share. */
+export interface NativeSourceObjectHelper {
+  readonly name: HelperName;
+  readonly token: FunctionReservation;
 }
 export interface NativeSourceObjectReservations {
-  readonly adapters: ReadonlyMap<Adapted, FunctionReservation>;
-  readonly helpers: ReadonlyMap<HelperName, FunctionReservation>;
+  /** One row per contract the program calls, in contract order. */
+  readonly served: readonly NativeSourceObjectFunction[];
+  /** The helpers the served adapters list, in name order. */
+  readonly helpers: readonly NativeSourceObjectHelper[];
+}
+interface Owner {
+  readonly tx: PhysicalModuleReservations;
   readonly dependencies: NativeSourceObjectDependencies;
+  readonly identities: NativeSourceObjectDependencies;
+  filled: boolean;
+}
+const owners = new WeakMap<NativeSourceObjectReservations, Owner>();
+function fail(detail: string): never {
+  throw new Error("native source objects: " + detail);
+}
+function requireOwner(tx: PhysicalModuleReservations, pack: NativeSourceObjectReservations): Owner {
+  const owner = owners.get(pack);
+  if (!owner || owner.tx !== tx) fail("foreign or copied owner");
+  for (const key of Object.keys(owner.identities) as (keyof NativeSourceObjectDependencies)[])
+    if (owner.dependencies[key] !== owner.identities[key]) fail("substituted dependency identity");
+  return owner;
 }
 
-/** One adapter per adapted contract the program calls, and the helpers those list; `define-data` needs none. */
+/**
+ * A function per served contract the program calls (an adapter reserved here, or the realm function a row binds),
+ * and one per helper those adapters list.
+ */
 export function reserveNativeSourceObjectResources(
   tx: PhysicalModuleReservations,
   realmKey: string,
@@ -216,32 +257,62 @@ export function reserveNativeSourceObjectResources(
 ): NativeSourceObjectReservations {
   const reserve = (key: string, name: string, { params, results }: Signature) =>
     tx.reserveFunction(key, name, { params: [...params], results: [...results] });
-  const adapted = [...new Set(features)].filter(isAdapted).sort();
-  const adapters = new Map(
-    adapted.map((feature) => {
-      const key = nativeSourceObjectResourceKey(realmKey, feature)!;
-      return [feature, reserve(key, key, adapter(feature).signature)] as const;
-    }),
-  );
+  const called = [...new Set(features)].filter(isServed).sort();
+  const served = called.map((feature) => {
+    const key = servedKey(realmKey, feature);
+    const row: Row = ROWS[feature];
+    const token = "binds" in row ? row.binds(dependencies) : reserve(key, key, row.signature);
+    return Object.freeze({ feature, key, token });
+  });
   const vector = nativeBuiltinFunctionRequestDependencies(tx, dependencies.kernel.requests).arguments.carrier;
-  const used = [...new Set(adapted.flatMap((feature) => adapter(feature).helpers ?? []))].sort();
-  const helpers = new Map(
-    used.map((name) => {
-      const signature = HELPERS[name].signature(vector.typeIndex);
-      return [name, reserve(realmKey + ":source-objects:" + name, realmKey + ":" + name, signature)] as const;
-    }),
-  );
-  return Object.freeze({ adapters, helpers, dependencies });
+  const listed = [...new Set(adapterRows(called).flatMap((row) => row.helpers ?? []))].sort();
+  const helpers = listed.map((name) => {
+    const token = reserve(
+      realmKey + ":source-objects:" + name,
+      realmKey + ":" + name,
+      HELPERS[name].signature(vector.typeIndex),
+    );
+    return Object.freeze({ name, token });
+  });
+  const pack = Object.freeze({ served: Object.freeze(served), helpers: Object.freeze(helpers) });
+  owners.set(pack, { tx, dependencies, identities: Object.freeze({ ...dependencies }), filled: false });
+  return pack;
+}
+
+/** The functions this pack owns: its adapters and helpers. A bound function stays in its producer's inventory. */
+export function nativeSourceObjectReservationInventory(
+  tx: PhysicalModuleReservations,
+  pack: NativeSourceObjectReservations,
+): readonly FunctionReservation[] {
+  requireOwner(tx, pack);
+  return [
+    ...pack.served.filter((row) => "body" in ROWS[row.feature]).map((row) => row.token),
+    ...pack.helpers.map((row) => row.token),
+  ];
 }
 
 export function fillNativeSourceObjectResources(
   tx: PhysicalModuleReservations,
   pack: NativeSourceObjectReservations,
 ): void {
-  const fill: AdapterFill = { tx, helper: (name) => pack.helpers.get(name)!.handle };
-  for (const [feature, token] of pack.adapters) tx.fillFunction(token, adapter(feature).body(pack.dependencies, fill));
-  for (const [name, token] of pack.helpers) tx.fillFunction(token, HELPERS[name].body(pack.dependencies, tx));
+  const owner = requireOwner(tx, pack);
+  if (owner.filled) fail("duplicate canonical fill");
+  const helper = (name: HelperName) =>
+    (pack.helpers.find((row) => row.name === name) ?? fail("unreserved helper " + name)).token.handle;
+  for (const { feature, token } of pack.served) {
+    const row: Row = ROWS[feature];
+    if ("body" in row) tx.fillFunction(token, row.body(owner.dependencies, { tx, helper }));
+  }
+  for (const { name, token } of pack.helpers) tx.fillFunction(token, HELPERS[name].body(owner.dependencies, tx));
+  owner.filled = true;
 }
-function fail(detail: string): never {
-  throw new Error("native source objects: " + detail);
+
+/** The canonical fill ran, and every served function (adapter or bound) and helper is completed. */
+export function requireCompletedNativeSourceObjects(
+  tx: PhysicalModuleReservations,
+  pack: NativeSourceObjectReservations,
+): NativeSourceObjectReservations {
+  if (!requireOwner(tx, pack).filled) fail("missing canonical fill");
+  for (const { token } of [...pack.served, ...pack.helpers]) tx.assertCompletedReservation(token);
+  return pack;
 }

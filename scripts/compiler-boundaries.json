@@ -13754,7 +13754,7 @@
       "nextBoundary": "Separate pure IR contracts from frontend inventory and physical/backend dependencies."
     },
     {
-      "path": "src/ir/property-key-fold.ts",
+      "path": "src/shared/property-key-fold.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
       "destination": "ir-core",
@@ -17070,6 +17070,11 @@
     },
     {
       "path": "src/ir/program/dynamic-value-legalization.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
+      "path": "src/ir/program/settled-verdict.ts",
       "state": "clean",
       "layer": "ir-program"
     },
