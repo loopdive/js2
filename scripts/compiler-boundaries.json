@@ -15057,14 +15057,6 @@
       "nextBoundary": "Source-owned AST/checker preparation; isolate checker/library identity dependencies before certifying the complete frontend boundary."
     },
     {
-      "path": "src/frontend/eval/realm-eval.ts",
-      "state": "unmigrated",
-      "layer": "mixed-needs-split",
-      "destination": "frontend-ts",
-      "owner": "3518-coordinator",
-      "nextBoundary": "Program-wide proof that an `eval` call names the realm's eval (#7363); isolate the TypeScript and checker dependencies before certifying the complete frontend boundary."
-    },
-    {
       "path": "src/backend/wasmgc/resources/native-source-closures.ts",
       "state": "clean",
       "layer": "backend-wasmgc"
