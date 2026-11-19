@@ -195,8 +195,8 @@ export function legalizeDynamicValues(fn: IrFunction): IrFunction {
           { kind: "unary", op: "i32.eqz", rand: positive, result: instr.result, resultType: instr.resultType },
         ];
       }
-      // (#7354 Fa) The function-value projection (`functionObjectDynamicValue`) boxes a packed callable, an
-      // externref, into the dynamic value; the carrier is that externref itself.
+      // (#7354 Fa, Fb) The function-value projection (`functionObjectDynamicValue`) boxes a packed callable, and a
+      // native closure call boxes its result, an externref, into the dynamic value: the carrier is that externref.
       case "call":
         if (
           instr.target.binding.kind === "runtime" &&
@@ -204,6 +204,14 @@ export function legalizeDynamicValues(fn: IrFunction): IrFunction {
           types.get(instr.args[0]!)?.kind === "callable"
         )
           return admit("function", instr, instr.args[0]!);
+        // INTEGRATION (S8): Fb boxes a native closure call's externref result onto the carrier, but that value has
+        // no carrier kind in Fa/Ty's TYPEOF_KIND, so `typeof` would read it as "function". Refused until a kind exists.
+        if (
+          instr.target.binding.kind === "runtime" &&
+          instr.target.name === IR_DYN_CALL_BOX_FN &&
+          types.get(instr.args[0]!)?.kind === "val"
+        )
+          return gap("box of a native call result (no carrier kind)");
         // A front-end dynamic helper (`__ir_dyn_add`, ...) has no runtime declaration.
         return instr.target.binding.kind === "runtime" &&
           !irRuntimeCallableDeclaration(instr.target) &&
