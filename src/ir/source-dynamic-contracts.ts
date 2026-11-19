@@ -386,10 +386,11 @@ function legalizeSourceDynamicValues(
   if (!nativeDynamicLane(policy)) return functions;
   // (#7354 Str2) Number::toString has one binding on this lane, typed or dynamic (number-to-string-target.ts).
   const retargeted = functions.map(retargetNumberToString);
-  if (!contracted && !retargeted.some(convertsBoxedLiteralToString)) return retargeted;
+  const legalizes = contracted ? () => true : convertsDynamicToString;
+  if (!retargeted.some(legalizes)) return retargeted;
   let legalized: readonly IrFunction[];
   try {
-    legalized = retargeted.map((fn) => legalizeDynamicValues(fn, allocations));
+    legalized = retargeted.map((fn) => (legalizes(fn) ? legalizeDynamicValues(fn, allocations) : fn));
   } catch (error) {
     if (!(error instanceof DynamicValueGap)) throw error;
     throw new IrUnsupportedError("type-resolution-unsupported", "build", error.message);
@@ -399,10 +400,12 @@ function legalizeSourceDynamicValues(
 }
 
 /**
- * (#7354 Str2) A ToString of the dynamic value without a dynamic contract: from-ast boxed a literal operand into it
- * (`String(null)`, `String(undefined)`), and only the legalization expresses that ToString on this lane.
+ * (#7354 Str2) A ToString of the dynamic value in a program without a dynamic contract. from-ast boxes an operand
+ * into the dynamic value when it has no primitive representation (a literal `null` or `undefined`, `String(null)`),
+ * and only the legalization expresses that ToString on this lane, whatever the operand was. Only such a function is
+ * legalized: without a contract no dynamic value crosses a function boundary, so the others keep their path.
  */
-function convertsBoxedLiteralToString(fn: IrFunction): boolean {
+function convertsDynamicToString(fn: IrFunction): boolean {
   let found = false;
   for (const block of fn.blocks)
     for (const root of block.instrs) forEachInstrDeep(root, (i) => (found ||= i.kind === "dyn.to_string"));
