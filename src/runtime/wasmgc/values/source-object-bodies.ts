@@ -14,20 +14,28 @@ export interface SourceObjectDefinition {
  * `js.object.create-default`: OrdinaryObjectCreate(%Object.prototype%) with an explicit link to the realm's
  * Object.prototype, so a lookup never meets the storage's implicit-prototype state.
  */
-export function buildSourceObjectCreateDefinition(d: {
+export function buildSourceObjectCreateDefinition(d: SourceObjectCreateOperands): SourceObjectDefinition {
+  return { locals: [], body: sourceObjectCreate(d, [{ op: "call", funcIdx: d.objectPrototype }]) };
+}
+export interface SourceObjectCreateOperands {
   readonly objectTypeIdx: TypeHandle;
   readonly objectPrototype: FuncHandle;
   readonly createWithPrototype: FuncHandle;
-}): SourceObjectDefinition {
-  return {
-    locals: [],
-    body: [
-      { op: "call", funcIdx: d.objectPrototype },
-      { op: "any.convert_extern" },
-      { op: "ref.cast", typeIdx: d.objectTypeIdx },
-      { op: "call", funcIdx: d.createWithPrototype },
-    ],
-  };
+}
+/**
+ * OrdinaryObjectCreate(proto) for an ordinary `proto` (an externref): `create-default` passes the realm's
+ * Object.prototype, (#7354 C) `construct` the constructor's `prototype`.
+ */
+export function sourceObjectCreate(
+  d: Pick<SourceObjectCreateOperands, "objectTypeIdx" | "createWithPrototype">,
+  prototype: readonly Instr[],
+): Instr[] {
+  return [
+    ...prototype,
+    { op: "any.convert_extern" },
+    { op: "ref.cast", typeIdx: d.objectTypeIdx },
+    { op: "call", funcIdx: d.createWithPrototype },
+  ];
 }
 
 /**

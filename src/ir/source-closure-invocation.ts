@@ -8,7 +8,8 @@ import { irIntrinsicFuncRef } from "./core/callable-bindings.js";
 import {
   IR_CLOSURE_VECTOR_APPLY,
   IR_CLOSURE_UNDEFINED,
-  irClosureMethodReference,
+  IR_CLOSURE_METHOD_PREFIX,
+  irArityCallableReference,
 } from "./core/closure-invocation-callables.js";
 import { IrUnsupportedError } from "./outcomes.js";
 import { assertSourceClosureInvocationEffects } from "./source-closure-invocation-effects.js";
@@ -146,7 +147,11 @@ export function lowerSourceClosureInvocation(
   });
   const value =
     plan.method === "call"
-      ? builder.emitCall(irClosureMethodReference(args.length), [receiver, external, ...args], extern)
+      ? builder.emitCall(
+          irArityCallableReference(IR_CLOSURE_METHOD_PREFIX, args.length),
+          [receiver, external, ...args],
+          extern,
+        )
       : builder.emitCall(
           irIntrinsicFuncRef(IR_CLOSURE_VECTOR_APPLY),
           [external, receiver, builder.emitVecNewFixed(args, extern, irVec(extern, false))],

@@ -7,7 +7,7 @@ import type { IrFunctionBuilder } from "./builder.js";
 import type { IrImportedCallLoweringPlan, IrTopLevelFunctionValueLoweringPlan } from "./ast-lowering-plans.js";
 import type { IrFunctionMemberClosures } from "./function-member-closure-plan.js";
 import { irRuntimeFuncRef } from "./callable-bindings.js";
-import { irClosureMethodReference } from "./core/closure-invocation-callables.js";
+import { IR_CLOSURE_METHOD_PREFIX, irArityCallableReference } from "./core/closure-invocation-callables.js";
 import type { IrUnitId } from "./identity.js";
 import { JS_TAG_IDS } from "./runtime/js-tag-domain.js";
 import { asVal, irDynamic, irVal, type IrType, type IrValueId } from "./nodes.js";
@@ -288,7 +288,7 @@ function applyNativeClosureCall(
     builder.emitCoerceToExternref(functionObjectDynamicValue(cx.lowerExpression(argument), argument, cx)),
   );
   const result = builder.emitCall(
-    irClosureMethodReference(args.length),
+    irArityCallableReference(IR_CLOSURE_METHOD_PREFIX, args.length),
     [builder.emitCoerceToExternref(receiver), calleeCarrier, ...args],
     external,
   );

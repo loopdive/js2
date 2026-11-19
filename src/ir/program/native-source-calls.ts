@@ -45,6 +45,8 @@ export interface SourceCall<F extends RuntimeFeature> {
   readonly semanticOccurrence: number;
   readonly ownerUnitId: IrUnitId;
   readonly feature: F;
+  /** The symbol the call names: its feature, or one member `<feature>:N` of an arity family. */
+  readonly symbol: string;
 }
 
 interface Row<F extends RuntimeFeature> {
@@ -156,11 +158,14 @@ export function pairedSourceCalls<F extends RuntimeFeature>(
       for (const [row, semanticOccurrence] of pairs) {
         const mismatch = nativeAsyncCallMismatch(row.call, row.declaration, types);
         if (mismatch) fail("call differs from its canonical declaration: " + mismatch);
+        const { binding } = row.declaration.ref;
+        if (binding.kind !== "intrinsic") fail("source call declaration is not an intrinsic");
         calls.push({
           occurrence: row.occurrence,
           semanticOccurrence,
           ownerUnitId: owner.unitId,
           feature: row.declaration.feature,
+          symbol: binding.symbol,
         });
       }
     }

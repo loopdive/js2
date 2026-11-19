@@ -215,7 +215,7 @@ export function planNativeSourceObjectSetup(
   if (!realm || uses.length === 0) return { setup: undefined, gaps: [] };
   const gaps: { detail: string; unitId: IrUnitId }[] = [];
   const served = uses.flatMap((use) => {
-    const resourceKey = nativeSourceObjectResourceKey(realm.description.key, use.feature);
+    const resourceKey = nativeSourceObjectResourceKey(realm.description.key, use);
     if (resourceKey === undefined) {
       gaps.push({ detail: `${use.feature} has no native source provider`, unitId: use.ownerUnitId });
       return [];

@@ -6,7 +6,8 @@ import { irIntrinsicFuncRef } from "../core/callable-bindings.js";
 import {
   IR_CLOSURE_UNDEFINED,
   IR_CLOSURE_VECTOR_APPLY,
-  closureMethodArity,
+  IR_CLOSURE_METHOD_PREFIX,
+  arityCallableArity,
 } from "../core/closure-invocation-callables.js";
 import type { IrRuntimeCallableDeclaration } from "./callable-declarations.js";
 
@@ -20,7 +21,7 @@ const VECTOR: IrType = Object.freeze({ kind: "vec", elementType: EXTERNAL, nulla
 export function irClosureInvocationCallableDeclaration(ref: IrFuncRef): IrRuntimeCallableDeclaration | undefined {
   if (ref.binding.kind !== "intrinsic") return undefined;
   const { symbol } = ref.binding;
-  const arity = closureMethodArity(symbol);
+  const arity = arityCallableArity(IR_CLOSURE_METHOD_PREFIX, symbol);
   const kind =
     arity !== undefined
       ? "method"

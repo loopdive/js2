@@ -439,12 +439,13 @@ function reserveKernelResources(tx: PhysicalModuleReservations, pack: NativeReal
     descriptorDependencies,
   };
   const kernel = reserveNativeBuiltinFunctionResources(tx, kernelDependencies);
-  const sourceObjects = reserveNativeSourceObjectResources(
-    tx,
-    key,
-    pack.requirements.description.sourceCalls.map((call) => call.feature),
-    { layouts, storage, descriptors, kernel, errors: pack.substrate.errors },
-  );
+  const sourceObjects = reserveNativeSourceObjectResources(tx, key, pack.requirements.description.sourceCalls, {
+    layouts,
+    storage,
+    descriptors,
+    kernel,
+    errors: pack.substrate.errors,
+  });
   return {
     equality,
     booleans,

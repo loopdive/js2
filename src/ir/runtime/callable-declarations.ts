@@ -42,6 +42,12 @@ import {
   ordinaryObjectCallablePolicyMismatch,
   irOrdinaryObjectCallableDeclaration,
 } from "./ordinary-object-callables.js";
+import {
+  FUNCTION_OBJECT_RUNTIME_PROVIDERS,
+  functionObjectProviderMismatch,
+  functionObjectCallablePolicyMismatch,
+  irFunctionObjectCallableDeclaration,
+} from "./function-object-callables.js";
 
 import {
   DYNAMIC_VALUE_RUNTIME_PROVIDERS,
@@ -115,6 +121,7 @@ export function irRuntimeCallableDeclaration(ref: IrFuncRef): IrRuntimeCallableD
     : (irNativeAsyncCallableDeclaration(ref) ??
         irVectorCallableDeclaration(ref) ??
         irOrdinaryObjectCallableDeclaration(ref) ??
+        irFunctionObjectCallableDeclaration(ref) ??
         irNumberConversionCallableDeclaration(ref) ??
         irNumberRemainderCallableDeclaration(ref) ??
         irClosureInvocationCallableDeclaration(ref));
@@ -125,6 +132,7 @@ export const SEMANTIC_CALLABLE_RUNTIME_PROVIDERS: readonly RuntimeProviderDefini
   ...NATIVE_ASYNC_CALLABLE_RUNTIME_PROVIDERS,
   ...VECTOR_CALLABLE_RUNTIME_PROVIDERS,
   ...ORDINARY_OBJECT_RUNTIME_PROVIDERS,
+  ...FUNCTION_OBJECT_RUNTIME_PROVIDERS,
   ...NUMBER_REMAINDER_RUNTIME_PROVIDERS,
   ...NUMBER_CONVERSION_RUNTIME_PROVIDERS,
   ...DYNAMIC_VALUE_RUNTIME_PROVIDERS,
@@ -135,6 +143,7 @@ export function semanticCallableProviderMismatch(provider: RuntimeProviderDefini
     nativeAsyncProviderMismatch(provider) ??
     vectorProviderMismatch(provider) ??
     ordinaryObjectProviderMismatch(provider) ??
+    functionObjectProviderMismatch(provider) ??
     numberRemainderProviderMismatch(provider) ??
     dynamicValueProviderMismatch(provider)
   );
@@ -148,5 +157,6 @@ export function semanticCallablePolicyMismatch(
     ? nativeAsyncCallablePolicyMismatch(feature, policy)
     : (vectorCallablePolicyMismatch(feature, policy) ??
         ordinaryObjectCallablePolicyMismatch(feature, policy) ??
+        functionObjectCallablePolicyMismatch(feature, policy) ??
         dynamicValuePolicyMismatch(feature, policy));
 }

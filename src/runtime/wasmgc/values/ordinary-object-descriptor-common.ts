@@ -12,6 +12,8 @@ export const ORDINARY_OBJECT_DESCRIPTOR_ENCODING = Object.freeze({
   sealed: 2,
   frozen: 4,
   nullPrototype: 128,
+  /** (#7354 C) Object flags of a function's bag: the function has [[Construct]] (`js.function.init`). */
+  hasConstruct: 256,
   noneHeap: -18,
   writableSpecified: 8,
   enumerableSpecified: 16,

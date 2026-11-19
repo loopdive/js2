@@ -3,7 +3,8 @@ import type { AllocSiteId, IrInstr, IrStringLengthProvider } from "../../../ir/c
 import {
   IR_CLOSURE_VECTOR_APPLY,
   IR_CLOSURE_UNDEFINED,
-  closureMethodArity,
+  IR_CLOSURE_METHOD_PREFIX,
+  arityCallableArity,
 } from "../../../ir/core/closure-invocation-callables.js";
 import type { IrStringEncoding, IrStringConcatMode } from "../../../ir/core/string-types.js";
 import type { IrFuncRef, IrGlobalRef } from "../../../ir/core/value-references.js";
@@ -314,7 +315,7 @@ export function planNativeStringValuePhysical(
         instruction.target.binding.kind === "intrinsic" &&
         (instruction.target.binding.symbol === IR_CLOSURE_VECTOR_APPLY ||
           instruction.target.binding.symbol === IR_CLOSURE_UNDEFINED ||
-          closureMethodArity(instruction.target.binding.symbol) !== undefined)
+          arityCallableArity(IR_CLOSURE_METHOD_PREFIX, instruction.target.binding.symbol) !== undefined)
       );
     });
   const dynamicValues = selectNativeDynamicValues(

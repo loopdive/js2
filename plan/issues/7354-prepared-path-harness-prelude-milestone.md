@@ -59,7 +59,11 @@ related: [7188, 2949, 3526, 3527, 3518, 7106, 7349, 7350, 7352]
 # (the record lives beside the consumer-private observation map; the slot computation, `nativeRealmCompletedSlots`,
 # lives in native-realm.ts) and the imports. The two native binding lists fold through `plannedNativeCallBindings`
 # (program-physical-plan.ts) instead of growing each.
+# 2026-11-19 (slice C, step C1 realm side): src/ir/runtime/manifest.ts +4, the registration of the `js.function.*`
+# contract family (`function-object-callables.ts`): its features and provider ids in the manifest's FEATURE_SET and
+# PROVIDER_ID_SET and their two imports, one row each beside the ordinary-object family.
 loc-budget-allow:
+  - src/ir/runtime/manifest.ts
   - src/ir/program-consumer.ts
   - src/ir/program-physical-plan.ts
   - src/compiler.ts
@@ -3070,3 +3074,38 @@ Named gaps: a dynamic call in a program with no source closure (no dispatcher: `
 function materialization`), spread arguments, `new`, method calls and `fn.call` / `fn.apply` on a dynamic value
 (slice C), a receiver other than `undefined` (`this`, slice C).
 
+
+## C1, realm side: the function-object family as pure bodies (2026-11-19, branch `claude/7354-c-fn`)
+
+Built and unit-tested, not wired into the program pipeline (the realm's per-family use collection is being rebuilt
+on `claude/7354-c-calls`; this family joins it as one row).
+
+- **Kernel source arm.** `match` answers `entries.length + 1` (`sourceClosureOrdinal`) for a value that passes
+  `ref.test` of the closure root and fails `ref.test` of every builtin metadata type. The exclusion is what keeps a
+  clone, a forgery or a bare metadata struct at 0 (all metadata subtypes); `requireSourceMetadataSeparation` is the
+  layout guarantee behind it. `getPrototypeOf` answers %Function.prototype% for it, `setPrototypeOf` status 3. A
+  source closure used as a getter keeps answering status 3 in `EntryGet`, because `callVector` has no source arm.
+- **`callVector` on a source closure stays a TypeError.** There is no reservation cycle (the consumer reserves the
+  invocation before the realm kernel), but the kernel has no path to the apply-vector: the apply-vector is reserved
+  only when the program has an apply-vector use, the kernel's dependency record (five authenticated keys) carries no
+  invocation pack, and the kernel harness has none. Reaching it means the realm requiring the apply-vector whenever it
+  has source closures and passing the invocation into the kernel: wiring, so left for the wiring step.
+- **Contracts** (`src/ir/runtime/function-object-callables.ts`): `js.function.is-callable`, `init`, `construct:N`,
+  `has-instance`, `this`. `construct:N` and `js.closure.call:N` share `irArityCallableReference` /
+  `arityCallableArity` (the closure-only pair became prefix-parameterised).
+- **Adapters** (`native-source-objects.ts` rows, bodies in `source-function-object-bodies.ts`): over the kernel's own
+  operand record (`nativeBuiltinFunctionOperands`), the invocation's `js.closure.call:N`, `__current_this` and
+  `isUndefined`. Reused instead of copied: the length/name seeding (`buildFunctionLengthNameSeed`, now shared with the
+  builtin initializer), the heterogeneous [[GetPrototypeOf]] step (`buildBuiltinFunctionParentStep`, now shared with
+  `setPrototypeOf`'s cycle walk), OrdinaryObjectCreate (`sourceObjectCreate`, shared with `create-default`), the
+  TypeError throw (`builtinTypeError`).
+- **[[Construct]] is recorded in the bag's object flags** (`hasConstruct`, bit 256 beside nullPrototype 128), set by
+  `init`: the closure struct has no spare field, and the bag's flags already are the function object's flags.
+- **Named gaps.** `new` with a function-valued `prototype` (an ordinary object's [[Prototype]] field cannot hold a
+  closure); sloppy `this` of `undefined` / `null` (needs `js.realm.global_object`, S5) and of a primitive (needs
+  ToObject). has-instance traps on an object whose null link is the storage's implicit parent: no object a source
+  program reaches has one.
+- **Wiring still owed:** the family's uses in the realm's source-call collection; the invocation pack in the realm's
+  adapter dependencies (`invocation`); `js.closure.call:N` selected for every `construct:N` arity; the adapter strings
+  (`NATIVE_SOURCE_FUNCTION_LITERALS`) in the realm literal plan; the family in `intrinsic-preparation.ts`'s runtime
+  call census.
