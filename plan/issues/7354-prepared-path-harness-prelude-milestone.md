@@ -3247,6 +3247,11 @@ Branch `claude/7354-json` (`093a410582` = `claude/7354-ty-r2` + merge of `claude
 were read from this head and from `origin/claude/7354-integration` (`87655f3f65`) with `git show`; only the probes
 named here were run. Probes: `.tmp/j-probe*.mts` (IR dump through a loader hook, `.tmp/dvl-wrap.ts`).
 
+**Re-checked on the merged head (`a3793425eb` = this branch + `origin/claude/7354-integration` `9426e5e1c2`).**
+Where the code differs from this plan, "J result" below says what was built instead: the legalization had already
+grown past the size this plan set for moving the builder out (section 3), a concrete operand is not boxed
+(section 1), and the lead's decision on risk 1 made the abort one shared intrinsic.
+
 ### 1. How `JSON.stringify(v)` lowers today
 
 - **from-ast** (`src/ir/from-ast.ts:9747-9767`): a one-argument call on the ambient `JSON` lowers the argument with a
@@ -3457,6 +3462,147 @@ This is Ty's `expectLikeNode`.
      verifier about 15, string-values wiring about 5).
    - Tests: about 250 lines.
    - It fits in one slice only if questions 1 and 3 do not grow it.
+
+## J result (2026-11-19, branch `claude/7354-json`)
+
+Built on the merge of `origin/claude/7354-integration` (`9426e5e1c2`) into this branch (`a3793425eb`). Lead
+decisions taken: J is developed on the integration branch, and ToString's `function` row becomes the same run-time
+abort as JSON's unsupported kinds.
+
+### What was built
+
+- **Table.** `JSON_ARM` in `src/ir/program/dynamic-value-kinds.ts`, beside `TO_STRING_ARM`. Rows: `string` quote,
+  `number` number, `boolean` and `null` to-string, `undefined` undefined, `object` and `function` unsupported.
+  `TO_STRING_ARM.function` is `unsupported` now; the `refused` value left that table, since no row used it.
+- **Builder.** `dynamicJsonStringify` in the new `src/ir/program/dynamic-json-stringify.ts`, beside
+  `dynamic-member-read.ts`. It is one `kindChain` over `kindsOf(value)` into the carrier. Each text arm makes a
+  native string, and one `coerce.to_externref` wraps it. The `undefined` arm is `js.value.undefined`. The number arm
+  unboxes and tests `n - n == 0`: a finite number goes to the formatter, anything else is `"null"`.
+- **Shared pieces.** `formatNumber` is split out of ToString's `format` arm, so both callers use the one formatter
+  binding. One builders object (`shared`) now serves the member read and the JSON builder; it replaces the member
+  read's inline copy.
+- **Intrinsics.** Two, each with a row in every file of the `is_number` pattern: vocabulary, definition, feature,
+  provider id, symbol and canonical ABI row.
+  - `js.value.json_quote`: `(externref) -> string`, runtime function `__json_quote_string`.
+  - `js.value.unsupported`: `() -> string`, runtime function `__js_value_unsupported`.
+- **Resources.** In `native-dynamic-values.ts`:
+  - The quote body is `buildJsonQuoteStringDefinition` from `json-bodies.ts`. It is imported, not copied, and its
+    run-length locals are expanded at the fill.
+  - The abort body is `unreachable`.
+  - `NativeDynamicValueStrings` is `{ layout, flatten, equals? }`. Strict equality still gets `equals` only when
+    `strictEqStrings` holds, so its body is unchanged.
+- **Front end.** The resolver fact `jsonStringifyResultIsDynamic` is set only on the Prepared native lane
+  (`programDynamicContracts().resolver`). from-ast asks it through `jsonStringifyResult(cx)`, and
+  `emitDynJsonStringify` takes the result type. The ordinary resolver does not set the fact, so its IR stays `string`.
+  `dialect/js.ts` documents both lanes.
+- **Boundaries.** `src/ir/program/dynamic-json-stringify.ts` is classified `clean` / `ir-program` in
+  `scripts/compiler-boundaries.json`.
+- **Size.** In `src/`: 211 lines added and 44 removed, doc comments included; the new module is 72 of them. The plan
+  estimated about 110.
+
+### Deviations from the plan
+
+1. **One abort intrinsic instead of a `js.value.unsupported:<operation>` family.** The intrinsic vocabulary is a
+   closed `Record`, with no parameterised ids. A per-operation family would need its own resolution in six files.
+   A trap's stack already names the calling function after `__js_value_unsupported` (for example `at f`, or
+   `at <module-init>`). So both users share one id, under a name that does not say "json".
+2. **The abort returns `string`, not `externref`** (new `NULLARY_TO_STRING_INTRINSIC_SIGNATURE`). Both users take a
+   string from the arm the abort replaces: ToString's chain, and JSON's text arms before their wrap. So no
+   placeholder value follows the trap.
+3. **The builder lives in its own module.** `legalizationBuilders` was already 281 lines on the merged head, past the
+   plan's threshold of about 220 for moving out.
+4. **`verify.ts` is unchanged.** It checks only the operand of `dyn.json_stringify`.
+5. **A concrete operand is not boxed.** `JSON.stringify(1)` demotes in from-ast with `JSON.stringify of f64
+   operand is deferred`; section 1 was wrong about this. The single-arm path for a box-proven kind is tested at IR
+   level.
+6. **Risk 5 (UTF-8 storage) needs no refusal.** `__str_flatten` always returns the flat WTF-16 `$NativeString`
+   (`native-string-flatten.ts` decodes UTF-8 first).
+
+### Measured
+
+- **Tests.** `tests/issue-7354-j-json-stringify.test.ts` has 38 tests:
+  - 25 primitive operands against node, the right and the wrong program each, among them 12 strings (control
+    characters, lone surrogates, a pair, a concatenated operand) and 9 numbers (−0, NaN, ±Infinity, 1e21, 1e-7);
+  - the `undefined` value read by `typeof` and by `+`;
+  - five operand positions, including assert.js's `formatIdentityFreeValue` as written;
+  - two IR-level single-arm checks;
+  - the abort for an object, for a function value and for ToString of a function: a `WebAssembly.RuntimeError`
+    whose stack names `__js_value_unsupported`, not caught by the program's `try`/`catch`;
+  - a program whose abort arm never runs;
+  - an array operand, which refuses by name (no array enters the carrier yet).
+- **Pins.** Seven new R census tests. Ty's JSON refusal pin is now a run against node. Fa's `String(f)` refusal moved
+  to J's file as the abort. The seam count went from 47 to 49. The ownership pins are updated: the
+  `INTRINSIC_DEFINITIONS` hash, the new signature's hash, the row list and the denominator 95 → 96. D1's selection
+  pin has the two new fields.
+- **Mutations, all killed.** For each one, a J test went red:
+  - quote row → to-string;
+  - finite test removed;
+  - `undefined` row → to-string;
+  - object row → to-string;
+  - abort made catchable (an IR `throw`);
+  - resolver fact removed (the conditional and concatenation positions);
+  - ToString's function row → name.
+- **Ordinary bytes.** 138 programs × (default, `target: "standalone"`), so 276 compiles, against the merge commit:
+  **0 differences** (268 compile, 8 fail to compile on both). The programs: all 66 of `built-ins/JSON/stringify`, all
+  16 of `language/expressions/typeof`, 20 `String(x)` programs, and 36 `JSON.stringify` of an untyped, `any` or
+  guarded parameter.
+- **Harness.** Before J, assert.js's `formatIdentityFreeValue` refused with `dyn.json_stringify`. Now it compiles and
+  answers like node. The assembled `sta.js + assert.js` program still stops first at `instanceof RHS class
+  "Test262Error"` (C1), on the base and with J alike. As section 7 predicted, J alone moves no file.
+- **Broad run.** All 24 `tests/issue-7354-*` files plus 11 neighbouring JSON and vocabulary pins: 1,980 tests in
+  35 files. 46 failed on the first run. One was J's: the `#3526` nullary-call pin, which now lists the abort too.
+  The other 45 fail the same way on the merge commit `a3793425eb`, so they come from integration:
+  - 25 in `3518-provider-verification-ownership`, 9 in `3518-program-validator-relocation`, and the
+    `3518-runtime-contract-evolution` suite;
+  - 2 in `1599` (default mode) and 1 in `2166`;
+  - 2 in Fa × Ty, 1 in C, 1 in Str2 and 1 in Ty;
+  - 3 rows of the Ty census.
+- **The census of the 6,674 files was not re-run.** That census needs the uncommitted stand-in rig ("Function value
+  with own properties: plan", section 2), and one full compile there takes about 13 min.
+
+### Found on the way (all pre-existing on `a3793425eb`, not J's)
+
+- The Ty unit test `answers typeof of a function value in the carrier with a runtime test` fails on the merge commit.
+  It legalizes with `NO_PROGRAM_KINDS` (no functions), so `typeof … === "function"` folds to a constant.
+- **A wrong answer:** `if (typeof (void 0) !== "undefined") throw 1;` at a script's top level throws on the Prepared
+  path. A module-init without a dynamic contract is not legalized.
+- `JSON.stringify(void 0)` in such a module-init refuses by name (`dyn.undefined that no dynamic contract
+  legalized`).
+- `c ? JSON.stringify(v) : "-"` refuses in from-ast: `ternary branches have different types (dynamic vs string)`.
+- The ordinary pipeline answers `JSON.stringify(undefined)` with `"null"` on both targets; filed as
+  [#7405](7405-json-stringify-undefined-ordinary.md).
+- A program with a function value compiles in about 11 s, so J's abort tests carry a 240 s timeout, as Fa's do.
+
+### Next (lead, 2026-11-19)
+
+J is now the first wall of the prelude: 301 of 411 sample rows stop at assert.js:27 after S3's
+OrdinaryToPrimitive. So the `object` row must serialize, not abort. It is to walk the realm kernel's own
+enumerable keys, with no second key walk, on lane S3's `claude/7354-o` (with `claude/7354-o-toprim` `f385ce7f64`)
+and S3's kind API. Until then `JSON_ARM.object` stays `unsupported`.
+
+### Gates
+
+Each gate was run unpiped, output in `.tmp/`:
+
+| gate | exit |
+| --- | ---: |
+| typecheck | 0 |
+| check-loc-budget | 0 |
+| check-func-budget | 0 |
+| check-coercion-sites | 0 |
+| check:oracle-ratchet | 0 |
+| check:dead-exports | 0 |
+| loc, with `LOC_GATE_BASE=origin/main` (`89e4748241`) | 0 |
+| func, with `LOC_GATE_BASE=origin/main` (`89e4748241`) | 0 |
+| check:import-cycles | 0 |
+| check:compiler-boundaries:inventory | 1 |
+
+- **The boundaries inventory is red on the merge commit too, and J adds nothing to it.** The error list is the same
+  on both (84 forbidden-transitive-path, 6 unclassified-target, 2 unclassified-module, 1 unclean-active-layer).
+- **The red comes from integration.** It is the unclassified `src/ir/program/prepared-allocations.ts` and
+  `src/ir/regexp-literal-admission.ts`, and the paths through them.
+- **J needs no growth grant.** `legalizationBuilders` went to 306 lines at first. Sharing one builders object with
+  the member read brought it back under 300.
 
 ## Function value with own properties: plan (split S4 / S11, 2026-11-19)
 
