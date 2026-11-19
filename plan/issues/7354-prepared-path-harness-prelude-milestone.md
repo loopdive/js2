@@ -42,7 +42,7 @@ loc-budget-allow:
   - src/compiler/ir-program-presentation.ts
 import-cycles-allow:
   - backend->ir: 119 # 2026-11-17 (#7354 Str review 2): the native string length emitter reads the selected carrier field through the shared preparedStringLenProvider (ir/runtime/intrinsic-preparation.ts) instead of re-implementing it
-  - ir->runtime: 11 # 2026-11-19 (#7354 Ty review): source-dynamic-contracts.ts reads the realm's global table (runtime/contracts/native-realm-globals.ts, #7350 B2a). runtime/contracts is a leaf (it imports nothing from ir); it is the layer IR reads realm data from, as in 4 of the 10 existing edges (realm-keys.ts and native-realm-requirements.ts read native-realm-catalog.ts, js-tag.ts reads js-value-tags.ts, native-prototype-requirements.ts reads builtin-brands.ts). The pair is two-way only through runtime/standalone-timer-callback-bridge.ts -> ir/async-runtime-providers.ts; no SCC grows
+  - ir->runtime: 12 # 2026-11-19 (#7354 Ty review): source-dynamic-contracts.ts (Prepared typeof of a global) and ambient-typeof.ts (the ordinary lane's typeof fold, whose duplicate tag list it replaces) read the realm's global table (runtime/contracts/native-realm-globals.ts, #7350 B2a). runtime/contracts is a leaf (it imports nothing from ir); it is the layer IR reads realm data from, as in 4 of the 10 existing edges (realm-keys.ts and native-realm-requirements.ts read native-realm-catalog.ts, js-tag.ts reads js-value-tags.ts, native-prototype-requirements.ts reads builtin-brands.ts). The pair is two-way only through runtime/standalone-timer-callback-bridge.ts -> ir/async-runtime-providers.ts; no SCC grows
 ---
 
 # #7354 — Prepared IR path, milestone 1
@@ -2279,6 +2279,9 @@ Fresh-context review on the merge of Ty with main
    - `typeof` of such a name is a constant string, so the legalization trigger for it and
      `PREPARED_PROVIDED_GLOBALS` are gone (`Number` answers "function" from the table);
    - the classifier's kind is `global-typeof` with the resolver's tag (was `absent-global`);
+   - the ordinary lane's duplicate tag list `AMBIENT_TYPEOF_TAGS` (`src/ir/ambient-typeof.ts`) is gone: the
+     selector's and from-ast's fold read `ambientGlobalTypeofTag`, which keeps the 16-name admission set (widening it
+     changes ordinary-lane output) and takes each tag from the same table;
    - consequence: assert.js's `typeof JSON !== "undefined" ? JSON.stringify(v) : …` now lowers its live arm, which
      refuses by name (`dyn.json_stringify has no Prepared intrinsic`); pinned.
    - Pin: every table row except `undefined`/`NaN`/`Infinity` (the classifier answers those earlier) answers its tag
@@ -2292,5 +2295,5 @@ Fresh-context review on the merge of Ty with main
 
 **Stacking.** Branch `claude/7354-ty-r2` (replaces `claude/7354-ty`, whose merge of `claude/7350-b1` brought #7263's
 G1 history with it) is `65d64b13ae` plus a merge of #7350 B2a (`claude/7350-b2a` `ad0a89f013`, PR #7315) and this
-fix. Grant: `ir->runtime` 10 → 11 for the table import (frontmatter). The PR must not release before #7361 and #7315
+fix. Grant: `ir->runtime` 10 → 12 for the two table imports (frontmatter). The PR must not release before #7361 and #7315
 are on main.
