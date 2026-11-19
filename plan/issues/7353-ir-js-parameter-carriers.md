@@ -14,6 +14,10 @@ area: ir
 goal: ir-full-coverage
 depends_on: []
 related: [7349, 7350, 7352, 7342]
+loc-budget-allow:
+  # 2026-11-19 (slice 3, WIP): the storage rule for a JSDoc type literal sits
+  # beside `parameterMayBeOmitted`, the sibling rule `lowerParamType` asks.
+  - src/codegen/declarations.ts
 ---
 
 # #7353 — IR: JavaScript parameter carriers

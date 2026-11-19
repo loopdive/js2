@@ -82,7 +82,7 @@ import { filterResultNeedsDynamicCarrier } from "./array-filter-spec-access.js";
 import { addFunctionOwnLocals } from "../ir/analysis/binding-info.js"; // (#2103) memoized own-locals oracle
 import { dedupeDiagnosticsFrom, reportError } from "./context/errors.js";
 import type { CodegenContext, FunctionContext, OptionalParamInfo } from "./context/types.js";
-import { jsValueBoundary } from "./context/types.js";
+import { hostFreeEnvironment, jsValueBoundary } from "./context/types.js";
 import { usesJsEnvironmentPlatformGlobal } from "./extern-declarations.js";
 import { compileFunctionBody, dumpFrameBreach, registerInlinableFunction } from "./audited-function-body.js";
 import { _hasRuntimeComputedKey, objectLiteralForcesHostPath } from "./literals.js"; // (#3024/#4638) module-global externref routing in lockstep with the literal's own host-path gate
@@ -1133,6 +1133,20 @@ export function parameterMayBeOmitted(param: ts.ParameterDeclaration): boolean {
 }
 
 /**
+ * (#7353) With no JavaScript embedder a JSDoc type literal does not type a JavaScript
+ * parameter's storage. TypeScript builds one from `@param {object} desc` plus
+ * nested `@param [desc.enumerable]` tags; storing it as that literal's struct
+ * gives a caller's object of another shape no slot. The parameter keeps the
+ * dynamic carrier, as a plain `@param {object}` already does, and the IR then
+ * claims it as `dynamic` (`jsDocParamLowersAsExternref`).
+ */
+function jsDocTypeLiteralStoresAsCarrier(ctx: CodegenContext, param: ts.ParameterDeclaration): boolean {
+  if (!hostFreeEnvironment(ctx) || param.type !== undefined) return false;
+  const jsDocType = ts.getJSDocType(param);
+  return jsDocType !== undefined && ts.isJSDocTypeLiteral(jsDocType);
+}
+
+/**
  * (#3268) Lower a single non-rest function parameter to its Wasm ValType.
  * Consolidates the four byte-identical per-parameter lowering blocks
  * (registerBodyless + collectDeclarations, generator and normal arms):
@@ -1163,7 +1177,7 @@ function lowerParamType(
   // scalar representation. Without this, `@param {number=} size` receives
   // `0` from pushDefaultValue and `typeof size`/Number.isNaN guards observe
   // the wrong value (webpack's formatSize is the regression witness).
-  if (nativeParam === null && parameterMayBeOmitted(param)) {
+  if (nativeParam === null && (parameterMayBeOmitted(param) || jsDocTypeLiteralStoresAsCarrier(ctx, param))) {
     wasmType = { kind: "externref" };
   }
   // (#5221) A parameter whose only type evidence is an `undefined` default —
