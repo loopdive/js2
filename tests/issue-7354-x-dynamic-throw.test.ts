@@ -175,7 +175,8 @@ describe("#7354 X — throw and catch with the Prepared dynamic value", () => {
     [
       "a TDZ ReferenceError",
       "function f() { return x; }\ntry { f(); } catch (e) { if (!e) throw 1; }\nlet x = 1;",
-      "runtime callable __new_ReferenceError needs runtime function materialization",
+      // (#7354 O1) The thrown ReferenceError is no carrier kind: the program-wide throw rule refuses it first.
+      "throw of a value outside the dynamic carrier's kinds",
     ],
     [
       "a vector store (the null-vector guard throws a null payload)",
