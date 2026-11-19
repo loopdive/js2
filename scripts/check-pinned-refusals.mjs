@@ -23,7 +23,8 @@ const HELPER = /\b(queryAfterAudit|completionCheck|sealed|expectUnemittable)\(/g
 const git = (...argv) => execFileSync("git", argv, { encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
 const show = (ref, path) => {
   try {
-    return git("show", `${ref}:${path}`);
+    // A file new on HEAD has no base version: skip it quietly.
+    return execFileSync("git", ["show", `${ref}:${path}`], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
   } catch {
     return undefined;
   }
