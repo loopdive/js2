@@ -3332,6 +3332,7 @@ function planIrOverlay(
       implicitParamUsesNumericVecAbi,
       dynamicCarrierDivergesFromLegacy: makeIrDynamicCarrierDivergenceProbe(ctx),
       jsDocParamLowersAsExternref: (parameter) => legacyParamSlotIsExternref(ctx, parameter),
+      resultWidensToDynamic: (fn) => functionReturnsWidenedValue(ctx, fn),
       resolveFnctorAdmission,
       ...(fnctorArgumentProjections.length > 0
         ? {

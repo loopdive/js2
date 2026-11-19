@@ -261,7 +261,7 @@ import {
   type OperandFamily,
   compoundWriteAdmissible,
 } from "./analysis/operand-admissibility.js";
-import { everyYieldedValue } from "./analysis/carrier-expression.js";
+import { everyYieldedValue, producesCarrier } from "./analysis/carrier-expression.js";
 import { isSlotFreeI32IdentityLowered } from "./analysis/i32-slots.js";
 import { selectVecSearchOrJoin, type IrArrayElementFamily } from "./array-methods/selection.js";
 import { selectStaticPredicateCall } from "./static-predicates/selection.js";
@@ -585,6 +585,13 @@ export interface IrSelectionOptions extends IrAsyncSelectionOptions {
    * `abi-signature-parity` guard compares against.
    */
   readonly jsDocParamLowersAsExternref?: (parameter: ts.ParameterDeclaration) => boolean;
+  /**
+   * (#7331) Does legacy register this unannotated function's result as the
+   * dynamic carrier because a returned value's checker type is stale (a
+   * binding written across domains)? The override map gives the IR function
+   * that result whatever the selector resolved from the lattice.
+   */
+  readonly resultWidensToDynamic?: (fn: ts.FunctionDeclaration) => boolean;
   /**
    * Standalone/WASI normally close claims over local callers. A production
    * planner may exempt a callee when its direct callable and IR overlay share
@@ -1900,7 +1907,12 @@ let currentDynamicParamNames = new Set<string>();
  */
 let currentProvenMixedConditionals = new Set<ts.ConditionalExpression>();
 // The current subject's resolved return kind: `concreteResultRecoversDynamic`
-// reads it to recover a dynamic `return` operand into a concrete result.
+// reads it to recover a dynamic `return` operand into a concrete result, and
+// `isPhase1ReturnValue` to refuse a carrier into a number. Module-init,
+// constructor-field and planned-closure walks keep the previous subject's
+// kind, as before #7331. None reaches a carrier `return` (a planned closure
+// refuses a carrier result first, `closure-return-type`), so for the
+// `isPhase1ReturnValue` read a stale kind could only refuse.
 let currentFnReturnKind: ResolvedKind = null;
 // (#7106 S1c) Catch bindings of the current subject: a thrown payload is ALWAYS
 // the boxed-any carrier, never a callback-boundary parameter carrier, so a
@@ -6489,9 +6501,44 @@ function isPhase1BodyStatement(
       return currentFnIsVoidReturn || currentFnIsDynamicReturn ? true : shapeNo("body-return-bare-nonvoid", stmt);
     }
     if (currentFnIsDynamicReturn && isUnshadowedUndefinedIdentifier(stmt.expression, scope)) return true;
-    return isPhase1Expr(stmt.expression, scope, localClasses);
+    return isPhase1ReturnValue(stmt.expression, scope, localClasses);
   }
   return shapeNo("body-unhandled-stmt", stmt);
+}
+
+/**
+ * (#7331) A returned value. A script var in its dynamic home (and a member
+ * read, method call or `+` over one) lowers to the carrier whatever the
+ * checker types it, and `coerceReturnValue` has no carrier-to-number arm, so a
+ * number result refuses it: `function h() { return p.length; }`. Where legacy
+ * widens the result to the carrier (`var n = 1; … n = 'x'; function h() {
+ * return n; }`), the override map gives the IR function that result too,
+ * whatever the lattice says, and the carrier returns as itself.
+ */
+function isPhase1ReturnValue(value: ts.Expression, scope: ReadonlySet<string>, localClasses: ReadonlySet<string>) {
+  if (currentFnReturnKind === "f64" && yieldsModuleCarrier(value) && !resultWidensToDynamic()) {
+    return shapeNo("return-carrier-into-number", value);
+  }
+  return isPhase1Expr(value, scope, localClasses);
+}
+
+function resultWidensToDynamic(): boolean {
+  const subject = currentSelectionSubject;
+  return (
+    subject !== null &&
+    ts.isFunctionDeclaration(subject) &&
+    currentSelectionOptions?.resultWidensToDynamic?.(subject) === true
+  );
+}
+
+const MODULE_CARRIER_LEAVES = {
+  binding: (node: ts.Identifier | ts.ThisExpression) => holdsCarrier(node),
+  call: (call: ts.CallExpression) => (ts.isPropertyAccessExpression(call.expression) ? undefined : false),
+};
+
+/** `value` lowers to the carrier through a script var in its dynamic home. */
+function yieldsModuleCarrier(value: ts.Expression): boolean {
+  return producesCarrier(value, MODULE_CARRIER_LEAVES);
 }
 
 /** (#7106 S3c) The implicit `return;` after a dynamic-return function's trailing statement. */
@@ -6516,7 +6563,7 @@ function isPhase1Tail(
       return isGenerator || isVoidReturn || currentFnIsDynamicReturn ? true : shapeNo("tail-bare-return-nonvoid", stmt);
     // #7104 — `return undefined` in a dynamic-return function.
     if (currentFnIsDynamicReturn && isUnshadowedUndefinedIdentifier(stmt.expression, scope)) return true;
-    return isPhase1Expr(stmt.expression, scope, localClasses);
+    return isPhase1ReturnValue(stmt.expression, scope, localClasses);
   }
   if (ts.isBlock(stmt)) {
     return isPhase1StatementList(stmt.statements, new Set(scope), localClasses, isGenerator, isVoidReturn);
@@ -8376,6 +8423,17 @@ const OBVIOUS_OPERAND_FAMILIES: Record<ObviousModuleValueFamily | "unknown", Ope
   nullish: "nullish",
   unknown: "unknown",
 };
+
+/**
+ * The arms of a conditional over a module value lower to different carriers. A
+ * carrier arm (#7331) is the carrier whatever the checker types it (`c ?
+ * p.length : 0`), and the generic join has no carrier-to-number arm.
+ */
+function moduleValueConditionalArmsDiffer(expr: ts.ConditionalExpression): boolean {
+  if (yieldsModuleCarrier(expr.whenTrue) !== yieldsModuleCarrier(expr.whenFalse)) return true;
+  const whenTrueFamily = obviousModuleValueFamily(expr.whenTrue);
+  return !whenTrueFamily || whenTrueFamily !== obviousModuleValueFamily(expr.whenFalse);
+}
 
 /** Narrow family evidence used only to reject representation mismatches. */
 function obviousModuleValueFamily(expr: ts.Expression): ObviousModuleValueFamily | undefined {
@@ -12788,12 +12846,11 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
       currentProvenMixedConditionals.add(expr);
       return true;
     }
-    if (expressionTouchesTrackedModuleValue(expr.whenTrue) || expressionTouchesTrackedModuleValue(expr.whenFalse)) {
-      const whenTrueFamily = obviousModuleValueFamily(expr.whenTrue);
-      const whenFalseFamily = obviousModuleValueFamily(expr.whenFalse);
-      if (!whenTrueFamily || !whenFalseFamily || whenTrueFamily !== whenFalseFamily) {
-        return shapeNo("expr-module-value-conditional-mismatch", expr);
-      }
+    if (
+      (expressionTouchesTrackedModuleValue(expr.whenTrue) || expressionTouchesTrackedModuleValue(expr.whenFalse)) &&
+      moduleValueConditionalArmsDiffer(expr)
+    ) {
+      return shapeNo("expr-module-value-conditional-mismatch", expr);
     }
     // (#7113) A planned closure's dynamic parameter joined with `undefined` /
     // `null`: the generic tail types the arms `dynamic` vs `dynamic<tag:1>`
