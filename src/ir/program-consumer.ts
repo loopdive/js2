@@ -768,34 +768,6 @@ function reconcileNativeEmission(
   return nativeFunctions;
 }
 
-type CompletedPack<F extends (tx: PhysicalModuleReservations, pack: never) => void> =
-  | Parameters<F>[1]
-  | null
-  | undefined;
-
-/** (#7365) The completion checks after seal only read the layout: one audit, taken after all of them, covers them. */
-function requireCompletedPacks(
-  reservations: PhysicalModuleReservations,
-  packs: {
-    readonly sourceClosures: CompletedPack<typeof requireCompletedNativeSourceClosures>;
-    readonly realm: CompletedPack<typeof requireCompletedNativeRealmBootstrap>;
-    readonly invocationPack: CompletedPack<typeof requireCompletedNativeInvocation>;
-    readonly nativePack: CompletedPack<typeof requireCompletedNativeStringValues>;
-    readonly strings: CompletedPack<typeof requireCompletedNativeStringLiterals>;
-    readonly formatterPack: CompletedPack<typeof requireCompletedNativeNumberFormat>;
-  },
-): void {
-  const { sourceClosures, realm, invocationPack, nativePack, strings, formatterPack } = packs;
-  reservations.audited(() => {
-    if (sourceClosures) requireCompletedNativeSourceClosures(reservations, sourceClosures);
-    if (realm) requireCompletedNativeRealmBootstrap(reservations, realm);
-    if (invocationPack) requireCompletedNativeInvocation(reservations, invocationPack);
-    if (nativePack) requireCompletedNativeStringValues(reservations, nativePack);
-    else if (strings) requireCompletedNativeStringLiterals(reservations, strings);
-    if (formatterPack) requireCompletedNativeNumberFormat(reservations, formatterPack);
-  });
-}
-
 /** Snapshot the completed ABI using the existing successful-emission record. */
 function recordEmissionObservation(
   result: EmittedPreparedIrProgram,
@@ -1514,7 +1486,15 @@ function materializePhysicalProgram(
 
   if (nativePack?.output) publishNativeStringValueOutput(reservations, nativePack);
   reservations.seal();
-  requireCompletedPacks(reservations, { sourceClosures, realm, invocationPack, nativePack, strings, formatterPack });
+  // (#7365) The completion checks after seal only read the layout: one audit, taken after all of them, covers them.
+  reservations.audited(() => {
+    if (sourceClosures) requireCompletedNativeSourceClosures(reservations, sourceClosures);
+    if (realm) requireCompletedNativeRealmBootstrap(reservations, realm);
+    if (invocationPack) requireCompletedNativeInvocation(reservations, invocationPack);
+    if (nativePack) requireCompletedNativeStringValues(reservations, nativePack);
+    else if (strings) requireCompletedNativeStringLiterals(reservations, strings);
+    if (formatterPack) requireCompletedNativeNumberFormat(reservations, formatterPack);
+  });
 
   // 6. Receipts come from the module itself, never from the loop counter.
   const emittedUnitIds: IrUnitId[] = [];

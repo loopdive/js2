@@ -254,6 +254,8 @@ export class PhysicalModuleReservations {
   #canonicalGroupText: string;
   #canonicalGroupRegistered = false;
   #importsClosed = false;
+  /** Imports per index space, settled at freeze (imports are closed by then). */
+  #importOffsets: Readonly<Record<"function" | "global" | "tag", number>> = { function: 0, global: 0, tag: 0 };
   #checkingSelfDefinition = false;
   /** Inside `audited`: nested layout audits are skipped, ledger mutations are refused, one audit runs on exit. */
   #auditing = false;
@@ -735,6 +737,13 @@ export class PhysicalModuleReservations {
   freezeReservations(): void {
     this.#require("reserving");
     this.#validateResources();
+    const offsets = { function: 0, global: 0, tag: 0 };
+    for (const token of this.#tokens) {
+      if (token.kind === "function-import") offsets.function++;
+      else if (token.kind === "global-import") offsets.global++;
+      else if (token.kind === "tag-import") offsets.tag++;
+    }
+    this.#importOffsets = Object.freeze(offsets);
     this.#state = "filling";
   }
 
@@ -761,22 +770,21 @@ export class PhysicalModuleReservations {
   physicalIndex(token: PhysicalReservation): number {
     if (this.#state !== "filling" && this.#state !== "sealed") this.#fail(`physical index requested in ${this.#state}`);
     this.#verifyLayout();
+    return this.#coordinate(token);
+  }
+
+  /**
+   * A token's index from private state settled at freeze: its reserved position plus the import offset of its
+   * index space. The allocator admits no table/memory imports; their positions, like flat type coordinates, are
+   * already final. No public array is read, so a layout altered and restored inside `audited` cannot steer an index.
+   */
+  #coordinate(token: PhysicalReservation): number {
     this.#owned(token);
-    const position = this.#positions.get(token)!;
-    switch (token.kind) {
-      case "function":
-        return this.#importCount("func") + this.#module.funcOrdinalToPosition[token.handle - STABLE_FUNC_BASE]!;
-      case "global":
-        return this.#importCount("global") + position;
-      case "tag":
-        return this.#importCount("tag") + position;
-      case "table":
-        return this.#importCount("table") + position;
-      case "memory":
-        return this.#importCount("memory") + position;
-      default:
-        return position;
-    }
+    const offset =
+      token.kind === "function" || token.kind === "global" || token.kind === "tag"
+        ? this.#importOffsets[token.kind]
+        : 0;
+    return this.#positions.get(token)! + offset;
   }
 
   /** One fresh layout audit for a dense own-data list; never invoke its getters or iterator. */
@@ -797,22 +805,7 @@ export class PhysicalModuleReservations {
     if (this.#state !== "filling" && this.#state !== "sealed") this.#fail(`physical index requested in ${this.#state}`);
     this.#verifyLayout();
     if (this.#state !== "filling" && this.#state !== "sealed") this.#fail(`physical index requested in ${this.#state}`);
-    const offsets = { function: 0, global: 0, tag: 0 };
-    for (const token of this.#tokens) {
-      if (token.kind === "function-import") offsets.function++;
-      else if (token.kind === "global-import") offsets.global++;
-      else if (token.kind === "tag-import") offsets.tag++;
-    }
-    const indices: number[] = [];
-    for (const token of captured) {
-      this.#owned(token);
-      const offset =
-        token.kind === "function" || token.kind === "global" || token.kind === "tag" ? offsets[token.kind] : 0;
-      // The allocator admits no table/memory imports. Their positions, like
-      // imported resources and flat type coordinates, are already final.
-      indices.push(this.#positions.get(token)! + offset);
-    }
-    return Object.freeze(indices);
+    return Object.freeze(captured.map((token) => this.#coordinate(token)));
   }
 
   /** Authenticate producer completion without sealing unrelated reservations. */
