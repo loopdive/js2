@@ -2718,7 +2718,6 @@ case. `this` is `__current_this`; `new` is create-with-prototype plus the existi
   `ordinary-object-callables.ts`, in the same shape (one table of `js.function.*` features, the same standalone
   wasmgc admission):
   - `js.function.init(closure, name, length, flags) -> void` (fills the bag; `flags` = constructible);
-  - `js.function.object(EXT) -> EXT` (the bag of a function value; the member-access row's receiver object);
   - `js.function.construct:N(callee, ...N) -> EXT`, named and parsed like `js.closure.call:N` (one helper pair
     in `closure-invocation-callables.ts` becomes parameterised by prefix, not copied);
   - `js.function.has-instance(value, callee) -> BOOL` (OrdinaryHasInstance);
@@ -2750,6 +2749,17 @@ case. `this` is `__current_this`; `new` is create-with-prototype plus the existi
   for every plain function declaration and expression, so the existing `bindEntryThis` runs. The ordinary
   pipeline's self-guarded-constructor gates stay as they are (its bytes stay identical); the Prepared path asks
   only "is the callee a function value", which Fa answers.
+
+### Plan change (2026-11-19, approved by the lead)
+
+The realm kernel routes every property operation (`lookup`, `get`, `findOwn`, `getPrototypeOf`, ...) through
+`match`, which recognises only builtin function objects; a source closure falls through to status 3 (unknown).
+So a source closure becomes a kernel function object instead of gaining its own accessor: `match` gets one
+source-closure arm (`ref.test` of the realm's closure root), whose bag is the closure's `$bag` and whose
+`[[Prototype]]` is the realm's `Function.prototype`. Member get / set on a function value then is the existing
+`js.object.get` / `set` with the closure as the object, and `js.function.object` is dropped. The `function` carrier
+kind (its `typeof`, ToString, `+` and kind-test rows) is Fa's (PR #7309), which admits function values into the
+carrier; C builds on it.
 
 ### Order
 
