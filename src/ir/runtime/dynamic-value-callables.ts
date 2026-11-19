@@ -14,12 +14,13 @@ import type { RuntimeManifestPolicy } from "../../runtime/contracts/provider-pol
  * (#7354 D1) The physical function behind each dynamic-value operation. The
  * number and Boolean `typeof` tag tests (#7354 Ty) are the existing
  * primitive-carrier predicates the native value and Boolean resources already
- * define; the string test and read (#7354 Str2), equality, ToBoolean (#7354 T) and the `undefined`
- * value are the dynamic-value resources' own functions.
+ * define; the string test and read (#7354 Str2), equality, ToBoolean (#7354 T), the `undefined` value and (#7354 Fa)
+ * the function test are the dynamic-value resources' own functions.
  */
 const SYMBOLS: Readonly<Record<DynamicValueRuntimeFeature, string>> = Object.freeze({
   "js.value.as_string": "__js_as_string",
   "js.value.is_boolean": "__typeof_boolean",
+  "js.value.is_function": "__typeof_function",
   "js.value.is_number": "__typeof_number",
   "js.value.is_string": "__typeof_string",
   "js.value.strict_eq": "__js_strict_eq",

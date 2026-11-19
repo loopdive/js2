@@ -3101,3 +3101,73 @@ carrier; C builds on it.
    `Test262Error` reads `this` only under `new`, so C1's proof does not reach that arm.
 2. A function value is filled by `js.function.init` where Fa makes it a value. If Fa creates a value in more than
    one place, the call goes into Fa's one helper, not into each site.
+
+## Fa × Ty — the function kind's test (2026-11-19, branch `claude/7354-fa-ty`)
+
+Fa (`1474338c53`) merged onto Ty (`cf28f62f9f`). The wall it removes: assert.js's
+`typeof value !== 'function'` (`isPrimitive`) and `typeof func !== "function"` (`assert.throws`), which stop 6,488
+of 8,717 ES5 files.
+
+### Plan
+
+- **Module.** The legalization keeps one kind family in `src/ir/program/dynamic-value-legalization.ts`: one
+  `TYPEOF_KIND` (Fa's, with the `function` row), one `CarrierKind`, one admission point `admit` (the box arm and
+  the function-value projection both call it), Ty's `KIND_OF_TYPEOF` and `KIND_TEST`. `KIND_TEST.function` is the
+  new intrinsic `js.value.is_function` (externref → i32).
+- **Shape.** The intrinsic follows Ty's two tag tests row for row: vocabulary, definition, runtime feature,
+  provider id `native.js.value.is_function`, symbol `__typeof_function` (`dynamic-value-callables.ts`), and the
+  canonical ABI row in `native-primitive-boundary-abi.ts`. The census needs no row: it reads the provider table.
+- **Physical resource.** `__typeof_function` is a row of the dynamic-value resources
+  (`native-dynamic-values.ts`), beside `__extern_is_undefined`. It is not in the value resources with
+  `__typeof_number`, because its body needs the closure wrapper root, which the source closures own. The root
+  comes in at fill time (`fillNativeStringValueResources(…, sourceClosures?.types.closures.root)`): the realm path
+  reserves the value resources before the source closures, so they cannot take it at reservation.
+- **Reuse.** The body is `buildClosureRootTest` (`closure-invocation-bodies.ts`): `any.convert_extern` +
+  `ref.test` of the root, the test the `js.closure.call:N` dispatcher's root arm runs. One root is enough: the
+  native invocation layout refuses a closure carrier that does not descend from it ("closure carrier is detached
+  from its canonical root"), and a realm with a source shares the source's closure pack, root included. The
+  dispatcher's own arms are not rewritten onto the helper: they `local.tee` the converted value for the cast that
+  follows, so sharing the helper would change the output of every legacy and Prepared closure call.
+- **A program with no closure** has no function value, so its body is `i32.const 0`. This case does happen: in
+  `function isFn(v) { return typeof v === "function"; } isFn(1)`, `isFn` is a direct call and creates no closure.
+- **Builtin function objects** (`native-builtin-functions.ts`) can hold a realm-owned root when the realm has no
+  source. They do not reach the carrier on this tree: an externref call result refuses at the box, whatever its
+  tag (Ty's pin "the carrier admits only known kinds"). The admission that lets them in (Fb's tested-at-run-time
+  admission) must test that root too.
+- **What changed in semantics.** Before the merge, Ty answered a `"function"` literal with the constant false,
+  which was sound while no function value could enter the carrier. With Fa merged it is a runtime test. The merge
+  commit itself gives it a named refusal (`typeof test for function`) until the intrinsic lands.
+- **Code quality.** No duplicated predicate or table. Every `Record<CarrierKind, …>` has a real row. ToString and
+  `+` of a function value still refuse before any kind table (`String(f)`: no AST-site plan; `f + ""`:
+  `__ir_dyn_add`), so on this tree there is no `TO_STRING_ARM`/`ADD_ROLE` to extend.
+- **For the integration with Str2/Perf2 (lead rule, 2026-11-19).** Their `function` rows in `TO_STRING_ARM` and
+  `ADD_ROLE` must be run-time arms, never a compile-time refusal. Any dynamic value may be a function, so a
+  compile-time refusal makes every dynamic ToString and `+` refuse. What the rows do:
+  - ToString gives implementation-defined source text (§20.2.3.5, e.g. `"function () { [native code] }"`), or,
+    if that is not cheap, aborts at run time with a named error that cannot be caught.
+  - `+` reaches that ToString through ToPrimitive.
+  - The kind test they dispatch on is `js.value.is_function` / `__typeof_function` from this slice.
+
+### Result and proofs
+
+- `tests/issue-7354-fa-ty-function-kind.test.ts`: assert.js's predicate on a parameter, for each of these:
+  - a closure in a `var`;
+  - a closure in a function's local;
+  - a call's result;
+  - a closure literal passed as the argument;
+  - the `!==` sense;
+  - every other admitted kind (number, Boolean, `undefined`, `null`, string) beside a closure;
+  - a program with no closure.
+
+  Each program runs with node's answer (returns) and with a wrong one (throws), so a folded constant cannot pass.
+  The legalization unit tests pin `js.value.is_function` (and its negation) for a function value, never a `const`.
+- Ty's "the carrier admits only known kinds" gains the function row: a packed callable through the function-value
+  projection gets a runtime test. The untagged, Function-tagged and Object-tagged externref rows still refuse.
+- The census test ("#7354 Ty — the census on typeof comparisons") covers the third provider and the
+  `__typeof_function` resource: dropping or renaming either refuses.
+- The pinned lists were updated: the intrinsic count (44 → 45, `issue-3518-core-vocabulary-seam`), and the
+  `INTRINSIC_DEFINITIONS` successor hash with its re-derivation fragment (`issue-3518-semantic-verification-ownership`).
+  The predecessor `b763d963…` still re-derives.
+- The prelude (`test262-fyi-runtime.js` + `assert.js` + `sta.js` + `assert.sameValue(1, 1);`, strict entry) no
+  longer stops at the `typeof … 'function'` tests. Its new first gap is `String(value)` in
+  `formatIdentityFreeValue` (assert.js:24): `direct call to "String" has no exact AST-site plan`.

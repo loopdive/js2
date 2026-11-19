@@ -95,7 +95,8 @@ function carrierClosureInstr(instr: IrInstr): IrInstr {
  * share one (`typeof null` is "object": an admitted object kind must merge with that row). The admitted kinds ARE this
  * table's values: a value enters the carrier only as one of them (`boxedKind`, the function-value projection and a
  * packed callable's coercion all go through `admit`, exhaustive by type), so a slice that admits a kind adds its
- * row here and `admit` does not compile until it has an arm for it.
+ * row here and `admit` does not compile until it has an arm for it. That is what makes the `typeof` comparison arm
+ * sound: a literal no row answers ("symbol", "object" for a non-null value, a typo) is constant false.
  */
 const TYPEOF_KIND = {
   number: "number",
@@ -118,8 +119,7 @@ const KIND_TEST: Readonly<Record<CarrierKind, IntrinsicId | "ref.is_null" | "ref
   string: "js.value.is_string",
   undefined: "js.extern.is_undefined",
   null: "ref.is_null",
-  // INTEGRATION (S8): Fa admits function values; Ty's per-kind table needs their row. No predicate yet: refuse.
-  function: "refuse",
+  function: "js.value.is_function",
 };
 
 /**
