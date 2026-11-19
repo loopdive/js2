@@ -197,17 +197,8 @@ describe("#7354 H follow-up — a hoisted `var` declaration without initializer"
       ([shape, body]) =>
         [`repeated ${shape}`, `function f(v){ ${body} } f(5);`, /redeclaration of '[xvi]' in f/] as const,
     ),
-    // (#7365) A nested script `var` is a global, and a repeated one has no single global yet.
-    [
-      "repeated in two script loops",
-      "var r; for (var i = 0; i < 1; i++) { var g; g = 5; } for (var j = 0; j < 1; j++) { var g; r = g; }",
-      "module binding g has no exact typed storage: not-direct",
-    ],
-    [
-      "a script var declared again",
-      "var x; x = 1; var x; if (x !== 1) throw 1;",
-      "module binding x has no exact typed storage",
-    ],
+    // (#7365) A nested and a repeated script `var` are one global: `tests/issue-7365-nested-script-var.test.ts`
+    // runs the two script programs this list refused.
     [
       "read by a closure",
       "function f(v, w){ var r = w; var k = function(){ return x; }; for (var i = 0; i < 2; i = i + 1) { var x; if (i === 0) x = v; else r = k(); } return r; } f(5, 0);",

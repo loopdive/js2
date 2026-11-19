@@ -18,8 +18,10 @@ related: [7354, 7106]
 
 # #7365 — Prepared IR path: script-scope mechanisms
 
-> Id note (2026-11-19): `7365` is the id `claim-issue.mjs --allocate --dry-run` previewed; the reserving call was
-> denied by this session's permission layer, so the id is NOT reserved yet. Re-allocate before this file is pushed.
+> Id note (2026-11-19): `7365` is the id `claim-issue.mjs --allocate --dry-run` previewed, and the reserving call
+> was denied by this session's permission layer. `--check 7365` now reads RESERVED by `ttraenkler/c-lead` at
+> 13:25:14Z, which is ANOTHER lane's reservation, not this one. This issue must be renumbered (file, test file,
+> code comments) to a reserved id before it is pushed.
 
 ## Problem
 
@@ -79,7 +81,7 @@ catch parameter (Annex B.3.5), a pattern, a `for-in` head, a `var` in a `with` b
 Code-quality acceptance: no new module and no new predicate; the producer's duplicate top-level walk is replaced by
 the shared `moduleInitBindings`; no growth grant.
 
-### Slice 1b — one global per repeated `var` name (planned)
+### Slice 1b — one global per repeated `var` name
 
 A repeated script `var` (`for (var i…) {} for (var i…) {}`) is one binding. The resolver already picks the first
 declaration as the canonical identity (`uniqueTopLevelVariableDeclaration`, `allowRedeclaredVar`); the Prepared
@@ -135,3 +137,41 @@ after evaluating it. A member `delete` is a named refusal unless slice O's objec
 - The other three lists (S9 @ `54d5a075`) carry one first-gap detail each: block FunctionDeclaration 69
   (`unsupported body statement FunctionDeclaration`), undeclared global 53 (42 `assignment to undeclared
   identifier`, 11 compound assignment), `delete` 37 (`delete has no IR lowering`). Slices 2–4 not started.
+
+## Slice 1b result (2026-11-19, local, not pushed)
+
+Built (no new module; one shared predicate replaces the home's own declaration count):
+
+- `scriptVarDeclarations` (`src/ir/module-init-vars.ts`): every declarator of a script `var` name in source
+  order, when each is a module-init binding's own; `undefined` when any declaration is something else (a
+  function, a lexical, an ambient, a JS property declaration such as `Object.defineProperty(o, …)`). The first is
+  the canonical identity, as the resolver's `uniqueTopLevelVariableDeclaration` already picks it.
+- The home (`irOwnedScriptVarHome`) asks it instead of counting declarations itself, and answers only for the
+  first declarator.
+- The startup plan (`module-init-plan.ts`, two extracted helpers `redeclaredScriptVarOrdinal` and
+  `nestedVarBindings`, which also keep `buildIrModuleInitPlan` under its function budget) records no binding for a
+  later declarator; its statement's evaluation names the first declarator's global.
+- The producer maps every declarator to the first one's global entry.
+
+Measured:
+
+- `tests/issue-7365-nested-script-var.test.ts`: +9 programs for repeated `var`s (both run, node agrees), 30 tests.
+  The test helper tolerates the checker's `Subsequent variable declarations must have the same type` on legal JS
+  (`var x = 1; var x;`), which does not stop the compile.
+- Pins moved into this file: H's "declared twice", VG's "declared twice", H2's two script repeats.
+- S9's `script-var-home-repeated-var.tsv` (255 files, S9 @ `97f19439`), stand-in census on this tree: 12 still stop
+  at `not-direct`. None of the 12 is a repeated `var`: 8 are `Object.defineProperty(props, …)` (a JS property
+  declaration, kept as slice O's named gap) and 4 are `this.x = 1` (the global object as `this`, slice C).
+  The other 243 move on to: `unknown class` (Test262Error, slice C) 107, an object/array literal initializer with
+  no carrier (slice O) 58, closures (Fa) 15, a direct call with no AST-site plan 10, RegExp crash (#7364) 8,
+  postfix/prefix update 14, and smaller ones.
+- Mutation check: 5 mutants. Killed: home answering a single declaration only; the plan keeping a nested or a
+  top-level redeclaration's binding; the predicate ignoring a non-var declaration (killed by H's
+  `Object.defineProperty` refusal). Survivor, with its reason: the redeclarator's evaluation naming its own
+  ordinal instead of the first one's. Evaluation binding ids are read only by the source-map validator, and the
+  Prepared entry refuses source maps today.
+- Ordinary-pipeline bytes: 160 files (the 100 above + 60 of S9's repeated-var list) × default and standalone,
+  against an `origin/main` export: identical (296 binaries, 24 identical compile errors).
+- Prepared tests (#7188, every #7354 file, prepared-entry/-runtime, this issue): 733/733. Vitest exits 1 on one
+  worker RPC timeout under CPU load, not a test failure.
+- Gates: typecheck, loc, func (also against `origin/main`), coercion-sites, oracle-ratchet, dead-exports.

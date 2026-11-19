@@ -20,10 +20,10 @@
  * allocation chose (including legacy's own zero for an unwritten typed slot),
  * so a common core would either change legacy's answer or inherit its zero.
  */
-import { isMemberWriteDeclaration } from "../shared/binding-writes.js";
 import { ts } from "../ts-api.js";
 import { type NamedVariableDeclaration, scriptVarReadsFollowInitializer } from "./module-binding-script-var.js";
 import type { IrModuleBindingDeclaration, IrScriptVarHome } from "./module-bindings.js";
+import { scriptVarDeclarations } from "./module-init-vars.js";
 
 /** The global object's non-writable value properties: a script `var` of one of these names never stores. */
 const NON_WRITABLE_GLOBALS: ReadonlySet<string> = new Set(["undefined", "NaN", "Infinity"]);
@@ -50,13 +50,11 @@ export function irOwnedScriptVarHome(
     if ((declaration.parent.flags & ts.NodeFlags.BlockScoped) !== 0 || ts.isExternalModule(declaration.getSourceFile()))
       return undefined;
     if (declaration.getSourceFile() !== soleSource || NON_WRITABLE_GLOBALS.has(declaration.name.text)) return undefined;
-    // The startup plan gives every declarator its own binding, so a repeated `var` has no single global yet. A JS
-    // member write on the binding (`o.p = v`) declares no second binding. `Object.defineProperty(o, …)` still counts
-    // as one: the Prepared path admits no `Object` static yet (slice O), and from-ast takes an unadmitted one for
-    // selector drift, so the binding must stay without a home and refuse by name.
-    const declarations = checker.getSymbolAtLocation(declaration.name)?.declarations ?? [];
-    const own = (other: ts.Declaration) => !other.getSourceFile().isDeclarationFile && !isMemberWriteDeclaration(other);
-    if (declarations.filter(own).length !== 1) return undefined;
+    // (#7365 1b) A repeated `var` is one binding: the home is its first declarator's, each later one a write.
+    // `Object.defineProperty(o, …)` still counts as a second declaration: the Prepared path admits no `Object`
+    // static yet (slice O), and from-ast takes an unadmitted one for selector drift, so the binding must stay
+    // without a home and refuse by name.
+    if (scriptVarDeclarations(checker, declaration.name)?.[0] !== declaration) return undefined;
     const type = checker.getTypeAtLocation(declaration.name);
     // A TypeScript annotation other than `any` is the binding's contract: the binding gets the typed home or none,
     // never the dynamic one. A store of a value the checker types `any` into it is then refused by the resolver's

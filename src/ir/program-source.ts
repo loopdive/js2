@@ -1658,7 +1658,7 @@ export function prepareIrProgramSources(
       diagnostic,
     );
     for (const source of sourceFiles) {
-      // (#7365) Every binding the module-init declares: a script `var` nested in top-level code is a global too.
+      // (#7365) Each module-init binding: a nested script `var` is a global too, a repeated one shares its first's.
       for (const bound of source.statements.flatMap(moduleInitBindings)) {
         const declaration = "unmapped" in bound ? bound.unmapped : bound.declaration;
         diagnostic.active = requireIrPlanningOwnerUnitId(identity, declaration);
@@ -1678,9 +1678,9 @@ export function prepareIrProgramSources(
           tdzGlobalName: lexical ? `${declaration.name.text}$tdz` : null,
           type: storageType(global),
         };
-        const entry = { binding, identity: global };
-        globals.push(entry);
-        globalByDeclaration.set(declaration, entry);
+        const shared = globals.find((other) => other.identity.globalBindingId === global.globalBindingId);
+        if (!shared) globals.push({ binding, identity: global });
+        globalByDeclaration.set(declaration, shared ?? globals.at(-1)!);
       }
     }
     const closureInvocations = prepareSourceClosureInvocations(input.checker, sourceFiles);

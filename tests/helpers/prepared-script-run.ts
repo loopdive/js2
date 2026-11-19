@@ -26,8 +26,12 @@ export const preparedScriptOptions = (fileName = "test.js"): Test262CompileOptio
 
 const messages = (result: { errors: readonly { message: string }[] }) => result.errors.map((error) => error.message);
 
-/** Diagnostics the checker reports on sloppy script code that do not stop the compile. */
-const TOLERATED = /^Variable '\w+' is used before being assigned\.$/;
+/**
+ * Diagnostics the checker reports on legal sloppy script code that do not stop the compile: a read before the
+ * first store, and a repeated `var` whose declarators the checker types differently (`var x = 1; var x;`).
+ */
+const TOLERATED =
+  /^(Variable '\w+' is used before being assigned\.|Subsequent variable declarations must have the same type\. .*)$/;
 
 /** Run `source`'s module-init: `returned`, or `threw` when it threw a Wasm exception. */
 export async function runPreparedScript(source: string, fileName = "test.js"): Promise<"returned" | "threw"> {

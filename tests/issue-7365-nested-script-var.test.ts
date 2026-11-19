@@ -3,7 +3,8 @@
 // #7365 slice 1 — a `var` nested in top-level code (a block, `if`, loop, `try`, `switch` or label of a script) on
 // the Prepared whole-program path. It belongs to the script scope wherever its statement is, so it has the same
 // global as a top-level `var` (slice H's home): `undefined` from instantiation, visible after its block and to
-// every function. A top-level `for (;;)` head keeps the typed home when every read follows it.
+// every function. A top-level `for (;;)` head keeps the typed home when every read follows it. Slice 1b: a repeated
+// script `var` is one binding.
 import { runInNewContext } from "node:vm";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { preparedScriptRefusal, runPreparedScript } from "./helpers/prepared-script-run.js";
@@ -77,13 +78,41 @@ describe("#7365 slice 1 — a var nested in top-level code", () => {
     }
   });
 
+  // Slice 1b: a repeated script `var` is one binding with one global, the first declarator's; each later
+  // declarator's initializer is a write and a bare one is a no-op.
+  it.each([
+    ["declared twice with initializers", "var x = 1; var x = 2;", "x !== 2", "x !== 1"],
+    ["declared again bare", "var x = 1; var x;", "x !== 1", "x !== undefined"],
+    ["assigned, then declared again bare", "var x; x = 1; var x;", "x !== 1", "x !== undefined"],
+    ["declared as ±0", "var x = +0; var x = -0;", "1 / x !== -Infinity", "1 / x !== Infinity"],
+    ["as the head of two loops", "for (var i = 0; i < 1; i++) {} for (var i = 0; i < 2; i++) {}", "i !== 2", "i !== 1"],
+    [
+      "bare in two script loops",
+      "var r; for (var i = 0; i < 1; i++) { var g; g = 5; } for (var j = 0; j < 1; j++) { var g; r = g; }",
+      "r !== 5",
+      "r !== undefined",
+    ],
+    ["first in a block, then at top level", "{ var x = 1; } var x;", "x !== 1", "x !== undefined"],
+    ["at top level, then in a block", "var x = 1; { var x = 2; }", "x !== 2", "x !== 1"],
+    [
+      "read by a function before both declarations run",
+      "function f() { return x; } var a = f(); var x = 1; { var x = 2; }",
+      "a !== undefined || f() !== 2",
+      "f() !== 1",
+    ],
+  ])("a var %s", async (_, program, holds, fails) => {
+    for (const [check, verdict] of [
+      [holds, "returned"],
+      [fails, "threw"],
+    ] as const) {
+      const source = `${program} if (${check}) throw 1;`;
+      expect(nodeVerdict(source), source).toBe(verdict);
+      expect(await runPreparedScript(source), source).toBe(verdict);
+    }
+  });
+
   // Not built here; each refuses by name instead of compiling to a wrong answer.
   it.each([
-    [
-      "a var repeated in two blocks (one global per name)",
-      "for (var i = 0; i < 1; i++) {} for (var i = 0; i < 2; i++) {} if (i !== 2) throw 1;",
-      "module binding i has no exact typed storage: not-direct",
-    ],
     [
       "a var redeclaring its catch parameter (Annex B.3.5)",
       "try { throw 1; } catch (e) { var e = 2; } if (e !== undefined) throw 1;",
