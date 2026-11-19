@@ -3,7 +3,8 @@
 /**
  * (#7354 Ty) Which provider resolves an identifier read, in from-ast's resolution order. The ONE authority for
  * that order: the identifier read lowers by switching on the answer, and every other question about a read (the
- * `typeof` of a name nothing resolves) asks the same function, so the two cannot drift. Pure: it emits nothing.
+ * `typeof` of a name nothing resolves) asks the same function, so the two cannot drift. It emits nothing (it throws
+ * only on a DOM preparation mismatch).
  */
 import ts from "typescript";
 import { isAmbientIntrinsicValueUse } from "../shared/ambient-intrinsics.js";
@@ -74,21 +75,19 @@ export function classifyIdentifierRead<Binding>(
     };
   if (isAmbientIntrinsicValueUse(expr, (node) => resolver?.isLibOnlyBinding?.(node) === true, resolver))
     return { kind: "ambient-intrinsic" };
-  return isTypeofOperand(expr) && resolver?.unresolvedNameIsAbsent?.(expr) === true
+  return absentTypeofOperand(expr, (node) => resolver?.unresolvedNameIsAbsent?.(node) === true)
     ? { kind: "absent-global" }
     : { kind: "unresolved" };
 }
 
-/** The build-time `typeof` answer for an absent global, from the same classification the read uses. */
-export function absentGlobalTypeof<Binding>(
-  expr: ts.Identifier,
-  cx: IdentifierReadContext<Binding>,
-): "undefined" | undefined {
-  return classifyIdentifierRead(expr, cx).kind === "absent-global" ? "undefined" : undefined;
-}
-
-function isTypeofOperand(expr: ts.Identifier): boolean {
+/**
+ * The `absent-global` question once every earlier arm declined: `expr` is a `typeof` operand (through parentheses)
+ * and `isAbsent` (the resolver's `unresolvedNameIsAbsent`) says the program's environment lacks it. Also asked
+ * without a lowering context, to decide whether a root needs the dynamic legalization; there the earlier arms are
+ * not asked, so `typeof undefined` counts too, which only legalizes a function that then has nothing to legalize.
+ */
+export function absentTypeofOperand(expr: ts.Identifier, isAbsent: (node: ts.Identifier) => boolean): boolean {
   let node: ts.Node = expr;
   while (ts.isParenthesizedExpression(node.parent)) node = node.parent;
-  return ts.isTypeOfExpression(node.parent);
+  return ts.isTypeOfExpression(node.parent) && isAbsent(expr);
 }

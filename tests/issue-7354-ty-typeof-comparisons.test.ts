@@ -231,6 +231,23 @@ describe("#7354 Ty — typeof comparisons on the Prepared dynamic value", () => 
     expect(await refusal(source)).toContain("ir/from-ast: switch-case-test-nonliteral in t");
   });
 
+  // A numeric test never matches a string discriminant (strict equality); one ladder cannot hold both (review RV7305).
+  it("refuses a switch mixing numeric and string case tests by name", async () => {
+    expect(
+      await refusal('function t(v) { switch (v) { case 1: return 1; case "a": return 2; } return 3; }\nt("a");'),
+    ).toContain("ir/from-ast: switch-case-test-mixed in t");
+  });
+
+  // A guard narrows the parameter's reference to `number`, but the parameter still holds the dynamic value, so the
+  // result is the dynamic value too (review RV7305: the narrowed `f64` result contract was an invariant error).
+  it.each([
+    ["an if", 'function f(x) { if (typeof x === "number") return x; return 0; }'],
+    ["a conditional", 'function f(x) { return typeof x === "number" ? x : 0; }'],
+    ["a local", 'function f(x) { if (typeof x === "number") { var r = x; return r; } return 0; }'],
+  ])("returns a parameter narrowed by %s like JavaScript", async (_label, declaration) => {
+    await expectLikeNode((right) => `${declaration}\nif (f(5) !== ${right ? 5 : 6} || f("a") !== 0) throw 1;`);
+  });
+
   it("answers a switch on the typeof with the default clause in the middle", async () => {
     await expectLikeNode(
       (right) =>

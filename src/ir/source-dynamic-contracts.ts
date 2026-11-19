@@ -38,6 +38,7 @@ import { functionBodyAlwaysTerminates, irFunctionBodyReturnsValue } from "./sele
 import { someReturnedValue } from "./function-returns.js";
 import { sourceDynamicProvenance, type SourceDynamicProvenance } from "./source-dynamic-provenance.js";
 import { isUndeclaredInFile } from "../shared/ambient-intrinsics.js";
+import { absentTypeofOperand } from "./identifier-read.js";
 
 type Carries = SourceDynamicProvenance["carries"];
 type Signature = { readonly params: readonly IrType[]; readonly returnType: IrType | null };
@@ -217,6 +218,9 @@ export function programDynamicContracts(
     sourceFiles,
     nativeDynamicLane(policy),
     (declaration, carries) => sourceDynamicResult(checker, policy, declaration, carries) !== undefined,
+    (parameter) =>
+      ts.isFunctionDeclaration(parameter.parent) &&
+      sourceDynamicParameter(checker, policy, parameter.parent, parameter)?.kind === "dynamic",
   );
   return {
     ...provenance,
@@ -371,7 +375,7 @@ function legalizeSourceDynamicValues(
   const roots = "kind" in declaration ? [declaration] : declaration;
   const contracted =
     roots.some(bindsCatch) ||
-    roots.some((root) => readsTypeofOfAbsentGlobal(checker, sourceFiles, root)) ||
+    roots.some((root) => readsTypeofOfAbsentGlobal((node) => absentGlobal(checker, sourceFiles, node), root)) ||
     globals.some((global) => global.binding.type.kind === "dynamic") ||
     [...signatures].some(
       (signature) =>
@@ -389,18 +393,10 @@ function legalizeSourceDynamicValues(
   return legalized;
 }
 
-/** `node` holds `typeof <name>` of an absent global (nested functions included). */
-function readsTypeofOfAbsentGlobal(
-  checker: ts.TypeChecker,
-  sourceFiles: readonly ts.SourceFile[],
-  node: ts.Node,
-): boolean {
-  if (ts.isTypeOfExpression(node)) {
-    let operand: ts.Expression = node.expression;
-    while (ts.isParenthesizedExpression(operand)) operand = operand.expression;
-    if (ts.isIdentifier(operand) && absentGlobal(checker, sourceFiles, operand)) return true;
-  }
-  return ts.forEachChild(node, (child) => readsTypeofOfAbsentGlobal(checker, sourceFiles, child)) === true;
+/** `node` holds `typeof <name>` of an absent global, by the read classifier's own question (nested functions too). */
+function readsTypeofOfAbsentGlobal(isAbsent: (node: ts.Identifier) => boolean, node: ts.Node): boolean {
+  if (ts.isIdentifier(node) && absentTypeofOperand(node, isAbsent)) return true;
+  return ts.forEachChild(node, (child) => readsTypeofOfAbsentGlobal(isAbsent, child)) === true;
 }
 
 /** `node` holds a `catch` clause with a binding (nested functions included: they are lowered from the same roots). */

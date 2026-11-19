@@ -433,7 +433,7 @@ import {
   irVecNewSizedSymbol,
 } from "./vector-runtime.js";
 import { readEnv } from "../env.js";
-import { absentGlobalTypeof, classifyIdentifierRead } from "./identifier-read.js";
+import { classifyIdentifierRead } from "./identifier-read.js";
 import { numericCaseTestValue, stringCaseTestValue, switchCaseTests } from "./switch-case-tests.js";
 
 interface ResolvedIrVecType {
@@ -13062,9 +13062,9 @@ function lowerSwitchStatement(stmt: ts.SwitchStatement, cx: LowerCtx): void {
       // the literal's value, as slice 4.
       const v = dispatch ? k : numericCaseTestValue(clause.expression);
       if (v === null) {
-        // invariant (producer-promise): the selector's own gate already decided this predicate — #4502.
+        // invariant: `switchCaseTests` (asked above) admits a numeric switch only when every test is a numeric literal.
         throw new Error(
-          `ir/from-ast: switch case test must be a numeric literal — selector gate failed (${cx.funcName})`,
+          `ir/from-ast: switch case test must be a numeric literal — switchCaseTests admitted it (${cx.funcName})`,
         );
       }
       tests.push(v);
@@ -14017,7 +14017,9 @@ function lowerConditional(expr: ts.ConditionalExpression, cx: LowerCtx, hint?: I
   // at build time — the selector admitted exactly that arm.
   const folded = foldAmbientTypeofComparison(
     expr.condition,
-    (id) => ambientTypeofIdentifierTagFromAst(id, cx) ?? absentGlobalTypeof(id, cx),
+    (id) =>
+      ambientTypeofIdentifierTagFromAst(id, cx) ??
+      (classifyIdentifierRead(id, cx).kind === "absent-global" ? "undefined" : undefined),
   );
   if (folded !== undefined) {
     return lowerExpr(folded ? expr.whenTrue : expr.whenFalse, cx, hint ?? irVal({ kind: "f64" }));
