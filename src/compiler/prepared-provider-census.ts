@@ -19,7 +19,7 @@ import {
   type PhysicalNativeStringSetup,
 } from "../ir/program-physical-plan.js";
 import {
-  canonicalSupportRole,
+  formatterSetupJoins,
   formatterJoins,
   formatterKernelScratch,
   formatterScratchBinding,
@@ -211,13 +211,15 @@ type NativeSetup = Pick<PhysicalNativeStringSetup, "bindings" | "formatterScratc
  * emission resolves each binding to a slot of its declaration's space. (#7354 Str) A binding the setup derives
  * itself (not a runtime or intrinsic callable's) is the one its declaration's space and role derive under the
  * runtime ABI anchor, so every role the census reads is the one the completed slot was reserved under. (#7354
- * Str2-c) The formatter's support callables keep their canonical binding ids instead, and a setup that carries the
+ * Str2) A `canonical` setup (the formatter's) had every binding joined to its canonical declaration already
+ * (`formatterSetupJoins`), which also covers its callables bound under canonical ids. A setup that carries the
  * formatter scratch binds the string data type twice (`formatterScratchBinding`).
  */
 function nativeSlots(
   program: PreparedIrProgram,
   emission: EmittedPreparedIrProgram,
   setup: NativeSetup,
+  canonical: boolean,
 ): NativeSlot[] | undefined {
   const { declarations } = setup.resources;
   if (!setup.bindings.every((binding) => declarations.filter((row) => row.key === binding.resourceKey).length === 1))
@@ -240,8 +242,7 @@ function nativeSlots(
     const slot = binding && emittedProgramBindingIndex(emission, binding.entry.id);
     if (!binding || slot?.space !== declaration.space) return undefined;
     const callable = binding.reference.binding.kind === "runtime" || binding.reference.binding.kind === "intrinsic";
-    if (!scratch && !callable && binding.entry.id !== owned && !canonicalSupportRole(program, declaration))
-      return undefined;
+    if (!canonical && !scratch && !callable && binding.entry.id !== owned) return undefined;
     slots.push({ declaration, binding, index: slot.index });
   }
   return slots;
@@ -389,8 +390,10 @@ function nativeRows(
       readonly slots: NativeSetupSlots;
     }
   | undefined {
-  const owned = nativeSlots(program, emission, setup);
-  const formatted = formatter ? nativeSlots(program, emission, formatter) : [];
+  const owned = nativeSlots(program, emission, setup, false);
+  const joined =
+    formatter && formatterSetupJoins(program, formatter, setup.resources.literalRequirements.key, backend.numberFormat);
+  const formatted = !formatter ? [] : joined ? nativeSlots(program, emission, formatter, true) : undefined;
   const slots = owned && formatted && [...owned, ...formatted];
   // (#7354 Str2-c) One declaration per completed slot, across both setups: no row is a second name for another's.
   if (
@@ -401,8 +404,7 @@ function nativeRows(
     return undefined;
   const strings = providers.filter((row) => STRING_FEATURES.has(row.feature));
   const callables = providers.filter((row) => !strings.includes(row) && row.implementation.kind === "runtime-callable");
-  const stringKey = setup.resources.literalRequirements.key;
-  const formatterCallables = formatterJoins(program, formatter, formatted!, stringKey, backend.numberFormat);
+  const formatterCallables = formatterJoins(program, formatter, formatted!);
   const answered: RuntimeProviderDefinition["implementation"][] = [...(formatterCallables ?? [])];
   const rows: SupportCallableRow[] = [];
   for (const { declaration, binding } of slots) {

@@ -37,19 +37,6 @@ const ADAPTER_PROVIDER = NATIVE_ASYNC_CALLABLE_RUNTIME_PROVIDERS.find(
 )!;
 
 /**
- * A formatter setup function bound under the batch's own support binding id (a kernel, the radix body) rather
- * than a setup-derived one; `formatterSetupJoins` pins that binding.
- */
-export function canonicalSupportRole(program: PreparedIrProgram, declaration: NativeStringValueDeclaration): boolean {
-  return (
-    declaration.space === "function" &&
-    numberFormatSetupAssociations(program.inventory).some(
-      (row) => row.origin === "support" && same(declaration.role, row.role),
-    )
-  );
-}
-
-/**
  * (#7354 Str2 review 1) The formatter setup is exactly the one the runtime ABI anchor, the string owner and the
  * accepted number-format policy determine, joined row by row by identity: its declarations equal the formatter
  * recipe's (role, name, signature or type, mutability — one row per role, in recipe order), and each declaration is
@@ -58,7 +45,7 @@ export function canonicalSupportRole(program: PreparedIrProgram, declaration: Na
  * (`internalNativeBinding`) for every other row. The census then joins each binding's slot to the declaration's
  * space, signature and support receipt. No row is joined by its name.
  */
-function formatterSetupJoins(
+export function formatterSetupJoins(
   program: PreparedIrProgram,
   formatter: PhysicalNativeNumberFormatSetup,
   stringKey: string,
@@ -155,25 +142,20 @@ function batchJoins(
 }
 
 /**
- * The formatter joins its demand: a program with a direct formatter call has the canonical formatter setup
- * (`formatterSetupJoins`) and its batch, one without has no batch. The setup's adapter answers the adapter's
- * canonical provider, which the census then requires selected exactly once (no provider without demand, none
- * twice). Answers the provider implementations the formatter answers, or undefined when anything joins nothing.
+ * The formatter joins its demand: a program with a direct formatter call has the formatter setup (which the census
+ * joined to its canonical declarations, `formatterSetupJoins`) and its batch, one without has no batch. The setup's
+ * adapter answers the adapter's canonical provider, which the census then requires selected exactly once (no
+ * provider without demand, none twice). Answers the provider implementations the formatter answers, or undefined
+ * when anything joins nothing.
  */
 export function formatterJoins(
   program: PreparedIrProgram,
   formatter: PhysicalNativeNumberFormatSetup | undefined,
   slots: readonly FormatterSlot[],
-  stringKey: string,
-  numberFormat: PreparedIrBackendOptions["numberFormat"],
 ): readonly RuntimeProviderDefinition["implementation"][] | undefined {
   // Without demand only the batch needs a check here: a provider then answers no runtime callable, a scratch no
   // second binding, and a formatter setup's functions no support receipt, so the census refuses each of them.
   if (irNumberFormatDemandOwners(program.ir.functions).length === 0)
     return program.runtimeSupport?.batches.length ? undefined : [];
-  return formatter &&
-    formatterSetupJoins(program, formatter, stringKey, numberFormat) &&
-    batchJoins(program, formatter, slots)
-    ? [ADAPTER_PROVIDER.implementation]
-    : undefined;
+  return formatter && batchJoins(program, formatter, slots) ? [ADAPTER_PROVIDER.implementation] : undefined;
 }
