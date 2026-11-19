@@ -4,7 +4,7 @@
 // compared with node's `globalThis` descriptor; a row from a later edition than node's engine is compared with
 // its spec values, written out below. Completeness is checked against a fresh V8 context, which holds only the
 // engine's own globals (no node or web-platform host globals).
-import { readdirSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { runInNewContext } from "node:vm";
 import { describe, expect, it } from "vitest";
@@ -49,6 +49,7 @@ const SPEC_ROWS: Record<string, Omit<NativeRealmGlobal, "name">> = {
  * (`%TypedArray%`, the iterator and function prototypes, %ThrowTypeError%), the NativeError group (its
  * constructors are rows) and the global object's own tests.
  */
+const BUILT_INS = "test262/test/built-ins";
 const NON_GLOBAL_DIRECTORIES = new Set([
   "ArrayIteratorPrototype",
   "AsyncFromSyncIteratorPrototype",
@@ -90,7 +91,8 @@ const isConstructor = (value: unknown): boolean => {
 };
 const newThrows = (value: unknown): boolean => {
   try {
-    new (value as new () => unknown)();
+    const Constructor = value as new () => unknown;
+    new Constructor();
     return false;
   } catch (error) {
     return error instanceof TypeError;
@@ -147,8 +149,9 @@ describe("#7350 B2a — the global object's population", () => {
     expect(new Set(NATIVE_REALM_GLOBALS.map((row) => row.edition))).toEqual(new Set([NATIVE_REALM_EDITION, DRAFT]));
   });
 
-  it("lists every global the runner's classifier scores as standard", () => {
-    const root = "test262/test/built-ins";
+  // Needs the test262 submodule, which the changed-issue-test CI job does not check out.
+  it.skipIf(!existsSync(BUILT_INS))("lists every global the runner's classifier scores as standard", () => {
+    const root = BUILT_INS;
     const listed = new Set(NATIVE_REALM_GLOBALS.map((row) => row.name));
     const standard = readdirSync(root).filter((directory) => {
       if (NON_GLOBAL_DIRECTORIES.has(directory)) return false;

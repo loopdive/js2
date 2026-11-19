@@ -193,7 +193,7 @@ import { irCountedStringAppendSiteIdIsCurrent } from "./counted-string-append-pr
 import { timerArg, timerResult } from "./timer-shim-lowering.js";
 import { irBool, irTypeIsBoolean } from "./boolean-brand.js";
 import { carrierStringFamily, lowerConcatOperand, lowerPrimitiveToString } from "./primitive-to-string.js";
-import { ambientGlobalTypeofTag, foldAmbientTypeofComparison } from "./ambient-typeof.js";
+import { ambientGlobalTypeofTag, foldAmbientTypeofComparison, type UnresolvedGlobalTypeof } from "./ambient-typeof.js";
 import {
   collectOuterWrites,
   collectTransitiveClosureCaptures,
@@ -437,7 +437,6 @@ import {
 } from "./vector-runtime.js";
 import { readEnv } from "../env.js";
 import { classifyIdentifierRead } from "./identifier-read.js";
-import type { UnresolvedGlobalTypeof } from "./source-dynamic-contracts.js";
 import { numericCaseTestValue, stringCaseTestValue, switchCaseTests } from "./switch-case-tests.js";
 
 interface ResolvedIrVecType {

@@ -59,7 +59,7 @@ loc-budget-allow:
   - src/compiler/ir-program-presentation.ts
 import-cycles-allow:
   - backend->ir: 119 # 2026-11-17 (#7354 Str review 2): the native string length emitter reads the selected carrier field through the shared preparedStringLenProvider (ir/runtime/intrinsic-preparation.ts) instead of re-implementing it
-  - ir->runtime: 12 # 2026-11-19 (#7354 Ty review): source-dynamic-contracts.ts (Prepared typeof of a global) and ambient-typeof.ts (the ordinary lane's typeof fold, whose duplicate tag list it replaces) read the realm's global table (runtime/contracts/native-realm-globals.ts, #7350 B2a). runtime/contracts is a leaf (it imports nothing from ir); it is the layer IR reads realm data from, as in 4 of the 10 existing edges (realm-keys.ts and native-realm-requirements.ts read native-realm-catalog.ts, js-tag.ts reads js-value-tags.ts, native-prototype-requirements.ts reads builtin-brands.ts). The pair is two-way only through runtime/standalone-timer-callback-bridge.ts -> ir/async-runtime-providers.ts; no SCC grows
+  - ir->runtime: 11 # 2026-11-19 (#7354 Ty review 3): ambient-typeof.ts (the ordinary lane's typeof fold, whose duplicate tag list it replaces, and the Prepared typeof of a global, moved there from source-dynamic-contracts.ts) reads the realm's global table (runtime/contracts/native-realm-globals.ts, #7350 B2a). runtime/contracts is a leaf (it imports nothing from ir); it is the layer IR reads realm data from, as in 4 of the 10 existing edges (realm-keys.ts and native-realm-requirements.ts read native-realm-catalog.ts, js-tag.ts reads js-value-tags.ts, native-prototype-requirements.ts reads builtin-brands.ts). The pair is two-way only through runtime/standalone-timer-callback-bridge.ts -> ir/async-runtime-providers.ts; no SCC grows
 ---
 
 # #7354 — Prepared IR path, milestone 1
@@ -2314,10 +2314,47 @@ Fresh-context review on the merge of Ty with main
    one helper); the classifier's doc says it throws on a DOM mismatch; the numeric-case invariant names
    `switchCaseTests`.
 
+7. **Lead's rule (Fa/Fb cross-lane review): Ty folds a `typeof` literal only for statically known carrier kinds.**
+   Pinned (describe "the carrier admits only known kinds"): a box of a value with no carrier kind (an externref call
+   result, untagged or Function/Object-tagged) refuses by name (`box of a non-primitive value has no Prepared
+   intrinsic`); every admitted kind gets a non-constant tag test; mutation-checked. Lane S4 adds the `function` kind
+   (`js.value.is_function`) as one more `KIND_TEST` row on this branch.
+
 **Stacking.** Branch `claude/7354-ty-r2` (replaces `claude/7354-ty`, whose merge of `claude/7350-b1` brought #7263's
-G1 history with it) is `65d64b13ae` plus a merge of #7350 B2a (`claude/7350-b2a` at its final head `40f37006fb`,
-PR #7315; first merged at `ad0a89f013`), a merge of main (`89e4748241`) and this fix. Grant: `ir->runtime` 10 → 12 for the two table imports (frontmatter). The PR must not release before #7361 and #7315
-are on main.
+G1 history with it) is `65d64b13ae` plus merges of #7350 B2a (`claude/7350-b2a`, PR #7315, at its approved head
+`66e72e6df9`) and of main (`89e4748241`), and this fix. Grant: `ir->runtime` 10 → 12 for the two table imports
+(frontmatter). The PR must not release before #7361 and #7315 are on main.
+
+### Review round 3 (Ty, RV7327): BLOCKER at `e3dbdce3b6`
+
+Fresh-context review of `66e72e6df9..e3dbdce3b6`. Answers per finding:
+
+1. **M1, must-fix, fixed: `typeof arguments` in a function answered "undefined".** The checker synthesizes a
+   function's `arguments` without declarations, like `globalThis`, so the `"no-user"` predicate took it for a global;
+   the function was claimed and then failed at emission (`resolver cannot lower dyn.arguments_length`). A
+   declaration-less symbol now counts only when it is the symbol the global scope resolves
+   (`checker.resolveName(name, undefined, Value, false)`): `globalThis` is, a function's `arguments` is not (no
+   global symbol), an unresolved name has no symbol. In a function the read refuses again:
+   `identifier "arguments" is not in scope in f`. Pinned in a comparison and in a `?:` fold; at a script's top level
+   it answers "undefined", checked against node running the source as a script (`vm.runInThisContext`; a
+   `new Function` body has `arguments`).
+   Mutation: the old predicate fails both function pins with the emission error.
+2. **S1, should-fix, fixed:** `unresolvedGlobalTypeof`, its lib-binding predicate and `UnresolvedGlobalTypeof` moved
+   to `src/ir/ambient-typeof.ts` as `makeUnresolvedGlobalTypeof(checker)`; `source-dynamic-contracts.ts` only wires
+   it into `resolver`. `ir->runtime` is 11 (one file reads the table), so the grant is now 10 → 11.
+3. **Nit, fixed by a pin:** `ambientGlobalTypeofTag`'s narrowing stays (the table's tag type is not keyed by name,
+   and S5 owns the table); a test asserts each of the 16 names folds to its table tag, so the narrowing drops none.
+4. **Nit, rebutted:** `Object.hasOwn` does not narrow in TypeScript's lib (`(o: object, v: PropertyKey): boolean`),
+   so `TYPEOF_KIND[literal]` would need a cast; the `Map` stays.
+5. **Nit, fixed:** `isTypeofOperand` uses the shared `outermostParenthesized` (`src/shared/binding-writes.ts`). It
+   walks up to the operand's position; from-ast's `peelParensExpr` walks down, a different question.
+6. **Nit, rebutted (reviewer agrees):** the per-intrinsic `||` lists stay until Fa's `is_function` row makes them a
+   table.
+
+Ordinary pipeline: 38 programs (`typeof` of the 16 names in comparisons and `?:`, `typeof arguments` in and out of a
+function, a switch, `globalThis`) × {default, standalone}, origin/main `89e4748241` vs this head: 76/76 identical
+binary hashes and diagnostics.
+
 
 ## Fa — function values: creation and storage (2026-11-19)
 

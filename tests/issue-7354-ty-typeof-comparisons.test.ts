@@ -7,9 +7,11 @@
 // answers ("symbol", a typo) is constant. Strings
 // are admitted (slice Str) but the native lane has no string predicate yet, so a test for "string" refuses by name.
 // A `typeof` result used any other way still refuses as `dyn.typeof` (slice Str2).
+import { runInThisContext } from "node:vm";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as gc from "../src/codegen/index.js";
 import * as linear from "../src/codegen-linear/index.js";
+import { ambientGlobalTypeofTag } from "../src/ir/ambient-typeof.js";
 import type { IrFunction, IrInstr } from "../src/ir/core/nodes.js";
 import type { TagId } from "../src/ir/core/tag-domain.js";
 import { irDynamic, irVal } from "../src/ir/core/types.js";
@@ -424,6 +426,27 @@ describe("#7354 Ty — typeof of a global the program does not declare, on the P
     await expectLikeNode(program, [expect.stringContaining("Cannot find name 'notDeclared'")]);
   });
 
+  // A function's `arguments` is a symbol the checker synthesizes without a declaration, like `globalThis`, but it
+  // is no global: the read refuses by name (node answers "object"; the Prepared path has no `arguments` yet).
+  it.each([
+    ["a comparison", 'function f() { return typeof arguments === "object"; }\nif (!f()) throw 1;'],
+    ["a conditional", 'function f() { return typeof arguments === "undefined" ? 1 : 2; }\nf();'],
+  ])("refuses typeof arguments in %s inside a function by name", async (_label, source) => {
+    expect(await refusal(source)).toContain('identifier "arguments" is not in scope in f');
+  });
+
+  // A script's top level has no `arguments` binding. `new Function` bodies do, so node's answer is read from the
+  // same source run as a script.
+  it("answers typeof arguments at a script's top level like JavaScript", async () => {
+    const program = (right: boolean) => `if ((typeof arguments === "undefined") !== ${right}) throw 1;`;
+    for (const right of [true, false]) {
+      const script = () => runInThisContext(program(right));
+      if (right) expect(script).not.toThrow();
+      else expect(script).toThrow();
+      expect(await run(program(right), ["Cannot find name 'arguments'."])).toBe(right ? "returned" : "threw");
+    }
+  });
+
   it("answers a var declaring the global's name with the program's binding", async () => {
     const program = (right: boolean) => `var JSON = 1;\nif ((typeof JSON === "number") !== ${right}) throw 1;`;
     await expectLikeNode(program, [
@@ -471,6 +494,29 @@ describe("#7354 Ty — typeof of a global the program does not declare, on the P
     const host = (globalThis as Record<string, unknown>)[name];
     if (host !== undefined) expect(typeof host).toBe(tag);
     await expectAnswerTag(name, tag);
+  });
+
+  // The ordinary lane's fold reads the same table, narrowed to "object" | "function": every name it folds is such a
+  // row, so the narrowing drops none.
+  it.each([
+    "JSON",
+    "Math",
+    "Reflect",
+    "Object",
+    "Function",
+    "Array",
+    "String",
+    "Number",
+    "Boolean",
+    "Symbol",
+    "Error",
+    "TypeError",
+    "RangeError",
+    "Date",
+    "RegExp",
+    "Promise",
+  ])("folds typeof %s on the ordinary lane to the realm table's tag", (name) => {
+    expect(ambientGlobalTypeofTag(name)).toBe(nativeRealmGlobalTypeof(name));
   });
 
   // ES2026: this node has no `Temporal` to compare with, so the tag is pinned by hand.
