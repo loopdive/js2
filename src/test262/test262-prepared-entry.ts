@@ -8,6 +8,7 @@ import type { PreparedIrPipelinePresentationResult } from "../compiler/ir-progra
 import type { JavaScriptAdapterManifestV1 } from "../adapter-manifest.js";
 import { emittedPhysicalSetupPlan } from "../ir/program-consumer.js";
 import { freezePreparedIrValue } from "../ir/program.js";
+import { literalEvalFileName, literalEvalTexts, pairLiteralEvalSources } from "../ir/eval-literal.js";
 import { failResult } from "../compiler/output.js";
 import { resolveCompileTargetProfile } from "../target-profile.js";
 
@@ -345,6 +346,25 @@ function failed(
   results.set(result, { rows: observeResult(result), outcome: diagnostic, frontendFailure });
   return result;
 }
+/** A named refusal of the adapter itself, located at the entry's first line. */
+function adapterRefusal(entryFile: string, code: string, detail: string, message = detail): CompileResult {
+  return failed({ kind: "adapter-unsupported", detail }, [
+    { severity: "error", code, message, file: entryFile, line: 1, column: 1 },
+  ]);
+}
+/** The source graph plus one `<eval:N>.js` script per qualifying literal eval site of the entry (#7363). */
+function withLiteralEvalSources(files: Record<string, string>, texts: readonly string[]): Record<string, string> {
+  if (texts.length === 0) return files;
+  const names = new Set(Object.keys(files).map(normalizeMultiFileName));
+  const graph: Record<string, string> = Object.create(null);
+  Object.assign(graph, files);
+  texts.forEach((text, index) => {
+    const name = literalEvalFileName(index);
+    if (names.has(normalizeMultiFileName(name))) invalidRequest(`source name ${name} is reserved for a literal eval source`);
+    Object.defineProperty(graph, name, { value: text, enumerable: true });
+  });
+  return graph;
+}
 function present(
   files: Record<string, string>,
   entryFile: string,
@@ -354,63 +374,47 @@ function present(
   const exactFiles = sourceGraph(files, entryFile);
   const profile = resolveCompileTargetProfile(options);
   if (options.backend !== undefined && options.backend !== profile.backend)
-    return failed({ kind: "adapter-unsupported", detail: "explicit backend contradicts resolved target" }, [
-      {
-        severity: "error",
-        code: "prepared-backend-target-mismatch",
-        message: "explicit backend contradicts resolved target",
-        file: entryFile,
-        line: 1,
-        column: 1,
-      },
-    ]);
+    return adapterRefusal(entryFile, "prepared-backend-target-mismatch", "explicit backend contradicts resolved target");
   if (options.runtimeEvalProvider === false)
-    return failed(
-      { kind: "adapter-unsupported", detail: "strict compilation cannot disable demanded runtime eval providers" },
-      [
-        {
-          severity: "error",
-          code: "prepared-runtime-eval-option-unsupported",
-          message: "runtimeEvalProvider:false cannot certify a strict prepared compile",
-          file: entryFile,
-          line: 1,
-          column: 1,
-        },
-      ],
+    return adapterRefusal(
+      entryFile,
+      "prepared-runtime-eval-option-unsupported",
+      "strict compilation cannot disable demanded runtime eval providers",
+      "runtimeEvalProvider:false cannot certify a strict prepared compile",
     );
   if (options.define !== undefined)
-    return failed(
-      { kind: "adapter-unsupported", detail: "strict compilation does not rewrite source with define substitutions" },
-      [
-        {
-          severity: "error",
-          code: "prepared-input-transform-unsupported",
-          message: "strict compilation preserves exact source text",
-          file: entryFile,
-          line: 1,
-          column: 1,
-        },
-      ],
+    return adapterRefusal(
+      entryFile,
+      "prepared-input-transform-unsupported",
+      "strict compilation does not rewrite source with define substitutions",
+      "strict compilation preserves exact source text",
     );
-  const ast = analyzeMultiSource(exactFiles, entryFile, undefined, {
+  const entryKey = Object.keys(exactFiles).find(
+    (key) => normalizeMultiFileName(key) === normalizeMultiFileName(entryFile),
+  )!;
+  // Module code is strict, so no direct eval in it runs as a sloppy Script.
+  const evalTexts =
+    options.inferModuleStrictArguments === true ? [] : literalEvalTexts(entryKey, exactFiles[entryKey]!);
+  if (evalTexts.length > 0 && options.allowJs !== true)
+    return adapterRefusal(
+      entryFile,
+      "prepared-literal-eval-requires-allowjs",
+      "a literal eval source is a JavaScript root and needs allowJs",
+    );
+  const graph = withLiteralEvalSources(exactFiles, evalTexts);
+  const ast = analyzeMultiSource(graph, entryFile, undefined, {
     allowJs: options.allowJs,
     skipSemanticDiagnostics: options.skipSemanticDiagnostics,
     ...(options.platform ? { platform: options.platform } : {}),
   });
-  if (!completeAnalyzedGraph(exactFiles, entryFile, ast))
-    return failed(
-      { kind: "adapter-unsupported", detail: "frontend did not retain the complete supplied name/text graph" },
-      [
-        {
-          severity: "error",
-          code: "prepared-source-graph-incomplete",
-          message: "frontend did not retain the complete supplied name/text graph",
-          file: entryFile,
-          line: 1,
-          column: 1,
-        },
-      ],
+  if (!completeAnalyzedGraph(graph, entryFile, ast))
+    return adapterRefusal(
+      entryFile,
+      "prepared-source-graph-incomplete",
+      "frontend did not retain the complete supplied name/text graph",
     );
+  const literalEvalSources =
+    evalTexts.length === 0 ? [] : pairLiteralEvalSources(ast.entryFile, ast.sourceFiles, evalTexts.length);
   // The public single-source compiler always applies its parser-syntax gate,
   // including allowJs. Multi-source calls retain their captured option policy.
   const pipelineOptions = singleSource
@@ -433,6 +437,7 @@ function present(
     diagnosticAnchor: ast.entryFile,
     runEarlyErrorsOnAllowJs: singleSource || options.enforceJsEarlyErrors === true,
     options: pipelineOptions,
+    literalEvalSources,
   });
   if (outcome.kind === "output-failed") {
     // Query immediately for this call's actual outcome. No duplicate early-error

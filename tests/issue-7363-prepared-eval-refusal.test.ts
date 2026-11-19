@@ -36,17 +36,25 @@ const gaps = async (source: string) =>
   (await compile(source, options)).errors.filter((error) => error.severity === "error").map((error) => error.message);
 
 describe("#7363 slice 1 — an eval statement on the Prepared path refuses by name", () => {
+  // A top-level literal that declares nothing is a called source since #7363 A2: still refused, with its own label.
+  it("refuses a literal at top level as a site with a called source", async () => {
+    expect(await gaps('eval("1");')).toEqual([
+      "ir/from-ast: eval literal has a called source; its call needs the %eval% identity test (#7363 A4) in <module-init>",
+    ]);
+  });
+
+  // The rebinding rows call from a function: a top-level site would add a source, and then a script `var` has no
+  // home until #7363 A3, so the compile would stop at the `var` first.
   it.each([
-    ["a literal at top level", 'eval("1");', "<module-init>"],
     ["a declaration in a function", 'function f() { eval("var y = 1"); }\nf();', "f"],
+    ["an alias of the global", 'function f() { eval("1"); }\nvar e = eval;', "f"],
+    ["an eval property", 'function f() { eval("1"); }\nvar o = {};\no.eval = 1;', "f"],
+    ["the name as a string", 'function f() { eval("1"); }\nvar key = "eval";', "f"],
     ["a computed source", 'var s = "1";\neval(s);', "<module-init>"],
     ["the indirect (0, eval) spelling", '(0, eval)("1");', "<module-init>"],
     // Not lexical: what the global binding holds when the call runs is slice 2's question.
     ["a write through globalThis", 'function f() { eval("1"); }\nglobalThis.eval = function (x) { return x; };', "f"],
     ["a write through this", 'function f() { eval("1"); }\nthis.eval = function (x) { return x; };\nf();', "f"],
-    ["an alias of the global", 'eval("1");\nvar e = eval;', "<module-init>"],
-    ["an eval property", 'eval("1");\nvar o = {};\no.eval = 1;', "<module-init>"],
-    ["the name as a string", 'eval("1");\nvar key = "eval";', "<module-init>"],
     // A binding in a scope that does not enclose the call.
     ["another function's parameter", 'function f() { eval("1"); }\nfunction g(eval) { return eval; }', "f"],
     ["another function's inner function", 'function f() { eval("1"); }\nfunction g() { function eval() {} }', "f"],

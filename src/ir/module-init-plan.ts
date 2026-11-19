@@ -60,6 +60,8 @@ export interface BuildIrModuleInitPlanInput {
   readonly identityContext: IrPlanningIdentityContext;
   readonly target: IrModuleInitTarget;
   readonly deferTopLevelInit: boolean;
+  /** (#7363) The source holds a literal eval's text: its call site runs it, not startup (`src/ir/eval-literal.ts`). */
+  readonly called?: boolean;
 }
 
 export interface LegacyModuleInitStaticEntry {
@@ -132,15 +134,18 @@ function invocationPolicy(
   executable: boolean,
   target: IrModuleInitTarget,
   deferTopLevelInit: boolean,
+  called: boolean,
 ): IrModuleInitInvocationPolicy {
   const kind: IrModuleInitInvocationKind = !executable
     ? "none"
-    : target === "wasi"
-      ? "wasi-start-export"
-      : deferTopLevelInit
-        ? "deferred-export"
-        : "wasm-start";
-  return Object.freeze({ target, kind, exactlyOnce: true });
+    : called
+      ? "called"
+      : target === "wasi"
+        ? "wasi-start-export"
+        : deferTopLevelInit
+          ? "deferred-export"
+          : "wasm-start";
+  return Object.freeze({ target, kind, exactlyOnce: kind !== "called" });
 }
 
 function collectReassignedTopLevelFunctions(
@@ -455,7 +460,7 @@ export function buildIrModuleInitPlan(input: BuildIrModuleInitPlanInput): IrModu
     liveSeeds: Object.freeze(liveSeeds),
     evaluations: Object.freeze(evaluations),
     exports: Object.freeze(exports),
-    invocation: invocationPolicy(executable, input.target, input.deferTopLevelInit),
+    invocation: invocationPolicy(executable, input.target, input.deferTopLevelInit, input.called === true),
     gaps: Object.freeze(gaps),
   });
   verifyIrModuleInitPlan(plan, sourceFile);

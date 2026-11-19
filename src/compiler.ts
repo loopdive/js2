@@ -45,6 +45,7 @@ import {
   type PreparedIrPipelinePresentationResult,
 } from "./compiler/ir-program-presentation.js";
 import { freezePreparedIrValue, PreparedIrProgramInvariantError, type PreparedIrBackendOptions } from "./ir/program.js";
+import type { IrWholeProgramPreparationInput } from "./ir/program-preparation.js";
 import { preparedPresentationPolicy } from "./compiler/prepared-provider-census.js";
 import { buildHostImportInventory, summarizeHostImportInventory } from "./host-import-policy.js";
 import { buildCapabilityRequirements, validatePlatformCapabilityRequirements } from "./capability-registry.js";
@@ -1118,7 +1119,9 @@ function runPipeline(input: PipelineInput): CompileResult {
 }
 
 /** Internal productive checkpoint; public entry points keep their existing route. */
-export function runPreparedIrPipelinePresentation(input: PipelineInput): PreparedIrPipelinePresentationResult {
+export function runPreparedIrPipelinePresentation(
+  input: PipelineInput & Pick<IrWholeProgramPreparationInput, "literalEvalSources">,
+): PreparedIrPipelinePresentationResult {
   const snapshot = { ...input, options: freezePreparedIrValue(input.options) as CompileOptions };
   const { options, entryAst, multiAst, errors } = snapshot;
   const diagnostics = multiAst ?? {
@@ -1162,6 +1165,7 @@ export function runPreparedIrPipelinePresentation(input: PipelineInput): Prepare
       checker: entryAst.checker,
       policy: preparedPresentationPolicy(backendOptions.backend, target),
       deferTopLevelInit: options.deferTopLevelInit === true,
+      literalEvalSources: snapshot.literalEvalSources,
     },
     backendOptions,
     output: {

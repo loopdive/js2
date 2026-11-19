@@ -19,12 +19,20 @@ related: [7354, 7106, 7345, 3630]
 # Prepared refusal, which asks the lexical walk `resolvesToSourceBinding` (src/ir/analysis/ast-scope.ts).
 # 2026-11-19 (slice A, A1): +1 line each in program-physical-plan.ts and ir-program-presentation.ts, the import of
 # `runsAtStartup` (module-init-plan.ts), the one predicate both startup consumers ask; no logic grows there.
+# 2026-11-19 (slice A, A2): the literal-eval relation is new code in src/ir/eval-literal.ts; the seams only carry it.
+# program-source.ts +6: the input field, the receipt call, `called` for buildIrModuleInitPlan and the resolver
+# capability. compiler.ts +4: the field passes from the Prepared pipeline input into `preparation`. from-ast +5 in
+# lowerCall: the site's label asks the capability.
 loc-budget-allow:
   - src/ir/from-ast.ts
   - src/ir/program-physical-plan.ts
   - src/compiler/ir-program-presentation.ts
+  - src/ir/program-source.ts
+  - src/compiler.ts
 func-budget-allow:
   - src/ir/from-ast.ts::lowerCall
+import-cycles-allow:
+  - ir->frontend: 10 # 2026-11-19 (#7363 A2): src/ir/eval-literal.ts asks the shared pure eval syntax in src/frontend/eval/ (parse, static SyntaxError, declared names), the one copy both pipelines ask, as the plan's "Reused" list says
 ---
 
 # #7363 — `eval` on the Prepared IR path
@@ -344,3 +352,28 @@ Findings:
   `buildIrModuleInitPlan` take `"called"` in A2. `tests/issue-7363-called-module-init.test.ts` marks one script's
   real plan called by wrapping `buildIrModuleInitPlan` and re-verifying the result.
 - Mutation: each of the five new conditions, reverted alone, turns at least one of its five tests red.
+
+### A2 result (2026-11-19)
+
+- `src/ir/eval-literal.ts` holds the site predicate (A0's, plus `return` outside a function and "one init chunk"),
+  the pairing and the receipt. `present()` parses the entry only when its text contains `eval`, adds `<eval:N>.js`
+  per qualifying site, and passes `literalEvalSources` through `runPreparedIrPipelinePresentation` into
+  `preparation`. A module-goal compile adds none; without `allowJs` a site refuses by name
+  (`prepared-literal-eval-requires-allowjs`); a supplied file with an eval source's name is refused.
+- `prepareIrProgramSources` runs the receipt, passes `called` to `buildIrModuleInitPlan`, and gives `lowerCall` the
+  capability `literalEvalHasCalledSource`. A related statement site refuses with
+  `eval literal has a called source; its call needs the %eval% identity test (#7363 A4)`.
+- A1's test now uses the real relation; the mock is gone. A site after `break` is never lowered, so its program
+  compiles and shows the called source. A1's third case (the only executable init is called) cannot arise from the
+  relation: the entry holds the site's statement, so it is always executable. That case is dropped.
+- Plan correction: the `return` rule could not go into the shared early-error check. It changes the legacy fold's
+  bytes for `parse-failure-5.js` (default and standalone), so it lives in the IR predicate and the shared check is
+  unchanged.
+- Measured on the 118 A0 files (stand-in harness): the first gap moves for 72. 50 now stop at a script `var` of the
+  entry (`module binding … has no exact typed storage`): a second source takes away the only-source script-var home,
+  which is A3's work. About 20 stop inside an eval text (counted on the raw test texts): `<eval:N>.js` sorts before
+  the entry and is lowered first, and the census charges those gaps to the stand-in by line. 2 stop at the new label.
+  Real harness: 116 of 118 move from `assert.js` (`dyn.typeof`) to a harness `var` with no home, for the same A3
+  reason. Every file was a compile error before and is one after.
+- Programs with no qualifying site: Prepared output identical on the 100-file sample, and ordinary-pipeline bytes
+  identical (100 files × default and standalone). The listed regression tests fail the same 48 tests as the base.

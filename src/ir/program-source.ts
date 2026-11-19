@@ -37,6 +37,7 @@ import { buildIrProgramCallableBindingGraph } from "./program-callable-bindings.
 import type { IrProgramCallableBindingRecord } from "./program/callable-bindings.js";
 import { buildIrUnitTypeMap, lowerTypeToIrType } from "./propagate.js";
 import { buildIrModuleInitPlan } from "./module-init-plan.js";
+import { verifyLiteralEvalSources, type LiteralEvalSource } from "./eval-literal.js";
 import type { IrModuleInitPlan } from "./program/startup.js";
 import { makeModuleInitSynthetic } from "./module-init.js";
 import { makeIrIdentityModuleBindingResolver, type IrModuleBindingIdentity } from "./module-bindings.js";
@@ -861,6 +862,8 @@ export interface IrProgramSourceInput {
   readonly nativeStringValueProjection?: "standalone-native";
   /** Independent string-only console intents; no async family or runtime availability is implied. */
   readonly nativeStringOutputProjection?: "standalone-native";
+  /** (#7363) Each top-level literal direct eval site and the script holding its text; absent: none. */
+  readonly literalEvalSources?: readonly LiteralEvalSource[];
 }
 
 /** Frontend-only carrier; declarations never cross into PreparedIrProgram. */
@@ -1555,6 +1558,7 @@ export function prepareIrProgramSources(
   const nativeAsyncFamily = selectNativeAsyncFamilyProjection(input);
   const nativeStringValues = selectNativeStringValueProjection(input);
   const nativeStringOutput = selectNativeStringOutputProjection(input);
+  const literalEval = verifyLiteralEvalSources(input.literalEvalSources ?? [], input.sourceFiles, input.entrySource);
   const inventory = buildIrUnitInventory(input.sourceFiles, {
     ...input.inventoryOptions,
     entrySource: input.entrySource,
@@ -1613,6 +1617,7 @@ export function prepareIrProgramSources(
           identityContext: identity,
           target: input.policy.target === "strict-no-host" ? "standalone" : input.policy.target,
           deferTopLevelInit: input.deferTopLevelInit,
+          called: literalEval.sources.has(sourceFile),
         }),
       );
     }
@@ -1725,6 +1730,7 @@ export function prepareIrProgramSources(
         sourceClosureInvocation: (expression) => closureInvocations.get(expression),
         sourceClosureCallableParameter: (node) => closureCallableParameters.has(node),
         resolveModuleBinding: resolveBinding,
+        literalEvalHasCalledSource: (call) => literalEval.calls.has(call),
         preparedAsyncAwaitSite: (awaitExpression) => {
           const host = input.policy.backend === "wasmgc" && input.policy.target === "host";
           const resultType =
