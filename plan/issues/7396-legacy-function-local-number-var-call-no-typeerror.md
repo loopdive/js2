@@ -45,6 +45,45 @@ callee is nullish. A non-nullish callee goes through `__apply_closure`, and
 call, instead of throwing. The arm's own comment says it covers standalone
 and wasi only, yet gc fails the same way. Check which route gc takes.
 
+### Further cases: a non-callable written by a call, a destructuring or a for-of
+
+The review of #7334 (PR #7318) asked for these. Every one of them is an
+existing bug on main `89e47482`, not something #7334 introduced. Checked
+through `runTest262File` on standalone and gc (the two lanes always agreed),
+compared with node. Each program calls `g()` inside
+`function probe() { try { var r = g(); return "returned " + String(r); } catch (e) { … } }`.
+"module" declares and writes `g` at module scope. "local" declares and writes
+it inside `probe`. Node throws TypeError in every row.
+
+| Write that stores the number 3 | Scope | Main `89e47482` | #7334 branch `e95970c9` |
+| --- | --- | --- | --- |
+| `var g = three();` (`function three() { return 3; }`) | module | silent: `g()` returns `null` | same |
+| same | local | silent: returns `null` | same |
+| `var g = function () {}; g = three();` | module | trap: `RuntimeError: dereferencing a null pointer`, which the `try` does not catch | TypeError (correct) |
+| same | local | trap, as above | TypeError (correct) |
+| `var g; [g] = arr;` (`var arr = [3]`) | module | TypeError (correct) | same |
+| same | local | silent: returns `null` | same |
+| `var g = function () {}; [g] = arr;` | module | silent: returns `undefined` | same |
+| same | local | trap, as above | TypeError (correct) |
+| `var g; for (g of arr) {}` | module | TypeError (correct) | same |
+| same | local | TypeError (correct) | same |
+| `var g = function () {}; for (g of arr) {}` | module | silent: returns `undefined` | same |
+| same | local | trap, as above | TypeError (correct) |
+
+What the table shows:
+
+- **#7334 fixes only the traps.** Each trap row writes `g` twice, which is
+  the shape #7334's rule sends to the dynamic route.
+- **Six rows still return a value after #7334.** Fix these here:
+  - A var written once by a call result (`null`, both scopes). With one
+    write, #7334 trusts the checker type and keeps the typed route.
+  - A function-local var written once by a destructuring (`null`). This is
+    the same `null` as the repro above.
+  - A module var that holds a function and is then written by a
+    destructuring or a for-of (`undefined`). The module repro without the
+    function write throws correctly, so the function write is what sends
+    the call down the silent route.
+
 ## Direction
 
 - **Option 1: throw in that arm.** After `__apply_closure` classifies the
