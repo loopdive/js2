@@ -222,9 +222,14 @@ realm program. The global table references catalog rows by id and adds none.
 **Identity only.** An intrinsic the catalog has a row for (`%Object%`, `%Function%`) has its complete
 property population there (`nativeRealmGlobalSurface` answers `"complete"`). Every other intrinsic the table
 names is identity only (`"identity"`): its identity, typeof tag, `length` and constructibility are known, its
-members are not. B2b's rule for an identity intrinsic: a member read refuses by name at compile time (static
-key) or throws a named error at run time (dynamic key), never `undefined`; a call or `new` of an
-`implementation: "unavailable"` algorithm throws a named TypeError.
+members are not. B2b's rule for an identity intrinsic (lead, 2026-11-19): an unsupported member or algorithm is never a
+catchable JavaScript error, which would let `assert.throws(TypeError, …)` pass for the wrong reason — a
+statically visible callee or key refuses by name at compile time, a dynamic one aborts with an uncatchable
+trap; never `undefined`. Its `name`, `length`, `prototype` and constructibility are part of the identity. Checked
+2026-11-19: no realm row breaks the rule today — the kernel materializes only `%Function.prototype%` and
+`%ThrowTypeError%` (both spec behaviour) and its request validator refuses every `unavailable` algorithm, so
+the abort tests (inside `try` / `catch` and inside `assert.throws`-style code) land with B2b, which
+materializes the first identity row.
 
 **Reuse.** Nothing is implemented here. When a row's surface is filled (B2c…), it binds the existing native
 body: `object-constructor-body.ts` (Object), `primitive-wrapper-bodies.ts` (String, Number, Boolean),

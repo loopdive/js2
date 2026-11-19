@@ -156,7 +156,8 @@ const CATALOG_IDS: ReadonlySet<string> = new Set(NATIVE_REALM_CATALOG.intrinsics
 /**
  * `"complete"` when the realm catalog has the intrinsic's row, with its full property population; `"identity"`
  * when only its identity, typeof tag, `length` and constructibility are known. A member of an identity
- * intrinsic is never answered as `undefined`: its read refuses by name or throws a named error.
+ * intrinsic is never answered as `undefined` nor by a catchable error: a static read refuses by name at compile
+ * time, a dynamic one aborts uncatchably.
  */
 export function nativeRealmGlobalSurface(id: string): "complete" | "identity" {
   return CATALOG_IDS.has(id) ? "complete" : "identity";
