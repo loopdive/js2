@@ -48,6 +48,18 @@ built-ins/Function/prototype/bind/15.3.4.5-8-1.js	ir/from-ast: proven dynamic bi
 built-ins/Function/prototype/bind/15.3.4.5-8-2.js	ir/from-ast: proven dynamic binding 'o' initializer has no supported carrier (<module-init>)
 built-ins/Function/prototype/bind/15.3.4.5-9-1.js	ir/from-ast: proven dynamic binding 'o' initializer has no supported carrier (<module-init>)
 built-ins/Function/prototype/bind/15.3.4.5-9-2.js	ir/from-ast: proven dynamic binding 'o' initializer has no supported carrier (<module-init>)
+built-ins/Function/prototype/bind/15.3.4.5.1-4-10.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Function/prototype/bind/15.3.4.5.1-4-11.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Function/prototype/bind/15.3.4.5.1-4-12.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Function/prototype/bind/15.3.4.5.1-4-13.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Function/prototype/bind/15.3.4.5.1-4-14.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Function/prototype/bind/15.3.4.5.1-4-15.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Function/prototype/bind/15.3.4.5.1-4-2.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Function/prototype/bind/15.3.4.5.1-4-6.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Function/prototype/bind/15.3.4.5.1-4-7.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Function/prototype/bind/15.3.4.5.1-4-8.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Function/prototype/bind/15.3.4.5.1-4-9.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+built-ins/Function/prototype/bind/15.3.4.5.2-4-5.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
 built-ins/Function/prototype/call/S15.3.4.4_A6_T10.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
 built-ins/Object/S15.2.1.1_A2_T4.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
 built-ins/Object/S15.2.2.1_A2_T1.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
@@ -68,6 +80,7 @@ built-ins/Object/create/15.2.3.5-4-161.js	module binding proto has no exact type
 built-ins/Object/create/15.2.3.5-4-162.js	module binding descObj has no exact typed storage: not-direct
 built-ins/Object/create/15.2.3.5-4-163.js	module binding proto has no exact typed storage: not-direct
 built-ins/Object/create/15.2.3.5-4-164.js	module binding proto has no exact typed storage: not-direct
+built-ins/Object/create/15.2.3.5-4-17.js	module binding props has no exact typed storage: not-direct
 built-ins/Object/create/15.2.3.5-4-18.js	ir/from-ast: proven dynamic binding 'proto' initializer has no supported carrier (<module-init>)
 built-ins/Object/create/15.2.3.5-4-181.js	ir/from-ast: proven dynamic binding 'proto' initializer has no supported carrier (<module-init>)
 built-ins/Object/create/15.2.3.5-4-182.js	ir/from-ast: proven dynamic binding 'proto' initializer has no supported carrier (<module-init>)
@@ -77,7 +90,9 @@ built-ins/Object/create/15.2.3.5-4-185.js	module binding proto has no exact type
 built-ins/Object/create/15.2.3.5-4-187.js	module binding proto has no exact typed storage: not-direct
 built-ins/Object/create/15.2.3.5-4-188.js	module binding descObj has no exact typed storage: not-direct
 built-ins/Object/create/15.2.3.5-4-189.js	module binding proto has no exact typed storage: not-direct
+built-ins/Object/create/15.2.3.5-4-19.js	module binding props has no exact typed storage: not-direct
 built-ins/Object/create/15.2.3.5-4-190.js	module binding proto has no exact typed storage: not-direct
+built-ins/Object/create/15.2.3.5-4-20.js	module binding props has no exact typed storage: not-direct
 built-ins/Object/create/15.2.3.5-4-21.js	module binding proto has no exact typed storage: not-direct
 built-ins/Object/create/15.2.3.5-4-22.js	ir/from-ast: proven dynamic binding 'proto' initializer has no supported carrier (<module-init>)
 built-ins/Object/create/15.2.3.5-4-23.js	module binding proto has no exact typed storage: not-direct
@@ -1292,6 +1307,7 @@ harness/propertyhelper-verifywritable-writable.js	module binding obj has no exac
 intl402/NumberFormat/significant-digits-options-get-sequence.js	module binding options has no exact typed storage: not-direct
 language/directive-prologue/10.1.1-28-s.js	module binding obj has no exact typed storage: not-direct
 language/directive-prologue/get-accsr-not-first-runtime.js	module binding obj has no exact typed storage: not-direct
+language/eval-code/direct/cptn-nrml-expr-obj.js	ir/from-ast: proven dynamic binding 'x' initializer has no supported carrier (<module-init>)
 language/eval-code/direct/non-string-object.js	ir/from-ast: proven dynamic binding 'x' initializer has no supported carrier (<module-init>)
 language/eval-code/indirect/cptn-nrml-expr-obj.js	ir/from-ast: proven dynamic binding 'x' initializer has no supported carrier (<module-init>)
 language/eval-code/indirect/non-string-object.js	ir/from-ast: proven dynamic binding 'x' initializer has no supported carrier (<module-init>)
@@ -1301,6 +1317,8 @@ language/expressions/assignment/8.12.5-3-b_2.js	module binding tempObj has no ex
 language/expressions/assignment/8.12.5-5-b_1.js	module binding tempObj has no exact typed storage: not-direct
 language/expressions/assignment/S11.13.1_A5_T2.js	ir/from-ast: proven dynamic binding 'scope' initializer has no supported carrier (<module-init>)
 language/expressions/assignment/S11.13.1_A5_T3.js	ir/from-ast: proven dynamic binding 'outerScope' initializer has no supported carrier (<module-init>)
+language/expressions/assignment/S8.12.5_A1.js	ir/from-ast: proven dynamic binding '__map' initializer has no supported carrier (<module-init>)
+language/expressions/assignment/S8.12.5_A2.js	ir/from-ast: proven dynamic binding '_map' initializer has no supported carrier (<module-init>)
 language/expressions/call/11.2.3-3_4.js	module binding o has no exact typed storage: not-direct
 language/expressions/call/11.2.3-3_6.js	module binding o has no exact typed storage: not-direct
 language/expressions/call/11.2.3-3_7.js	module binding o has no exact typed storage: not-direct
@@ -1337,12 +1355,24 @@ language/expressions/compound-assignment/S11.13.2_A5.6_T3.js	ir/from-ast: proven
 language/expressions/compound-assignment/S11.13.2_A5.7_T3.js	ir/from-ast: proven dynamic binding 'outerScope' initializer has no supported carrier (<module-init>)
 language/expressions/compound-assignment/S11.13.2_A5.8_T3.js	ir/from-ast: proven dynamic binding 'outerScope' initializer has no supported carrier (<module-init>)
 language/expressions/compound-assignment/S11.13.2_A5.9_T3.js	ir/from-ast: proven dynamic binding 'outerScope' initializer has no supported carrier (<module-init>)
+language/expressions/in/S8.12.6_A1.js	ir/from-ast: proven dynamic binding '__obj' initializer has no supported carrier (<module-init>)
+language/expressions/in/S8.12.6_A2_T1.js	ir/from-ast: proven dynamic binding '__obj' initializer has no supported carrier (<module-init>)
+language/expressions/in/S8.12.6_A3.js	ir/from-ast: proven dynamic binding '__obj' initializer has no supported carrier (<module-init>)
 language/expressions/instanceof/S11.8.6_A7_T1.js	ir/from-ast: proven dynamic binding '__obj' initializer has no supported carrier (<module-init>)
 language/expressions/object/11.1.5_5-4-1.js	ir/from-ast: proven dynamic binding 'o' initializer has no supported carrier (<module-init>)
+language/expressions/object/S11.1.5_A1.1.js	ir/from-ast: proven dynamic binding 'object' initializer has no supported carrier (<module-init>)
+language/expressions/object/S11.1.5_A1.2.js	ir/from-ast: proven dynamic binding 'object' initializer has no supported carrier (<module-init>)
+language/expressions/object/S11.1.5_A1.3.js	ir/from-ast: proven dynamic binding 'object' initializer has no supported carrier (<module-init>)
+language/expressions/object/S11.1.5_A1.4.js	ir/from-ast: proven dynamic binding 'object' initializer has no supported carrier (<module-init>)
+language/expressions/object/S11.1.5_A3.js	ir/from-ast: proven dynamic binding 'object' initializer has no supported carrier (<module-init>)
+language/expressions/object/S11.1.5_A4.1.js	ir/from-ast: proven dynamic binding 'object' initializer has no supported carrier (<module-init>)
+language/expressions/object/S11.1.5_A4.2.js	ir/from-ast: proven dynamic binding 'object' initializer has no supported carrier (<module-init>)
 language/expressions/postfix-decrement/S11.3.2_A5_T3.js	ir/from-ast: proven dynamic binding 'outerScope' initializer has no supported carrier (<module-init>)
 language/expressions/postfix-increment/S11.3.1_A5_T3.js	ir/from-ast: proven dynamic binding 'outerScope' initializer has no supported carrier (<module-init>)
 language/expressions/prefix-decrement/S11.4.5_A5_T3.js	ir/from-ast: proven dynamic binding 'outerScope' initializer has no supported carrier (<module-init>)
 language/expressions/prefix-increment/S11.4.4_A5_T3.js	ir/from-ast: proven dynamic binding 'outerScope' initializer has no supported carrier (<module-init>)
+language/expressions/property-accessors/S8.12.3_A2.js	ir/from-ast: proven dynamic binding '__obj' initializer has no supported carrier (<module-init>)
+language/expressions/property-accessors/S8.12.3_A3.js	ir/from-ast: proven dynamic binding '__map' initializer has no supported carrier (<module-init>)
 language/function-code/10.4.3-1-58-s.js	module binding o has no exact typed storage: not-direct
 language/function-code/10.4.3-1-58gs.js	module binding o has no exact typed storage: not-direct
 language/function-code/10.4.3-1-59-s.js	module binding o has no exact typed storage: not-direct
@@ -1364,6 +1394,7 @@ language/reserved-words/ident-name-reserved-word-literal-memberexpr-str.js	ir/fr
 language/reserved-words/ident-name-reserved-word-literal-memberexpr.js	ir/from-ast: proven dynamic binding 'tokenCodes' initializer has no supported carrier (<module-init>)
 language/reserved-words/ident-name-reserved-word-literal-prop-name.js	ir/from-ast: proven dynamic binding 'tokenCodes' initializer has no supported carrier (<module-init>)
 language/statements/for/12.6.3_2-3-a-ii-1.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
+language/statements/function/S13.2.2_A18_T1.js	ir/from-ast: proven dynamic binding '__obj' initializer has no supported carrier (<module-init>)
 language/statements/function/S13.2.2_A19_T2.js	ir/from-ast: proven dynamic binding '__obj' initializer has no supported carrier (<module-init>)
 language/statements/function/S13_A10.js	ir/from-ast: proven dynamic binding '__music_box' initializer has no supported carrier (<module-init>)
 language/statements/try/12.14-4.js	ir/from-ast: proven dynamic binding 'o' initializer has no supported carrier (<module-init>)
@@ -1373,8 +1404,12 @@ language/statements/with/12.10-0-3.js	ir/from-ast: proven dynamic binding 'o' in
 language/statements/with/12.10-0-7.js	ir/from-ast: proven dynamic binding 'o' initializer has no supported carrier (<module-init>)
 language/statements/with/12.10-7-1.js	ir/from-ast: proven dynamic binding 'o' initializer has no supported carrier (<module-init>)
 language/types/object/S8.6.2_A1.js	ir/from-ast: proven dynamic binding '__obj' initializer has no supported carrier (<module-init>)
+language/types/object/S8.6.2_A3.js	ir/from-ast: proven dynamic binding '__obj' initializer has no supported carrier (<module-init>)
+language/types/object/S8.6.2_A4.js	ir/from-ast: proven dynamic binding '__obj' initializer has no supported carrier (<module-init>)
 language/types/object/S8.6_A2_T1.js	ir/from-ast: proven dynamic binding '__map' initializer has no supported carrier (<module-init>)
+language/types/object/S8.6_A2_T2.js	ir/from-ast: proven dynamic binding '__map' initializer has no supported carrier (<module-init>)
 language/types/object/S8.6_A3_T1.js	ir/from-ast: proven dynamic binding '__map' initializer has no supported carrier (<module-init>)
+language/types/object/S8.6_A3_T2.js	ir/from-ast: proven dynamic binding '__map' initializer has no supported carrier (<module-init>)
 language/types/reference/8.7.2-3-1-s.js	ir/from-ast: proven dynamic binding 'o' initializer has no supported carrier (<module-init>)
 language/types/reference/8.7.2-3-s.js	module binding _8_7_2_3 has no exact typed storage: not-direct
 language/types/reference/8.7.2-4-s.js	module binding _8_7_2_4 has no exact typed storage: not-direct

@@ -11,13 +11,11 @@
  *     --out .tmp/subset.jsonl --harness stand-in
  *   node scripts/ir-census/prepared-analyze.mjs --rows .tmp/subset.jsonl
  */
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 
 import { readRows } from "./analyze.mjs";
-import { mechanismOf } from "./prepared-mechanisms.mjs";
-
-const TEST262 = resolve(import.meta.dirname, "../../test262");
+import { mechanismOf, sourceWithIncludes } from "./prepared-mechanisms.mjs";
 
 function arg(flag) {
   const index = process.argv.indexOf(flag);
@@ -30,16 +28,12 @@ const slug = (text) =>
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-|-$/g, "");
 
-function listOf(row) {
-  return slug(mechanismOf(row, readFileSync(join(TEST262, "test", row.file), "utf8")));
-}
-
 const out = resolve(arg("--out"));
 mkdirSync(out, { recursive: true });
 const lists = new Map();
 for (const row of readRows(arg("--rows"))) {
   if (row.status !== "compile_error" && row.status !== "crash") continue;
-  const name = listOf(row);
+  const name = slug(mechanismOf(row, sourceWithIncludes(row.file)));
   const line = `${row.file}\t${(row.detail ?? "").replace(/\s+/g, " ").slice(0, 120)}`;
   lists.set(name, [...(lists.get(name) ?? []), line]);
 }

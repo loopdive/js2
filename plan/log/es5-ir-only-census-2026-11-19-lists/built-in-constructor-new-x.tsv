@@ -364,6 +364,7 @@ built-ins/String/prototype/toUpperCase/S15.5.4.18_A1_T1.js	ir/from-ast: unknown 
 built-ins/String/prototype/toUpperCase/S15.5.4.18_A1_T2.js	ir/from-ast: unknown class "Boolean" in <module-init>
 built-ins/String/prototype/trim/15.5.4.20-1-9.js	ir/from-ast: unknown class "String" in <module-init>
 built-ins/String/prototype/trim/15.5.4.20-2-50.js	ir/from-ast: unknown class "Error" in <module-init>
+harness/detachArrayBuffer.js	ir/from-ast: unknown class "ArrayBuffer" in <module-init>
 intl402/DateTimeFormat/prototype/format/bound-to-datetimeformat-instance.js	ir/from-ast: unknown class "Date" in <module-init>
 language/directive-prologue/10.1.1-29-s.js	ir/from-ast: unknown class "Function" in testcase
 language/directive-prologue/10.1.1-31-s.js	ir/from-ast: unknown class "Function" in <module-init>

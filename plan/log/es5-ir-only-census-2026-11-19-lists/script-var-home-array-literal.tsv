@@ -255,3 +255,4 @@ harness/asyncHelpers-asyncTest-rejects-non-callable.js	module binding doneValues
 harness/asyncHelpers-asyncTest-return-not-thenable.js	module binding doneValues has no exact typed storage: unsupported
 harness/asyncHelpers-asyncTest-then-rejects.js	module binding rejectionValues has no exact typed storage: unsupported
 harness/compare-array-arguments.js	module binding fixture has no exact typed storage: unsupported
+harness/wellKnownIntrinsicObjects.js	module binding WellKnownIntrinsicObjects has no exact typed storage: unsupported

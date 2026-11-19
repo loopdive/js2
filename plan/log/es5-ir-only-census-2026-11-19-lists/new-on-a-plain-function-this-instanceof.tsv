@@ -73,7 +73,6 @@ built-ins/global/S10.2.3_A1.1_T1.js	ir/from-ast: unknown class "Test262Error" in
 built-ins/global/S10.2.3_A1.2_T1.js	ir/from-ast: unknown class "Test262Error" in test
 harness/assertRelativeDateMs.js	ir/from-ast: unknown class "Test262Error" in assertRelativeDateMs
 harness/detachArrayBuffer-host-detachArrayBuffer.js	ir/from-ast: unknown class "Test262Error" in $DETACHBUFFER
-harness/detachArrayBuffer.js	ir/from-ast: unknown class "ArrayBuffer" in <module-init>
 intl402/Collator/instance-proto-and-extensible.js	ir/from-ast: only direct constructor names supported in slice 4 (<module-init>)
 intl402/Collator/prototype/compare/builtin.js	ir/from-ast: unknown class "Test262Error" in isConstructor
 intl402/Collator/prototype/compare/compare-function-builtin.js	ir/from-ast: unknown class "Test262Error" in isConstructor

@@ -5,3 +5,4 @@ built-ins/Object/defineProperties/15.2.3.7-6-a-12.js	module binding fun has no e
 built-ins/Object/defineProperties/15.2.3.7-6-a-22.js	module binding arg has no exact typed storage: not-direct
 built-ins/Object/defineProperty/15.2.3.6-4-33.js	module binding fun has no exact typed storage: not-direct
 built-ins/Object/isFrozen/15.2.3.12-2-a-13.js	module binding obj has no exact typed storage: not-direct
+harness/nativeFunctionMatcher.js	module binding validateNativeFunctionSource has no exact typed storage: unsupported

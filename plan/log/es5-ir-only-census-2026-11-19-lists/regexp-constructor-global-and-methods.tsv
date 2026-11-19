@@ -11,7 +11,6 @@ built-ins/Object/getPrototypeOf/15.2.3.2-2-26.js	ir/from-ast: unknown class "Reg
 built-ins/RegExp/15.10.4.1-1.js	ir/from-ast: unknown class "RegExp" in <module-init>
 built-ins/RegExp/15.10.4.1-4.js	ir/from-ast: unknown class "RegExp" in <module-init>
 built-ins/RegExp/S15.10.2.10_A5.1_T1.js	ir/from-ast: unknown class "RegExp" in <module-init>
-built-ins/RegExp/S15.10.2.12_A4_T5.js	ir/from-ast: proven dynamic binding 'regexp_W' initializer has no supported carrier (<module-init>)
 built-ins/RegExp/S15.10.2.8_A3_T16.js	ir/from-ast: unknown class "RegExp" in <module-init>
 built-ins/RegExp/S15.10.3.1_A1_T2.js	ir/from-ast: unknown class "RegExp" in <module-init>
 built-ins/RegExp/S15.10.3.1_A1_T3.js	ir/from-ast: unknown class "RegExp" in <module-init>
@@ -73,11 +72,4 @@ built-ins/String/prototype/trim/15.5.4.20-2-49.js	ir/from-ast: unknown class "Re
 intl402/NumberFormat/prototype/format/format-non-finite-numbers.js	ir/from-ast: unknown class "RegExp" in <module-init>
 language/literals/null/S7.8.1_A1_T2.js	ir/from-ast: direct call to "RegExp" has no exact AST-site plan in <module-init>
 language/literals/regexp/7.8.5-2gs.js	ir/from-ast: unknown class "RegExp" in <module-init>
-language/literals/regexp/S7.8.5_A3.1_T1.js	ir/from-ast: proven dynamic binding 'regexp' initializer has no supported carrier (<module-init>)
-language/literals/regexp/S7.8.5_A3.1_T2.js	ir/from-ast: proven dynamic binding 'regexp' initializer has no supported carrier (<module-init>)
-language/literals/regexp/S7.8.5_A3.1_T3.js	ir/from-ast: proven dynamic binding 'regexp' initializer has no supported carrier (<module-init>)
-language/literals/regexp/S7.8.5_A3.1_T4.js	ir/from-ast: proven dynamic binding 'regexp' initializer has no supported carrier (<module-init>)
-language/literals/regexp/S7.8.5_A3.1_T5.js	ir/from-ast: proven dynamic binding 'regexp' initializer has no supported carrier (<module-init>)
-language/literals/regexp/S7.8.5_A3.1_T6.js	ir/from-ast: proven dynamic binding 'regexp' initializer has no supported carrier (<module-init>)
 language/literals/regexp/S7.8.5_A4.1.js	ir/from-ast: instanceof RHS class "RegExp" has no projected shape (<module-init>)
-language/literals/regexp/S7.8.5_A4.2.js	ir/from-ast: proven dynamic binding 'regexp1' initializer has no supported carrier (<module-init>)

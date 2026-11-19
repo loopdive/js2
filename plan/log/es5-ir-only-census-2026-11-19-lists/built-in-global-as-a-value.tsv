@@ -765,10 +765,16 @@ harness/asyncHelpers-throwsAsync-resolved-error.js	ir/from-ast: identifier "Obje
 harness/asyncHelpers-throwsAsync-same-realm.js	ir/from-ast: identifier "Object" is not in scope in asyncTest
 harness/asyncHelpers-throwsAsync-single-arg.js	ir/from-ast: identifier "Object" is not in scope in asyncTest
 harness/nans.js	ir/from-ast: identifier "Number" is not in scope in <module-init>
+intl402/Collator/builtin.js	ir/from-ast: identifier "Intl" is not in scope in <module-init>
 intl402/Collator/prototype/builtin.js	ir/from-ast: identifier "Object" is not in scope in <module-init>
+intl402/Collator/prototype/constructor/value.js	ir/from-ast: identifier "Intl" is not in scope in <module-init>
 intl402/Date/prototype/this-value-invalid-date.js	ir/from-ast: identifier "Date" is not in scope in <module-init>
+intl402/DateTimeFormat/builtin.js	ir/from-ast: identifier "Intl" is not in scope in <module-init>
 intl402/DateTimeFormat/prototype/builtin.js	ir/from-ast: identifier "Object" is not in scope in <module-init>
+intl402/DateTimeFormat/prototype/constructor/value.js	ir/from-ast: identifier "Intl" is not in scope in <module-init>
+intl402/NumberFormat/builtin.js	ir/from-ast: identifier "Intl" is not in scope in <module-init>
 intl402/NumberFormat/prototype/builtin.js	ir/from-ast: identifier "Object" is not in scope in <module-init>
+intl402/NumberFormat/prototype/constructor/value.js	ir/from-ast: identifier "Intl" is not in scope in <module-init>
 language/arguments-object/10.6-12-2.js	ir/from-ast: identifier "Object" is not in scope in testcase
 language/arguments-object/10.6-13-c-2-s.js	ir/from-ast: identifier "Object" is not in scope in testcase
 language/arguments-object/10.6-13-c-3-s.js	ir/from-ast: identifier "Object" is not in scope in testcase

@@ -13,28 +13,8 @@ built-ins/Array/prototype/concat/S15.4.4.4_A3_T1.js	module binding arr has no ex
 built-ins/Array/prototype/toString/S15.4.4.2_A1_T3.js	module binding x has no exact typed storage: not-direct
 built-ins/Array/prototype/toString/S15.4.4.2_A1_T4.js	module binding object has no exact typed storage: not-direct
 built-ins/Function/S15.3_A3_T1.js	module binding f has no exact typed storage: not-direct
-built-ins/Function/prototype/bind/15.3.4.5.1-4-10.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
-built-ins/Function/prototype/bind/15.3.4.5.1-4-11.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
-built-ins/Function/prototype/bind/15.3.4.5.1-4-12.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
-built-ins/Function/prototype/bind/15.3.4.5.1-4-13.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
-built-ins/Function/prototype/bind/15.3.4.5.1-4-14.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
-built-ins/Function/prototype/bind/15.3.4.5.1-4-15.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
-built-ins/Function/prototype/bind/15.3.4.5.1-4-2.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
-built-ins/Function/prototype/bind/15.3.4.5.1-4-6.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
-built-ins/Function/prototype/bind/15.3.4.5.1-4-7.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
-built-ins/Function/prototype/bind/15.3.4.5.1-4-8.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
-built-ins/Function/prototype/bind/15.3.4.5.1-4-9.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
-built-ins/Function/prototype/bind/15.3.4.5.2-4-5.js	ir/from-ast: proven dynamic binding 'obj' initializer has no supported carrier (<module-init>)
 built-ins/Math/log/S15.8.2.10_A3.js	module binding x has no exact typed storage: not-direct
 built-ins/Number/S9.1_A1_T1.js	module binding object has no exact typed storage: not-direct
-built-ins/Object/create/15.2.3.5-4-11.js	module binding props has no exact typed storage: not-direct
-built-ins/Object/create/15.2.3.5-4-12.js	module binding props has no exact typed storage: not-direct
-built-ins/Object/create/15.2.3.5-4-14.js	module binding props has no exact typed storage: not-direct
-built-ins/Object/create/15.2.3.5-4-15.js	module binding argObj has no exact typed storage: not-direct
-built-ins/Object/create/15.2.3.5-4-17.js	module binding props has no exact typed storage: not-direct
-built-ins/Object/create/15.2.3.5-4-19.js	module binding props has no exact typed storage: not-direct
-built-ins/Object/create/15.2.3.5-4-20.js	module binding props has no exact typed storage: not-direct
-built-ins/Object/create/15.2.3.5-4-24.js	module binding child has no exact typed storage: not-direct
 built-ins/RegExp/S15.10.2.10_A1.1_T1.js	module binding arr has no exact typed storage: not-direct
 built-ins/RegExp/S15.10.2.10_A1.2_T1.js	module binding arr has no exact typed storage: not-direct
 built-ins/RegExp/S15.10.2.10_A1.3_T1.js	module binding arr has no exact typed storage: not-direct
@@ -49,29 +29,12 @@ built-ins/RegExp/S15.10.2.11_A1_T1.js	module binding arr has no exact typed stor
 built-ins/String/S9.1_A1_T2.js	module binding object has no exact typed storage: not-direct
 built-ins/String/fromCharCode/S9.7_A3.1_T4.js	module binding object has no exact typed storage: not-direct
 built-ins/String/prototype/localeCompare/S15.5.4.9_A1_T1.js	module binding str2 has no exact typed storage: not-direct
-built-ins/String/prototype/replace/S15.5.4.11_A2_T1.js	ir/from-ast: proven dynamic binding '__re' initializer has no supported carrier (<module-init>)
-built-ins/String/prototype/replace/S15.5.4.11_A2_T10.js	ir/from-ast: proven dynamic binding '__re' initializer has no supported carrier (<module-init>)
-built-ins/String/prototype/replace/S15.5.4.11_A2_T2.js	ir/from-ast: proven dynamic binding '__re' initializer has no supported carrier (<module-init>)
-built-ins/String/prototype/replace/S15.5.4.11_A2_T3.js	ir/from-ast: proven dynamic binding '__re' initializer has no supported carrier (<module-init>)
-built-ins/String/prototype/replace/S15.5.4.11_A2_T4.js	ir/from-ast: proven dynamic binding '__re' initializer has no supported carrier (<module-init>)
-built-ins/String/prototype/replace/S15.5.4.11_A2_T5.js	ir/from-ast: proven dynamic binding '__re' initializer has no supported carrier (<module-init>)
-built-ins/String/prototype/replace/S15.5.4.11_A2_T6.js	ir/from-ast: proven dynamic binding '__re' initializer has no supported carrier (<module-init>)
-built-ins/String/prototype/replace/S15.5.4.11_A2_T7.js	ir/from-ast: proven dynamic binding '__re' initializer has no supported carrier (<module-init>)
-built-ins/String/prototype/replace/S15.5.4.11_A2_T8.js	ir/from-ast: proven dynamic binding '__re' initializer has no supported carrier (<module-init>)
-built-ins/String/prototype/replace/S15.5.4.11_A2_T9.js	ir/from-ast: proven dynamic binding '__re' initializer has no supported carrier (<module-init>)
-built-ins/String/prototype/replace/S15.5.4.11_A3_T1.js	ir/from-ast: proven dynamic binding '__re' initializer has no supported carrier (<module-init>)
-built-ins/String/prototype/replace/S15.5.4.11_A3_T2.js	ir/from-ast: proven dynamic binding '__re' initializer has no supported carrier (<module-init>)
-built-ins/String/prototype/replace/S15.5.4.11_A3_T3.js	ir/from-ast: proven dynamic binding '__re' initializer has no supported carrier (<module-init>)
-built-ins/String/prototype/replace/S15.5.4.11_A5_T1.js	ir/from-ast: proven dynamic binding '__pattern' initializer has no supported carrier (<module-init>)
 language/comments/S7.4_A2_T1.js	module binding y has no exact typed storage: not-direct
-language/eval-code/direct/cptn-nrml-expr-obj.js	ir/from-ast: proven dynamic binding 'x' initializer has no supported carrier (<module-init>)
 language/expressions/addition/S11.6.1_A2.1_T1.js	module binding x has no exact typed storage: not-direct
 language/expressions/addition/S11.6.1_A2.2_T2.js	module binding date has no exact typed storage: not-direct
 language/expressions/addition/S11.6.1_A2.4_T1.js	module binding x has no exact typed storage: not-direct
 language/expressions/array/S11.1.4_A2.js	module binding subarray has no exact typed storage: not-direct
 language/expressions/assignment/S11.13.1_A2.1_T1.js	module binding x has no exact typed storage: not-direct
-language/expressions/assignment/S8.12.5_A1.js	ir/from-ast: proven dynamic binding '__map' initializer has no supported carrier (<module-init>)
-language/expressions/assignment/S8.12.5_A2.js	ir/from-ast: proven dynamic binding '_map' initializer has no supported carrier (<module-init>)
 language/expressions/bitwise-and/S11.10.1_A2.1_T1.js	module binding x has no exact typed storage: not-direct
 language/expressions/bitwise-and/S11.10.1_A2.4_T1.js	module binding x has no exact typed storage: not-direct
 language/expressions/bitwise-not/S11.4.8_A2.1_T1.js	module binding x has no exact typed storage: not-direct
@@ -110,13 +73,8 @@ language/expressions/greater-than-or-equal/S11.8.4_A2.4_T1.js	module binding x h
 language/expressions/greater-than/S11.8.2_A2.1_T1.js	module binding x has no exact typed storage: not-direct
 language/expressions/greater-than/S11.8.2_A2.4_T1.js	module binding x has no exact typed storage: not-direct
 language/expressions/in/S11.8.7_A2.1_T1.js	module binding x has no exact typed storage: not-direct
-language/expressions/in/S11.8.7_A2.4_T1.js	module binding NUMBER has no exact typed storage: unsupported
 language/expressions/in/S11.8.7_A4.js	module binding object has no exact typed storage: not-direct
-language/expressions/in/S8.12.6_A1.js	ir/from-ast: proven dynamic binding '__obj' initializer has no supported carrier (<module-init>)
-language/expressions/in/S8.12.6_A2_T1.js	ir/from-ast: proven dynamic binding '__obj' initializer has no supported carrier (<module-init>)
-language/expressions/in/S8.12.6_A3.js	ir/from-ast: proven dynamic binding '__obj' initializer has no supported carrier (<module-init>)
 language/expressions/instanceof/S11.8.6_A2.1_T1.js	module binding object has no exact typed storage: not-direct
-language/expressions/instanceof/S11.8.6_A2.4_T1.js	module binding OBJECT has no exact typed storage: unsupported
 language/expressions/left-shift/S11.7.1_A2.1_T1.js	module binding x has no exact typed storage: not-direct
 language/expressions/left-shift/S11.7.1_A2.4_T1.js	module binding x has no exact typed storage: not-direct
 language/expressions/less-than-or-equal/S11.8.3_A2.1_T1.js	module binding x has no exact typed storage: not-direct
@@ -141,16 +99,8 @@ language/expressions/modulus/S11.5.3_A2.1_T1.js	module binding x has no exact ty
 language/expressions/modulus/S11.5.3_A2.4_T1.js	module binding x has no exact typed storage: not-direct
 language/expressions/multiplication/S11.5.1_A2.1_T1.js	module binding x has no exact typed storage: not-direct
 language/expressions/multiplication/S11.5.1_A2.4_T1.js	module binding x has no exact typed storage: not-direct
-language/expressions/object/S11.1.5_A1.1.js	ir/from-ast: proven dynamic binding 'object' initializer has no supported carrier (<module-init>)
-language/expressions/object/S11.1.5_A1.2.js	ir/from-ast: proven dynamic binding 'object' initializer has no supported carrier (<module-init>)
-language/expressions/object/S11.1.5_A1.3.js	ir/from-ast: proven dynamic binding 'object' initializer has no supported carrier (<module-init>)
-language/expressions/object/S11.1.5_A1.4.js	ir/from-ast: proven dynamic binding 'object' initializer has no supported carrier (<module-init>)
 language/expressions/object/S11.1.5_A2.js	module binding x has no exact typed storage: not-direct
-language/expressions/object/S11.1.5_A3.js	ir/from-ast: proven dynamic binding 'object' initializer has no supported carrier (<module-init>)
-language/expressions/object/S11.1.5_A4.1.js	ir/from-ast: proven dynamic binding 'object' initializer has no supported carrier (<module-init>)
-language/expressions/object/S11.1.5_A4.2.js	ir/from-ast: proven dynamic binding 'object' initializer has no supported carrier (<module-init>)
 language/expressions/object/S11.1.5_A4.3.js	module binding object has no exact typed storage: not-direct
-language/expressions/postfix-decrement/S11.3.2_A2.1_T1.js	module binding x has no exact typed storage: not-direct
 language/expressions/postfix-decrement/S11.3.2_A2.2_T1.js	module binding object has no exact typed storage: not-direct
 language/expressions/postfix-decrement/S11.3.2_A3_T1.js	module binding x has no exact typed storage: not-direct
 language/expressions/postfix-decrement/S11.3.2_A3_T2.js	module binding x has no exact typed storage: not-direct
@@ -162,7 +112,6 @@ language/expressions/postfix-decrement/S11.3.2_A4_T2.js	module binding x has no 
 language/expressions/postfix-decrement/S11.3.2_A4_T3.js	module binding x has no exact typed storage: not-direct
 language/expressions/postfix-decrement/S11.3.2_A4_T4.js	module binding x has no exact typed storage: not-direct
 language/expressions/postfix-decrement/S11.3.2_A4_T5.js	module binding x has no exact typed storage: not-direct
-language/expressions/postfix-increment/S11.3.1_A2.1_T1.js	module binding x has no exact typed storage: not-direct
 language/expressions/postfix-increment/S11.3.1_A2.2_T1.js	module binding object has no exact typed storage: not-direct
 language/expressions/postfix-increment/S11.3.1_A3_T1.js	module binding x has no exact typed storage: not-direct
 language/expressions/postfix-increment/S11.3.1_A3_T2.js	module binding x has no exact typed storage: not-direct
@@ -174,7 +123,6 @@ language/expressions/postfix-increment/S11.3.1_A4_T2.js	module binding x has no 
 language/expressions/postfix-increment/S11.3.1_A4_T3.js	module binding x has no exact typed storage: not-direct
 language/expressions/postfix-increment/S11.3.1_A4_T4.js	module binding x has no exact typed storage: not-direct
 language/expressions/postfix-increment/S11.3.1_A4_T5.js	module binding x has no exact typed storage: not-direct
-language/expressions/prefix-decrement/S11.4.5_A2.1_T1.js	module binding x has no exact typed storage: not-direct
 language/expressions/prefix-decrement/S11.4.5_A2.2_T1.js	module binding object has no exact typed storage: not-direct
 language/expressions/prefix-decrement/S11.4.5_A3_T1.js	module binding x has no exact typed storage: not-direct
 language/expressions/prefix-decrement/S11.4.5_A3_T2.js	module binding x has no exact typed storage: not-direct
@@ -186,7 +134,6 @@ language/expressions/prefix-decrement/S11.4.5_A4_T2.js	module binding x has no e
 language/expressions/prefix-decrement/S11.4.5_A4_T3.js	module binding x has no exact typed storage: not-direct
 language/expressions/prefix-decrement/S11.4.5_A4_T4.js	module binding x has no exact typed storage: not-direct
 language/expressions/prefix-decrement/S11.4.5_A4_T5.js	module binding x has no exact typed storage: not-direct
-language/expressions/prefix-increment/S11.4.4_A2.1_T1.js	module binding x has no exact typed storage: not-direct
 language/expressions/prefix-increment/S11.4.4_A2.2_T1.js	module binding object has no exact typed storage: not-direct
 language/expressions/prefix-increment/S11.4.4_A3_T1.js	module binding x has no exact typed storage: not-direct
 language/expressions/prefix-increment/S11.4.4_A3_T2.js	module binding x has no exact typed storage: not-direct
@@ -198,8 +145,6 @@ language/expressions/prefix-increment/S11.4.4_A4_T2.js	module binding x has no e
 language/expressions/prefix-increment/S11.4.4_A4_T3.js	module binding x has no exact typed storage: not-direct
 language/expressions/prefix-increment/S11.4.4_A4_T4.js	module binding x has no exact typed storage: not-direct
 language/expressions/prefix-increment/S11.4.4_A4_T5.js	module binding x has no exact typed storage: not-direct
-language/expressions/property-accessors/S8.12.3_A2.js	ir/from-ast: proven dynamic binding '__obj' initializer has no supported carrier (<module-init>)
-language/expressions/property-accessors/S8.12.3_A3.js	ir/from-ast: proven dynamic binding '__map' initializer has no supported carrier (<module-init>)
 language/expressions/relational/S9.1_A1_T4.js	module binding object has no exact typed storage: not-direct
 language/expressions/right-shift/S11.7.2_A2.1_T1.js	module binding x has no exact typed storage: not-direct
 language/expressions/right-shift/S11.7.2_A2.4_T1.js	module binding x has no exact typed storage: not-direct
@@ -232,7 +177,6 @@ language/line-terminators/S7.3_A7_T6.js	module binding y has no exact typed stor
 language/line-terminators/S7.3_A7_T7.js	module binding y has no exact typed storage: not-direct
 language/line-terminators/S7.3_A7_T8.js	module binding y has no exact typed storage: not-direct
 language/statements/for/S12.6.3_A14.js	module binding j has no exact typed storage: not-direct
-language/statements/function/S13.2.2_A18_T1.js	ir/from-ast: proven dynamic binding '__obj' initializer has no supported carrier (<module-init>)
 language/statements/function/S13.2.2_A19_T6.js	module binding __obj has no exact typed storage: not-direct
 language/statements/function/S13.2.2_A19_T8.js	module binding __obj has no exact typed storage: not-direct
 language/statements/function/S13_A17_T1.js	module binding __result has no exact typed storage: not-direct
@@ -247,9 +191,5 @@ language/statements/try/S12.14_A18_T3.js	module binding b has no exact typed sto
 language/statements/try/S12.14_A18_T4.js	module binding b has no exact typed storage: not-direct
 language/statements/try/S12.14_A18_T5.js	module binding b has no exact typed storage: not-direct
 language/statements/variable/S12.2_A2.js	module binding __variable has no exact typed storage: not-direct
-language/types/object/S8.6.2_A3.js	ir/from-ast: proven dynamic binding '__obj' initializer has no supported carrier (<module-init>)
-language/types/object/S8.6.2_A4.js	ir/from-ast: proven dynamic binding '__obj' initializer has no supported carrier (<module-init>)
-language/types/object/S8.6_A2_T2.js	ir/from-ast: proven dynamic binding '__map' initializer has no supported carrier (<module-init>)
-language/types/object/S8.6_A3_T2.js	ir/from-ast: proven dynamic binding '__map' initializer has no supported carrier (<module-init>)
 language/types/reference/S8.7_A2.js	module binding items has no exact typed storage: not-direct
 language/types/string/S8.4_A2.js	module binding str has no exact typed storage: not-direct

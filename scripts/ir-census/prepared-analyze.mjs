@@ -11,13 +11,8 @@
  * gap, so every count is a first-gap count: a file is charged to one
  * mechanism, and nothing behind that gap is seen.
  */
-import { readFileSync } from "node:fs";
-import { join, resolve } from "node:path";
-
 import { readRows } from "./analyze.mjs";
-import { MECHANISMS, mechanismOf } from "./prepared-mechanisms.mjs";
-
-const TEST262 = resolve(import.meta.dirname, "../../test262");
+import { MECHANISMS, mechanismOf, sourceWithIncludes } from "./prepared-mechanisms.mjs";
 
 const table = (head, rows) =>
   [`| ${head.join(" | ")} |`, `|${head.map(() => "---").join("|")}|`, ...rows.map((r) => `| ${r.join(" | ")} |`)].join(
@@ -41,17 +36,6 @@ const normalise = (detail = "") =>
     .replace(/\d+/g, "N")
     .slice(0, 110)
     .trim();
-
-function sourceText(file) {
-  const text = readFileSync(join(TEST262, "test", file), "utf8");
-  const includes =
-    /includes:\s*\[([^\]]*)\]/
-      .exec(text)?.[1]
-      .split(",")
-      .map((s) => s.trim())
-      .filter(Boolean) ?? [];
-  return [text, ...includes.map((name) => readFileSync(join(TEST262, "harness", name), "utf8"))].join("\n");
-}
 
 function report(path) {
   const rows = readRows(path);
@@ -83,7 +67,7 @@ function report(path) {
   // Every first gap by mechanism. A gap in the stand-in is charged to what the test asked of it
   // (`assert.throws` calls a function value); a gap in an include is shown under the include.
   const labelled = gaps.map((row) => {
-    const mechanism = mechanismOf(row, sourceText(row.file));
+    const mechanism = mechanismOf(row, sourceWithIncludes(row.file));
     const where = row.origin?.startsWith("harness:") ? `include ${row.origin.slice(8)}` : "";
     return { row, mechanism, where, name: quoted(row.detail ?? "") };
   });
