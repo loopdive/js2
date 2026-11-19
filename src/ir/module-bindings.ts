@@ -32,11 +32,10 @@ import {
   certifiedScriptVarUse,
   certifiedScriptVarWriteMatches,
 } from "./module-binding-certified-homes.js";
-import { isModuleInitVarList, isTopLevelStatementDeclaration } from "../shared/var-declaration-lists.js";
 import { stringBindingReadIsValue } from "./module-binding-string.js";
-import { bindingDeclarationList } from "./binding-pattern-plan.js";
 import {
   carrierLeafReads,
+  isModuleInitGlobalDeclaration,
   moduleBindingDeclarationOrder,
   moduleBindingLexicalFlags as lexicalFlags,
 } from "./module-init-vars.js";
@@ -1064,11 +1063,20 @@ function isModuleBindingDeclaration(
 ): candidate is IrModuleBindingDeclaration {
   if (!candidate || candidate.getSourceFile() !== sourceFile) return false;
   const declaration = ts.isVariableDeclaration(candidate) || ts.isBindingElement(candidate) ? candidate : undefined;
-  if (!declaration || !ts.isIdentifier(declaration.name)) return false;
-  // A top-level `VariableStatement`'s own name binds in a script or an ES module.
-  if (isTopLevelStatementDeclaration(declaration)) return true;
-  // (#7106 S5, L, L2) A leaf, a `for` head's or a nested `var`'s name binds in a script's modelled list.
-  return !ts.isExternalModule(sourceFile) && isModuleInitVarList(bindingDeclarationList(declaration));
+  return declaration !== undefined && ts.isIdentifier(declaration.name) && isModuleInitGlobalDeclaration(declaration);
+}
+
+/**
+ * The module-init global declarations `node`'s binding has in its own file, in source order. (#7106, #7372 1b) A
+ * script may repeat `var x` (S11.6.1_A2.1_T1's `var x = 1; … var x = 1;`): one binding with one global, the first
+ * declaration its canonical identity and each later one a write.
+ */
+export function moduleBindingDeclarations(node: ts.Identifier, checker: ts.TypeChecker): IrModuleBindingDeclaration[] {
+  const sourceFile = node.getSourceFile();
+  const direct = new Set<IrModuleBindingDeclaration>();
+  for (const candidate of bindingDeclarationCandidates(node, checker))
+    if (isModuleBindingDeclaration(candidate, sourceFile)) direct.add(candidate);
+  return [...direct].sort((a, b) => a.pos - b.pos);
 }
 
 function uniqueTopLevelVariableDeclaration(
@@ -1076,19 +1084,9 @@ function uniqueTopLevelVariableDeclaration(
   checker: ts.TypeChecker,
   allowRedeclaredVar = false,
 ): IrModuleBindingDeclaration | undefined {
-  const sourceFile = node.getSourceFile();
-  const candidates = bindingDeclarationCandidates(node, checker);
-  if (candidates.length === 0) return undefined;
-  const directDeclarations = new Set<IrModuleBindingDeclaration>();
-  for (const candidate of candidates) {
-    if (isModuleBindingDeclaration(candidate, sourceFile)) directDeclarations.add(candidate);
-  }
-  if (directDeclarations.size === 1) return [...directDeclarations][0]!;
-  // (#7106) A script may repeat `var x` (S11.6.1_A2.1_T1's `var x = 1; … var
-  // x = 1;`): one binding and one legacy slot, so the first declaration is
-  // the canonical identity and each later one is a write.
-  if (!allowRedeclaredVar || directDeclarations.size === 0) return undefined;
-  const ordered = [...directDeclarations].sort((a, b) => a.pos - b.pos);
+  const ordered = moduleBindingDeclarations(node, checker);
+  if (ordered.length === 1) return ordered[0];
+  if (!allowRedeclaredVar || ordered.length === 0) return undefined;
   return ordered.some((declaration) => lexicalFlags(declaration) !== 0) ? undefined : ordered[0];
 }
 

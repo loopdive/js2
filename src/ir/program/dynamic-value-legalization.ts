@@ -607,19 +607,23 @@ interface SourceGlobal {
 /**
  * (#7354 H) The globals arm, over functions already legalized. A dynamic global (a script `var` without a
  * proven typed home) is stored as the carrier. JavaScript hoists such a `var` with the value `undefined`, so
- * its storage owner, the script's module-init, stores `undefined` before its first statement; nothing runs
- * before that, so the physical global's own default (a null externref, outside the admitted set) is never
+ * its storage owner, the script's module-init, stores `undefined` before its first statement into each global
+ * `startsUndefined` names (#7372: the source-globals registry, from the startup plan's instantiation); nothing
+ * runs before that, so the physical global's own default (a null externref, outside the admitted set) is never
  * read.
  */
 export function legalizeDynamicGlobals<Global extends SourceGlobal>(
   functions: readonly IrFunction[],
   globals: readonly Global[],
+  startsUndefined: (global: Global) => boolean,
 ): { readonly functions: readonly IrFunction[]; readonly globals: readonly Global[] } {
   const dynamic = globals.filter((global) => global.binding.type.kind === "dynamic");
   if (dynamic.length === 0) return { functions, globals };
   return {
     functions: functions.map((fn) => {
-      const owned = dynamic.filter((global) => global.identity.storageOwnerUnitId === fn.unitId);
+      const owned = dynamic.filter(
+        (global) => global.identity.storageOwnerUnitId === fn.unitId && startsUndefined(global),
+      );
       return owned.length === 0 ? fn : storeUndefinedFirst(fn, owned);
     }),
     globals: globals.map((global) =>

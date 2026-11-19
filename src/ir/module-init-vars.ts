@@ -21,7 +21,7 @@ import {
   moduleInitVarLists,
 } from "../shared/var-declaration-lists.js";
 import { ts } from "../ts-api.js";
-import { patternLeaves, type BindingLeaf } from "./binding-pattern-plan.js";
+import { bindingDeclarationList, patternLeaves, type BindingLeaf } from "./binding-pattern-plan.js";
 
 /** The modelled `var` lists ({@link moduleInitVarLists}) of every module-init statement. */
 export function collectIrSafeModuleVarDeclarationLists(
@@ -134,4 +134,14 @@ export function carrierLeafReads(
   };
   if (leafNames.size > 0) visit(node);
   return reads;
+}
+
+/**
+ * Whether `declaration` binds a module-init global: a top-level `VariableStatement`'s own name, in a script or an
+ * ES module, or (#7106 S5, L, L2) in a script a leaf, a `for` head's or a nested `var`'s name of a modelled list.
+ * The resolver, the startup plan and the Prepared producer all ask this one rule.
+ */
+export function isModuleInitGlobalDeclaration(declaration: ts.VariableDeclaration | ts.BindingElement): boolean {
+  if (isTopLevelStatementDeclaration(declaration)) return true;
+  return !ts.isExternalModule(declaration.getSourceFile()) && isModuleInitVarList(bindingDeclarationList(declaration));
 }
