@@ -758,11 +758,13 @@ export class PhysicalModuleReservations {
     this.#require("reserving");
     this.#verifyLayout();
     this.#validateResources();
-    this.#importOffsets = Object.freeze({
-      function: this.#importCount("func"),
-      global: this.#importCount("global"),
-      tag: this.#importCount("tag"),
-    });
+    const offsets = { function: 0, global: 0, tag: 0 };
+    for (const token of this.#tokens) {
+      if (token.kind === "function-import") offsets.function++;
+      else if (token.kind === "global-import") offsets.global++;
+      else if (token.kind === "tag-import") offsets.tag++;
+    }
+    this.#importOffsets = Object.freeze(offsets);
     this.#state = "filling";
   }
 
@@ -822,8 +824,8 @@ export class PhysicalModuleReservations {
     // A Proxy descriptor trap can run during capture: recheck the phase after it.
     if (this.#state !== "filling" && this.#state !== "sealed") this.#fail(`physical index requested in ${this.#state}`);
     this.#verifySealed();
-    const indices = captured.map((token) => this.#coordinate(token));
-    return Object.freeze(indices);
+    if (this.#state !== "filling" && this.#state !== "sealed") this.#fail(`physical index requested in ${this.#state}`);
+    return Object.freeze(captured.map((token) => this.#coordinate(token)));
   }
 
   /** Authenticate producer completion without sealing unrelated reservations. */

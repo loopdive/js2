@@ -14,6 +14,14 @@ area: ir
 goal: ir-full-coverage
 depends_on: []
 related: [7354]
+# 2026-11-19 (part A, review round 1): src/ir/program-consumer.ts +7, the three `audited(() => { ... })` wrappers
+# around the post-seal reader blocks (two lines each) and the one-line reason at the completion checks; they wrap
+# reads in place, so there is no subsystem module to move them to. `materializePhysicalProgram` 300 → 303: the
+# wrapper around its six completion checks is inline there at the reviewer's request (one caller).
+loc-budget-allow:
+  - src/ir/program-consumer.ts
+func-budget-allow:
+  - src/ir/program-consumer.ts::materializePhysicalProgram
 ---
 
 # #7365 — PhysicalModuleReservations: quadratic layout audit
@@ -191,12 +199,21 @@ rows (sha1 `511adde20023d0a9591f97307d7bab532509a41d`).
 - **A, contract-neutral** (branch `claude/7354-perf3-readers`):
   - The pure readers after seal each run under ONE audit through the
     existing `audited()` instead of one audit per read. Those readers are:
-    the completion checks after `seal()` (`requireCompletedPacks`),
+    the completion checks after `seal()` in `materializePhysicalProgram`,
     `emittedSupportFunctionReceipts`, the support-receipt map and
     `nativeRealmCompletedSlots` in `recordEmissionObservation`.
   - `audited()` refuses any ledger mutation inside the block and audits once
     after it, so each reader still sees an audited layout.
   - Detection stays at the same calls, and no pinned test changes.
+  - **Review round 1 (2026-11-19): an index is answered from private state.**
+    Inside a block the nested audits are skipped, so a public layout altered
+    during one read and restored before the exit audit could steer
+    `physicalIndex` (it counted `module.imports` and read
+    `module.funcOrdinalToPosition`). `physicalIndex` and `physicalIndices`
+    now share `#coordinate`: the reserved position plus the import offset of
+    its index space, counted from the reservation tokens at freeze. Every
+    audit call stays where it was. Probes:
+    `tests/issue-7365-audited-reader-forgery.test.ts`.
 - **B, contract change** (branch `claude/7354-perf3-reservations`, on top of A):
   - During filling, queries read private state settled at freeze, and each
     fill checks only its own data.
