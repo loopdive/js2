@@ -13,11 +13,16 @@ task_type: implementation
 area: ir
 goal: ir-full-coverage
 related: [7354, 7349, 7350]
-# 2026-11-19 (WIP, S10): src/ir/from-ast.ts grows for `numericReaderOperandToF64` and `booleanToNumber`
-# (the binary form's boolean conversion, factored out so the compound arm reuses it). Pending the lead's decision
-# on the selector/JS-environment question; the grant is re-justified or removed before review.
+# 2026-11-19 (S10): src/ir/from-ast.ts +23. The compound arm reads a boolean / string right-hand side with the
+# binary form's steps through one helper, `numericReaderOperandToF64` (the binary form's boolean conversion is
+# factored into `booleanToNumber`, which both use), and from-ast's resolver capability union names
+# `native-dynamic-to-number`, which prettier now splits over lines.
+# 2026-11-19 (S10): plannedClosureOperandRefusal +2. Its compound-write arm passes the lane's
+# `native-dynamic-to-number` capability into the one table; prettier wraps the return over three lines.
 loc-budget-allow:
   - src/ir/from-ast.ts
+func-budget-allow:
+  - src/ir/select-planned-closure-operands.ts::plannedClosureOperandRefusal
 ---
 
 # #7375 — Prepared path: compound assignment with a non-numeric right-hand side
@@ -133,3 +138,55 @@ string or boolean, which this path already has.
   `compoundWriteAdmissible` stays the one table both from-ast and the selector
   ask; no arm specific to the Prepared path; `src/ir/from-ast.ts` does not
   grow, or the growth is granted in this file with a dated reason.
+
+## Result (2026-11-19, S10, local branch `claude/7375-compound-rhs`)
+
+The lead's decision: (b). JS-environment bytes stay identical; standalone is the target. The gate is the existing
+backend capability set, not an ad-hoc boolean.
+
+Built:
+
+- **New capability** `native-dynamic-to-number` in `IrBackendTargetCapability` (`src/ir/backend/legality.ts`),
+  ToNumber of a boxed concrete boolean / string. It is grouped with the host-free-standalone-only capabilities, so
+  it is false for the JS environment's native regime (`nativeRegimeInJs`), for WASI and for gc.
+- **`compoundWriteAdmissible`** takes the lane's answer as a parameter. With it, a numeric compound other than
+  `+=` (a string concatenates) and `**=` (exact-exponentiation operands) admits a boolean or string right-hand
+  side, on a dynamic or a number slot. All callers pass the capability: the ordinary selector's number-compound
+  arm, its planned-closure operand check (`nativeDynamicToNumber`, beside its sibling lane flags) and from-ast.
+- **from-ast's compound arm** reads that right-hand side with `numericReaderOperandToF64`, the binary form's
+  steps: a boolean is its 0 / 1 (`booleanToNumber`, factored out of `booleansReadAsNumbers`); a string is boxed
+  (`boxConcreteToDynamic`) and read with `dyn.to_number`.
+- **The Prepared resolver asks the capability set** for the first time. The native dynamic lane's resolver
+  (`programDynamicContracts`, `src/ir/source-dynamic-contracts.ts`) answers through the same legality predicate,
+  on a standalone wasmgc profile, and only for the capabilities its dynamic contracts cover
+  (`native-dynamic-to-number`). Every other capability stays unasked, so what the path admits does not move.
+- **Cleanup:** the selector's `supportsBackendCapability` option spelled out the 28-member capability union
+  inline; it now names `IrBackendTargetCapability`.
+
+Out of scope, noted: `var x = 2; x *= "3"` (a typed number slot). The binary form `x = x * "3"` refuses
+identically: a typed program has no dynamic carrier to box the string into. `+=` waits for Str2's dynamic `+`.
+
+Measured:
+
+- **Prepared:** every probe of the acceptance list runs with node's answer, except the shared typed-slot gap
+  above. Covered: the ten operators × string and boolean right-hand sides, in module-init and in a function. The
+  30 census files (S9's stand-in harness, this tree) all get past `compound-assign-unsupported`; each one now
+  first stops at `unknown class Test262Error` (slice C).
+- **JS-environment bytes,** vs an `origin/main` export: identical on 9 isolated programs (the 7 compound probes
+  plus two `+=` ones), `.js` and `.ts`. The 250-file test262 sample (the 30 + 220) is identical on both targets.
+- **Ordinary standalone, the programs whose bytes change:** 52 programs (13 compound shapes × right and wrong
+  answer × `.js`/`.ts`) run with node's answer. 48 now take the IR path where 4 did on base. Shapes: `x = true;
+  x *= true`, `x = "1"; x *= "1"`, `x <<= "1"`, `var x = 2; x *= "3"`, the function case, `x |= "1"`,
+  `x %= "4"`, `x -= 1` on `"abc"`, `x /= "x"`, `x >>>= true`, `x >>= "1"`, `x &= "3"`, `x ^= true`.
+- **Standalone test262 verdicts** of the 30 files (the ordinary runner, `runTest262File`): 30/30 pass on base and
+  on this branch.
+- **Pins moved:** `tests/es5-dynamic-compound.test.ts`. Six "refuses at selection" rows (`-= "2"`, `*= true`,
+  `-= fs()`, `<<= fs()`, `-= "a" + "b"`, `<<= "a" + "b"`) are now claimed, lowered and run against node. The
+  #7144 selector⇔from-ast sweep (`tests/issue-7144-operand-admissibility.test.ts`) now expects per lane. That
+  sweep caught `n += s` being admitted on a number slot, a concatenation; `+=` is excluded, and the new test
+  pins it.
+- **Pre-existing on main, not this change:** 4 tests of the #7144 sweep fail on the base too (`'-'`, `'|'`, `'<'`
+  over every pair; plain writes into each slot family).
+- **Mutation check:** 4 mutants, all killed. They removed: the capability case; the Prepared resolver's answer;
+  the table's capability test; the boolean arm.
+- `tests/issue-7375-compound-non-numeric-rhs.test.ts`: 40 tests.

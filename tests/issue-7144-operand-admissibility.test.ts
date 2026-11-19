@@ -95,12 +95,15 @@ function node(body: string): number {
   return new Function(`"use strict";\n${source(body).replace(/\bexport /g, "")}\nreturn run();`)() as number;
 }
 
-/** Selection agrees with the predicate, and a claim never withdraws. */
-async function expectAgreement(body: string, admissible: boolean): Promise<void> {
+/** Selection agrees with the predicate (per lane, where it asks a lane capability), and a claim never withdraws. */
+async function expectAgreement(
+  body: string,
+  admissible: boolean | ((lane: keyof typeof LANES) => boolean),
+): Promise<void> {
   for (const lane of Object.keys(LANES) as (keyof typeof LANES)[]) {
     const { claimed, postClaimErrors, result } = await outcome(body, lane);
     expect(postClaimErrors, `${lane}: ${body}`).toEqual([]);
-    expect(claimed, `${lane}: ${body}`).toBe(admissible);
+    expect(claimed, `${lane}: ${body}`).toBe(typeof admissible === "function" ? admissible(lane) : admissible);
     if (lane === "gc") expect(result.success, `${lane}: ${body}`).toBe(true);
     else expect(await runInstance(result, lane), `${lane}: ${body}`).toBe(node(body));
   }
@@ -159,9 +162,12 @@ describe("#7144 — writes, increments, `??` and `null` compares: selector ⇔ f
         for (const value of [PRODUCERS.number!, PRODUCERS.string!, PRODUCERS.boolean!, PRODUCERS.dynamic!]) {
           // `**=` shares `**`'s exact-exponentiation admission (#4787), which
           // excludes module init, so this harness never claims it.
+          // (#7375) `native-dynamic-to-number` holds on standalone only.
           await expectAgreement(
             `${slot} ${spelling} ${value.expr}; throw m;`,
-            op !== ts.SyntaxKind.AsteriskAsteriskEqualsToken && compoundWriteAdmissible(op, slotFamily, value.family),
+            (lane) =>
+              op !== ts.SyntaxKind.AsteriskAsteriskEqualsToken &&
+              compoundWriteAdmissible(op, slotFamily, value.family, lane === "standalone"),
           );
         }
       }

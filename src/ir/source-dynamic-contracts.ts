@@ -28,6 +28,11 @@
  *   result contracts and the flow rule answer from the same provenance.
  */
 import { ts } from "../ts-api.js";
+import {
+  supportsIrBackendTargetCapability,
+  type IrBackendTargetCapability,
+  type IrBackendTargetProfile,
+} from "./backend/legality.js";
 import type { IrType } from "./core/types.js";
 import type { IrFunction } from "./core/nodes.js";
 import { IrUnsupportedError } from "./outcomes.js";
@@ -43,6 +48,18 @@ type Signature = { readonly params: readonly IrType[]; readonly returnType: IrTy
 /** A program global as the source producer holds it: only its storage type matters here. */
 type SourceGlobal = { readonly binding: { readonly type: IrType } };
 type SourcePolicy = Pick<RuntimeManifestPolicy, "backend" | "target">;
+/** The native dynamic lane's target, as the backend capability set reads it. */
+const NATIVE_LANE: IrBackendTargetProfile = Object.freeze({
+  backend: "wasmgc",
+  target: "standalone",
+  allowHostImports: false,
+});
+/**
+ * (#7375) The capabilities the native lane answers through the backend capability set, the first the Prepared
+ * resolver asks: only those whose providers this lane's dynamic contracts cover, so that what the path admits
+ * does not move with the rest of the set.
+ */
+const NATIVE_LANE_CAPABILITIES: ReadonlySet<IrBackendTargetCapability> = new Set(["native-dynamic-to-number"]);
 type DynamicLane = "host-async" | "native" | undefined;
 const IR_BOOLEAN_RESULT: IrType = Object.freeze({ kind: "val", val: Object.freeze({ kind: "i32", boolean: true }) });
 
@@ -192,7 +209,11 @@ export interface ProgramDynamicContracts extends SourceDynamicProvenance {
    * all refuse before a catch today; the slice that makes one reachable updates
    * tests/issue-7354-x-dynamic-throw.test.ts, which pins each.
    */
-  readonly resolver: { readonly resolveDynamic?: () => ValType; readonly dynamicCarrierIsExternref?: () => boolean };
+  readonly resolver: {
+    readonly resolveDynamic?: () => ValType;
+    readonly dynamicCarrierIsExternref?: () => boolean;
+    readonly supportsBackendCapability?: (capability: IrBackendTargetCapability) => boolean;
+  };
   /** {@link legalizeSourceDynamicValues} for the functions lowered from `roots`. */
   readonly legalize: (
     signatures: Iterable<Signature>,
@@ -217,7 +238,12 @@ export function programDynamicContracts(
     ...provenance,
     parameter: (declaration, parameter) => sourceDynamicParameter(checker, policy, declaration, parameter),
     resolver: nativeDynamicLane(policy)
-      ? { resolveDynamic: () => ({ kind: "externref" }), dynamicCarrierIsExternref: () => true }
+      ? {
+          resolveDynamic: () => ({ kind: "externref" }),
+          dynamicCarrierIsExternref: () => true,
+          supportsBackendCapability: (capability) =>
+            NATIVE_LANE_CAPABILITIES.has(capability) && supportsIrBackendTargetCapability(NATIVE_LANE, capability),
+        }
       : {},
     result: (declaration) =>
       sourceDynamicResult(checker, policy, declaration, provenance.carries) ??

@@ -551,15 +551,28 @@ export function nullValueAdmissible(consumer: OperandFamily): boolean {
  * number arithmetic on an f64 or dynamic slot. Dynamic operands use ToNumber;
  * a value `void x` already supplies its numeric NaN.
  */
-export function compoundWriteAdmissible(op: ts.SyntaxKind, slot: OperandFamily, value: OperandFamily): boolean {
+/**
+ * `dynamicToNumber`: the lane's `native-dynamic-to-number` capability, under which (#7375) a boolean or string
+ * right-hand side of a numeric compound is read with ToNumber.
+ */
+export function compoundWriteAdmissible(
+  op: ts.SyntaxKind,
+  slot: OperandFamily,
+  value: OperandFamily,
+  dynamicToNumber: boolean,
+): boolean {
   if (op === ts.SyntaxKind.PlusEqualsToken) {
     if (slot === "string") return value === "string";
     if (slot === "dynamic") return boxableIntoDynamic(value);
   }
   if (!isNumberCompoundAssignOperator(op)) return false;
   // (#7375) A boolean or string right-hand side is read with ToNumber, as the binary form reads it
-  // (`numericReaderOperandToF64`); `**=` keeps its exact-exponentiation operands.
-  const toNumbered = op !== ts.SyntaxKind.AsteriskAsteriskEqualsToken && (value === "boolean" || value === "string");
+  // (`numericReaderOperandToF64`). Not by `+=` (a string concatenates) or `**=` (exact-exponentiation operands).
+  const toNumbered =
+    dynamicToNumber &&
+    op !== ts.SyntaxKind.PlusEqualsToken &&
+    op !== ts.SyntaxKind.AsteriskAsteriskEqualsToken &&
+    (value === "boolean" || value === "string");
   // Dynamic numeric compounds use the same ToNumber path as binary arithmetic.
   if (slot === "dynamic")
     return (

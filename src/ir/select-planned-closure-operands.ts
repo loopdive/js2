@@ -68,6 +68,8 @@ export interface PlannedClosureFamilySources {
   readonly nativeDynamicMemberRead?: boolean;
   /** (#7113, #7193) The lane admits a carrier loose `==` / `!=` in a planned closure. */
   readonly nativeDynamicLooseEquality?: boolean;
+  /** (#7375) The lane reads a boolean / string compound right-hand side with ToNumber. */
+  readonly nativeDynamicToNumber?: boolean;
   /** (#7113) The lane plans a direct call to a module function from a planned closure. */
   readonly directCalls?: boolean;
   /** (#7066) How the lane judges a `+` (`additiveOperandsProvable`). */
@@ -460,7 +462,9 @@ export function plannedClosureOperandRefusal(
       if (op === ts.SyntaxKind.EqualsToken) {
         return slotWriteVerdict(slot, value) === "admissible" ? null : { arm: "closure-slot-write", node: expr };
       }
-      return compoundWriteAdmissible(op, slot, value) ? null : { arm: "closure-compound-write", node: expr };
+      return compoundWriteAdmissible(op, slot, value, sources.nativeDynamicToNumber === true)
+        ? null
+        : { arm: "closure-compound-write", node: expr };
     }
     if (op === ts.SyntaxKind.InKeyword) {
       return sources.preparedDynamicHelpers || !carrierInReceiver(operandProof(expr.right).family)
