@@ -87,6 +87,17 @@ let it settle. That is a separate change in another module, not made here.
   so that a realm pack carrying source-closure requirements can settle too. Until then such a pack is re-checked at
   every use. File it as its own issue once a measurement shows its share.
 
+## Remaining levers (perf2's chain, not changed here)
+
+Measured 2026-11-19 on `claude/7354-o` + B′ + #7397 + #7398, prelude f, CPU
+profile (23.3 s compile):
+
+- the per-literal `audited` block in `emitPreparedNativeStringLiteral`:
+  5.4 s (18.0 %);
+- `planNativeStringValuePhysical` (`native-string-values.ts`), recomputed from
+  `prepareNativeProgramStringInput`, `nativeStringSetup` and
+  `checkReservationInput`: 4.4 s (14.7 %).
+
 ## Acceptance criteria
 
 1. Prelude-shaped program q/h/f: before/after times, sha1 identical.
@@ -99,3 +110,7 @@ let it settle. That is a separate change in another module, not made here.
    The first test fails without the change.
 3. The realm, request-literal, realm-declaration, #7354 Perf and #7354 O test
    files: no new failures.
+4. Once #7397, #7398 and #7365 have landed, restore the timeout of
+   `tests/issue-3518-ordinary-object-runtime-providers.test.ts` "empty void
+   closure bodies" (both tests) from 90 s to 35 s. #7312 raised it in
+   f4c7cb8256 with a dated reason.
