@@ -278,6 +278,7 @@
         "src/runtime/contracts/collection-kind.ts",
         "src/runtime/contracts/js-value-tags.ts",
         "src/runtime/contracts/native-realm-catalog.ts",
+        "src/runtime/contracts/native-realm-globals.ts",
         "src/runtime/contracts/well-known-symbols.ts"
       ],
       "minModules": 10
@@ -16706,6 +16707,11 @@
     },
     {
       "path": "src/runtime/contracts/native-realm-catalog.ts",
+      "state": "clean",
+      "layer": "runtime-contracts"
+    },
+    {
+      "path": "src/runtime/contracts/native-realm-globals.ts",
       "state": "clean",
       "layer": "runtime-contracts"
     },
