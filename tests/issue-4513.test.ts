@@ -340,11 +340,14 @@ describe("#4513 — keys that need a value environment still reject cleanly", ()
     );
   });
 
-  it("a runtime parameter key", async () => {
+  // 2026-11-19 (#7354, found by #7312's changed-root-tests): the key is a runtime value computed inside the
+  // function. A JS string argument no longer crosses the export boundary into a native-string parameter ("type
+  // incompatibility when transforming from/to JS"), which is unrelated to what this test is about.
+  it("a runtime key", async () => {
     await expectCleanReject(
-      `export function f(n: number, k: string): number { const o = { [k]: n }; return (o as any).a; }`,
+      `export function f(n: number): number { const k = n > 0 ? "a" : "b"; const o = { [k]: n }; return (o as any).a; }`,
       "f",
-      [41, "a"],
+      [41],
       41,
     );
   });
@@ -383,20 +386,20 @@ describe("#4513 — property FORMS that stay rejected, each at its own arm", () 
       `export function f(n: number): number { const o = { get ["a"]() { return 1; } }; return (o as any).a + n; }`,
       "f",
       [41],
-      NaN,
+      // 2026-11-19: node's answer. The direct backend now evaluates the getter (it answered NaN when this was pinned).
+      42,
     );
   });
 
-  it("a computed method name — legacy itself THROWS on this shape, so it is not a parity target", async () => {
-    // Measured: the direct backend emits an object whose `m` is not callable.
-    // Adopting the shape in the IR would mean reproducing a legacy bug.
-    const source = `export function f(n: number): number { const o = { ["m"]() { return 1; } }; return (o as any).m() + n; }`;
-    expect(claims(source, "f")).toBe(false);
-    expect(await outcomeOf(source, "f")).not.toBe("invariant");
-    const legacy = await instantiate(source, false);
-    const ir = await instantiate(source, true);
-    expect(() => (legacy.f as (n: number) => number)(41)).toThrow();
-    expect(() => (ir.f as (n: number) => number)(41)).toThrow();
+  // 2026-11-19: the direct backend now calls the computed method (it threw when this was pinned), so the shape
+  // stays unclaimed by the IR and both paths give node's answer.
+  it("a computed method name", async () => {
+    await expectCleanReject(
+      `export function f(n: number): number { const o = { ["m"]() { return 1; } }; return (o as any).m() + n; }`,
+      "f",
+      [41],
+      42,
+    );
   });
 
   it("a spread alongside a computed key", async () => {

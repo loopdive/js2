@@ -2262,6 +2262,11 @@ through `src/test262/test262-prepared-entry.ts` (options `wholeProgram: prepared
     intrinsic"); a gap could carry its own sentence.
   - `nativeRealmReservationInventory` records `owner.inventory` as a side effect of a query; a separate record step
     would be clearer.
+- **Reviewer notes on the EH fix (non-blocking, APPROVE on f4c7cb8256):**
+  - The realm guards catch only the module's exception tag. That is enough while the realm runs standalone only; a
+    realm in a JavaScript environment would also see host exceptions and would need `catch_all_ref`/`throw_ref`.
+  - The decoder test's `catch_all` pattern would also flag a legitimate `try_table` `catch_all` clause; it should
+    match only the legacy `(catch_all` form once a realm body uses one.
 - **Timeout (lead decision).** `tests/issue-3518-ordinary-object-runtime-providers.test.ts` "empty void closure
   bodies" ×2 run at 90 s instead of the global 35 s. Each case compiles a realm program twice (≈36 s locally, ≈39.5 s
   on CI). Restore the default once #7397, #7398 and #7365 land; #7397's issue file carries that as an acceptance line.
