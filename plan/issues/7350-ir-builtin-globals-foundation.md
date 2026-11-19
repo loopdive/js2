@@ -5,7 +5,7 @@ status: in-progress
 assignee: ttraenkler/senior-dev
 sprint: current
 created: 2026-11-15
-updated: 2026-11-16
+updated: 2026-11-19
 priority: high
 horizon: xl
 feasibility: hard
@@ -261,3 +261,19 @@ runtime-side fact, no hand list). Writes stay out (G6).
   120 realm-graph programs: 0 claimed-wrong, 0 lost, 0 new post-claim errors.
 - JS-environment output: identical on 666 binaries (the 408 position programs, the 2 gained files and 256
   sampled carrier, control and `with` files).
+
+**Re-measured 2026-11-19** (lead takeover; branch head after merging main `ee3fcdd610`, standalone, compile census
+without the Temporal provider, verdicts with `scripts/run-test262-paths.mts`). Population: the 1,327 ES5 files
+that pass on the standalone baseline of 2026-11-19, still carry legacy units, and name a built-in global outside
+a call, `new`, `instanceof` or member position (`.tmp` prefilter; the earlier 1,837-file carrier list is not in
+the repository).
+
+| population | files | gained | lost | units newly legacy | new post-claim | new CE | standalone binaries differ |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| ES5 candidates | 1,327 | 3 | 0 | 0 | 0 | 0 | 3 |
+| random test262 sample, default and standalone | 100 | 0 | 0 | 0 | 0 | 0 | 0 (JS environment 0 of 103 incl. the gained) |
+
+- Gained: `built-ins/JSON/15.12-0-1.js`, `built-ins/global/S10.2.3_A1.1_T4.js` and (new since 2026-11-16)
+  `built-ins/global/S10.2.3_A1.2_T4.js`; all three pass on both trees.
+- `tests/issue-7294-builtin-proto-member-provider.test.ts` fails the same 4 rows on main `ee3fcdd610` as on
+  the branch (`operand-coercion-unsupported` on `Object.is`); not caused by G1.
