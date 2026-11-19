@@ -36,6 +36,7 @@ import {
 } from "../shared.js";
 import { pushDefaultValue } from "../type-coercion.js";
 import { getFuncParamTypes } from "./helpers.js";
+import { optionalChainReceiverType } from "../builtin-subclass-receiver.js";
 import { tupleStructFields } from "./spread-arguments-call.js";
 
 export function findExternInfoForMember(
@@ -64,7 +65,7 @@ function compileExternMethodCall(
   propAccess: ts.PropertyAccessExpression,
   callExpr: ts.CallExpression,
 ): InnerResult | undefined {
-  const receiverType = ctx.checker.getTypeAtLocation(propAccess.expression);
+  const receiverType = optionalChainReceiverType(propAccess, ctx.checker.getTypeAtLocation(propAccess.expression));
   const declaredClassName = hostMapCarrierClassName(ctx, receiverType) ?? receiverType.getSymbol()?.name;
   // (#7058) `ReadonlyMap` / `ReadonlySet` are type-only VIEWS of the same
   // native `$Map` / `$Set` (JSDoc `@type {ReadonlyMap<…>}` on a `new Map(…)`,

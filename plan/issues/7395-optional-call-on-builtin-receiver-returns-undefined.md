@@ -1,10 +1,11 @@
 ---
 id: 7395
 title: "`s?.toUpperCase()`, `a?.push(3)` and `m?.get(k)` on a defined string, array, Map or Set receiver return `undefined`"
-status: in-progress
+status: done
 sprint: current
 created: 2026-11-19
 updated: 2026-11-19
+completed: 2026-11-19
 priority: high
 horizon: s
 feasibility: medium
@@ -56,15 +57,16 @@ Same rows fail on all three heads:
 | `Set` | `?.add` (dropped) | **all 5 kinds wrong** | — |
 | `Map`, `Set` | `?.size` | all 5 kinds wrong; param/field/global fail Wasm validation | param, field fail validation |
 | class `K` (control) | `?.m()`, `?.bump()` | ok | ok, except local |
+| any receiver, `const r: T \| undefined = undefined` | every method form | — | **wrong for every type**, the class control included |
 
 Three of the failing groups are other mechanisms and are not this issue:
 
 - **Local U** (every receiver, the class control included): `const r: T | undefined = undefined` narrows `r` to
-  `undefined`, and that path answers wrongly for every receiver.
+  `undefined`, and that path answers wrongly for every receiver (the separate row above).
 - **`?.includes` / `?.has` results**: the result type is `boolean | undefined`, which lowers to a bare i32 that
   cannot hold `undefined` (the #7374 representation gap). U never reads as `undefined`.
 - **`?.size`**: an optional *property* access, not a call; it emits invalid Wasm for parameter, field and global
-  receivers.
+  receivers. #7401 owns it (`property-access.ts`).
 
 ## Cause
 
@@ -129,3 +131,49 @@ sample compiles byte-identically on gc and standalone.
 - No U row that passes today regresses.
 - `tests/issue-7395-optional-call-builtin-receiver.test.ts` covers those rows on both targets, with expected values
   written by hand to match node.
+
+## Result (2026-11-19)
+
+On `claude/7395-optional-call-builtin-receivers`, base be33813e0a (#7374 107c33343d merged with #7370 18f3b2ad88).
+
+What changed, against the plan:
+
+- **Plan steps 1–2 as written.** `isPrimitiveMethodReceiver` became `isLadderMethodReceiver`: the primitive mask
+  gains `StringLike`, and a built-in nominal receiver (`isBuiltinTypeName`) also qualifies. The `ctx.fast`-gated
+  string branch is gone, including its host `string_<method>` import fallback.
+- **Step 3: one join helper.** `undefinableJoin` sits next to `nullableJoin` and `optionalUndefinedInstrs`, and both
+  the ladder arm and `compileOptionalValueReceiverCall` use it. Its job is to give the call result a type that the
+  short-circuit `undefined` also fits:
+  - a number becomes an f64 carrying the sentinel; an i32 result (a string `indexOf`) is converted only when the
+    declared type is a number;
+  - an anyref result (`Map.get`) becomes an externref;
+  - any other reference takes its nullable form.
+
+  `optionalUndefinedInstrs` now yields the sentinel for an f64.
+- **Step 4: the cause was not the ValType.** `compileExternMethodCall` (`expressions/extern.ts`) read the receiver as
+  the raw `Map<…> | undefined` union, so no class name matched and the native Map/Set dispatch was skipped. It now goes
+  through `optionalChainReceiverType`, the same rule the ladder uses.
+
+Measurements:
+
+- **Probe** (280 programs): 145 fail on the base, 66 on the head, and no row regresses. Every in-scope D row passes:
+  string methods; array `indexOf`/`join`/`push`/`map`; Map `get`/`set`; Set `add`. The U rows that passed still pass.
+- **#7401's three reproducers** (local Set `add`, local Map `set`, `s?.has(1) ? 1 : 0`) pass on gc and standalone.
+- **`tests/issue-7395-optional-call-builtin-receiver.test.ts`**: 14 programs × gc/standalone, with expected values
+  checked against node. The base fails all 28; the head passes 28/28.
+- **Neighbour suites**: 24 files (optional-call/chain, string/array method, Map/Set, #7360/#7370/#7374). The base
+  has 285 passing and 42 failing; the head has 313 passing and 14 failing. The 14 head failures are the same tests
+  that fail on the base, and the 28 fixed are the new tests.
+- **Byte identity**: 100 test262 files × gc/standalone, identical against the be33813e0a sources (200/200).
+- **Gates**: loc/func budget (also with `LOC_GATE_BASE=origin/main`), coercion sites, oracle ratchet and dead exports
+  all pass. `calls-optional.ts` goes from 504 to 464 lines.
+
+### Left open
+
+- `const r: T | undefined = undefined` locals (the row above): wrong for every receiver type.
+- `boolean | undefined` results (`?.includes`, `?.has` stored in a variable): the i32 cannot hold `undefined`. Widening
+  the result to an f64 made those U rows pass, but it stores `true` as the number 1, so it was dropped.
+  Testing the result directly (`s?.has(1) ? …`) works.
+- `?.size`: #7401.
+- `a?.map(f).length` with `a` undefined: the chain past the call does not short-circuit, so it traps (null deref).
+
