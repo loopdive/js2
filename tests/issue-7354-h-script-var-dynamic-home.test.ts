@@ -395,7 +395,7 @@ describe("#7354 H — legalizeDynamicGlobals", () => {
   it("returns the program unchanged without a dynamic global", () => {
     const functions = [fn("init", [marker])];
     const globals = [global("n", f64, "init")];
-    const out = legalizeDynamicGlobals(functions, globals, () => true);
+    const out = legalizeDynamicGlobals(functions, globals);
     expect(out.functions).toBe(functions);
     expect(out.globals).toBe(globals);
   });
@@ -408,7 +408,7 @@ describe("#7354 H — legalizeDynamicGlobals", () => {
       global("n", f64, "init"),
       global("b", { kind: "dynamic" }, "init"),
     ];
-    const out = legalizeDynamicGlobals([init, other], globals, () => true);
+    const out = legalizeDynamicGlobals([init, other], globals);
     expect(out.functions[1]).toBe(other);
     const instrs = out.functions[0]!.blocks[0]!.instrs;
     expect(instrs.map((instr) => instr.kind)).toEqual(["intrinsic", "global.set", "global.set", "const"]);

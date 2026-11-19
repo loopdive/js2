@@ -38,8 +38,9 @@ import { buildIrUnitTypeMap, lowerTypeToIrType } from "./propagate.js";
 import { buildIrModuleInitPlan } from "./module-init-plan.js";
 import type { IrModuleInitPlan } from "./program/startup.js";
 import { makeModuleInitSynthetic } from "./module-init.js";
-import { collectProgramSourceGlobals, instantiateProgramSourceGlobals } from "./program-source-globals.js";
-import { makeIrIdentityModuleBindingResolver, type IrModuleBindingIdentity } from "./module-bindings.js";
+import { collectProgramSourceGlobals, type ProgramSourceGlobal } from "./program-source-globals.js";
+import { legalizeDynamicGlobals } from "./program/dynamic-value-legalization.js";
+import { makeIrIdentityModuleBindingResolver } from "./module-bindings.js";
 import type { IrDirectCallLoweringPlan, ModuleBindingGlobal } from "./ast-lowering-plans.js";
 import type { PreparedIrFunction as IrFunction, PreparedIrModule as IrModule } from "./runtime/contracts/prepared.js";
 import type { IrType } from "./core/types.js";
@@ -872,7 +873,7 @@ export interface IrProgramSourcePreparation {
   readonly derivedUnits: readonly ProgramAbiDerivedUnitRecord[];
   readonly startup: readonly IrModuleInitPlan[];
   readonly callables: readonly IrProgramCallableBindingRecord[];
-  readonly globals: readonly { readonly binding: ModuleBindingGlobal; readonly identity: IrModuleBindingIdentity }[];
+  readonly globals: readonly ProgramSourceGlobal[];
   readonly allocations: AllocSiteRegistry;
 }
 
@@ -1780,7 +1781,7 @@ export function prepareIrProgramSources(
       sourceMapProjector === undefined
         ? undefined
         : finishSourceMapCatalog(sourceMapProjector, derivedSourceRows!, derivedUnits);
-    const dynamic = instantiateProgramSourceGlobals(functions, sourceGlobals);
+    const dynamic = legalizeDynamicGlobals(functions, globals);
     const prepared: IrProgramSourcePreparation = {
       kind: "prepared",
       ...(sourceMap === undefined ? {} : { sourceMap }),

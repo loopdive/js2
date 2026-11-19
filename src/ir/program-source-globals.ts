@@ -3,11 +3,11 @@
  * (#7372) The source globals of a Prepared whole program: one row per module-init global binding
  * (`isModuleInitGlobalDeclaration`), with its storage and how the program instantiates it. The producer
  * (`prepareIrProgramSources`) asks this registry for the program input's globals and for the declaration → global
- * lookup its resolver reads; the module-init prologue stores what each row's instantiation says.
+ * lookup its resolver reads.
  *
  * The instantiation is the startup plan's (`IrModuleInitBindingIntent.initialization`), so the plan and the
- * prologue cannot disagree: a script `var` is `undefined` from instantiation, a lexical binding is in its TDZ
- * until its declaration runs. A repeated script `var` is one row: every declarator resolves to the first one's
+ * storage cannot disagree: a script `var` is `undefined` from instantiation, a lexical binding is in its TDZ
+ * until its declaration runs and has the TDZ flag global. A repeated script `var` is one row: every declarator resolves to the first one's
  * binding id.
  */
 import { ts } from "../ts-api.js";
@@ -19,9 +19,8 @@ import type { IrModuleBindingIdentity, IrModuleBindingResolver } from "./module-
 import { isModuleInitGlobalDeclaration, moduleInitBindings } from "./module-init-vars.js";
 import { IrUnsupportedError } from "./outcomes.js";
 import { requireIrPlanningOwnerUnitId, type IrPlanningIdentityContext } from "./planning-identity.js";
-import { legalizeDynamicGlobals } from "./program/dynamic-value-legalization.js";
+import { PreparedIrProgramInvariantError } from "./program/errors.js";
 import type { IrModuleInitBindingIntent, IrModuleInitPlan } from "./program/startup.js";
-import type { PreparedIrFunction as IrFunction } from "./runtime/contracts/prepared.js";
 
 /** A global as the program input carries it. */
 export interface ProgramSourceGlobal {
@@ -29,16 +28,9 @@ export interface ProgramSourceGlobal {
   readonly identity: IrModuleBindingIdentity;
 }
 
-/** One registry row: the global and how the program instantiates it. */
-interface ProgramSourceGlobalRow {
-  readonly global: ProgramSourceGlobal;
-  readonly instantiation: IrModuleInitBindingIntent["initialization"];
-}
-
 export interface ProgramSourceGlobals {
   readonly globals: readonly ProgramSourceGlobal[];
   readonly byDeclaration: ReadonlyMap<ts.Declaration, ProgramSourceGlobal>;
-  readonly rows: readonly ProgramSourceGlobalRow[];
 }
 
 interface ProgramSourceGlobalsInput {
@@ -56,7 +48,7 @@ export function collectProgramSourceGlobals(input: ProgramSourceGlobalsInput): P
   const instantiationById = new Map(
     input.startup.flatMap((plan) => plan.bindings).map((intent) => [intent.globalBindingId, intent.initialization]),
   );
-  const rowById = new Map<string, ProgramSourceGlobalRow>();
+  const globalById = new Map<string, ProgramSourceGlobal>();
   const byDeclaration = new Map<ts.Declaration, ProgramSourceGlobal>();
   for (const source of input.sourceFiles) {
     for (const bound of source.statements.flatMap(moduleInitBindings)) {
@@ -70,38 +62,28 @@ export function collectProgramSourceGlobals(input: ProgramSourceGlobalsInput): P
         unsupported(`module binding ${declaration.name.text} has no exact typed storage: ${inspected.kind}`);
       const global = inspected.identity;
       diagnostic.active = global.storageOwnerUnitId;
-      const instantiation = instantiationById.get(global.globalBindingId)!;
-      const row = rowById.get(global.globalBindingId) ?? {
-        global: { binding: moduleBindingGlobal(declaration.name.text, global, instantiation), identity: global },
-        instantiation,
+      const instantiation = instantiationById.get(global.globalBindingId);
+      if (instantiation === undefined)
+        throw new PreparedIrProgramInvariantError(
+          "invalid-prepared-data",
+          `module binding ${declaration.name.text} has no startup binding to instantiate it`,
+        );
+      const entry = globalById.get(global.globalBindingId) ?? {
+        binding: moduleBindingGlobal(declaration.name.text, global, instantiation),
+        identity: global,
       };
-      rowById.set(global.globalBindingId, row);
-      byDeclaration.set(declaration, row.global);
+      globalById.set(global.globalBindingId, entry);
+      byDeclaration.set(declaration, entry);
     }
   }
-  const rows = [...rowById.values()];
-  return { globals: rows.map((row) => row.global), byDeclaration, rows };
-}
-
-/**
- * The module-init prologue's stores: every dynamic global takes the carrier type, and each one the startup plan
- * instantiates as `undefined` gets that value before the first statement of its storage owner.
- */
-export function instantiateProgramSourceGlobals(
-  functions: readonly IrFunction[],
-  registry: ProgramSourceGlobals,
-): { readonly functions: readonly IrFunction[]; readonly globals: readonly ProgramSourceGlobal[] } {
-  const startsUndefined = new Set(
-    registry.rows.filter((row) => row.instantiation === "undefined-at-instantiation").map((row) => row.global),
-  );
-  return legalizeDynamicGlobals(functions, registry.globals, (global) => startsUndefined.has(global));
+  return { globals: [...globalById.values()], byDeclaration };
 }
 
 /** A global in its TDZ until its declaration runs (a `let` or `const`) also has the TDZ flag global. */
 function moduleBindingGlobal(
   name: string,
   global: IrModuleBindingIdentity,
-  instantiation: ProgramSourceGlobalRow["instantiation"],
+  instantiation: IrModuleInitBindingIntent["initialization"],
 ): ModuleBindingGlobal {
   const lexical = instantiation === "tdz";
   return {

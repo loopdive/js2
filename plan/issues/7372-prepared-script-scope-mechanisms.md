@@ -219,10 +219,6 @@ Built (`src/ir/program-source-globals.ts`, new; program-source.ts shrinks by 38 
   startup plan's own `IrModuleInitBindingIntent.initialization` (`undefined-at-instantiation` | `tdz`), not a
   second vocabulary. The TDZ flag global now follows from it: a row is in its TDZ exactly when the plan says
   `tdz` (before: the declaration list's `let`/`const` flag, the same set).
-- `instantiateProgramSourceGlobals`: the module-init prologue. `legalizeDynamicGlobals` (D1's globals arm,
-  unchanged otherwise) takes the set of globals to store `undefined` into from the caller instead of storing it
-  into every dynamic global: the registry passes the rows the plan instantiates as `undefined`. That is the seam
-  S4's `function-at-startup` and S2's / slice 3's `on-first-run` rows plug into.
 - Not added, by the IR rule (no kind without a user): `function-at-startup`, `on-first-run`,
   `global-object-property`. Not done: keying the repeated-declaration rule by symbol across sources. Its first
   user is S2's eval source. The resolver's `moduleBindingDeclarations` is shared with the ordinary pipeline's
@@ -235,3 +231,21 @@ Measured:
   refusals).
 - Gates: typecheck, loc, func (also against `origin/main`), coercion-sites, oracle-ratchet, dead-exports,
   import-cycles; compiler-boundaries inventory valid (new module classified, `owner: 7372`).
+
+### Review round 1 (RV7329, head `4792b8f2`): BLOCKER, addressed
+
+- **Must-fix: not move-only.** The prologue seam (`legalizeDynamicGlobals` storing `undefined` only into the
+  rows the plan instantiates as `undefined`) dropped the store into a dynamic `let`. Such a `let` exists: the
+  Prepared producer's `numberStorage: "f64"` plus `updateRetypesModuleBinding` gives a `++`/`--` target the
+  carrier, e.g. `let x = "a"; x++;`. The lead's decision: keep this PR move-only. The seam and
+  `instantiateProgramSourceGlobals` are removed. `legalizeDynamicGlobals` is back to `dd8e3628`, storing into
+  every dynamic global it owns. Narrowing that store, if wanted, is a later PR with a pinning test.
+- **Should-fix:** `IrProgramSourcePreparation.globals` uses the registry's `ProgramSourceGlobal` (no second
+  spelling). A global without a startup binding throws a named `PreparedIrProgramInvariantError` instead of
+  `!`.
+- **Nits:** D1's doc names the dynamic `let`; the registry exposes `globals` and `byDeclaration` only (the
+  internal row type is gone; the instantiation decides the TDZ flag global).
+- Prepared bytes vs `dd8e3628`: 886 programs, the 872 above plus the reviewer's four rows and three more dynamic
+  `let` programs, each as `.js` and `.ts`, are identical. The reviewer's `dd8e3628` hashes reproduce (`let x =
+  "a"; x++;` → `eb4d8edaddca`). The 872-program sample had missed the class because no test program has a
+  `++`/`--` on a non-number `let`.
