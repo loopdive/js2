@@ -209,6 +209,52 @@ rows (sha1 `511adde20023d0a9591f97307d7bab532509a41d`).
   (`nativeRealmReservationInventory`, `preparedIrDataMismatch`), not this
   audit.
 
+## Chosen: B′ (lead decision 2026-11-19)
+
+**Contract.** An index query during filling does not audit the layout;
+completion checks, freeze and seal do, and every read after seal does. A
+reservation's own data is checked when it is reserved or filled. The same
+sentence is in the header of `src/wasm/physical/module-reservations.ts`.
+
+- **Completion checks** are `assertCompletedReservation`,
+  `assertTypeReservation` and every `requireCompleted*` that reaches them. They
+  keep their full audit during filling. Only `physicalIndex` /
+  `physicalIndices` and reserves / fills skip it.
+- **Nothing is emitted from an unsealed layout.**
+  - The one production owner of a transaction (`src/ir/program-consumer.ts`,
+    `materializePhysicalProgram`) has no return before `seal()`. Its module is
+    exposed only through the emission it returns after sealing.
+  - After a refusal the ledger is `failed` and `seal()` refuses. Every
+    re-pointed pin asserts that (`expectUnemittable`).
+- **Owned fills** (`fillOwnedFunction`) keep their fill-time check of their own
+  descriptor and completed body (`#verifyDescriptor`,
+  `#verifyCompletedFunction`). `#verifyLayout`'s per-token loops now call the
+  same two helpers.
+- **Realm proving program:** A 9.2 s, B′ 3.1 s (B would be 1.5 s). The wasm is
+  identical in every variant (sha1 `511adde2`).
+
+### Pins re-pointed by B′ (65; the src commit alone fails exactly these)
+
+| file | re-pointed | old detection point | new detection point |
+|---|---|---|---|
+| `issue-3518-physical-snapshot-comparison` | 40 | `physicalIndices` during filling | `queryAfterAudit` (one completion-check audit, then the query) |
+| `issue-3518-native-authentication-performance` | 11 | `physicalIndices` during filling | `queryAfterAudit`; the reflection-trap pin `completionCheck` |
+| `issue-3518-native-string-flatten-resources` | 6 | `requireCompletedNativeStringFlatten` (its index queries) | `completionCheck` (the check under `audited()`) |
+| `issue-3518-native-builtin-functions` | 3 | `requireNativeBuiltinFunctionReservations` | `completionCheck` |
+| `issue-3518-builtin-request-literal-authentication` | 2 | the issuer, filling phase | `completionCheck` (reserving keeps the issuer) |
+| `issue-3518-native-string-completion` | 2 | `requireCompletedNativeStringLiterals` | `completionCheck` |
+| `issue-3527-owned-function-data` | 1 | `fillOwnedFunction`'s whole-layout closing audit | `sealed` |
+
+Every re-pointed pin keeps its mutation and its expected error text.
+`scripts/check-pinned-refusals.mjs --base <A head>` verifies this per file:
+the same expected refusals, the same case count, no added `.not.toThrow`.
+
+### Possible later change: B
+
+B would also skip the audit in completion checks during filling (realm
+1.5 s). It moves 186 pins, across the #3518, #3525 and #3527 suites. Not
+built.
+
 ## Implementation Plan (pending the decision above)
 
 - **Module:** `src/wasm/physical/module-reservations.ts` only. The check
