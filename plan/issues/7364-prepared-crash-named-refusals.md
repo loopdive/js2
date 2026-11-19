@@ -15,10 +15,12 @@ area: ir, compiler
 goal: ir-full-coverage
 depends_on: []
 related: [7354, 7338, 7106, 3791]
-# 2026-11-19 (review round 1): one shared RegExp construction rule and the `unselected` producer fact. The rule's
-# body lives in src/ir/regexp-literal-admission.ts and `refuseUnselected` beside `demoteToLegacy`; what is left is
-# wiring: from-ast.ts +3 (the `unselected` option, its LowerCtx field, the admission import), integration.ts +1
-# (the resolver's `nativeRegExpCompiles`, the selector's own answer), program-source.ts +1 (`unselected: true`).
+# 2026-11-19 (review round 1): src/ir/from-ast.ts, the `unselected` option and its LowerCtx field, the
+# regexp-literal-admission import, and `unadmittedObjectDefineProperty` over `refuseUnselected` (the rule itself
+# lives in src/ir/regexp-literal-admission.ts and the helper beside `demoteToLegacy`).
+# 2026-11-19 (review round 1): src/ir/integration.ts +1, the resolver's `nativeRegExpCompiles`, the selector's
+# own answer, asked again where a static construction is built.
+# 2026-11-19 (review round 1): src/ir/program-source.ts +1, `unselected: true`, the Prepared producer's fact.
 loc-budget-allow:
   - src/ir/from-ast.ts
   - src/ir/integration.ts

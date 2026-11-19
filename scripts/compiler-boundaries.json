@@ -13194,6 +13194,14 @@
       "nextBoundary": "TypeScript-AST plan plus builder lowering of the JS environment's `Object.create({}, { <literal data descriptors> })`, shared by the selector and from-ast (#7276); folds into the #7338 statics table when that environment adopts it."
     },
     {
+      "path": "src/ir/regexp-literal-admission.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "7364",
+      "nextBoundary": "TypeScript-AST rule for which static RegExp constructions a lane builds, shared by the selector and from-ast (#7364); moves with the frontend inventory split."
+    },
+    {
       "path": "src/ir/object-statics.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",

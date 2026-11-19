@@ -8,7 +8,7 @@ import { describe, expect, it } from "vitest";
 import ts from "typescript";
 import { analyzeSource } from "../src/checker/index.js";
 import { compile as compileOrdinary } from "../src/index.js";
-import { lowerFunctionAstToIr } from "../src/ir/index.js";
+import { lowerFunctionAstToIr, planIrCompilation } from "../src/ir/index.js";
 import { IrInvariantError, IrUnsupportedError } from "../src/ir/outcomes.js";
 import { compile, type Test262CompileOptions } from "../src/test262/test262-prepared-entry.js";
 import { createTestIrFunctionIdentityFactory } from "./helpers/ir-identities.js";
@@ -69,7 +69,20 @@ describe("#7364 — the ordinary pipeline claims no RegExp unit it then withdraw
     expect(result.irOutcomes?.find((outcome) => outcome.displayName === "f")?.stage).toBe("patch");
   });
 
-  it("linear: the selector refuses it, so no IR build error is reported", async () => {
+  // The linear lane answers no RegExp capability. Under the old reading (an absent answer is "host available") the
+  // selector claimed `f` and from-ast then threw or withdrew it; now the refusal is at select, by name.
+  it("linear: the selector refuses it at select, by name", () => {
+    const ast = analyzeSource(source);
+    const selection = planIrCompilation(ast.sourceFile, {
+      experimentalIR: true,
+      trackFallbacks: true,
+      backendTargetProfile: { backend: "linear" },
+    });
+    expect([...selection.funcs]).toEqual([]);
+    expect(selection.fallbacks).toEqual([{ name: "f", reason: "regexp-constructor-unsupported" }]);
+  });
+
+  it("linear: no IR build error is reported", async () => {
     const result = await compileOrdinary(source, { fileName: "t.ts", target: "linear", trackIrOutcomes: true });
     expect(result.irPostClaimErrors ?? []).toEqual([]);
     expect(result.errors.map((error) => error.message).join("\n")).not.toContain("linear-ir: IR build");
