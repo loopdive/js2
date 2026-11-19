@@ -84,13 +84,20 @@ export function settledAtIssue(input: unknown): PreparedIrSettlement {
   return { settled: isImmutablePreparedIrValue(input) ? sharedPrototypeState() : undefined };
 }
 
-/** The settled verdicts of ONE check, each held by the input object it was reached over. */
-export class PreparedIrSettledChecks<Input extends object> {
-  readonly #holders = new WeakMap<Input, PreparedIrSettlement>();
+/**
+ * The settled results of ONE pure computation over its input (a check's result is `void`), each held by the input
+ * object it ran over.
+ */
+export class PreparedIrSettledChecks<Input extends object, Output = void> {
+  readonly #holders = new WeakMap<Input, PreparedIrSettlement & { output?: Output }>();
 
-  check(input: Input, check: () => void): void {
+  check(input: Input, compute: () => Output): Output {
     let holder = this.#holders.get(input);
     if (!holder) this.#holders.set(input, (holder = { settled: undefined }));
-    checkUnlessSettled(holder, input, check);
+    const settled = holder;
+    checkUnlessSettled(settled, input, () => {
+      settled.output = compute();
+    });
+    return settled.output as Output;
   }
 }

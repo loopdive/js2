@@ -1,7 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
 import { IR_CLASS_SHAPE_CELL } from "../core/types.js";
-import { hasNativeCollectionSlots, recordNoNativeCollectionSlots } from "../core/native-slots.js";
 import { PreparedIrProgramInvariantError } from "./errors.js";
 
 class FrozenMap<K, V> implements ReadonlyMap<K, V> {
@@ -138,7 +137,7 @@ export function preparedIrDataMismatch(left: unknown, right: unknown): string | 
     for (const value of [expected, actual]) {
       const prototype = Object.getPrototypeOf(value);
       if (
-        hasNativeCollectionSlots(value) ||
+        hasNativeCollectionState(value) ||
         (!Array.isArray(value) && prototype !== null && prototype !== Object.prototype)
       ) {
         return `${path} (non-data object)`;
@@ -237,12 +236,46 @@ function immutableCopy(
   }
   activeCopies.delete(value);
   // A fresh null-prototype record has no collection slot, now or ever: record the fact instead of probing for it.
-  recordNoNativeCollectionSlots(copy);
+  const { apply, set, cache } = nativeCollectionBrand;
+  apply(set, cache, [copy, false]);
   return Object.freeze(copy);
 }
 
 export function freezePreparedIrValue(value: unknown): unknown {
   return immutableCopy(value);
+}
+
+// Internal collection slots cannot change on an existing object. Only that
+// brand is cached: prototypes, descriptors, values and entries stay live data.
+const nativeCollectionBrand = Object.freeze({
+  cache: new WeakMap<object, boolean>(),
+  get: WeakMap.prototype.get,
+  set: WeakMap.prototype.set,
+  apply: Reflect.apply,
+  isArray: Array.isArray,
+  probes: Object.freeze([Map.prototype.has, Set.prototype.has, WeakMap.prototype.has, WeakSet.prototype.has]),
+});
+
+function hasNativeCollectionState(value: object): boolean {
+  const { cache, get, set, apply, isArray, probes } = nativeCollectionBrand;
+  // An Array exotic object (or a proxy for one) is created without collection slots, and slots never appear later;
+  // this answers without a probe that throws on every array.
+  if (isArray(value)) return false;
+  const cached = apply(get, cache, [value]) as boolean | undefined;
+  if (cached !== undefined) return cached;
+  let hasSlots = false;
+  for (let index = 0; index < probes.length; index++) {
+    try {
+      apply(probes[index]!, value, [value]);
+      // Probe success authenticates the slot, even when membership is false.
+      hasSlots = true;
+      break;
+    } catch {
+      // Native methods authenticate internal slots even when the prototype was erased.
+    }
+  }
+  apply(set, cache, [value, hasSlots]);
+  return hasSlots;
 }
 
 /** Freeze producer-owned attachments without replacing authenticated plan/manifest identities. */
@@ -269,7 +302,7 @@ export function freezePreparedIrRuntimeValue<T>(value: T): T {
     } else {
       const prototype = Object.getPrototypeOf(item);
       if (
-        hasNativeCollectionSlots(item) ||
+        hasNativeCollectionState(item) ||
         (!Array.isArray(item) && prototype !== Object.prototype && prototype !== null)
       )
         invalidPreparedData("runtime data contains mutable or executable context state");
