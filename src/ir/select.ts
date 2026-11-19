@@ -1904,8 +1904,9 @@ let currentProvenMixedConditionals = new Set<ts.ConditionalExpression>();
 // reads it to recover a dynamic `return` operand into a concrete result, and
 // `isPhase1ReturnValue` to refuse a carrier into a number. Module-init,
 // constructor-field and planned-closure walks keep the previous subject's
-// kind; none reaches a carrier `return` (a planned closure refuses a carrier
-// result first, `closure-return-type`), and a stale kind could only refuse.
+// kind, as before #7331. None reaches a carrier `return` (a planned closure
+// refuses a carrier result first, `closure-return-type`), so for the
+// `isPhase1ReturnValue` read a stale kind could only refuse.
 let currentFnReturnKind: ResolvedKind = null;
 // (#7106 S1c) Catch bindings of the current subject: a thrown payload is ALWAYS
 // the boxed-any carrier, never a callback-boundary parameter carrier, so a
