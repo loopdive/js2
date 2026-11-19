@@ -45,6 +45,7 @@ import type { PreparedIrFunction as IrFunction, PreparedIrModule as IrModule } f
 import type { IrType } from "./core/types.js";
 import { freezePreparedIrRuntimeValue, preparedIrDataMismatch } from "./program/data.js";
 import { classifyIrFailure, IrUnsupportedError } from "./outcomes.js";
+import { refuseConstBindingWrite } from "./const-binding-writes.js";
 import type { ProgramAbiDerivedUnitRecord } from "./program/abi.js";
 import { preparedIrProgramOwner } from "./program.js";
 import { PreparedIrProgramInvariantError } from "./program/errors.js";
@@ -1419,7 +1420,6 @@ function prepareSourceFunctionSignatures(
   }
 }
 
-/** Build each original source body once, before any backend context or allocator exists. */
 /** Combine source-owned call/read plans; no physical provider is selected here. */
 function prepareSourceBuiltinResolvers(
   input: IrProgramSourceInput,
@@ -1742,11 +1742,11 @@ export function prepareIrProgramSources(
       };
       const source = identity.sourceFileBySourceId.get(unit.sourceId)!;
       const moduleInit = unit.kind === "module-init";
-      const declaration = moduleInit
-        ? makeModuleInitSynthetic(identity.moduleInitPopulationBySourceFile.get(source) ?? [])
-        : identity.declarationByUnitId.get(unit.id)!;
+      const population = identity.moduleInitPopulationBySourceFile.get(source) ?? [];
+      const declaration = moduleInit ? makeModuleInitSynthetic(population) : identity.declarationByUnitId.get(unit.id)!;
       if (!ts.isFunctionDeclaration(declaration)) unsupported(`missing declaration producer for ${unit.kind}`);
-      const sourceRoots = moduleInit ? (identity.moduleInitPopulationBySourceFile.get(source) ?? []) : declaration;
+      const sourceRoots = moduleInit ? population : declaration;
+      refuseConstBindingWrite(sourceRoots);
       Object.assign(resolver, prepareSourceBuiltinResolvers(input, sourceRoots));
       const signature = signatures.get(unit.id);
       const lowered = lowerFunctionAstToIr(declaration, {
