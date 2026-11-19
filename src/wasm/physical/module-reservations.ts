@@ -1,5 +1,12 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
+/**
+ * The physical layout transaction. Audit contract (#7365): an index query during filling does not audit the
+ * layout; completion checks, freeze and seal do, and every read after seal does. A reservation's own data is
+ * checked when it is reserved or filled. A layout altered from outside therefore fails at the next completion
+ * check or at seal, and nothing is emitted from an unsealed layout.
+ */
+
 import {
   createOwnedFunctionSnapshotStore,
   copyOwnedFunctionDefinition,
@@ -410,26 +417,14 @@ export class PhysicalModuleReservations {
     ) {
       this.#fail("unregistered, substituted or altered canonical runtime rec-group");
     }
-    for (const [token, text] of this.#records) {
-      if (this.#recordText(token) !== text) this.#fail(`altered ${token.kind} descriptor ${token.key}`);
-    }
+    for (const token of this.#records.keys()) this.#verifyDescriptor(token);
     for (const [type, { text, members }] of this.#typeRecords) {
       if (this.#snapshot(type) !== text) this.#fail("altered reserved type definition/signature");
       const current = this.#typeMembers(type);
       if (current.length !== members.length || current.some((member, index) => member !== members[index]))
         this.#fail("substituted reserved type member/payload");
     }
-    for (const [token, fill] of this.#filledFunctions) {
-      if (
-        token.object.locals !== fill.locals ||
-        token.object.body !== fill.body ||
-        !this.#matchesFunction(
-          this.#ownedFunctions.get(token) !== undefined ? ownedFunctionShell(token.object) : token.object,
-          this.#ownedFunctions.get(token) ?? fill.snapshot,
-        )
-      )
-        this.#fail(`altered completed function ${token.key}`);
-    }
+    for (const token of this.#filledFunctions.keys()) this.#verifyCompletedFunction(token);
     for (const [token, fill] of this.#filledGlobals) {
       if (token.object.init !== fill.init || this.#snapshot(fill.init) !== fill.text)
         this.#fail(`altered completed global ${token.key}`);
@@ -437,6 +432,27 @@ export class PhysicalModuleReservations {
     for (const [record, text] of this.#publications) {
       if (this.#snapshot(record) !== text) this.#fail("altered publication descriptor");
     }
+  }
+
+  /** (#7365) One reservation's descriptor record, as reserved. */
+  #verifyDescriptor(token: PhysicalReservation): void {
+    if (this.#recordText(token) !== this.#records.get(token))
+      this.#fail(`altered ${token.kind} descriptor ${token.key}`);
+  }
+
+  /** (#7365) One completed function: the published locals/body and their snapshot (an owned fill's frozen shell). */
+  #verifyCompletedFunction(token: FunctionReservation): void {
+    const fill = this.#filledFunctions.get(token)!;
+    const shell = this.#ownedFunctions.get(token);
+    if (
+      token.object.locals !== fill.locals ||
+      token.object.body !== fill.body ||
+      !this.#matchesFunction(
+        shell !== undefined ? ownedFunctionShell(token.object) : token.object,
+        shell ?? fill.snapshot,
+      )
+    )
+      this.#fail(`altered completed function ${token.key}`);
   }
 
   #importCount(kind: ImportDesc["kind"]): number {
@@ -602,6 +618,7 @@ export class PhysicalModuleReservations {
   /** Authenticate a prerequisite before allocating dependents; exposes no final index. */
   assertTypeReservation(token: TypeReservation): void {
     this.#require("reserving");
+    this.#verifyLayout();
     this.#owned(token);
     if (token.kind !== "type") this.#fail("expected type reservation token");
   }
@@ -812,7 +829,7 @@ export class PhysicalModuleReservations {
   /** Authenticate producer completion without sealing unrelated reservations. */
   assertCompletedReservation(token: FunctionReservation | GlobalReservation): void {
     if (this.#state !== "filling" && this.#state !== "sealed") this.#fail(`completion requested in ${this.#state}`);
-    this.#verifySealed();
+    this.#verifyLayout();
     this.#owned(token);
     if (token.kind === "function") {
       if (!this.#filledFunctions.has(token)) this.#fail(`missing function fill ${token.key}`);
@@ -863,9 +880,12 @@ export class PhysicalModuleReservations {
       const snapshot = this.#captureFunction(token.object);
       const shell = data.immutable ? this.#captureFunction(ownedFunctionShell(token.object)) : undefined;
       if (this.#state !== "filling") this.#fail("owned publication changed ledger phase");
+      // Copy callbacks may have run: audit this function's own descriptor, then its registered completion.
+      this.#verifyDescriptor(token);
       if (this.#state !== "filling" || this.#filledFunctions.has(token)) this.#fail("reentrant owned publication");
       this.#filledFunctions.set(token, { locals: data.locals, body: data.body, snapshot });
       if (shell !== undefined) this.#ownedFunctions.set(token, shell);
+      this.#verifyCompletedFunction(token);
       if (this.#state !== "filling") this.#fail("owned closing audit changed ledger phase");
     } catch (error) {
       if (this.#state === "failed") throw error; // Already prefixed by #fail.
