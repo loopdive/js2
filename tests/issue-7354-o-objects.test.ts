@@ -101,10 +101,7 @@ describe("#7354 O — object literals are ordinary objects of the realm", () => 
 
   // Each refusal names the step that removes it (the slice plan in the #7354 issue file).
   it("refuses what the later steps build, by name", async () => {
-    // O4: the script var holds the object (O2); its member read is the dynamic member read.
-    expect(await refusal("var o = { a: 1 }; if (o.a !== 1) throw 1;")).toContain(
-      "dynamic operation dyn.member_get has no Prepared intrinsic",
-    );
+    // O4 reads a script var's object (tests/issue-7354-o4-member-read.test.ts).
     // O2: an object reaching a dynamic slot (here P's unannotated result).
     expect(await refusal("function f(){ var o = { a: 1 }; return o; } f();")).toContain(
       "concrete return needs a dynamic box in f",
