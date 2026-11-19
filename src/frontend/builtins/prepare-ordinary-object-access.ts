@@ -95,6 +95,8 @@ export function prepareOrdinaryObjectAccessResolver(
    * after the literal stored it.
    */
   const ordinaryLiteral = (expression: ts.Expression): ts.ObjectLiteralExpression | undefined => {
+    // The literal itself as the receiver: its members are its own initializers.
+    if (ts.isObjectLiteralExpression(expression)) return expression;
     if (!ts.isIdentifier(expression)) return undefined;
     const symbol = checker.getSymbolAtLocation(expression);
     const declaration = symbol?.valueDeclaration;
