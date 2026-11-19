@@ -201,3 +201,39 @@ Code quality:
 6. No second call mechanism beside #7349's.
 7. A fresh-context adversarial review per slice records its verdict in the
    PR body.
+
+## Slice B2a plan — the one global table (2026-11-19)
+
+Lead decision 2026-11-19: S5 owns the realm rows for the global object. Lane S1 (Ty, `typeof` of a global)
+needs the same table, so it lands first, as pure data.
+
+**Target structure.** A sibling of the realm catalog, `src/runtime/contracts/native-realm-globals.ts`:
+`NATIVE_REALM_GLOBALS`, the complete own-property population of the global object (ES2025 §19.1–19.4 plus
+Annex B.2.1 `escape` / `unescape`), each entry with its attributes and its value — a number (`NaN`,
+`Infinity`), `undefined`, the global object itself (`globalThis`), or an intrinsic named by id, with that
+intrinsic's typeof tag, `length` and constructibility. `nativeRealmGlobalTypeof(name)` answers from it; Ty
+reads that export, not a list of its own.
+
+**Why a sibling and not catalog rows.** The realm's literal plan (`native-realm-literals.ts`,
+`native-builtin-function-requests.ts`) interns every catalog row's name and property keys into every realm
+binary; adding about 60 rows to `NATIVE_REALM_CATALOG.intrinsics` would add their strings to every Prepared
+realm program. The global table references catalog rows by id and adds none.
+
+**Identity only.** An intrinsic the catalog has a row for (`%Object%`, `%Function%`) has its complete
+property population there (`nativeRealmGlobalSurface` answers `"complete"`). Every other intrinsic the table
+names is identity only (`"identity"`): its identity, typeof tag, `length` and constructibility are known, its
+members are not. B2b's rule for an identity intrinsic: a member read refuses by name at compile time (static
+key) or throws a named error at run time (dynamic key), never `undefined`; a call or `new` of an
+`implementation: "unavailable"` algorithm throws a named TypeError.
+
+**Reuse.** Nothing is implemented here. When a row's surface is filled (B2c…), it binds the existing native
+body: `object-constructor-body.ts` (Object), `primitive-wrapper-bodies.ts` (String, Number, Boolean),
+`number-bodies.ts` (isNaN, isFinite), `error-bodies.ts` (the NativeErrors), `codegen/json-codec-native.ts` /
+`json-standalone.ts` (JSON) and `codegen/math-helpers.ts` (Math), moving codegen-side pure bodies to
+`runtime/wasmgc/values/` when they are bound.
+
+**Acceptance.** A unit test against node 22: every entry's attributes, typeof tag, `length`, `name` and
+constructibility equal node's `globalThis` descriptor (`Float16Array`, ES2025, is absent in node 22 and checked
+by its spec values); every intrinsic id the table names is unique, and the catalog rows it names exist.
+Output byte-identical (nothing reads the table yet). Quality: one table; the typeof answer is derived from it;
+no second list in Ty.
