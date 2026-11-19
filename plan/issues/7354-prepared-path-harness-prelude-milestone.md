@@ -2615,3 +2615,53 @@ one-time whole-program compares and snapshot copies (`planNativeStringValuePhysi
   refresh (#7358).
 - One O(module) audit per function body remains (quadratic in the number of functions, small constant).
 - Not verified: the 20/50-site and 400-line outputs against base (base too slow), `--utf8-storage`, `compileMulti`.
+
+### Str2 + Perf2 integrated (2026-11-19)
+
+Branch `claude/7354-perf2`: Str2 (`1e12b62aac`), lane S2's Perf2 work (`84b8afbe41`) and `origin/main`
+(`89e4748241`) merged into Perf2 (`2f3bb36368`).
+
+Conflicts and ports:
+- Str2 merge: only this file (both sides' sections kept). No settle port was needed: Str2's whole-value formatter
+  join (`formatterSetupJoins`, `ryuTablesJoin`) runs in the presentation's provider census, once per compile, not in a
+  per-use currentness check; Perf2's settled checks are untouched by it.
+- S2 merge: `fillPreparedPrimaryUnit` had `tx.audited` around `lowerIrFunctionBody` on both sides (one kept);
+  `tests/issue-7354-perf2-settled-checks.test.ts` was added on both sides — one file now, S2's five settled-verdict
+  unit tests dropped as duplicates of this side's, its native value plan (2) and formatter/object-access over a
+  changeable program (2) tests added (16 tests). Dynamic-add and Ty tests are S2's (Str2 never changed them).
+  `assertNativeValueResourcePlan` settles at issue (S2) through the IR binding below.
+- Main merge: no conflicts. PR 7263 had not landed, so `identifier-read.ts` needed no port.
+
+Gate fix (import-cycles `backend->ir` 119 → 120 and the boundaries inventory): the mechanism moved to the contract
+leaf `src/shared/contracts/settled-verdict.ts` (`preparedIrSettledVerdicts(collectionMembers)` →
+`isImmutable`, `checkUnlessSettled`, `settledAtIssue`, `settledChecks`). Its one IR fact — which objects are genuine
+frozen collections — is a parameter, because `data.ts` (which owns the brand) is pinned by the #3518 seam tests and
+cannot move. `src/ir/program/settled-verdict.ts` binds it to `preparedIrFrozenCollectionMembers` for the IR modules;
+`native-string-values.ts` binds it itself through `data.ts`, which it already imported, so no new backend→ir edge.
+`PreparedIrSettledChecks` (class) became `settledChecks<Input, Output>()`. The `backend->ir: 120` grant is removed;
+`compiler-boundaries.json` classifies the leaf (foundation) and `settled-verdict.ts` / `prepared-allocations.ts`
+(ir-program), which were unclassified. Both gates green without grants.
+
+Also: `tests/issue-7354-str2-to-string.test.ts` and `...-str2c-formatter-census.test.ts` exited 1 with every test
+green ("Timeout calling onTaskUpdate"); both now yield a macrotask in `afterEach`, as S2 did for dynamic add.
+
+Results on the integrated head:
+- Gates (each bare): typecheck, loc, func (also with `LOC_GATE_BASE=origin/main`), coercion-sites, oracle-ratchet,
+  dead-exports, import-cycles, compiler-boundaries `--mode inventory --base origin/main`: all exit 0.
+- Tests (one file per command, VITEST_MAX_FORKS=1): all pass — to-string 43 (87 s), Ty 64 (131 s), dynamic add 31
+  (229 s), formatter census 390 (154 s, incl. the 532-leaf forgery), perf2 settled 16, Perf 33, Str 19, Str emitter 9,
+  R 113, D1 44, P 26, T 108 (192 s), X 53, H 65, V/G 45, prepared entry 44, runtime 8, #7188 6.
+  `changed-root-tests` set (14 files, interpreter eval engine, the script's own invocation): all pass; over 3 minutes:
+  dynamic add 226 s.
+- Timing, N functions `f(a, b) { return a + b; }` called once each at top level, strict Prepared entry, standalone,
+  second compile in the process (same program on both): Perf2 tip 2.3–2.4 / 5.4–5.7 / 32.8 s, integrated
+  2.5–3.1 / 5.6–6.3 / 20.5 s for 1 / 5 / 20 sites; output bytes identical.
+- Prepared bytes: 38 programs (Str2 String()/ToString, Ty, dynamic `+`/`+=`, D1, T, X, Str typed strings) identical to
+  Str2 @ `1e12b62aac` (35 compiled, 3 identical named refusals).
+- Ordinary pipeline: 100 test262 files of the ES5 sample, default and `--target standalone`, identical to
+  `origin/main` (94 compiled, 6 CE on both, per target).
+- 411-row sample (real runner, IR path, standalone): first-gap tally 282 `dyn.member_get has no Prepared intrinsic`,
+  84 `module binding … has no exact typed storage: not-direct`, 26 `identifier "assert" is not in scope in
+  verifyProperty`, 14 pass (negatives), 1 `unknown class "Test262Error"`, 1 `print` direct call, plus 3 rows whose
+  parse error precedes `dyn.member_get`. The error text carries no source location (`L1:1`).
+- Not verified: `--utf8-storage`, `compileMulti`, the gc target's Prepared bytes.
