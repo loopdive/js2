@@ -1,8 +1,8 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 /**
- * (#7354 D1, Ty, Str2, Str2-c, O2) The kinds of value the Prepared dynamic value admits, and how each operation of the
- * dynamic-value legalization answers each kind. Every table is a `Record` over `CarrierKind`, so a slice that admits
- * a kind must give it a row in each.
+ * (#7354 D1, Ty, Str2, Str2-c, O2, O2b) The kinds of value the Prepared dynamic value admits, and how each operation
+ * of the dynamic-value legalization answers each kind. Every table is a `Record` over `CarrierKind`, so a slice that
+ * admits a kind must give it a row in each.
  *
  * Soundness rests on the admitted set: the box arm admits a value only as one of these kinds (`boxedKind`), so a
  * test that rules out every other kind proves the last one (`complement`), and a chain over all kinds may leave the
@@ -50,24 +50,24 @@ export const KIND_TEST: Readonly<Record<CarrierKind, IntrinsicId | "ref.is_null"
 
 /**
  * How ToString (§7.1.17) answers each kind, in the order a chain tests them: the native string it carries, the number
- * formatter, "true"/"false", the kind's own name, or (O2) a plain object's OrdinaryToPrimitive ("[object Object]",
- * `plainObjectToPrimitive`). The last kind is reached untested because the chain is total over this table.
+ * formatter, "true"/"false", the kind's own name, or (O2b) an object's OrdinaryToPrimitive
+ * (`ordinary-to-primitive.ts`). The last kind is reached untested because the chain is total over this table.
  */
 export const TO_STRING_ARM: Readonly<
-  Record<CarrierKind, "as-string" | "format" | "boolean" | "name" | "plain-object">
+  Record<CarrierKind, "as-string" | "format" | "boolean" | "name" | "to-primitive">
 > = {
   string: "as-string",
   number: "format",
   boolean: "boolean",
   undefined: "name",
   null: "name",
-  object: "plain-object",
+  object: "to-primitive",
 };
 export const KIND_ORDER = Object.keys(TO_STRING_ARM) as readonly CarrierKind[];
 
 /**
  * How `+` (§13.15.3) takes each kind after ToPrimitive: a string makes the addition a concatenation, any other kind is
- * summed through ToNumber. A plain object's ToPrimitive is a string.
+ * summed through ToNumber. An object's ToPrimitive is a string or a TypeError (`ordinary-to-primitive.ts`).
  */
 export const ADD_ROLE: Readonly<Record<CarrierKind, "concat" | "numeric">> = {
   number: "numeric",
@@ -80,21 +80,22 @@ export const ADD_ROLE: Readonly<Record<CarrierKind, "concat" | "numeric">> = {
 
 /**
  * How ToNumber (§7.1.4) answers each kind: the primitive unboxer (a number its payload, a Boolean 0/1, `undefined`
- * NaN, `null` 0), or a plain object's ToPrimitive read as a number (NaN).
+ * NaN, `null` 0), or (O2b) an object's ToPrimitive, a string that reads as NaN.
  */
-export const TO_NUMBER_ARM: Readonly<Record<CarrierKind, "unbox" | "plain-object">> = {
+export const TO_NUMBER_ARM: Readonly<Record<CarrierKind, "unbox" | "to-primitive">> = {
   number: "unbox",
   boolean: "unbox",
   string: "unbox",
   undefined: "unbox",
   null: "unbox",
-  object: "plain-object",
+  object: "to-primitive",
 };
 
 /**
  * (#7354 O4, O3) How a member read (GetValue) and a member write (PutValue) take each receiver
  * kind: both ToObject the base, so `undefined` and `null` throw a TypeError; an object is the realm's [[Get]] or
- * [[Set]]; a primitive reaches only built-in prototypes (`builtin-prototype-keys.ts`).
+ * [[Set]]; a primitive reaches only built-in prototypes (`builtin-prototype-keys.ts`), and (O2b) only while no code
+ * can reach them to change them.
  */
 export const MEMBER_ACCESS_ARM: Readonly<Record<CarrierKind, "type-error" | "object" | "primitive">> = {
   number: "primitive",
@@ -106,32 +107,23 @@ export const MEMBER_ACCESS_ARM: Readonly<Record<CarrierKind, "type-error" | "obj
 };
 
 /**
- * What a program's objects allow (`src/ir/source-plain-objects.ts` answers it from the source): whether the program
- * builds ordinary objects, and `undefined` when they and the built-in prototypes are plain, else the first reason
- * they are not.
+ * What the dynamic-value legalization asks of a program's source (`src/ir/source-plain-objects.ts` answers it in one
+ * walk): whether it builds ordinary objects, so the object kind is admitted; (O2b) whether it names `Symbol`, the only
+ * way to `@@toPrimitive`; and (O4) `unplain`, the first way its code can reach a built-in prototype to change it,
+ * which a member read of a primitive must exclude.
  */
 export interface ProgramObjects {
   readonly present: boolean;
+  readonly namesSymbol: boolean;
   readonly unplain: string | undefined;
 }
 
 /** A program that builds no ordinary object. */
-export const NO_OBJECTS: ProgramObjects = Object.freeze({ present: false, unplain: undefined });
-
-/** The kinds the `plain-object` rows were proved for: none of them is a callable. */
-type PlainObjectKinds = "number" | "boolean" | "string" | "undefined" | "null" | "object";
-
-/**
- * The plain-object rows' verdict for a program: `undefined` when they may answer, else the named refusal of
- * `operation` (`source-plain-objects.ts` says why the program's objects are not plain). (#7354 O4) The member-read
- * rows ask it too: a key outside the built-in prototypes reads `undefined` only while no code can change them. The OrdinaryToPrimitive shortcut is exact
- * only while no callable can be a property value, so the kind set is pinned here: a slice that admits another kind
- * (Fa's function values) fails to compile until it replaces the shortcut by Get and Call.
- */
-export function plainObjectRefusal(objects: ProgramObjects, operation: string): string | undefined {
-  const provedKinds: [Exclude<CarrierKind, PlainObjectKinds>] extends [never] ? true : never = true;
-  return provedKinds && objects.unplain === undefined ? undefined : `${operation} (${objects.unplain})`;
-}
+export const NO_OBJECTS: ProgramObjects = Object.freeze({
+  present: false,
+  namesSymbol: false,
+  unplain: undefined,
+});
 
 /** The kinds a value of a program may be: the object kind only where the program builds objects. */
 export function admittedKinds(objects: ProgramObjects): readonly CarrierKind[] {

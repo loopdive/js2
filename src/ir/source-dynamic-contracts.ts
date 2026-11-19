@@ -221,8 +221,8 @@ export function programDynamicContracts(
   sourceFiles: readonly ts.SourceFile[],
   allocations: AllocSiteRegistry,
 ): ProgramDynamicContracts {
-  // (#7354 O2) Whether the program builds objects, and whether they are plain: one answer every group asks.
-  const objects = programObjects(checker, sourceFiles);
+  // (#7354 O2, O2b) What the source allows its objects: one answer every group asks.
+  const objects = programObjects(sourceFiles);
   const provenance = sourceDynamicProvenance(
     checker,
     sourceFiles,

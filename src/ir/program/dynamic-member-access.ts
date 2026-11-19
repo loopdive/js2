@@ -3,22 +3,20 @@
  * (#7354 O4, O3) A member read or write of the dynamic value with a constant key, as one chain over the receiver's
  * kinds (`MEMBER_ACCESS_ARM`): a TypeError for `undefined` / `null`, the realm's [[Get]] or [[Set]] for an object, and
  * for a primitive what its pristine wrapper answers. A key a built-in prototype holds (the realm's prototypes do not
- * hold it yet), a computed key, or a program whose prototypes code can change refuses by name.
+ * hold it yet), a computed key, or (O2b) a primitive receiver in a program whose prototypes code can change refuses by
+ * name.
  */
 import type { IntrinsicId } from "../core/intrinsics.js";
 import type { IrInstr, IrValueId } from "../core/nodes.js";
 import type { IrType } from "../core/types.js";
-import { irIntrinsicFuncRef } from "../core/callable-bindings.js";
 import { BUILTIN_REACHABLE_KEYS, isArrayIndexKey } from "./builtin-prototype-keys.js";
-import { MEMBER_ACCESS_ARM, plainObjectRefusal, type CarrierKind, type ProgramObjects } from "./dynamic-value-kinds.js";
+import { MEMBER_ACCESS_ARM, type CarrierKind, type ProgramObjects } from "./dynamic-value-kinds.js";
+import { realmCall, typeError, type TypeErrorBuilders } from "./dynamic-realm-calls.js";
 import { gap } from "./dynamic-value-gap.js";
 
 /** The legalization builders a member access is written with. */
-export interface MemberAccessBuilders {
-  readonly carrier: IrType;
+export interface MemberAccessBuilders extends TypeErrorBuilders {
   readonly definitions: ReadonlyMap<IrValueId, IrInstr>;
-  readonly fresh: () => IrValueId;
-  readonly text: (value: string, result: IrValueId) => IrInstr;
   readonly intrinsic: (
     instr: IrInstr,
     id: IntrinsicId,
@@ -41,8 +39,8 @@ type Program = { readonly objects: ProgramObjects; readonly catches: boolean };
 /** OrdinarySet's answer (`js.object.set`). */
 const BOOLEAN: IrType = Object.freeze({ kind: "val", val: Object.freeze({ kind: "i32", boolean: true }) });
 
-/** A thrown TypeError: `what` the receiver may be, as a refusal names it, and the error's message. */
-type ThrowTypeError = (what: string, message: string, result: IrValueId) => IrInstr[];
+/** A thrown TypeError with `message` (`typeError`), the arm's unread answer into `result`. */
+type ThrowTypeError = (message: string, result: IrValueId) => IrInstr[];
 
 /** What sets a read and a write apart past the receiver chain they share. */
 interface Access {
@@ -65,13 +63,6 @@ function constantKey(b: MemberAccessBuilders, instr: IrInstr, key: IrValueId): s
   return text?.kind === "string.const" ? text.value : gap(`${instr.kind} with a computed key`);
 }
 
-const call = (
-  feature: "js.object.create-type-error" | "js.object.get" | "js.object.set",
-  args: IrValueId[],
-  result: IrValueId,
-  resultType: IrType,
-): IrInstr => ({ kind: "call", target: irIntrinsicFuncRef(feature), args, result, resultType });
-
 /** The chain both accesses take over the once-evaluated `receiver`, into `result`. */
 function memberAccess(
   b: MemberAccessBuilders,
@@ -81,30 +72,23 @@ function memberAccess(
   receiver: IrValueId,
   result: IrValueId,
 ): IrInstr[] {
-  const refusal = plainObjectRefusal(program.objects, access.operation);
-  if (refusal !== undefined) gap(refusal);
-  const throwTypeError: ThrowTypeError = (what, text, r) => {
-    // A catch would read this TypeError as a dynamic value, and no carrier kind holds an error yet.
-    if (program.catches) gap(`${access.operation} of ${what} in a program that catches`);
-    const [message, carried, error] = [b.fresh(), b.fresh(), b.fresh()];
-    return [
-      b.text(text, message),
-      { kind: "coerce.to_externref", value: message, result: carried, resultType: b.carrier },
-      call("js.object.create-type-error", [carried], error, b.carrier),
-      { kind: "throw", value: error, result: null, resultType: null },
-      access.unread(r),
-    ];
-  };
+  // The TypeError does not complete; the access's unread answer only gives the arm its value.
+  const throwTypeError: ThrowTypeError = (message, r) => [...typeError(b, message, program.catches), access.unread(r)];
   const arm = (kind: CarrierKind, r: IrValueId): IrInstr[] => {
     switch (MEMBER_ACCESS_ARM[kind]) {
       case "type-error":
-        return throwTypeError("a possibly nullish value", access.nullishMessage(kind), r);
+        return throwTypeError(access.nullishMessage(kind), r);
       case "object":
         if (BUILTIN_REACHABLE_KEYS.object.has(access.name))
           gap(`${access.operation} needs Object.prototype's properties`);
         return [access.object(r)];
-      case "primitive":
+      case "primitive": {
+        // (#7354 O2b) Only this arm assumes the built-in prototypes are the specification's; the object arm is the
+        // realm's own [[Get]] / [[Set]].
+        const reached = program.objects.unplain;
+        if (reached !== undefined) gap(`${access.operation} (${reached})`);
         return access.primitive(kind, r, throwTypeError);
+      }
     }
   };
   return b.kindChain(instr, receiver, result, arm, b.kindsOf(receiver), access.resultType);
@@ -127,7 +111,7 @@ export function dynamicMemberRead(
     resultType: b.carrier,
     nullishMessage: (kind) => `Cannot read properties of ${kind} (reading '${name}')`,
     unread: (r) => b.intrinsic(instr, "js.value.undefined", [], r),
-    object: (r) => call("js.object.get", [receiver, key, receiver], r, b.carrier),
+    object: (r) => realmCall("js.object.get", [receiver, key, receiver], r),
     primitive: (kind, r) => {
       const reachable = BUILTIN_REACHABLE_KEYS[kind as keyof typeof BUILTIN_REACHABLE_KEYS];
       if (reachable.has(name) || (kind === "string" && isArrayIndexKey(name)))
@@ -167,11 +151,9 @@ export function dynamicMemberWrite(
     resultType: BOOLEAN,
     nullishMessage: (kind) => `Cannot set properties of ${kind} (setting '${name}')`,
     unread,
-    object: (r) => call("js.object.set", [receiver, key, value, receiver], r, BOOLEAN),
+    object: (r) => realmCall("js.object.set", [receiver, key, value, receiver], r),
     primitive: (kind, r, throwTypeError) =>
-      sloppy
-        ? [unread(r)]
-        : throwTypeError("a possibly primitive value in strict code", `Cannot create property '${name}' on ${kind}`, r),
+      sloppy ? [unread(r)] : throwTypeError(`Cannot create property '${name}' on ${kind}`, r),
   };
   return memberAccess(b, program, instr, access, receiver, b.fresh());
 }

@@ -3,9 +3,9 @@
 // #7354 slice O, step O3 — a member write of a dynamic value with a constant key (`MEMBER_ACCESS_ARM` in
 // src/ir/program/dynamic-value-kinds.ts, `dynamicMemberWrite` in dynamic-member-access.ts): an object writes through
 // the realm's OrdinarySet (`js.object.set`), `undefined` / `null` throw a TypeError, a primitive's write fails, which
-// sloppy code ignores and strict code throws for. A computed key, an Object.prototype key, or a write that may throw
-// in a program that catches refuses by name. Every run program runs twice: node's answer (returns) and a wrong one
-// (throws).
+// sloppy code ignores and strict code throws for. A computed key or an Object.prototype key refuses by name; (#7354
+// O2b) a write that throws in a program that catches traps. Every run program runs twice: node's answer (returns) and
+// a wrong one (throws).
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as gc from "../src/codegen/index.js";
 import * as linear from "../src/codegen-linear/index.js";
@@ -122,19 +122,34 @@ describe("#7354 O3 — a member write of the dynamic value", () => {
       "function s(v){ v.isPrototypeOf = 1; } s({});",
       "member write 'isPrototypeOf' needs Object.prototype's properties",
     ],
-    [
-      "a strict write to a possible primitive in a program that catches",
-      '"use strict"; function f(v) { try { v.x = 1; } catch (e) { return 0; } return 1; } f({});',
-      "member write 'x' of a possibly primitive value in strict code in a program that catches",
-    ],
-    [
-      "a nullish write in a program that catches",
-      "function f(v) { try { v.x = 1; } catch (e) { return 0; } return 1; } f(null);",
-      "member write 'x' of a possibly nullish value in a program that catches",
-    ],
   ])("refuses %s by name", async (_label, source, reason) => {
     expect(await refusal(source)).toContain(reason);
   });
+
+  // (#7354 O2b) These writes used to refuse by name ("… in a program that catches"). The legalization's TypeError now
+  // comes from one helper (`typeError`, dynamic-realm-calls.ts): in a program that catches, the realm's TypeError is
+  // not yet catchable from source code, so the program fails loudly (`js.object.uncatchable-type-error`) where node's
+  // catch answers 0. That is a failure, not node's answer, and never a wrong one. A write that does not throw still
+  // runs: the object write answers 1, as node does.
+  it.each([
+    ["a nullish write", "function f(v) { try { v.x = 1; } catch (e) { return 0; } return 1; } var r = f(null);", 0],
+    [
+      "a strict write to a primitive",
+      '"use strict"; function f(v) { try { v.x = 1; } catch (e) { return 0; } return 1; } var r = f(1);',
+      0,
+    ],
+  ])(
+    "traps for %s in a program that catches",
+    async (_label, source, answer) => {
+      expect(new Function(`${source} return r;`)()).toBe(answer);
+      const result = await compile(source, options());
+      expect(requiredPreparedEmission(result)).toBeDefined();
+      expect(() => (instantiatePreparedArtifact(result).instance.exports.__module_init as () => void)()).toThrow(
+        WebAssembly.RuntimeError,
+      );
+    },
+    180_000,
+  );
 });
 
 // The kernel's lookup answers (status, entry): 0 absent, 1 found, 2 a miss at the realm's Object.prototype, 3 not an

@@ -2576,6 +2576,80 @@ O1 to O4 (these are this slice's steps, not #7352's parked ordinary-pipeline sli
   `tests/issue-7354-str2-to-string.test.ts` still expects `identifier "String" is not in scope`. After Ty, it
   answers from the realm table.
 
+### O2b: runtime-guarded ToPrimitive (plan, 2026-11-19, branch `claude/7354-o-toprim` from `claude/7354-o` 0c7109594b)
+
+Why: on the harness prelude the static plainness rule (`programObjects`) never holds (61 reasons on assert.js +
+sta.js + propertyHelper.js + compareArray.js), so every ToPrimitive of the object kind refuses. Among them are
+assert.js `message += …` and sameValue's `1 / a`.
+
+Semantics (§7.1.1, OrdinaryToPrimitive §7.1.1.1), decided at run time:
+
+- No admitted carrier kind is callable. The carrier's coercion gate refuses a callable property value (a getter, a
+  function value), so a conversion method the object holds is never callable, and OrdinaryToPrimitive skips it
+  (step 2.b). An absent one is the realm's Object.prototype method: `valueOf` answers the object, which is not
+  primitive and so is skipped too, and `toString` answers `"[object Object]"`.
+- So for every hint the answer is: HasProperty(o, "toString") ? TypeError : `"[object Object]"`. ToNumber of it is
+  NaN, and `+` concatenates it. `valueOf` cannot change the answer until a callable kind exists.
+- A compile-time kind pin in the builder fails the build when Fa admits a callable kind. The arm then has to Get and
+  Call the method in hint order. No unreachable abort arm is emitted for a callable method.
+- "Absent" means kernel lookup status 0, or 2, a miss at the realm's Object.prototype, which does not hold the
+  specification's properties yet. Status 3 traps, as in the get adapter.
+- `@@toPrimitive` (step 2) is reachable only by naming `Symbol`. Such a program refuses by name: "ToPrimitive of an
+  object in a program that names 'Symbol'".
+- The TypeError the legalization synthesizes (this arm, and O4's nullish member read) is thrown through
+  `js.object.create-type-error` in a program without a catch. In a program that catches, a catch would read it as a
+  dynamic value, and no carrier kind holds an error yet. So the program fails loudly there, through
+  `js.object.uncatchable-type-error`: an interim (lead, 2026-11-19), never a wrong answer, only a failure. It
+  replaces O4's refusal "member read … of a possibly nullish value in a program that catches".
+- **Follow-up.** Lane S13 (`claude/7354-shared-exn`, from `claude/7354-o` 0c7109594b) builds one exception tag
+  shared by realm and source throws. Once it lands, a source `catch` catches realm errors, and the one helper
+  (`typeError` in `dynamic-realm-calls.ts`) throws in catching programs too. Then `js.object.uncatchable-type-error`
+  and its realm row are deleted. That is a one-place change: no other code synthesizes a TypeError. #7368's
+  catch-guarded "REALM_REJECTING" path can move onto the same helper; its signature is
+  `typeError(builders, message, catches) → IrInstr[]`.
+
+Target structure:
+
+- `src/ir/program/ordinary-to-primitive.ts` (new, beside `dynamic-member-read.ts`) is the one OrdinaryToPrimitive
+  builder. The `object` rows of `TO_STRING_ARM` and `TO_NUMBER_ARM` (renamed `"plain-object"` → `"to-primitive"`)
+  call it; ToNumber reads its string as NaN. It also carries the kind pin.
+- `src/ir/program/dynamic-realm-calls.ts` (new) is the one `js.object.*` call builder (it replaces dynamic-member-read's
+  local `call`) and the one synthesized-TypeError helper (throw, or the uncatchable failure in a catching program).
+- The realm adds two rows to `ROWS` in `native-source-objects.ts`, with bodies in `source-object-bodies.ts`:
+  `js.object.has`, an adapter over the kernel's `has` (status 1 → true, 0 and 2 → false, every status ≥ 3 traps,
+  exactly like the get adapter, so B2b's status 4 is never read as absent), and the new
+  contract `js.object.uncatchable-type-error` (`[] → []`, body `unreachable`).
+  - It is a call contract, not an intrinsic as first proposed. Every intrinsic is certified pure
+    (`analysis/intrinsics.ts`, `effects.ts`), so dead-code and GVN passes could drop or merge a trap whose result is
+    unused.
+- `ProgramObjects` keeps one walk and returns the answers its consumers ask:
+  - `present` (the object kind is admitted);
+  - `namesSymbol` (ToPrimitive);
+  - `unplain`, the first way code can reach a built-in prototype: it names a prototype global, or reads
+    `prototype` / `__proto__`. The field keeps its O2 name, so S5's B2b (which adds a field) merges cleanly.
+  The O4 member read keeps that last gate, now on its primitive arm only: the object arm is the realm's exact [[Get]].
+  The ToPrimitive-only reasons go: literal members, function values, member writes, `toString` / `valueOf` keys.
+  The checker parameter goes with them.
+- `plainObjectRefusal` and `plainObjectToPrimitive` are deleted.
+
+Reused: `kindChain`, `branch`, `text`, the realm kernel's `has` / lookup, the errors pack's TypeError, and the
+source-object `ROWS` binding arm. Duplicate removed: the TypeError construction in `dynamic-member-read.ts`, now
+the shared helper, and its local call builder.
+
+Acceptance:
+
+- `""+o`, `o+"!"`, `+o`, `1/o` on a plain object, in a program that is not plain by the old rule (it names
+  `String`), give node's answer.
+- `message += " "` on a string-valued dynamic value in a program that builds objects gives node's answer.
+- `{toString: undefined}` and `{toString: 1}` throw a TypeError where node does (no catch). `{valueOf: 1}` gives
+  `"[object Object]"`.
+- The same TypeError cases in a catching program trap (WebAssembly.RuntimeError).
+- The Symbol refusal is pinned by name.
+- Mutations: the arm treats a present `toString` as absent; the Symbol refusal is removed; the arm skips the
+  `valueOf` read (an equivalent mutant by construction, see above).
+- Code quality: one OrdinaryToPrimitive builder for ToString, ToNumber and `+`; one realm-call builder and one
+  synthesized-TypeError helper for both arms that raise one; one row per realm contract; no function or file over
+  budget; ordinary-pipeline bytes identical.
 ### O3 plan (2026-11-19, `claude/7354-o3` from `claude/7354-o` 0c7109594b)
 
 Measured on the base (Prepared entry, standalone): `var o = { a: 1 }; o.b = 2; …` refuses "property assignment on
@@ -2638,6 +2712,46 @@ typed plan refuses "box of a non-primitive value" (the box arm admits an object 
 - Ordinary-pipeline output byte-identical on the 13 playground examples and 11 member-write snippets (strict and
   sloppy, dynamic, untyped, literal, accessor-literal, catch-binding, open-carrier, script-var and element writes),
   each default and standalone.
+
+### O2b result (2026-11-19, `claude/7354-o-toprim`)
+
+- Built as planned above. The one builder is `ordinary-to-primitive.ts`. `dynamic-realm-calls.ts` holds `realmCall`
+  and `typeError(builders, message, catches)`. The realm rows are `js.object.has` and
+  `js.object.uncatchable-type-error`.
+- After the merge onto O3, `dynamic-member-access.ts` takes the helper for reads and writes (its copy of the TypeError
+  and its two catch refusals go). The prototype gate sits on the primitive arm of both accesses.
+- Programs that run and agree with node (tests/issue-7354-o2b-to-primitive.test.ts):
+  - `""+o`, `o+"!"`, `+o` and `1/o` in a program that names `Object`;
+  - `message += " "` on a string in a program that builds objects;
+  - `{ valueOf: 1 }`.
+- TypeError cases that throw as node does: `{ toString: undefined }` and `+{ toString: 1 }`. The same in a program
+  that catches traps (WebAssembly.RuntimeError), as do O4's nullish read and O3's throwing writes there.
+- The `Symbol` refusal is pinned by name. The has adapter is pinned on statuses 0/1/2 and traps on 3, 4, 0x7fffffff
+  and -1.
+- Mutations, each failing its tests:
+  - a held `toString` treated as absent: 3 tests fail;
+  - the Symbol refusal removed: 1 test fails;
+  - `valueOf` probed instead of `toString`: 3 tests fail.
+  "The arm skips the `valueOf` read" is an equivalent mutant: there is no `valueOf` read while no kind is callable.
+- Ordinary-pipeline bytes are identical against `claude/7354-o` 0c7109594b on the 13 playground examples, default
+  and standalone (26 hashes).
+- 411-row sample (`TEST262_COMPILER_PATH=ir`, standalone):
+  - every run passes 20: integration 94abeb8347, the integration with O merged (`9426e5e1c2`), and that plus O2b
+    (local merge, not pushed).
+  - Before O2b, the first gap of 301 rows is "ToPrimitive of an object (an object property holds a function)".
+    After it, those same 301 rows stop at "dyn.json_stringify has no Prepared intrinsic". That is assert.js:27,
+    `JSON.stringify(value)` in `formatIdentityFreeValue`, the prelude's only `JSON.stringify`. ToNumber of the
+    object kind (`isNegativeZero`'s `1 / value`, line 17) no longer stops it.
+  - The other first gaps are unchanged ("module binding … has no exact typed storage", `assert` not in scope in
+    `verifyProperty`).
+- **For the integration merge.** The integration admits Fa's `function` kind, so the kind pin in
+  `ordinary-to-primitive.ts` fails the build there, as designed. The local measurement merge resolved it like this:
+  - read each held `toString` / `valueOf`, and test it with `js.value.is_function`;
+  - if either is callable, fail loudly, because calling it needs Call on a function value;
+  - otherwise keep the arm's answer.
+
+  Fa's `TO_NUMBER_ARM.function: "nan"` sits beside the object row's `"to-primitive"`. The integration's
+  `ProgramKinds` carries `catches`, which the builder takes as it is.
 
 ## Realm join (2026-11-19, branch `claude/7354-realm` from `origin/main`)
 
