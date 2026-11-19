@@ -255,7 +255,7 @@ import {
   type OperandFamily,
   compoundWriteAdmissible,
 } from "./analysis/operand-admissibility.js";
-import { everyYieldedValue } from "./analysis/carrier-expression.js";
+import { everyYieldedValue, producesCarrier } from "./analysis/carrier-expression.js";
 import { isSlotFreeI32IdentityLowered } from "./analysis/i32-slots.js";
 import { selectVecSearchOrJoin, type IrArrayElementFamily } from "./array-methods/selection.js";
 import { selectStaticPredicateCall } from "./static-predicates/selection.js";
@@ -6483,10 +6483,28 @@ function isPhase1BodyStatement(
       return currentFnIsVoidReturn || currentFnIsDynamicReturn ? true : shapeNo("body-return-bare-nonvoid", stmt);
     }
     if (currentFnIsDynamicReturn && isUnshadowedUndefinedIdentifier(stmt.expression, scope)) return true;
-    return isPhase1Expr(stmt.expression, scope, localClasses);
+    return isPhase1ReturnValue(stmt.expression, scope, localClasses);
   }
   return shapeNo("body-unhandled-stmt", stmt);
 }
+
+/**
+ * (#7331) A returned value. A script var in its dynamic home (and a member
+ * read, method call or `+` over one) lowers to the carrier whatever the
+ * checker types it, and `coerceReturnValue` has no carrier-to-number arm, so a
+ * number result refuses it: `function h() { return p.length; }`.
+ */
+function isPhase1ReturnValue(value: ts.Expression, scope: ReadonlySet<string>, localClasses: ReadonlySet<string>) {
+  if (currentFnReturnKind === "f64" && producesCarrier(value, MODULE_CARRIER_LEAVES)) {
+    return shapeNo("return-carrier-into-number", value);
+  }
+  return isPhase1Expr(value, scope, localClasses);
+}
+
+const MODULE_CARRIER_LEAVES = {
+  binding: (node: ts.Identifier | ts.ThisExpression) => holdsCarrier(node),
+  call: (call: ts.CallExpression) => (ts.isPropertyAccessExpression(call.expression) ? undefined : false),
+};
 
 /** (#7106 S3c) The implicit `return;` after a dynamic-return function's trailing statement. */
 const IMPLICIT_DYNAMIC_RETURN: ts.Statement = ts.factory.createReturnStatement();
@@ -6510,7 +6528,7 @@ function isPhase1Tail(
       return isGenerator || isVoidReturn || currentFnIsDynamicReturn ? true : shapeNo("tail-bare-return-nonvoid", stmt);
     // #7104 — `return undefined` in a dynamic-return function.
     if (currentFnIsDynamicReturn && isUnshadowedUndefinedIdentifier(stmt.expression, scope)) return true;
-    return isPhase1Expr(stmt.expression, scope, localClasses);
+    return isPhase1ReturnValue(stmt.expression, scope, localClasses);
   }
   if (ts.isBlock(stmt)) {
     return isPhase1StatementList(stmt.statements, new Set(scope), localClasses, isGenerator, isVoidReturn);
