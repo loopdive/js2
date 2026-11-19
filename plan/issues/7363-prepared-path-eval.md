@@ -133,6 +133,9 @@ to one shared module both pipelines ask, instead of a second copy.
 ## Slice 1 result (2026-11-19)
 
 - `src/ir/from-ast.ts` `lowerCall` and the `globalEvalTarget` contract doc; the test file above, 5 tests, green.
+- S9's list of the 196 files that crashed (`plan/log/es5-ir-only-census-2026-11-19-lists/crash-eval-owning-predicate.tsv`,
+  PR #7308) re-measured on this head with `scripts/ir-census/prepared-census.mts --harness stand-in`: 196 of 196 now
+  stop at `ir/from-ast: eval statement has no eval provider` in the test body; none throws.
 - Ordinary pipeline bytes identical against `origin/main` on 98 test262 files (70 eval-census files, 28
   Array built-ins) × default and standalone.
 - `tests/issue-7106-runtime-eval-a2c-global-eval-arm.test.ts`, `tests/issue-1164-es5-eval-slice.test.ts` and
