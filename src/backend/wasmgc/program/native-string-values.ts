@@ -704,7 +704,10 @@ export function nativeStringValueReservationInventory(
 ): readonly NativeStringValueResourceRow[] {
   return ownerFor(tx, pack).rows;
 }
-/** `closureRoot`: the source closures' wrapper root, which the dynamic value's function test reads. */
+/**
+ * `closureRoot`: the native closures root — the source's, or (once a built-in function value can reach the carrier
+ * without a source closure) the realm's.
+ */
 export function fillNativeStringValueResources(
   tx: PhysicalModuleReservations,
   pack: NativeStringValueReservations,

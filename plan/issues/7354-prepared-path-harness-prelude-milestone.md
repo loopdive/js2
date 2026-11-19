@@ -2527,6 +2527,19 @@ of 8,717 ES5 files.
   longer stops at the `typeof … 'function'` tests. Its new first gap is `String(value)` in
   `formatIdentityFreeValue` (assert.js:24): `direct call to "String" has no exact AST-site plan`.
 
+### Agreed open points (2026-11-19, after merging Fa round 2 `e22cb7c872` and Ty `4b8cb983d0`)
+
+- **Q1 — one predicate for every callable root.** Once a built-in function object can reach the carrier,
+  `__typeof_function` must test every callable root through ONE predicate. The PR that first lets them in (S5's
+  #7350 B2b or S11's C) adds it, with a test. Agreed shape: a single root. B2b supplies the realm's native closures
+  root when the program has no source closure (`?? <realm root>` at the `fillNativeStringValueResources` call in
+  `src/ir/program-consumer.ts`, with its own test; not added here). Built-in function types descend from that root
+  (built-in fn ⊂ metadata ⊂ signature wrapper ⊂ closure root), so one `ref.test` suffices. The `closureRoot` doc
+  comments in `native-dynamic-values.ts` and `native-string-values.ts` already say so.
+- **Q2 — vitest `onTaskUpdate` timeout.** A long test file can exit 1 with only the worker's `onTaskUpdate` RPC
+  timeout while every test passes. That is a known environment issue, not this slice's.
+- **Not this slice's:** the `function` rows of `TO_STRING_ARM` (S1), `ADD_ROLE` (c) and `MEMBER_READ` (O2).
+
 
 ## Slice O: Implementation Plan (2026-11-19)
 

@@ -157,7 +157,10 @@ export function reserveNativeDynamicValueResources(
   return pack;
 }
 
-/** `closureRoot` is the source closures' wrapper root, when the program has a closure. */
+/**
+ * `closureRoot`: the native closures root — the source's, or (once a built-in function value can reach the carrier
+ * without a source closure) the realm's.
+ */
 export function fillNativeDynamicValueResources(
   tx: PhysicalModuleReservations,
   pack: NativeDynamicValueReservations,
