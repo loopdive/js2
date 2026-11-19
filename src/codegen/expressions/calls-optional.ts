@@ -23,7 +23,7 @@ import { ensureExternIsUndefinedImport, flushLateImportShifts } from "./late-imp
 import { getFuncParamTypes } from "./helpers.js";
 import { resolveStructName } from "./misc.js";
 import { compileReceiverMethodCall } from "./call-receiver-method.js";
-import { tryCompileStandaloneRegExpMethod } from "../regexp-method-call.js";
+import { tryCompileStandaloneRegExpMethod } from "../regexp-standalone.js";
 import { isBuiltinTypeName } from "../builtin-tags.js";
 import { emitIsUndefF64, f64MayHoldUndefined, pushUndefF64 } from "../value-tags.js";
 

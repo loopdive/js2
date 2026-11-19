@@ -463,12 +463,12 @@ import {
   RUNTIME_EVAL_VALUE_KIND_UNDEFINED,
 } from "../runtime-eval-boundary.js";
 import { compileExternMethodCall, compileSpreadCallArgs, emitLazyProtoGet } from "./extern.js";
-import { tryCompileStandaloneRegExpMethod } from "../regexp-method-call.js";
 import {
   compileStandaloneRegExpConstructor,
   emitStandaloneRegExpToStringFromExpr,
   isGlobalRegExpIdentifier,
   tryCompileStandaloneRegExpExec,
+  tryCompileStandaloneRegExpMethod,
   tryCompileStandaloneRegExpSymbolCall,
   tryCompileStandaloneRegExpTest,
   usesNativeRegExpProvider,

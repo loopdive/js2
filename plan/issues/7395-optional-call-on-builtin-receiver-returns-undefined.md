@@ -15,6 +15,11 @@ area: codegen
 goal: core-semantics
 related: [7370, 7374]
 depends_on: [7370, 7374]
+loc-budget-allow:
+  # 2026-11-19 (RV7336 round 2): `tryCompileStandaloneRegExpMethod` (~25 lines) chains the four native RegExp
+  # method arms and must sit beside them. As its own module it added an unclassified compiler-boundaries entry
+  # and grew the import SCC (708 -> 709), failing `quality`.
+  - src/codegen/regexp-standalone.ts
 ---
 
 # #7395 — an optional method call on a built-in receiver never runs
@@ -176,7 +181,7 @@ Measurements:
   - `compileExternMethodCall` narrowed every receiver class, but only Map and Set have a native dispatch there.
 
   The RegExp arms (exec, test, toString, compile) are now one helper, `tryCompileStandaloneRegExpMethod`
-  (new `regexp-method-call.ts`; `regexp-standalone.ts` is at its size ceiling). The plain call path and `compileHeldReceiverMethodCall` both call it. The extern read
+  (in `regexp-standalone.ts`, beside the four arms; a separate module failed the compiler-boundaries and import-cycle checks, RV7336 round 2). The plain call path and `compileHeldReceiverMethodCall` both call it. The extern read
   narrows only Map / Set / ReadonlyMap / ReadonlySet.
   - A narrowed `const g: RegExp | undefined = /a/` now answers like node: 111, where #7374's head gave 0.
   - `let g: RegExp | undefined; g?.test('a')` compiles again.
