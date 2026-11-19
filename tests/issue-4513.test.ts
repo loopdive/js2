@@ -14,7 +14,7 @@
 // the adoptable set is exactly the keys that resolve to a string during
 // selection. The selector is checker-free — its `scope` is a
 // `ReadonlySet<string>` of NAMES, not a value environment — so the fold in
-// `src/ir/property-key-fold.ts` is purely syntactic: string literal,
+// `src/shared/property-key-fold.ts` is purely syntactic: string literal,
 // no-substitution template, numeric literal, and parenthesised wrappers of
 // those. `const k = "a"`, `Symbol.iterator`, template substitution and
 // arithmetic keep rejecting.
@@ -42,7 +42,7 @@ import { describe, expect, it } from "vitest";
 
 import { compile } from "../src/index.js";
 import { planIrCompilation } from "../src/ir/select.js";
-import { foldComputedPropertyKey, objectLiteralDataPropertyName } from "../src/ir/property-key-fold.js";
+import { foldComputedPropertyKey, objectLiteralDataPropertyName } from "../src/shared/property-key-fold.js";
 import { buildImports } from "../src/runtime.js";
 
 const ENV_STUB = {

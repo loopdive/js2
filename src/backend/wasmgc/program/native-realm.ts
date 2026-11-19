@@ -130,6 +130,9 @@ import {
 import {
   reserveNativeSourceObjectResources,
   fillNativeSourceObjectResources,
+  nativeSourceObjectReservationInventory,
+  requireCompletedNativeSourceObjects,
+  type NativeSourceObjectFeature,
 } from "../resources/native-source-objects.js";
 
 function fail(detail: string): never {
@@ -198,6 +201,8 @@ interface Owner {
   readonly strings: NativeStringValueReservations;
   population?: Population;
   kernel?: ReturnType<typeof reserveKernelResources>;
+  /** The reserved realm's enumeration, which its completed slots report. */
+  inventory?: ReturnType<typeof nativeRealmReservationInventory>;
   phase: "foundation" | "reserving-kernel" | "reserved" | "filling" | "complete" | "failed";
 }
 const owners = new WeakMap<NativeRealmReservations, Owner>();
@@ -517,7 +522,7 @@ export function nativeRealmReservationInventory(tx: PhysicalModuleReservations, 
     ...nativeObjectSameValueReservationInventory(tx, k.sameValue, k.sameValueDependencies).functions,
     ...nativeObjectDescriptorReservationInventory(tx, k.descriptors, k.descriptorDependencies).functions,
     ...kernel.functions,
-    ...k.sourceObjects.adapters.values(),
+    ...nativeSourceObjectReservationInventory(tx, k.sourceObjects),
   ];
   const types: TypeReservation[] = [
     ...substrate.types,
@@ -543,16 +548,19 @@ export function nativeRealmReservationInventory(tx: PhysicalModuleReservations, 
     pack.strings.number!.dependencies,
   );
   if (new Set(functions).size !== functions.length) fail("duplicate native function ownership");
-  return Object.freeze({
+  const inventory = Object.freeze({
     functions: Object.freeze(functions),
     types: Object.freeze(types),
     globals: Object.freeze(globals),
     ...population,
     kernel: k.kernel,
+    sourceObjects: k.sourceObjects.served,
     tags: Object.freeze([k.kernel.exception]),
     completionScope: pack.completionScope,
     unavailable: pack.requirements.description.unavailable,
   });
+  if (owner.phase === "reserved") owner.inventory = inventory;
+  return inventory;
 }
 export function fillNativeRealmResources(tx: PhysicalModuleReservations, pack: NativeRealmReservations): void {
   const owner = current(tx, pack),
@@ -578,22 +586,6 @@ export function fillNativeRealmResources(tx: PhysicalModuleReservations, pack: N
     throw error;
   }
 }
-/** (#7354 O1) The completed slots of the realm's resources, which its own completion check authenticated. */
-export interface EmittedNativeRealmSlots {
-  readonly functions: ReadonlySet<number>;
-  readonly types: ReadonlySet<number>;
-  readonly globals: ReadonlySet<number>;
-}
-/** The physical indices of the realm's completed functions, types and globals. */
-export function nativeRealmCompletedSlots(
-  tx: PhysicalModuleReservations,
-  pack: NativeRealmReservations,
-): EmittedNativeRealmSlots {
-  const { functions, types, globals } = nativeRealmReservationInventory(tx, pack);
-  const indices = (tokens: readonly (FunctionReservation | TypeReservation | GlobalReservation)[]) =>
-    new Set(tx.physicalIndices(tokens));
-  return Object.freeze({ functions: indices(functions), types: indices(types), globals: indices(globals) });
-}
 /** This certifies bootstrap resources only. The consumer separately authenticates its real source bodies. */
 export function requireCompletedNativeRealmBootstrap(
   tx: PhysicalModuleReservations,
@@ -608,5 +600,48 @@ export function requireCompletedNativeRealmBootstrap(
     strings: pack.strings.strings,
   });
   requireCompletedNativeBuiltinFunctionKernel(tx, owner.kernel.kernel, owner.kernel.kernelDependencies);
+  requireCompletedNativeSourceObjects(tx, owner.kernel.sourceObjects);
   return pack;
+}
+/** (#7354 O1) The completed slots of the realm's resources, as the presentation's census joins them. */
+export interface EmittedNativeRealmSlots {
+  /** Each realm function's slot index and reservation key: the support receipt it must have. */
+  readonly functions: readonly { readonly index: number; readonly key: string }[];
+  readonly types: ReadonlySet<number>;
+  readonly globals: ReadonlySet<number>;
+  /** The function serving each `js.object.*` contract the program calls: its slot and the key its call rows bind. */
+  readonly sourceObjects: readonly {
+    readonly feature: NativeSourceObjectFeature;
+    readonly key: string;
+    readonly index: number;
+  }[];
+}
+/**
+ * Certify the bootstrap, then answer the slots of the tokens the reserved realm enumerated, with one layout audit
+ * (a second enumeration would re-run every pack's ownership checks the certification just ran).
+ */
+export function requireCompletedNativeRealmSlots(
+  tx: PhysicalModuleReservations,
+  pack: NativeRealmReservations,
+): EmittedNativeRealmSlots {
+  requireCompletedNativeRealmBootstrap(tx, pack);
+  const inventory = owners.get(pack)!.inventory;
+  if (!inventory) fail("realm inventory was never enumerated");
+  const { functions, types, globals, sourceObjects } = inventory;
+  const indices = tx.physicalIndices([...functions, ...types, ...globals, ...sourceObjects.map((row) => row.token)]);
+  let next = 0;
+  const take = (count: number) => indices.slice(next, (next += count));
+  const functionIndices = take(functions.length);
+  return Object.freeze({
+    functions: Object.freeze(
+      functions.map((token, i) => Object.freeze({ index: functionIndices[i]!, key: token.key })),
+    ),
+    types: new Set(take(types.length)),
+    globals: new Set(take(globals.length)),
+    sourceObjects: Object.freeze(
+      take(sourceObjects.length).map((index, i) =>
+        Object.freeze({ feature: sourceObjects[i]!.feature, key: sourceObjects[i]!.key, index }),
+      ),
+    ),
+  });
 }

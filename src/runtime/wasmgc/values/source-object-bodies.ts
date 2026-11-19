@@ -41,8 +41,9 @@ export function buildSourceObjectCreateDefinition(d: {
  * `js.object.get(object, key, receiver)`: the kernel's [[Get]], whose absent answer already is `undefined`. Its
  * "incomplete parent" state is a miss at the realm's Object.prototype, which does not hold the specification's
  * properties yet: (#7354 O4) every caller refuses the keys Object.prototype defines (`builtin-prototype-keys.ts`), so
- * a miss there is a true miss and answers `undefined` too. Its "not an object" state cannot occur: every object a
- * source program reaches was built by `create-default` on this realm's Object.prototype.
+ * a miss there is a true miss and answers `undefined` too. Its "not an object" state (3), and any status outside the
+ * kernel's four, traps: every object a source program reaches was built by `create-default` on this realm's
+ * Object.prototype.
  */
 export function buildSourceObjectGetDefinition(d: { readonly get: FuncHandle }): SourceObjectDefinition {
   return {
@@ -53,8 +54,8 @@ export function buildSourceObjectGetDefinition(d: { readonly get: FuncHandle }):
       { op: "local.get", index: 2 },
       { op: "call", funcIdx: d.get },
       { op: "local.set", index: 3 },
-      { op: "i32.const", value: 3 },
-      { op: "i32.eq" },
+      { op: "i32.const", value: 2 },
+      { op: "i32.gt_u" },
       { op: "if", blockType: { kind: "empty" }, then: [{ op: "unreachable" }] },
       { op: "local.get", index: 3 },
     ],
