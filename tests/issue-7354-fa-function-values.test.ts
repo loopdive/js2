@@ -366,14 +366,13 @@ describe("#7354 Fa — the legalization arms", () => {
     expect(boxed).toEqual({ kind: "coerce.to_externref", value: 3, result: 1, resultType: externref });
   });
 
-  it("leaves the function-value box of anything but a packed callable to the helper refusal", () => {
+  it("refuses the function-value box of anything but a packed callable by name", () => {
     const helper = { ...box, args: [0] };
-    expect(() => legalizeDynamicValues(fn([helper]))).toThrow("__ir_dyn_call_box");
+    expect(() => legalizeDynamicValues(fn([helper]))).toThrow("__ir_dyn_call_box of a value of type closure");
   });
 
-  // `admit("function")` emits the coercion it was given, so this arm states the kind for the type system only:
-  // deleting it leaves the output unchanged, and this test pins that output, not the arm.
-  it("keeps a packed callable coerced into an object's property as its own externref (a type-only kind)", () => {
+  // Without the function kind, the coercion of a packed callable into the carrier refuses (`carrierKind`).
+  it("admits a packed callable coerced into an object's property as the function kind, its own externref", () => {
     const stored = { kind: "coerce.to_externref", value: 3, result: 1, resultType: externref };
     const [, , coerced] = legalizeDynamicValues(fn([closureNew, pack, stored])).blocks[0]!.instrs as IrInstr[];
     expect(coerced).toEqual(stored);

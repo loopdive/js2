@@ -293,18 +293,14 @@ describe("#7354 X — the legalization arm", () => {
     ["a boundary-boxed number", undefined, { kind: "intrinsic", id: "js.number.box", version: 1, args: [0] }],
     ["a boundary-boxed Boolean", undefined, { kind: "intrinsic", id: "js.boolean.box", version: 1, args: [0] }],
     ["the null constant", undefined, { kind: "const", value: { kind: "null", ty: externref } }],
+    // (#7354 Fa) The function kind.
+    ["a closure pack", { kind: "callable", signature: { params: [], returnType: null } }],
   ])("admits %s in both rules", (_label, type, definition?: object) => {
     const { coerced, program } = operand(type, definition);
     expect(legalizeDynamicValues(program).blocks[0]!.instrs).toContainEqual(coerced);
     expect(() => refuseUnadmittedThrows(program)).not.toThrow();
   });
   it.each([
-    [
-      "a closure pack",
-      { kind: "callable", signature: { params: [], returnType: null } },
-      undefined,
-      "a value of type callable",
-    ],
     [
       "an ordinary object",
       undefined,
@@ -316,5 +312,19 @@ describe("#7354 X — the legalization arm", () => {
     const { program } = operand(type, definition);
     expect(() => legalizeDynamicValues(program)).toThrow(`coerce.to_externref of ${name}`);
     expect(() => refuseUnadmittedThrows(program)).toThrow(`carrier's kinds (${name})`);
+  });
+
+  // (#7354 Fa) Every other dynamic result enters through the same rule: one that only moves a carrier value keeps,
+  // and one no rule produces (a call outside the source program) refuses by name.
+  it("refuses a dynamic result of no kind by name", () => {
+    const call = {
+      kind: "call",
+      target: irIntrinsicFuncRef("js.object.create-default"),
+      args: [],
+      resultType: dynamic,
+    };
+    expect(() => legalizeDynamicValues(fn([{ ...call, result: 1 }]))).toThrow(
+      "js.object.create-default of an ordinary object",
+    );
   });
 });

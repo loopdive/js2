@@ -90,9 +90,8 @@ function carrierClosureInstr(instr: IrInstr): IrInstr {
 /**
  * (#7354 Ty, Fa) `typeof`'s answer for each kind of value the carrier admits, keyed by the answer so that no two kinds
  * share one (`typeof null` is "object": an admitted object kind must merge with that row). The admitted kinds ARE this
- * table's values: a value enters the carrier only as one of them (`boxedKind`, the function-value projection and a
- * packed callable's coercion all go through `admit`, exhaustive by type), so a slice that admits a kind adds its
- * row here and `admit` does not compile until it has an arm for it.
+ * table's values: {@link carrierKind} names each value's kind, and a value enters the carrier only through `admit`,
+ * which refuses one without, so a slice that admits a kind adds its row here and its arm in `carrierKind`.
  */
 const TYPEOF_KIND = {
   number: "number",
@@ -124,33 +123,71 @@ function valueDefinitions(fn: IrFunction): Map<IrValueId, IrInstr> {
 }
 
 /**
- * (#7354 X, O1) The kind the carrier holds `value` as, from its type and defining instruction: the dynamic value
- * itself, a native string (its own payload), a boundary box's number or Boolean, the null constant's null reference,
- * or, through a coercion, its operand's kind. Any other value has none: an ordinary object until #7354 O2 gives the
- * carrier its kind, a callable until slice Fa gives it its tag.
+ * The operand whose kind `definition`'s result carries: a coercion's, and (#7354 Fa) the function-value projection's
+ * (`functionObjectDynamicValue` boxes a packed callable into the dynamic value through `__ir_dyn_call_box`).
+ */
+function carriedOperand(definition: IrInstr | undefined): IrValueId | undefined {
+  if (definition?.kind === "coerce.to_externref") return definition.value;
+  return definition?.kind === "call" &&
+    definition.target.binding.kind === "runtime" &&
+    definition.target.name === IR_DYN_CALL_BOX_FN
+    ? definition.args[0]
+    : undefined;
+}
+
+/**
+ * (#7354 Fa) The instructions that only move a value already in the carrier, whose kind its producer admitted: reads
+ * of a dynamic slot, global or closure capture, a closure call's result and a structured `if`'s join. A source call's
+ * result is one too (its callee's returns are admitted in its own body).
+ */
+const CARRYING: ReadonlySet<IrInstr["kind"]> = new Set([
+  "slot.read",
+  "global.get",
+  "closure.cap",
+  "closure.call",
+  "if",
+]);
+const carries = (definition: IrInstr) =>
+  CARRYING.has(definition.kind) || (definition.kind === "call" && definition.target.binding.kind === "unit");
+
+/**
+ * (#7354 X, O1, Fa) The kind the carrier holds `value` as, from its type and defining instruction: a native string or
+ * a packed callable (its own payload), a box to the dynamic value ({@link boxedKind}), a boundary box's number or
+ * Boolean, the null constant's null reference, `undefined`, or, through a coercion or the function-value projection,
+ * its operand's kind. A dynamic value is "dynamic" (its kind was admitted where it entered) as a parameter or block
+ * argument or through a {@link CARRYING} instruction. Any other value has none: an ordinary object until #7354 O2
+ * gives the carrier its kind, or a dynamic result no rule produces (a runtime call's).
  */
 export function carrierKind(
   value: IrValueId,
   types: ReadonlyMap<IrValueId, IrType>,
   definitions: ReadonlyMap<IrValueId, IrInstr>,
-): "dynamic" | "string" | "number" | "boolean" | "null" | undefined {
+): CarrierKind | "dynamic" | undefined {
   const type = types.get(value);
-  if (type?.kind === "dynamic" || type?.kind === "string") return type.kind;
+  if (type?.kind === "string") return "string";
+  if (type?.kind === "callable") return "function";
   const definition = definitions.get(value);
+  const operand = carriedOperand(definition);
+  if (operand !== undefined) return carrierKind(operand, types, definitions);
+  if (definition?.kind === "box" && definition.toType.kind === "dynamic")
+    return boxedKind(definition.toType.tag, types.get(definition.value));
   if (definition?.kind === "intrinsic" && definition.id === "js.number.box") return "number";
   if (definition?.kind === "intrinsic" && definition.id === "js.boolean.box") return "boolean";
   if (definition?.kind === "const" && definition.value.kind === "null") return "null";
-  return definition?.kind === "coerce.to_externref" ? carrierKind(definition.value, types, definitions) : undefined;
+  if (definition?.kind === "dyn.undefined") return "undefined";
+  return type?.kind === "dynamic" && (!definition || carries(definition)) ? "dynamic" : undefined;
 }
 
-/** A value {@link carrierKind} has no kind for (through its coercions), as a refusal names it. */
+/** A value {@link carrierKind} has no kind for (through the operand it carries), as a refusal names it. */
 function unadmittedValue(
   value: IrValueId,
   types: ReadonlyMap<IrValueId, IrType>,
   definitions: ReadonlyMap<IrValueId, IrInstr>,
 ): string {
   const definition = definitions.get(value);
-  if (definition?.kind === "coerce.to_externref") return unadmittedValue(definition.value, types, definitions);
+  const operand = carriedOperand(definition);
+  if (operand !== undefined) return unadmittedValue(operand, types, definitions);
+  if (definition?.kind === "box") return "a non-primitive value";
   if (
     definition?.kind === "call" &&
     irOrdinaryObjectCallableDeclaration(definition.target)?.feature === "js.object.create-default"
@@ -176,44 +213,53 @@ export function legalizeDynamicValues(fn: IrFunction): IrFunction {
     ...(instr.site === undefined ? {} : { site: instr.site }),
   });
   const isDynamic = (value: IrValueId): boolean => types.get(value)?.kind === "dynamic";
-  /** (#7354 Fa) A packed callable is a function value: every arm that takes one into the carrier says so. */
-  const isFunctionValue = (value: IrValueId): boolean => types.get(value)?.kind === "callable";
-  /** A value entering the carrier as `kind`; a value of no admitted kind refuses. */
-  const admit = (kind: CarrierKind | undefined, instr: IrInstr, value: IrValueId): readonly IrInstr[] => {
-    switch (kind) {
-      case "boolean":
-        return [intrinsic(instr, "js.boolean.box", [value])];
-      // The Null partition has one value, the carrier's null reference.
-      case "null":
-        return [{ kind: "const", value: { kind: "null", ty: CARRIER }, result: instr.result, resultType: CARRIER }];
-      case "number":
-        return [intrinsic(instr, "js.number.box", [value])];
-      // (#7354 Str) A native string, and (#7354 Fa) a function value's closure, are their own payload: the externref
-      // that wraps it.
-      case "string":
-      case "function":
-        return [
-          {
-            kind: "coerce.to_externref",
-            value,
-            result: instr.result,
-            resultType: CARRIER,
-            ...(instr.site === undefined ? {} : { site: instr.site }),
-          },
-        ];
-      // `undefined` enters only as `dyn.undefined`, never by a box.
-      case "undefined":
-      case undefined:
-        return gap(`box of a non-primitive value`);
-    }
+  /**
+   * The one admission point: `instr`'s result enters the carrier as its {@link carrierKind}, lowered by `lower` (by
+   * default `instr` itself, whose result already is a carrier value); a result of no kind refuses by name.
+   */
+  const admit = (
+    instr: IrInstr,
+    lower: (kind: CarrierKind | "dynamic") => readonly IrInstr[] = () => [instr],
+  ): readonly IrInstr[] => {
+    const kind = carrierKind(instr.result!, types, definitions);
+    if (kind !== undefined) return lower(kind);
+    return gap(
+      `${instr.kind === "call" ? instr.target.name : instr.kind} of ${unadmittedValue(instr.result!, types, definitions)}`,
+    );
   };
+  /** The carrier value of `kind` an entry builds from its raw `value`. */
+  const intoCarrier =
+    (instr: IrInstr, value: IrValueId) =>
+    (kind: CarrierKind | "dynamic"): readonly IrInstr[] => {
+      switch (kind) {
+        case "boolean":
+          return [intrinsic(instr, "js.boolean.box", [value])];
+        // The Null partition has one value, the carrier's null reference.
+        case "null":
+          return [{ kind: "const", value: { kind: "null", ty: CARRIER }, result: instr.result, resultType: CARRIER }];
+        case "number":
+          return [intrinsic(instr, "js.number.box", [value])];
+        // (#7354 Str) A native string, and (#7354 Fa) a function value's closure, are their own payload: the
+        // externref that wraps it.
+        default:
+          return [
+            {
+              kind: "coerce.to_externref",
+              value,
+              result: instr.result,
+              resultType: CARRIER,
+              ...(instr.site === undefined ? {} : { site: instr.site }),
+            },
+          ];
+      }
+    };
+  /** An instruction kept as it is: one with a dynamic result (a carrying one) is admitted. */
+  const keep = (instr: IrInstr): readonly IrInstr[] => (instr.resultType?.kind === "dynamic" ? admit(instr) : [instr]);
 
   const expand = (instr: IrInstr): readonly IrInstr[] => {
     switch (instr.kind) {
       case "box":
-        return instr.toType.kind === "dynamic"
-          ? admit(boxedKind(instr.toType.tag, types.get(instr.value)), instr, instr.value)
-          : [instr];
+        return instr.toType.kind === "dynamic" ? admit(instr, intoCarrier(instr, instr.value)) : [instr];
       case "unbox":
         if (!isDynamic(instr.value)) return [instr];
         if (instr.tagId === JS_TAG_IDS.NumberF64) return [intrinsic(instr, "js.number.unbox", [instr.value])];
@@ -247,37 +293,27 @@ export function legalizeDynamicValues(fn: IrFunction): IrFunction {
           { kind: "unary", op: "i32.eqz", rand: positive, result: instr.result, resultType: instr.resultType },
         ];
       }
-      // (#7354 Fa) The function-value projection (`functionObjectDynamicValue`) boxes a packed callable, an
-      // externref, into the dynamic value; the carrier is that externref itself.
+      // (#7354 Fa) The function-value projection boxes a packed callable, an externref, into the dynamic value; the
+      // carrier is that externref itself.
       case "call":
-        if (
-          instr.target.binding.kind === "runtime" &&
-          instr.target.name === IR_DYN_CALL_BOX_FN &&
-          isFunctionValue(instr.args[0]!)
-        )
-          return admit("function", instr, instr.args[0]!);
+        if (carriedOperand(instr) !== undefined) return admit(instr, intoCarrier(instr, instr.args[0]!));
         // A front-end dynamic helper (`__ir_dyn_add`, ...) has no runtime declaration.
         return instr.target.binding.kind === "runtime" &&
           !irRuntimeCallableDeclaration(instr.target) &&
           [instr.resultType, ...instr.args.map((arg) => types.get(arg))].some((type) => type?.kind === "dynamic")
           ? gap(instr.target.name)
-          : [instr];
+          : keep(instr);
       // (#7354 X, O1) The carrier already is the native externref value: the exception payload a thrown dynamic
-      // value carries and the value an ordinary object's property stores. A coercion to it keeps, and lowers to
-      // nothing over the legalized operand, only for an operand of a kind the carrier holds. (A callable pack is
-      // a coercion to the callable type, not to the carrier.)
+      // value carries and the value an ordinary object's property stores. A coercion to it is admitted, and lowers to
+      // nothing over the legalized operand. (A callable pack is a coercion to the callable type, not to the carrier.)
       case "coerce.to_externref": {
-        // (#7354 Fa) An object literal stores a closure member as its packed callable, coerced: that coercion is a
-        // function value entering the carrier.
-        if (isFunctionValue(instr.value)) return admit("function", instr, instr.value);
         const target = instr.resultType;
-        const toCarrier = target?.kind === "dynamic" || (target?.kind === "val" && target.val.kind === "externref");
-        return !toCarrier || carrierKind(instr.value, types, definitions) !== undefined
-          ? [instr]
-          : gap(`coerce.to_externref of ${unadmittedValue(instr.value, types, definitions)}`);
+        return target?.kind === "dynamic" || (target?.kind === "val" && target.val.kind === "externref")
+          ? admit(instr)
+          : [instr];
       }
       default:
-        return instr.kind.startsWith("dyn.") ? gap(instr.kind) : [instr];
+        return instr.kind.startsWith("dyn.") ? gap(instr.kind) : keep(instr);
     }
   };
   const mapBuffer = (buffer: readonly IrInstr[]): readonly IrInstr[] =>
