@@ -141,11 +141,11 @@ describe("#7354 O2 — what a program's source allows its objects", () => {
   };
 
   it("answers no objects, and objects no code can change a built-in prototype through", () => {
-    expect(objects("export const n = 1;")).toEqual({ present: false, namesSymbol: false, reachesPrototype: undefined });
+    expect(objects("export const n = 1;")).toEqual({ present: false, namesSymbol: false, unplain: undefined });
     expect(objects("export const o = { a: 1, toString: 1 }; export const v = o.a;")).toEqual({
       present: true,
       namesSymbol: false,
-      reachesPrototype: undefined,
+      unplain: undefined,
     });
   });
 
@@ -158,20 +158,18 @@ describe("#7354 O2 — what a program's source allows its objects", () => {
     ["the String global", "export const s = String(1);", "the program names 'String'"],
     ["globalThis", "export const g = globalThis;", "the program names 'globalThis'"],
   ])("reaches a built-in prototype with %s", (_label, source, reason) => {
-    expect(objects(source).reachesPrototype).toBe(reason);
+    expect(objects(source).unplain).toBe(reason);
   });
 
   it("answers whether the program names Symbol, the way to @@toPrimitive", () => {
     expect(objects("export const s = typeof Symbol;")).toMatchObject({
       namesSymbol: true,
-      reachesPrototype: "the program names 'Symbol'",
+      unplain: "the program names 'Symbol'",
     });
     expect(objects("export const o = { Symbol: 1 }; export const v = o.Symbol;").namesSymbol).toBe(false);
   });
 
   it("does not take a member or key name for a global", () => {
-    expect(
-      objects("export const o = { Object: 1, String: 2 }; export const v = o.Object;").reachesPrototype,
-    ).toBeUndefined();
+    expect(objects("export const o = { Object: 1, String: 2 }; export const v = o.Object;").unplain).toBeUndefined();
   });
 });

@@ -41,13 +41,13 @@ function prototypeReach(node: ts.Node): string | undefined {
 export function programObjects(sourceFiles: readonly ts.SourceFile[]): ProgramObjects {
   let present = false;
   let namesSymbol = false;
-  let reachesPrototype: string | undefined;
+  let unplain: string | undefined;
   const visit = (node: ts.Node): void => {
     present ||= ts.isObjectLiteralExpression(node);
     namesSymbol ||= prototypeGlobal(node) === "Symbol";
-    reachesPrototype ??= prototypeReach(node);
+    unplain ??= prototypeReach(node);
     ts.forEachChild(node, visit);
   };
   sourceFiles.forEach(visit);
-  return { present, namesSymbol, reachesPrototype };
+  return { present, namesSymbol, unplain };
 }

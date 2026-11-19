@@ -108,20 +108,20 @@ export const MEMBER_READ_ARM: Readonly<Record<CarrierKind, "type-error" | "get" 
 /**
  * What the dynamic-value legalization asks of a program's source (`src/ir/source-plain-objects.ts` answers it in one
  * walk): whether it builds ordinary objects, so the object kind is admitted; (O2b) whether it names `Symbol`, the only
- * way to `@@toPrimitive`; and (O4) the first way its code can reach a built-in prototype to change it, which a member
- * read of a primitive must exclude.
+ * way to `@@toPrimitive`; and (O4) `unplain`, the first way its code can reach a built-in prototype to change it,
+ * which a member read of a primitive must exclude.
  */
 export interface ProgramObjects {
   readonly present: boolean;
   readonly namesSymbol: boolean;
-  readonly reachesPrototype: string | undefined;
+  readonly unplain: string | undefined;
 }
 
 /** A program that builds no ordinary object. */
 export const NO_OBJECTS: ProgramObjects = Object.freeze({
   present: false,
   namesSymbol: false,
-  reachesPrototype: undefined,
+  unplain: undefined,
 });
 
 /** The kinds a value of a program may be: the object kind only where the program builds objects. */

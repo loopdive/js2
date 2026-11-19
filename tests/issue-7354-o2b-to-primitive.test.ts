@@ -4,12 +4,16 @@
 // (src/ir/program/ordinary-to-primitive.ts). No admitted kind is callable, so the answer for every hint is
 // "[object Object]" when the object has no `toString` up to the realm's Object.prototype, and a TypeError when it
 // holds one. ToNumber of that string is NaN, and `+` concatenates it. A program that names `Symbol` refuses by name.
-// The synthesized TypeError aborts uncatchably in a program that catches. Every answer program runs twice: node's
+// The synthesized TypeError fails loudly (a trap) in a program that catches. Every answer program runs twice: node's
 // answer (returns) and a wrong one (throws).
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as gc from "../src/codegen/index.js";
 import * as linear from "../src/codegen-linear/index.js";
+import { emitBinary } from "../src/emit/binary.js";
+import { createEmptyModule } from "../src/ir/types.js";
+import { buildSourceObjectHasDefinition } from "../src/runtime/wasmgc/values/source-object-bodies.js";
 import { instantiatePreparedArtifact } from "../src/test262/test262-prepared-runtime.js";
+import { PhysicalModuleReservations } from "../src/wasm/physical/module-reservations.js";
 import {
   compile,
   requiredPreparedEmission,
@@ -126,5 +130,50 @@ describe("#7354 O2b — OrdinaryToPrimitive of an ordinary object", () => {
     const result = await compile("var o = { a: 1 }; var s = typeof Symbol; var t = '' + o;", options());
     expect(result.success).toBe(false);
     expect(messages(result).join("\n")).toContain("ToPrimitive of an object in a program that names 'Symbol'");
+  });
+});
+
+// The kernel's HasProperty answers lookup's status: 0 absent, 1 found, 2 a miss at the realm's Object.prototype
+// (which does not hold the specification's properties yet, so OrdinaryToPrimitive takes the method for its own), 3
+// not an object. The adapter answers found for 1, absent for 0 and 2, and traps on 3 and on any other status, exactly
+// like the get adapter (tests/issue-7354-o-objects.test.ts): an unknown status is never read as absent.
+describe("#7354 O2b — the js.object.has adapter over the kernel's HasProperty", () => {
+  const ext = { kind: "externref" } as const;
+  function adapter(answer: (target: unknown, key: unknown) => number) {
+    const module = createEmptyModule(),
+      tx = new PhysicalModuleReservations(module);
+    const has = tx.reserveFunctionImport("kernel:has", "kernel", "has", {
+      params: [ext, ext],
+      results: [{ kind: "i32" }],
+    });
+    const fn = tx.reserveFunction("adapter:has", "has", { params: [ext, ext], results: [{ kind: "i32" }] });
+    tx.freezeReservations();
+    tx.fillFunction(fn, buildSourceObjectHasDefinition({ has: has.handle }));
+    tx.defineExport("export:has", "has", fn);
+    tx.seal();
+    const wasm = new WebAssembly.Module(emitBinary(module) as BufferSource);
+    return new WebAssembly.Instance(wasm, { kernel: { has: answer } }).exports.has as (...args: unknown[]) => unknown;
+  }
+  const target = {},
+    key = {};
+
+  it.each([
+    [0, 0],
+    [1, 1],
+    [2, 0],
+  ])("answers status %i as %i, forwarding both operands", (status, found) => {
+    const seen: unknown[][] = [];
+    const has = adapter((...args) => {
+      seen.push(args);
+      return status;
+    });
+    expect(has(target, key)).toBe(found);
+    expect(seen).toHaveLength(1);
+    expect(seen[0]!.map((operand, i) => operand === [target, key][i])).toEqual([true, true]);
+  });
+
+  it.each([3, 4, 0x7fffffff, -1])("traps on a non-object or unknown answer (status %i)", (status) => {
+    const has = adapter(() => status);
+    expect(() => has(target, key)).toThrow(WebAssembly.RuntimeError);
   });
 });

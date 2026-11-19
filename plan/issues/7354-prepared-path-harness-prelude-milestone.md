@@ -2610,7 +2610,8 @@ Target structure:
 - `src/ir/program/dynamic-realm-calls.ts` (new) is the one `js.object.*` call builder (it replaces dynamic-member-read's
   local `call`) and the one synthesized-TypeError helper (throw, or the uncatchable failure in a catching program).
 - The realm adds two rows to `ROWS` in `native-source-objects.ts`, with bodies in `source-object-bodies.ts`:
-  `js.object.has`, an adapter over the kernel's `has` (status 1 → true, 0 and 2 → false, 3 traps), and the new
+  `js.object.has`, an adapter over the kernel's `has` (status 1 → true, 0 and 2 → false, every status ≥ 3 traps,
+  exactly like the get adapter, so B2b's status 4 is never read as absent), and the new
   contract `js.object.uncatchable-type-error` (`[] → []`, body `unreachable`).
   - It is a call contract, not an intrinsic as first proposed. Every intrinsic is certified pure
     (`analysis/intrinsics.ts`, `effects.ts`), so dead-code and GVN passes could drop or merge a trap whose result is
@@ -2618,8 +2619,8 @@ Target structure:
 - `ProgramObjects` keeps one walk and returns the answers its consumers ask:
   - `present` (the object kind is admitted);
   - `namesSymbol` (ToPrimitive);
-  - `reachesPrototype`, the first way code can reach a built-in prototype: it names a prototype global, or reads
-    `prototype` / `__proto__`.
+  - `unplain`, the first way code can reach a built-in prototype: it names a prototype global, or reads
+    `prototype` / `__proto__`. The field keeps its O2 name, so S5's B2b (which adds a field) merges cleanly.
   The O4 member read keeps that last gate, now on its primitive arm only: the object arm is the realm's exact [[Get]].
   The ToPrimitive-only reasons go: literal members, function values, member writes, `toString` / `valueOf` keys.
   The checker parameter goes with them.

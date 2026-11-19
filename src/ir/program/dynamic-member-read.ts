@@ -64,7 +64,7 @@ export function dynamicMemberRead(
       case "primitive": {
         // (#7354 O2b) Only this arm assumes the built-in prototypes are the specification's; the object arm is the
         // realm's own [[Get]].
-        const reached = program.objects.reachesPrototype;
+        const reached = program.objects.unplain;
         if (reached !== undefined) gap(`member read '${name}' (${reached})`);
         const reachable = BUILTIN_REACHABLE_KEYS[kind as keyof typeof BUILTIN_REACHABLE_KEYS];
         if (reachable.has(name) || (kind === "string" && isArrayIndexKey(name)))
