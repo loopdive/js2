@@ -90,6 +90,7 @@ export function prepareOrdinaryObjectAccessResolver(
   ) => PreparedOrdinaryPropertyRead | undefined;
   readonly preparedOrdinaryObjectLiteral: (literal: ts.ObjectLiteralExpression) => boolean;
   readonly preparedArrayLiteral: (literal: ts.ArrayLiteralExpression) => boolean;
+  readonly preparedArrayBrandTest: (call: ts.CallExpression) => boolean;
   readonly preparedArrayElementRead: (expression: ts.ElementAccessExpression) => PreparedArrayElementRead | undefined;
 } {
   const plans = new WeakMap<ts.PropertyAccessExpression, PreparedOrdinaryPropertyRead>();
@@ -223,18 +224,17 @@ export function prepareOrdinaryObjectAccessResolver(
   };
   const owned = roots.every((root) => sourceFiles.includes(root.getSourceFile()));
   if (owned) roots.forEach(visit);
+  const ownsNode = (node: ts.Node) => owned && sourceFiles.includes(node.getSourceFile());
   return Object.freeze({
     preparedOrdinaryPropertyRead(expression: ts.PropertyAccessExpression) {
       return plans.get(expression);
     },
     // (#7354 O1) The Prepared backend has no closed object struct: every literal it owns is an ordinary object.
-    preparedOrdinaryObjectLiteral(literal: ts.ObjectLiteralExpression) {
-      return owned && sourceFiles.includes(literal.getSourceFile());
-    },
+    preparedOrdinaryObjectLiteral: ownsNode,
     // (#7352 arrays) Nor a vec home for a literal: every array literal it owns is an Array exotic object.
-    preparedArrayLiteral(literal: ts.ArrayLiteralExpression) {
-      return owned && sourceFiles.includes(literal.getSourceFile());
-    },
+    preparedArrayLiteral: ownsNode,
+    // (#7352 A3) So every Array it owns carries the realm's brand, which `Array.isArray` tests.
+    preparedArrayBrandTest: ownsNode,
     preparedArrayElementRead(expression: ts.ElementAccessExpression) {
       return elementPlans.get(expression);
     },

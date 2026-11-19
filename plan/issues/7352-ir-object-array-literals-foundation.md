@@ -24,6 +24,9 @@ related: [7349, 7350, 7353, 7335, 7280, 7338, 7339, 7292]
 # reads an element of a dynamic binding as the carrier (`isCarrierElementRead`, sharing `receiverBinding` with
 # `isScriptVarVec`). Both sit in the scope-lookup helpers they extend; the member chain itself lives in
 # src/ir/program/dynamic-member-*.ts.
+# 2026-11-19 (A3 Array.isArray, branch claude/7354-arrays-isarray): src/ir/from-ast.ts +11 net. The resolver
+# query `preparedArrayBrandTest` and the static-predicate host's `arrayBrandTest` (one `js.object.is-array` call),
+# next to the host it extends; the arm itself lives in src/ir/static-predicates/lowering.ts.
 loc-budget-allow:
   - src/ir/from-ast.ts
 ---
@@ -383,6 +386,25 @@ their home), 325 did not.
 The real prelude's `var failures = []` (propertyHelper.js) has its home: `failures.length` and `failures[0] = 1`
 inside a function pass; `failures.push(1)` refuses ("__ir_dyn_method_call_1 has no Prepared intrinsic"), so
 Array.prototype.push is its next gap.
+
+### A3 `Array.isArray` result (2026-11-19)
+
+Branch `claude/7354-arrays-isarray` on `claude/7354-arrays` (`5c00016ed2`). Rule 5 as written: one contract row,
+`js.object.is-array(value) -> boolean` in the ordinary-object family (`ordinary-object-callables.ts`, manifest), served
+by the realm (`native-source-objects.ts` ROWS, `array: true`) with the body `any.convert_extern; ref.test $Array`
+(`buildArrayIsArrayDefinition`, the existing `arrayTest`). No new lowering: the #7106 static-predicate arm
+(`static-predicates/lowering.ts`) already owns `Array.isArray` on the unshadowed ambient `Array` and answers a
+primitive `false` without a call; an `externref` or `dynamic` operand now calls the brand test where the resolver
+answers `preparedArrayBrandTest` (the Prepared resolver, for every call it owns), and still demotes elsewhere. The
+dynamic value's carrier is the externref the test reads, so no kind table is consulted: every non-`$Array` value,
+boxed primitives and null included, fails `ref.test`.
+
+- Proving programs (`tests/issue-7352-a-arrays.test.ts`, "A3"): an Array and an ordinary object in a script var,
+  P's dynamic parameter holding an Array, a number, an object and null, a function-local literal; right answer
+  returns, wrong throws, node agrees. `var A = Array;` stays refused ('identifier "Array" is not in scope', S5's).
+- Mutation check: the test answering `$Object` instead of `$Array` fails the object and parameter programs.
+- Bytes: ordinary pipeline identical on 111 files × default/standalone vs `5c00016ed2`; the 34 realm programs
+  without `Array.isArray` (`.tmp/bytes-realm-compare.mts`) have the same outcome, 29 binaries sha-equal, 5 refusals.
 
 ### Acceptance
 

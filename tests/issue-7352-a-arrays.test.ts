@@ -12,6 +12,9 @@
 //
 // A2's dynamic value: an array is the carrier's object kind; a number key reads and writes it through the index
 // contracts and `length` writes through `js.object.set-length` (`src/ir/program/dynamic-member-*.ts`).
+//
+// A3's `Array.isArray(x)`: the realm's `$Array` brand test (`js.object.is-array`) of an object or the dynamic value;
+// a primitive operand is `false` without a call (`src/ir/static-predicates/lowering.ts`).
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import * as gc from "../src/codegen/index.js";
 import { irIntrinsicFuncRef, irRuntimeFuncRef } from "../src/ir/core/callable-bindings.js";
@@ -112,11 +115,13 @@ const PROGRAMS: readonly { name: string; body: string; answers: readonly [string
 
 const REF = { kind: "val", val: { kind: "externref" } };
 const INDEX = { kind: "val", val: { kind: "f64" } };
+const BOOL = { kind: "val", val: { kind: "i32", boolean: true } };
 const CONTRACTS = [
   ["js.object.create-array", [INDEX], [REF]],
   ["js.object.get-index", [REF, INDEX, REF], [REF]],
   ["js.object.set-index", [REF, INDEX, REF], []],
   ["js.object.set-length", [REF, INDEX], []],
+  ["js.object.is-array", [REF], [BOOL]],
 ] as const;
 
 describe("#7352 arrays — the index contracts of the ordinary-object family", () => {
@@ -404,6 +409,45 @@ describe("#7352 A2 — a member write of the dynamic value", () => {
     },
     120_000,
   );
+});
+
+describe("#7352 A3 — Array.isArray is the realm's Array brand test", () => {
+  // [what the operand is, the program, the same program with a wrong answer]
+  it.each([
+    [
+      "an Array in a script var",
+      "var a = [1]; if (Array.isArray(a) !== true) throw 1;",
+      "var a = [1]; if (Array.isArray(a) !== false) throw 1;",
+    ],
+    [
+      "an ordinary object in a script var",
+      "var o = { a: 1 }; if (Array.isArray(o) !== false) throw 1;",
+      "var o = { a: 1 }; if (Array.isArray(o) !== true) throw 1;",
+    ],
+    [
+      "P's dynamic parameter, holding an Array, a number, an object or null",
+      "function f(x) { return Array.isArray(x); } if (f([1]) !== true || f(1) || f({}) || f(null)) throw 1;",
+      "function f(x) { return Array.isArray(x); } if (f([1]) !== true || f(1) || f({}) || !f(null)) throw 1;",
+    ],
+    [
+      "a function-local literal",
+      "function g() { var a = [1, 2]; return Array.isArray(a); } if (g() !== true) throw 1;",
+      "function g() { var a = [1, 2]; return Array.isArray(a); } if (g() !== false) throw 1;",
+    ],
+  ])(
+    "%s",
+    async (_label, source, wrong) => {
+      expect(() => new Function(source)()).not.toThrow();
+      expect(() => new Function(wrong)()).toThrow();
+      expect(await run(source)).toBe("returned");
+      expect(await run(wrong)).toBe("threw");
+    },
+    180_000,
+  );
+
+  it("refuses `Array` as a value by its existing name (lane S5's built-in globals)", async () => {
+    expect(await refusal("var A = Array;")).toContain('identifier "Array" is not in scope');
+  }, 120_000);
 });
 
 // A2: the number-key and `length` arms of the dynamic value's member chain, on a receiver whose kind its box proves

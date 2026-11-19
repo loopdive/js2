@@ -428,6 +428,7 @@ export const ORDINARY_OBJECT_RUNTIME_FEATURES = Object.freeze([
   "js.object.get-index",
   "js.object.set-index",
   "js.object.set-length",
+  "js.object.is-array",
 ] as const);
 export type OrdinaryObjectRuntimeFeature = (typeof ORDINARY_OBJECT_RUNTIME_FEATURES)[number];
 export const ORDINARY_OBJECT_RUNTIME_PROVIDER_IDS = Object.freeze([
@@ -444,6 +445,7 @@ export const ORDINARY_OBJECT_RUNTIME_PROVIDER_IDS = Object.freeze([
   "native.js.object.get-index",
   "native.js.object.set-index",
   "native.js.object.set-length",
+  "native.js.object.is-array",
 ] as const);
 export type OrdinaryObjectRuntimeProviderId = (typeof ORDINARY_OBJECT_RUNTIME_PROVIDER_IDS)[number];
 
