@@ -2297,7 +2297,13 @@ Fresh-context review on the merge of Ty with main
    one helper); the classifier's doc says it throws on a DOM mismatch; the numeric-case invariant names
    `switchCaseTests`.
 
+7. **Lead's rule (Fa/Fb cross-lane review): Ty folds a `typeof` literal only for statically known carrier kinds.**
+   Pinned (describe "the carrier admits only known kinds"): a box of a value with no carrier kind (an externref call
+   result, untagged or Function/Object-tagged) refuses by name (`box of a non-primitive value has no Prepared
+   intrinsic`); every admitted kind gets a non-constant tag test; mutation-checked. Lane S4 adds the `function` kind
+   (`js.value.is_function`) as one more `KIND_TEST` row on this branch.
+
 **Stacking.** Branch `claude/7354-ty-r2` (replaces `claude/7354-ty`, whose merge of `claude/7350-b1` brought #7263's
-G1 history with it) is `65d64b13ae` plus a merge of #7350 B2a (`claude/7350-b2a` at its final head `40f37006fb`,
-PR #7315; first merged at `ad0a89f013`), a merge of main (`89e4748241`) and this fix. Grant: `ir->runtime` 10 → 12 for the two table imports (frontmatter). The PR must not release before #7361 and #7315
-are on main.
+G1 history with it) is `65d64b13ae` plus merges of #7350 B2a (`claude/7350-b2a`, PR #7315, at its approved head
+`66e72e6df9`) and of main (`89e4748241`), and this fix. Grant: `ir->runtime` 10 → 12 for the two table imports
+(frontmatter). The PR must not release before #7361 and #7315 are on main.
