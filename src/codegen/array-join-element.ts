@@ -38,26 +38,6 @@ import { nativeStringLiteralInstrs } from "./native-strings.js";
 import { ts } from "../ts-api.js";
 
 /**
- * Is `typeIdx` `$AnyString` or one of its subtypes (`$NativeString`, a rope)?
- *
- * Walks the declared supertype chain rather than comparing against the two
- * known ids, so a string carrier added later keeps the untouched
- * `ref.as_non_null` lowering instead of silently rerouting through ToString.
- * A false negative would still be CORRECT (ToString of a string is that
- * string), just slower — the walk is about byte-identity, not soundness.
- */
-export function isAnyStringSubtype(ctx: CodegenContext, typeIdx: number): boolean {
-  if (ctx.anyStrTypeIdx < 0 || typeIdx < 0) return false;
-  for (let cur = typeIdx, hops = 0; cur >= 0 && hops < 16; hops++) {
-    if (cur === ctx.anyStrTypeIdx || cur === ctx.nativeStrTypeIdx) return true;
-    const def = ctx.mod.types[cur];
-    if (!def || def.kind !== "struct") return false;
-    cur = def.superTypeIdx ?? -1;
-  }
-  return false;
-}
-
-/**
  * Element (on the stack) → `(ref $AnyString)` for the boxed-any and non-string
  * GC-ref carriers.
  *

@@ -28,7 +28,7 @@
 import type { ValType } from "../ir/types.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { ensureLateImport, flushLateImportShifts } from "./expressions/late-imports.js";
-import { isAnyStringSubtype } from "./array-join-element.js";
+import { isAnyStringSubtype } from "./native-strings-shared.js";
 import { coerceType } from "./type-coercion.js";
 
 /**
