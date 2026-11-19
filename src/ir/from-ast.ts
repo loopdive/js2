@@ -197,7 +197,7 @@ import {
   isCapturedByOrdinaryDescriptor,
 } from "./closure-captures.js";
 import { planArrayLiteralSpread } from "./array-spread-shape.js";
-import { objectLiteralDataPropertyName, phase1PropertyName } from "./property-key-fold.js";
+import { objectLiteralDataPropertyName, phase1PropertyName } from "../shared/property-key-fold.js";
 import { collectDynamicStringLocalWidening } from "./dynamic-local-widening.js";
 import { coercibleStandaloneDomArgumentBoundary } from "./dom-boundary.js";
 import { fmodRefFor } from "./fmod-selection.js";
