@@ -22,8 +22,7 @@ loc-budget-allow:
   # 2026-11-19 (S8 review RV-S8) — select.ts further +~35: the widened-result
   #   exemption (`resultWidensToDynamic`, an IrSelectionOptions hook beside
   #   `jsDocParamLowersAsExternref`), the conditional carrier-arm check in the
-  #   module-value conditional rule, and resetting `currentFnReturnKind` in the
-  #   three non-function subjects. All read or reset selector state.
+  #   module-value conditional rule. Both read selector state.
   - src/ir/select.ts
   # 2026-11-19 (S8 review RV-S8) — codegen/index.ts +1: the one line wiring
   #   `resultWidensToDynamic` into planIrOverlay's selection options, beside
@@ -119,19 +118,16 @@ arms that disagree on `yieldsModuleCarrier`
 (`expr-module-value-conditional-mismatch`), anywhere, not only in a return.
 Both arms carriers is a carrier, which the return refusal then sees.
 
-**State.** `currentFnReturnKind` was set only for function subjects, so a
-planned closure, module-init or a constructor-field walk read the previous
-subject's kind (measured: a module-init closure returning
-`"Test262Error: " + this.message` saw `f64`). The new reader made that stale
-value load-bearing; the three subjects now reset it (the closure also saves
-and restores it).
-
-No ToNumber lowering: legacy converts, but the `f64` result is the checker's
-reading of the initializer, and a script var can be reassigned, so a
-converted return would be wrong where JS returns the value unchanged.
-
-**Quality acceptance.** No new carrier definition (reuses `producesCarrier`
-and `holdsCarrier`); both return arms go through one helper.
+**State (no reset, measured).** `currentFnReturnKind` is set only for
+function subjects, so module-init, constructor-field and planned-closure walks
+keep the previous subject's kind (seen: the harness's
+`Test262Error.prototype.toString` closure walked with `f64`). It never
+reaches the refusal with a carrier: a planned closure refuses a carrier result
+first (`closure-return-type`), and module-init and constructor fields have no
+own `return`. A shadow-instrumented compile of the 700-file sample recorded
+zero carrier returns under a stale kind, and no constructed program made a
+reset observable, so the resets cfa71274 added were dropped
+again as untestable. A stale kind could only over-refuse, never withdraw.
 
 **Tests.** `tests/issue-7331-carrier-return-into-number.test.ts`: the issue's
 three repros, the `+` form, both-arm and mixed conditionals and `y = -null`

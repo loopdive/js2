@@ -1620,7 +1620,6 @@ export function assessIrImplicitConstructorSubject(
   currentFnIsVoidReturn = false;
   currentFnIsDynamicReturn = false;
   currentFnIsAsync = false;
-  currentFnReturnKind = null;
   if (SHAPE_DIAG_ON) shapeRejectDetail = null;
   const accepted = constructorFieldInitializersAreIrSafe(owner, new Set(["this"]), localClasses);
   const reason = accepted ? null : (typedShapeRejectReason ?? "body-shape-rejected");
@@ -1903,9 +1902,10 @@ let currentDynamicParamNames = new Set<string>();
 let currentProvenMixedConditionals = new Set<ts.ConditionalExpression>();
 // The current subject's resolved return kind: `concreteResultRecoversDynamic`
 // reads it to recover a dynamic `return` operand into a concrete result, and
-// `isPhase1ReturnValue` to refuse a carrier into a number. Null where no
-// function result was resolved (module-init, constructor fields, a planned
-// closure), so an earlier subject's kind never reaches those walks.
+// `isPhase1ReturnValue` to refuse a carrier into a number. Module-init,
+// constructor-field and planned-closure walks keep the previous subject's
+// kind; none reaches a carrier `return` (a planned closure refuses a carrier
+// result first, `closure-return-type`), and a stale kind could only refuse.
 let currentFnReturnKind: ResolvedKind = null;
 // (#7106 S1c) Catch bindings of the current subject: a thrown payload is ALWAYS
 // the boxed-any carrier, never a callback-boundary parameter carrier, so a
@@ -7788,7 +7788,6 @@ function withFunctionMemberClosureState<T>(
     currentFnIsVoidReturn,
     currentFnIsDynamicReturn,
     currentFnIsAsync,
-    currentFnReturnKind,
     currentDynMemberEqualitySubject,
     currentDynEqualityBoxableParamNames,
     currentNumericParamNames,
@@ -7830,7 +7829,6 @@ function withFunctionMemberClosureState<T>(
     plan.signature.returnType?.kind === "val" && plan.signature.returnType.val.kind === "i32";
   currentFnIsGenerator = currentFnIsVoidReturn = currentFnIsDynamicReturn = currentFnIsAsync = false;
   currentFnIsVoidReturn = plan.signature.returnType === null;
-  currentFnReturnKind = null;
   currentDynMemberEqualitySubject = null;
   currentDynEqualityBoxableParamNames = new Set();
   currentNumericParamNames = new Set();
@@ -7858,7 +7856,6 @@ function withFunctionMemberClosureState<T>(
       currentFnIsVoidReturn,
       currentFnIsDynamicReturn,
       currentFnIsAsync,
-      currentFnReturnKind,
       currentDynMemberEqualitySubject,
       currentDynEqualityBoxableParamNames,
       currentNumericParamNames,
@@ -8420,7 +8417,6 @@ const OBVIOUS_OPERAND_FAMILIES: Record<ObviousModuleValueFamily | "unknown", Ope
   unknown: "unknown",
 };
 
-/** Narrow family evidence used only to reject representation mismatches. */
 /**
  * The arms of a conditional over a module value lower to different carriers. A
  * carrier arm (#7331) is the carrier whatever the checker types it (`c ?
@@ -8432,6 +8428,7 @@ function moduleValueConditionalArmsDiffer(expr: ts.ConditionalExpression): boole
   return !whenTrueFamily || whenTrueFamily !== obviousModuleValueFamily(expr.whenFalse);
 }
 
+/** Narrow family evidence used only to reject representation mismatches. */
 function obviousModuleValueFamily(expr: ts.Expression): ObviousModuleValueFamily | undefined {
   const candidate = unwrapPhase1Parens(expr);
   const binding = moduleBinding(candidate);
@@ -14204,7 +14201,6 @@ export function assessModuleInit(
   currentFnIsGenerator = false;
   currentFnIsVoidReturn = true;
   currentFnIsAsync = false; // (#1373b C-1) module-init is never an async body
-  currentFnReturnKind = null;
   currentSubjectIsModuleInit = true;
   currentDynMemberEqualitySubject = null;
   currentStableFunctionCallSubject = null;
