@@ -8,7 +8,7 @@
  * prototype properties: the dynamic-value legalization asks this one answer before it takes either shortcut.
  */
 import { ts } from "../ts-api.js";
-import { objectLiteralDataPropertyName } from "./property-key-fold.js";
+import { objectLiteralDataPropertyName } from "../shared/property-key-fold.js";
 import type { ProgramObjects } from "./program/dynamic-value-kinds.js";
 
 /** Own keys whose definition changes what OrdinaryToPrimitive or a prototype lookup answers. */

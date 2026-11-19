@@ -2,6 +2,7 @@
 import { ts } from "../typescript.js";
 import type { IrType } from "../../ir/core/types.js";
 import { resolveOrdinaryObjectClosureSignature } from "../../ir/ordinary-object-closure-signatures.js";
+import { objectLiteralDataPropertyName } from "../../shared/property-key-fold.js";
 
 export interface PreparedOrdinaryPropertyRead {
   readonly key: string;
@@ -14,10 +15,6 @@ const BOOLEAN: IrType = Object.freeze({ kind: "val", val: Object.freeze({ kind: 
 const isAccessor = (property: ts.ObjectLiteralElementLike): boolean =>
   ts.isGetAccessorDeclaration(property) || ts.isSetAccessorDeclaration(property);
 
-/** A member's static name: an identifier, string or number; `undefined` for a computed key. */
-const staticName = (name: ts.PropertyName): string | undefined =>
-  ts.isIdentifier(name) || ts.isStringLiteral(name) || ts.isNumericLiteral(name) ? name.text : undefined;
-
 /**
  * (#7354 O1) Every member is a statically named data property (a `__proto__` member sets the prototype instead): its
  * value is the literal's own initializer.
@@ -26,8 +23,8 @@ function isDataOnlyLiteral(literal: ts.ObjectLiteralExpression): boolean {
   return literal.properties.every(
     (property) =>
       (ts.isPropertyAssignment(property) || ts.isShorthandPropertyAssignment(property)) &&
-      staticName(property.name) !== undefined &&
-      !(ts.isPropertyAssignment(property) && staticName(property.name) === "__proto__"),
+      objectLiteralDataPropertyName(property.name) !== null &&
+      !(ts.isPropertyAssignment(property) && objectLiteralDataPropertyName(property.name) === "__proto__"),
   );
 }
 
@@ -85,8 +82,14 @@ export function prepareOrdinaryObjectAccessResolver(
       const found = new Map<ts.Symbol, ts.Identifier[]>();
       const collect = (node: ts.Node): void => {
         if (ts.isIdentifier(node)) {
-          const target = checker.getSymbolAtLocation(node);
-          if (target) found.set(target, [...(found.get(target) ?? []), node]);
+          // `{ o }` names the property it defines; the binding it reads is the shorthand's value symbol.
+          const target =
+            ts.isShorthandPropertyAssignment(node.parent) && node.parent.name === node
+              ? checker.getShorthandAssignmentValueSymbol(node.parent)
+              : checker.getSymbolAtLocation(node);
+          const known = target && found.get(target);
+          if (known) known.push(node);
+          else if (target) found.set(target, [node]);
         }
         ts.forEachChild(node, collect);
       };
