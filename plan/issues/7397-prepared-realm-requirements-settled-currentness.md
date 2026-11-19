@@ -80,6 +80,13 @@ that carries source-closure requirements therefore never settles and is
 re-checked at every use, as before. Issuing the frozen `snapshot` there would
 let it settle. That is a separate change in another module, not made here.
 
+## Follow-up (next step, not in this change)
+
+- **Freeze the source-closure planner's issued arrays.** In
+  `planNativeSourceClosureRequirements`, issue `Object.freeze({ ...snapshot, demands })` from the frozen snapshot,
+  so that a realm pack carrying source-closure requirements can settle too. Until then such a pack is re-checked at
+  every use. File it as its own issue once a measurement shows its share.
+
 ## Acceptance criteria
 
 1. Prelude-shaped program q/h/f: before/after times, sha1 identical.
