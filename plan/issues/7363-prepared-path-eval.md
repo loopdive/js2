@@ -145,6 +145,13 @@ to one shared module both pipelines ask, instead of a second copy.
   - a top-level sloppy literal is a called script source of the program (Slice A below).
 - Proving program: each form checked against node (the right answer returns, a wrong one throws), plus a rebound
   `eval` taking the ordinary-call arm.
+- Acceptance (review RV7310 should-fix): the identity test reads the callee through the real environment chain, not
+  through slice 1's lexical answer. An `eval` that slice 1 calls unbound is not therefore %eval%:
+  - `eval("var eval = g"); eval("1")`: an earlier sloppy direct eval declared a var `eval`, so the second call is an
+    ordinary call of `g`;
+  - `with (o) { eval("1") }`: an `eval` property of `o` is the callee;
+  - `eval("1"); { function eval() {} }` (Annex B lean): slice 1 treats `eval` as bound. The answer must match node
+    in sloppy and in strict code.
 
 ### Later (own slices, measured first)
 
