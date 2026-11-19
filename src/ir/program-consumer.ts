@@ -437,7 +437,9 @@ export function emittedSupportFunctionReceipts(
 ): readonly EmittedSupportFunctionReceipt[] {
   const record = startupAdapters.get(emitted);
   if (!record) programInvariant("invalid-transaction-capability", "emission was not produced by this consumer");
-  for (const token of record.functions) record.reservations.assertCompletedReservation(token);
+  record.reservations.audited(() => {
+    for (const token of record.functions) record.reservations.assertCompletedReservation(token);
+  });
   if (record.functions.length !== emitted.module.functions.length)
     emissionFailed("completed emission function census changed");
   return record.support;
@@ -766,6 +768,34 @@ function reconcileNativeEmission(
   return nativeFunctions;
 }
 
+type CompletedPack<F extends (tx: PhysicalModuleReservations, pack: never) => void> =
+  | Parameters<F>[1]
+  | null
+  | undefined;
+
+/** (#7365) The completion checks after seal only read the layout: one audit, taken after all of them, covers them. */
+function requireCompletedPacks(
+  reservations: PhysicalModuleReservations,
+  packs: {
+    readonly sourceClosures: CompletedPack<typeof requireCompletedNativeSourceClosures>;
+    readonly realm: CompletedPack<typeof requireCompletedNativeRealmBootstrap>;
+    readonly invocationPack: CompletedPack<typeof requireCompletedNativeInvocation>;
+    readonly nativePack: CompletedPack<typeof requireCompletedNativeStringValues>;
+    readonly strings: CompletedPack<typeof requireCompletedNativeStringLiterals>;
+    readonly formatterPack: CompletedPack<typeof requireCompletedNativeNumberFormat>;
+  },
+): void {
+  const { sourceClosures, realm, invocationPack, nativePack, strings, formatterPack } = packs;
+  reservations.audited(() => {
+    if (sourceClosures) requireCompletedNativeSourceClosures(reservations, sourceClosures);
+    if (realm) requireCompletedNativeRealmBootstrap(reservations, realm);
+    if (invocationPack) requireCompletedNativeInvocation(reservations, invocationPack);
+    if (nativePack) requireCompletedNativeStringValues(reservations, nativePack);
+    else if (strings) requireCompletedNativeStringLiterals(reservations, strings);
+    if (formatterPack) requireCompletedNativeNumberFormat(reservations, formatterPack);
+  });
+}
+
 /** Snapshot the completed ABI using the existing successful-emission record. */
 function recordEmissionObservation(
   result: EmittedPreparedIrProgram,
@@ -788,10 +818,12 @@ function recordEmissionObservation(
     functions.length !== result.module.functions.length
   )
     emissionFailed("completed emission function ownership is not an exact partition");
-  const support = supportFunctions.map((token) => {
-    reservations.assertCompletedReservation(token);
-    return Object.freeze({ key: token.key, index: reservations.physicalIndex(token) });
-  });
+  const support = reservations.audited(() =>
+    supportFunctions.map((token) => {
+      reservations.assertCompletedReservation(token);
+      return Object.freeze({ key: token.key, index: reservations.physicalIndex(token) });
+    }),
+  );
   startupAdapters.set(
     result,
     Object.freeze({
@@ -1482,12 +1514,7 @@ function materializePhysicalProgram(
 
   if (nativePack?.output) publishNativeStringValueOutput(reservations, nativePack);
   reservations.seal();
-  if (sourceClosures) requireCompletedNativeSourceClosures(reservations, sourceClosures);
-  if (realm) requireCompletedNativeRealmBootstrap(reservations, realm);
-  if (invocationPack) requireCompletedNativeInvocation(reservations, invocationPack);
-  if (nativePack) requireCompletedNativeStringValues(reservations, nativePack);
-  else if (strings) requireCompletedNativeStringLiterals(reservations, strings);
-  if (formatterPack) requireCompletedNativeNumberFormat(reservations, formatterPack);
+  requireCompletedPacks(reservations, { sourceClosures, realm, invocationPack, nativePack, strings, formatterPack });
 
   // 6. Receipts come from the module itself, never from the loop counter.
   const emittedUnitIds: IrUnitId[] = [];
@@ -1522,7 +1549,11 @@ function materializePhysicalProgram(
     startAdapter,
     [...slots.values()],
     [...supportFunctions.values()],
-    realm ? nativeRealmCompletedSlots(reservations, realm, sourceClosures?.types, invocationPack) : undefined,
+    realm
+      ? reservations.audited(() =>
+          nativeRealmCompletedSlots(reservations, realm, sourceClosures?.types, invocationPack),
+        )
+      : undefined,
   );
   return result;
 }
