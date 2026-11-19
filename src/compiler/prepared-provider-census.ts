@@ -403,7 +403,7 @@ function nativeRows(
     return undefined;
   const strings = providers.filter((row) => STRING_FEATURES.has(row.feature));
   const callables = providers.filter((row) => !strings.includes(row) && row.implementation.kind === "runtime-callable");
-  const formatterCallables = formatterJoins(program, emission, formatter, formatted!);
+  const formatterCallables = formatterJoins(program, emission, formatted!);
   const answered: RuntimeProviderDefinition["implementation"][] = [...(formatterCallables ?? [])];
   const rows: SupportCallableRow[] = [];
   for (const { declaration, binding } of slots) {

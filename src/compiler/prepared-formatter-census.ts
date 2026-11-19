@@ -45,9 +45,9 @@ const ADAPTER_PROVIDER = NATIVE_ASYNC_CALLABLE_RUNTIME_PROVIDERS.find(
  * integer policy declare, with that input; the string setup's data type as the scratch, on its prepared ABI entry;
  * one binding per declaration, in the producer's order — first a canonical callable's ABI entry and reference for a
  * kernel, the radix body and the adapter (`numberFormatSetupAssociations`), then the setup-derived binding
- * (`internalNativeBinding`) at the setup's declaration order for every other row, on an existing entry's order and
- * name where the program already plans it; and the radix body as the support function. Undefined when no recipe can
- * be declared (no policy, or no string owner key): then no formatter setup is the program's.
+ * (`internalNativeBinding`) at the setup's declaration order for every other row; and the radix body as the support
+ * function. Undefined when no recipe can be declared (no policy, or no string owner key): then no formatter setup is
+ * the program's.
  */
 function derivedFormatterSetup(
   program: PreparedIrProgram,
@@ -69,15 +69,13 @@ function derivedFormatterSetup(
     reference: row.ref,
   }));
   const baseOrder = nativeSupplementalOrder(program) + strings.declarations.length;
-  const derived = recipe.declarations.flatMap((declaration, index) => {
-    if (associated.some((row) => row.resourceKey === declaration.key)) return [];
-    const binding = internalNativeBinding(program, declaration, baseOrder + index);
-    const existing = planOf(binding.entry.id);
-    const entry = existing
-      ? { ...binding.entry, order: existing.order, displayName: existing.displayName }
-      : binding.entry;
-    return [{ ...binding, entry }];
-  });
+  // Only the fresh entry: the producer would keep the order and name of an entry the program already plans for such a
+  // row, but no formatter program measured plans one, so a program that did refuses here rather than unproven.
+  const derived = recipe.declarations.flatMap((declaration, index) =>
+    associated.some((row) => row.resourceKey === declaration.key)
+      ? []
+      : [internalNativeBinding(program, declaration, baseOrder + index)],
+  );
   const physical = (type: IrType) => (type.kind === "val" ? type.val : type);
   const { implementation, scratch } = declared;
   const body = associated.find((row) => same(row.reference, implementation.ref));
@@ -196,22 +194,19 @@ function ryuTablesJoin(emission: EmittedPreparedIrProgram, slots: readonly Forma
 
 /**
  * The formatter joins its demand: a program with a direct formatter call has the formatter setup (which the census
- * joined to its canonical declarations, `formatterSetupJoins`) and its batch, one without has no batch. The setup's
- * adapter answers the adapter's canonical provider, which the census then requires selected exactly once (no
- * provider without demand, none twice). Answers the provider implementations the formatter answers, or undefined
- * when anything joins nothing.
+ * joined to the derived one, `formatterSetupJoins`; its Ryu tables join only setup slots, so a missing setup joins
+ * nothing) and its batch, one without has no batch. The setup's adapter answers the adapter's canonical provider,
+ * which the census then requires selected exactly once (no provider without demand, none twice). Answers the provider
+ * implementations the formatter answers, or undefined when anything joins nothing.
  */
 export function formatterJoins(
   program: PreparedIrProgram,
   emission: EmittedPreparedIrProgram,
-  formatter: PhysicalNativeNumberFormatSetup | undefined,
   slots: readonly FormatterSlot[],
 ): readonly RuntimeProviderDefinition["implementation"][] | undefined {
   // Without demand only the batch needs a check here: a provider then answers no runtime callable, a scratch no
   // second binding, and a formatter setup's functions no support receipt, so the census refuses each of them.
   if (irNumberFormatDemandOwners(program.ir.functions).length === 0)
     return program.runtimeSupport?.batches.length ? undefined : [];
-  return formatter && batchJoins(program) && ryuTablesJoin(emission, slots)
-    ? [ADAPTER_PROVIDER.implementation]
-    : undefined;
+  return batchJoins(program) && ryuTablesJoin(emission, slots) ? [ADAPTER_PROVIDER.implementation] : undefined;
 }
