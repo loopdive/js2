@@ -75,7 +75,10 @@ const HELPERS = {
       });
     },
   },
-  /** (u32) -> String: the canonical string of an array index, the realm's one formatter of an integer key. */
+  /**
+   * (u32) -> String: the canonical string of an array index, built by the String exotic objects' index-key body
+   * (`string-index-key-body.ts`); the realm does not hold that pack, so it reserves its own instance.
+   */
   "index-key": {
     signature: () => ({ params: [I32], results: [EXTERNREF] }),
     body: ({ kernel }, tx) => {

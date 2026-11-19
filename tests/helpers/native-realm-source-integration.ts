@@ -50,8 +50,15 @@ export const REALM_THROW_SOURCE = `export function run(message: string): number 
   const object = { get value(): number { throw message; } };
   return object.value;
 }`;
-/** Constructed typed-IR backend control. This does not attest frontend admission of Object.create. */
-export function prepareBackendRealmProgram(): PreparedIrProgram {
+const createNull = (builder: IrFunctionBuilder) =>
+  builder.emitCall(irIntrinsicFuncRef("js.object.create-null"), [], { kind: "val", val: { kind: "externref" } });
+/**
+ * Constructed typed-IR backend control: `run` makes the contract calls of `calls` (by default one
+ * `js.object.create-null`), so the realm reserves their providers. This does not attest frontend admission.
+ */
+export function prepareBackendRealmProgram(
+  calls: (builder: IrFunctionBuilder) => void = createNull,
+): PreparedIrProgram {
   const { packet } = sourcePacket({ "./entry.ts": "export function run(): number { return 7; }" });
   const original = packet.ir.functions.find((row) => row.name === "run")!;
   const builder = new IrFunctionBuilder(
@@ -60,7 +67,7 @@ export function prepareBackendRealmProgram(): PreparedIrProgram {
     original.exported,
   );
   builder.openBlock();
-  builder.emitCall(irIntrinsicFuncRef("js.object.create-null"), [], { kind: "val", val: { kind: "externref" } });
+  calls(builder);
   const result = builder.emitConst({ kind: "f64", value: 7 }, { kind: "val", val: { kind: "f64" } });
   builder.terminate({ kind: "return", values: [result] });
   const fn = builder.finish();

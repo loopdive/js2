@@ -32,15 +32,16 @@ export function buildSourceObjectCreateDefinition(d: {
 
 /**
  * The kernel's [[Get]] of the (object, key, receiver) on the stack, whose absent answer already is `undefined`;
- * `value` is an externref scratch local. Its two incomplete states (a parent outside the realm, a carrier that is
- * not an object) cannot occur: every object a source program reaches was built by a `create-*` contract on this
- * realm's prototypes.
+ * `value` is an externref scratch local. A status above `answered` traps. The kernel's incomplete states are 2, a
+ * lookup that ended at a parent outside the realm or at the realm's Object.prototype (which holds only part of its
+ * standard properties, so a miss there is not proven absence), and 3, a carrier that is not an object; every object
+ * a source program reaches was built by a `create-*` contract on this realm's prototypes, so 3 cannot occur.
  */
-export function sourceObjectGet(get: FuncHandle, value: number): Instr[] {
+export function sourceObjectGet(get: FuncHandle, value: number, answered: 1 | 2 = 1): Instr[] {
   return [
     { op: "call", funcIdx: get },
     { op: "local.set", index: value },
-    { op: "i32.const", value: 2 },
+    { op: "i32.const", value: answered + 1 },
     { op: "i32.ge_u" },
     { op: "if", blockType: { kind: "empty" }, then: [{ op: "unreachable" }] },
     { op: "local.get", index: value },

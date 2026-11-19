@@ -66,7 +66,9 @@ const wrapped = (index: number): Instr[] => [get(index), { op: "i32.wrap_i64" }]
 /**
  * `js.object.get-index(object, index, receiver)`: [[Get]] with an array-index key. An element the vector of an
  * `$Array` holds is the answer; a hole, an index above the vector and a receiver that is no array take the
- * kernel's string-keyed [[Get]], which finds a map-held index and walks the prototype chain.
+ * kernel's string-keyed [[Get]], which finds a map-held index and walks the prototype chain. A walk that ends at
+ * the realm's partly populated Object.prototype (status 2) is absence here, `undefined`: no standard property of
+ * %Array.prototype% or %Object.prototype% is an array index, so the unpopulated ones cannot answer this key.
  */
 export function buildArrayGetIndexDefinition(d: ArrayGetIndexOperands): SourceObjectDefinition {
   return {
@@ -100,7 +102,7 @@ export function buildArrayGetIndexDefinition(d: ArrayGetIndexOperands): SourceOb
       ...wrapped(3),
       { op: "call", funcIdx: d.indexKey },
       get(2),
-      ...sourceObjectGet(d.get, 4),
+      ...sourceObjectGet(d.get, 4, 2),
     ],
   };
 }

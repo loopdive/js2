@@ -46,8 +46,9 @@ const cutVector = (d: ArraySetLengthOperands): Instr[] => [
 ];
 
 /**
- * §10.4.2.4 step 17 deletes every index at or above the new length. The vector's are cut; an index the map holds
- * there aborts, uncatchably, until a slice deletes map indices (a wrong `length` is never left behind).
+ * §10.4.2.4 step 17 deletes every index at or above the new length. An index the map holds there aborts,
+ * uncatchably and before anything changes, until a slice deletes map indices (a wrong `length` is never left
+ * behind); the vector's are then cut.
  */
 const refuseMapIndices = (d: ArraySetLengthOperands): Instr[] => [
   ...arrayRef(d, OBJECT),
@@ -137,11 +138,11 @@ export function buildArraySetLengthDefinition(d: ArraySetLengthOperands): Source
         op: "if",
         blockType: empty,
         then: [
+          ...refuseMapIndices(d),
           get(NEW_LENGTH),
           ...arrayDenseLength(d, OBJECT),
           { op: "i32.lt_u" },
           { op: "if", blockType: empty, then: cutVector(d) },
-          ...refuseMapIndices(d),
         ],
       },
       ...arraySetLength(d, OBJECT, [get(NEW_LENGTH)]),
