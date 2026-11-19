@@ -190,3 +190,19 @@ Measured:
 - **Mutation check:** 4 mutants, all killed. They removed: the capability case; the Prepared resolver's answer;
   the table's capability test; the boolean arm.
 - `tests/issue-7375-compound-non-numeric-rhs.test.ts`: 40 tests.
+
+### Why the from-ast growth (+23) stays in from-ast
+
+- The new code is two helpers and their call sites.
+  - `numericReaderOperandToF64` (8 lines) is built from from-ast's own lowering primitives: `relOperandToF64`,
+    `boxConcreteToDynamic` and the function builder's `emitDynToNumber`. All three are module-private and used by
+    dozens of from-ast arms.
+  - `booleanToNumber` (4 lines) is the conversion `booleansReadAsNumbers` already had inline, lifted so both
+    forms share it.
+- Moving the two helpers to a module of their own would mean exporting those primitives from from-ast, a wider
+  surface for 12 lines. They belong beside `booleansReadAsNumbers` and `boxNumericReaderOperands`, the binary
+  form's same steps.
+- The rest is not new logic: the resolver's capability union (+5, prettier splits it over lines), the
+  capability read in `lowerCompoundAssignment` (+1), and the doc lines.
+- Red on main, found while measuring: four tests of `tests/issue-7144-operand-admissibility.test.ts` also fail on
+  `origin/main`. Filed as #7408 with the bisected merges; this change leaves them exactly as on main.
