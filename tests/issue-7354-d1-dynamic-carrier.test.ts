@@ -208,8 +208,13 @@ describe("#7354 D1 — the dynamic value on the Prepared standalone path", () =>
     ],
     // (#7354 Str) The property key enters the dynamic value as a string now; the member read itself has no intrinsic.
     ["a member read", "return id(1).x === 1 ? 1 : 0;", "dynamic operation dyn.member_get has no Prepared intrinsic"],
-    // typeof answers a string: a later slice, with string equality.
-    ["typeof", 'return typeof id(1) === "number" ? 1 : 0;', "dynamic operation dyn.typeof has no Prepared intrinsic"],
+    // (#7354 Ty) A typeof comparison is expressed now (tests/issue-7354-ty-typeof-comparisons.test.ts); a typeof
+    // value answers a string, a later slice.
+    [
+      "typeof",
+      "return typeof id(1) === typeof id(2) ? 1 : 0;",
+      "dynamic operation dyn.typeof has no Prepared intrinsic",
+    ],
     ["`**`", "return id(2) ** 3;", "'**' on a dynamic operand"],
     ["`**` on the right", "return 2 ** id(3);", "'**' on a dynamic operand"],
     ["a value-position prefix update", "let x: any = id(1); return ++x;", "value-position prefix update"],

@@ -278,6 +278,7 @@
         "src/runtime/contracts/collection-kind.ts",
         "src/runtime/contracts/js-value-tags.ts",
         "src/runtime/contracts/native-realm-catalog.ts",
+        "src/runtime/contracts/native-realm-globals.ts",
         "src/runtime/contracts/well-known-symbols.ts"
       ],
       "minModules": 10
@@ -1993,6 +1994,22 @@
     }
   ],
   "files": [
+    {
+      "path": "src/ir/switch-case-tests.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "7354-prepared-path",
+      "nextBoundary": "Frontend switch case-test admission shared by the selector and from-ast; moves with from-ast's frontend half."
+    },
+    {
+      "path": "src/ir/identifier-read.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "7354-prepared-path",
+      "nextBoundary": "Frontend identifier-read resolution order (scope, module binding, global constants, host and ambient globals), shared by from-ast's read and its typeof fold; moves with from-ast's frontend half."
+    },
     {
       "path": "src/ir/function-object-lowering.ts",
       "state": "unmigrated",
@@ -16694,6 +16711,11 @@
       "layer": "runtime-contracts"
     },
     {
+      "path": "src/runtime/contracts/native-realm-globals.ts",
+      "state": "clean",
+      "layer": "runtime-contracts"
+    },
+    {
       "path": "src/ir/program/native-realm-requirements.ts",
       "state": "clean",
       "layer": "ir-program"
@@ -17029,6 +17051,11 @@
     },
     {
       "path": "src/ir/program/dynamic-value-legalization.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
+      "path": "src/ir/program/typeof-comparisons.ts",
       "state": "clean",
       "layer": "ir-program"
     },

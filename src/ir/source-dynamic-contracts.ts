@@ -37,6 +37,7 @@ import type { ValType } from "../wasm/model/instructions.js";
 import { functionBodyAlwaysTerminates, irFunctionBodyReturnsValue } from "./select.js";
 import { someReturnedValue } from "./function-returns.js";
 import { sourceDynamicProvenance, type SourceDynamicProvenance } from "./source-dynamic-provenance.js";
+import { makeUnresolvedGlobalTypeof, type UnresolvedGlobalTypeof } from "./ambient-typeof.js";
 
 type Carries = SourceDynamicProvenance["carries"];
 type Signature = { readonly params: readonly IrType[]; readonly returnType: IrType | null };
@@ -192,7 +193,11 @@ export interface ProgramDynamicContracts extends SourceDynamicProvenance {
    * all refuse before a catch today; the slice that makes one reachable updates
    * tests/issue-7354-x-dynamic-throw.test.ts, which pins each.
    */
-  readonly resolver: { readonly resolveDynamic?: () => ValType; readonly dynamicCarrierIsExternref?: () => boolean };
+  readonly resolver: {
+    readonly resolveDynamic?: () => ValType;
+    readonly dynamicCarrierIsExternref?: () => boolean;
+    readonly unresolvedGlobalTypeof?: (node: ts.Identifier) => UnresolvedGlobalTypeof | undefined;
+  };
   /** {@link legalizeSourceDynamicValues} for the functions lowered from `roots`. */
   readonly legalize: (
     signatures: Iterable<Signature>,
@@ -212,12 +217,19 @@ export function programDynamicContracts(
     sourceFiles,
     nativeDynamicLane(policy),
     (declaration, carries) => sourceDynamicResult(checker, policy, declaration, carries) !== undefined,
+    (parameter) =>
+      ts.isFunctionDeclaration(parameter.parent) &&
+      sourceDynamicParameter(checker, policy, parameter.parent, parameter)?.kind === "dynamic",
   );
   return {
     ...provenance,
     parameter: (declaration, parameter) => sourceDynamicParameter(checker, policy, declaration, parameter),
     resolver: nativeDynamicLane(policy)
-      ? { resolveDynamic: () => ({ kind: "externref" }), dynamicCarrierIsExternref: () => true }
+      ? {
+          resolveDynamic: () => ({ kind: "externref" }),
+          dynamicCarrierIsExternref: () => true,
+          unresolvedGlobalTypeof: makeUnresolvedGlobalTypeof(checker),
+        }
       : {},
     result: (declaration) =>
       sourceDynamicResult(checker, policy, declaration, provenance.carries) ??

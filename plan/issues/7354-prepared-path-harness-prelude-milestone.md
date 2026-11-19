@@ -42,6 +42,7 @@ loc-budget-allow:
   - src/compiler/ir-program-presentation.ts
 import-cycles-allow:
   - backend->ir: 119 # 2026-11-17 (#7354 Str review 2): the native string length emitter reads the selected carrier field through the shared preparedStringLenProvider (ir/runtime/intrinsic-preparation.ts) instead of re-implementing it
+  - ir->runtime: 11 # 2026-11-19 (#7354 Ty review 3): ambient-typeof.ts (the ordinary lane's typeof fold, whose duplicate tag list it replaces, and the Prepared typeof of a global, moved there from source-dynamic-contracts.ts) reads the realm's global table (runtime/contracts/native-realm-globals.ts, #7350 B2a). runtime/contracts is a leaf (it imports nothing from ir); it is the layer IR reads realm data from, as in 4 of the 10 existing edges (realm-keys.ts and native-realm-requirements.ts read native-realm-catalog.ts, js-tag.ts reads js-value-tags.ts, native-prototype-requirements.ts reads builtin-brands.ts). The pair is two-way only through runtime/standalone-timer-callback-bridge.ts -> ir/async-runtime-providers.ts; no SCC grows
 ---
 
 # #7354 — Prepared IR path, milestone 1
@@ -2061,3 +2062,278 @@ Should-fixes, both recorded under "Known gaps (T and X)" below:
   as a second binding of the `var` name. It belongs to the "one slot per `var` name per function" follow-up (see
   Known gaps (H)) and is left unchanged.
 
+## Ty result
+
+Status 2026-11-17. Branch `claude/7354-ty` on `claude/7354-tx` (`37366b4667`).
+
+### Built
+
+- **Step 1, `typeof v <op> "lit"` on the dynamic value.** from-ast lowers every such comparison (all four
+  operators, both orders) as `string.eq(dyn.typeof v, string.const)`. `src/ir/program/typeof-comparisons.ts` finds
+  them; one arm of `dynamic-value-legalization.ts` answers each with a tag test on `v` and drops the `typeof`
+  result and literal when only those comparisons read them. A `typeof` result used any other way still refuses as
+  `dyn.typeof` (slice Str2). Tag tests: "number" → new `js.value.is_number`, "boolean" → new `js.value.is_boolean`
+  (bound to the native value / Boolean resources' existing `__typeof_number` / `__typeof_boolean`, no new
+  resource), "undefined" → `js.extern.is_undefined`, "object" → `ref.is_null`; any other literal is constant.
+- **Tie to the admitted kinds.** `TYPEOF_KIND` is keyed by the `typeof` answer and its values are the admitted
+  kinds; the box arm admits a value only through `boxedKind()` typed by it. A slice admitting strings/objects must
+  edit it (an object kind collides with `null` on "object"); until then an unanswered literal is constant false.
+- **Step 2a, refactor (`fa01b1aa4c`).** from-ast's identifier-read chain is one pure classifier,
+  `classifyIdentifierRead` (`src/ir/identifier-read.ts`); the read switches on it (from-ast −30 lines).
+- **Step 2b, `typeof` of an absent global (`af18d626f0`).** The native lane's resolver states
+  `unresolvedNameIsAbsent`: a name the program does not declare and not in `PREPARED_PROVIDED_GLOBALS` (`Number`,
+  since `Number(v)` compiles). The classifier answers such a `typeof` operand `absent-global`; the read lowers it to
+  the undefined value (step 1 answers the comparison) and the conditional fold answers "undefined" from the same
+  classification, so assert.js's dead `JSON.stringify` arm is not lowered. The legalization also runs for roots
+  holding such a `typeof`.
+- **Semantics, stated:** this is THIS environment's answer (it provides no such global), not ECMAScript's — node
+  says `typeof Math === "object"`. Sound because every value/member/call/`new` use of such a name refuses by name
+  (pinned for every name of `AMBIENT_TYPEOF_TAGS`, the failure says to add the name to `PREPARED_PROVIDED_GLOBALS`),
+  and the error is in the safe direction. The shape that could pass falsely (assertions all under
+  `if (typeof X !== "undefined")`): 0 es5id files; in test/built-ins + test/language 11 files compare a global's
+  `typeof`, of which 2 guard assertions (`Object/assign/target-Array.js` Proxy, `Error/isError/fake-errors.js`
+  Symbol) and 7 skip one table row (ArrayBuffer immutable, Error stack).
+
+### Differences from the brief
+
+- `switch (typeof v)` with only literal cases and `var k = typeof v; k === "x"` are accepted (the same SSA
+  comparisons; tested against node). Any non-literal case test refuses by name ("switch-case-test-nonliteral", review round 1; before it, only an all-non-literal switch refused).
+- A typed operand (`typeof n` with `n` an f64 local) still refuses ("js.string.const is unavailable"), as on base.
+
+### Measured
+
+- Tests: `tests/issue-7354-ty-typeof-comparisons.test.ts` 67 (isPrimitive; per literal every operator × order ×
+  9 values; side effects once; conditions, loops, `?:`, `&&`/`||`, switch, catch; refusals; absent globals, the
+  table-driven pin, shadowing var/parameter/local, hoisted var, undeclared identifier, TDZ, cross-script
+  declaration). R census +6 (providers dropped/renamed, `__typeof_number`/`__typeof_boolean` renamed). With D1, T,
+  H, X, P, V/G, R, prepared entry/runtime, #7188, 3518 seam/ownership: 445 pass.
+- Sweep: 566 programs (190 full + 376 sampled of 1,692: 9 literals × 10 values × operators × orders × 10
+  positions) against node: 530 correct (right answer returns, wrong throws), 36 named gaps (typed script var →
+  string const; TypeScript no-overlap errors), 0 wrong, 0 invariant, 0 invalid Wasm.
+- Mutations: step 1 — 2 survivors found and killed by new tests (literal guard: `typeof v === typeof w` gave a
+  wrong answer; the number-test resource selection); survivor kept: terminator use count (no source shape puts a
+  `typeof` result in a terminator; a use count must be complete). Step 2 — all 7 guards killed (file/checker
+  declaration checks gave wrong answers under mutation, now tested).
+- Ordinary bytes: refactor identical on 313 test262 files (ES5 sample + Math, JSON, Number, global, identifiers,
+  typeof, identifier-resolution) × JS and standalone; feature identical on 163 of them × 2. Prepared bytes of the
+  refactor identical for 343 distinct programs of the 7354/7188/prepared tests × standalone/gc.
+- Pins: 3518 core-vocabulary-seam 42 → 44; semantic-verification-ownership INTRINSIC_DEFINITIONS pin
+  bc21ec2c… → 242fb237… (predecessor step also removes the two rows); D1's tag-test refusal now uses a String tag;
+  T/D1 typeof refusals moved here. 3518/3526 base diff: the four pin files run on base and HEAD (evolution: same 117
+  failures); the other ~300 files were run on HEAD only for about half (no base comparison) — not complete.
+- 411-row sample: negatives 14 pass. After step 1: 282 moved from `dyn.typeof` (isPrimitive) to `identifier
+  "JSON" is not in scope in formatIdentityFreeValue`. After step 2: 308 × `direct call to "String" has no exact
+  AST-site plan` (282 in `formatIdentityFreeValue`, assert.js:29 `return String(value) + "n";`, 26 in
+  `verifyProperty`); 84 × `module binding X has no exact typed storage: not-direct` (obj 52, x 5, proto 4, o 4, …);
+  2 switch-case lexical binding; 1 `unknown class "Test262Error"` in isConstructor; 1 parse error; 1 `print`.
+
+### Known gaps
+
+- Pre-existing: an empty source program throws `PreparedIrProgramInvariantError` out of compile() on the Prepared
+  standalone entry ("native string/value demands: missing complete owner population").
+- `typeof Number` refuses by name (provided, real tag not wired).
+
+### Review round 1 (Ty)
+
+Adversarial review at `cb7aec7ab6`: NOT MET, one must-fix. Fixed at `9434ede322`:
+
+1. **Must-fix: a switch mixing literal and non-literal case tests gave a wrong answer.** `lowerStringSwitchDispatch`
+   compared only string-literal tests and skipped the rest (never compared, never evaluated); only the selector
+   stopped it, and the Prepared path has none. The selector's case-test admission is now one predicate,
+   `switchCaseTests` (`src/ir/switch-case-tests.ts`), asked by the selector and by from-ast's switch lowering, which
+   refuses by name (`switch-case-test-nonliteral`, `-mixed`, `switch-multiple-defaults`); the two files' duplicate
+   literal helpers fold into it (from-ast −18, select −48 lines). Siblings: the numeric dispatch with a non-constant
+   case used to reach a plain producer-promise `Error` (an exception, not a refusal) and now refuses by name; a
+   string switch with a numeric case was skipped the same way and is now `-mixed` (TypeScript also rejects most such
+   programs). Tests: the repro (last), first, only, a call with a side effect, a numeric switch's non-literal case,
+   default in the middle (runs like node). Mutation: deleting the refusal is killed.
+2. **Catch-payload tie (should-fix): pin.** The catch binding enters the carrier without `boxedKind`; T's per-throw-site
+   payload pins (`tests/issue-7354-x-dynamic-throw.test.ts`) now fail with a message pointing at `TYPEOF_KIND`.
+3. **`tag.test` widening (should-fix): withdrawn.** The arm keeps only its sourced `undefined`/`null` probes; the number
+   and Boolean tests come only from the `string.eq` arm; D1's number-tag refusal pin is restored.
+4. **Fold asks the classifier only (should-fix): rebutted.** `ambientTypeofIdentifierTagFromAst` is not part of the
+   identifier-read order: it answers the ordinary lane's host-provided `AMBIENT_TYPEOF_TAGS` (`isAmbientBinding`),
+   which the read chain never resolves (on that lane the read of `JSON` itself is `unresolved`), and it decides before
+   the operand is lowered (`typeof (JSON)` with parentheses is deliberately not folded there). Moving it into the
+   classifier would make the read answer it too and change which resolver calls run on the ordinary lane; the Ty
+   answer (`absent-global`) already comes only from the classifier.
+
+Measured after the fixes: Ty 72, D1/T/X 126, H/R 134 tests pass; `changed-root-tests.sh` (vs main): 7 of 9 files
+ran inside the 9-minute cap and pass, the other two (X, Ty) pass when run directly; `issue-2952-slice4/6` fail the same
+16 tests on base and HEAD; typecheck, loc, func, coercion, oracle, dead-exports, import-cycles, boundaries pass;
+ordinary bytes identical on 100 files (40 `language/statements/switch`, ES5 sample, typeof/identifier dirs) × JS and
+standalone (77 compile per target, 23 compile errors on both).
+
+### Merge onto current T/X
+
+Merged `origin/claude/7354-tx` `b7e09b74bd` (main with Str, Perf, the DCE fix #7359 and the T/X review fixes) into
+the branch (`d3a59deb11`); the tests follow in `4acb90ccd8`.
+
+- **Conflicts.** Four files:
+  - this issue file: T/X's later sections first, "Ty result" last;
+  - `dynamic-value-legalization.ts`, the box arm: Str's string box (`coerce.to_externref`) became the `"string"` case
+    of Ty's `boxedKind()` switch;
+  - D1's refusal table: Str's member-read row (`dyn.member_get`) and Ty's `typeof` row are both kept;
+  - X's catch-payload pins: Str's thrown-string tests and Ty's `TYPEOF_KIND` sentence are both kept.
+- **Port forced by the tie: `"string"`.** Strings are in the carrier now, so `boxedKind()` must return a kind for a
+  string box. That means `TYPEOF_KIND` gains `string: "string"`, and `KIND_TEST` (a `Record` over the kinds) needs an
+  entry for it. The native lane has no string predicate resource (`__typeof_string` exists only as a legacy host
+  import). So the entry is `undefined`, and the test refuses by name: `dynamic operation typeof test for string has
+  no Prepared intrinsic`. This applies under all four operators and in both operand orders, even in a program where
+  no string reaches the carrier. It is never constant false. Building a real predicate would need a new intrinsic,
+  provider and resource, plus the census and pin updates; that is left to Str2.
+  - Cost on the sample: none. No row stops there (the prelude's one `typeof … === "string"`, in
+    `test262-fyi-runtime.js`, sits behind a member read that refuses first).
+- **Typed operands now compile.** `typeof n === "<lit>"` for a typed number, Boolean or string local is a constant
+  string compared with Str's string equality. It answers like node for "number", "boolean", "string" and "object".
+  This replaces the old pin, which expected "js.string.const is unavailable".
+- **Results.**
+  - Ty test: 81 pass. The table has 7 literals × 4 operators × 2 orders × 11 values, now including `""` and `"a"`,
+    against node; it also has 8 `"string"` refusals and 3 typed-operand programs. Each table program has a 120 s
+    timeout: alone it takes about 15 s, but it went past 35 s under load.
+  - Other tests pass: T 108, X 51, D1+P 72, R 110, Str 28, Perf 33, H/H2/H3 207, V/G + prepared entry/runtime +
+    #7188 103, and 3518 seam/ownership 56 (with the interpreter engine). The 7354 files ran one by one rather than
+    through `changed-root-tests.sh`; the set is the same 10 changed root files.
+  - Gates pass: typecheck, loc, func, coercion-sites, oracle-ratchet, dead-exports, import-cycles and the boundaries
+    inventory. Loc and func also pass with `LOC_GATE_BASE=origin/main` (`f7daa0d342`).
+  - Mutation: removing the string arm of `boxedKind()` is killed by the table. Removing the refusal is a type error.
+  - Ordinary bytes are identical to `origin/claude/7354-tx` on 100 test262 files (all 16 of `expressions/typeof`, 34
+    of `statements/switch`, and 50 of the logical/try/conditional ES5 sample), for both the JS environment and
+    `--target standalone`. On both sides, 6 files are compile errors per target.
+- **411-row sample, first gaps after the merge.** The tally is unchanged from before the merge. Negatives: 14 pass.
+
+  | Rows | First gap |
+  | ---: | --- |
+  | 282 | `ir/from-ast: direct call to "String" has no exact AST-site plan in formatIdentityFreeValue` |
+  | 84 | `module binding X has no exact typed storage: not-direct` (obj 52, x 5, proto 4, o 4, arr 3, …) |
+  | 26 | `ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty` |
+  | 2 | `'f' is not defined — switch-case lexical binding does not leak out of the switch block` |
+  | 1 | `unknown class "Test262Error"` in isConstructor |
+  | 1 | parse error (`Expression expected.`) |
+  | 1 | `print` |
+
+- **Known gap: `throw {}` is still an invariant error.** It throws out of `compile()` with "resolver cannot lower
+  object<>" rather than refusing by name. The review's should-fix (pin a named refusal) cannot be test-only: the
+  refusal needs a source change. X's existing pin keeps the invariant observed.
+
+### Delta review
+
+Delta review at `7ffc4e1087`: NOT MET, one must-fix and two should-fixes.
+
+- **Must-fix: `typeof void 0` answers "number". Not fixed here: the ordinary pipeline has the same wrong answer.**
+  - `lowerTypeOf` (`src/ir/from-ast.ts`) lowers its operand with an f64 hint, and `staticTypeOfFor` answers from
+    the IR type, so it says "number".
+  - Probed on the Prepared path and on the ordinary pipeline (default and `--target standalone`); each program
+    returns a value from a function and is compared with node (`.tmp/typeof-probe.mts`).
+  - Wrong answers on all three trees (Ty, `origin/claude/7354-tx`, `origin/main`) and all three lanes, except
+    Prepared on main, which refuses where the table says "refuses":
+
+    | Program | Ty / tx Prepared | main Prepared | ordinary default / standalone (main, tx, Ty) |
+    | --- | --- | --- | --- |
+    | `typeof void 0 === "undefined"` / `=== "number"` | wrong | refuses | wrong |
+    | `typeof (c ? void 0 : void 0)` | wrong | refuses | wrong |
+    | `typeof (0, void 0)` | wrong | refuses | wrong |
+    | `switch (typeof void 0)` | wrong | wrong | wrong |
+    | `typeof (c ? void 0 : 1)` | wrong | refuses | correct |
+    | `typeof void f()` | refuses (`__ir_dyn_add`) | refuses | wrong |
+
+  - Correct everywhere: `typeof undefined`, `null`, a call returning `undefined`, literals, `!0`, `-x`, typed
+    locals and `NaN`.
+  - Fixing it means changing shared from-ast code, which changes ordinary-pipeline output for these programs; that
+    would be a correctness fix. The review brief says to stop and report in that case, so the decision is with the
+    lead.
+  - **Fixed by [#7361](7361-typeof-static-answer-from-hinted-operand.md)**, its own fix off `main` (branch
+    `claude/7361-typeof-static`). Ty gets it through `main` once it lands; it is not merged here.
+- **Should-fix 1, done:** `KIND_TEST.string` is the named sentinel `"refuse"`, not `undefined`. A missing literal in
+  `KIND_OF_TYPEOF` still means constant false, and the two meanings no longer share one value.
+- **Should-fix 2, done:** the `dyn.to_number` comment now names the string arm (StringToNumber). The header
+  paragraph Str edited is rewrapped.
+- After the fixes: typecheck passes and Ty's 81 tests pass.
+
+### Review round 2 (Ty, RV7305): BLOCKER at `308bf179b7`
+
+Fresh-context review on the merge of Ty with main
+([comment](https://github.com/loopdive/js2/pull/7305#issuecomment-7010855623)). Answers per finding:
+
+1. **Must-fix, fixed (`65d64b13ae`): a narrowed `typeof` guard threw an invariant error.**
+   `function f(x){ if (typeof x === "number") return x; return 0; }` (also as `?:`) threw "return[0] type externref
+   not assignable to declared result f64" out of `compile()`. Cause: provenance
+   (`src/ir/source-dynamic-provenance.ts`) said a parameter never carries the dynamic value, assuming its reference
+   is checker `any`; the guard narrows that reference to `number`, so the result contract became f64 while the value
+   was the carrier. Provenance now asks the parameter contract itself (`parameterIsDynamic`, wired to
+   `sourceDynamicParameter`): the result is the dynamic value and the program answers like node (`f(5)`, `f("a")`).
+   Pinned for an `if`, a `?:` and a local, each with the wrong answer throwing.
+2. **`typeof void 0`:** fixed by [#7361](7361-typeof-static-answer-from-hinted-operand.md); merged and pinned here
+   once it is on main.
+3. **Should-fix (lead's decision: a wrong answer is never by design), fixed: `typeof` of a global the program does
+   not declare.** Step 2b answered "undefined" for every such name (`typeof Math`, `typeof eval`, `typeof isNaN`).
+   Now:
+   - the answer comes from ONE table, the realm's global population `NATIVE_REALM_GLOBALS` /
+     `nativeRealmGlobalTypeof` (`src/runtime/contracts/native-realm-globals.ts`, #7350 B2a, owned by lane S5), behind
+     the lib-binding predicate `makeIrAmbientBindingPredicate(checker, "no-user")` (lib-only declarations, or
+     none: the checker-synthesized `globalThis`) or an unresolved name, and the file-level shadow check
+     (`isUnshadowedLibBinding`);
+   - the table's edition is ES2026 (adds `Temporal`, "object"), and its answer is three-way: a language tag
+     (`"function"`, `"object"`, `"number"`), `"undefined"` for the global `undefined` only, or
+     `"not-a-language-global"` for a name ECMA-262 does not define;
+   - a language global answers its tag (`typeof Math === "object"`, `typeof eval === "function"`); a
+     not-a-language-global that a lib declares (`document`, `console`, `Intl`) refuses by name:
+     `typeof of the host global X has no Prepared answer`; one nothing declares (`notDeclared`) answers "undefined";
+   - `typeof` of such a name is a constant string, so the legalization trigger for it and
+     `PREPARED_PROVIDED_GLOBALS` are gone (`Number` answers "function" from the table);
+   - the classifier's kind is `global-typeof` with the resolver's tag (was `absent-global`);
+   - the ordinary lane's duplicate tag list `AMBIENT_TYPEOF_TAGS` (`src/ir/ambient-typeof.ts`) is gone: the
+     selector's and from-ast's fold read `ambientGlobalTypeofTag`, which keeps the 16-name admission set (widening it
+     changes ordinary-lane output) and takes each tag from the same table;
+   - consequence: assert.js's `typeof JSON !== "undefined" ? JSON.stringify(v) : …` now lowers its live arm, which
+     refuses by name (`dyn.json_stringify has no Prepared intrinsic`); pinned.
+   - Pin: every table row except `undefined`/`NaN`/`Infinity` (the classifier answers those earlier) answers its tag
+     both ways, and the tag equals node's where node has the global; `Temporal` (absent in node 22) answers
+     "object" by hand; `document`, `console` and `Intl` refuse in a comparison and in a fold.
+4. **Should-fix, fixed: a second decider for "absent global".** `readsTypeofOfAbsentGlobal` is gone with the
+   trigger (item 3); the classifier is the only decider.
+5. **Should-fix, fixed: `switch-case-test-mixed` pinned** (mutation M4).
+6. **Nits, fixed:** `absentGlobalTypeof` inlined (then replaced by `globalTypeofTag`, the fold's and `lowerTypeOf`'s
+   one helper); the classifier's doc says it throws on a DOM mismatch; the numeric-case invariant names
+   `switchCaseTests`.
+
+7. **Lead's rule (Fa/Fb cross-lane review): Ty folds a `typeof` literal only for statically known carrier kinds.**
+   Pinned (describe "the carrier admits only known kinds"): a box of a value with no carrier kind (an externref call
+   result, untagged or Function/Object-tagged) refuses by name (`box of a non-primitive value has no Prepared
+   intrinsic`); every admitted kind gets a non-constant tag test; mutation-checked. Lane S4 adds the `function` kind
+   (`js.value.is_function`) as one more `KIND_TEST` row on this branch.
+
+**Stacking.** Branch `claude/7354-ty-r2` (replaces `claude/7354-ty`, whose merge of `claude/7350-b1` brought #7263's
+G1 history with it) is `65d64b13ae` plus merges of #7350 B2a (`claude/7350-b2a`, PR #7315, at its approved head
+`66e72e6df9`) and of main (`89e4748241`), and this fix. Grant: `ir->runtime` 10 → 12 for the two table imports
+(frontmatter). The PR must not release before #7361 and #7315 are on main.
+
+### Review round 3 (Ty, RV7327): BLOCKER at `e3dbdce3b6`
+
+Fresh-context review of `66e72e6df9..e3dbdce3b6`. Answers per finding:
+
+1. **M1, must-fix, fixed: `typeof arguments` in a function answered "undefined".** The checker synthesizes a
+   function's `arguments` without declarations, like `globalThis`, so the `"no-user"` predicate took it for a global;
+   the function was claimed and then failed at emission (`resolver cannot lower dyn.arguments_length`). A
+   declaration-less symbol now counts only when it is the symbol the global scope resolves
+   (`checker.resolveName(name, undefined, Value, false)`): `globalThis` is, a function's `arguments` is not (no
+   global symbol), an unresolved name has no symbol. In a function the read refuses again:
+   `identifier "arguments" is not in scope in f`. Pinned in a comparison and in a `?:` fold; at a script's top level
+   it answers "undefined", checked against node running the source as a script (`vm.runInThisContext`; a
+   `new Function` body has `arguments`).
+   Mutation: the old predicate fails both function pins with the emission error.
+2. **S1, should-fix, fixed:** `unresolvedGlobalTypeof`, its lib-binding predicate and `UnresolvedGlobalTypeof` moved
+   to `src/ir/ambient-typeof.ts` as `makeUnresolvedGlobalTypeof(checker)`; `source-dynamic-contracts.ts` only wires
+   it into `resolver`. `ir->runtime` is 11 (one file reads the table), so the grant is now 10 → 11.
+3. **Nit, fixed by a pin:** `ambientGlobalTypeofTag`'s narrowing stays (the table's tag type is not keyed by name,
+   and S5 owns the table); a test asserts each of the 16 names folds to its table tag, so the narrowing drops none.
+4. **Nit, rebutted:** `Object.hasOwn` does not narrow in TypeScript's lib (`(o: object, v: PropertyKey): boolean`),
+   so `TYPEOF_KIND[literal]` would need a cast; the `Map` stays.
+5. **Nit, fixed:** `isTypeofOperand` uses the shared `outermostParenthesized` (`src/shared/binding-writes.ts`). It
+   walks up to the operand's position; from-ast's `peelParensExpr` walks down, a different question.
+6. **Nit, rebutted (reviewer agrees):** the per-intrinsic `||` lists stay until Fa's `is_function` row makes them a
+   table.
+
+Ordinary pipeline: 38 programs (`typeof` of the 16 names in comparisons and `?:`, `typeof arguments` in and out of a
+function, a switch, `globalThis`) × {default, standalone}, origin/main `89e4748241` vs this head: 76/76 identical
+binary hashes and diagnostics.

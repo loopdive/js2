@@ -327,6 +327,8 @@ export function planNativeStringValuePhysical(
       (row) =>
         executable(row.occurrence) &&
         (row.instruction.id === "js.number.unbox" ||
+          // (#7354 Ty) the number `typeof` test is the value resources' own predicate.
+          row.instruction.id === "js.value.is_number" ||
           (row.instruction.id === "js.number.box" &&
             row.instruction.provider?.kind === "callable" &&
             row.instruction.provider.target.binding.kind === "runtime" &&
