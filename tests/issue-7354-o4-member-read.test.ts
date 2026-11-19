@@ -3,8 +3,9 @@
 // #7354 slice O, step O4 — a member read of a dynamic value with a constant key (`MEMBER_READ_ARM` in
 // src/ir/program/dynamic-value-kinds.ts): `undefined` / `null` throw a TypeError, an object reads through the realm's
 // [[Get]], a primitive reads `undefined` for a key no built-in prototype holds. A key a built-in prototype holds, a
-// computed key, a program whose prototypes code can reach, or a nullish read in a program that catches refuses by
-// name. Every program runs twice: node's answer (returns) and a wrong one (throws).
+// computed key, or a primitive receiver in a program whose prototypes code can reach refuses by name; (#7354 O2b) a
+// nullish read in a program that catches traps. Every program runs twice: node's answer (returns) and a wrong one
+// (throws).
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as gc from "../src/codegen/index.js";
 import * as linear from "../src/codegen-linear/index.js";
@@ -111,11 +112,6 @@ describe("#7354 O4 — a member read of the dynamic value", () => {
     ["an Object.prototype method", "var o = { a: 1 }; var t = o.toString;", "member read 'toString'"],
     ["a computed key", 'var o = { a: 1 }; var k = "a"; var v = o[k];', "dyn.member_get with a computed key"],
     [
-      "a nullish read in a program that catches",
-      "function f(v) { try { return v.x; } catch (e) { return 0; } } f(null);",
-      "member read 'x' of a possibly nullish value in a program that catches",
-    ],
-    [
       "a program that names a prototype global",
       "var o = { a: 1 }; var t = typeof Object; if (o.a !== 1) throw 1;",
       "member read 'a' (the program names 'Object')",
@@ -123,4 +119,18 @@ describe("#7354 O4 — a member read of the dynamic value", () => {
   ])("refuses %s by name", async (_label, source, reason) => {
     expect(await refusal(source)).toContain(reason);
   });
+
+  // (#7354 O2b) This read used to refuse by name ("… of a possibly nullish value in a program that catches"). Node's
+  // catch reads the TypeError and answers 0. Here the TypeError is the realm's, which no carrier kind holds, so a
+  // catch must not read it: the program traps instead (`js.object.uncatchable-type-error`). That is a failure, not node's
+  // answer, and never a wrong one.
+  it("traps reading a member of null in a program that catches", async () => {
+    const source = "function f(v) { try { return v.x; } catch (e) { return 0; } } var r = f(null);";
+    expect(new Function(`${source} return r;`)()).toBe(0);
+    const result = await compile(source, options());
+    expect(requiredPreparedEmission(result)).toBeDefined();
+    expect(() => (instantiatePreparedArtifact(result).instance.exports.__module_init as () => void)()).toThrow(
+      WebAssembly.RuntimeError,
+    );
+  }, 180_000);
 });

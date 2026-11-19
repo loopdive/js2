@@ -54,3 +54,34 @@ export function buildSourceObjectGetDefinition(d: { readonly get: FuncHandle }):
     ],
   };
 }
+
+/**
+ * (#7354 O2b) `js.object.has(object, key)`: the kernel's HasProperty, read as found (status 1). A miss at the realm's
+ * Object.prototype (2) is absent, as in the get adapter: its one caller, OrdinaryToPrimitive, takes an absent
+ * conversion method for the realm Object.prototype's own. Status 3 traps, as in the get adapter.
+ */
+export function buildSourceObjectHasDefinition(d: { readonly has: FuncHandle }): SourceObjectDefinition {
+  return {
+    locals: [{ name: "status", type: { kind: "i32" } }],
+    body: [
+      { op: "local.get", index: 0 },
+      { op: "local.get", index: 1 },
+      { op: "call", funcIdx: d.has },
+      { op: "local.tee", index: 2 },
+      { op: "i32.const", value: 2 },
+      { op: "i32.gt_u" },
+      { op: "if", blockType: { kind: "empty" }, then: [{ op: "unreachable" }] },
+      { op: "local.get", index: 2 },
+      { op: "i32.const", value: 1 },
+      { op: "i32.eq" },
+    ],
+  };
+}
+
+/**
+ * (#7354 O2b, interim) `js.object.uncatchable-type-error()`: fail loudly where a TypeError would reach a source catch
+ * that cannot read it yet (`ordinary-object-callables.ts` says why this is a call and not an intrinsic).
+ */
+export function buildSourceObjectUncatchableTypeErrorDefinition(): SourceObjectDefinition {
+  return { locals: [], body: [{ op: "unreachable" }] };
+}

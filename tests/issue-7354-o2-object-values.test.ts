@@ -2,9 +2,10 @@
 //
 // #7354 slice O, step O2 — an ordinary object is a kind of the Prepared dynamic value. A literal stored into a
 // dynamic home (a script `var`) or thrown and caught is the object kind: `typeof` answers "object", strict equality
-// is identity, ToBoolean is true and, while the program's objects are plain (`src/ir/source-plain-objects.ts`),
-// OrdinaryToPrimitive answers "[object Object]" (ToNumber NaN). A program whose objects are not plain refuses that
-// conversion by name. Every program runs twice: node's answer (returns) and a wrong one (throws).
+// is identity, ToBoolean is true and OrdinaryToPrimitive of an object without its own `toString` answers
+// "[object Object]" (ToNumber NaN). (#7354 O2b) That conversion is decided at run time now, not by the static
+// plainness rule: tests/issue-7354-o2b-to-primitive.test.ts pins it. Every program runs twice: node's answer
+// (returns) and a wrong one (throws).
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as gc from "../src/codegen/index.js";
 import * as linear from "../src/codegen-linear/index.js";
@@ -54,12 +55,6 @@ async function run(source: string): Promise<"returned" | "threw"> {
     expect((error as object).constructor.name).toBe("Exception");
     return "threw";
   }
-}
-
-async function refusal(source: string): Promise<string> {
-  const result = await compile(source, options());
-  expect(result.success).toBe(false);
-  return messages(result).join("\n");
 }
 
 /** `check` is the program's test of `value`; node's answer passes it, `wrong` must not. */
@@ -134,67 +129,49 @@ describe("#7354 O2 — an ordinary object is a kind of the dynamic value", () =>
     );
   }
 
-  // The reasons a program reaches today; the others stop earlier (methods and function values need slice Fa, member
-  // writes O3) and are pinned on the predicate itself below.
-  it.each([
-    [
-      "a literal `toString`",
-      'var o = { toString: 1 }; if ("" + o !== "x") throw 1;',
-      "an object literal defines 'toString'",
-    ],
-    ["a literal `valueOf`", "var o = { valueOf: 1 }; if (+o !== 1) throw 1;", "an object literal defines 'valueOf'"],
-    [
-      "a prototype global",
-      'var o = {}; var s = typeof Object; if ("" + o !== s) throw 1;',
-      "the program names 'Object'",
-    ],
-  ])("refuses ToPrimitive of an object with %s", async (_label, source, reason) => {
-    expect(await refusal(source)).toContain(`ToPrimitive of an object (${reason})`);
-  });
+  // (#7354 O2b) The table "refuses ToPrimitive of an object with …" is gone: a literal `toString` or `valueOf` and a
+  // prototype global no longer refuse. OrdinaryToPrimitive reads the object at run time, so the static plainness
+  // rule has nothing left to decide for it (tests/issue-7354-o2b-to-primitive.test.ts pins each of those programs).
 });
 
-describe("#7354 O2 — whether a program's objects are plain", () => {
+describe("#7354 O2 — what a program's source allows its objects", () => {
   const objects = (source: string) => {
     const ast = analyzeMultiSource({ "./entry.ts": source }, "./entry.ts");
-    return programObjects(ast.checker, ast.sourceFiles);
+    return programObjects(ast.sourceFiles);
   };
 
-  it("answers no objects, and plain objects", () => {
-    expect(objects("export const n = 1;")).toEqual({ present: false, unplain: undefined });
-    expect(objects("export const o = { a: 1, b: 'x' }; export const v = o.a;")).toEqual({
+  it("answers no objects, and objects no code can change a built-in prototype through", () => {
+    expect(objects("export const n = 1;")).toEqual({ present: false, namesSymbol: false, reachesPrototype: undefined });
+    expect(objects("export const o = { a: 1, toString: 1 }; export const v = o.a;")).toEqual({
       present: true,
-      unplain: undefined,
+      namesSymbol: false,
+      reachesPrototype: undefined,
     });
   });
 
+  // (#7354 O2b) The ToPrimitive-only reasons (literal members, function values, member writes, `toString` /
+  // `valueOf` keys) are gone with the rule that read them; these remain for O4's member read of a primitive.
   it.each([
-    ["a method", "export const o = { f() { return 1; } };", "an object literal defines a method, accessor or spread"],
-    [
-      "an accessor",
-      "export const o = { get f() { return 1; } };",
-      "an object literal defines a method, accessor or spread",
-    ],
-    ["a spread", "const p = {}; export const o = { ...p };", "an object literal defines a method, accessor or spread"],
-    ["a computed key", "const k = 'a'; export const o = { [k]: 1 };", "an object literal has a computed key"],
-    ["a literal toString", "export const o = { toString: 1 };", "an object literal defines 'toString'"],
-    ["a literal valueOf", "export const o = { valueOf: 1 };", "an object literal defines 'valueOf'"],
-    ["a literal __proto__", "export const o = { __proto__: null };", "an object literal defines '__proto__'"],
-    ["a function value", "export const o = { f: function () {} };", "an object property holds a function"],
-    ["an arrow value", "export const o = { f: () => 1 };", "an object property holds a function"],
-    ["a toString write", "export const o: any = {}; o.toString = 1;", "a member write defines 'toString'"],
-    ["a valueOf element write", "export const o: any = {}; o['valueOf'] = 1;", "a member write defines 'valueOf'"],
-    ["a computed write", "export const o: any = {}; const k = 'a'; o[k] = 1;", "a member write has a computed key"],
-    ["a function write", "export const o: any = {}; o.f = function () {};", "a member write stores a function"],
     ["a prototype read", "function F() {} export const p = F.prototype;", "the program reads 'prototype'"],
     ["a __proto__ read", "export const o: any = {}; export const p = o.__proto__;", "the program reads '__proto__'"],
     ["the Object global", "export const t = typeof Object;", "the program names 'Object'"],
     ["the String global", "export const s = String(1);", "the program names 'String'"],
     ["globalThis", "export const g = globalThis;", "the program names 'globalThis'"],
-  ])("is not plain with %s", (_label, source, reason) => {
-    expect(objects(source).unplain).toBe(reason);
+  ])("reaches a built-in prototype with %s", (_label, source, reason) => {
+    expect(objects(source).reachesPrototype).toBe(reason);
+  });
+
+  it("answers whether the program names Symbol, the way to @@toPrimitive", () => {
+    expect(objects("export const s = typeof Symbol;")).toMatchObject({
+      namesSymbol: true,
+      reachesPrototype: "the program names 'Symbol'",
+    });
+    expect(objects("export const o = { Symbol: 1 }; export const v = o.Symbol;").namesSymbol).toBe(false);
   });
 
   it("does not take a member or key name for a global", () => {
-    expect(objects("export const o = { Object: 1, String: 2 }; export const v = o.Object;").unplain).toBeUndefined();
+    expect(
+      objects("export const o = { Object: 1, String: 2 }; export const v = o.Object;").reachesPrototype,
+    ).toBeUndefined();
   });
 });

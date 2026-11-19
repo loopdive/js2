@@ -41,6 +41,7 @@ import { PREPARED_NUMBER_TO_STRING } from "./number-to-string-target.js";
 import { IR_DYN_ADD_FN } from "../../shared/contracts/dynamic-add-helper.js";
 import { gap } from "./dynamic-value-gap.js";
 import { dynamicMemberRead } from "./dynamic-member-read.js";
+import { ordinaryToPrimitive } from "./ordinary-to-primitive.js";
 import {
   ADD_ROLE,
   KIND_TEST,
@@ -51,7 +52,6 @@ import {
   TYPEOF_NAME,
   admittedKinds,
   boxedKind,
-  plainObjectRefusal,
   type CarrierKind,
   type ProgramObjects,
 } from "./dynamic-value-kinds.js";
@@ -256,25 +256,24 @@ function legalizationBuilders(
       }
       case "name":
         return [text(kind, result)];
-      case "plain-object":
-        return [text(plainObjectToPrimitive(), result)];
+      case "to-primitive":
+        return toPrimitive(value, result);
     }
   };
-  /** (#7354 O2) OrdinaryToPrimitive of a plain object (`TO_STRING_ARM`), or the named refusal. */
-  const plainObjectToPrimitive = (): string => {
-    const refusal = plainObjectRefusal(objects, "ToPrimitive of an object");
-    return refusal === undefined ? "[object Object]" : gap(refusal);
-  };
-  /** (#7354 O2) ToNumber of the once-evaluated `value` (`TO_NUMBER_ARM`): a plain object's is NaN. */
+  // (#7354 O2b) OrdinaryToPrimitive of the once-evaluated object `value` (`ordinary-to-primitive.ts`).
+  const toPrimitive = (value: IrValueId, result: IrValueId): IrInstr[] =>
+    ordinaryToPrimitive({ carrier: CARRIER, fresh, text, branch }, { objects, catches }, value, result);
+  /** (#7354 O2) ToNumber of the once-evaluated `value` (`TO_NUMBER_ARM`): an object's ToPrimitive reads as NaN. */
   const toNumber = (instr: IrInstr, value: IrValueId, result: IrValueId): IrInstr[] => {
     const kinds = kindsOf(value);
     const unbox = (r: IrValueId): IrInstr[] => [intrinsic(instr, "js.number.unbox", [value], r)];
     if (kinds.every((kind) => TO_NUMBER_ARM[kind] === "unbox")) return unbox(result);
-    plainObjectToPrimitive();
+    // ToNumber of "[object Object]" is NaN; the string itself is not read.
     const nan = (r: IrValueId): IrInstr[] => [
+      ...toPrimitive(value, fresh()),
       { kind: "const", value: { kind: "f64", value: NaN }, result: r, resultType: F64 },
     ];
-    if (kinds.every((kind) => TO_NUMBER_ARM[kind] === "plain-object")) return nan(result);
+    if (kinds.every((kind) => TO_NUMBER_ARM[kind] === "to-primitive")) return nan(result);
     const cond = fresh();
     return [...kindTest(instr, "object", value, cond, TEST_RESULT), branch(cond, nan, unbox, result, F64)];
   };
@@ -390,7 +389,7 @@ function legalizationBuilders(
 
 /** (#7354 O2, O4) What the legalization of every function of one program asks of the whole program. */
 export interface LegalizationProgram {
-  /** Whether the program builds objects, and whether they are plain (`source-plain-objects.ts`). */
+  /** What the program's source allows its objects (`source-plain-objects.ts`). */
   readonly objects: ProgramObjects;
   /** Whether the program binds a catch: a value thrown here may then be read back as a dynamic value. */
   readonly catches: boolean;

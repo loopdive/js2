@@ -2570,6 +2570,80 @@ O1 to O4 (these are this slice's steps, not #7352's parked ordinary-pipeline sli
   `tests/issue-7354-str2-to-string.test.ts` still expects `identifier "String" is not in scope`. After Ty, it
   answers from the realm table.
 
+### O2b: runtime-guarded ToPrimitive (plan, 2026-11-19, branch `claude/7354-o-toprim` from `claude/7354-o` 0c7109594b)
+
+Why: on the harness prelude the static plainness rule (`programObjects`) never holds (61 reasons on assert.js +
+sta.js + propertyHelper.js + compareArray.js), so every ToPrimitive of the object kind refuses. Among them are
+assert.js `message += …` and sameValue's `1 / a`.
+
+Semantics (§7.1.1, OrdinaryToPrimitive §7.1.1.1), decided at run time:
+
+- No admitted carrier kind is callable. The carrier's coercion gate refuses a callable property value (a getter, a
+  function value), so a conversion method the object holds is never callable, and OrdinaryToPrimitive skips it
+  (step 2.b). An absent one is the realm's Object.prototype method: `valueOf` answers the object, which is not
+  primitive and so is skipped too, and `toString` answers `"[object Object]"`.
+- So for every hint the answer is: HasProperty(o, "toString") ? TypeError : `"[object Object]"`. ToNumber of it is
+  NaN, and `+` concatenates it. `valueOf` cannot change the answer until a callable kind exists.
+- A compile-time kind pin in the builder fails the build when Fa admits a callable kind. The arm then has to Get and
+  Call the method in hint order. No unreachable abort arm is emitted for a callable method.
+- "Absent" means kernel lookup status 0, or 2, a miss at the realm's Object.prototype, which does not hold the
+  specification's properties yet. Status 3 traps, as in the get adapter.
+- `@@toPrimitive` (step 2) is reachable only by naming `Symbol`. Such a program refuses by name: "ToPrimitive of an
+  object in a program that names 'Symbol'".
+- The TypeError the legalization synthesizes (this arm, and O4's nullish member read) is thrown through
+  `js.object.create-type-error` in a program without a catch. In a program that catches, a catch would read it as a
+  dynamic value, and no carrier kind holds an error yet. So the program fails loudly there, through
+  `js.object.uncatchable-type-error`: an interim (lead, 2026-11-19), never a wrong answer, only a failure. It
+  replaces O4's refusal "member read … of a possibly nullish value in a program that catches".
+- **Follow-up.** Lane S13 (`claude/7354-shared-exn`, from `claude/7354-o` 0c7109594b) builds one exception tag
+  shared by realm and source throws. Once it lands, a source `catch` catches realm errors, and the one helper
+  (`typeError` in `dynamic-realm-calls.ts`) throws in catching programs too. Then `js.object.uncatchable-type-error`
+  and its realm row are deleted. That is a one-place change: no other code synthesizes a TypeError. #7368's
+  catch-guarded "REALM_REJECTING" path can move onto the same helper; its signature is
+  `typeError(builders, message, catches) → IrInstr[]`.
+
+Target structure:
+
+- `src/ir/program/ordinary-to-primitive.ts` (new, beside `dynamic-member-read.ts`) is the one OrdinaryToPrimitive
+  builder. The `object` rows of `TO_STRING_ARM` and `TO_NUMBER_ARM` (renamed `"plain-object"` → `"to-primitive"`)
+  call it; ToNumber reads its string as NaN. It also carries the kind pin.
+- `src/ir/program/dynamic-realm-calls.ts` (new) is the one `js.object.*` call builder (it replaces dynamic-member-read's
+  local `call`) and the one synthesized-TypeError helper (throw, or the uncatchable failure in a catching program).
+- The realm adds two rows to `ROWS` in `native-source-objects.ts`, with bodies in `source-object-bodies.ts`:
+  `js.object.has`, an adapter over the kernel's `has` (status 1 → true, 0 and 2 → false, 3 traps), and the new
+  contract `js.object.uncatchable-type-error` (`[] → []`, body `unreachable`).
+  - It is a call contract, not an intrinsic as first proposed. Every intrinsic is certified pure
+    (`analysis/intrinsics.ts`, `effects.ts`), so dead-code and GVN passes could drop or merge a trap whose result is
+    unused.
+- `ProgramObjects` keeps one walk and returns the answers its consumers ask:
+  - `present` (the object kind is admitted);
+  - `namesSymbol` (ToPrimitive);
+  - `reachesPrototype`, the first way code can reach a built-in prototype: it names a prototype global, or reads
+    `prototype` / `__proto__`.
+  The O4 member read keeps that last gate, now on its primitive arm only: the object arm is the realm's exact [[Get]].
+  The ToPrimitive-only reasons go: literal members, function values, member writes, `toString` / `valueOf` keys.
+  The checker parameter goes with them.
+- `plainObjectRefusal` and `plainObjectToPrimitive` are deleted.
+
+Reused: `kindChain`, `branch`, `text`, the realm kernel's `has` / lookup, the errors pack's TypeError, and the
+source-object `ROWS` binding arm. Duplicate removed: the TypeError construction in `dynamic-member-read.ts`, now
+the shared helper, and its local call builder.
+
+Acceptance:
+
+- `""+o`, `o+"!"`, `+o`, `1/o` on a plain object, in a program that is not plain by the old rule (it names
+  `String`), give node's answer.
+- `message += " "` on a string-valued dynamic value in a program that builds objects gives node's answer.
+- `{toString: undefined}` and `{toString: 1}` throw a TypeError where node does (no catch). `{valueOf: 1}` gives
+  `"[object Object]"`.
+- The same TypeError cases in a catching program trap (WebAssembly.RuntimeError).
+- The Symbol refusal is pinned by name.
+- Mutations: the arm treats a present `toString` as absent; the Symbol refusal is removed; the arm skips the
+  `valueOf` read (an equivalent mutant by construction, see above).
+- Code quality: one OrdinaryToPrimitive builder for ToString, ToNumber and `+`; one realm-call builder and one
+  synthesized-TypeError helper for both arms that raise one; one row per realm contract; no function or file over
+  budget; ordinary-pipeline bytes identical.
+
 ## Slice O: Implementation Plan (2026-11-19)
 
 Branch `claude/7354-o` on `claude/7354-perf2` (`503ff2cb4d`). Lead decision of 2026-11-19: option A, in four steps
