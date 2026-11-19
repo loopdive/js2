@@ -8,6 +8,7 @@
 // via funcMap. It returns `undefined` when the callee is not one of these
 // identifier cases, so the caller in calls.ts continues its dispatch chain.
 // Moved verbatim: the emitted Wasm is byte-identical.
+import { moduleVarHoldsNonFunctionWrite } from "./module-var-function-writes.js";
 import { liveResultBridge, liveResultBridgeable } from "./dispatch-extern-result-bridge.js";
 import { ts } from "../../ts-api.js";
 import { widenJsDefaultGuessSlot } from "../js-default-param-type-guess.js";
@@ -1723,17 +1724,18 @@ function compileBoundIdentifierCall(
     // Route it through the dynamic boundary below instead of committing to a
     // stale `closureMap`/local signature and nulling a different funcref cast.
     const calleeComesFromElementRead = bindingIsPopulatedFromElementRead(ctx, expr.expression);
+    const closureInfoStale = calleeComesFromElementRead || moduleVarHoldsNonFunctionWrite(ctx, expr.expression);
     let closureInfo =
       isLocallyShadowed ||
       nestedBindingVisible ||
       defaultExpressionImport !== undefined ||
       calleeIsParameterBinding ||
-      calleeComesFromElementRead ||
+      closureInfoStale ||
       (!hasVisibleClosureStorage && ctx.funcMap.has(funcName))
         ? undefined
         : (bindingClosureInfo ?? ctx.closureMap.get(funcName));
 
-    if (!closureInfo && !nestedBindingVisible && defaultExpressionImport === undefined && !calleeComesFromElementRead) {
+    if (!closureInfo && !nestedBindingVisible && defaultExpressionImport === undefined && !closureInfoStale) {
       closureInfo = resolveClosureInfoFromLocal(ctx, fctx, funcName);
     }
     // (#4133) An out-of-scope nested binding lets the closure/local paths above
