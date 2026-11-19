@@ -1,7 +1,8 @@
 ---
 id: 7410
 title: "TypeScript's escaped well-known-symbol names (`__@replace@<id>`) leak into Wasm names and runtime strings; output depends on compile order"
-status: in-progress
+status: done
+completed: 2026-11-19
 sprint: current
 created: 2026-11-19
 updated: 2026-11-19
@@ -12,7 +13,7 @@ reasoning_effort: high
 task_type: bugfix
 area: codegen
 goal: ir-full-coverage
-related: [7350]
+related: [7350, 7427]
 # (2026-11-19) `foldableTypeSymbolName` needs the checker to resolve `Symbol` in `[Symbol.replace]` to the
 # compiler library's binding: it takes a `ts.Symbol` (the type symbol), which the node-keyed oracle cannot
 # express. One `ctx.checker` at the fold site, replacing no other query.
@@ -119,7 +120,7 @@ symbol keys, and check whether the IR object shape reaches a Wasm struct layout.
 Sweep the `getProperties` / `getPropertiesOfType` / oracle property queries whose names reach a field,
 type, function or global name.
 
-## Fix
+## Fix (first proposal, superseded by the Implementation Plan below)
 
 One helper that turns a property symbol into its Wasm-facing key, deriving it from the source key rather
 than the checker's escaped name. For example, `__@dispose@<id>` becomes `@@dispose` for the well-known
@@ -141,3 +142,67 @@ so in the PR.
 - A test compiles one file, then compiles it again after an unrelated compile in the same process, and
   asserts identical bytes.
 - Quality: one helper, no per-site string surgery.
+
+## Implementation Plan (2026-11-19)
+
+**Where the fix lives.** The escaped name is a valid compiler-internal key: struct fields, method helpers and
+`funcMap` rows are created and looked up by `prop.name` in hundreds of places, consistently within one compile.
+It must not reach output. So the fix goes at the two places where it leaves the compiler, not at the places
+that create keys:
+
+- **Runtime `.name`** (`property-access-dispatch.ts`): `foldableTypeSymbolName` replaces
+  `nameFoldTypeSymbolIsDeclarationArtefact` and gathers every type-symbol name that cannot be published, in one
+  predicate: `__computed`, the descriptor accessor slot, and now a symbol key. A well-known key folds to the
+  spec's `[Symbol.replace]` (`functionNameForKey`, new `src/checker/well-known-symbol-keys.ts`, which checks that
+  `Symbol` in `[Symbol.replace]` is the compiler library's binding). Any other symbol key declines, so the
+  closure's own `$fnmeta` answers at run time.
+- **Emitted names** (`src/emit/binary.ts`): the name section is the only place a compiler name enters the
+  binary, and it holds only function names. `withoutSymbolIds` (new `src/emit/debug-names.ts`) drops the id
+  there: `__@dispose@157` → `__@dispose`. Type and field names appear only in WAT text.
+
+**Reuses / removes.** One predicate for unpublishable fold names, instead of a second check beside the old one.
+No per-site renaming.
+
+**Quality acceptance.** One helper per exit point; no change to how keys are created or looked up.
+
+## Resolution (2026-11-19)
+
+**Open check (a), sorting by name.** Fields are sorted by the escaped name (`objectIrTypeFromTsType` and the
+sorts in `index.ts` near 1617 and 1978). Well-known keys never reorder: two of them differ in their key part
+(`__@iterator` vs `__@toPrimitive`) before the id is reached. Against an ordinary name, the `__@` prefix decides.
+**Residual:** two different user symbols with the same name in one shape (`[a.k]` and `[b.k]`, both
+`unique symbol` named `k`) order by id, so their layout can still depend on compile order. That is not fixed
+here; it needs the key's declaration identity, not its name.
+
+**Open check (b), every site.** A sweep compiled 666 test262 files that use a `[Symbol.x]` key (every fifth
+file plus the 20 above) on default and standalone. It scanned each binary for `__@<letters>@<digit>` in names
+and for `__@` as a native string constant.
+
+| site | what leaked | disposition |
+| --- | --- | --- |
+| `tryLengthAndNameReads` | `fn.name` string | fixed here |
+| name section | function names | fixed here (`withoutSymbolIds`) |
+| `expressions/calls.ts` near 1242, reflective member call | `member = sym.getName()`, so the refusal message reads `String.prototype.__@iterator@84 …` and the glue's `@@1` member is missed | #7427 |
+| `literals.ts` near 810, `materializeStructAsDynamicObject` | a `[Symbol.match]` field becomes the string-keyed property `"__@match@158"` | #7427 |
+| `ensureStructForType`, `objectIrTypeFromTsType`, `generators-native.ts` | internal keys only | unchanged: they never reach output except through the name section |
+
+After this change: 0 names. The only strings left are the two #7427 sites (String/prototype `Symbol.iterator`
+and `replaceAll` files).
+
+**Measured.** Here "this branch" is the fix on top of main 89e4748241:
+- The 19 files above plus `staging/sm/RegExp/replace.js` were hashed in two processes, one in list order and one
+  in reverse order, so each file follows a different set of earlier compiles. On this branch, 39 rows, 0 differ.
+  On main the same files differed (the 38 rows above, and S12's `replace.js`).
+- `tests/issue-7410-symbol-key-names.test.ts`: 13 tests pass. On main, 6 fail.
+  - The `.name` rows are pinned against node on default and standalone; node also answers the user-symbol row.
+    The `Symbol.dispose` row is not pinned, because node 22's `Symbol.dispose` is a polyfill named
+    `nodejs.dispose`.
+  - Another test asserts that no emitted name matches `__@x@<digit>`.
+
+**Acceptance as met.** An in-process recompile test cannot tell the two apart, because the id is fixed once
+assigned in a process, so `compile X; compile Y; compile X` matches on main too. The test therefore asserts the
+cause (no id in any emitted name, the right `.name`). The order dependence itself is checked by the two-order
+hash run above.
+
+**Found on the way, not fixed:** reading `.name` of an object-literal method keyed by `Symbol.iterator`,
+`Symbol.toStringTag` or `Symbol.split` throws on default and standalone, on main as well.
