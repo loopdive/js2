@@ -9,6 +9,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as gc from "../src/codegen/index.js";
 import * as linear from "../src/codegen-linear/index.js";
+import type { IrFunction, IrInstr } from "../src/ir/core/nodes.js";
+import type { TagId } from "../src/ir/core/tag-domain.js";
+import { irDynamic, irVal } from "../src/ir/core/types.js";
+import { DynamicValueGap, legalizeDynamicValues } from "../src/ir/program/dynamic-value-legalization.js";
+import { JS_TAG_IDS } from "../src/ir/runtime/js-tag-domain.js";
 import { NATIVE_REALM_GLOBALS, nativeRealmGlobalTypeof } from "../src/runtime/contracts/native-realm-globals.js";
 import { instantiatePreparedArtifact } from "../src/test262/test262-prepared-runtime.js";
 import {
@@ -279,6 +284,83 @@ describe("#7354 Ty — typeof comparisons on the Prepared dynamic value", () => 
   it("keeps the gc target's contract", async () => {
     expect(await refusal('function f(v) { return typeof v === "number"; }\nf(1);', "gc")).toContain(
       "function f has an unresolved parameter contract",
+    );
+  });
+});
+
+// The comparison arm folds a literal no admitted kind answers ("function", "symbol") to false. That is sound only
+// while every value in the carrier has a kind: a box that admitted an unknown value (lane S4's Fb boxed a native
+// call's externref result) would turn `typeof f() === "function"` into a wrong constant. So such a box must refuse,
+// and each kind that does enter must be answered by a runtime test, never by the fold.
+describe("#7354 Ty — the carrier admits only known kinds", () => {
+  const externref = irVal({ kind: "externref" });
+  const box = (tag?: TagId) => ({
+    kind: "box",
+    value: 0,
+    toType: irDynamic(tag),
+    result: 1,
+    resultType: irDynamic(tag),
+  });
+  /** `enter` defines the dynamic value 1; its `typeof` is compared with `literal` into value 4. */
+  const compareTypeof = (enter: readonly object[], literal: string): IrFunction =>
+    ({
+      unitId: "ir-unit:test",
+      name: "f",
+      params: [],
+      resultTypes: [],
+      blocks: [
+        {
+          id: 0,
+          blockArgs: [],
+          blockArgTypes: [],
+          instrs: [
+            ...enter,
+            { kind: "dyn.typeof", value: 1, result: 2, resultType: { kind: "string" } },
+            { kind: "string.const", value: literal, result: 3, resultType: { kind: "string" } },
+            { kind: "string.eq", lhs: 2, rhs: 3, negate: false, result: 4, resultType: irVal({ kind: "i32" }) },
+          ] as IrInstr[],
+          terminator: { kind: "return", values: [] },
+        },
+      ],
+      exported: false,
+      valueCount: 5,
+    }) as unknown as IrFunction;
+  /** A call's result, value 0: its type is all the box arm can know about it. */
+  const call = (resultType: object) => ({
+    kind: "call",
+    target: { kind: "func", name: "native", binding: { kind: "unit", unitId: "ir-unit:native" } },
+    args: [],
+    result: 0,
+    resultType,
+  });
+
+  it.each([
+    ["untagged", undefined],
+    ["tagged Function", JS_TAG_IDS.Function],
+    ["tagged Object", JS_TAG_IDS.Object],
+  ])('refuses a box of a call\'s externref result (%s) instead of folding typeof === "function"', (_label, tag) => {
+    const legalize = () => legalizeDynamicValues(compareTypeof([call(externref), box(tag)], "function"));
+    expect(legalize).toThrow(DynamicValueGap);
+    expect(legalize).toThrow("dynamic operation box of a non-primitive value has no Prepared intrinsic");
+  });
+
+  // The literal is JavaScript's own answer for the value, not the legalization's table.
+  it.each([
+    ["a number", [call(irVal({ kind: "f64" })), box()], 1],
+    ["a Boolean", [call(irVal({ kind: "i32" })), box(JS_TAG_IDS.Boolean)], true],
+    ["null", [call(externref), box(JS_TAG_IDS.Null)], null],
+    ["undefined", [{ kind: "dyn.undefined", result: 1, resultType: irDynamic() }], undefined],
+  ])("answers typeof of %s in the carrier with a runtime test", (_label, enter, value) => {
+    const test = legalizeDynamicValues(compareTypeof(enter, typeof value)).blocks[0]!.instrs.find(
+      (instr) => instr.result === 4,
+    );
+    expect(test).toBeDefined();
+    expect(test!.kind).not.toBe("const");
+  });
+
+  it("refuses typeof of a string in the carrier by name rather than folding it", () => {
+    expect(() => legalizeDynamicValues(compareTypeof([call({ kind: "string" }), box()], typeof "a"))).toThrow(
+      "dynamic operation typeof test for string has no Prepared intrinsic",
     );
   });
 });
