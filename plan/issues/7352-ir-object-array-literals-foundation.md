@@ -294,6 +294,15 @@ lists and this section records where the files stop next.
 - Ordinary pipeline: bytes identical on 111 files (playground examples, test262 `built-ins/Array` and
   `language/expressions` samples) × default and standalone, against `claude/7354-realm` `e9e64e5d`.
 - Native async family units keep their logical-vector literals (`isPreparedArrayLiteral` defers to them).
+- **Where the 455 files stop next** (S9's stand-in census, `scripts/ir-census/prepared-census.mts --harness
+  stand-in`, on the two array lists, at `aecc802b`): none stops at an array literal any more; all 455 are still
+  compile errors, now at
+
+  | first gap | files | removed by |
+  | --- | ---: | --- |
+  | script `var` with an array/object initialiser has no typed storage ("module binding … has no exact typed storage", 259) or no dynamic carrier ("proven dynamic binding … has no supported carrier", 133) | 392 | A2 on S3's O2 home and object carrier kind |
+  | `Array.prototype` method on the array: `forEach` 59 (all in `testWithIntlConstructors`), `every` 1, `filter` 1 | 61 | Array.prototype methods with callbacks, after lane S4's Fb |
+  | property write on the array, a static predicate operand | 2 | A2 / S3 O3 |
 
 ### Acceptance
 
