@@ -28,6 +28,11 @@ node scripts/ir-census/prepared-analyze.mjs --rows .tmp/ir-census/integ-<sha>-st
 
 - **Real prelude:** still 0 pass. The `assert.js` gap moved one step, from
   `dyn.typeof` to `typeof test for function has no Prepared intrinsic` (6,536).
+  That refusal is an integration-only alarm S8 added where two lanes meet
+  (Fa's `function` carrier kind × Ty's kind-test table), so it is a
+  cross-lane gap, not one lane's own refusal. The round merges 9 lanes
+  (realm, fa, fb, ty, arrays, prepared-eval, crashes, perf3-readers; not yet
+  c/o and perf2).
   Unchanged: the test's own script `var` without a home (1,683) and the
   `String()` call in `propertyHelper.js` (397).
 - **Stand-in: 153 pass** (+6, −1 against main):
