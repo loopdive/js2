@@ -88,7 +88,8 @@ export type ExternBoundaryIntrinsicId = (typeof EXTERN_BOUNDARY_INTRINSIC_IDS)[n
  * extern families do not already name. Only the Prepared standalone lane
  * produces them, from its dynamic-value legalization. (#7354 Ty) The
  * `is_*` tag tests answer `typeof v === "number"` / `"boolean"` / `"string"` and (#7354 Fa) `"function"`; (#7354 Str2)
- * `as_string` reads the native string a string-kinded value carries.
+ * `as_string` reads the native string a string-kinded value carries. (#7354 J) `json_quote` is QuoteJSONString of a
+ * string-kinded value; `unsupported` is the named run-time abort of an operation on a kind no arm serves yet.
  */
 export const DYNAMIC_VALUE_INTRINSIC_IDS = Object.freeze([
   "js.value.as_string",
@@ -96,9 +97,11 @@ export const DYNAMIC_VALUE_INTRINSIC_IDS = Object.freeze([
   "js.value.is_function",
   "js.value.is_number",
   "js.value.is_string",
+  "js.value.json_quote",
   "js.value.strict_eq",
   "js.value.to_boolean",
   "js.value.undefined",
+  "js.value.unsupported",
 ] as const);
 
 export type DynamicValueIntrinsicId = (typeof DYNAMIC_VALUE_INTRINSIC_IDS)[number];

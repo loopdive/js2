@@ -1,9 +1,9 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 /**
- * (#7354 D1, Ty, Str2, Str2-c, O2, Fa) The kinds of value the Prepared dynamic value admits, and how each operation of
- * the dynamic-value legalization answers each kind. Every table is a `Record` over `CarrierKind`, so a slice that
- * admits a kind must give it a row in each; a `refused` row is an operation the kind has no arm for yet, which the
- * legalization refuses by name.
+ * (#7354 D1, Ty, Str2, Str2-c, O2, Fa, J) The kinds of value the Prepared dynamic value admits, and how each
+ * operation of the dynamic-value legalization answers each kind. Every table is a `Record` over `CarrierKind`, so a
+ * slice that admits a kind must give it a row in each; a `refused` row is an operation the kind has no arm for yet,
+ * which the legalization refuses by name, and (J) an `unsupported` row one it aborts by name at run time.
  *
  * Soundness rests on the admitted set: a value enters the carrier only as one of these kinds (`boxedKind`, and the
  * function-value projection), so a test that rules out every other kind proves the last one (`complement`), and a
@@ -56,11 +56,11 @@ export const KIND_TEST: Readonly<Record<CarrierKind, IntrinsicId | "ref.is_null"
  * How ToString (§7.1.17) answers each kind, in the order a chain tests them: the native string it carries, the number
  * formatter, "true"/"false", the kind's own name, or (O2) a plain object's OrdinaryToPrimitive ("[object Object]",
  * `plainObjectToPrimitive`). The last kind is reached untested because the chain is total over this table. (Fa) A
- * function value's ToPrimitive reads the function's `toString` and `valueOf`, which no arm does yet: its ToString
- * refuses, and so do its `+` and its ToNumber below.
+ * function value's ToPrimitive reads the function's `toString` and `valueOf`, which no arm does yet: (J) its
+ * ToString aborts at run time, by name (`js.value.unsupported`), and its `+` refuses below.
  */
 export const TO_STRING_ARM: Readonly<
-  Record<CarrierKind, "as-string" | "format" | "boolean" | "name" | "plain-object" | "refused">
+  Record<CarrierKind, "as-string" | "format" | "boolean" | "name" | "plain-object" | "unsupported">
 > = {
   string: "as-string",
   number: "format",
@@ -68,9 +68,25 @@ export const TO_STRING_ARM: Readonly<
   undefined: "name",
   null: "name",
   object: "plain-object",
-  function: "refused",
+  function: "unsupported",
 };
 export const KIND_ORDER = Object.keys(TO_STRING_ARM) as readonly CarrierKind[];
+
+/**
+ * (#7354 J) How `JSON.stringify(value)` (§25.5.2, SerializeJSONProperty) answers each kind: QuoteJSONString of a
+ * string, a finite number's Number::toString (any other number is "null"), a Boolean's or `null`'s ToString, and the
+ * `undefined` value for `undefined`. An object or a function first reads its `toJSON` (GetV) and then needs
+ * SerializeJSONObject/Array, which no arm does yet: it aborts at run time, by name, so it never answers a wrong string.
+ */
+export const JSON_ARM: Readonly<Record<CarrierKind, "quote" | "number" | "to-string" | "undefined" | "unsupported">> = {
+  string: "quote",
+  number: "number",
+  boolean: "to-string",
+  undefined: "undefined",
+  null: "to-string",
+  object: "unsupported",
+  function: "unsupported",
+};
 
 /**
  * How `+` (§13.15.3) takes each kind after ToPrimitive: a string makes the addition a concatenation, any other kind is

@@ -380,11 +380,13 @@ describe("#7354 Ty — typeof of a global the program does not declare, on the P
     await expectLikeNode((right) => `${declarations}\nif (${probe} !== ${right ? expected : wrong}) throw 1;`);
   });
 
-  // The live arm is lowered now: `JSON.stringify` refuses by name on this path.
-  it("lowers the assert.js conditional's live arm", async () => {
-    expect(
-      await refusal('function f(v) { return typeof JSON !== "undefined" ? JSON.stringify(v) : 2; }\nf(0);'),
-    ).toContain("dynamic operation dyn.json_stringify has no Prepared intrinsic");
+  // The live arm is lowered now, and (#7354 J) `JSON.stringify` answers like JavaScript on this path.
+  it("answers the assert.js conditional's live arm like JavaScript", async () => {
+    await expectLikeNode(
+      (right) =>
+        `function f(v) { return typeof JSON !== "undefined" ? JSON.stringify(v) : 2; }\n` +
+        `if (f(0) !== ${right ? '"0"' : '"1"'}) throw 1;`,
+    );
   });
 
   // H's dynamic home: `undefined` before the assignment, the value's type after (TypeScript warns).

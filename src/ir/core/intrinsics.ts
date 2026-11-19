@@ -96,6 +96,16 @@ const EXTERNREF_TO_STRING_INTRINSIC_SIGNATURE: IntrinsicSignature = Object.freez
 });
 
 /**
+ * (#7354 J) `() -> string` — the named run-time abort. It never returns; its result is a string because both of its
+ * operations (ToString, JSON.stringify's text) take a string from the arm it stands in for.
+ */
+const NULLARY_TO_STRING_INTRINSIC_SIGNATURE: IntrinsicSignature = Object.freeze({
+  version: INTRINSIC_SIGNATURE_VERSION,
+  params: Object.freeze([] as readonly IrType[]),
+  result: Object.freeze({ kind: "string" as const }),
+});
+
+/**
  * `(externref, externref) -> i32` — the exact ABI of the string relational
  * compare helper, shared by the `env.string_compare` host import and the
  * host-free `__str_compare` Wasm helper. Both answer a -1/0/1 lexicographic
@@ -225,9 +235,11 @@ export const INTRINSIC_DEFINITIONS: Readonly<Record<IntrinsicId, IntrinsicDefini
   "js.value.is_function": definition("js.value.is_function", EXTERNREF_TO_I32_INTRINSIC_SIGNATURE),
   "js.value.is_number": definition("js.value.is_number", EXTERNREF_TO_I32_INTRINSIC_SIGNATURE),
   "js.value.is_string": definition("js.value.is_string", EXTERNREF_TO_I32_INTRINSIC_SIGNATURE),
+  "js.value.json_quote": definition("js.value.json_quote", EXTERNREF_TO_STRING_INTRINSIC_SIGNATURE),
   "js.value.strict_eq": definition("js.value.strict_eq", EXTERNREF_PAIR_TO_I32_INTRINSIC_SIGNATURE),
   "js.value.to_boolean": definition("js.value.to_boolean", EXTERNREF_TO_I32_INTRINSIC_SIGNATURE),
   "js.value.undefined": definition("js.value.undefined", NULLARY_TO_EXTERNREF_INTRINSIC_SIGNATURE),
+  "js.value.unsupported": definition("js.value.unsupported", NULLARY_TO_STRING_INTRINSIC_SIGNATURE),
   "math.abs": definition("math.abs", F64_UNARY_INTRINSIC_SIGNATURE),
   "math.acos": definition("math.acos", F64_UNARY_INTRINSIC_SIGNATURE),
   "math.acosh": definition("math.acosh", F64_UNARY_INTRINSIC_SIGNATURE),

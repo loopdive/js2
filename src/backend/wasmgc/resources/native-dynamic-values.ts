@@ -3,9 +3,10 @@
 /**
  * (#7354 D1) The dynamic value's own runtime functions on the Prepared
  * standalone lane: strict equality, ToBoolean (#7354 T), the `undefined` value,
- * the `undefined` probe, (#7354 Ty) the string `typeof` test and (#7354 Fa) the function test. Every body is a
- * shared pure builder; the number and Boolean carrier functions they call are the issued primitive owners', never a
- * lookalike.
+ * the `undefined` probe, (#7354 Ty) the string `typeof` test, (#7354 Fa) the function test and (#7354 J)
+ * QuoteJSONString and the named abort. Every body is a shared pure builder; the
+ * number and Boolean carrier functions they call are the issued primitive
+ * owners', never a lookalike.
  */
 import type {
   PhysicalModuleReservations,
@@ -16,6 +17,8 @@ import type { IrInstrIntrinsic } from "../../../ir/core/nodes.js";
 import type { NativeValueResourcePlan } from "../../../ir/program/native-value-resources.js";
 import { buildObjectSameValueBody } from "../../../runtime/wasmgc/values/object-same-value-body.js";
 import { buildClosureRootTest } from "../../../runtime/wasmgc/values/closure-invocation-bodies.js";
+import { buildJsonQuoteStringDefinition } from "../../../runtime/wasmgc/values/json-bodies.js";
+import type { NativeStringLayout } from "../../../runtime/wasmgc/values/string-layouts.js";
 import {
   buildExternRefTestBody,
   buildIsUndefinedBody,
@@ -58,6 +61,10 @@ export interface NativeDynamicValueSelection {
   /** (#7354 Str2) The native string of a string-kinded value (ToString's string arm). */
   readonly asString: boolean;
   readonly isFunction: boolean;
+  /** (#7354 J) QuoteJSONString of a string-kinded value (`JSON.stringify`'s string arm). */
+  readonly jsonQuote: boolean;
+  /** (#7354 J) The abort of an operation on a kind no arm serves yet (`JSON_ARM`, `TO_STRING_ARM`). */
+  readonly unsupported: boolean;
 }
 
 /**
@@ -84,6 +91,8 @@ export function selectNativeDynamicValues(
     isString: has("js.value.is_string"),
     asString: has("js.value.as_string"),
     isFunction: has("js.value.is_function"),
+    jsonQuote: has("js.value.json_quote"),
+    unsupported: has("js.value.unsupported"),
   };
   return Object.values(selection).some(Boolean) ? selection : undefined;
 }
@@ -99,6 +108,8 @@ const ROWS = [
   // (#7354 Str2) The result is the string owner's AnyString type, resolved by key.
   ["asString", "as-string", "__js_as_string", { params: [EXTERNREF], results: ["any-string"] }],
   ["isFunction", "typeof-function", "__typeof_function", { params: [EXTERNREF], results: [I32] }],
+  ["jsonQuote", "json-quote", "__json_quote_string", { params: [EXTERNREF], results: ["any-string"] }],
+  ["unsupported", "unsupported", "__js_value_unsupported", { params: [], results: ["any-string"] }],
 ] as const;
 
 /** `stringKey` names the native string owner whose AnyString type `as_string` answers. */
@@ -138,12 +149,17 @@ export interface NativeDynamicValueReservations {
   readonly isString?: FunctionReservation;
   readonly asString?: FunctionReservation;
   readonly isFunction?: FunctionReservation;
+  readonly jsonQuote?: FunctionReservation;
+  readonly unsupported?: FunctionReservation;
 }
-/** (#7354 Str) The issued string resources strict equality's string arm calls. */
+/**
+ * The issued string resources the string arms call: (#7354 J) QuoteJSONString's, and (#7354 Str) strict equality's
+ * when a native string can reach it (`equals`).
+ */
 export interface NativeDynamicValueStrings {
-  readonly anyStrTypeIdx: number;
+  readonly layout: NativeStringLayout;
   readonly flatten: FunctionReservation;
-  readonly equals: FunctionReservation;
+  readonly equals: FunctionReservation | undefined;
 }
 interface Owner {
   readonly tx: PhysicalModuleReservations;
@@ -178,6 +194,7 @@ export function reserveNativeDynamicValueResources(
 ): NativeDynamicValueReservations {
   if (!key || tx.state !== "reserving") fail("invalid reservation phase/key");
   if (selection.strictEq && !booleans) fail("strict equality requires the Boolean predicates");
+  if (selection.jsonQuote && !strings) fail("QuoteJSONString requires the string resources");
   requireNativeValueReservations(tx, values, requirements, dependencies);
   const stringPack = carrierStringPack(dependencies);
   const { typePack } = nativeStringLiteralReservationInventory(tx, stringPack);
@@ -225,9 +242,9 @@ export function fillNativeDynamicValueResources(
         unboxNumIdx: values.functions.unboxNumber.handle,
         unboxBoolIdx: booleans!.unboxBoolean.handle,
         numberEquality: "number-equal",
-        anyStrTypeIdx: strings?.anyStrTypeIdx ?? -1,
+        anyStrTypeIdx: strings?.layout.anyStrTypeIdx ?? -1,
         strFlattenIdx: strings?.flatten.handle,
-        strEqualsIdx: strings?.equals.handle,
+        strEqualsIdx: strings?.equals?.handle,
       }),
     });
   }
@@ -277,6 +294,20 @@ export function fillNativeDynamicValueResources(
       locals: [],
       body: closureRoot ? buildClosureRootTest(0, tx.physicalIndex(closureRoot)) : [{ op: "i32.const", value: 0 }],
     });
+  // (#7354 J) Called only on a value `is_string` answered. The body reads WTF-16 code units, which `__str_flatten`
+  // yields under either string storage.
+  if (pack.jsonQuote) {
+    const { locals, body } = buildJsonQuoteStringDefinition({
+      ...strings!.layout,
+      flattenHandle: strings!.flatten.handle,
+    });
+    // The shared body declares its locals run-length; a physical definition names each one.
+    const types = locals.flatMap(({ count, type }) => Array<typeof type>(count).fill(type));
+    tx.fillFunction(pack.jsonQuote, { locals: types.map((type, index) => ({ name: `l${index}`, type })), body });
+  }
+  // (#7354 J) A trap, not a throw: no program `catch` can observe a value this build has no arm for. The function's
+  // own name is what the trap's stack shows.
+  if (pack.unsupported) tx.fillFunction(pack.unsupported, { locals: [], body: [{ op: "unreachable" }] });
   owner.filled = true;
 }
 

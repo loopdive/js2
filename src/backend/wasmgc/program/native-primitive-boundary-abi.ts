@@ -145,9 +145,11 @@ function nativeIntrinsicRows(input: NativeStringValueReservationInput): readonly
     canonicalRow("js.value.is_function", "typeof-function", true),
     canonicalRow("js.value.is_number", "typeof-number", true),
     canonicalRow("js.value.is_string", "typeof-string", true),
+    canonicalRow("js.value.json_quote", "json-quote", true),
     canonicalRow("js.value.strict_eq", "strict-eq", true),
     canonicalRow("js.value.to_boolean", "to-boolean", true),
     canonicalRow("js.value.undefined", "undefined-value", true),
+    canonicalRow("js.value.unsupported", "unsupported", true),
   ];
 }
 

@@ -47,6 +47,7 @@ import { PREPARED_NUMBER_TO_STRING } from "./number-to-string-target.js";
 import { IR_DYN_ADD_FN } from "../../shared/contracts/dynamic-add-helper.js";
 import { gap } from "./dynamic-value-gap.js";
 import { dynamicMemberRead } from "./dynamic-member-read.js";
+import { dynamicJsonStringify } from "./dynamic-json-stringify.js";
 import {
   ADD_ROLE,
   KIND_TEST,
@@ -275,6 +276,14 @@ function legalizationBuilders(
       resultType,
     };
   };
+  /** Number::toString of `number` (the program's one formatter binding). */
+  const formatNumber = (number: IrValueId, result: IrValueId): IrInstr => ({
+    kind: "call",
+    target: PREPARED_NUMBER_TO_STRING,
+    args: [number],
+    result,
+    resultType: STRING,
+  });
   // (#7354 Str2) ToString of the once-evaluated `value`, one arm per admitted kind (`TO_STRING_ARM`).
   const toStringArm = (instr: IrInstr, kind: CarrierKind, value: IrValueId, result: IrValueId): IrInstr[] => {
     switch (TO_STRING_ARM[kind]) {
@@ -282,10 +291,7 @@ function legalizationBuilders(
         return [intrinsic(instr, "js.value.as_string", [value], result)];
       case "format": {
         const number = fresh();
-        return [
-          intrinsic(instr, "js.number.unbox", [value], number),
-          { kind: "call", target: PREPARED_NUMBER_TO_STRING, args: [number], result, resultType: STRING },
-        ];
+        return [intrinsic(instr, "js.number.unbox", [value], number), formatNumber(number, result)];
       }
       case "boolean": {
         const flag = fresh();
@@ -304,8 +310,8 @@ function legalizationBuilders(
         return [text(kind, result)];
       case "plain-object":
         return [text(plainObjectToPrimitive(), result)];
-      case "refused":
-        return gap(`ToString of a ${kind} value`);
+      case "unsupported":
+        return [intrinsic(instr, "js.value.unsupported", [], result)];
     }
   };
   /** (#7354 O2) OrdinaryToPrimitive of a plain object (`TO_STRING_ARM`), or the named refusal. */
@@ -352,15 +358,12 @@ function legalizationBuilders(
       ),
     ];
   };
+  // The builders the operations written in their own modules (member read, JSON.stringify) are given.
+  const shared = { carrier: CARRIER, testResult: TEST_RESULT, definitions, fresh, text, intrinsic, kindsOf, kindChain };
   const memberRead = (instr: IrInstr, receiver: IrValueId, key: IrValueId, result: IrValueId): IrInstr[] =>
-    dynamicMemberRead(
-      { carrier: CARRIER, definitions, fresh, text, intrinsic, kindsOf, kindChain },
-      program,
-      instr,
-      receiver,
-      key,
-      result,
-    );
+    dynamicMemberRead(shared, program, instr, receiver, key, result);
+  const jsonStringify = (instr: IrInstr, value: IrValueId, result: IrValueId): IrInstr[] =>
+    dynamicJsonStringify({ ...shared, toStringArm, formatNumber, branch }, instr, value, result);
   const stringOf = (instr: IrInstr, value: IrValueId, result: IrValueId): IrInstr[] =>
     kindChain(instr, value, result, (kind, r) => toStringArm(instr, kind, value, r), kindsOf(value));
   /**
@@ -432,6 +435,7 @@ function legalizationBuilders(
     toStringArm,
     toNumber,
     memberRead,
+    jsonStringify,
     addition,
     definitions,
     admitted,
@@ -565,6 +569,8 @@ export function legalizeDynamicValues(
         return toNumber(instr, instr.value, instr.result!);
       case "dyn.member_get":
         return builders.memberRead(instr, instr.recv, instr.key, instr.result!);
+      case "dyn.json_stringify":
+        return builders.jsonStringify(instr, instr.value, instr.result!);
       case "dyn.eq": {
         if (instr.loose) return gap("dyn.eq (loose)");
         return withSense(instr, instr.negate, (result) => [

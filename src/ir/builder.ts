@@ -702,16 +702,15 @@ export class IrFunctionBuilder {
 
   /**
    * Emit `dyn.json_stringify{value}` — one-argument `JSON.stringify` over the
-   * boxed-any carrier (#7106 S1b); result is `string`. Routes to the native
-   * codec root via `IrDynamicLowering.emitJsonStringify`.
+   * boxed-any carrier (#7106 S1b); result is `resultType` (`dialect/js.ts` says
+   * which lane answers which).
    */
-  emitDynJsonStringify(value: IrValueId): IrValueId {
+  emitDynJsonStringify(value: IrValueId, resultType: IrType): IrValueId {
     if (this.typeOf(value).kind !== "dynamic") {
       throw new Error(
         `IrFunctionBuilder: emitDynJsonStringify operand ${value} is not dynamic (#7106 S1b) (func ${this.id.name})`,
       );
     }
-    const resultType: IrType = { kind: "string" };
     const result = this.allocator.fresh();
     this.valueTypes.set(result, resultType);
     this.pushInstr({ kind: "dyn.json_stringify", value, result, resultType });

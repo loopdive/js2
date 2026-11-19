@@ -633,6 +633,52 @@ describe("#7354 H — the census on a script var in the dynamic home", () => {
   });
 });
 
+describe("#7354 J — the census on JSON.stringify of the dynamic value", () => {
+  // The string arm binds QuoteJSONString; the program creates a function value, so the function kind's arm binds
+  // the named run-time abort (never run here).
+  const program =
+    'function f(v) { return JSON.stringify(v); }\nvar g = function () {};\nif (f("a") !== \'"a"\') throw 1;';
+  const refusal = async () => {
+    const result = await compile(program, options("standalone", "test.js"));
+    expect(result.success).toBe(false);
+    return messages(result).join("\n");
+  };
+  const RUNTIME_DEMAND = "host provider or async demand is outside this numeric presentation contract";
+  const IDS = ["native.js.value.json_quote", "native.js.value.unsupported"];
+
+  it("presents and runs the unaltered program", async () => {
+    const exports = await present(program, "test.js");
+    expect(() => (exports.__module_init as (() => void) | undefined)?.()).not.toThrow();
+  });
+
+  it.each(IDS)("refuses a census that drops %s", async (id) => {
+    census.providers = (rows) => rows.filter((row) => row.id !== id);
+    expect(await refusal()).toContain(RUNTIME_DEMAND);
+  });
+
+  it.each(IDS)("refuses a census that renames %s", async (id) => {
+    census.providers = (rows) => rows.map((row) => (row.id === id ? { ...row, id: `${id}.renamed` } : row));
+    expect(await refusal()).toContain(RUNTIME_DEMAND);
+  });
+
+  it.each(["__json_quote_string", "__js_value_unsupported"])(
+    "refuses a native setup that renames the %s resource",
+    async (name) => {
+      census.setup = (setup) =>
+        ({
+          ...setup,
+          resources: {
+            ...setup.resources,
+            declarations: setup.resources.declarations.map((row) =>
+              "name" in row && row.name === name ? { ...row, name: `${name}_renamed` } : row,
+            ),
+          },
+        }) as never;
+      expect(await refusal()).toContain(RUNTIME_DEMAND);
+    },
+  );
+});
+
 describe("#7354 Str — the census on a typed string program", () => {
   const program =
     "function cat(a: string, b: string): string { return a + b; }\n" +

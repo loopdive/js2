@@ -179,11 +179,14 @@ export interface IrInstrDynToString extends IrInstrBase {
 /**
  * `dyn.json_stringify{value}` — `JSON.stringify(value)` (§25.5.2, one argument,
  * no replacer, no space) over a boxed-any carrier (#7106 S1b). `value` MUST be
- * `IrType.dynamic`; result (via `IrInstrBase.result`) is `string`. Lowering
- * routes to the SAME native codec root legacy's one-argument
- * `JSON.stringify(anyVar)` calls (`__json_stringify_root`), so the two
- * frontends serialise identically, substrate limitations included. Admitted
- * only where the `native-json-codec` backend capability holds.
+ * `IrType.dynamic`. On the ordinary pipeline the result (via
+ * `IrInstrBase.result`) is `string`, and lowering routes to the SAME native
+ * codec root legacy's one-argument `JSON.stringify(anyVar)` calls
+ * (`__json_stringify_root`), so the two frontends serialise identically,
+ * substrate limitations included; admitted only where the `native-json-codec`
+ * backend capability holds. (#7354 J) On the Prepared native lane the result is
+ * `dynamic` (a string or `undefined`), and the dynamic-value legalization
+ * expands it per kind (`dynamic-json-stringify.ts`).
  */
 export interface IrInstrDynJsonStringify extends IrInstrBase {
   readonly kind: "dyn.json_stringify";

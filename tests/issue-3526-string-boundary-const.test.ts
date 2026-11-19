@@ -227,12 +227,15 @@ describe("#3526 F2-S8 string-const contract", () => {
     );
     const valueRows = emptyParamRows.filter((provider) => provider.signature === EXTERNREF_GLOBAL_INTRINSIC_SIGNATURE);
     expect(valueRows.map((provider) => provider.id).sort()).toEqual([...STRING_CONST_RUNTIME_PROVIDER_IDS].sort());
-    // (#7354 D1) The one nullary CALL, the dynamic `undefined` value, carries its
-    // own signature of the same shape, never the VALUE one.
+    // (#7354 D1) The nullary CALLS, the dynamic `undefined` value and (#7354 J) the named run-time abort, carry
+    // their own signatures, never the VALUE one.
     const callRows = emptyParamRows.filter((provider) => !valueRows.includes(provider));
-    expect(callRows.map((provider) => provider.id)).toEqual(["native.js.value.undefined"]);
-    expect(callRows[0]!.signature).toBe(INTRINSIC_DEFINITIONS["js.value.undefined"].signature);
-    expect(callRows[0]!.signature).not.toBe(EXTERNREF_GLOBAL_INTRINSIC_SIGNATURE);
+    const callIds = ["js.value.undefined", "js.value.unsupported"] as const;
+    expect(callRows.map((provider) => provider.id)).toEqual(callIds.map((id) => `native.${id}`));
+    callIds.forEach((id, index) => {
+      expect(callRows[index]!.signature).toBe(INTRINSIC_DEFINITIONS[id].signature);
+      expect(callRows[index]!.signature).not.toBe(EXTERNREF_GLOBAL_INTRINSIC_SIGNATURE);
+    });
   });
 
   it("is FOUR-armed — two authorities × two namespaces", () => {

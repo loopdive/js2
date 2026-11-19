@@ -279,6 +279,8 @@ export interface ProgramDynamicContracts extends SourceDynamicProvenance {
     readonly dynamicClosureSignature?: (expression: ts.FunctionExpression) => Signature | undefined;
     /** (#7354 Fa) {@link staticFunctionValue}. */
     readonly staticFunctionValue?: (declaration: ts.VariableDeclaration) => boolean;
+    /** (#7354 J) `JSON.stringify(v)` answers the dynamic value. */
+    readonly jsonStringifyResultIsDynamic?: () => boolean;
     readonly unresolvedGlobalTypeof?: (node: ts.Identifier) => UnresolvedGlobalTypeof | undefined;
   };
   /** {@link legalizeSourceDynamicValues} for the functions lowered from `roots`. */
@@ -323,6 +325,7 @@ export function programDynamicContracts(
           dynamicCarrierIsExternref: () => true,
           dynamicClosureSignature: (expression) => sourceDynamicClosureSignature(policy, expression),
           staticFunctionValue: (declaration) => staticFunctionValue(policy, sourceFiles, declaration),
+          jsonStringifyResultIsDynamic: () => true,
           unresolvedGlobalTypeof: makeUnresolvedGlobalTypeof(checker),
         }
       : {},

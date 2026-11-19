@@ -243,10 +243,9 @@ describe("#7354 Fa — function values on the Prepared path", () => {
       "function g() { var k = function () { return x; }; var x = 1; return k(); } g();",
       'closure g__closure_0 reads "x", a local of its enclosing function declared after the closure is created',
     ],
-    // (#7354 C) ToString and `+` of a function value are ToPrimitive's, and a test for the function kind is the
-    // realm's IsCallable: none is served yet. A declaration read as a value is not built yet.
+    // (#7354 C) `+` of a function value is ToPrimitive's, which is not served yet ((#7354 J) its ToString aborts at
+    // run time instead: tests/issue-7354-j-json-stringify.test.ts). A declaration read as a value is not built yet.
     ["`+` with a string", 'var f = function () {}; var s = f + "";', "dynamic operation + on a function value"],
-    ["`String(f)`", "var f = function () {}; var s = String(f);", "dynamic operation ToString of a function value"],
     [
       "a function declaration read as a value",
       "function id(v) { return v; } var g = id;",

@@ -997,6 +997,11 @@ export interface IrFromAstResolver extends PreparedAsyncFromAstResolver {
   /** (#7354 Fa) The script `var` holds its function-expression initializer from its declaration on. */
   staticFunctionValue?(declaration: ts.VariableDeclaration): boolean;
   /**
+   * (#7354 J) `JSON.stringify(v)` answers the dynamic value (a string or `undefined`), as on the Prepared native lane.
+   * A lane without it keeps the codec root's `string` result.
+   */
+  jsonStringifyResultIsDynamic?(): boolean;
+  /**
    * (#7106 Stage 4) True when this lane lowers `recv.<method>(…arity args)` on
    * a dynamic receiver through the `__ir_dyn_mcall_<m>_<n>` brand-dispatch
    * wrapper (host-free, non-fast lanes).
@@ -7697,6 +7702,11 @@ function lowerPreparedNumberCall(expr: ts.CallExpression, cx: LowerCtx): IrValue
   return result;
 }
 
+/** (#7354 J) `JSON.stringify(v)`'s result on this lane: the dynamic value, or the codec root's string. */
+function jsonStringifyResult(cx: LowerCtx): IrType {
+  return cx.resolver?.jsonStringifyResultIsDynamic?.() === true ? irDynamic() : { kind: "string" };
+}
+
 function functionObjectLoweringHost(cx: LowerCtx): functionObjects.FunctionObjectLoweringHost {
   return {
     builder: cx.builder,
@@ -9820,7 +9830,7 @@ function lowerMethodCall(expr: ts.CallExpression, cx: LowerCtx, statementPositio
     const argument = expr.arguments[0]!;
     const raw = lowerExpr(argument, cx, irDynamic());
     const rawType = cx.builder.typeOf(raw);
-    if (rawType.kind === "dynamic") return cx.builder.emitDynJsonStringify(raw);
+    if (rawType.kind === "dynamic") return cx.builder.emitDynJsonStringify(raw, jsonStringifyResult(cx));
     // The selector admits only an operand the checker cannot pin to a primitive;
     // a concrete representation here is a selector/producer disagreement and
     // withdraws rather than rendering through the boxed codec path.
