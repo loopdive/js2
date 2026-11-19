@@ -40,7 +40,7 @@ import type { NativeInvocationReservations } from "./native-invocation.js";
 import type { NativeObjectDescriptorReservations } from "./native-object-descriptors.js";
 import type { NativeObjectLayoutReservations } from "./native-object-layouts.js";
 import type { NativeObjectStorageReservations } from "./native-object-storage.js";
-import { nativeStringLiteralInstrs } from "./native-string-literals.js";
+import { nativeStringLiteralInstrs, type NativeStringLiteralReservations } from "./native-string-literals.js";
 
 const EXTERNREF = { kind: "externref" } as const,
   I32 = { kind: "i32" } as const,
@@ -211,12 +211,23 @@ export function fillNativeSourceObjectResources(
   pack: NativeSourceObjectReservations,
 ): void {
   const { kernel } = pack.dependencies;
-  const strings = nativeBuiltinFunctionRequestDependencies(tx, kernel.requests).strings;
+  // Both re-authenticate their owners, and only the function-object rows read them: computed on first use.
+  let operands: BuiltinFunctionPrototypeOperands | undefined;
+  let strings: NativeStringLiteralReservations | undefined;
   const context: AdapterContext = {
     ...pack.dependencies,
     tx,
-    operands: nativeBuiltinFunctionOperands(tx, kernel),
-    text: (key) => [...nativeStringLiteralInstrs(tx, strings, TEXT[key]), { op: "extern.convert_any" }],
+    get operands() {
+      return (operands ??= nativeBuiltinFunctionOperands(tx, kernel));
+    },
+    text: (key) => [
+      ...nativeStringLiteralInstrs(
+        tx,
+        (strings ??= nativeBuiltinFunctionRequestDependencies(tx, kernel.requests).strings),
+        TEXT[key],
+      ),
+      { op: "extern.convert_any" },
+    ],
   };
   for (const [symbol, token] of pack.adapters) {
     const { feature, arity } = served(symbol)!;
