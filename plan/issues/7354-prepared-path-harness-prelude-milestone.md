@@ -2146,6 +2146,27 @@ refusal (it runs now).
   `typeof` of a function value (Str2's `typeof` must answer `"function"` for it); an arrow function or a parameter
   default (no all-dynamic contract).
 
+### Review round 1 (RV7309, BLOCKER on ab4040fced)
+
+Fixes made on Opus (lead's decision) after a Fable subagent stopped on a rate limit; realm head cd03504321 merged
+first.
+
+| finding | answer | proof |
+| --- | --- | --- |
+| M1: writing a parameter inside an all-dynamic function expression was an invariant crash out of `compile()` | Fixed: the body seeds a slot for every written parameter through `lowerMutableParameterStorage`, the helper a declaration's reassigned parameter already uses (`writtenParameterSlots`); the planned member closure's inline copy of that seeding is gone too | runs: `if (a === undefined) a = 3`, `a++`/`b--`/`b -= 2`, a written parameter in a function's local closure; named refusals: `+=` (dynamic `+`), a nested closure reading or writing it, `arguments` aliasing, a closure assigned to it |
+| M2: `staticFunctionValue` answered true for `this.f =`, `globalThis.f =` / `globalThis["f"] =`, Annex B block functions | Fixed with one shared proof: `bindingIsUniqueAndNeverWritten` (the name's only binding site in the file, never assigned, no eval/with) and `sourceMayWriteBindingUnseen` (no unspelled code, no reflective route, no member of that name written on any object), plus "the global object does not escape". `sourceMayWriteBindingUnseen` replaces the identical three-predicate conjunction in `wrapper-construction.ts` and `always-undefined-binding.ts` (one proof, three users) | contract unit tests pin each route: `this.f` (top level and in a function), `globalThis.f`, `globalThis["f"]`, a block-level function, a function in an `if`, `f.constructor("…")()`, a shadowing binding |
+| retype accepted any live site | `retypeClosure`: only a live closure site, typed by the closure type | registry test |
+| `inCall` admitted a closure anywhere | Narrowed: only a closure body's first parameter (`__self`); a closure anywhere else in a contract still refuses | presentation test |
+| `holdsDynamicClosure` duplicated `bindsCatch` | One walker `holds(node, match)` with the two matchers | — |
+| the H2 refusal read "not in scope" | Says what it means: a closure reading a local of its enclosing function declared after the closure is created | H2 pin |
+| kind invariant (b): an object literal's closure member entered the carrier outside `admit` | The legalization's coerce arm admits a packed callable as `function` through `admit` | legalization unit test |
+| (found while checking the #3518 suites) a closure inside a descriptor literal got the all-dynamic signature | `ownedByDescriptorLiteral` (one predicate, used by the contract and by from-ast's descriptor branch): the checker's signature wins | the three issue-3518 getter files pass again; contract unit test |
+| kind invariant (a), (c) | S3's lines in the realm PR (#7312): S3 writes them against an exported kind predicate there; Fa re-points them at `admit` when it merges that head | — |
+
+Verified on the rework head: typecheck, loc, func (also against `origin/main`), coercion, oracle-ratchet,
+dead-exports, import-cycles, compiler-boundaries pass; 420 tests (the Fa file, #7354 H/H2/X/P/D1/O, prepared
+entry/runtime, the three issue-3518 getter files) all pass.
+
 ### Compile time
 
 A program with one closure compiles in about 22 s through the strict entry on a 4-core box (one with no closure:

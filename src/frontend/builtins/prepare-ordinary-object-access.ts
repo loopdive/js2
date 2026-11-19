@@ -2,7 +2,6 @@
 import { ts } from "../typescript.js";
 import type { IrType } from "../../ir/core/types.js";
 import { resolveOrdinaryObjectClosureSignature } from "../../ir/ordinary-object-closure-signatures.js";
-import { objectLiteralDataPropertyName } from "../../ir/property-key-fold.js";
 
 export interface PreparedOrdinaryPropertyRead {
   readonly key: string;
@@ -15,13 +14,20 @@ const BOOLEAN: IrType = Object.freeze({ kind: "val", val: Object.freeze({ kind: 
 const isAccessor = (property: ts.ObjectLiteralElementLike): boolean =>
   ts.isGetAccessorDeclaration(property) || ts.isSetAccessorDeclaration(property);
 
-/** (#7354 O1) Every member is a static-keyed data property: its value is the literal's own initializer. */
+/** A member's static name: an identifier, string or number; `undefined` for a computed key. */
+const staticName = (name: ts.PropertyName): string | undefined =>
+  ts.isIdentifier(name) || ts.isStringLiteral(name) || ts.isNumericLiteral(name) ? name.text : undefined;
+
+/**
+ * (#7354 O1) Every member is a statically named data property (a `__proto__` member sets the prototype instead): its
+ * value is the literal's own initializer.
+ */
 function isDataOnlyLiteral(literal: ts.ObjectLiteralExpression): boolean {
   return literal.properties.every(
     (property) =>
       (ts.isPropertyAssignment(property) || ts.isShorthandPropertyAssignment(property)) &&
-      objectLiteralDataPropertyName(property.name) !== null &&
-      !(ts.isPropertyAssignment(property) && objectLiteralDataPropertyName(property.name) === "__proto__"),
+      staticName(property.name) !== undefined &&
+      !(ts.isPropertyAssignment(property) && staticName(property.name) === "__proto__"),
   );
 }
 
@@ -95,6 +101,8 @@ export function prepareOrdinaryObjectAccessResolver(
    * after the literal stored it.
    */
   const ordinaryLiteral = (expression: ts.Expression): ts.ObjectLiteralExpression | undefined => {
+    // The literal itself as the receiver: its members are its own initializers.
+    if (ts.isObjectLiteralExpression(expression)) return expression;
     if (!ts.isIdentifier(expression)) return undefined;
     const symbol = checker.getSymbolAtLocation(expression);
     const declaration = symbol?.valueDeclaration;

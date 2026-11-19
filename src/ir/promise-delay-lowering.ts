@@ -67,6 +67,8 @@ export interface ExactClosureLoweringOptions {
   readonly hostOneShot?: boolean;
   /** Exact reusable callback admitted only by the standalone DOM authority. */
   readonly domCallbackAuthority?: IrDomCallbackAuthority;
+  /** (#7354 Fa) A parameter the body writes reads through a slot, as a planned member closure's always does. */
+  readonly writtenParameterSlots?: boolean;
 }
 
 type PromiseDelayBuilder = Pick<IrFunctionBuilder, "emitCall" | "emitCallablePack" | "typeOf">;
