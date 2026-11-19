@@ -13,7 +13,7 @@ task_type: bugfix
 area: ir, compiler, test262
 goal: ir-full-coverage
 depends_on: []
-related: [7354, 1927]
+related: [7354, 1927, 7434]
 # 2026-11-19: src/compiler.ts +12, `singleSourceHasHardTypeErrors`, the single-source
 # compiler's type gate, extracted from compileSourceSync and now asked by the strict
 # Prepared entry too, in place of the presentation's blanket refusal of every
@@ -90,3 +90,9 @@ Yield 0. Two reasons, both measured:
   TS2565, …) are never produced in the test262 lane. No sampled row carried a TypeScript diagnostic or a warning on
   either tree. The test262 lane's benefit therefore waits on those walls and is limited to warnings the compiler
   itself reports; the compiler change matters to callers that keep semantic diagnostics.
+
+## Follow-up
+
+- [#7434](https://js2wasm.loopdive.com/dashboard/issue.html?slug=7434-prepared-const-reassignment-invariant): a `const`
+  reassignment, no longer hidden behind TS2588 on the direct Prepared entry, reaches an invariant error in from-ast's
+  mutation pre-pass (pre-existing on main under `skipSemanticDiagnostics`); found in review, not fixed here.
