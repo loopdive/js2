@@ -3,6 +3,7 @@
  * Tables for prepared-census.mts rows.
  *
  *   node scripts/ir-census/prepared-analyze.mjs --rows <prepared.jsonl> [--rows <other.jsonl> …]
+ *                                               [--base <older prepared.jsonl>]
  *
  * For each rows file: outcomes (pass / fail / compile error / crash / skipped),
  * where the first gap lies (harness file, stand-in, test body), the first gaps
@@ -10,6 +11,9 @@
  * and issue (prepared-mechanisms.mjs). The Prepared path stops at its first
  * gap, so every count is a first-gap count: a file is charged to one
  * mechanism, and nothing behind that gap is seen.
+ *
+ * With `--base`, each report starts with the files that pass now and did not
+ * pass in the base run, and those that passed there and no longer do.
  */
 import { readRows } from "./analyze.mjs";
 import { MECHANISMS, mechanismOf, sourceWithIncludes } from "./prepared-mechanisms.mjs";
@@ -97,5 +101,22 @@ function report(path) {
   return out.join("\n\n");
 }
 
-const paths = process.argv.flatMap((arg, i) => (process.argv[i - 1] === "--rows" ? [arg] : []));
-console.log(paths.map(report).join("\n\n"));
+/** Passes gained and lost against an older run of the same files. */
+function passDelta(rows, baseRows) {
+  const passed = new Set(baseRows.filter((row) => row.status === "pass").map((row) => row.file));
+  const now = rows.filter((row) => row.status === "pass").map((row) => row.file);
+  const gained = now.filter((file) => !passed.has(file)).sort();
+  const lost = [...passed].filter((file) => !now.includes(file)).sort();
+  const list = (files) => files.map((file) => `- \`${file}\``).join("\n") || "- none";
+  return `Passes gained (${gained.length}):\n${list(gained)}\n\nPasses lost (${lost.length}):\n${list(lost)}`;
+}
+
+const argv = process.argv;
+const paths = argv.flatMap((arg, i) => (argv[i - 1] === "--rows" ? [arg] : []));
+const basePath = argv.includes("--base") ? argv[argv.indexOf("--base") + 1] : undefined;
+const baseRows = basePath ? readRows(basePath) : undefined;
+console.log(
+  paths
+    .map((path) => (baseRows ? `${passDelta(readRows(path), baseRows)}\n\n${report(path)}` : report(path)))
+    .join("\n\n"),
+);
