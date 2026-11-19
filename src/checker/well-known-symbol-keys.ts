@@ -6,7 +6,7 @@
  * symbol counter. The id depends on how many compiles the process ran before, so a runtime string built from that
  * escaped name is both wrong and dependent on compile order.
  */
-import { ts } from "../frontend/typescript.js";
+import { ts } from "../ts-api.js";
 import { isCurrentCompilerLibrarySourceFile } from "./index.js";
 
 const ESCAPED_SYMBOL_KEY = /^__@(.+)@\d+$/;
