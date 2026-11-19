@@ -4,7 +4,7 @@ import { compile } from "../src/index.js";
 import { buildImports } from "../src/runtime.js";
 import { createNewFunctionShim } from "../src/runtime-eval.js";
 import { ts } from "../src/ts-api.js";
-import { foldedEvalEarlyError } from "../src/codegen/expressions/eval-early-errors.js";
+import { foldedEvalEarlyError } from "../src/frontend/eval/early-errors.js";
 
 const LANES = [
   { name: "host", target: undefined },
