@@ -9,7 +9,7 @@
 
 import { describe, expect, it } from "vitest";
 
-import { runExportedUnit, runModuleInit } from "./helpers/ambient-intrinsic-probe.js";
+import { intrinsicUseVerdicts, runExportedUnit, runModuleInit } from "./helpers/ambient-intrinsic-probe.js";
 
 const run = (target: "standalone" | undefined, source: string) =>
   runModuleInit(target, source, { fileName: "issue-7350-builtin-globals.js" });
@@ -32,7 +32,8 @@ const CLAIMED: Record<string, string> = {
 const REFUSED: Record<string, string> = {
   "a member read through an alias": `var M = Math; if (M.max(1, 2) !== 2) { throw "m"; }`,
   "the name written": `function w() { Math = 5; } if (!Math) { throw "w"; }`,
-  // This unit is refused for its shape before the read is asked about; REFUSED_UNITS pins the `with` screen itself.
+  // This unit is refused for its shape before the read is asked about; the admission-level test below pins the
+  // `with` guards themselves.
   "inside a with body": `var o = { Math: 3 }; var r; with (o) { r = Math === 3; } if (!r) { throw "b"; }`,
   "a loose compare with null": `if (Math == null) { throw "n"; }`,
   "a conditional beside null": `var c = 1; var v = c ? JSON : null; if (v !== JSON) { throw "c"; }`,
@@ -43,22 +44,6 @@ const REFUSED: Record<string, string> = {
  * standalone, each for one check of the admission; `answer` is node's.
  */
 const REFUSED_UNITS: Record<string, { readonly source: string; readonly answer: number }> = {
-  // `isPristineIntrinsic`'s `with` screen. The selector's `with` lane (#4206, `isPhase1WithStatement`) admits a
-  // closure in the body of `with (<object literal>)` and scopes the literal's own field names; a name the target only
-  // inherits is not among them and reaches the admission. That lane is broken on main today (its own control is
-  // refused as `external-call`), so this unit is refused without the screen too; the screen is what keeps it
-  // refused once #4206 is repaired.
-  "a closure in a with body whose target inherits the name": {
-    source: `export function test(): number {
-      let out = 0;
-      with ({ __proto__: { Math: 3 }, value: 1 }) {
-        const read = function (): number { return Math === 3 ? value : 0; };
-        out = read();
-      }
-      return out;
-    }`,
-    answer: 1,
-  },
   // `isLibOnlyBinding`: the namespace merges with the lib's `TypeError`, and no other check of the admission sees it.
   "a namespace merged with the name": {
     source: `namespace TypeError { export const z = 1; }
@@ -91,6 +76,17 @@ describe("#7350 G1 — a built-in global read as a value", () => {
       });
     });
   }
+
+  it("refuses a read inside a with body at the admission", () => {
+    // Two guards refuse it: the checker binds no symbol inside a `with` body, so `isLibOnlyBinding` answers false,
+    // and `isPristineIntrinsic` screens the body syntactically. The verdicts turn true only when both are removed.
+    expect(intrinsicUseVerdicts(`var o = { a: 1 }; with (o) { if (TypeError === TypeError) {} }`, "TypeError")).toEqual(
+      [false, false],
+    );
+    expect(intrinsicUseVerdicts(`function f(o) { with (o) { return typeof TypeError; } }`, "TypeError")).toEqual([
+      false,
+    ]);
+  });
 
   it("keeps the JS environment's routing for the new names", async () => {
     expect(await run(undefined, `var a = Math; if (a !== Math) { throw "i"; }`)).toEqual({
