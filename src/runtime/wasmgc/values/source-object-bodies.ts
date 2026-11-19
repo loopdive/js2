@@ -35,15 +35,16 @@ export function buildSourceObjectCreateDefinition(d: {
  * `value` is an externref scratch local. Its "incomplete parent" state (2) is a miss at the realm's Object.prototype,
  * which does not hold the specification's properties yet: (#7354 O4) every caller refuses the keys Object.prototype
  * defines (`builtin-prototype-keys.ts`), and (#7352 arrays) no standard prototype property is an array index, so a
- * miss there is a true miss and answers `undefined` too. Its "not an object" state (3) cannot occur: every object a
- * source program reaches was built by a `create-*` contract on this realm's prototypes.
+ * miss there is a true miss and answers `undefined` too. Its "not an object" state (3), and any status outside the
+ * kernel's four, traps: every object a source program reaches was built by a `create-*` contract on this realm's
+ * prototypes.
  */
 export function sourceObjectGet(get: FuncHandle, value: number): Instr[] {
   return [
     { op: "call", funcIdx: get },
     { op: "local.set", index: value },
-    { op: "i32.const", value: 3 },
-    { op: "i32.eq" },
+    { op: "i32.const", value: 2 },
+    { op: "i32.gt_u" },
     { op: "if", blockType: { kind: "empty" }, then: [{ op: "unreachable" }] },
     { op: "local.get", index: value },
   ];
