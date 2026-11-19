@@ -43,6 +43,7 @@ export interface MemberAccessBuilders {
 export interface MemberAccessProgram {
   readonly objects: ProgramObjects;
   readonly catches: boolean;
+  readonly handlesExceptions: boolean;
 }
 
 /**

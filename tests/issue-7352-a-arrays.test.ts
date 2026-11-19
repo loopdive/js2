@@ -32,6 +32,13 @@ import {
   type LegalizationProgram,
 } from "../src/ir/program/dynamic-value-legalization.js";
 import { JS_TAG_IDS } from "../src/ir/runtime/js-tag-domain.js";
+import { analyzeMultiSource } from "../src/checker/index.js";
+import { irModuleGlobalBindingId, irSourceGlobalRef } from "../src/ir/abi-bindings.js";
+import { scriptVarGlobalKinds } from "../src/ir/script-var-kinds.js";
+import type { IrSourceId } from "../src/shared/contracts/ir-identity.js";
+import { ts } from "../src/ts-api.js";
+
+const GLOBAL = irModuleGlobalBindingId("source:test" as IrSourceId, 0);
 
 const options = (): Test262CompileOptions =>
   ({
@@ -138,10 +145,9 @@ describe("#7352 arrays — array literals are Array exotic objects of the realm"
 
   // Each refusal names the slice that removes it (the plan in the #7352 issue file).
   it("refuses what the later slices build, by name", async () => {
-    // A2: a script var's Array is the dynamic home's object, but the var may hold a string, whose index needs its
-    // wrapper (slice B).
-    expect(await refusal("var a = [1, 2]; if (a[0] !== 1) throw 1;")).toContain(
-      "member read '0' of a string needs its wrapper prototype",
+    // A2: an Array through P's dynamic parameter, which may hold a string, whose index needs its wrapper (slice B).
+    expect(await refusal("function f(x) { return x[1] + x.length; } if (f([1, 2, 3]) !== 5) throw 1;")).toContain(
+      "member read '1' of a string needs its wrapper prototype",
     );
     // A constant number key that is no array index needs ToString of a number, which the realm cannot reach.
     expect(await refusal("var a = [1, 2]; var x = a[1.5];")).toContain(
@@ -302,6 +308,83 @@ describe("#7352 arrays — the Array exotic object's runtime (the realm's bodies
 });
 
 // A2: a member write of the dynamic value (`MEMBER_WRITE_ARM`), through P's dynamic parameter, which may hold any kind.
+// A2: a script var whose every write is a literal holds `undefined` or an object (`src/ir/script-var-kinds.ts`), so
+// its member chain has no primitive arm. Each program runs as written (node's answer) and with a wrong answer.
+describe("#7352 A2 — a script var holding an Array", () => {
+  it.each([
+    ["an index read", "var a = [1, 2]; if (a[0] !== 1) throw 1;", "a[0] !== 2"],
+    [
+      "an element write with growth and a hole",
+      "var a = [1, 2]; a[5] = 1; if (a.length !== 6 || a[3] !== undefined || a[5] !== 1) throw 1;",
+      "a.length !== 7",
+    ],
+    [
+      "a length write that shrinks",
+      "var a = [1, 2, 3]; a.length = 1; if (a.length !== 1 || a[1] !== undefined) throw 1;",
+      "a.length !== 3",
+    ],
+  ])(
+    "%s",
+    async (_label, source, wrongCheck) => {
+      const wrong = source.replace(/if \(.*\) throw 1;$/, `if (${wrongCheck}) throw 1;`);
+      expect(() => new Function(source)()).not.toThrow();
+      expect(() => new Function(wrong)()).toThrow();
+      expect(await run(source)).toBe("returned");
+      expect(await run(wrong)).toBe("threw");
+    },
+    180_000,
+  );
+
+  it("throws ArraySetLength's RangeError for a length that is no u32, as node does", async () => {
+    const source = "var a = [1, 2, 3]; a.length = -1;";
+    expect(() => new Function(source)()).toThrow(RangeError);
+    expect(await run(source)).toBe("threw");
+  }, 120_000);
+
+  it("refuses by name what it cannot answer", async () => {
+    // The realm throws the RangeError under its own exception tag, which a source catch does not handle yet.
+    expect(await refusal("var a = [1, 2, 3]; try { a.length = -1; } catch {}")).toContain(
+      "member write 'length' (ArraySetLength's RangeError) in a program that catches",
+    );
+    // A write of another kind (here a closure's) keeps every kind, and the string arm refuses.
+    expect(await refusal("var a = [1, 2]; function f(v) { a = v; } f(1); var x = a[0];")).toContain(
+      "member read '0' of a string needs its wrapper prototype",
+    );
+    // A write through the global object takes the binding's home away before any kind is asked.
+    expect(await refusal("var a = [1, 2]; function id(x) { return x; } this.a = id(1); var x = a[0];")).toContain(
+      "module binding a has no exact typed storage: not-direct",
+    );
+  }, 120_000);
+
+  // Escapes the frontend refuses or the Prepared path cannot compile yet (`eval` throws an invariant on the base):
+  // the screen itself drops the fact.
+  const kinds = (source: string) => {
+    const ast = analyzeMultiSource({ "./entry.ts": source }, "./entry.ts");
+    const [statement] = ast.sourceFiles.flatMap((file) => file.statements).filter(ts.isVariableStatement);
+    const declaration = statement!.declarationList.declarations[0]!;
+    const binding = { type: { kind: "dynamic" }, globalRef: irSourceGlobalRef(GLOBAL, "a") } as const;
+    return scriptVarGlobalKinds(ast.checker, new Map([[declaration, { binding }]])).get(GLOBAL);
+  };
+  it.each([
+    ["a direct eval", 'var a = [1]; eval("a = 1");'],
+    ["an indirect eval", 'var a = [1]; (0, eval)("a = 1");'],
+    ["Function", 'var a = [1]; Function("a = 1")();'],
+    ["with", "var a = [1]; with ({}) {}"],
+    ["delete", "var a = [1]; delete a;"],
+    ["the global object escaping through this", "var a = [1]; var g = this;"],
+    ["the global object escaping through globalThis", "var a = [1]; var g = globalThis;"],
+    ["a closure's write", "var a = [1]; function f(v) { a = v; }"],
+    ["a member write by the binding's name", "var a = [1]; var o = {}; o.a = 1;"],
+    ["a non-literal initializer", "function g() { return [1]; } var a = g();"],
+  ])("keeps every kind with %s", (_label, source) => {
+    expect(kinds(source)).toBeUndefined();
+  });
+  it("holds undefined and objects when every write is an object or array literal", () => {
+    expect(kinds("var a = [1]; a[0] = 2;")).toEqual(["undefined", "object"]);
+    expect(kinds("var a = { p: 1 };")).toEqual(["undefined", "object"]);
+  });
+});
+
 describe("#7352 A2 — a member write of the dynamic value", () => {
   it("a primitive's [[Set]] fails: nothing in sloppy code", async () => {
     const source = "function w(o) { o.q = 2; return o; } if (w(1) !== 1) throw 1;";
@@ -328,7 +411,12 @@ describe("#7352 A2 — a member write of the dynamic value", () => {
 describe("#7352 A2 — the dynamic member chain's Array arms (legalization)", () => {
   const F64 = { kind: "val", val: { kind: "f64" } } as const;
   const DYN = { kind: "dynamic" } as const;
-  const ARRAYS: LegalizationProgram = { objects: { present: true, arrays: true, unplain: undefined }, catches: false };
+  const ARRAYS: LegalizationProgram = {
+    objects: { present: true, arrays: true, unplain: undefined },
+    catches: false,
+    handlesExceptions: false,
+    globalKinds: new Map(),
+  };
   const box = (result: number, value: number, tag: number): IrInstr =>
     ({ kind: "box", value, toType: { ...DYN, tag }, result, resultType: { ...DYN, tag } }) as unknown as IrInstr;
   /** The boxed number `value` into `result + 1`. */
@@ -410,7 +498,7 @@ describe("#7352 A2 — the dynamic member chain's Array arms (legalization)", ()
       "member write '0' needs OrdinarySet",
     );
     expect(
-      refusalOf(() => calls([...named("length"), ...number(5, 1)], write, { ...ARRAYS, catches: true })),
+      refusalOf(() => calls([...named("length"), ...number(5, 1)], write, { ...ARRAYS, handlesExceptions: true })),
     ).toContain("member write 'length' (ArraySetLength's RangeError) in a program that catches");
   });
 });

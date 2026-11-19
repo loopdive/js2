@@ -32,7 +32,8 @@ export function dynamicMemberWrite(
       gap(`${operation} needs OrdinarySet`);
     if (member.kind === "index")
       return [objectCall(b, "js.object.set-index", [instr.recv, member.index, instr.value], null), done(r)];
-    refuseCaughtError(program, `${operation} (ArraySetLength's RangeError)`);
+    // ArraySetLength's RangeError is thrown under the realm's exception tag, which no source catch handles yet.
+    if (program.handlesExceptions) gap(`${operation} (ArraySetLength's RangeError) in a program that catches`);
     const length = b.fresh();
     return [
       ...b.toNumber(instr, instr.value, length),

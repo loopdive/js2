@@ -35,6 +35,7 @@ import {
   DynamicValueGap,
   legalizeDynamicValues,
   refuseUnadmittedThrows,
+  type LegalizationProgram,
 } from "./program/dynamic-value-legalization.js";
 import { retargetNumberToString } from "./program/number-to-string-target.js";
 import { programObjects, type ProgramObjects } from "./source-plain-objects.js";
@@ -209,6 +210,7 @@ export interface ProgramDynamicContracts extends SourceDynamicProvenance {
   readonly legalize: (
     signatures: Iterable<Signature>,
     globals: readonly SourceGlobal[],
+    globalKinds: LegalizationProgram["globalKinds"],
     roots: ts.FunctionDeclaration | readonly ts.Statement[],
     functions: readonly IrFunction[],
   ) => readonly IrFunction[];
@@ -252,12 +254,13 @@ export function programDynamicContracts(
         `function ${declaration.name?.text} returns ${checker.typeToString(result)}, which has no Prepared result contract`,
       );
     },
-    legalize: (signatures, globals, roots, functions) =>
+    legalize: (signatures, globals, globalKinds, roots, functions) =>
       legalizeSourceDynamicValues(
         checker,
         policy,
         signatures,
         globals,
+        globalKinds,
         roots,
         functions,
         provenance.carries,
@@ -378,6 +381,7 @@ function legalizeSourceDynamicValues(
   policy: SourcePolicy,
   signatures: Iterable<Signature>,
   globals: readonly SourceGlobal[],
+  globalKinds: LegalizationProgram["globalKinds"],
   declaration: ts.FunctionDeclaration | readonly ts.Statement[],
   functions: readonly IrFunction[],
   carries: Carries,
@@ -400,7 +404,11 @@ function legalizeSourceDynamicValues(
   let legalized: readonly IrFunction[] = retargeted;
   try {
     const catches = sourceFiles.some(bindsCatch);
-    if (contracted) legalized = retargeted.map((fn) => legalizeDynamicValues(fn, allocations, { objects, catches }));
+    const handlesExceptions = sourceFiles.some((file) => holdsCatch(file, false));
+    if (contracted)
+      legalized = retargeted.map((fn) =>
+        legalizeDynamicValues(fn, allocations, { objects, catches, handlesExceptions, globalKinds }),
+      );
     if (catches) retargeted.forEach(refuseUnadmittedThrows);
   } catch (error) {
     if (!(error instanceof DynamicValueGap)) throw error;
@@ -424,9 +432,15 @@ function readsTypeofOfAbsentGlobal(
   return ts.forEachChild(node, (child) => readsTypeofOfAbsentGlobal(checker, sourceFiles, child)) === true;
 }
 
-/** `node` holds a `catch` clause with a binding (nested functions included: they are lowered from the same roots). */
-function bindsCatch(node: ts.Node): boolean {
+/**
+ * `node` holds a `catch` clause (nested functions included: they are lowered from the same roots); `bound`: one with
+ * a binding.
+ */
+function holdsCatch(node: ts.Node, bound: boolean): boolean {
   return (
-    (ts.isCatchClause(node) && node.variableDeclaration !== undefined) || ts.forEachChild(node, bindsCatch) === true
+    (ts.isCatchClause(node) && (!bound || node.variableDeclaration !== undefined)) ||
+    ts.forEachChild(node, (child) => holdsCatch(child, bound)) === true
   );
 }
+
+const bindsCatch = (node: ts.Node): boolean => holdsCatch(node, true);
