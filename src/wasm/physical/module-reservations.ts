@@ -455,6 +455,19 @@ export class PhysicalModuleReservations {
       this.#fail(`altered completed function ${token.key}`);
   }
 
+  /**
+   * (#7365) A validation that throws outside `#fail` (a getter's TypeError on a record the audit read only once)
+   * still fails the ledger, so a layout it could not validate is never sealed.
+   */
+  #validate(check: () => void): void {
+    try {
+      check();
+    } catch (error) {
+      if (this.#state === "failed") throw error;
+      this.#fail(error instanceof Error ? error.message : String(error));
+    }
+  }
+
   #importCount(kind: ImportDesc["kind"]): number {
     return this.#module.imports.filter((record) => record.desc.kind === kind).length;
   }
@@ -757,7 +770,7 @@ export class PhysicalModuleReservations {
   freezeReservations(): void {
     this.#require("reserving");
     this.#verifyLayout();
-    this.#validateResources();
+    this.#validate(() => this.#validateResources());
     const offsets = { function: 0, global: 0, tag: 0 };
     for (const token of this.#tokens) {
       if (token.kind === "function-import") offsets.function++;
@@ -1004,13 +1017,13 @@ export class PhysicalModuleReservations {
   seal(): PhysicalModuleCensus {
     this.#require("filling");
     this.#verifyLayout();
-    this.#validateResources();
+    this.#validate(() => this.#validateResources());
     for (const token of this.#tokens) {
       if (token.kind === "function" && !this.#filledFunctions.has(token))
         this.#fail(`missing function fill ${token.key}`);
       if (token.kind === "global" && !this.#filledGlobals.has(token)) this.#fail(`missing global fill ${token.key}`);
     }
-    this.#validateDeclaredFunctionReferences();
+    this.#validate(() => this.#validateDeclaredFunctionReferences());
     this.#state = "sealed";
     const m = this.#module;
     return Object.freeze({
