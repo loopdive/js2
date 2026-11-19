@@ -80,8 +80,8 @@ function node(source: string): "returned" | "threw" {
   }
 }
 
-async function refusal(source: string, target: "standalone" | "gc" = "standalone") {
-  const result = await compile(source, options(target));
+async function refusal(source: string, target: "standalone" | "gc" = "standalone", fileName = "test.js") {
+  const result = await compile(source, { ...options(target), fileName });
   expect(result.success).toBe(false);
   return messages(result).join("\n");
 }
@@ -137,6 +137,32 @@ describe("#7354 Fa — function values on the Prepared path", () => {
       "var f = function () {}; var c; try { throw f; } catch (e) { c = e; }",
       "c !== f || !c",
       "c === f",
+    ],
+    // A written parameter reads through a slot seeded from the argument, as a declaration's does.
+    [
+      "assigning its parameter (the harness's `if (message === undefined) message = …`)",
+      "var f = function (a) { if (a === undefined) a = 3; return a; };",
+      "f(undefined) !== 3 || f(5) !== 5",
+      "f(undefined) !== undefined",
+    ],
+    [
+      "updating its parameters with `++`, `--` and a numeric compound",
+      "var f = function (a, b) { a++; b--; b -= 2; return a - b; };",
+      "f(1, 1) !== 4",
+      "f(1, 1) !== 0",
+    ],
+    [
+      "in a function's local, assigning its parameter",
+      "function g() { var f = function (a) { a = 2; return a; }; return f(1); }",
+      "g() !== 2",
+      "g() !== 1",
+    ],
+    // The member is stored as a function value; reading it back is the object slice's.
+    [
+      "stored as an object literal's member",
+      "function g() { var o = { a: 1, m: function (v) { return v; } }; return o.a; }",
+      "g() !== 1",
+      "g() !== 2",
     ],
   ])(
     "runs a function expression %s",
@@ -198,6 +224,38 @@ describe("#7354 Fa — function values on the Prepared path", () => {
       "function g() { var x = 1; var f = function () { return x; }; x = 2; return f(); } g();",
       'captures non-local binding "x"',
     ],
+    // A written parameter: what the slot does not serve yet, each by its own name.
+    [
+      "`+=` on a parameter",
+      "var f = function (a) { a += 1; return a; }; f(1);",
+      "dynamic operation __ir_dyn_add has no Prepared intrinsic",
+    ],
+    [
+      "a nested closure reading a written parameter",
+      "var f = function (a) { var k = function () { return a; }; a = 2; return k(); }; f(1);",
+      'captures non-local binding "a"',
+    ],
+    [
+      "a nested closure writing a parameter",
+      "var f = function (a) { var k = function () { a = 5; }; k(); return a; }; f(1);",
+      'mutable closure capture "a" must be a primitive',
+    ],
+    [
+      "`arguments` aliasing a written parameter",
+      "var f = function (a) { a = 2; return arguments[0]; }; f(1);",
+      'identifier "arguments" is not in scope',
+    ],
+    [
+      "a closure assigned to a parameter",
+      "var f = function (a) { a = function () { return 1; }; return a; }; f(1);",
+      'assignment to "a" (dynamic) got closure()->dynamic',
+    ],
+    // JavaScript hoists the local; the closure captures only what is bound where it is created.
+    [
+      "a closure reading a local declared after it",
+      "function g() { var k = function () { return x; }; var x = 1; return k(); } g();",
+      'closure g__closure_0 reads "x", a local of its enclosing function declared after the closure is created',
+    ],
     // ToString and `+` of a function value have no arm yet (the source text is the function's own string).
     [
       "`+` with a string",
@@ -216,6 +274,21 @@ describe("#7354 Fa — function values on the Prepared path", () => {
   ])("refuses %s by name", async (_, program, message) => {
     expect(await refusal(program)).toContain(message);
   });
+
+  // The ABI join admits a closure only as a lifted closure body's `__self`: a nested function taking a captured
+  // closure as a parameter (annotated TypeScript, so it reaches the join) still needs a boundary producer.
+  it(
+    "refuses a closure in a callable contract anywhere but a closure body's `__self`",
+    async () => {
+      const program =
+        "function g(): number { const f = (a: number): number => a + 1; function inner(): number { return f(1); } " +
+        "return inner(); } if (g() !== 2) throw 1;";
+      expect(await refusal(program, "standalone", "test.ts")).toContain(
+        "promise/reference callable contracts require an explicit boundary producer",
+      );
+    },
+    SLOW,
+  );
 
   it("gives the gc target no all-dynamic closure (no carrier, so no dynamic home)", async () => {
     expect(await refusal("var f = function (a) { return a; };", "gc")).toContain(
@@ -286,12 +359,36 @@ describe("#7354 Fa — the legalization arms", () => {
     expect(() => legalizeDynamicValues(fn([helper]))).toThrow("__ir_dyn_call_box");
   });
 
-  it("re-types each closure allocation site to its legalized type", () => {
+  it("states the function kind for a packed callable coerced into an object's property", () => {
+    const stored = { kind: "coerce.to_externref", value: 3, result: 1, resultType: externref };
+    const [, , coerced] = legalizeDynamicValues(fn([closureNew, pack, stored])).blocks[0]!.instrs as IrInstr[];
+    expect(coerced).toEqual(stored);
+  });
+
+  it("re-types each closure allocation site, and no other, to its legalized type", () => {
+    const cell = {
+      kind: "refcell.new",
+      value: 1,
+      result: 3,
+      resultType: { kind: "boxed", inner: externref },
+      alloc: 8,
+    };
     const retyped: [number, unknown][] = [];
-    legalizeDynamicAllocations([legalizeDynamicValues(fn([closureNew]))], {
-      retype: (id, type) => retyped.push([id, type]),
+    legalizeDynamicAllocations([legalizeDynamicValues(fn([closureNew, cell]))], {
+      retypeClosure: (id, type) => retyped.push([id, type]),
     });
     expect(retyped).toEqual([[7, { kind: "closure", signature: carrier }]]);
+  });
+
+  it("lets the registry re-type only a live closure site", () => {
+    const registry = new AllocSiteRegistry();
+    const closureSite = registry.fresh("closure", { kind: "closure", signature: logical });
+    const cellSite = registry.fresh("refcell", { kind: "boxed", inner: externref });
+    const legalized = { kind: "closure", signature: carrier } as const;
+    registry.retypeClosure(closureSite, legalized);
+    expect(registry.resolve(closureSite)!.type).toEqual(legalized);
+    expect(() => registry.retypeClosure(cellSite, legalized)).toThrow("not a live closure site");
+    expect(registry.resolve(cellSite)!.type).toEqual({ kind: "boxed", inner: externref });
   });
 });
 
@@ -342,6 +439,8 @@ describe("#7354 Fa — the closure contracts", () => {
     ["a pattern parameter", "var f = function ({ a }) {};"],
     ["a generator", "var f = function* () {};"],
     ["an async function", "var f = async function () {};"],
+    // The checker types a descriptor literal's closures, nested ones included (`ownedByDescriptorLiteral`).
+    ["a literal inside a descriptor literal", "var o = { get x() { var f = function (a) {}; return f; } };"],
   ])("gives %s no all-dynamic signature", (_, source) => {
     const { resolver, f } = contractsOf([source]);
     expect(resolver.dynamicClosureSignature!(f.initializer as ts.FunctionExpression)).toBeUndefined();
@@ -358,6 +457,17 @@ describe("#7354 Fa — the closure contracts", () => {
     ["declared in a block", ["{ var f = function (a) { return a; }; }"]],
     ["in a source that lets the global object escape", ["var f = function (a) { return a; }; var g = globalThis;"]],
     ["in a source that runs dynamic code", ['var f = function (a) { return a; }; eval("");']],
+    // A script var is a property of the global object: a member write of its name rewrites it.
+    ["rewritten through `this`", ["var f = function (a) { return 1; }; this.f = function (a) { return 2; };"]],
+    ["rewritten through `this` in a function", ["var f = function (a) { return 1; }; function w() { this.f = 0; }"]],
+    ["rewritten through `globalThis.f`", ["var f = function (a) { return 1; }; globalThis.f = 0;"]],
+    ['rewritten through `globalThis["f"]`', ['var f = function (a) { return 1; }; globalThis["f"] = 0;']],
+    // Annex B: in sloppy code a block-level function declaration also assigns the `var` of its name.
+    ["redeclared by a block-level function", ["var f = function (a) { return 1; }; { function f(a) { return 2; } }"]],
+    ["redeclared by a function in an `if`", ["var f = function (a) { return 1; }; if (1) { function f(a) {} }"]],
+    ["in a source that reaches `Function` by `constructor`", ['var f = function (a) {}; f.constructor("f = 0")();']],
+    // The proof is name-based: another binding of the name declines, whichever scope it is in.
+    ["sharing its name with another binding", ["var f = function (a) { return a; }; function w(f) { return f; }"]],
     ["in a program of two scripts", ["var f = function (a) { return a; };", "var k = 1;"]],
     ["initialized with a literal without the contract", ["var f = function (a = 1) { return a; };"]],
   ])("refuses a static closure to a var %s", (_, sources) => {

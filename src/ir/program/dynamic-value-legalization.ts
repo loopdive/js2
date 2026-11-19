@@ -89,9 +89,9 @@ function carrierClosureInstr(instr: IrInstr): IrInstr {
 /**
  * (#7354 Ty, Fa) `typeof`'s answer for each kind of value the carrier admits, keyed by the answer so that no two kinds
  * share one (`typeof null` is "object": an admitted object kind must merge with that row). The admitted kinds ARE this
- * table's values: a value enters the carrier only as one of them (`boxedKind` and the function-value projection both
- * go through `admit`, exhaustive by type), so a slice that admits a kind adds its row here and every per-kind table
- * (`Record<CarrierKind, …>`) must then give it a row before the program compiles.
+ * table's values: a value enters the carrier only as one of them (`boxedKind`, the function-value projection and a
+ * packed callable's coercion all go through `admit`, exhaustive by type), so a slice that admits a kind adds its
+ * row here and `admit` does not compile until it has an arm for it.
  */
 const TYPEOF_KIND = {
   number: "number",
@@ -126,6 +126,8 @@ export function legalizeDynamicValues(fn: IrFunction): IrFunction {
     ...(instr.site === undefined ? {} : { site: instr.site }),
   });
   const isDynamic = (value: IrValueId): boolean => types.get(value)?.kind === "dynamic";
+  /** (#7354 Fa) A packed callable is a function value: every arm that takes one into the carrier says so. */
+  const isFunctionValue = (value: IrValueId): boolean => types.get(value)?.kind === "callable";
   /** A value entering the carrier as `kind`; a value of no admitted kind refuses. */
   const admit = (kind: CarrierKind | undefined, instr: IrInstr, value: IrValueId): readonly IrInstr[] => {
     switch (kind) {
@@ -201,7 +203,7 @@ export function legalizeDynamicValues(fn: IrFunction): IrFunction {
         if (
           instr.target.binding.kind === "runtime" &&
           instr.target.name === IR_DYN_CALL_BOX_FN &&
-          types.get(instr.args[0]!)?.kind === "callable"
+          isFunctionValue(instr.args[0]!)
         )
           return admit("function", instr, instr.args[0]!);
         // A front-end dynamic helper (`__ir_dyn_add`, ...) has no runtime declaration.
@@ -215,6 +217,9 @@ export function legalizeDynamicValues(fn: IrFunction): IrFunction {
       // over the legalized operand. The catch binding reads the payload back as the dynamic value: every value an
       // accepted program can throw (a dynamic value, a boxed number, `null`) is in the admitted set.
       case "coerce.to_externref":
+        // (#7354 Fa) An object literal stores a closure member as its packed callable, coerced: that coercion is a
+        // function value entering the carrier.
+        if (isFunctionValue(instr.value)) return admit("function", instr, instr.value);
         return [instr];
       default:
         return instr.kind.startsWith("dyn.") ? gap(instr.kind) : [instr];
@@ -256,8 +261,8 @@ export function legalizeDynamicValues(fn: IrFunction): IrFunction {
 }
 
 /** The part of the allocation registry the legalization re-types. */
-interface RetypableAllocations {
-  retype(id: AllocSiteId, type: IrType): void;
+export interface RetypableAllocations {
+  retypeClosure(id: AllocSiteId, type: Extract<IrType, { kind: "closure" }>): void;
 }
 
 /**
@@ -269,8 +274,8 @@ export function legalizeDynamicAllocations(functions: readonly IrFunction[], all
     for (const block of fn.blocks)
       for (const root of block.instrs)
         forEachInstrDeep(root, (instr) => {
-          if (instr.kind === "closure.new" && instr.alloc !== undefined)
-            allocations.retype(instr.alloc, instr.resultType!);
+          if (instr.kind === "closure.new" && instr.alloc !== undefined && instr.resultType?.kind === "closure")
+            allocations.retypeClosure(instr.alloc, instr.resultType);
         });
 }
 
