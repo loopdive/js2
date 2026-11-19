@@ -517,3 +517,119 @@ Not verified in this plan:
 - Whether any program's refusal depends on a stage 2 check (PR 3 step 3 measures it).
 - The behaviour of `check:dead-exports` when tests are deleted, and of its `preservation-v1` contract.
 - Timings are single runs on a loaded box; ratios are safe, digits are not.
+
+## PR 1 result
+
+Implemented 2026-11-19 on `claude/7380-validator` (base `71173e020b` = main `89e4748241` + this plan).
+
+What is behind the switch:
+
+- **Switch:** `JS2WASM_VALIDATE_PREPARED`. It is on only when the value is exactly `1`.
+- **Where it lives:** `src/shared/contracts/prepared-validation.ts`, a foundation leaf. It exports
+  `preparedValidationEnabled()`, plus `setPreparedValidation(on)` for tests.
+- **How it is read:** once, at module load, from `globalThis.process?.env`.
+  - This is a deviation from the plan, which named `readEnv`. The foundation layer may import only foundation, and
+    `src/env.ts` is `mixed-needs-split`.
+  - The read is the same expression `readEnv` uses. No other file reads the variable.
+- **Defaults:**
+  - Off for `compile()` outside tests: the CLI, the API and `scripts/*.mts` runs.
+  - On under vitest: `vitest.config.ts` sets `test.env` to `process.env.JS2WASM_VALIDATE_PREPARED ?? "1"`, so
+    `JS2WASM_VALIDATE_PREPARED=0` turns it off for a measurement.
+  - The test262 vitest lanes inherit it too: `scripts/compiler-pool.ts` forks its workers with `process.env`.
+- **Readers (three sites):**
+  1. `PhysicalModuleReservations.#verifyLayout` returns at once when the switch is off.
+  2. `hasNativeCollectionState` (`src/ir/program/data.ts`) returns `false` when off. Deviation from the plan's
+     `instanceof`: both callers pair it with the prototype check (non-array, prototype neither `Object.prototype`
+     nor `null`). That check already refuses every genuine collection, with the same message, and an array has no
+     collection slot. So `instanceof` would be a branch that never decides anything.
+  3. In `copyIrPreparationData` (`src/ir/analysis/alloc-registry.ts`), the Date probe and the collection probe loop
+     moved into `hasDateSlot` and `hasCollectionSlot`. When off they answer by `instanceof`, so a genuine Date or
+     collection keeps its exact refusal text ("unsupported Date instance" / "unsupported collection prototype").
+- **Shared tooling:**
+  - `scripts/prepared-byte-identity.mts`.
+  - `tests/fixtures/prepared-proving-programs.json`: 804 distinct programs, captured by logging every strict-entry
+    call of `tests/issue-7354-*`, `tests/test262-prepared-*` and `tests/issue-7188-*`. It is one JSON row per line
+    and listed in `.prettierignore`; it is not `.jsonl`, because `*.jsonl` is gitignored.
+  - Not included: the 69 + 14 probe programs of sections 0 and 1, which live in the architect's scratch.
+- **Test:** `tests/issue-7380-audit-flag.test.ts`, 7 tests. It checks:
+  - the default (unset, `0` and `true` read as off, `1` as on);
+  - that the switch is on under vitest;
+  - with the switch on, the seeded "altered completed function" of `issue-3518-module-reservations` and the
+    erased-prototype `Map` of `issue-3518-native-authentication-performance` are refused; with it off they are not;
+  - identical bytes with the switch on and off for a numeric, a string and a dynamic program.
+
+Compile time, through the strict entry. Standalone, second compile in the process, single runs, load about 1.5:
+
+| program | main (`71173e020b`) | switch on | switch off |
+| --- | ---: | ---: | ---: |
+| trivial numeric `var x = 1; x = x + 1; if (x !== 2) throw 1;` | 0.51 s | 0.47 s | 0.11 s |
+| 1 string line in a function (literal + concat + `length` + `===`) | 0.63 s | 0.70 s | 0.11 s |
+| 50 string lines in a function | 8.26 s | 8.45 s | 1.46 s |
+| 200 string lines in a function | 41.51 s | 40.63 s | 6.80 s |
+
+The binaries are identical in every row (`sha1` `6f62adfb4514`, `f3e00e0ed006`, `6088809e5f5b`, `bb07134afecc`).
+The number of times each check is called per compile is the same with the switch on or off; with it off, the calls
+return at once.
+
+| program | layout audits | `hasNativeCollectionState` calls | `copyIrPreparationData` slot queries |
+| --- | ---: | ---: | ---: |
+| numeric | 318 | 13,496 | 828 |
+| 1 string line | 382 | 18,330 | 2,084 |
+| 50 lines | 1,019 | 392,200 | 71,174 |
+| 200 lines | 2,969 | 1,656,100 | 282,674 |
+
+With the switch on, each slot query on an object not seen before throws up to four `TypeError`s. The remaining
+6.8 s at 200 lines is not linear yet; PR 3 and 5b to 5d address it.
+
+Byte and outcome proofs:
+
+- **Prepared path**, 804 programs × {main, switch on, switch off}: all three outputs identical, byte for byte.
+  - 670 binaries and 132 refusals with the same text.
+  - 2 programs throw out of `compile()` already on main, and nothing new throws:
+    - row 533: `PreparedIrProgramInvariantError` "… accepted body … failed to lower it: ir/lower: resolver cannot
+      lower object<>" (the M14 class);
+    - row 787: the entry's own `TypeError`, "duplicate normalized source name".
+- **Ordinary pipeline:** 100 test262 files (every 400th of `built-ins` + `language`) × {default target,
+  `--target standalone`}, main against switch off, run in two chunks of 50. The output is identical: 176 binaries
+  and 24 compile errors with the same text.
+- **ES5 sample** of 411 rows (`l420.txt`), run through `tests/test262-chunk-dynamic.test.ts` with
+  `TEST262_COMPILER_PATH=ir`, standalone, QuickJS eval engine, with the switch `0` and `1`:
+  - per-row results are identical in every field except `workerPid` (397 `compile_error`, 14 `pass`, wall time
+    45 s against 46 s);
+  - this sample discriminates weakly, because its rows refuse at the prelude before the ledger is used. The
+    804-program corpus is the stronger proof that no refusal depends on these checks.
+
+Failing sets with the switch on: 101 files, that is the 89 `tests/issue-3518-*` files that name the ledger, the
+snapshots, `program/data` or `alloc-registry`, plus the 12 `tests/issue-7354-*` files. They ran in chunks of 8,
+single fork.
+
+- Main fails 835 tests and this branch fails 841. No test that failed on main passes here.
+- The 6 new failures are all a source pin, `tests/issue-3518-allocation-runtime-seam.test.ts`.
+  - The failing tests are "retains every declaration, …" and the five "rejects changed … in the complete relocation
+    receipt".
+  - The pin hashes each top-level declaration of `src/ir/analysis/alloc-registry.ts` and expects exactly the
+    declaration list `['copyIrPreparationData', …(4)]`. Any edit to the probes in `copyIrPreparationData` breaks
+    it; inlining the switch instead of extracting the two helpers would change the body hash all the same.
+  - Per this plan, PR 2 retires the pin. It is not re-hashed here. No other pin moved: the edits to `data.ts` and
+    `module-reservations.ts` turned no green test red.
+
+Gates, each run bare: all exit 0.
+
+- `npm run -s typecheck`
+- `node scripts/check-loc-budget.mjs`, `node scripts/check-func-budget.mjs`, each also with
+  `LOC_GATE_BASE=bd8317fbbc` (then `origin/main`)
+- `node scripts/check-coercion-sites.mjs`
+- `npm run -s check:oracle-ratchet`, `npm run -s check:dead-exports`, `npm run -s check:import-cycles`
+- `node scripts/check-compiler-boundaries.mjs --mode inventory --base origin/main`, after classifying the new leaf
+  as `foundation`
+- `JS2WASM_EVAL_ENGINE=interpreter sh scripts/hooks/changed-root-tests.sh`: 7 of 7 pass
+
+Not verified:
+
+- the realm program and the 20 dynamic `+` sites of section 0: neither compiles on main, they need `claude/7354-o`
+  and `claude/7354-perf2`;
+- `--utf8-storage` and `compileMulti`, beyond the 16 multi-file programs in the corpus;
+- the host (`gc`) lane bytes, beyond the 28 gc-target programs in the corpus;
+- the rest of `tests/` outside the 101 files;
+- that the `quality` job's full vitest run stays within its time budget. The switch is on there exactly as before,
+  so nothing should change.
