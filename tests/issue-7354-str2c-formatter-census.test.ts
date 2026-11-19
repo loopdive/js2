@@ -19,6 +19,7 @@ import type { PhysicalNativeNumberFormatSetup, PhysicalNativeStringSetup } from 
 import type { PreparedIrProgram } from "../src/ir/program.js";
 import { RUNTIME_PROVIDERS } from "../src/ir/runtime/manifest.js";
 import { callableCarried, runtimeCensus } from "../src/compiler/prepared-provider-census.js";
+import { emittedPhysicalSetupPlan } from "../src/ir/program-consumer.js";
 
 type Receipt = { readonly key: string; readonly index: number };
 type Contract = Parameters<typeof import("../src/compiler/prepared-provider-census.js").callableCarried>[1];
@@ -33,6 +34,10 @@ const forge = vi.hoisted(() => ({
   formatter: undefined as
     | undefined
     | ((setup: PhysicalNativeNumberFormatSetup) => PhysicalNativeNumberFormatSetup | undefined),
+  // A forged binding index: the slot the completed emission reports for a binding id.
+  index: undefined as
+    | undefined
+    | ((id: string, real: (id: string) => { space: string; index: number } | undefined) => unknown),
   forged: new WeakMap<object, unknown>(),
   // The last unforged census and contract calls, replayed by the census-level forgeries below.
   census: undefined as unknown,
@@ -65,6 +70,12 @@ vi.mock("../src/ir/program-consumer.js", async (original) => {
       const receipts = real.emittedSupportFunctionReceipts(...args);
       return forge.receipts?.(receipts) ?? receipts;
     },
+    emittedProgramBindingIndex: (...[emitted, id]: Parameters<typeof real.emittedProgramBindingIndex>) =>
+      forge.index
+        ? (forge.index(id, (other) => real.emittedProgramBindingIndex(emitted, other as typeof id)) as ReturnType<
+            typeof real.emittedProgramBindingIndex
+          >)
+        : real.emittedProgramBindingIndex(emitted, id),
     // One forged plan object per emitted plan, as R's census test does: every reader sees the same forgery.
     emittedPhysicalSetupPlan: (...args: Parameters<typeof real.emittedPhysicalSetupPlan>) => {
       const plan = real.emittedPhysicalSetupPlan(...args);
@@ -73,10 +84,10 @@ vi.mock("../src/ir/program-consumer.js", async (original) => {
         forge.forged.set(plan, {
           ...plan,
           nativeStrings: forge.strings?.(plan.nativeStrings) ?? plan.nativeStrings,
-          nativeNumberFormat:
-            forge.formatter && plan.nativeNumberFormat
-              ? forge.formatter(plan.nativeNumberFormat)
-              : plan.nativeNumberFormat,
+          // A formatter forgery may also inject a setup into a program that has none.
+          nativeNumberFormat: forge.formatter
+            ? forge.formatter(plan.nativeNumberFormat as PhysicalNativeNumberFormatSetup)
+            : plan.nativeNumberFormat,
         });
       return forge.forged.get(plan) as typeof plan;
     },
@@ -98,6 +109,7 @@ const options = (target: "standalone" | "gc" = "standalone"): Test262CompileOpti
 afterEach(() => {
   vi.restoreAllMocks();
   forge.providers = forge.program = forge.contract = forge.receipts = forge.strings = forge.formatter = undefined;
+  forge.index = undefined;
   forge.forged = new WeakMap();
 });
 
@@ -433,6 +445,220 @@ describe("#7354 Str2-c — the census refuses a forged formatter setup", () => {
   });
 });
 
+// (#7354 Str2 review 1) Every field of every formatter row is forged ALONE, and swapped between two rows: the rows
+// of the same shape (which a swap could pass off as each other), and the review's repros. The forgeries are generated
+// from the row table, so a new row is covered without a new test.
+type Field = "role" | "entry id" | "reference" | "slot" | "signature" | "receipt";
+const FIELDS: readonly Field[] = ["role", "entry id", "reference", "slot", "signature", "receipt"];
+const SPACES: Readonly<Record<string, Declaration["space"]>> = {
+  "table-type": "type",
+  inverse: "global",
+  powers: "global",
+};
+const spaceOf = (row: readonly string[]) => SPACES[row[1]!] ?? "function";
+/** A declaration without its identity: a function's signature, a global's type and mutability, a type's layout. */
+const shapeOf = (declaration: Declaration) => {
+  const { key: _key, role: _role, name: _name, ...shape } = declaration as Declaration & { name?: string };
+  return shape;
+};
+/** A shape no canonical row has. */
+function foreignShape(declaration: Declaration): object {
+  if (declaration.space === "function")
+    return { ...shapeOf(declaration), signature: { params: [], results: [{ kind: "i32" }] } };
+  if (declaration.space === "global") return { ...shapeOf(declaration), valueType: { kind: "i32" } };
+  return { ...shapeOf(declaration), shape: { ...declaration.shape, name: "forged" } };
+}
+/**
+ * How a field of a row is read and written in a setup, and given a value no row has. A row is named by its
+ * declaration key (resource key), which a forged role does not move.
+ */
+interface SetupField {
+  readonly read: (setup: Setup, key: string) => unknown;
+  readonly write: (setup: Setup, key: string, value: unknown) => Setup;
+  readonly foreign: (setup: Setup, key: string) => unknown;
+}
+const declarationOf = (setup: Setup, key: string) => setup.resources.declarations.find((row) => row.key === key)!;
+const publishedOf = (setup: Setup, key: string) => setup.bindings.find((row) => row.resourceKey === key)!;
+const declarationWith = (setup: Setup, key: string, alter: (d: Declaration) => Declaration): Setup =>
+  withDeclarations(
+    setup,
+    setup.resources.declarations.map((d) => (d.key === key ? alter(d) : d)),
+  );
+const bindingWith = (setup: Setup, key: string, alter: (b: Binding) => Binding): Setup =>
+  withBindings(
+    setup,
+    setup.bindings.map((b) => (b.resourceKey === key ? alter(b) : b)),
+  );
+const SETUP_FIELDS: Partial<Record<Field, SetupField>> = {
+  role: {
+    read: (setup, key) => declarationOf(setup, key).role,
+    write: (setup, key, value) => declarationWith(setup, key, (d) => ({ ...d, role: value as string[] })),
+    foreign: (setup, key) => [...declarationOf(setup, key).role, "forged"],
+  },
+  signature: {
+    read: (setup, key) => shapeOf(declarationOf(setup, key)),
+    write: (setup, key, value) =>
+      declarationWith(
+        setup,
+        key,
+        (d) => ({ ...(value as object), key: d.key, role: d.role, name: (d as { name?: string }).name }) as Declaration,
+      ),
+    foreign: (setup, key) => foreignShape(declarationOf(setup, key)),
+  },
+  "entry id": {
+    read: (setup, key) => publishedOf(setup, key).entry.id,
+    write: (setup, key, value) => bindingWith(setup, key, (b) => ({ ...b, entry: { ...b.entry, id: value as never } })),
+    foreign: (setup, key) => publishedOf(setup, key).entry.id + ":forged",
+  },
+  reference: {
+    read: (setup, key) => publishedOf(setup, key).reference,
+    write: (setup, key, value) => bindingWith(setup, key, (b) => ({ ...b, reference: value as Binding["reference"] })),
+    foreign: (setup, key) => ({ ...publishedOf(setup, key).reference, name: "forged" }),
+  },
+};
+/** The formatter setup of the captured census. */
+const capturedSetup = (): Setup => emittedPhysicalSetupPlan(censusInputs.census[1]).nativeNumberFormat!;
+
+/**
+ * Arrange one forgery: each `[row, from]` gives `row`'s `field` the value `from` has in the unforged setup (all
+ * values are read before any is written), or a value no row has when `from` is undefined or has the same value
+ * (two rows of one shape share their signature, so copying it would forge nothing).
+ */
+function arrangeField(
+  field: Field,
+  assignments: readonly (readonly [readonly string[], readonly string[] | undefined])[],
+) {
+  const setup = capturedSetup();
+  const keyed = assignments.map(([row, from]) => [roleOf(setup, row).key, from && roleOf(setup, from).key] as const);
+  if (field === "slot") {
+    const ids = new Map(
+      keyed.map(([key, from]) => [publishedOf(setup, key).entry.id, from && publishedOf(setup, from).entry.id]),
+    );
+    forge.index = (id, real) => {
+      if (!ids.has(id)) return real(id);
+      const from = ids.get(id);
+      // A slot no formatter row has: the first or second slot of the space (another setup's, or a source function).
+      return from ? real(from) : { ...real(id)!, index: real(id)!.index === 0 ? 1 : 0 };
+    };
+    return;
+  }
+  if (field === "receipt") {
+    const keys = new Map(keyed);
+    forge.receipts = (rows) =>
+      rows.map((row) => (keys.has(row.key) ? { ...row, key: keys.get(row.key) ?? row.key + ":forged" } : row));
+    return;
+  }
+  const { read, write, foreign } = SETUP_FIELDS[field]!;
+  forge.formatter = (unforged) => {
+    const values = keyed.map(([key, from]) => {
+      const copied = from === undefined ? undefined : read(unforged, from);
+      const own = JSON.stringify(read(unforged, key));
+      return [key, copied !== undefined && JSON.stringify(copied) !== own ? copied : foreign(unforged, key)] as const;
+    });
+    return values.reduce((forged, [key, value]) => write(forged, key, value), unforged);
+  };
+}
+
+describe("#7354 Str2 — every field of every formatter row is joined by identity", () => {
+  /** The next row of the same space, so a forged field takes a value a real row has; undefined when it is alone. */
+  const partnerOf = (row: readonly string[]) => {
+    const peers = ROWS.filter((other) => spaceOf(other) === spaceOf(row));
+    return peers.length > 1 ? peers[(peers.indexOf(row as (typeof ROWS)[number]) + 1) % peers.length] : undefined;
+  };
+  // Only a function has a support receipt.
+  const alone = ROWS.flatMap((row) =>
+    FIELDS.filter((field) => field !== "receipt" || spaceOf(row) === "function").map(
+      (field) => [field, row.join(" "), row, partnerOf(row)] as const,
+    ),
+  );
+  it.each(alone)("refuses the %s alone of the %s row", async (field, _label, row, partner) => {
+    arrangeField(field, [[row, partner]]);
+    await refused(RUNTIME_DEMAND);
+  });
+
+  it.each(alone.filter(([, , , partner]) => partner !== undefined))(
+    "refuses the %s alone of the %s row set to a value no row has",
+    async (field, _label, row) => {
+      arrangeField(field, [[row, undefined]]);
+      await refused(RUNTIME_DEMAND);
+    },
+  );
+
+  // A swap of two rows of the same shape: the census must tell them apart by identity, not by shape. (Their shared
+  // signature swapped is no forgery; each one's own is forged alone above.)
+  const sameShapePairs = () => {
+    const setup = capturedSetup();
+    const pairs = ROWS.flatMap((left, index) =>
+      ROWS.slice(index + 1)
+        .filter(
+          (right) => JSON.stringify(shapeOf(roleOf(setup, left))) === JSON.stringify(shapeOf(roleOf(setup, right))),
+        )
+        .map((right) => [left, right] as const),
+    );
+    expect(pairs.map((pair) => pair.map((row) => row[1]))).toEqual([["inverse", "powers"]]);
+    return pairs;
+  };
+  it.each(["role", "entry id", "reference"] as const)(
+    "refuses the %s swapped between two rows of one shape",
+    async (field) => {
+      for (const [left, right] of sameShapePairs()) {
+        arrangeField(field, [
+          [left, right],
+          [right, left],
+        ]);
+        await refused(RUNTIME_DEMAND);
+      }
+    },
+  );
+  // Known limit, pinned: a slot is the completed emission's own binding-index record, the root the census joins to.
+  // Two globals of one shape exchanged in that record leave no second record to contradict it (a function has its
+  // support receipt; a global has none).
+  it("accepts two same-shape globals exchanged in the emission's own index record", async () => {
+    for (const [left, right] of sameShapePairs()) {
+      arrangeField("slot", [
+        [left, right],
+        [right, left],
+      ]);
+      expect(runtimeCensus(...censusInputs.census)).toBeDefined();
+    }
+  });
+
+  // The review's repros: kernel roles swapped or doubled, kernel and Ryu references swapped.
+  const kernel = (role: string) => ["number-format", role] as const;
+  it.each([
+    ["role", kernel("new"), kernel("get")],
+    ["role", kernel("set"), kernel("fin")],
+    ["role", kernel("get"), kernel("trap")],
+    ["reference", kernel("new"), kernel("get")],
+    ["reference", ["number-ryu", "inverse"], ["number-ryu", "powers"]],
+  ] as const)("refuses the %s swapped between %j and %j", async (field, left, right) => {
+    arrangeField(field, [
+      [left, right],
+      [right, left],
+    ]);
+    await refused(RUNTIME_DEMAND);
+  });
+  it.each([
+    ["role", kernel("trap"), kernel("new")],
+    ["reference", kernel("radix-body"), kernel("new")],
+  ] as const)("refuses the %s of %j set to that of %j", async (field, row, from) => {
+    arrangeField(field, [[row, from]]);
+    await refused(RUNTIME_DEMAND);
+  });
+
+  it("refuses a formatter setup injected into a program without a formatter call", async () => {
+    const injected = capturedSetup();
+    forge.formatter = () => injected;
+    await refusedOnCompile(RUNTIME_DEMAND, 'var s = "a";\nif (s !== "a") throw 1;');
+  });
+
+  // One forgery per field category through compile(): refused by name, never an exception.
+  it.each(FIELDS)("refuses a forged %s through compile()", async (field) => {
+    arrangeField(field, [[kernel("trap"), field === "receipt" || field === "slot" ? kernel("new") : undefined]]);
+    await refusedOnCompile(RUNTIME_DEMAND);
+  });
+});
+
 describe("#7354 Str2-c — the census refuses a forged formatter scratch", () => {
   const scratchBindings = (setup: PhysicalNativeStringSetup) =>
     setup.bindings.filter((row) => row.resourceKey.endsWith(":data"));
@@ -495,6 +721,36 @@ describe("#7354 Str2-c — the census refuses a forged formatter scratch", () =>
           bindings: setup.bindings.map((row) =>
             scratchBindings(setup).includes(row) ? { ...row, entry: any.entry } : row,
           ),
+        };
+      },
+    ],
+    ...[0, 1].map(
+      (which) =>
+        [
+          `with its ${which ? "setup-derived" : "canonical"} binding alone on another entry id`,
+          (setup: PhysicalNativeStringSetup) => {
+            const any = setup.bindings.find((row) => row.resourceKey.endsWith(":any"))!;
+            const target = scratchBindings(setup)[which];
+            return {
+              ...setup,
+              bindings: setup.bindings.map((row) =>
+                row === target ? { ...row, entry: { ...row.entry, id: any.entry.id } } : row,
+              ),
+            };
+          },
+        ] as const,
+    ),
+    [
+      // Same storage and nullability, another type identity: on the setup and on its canonical binding alike.
+      "replaced by a structurally equal but distinct support type",
+      (setup: PhysicalNativeStringSetup) => {
+        const scratch = setup.formatterScratch!;
+        const ref = { ...scratch.ref, binding: { kind: "support", bindingId: scratch.ref.binding.bindingId + "x" } };
+        const canonical = scratchBindings(setup)[0];
+        return {
+          ...setup,
+          formatterScratch: { ...scratch, ref } as never,
+          bindings: setup.bindings.map((row) => (row === canonical ? { ...row, reference: ref as never } : row)),
         };
       },
     ],
