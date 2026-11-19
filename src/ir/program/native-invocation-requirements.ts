@@ -6,7 +6,8 @@ import type { IrUnitId } from "../../shared/contracts/ir-identity.js";
 import {
   IR_CLOSURE_VECTOR_APPLY,
   IR_CLOSURE_UNDEFINED,
-  closureMethodArity,
+  IR_CLOSURE_METHOD_PREFIX,
+  arityCallableArity,
 } from "../core/closure-invocation-callables.js";
 import { nativeAsyncCallableValueTypes } from "../runtime/native-async-callables.js";
 import {
@@ -204,7 +205,7 @@ function calculate(
     const call: IrInstrCall = row.instruction,
       binding = call.target.binding;
     if (binding.kind !== "intrinsic") continue;
-    const arity = closureMethodArity(binding.symbol);
+    const arity = arityCallableArity(IR_CLOSURE_METHOD_PREFIX, binding.symbol);
     const kind =
       arity !== undefined
         ? "method"
