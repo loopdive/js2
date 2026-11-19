@@ -579,10 +579,13 @@ export function nativeRealmCompletedSlots(
   tx: PhysicalModuleReservations,
   pack: NativeRealmReservations,
 ): EmittedNativeRealmSlots {
-  const { functions, types, globals } = nativeRealmReservationInventory(tx, pack);
-  const indices = (tokens: readonly (FunctionReservation | TypeReservation | GlobalReservation)[]) =>
-    new Set(tx.physicalIndices(tokens));
-  return Object.freeze({ functions: indices(functions), types: indices(types), globals: indices(globals) });
+  // (#7365) One layout audit, taken after the inventory and its index reads, instead of one per read.
+  return tx.audited(() => {
+    const { functions, types, globals } = nativeRealmReservationInventory(tx, pack);
+    const indices = (tokens: readonly (FunctionReservation | TypeReservation | GlobalReservation)[]) =>
+      new Set(tx.physicalIndices(tokens));
+    return Object.freeze({ functions: indices(functions), types: indices(types), globals: indices(globals) });
+  });
 }
 /** This certifies bootstrap resources only. The consumer separately authenticates its real source bodies. */
 export function requireCompletedNativeRealmBootstrap(

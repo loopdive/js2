@@ -13,11 +13,12 @@ task_type: implementation
 area: ir
 goal: ir-full-coverage
 depends_on: []
-related: [7354]
+related: [7354, 7400]
 # 2026-11-19 (part A, review round 1): src/ir/program-consumer.ts +7, the three `audited(() => { ... })` wrappers
 # around the post-seal reader blocks (two lines each) and the one-line reason at the completion checks; they wrap
 # reads in place, so there is no subsystem module to move them to. `materializePhysicalProgram` 300 → 303: the
-# wrapper around its six completion checks is inline there at the reviewer's request (one caller).
+# wrapper around its six completion checks is inline there at the reviewer's request (one caller). Splitting
+# `materializePhysicalProgram` by its numbered steps is #7400 (backlog), which retires this grant.
 loc-budget-allow:
   - src/ir/program-consumer.ts
 func-budget-allow:
