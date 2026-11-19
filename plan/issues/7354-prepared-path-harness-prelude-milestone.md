@@ -43,8 +43,6 @@ loc-budget-allow:
   - src/ir/program-source.ts
   - src/ir/from-ast.ts
   - src/compiler/ir-program-presentation.ts
-import-cycles-allow:
-  - backend->ir: 120 # 2026-11-17 (#7354 Str review 2): the native string length emitter reads the selected carrier field through the shared preparedStringLenProvider (ir/runtime/intrinsic-preparation.ts) instead of re-implementing it; 2026-11-19 (#7354 Perf2): native-string-values.ts uses the one settled-verdict mechanism (ir/program/settled-verdict.ts), which moved out of it because the ir requirement modules use it too and ir cannot import backend
 ---
 
 # #7354 — Prepared IR path, milestone 1

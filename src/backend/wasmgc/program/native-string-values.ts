@@ -30,12 +30,12 @@ import {
   assertNativeValueResourcePlanFor,
   type NativeValueResourcePlan,
 } from "../../../ir/program/native-value-resources.js";
-import { freezePreparedIrValue, preparedIrDataMismatch } from "../../../ir/program/data.js";
 import {
-  checkUnlessSettled,
-  PreparedIrSettledChecks,
-  type PreparedIrSettlement,
-} from "../../../ir/program/settled-verdict.js";
+  freezePreparedIrValue,
+  preparedIrDataMismatch,
+  preparedIrFrozenCollectionMembers,
+} from "../../../ir/program/data.js";
+import { preparedIrSettledVerdicts, type PreparedIrSettlement } from "../../../shared/contracts/settled-verdict.js";
 import { PreparedIrProgramInvariantError } from "../../../ir/program/errors.js";
 import type { Instr } from "../../../wasm/model/instructions.js";
 import type {
@@ -444,8 +444,11 @@ interface Owner {
   readonly authentication: PreparedIrSettlement;
 }
 const owners = new WeakMap<NativeStringValueReservations, Owner>();
+// Bound here rather than imported from the IR's binding: the backend reads the IR's frozen collections only through
+// program data, which it already imports.
+const { checkUnlessSettled, settledChecks } = preparedIrSettledVerdicts(preparedIrFrozenCollectionMembers);
 /** A re-plan of the whole program: settled per input object, so the foundation and the reservation share it. */
-const currentInputs = new PreparedIrSettledChecks<NativeStringValueReservationInput>();
+const currentInputs = settledChecks<NativeStringValueReservationInput>();
 export function assertNativeStringValueReservationInput(input: NativeStringValueReservationInput): void {
   currentInputs.check(input, () => checkReservationInput(input));
 }

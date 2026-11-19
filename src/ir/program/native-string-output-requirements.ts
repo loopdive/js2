@@ -20,12 +20,7 @@ import { collectNativeStringValueDemands, type NativeStringValueDemands } from "
 import { freezePreparedIrValue, preparedIrDataMismatch } from "./data.js";
 import { PreparedIrProgramInvariantError } from "./errors.js";
 import { assertPreparedIrProgramPopulation } from "./population.js";
-import {
-  checkUnlessSettled,
-  PreparedIrSettledChecks,
-  settledAtIssue,
-  type PreparedIrSettlement,
-} from "./settled-verdict.js";
+import { checkUnlessSettled, settledChecks, settledAtIssue, type PreparedIrSettlement } from "./settled-verdict.js";
 
 export interface NativeStringOutputOptions {
   readonly emptyIdentity: boolean;
@@ -96,7 +91,7 @@ function locate(demands: NativeStringValueDemands, occurrence: number, detail: s
 }
 
 /** A census is a property of its demands, not of the derivation that reads it: authenticated once per demands. */
-const authenticatedCensus = new PreparedIrSettledChecks<NativeStringValueDemands>();
+const authenticatedCensus = settledChecks<NativeStringValueDemands>();
 function authenticateCensus(demands: NativeStringValueDemands): void {
   authenticatedCensus.check(demands, () => checkCensus(demands));
 }

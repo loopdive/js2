@@ -2,13 +2,13 @@
 //
 // #7354 Perf2 — the Prepared path's currentness checks re-derived the whole program at every string emit. Each check
 // that is a pure function of input that can no longer change now runs once per input (checkUnlessSettled,
-// PreparedIrSettledChecks and settledAtIssue in src/ir/program/settled-verdict.ts; the allocation registry restore
+// settledChecks and settledAtIssue, src/shared/contracts/settled-verdict.ts bound in src/ir/program/settled-verdict.ts; the allocation registry restore
 // of src/ir/program/prepared-allocations.ts), and a body's emits share one layout audit. These tests try to pass a
 // mutated input through every one of those paths: each must be refused, never a stale pass.
 import { describe, expect, it } from "vitest";
 import {
   checkUnlessSettled,
-  PreparedIrSettledChecks,
+  settledChecks,
   settledAtIssue,
   type PreparedIrSettlement,
 } from "../src/ir/program/settled-verdict.js";
@@ -109,7 +109,7 @@ describe("#7354 Perf2 — checkUnlessSettled", () => {
   });
 
   it("keeps one verdict per input object, and none for a mutable copy", () => {
-    const checks = new PreparedIrSettledChecks<object>();
+    const checks = settledChecks<object>();
     const a = Object.freeze({ value: 1 });
     const b = Object.freeze({ value: 1 });
     const c = counting();

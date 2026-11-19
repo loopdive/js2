@@ -7,14 +7,14 @@
 import type { AllocSiteId } from "../core/nodes.js";
 import { AllocSiteRegistry } from "../analysis/alloc-registry.js";
 import type { AllocRegistrySnapshot } from "../analysis/contracts/allocations.js";
-import { PreparedIrSettledChecks } from "./settled-verdict.js";
+import { settledChecks } from "./settled-verdict.js";
 
 /** Read-only: the restored registry is shared by every reader of the same immutable snapshot. */
 export interface PreparedAllocationSites {
   resolve(id: AllocSiteId): ReturnType<AllocSiteRegistry["resolve"]>;
 }
 
-const restored = new PreparedIrSettledChecks<AllocRegistrySnapshot, PreparedAllocationSites>();
+const restored = settledChecks<AllocRegistrySnapshot, PreparedAllocationSites>();
 
 export function preparedAllocationSites(snapshot: AllocRegistrySnapshot): PreparedAllocationSites {
   return restored.check(snapshot, () => AllocSiteRegistry.fromSnapshot(snapshot));

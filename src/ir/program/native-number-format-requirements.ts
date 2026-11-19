@@ -24,7 +24,7 @@ import {
 import { assertIrRuntimeSupport, type IrNumberFormatRadixSupport } from "./runtime-support.js";
 import { preparedIrDataMismatch } from "./data.js";
 import { PreparedIrProgramInvariantError } from "./errors.js";
-import { PreparedIrSettledChecks } from "./settled-verdict.js";
+import { settledChecks } from "./settled-verdict.js";
 
 export interface NativeNumberFormatRequirementInput {
   readonly program: PreparedIrProgram;
@@ -204,7 +204,7 @@ export function assertNativeNumberFormatRequirementsCurrent(
   // the requirements alone.
   currentRequirements.check(requirements, () => checkCurrent(requirements));
 }
-const currentRequirements = new PreparedIrSettledChecks<NativeNumberFormatRequirements>();
+const currentRequirements = settledChecks<NativeNumberFormatRequirements>();
 function checkCurrent(requirements: NativeNumberFormatRequirements): void {
   const current = deriveNativeNumberFormatRequirements(requirements);
   if (
