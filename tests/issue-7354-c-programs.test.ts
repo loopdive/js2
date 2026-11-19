@@ -161,7 +161,8 @@ describe("#7354 C2 — own properties of a function object", () => {
       "a read before the first assignment",
       "function f(){} if (f.p !== undefined) throw 1; f.p = 1;",
       "function f(){} if (f.p === undefined) throw 1; f.p = 1;",
-      // The checker's diagnostic is a frontend error, which the Prepared entry refuses before the IR runs.
+      // The checker's TS2565 comes first; like the ordinary compiler, the entry tolerates it, and the IR's own refusal
+      // is `identifier "f" is not in scope in <module-init>`.
       "Property 'p' is used before being assigned.",
     ],
   ])("%s", check, SLOW);

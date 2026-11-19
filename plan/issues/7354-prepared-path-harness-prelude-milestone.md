@@ -59,6 +59,10 @@ related: [7188, 2949, 3526, 3527, 3518, 7106, 7349, 7350, 7352]
 # (the record lives beside the consumer-private observation map; the slot computation, `nativeRealmCompletedSlots`,
 # lives in native-realm.ts) and the imports. The two native binding lists fold through `plannedNativeCallBindings`
 # (program-physical-plan.ts) instead of growing each.
+# 2026-11-19 (slice C, TypeScript diagnostics): src/compiler.ts +12,
+# `singleSourceHasHardTypeErrors`, the single-source compiler's type gate, now asked
+# by the strict Prepared entry too in place of the presentation's blanket refusal of
+# every error-severity diagnostic (ir-program-presentation.ts -2).
 loc-budget-allow:
   - src/ir/program-consumer.ts
   - src/ir/program-physical-plan.ts
