@@ -92,9 +92,11 @@ which tests IsCallable and throws a catchable TypeError.
 
 **Fix.** `varMayHoldNonClosure`
 (`src/codegen/expressions/var-non-closure-writes.ts`) answers whether the
-callee's `var` (found by oracle declaration identity, its writes scanned over
-its declaring function or source file with `identifierWritesOf`, cached per
-declaration) is written more than once and some write stores anything other
+callee's `var` or `let` (found by oracle declaration identity, its writes
+scanned over its declaring function or source file with `identifierWritesOf`,
+plus the declaration's own initializer, which `identifierWritesOf` leaves out
+for a `let`/`const` declarator; cached per declaration) is written more than
+once and some write stores anything other
 than a function expression, an arrow or a nullish value (`null`, `void x`, the
 global `undefined`, resolved through the oracle). So a number, `g += 1`, an
 `any` (`JSON.parse`), a union (`c ? 3 : function () {}`), an instance, a
@@ -123,12 +125,14 @@ in its own module, one flag read by the three gates it controls.
 **Tests.** `tests/issue-7334-reassigned-callable-module-var.test.ts`: through
 the runner on standalone and gc, the issue repro, the caught form, the
 initializer and arrow-initializer forms, the alias (`var h = g; g = 3;
-h = g`), a function-local var initialised with a function, a compound write,
+h = g`), a function-local var initialised with a function, a module and a
+function-local `let g = function () {}; g = 3`, a compound write,
 a union, an `any` and an instance write throw a catchable TypeError; a
 function declaration and a builtin of another signature, a function stored
 after a number and a var holding only functions are called with the right
 result. The repro compiles on wasi. A route check on the emitted WAT pins that
-function-only, arrow, null, void and undefined writes, a single property-read
+function-only, arrow, null, void and undefined writes, a lone `let` function
+initializer, a single property-read
 write and a local var shadowing a module var that holds a number keep the
 typed call; that a number write (module, function initializer, local) and a
 local `undefined` that shadows the global leave it. Each route pin fails under

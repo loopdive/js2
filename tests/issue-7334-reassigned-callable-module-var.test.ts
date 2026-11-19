@@ -51,6 +51,10 @@ var g; g = function (a) { return a + 1; }; g = k;
 assert.sameValue(g(5), 10);`,
   "a builtin of another signature": `var g = function () { return 1; }; g = Math.max;
 assert.sameValue(g(1, 5), 5);`,
+  "a let initialised with a function": `let g = function () {}; g = 3; ${CAUGHT}`,
+  "a function-local let initialised with a function": `function f() { let g = function () {}; g = 3;
+  try { g(); return 0; } catch (e) { return e instanceof TypeError ? 1 : 2; } }
+assert.sameValue(f(), 1);`,
   "a function stored after a number": `var getter; getter = 3; getter = function (a) { return a + 7; }; var r = 0;
 (function () { r = getter(1); })();
 assert.sameValue(r, 8);`,
@@ -108,6 +112,7 @@ async function callRoute(source: string, funcName: string): Promise<"typed" | "d
 describe("#7334 vars written once, or only with closures or nullish, keep the typed call", () => {
   const ROUTES: [string, string, string, "typed" | "dynamic"][] = [
     ["only function writes", `var g; g = function (a) { return a + 7; }; var r = g(1);`, "__module_init", "typed"],
+    ["a let function initializer", `let g = function (a) { return a + 7; }; var r = g(1);`, "__module_init", "typed"],
     ["a function initializer", `var g = function (a) { return a + 7; }; var r = g(1);`, "__module_init", "typed"],
     ["a null write", `var g; g = function (a) { return a + 7; }; g = null; var r = g(1);`, "__module_init", "typed"],
     [
