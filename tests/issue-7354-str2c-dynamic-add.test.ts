@@ -193,6 +193,30 @@ describe("#7354 Str2-c — dynamic + with operands of a known kind", () => {
     );
   });
 
+  // A chain's first `+` of two non-strings is a number, not a known string, to the next `+` of the chain.
+  it("answers chains whose first pair is numeric", async () => {
+    const declarations = "function f(a, b, c) { return a + b + c; }\nfunction g(a, b, c, d) { return a + b + c + d; }";
+    const fns = new Function(`${declarations}; return [f, g];`)() as ((...v: unknown[]) => unknown)[];
+    const rows: readonly (readonly ["f" | "g", readonly string[]])[] = [
+      ["f", ["1", "2", '"x"']],
+      ["f", ["true", "1", "null"]],
+      ["f", ["1", "2", "3"]],
+      ["f", ['"a"', "1", "2"]],
+      ["f", ["undefined", "1", '"z"']],
+      ["g", ["1", "2", "3", '"s"']],
+    ];
+    await expectLikeNode((right) =>
+      [
+        declarations,
+        ...rows.map(([name, args], i) => {
+          const expected = fns[name === "f" ? 0 : 1]!(...args.map(value));
+          const call = `${name}(${args.join(", ")})`;
+          return `if (!${exact(call, !right && i === rows.length - 1 ? wrongOf(expected) : expected)}) throw ${i};`;
+        }),
+      ].join("\n"),
+    );
+  }, 120_000);
+
   it("keeps typed + typed as before (no dynamic expansion)", async () => {
     await expectLikeNode((ok) => `var a = 1; var b = 2;\nif (a + b !== ${ok ? 3 : 4}) throw 1;`);
   });
