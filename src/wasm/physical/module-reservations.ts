@@ -254,6 +254,8 @@ export class PhysicalModuleReservations {
   #canonicalGroupText: string;
   #canonicalGroupRegistered = false;
   #importsClosed = false;
+  /** Imports per index space, settled at freeze (imports are closed by then). */
+  #importOffsets: Readonly<Record<"function" | "global" | "tag", number>> = { function: 0, global: 0, tag: 0 };
   #checkingSelfDefinition = false;
   /** Inside `audited`: nested layout audits are skipped, ledger mutations are refused, one audit runs on exit. */
   #auditing = false;
@@ -340,7 +342,6 @@ export class PhysicalModuleReservations {
     if (this.#checkingSelfDefinition) this.#fail("reentrant self-type definition");
     if (this.#auditing) this.#fail("mutation inside a read-only audited check");
     if (this.#state !== phase) this.#fail(`operation requires ${phase}, observed ${this.#state}`);
-    this.#verifyLayout();
   }
 
   #key(key: PhysicalResourceKey): void {
@@ -449,7 +450,6 @@ export class PhysicalModuleReservations {
   internFunctionType(params: readonly ValType[], results: readonly ValType[], name?: string): number {
     if (this.#checkingSelfDefinition) this.#fail("reentrant self-type definition");
     if (this.#state !== "reserving" && this.#state !== "filling") this.#fail(`type lookup in ${this.#state}`);
-    this.#verifyLayout();
     const key = funcTypeKey([...params], [...results]);
     const cached = this.#cache.get(key);
     if (cached !== undefined) {
@@ -734,7 +734,13 @@ export class PhysicalModuleReservations {
 
   freezeReservations(): void {
     this.#require("reserving");
+    this.#verifyLayout();
     this.#validateResources();
+    this.#importOffsets = Object.freeze({
+      function: this.#importCount("func"),
+      global: this.#importCount("global"),
+      tag: this.#importCount("tag"),
+    });
     this.#state = "filling";
   }
 
@@ -760,26 +766,24 @@ export class PhysicalModuleReservations {
   /** Final raw index at this frozen layout; never hand .handle to ProgramAbiMap. */
   physicalIndex(token: PhysicalReservation): number {
     if (this.#state !== "filling" && this.#state !== "sealed") this.#fail(`physical index requested in ${this.#state}`);
-    this.#verifyLayout();
-    this.#owned(token);
-    const position = this.#positions.get(token)!;
-    switch (token.kind) {
-      case "function":
-        return this.#importCount("func") + this.#module.funcOrdinalToPosition[token.handle - STABLE_FUNC_BASE]!;
-      case "global":
-        return this.#importCount("global") + position;
-      case "tag":
-        return this.#importCount("tag") + position;
-      case "table":
-        return this.#importCount("table") + position;
-      case "memory":
-        return this.#importCount("memory") + position;
-      default:
-        return position;
-    }
+    return this.#coordinate(token);
   }
 
-  /** One fresh layout audit for a dense own-data list; never invoke its getters or iterator. */
+  /**
+   * A token's index from private state settled at freeze: its reserved position plus the import offset of its
+   * index space. The allocator admits no table/memory imports; their positions, like flat type coordinates, are
+   * already final. No public array is read, so an outside mutation cannot steer an index; `seal()` audits it.
+   */
+  #coordinate(token: PhysicalReservation): number {
+    this.#owned(token);
+    const offset =
+      token.kind === "function" || token.kind === "global" || token.kind === "tag"
+        ? this.#importOffsets[token.kind]
+        : 0;
+    return this.#positions.get(token)! + offset;
+  }
+
+  /** Indices for a dense own-data list; never invoke its getters or iterator. */
   physicalIndices(tokens: readonly PhysicalReservation[]): readonly number[] {
     if (this.#state !== "filling" && this.#state !== "sealed") this.#fail(`physical index requested in ${this.#state}`);
     if (!Array.isArray(tokens)) this.#fail("physical indices require a dense own-data array");
@@ -792,33 +796,15 @@ export class PhysicalModuleReservations {
       if (!descriptor || !("value" in descriptor)) this.#fail("physical indices require dense own-data entries");
       captured.push(descriptor.value);
     }
-    // A Proxy descriptor trap can run during capture. Audit only after capture,
-    // then use private frozen tokens/positions without reading public arrays.
+    // A Proxy descriptor trap can run during capture: recheck the phase after it.
     if (this.#state !== "filling" && this.#state !== "sealed") this.#fail(`physical index requested in ${this.#state}`);
-    this.#verifyLayout();
-    if (this.#state !== "filling" && this.#state !== "sealed") this.#fail(`physical index requested in ${this.#state}`);
-    const offsets = { function: 0, global: 0, tag: 0 };
-    for (const token of this.#tokens) {
-      if (token.kind === "function-import") offsets.function++;
-      else if (token.kind === "global-import") offsets.global++;
-      else if (token.kind === "tag-import") offsets.tag++;
-    }
-    const indices: number[] = [];
-    for (const token of captured) {
-      this.#owned(token);
-      const offset =
-        token.kind === "function" || token.kind === "global" || token.kind === "tag" ? offsets[token.kind] : 0;
-      // The allocator admits no table/memory imports. Their positions, like
-      // imported resources and flat type coordinates, are already final.
-      indices.push(this.#positions.get(token)! + offset);
-    }
+    const indices = captured.map((token) => this.#coordinate(token));
     return Object.freeze(indices);
   }
 
   /** Authenticate producer completion without sealing unrelated reservations. */
   assertCompletedReservation(token: FunctionReservation | GlobalReservation): void {
     if (this.#state !== "filling" && this.#state !== "sealed") this.#fail(`completion requested in ${this.#state}`);
-    this.#verifyLayout();
     this.#owned(token);
     if (token.kind === "function") {
       if (!this.#filledFunctions.has(token)) this.#fail(`missing function fill ${token.key}`);
@@ -869,12 +855,9 @@ export class PhysicalModuleReservations {
       const snapshot = this.#captureFunction(token.object);
       const shell = data.immutable ? this.#captureFunction(ownedFunctionShell(token.object)) : undefined;
       if (this.#state !== "filling") this.#fail("owned publication changed ledger phase");
-      this.#verifyLayout();
       if (this.#state !== "filling" || this.#filledFunctions.has(token)) this.#fail("reentrant owned publication");
       this.#filledFunctions.set(token, { locals: data.locals, body: data.body, snapshot });
       if (shell !== undefined) this.#ownedFunctions.set(token, shell);
-      // Registration must participate in the closing audit before returning authority.
-      this.#verifyLayout();
       if (this.#state !== "filling") this.#fail("owned closing audit changed ledger phase");
     } catch (error) {
       if (this.#state === "failed") throw error; // Already prefixed by #fail.
@@ -990,6 +973,7 @@ export class PhysicalModuleReservations {
   /** Only completed, unchanged actual resources contribute to this census. */
   seal(): PhysicalModuleCensus {
     this.#require("filling");
+    this.#verifyLayout();
     this.#validateResources();
     for (const token of this.#tokens) {
       if (token.kind === "function" && !this.#filledFunctions.has(token))

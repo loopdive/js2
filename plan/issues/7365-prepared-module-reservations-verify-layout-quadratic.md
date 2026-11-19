@@ -132,6 +132,47 @@ If chosen:
 - one new mutation test per folded check proves each kind is still caught
   at seal.
 
+## Prototype of options 1 + 3 (2026-11-19, WIP on this branch)
+
+- **Built:**
+  - Queries (`physicalIndex`, `physicalIndices`, `assertCompletedReservation`)
+    compute from private state settled at freeze, through one `#coordinate`
+    helper: the reserved position plus the import offset of its index space.
+    They read no public array.
+  - Reserve and fill calls check only their own data.
+  - `#verifyLayout()` (the full audit) runs at `freezeReservations()` and at
+    `seal()`, and in `audited()`, which is unchanged (the perf2 lane's).
+- **Synthetic bench, legacy fills:**
+
+| N | fill + index before | after | queries after fill, before | after | freeze | seal |
+|---|---|---|---|---|---|---|
+| 250 | 397 ms | 3 ms | 268 ms | 0 ms | 3 ms | 5 ms |
+| 500 | 1,846 ms | 3 ms | 1,211 ms | 0 ms | 3 ms | 5 ms |
+| 1,000 | 6,676 ms | 4 ms | 4,506 ms | 0 ms | 6 ms | 13 ms |
+| 2,000 | 29,267 ms | 11 ms | 22,193 ms | 0 ms | 8 ms | 21 ms |
+
+- **Option 2 measured (owned fills, which copy and freeze at fill):**
+  - On main, N=250 / 500 / 1,000: fill + index takes 1.5 s / 6.2 s / 23.9 s,
+    and queries after fill take 0.3 s / 1.3 s / 5.6 s. They are as quadratic
+    as legacy fills, because the per-query audit is O(N) per call whatever
+    the body size.
+  - With the prototype, at N=2,000, fill + index takes 48 ms.
+  - Freezing is cheap, but it does not remove the quadratic term while
+    queries keep auditing. Freezing legacy fills would also turn each pinned
+    mutation into a TypeError at its own site.
+- **Contract fallout:**
+  - On the 43 pin files, 216 tests flip to failing (0 to passing): 547
+    failing against 331 on main.
+  - Every one expects detection at a query or at a fill of another resource.
+  - Largest files: `issue-3518-physical-snapshot-comparison` 40,
+    `issue-3527-publication-snapshot-comparison` 29,
+    `issue-3527-descriptor-snapshots` 20,
+    `issue-3518-native-primitive-wrapper-storage` 13,
+    `issue-3518-native-authentication-performance` 11,
+    `issue-3525-prepared-pipeline-boolean-presentation` 10,
+    `issue-3518-native-number-primitive-classifier` 10.
+  - Re-pointing these awaits the lead's decision.
+
 ## Implementation Plan (pending the decision above)
 
 - **Module:** `src/wasm/physical/module-reservations.ts` only. The check
