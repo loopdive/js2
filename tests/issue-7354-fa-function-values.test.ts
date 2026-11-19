@@ -206,6 +206,18 @@ describe("#7354 Fa — function values on the Prepared path", () => {
       "var f = function () { return arguments.length; }; f();",
       "arguments.length outside its function's entry prologue",
     ],
+    // A var that shares its name with a function declaration: its home does not hold the hoisted function, and a
+    // direct call of the name would bind the declaration and ignore the var's store (review round 2, N1).
+    ...[
+      "var f = function (a) { return 1; }; function f(a) { return 2; } f(0);",
+      "function f(a) { return 2; } var f = function (a) { return 1; }; f(0);",
+      "var f = 1; function f(a) { return 2; } f(0);",
+      "function f(a) { return 2; } var f = 1; function h() { return f(0); } h();",
+    ].map((program) => [
+      `a var sharing its name with a function declaration: ${program}`,
+      program,
+      "script var f shares its binding with a function declaration",
+    ]),
     // Literals without the all-dynamic contract keep the annotated-closure rule.
     [
       "a parameter with a default",
@@ -354,12 +366,13 @@ describe("#7354 Fa — the legalization arms", () => {
     expect(boxed).toEqual({ kind: "coerce.to_externref", value: 3, result: 1, resultType: externref });
   });
 
-  it("leaves the function-value box of anything but a packed callable to the helper refusal", () => {
+  it("refuses the function-value box of anything but a packed callable by name", () => {
     const helper = { ...box, args: [0] };
-    expect(() => legalizeDynamicValues(fn([helper]))).toThrow("__ir_dyn_call_box");
+    expect(() => legalizeDynamicValues(fn([helper]))).toThrow("__ir_dyn_call_box of a value of type closure");
   });
 
-  it("states the function kind for a packed callable coerced into an object's property", () => {
+  // Without the function kind, the coercion of a packed callable into the carrier refuses (`carrierKind`).
+  it("admits a packed callable coerced into an object's property as the function kind, its own externref", () => {
     const stored = { kind: "coerce.to_externref", value: 3, result: 1, resultType: externref };
     const [, , coerced] = legalizeDynamicValues(fn([closureNew, pack, stored])).blocks[0]!.instrs as IrInstr[];
     expect(coerced).toEqual(stored);

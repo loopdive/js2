@@ -2402,6 +2402,16 @@ Verified on the rework head: typecheck, loc, func (also against `origin/main`), 
 dead-exports, import-cycles, compiler-boundaries pass; 420 tests (the Fa file, #7354 H/H2/X/P/D1/O, prepared
 entry/runtime, the three issue-3518 getter files) all pass.
 
+### Review round 2 (BLOCKER on 1474338c53)
+
+| finding | answer | proof |
+| --- | --- | --- |
+| N1: `var f = function … ; function f(a) {…}`: the call `f(0)` bound the hoisted declaration and ignored the var's store (also `var f = 1`, older than Fa; both orders, and from inside a function) | The root: the checker gives the var and the declaration two symbols, so the direct-call resolvers (`targetForSymbol`, `makeCallableForSymbol`) see a never-written function, and the var's home never holds the hoisted function. The Prepared module-binding planning (`prepareIrProgramSources`) now refuses a top-level var whose name a top-level function declaration also binds (`moduleDeclares`, the selector's existing predicate, now exported): `script var f shares its binding with a function declaration`. One place, before any unit is lowered, so store, read and call of the name all refuse; `var f;` with a declaration refuses too (its home would read `undefined` for the function). Ordinary pipeline untouched (the check is on the whole-program preparation only) | four refusal pins: function-expression store and number store, both orders, one called from a function |
+| kind rule: every carrier entry Fa adds goes through `admit` | Confirmed: the `__ir_dyn_call_box` arm (the function-value projection) and the coerce of a packed callable both return `admit("function", …)`; nothing Fa adds bypasses it | — |
+| kind rule (a)/(c) still open | Not in realm head `f8d848bfdc` (its only commit since `cd03504321` is the O1 adapter-row refactor), so not merged. Open for #7312: `dynamic-value-legalization.ts` coerce arm `return [instr]` (L223), the blanket `carrierOf` re-type of every other result (L233), and `refuseUnadmittedThrows` admitting any `coerce.to_externref` (L302). **Ordering: Fa merges #7312's head, and re-points those lines at `admit`, before Fa lands on main.** | — |
+| the "states the function kind" unit test survives deleting the coerce-arm `admit` | `admit("function")` emits the coercion it was given: the arm is a statement about types only. Renamed the test to say so (it pins the output, not the arm) | — |
+| kind rule (a)/(c) and the throw rule, after merging #7312 (2026-11-19) | **Enforced.** Fa merged realm-eh `52ac2f56ab` (#7312 `39b631a9c6` + the realm EH fix), then #7312's head `0bb1eb4e22`. #7312's `carrierKind` (S3) and Fa's `TYPEOF_KIND`/`admit` are now one: `CarrierKind` (the `TYPEOF_KIND` values, `function` included) is the one kind table, `carrierKind` its one lookup (a callable is `function`; a box, the boundary boxes, null, `dyn.undefined`; a coercion's and the function-value projection's operand through `carriedOperand`; a dynamic value only as a parameter, block argument, or the result of an instruction that carries one, `CARRYING` plus a source call), and `admit` the one admission point. (a) the coerce-to-carrier arm, (c) every other kept instruction with a `dynamic` result (`keep`), the box arm and the function-value projection all go through `admit`; `refuseUnadmittedThrows` asks `carrierKind`. A value without a kind refuses by name (`<operation> of <value>`). Merge fix: realm's throw-rule scope `sourceFiles.some(bindsCatch)` became `holds(file, bindsCatch)`, since Fa made `bindsCatch` a node predicate | Mutation, deleting the `callable` → `function` row in `carrierKind`: 16 red (X "admits a closure pack"; Fa: 13 run/refuse cases, the projection arm and the object-member coerce test); restored. X's "a closure pack" moved from the refusal table to the admission table; a new X pin refuses a `dynamic` result of no kind (a call outside the source program); the Fa coerce test asserts behaviour again ("admits a packed callable … as the function kind") |
+
 ### Compile time
 
 A program with one closure compiles in about 22 s through the strict entry on a 4-core box (one with no closure:
@@ -2481,6 +2491,112 @@ of 8,717 ES5 files.
   `formatIdentityFreeValue` (assert.js:24): `direct call to "String" has no exact AST-site plan`.
 
 
+## Slice O: Implementation Plan (2026-11-19)
+
+Branch `claude/7354-o` on `claude/7354-perf2` (`503ff2cb4d`). Lead decision of 2026-11-19: option A, in four steps
+O1 to O4 (these are this slice's steps, not #7352's parked ordinary-pipeline slice of the same name).
+
+### What exists, measured on the base
+
+- `var o = { a: 1 }` (script level) refuses: "proven dynamic binding 'o' initializer has no supported carrier".
+- `function f(){ var o = { a: 1 }; return o.a; }` is accepted and then fails at emission: "resolver cannot lower
+  object<a:f64>" (the closed-struct `object.new` the ordinary selector would have refused; the "object literal inside
+  a function throws an emission invariant error" of the P census).
+- `var o; o.x` refuses: "dynamic operation dyn.member_get has no Prepared intrinsic".
+- The source contracts `js.object.{create-default, create-null, create-with-prototype, define-data, define-accessor,
+  define-attributes, get, has}` (`src/ir/runtime/ordinary-object-callables.ts`) are declared, but none materializes:
+  an accessor literal fails with "intrinsic callable js.object.get … needs runtime function materialization"
+  (`program-physical-plan.ts`, the fall-through of the required-callable loop). There is no `set`.
+- The realm (`src/backend/wasmgc/program/native-realm.ts`) is reserved whenever a program has a `js.object.*` use.
+  Its builtin-object kernel (`native-builtin-functions.ts`) already owns the object protocol the source needs:
+  `objectPrototype` (the realm's Object.prototype, initialized on first use), `lookup` / `get` over ordinary
+  `$Object`s and builtin function objects (status + value, accessor entries dispatched through `method0`),
+  `has`; the storage pack owns `createWithPrototype`; the descriptor pack owns `defineData`. With no source
+  closures the realm builds its own closure population (`beginRealm`), so a program without closures needs nothing
+  from slice Fa.
+- `reserveNativeObjectGetResources` and the provenance gaps in `native-object-access-requirements.ts` belong to an
+  older design (static creation provenance per receiver). #3518 has no live claim (released 2026-09-03).
+
+### Target structure
+
+- **One public object family on the realm, one binding arm.** A new resource module
+  `src/backend/wasmgc/resources/native-source-objects.ts` reserves, inside the realm kernel's reservation, one
+  public function per `js.object.*` feature the program uses, with exactly the declared signature. Each is a thin
+  adapter over the kernel/storage/descriptor function that already implements it (bodies in a pure builder module
+  `src/runtime/wasmgc/values/source-object-bodies.ts`):
+  - `create-default` = `createWithPrototype(objectPrototype())` (an explicit Object.prototype link, so the kernel's
+    lookup never meets the "implicit prototype" state);
+  - `define-data` = the descriptor pack's `defineData` (CreateDataProperty on the literal's fresh object);
+  - `get` = kernel `get`, status folded (absent answers `undefined`; status 2/3 cannot occur for a receiver
+    built by `create-default`, and the adapter makes that a trap with a named invariant comment);
+  - O3 adds `set` = OrdinarySet here, beside `get`.
+- **Plan side.** `program-physical-plan.ts`: the required-callable loop's fall-through gains one arm for the
+  ordinary-object family, fed by a binding list built like `nativeInvocationAbiBindings` (one row per distinct
+  call route, resource key `<realm key>:source-object:<feature>`). The two binding builders share one helper
+  (`nativeCallableAbiBindings`) instead of a second copy.
+- **Consumer side.** `program-consumer.ts`: `reconcileInvocationBindings` becomes the one
+  `reconcileNativeBindings(rows, functions, context)` used for invocation and source-object rows.
+- **Front end (O1).** The Prepared resolver's ordinary-object plan (`src/frontend/builtins/prepare-ordinary-object-access.ts`)
+  extends from accessor literals to data-only literals; from-ast's existing `lowerOrdinaryDescriptorLiteral` (renamed
+  `lowerOrdinaryObjectLiteral`, it already lowers data members through `define-data` with mask 191) builds them. No
+  second literal lowering.
+- **Dynamic value (O2).** `dynamic-value-legalization.ts` gains the `object` carrier kind as one row in each
+  `Record<CarrierKind, …>` table (`KIND_TEST`, `TO_STRING_ARM`, `ADD_ROLE`, typeof answer). A box of an ordinary
+  object is the externref itself. Its kind test is a new `js.value.is_object` intrinsic in the dynamic-value
+  family (`dynamic-value-callables.ts`, one row). `+` and ToString on an object refuse by name until
+  ToPrimitive exists (the table row says so).
+- **Member access (O3/O4).** `dyn.member_get` / `dyn.member_set` legalize to one kind chain built by the existing
+  `kindChain`: `undefined`/`null` → TypeError (`emitThrowTypeErrorIfNullish`'s message), object →
+  `js.object.get`/`set`, a primitive kind → refusal by name at legalization ("member read of a primitive needs
+  its wrapper prototype"), recorded as the next gap for slice B / #7350.
+
+### Reused, and what duplicate goes
+
+- Reused: the realm kernel's object protocol, the storage and descriptor packs, the dynamic-value tables and
+  `kindChain`, `lowerOrdinaryDescriptorLiteral`, the invocation binding builder and reconciliation.
+- Removed duplicate: the per-family binding builder/reconciler pair becomes one parameterised pair. The static
+  provenance gaps that the runtime-typed adapters make obsolete are deleted, not bypassed (each named in the step's
+  commit).
+
+### Acceptance
+
+- O1: `function f(){ var o = { a: 1 }; return o.a; } if (f() !== 1) throw 1;` validates and runs through the
+  strict entry; a wrong answer throws; node agrees.
+- O2: `var o = { a: 1 }; if (o.a !== 1) throw 1;` at script level.
+- O3: the ladder's program `var o = { a: 1 }; o.b = 2; if (o.a + o.b !== 3) throw 1;`.
+- O4: `var o; o.x` throws a catchable TypeError; `var s = "a"; s.length` refuses by name.
+- Each step: refusals left pinned by name in `tests/issue-7354-o-objects.test.ts`; mutation checks on every new
+  table row and arm; ordinary-pipeline bytes identical on the 100-file sample × JS and standalone; the 411-row
+  sample tallied before and after.
+- Code quality: one binding arm and one reconciler for every native callable family; one row per kind in each
+  dynamic-value table; no adapter re-implements a kernel algorithm; no file or function over its budget without a
+  dated grant.
+
+### O2–O4 design, revised (2026-11-19, after O1)
+
+- **The object kind.** `CarrierKind` gains `object`, last in `KIND_ORDER`, so every total chain reaches it untested.
+  Its kind test is the complement of the others (`KIND_TEST.object = "complement"`: no other admitted kind), exact
+  because the admitted set is exact; a later kind (Fa's `function`) gets its own test and leaves the complement
+  right. `typeof` answers `"object"` for `null` and `object` (the `string.eq` arm tests the union). A box of a value
+  whose producer is `js.object.create-default` is the object kind; any other reference still refuses.
+- **ToPrimitive of an ordinary object, with a checked precondition.** OrdinaryToPrimitive of an object built by
+  `create-default` on the realm's pristine Object.prototype, in a program that stores no callable into an object and
+  defines no own `toString` / `valueOf`, answers `"[object Object]"` for every hint (ToNumber: NaN). The legalization
+  asks one program-wide predicate (`objectsArePlain`): no `define-accessor`, no callable value stored by
+  `define-data` / `set`, every defined or set key a string constant other than `toString` / `valueOf`, and no
+  producer of a realm object other than `create-default`. When it does not hold, the object arm of ToString, `+` and
+  ToNumber refuses by name. The arm is also keyed on the kind table: a compile-time assertion that `CarrierKind` has
+  no callable kind fails the build when Fa adds one, so the arm cannot outlive its precondition silently.
+- **Member read (O4).** `dyn.member_get(receiver, key)` with a constant key legalizes to one kind chain over the
+  receiver: `undefined` / `null` throw a TypeError (the source `__new_TypeError` call binds the realm errors pack's
+  constructor, one more realm-served row); `object` is `js.object.get(receiver, key, receiver)`; a primitive answers
+  `undefined` when the key names no property of its wrapper prototype or Object.prototype (a fixed list from the
+  specification, plus `length` and array indices for strings) under the same pristine-prototype precondition, and
+  refuses by name otherwise. A non-constant key refuses by name.
+- **Member write (O3).** `js.object.set` = OrdinarySet on the realm (a contract beside `get`, an adapter over the
+  kernel's lookup and the descriptor pack's define); the same receiver chain, a primitive receiver refusing by name.
+- **Catch.** The program-wide throw rule applies only where the program binds a catch: a TypeError thrown from a
+  member read is no carrier kind, so a program that also catches refuses by name until an error kind exists.
 ## Realm join (2026-11-19, branch `claude/7354-realm` from `origin/main`)
 
 The native realm of #3518 (`src/backend/wasmgc/program/native-realm.ts`) is reserved for any program with a
@@ -2488,6 +2604,13 @@ The native realm of #3518 (`src/backend/wasmgc/program/native-realm.ts`) is rese
 had no arm that binds a source call to a realm function, and the Prepared runtime census joined only the native
 string and formatter setups. This branch builds the shared join, and its first row, the source objects of slice O
 (step O1). Lane S4 (slice Fa) adds the closure/invocation owner as one more row.
+
+Review round 2 (RV7312, branch `claude/7354-realm-r2b`): the property-key fold moved to
+`src/shared/property-key-fold.ts`, so the resolver and the lowering share it and `{ ['a']: 3 }` runs again; both
+carrier rules ask one predicate (`carrierKind`: dynamic, string, boundary-boxed number or Boolean, `null`), and the
+throw rule binds only a program with a catch binding; the reference scan sees `{ o }` shorthand references and has
+resolver-level tests; the #3525 allocation and method-key pins and the #3518 callable-contract pin follow the new
+shape.
 
 ### Built
 
@@ -2541,3 +2664,23 @@ covers it, and the realm's fill and owner checks call `physicalIndex` thousands 
 square of the reserved resources. Reproducer: `.tmp/prof.mts` pattern, i.e. compile the proving program above twice
 through `src/test262/test262-prepared-entry.ts` (options `wholeProgram: prepared-program-required`, `wasmgc`,
 `standalone`, `allowJs`) and profile the second.
+
+### Review round 3 (2026-11-19): APPROVE on 39b631a9c6, then the exception-handling fix
+
+- **Mixed exception handling (found by S4 on CI's Node 25).** A realm module whose program has a user `try` mixed the
+  legacy `try … catch_all … rethrow` of three realm bodies with the `try_table` the user `try` lowers to. Node 25
+  (V8) rejects such a module at validation; Node 22 accepts it, and no #7312 test compiled a program with a `try`.
+  - Fix: on `claude/7354-realm-eh`, the realm bodies switch to `buildStandardTryTable` on the module tag (#6641).
+  - Guard: `tests/issue-7354-realm-eh.test.ts` asserts the module text has no legacy EH instruction beside the
+    `try_table`, so it holds on any Node.
+  - A search of src found no other legacy-EH emitter on the Prepared path: the IR emitter already turns `rethrow 0`
+    into `throw` inside a `try_table`, and the legacy sites left are in `src/codegen/` (the ordinary pipeline).
+- **Filed:** the IR-side source-object planner that would leave `native-invocation-abi.ts` one concern (#7407).
+- **Open nits (non-blocking):**
+  - A parenthesized literal receiver (`({a: 4, b: 5}).b`) refuses ("box of a non-primitive value"). Unwrapping the
+    parentheses in the resolver alone is NOT enough: the program then compiles but answers wrong (both the right and
+    the wrong comparison throw), so the read lowering must peel the same parentheses. It needs its own test pair.
+  - Gap details read awkwardly inside the generic wrapper ("dynamic operation throw of a value … has no Prepared
+    intrinsic"); a gap could carry its own sentence.
+  - `nativeRealmReservationInventory` records `owner.inventory` as a side effect of a query; a separate record step
+    would be clearer.
