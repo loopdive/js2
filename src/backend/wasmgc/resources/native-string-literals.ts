@@ -7,6 +7,7 @@ import type {
   FunctionReservation,
 } from "../../../wasm/physical/module-reservations.js";
 import type { Instr } from "../../../wasm/model/instructions.js";
+import { freezePreparedIrRuntimeValue } from "../../../ir/program/data.js";
 import {
   createStringDataType,
   createAnyStringShape,
@@ -419,7 +420,8 @@ export function fillNativeStringLiteralResources(
   const owner = authenticateLiteralOwner(tx, pack);
   if (owner.filled) throw new Error("native strings: duplicate fill");
   tx.physicalIndices(pack.types);
-  for (const row of owner.globals) tx.fillGlobal(row.token, row.init);
+  // A literal's initializer never changes after its fill: frozen, later layout audits check only its identity.
+  for (const row of owner.globals) tx.fillGlobal(row.token, freezePreparedIrRuntimeValue(row.init));
   for (const row of owner.functions) {
     tx.fillFunction(
       row.token,
