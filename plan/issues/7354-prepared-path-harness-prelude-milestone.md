@@ -42,6 +42,7 @@ loc-budget-allow:
   - src/compiler/ir-program-presentation.ts
 import-cycles-allow:
   - backend->ir: 119 # 2026-11-17 (#7354 Str review 2): the native string length emitter reads the selected carrier field through the shared preparedStringLenProvider (ir/runtime/intrinsic-preparation.ts) instead of re-implementing it
+  - ir->runtime: 11 # 2026-11-19 (#7354 Ty review): source-dynamic-contracts.ts reads the realm's global table (runtime/contracts/native-realm-globals.ts, #7350 B2a) for typeof of a global, as realm-keys.ts reads the catalog; no SCC grows
 ---
 
 # #7354 — Prepared IR path, milestone 1
@@ -2248,3 +2249,47 @@ Delta review at `7ffc4e1087`: NOT MET, one must-fix and two should-fixes.
 - **Should-fix 2, done:** the `dyn.to_number` comment now names the string arm (StringToNumber). The header
   paragraph Str edited is rewrapped.
 - After the fixes: typecheck passes and Ty's 81 tests pass.
+
+### Review round 2 (Ty, RV7305): BLOCKER at `308bf179b7`
+
+Fresh-context review on the merge of Ty with main
+([comment](https://github.com/loopdive/js2/pull/7305#issuecomment-7010855623)). Answers per finding:
+
+1. **Must-fix, fixed (`65d64b13ae`): a narrowed `typeof` guard threw an invariant error.**
+   `function f(x){ if (typeof x === "number") return x; return 0; }` (also as `?:`) threw "return[0] type externref
+   not assignable to declared result f64" out of `compile()`. Cause: provenance
+   (`src/ir/source-dynamic-provenance.ts`) said a parameter never carries the dynamic value, assuming its reference
+   is checker `any`; the guard narrows that reference to `number`, so the result contract became f64 while the value
+   was the carrier. Provenance now asks the parameter contract itself (`parameterIsDynamic`, wired to
+   `sourceDynamicParameter`): the result is the dynamic value and the program answers like node (`f(5)`, `f("a")`).
+   Pinned for an `if`, a `?:` and a local, each with the wrong answer throwing.
+2. **`typeof void 0`:** fixed by [#7361](7361-typeof-static-answer-from-hinted-operand.md); merged and pinned here
+   once it is on main.
+3. **Should-fix (lead's decision: a wrong answer is never by design), fixed: `typeof` of a global the program does
+   not declare.** Step 2b answered "undefined" for every such name (`typeof Math`, `typeof eval`, `typeof isNaN`).
+   Now:
+   - the answer comes from ONE table, the realm's global population `NATIVE_REALM_GLOBALS` /
+     `nativeRealmGlobalTypeof` (`src/runtime/contracts/native-realm-globals.ts`, #7350 B2a, owned by lane S5), behind
+     #7350 B1a's lib-binding predicate (`makeIrAmbientBindingPredicate(checker, "every-or-unresolved")`, composed
+     with `"no-user"` for the checker-synthesized `globalThis`);
+   - an ES global answers its tag (`typeof Math === "object"`, `typeof eval === "function"`); a name nothing
+     declares answers "undefined"; a lib-only name the table lacks (`document`, `console`, `Intl`) refuses by name:
+     `typeof of the host global X has no Prepared answer`;
+   - `typeof` of such a name is a constant string, so the legalization trigger for it and
+     `PREPARED_PROVIDED_GLOBALS` are gone (`Number` answers "function" from the table);
+   - the classifier's kind is `global-typeof` with the resolver's tag (was `absent-global`);
+   - consequence: assert.js's `typeof JSON !== "undefined" ? JSON.stringify(v) : …` now lowers its live arm, which
+     refuses by name (`dyn.json_stringify has no Prepared intrinsic`); pinned.
+   - Pin: every table row except `undefined`/`NaN`/`Infinity` (the classifier answers those earlier) answers its tag
+     both ways, and the tag equals node's where node has the global; `document` refuses in a comparison and in a fold.
+4. **Should-fix, fixed: a second decider for "absent global".** `readsTypeofOfAbsentGlobal` is gone with the
+   trigger (item 3); the classifier is the only decider.
+5. **Should-fix, fixed: `switch-case-test-mixed` pinned** (mutation M4).
+6. **Nits, fixed:** `absentGlobalTypeof` inlined (then replaced by `globalTypeofTag`, the fold's and `lowerTypeOf`'s
+   one helper); the classifier's doc says it throws on a DOM mismatch; the numeric-case invariant names
+   `switchCaseTests`.
+
+**Stacking.** The branch merges #7350 B2a (`claude/7350-b2a`, PR #7315) and B1 (`claude/7350-b1`). Conflicts:
+from-ast's identifier read (B1's `builtinGlobalValueAdmitted` moved into the classifier's ambient-intrinsic arm),
+from-ast imports, and the #7350 issue file (both sections kept). Grant: `ir->runtime` 10 → 11 for the table import
+(frontmatter). The PR must not release before #7361, #7315 and B1 are on main.

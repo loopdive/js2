@@ -3,7 +3,7 @@
 /**
  * (#7354 Ty) Which provider resolves an identifier read, in from-ast's resolution order. The ONE authority for
  * that order: the identifier read lowers by switching on the answer, and every other question about a read (the
- * `typeof` of a name nothing resolves) asks the same function, so the two cannot drift. It emits nothing (it throws
+ * `typeof` of a global the program does not declare) asks the same function, so the two cannot drift. It emits nothing (it throws
  * only on a DOM preparation mismatch).
  */
 import ts from "typescript";
@@ -11,6 +11,7 @@ import { builtinGlobalValueAdmitted } from "./builtin-globals.js";
 import { IrInvariantError } from "./outcomes.js";
 import type { IrFromAstResolver } from "./from-ast.js";
 import type { FunctionValueLoweringPlans } from "./function-object-lowering.js";
+import type { UnresolvedGlobalTypeof } from "./source-dynamic-contracts.js";
 
 type ModuleBinding = NonNullable<ReturnType<NonNullable<IrFromAstResolver["resolveModuleBinding"]>>>;
 type HostGlobal = NonNullable<ReturnType<NonNullable<IrFromAstResolver["getHostGlobalInfo"]>>>;
@@ -31,10 +32,10 @@ export type IdentifierRead<Binding> =
   /** An ambient intrinsic as a value, read off the realm's global object (#7106). */
   | { readonly kind: "ambient-intrinsic" }
   /**
-   * (#7354 Ty) A `typeof` operand no provider resolves, where the resolver states the name is absent from this
-   * program's global environment: its `typeof` is "undefined" (§13.5.3, an unresolvable reference).
+   * (#7354 Ty) A `typeof` operand no provider resolves: a global the program does not declare, with the resolver's
+   * `typeof` answer for it (the realm catalog's tag, "undefined" for a name nothing declares, or a named refusal).
    */
-  | { readonly kind: "absent-global" }
+  | { readonly kind: "global-typeof"; readonly tag: UnresolvedGlobalTypeof }
   | { readonly kind: "unresolved" };
 
 interface IdentifierReadContext<Binding> extends FunctionValueLoweringPlans {
@@ -74,19 +75,12 @@ export function classifyIdentifierRead<Binding>(
       certifiedDom: dom?.kind === "global-get" && dom.identifier === expr && dom.importName === global.importName,
     };
   if (builtinGlobalValueAdmitted(expr, resolver ?? {})) return { kind: "ambient-intrinsic" };
-  return absentTypeofOperand(expr, (node) => resolver?.unresolvedNameIsAbsent?.(node) === true)
-    ? { kind: "absent-global" }
-    : { kind: "unresolved" };
+  const tag = isTypeofOperand(expr) ? resolver?.unresolvedGlobalTypeof?.(expr) : undefined;
+  return tag === undefined ? { kind: "unresolved" } : { kind: "global-typeof", tag };
 }
 
-/**
- * The `absent-global` question once every earlier arm declined: `expr` is a `typeof` operand (through parentheses)
- * and `isAbsent` (the resolver's `unresolvedNameIsAbsent`) says the program's environment lacks it. Also asked
- * without a lowering context, to decide whether a root needs the dynamic legalization; there the earlier arms are
- * not asked, so `typeof undefined` counts too, which only legalizes a function that then has nothing to legalize.
- */
-export function absentTypeofOperand(expr: ts.Identifier, isAbsent: (node: ts.Identifier) => boolean): boolean {
+function isTypeofOperand(expr: ts.Identifier): boolean {
   let node: ts.Node = expr;
   while (ts.isParenthesizedExpression(node.parent)) node = node.parent;
-  return ts.isTypeOfExpression(node.parent) && isAbsent(expr);
+  return ts.isTypeOfExpression(node.parent);
 }
