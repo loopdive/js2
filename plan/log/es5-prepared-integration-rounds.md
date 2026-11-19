@@ -24,6 +24,7 @@ node scripts/ir-census/prepared-analyze.mjs --rows .tmp/ir-census/integ-<sha>-st
 | main (baseline) | `ee3fcdd610` | 0 | `dyn.typeof` in `assert.js` (6,536) | 148 | 495 |
 | 1 | `bc07f68fc0` | 0 | `typeof test for function` in `assert.js` (6,536) | 153 | 16 |
 | 3 | `43f5fb1ffd` | 0 | `typeof test for function` in `assert.js` (6,536) | 154 | 15 |
+| 4 | `87655f3f65` | 0 | `dyn.json_stringify` in `assert.js` (6,722) | 155 | 15 |
 
 ## Round 1: `bc07f68fc0` (2026-11-19)
 
@@ -109,3 +110,23 @@ sent for measurement.
 | 11 | for-in head `var` | O follow-up, for-in runtime | 206 |
 | 12 | repeated script `var` (not yet in this tree) | #7372 slice 1b | 195 |
 | | everything else | | 1,342 |
+
+## Round 4: `87655f3f65` (2026-11-19)
+
+Adds ty-r2 (`d8d967494e`), fa-ty (`f4ae23a7b6`: `typeof x === "function"` is
+a real kind test now) and globals-registry (`4792b8f2`, bringing script
+scope `dd8e3628`).
+
+- **Real prelude:** still 0 pass, but the wall moved. The `typeof` alarm is
+  gone; 6,722 files now stop at `dyn.json_stringify has no Prepared
+  intrinsic` in `assert.js` lines 135/136 (the `JSON.stringify` call of the
+  value formatter). The test's own script `var` without a home fell from
+  1,683 to 1,481 (script scope).
+- **Stand-in: 155 pass** (+1, −0 against round 3): gained
+  `language/statements/break/line-terminators.js`. Crashes 15.
+- **Script scope landed:** repeated script `var` 195 → 27; assignment to an
+  undeclared global 53 → 44; read of an undeclared name 110 → 101.
+- The largest first gaps are unchanged in order: `var obj = {…}` 1,589 (O),
+  built-in global as a value 1,281 (B), `new` / `this` 1,155 (C;
+  `new Test262Error` 867), array literals 652 (O), `new X` 506 (B), call
+  through a value 484 (Fb), RegExp 420, built-in call 326, `eval` 313.
