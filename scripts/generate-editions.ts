@@ -54,7 +54,7 @@ const FEATURE_T262_MAP_PATH = join(ROOT, "scripts", "feature-t262-features.json"
 // `T262_CURRENT_DRAFT_EDITION_YEAR` in website/components/t262-charts.js is the
 // single intentional switch that promotes a draft year to a published notch on
 // the landing-page timeline (see #1777).
-const CURRENT_DRAFT_EDITION = 2027;
+export const CURRENT_DRAFT_EDITION = 2027;
 
 // ---------------------------------------------------------------------------
 // Feature → Edition mapping (from issue #959 spec)

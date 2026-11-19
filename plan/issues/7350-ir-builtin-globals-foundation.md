@@ -208,11 +208,21 @@ Lead decision 2026-11-19: S5 owns the realm rows for the global object. Lane S1 
 needs the same table, so it lands first, as pure data.
 
 **Target structure.** A sibling of the realm catalog, `src/runtime/contracts/native-realm-globals.ts`:
-`NATIVE_REALM_GLOBALS`, the complete own-property population of the global object (ES2025 §19.1–19.4 plus
-Annex B.2.1 `escape` / `unescape`), each entry with its attributes and its value — a number (`NaN`,
-`Infinity`), `undefined`, the global object itself (`globalThis`), or an intrinsic named by id, with that
-intrinsic's typeof tag, `length` and constructibility. `nativeRealmGlobalTypeof(name)` answers from it; Ty
-reads that export, not a list of its own.
+`NATIVE_REALM_GLOBALS`, the complete own-property population of the global object in the realm's edition
+(`NATIVE_REALM_EDITION` in `native-realm-catalog.ts`, 2026 — the newest ratified edition, the year before
+`CURRENT_DRAFT_EDITION` in `scripts/generate-editions.ts`, and pinned to it by the test): §19.1–19.4 with
+`Temporal` (ES2026, #5173) plus Annex B.2.1 `escape` / `unescape`. Explicit resource management
+(`SuppressedError`, `DisposableStack`, `AsyncDisposableStack`) is ES2027 in the repo's edition map, so it is not
+a row. Each entry carries its attributes and its value: a number (`NaN`, `Infinity`), `undefined`, the global
+object (`globalThis`), a function (intrinsic id, `length`, construct behaviour: `none`, `ordinary`, or `throws`
+for `Symbol`, `BigInt` and `Iterator`, whose IsConstructor is true but whose `new X()` throws), or a namespace
+(intrinsic id). `nativeRealmGlobalTypeof(name)` answers a tag or `"not-a-language-global"` (a host name such as
+`console`: no `typeof` answer, the caller refuses).
+
+**The duplicate it removes.** `AMBIENT_TYPEOF_TAGS` (`src/ir/ambient-typeof.ts`) is a second typeof list on
+main. It sits in lane S1's region; S1 removes its tags in Ty (#7305) and keeps only the ordinary lane's
+16-name admission set, whose tags come from this table, so gc output stays byte-identical (S1's ack,
+2026-11-19).
 
 **Why a sibling and not catalog rows.** The realm's literal plan (`native-realm-literals.ts`,
 `native-builtin-function-requests.ts`) interns every catalog row's name and property keys into every realm
@@ -237,8 +247,17 @@ body: `object-constructor-body.ts` (Object), `primitive-wrapper-bodies.ts` (Stri
 `json-standalone.ts` (JSON) and `codegen/math-helpers.ts` (Math), moving codegen-side pure bodies to
 `runtime/wasmgc/values/` when they are bound.
 
-**Acceptance.** A unit test against node 22: every entry's attributes, typeof tag, `length`, `name` and
-constructibility equal node's `globalThis` descriptor (`Float16Array`, ES2025, is absent in node 22 and checked
-by its spec values); every intrinsic id the table names is unique, and the catalog rows it names exist.
-Output byte-identical (nothing reads the table yet). Quality: one table; the typeof answer is derived from it;
-no second list in Ty.
+**Acceptance.** A unit test: every row the running node has equals node's `globalThis` descriptor (attributes,
+typeof tag, `length`, `name`, IsConstructor, and `new` throwing for the `throws` rows); the rows a node engine
+may predate (`Float16Array`, `Temporal`) are compared with their spec values written in the test, and node
+may lack no other row; a fresh V8 context (only the engine's own globals) has no ECMAScript global the table
+misses; `length` / construct of the catalog's complete rows equal the catalog's. Output byte-identical
+(nothing under `src/` reads the table yet; `check:dead-exports` only scans `src/codegen/`, so it says nothing
+about this file). Quality: one table; the typeof answer is derived from it.
+
+**Named follow-up (needs an issue id; allocation was refused in this session):** fold the other global-name
+lists into this table once their lanes allow — `GLOBAL_VALUE_NAMES` / `NAMESPACE_GLOBALS`
+(`src/checker/inhouse-globals.ts`, the second mixing in `console`, `process` and `Intl`), `BUILTIN_CLASS_NAMES`
+(`src/codegen/expressions/builtin-class-names.ts`), `ES5_INTRINSIC_OBJECTS` (`src/ir/object-integrity.ts`) —
+and the literal-interning `flatMap` duplicated in `native-realm-literals.ts` and
+`native-builtin-function-requests.ts`.
