@@ -1,4 +1,5 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+import { preparedFunctionThisStrictness } from "./compiler/prepared-this-binding.js";
 import { ts } from "./ts-api.js";
 import { createPreparedFrontendBoundary } from "./compiler/prepared-pipeline-boundary.js";
 import {
@@ -1163,6 +1164,7 @@ export function runPreparedIrPipelinePresentation(input: PipelineInput): Prepare
       checker: entryAst.checker,
       policy: preparedPresentationPolicy(backendOptions.backend, target),
       deferTopLevelInit: options.deferTopLevelInit === true,
+      functionThisStrictness: preparedFunctionThisStrictness,
     },
     backendOptions,
     output: {
