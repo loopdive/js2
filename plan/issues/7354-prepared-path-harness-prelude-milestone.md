@@ -2242,3 +2242,23 @@ covers it, and the realm's fill and owner checks call `physicalIndex` thousands 
 square of the reserved resources. Reproducer: `.tmp/prof.mts` pattern, i.e. compile the proving program above twice
 through `src/test262/test262-prepared-entry.ts` (options `wholeProgram: prepared-program-required`, `wasmgc`,
 `standalone`, `allowJs`) and profile the second.
+
+### Review round 3 (2026-11-19): APPROVE on 39b631a9c6, then the exception-handling fix
+
+- **Mixed exception handling (found by S4 on CI's Node 25).** A realm module whose program has a user `try` mixed the
+  legacy `try … catch_all … rethrow` of three realm bodies with the `try_table` the user `try` lowers to. Node 25
+  (V8) rejects such a module at validation; Node 22 accepts it, and no #7312 test compiled a program with a `try`.
+  - Fix: on `claude/7354-realm-eh`, the realm bodies switch to `buildStandardTryTable` on the module tag (#6641).
+  - Guard: `tests/issue-7354-realm-eh.test.ts` asserts the module text has no legacy EH instruction beside the
+    `try_table`, so it holds on any Node.
+  - A search of src found no other legacy-EH emitter on the Prepared path: the IR emitter already turns `rethrow 0`
+    into `throw` inside a `try_table`, and the legacy sites left are in `src/codegen/` (the ordinary pipeline).
+- **Filed:** the IR-side source-object planner that would leave `native-invocation-abi.ts` one concern (#7407).
+- **Open nits (non-blocking):**
+  - A parenthesized literal receiver (`({a: 4, b: 5}).b`) refuses ("box of a non-primitive value"). Unwrapping the
+    parentheses in the resolver alone is NOT enough: the program then compiles but answers wrong (both the right and
+    the wrong comparison throw), so the read lowering must peel the same parentheses. It needs its own test pair.
+  - Gap details read awkwardly inside the generic wrapper ("dynamic operation throw of a value … has no Prepared
+    intrinsic"); a gap could carry its own sentence.
+  - `nativeRealmReservationInventory` records `owner.inventory` as a side effect of a query; a separate record step
+    would be clearer.
