@@ -5,7 +5,7 @@
  */
 import type { FuncHandle, Instr, LocalDef, TypeHandle } from "../../../wasm/model/instructions.js";
 
-interface Definition {
+export interface SourceObjectDefinition {
   readonly locals: LocalDef[];
   readonly body: Instr[];
 }
@@ -18,7 +18,7 @@ export function buildSourceObjectCreateDefinition(d: {
   readonly objectTypeIdx: TypeHandle;
   readonly objectPrototype: FuncHandle;
   readonly createWithPrototype: FuncHandle;
-}): Definition {
+}): SourceObjectDefinition {
   return {
     locals: [],
     body: [
@@ -35,7 +35,7 @@ export function buildSourceObjectCreateDefinition(d: {
  * incomplete states (a parent outside the realm, a carrier that is not an object) cannot occur: every object a
  * source program reaches was built by `create-default` on this realm's Object.prototype.
  */
-export function buildSourceObjectGetDefinition(d: { readonly get: FuncHandle }): Definition {
+export function buildSourceObjectGetDefinition(d: { readonly get: FuncHandle }): SourceObjectDefinition {
   return {
     locals: [{ name: "value", type: { kind: "externref" } }],
     body: [
