@@ -40,6 +40,8 @@ import { typeofComparisons } from "./typeof-comparisons.js";
 import { PREPARED_NUMBER_TO_STRING } from "./number-to-string-target.js";
 import { IR_DYN_ADD_FN } from "../../shared/contracts/dynamic-add-helper.js";
 import { NO_OBJECTS, type ProgramObjects } from "../source-plain-objects.js";
+import { gap } from "./dynamic-value-gap.js";
+import { dynamicMemberRead } from "./dynamic-member-read.js";
 import {
   ADD_ROLE,
   KIND_TEST,
@@ -55,12 +57,7 @@ import {
 
 const CARRIER: IrType = Object.freeze({ kind: "val", val: Object.freeze({ kind: "externref" }) });
 
-/** A dynamic operation the Prepared path has no intrinsic for; the message names it. */
-export class DynamicValueGap extends Error {}
-
-function gap(operation: string): never {
-  throw new DynamicValueGap(`dynamic operation ${operation} has no Prepared intrinsic`);
-}
+export { DynamicValueGap } from "./dynamic-value-gap.js";
 
 /** Walk the data structurally: IR constants may hold bigints, which JSON cannot. */
 function containsDynamic(value: unknown): boolean {
@@ -85,7 +82,7 @@ function legalizationBuilders(
   fn: IrFunction,
   allocations: AllocSiteRegistry,
   types: ReturnType<typeof irValueTypes>,
-  objects: ProgramObjects,
+  { objects, catches }: LegalizationProgram,
 ) {
   let valueCount = fn.valueCount;
   const admitted = admittedKinds(objects);
@@ -225,7 +222,7 @@ function legalizationBuilders(
   };
   /** (#7354 O2) OrdinaryToPrimitive of a plain object (`TO_STRING_ARM`), or the named refusal. */
   const plainObjectToPrimitive = (): string => {
-    const refusal = plainObjectRefusal(objects);
+    const refusal = plainObjectRefusal(objects, "ToPrimitive of an object");
     return refusal === undefined ? "[object Object]" : gap(refusal);
   };
   /** (#7354 O2) ToNumber of the once-evaluated `value` (`TO_NUMBER_ARM`): a plain object's is NaN. */
@@ -249,6 +246,7 @@ function legalizationBuilders(
     result: IrValueId,
     arm: (kind: CarrierKind, result: IrValueId) => IrInstr[],
     kinds: readonly CarrierKind[] = admitted,
+    resultType: IrType = STRING,
   ): IrInstr[] => {
     const [kind, ...rest] = kinds;
     if (rest.length === 0) return arm(kind!, result);
@@ -258,11 +256,21 @@ function legalizationBuilders(
       branch(
         cond,
         (r) => arm(kind!, r),
-        (r) => kindChain(instr, value, r, arm, rest),
+        (r) => kindChain(instr, value, r, arm, rest, resultType),
         result,
+        resultType,
       ),
     ];
   };
+  const memberRead = (instr: IrInstr, receiver: IrValueId, key: IrValueId, result: IrValueId): IrInstr[] =>
+    dynamicMemberRead(
+      { carrier: CARRIER, definitions, fresh, text, intrinsic, kindsOf, kindChain },
+      { objects, catches },
+      instr,
+      receiver,
+      key,
+      result,
+    );
   const stringOf = (instr: IrInstr, value: IrValueId, result: IrValueId): IrInstr[] =>
     kindChain(instr, value, result, (kind, r) => toStringArm(instr, kind, value, r), kindsOf(value));
   /**
@@ -332,10 +340,19 @@ function legalizationBuilders(
     kindChain,
     toStringArm,
     toNumber,
+    memberRead,
     addition,
     admitted,
     valueCount: () => valueCount,
   };
+}
+
+/** (#7354 O2, O4) What the legalization of every function of one program asks of the whole program. */
+export interface LegalizationProgram {
+  /** Whether the program builds objects, and whether they are plain (`source-plain-objects.ts`). */
+  readonly objects: ProgramObjects;
+  /** Whether the program binds a catch: a value thrown here may then be read back as a dynamic value. */
+  readonly catches: boolean;
 }
 
 /**
@@ -345,11 +362,11 @@ function legalizationBuilders(
 export function legalizeDynamicValues(
   fn: IrFunction,
   allocations: AllocSiteRegistry,
-  objects: ProgramObjects = NO_OBJECTS,
+  program: LegalizationProgram = { objects: NO_OBJECTS, catches: false },
 ): IrFunction {
   if (!containsDynamic(fn)) return fn;
   const types = irValueTypes(fn);
-  const builders = legalizationBuilders(fn, allocations, types, objects);
+  const builders = legalizationBuilders(fn, allocations, types, program);
   const { intrinsic, fresh, kindTest, anyKind, kindOfBox, text, kindChain, toStringArm, toNumber } = builders;
   const isDynamic = (value: IrValueId): boolean => types.get(value)?.kind === "dynamic";
   const typeofs = typeofComparisons(fn);
@@ -401,7 +418,13 @@ export function legalizeDynamicValues(
       case "tag.test": {
         if (!isDynamic(instr.value)) return [instr];
         const kind =
-          instr.tagId === JS_TAG_IDS.Undefined ? "undefined" : instr.tagId === JS_TAG_IDS.Null ? "null" : undefined;
+          instr.tagId === JS_TAG_IDS.Undefined
+            ? "undefined"
+            : instr.tagId === JS_TAG_IDS.Null
+              ? "null"
+              : instr.tagId === JS_TAG_IDS.Object && builders.admitted.includes("object")
+                ? "object"
+                : undefined;
         return kind === undefined
           ? gap(`tag.test of tag ${instr.tagId}`)
           : kindTest(instr, kind, instr.value, instr.result!);
@@ -439,6 +462,8 @@ export function legalizeDynamicValues(
         return [intrinsic(instr, "js.value.to_boolean", [instr.value])];
       case "dyn.to_number":
         return toNumber(instr, instr.value, instr.result!);
+      case "dyn.member_get":
+        return builders.memberRead(instr, instr.recv, instr.key, instr.result!);
       case "dyn.eq": {
         if (instr.loose) return gap("dyn.eq (loose)");
         return withSense(instr, instr.negate, (result) => [

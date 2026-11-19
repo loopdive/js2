@@ -3,7 +3,8 @@
  * (#7354 O1) The public source-object functions on the realm. A source program reaches an ordinary object only
  * through the `js.object.*` contracts (`ordinary-object-callables.ts`); each contract it calls binds one function
  * here, whose signature is the contract's and whose algorithm is the realm's own:
- *   - the three `define-*` contracts are the descriptor pack's public defines, bound as they are;
+ *   - the three `define-*` contracts are the descriptor pack's public defines, bound as they are, and (#7354 O4)
+ *     `create-type-error` the invocation substrate's TypeError constructor;
  *   - `create-default` and `get` are adapters (`source-object-bodies.ts`) over the storage pack and the builtin-object
  *     kernel; (#7368) the own-property contracts are adapters over the storage pack's own-entry lookup.
  * A contract without a row here has no native source provider yet.
@@ -123,6 +124,8 @@ export function nativeSourceObjectResourceKey(
 ): string | undefined {
   const role = DESCRIPTOR_ROLE[feature];
   if (role !== undefined) return realmKey + ":descriptors:" + role;
+  // (#7354 O4) The invocation substrate's errors pack builds the realm's TypeError.
+  if (feature === "js.object.create-type-error") return realmKey + ":invocation-substrate:errors:new-TypeError";
   return isAdapted(feature) ? realmKey + ":source-objects:" + feature : undefined;
 }
 
