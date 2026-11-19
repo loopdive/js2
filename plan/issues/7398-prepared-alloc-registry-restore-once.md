@@ -1,7 +1,7 @@
 ---
 id: 7398
 title: "Prepared: the allocation registry is copied and re-validated at every restore from the same snapshot"
-status: in-progress
+status: wont-fix
 sprint: current
 created: 2026-11-19
 updated: 2026-11-19
@@ -17,6 +17,20 @@ related: [7354, 7365, 7397]
 ---
 
 # #7398 — one validated restore per unchangeable allocation snapshot
+
+## Withdrawn (2026-11-19): superseded by #7354 Perf2
+
+`claude/7354-perf2` 9a5b4b3c16 already adds the same mechanism:
+`src/ir/program/prepared-allocations.ts` `preparedAllocationSites`, a read-only
+view restored once per immutable snapshot through the generalised
+`PreparedIrSettledChecks`. That change is not on `claude/7354-o` or `main`
+yet, which is why this one was built in parallel. This branch is not opened as
+a PR.
+
+**Follow-up, once perf2 lands:** fold the two remaining
+`AllocSiteRegistry.fromSnapshot` sites in
+`src/ir/program/native-object-access-requirements.ts` into
+`preparedAllocationSites`. Perf2 does not switch them; this branch did.
 
 ## Problem
 
