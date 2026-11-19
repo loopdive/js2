@@ -2523,3 +2523,64 @@ O1 to O4 (these are this slice's steps, not #7352's parked ordinary-pipeline sli
 - Code quality: one binding arm and one reconciler for every native callable family; one row per kind in each
   dynamic-value table; no adapter re-implements a kernel algorithm; no file or function over its budget without a
   dated grant.
+
+## Realm join (2026-11-19, branch `claude/7354-realm` from `origin/main`)
+
+The native realm of #3518 (`src/backend/wasmgc/program/native-realm.ts`) is reserved for any program with a
+`js.object.*` use, a `Number(v)` use or source closures, but nothing let such a program present: the physical plan
+had no arm that binds a source call to a realm function, and the Prepared runtime census joined only the native
+string and formatter setups. This branch builds the shared join, and its first row, the source objects of slice O
+(step O1). Lane S4 (slice Fa) adds the closure/invocation owner as one more row.
+
+### Built
+
+- **Census join.** The consumer records the physical indices of the realm's completed functions, types and globals
+  (`nativeRealmCompletedSlots` in native-realm.ts, read through `emittedNativeRealmSlots` in program-consumer.ts),
+  authenticated by the realm's own `requireCompletedNativeRealmBootstrap`. `runtimeCensus`
+  (`src/compiler/prepared-provider-census.ts`) excludes those functions from the support-receipt join and adds the
+  types and globals to the native setup's slots, so the presentation's widening finalization owns them.
+- **One call-binding builder and reconciler.** `nativeInvocationAbiBindings` became a caller of
+  `nativeCallAbiBindings` (native-invocation-abi.ts); `reconcileInvocationBindings` became
+  `reconcileNativeCallBindings`, used for invocation and source-object rows; the two consumer lists of native binding
+  families read `plannedNativeCallBindings` (program-physical-plan.ts).
+- **Source objects (O1).** `native-source-objects.ts` serves the `js.object.*` contracts on the realm:
+  `define-data` binds the descriptor pack's public define as it is; `create-default`
+  (`createWithPrototype(objectPrototype())`, an explicit Object.prototype link) and `get` (the kernel's [[Get]], its
+  incomplete states unreachable) are adapters in `source-object-bodies.ts`. `native-source-object-abi.ts` builds
+  the plan rows; a contract without a provider is a plan gap by name. The Prepared resolver
+  (`prepare-ordinary-object-access.ts`) makes every literal it owns an ordinary object (the Prepared backend has no
+  closed object struct: this replaces the "resolver cannot lower object<…>" emission crash) and plans typed reads
+  of a data-only literal whose binding is only read as `o.k`. Member values cross into the object through the
+  number-boundary boxes (`boundaryBox` in from-ast, shared with `throw`), so a literal adds no dynamic value.
+- **Carrier rules.** `coerce.to_externref` of a dynamic value keeps (the carrier is the native value an object
+  property stores, as it is the exception payload); every throw of the program must be a carrier-admitted value
+  (`refuseUnadmittedThrows`, run over every function on the native dynamic lane, after legalization so its own gaps
+  keep their names), so an object cannot reach a catch binding before the carrier admits objects.
+
+### Measured
+
+- Proving program `function f(){ var o = { a: 1 }; return o.a; } if (f() !== 1) throw 1;` through the strict entry,
+  standalone: validates and returns; with `!== 2` it throws; node agrees. `tests/issue-7354-o-objects.test.ts`.
+- Pins updated: D1 "a typed literal property" (now D1's flow rule), "a dynamic object field" (now the untyped member
+  read), D1/X "dynamic externref coercion" (now kept); X object throws (now "throw of a value outside the dynamic
+  carrier's kinds").
+
+### Compile time: the reservation audit is quadratic (for the perf lane)
+
+With the realm in the module one compile of the proving program takes about 18 s (33 s on a loaded box). A CPU
+profile (`node --cpu-prof`) of that one compile, after a warm-up compile:
+
+| ms (inclusive) | entry |
+| ---: | --- |
+| 16,006 | `PhysicalModuleReservations#verifyLayout` (`src/wasm/physical/module-reservations.ts`) |
+| 11,588 | `#snapshot` / `dataText` |
+| 8,743 | `physicalIndex` |
+| 6,342 | `fillNativeRealmResources` |
+| 3,842 | `requireOwner` (native-object-descriptors.ts) |
+| 3,799 | `#matchesFunction` / `matchesPhysicalDataSnapshot` |
+
+`#verifyLayout` re-snapshots every reservation record on each `physicalIndex()` call unless an outer `audited(…)`
+covers it, and the realm's fill and owner checks call `physicalIndex` thousands of times, so the cost grows with the
+square of the reserved resources. Reproducer: `.tmp/prof.mts` pattern, i.e. compile the proving program above twice
+through `src/test262/test262-prepared-entry.ts` (options `wholeProgram: prepared-program-required`, `wasmgc`,
+`standalone`, `allowJs`) and profile the second.

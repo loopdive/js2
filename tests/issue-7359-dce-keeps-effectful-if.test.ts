@@ -79,15 +79,24 @@ describe("#7359 — the rule: as side-effecting as the buffers it runs", () => {
   const valueIf = (then: IrInstr[], otherwise: IrInstr[] = []) =>
     ({ kind: "if", result: null, then, else: otherwise }) as unknown as IrInstr;
 
-  it("keeps a value `if` with a call in an arm, at any depth", () => {
+  const slot = (kind: "slot.read" | "slot.write") => ({ kind, slotIndex: 0, result: null }) as unknown as IrInstr;
+  const thrown = { kind: "throw", result: null } as unknown as IrInstr;
+
+  it("keeps a value `if` whose arm writes or throws, at any depth", () => {
     expect(isSideEffecting(valueIf([call]))).toBe(true);
     expect(isSideEffecting(valueIf([], [binary, call]))).toBe(true);
     expect(isSideEffecting(valueIf([valueIf([binary, valueIf([], [call])])]))).toBe(true);
+    expect(isSideEffecting(valueIf([slot("slot.write")]))).toBe(true);
+    expect(isSideEffecting(valueIf([], [thrown]))).toBe(true);
   });
 
-  it("still drops a value `if` whose arms are pure", async () => {
+  // `effectsOf` is the authority on what an arm does: a read is not kept.
+  it("still drops a value `if` whose arms are pure or only read", async () => {
     expect(isSideEffecting(valueIf([binary], [binary]))).toBe(false);
     expect(isSideEffecting(valueIf([valueIf([binary])]))).toBe(false);
+    expect(isSideEffecting(valueIf([slot("slot.read")]))).toBe(false);
+    // The buffer rule reaches only buffer-bearing kinds: a leaf `effectsOf` calls call-like stays droppable.
+    expect(isSideEffecting({ kind: "dyn.current_this", result: null } as unknown as IrInstr)).toBe(false);
     const result = await compile(
       "export function f(a: number, b: number): number { a > 0 && b > 0; const r = a > 0 ? b > 1 : b < 1; return 0; }",
       { fileName: "test.ts", target: "standalone", emitWat: true },
