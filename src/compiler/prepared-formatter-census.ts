@@ -4,54 +4,90 @@
  * program that formats a number carries one runtime-support batch (the radix body), a formatter setup beside the
  * string setup (kernels, radix body and thunk, Ryu, `number_toString`, the native adapter) and the formatter's
  * scratch, which is the string setup's data type. Each is joined here by identity to the canonical declarations
- * of the program's runtime ABI anchor (`numberFormatRadixSupportDeclarations`, the adapter's callable
- * declaration), never by a function name; the census owns the slot, signature and receipt joins.
+ * of the program's runtime ABI anchor (`numberFormatRadixSupportDeclarations`, the formatter recipe and its
+ * callable associations), never by a function name; the census owns the slot, signature and receipt joins.
  */
 
-import type { PreparedIrProgram } from "../ir/program.js";
-import type { NativeStringValueAbiBinding, PhysicalNativeNumberFormatSetup } from "../ir/program-physical-plan.js";
+import type { PreparedIrBackendOptions, PreparedIrProgram } from "../ir/program.js";
+import {
+  internalNativeBinding,
+  type NativeStringValueAbiBinding,
+  type PhysicalNativeNumberFormatSetup,
+} from "../ir/program-physical-plan.js";
 import { preparedIrRuntimeAbiAnchor } from "../ir/program-runtime-abi.js";
 import { preparedIrDataMismatch } from "../ir/program/data.js";
-import { numberFormatRadixSupportDeclarations } from "../ir/program/formatter-support.js";
-import { irNumberFormatDemandOwners, type IrFormatterKernelRole } from "../ir/program/runtime-support.js";
+import {
+  numberFormatRadixSupportDeclarations,
+  numberFormatSetupAssociations,
+} from "../ir/program/formatter-support.js";
+import { irNumberFormatDemandOwners } from "../ir/program/runtime-support.js";
 import type { IrType } from "../ir/core/types.js";
 import type { IrFuncRef } from "../ir/core/value-references.js";
-import {
-  NATIVE_ASYNC_CALLABLE_DECLARATIONS,
-  NATIVE_ASYNC_CALLABLE_RUNTIME_PROVIDERS,
-} from "../ir/runtime/native-async-callables.js";
+import { NATIVE_ASYNC_CALLABLE_RUNTIME_PROVIDERS } from "../ir/runtime/native-async-callables.js";
 import type { RuntimeProviderDefinition } from "../ir/runtime/contracts/manifest.js";
+import { nativeNumberFormatResourceInput } from "../backend/wasmgc/program/native-number-format.js";
+import { declareNativeNumberFormatResources } from "../backend/wasmgc/resources/native-number-format.js";
 import type { NativeStringValueDeclaration } from "../runtime/wasmgc/values/native-resource-declaration-types.js";
 
 const same = (left: unknown, right: unknown) => preparedIrDataMismatch(left, right) === undefined;
 const canonical = (program: PreparedIrProgram) =>
   numberFormatRadixSupportDeclarations(preparedIrRuntimeAbiAnchor(program.inventory).id);
-const ADAPTER = NATIVE_ASYNC_CALLABLE_DECLARATIONS.find((row) => row.feature === "async.native.number-to-string")!;
-const ADAPTER_PROVIDER = NATIVE_ASYNC_CALLABLE_RUNTIME_PROVIDERS.find((row) => row.feature === ADAPTER.feature)!;
-const ADAPTER_ROLE = ["number-format", "native-to-string"] as const;
-
-/** The formatter setup roles of the batch's support callables: the kernels and the radix body. */
-const SUPPORT_ROLES: readonly (readonly string[])[] = [
-  ...(["new", "get", "set", "fin", "trap"] as const satisfies readonly IrFormatterKernelRole[]),
-  "radix-body",
-].map((role) => ["number-format", role]);
+const ADAPTER_PROVIDER = NATIVE_ASYNC_CALLABLE_RUNTIME_PROVIDERS.find(
+  (row) => row.feature === "async.native.number-to-string",
+)!;
 
 /**
  * A formatter setup function bound under the batch's own support binding id (a kernel, the radix body) rather
- * than a setup-derived one. Its identity is joined like every setup function's, which needs no binding id: the
- * emission's support receipt at the binding's slot carries the declaration's key, and the slot its signature
- * (`supportPopulationJoins`), so a binding moved to another function's entry joins nothing.
+ * than a setup-derived one; `formatterSetupJoins` pins that binding.
  */
-export function canonicalSupportRole(declaration: NativeStringValueDeclaration): boolean {
-  return declaration.space === "function" && SUPPORT_ROLES.some((role) => same(declaration.role, role));
+export function canonicalSupportRole(program: PreparedIrProgram, declaration: NativeStringValueDeclaration): boolean {
+  return (
+    declaration.space === "function" &&
+    numberFormatSetupAssociations(program.inventory).some(
+      (row) => row.origin === "support" && same(declaration.role, row.role),
+    )
+  );
+}
+
+/**
+ * (#7354 Str2 review 1) The formatter setup is exactly the one the runtime ABI anchor, the string owner and the
+ * accepted number-format policy determine, joined row by row by identity: its declarations equal the formatter
+ * recipe's (role, name, signature or type, mutability — one row per role, in recipe order), and each declaration is
+ * published once, under the binding the physical plan gives it — a canonical callable's entry and reference for a
+ * kernel, the radix body and the adapter (`numberFormatSetupAssociations`), the setup-derived one
+ * (`internalNativeBinding`) for every other row. The census then joins each binding's slot to the declaration's
+ * space, signature and support receipt. No row is joined by its name.
+ */
+function formatterSetupJoins(
+  program: PreparedIrProgram,
+  formatter: PhysicalNativeNumberFormatSetup,
+  stringKey: string,
+  numberFormat: PreparedIrBackendOptions["numberFormat"],
+): boolean {
+  const anchor = preparedIrRuntimeAbiAnchor(program.inventory).id;
+  // An emission with a formatter setup was accepted only with its resolved integer policy.
+  const input = nativeNumberFormatResourceInput(anchor, stringKey, numberFormat!.integerBeforeScratch);
+  const { declarations } = declareNativeNumberFormatResources(input);
+  const associations = numberFormatSetupAssociations(program.inventory);
+  const published = declarations.map((declaration) => {
+    const association = associations.find((row) => same(row.role, declaration.role));
+    const { entry, reference } = association
+      ? { entry: { id: association.bindingId }, reference: association.ref }
+      : internalNativeBinding(program, declaration, 0);
+    return [declaration.key, entry.id, reference] as const;
+  });
+  const byKey = (rows: readonly (readonly [string, string, unknown])[]) =>
+    [...rows].sort(([a], [b]) => a.localeCompare(b));
+  const bindings = formatter.bindings.map((row) => [row.resourceKey, row.entry.id, row.reference] as const);
+  return same(formatter.resources.declarations, declarations) && same(byKey(bindings), byKey(published));
 }
 
 /**
  * The string data type is also the formatter's scratch when the program formats a number: it is bound twice, by the
- * canonical scratch reference, whose slot the census reads, and by the setup's own derived reference (`owned`).
- * Answers the canonical binding; undefined for anything else, including a single binding where the scratch pair is
- * due. Its slot needs no further check: every other type slot of the setups is another declaration's, and the census
- * admits one declaration per slot (`nativeRows`).
+ * canonical scratch reference, whose slot the census reads, and by the setup's own derived reference (`owned`), both
+ * on the canonical scratch entry. Answers the canonical binding; undefined for anything else, including a single
+ * binding where the scratch pair is due. Its slot needs no further check: every other type slot of the setups is
+ * another declaration's, and the census admits one declaration per slot (`nativeRows`).
  */
 export function formatterScratchBinding(
   program: PreparedIrProgram,
@@ -63,7 +99,11 @@ export function formatterScratchBinding(
   const reference = bindings.filter((row) => same(row.reference, scratch.type.ref));
   const derived = bindings.filter((row) => !reference.includes(row));
   if (!same(scratchType, scratch.type) || reference.length !== 1 || derived.length !== 1) return undefined;
-  return same(derived[0]!.reference.binding, { kind: "source", bindingId: owned }) ? reference[0] : undefined;
+  const entries = [reference[0]!, derived[0]!].map((row) => row.entry.id);
+  return same(derived[0]!.reference.binding, { kind: "source", bindingId: owned }) &&
+    same(entries, [scratch.type.ref.binding.bindingId, scratch.type.ref.binding.bindingId])
+    ? reference[0]
+    : undefined;
 }
 
 /** Whether a native setup declaration is the formatter scratch's string data type. */
@@ -115,29 +155,25 @@ function batchJoins(
 }
 
 /**
- * The formatter joins its demand: a program with a direct formatter call has the formatter setup and its batch, one
- * without has no batch. The setup's unique adapter role is bound to the adapter's own intrinsic reference; it
- * answers the adapter's canonical provider, which the census then requires selected exactly once (no provider
- * without demand, none twice). Its slot, like every setup function's, needs no binding-id check: the support receipt
- * at that slot carries the role's declaration key (`supportPopulationJoins`). Answers the provider implementations
- * the formatter answers, or undefined when anything joins nothing.
+ * The formatter joins its demand: a program with a direct formatter call has the canonical formatter setup
+ * (`formatterSetupJoins`) and its batch, one without has no batch. The setup's adapter answers the adapter's
+ * canonical provider, which the census then requires selected exactly once (no provider without demand, none
+ * twice). Answers the provider implementations the formatter answers, or undefined when anything joins nothing.
  */
 export function formatterJoins(
   program: PreparedIrProgram,
   formatter: PhysicalNativeNumberFormatSetup | undefined,
   slots: readonly FormatterSlot[],
+  stringKey: string,
+  numberFormat: PreparedIrBackendOptions["numberFormat"],
 ): readonly RuntimeProviderDefinition["implementation"][] | undefined {
   // Without demand only the batch needs a check here: a provider then answers no runtime callable, a scratch no
   // second binding, and a formatter setup's functions no support receipt, so the census refuses each of them.
   if (irNumberFormatDemandOwners(program.ir.functions).length === 0)
     return program.runtimeSupport?.batches.length ? undefined : [];
-  const adapters = slots.filter((slot) => same(slot.declaration.role, ADAPTER_ROLE));
-  if (
-    adapters.length !== 1 ||
-    !same(adapters[0]!.binding.reference, ADAPTER.ref) ||
-    // A formatter setup's slots exist only beside the setup itself.
-    !batchJoins(program, formatter!, slots)
-  )
-    return undefined;
-  return [ADAPTER_PROVIDER.implementation];
+  return formatter &&
+    formatterSetupJoins(program, formatter, stringKey, numberFormat) &&
+    batchJoins(program, formatter, slots)
+    ? [ADAPTER_PROVIDER.implementation]
+    : undefined;
 }

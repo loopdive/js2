@@ -68,8 +68,7 @@ import {
 } from "../backend/wasmgc/program/native-number-format.js";
 import { nativeStringTypeKeys } from "../backend/wasmgc/resources/native-string-literals.js";
 import { collectNativeStringValueDemands } from "./program/native-string-value-demands.js";
-import { numberFormatRadixSupportDeclarations } from "./program/formatter-support.js";
-import { NATIVE_ASYNC_CALLABLE_DECLARATIONS } from "./runtime/native-async-callables.js";
+import { numberFormatRadixSupportDeclarations, numberFormatSetupAssociations } from "./program/formatter-support.js";
 import type { IrBindingId, IrUnitId } from "./identity.js";
 import type { IrFunction, IrType, IrInstrIntrinsic } from "./nodes.js";
 import type { IrPreparationFailure } from "./outcomes.js";
@@ -433,7 +432,8 @@ function declarationForRole(resources: NativeResourceRecipe, role: readonly stri
   return rows[0]!;
 }
 
-function internalNativeBinding(
+/** The binding a native setup declaration derives under the runtime ABI anchor (no canonical callable binds it). */
+export function internalNativeBinding(
   program: PreparedIrProgram,
   declaration: NativeStringValueDeclaration,
   declarationOrder: number,
@@ -851,22 +851,11 @@ function nativeFormatterSetup(
     strings.resources,
   );
   const canonical = numberFormatRadixSupportDeclarations(anchor.id);
-  const adapters = NATIVE_ASYNC_CALLABLE_DECLARATIONS.filter((row) => row.feature === "async.native.number-to-string");
-  if (adapters.length !== 1) nativeInvalid("formatter native adapter contract is not unique");
-  const associations = [
-    ...canonical.kernels.map((row) => ({ ...row, origin: "support" as const })),
-    { ...canonical.implementation, role: "radix-body", origin: "support" as const },
-    { ...adapters[0]!, role: "native-to-string", origin: "intrinsic" as const },
-  ];
   const bindings: NativeStringValueAbiBinding[] = [];
-  for (const association of associations) {
-    const declaration = declarationForRole(resources, ["number-format", association.role]);
+  for (const association of numberFormatSetupAssociations(program.inventory)) {
+    const declaration = declarationForRole(resources, association.role);
     if (declaration.space !== "function") nativeInvalid("formatter callable role does not name a function");
-    const id =
-      association.ref.binding.kind === "support"
-        ? association.ref.binding.bindingId
-        : preparedIrRuntimeCallableBindingId(program.inventory, association.ref);
-    const candidates = program.abi.entries.filter((row) => row.plan.id === id);
+    const candidates = program.abi.entries.filter((row) => row.plan.id === association.bindingId);
     if (candidates.length !== 1) nativeInvalid("formatter callable is missing its unique existing ABI entry");
     const { plan, contract } = candidates[0]!;
     if (

@@ -240,7 +240,8 @@ function nativeSlots(
     const slot = binding && emittedProgramBindingIndex(emission, binding.entry.id);
     if (!binding || slot?.space !== declaration.space) return undefined;
     const callable = binding.reference.binding.kind === "runtime" || binding.reference.binding.kind === "intrinsic";
-    if (!scratch && !callable && binding.entry.id !== owned && !canonicalSupportRole(declaration)) return undefined;
+    if (!scratch && !callable && binding.entry.id !== owned && !canonicalSupportRole(program, declaration))
+      return undefined;
     slots.push({ declaration, binding, index: slot.index });
   }
   return slots;
@@ -381,7 +382,7 @@ function nativeRows(
   setup: PhysicalNativeStringSetup,
   formatter: PhysicalNativeNumberFormatSetup | undefined,
   providers: readonly RuntimeProviderDefinition[],
-  utf8Storage: boolean,
+  backend: PreparedIrBackendOptions,
 ):
   | {
       readonly rows: readonly SupportCallableRow[];
@@ -400,7 +401,8 @@ function nativeRows(
     return undefined;
   const strings = providers.filter((row) => STRING_FEATURES.has(row.feature));
   const callables = providers.filter((row) => !strings.includes(row) && row.implementation.kind === "runtime-callable");
-  const formatterCallables = formatterJoins(program, formatter, formatted!);
+  const stringKey = setup.resources.literalRequirements.key;
+  const formatterCallables = formatterJoins(program, formatter, formatted!, stringKey, backend.numberFormat);
   const answered: RuntimeProviderDefinition["implementation"][] = [...(formatterCallables ?? [])];
   const rows: SupportCallableRow[] = [];
   for (const { declaration, binding } of slots) {
@@ -425,7 +427,7 @@ function nativeRows(
       callables.map((row) => row.implementation),
     ) ||
     providers.some((row) => !strings.includes(row) && !callables.includes(row)) ||
-    !stringProvidersJoin(projection, program, setup, owned!, strings, utf8Storage)
+    !stringProvidersJoin(projection, program, setup, owned!, strings, backend.utf8Storage)
   )
     return undefined;
   const indices = (space: "type" | "global") =>
@@ -457,7 +459,7 @@ export function runtimeCensus(
   const projection = program.runtime.find((row) => row.backend === backend.backend && row.target === backend.target);
   const native =
     setup && projection && backend.target === "standalone"
-      ? nativeRows(projection, program, emission, setup, plan.nativeNumberFormat, natives, backend.utf8Storage)
+      ? nativeRows(projection, program, emission, setup, plan.nativeNumberFormat, natives, backend)
       : undefined;
   if (!remainders || (!native && natives.length)) return undefined;
   if (!supportPopulationJoins(emission, [...remainders, ...(native?.rows ?? [])])) return undefined;
