@@ -78,9 +78,9 @@ Legacy codegen only.
 
 ### Left open
 
-- **Non-repeatable receivers** (`g()?.toFixed()`, `c.a?.toFixed()`) still short-circuit wrongly. The ladder
+- **Non-repeatable receivers** (`g()?.toFixed()`, `c.a?.toFixed()`) still short-circuit wrongly (#7374). The ladder
   re-reads its receiver, so those shapes need the receiver bound to the value already tested. That is a second
   mechanism, not this slice.
-- **`b?.toString()` with `b: boolean | undefined`**: the parameter lowers to a bare i32 that cannot hold
+- **`b?.toString()` with `b: boolean | undefined`** (#7374): the parameter lowers to a bare i32 that cannot hold
   `undefined`, so `f(true)` and `f(undefined)` cannot be told apart. It is a representation gap, and main behaves
   the same.
