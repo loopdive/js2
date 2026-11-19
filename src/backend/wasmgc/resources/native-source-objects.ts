@@ -9,10 +9,12 @@
  * A contract without a row here has no native source provider yet.
  */
 import type { FunctionReservation, PhysicalModuleReservations } from "../../../wasm/physical/module-reservations.js";
+import type { ValType } from "../../../wasm/model/instructions.js";
 import type { OrdinaryObjectRuntimeFeature } from "../../../ir/runtime/contracts/manifest.js";
 import {
   buildSourceObjectCreateDefinition,
   buildSourceObjectGetDefinition,
+  type SourceObjectDefinition,
 } from "../../../runtime/wasmgc/values/source-object-bodies.js";
 import type { NativeBuiltinFunctionReservations } from "./native-builtin-functions.js";
 import type { NativeObjectDescriptorReservations } from "./native-object-descriptors.js";
@@ -20,11 +22,27 @@ import type { NativeObjectLayoutReservations } from "./native-object-layouts.js"
 import type { NativeObjectStorageReservations } from "./native-object-storage.js";
 
 const EXTERNREF = { kind: "externref" } as const;
-/** The adapters this module owns, with the contract signature each reserves. */
+/** One adapter: the contract signature it reserves and its body over the realm's packs. */
+interface Adapter {
+  readonly signature: { readonly params: readonly ValType[]; readonly results: readonly ValType[] };
+  readonly body: (dependencies: NativeSourceObjectDependencies) => SourceObjectDefinition;
+}
+/** The adapters this module owns. A new realm-served contract is one row. */
 const ADAPTERS = {
-  "js.object.create-default": { params: [], results: [EXTERNREF] },
-  "js.object.get": { params: [EXTERNREF, EXTERNREF, EXTERNREF], results: [EXTERNREF] },
-} as const;
+  "js.object.create-default": {
+    signature: { params: [], results: [EXTERNREF] },
+    body: ({ layouts, storage, kernel }) =>
+      buildSourceObjectCreateDefinition({
+        objectTypeIdx: layouts.object.typeIndex,
+        objectPrototype: kernel.functions.objectPrototype.handle,
+        createWithPrototype: storage.createWithPrototype.handle,
+      }),
+  },
+  "js.object.get": {
+    signature: { params: [EXTERNREF, EXTERNREF, EXTERNREF], results: [EXTERNREF] },
+    body: ({ kernel }) => buildSourceObjectGetDefinition({ get: kernel.functions.get.handle }),
+  },
+} as const satisfies Readonly<Record<string, Adapter>>;
 type Adapted = keyof typeof ADAPTERS;
 const isAdapted = (feature: OrdinaryObjectRuntimeFeature): feature is Adapted => Object.hasOwn(ADAPTERS, feature);
 
@@ -62,7 +80,7 @@ export function reserveNativeSourceObjectResources(
   const adapters = new Map(
     adapted.map((feature) => {
       const key = nativeSourceObjectResourceKey(realmKey, feature)!;
-      const signature = ADAPTERS[feature];
+      const { signature } = ADAPTERS[feature];
       return [
         feature,
         tx.reserveFunction(key, key, { params: [...signature.params], results: [...signature.results] }),
@@ -76,16 +94,5 @@ export function fillNativeSourceObjectResources(
   tx: PhysicalModuleReservations,
   pack: NativeSourceObjectReservations,
 ): void {
-  const { layouts, storage, kernel } = pack.dependencies;
-  for (const [feature, token] of pack.adapters)
-    tx.fillFunction(
-      token,
-      feature === "js.object.create-default"
-        ? buildSourceObjectCreateDefinition({
-            objectTypeIdx: layouts.object.typeIndex,
-            objectPrototype: kernel.functions.objectPrototype.handle,
-            createWithPrototype: storage.createWithPrototype.handle,
-          })
-        : buildSourceObjectGetDefinition({ get: kernel.functions.get.handle }),
-    );
+  for (const [feature, token] of pack.adapters) tx.fillFunction(token, ADAPTERS[feature].body(pack.dependencies));
 }
