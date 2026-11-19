@@ -6,10 +6,9 @@ import { preparedIrProgramCallableResults } from "./program-callable-contract.js
 import { prepareSourceClosureInvocations } from "./source-closure-invocation.js";
 import { checkerAny, programDynamicContracts, type ProgramDynamicContracts } from "./source-dynamic-contracts.js";
 import type { TypedIrProgramInput } from "./program/input-contracts.js";
-import { legalizeDynamicGlobals } from "./program/dynamic-value-legalization.js";
 import type { TypeOracle } from "../checker/oracle.js";
 import { AllocSiteRegistry } from "./analysis/alloc-registry.js";
-import { irModuleGlobalBindingId, irModuleTdzGlobalBindingId, irSourceGlobalRef } from "./abi-bindings.js";
+import { irModuleGlobalBindingId, irModuleTdzGlobalBindingId } from "./abi-bindings.js";
 import { irUnitFuncRef, irUnitCallableBindingId } from "./callable-bindings.js";
 import {
   lowerFunctionAstToIr,
@@ -32,13 +31,14 @@ import type {
 } from "../shared/contracts/ir-unit-inventory.js";
 import { assertPreparedSourceMap } from "./program/validation.js";
 import { PositionMap } from "../position-map.js";
-import { buildIrPlanningIdentityContext, requireIrPlanningOwnerUnitId } from "./planning-identity.js";
+import { buildIrPlanningIdentityContext } from "./planning-identity.js";
 import { buildIrProgramCallableBindingGraph } from "./program-callable-bindings.js";
 import type { IrProgramCallableBindingRecord } from "./program/callable-bindings.js";
 import { buildIrUnitTypeMap, lowerTypeToIrType } from "./propagate.js";
 import { buildIrModuleInitPlan } from "./module-init-plan.js";
 import type { IrModuleInitPlan } from "./program/startup.js";
 import { makeModuleInitSynthetic } from "./module-init.js";
+import { collectProgramSourceGlobals, instantiateProgramSourceGlobals } from "./program-source-globals.js";
 import { makeIrIdentityModuleBindingResolver, type IrModuleBindingIdentity } from "./module-bindings.js";
 import type { IrDirectCallLoweringPlan, ModuleBindingGlobal } from "./ast-lowering-plans.js";
 import type { PreparedIrFunction as IrFunction, PreparedIrModule as IrModule } from "./runtime/contracts/prepared.js";
@@ -59,7 +59,6 @@ import { prepareNumberConversionResolver } from "../frontend/builtins/prepare-nu
 import { prepareObjectCreateResolver } from "../frontend/builtins/prepare-object-create.js";
 import { prepareNativeStringOutputResolver } from "../frontend/builtins/prepare-string-output.js";
 import { prepareNativeAsyncSourceFamilies, type NativeAsyncSourceFamilies } from "./program-native-async-source.js";
-import { moduleDeclares } from "./select-planned-closure-operands.js";
 import {
   collectIrPromiseDelayOwners,
   buildIrPromiseDelayLoweringPlans,
@@ -1049,22 +1048,6 @@ function checkerInferredCallableResult(
   return result;
 }
 
-function storageType(identity: IrModuleBindingIdentity): IrType {
-  const value = identity.valueKind;
-  switch (value.kind) {
-    case "f64":
-      return { kind: "val", val: { kind: "f64" } };
-    case "i32":
-      return { kind: "val", val: { kind: "i32", boolean: true } };
-    case "string":
-      return { kind: "string" };
-    case "dynamic":
-      return { kind: "dynamic" };
-    default:
-      return unsupported(`whole-program source storage has no typed carrier for ${value.kind}`);
-  }
-}
-
 /** Validate the explicit source request before inventory construction or source planning. */
 function selectNativePromiseDelaySourceProjection(
   input: Pick<IrProgramSourceInput, "promiseDelayProjection" | "policy">,
@@ -1573,8 +1556,6 @@ export function prepareIrProgramSources(
   const allocations = new AllocSiteRegistry();
   const functions: IrFunction[] = [];
   const derivedUnits: ProgramAbiDerivedUnitRecord[] = [];
-  const globals: IrProgramSourcePreparation["globals"][number][] = [];
-  const globalByDeclaration = new Map<ts.Declaration, IrProgramSourcePreparation["globals"][number]>();
   const signatures = new Map<IrUnitId, { params: readonly IrType[]; returnType: IrType | null }>();
   const bodyResults = new Map<IrUnitId, IrType | null>();
   const delayPlans: NativePromiseDelaySourcePlans = {
@@ -1657,36 +1638,14 @@ export function prepareIrProgramSources(
       dynamicContracts,
       diagnostic,
     );
-    for (const source of sourceFiles) {
-      for (const statement of source.statements) {
-        if (!ts.isVariableStatement(statement)) continue;
-        for (const declaration of statement.declarationList.declarations) {
-          diagnostic.active = requireIrPlanningOwnerUnitId(identity, declaration);
-          if (!ts.isIdentifier(declaration.name))
-            unsupported("whole-program binding pattern requires the existing destructuring producer");
-          // The var's home does not hold the hoisted function, and a direct call of the name binds the declaration.
-          if (moduleDeclares(source, declaration.name.text, true))
-            unsupported(`script var ${declaration.name.text} shares its binding with a function declaration`);
-          const inspected = moduleResolver.inspectDirectBinding(declaration.name);
-          if (inspected.kind !== "supported")
-            unsupported(`module binding ${declaration.name.text} has no exact typed storage: ${inspected.kind}`);
-          const global = inspected.identity;
-          diagnostic.active = global.storageOwnerUnitId;
-          const lexical = (statement.declarationList.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const)) !== 0;
-          const binding: ModuleBindingGlobal = {
-            ownerUnitId: global.ownerUnitId,
-            globalRef: irSourceGlobalRef(global.globalBindingId, declaration.name.text),
-            tdzGlobalRef: lexical ? irSourceGlobalRef(global.tdzBindingId, `${declaration.name.text}$tdz`) : null,
-            globalName: declaration.name.text,
-            tdzGlobalName: lexical ? `${declaration.name.text}$tdz` : null,
-            type: storageType(global),
-          };
-          const entry = { binding, identity: global };
-          globals.push(entry);
-          globalByDeclaration.set(declaration, entry);
-        }
-      }
-    }
+    const sourceGlobals = collectProgramSourceGlobals({
+      sourceFiles,
+      identity,
+      resolver: moduleResolver,
+      startup,
+      diagnostic,
+    });
+    const { globals, byDeclaration: globalByDeclaration } = sourceGlobals;
     const closureInvocations = prepareSourceClosureInvocations(input.checker, sourceFiles);
     const closureCallableParameters = new Set(
       [...closureInvocations.values()].flatMap((plan) => plan.callbacks.map((row) => row.parameter.type)),
@@ -1821,7 +1780,7 @@ export function prepareIrProgramSources(
       sourceMapProjector === undefined
         ? undefined
         : finishSourceMapCatalog(sourceMapProjector, derivedSourceRows!, derivedUnits);
-    const dynamic = legalizeDynamicGlobals(functions, globals);
+    const dynamic = instantiateProgramSourceGlobals(functions, sourceGlobals);
     const prepared: IrProgramSourcePreparation = {
       kind: "prepared",
       ...(sourceMap === undefined ? {} : { sourceMap }),

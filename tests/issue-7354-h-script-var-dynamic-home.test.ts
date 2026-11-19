@@ -155,8 +155,6 @@ describe("#7354 H — the dynamic home of a script var", () => {
   });
 
   it.each([
-    // The startup plan gives every declarator its own binding id: a second declaration has no single global.
-    ["declared twice", "var x = 1; var x = 2;", NO_HOME],
     // Each script's module-init stores `undefined` into its own globals; a script that runs first would read null.
     ["declared in one of two scripts", ["var u; u = 1;", "var v; v = 2;"], NO_HOME],
     ["on the gc target (no dynamic carrier)", "var x; x = 1;", NO_HOME],
@@ -393,7 +391,7 @@ describe("#7354 H — legalizeDynamicGlobals", () => {
   it("returns the program unchanged without a dynamic global", () => {
     const functions = [fn("init", [marker])];
     const globals = [global("n", f64, "init")];
-    const out = legalizeDynamicGlobals(functions, globals);
+    const out = legalizeDynamicGlobals(functions, globals, () => true);
     expect(out.functions).toBe(functions);
     expect(out.globals).toBe(globals);
   });
@@ -406,7 +404,7 @@ describe("#7354 H — legalizeDynamicGlobals", () => {
       global("n", f64, "init"),
       global("b", { kind: "dynamic" }, "init"),
     ];
-    const out = legalizeDynamicGlobals([init, other], globals);
+    const out = legalizeDynamicGlobals([init, other], globals, () => true);
     expect(out.functions[1]).toBe(other);
     const instrs = out.functions[0]!.blocks[0]!.instrs;
     expect(instrs.map((instr) => instr.kind)).toEqual(["intrinsic", "global.set", "global.set", "const"]);

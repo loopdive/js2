@@ -13682,6 +13682,14 @@
       "nextBoundary": "Explicit identity-preserving compatibility exports for the canonical prepared-program owner; retain existing callers until the complete IR path is tested and equivalent."
     },
     {
+      "path": "src/ir/program-source-globals.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "frontend-ts",
+      "owner": "7372",
+      "nextBoundary": "Registry of the Prepared program's source globals (#7372): one row per module-init global with its storage and the startup plan's instantiation, which the producer and the module-init prologue read; moves with program-source.ts under frontend/ts."
+    },
+    {
       "path": "src/ir/program-source.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
