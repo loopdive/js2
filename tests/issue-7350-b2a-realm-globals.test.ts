@@ -4,9 +4,12 @@
 // compared with node's `globalThis` descriptor; a row from a later edition than node's engine is compared with
 // its spec values, written out below. Completeness is checked against a fresh V8 context, which holds only the
 // engine's own globals (no node or web-platform host globals).
+import { readdirSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import { runInNewContext } from "node:vm";
 import { describe, expect, it } from "vitest";
 import { CURRENT_DRAFT_EDITION } from "../scripts/generate-editions.ts";
+import { classifyTestScope, parseMeta } from "./test262-runner.js";
 import { NATIVE_REALM_CATALOG, NATIVE_REALM_EDITION } from "../src/runtime/contracts/native-realm-catalog.js";
 import {
   NATIVE_REALM_GLOBALS,
@@ -15,15 +18,63 @@ import {
   nativeRealmGlobalTypeof,
 } from "../src/runtime/contracts/native-realm-globals.js";
 
-/** Rows an engine may predate, with their spec values: Float16Array (ES2025), Temporal (ES2026). */
-const SPEC_ROWS: Record<string, Pick<NativeRealmGlobal, "writable" | "configurable" | "value">> = {
-  Float16Array: {
+const DRAFT = NATIVE_REALM_EDITION + 1;
+const callable = (id: string, length: number, edition = NATIVE_REALM_EDITION) =>
+  ({
+    edition,
     writable: true,
     configurable: true,
-    value: { kind: "function", id: "%Float16Array%", length: 3, construct: "ordinary" },
+    value: { kind: "function", id, length, construct: "ordinary" },
+  }) as const;
+
+/**
+ * Rows an engine may predate, with their spec values: Float16Array (ES2025), Temporal (ES2026), and the
+ * explicit-resource-management globals of the draft (node 25 has them, node 22 does not).
+ */
+const SPEC_ROWS: Record<string, Omit<NativeRealmGlobal, "name">> = {
+  Float16Array: callable("%Float16Array%", 3),
+  Temporal: {
+    edition: NATIVE_REALM_EDITION,
+    writable: true,
+    configurable: true,
+    value: { kind: "namespace", id: "%Temporal%" },
   },
-  Temporal: { writable: true, configurable: true, value: { kind: "namespace", id: "%Temporal%" } },
+  AsyncDisposableStack: callable("%AsyncDisposableStack%", 0, DRAFT),
+  DisposableStack: callable("%DisposableStack%", 0, DRAFT),
+  SuppressedError: callable("%SuppressedError%", 3, DRAFT),
 };
+
+/**
+ * Directories under test262's `built-ins/` that name no global: intrinsics reached only from another object
+ * (`%TypedArray%`, the iterator and function prototypes, %ThrowTypeError%), the NativeError group (its
+ * constructors are rows) and the global object's own tests.
+ */
+const NON_GLOBAL_DIRECTORIES = new Set([
+  "ArrayIteratorPrototype",
+  "AsyncFromSyncIteratorPrototype",
+  "AsyncFunction",
+  "AsyncGeneratorFunction",
+  "AsyncGeneratorPrototype",
+  "AsyncIteratorPrototype",
+  "GeneratorFunction",
+  "GeneratorPrototype",
+  "MapIteratorPrototype",
+  "NativeErrors",
+  "RegExpStringIteratorPrototype",
+  "SetIteratorPrototype",
+  "StringIteratorPrototype",
+  "ThrowTypeError",
+  "TypedArray",
+  "TypedArrayConstructors",
+  "global",
+]);
+
+/**
+ * `ShadowRealm` is a stage 2.7 proposal that no edition or draft defines; the runner's classifier still scores its
+ * tests as standard (only `import-defer` and `source-phase-imports` are proposal features). It is not a row: the
+ * Prepared path refuses it by name instead of calling it a language global.
+ */
+const RUNNER_STANDARD_PROPOSALS = new Set(["ShadowRealm"]);
 
 /** The engine's own globals that ECMA-262 does not define: ECMA-402, the WebAssembly JS API, V8's console and
  * `--expose-gc`'s `gc`. */
@@ -84,9 +135,39 @@ describe("#7350 B2a — the global object's population", () => {
     expect(engine.filter((name) => !listed.has(name) && !ENGINE_NON_ECMASCRIPT.has(name))).toEqual([]);
   });
 
-  it("models the newest ratified edition", () => {
-    expect(NATIVE_REALM_EDITION).toBe(CURRENT_DRAFT_EDITION - 1);
+  it("models the newest ratified edition, and the draft after it", () => {
+    const charts = readFileSync("website/components/t262-charts.js", "utf8");
+    const chartsDraft = Number(/const T262_CURRENT_DRAFT_EDITION_YEAR = (\d+);/.exec(charts)?.[1]);
+    expect([NATIVE_REALM_EDITION, DRAFT, DRAFT]).toEqual([
+      CURRENT_DRAFT_EDITION - 1,
+      CURRENT_DRAFT_EDITION,
+      chartsDraft,
+    ]);
     expect(NATIVE_REALM_CATALOG.version).toBe(`ecma262-${NATIVE_REALM_EDITION}:Object+Function:v1`);
+    expect(new Set(NATIVE_REALM_GLOBALS.map((row) => row.edition))).toEqual(new Set([NATIVE_REALM_EDITION, DRAFT]));
+  });
+
+  it("lists every global the runner's classifier scores as standard", () => {
+    const root = "test262/test/built-ins";
+    const listed = new Set(NATIVE_REALM_GLOBALS.map((row) => row.name));
+    const standard = readdirSync(root).filter((directory) => {
+      if (NON_GLOBAL_DIRECTORIES.has(directory)) return false;
+      const files = readdirSync(join(root, directory), { recursive: true }) as string[];
+      return files.some((file) => {
+        if (!file.endsWith(".js") || file.endsWith("_FIXTURE.js")) return false;
+        const path = join(root, directory, file);
+        const source = readFileSync(path, "utf8");
+        return classifyTestScope(source, parseMeta(source), path).scope === "standard";
+      });
+    });
+    expect(standard.filter((name) => !listed.has(name))).toEqual([...RUNNER_STANDARD_PROPOSALS]);
+  });
+
+  it("marks exactly the spec's constructors whose `new X()` throws", () => {
+    const throws = NATIVE_REALM_GLOBALS.filter(
+      (row) => row.value.kind === "function" && row.value.construct === "throws",
+    );
+    expect(throws.map((row) => row.name)).toEqual(["BigInt", "Iterator", "Symbol"]);
   });
 
   it("agrees with the catalog on the rows the catalog completes", () => {
