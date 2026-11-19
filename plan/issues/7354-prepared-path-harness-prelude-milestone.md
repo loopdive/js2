@@ -2761,6 +2761,22 @@ source-closure arm (`ref.test` of the realm's closure root), whose bag is the cl
 kind (its `typeof`, ToString, `+` and kind-test rows) is Fa's (PR #7309), which admits function values into the
 carrier; C builds on it.
 
+### The kernel's source-closure arm (design, 2026-11-19)
+
+- `match` gains one arm after the builtin entries: a value that passes `ref.test` of the closure root and fails
+  `ref.test` of every builtin metadata type is a source closure (one ordinal after the builtin entries). The metadata
+  exclusion is load-bearing: the kernel's pins require a cloned or forged builtin function object not to match, and
+  those structs are subtypes of the same root; `requireSourceMetadataSeparation` (native-source-closures.ts) is the
+  layout guarantee the exclusion relies on.
+- `bag` is the header's `$bag` already (generic over the root). `getPrototypeOf` answers the realm's
+  `Function.prototype` (`entries[0]`, always requested) for the source ordinal; `setPrototypeOf` on a source closure
+  answers status 3 (unknown) until a slice needs a mutable source `[[Prototype]]` (ES5 has no way to ask);
+  `callVector` on a source closure dispatches through the invocation substrate's apply-vector (a source getter).
+- A source closure's bag must exist before any kernel operation reads it: `js.function.init` fills it where Fa makes
+  the closure a value. Both that call and `is-callable` are realm-family calls, so they wait for O4's one collection of
+  realm source-callable uses (S3), which also deletes the receiver-provenance gaps an `is-callable` on an arbitrary
+  value would meet today.
+
 ### Order
 
 - **C1**: `new F(a)` with `this.x = a` in F, `o.constructor === F`, `o instanceof F`.
