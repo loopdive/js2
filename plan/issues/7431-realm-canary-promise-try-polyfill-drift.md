@@ -65,10 +65,34 @@ mode, replaces the worker each time:
 - **Quality criterion.** No new list and no second install path: the worker
   primes through the one installer the runtime itself uses.
 
+## Finding: a second, separate failure in the 3426 test (2026-11-19)
+
+`tests/issue-3426-realm-canary-log-baseline.test.ts` also fails for a reason
+this fix does not touch. It expects the canary to report
+`String.prototype.concat.name:deleted` after a compiled
+`delete String.prototype.concat.name;`.
+
+- **Result.** With the `Promise.try` drift removed, the worker reports no
+  drift at all. On base the deletion was not reported either: the only drift
+  line there was `Promise.try:added`.
+- **Cause.** Under the native semantic core (#6708, #6979) the compiled
+  `delete` acts on the Wasm-native `String` prototype, not on the host's. On
+  the default target, compiling and running that statement leaves the host
+  `String.prototype.concat.name` descriptor unchanged
+  (`{ value: "concat", writable: false, enumerable: false, configurable: true }`).
+  The canary watches the host realm, so it is right to report nothing.
+- **Conclusion.** The test's premise, a compiled statement that mutates a host
+  built-in, is stale. It needs a probe that really reaches the host realm, or
+  it should be retired. This is its own issue, not part of this fix.
+- **Not verified.** I did not run the test on Node 24+ (CI's version) here, so
+  whether CI also sees it red is unconfirmed.
+
 ## Acceptance
 
 1. On Node 22, `TEST262_REALM_CANARY=log` reports no `Promise.try:added`.
 2. Local tests/min before and after on Node 22, in `recycle` mode.
-3. `tests/issue-3426-realm-canary-log-baseline.test.ts` passes on Node 22.
+3. `tests/issue-3426-realm-canary-log-baseline.test.ts` no longer reports
+   `Promise.try:added` on Node 22. It still fails on the separate finding
+   above.
 4. Verdicts unchanged on a measured path set. Node 24+ is unaffected by
    construction: the polyfill is a no-op there.
