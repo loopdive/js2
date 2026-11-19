@@ -192,12 +192,9 @@ describe("#7354 X — throw and catch with the Prepared dynamic value", () => {
       "function f(v) { try { v(); } catch (e) { return e; } }\nf(1);",
       "dynamic operation __ir_dyn_call_value has no Prepared intrinsic",
     ],
-    [
-      "a member read of a dynamic value (a TypeError on null)",
-      "function f(v) { try { return v.x; } catch (e) { return e; } }\nf(null);",
-      // (#7354 O4) the legalization's own TypeError is caught, but no carrier kind holds it when the catch reads it
-      "dynamic operation member read 'x' of a possibly nullish value in a program that reads a caught value has no Prepared intrinsic",
-    ],
+    // (#7354 O2b) "a member read of a dynamic value (a TypeError on null)" left this table: in a program that reads a
+    // caught value, the legalization's own TypeError aborts uncatchably instead of refusing, so no catch reads it
+    // (tests/issue-7354-o4-member-read.test.ts pins the trap).
   ])("refuses %s before it reaches a catch", async (_label, source, expected) => {
     const result = await compile(source, options());
     expect(

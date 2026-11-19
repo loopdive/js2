@@ -17099,6 +17099,16 @@
       "layer": "ir-program"
     },
     {
+      "path": "src/ir/program/dynamic-realm-calls.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
+      "path": "src/ir/program/ordinary-to-primitive.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
       "path": "src/ir/source-plain-objects.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",

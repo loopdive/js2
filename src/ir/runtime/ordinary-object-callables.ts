@@ -59,6 +59,12 @@ const DECLARATIONS: Readonly<Record<OrdinaryObjectRuntimeFeature, IrRuntimeCalla
   // (#7354 O4) A TypeError the realm builds, its message a native string: the dynamic-value legalization's
   // RequireObjectCoercible.
   "js.object.create-type-error": declaration("js.object.create-type-error", [EXTERNAL], [EXTERNAL]),
+  // (#7354 O2b, interim) The legalization's TypeError in a program that reads a caught value: a catch there would
+  // read it as a dynamic value, and no carrier kind holds an error, so the program fails loudly instead of throwing.
+  // (A catch that only binds or rethrows it catches the thrown TypeError: realm and source share one exception tag.)
+  // It is a call, not an intrinsic, on purpose: every intrinsic is certified pure (`analysis/intrinsics.ts`), so
+  // dead-code and GVN passes could drop or merge a trap. It goes once a carrier kind holds an error.
+  "js.object.uncatchable-type-error": declaration("js.object.uncatchable-type-error", [], []),
 });
 
 /** Exact semantic binding only; neither display names nor runtime aliases qualify. */
