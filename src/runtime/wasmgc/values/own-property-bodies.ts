@@ -50,16 +50,18 @@ export interface PropertyEnumerableBindings {
   readonly propEntryTypeIdx: number;
   readonly findOwnIdx: number;
   readonly enumerableFlag: number;
+  /** (#7368) The arm for a receiver that is no `$Object`; by default it answers false. */
+  readonly nonObjectArm?: Instr;
 }
 export function buildPropertyIsEnumerableBody(d: PropertyEnumerableBindings): Instr[] {
   return [
-    // any = any.convert_extern(obj); if !ref.test $Object → 0
+    // any = any.convert_extern(obj); if !ref.test $Object → the non-object arm
     { op: "local.get", index: 0 },
     { op: "any.convert_extern" },
     { op: "local.tee", index: 2 },
     { op: "ref.test", typeIdx: d.objectTypeIdx },
     { op: "i32.eqz" },
-    {
+    d.nonObjectArm ?? {
       op: "if",
       blockType: { kind: "empty" },
       then: [{ op: "i32.const", value: 0 }, { op: "return" }],

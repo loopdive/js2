@@ -1531,6 +1531,60 @@ function prepareStartupDirectCalls(
   }
 }
 
+type SourceModuleGlobal = IrProgramSourcePreparation["globals"][number];
+
+/** The module global of every top-level `var`/`let`/`const` binding: its exact typed storage, or a named refusal. */
+function prepareSourceModuleGlobals(
+  input: IrProgramSourceInput,
+  sourceFiles: readonly ts.SourceFile[],
+  identity: ReturnType<typeof buildIrPlanningIdentityContext>,
+  scriptVarHome: ReturnType<typeof programDynamicContracts>["scriptVarHome"],
+  diagnostic: SourceDiagnosticOwner,
+) {
+  const globals: SourceModuleGlobal[] = [];
+  const globalByDeclaration = new Map<ts.Declaration, SourceModuleGlobal>();
+  const moduleResolver = makeIrIdentityModuleBindingResolver(
+    input.checker,
+    {
+      numberStorage: "f64",
+      allowHostExterns: input.policy.target === "host",
+      allowBuiltinMapExtern: input.policy.target === "host" && input.policy.stringConst?.storage !== "native",
+      allowNativeMapStorage: input.policy.stringConst?.storage === "native",
+      oracle: input.oracle,
+      scriptVarHome,
+    },
+    identity,
+  );
+  for (const source of sourceFiles) {
+    for (const statement of source.statements) {
+      if (!ts.isVariableStatement(statement)) continue;
+      for (const declaration of statement.declarationList.declarations) {
+        diagnostic.active = requireIrPlanningOwnerUnitId(identity, declaration);
+        if (!ts.isIdentifier(declaration.name))
+          unsupported("whole-program binding pattern requires the existing destructuring producer");
+        const inspected = moduleResolver.inspectDirectBinding(declaration.name);
+        if (inspected.kind !== "supported")
+          unsupported(`module binding ${declaration.name.text} has no exact typed storage: ${inspected.kind}`);
+        const global = inspected.identity;
+        diagnostic.active = global.storageOwnerUnitId;
+        const lexical = (statement.declarationList.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const)) !== 0;
+        const binding: ModuleBindingGlobal = {
+          ownerUnitId: global.ownerUnitId,
+          globalRef: irSourceGlobalRef(global.globalBindingId, declaration.name.text),
+          tdzGlobalRef: lexical ? irSourceGlobalRef(global.tdzBindingId, `${declaration.name.text}$tdz`) : null,
+          globalName: declaration.name.text,
+          tdzGlobalName: lexical ? `${declaration.name.text}$tdz` : null,
+          type: storageType(global),
+        };
+        const entry = { binding, identity: global };
+        globals.push(entry);
+        globalByDeclaration.set(declaration, entry);
+      }
+    }
+  }
+  return { globals, globalByDeclaration };
+}
+
 export function prepareIrProgramSources(
   input: IrProgramSourceInput,
 ): IrProgramSourcePreparation | PreparedIrProgramFailure {
@@ -1556,8 +1610,6 @@ export function prepareIrProgramSources(
   const allocations = new AllocSiteRegistry();
   const functions: IrFunction[] = [];
   const derivedUnits: ProgramAbiDerivedUnitRecord[] = [];
-  const globals: IrProgramSourcePreparation["globals"][number][] = [];
-  const globalByDeclaration = new Map<ts.Declaration, IrProgramSourcePreparation["globals"][number]>();
   const signatures = new Map<IrUnitId, { params: readonly IrType[]; returnType: IrType | null }>();
   const bodyResults = new Map<IrUnitId, IrType | null>();
   const delayPlans: NativePromiseDelaySourcePlans = {
@@ -1576,18 +1628,6 @@ export function prepareIrProgramSources(
       identityContext: identity,
     });
     const dynamicContracts = programDynamicContracts(input.checker, input.policy, sourceFiles, allocations);
-    const moduleResolver = makeIrIdentityModuleBindingResolver(
-      input.checker,
-      {
-        numberStorage: "f64",
-        allowHostExterns: input.policy.target === "host",
-        allowBuiltinMapExtern: input.policy.target === "host" && input.policy.stringConst?.storage !== "native",
-        allowNativeMapStorage: input.policy.stringConst?.storage === "native",
-        oracle: input.oracle,
-        scriptVarHome: dynamicContracts.scriptVarHome,
-      },
-      identity,
-    );
     for (const sourceFile of sourceFiles) {
       diagnostic.active = identity.moduleInitUnitIdBySourceFile.get(sourceFile);
       startup.push(
@@ -1640,33 +1680,13 @@ export function prepareIrProgramSources(
       dynamicContracts,
       diagnostic,
     );
-    for (const source of sourceFiles) {
-      for (const statement of source.statements) {
-        if (!ts.isVariableStatement(statement)) continue;
-        for (const declaration of statement.declarationList.declarations) {
-          diagnostic.active = requireIrPlanningOwnerUnitId(identity, declaration);
-          if (!ts.isIdentifier(declaration.name))
-            unsupported("whole-program binding pattern requires the existing destructuring producer");
-          const inspected = moduleResolver.inspectDirectBinding(declaration.name);
-          if (inspected.kind !== "supported")
-            unsupported(`module binding ${declaration.name.text} has no exact typed storage: ${inspected.kind}`);
-          const global = inspected.identity;
-          diagnostic.active = global.storageOwnerUnitId;
-          const lexical = (statement.declarationList.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const)) !== 0;
-          const binding: ModuleBindingGlobal = {
-            ownerUnitId: global.ownerUnitId,
-            globalRef: irSourceGlobalRef(global.globalBindingId, declaration.name.text),
-            tdzGlobalRef: lexical ? irSourceGlobalRef(global.tdzBindingId, `${declaration.name.text}$tdz`) : null,
-            globalName: declaration.name.text,
-            tdzGlobalName: lexical ? `${declaration.name.text}$tdz` : null,
-            type: storageType(global),
-          };
-          const entry = { binding, identity: global };
-          globals.push(entry);
-          globalByDeclaration.set(declaration, entry);
-        }
-      }
-    }
+    const { globals, globalByDeclaration } = prepareSourceModuleGlobals(
+      input,
+      sourceFiles,
+      identity,
+      dynamicContracts.scriptVarHome,
+      diagnostic,
+    );
     const closureInvocations = prepareSourceClosureInvocations(input.checker, sourceFiles);
     const closureCallableParameters = new Set(
       [...closureInvocations.values()].flatMap((plan) => plan.callbacks.map((row) => row.parameter.type)),

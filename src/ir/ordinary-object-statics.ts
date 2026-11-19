@@ -15,22 +15,23 @@ import type { ObjectStaticProvider } from "./object-statics.js";
 import type { DescriptorFieldValue, ObjectStaticRuntime } from "./open-object-carrier.js";
 import { demoteToLegacy } from "./outcomes.js";
 import type { OrdinaryObjectRuntimeFeature } from "./runtime/contracts/manifest.js";
+import { ORDINARY_DESCRIPTOR_WORD } from "./runtime/ordinary-object-callables.js";
 
 const EXTERNREF = irVal({ kind: "externref" });
 const WORD = irVal({ kind: "f64" });
 const BOOLEAN = irVal({ kind: "i32", boolean: true });
 
-/**
- * The descriptor word of the `js.object.define-*` contracts: an attribute's value bit, its presence three bits up,
- * and the presence bit of each field that carries a value.
- */
-const ATTRIBUTE_BIT: Readonly<Record<string, number>> = { writable: 1, enumerable: 2, configurable: 4 };
-const PRESENCE_SHIFT = 3;
-const VALUE_PRESENT: Readonly<Record<string, number>> = { value: 128, get: 256, set: 512 };
+const ATTRIBUTE_BIT: Readonly<Record<string, number>> = ORDINARY_DESCRIPTOR_WORD.attribute;
+const VALUE_PRESENT: Readonly<Record<string, number>> = ORDINARY_DESCRIPTOR_WORD.field;
 
-/** The contract behind each helper a statics row names; a row without one has no Prepared provider yet. */
-const PROVIDER_CONTRACT: Partial<Record<ObjectStaticProvider, OrdinaryObjectRuntimeFeature>> = {
+/**
+ * The contract behind each helper a statics row names, or why the row has none on the Prepared path: a static whose
+ * answer the realm cannot build yet refuses by name.
+ */
+const PROVIDER_CONTRACT: Readonly<Record<ObjectStaticProvider, OrdinaryObjectRuntimeFeature | { refusal: string }>> = {
   __getOwnPropertyDescriptor: "js.object.get-own-property",
+  __getOwnPropertyNames: { refusal: "its answer is an array, which no js.object contract builds yet" },
+  __object_create: { refusal: "a prototype other than null has no js.object contract yet" },
 };
 
 function contract(
@@ -64,7 +65,7 @@ function descriptorWord(builder: IrFunctionBuilder, fields: readonly DescriptorF
   const set: IrValueId[] = [];
   for (const { name, value } of fields) {
     const attribute = ATTRIBUTE_BIT[name];
-    present += attribute === undefined ? VALUE_PRESENT[name]! : attribute << PRESENCE_SHIFT;
+    present += attribute === undefined ? VALUE_PRESENT[name]! : attribute << ORDINARY_DESCRIPTOR_WORD.presenceShift;
     if (attribute !== undefined) set.push(builder.emitSelect(builder.emitDynTruthy(value), bit(attribute), zero, WORD));
   }
   return set.reduce((word, term) => builder.emitBinary("f64.add", word, term, WORD), bit(present));
@@ -76,12 +77,8 @@ export const ORDINARY_OBJECT_RUNTIME: ObjectStaticRuntime = {
 
   call(builder, provider, operands) {
     const feature = PROVIDER_CONTRACT[provider];
-    if (feature === undefined) {
-      demoteToLegacy(
-        "call-resolution-unsupported",
-        `ir/ordinary-object-statics: ${provider} has no js.object contract on the Prepared path`,
-      );
-    }
+    if (typeof feature !== "string")
+      demoteToLegacy("call-resolution-unsupported", `ir/ordinary-object-statics: ${provider}: ${feature.refusal}`);
     const [object, key] = operands;
     return contract(
       builder,

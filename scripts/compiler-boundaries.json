@@ -13210,6 +13210,22 @@
       "nextBoundary": "TypeScript-AST plan of the `Object` statics table (`Object.<static>(…)` through the dynamic carrier), shared by the selector and from-ast (#7338); moves with the frontend inventory split."
     },
     {
+      "path": "src/ir/object-static-lowering.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "7368",
+      "nextBoundary": "TypeScript-AST lowering of an admitted `Object` static's operands onto a lane's object runtime (#7338, #7368); moves with the frontend inventory split."
+    },
+    {
+      "path": "src/ir/ordinary-object-statics.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "7368",
+      "nextBoundary": "The Prepared lane's object runtime for the `Object` statics: binds the `js.object.*` contracts (#7368); separate runtime-provider preparation from pure IR contracts."
+    },
+    {
       "path": "src/ir/binding-pattern-plan.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
@@ -16682,6 +16698,22 @@
       "layer": "mixed-needs-split",
       "destination": "frontend-ts",
       "owner": "3518-coordinator",
+      "nextBoundary": "Source-owned AST/checker preparation; isolate checker/library identity dependencies before certifying the complete frontend boundary."
+    },
+    {
+      "path": "src/frontend/builtins/prepare-object-statics.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "frontend-ts",
+      "owner": "7368",
+      "nextBoundary": "Source-owned AST/checker preparation; isolate checker/library identity dependencies before certifying the complete frontend boundary."
+    },
+    {
+      "path": "src/frontend/builtins/prepare-source-builtins.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "frontend-ts",
+      "owner": "7368",
       "nextBoundary": "Source-owned AST/checker preparation; isolate checker/library identity dependencies before certifying the complete frontend boundary."
     },
     {

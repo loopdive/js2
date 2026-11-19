@@ -57,6 +57,30 @@ const ownOperands = (d: NativeSourceObjectDependencies): SourceObjectOwnOperands
   findOwn: d.lookup.findOwn.handle,
   isOwnlessPrimitive: [d.values.functions.isNumber.handle, d.booleans.isBoolean.handle],
 });
+/** `get-own-property`: FromPropertyDescriptor over the own-entry lookup, its descriptor built by the pack's define. */
+function getOwnPropertyAdapter(d: NativeSourceObjectDependencies, tx: PhysicalModuleReservations) {
+  const literal = (text: string) => nativeStringLiteralOperand(tx, d.strings, text);
+  return buildSourceObjectOwnDescriptorDefinition({
+    ...ownOperands(d),
+    create: createDefault(d).body,
+    defineData: d.descriptors.defineData.handle,
+    anyValueTypeIdx: d.values.types.anyValue.typeIndex,
+    boxedBooleanTypeIdx: d.values.types.boxedBoolean.typeIndex,
+    undefinedValue: [
+      { op: "global.get", index: tx.physicalIndex(d.values.globals.undefined) },
+      { op: "extern.convert_any" },
+    ],
+    notCoercible: descriptorTypeError(
+      {
+        constructorIdx: d.errors.newTypeError.handle,
+        tagIdx: tx.physicalIndex(d.kernel.exception),
+        messages: [literal(NOT_COERCIBLE)],
+      },
+      0,
+    ),
+    keys: (name) => literal(name),
+  });
+}
 /** The adapters this module owns. A new realm-served contract is one row. */
 const ADAPTERS = {
   "js.object.create-default": { signature: { params: [], results: [EXTERNREF] }, body: createDefault },
@@ -72,37 +96,7 @@ const ADAPTERS = {
   "js.object.get-own-property": {
     signature: { params: [EXTERNREF, EXTERNREF], results: [EXTERNREF] },
     literals: [...DESCRIPTOR_FIELDS, NOT_COERCIBLE],
-    body: (d, tx) => {
-      const literal = (text: string) => nativeStringLiteralOperand(tx, d.strings, text);
-      const [value, writable, get, set, enumerable, configurable] = DESCRIPTOR_FIELDS.map(literal);
-      return buildSourceObjectOwnDescriptorDefinition({
-        ...ownOperands(d),
-        create: createDefault(d).body,
-        defineData: d.descriptors.defineData.handle,
-        anyValueTypeIdx: d.values.types.anyValue.typeIndex,
-        boxedBooleanTypeIdx: d.values.types.boxedBoolean.typeIndex,
-        undefinedValue: [
-          { op: "global.get", index: tx.physicalIndex(d.values.globals.undefined) },
-          { op: "extern.convert_any" },
-        ],
-        notCoercible: descriptorTypeError(
-          {
-            constructorIdx: d.errors.newTypeError.handle,
-            tagIdx: tx.physicalIndex(d.kernel.exception),
-            messages: [literal(NOT_COERCIBLE)],
-          },
-          0,
-        ),
-        keys: {
-          value: value!,
-          writable: writable!,
-          get: get!,
-          set: set!,
-          enumerable: enumerable!,
-          configurable: configurable!,
-        },
-      });
-    },
+    body: getOwnPropertyAdapter,
   },
 } as const satisfies Readonly<Record<string, Adapter>>;
 type Adapted = keyof typeof ADAPTERS;

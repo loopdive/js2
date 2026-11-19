@@ -65,6 +65,13 @@ const DECLARATIONS: Readonly<Record<OrdinaryObjectRuntimeFeature, IrRuntimeCalla
   "js.object.property-is-enumerable": declaration("js.object.property-is-enumerable", [EXTERNAL, EXTERNAL], [BOOLEAN]),
 });
 
+/** (#7368) The descriptor word's bits, as documented on {@link DECLARATIONS}. */
+export const ORDINARY_DESCRIPTOR_WORD = Object.freeze({
+  attribute: Object.freeze({ writable: 1, enumerable: 2, configurable: 4 }),
+  presenceShift: 3,
+  field: Object.freeze({ value: 128, get: 256, set: 512 }),
+});
+
 /** Exact semantic binding only; neither display names nor runtime aliases qualify. */
 export function irOrdinaryObjectCallableDeclaration(ref: IrFuncRef): IrRuntimeCallableDeclaration | undefined {
   if (ref.binding.kind !== "intrinsic" || !Object.hasOwn(DECLARATIONS, ref.binding.symbol)) return undefined;

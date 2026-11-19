@@ -6,7 +6,11 @@
  */
 import type { FuncHandle, Instr, LocalDef, TypeHandle } from "../../../wasm/model/instructions.js";
 import { buildClosureUndefinedTest } from "./closure-receiver-bodies.js";
-import { ORDINARY_OBJECT_DESCRIPTOR_ENCODING as ENCODING } from "./ordinary-object-descriptor-common.js";
+import {
+  ORDINARY_OBJECT_DESCRIPTOR_ENCODING as ENCODING,
+  descriptorFlagBit,
+} from "./ordinary-object-descriptor-common.js";
+import { buildOwnPropertyBody, buildPropertyIsEnumerableBody } from "./own-property-bodies.js";
 
 export interface SourceObjectDefinition {
   readonly locals: LocalDef[];
@@ -57,7 +61,6 @@ export function buildSourceObjectGetDefinition(d: { readonly get: FuncHandle }):
 
 const get = (index: number): Instr => ({ op: "local.get", index });
 const EMPTY = { kind: "empty" } as const;
-const I32 = { kind: "val", type: { kind: "i32" } } as const;
 const EXTERN = { kind: "val", type: { kind: "externref" } } as const;
 /** The `$PropEntry` fields the own-property bodies read. */
 const ENTRY = { value: 1, flags: 2, get: 4, set: 5 } as const;
@@ -73,36 +76,24 @@ export interface SourceObjectOwnOperands {
 }
 
 /**
- * `entry = OrdinaryGetOwnProperty(receiver, key)` (§10.1.5.1) into local `entry`, for a receiver that is an ordinary
- * object. A Number or Boolean answers `ownless` and returns; `nullish` runs first for `undefined` / `null`. Any other
- * carrier (a string, whose exotic object owns `length` and its indices) has no served lookup yet: a trap, never a
- * wrong answer.
+ * The arm an own-property body takes for a receiver that is no ordinary object: `nullish` first (for `undefined` /
+ * `null`), then a Number or Boolean answers `ownless` and returns. Any other carrier (a string, whose exotic object
+ * owns `length` and its indices) has no served lookup yet: a trap, never a wrong answer.
  */
-function ownEntry(d: SourceObjectOwnOperands, entry: number, ownless: Instr[], nullish: Instr[] = []): Instr[] {
-  const receiver: Instr[] = [get(0), { op: "any.convert_extern" }];
-  return [
-    ...receiver,
-    { op: "ref.test", typeIdx: d.objectTypeIdx },
-    { op: "i32.eqz" },
-    {
-      op: "if",
-      blockType: EMPTY,
-      then: [
-        ...nullish,
-        ...d.isOwnlessPrimitive.flatMap((funcIdx): Instr[] => [
-          get(0),
-          { op: "call", funcIdx },
-          { op: "if", blockType: EMPTY, then: [...ownless, { op: "return" }] },
-        ]),
-        { op: "unreachable" },
-      ],
-    },
-    ...receiver,
-    { op: "ref.cast", typeIdx: d.objectTypeIdx },
-    get(1),
-    { op: "call", funcIdx: d.findOwn },
-    { op: "local.set", index: entry },
-  ];
+function nonObjectArm(d: SourceObjectOwnOperands, ownless: Instr[], nullish: Instr[] = []): Instr {
+  return {
+    op: "if",
+    blockType: EMPTY,
+    then: [
+      ...nullish,
+      ...d.isOwnlessPrimitive.flatMap((funcIdx): Instr[] => [
+        get(0),
+        { op: "call", funcIdx },
+        { op: "if", blockType: EMPTY, then: [...ownless, { op: "return" }] },
+      ]),
+      { op: "unreachable" },
+    ],
+  };
 }
 
 const entryField = (d: SourceObjectOwnOperands, entry: number, fieldIdx: number): Instr[] => [
@@ -110,39 +101,32 @@ const entryField = (d: SourceObjectOwnOperands, entry: number, fieldIdx: number)
   { op: "ref.as_non_null" },
   { op: "struct.get", typeIdx: d.entryTypeIdx, fieldIdx },
 ];
-const flagSet = (flags: Instr[], bit: number): Instr[] => [
-  ...flags,
-  { op: "i32.const", value: bit },
-  { op: "i32.and" },
-  { op: "i32.const", value: 0 },
-  { op: "i32.ne" },
-];
 
 /**
  * `js.object.has-own(receiver, key)`: HasOwnProperty (§7.3.12); with `enumerable`, `js.object.property-is-enumerable`
- * (§20.1.3.4 step 4: an own property whose [[Enumerable]] is true). The caller has thrown for a nullish receiver.
+ * (§20.1.3.4 step 4: an own property whose [[Enumerable]] is true). Each is the object runtime's own kernel
+ * (`own-property-bodies.ts`) with the carrier's non-object arm. The caller has thrown for a nullish receiver.
  */
 export function buildSourceObjectOwnTestDefinition(
   d: SourceObjectOwnOperands,
   enumerable: boolean,
 ): SourceObjectDefinition {
-  const absent: Instr[] = [{ op: "i32.const", value: 0 }];
-  return {
-    locals: [{ name: "entry", type: { kind: "ref_null", typeIdx: d.entryTypeIdx } }],
-    body: [
-      ...ownEntry(d, 2, absent),
-      get(2),
-      { op: "ref.is_null" },
-      {
-        op: "if",
-        blockType: I32,
-        then: absent,
-        else: enumerable
-          ? flagSet(entryField(d, 2, ENTRY.flags), ENCODING.enumerable)
-          : [{ op: "i32.const", value: 1 }],
-      },
-    ],
+  const bindings = {
+    objectTypeIdx: d.objectTypeIdx,
+    findOwnIdx: d.findOwn,
+    nonObjectArm: nonObjectArm(d, [{ op: "i32.const", value: 0 }]),
   };
+  const any: LocalDef = { name: "any", type: { kind: "anyref" } };
+  return enumerable
+    ? {
+        locals: [any, { name: "entry", type: { kind: "ref_null", typeIdx: d.entryTypeIdx } }],
+        body: buildPropertyIsEnumerableBody({
+          ...bindings,
+          propEntryTypeIdx: d.entryTypeIdx,
+          enumerableFlag: ENCODING.enumerable,
+        }),
+      }
+    : { locals: [any], body: buildOwnPropertyBody(bindings) };
 }
 
 /** A data descriptor word with a value and every attribute present and true. */
@@ -169,19 +153,20 @@ export function buildSourceObjectOwnDescriptorDefinition(
     readonly undefinedValue: Instr[];
     /** ToObject's TypeError (§7.1.18), thrown. */
     readonly notCoercible: Instr[];
-    readonly keys: Readonly<Record<DescriptorField, Instr[]>>;
+    /** A descriptor field name as a key operand. */
+    readonly keys: (name: DescriptorField) => Instr[];
   },
 ): SourceObjectDefinition {
   const [entry, descriptor, flags] = [2, 3, 4];
   const field = (name: DescriptorField, value: Instr[]): Instr[] => [
     get(descriptor),
-    ...d.keys[name],
+    ...d.keys(name),
     ...value,
     { op: "f64.const", value: ALL_TRUE },
     { op: "call", funcIdx: d.defineData },
   ];
   const attribute = (bit: number): Instr[] => [
-    ...flagSet([get(flags)], bit),
+    ...descriptorFlagBit(flags, bit),
     { op: "struct.new", typeIdx: d.boxedBooleanTypeIdx },
     { op: "extern.convert_any" },
   ];
@@ -210,7 +195,17 @@ export function buildSourceObjectOwnDescriptorDefinition(
       { name: "flags", type: { kind: "i32" } },
     ],
     body: [
-      ...ownEntry(d, entry, d.undefinedValue, nullish),
+      get(0),
+      { op: "any.convert_extern" },
+      { op: "ref.test", typeIdx: d.objectTypeIdx },
+      { op: "i32.eqz" },
+      nonObjectArm(d, d.undefinedValue, nullish),
+      get(0),
+      { op: "any.convert_extern" },
+      { op: "ref.cast", typeIdx: d.objectTypeIdx },
+      get(1),
+      { op: "call", funcIdx: d.findOwn },
+      { op: "local.set", index: entry },
       get(entry),
       { op: "ref.is_null" },
       { op: "if", blockType: EMPTY, then: [...d.undefinedValue, { op: "return" }] },
@@ -218,7 +213,7 @@ export function buildSourceObjectOwnDescriptorDefinition(
       { op: "local.set", index: descriptor },
       ...entryField(d, entry, ENTRY.flags),
       { op: "local.set", index: flags },
-      ...flagSet([get(flags)], ENCODING.accessor),
+      ...descriptorFlagBit(flags, ENCODING.accessor),
       {
         op: "if",
         blockType: EMPTY,
