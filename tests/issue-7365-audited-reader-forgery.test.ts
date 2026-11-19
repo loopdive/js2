@@ -13,6 +13,7 @@ import {
   type PhysicalModuleStorage,
   type PhysicalReservation,
 } from "../src/wasm/physical/module-reservations.js";
+import { expectUnemittable, queryAfterAudit } from "./helpers/reservation-audit-points.js";
 
 type ImportKind = "func" | "global" | "tag";
 
@@ -256,8 +257,10 @@ describe("#7365 the ledger answers an index from its private state", () => {
       const { tx, tokens } = ledger(module);
       alterLayout(module);
       const query = () => tx.physicalIndex(tokens[3]!);
-      expect(inside ? () => tx.audited(query) : query).toThrow("population");
+      // During filling a bare query no longer audits; the completion-check audit before it refuses (#7365 B′).
+      expect(inside ? () => tx.audited(query) : () => queryAfterAudit(tx, query)).toThrow("population");
       expect(tx.state).toBe("failed");
+      expectUnemittable(tx);
     }
   });
 });
