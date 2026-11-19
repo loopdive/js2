@@ -2461,8 +2461,8 @@ export function compileOptionalPropertyAccess(
   const tsObjType = ctx.checker.getNonNullableType(ctx.checker.getTypeAtLocation(expr.expression));
   const propName = expr.name.text;
   let elseResultType: ValType | null = null;
-  if (isExternalDeclaredClass(tsObjType, ctx.checker) || hostMapCarrierClassName(ctx, tsObjType) !== undefined) {
-    compileExternPropertyGetFromStack(ctx, fctx, tsObjType, propName);
+  // (#7401) No host getter import (native `Map`/`Set` `.size`) → the dynamic member read below, not the receiver.
+  if (compileExternPropertyGetFromStack(ctx, fctx, tsObjType, propName)) {
     elseResultType = { kind: "externref" };
   } else if (isStringType(tsObjType) && propName === "length") {
     if (ctx.nativeStrings && ctx.anyStrTypeIdx >= 0) {
@@ -2602,29 +2602,29 @@ export function compileOptionalPropertyAccess(
   return resultType;
 }
 
-/** Helper: compile extern property get when receiver is already on stack */
+/** Helper: extern-class property get with the receiver on the stack; false (nothing emitted) without a getter import. */
 export function compileExternPropertyGetFromStack(
   ctx: CodegenContext,
   fctx: FunctionContext,
   objType: ts.Type,
   propName: string,
-): void {
-  const className = hostMapCarrierClassName(ctx, objType) ?? objType.getSymbol()?.name;
-  if (!className) return;
-  // Walk inheritance chain to find the property
+): boolean {
+  const className =
+    hostMapCarrierClassName(ctx, objType) ??
+    (isExternalDeclaredClass(objType, ctx.checker) ? objType.getSymbol()?.name : undefined);
+  if (!className) return false;
   let current: string | undefined = className;
   while (current) {
     const info = ctx.externClasses.get(current);
     if (info?.properties.has(propName)) {
-      const importName = `${info.importPrefix}_get_${propName}`;
-      const funcIdx = ctx.funcMap.get(importName);
-      if (funcIdx !== undefined) {
-        fctx.body.push({ op: "call", funcIdx });
-      }
-      return;
+      const funcIdx = ctx.funcMap.get(`${info.importPrefix}_get_${propName}`);
+      if (funcIdx === undefined) return false;
+      fctx.body.push({ op: "call", funcIdx });
+      return true;
     }
     current = (ctx as any).externClassParent?.get(current);
   }
+  return false;
 }
 
 // ── Property access ──────────────────────────────────────────────────
