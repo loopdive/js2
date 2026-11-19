@@ -392,7 +392,7 @@ function legalizationBuilders(
 export interface LegalizationProgram {
   /** Whether the program builds objects, and whether they are plain (`source-plain-objects.ts`). */
   readonly objects: ProgramObjects;
-  /** Whether the program binds a catch: a value thrown here may then be read back as a dynamic value. */
+  /** Whether the program reads a catch binding (not only rethrows it): a value thrown here is read back as dynamic. */
   readonly catches: boolean;
 }
 
@@ -562,7 +562,7 @@ export function legalizeDynamicValues(
 }
 
 /**
- * (#7354 X, O1) A catch binding reads the thrown payload back as the dynamic value, so in a program that binds one,
+ * (#7354 X, O1) A catch binding reads the thrown payload back as the dynamic value, so in a program that reads one,
  * every throw, in whichever function, must be a value of a {@link carrierKind}. Any other value refuses by name.
  */
 export function refuseUnadmittedThrows(fn: IrFunction): void {

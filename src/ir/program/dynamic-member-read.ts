@@ -68,8 +68,10 @@ export function dynamicMemberRead(
   const arm = (kind: CarrierKind, r: IrValueId): IrInstr[] => {
     switch (MEMBER_READ_ARM[kind]) {
       case "type-error": {
-        // A catch would read this TypeError as a dynamic value, and no carrier kind holds an error yet.
-        if (program.catches) gap(`member read '${name}' of a possibly nullish value in a program that catches`);
+        // A catch that reads its binding would read this TypeError as a dynamic value, and no carrier kind holds
+        // an error yet. A catch that only binds or rethrows it catches it: the realm throws under the program's tag.
+        if (program.catches)
+          gap(`member read '${name}' of a possibly nullish value in a program that reads a caught value`);
         const [message, carried, error] = [b.fresh(), b.fresh(), b.fresh()];
         return [
           b.text(`Cannot read properties of ${kind} (reading '${name}')`, message),

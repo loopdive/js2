@@ -194,9 +194,9 @@ describe("#7354 X — throw and catch with the Prepared dynamic value", () => {
     ],
     [
       "a member read of a dynamic value (a TypeError on null)",
-      "function f(v) { try { return v.x; } catch (e) { return 0; } }\nf(null);",
-      // (#7354 O4) the legalization's own TypeError is not yet catchable
-      "dynamic operation member read 'x' of a possibly nullish value in a program that catches has no Prepared intrinsic",
+      "function f(v) { try { return v.x; } catch (e) { return e; } }\nf(null);",
+      // (#7354 O4) the legalization's own TypeError is caught, but no carrier kind holds it when the catch reads it
+      "dynamic operation member read 'x' of a possibly nullish value in a program that reads a caught value has no Prepared intrinsic",
     ],
   ])("refuses %s before it reaches a catch", async (_label, source, expected) => {
     const result = await compile(source, options());

@@ -3,8 +3,8 @@
 // #7354 slice O, step O4 — a member read of a dynamic value with a constant key (`MEMBER_READ_ARM` in
 // src/ir/program/dynamic-value-kinds.ts): `undefined` / `null` throw a TypeError, an object reads through the realm's
 // [[Get]], a primitive reads `undefined` for a key no built-in prototype holds. A key a built-in prototype holds, a
-// computed key, a program whose prototypes code can reach, or a nullish read in a program that catches refuses by
-// name. Every program runs twice: node's answer (returns) and a wrong one (throws).
+// computed key, a program whose prototypes code can reach, or a nullish read in a program that reads a caught value
+// refuses by name. Every program runs twice: node's answer (returns) and a wrong one (throws).
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as gc from "../src/codegen/index.js";
 import * as linear from "../src/codegen-linear/index.js";
@@ -111,9 +111,9 @@ describe("#7354 O4 — a member read of the dynamic value", () => {
     ["an Object.prototype method", "var o = { a: 1 }; var t = o.toString;", "member read 'toString'"],
     ["a computed key", 'var o = { a: 1 }; var k = "a"; var v = o[k];', "dyn.member_get with a computed key"],
     [
-      "a nullish read in a program that catches",
-      "function f(v) { try { return v.x; } catch (e) { return 0; } } f(null);",
-      "member read 'x' of a possibly nullish value in a program that catches",
+      "a nullish read in a program that reads a caught value",
+      "function f(v) { try { return v.x; } catch (e) { return e; } } f(null);",
+      "member read 'x' of a possibly nullish value in a program that reads a caught value",
     ],
     [
       "a program that names a prototype global",
