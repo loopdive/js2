@@ -145,15 +145,26 @@ library.
   one realm because only the library creates objects.
 - Prepared code calling the value directly (`f("7")`) refuses: `direct call to
   "f" has no exact AST-site plan` (slice Fb).
-- **Unverified, and the largest open risk:** the library calling back *into* a
-  Prepared function (`Array.prototype.map.call(a, f)`, the prelude's
-  `assert.throws(TypeError, function () {…})`). Prepared cannot create a
-  function value yet (`module-level closure binding 'f' not in module-init
-  Slice 2 scope`; slice Fa). For a callback to work, the Prepared closure must
-  have the legacy closure header (shared in
-  `src/runtime/wasmgc/values/closure-layouts.ts`, so it is likely to match) and
-  must read the library's `currentThis`, not its own. Prove this first when Fa
-  lands.
+- **Callback into a Prepared closure: fails today. Measured on S4's Fa branch**
+  (`claude/7354-fa` @ `1474338c53`), with the shared tag:
+  - `typeof inc === "function"` in the library passes (fa3).
+  - `lib_call1(inc, 1)` (the library runs `f(a)`) and `[1, 2].map(inc)` in the
+    library both fail (fa1, fa2). A classifying probe shows the library's call
+    throws `TypeError`; it does not trap or return a wrong value.
+  - Cause: the closure **header** is the same type on both sides
+    (`(sub (struct funcref i32 (mut externref)))`), but the **entry signature**
+    is not. Legacy's dynamic call `ref.test`s the closure's funcref against one
+    uniform entry type, `(func (closure, externref, externref, externref) →
+    externref)`, and throws `TypeError` when it misses. Fa's funcref has the
+    callee's exact arity, `(func (closure, externref) → externref)`.
+  - Fix (not tried): the Prepared closure either carries an entry with legacy's
+    uniform signature (an adapter, or Fa's closure ABI adopting it), or the
+    library's call dispatch learns Prepared's exact-arity entries. Either way
+    the closure-call ABI becomes part of the versioned runtime ABI, next to
+    rules 1–3 below. Whether the IR adopts legacy's closure ABI here is the
+    lead's call: the 2026-11-15 rule says the IR need not mirror it.
+  - Not exercised: the library's `currentThis` versus Prepared's when the
+    callee reads `this` (slice C).
 
 ### (f) Size and compile time (prelude-shaped)
 
@@ -205,10 +216,11 @@ Rules that make it sound (each one closes a failure measured above):
 1. The Prepared path emits the canonical runtime type group (ABI v3, pinned
    finality). This fixes b8–b11.
 2. The Prepared path imports `env.__exn`. This fixes c1–c2.
-3. The library exports the value singletons (`undefined`, the boolean boxes)
+3. The closure-call entry signature is fixed by the ABI (fa1/fa2 above).
+4. The library exports the value singletons (`undefined`, the boolean boxes)
    and the Prepared path imports them, or Prepared `===` compares by tag. This
    fixes d7. Add them to the versioned ABI.
-4. One minting module: objects, arrays, errors, closures-as-objects and the
+5. One minting module: objects, arrays, errors, closures-as-objects and the
    realm are created only by the library; Prepared holds them as `externref`.
    This avoids the `$Object` layout split (a) and the cross-module
    struct-decoder problem the linked harness had to solve (#5225), and gives
@@ -219,7 +231,7 @@ Rules that make it sound (each one closes a failure measured above):
 | slice | today's plan | with the library |
 | --- | --- | --- |
 | H, T, X, Str | native, done or in flight | unchanged |
-| Fa (function values) | native | unchanged, plus the callback proof (e) and the library's `currentThis` |
+| Fa (function values) | native | unchanged, plus the shared closure-call entry signature (fa1/fa2 fail today) and the library's `currentThis` |
 | O (objects as dynamic values) | native object literal, member get/set | library callables: create, get, set, `in`; Prepared lowers literals to create + set |
 | Fb (dynamic call) | native IsCallable, apply vectors | library `call`/`apply` for any non-static callee; a direct typed call stays native |
 | C (function objects: props, `new`, `instanceof`) | native | library callables over the closure value from Fa |
@@ -240,7 +252,7 @@ Rules that make it sound (each one closes a failure measured above):
 - The library build: one source file under `src/runtime/`, built with
   `runtimeProvider` and cached by compiler ABI hash: M.
 - Runner linking on the IR lane: S (mirrors the linked-harness instantiate).
-- Fa callback proof: part of Fa.
+- Closure-call entry signature shared with the library: S–M, part of Fa or a follow-up.
 
 The remaining ladder becomes H/T/X/Str (done or in flight) → Fa → library
 bridge → M, instead of seven native slices.
@@ -268,6 +280,7 @@ bridge → M, instead of seven native slices.
   `PreparedIrProgramInvariantError: empty startup source … claims an
   executable body` from `assertPreparedIrProgram`, instead of a refusal.
   Repro: `var __d; function f(a) { return __d; } function g() { f(0); }`.
+  Already fixed by PR #7319 (approved, per the lead).
 - Binaryen 132 `wasm-merge -all` writes a module that V8 rejects
   (`stringview_wtf16`). Pass the explicit feature list instead.
 - `eval` in a library pulls in the runtime-eval provider (+750 kB and an import
