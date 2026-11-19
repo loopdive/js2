@@ -59,3 +59,50 @@ shared helper for each but could not fold every copy in that slice:
    check, and at least the unpinned `valueTypesOf` copies call `irValueTypes`.
 3. Pins change only by reviewed replay steps; no behaviour or byte change.
    Failing-test sets of `tests/issue-3518*` and `tests/issue-3526*` match main.
+
+## Implementation Plan (2026-11-19, base `origin/main` ee3fcdd610)
+
+### Provider comparison — module `src/ir/runtime/canonical-provider-mismatch.ts`
+
+- **The comparison.** `numberRemainderProviderMismatch`'s `sameData` becomes the canonical field comparison
+  (decision): it compares own data properties, so a `toJSON` forgery and an explicit `undefined` field are
+  rejected, which `tests/issue-3525-number-remainder-callables.test.ts` requires and JSON equality cannot give.
+  JSON equality is order-sensitive on keys; `sameData` is not, so the only rows the switch could newly accept are
+  key-reordered copies of the same data. Every canonical row is a frozen literal, so no shipped provider changes
+  verdict.
+- **Split.** `canonicalProviderRow(rows, provider)` (find by id or feature) and
+  `canonicalProviderMismatch(rows, provider, family)`. Families:
+  - ordinary object, dynamic value: unchanged calls;
+  - vector: `canonicalProviderMismatch(VECTOR_CALLABLE_RUNTIME_PROVIDERS, …)` (one row, so the same as row 0);
+  - number remainder: the shared call; its private `sameData` moves into the shared module;
+  - native async: `canonicalProviderRow` first, the "foreign clock projection" answer for a row-less
+    `standalone-clock-zero` provider stays in the family module, then the shared comparison.
+- **Pins.** `vectorProviderMismatch` and `nativeAsyncProviderMismatch` are source-pinned by the #3518 historical
+  reconstruction. Their new bodies get a hash-checked inverse span in the reconstruction helper, the same mechanism
+  as `tests/helpers/same-value-nan-correction.ts`; receipts stay immutable.
+
+### SSA value types — module `src/ir/analysis/value-types.ts`
+
+- One walker, `forEachIrValueDefinition(fn, visit)`: parameters, async-plan values, typed block arguments, and
+  every instruction result in block bodies and async-plan state bodies, nested buffers included.
+  `irValueTypes` collects it into a map; `nativeAsyncCallableValueTypes` runs it with its conflict check.
+- Copies that are the same walk call `irValueTypes`: `runtime/generator-support.ts`,
+  `runtime/intrinsic-preparation.ts`, `prepared-component-dependencies.ts`, `prepared-dynamic-support.ts`,
+  `analysis/linear-memory-plan.ts` (`collectValueTypes`). Left as they are, with the reason recorded in the
+  result: `async-prepare-ir.ts` and `async-linear-prepare.ts` (a shallow walk without async-plan values; folding
+  would add entries, which is a behaviour question, not a fold), `program-native-async-resources.ts`
+  (`delayCombinatorValueTypes` reads occurrence records, not the function).
+- A copy whose source is pinned by a receipt and cannot take a reviewed inverse step stays, with a note.
+
+### Lanes
+
+S2 (`claude/7354-perf2`) and S3 (`claude/7354-o`) change `runtime/dynamic-value-callables.ts` and the runtime
+contracts only; S4 (`claude/7354-fa`) was not pushed at planning time. None of the helpers above is in their diff;
+re-checked before each push.
+
+### Acceptance (quality)
+
+One provider comparison and one definition walker, each with every non-pinned copy folded into it; no family
+module keeps a comparison loop or a private SSA walk it could share. Bytes identical on a 100-file test262 sample ×
+gc/standalone; failing-test sets of `tests/issue-3518*`, `tests/issue-3526*` and `tests/issue-7354-*` equal to
+main's.
