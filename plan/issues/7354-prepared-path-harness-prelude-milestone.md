@@ -2234,12 +2234,30 @@ its planner (`native-invocation-requirements.ts`) admits only a callee that is a
 | --- | --- | --- | --- |
 | the call | `function-object-lowering.ts`: on the Prepared lane `applyDynamicCallee` emits one `js.closure.call:N(receiver, callee, …args)` over carrier operands | `functionObjectDynamicValue`, `irClosureMethodReference`, `coerce.to_externref` of a dynamic value (O1) | the runtime-helper sequence on this lane |
 | a dynamic callee | `native-invocation-requirements.ts`: a method use whose callee is no packed allocation is a `dynamicCallee` use; every source closure must be dispatchable (fixed parameters, carrier slots), else a named gap | `calculate`, `external` | — |
-| dispatch | `native-source-closure-callables.ts` `resolveEntries`: a dynamic use selects every source unit | `resolveSourceEntries` | — |
+| dispatch | `native-source-closure-callables.ts` `resolveEntries`: a dynamic use selects every source unit; `native-invocation.ts` `entries`: one arm per distinct signature | `resolveSourceEntries` | the per-closure duplicate arms |
 | result | legalization: `__ir_dyn_call_box` of any externref is the carrier (Fa's arm, widened from packed callables) | Fa's arm | — |
 | script vars | from-ast: a call through a dynamic home in any position on the lane; a function value stored by assignment | `isStatementDynamicModuleCall` (ordinary lane only now), `argumentIntoDynamic` | — |
 
 Quality criterion: one call path for a non-static callee on the lane (the same `lowerDynamicValueCall`), no second
 dispatcher, one lane predicate in from-ast.
+
+**Dispatcher or `call_ref` at the call site** (lead's question, measured on this branch, one dynamic call, n
+closures `var cI = function (x) { return x; }`, strict Prepared entry, standalone):
+
+| n | module bytes before dedupe | after | compile |
+| ---: | ---: | ---: | ---: |
+| 1 | 23,588 | 23,588 | 26 s |
+| 10 | 24,628 | 24,097 | 52 s (static calls only: 38 s) |
+| 50 | 29,424 | 26,533 | 277 s |
+
+The `js.closure.call:N` dispatcher already is a `call_ref` through the closure struct's own funcref, behind a
+`ref.test` of the allocation type and the lifted func type; what grew with every closure was one identical arm per
+closure. Its arms are now one per distinct (allocation type, lifted signature): every all-dynamic closure of one
+arity shares one. The remaining growth is the closures' own bodies and allocations. The dispatcher stays the one call
+path because it does what a call site cannot without copying it everywhere: IsCallable and the catchable TypeError,
+the saved/restored `currentThis` / `argc` / extra-argument protocol (`this` and `arguments` of slice C), `undefined`
+for missing arguments by the callee's arity, and it is where the realm's builtin function objects (S5) and construct
+(S11) are added as rows. Compile time is the realm's quadratic reservation audit (S6, #7365), not the dispatch.
 
 ### Result
 
