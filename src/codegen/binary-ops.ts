@@ -17,6 +17,7 @@ import { ts } from "../ts-api.js";
 import {
   getNullablePrimitiveInfo,
   isBigIntType,
+  typeMayBeBigInt,
   isBooleanType,
   isDeclaredHeterogeneousPrimitiveUnion,
   isHeterogeneousPrimitiveUnion,
@@ -1707,7 +1708,7 @@ export function compileBinaryExpression(
       const isStrictEq = op === ts.SyntaxKind.EqualsEqualsEqualsToken;
       const isStrictNeq = op === ts.SyntaxKind.ExclamationEqualsEqualsToken;
 
-      // Strict equality: BigInt and a PROVABLY non-bigint Number/String/Boolean
+      // Strict equality: BigInt and a PROVABLY non-bigint (#7371: `typeMayBeBigInt`) Number/String/Boolean
       // are different types → always false/true, decidable at compile time.
       //
       // (#6642) That fold is WRONG when the non-bigint side's static type is
@@ -1727,15 +1728,14 @@ export function compileBinaryExpression(
       // native-first/standalone (`ensureExternStrictEqHelper` returns
       // undefined off that lane) so JS-host mode is untouched.
       if (isStrictEq || isStrictNeq) {
-        const nonBigIntTsType0 = leftIsBigInt ? rightTsType : leftTsType;
-        const nonBigIntIsAnyish0 = (nonBigIntTsType0.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0;
+        const nonBigIntMayBeBigInt = typeMayBeBigInt(leftIsBigInt ? rightTsType : leftTsType);
         // `ensureExternStrictEqHelper` needs `ctx.nativeBoxNumberTypeIdx` /
         // `ctx.nativeBoxBooleanTypeIdx`, which are only set once
         // `addUnionImports` has registered the native-first boxing helpers —
         // this comparison can be the FIRST bigint-adjacent construct compiled
         // in a module, before anything else triggers that registration.
-        if (nonBigIntIsAnyish0) addUnionImports(ctx);
-        const dynStrictEqIdx = nonBigIntIsAnyish0 ? ensureExternStrictEqHelper(ctx) : undefined;
+        if (nonBigIntMayBeBigInt) addUnionImports(ctx);
+        const dynStrictEqIdx = nonBigIntMayBeBigInt ? ensureExternStrictEqHelper(ctx) : undefined;
         if (dynStrictEqIdx !== undefined) {
           const externref: ValType = { kind: "externref" };
           const lt = compileExpression(ctx, fctx, expr.left, externref);
