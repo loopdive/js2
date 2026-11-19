@@ -5,6 +5,7 @@
 // (the native `__typeof_number` / `__typeof_boolean` predicates, the `undefined` probe, the null test for
 // "object"), so no string is needed. A literal no admitted kind answers ("function", "string", a typo) is
 // constant. A `typeof` result used any other way still refuses as `dyn.typeof` (slice Str2).
+import { setImmediate } from "node:timers/promises";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as gc from "../src/codegen/index.js";
 import * as linear from "../src/codegen-linear/index.js";
@@ -30,7 +31,11 @@ const options = (target: "standalone" | "gc" = "standalone"): Test262CompileOpti
     allowJs: true,
   }) as Test262CompileOptions;
 
-afterEach(() => vi.restoreAllMocks());
+// A compile runs synchronously for seconds; yielding a macrotask between tests lets the worker answer vitest's RPC.
+afterEach(async () => {
+  vi.restoreAllMocks();
+  await setImmediate();
+});
 
 const messages = (result: { errors: readonly { message: string }[] }) => result.errors.map((error) => error.message);
 
@@ -96,31 +101,26 @@ describe("#7354 Ty — typeof comparisons on the Prepared dynamic value", () => 
 
   // One program per literal: every operator, both operand orders, every value. `bad` counts the answers that
   // differ from node's; the wrong program expects every answer negated, so each check must have run.
-  it.each(LITERALS)(
-    'answers typeof v <op> "%s" like JavaScript',
-    async (literal) => {
-      const functions = OPERATORS.flatMap((op, index) => [
-        `function l${index}(v) { return typeof v ${op} "${literal}"; }`,
-        `function r${index}(v) { return "${literal}" ${op} typeof v; }`,
-      ]);
-      const checks = (right: boolean) =>
-        OPERATORS.flatMap((op, index) =>
-          VALUES.flatMap((value) => {
-            const expected = answer(`typeof (${value}) ${op} "${literal}"`);
-            const sent = right ? expected : String(expected !== "true");
-            return [
-              `if (l${index}(${value}) !== ${sent}) bad = bad + 1;`,
-              `if (r${index}(${value}) !== ${sent}) bad = bad + 1;`,
-            ];
-          }),
-        );
-      await expectLikeNode((right) =>
-        [...functions, "var bad = 0;", ...checks(right), "if (bad !== 0) throw bad;"].join("\n"),
+  it.each(LITERALS)('answers typeof v <op> "%s" like JavaScript', async (literal) => {
+    const functions = OPERATORS.flatMap((op, index) => [
+      `function l${index}(v) { return typeof v ${op} "${literal}"; }`,
+      `function r${index}(v) { return "${literal}" ${op} typeof v; }`,
+    ]);
+    const checks = (right: boolean) =>
+      OPERATORS.flatMap((op, index) =>
+        VALUES.flatMap((value) => {
+          const expected = answer(`typeof (${value}) ${op} "${literal}"`);
+          const sent = right ? expected : String(expected !== "true");
+          return [
+            `if (l${index}(${value}) !== ${sent}) bad = bad + 1;`,
+            `if (r${index}(${value}) !== ${sent}) bad = bad + 1;`,
+          ];
+        }),
       );
-      // (#7354 Str2 merge) Two compiles of ~180 checks with string values: about 15 s alone, more under load.
-    },
-    120_000,
-  );
+    await expectLikeNode((right) =>
+      [...functions, "var bad = 0;", ...checks(right), "if (bad !== 0) throw bad;"].join("\n"),
+    );
+  });
 
   // TypeScript warns (the literal is outside `typeof`'s answers) but the program compiles; JavaScript says false.
   it("answers a literal no value has (a typo) as false", async () => {
