@@ -60,3 +60,24 @@ wrong operand type.
   and wasi.
 - **Related:** #7300 item 2, where appending non-string primitives traps
   with `illegal cast`, is the same arm.
+
+## Fix and remaining cases (2026-11-19)
+
+Fixed by PR #7333: a non-string GC ref RHS now goes through the runtime
+ToString (`emitNonStringRefToAnyStr`, `src/codegen/native-string-slot-bridge.ts`).
+
+The review found three more wrong answers in the same family. Each was
+measured on gc, standalone and wasi, and is the same with or without #7333:
+
+- **No `any`-typed function in the module.** The RHS is then already
+  `externref`, so the module validates, but the number branch traps with
+  `illegal cast`. Example:
+  `var out = 'x'; var c: any = 0; out += c ? 'a' : 1;` (node: `"x1"`).
+  The externref arm calls `__extern_toString` only when something else
+  registered it. This is #7300 item 2.
+- **An `undefined` branch** traps with a null dereference:
+  `var out = 'x'; var c: any = 0; out += c ? 'a' : undefined;`
+  (node: `"xundefined"`).
+- **An element target on a `string[]`** gives the wrong value:
+  `const o: string[] = ['x']; var c: any = 0; o[0] += c ? 'a' : 1;`
+  leaves `o[0] !== 'x1'` (node: `"x1"`).
