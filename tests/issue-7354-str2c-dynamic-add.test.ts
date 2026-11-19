@@ -4,6 +4,7 @@
 // `__ir_dyn_add` (`addition` in `src/ir/program/dynamic-value-legalization.ts`): a string on either side
 // concatenates the ToStrings, otherwise the ToNumbers are summed; operands of a known kind take only their arms.
 // Every program is checked against node twice: the right answer returns, a wrong one throws.
+import { setImmediate } from "node:timers/promises";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as gc from "../src/codegen/index.js";
 import * as linear from "../src/codegen-linear/index.js";
@@ -26,7 +27,11 @@ const options = (target: "standalone" | "gc" = "standalone"): Test262CompileOpti
     allowJs: true,
   }) as Test262CompileOptions;
 
-afterEach(() => vi.restoreAllMocks());
+// A compile runs synchronously for seconds; yielding a macrotask between tests lets the worker answer vitest's RPC.
+afterEach(async () => {
+  vi.restoreAllMocks();
+  await setImmediate();
+});
 const messages = (result: { errors: readonly { message: string }[] }) => result.errors.map((error) => error.message);
 
 async function run(source: string): Promise<"returned" | "threw"> {
@@ -60,7 +65,23 @@ async function expectLikeNode(program: (right: boolean) => string) {
   expect(await run(program(false))).toBe("threw");
 }
 
-const VALUES = ["1", "0", "-0", "0 / 0", "-1 / 0", "1.5", "true", "false", "undefined", "null", '""', '"a"', '" 12 "'];
+const VALUES = [
+  "1",
+  "0",
+  "-0",
+  "0 / 0",
+  "1 / 0",
+  "-1 / 0",
+  "1.5",
+  "true",
+  "false",
+  "undefined",
+  "null",
+  '""',
+  '"a"',
+  '"1"',
+  '" 12 "',
+];
 const value = (text: string): unknown => new Function(`return ${text};`)();
 /** A check that `r` is exactly `expected` (kind, value, the sign of zero, NaN). */
 function exact(r: string, expected: unknown): string {
@@ -76,9 +97,8 @@ const PAIRS = VALUES.flatMap((a) => VALUES.map((b) => [a, b] as const));
 const chunks = <T>(rows: readonly T[], size: number) =>
   Array.from({ length: Math.ceil(rows.length / size) }, (_, i) => rows.slice(i * size, i * size + size));
 
-// Each string literal in a Prepared program costs most of a second to compile today (the native string output
-// audit per literal occurrence, see the issue file), so the sweep checks every pair once against node (the right
-// answers return) and proves the check itself with one wrong answer per position (it throws).
+// A Prepared compile costs seconds, so the sweep checks every pair once against node (the right answers return) and
+// proves the check itself with one wrong answer per position (it throws).
 async function expectRight(program: string) {
   expect(node(program)).toBe("returned");
   expect(await run(program)).toBe("returned");
@@ -100,7 +120,7 @@ const POSITIONS: readonly [string, string, (a: string, b: string) => string, num
 describe("#7354 Str2-c — dynamic + over the carrier's cross product, like node", () => {
   describe.each(POSITIONS)("%s", (_label, declarations, site, stride) => {
     const pairs = PAIRS.filter((_, i) => i % stride === 0);
-    it.each(chunks(pairs, 43).map((rows, index) => [index, rows] as const))(
+    it.each(chunks(pairs, 45).map((rows, index) => [index, rows] as const))(
       "pairs chunk %i",
       async (_i, rows) => {
         await expectRight([declarations, ...checks(rows, site)].join("\n"));
@@ -117,7 +137,7 @@ describe("#7354 Str2-c — dynamic + over the carrier's cross product, like node
     });
   });
 
-  // Every third pair: each string argument is a literal, and literals are what compile slowly.
+  // Every third pair, in one program (a compile costs about 0.6 s per site).
   const CONDITION_PAIRS = PAIRS.filter((_, i) => i % 3 === 0);
   it("answers pairs as a condition (ToBoolean of the sum)", async () => {
     await expectLikeNode((right) =>

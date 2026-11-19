@@ -2,9 +2,10 @@
 //
 // #7354 Perf2 — the Prepared path's currentness checks re-derived the whole program at every string emit. Each check
 // that is a pure function of input that can no longer change now runs once per input (checkUnlessSettled,
-// settledChecks and settledAtIssue, src/shared/contracts/settled-verdict.ts bound in src/ir/program/settled-verdict.ts; the allocation registry restore
-// of src/ir/program/prepared-allocations.ts), and a body's emits share one layout audit. These tests try to pass a
-// mutated input through every one of those paths: each must be refused, never a stale pass.
+// settledChecks and settledAtIssue: src/shared/contracts/settled-verdict.ts, bound in src/ir/program/settled-verdict.ts;
+// the allocation registry restore of src/ir/program/prepared-allocations.ts), and a body's emits share one layout
+// audit. These tests try to pass a mutated input through every one of those paths: each must be refused, never a stale
+// pass.
 import { describe, expect, it } from "vitest";
 import {
   checkUnlessSettled,
@@ -28,6 +29,17 @@ import { freezePreparedIrRuntimeValue } from "../src/ir/program/data.js";
 import { preparedAllocationSites } from "../src/ir/program/prepared-allocations.js";
 import { asAllocSiteId } from "../src/ir/core/nodes.js";
 import { sourceInput, typedOptions, requireProgram } from "./helpers/typed-program-fixtures.js";
+import { readFileSync } from "node:fs";
+import {
+  assertNativeValueResourcePlan,
+  deriveNativeValueResourcePlan,
+} from "../src/ir/program/native-value-resources.js";
+import { prepareWholeIrProgram } from "../src/ir/program-preparation.js";
+import type { PreparedIrProgram } from "../src/ir/program/prepared-contracts.js";
+import {
+  assertNativeNumberFormatRequirementsCurrent,
+  deriveNativeNumberFormatRequirements,
+} from "../src/ir/program/native-number-format-requirements.js";
 
 const policy = {
   target: "standalone",
@@ -191,5 +203,86 @@ describe("#7354 Perf2 — allocation registry restored once per immutable snapsh
     (snapshot as { size: number }).size = 7;
     expect(() => preparedAllocationSites(snapshot)).toThrow(/invalid allocation snapshot/);
     expect(asAllocSiteId(0)).toBe(id);
+  });
+});
+
+describe("#7354 Perf2 — the native value plan's currentness", () => {
+  const policy = { backend: "wasmgc", target: "standalone" } as const;
+  function prepare() {
+    const source = prepareIrProgramSources({
+      ...sourceInput({ "./entry.ts": "export function main(value: number): number { return value; }" }),
+      policy,
+    });
+    if (source.kind !== "prepared") throw Error(source.detail);
+    const program = requireProgram(
+      prepareTypedIrProgram(captureTypedIrProgramInput(source), { ...typedOptions, policy, runtimePolicies: [policy] }),
+    );
+    return { program, projection: program.runtime[0]! };
+  }
+
+  it("refuses a mutable source changed after issue, at every later use", () => {
+    const { program, projection } = prepare();
+    const mutable = { ...program };
+    const plan = deriveNativeValueResourcePlan(mutable, projection, "primitive-only");
+    assertNativeValueResourcePlan(plan);
+    const entry = program.inventory.sources.find((source) => source.kind === "entry")!;
+    mutable.inventory = {
+      ...program.inventory,
+      sources: [{ ...entry, id: `${entry.id}?` }],
+    } as typeof program.inventory;
+    expect(() => assertNativeValueResourcePlan(plan)).toThrow("stale selected native value requirements");
+    expect(() => assertNativeValueResourcePlan(plan)).toThrow("stale selected native value requirements");
+  });
+
+  it("accepts the plan of a frozen program at every use", () => {
+    const { program, projection } = prepare();
+    const plan = deriveNativeValueResourcePlan(program, projection, "primitive-only");
+    for (let use = 0; use < 3; use++) expect(() => assertNativeValueResourcePlan(plan)).not.toThrow();
+  });
+});
+
+// A program the formatter and object-access derivations accept (the #3518 formatter fixture).
+function asyncExample(): PreparedIrProgram {
+  const source = readFileSync(new URL("../website/playground/examples/js/async.ts", import.meta.url), "utf8");
+  return requireProgram(
+    prepareWholeIrProgram({
+      ...sourceInput({ "./entry.ts": source }),
+      policy: {
+        backend: "wasmgc",
+        target: "standalone",
+        stringConst: { storage: "native" },
+        stringConcat: { concat: "native" },
+      },
+      promiseDelayProjection: "standalone-native",
+      asyncFamilyProjection: "standalone-native",
+    }),
+  );
+}
+/** A shallow copy, so the derivations below read a program that can still change. */
+const changeable = (program: PreparedIrProgram) =>
+  ({ ...program }) as { -readonly [K in keyof PreparedIrProgram]: PreparedIrProgram[K] };
+
+describe("#7354 Perf2 — formatter and object-access currentness over a program that can still change", () => {
+  it("refuses formatter requirements after their program changed, at every later use", () => {
+    const program = changeable(asyncExample());
+    const input = { program, projection: program.runtime[0]!, integerBeforeScratch: false };
+    const requirements = deriveNativeNumberFormatRequirements(input)!;
+    assertNativeNumberFormatRequirementsCurrent(input, requirements);
+    program.ir = { ...program.ir, functions: [] };
+    expect(() => assertNativeNumberFormatRequirementsCurrent(input, requirements)).toThrow(
+      "missing complete owner population",
+    );
+    expect(() => assertNativeNumberFormatRequirementsCurrent(input, requirements)).toThrow(
+      "missing complete owner population",
+    );
+  });
+
+  it("refuses object-access requirements after their program changed, at every later use", () => {
+    const program = changeable(asyncExample());
+    const requirements = deriveNativeObjectAccessRequirements(program, program.runtime[0]!);
+    assertNativeObjectAccessRequirementsCurrent(requirements);
+    program.ir = { ...program.ir, functions: [] };
+    expect(() => assertNativeObjectAccessRequirementsCurrent(requirements)).toThrow("borrowed source changed");
+    expect(() => assertNativeObjectAccessRequirementsCurrent(requirements)).toThrow("borrowed source changed");
   });
 });
