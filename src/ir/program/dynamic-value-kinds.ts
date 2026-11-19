@@ -92,18 +92,33 @@ export const TO_NUMBER_ARM: Readonly<Record<CarrierKind, "unbox" | "plain-object
   object: "plain-object",
 };
 
+/**
+ * (#7354 O4) How a member read (§13.3.2.1, GetV) answers each receiver kind: `undefined` and `null` throw a TypeError
+ * (RequireObjectCoercible); an object is the realm's [[Get]]; a primitive reaches only built-in prototypes, so a key
+ * none of them names reads `undefined` (`builtin-prototype-keys.ts`).
+ */
+export const MEMBER_READ_ARM: Readonly<Record<CarrierKind, "type-error" | "get" | "primitive">> = {
+  number: "primitive",
+  boolean: "primitive",
+  string: "primitive",
+  undefined: "type-error",
+  null: "type-error",
+  object: "get",
+};
+
 /** The kinds the `plain-object` rows were proved for: none of them is a callable. */
 type PlainObjectKinds = "number" | "boolean" | "string" | "undefined" | "null" | "object";
 
 /**
- * The plain-object rows' verdict for a program: `undefined` when they may answer, else the named refusal
- * (`source-plain-objects.ts` says why the program's objects are not plain). The OrdinaryToPrimitive shortcut is exact
+ * The plain-object rows' verdict for a program: `undefined` when they may answer, else the named refusal of
+ * `operation` (`source-plain-objects.ts` says why the program's objects are not plain). (#7354 O4) The member-read
+ * rows ask it too: a key outside the built-in prototypes reads `undefined` only while no code can change them. The OrdinaryToPrimitive shortcut is exact
  * only while no callable can be a property value, so the kind set is pinned here: a slice that admits another kind
  * (Fa's function values) fails to compile until it replaces the shortcut by Get and Call.
  */
-export function plainObjectRefusal(objects: ProgramObjects): string | undefined {
+export function plainObjectRefusal(objects: ProgramObjects, operation: string): string | undefined {
   const provedKinds: [Exclude<CarrierKind, PlainObjectKinds>] extends [never] ? true : never = true;
-  return provedKinds && objects.unplain === undefined ? undefined : `ToPrimitive of an object (${objects.unplain})`;
+  return provedKinds && objects.unplain === undefined ? undefined : `${operation} (${objects.unplain})`;
 }
 
 /** The kinds a value of a program may be: the object kind only where the program builds objects. */

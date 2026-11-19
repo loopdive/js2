@@ -17082,6 +17082,34 @@
       "layer": "ir-program"
     },
     {
+      "path": "src/ir/program/dynamic-value-kinds.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
+      "path": "src/ir/program/dynamic-value-gap.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
+      "path": "src/ir/program/dynamic-member-read.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
+      "path": "src/ir/program/builtin-prototype-keys.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
+      "path": "src/ir/source-plain-objects.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "frontend-ts",
+      "owner": "7354",
+      "nextBoundary": "The checker-and-source predicate whether a Prepared program's objects are plain (#7354 O2): which literals and member writes could change ToPrimitive or a built-in prototype; moves with source-dynamic-contracts.ts under frontend/ts."
+    },
+    {
       "path": "src/ir/program/number-to-string-target.ts",
       "state": "clean",
       "layer": "ir-program"
