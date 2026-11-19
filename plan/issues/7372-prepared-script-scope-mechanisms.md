@@ -205,3 +205,33 @@ Measured:
   `let x; var x;` is an early error the entry refuses first, so the check was removed as unreachable.
 - Ordinary-pipeline bytes, base vs head: 220 files (the 160 above + 60 ES modules flagged `module` that contain
   `var`, compiled as `test.mjs`) × default and standalone: identical (440 compiles).
+
+## Registry extraction R1 (2026-11-19, move-only; stacked on #7321)
+
+Decided by the C lead with S2 (#7363, eval) and S4 (Fa, function values): one registry for the Prepared
+program's source globals, so that the startup-store changes of the three lanes land in one module.
+
+Built (`src/ir/program-source-globals.ts`, new; program-source.ts shrinks by 38 lines):
+
+- `collectProgramSourceGlobals`: the producer's former globals loop, moved. One row per module-init global
+  (`isModuleInitGlobalDeclaration`), a repeated `var` one row keyed by its binding id, each with its storage
+  (`ModuleBindingGlobal`, `storageType` moved here) and its instantiation. The instantiation is read from the
+  startup plan's own `IrModuleInitBindingIntent.initialization` (`undefined-at-instantiation` | `tdz`), not a
+  second vocabulary. The TDZ flag global now follows from it: a row is in its TDZ exactly when the plan says
+  `tdz` (before: the declaration list's `let`/`const` flag, the same set).
+- `instantiateProgramSourceGlobals`: the module-init prologue. `legalizeDynamicGlobals` (D1's globals arm,
+  unchanged otherwise) takes the set of globals to store `undefined` into from the caller instead of storing it
+  into every dynamic global: the registry passes the rows the plan instantiates as `undefined`. That is the seam
+  S4's `function-at-startup` and S2's / slice 3's `on-first-run` rows plug into.
+- Not added, by the IR rule (no kind without a user): `function-at-startup`, `on-first-run`,
+  `global-object-property`. Not done: keying the repeated-declaration rule by symbol across sources. Its first
+  user is S2's eval source. The resolver's `moduleBindingDeclarations` is shared with the ordinary pipeline's
+  multi-module compile, so the change belongs in S2's PR, where a test can see it.
+
+Measured:
+
+- Prepared bytes, the #7321 head `dd8e3628` vs this one, 872 programs (every program literal of the #7354 and
+  #7372 tests and of prepared-entry/-runtime, each as `.js` and `.ts`): identical (247 binaries, 625 identical
+  refusals).
+- Gates: typecheck, loc, func (also against `origin/main`), coercion-sites, oracle-ratchet, dead-exports,
+  import-cycles; compiler-boundaries inventory valid (new module classified, `owner: 7372`).
