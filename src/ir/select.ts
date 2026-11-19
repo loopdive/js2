@@ -98,7 +98,7 @@ import type { IrCountedStringAppendPlan } from "./analysis/counted-string-append
 import { stringBuilderForcedLegacy } from "./string-builder-shape.js";
 import { demoteOnLegacyCallerPolicy, jsHostExternsEnabled } from "./legacy-caller-policy.js";
 import { planArrayLiteralSpread } from "./array-spread-shape.js";
-import { objectLiteralDataPropertyName, phase1PropertyName } from "./property-key-fold.js";
+import { objectLiteralDataPropertyName, phase1PropertyName } from "../shared/property-key-fold.js";
 import {
   emptyObjectBinding,
   isEmptyObjectExpression,
@@ -13658,7 +13658,7 @@ function isStaticSpreadSource(
  * `{ ["a"]: v }`, `` { [`a`]: v } ``, `{ [0]: v }` — since the IR object shape
  * is static and a folded key is indistinguishable from a plain one. Keys that
  * need a value environment (`const k = "a"`, `Symbol.iterator`, template
- * substitution, arithmetic) still reject: see `property-key-fold.ts` for why
+ * substitution, arithmetic) still reject: see `shared/property-key-fold.ts` for why
  * the fold is syntactic, and for the measurement showing a numeric key needs no
  * canonicalisation step (the scanner has already done it).
  */

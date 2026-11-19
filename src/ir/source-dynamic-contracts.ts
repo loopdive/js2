@@ -299,10 +299,11 @@ export function programDynamicContracts(
 ): ProgramDynamicContracts {
   // (#7354 O2, Fa) The kinds the program's values may be beyond the primitives, one answer every group asks: whether
   // it builds objects and whether they are plain; and whether it creates function values, which enter the carrier
-  // only as all-dynamic closures.
+  // only as all-dynamic closures. (#7354 O4) Whether it binds a catch: only then does source code read a payload.
   const kinds: ProgramKinds = {
     objects: programObjects(checker, sourceFiles),
     functions: sourceFiles.some((file) => holds(file, (node) => isDynamicClosure(policy, node))),
+    catches: sourceFiles.some((file) => holds(file, bindsCatch)),
   };
   const provenance = sourceDynamicProvenance(
     checker,
@@ -428,8 +429,11 @@ function storedIntoCarrier(value: ts.Expression, carries: Carries): boolean {
  * (`issue-3518-native-string-number-source-admission`). A function without a
  * dynamic value is returned unchanged. The flow rule runs only where a dynamic
  * value was lowered: in a function without one, no value can leave the dynamic
- * domain. (#7354 O1) Every function's throws are checked either way: a catch in
- * any group reads the payload as the dynamic value.
+ * domain. (#7354 O1, O4) In a program that binds a catch, every function's throws
+ * are checked either way: that catch, in whichever group, reads the payload as
+ * the dynamic value. Without one, no source code reads a payload, so a throw the
+ * compiler synthesizes (a TDZ `ReferenceError`, an O4 member-read TypeError)
+ * keeps its own.
  */
 function legalizeSourceDynamicValues(
   checker: ts.TypeChecker,
@@ -456,7 +460,7 @@ function legalizeSourceDynamicValues(
   let legalized: readonly IrFunction[] = retargeted;
   try {
     if (contracted) legalized = retargeted.map((fn) => legalizeDynamicValues(fn, allocations, kinds));
-    retargeted.forEach(refuseUnadmittedThrows);
+    if (kinds.catches) retargeted.forEach(refuseUnadmittedThrows);
   } catch (error) {
     if (!(error instanceof DynamicValueGap)) throw error;
     throw new IrUnsupportedError("type-resolution-unsupported", "build", error.message);

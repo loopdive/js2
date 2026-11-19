@@ -56,6 +56,9 @@ const DECLARATIONS: Readonly<Record<OrdinaryObjectRuntimeFeature, IrRuntimeCalla
   "js.object.define-attributes": declaration("js.object.define-attributes", [EXTERNAL, EXTERNAL, FLAGS], []),
   "js.object.get": declaration("js.object.get", [EXTERNAL, EXTERNAL, EXTERNAL], [EXTERNAL]),
   "js.object.has": declaration("js.object.has", [EXTERNAL, EXTERNAL], [BOOLEAN]),
+  // (#7354 O4) A TypeError the realm builds, its message a native string: the dynamic-value legalization's
+  // RequireObjectCoercible.
+  "js.object.create-type-error": declaration("js.object.create-type-error", [EXTERNAL], [EXTERNAL]),
 });
 
 /** Exact semantic binding only; neither display names nor runtime aliases qualify. */
