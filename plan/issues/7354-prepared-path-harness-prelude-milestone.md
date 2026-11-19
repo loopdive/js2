@@ -2516,3 +2516,129 @@ O1 to O4 (these are this slice's steps, not #7352's parked ordinary-pipeline sli
 - Code quality: one binding arm and one reconciler for every native callable family; one row per kind in each
   dynamic-value table; no adapter re-implements a kernel algorithm; no file or function over its budget without a
   dated grant.
+
+## Slice C: Implementation Plan (2026-11-19)
+
+Branch `claude/7354-c`. Base for this plan: `claude/7354-o` at `3adb860fc8` (O's plan, on Perf2). `claude/7354-fa`
+and the realm branch were not on origin when this was written; C1 is built on Fa's head once it is pushed, with O
+merged in.
+
+### Measured
+
+- Census of lane S9 (main `ee3fcdd610`, 8,717 positive ES5 files through the Prepared entry, stand-in harness):
+  "new on a plain function / this" is the first gap of 924 files (`new Test262Error` 606, `this` outside a method
+  264). In the real prelude: property write / read-and-call on a function object 10 / 9 sites, `new` on a plain
+  function / `this` / `instanceof` 10 / 4 / 2.
+- On the base, through the strict entry:
+  - `function F(){ this.a = 1; } var o = new F();` refuses: "'this' reference outside an instance method body (F)".
+    The Prepared caller of `lowerFunctionAstToIr` (`program-source.ts`) passes no `ambientThisStrict`, so
+    `bindEntryThis` never runs.
+  - `function F(){} new F() instanceof F` refuses: `unknown class "F" in <module-init>` (no declaration value yet:
+    Fa).
+  - `function f(){} f.x = 2;` refuses: `identifier "f" is not in scope in <module-init>` (Fa).
+
+### What exists
+
+- The closure struct (`closure-layouts.ts`): `func`, `$arity`, `$bag` (mutable externref, null at birth), captures.
+  Source closures keep `$bag` null; only the realm's builtin function kernel fills it, with `createNull()` and
+  `length` / `name` seeded by `defineDataBody` (`builtin-function-bodies.ts`).
+- `__current_this` (`native-invocation.ts`): reserved by the invocation substrate. `__call_fn_method_N` and the
+  apply-vector body install the receiver and restore it in `catchAll`. Nothing on the native path reads it.
+- The IR front end already has the operations: `dyn.current_this{strict}` (`bindEntryThis`), `dyn.construct`,
+  `dyn.instanceof_fn`, and `function-object-lowering.ts` (member get / set / call on a function value through
+  `dyn.member_get` / `dyn.member_set` and a closure call with the object as receiver). On the Prepared path none of
+  them legalizes: the dynamic-value legalization has no arm for them.
+- The realm kernel: `createWithPrototype`, `objectPrototype`, `get` / `lookup` / `has`, `defineData`, the
+  prototype chain walk (`prototype-chain-bodies.ts`). It has no `[[Construct]]` for source functions, no
+  OrdinaryHasInstance and no per-function `prototype` / `constructor` setup (its `construct` slot always throws).
+- Legacy keeps `F.prototype` in a per-function module global (`fnctorPrototypeObject`) and a closure-to-prototype
+  side table. **Not reused**: the decided representation keeps it in the bag, as an ordinary property.
+
+### Representation (decided in this issue, restated)
+
+A function object is the source closure struct. Its own properties live in a native ordinary object held in
+`$bag`, whose `[[Prototype]]` is the realm's `Function.prototype`. A source function's bag is filled once, when its
+closure is created as a value (the Fa site that makes a declaration or expression into a value): `length`, `name`,
+then for a constructible function `prototype`, a fresh ordinary object whose own `constructor` is the closure. This
+is the spec's order (OrdinaryFunctionCreate, SetFunctionName, MakeConstructor), so own-key order needs no special
+case. `this` is `__current_this`; `new` is create-with-prototype plus the existing closure call.
+
+### Target structure
+
+- **Contracts, one family.** `src/ir/runtime/function-object-callables.ts`, the sibling of
+  `ordinary-object-callables.ts`, in the same shape (one table of `js.function.*` features, the same standalone
+  wasmgc admission):
+  - `js.function.init(closure, name, length, flags) -> void` (fills the bag; `flags` = constructible);
+  - `js.function.object(EXT) -> EXT` (the bag of a function value; the member-access row's receiver object);
+  - `js.function.construct:N(callee, ...N) -> EXT`, named and parsed like `js.closure.call:N` (one helper pair
+    in `closure-invocation-callables.ts` becomes parameterised by prefix, not copied);
+  - `js.function.has-instance(value, callee) -> BOOL` (OrdinaryHasInstance);
+  - `js.function.this(strict) -> EXT`, the legalization of `dyn.current_this`.
+- **Bodies, pure builders.** `src/runtime/wasmgc/values/source-function-object-bodies.ts`, adapters over the
+  kernel only:
+  - `init` = `createWithPrototype(functionPrototype)`, then the builtin kernel's `length` / `name` seeding (that
+    body is lifted to take the name and length as operands instead of a second copy), then MakeConstructor with
+    `defineData` (`constructor`: writable, non-enumerable, configurable; `prototype`: writable,
+    non-enumerable, non-configurable);
+  - `construct:N` = IsConstructor (closure kind and the constructible bit), `get(F, "prototype")`, fall back to
+    `objectPrototype` when that is not an object, `createWithPrototype`, then the existing `js.closure.call:N`
+    with the new object as receiver; an object result replaces it. One builder parameterised by N, generated next
+    to the call:N builder;
+  - `has-instance` = the TypeErrors for a non-callable F and a non-object `F.prototype`, then the kernel's
+    prototype chain walk;
+  - `this` = `global.get __current_this`; the sloppy arm maps `undefined` / `null` to the realm global object
+    (open question below).
+- **Plan and consumer side.** No new arm: O's shared `nativeCallableAbiBindings` and the one
+  `reconcileNativeBindings` take the function family as one more row (resource key
+  `<realm key>:source-function:<feature>`). `__current_this` is already reserved by the invocation substrate;
+  the `this` body asks for it there.
+- **Dynamic value.** `dynamic-value-legalization.ts`: the `function` carrier kind is one row in each
+  `Record<CarrierKind, …>` table (Fa adds the box; if Fa does not, C adds the row: kind test
+  `js.value.is_callable`, `typeof` answer "function"). O3/O4's member chain gains the `function` row:
+  get / set on `js.function.object(v)` with `v` as receiver. `dyn.construct`, `dyn.instanceof_fn` and
+  `dyn.current_this` each get one legalization arm onto the family above.
+- **Front end.** `program-source.ts` passes `ambientThisStrict` (from `irFunctionCodeStrictness`'s source rule)
+  for every plain function declaration and expression, so the existing `bindEntryThis` runs. The ordinary
+  pipeline's self-guarded-constructor gates stay as they are (its bytes stay identical); the Prepared path asks
+  only "is the callee a function value", which Fa answers.
+
+### Order
+
+- **C1**: `new F(a)` with `this.x = a` in F, `o.constructor === F`, `o instanceof F`.
+  Proving: `function F(a){ this.a = a; } var o = new F(1); if (o.a !== 1 || o.constructor !== F || !(o instanceof F)) throw 1;`
+  and `sta.js`'s `Test262Error` with `new Test262Error("m").message === "m"`. Depends on Fa (F as a value) and O1 to
+  O3 (`this.a = a` is a member set on an object).
+- **C2**: get / set / call on a function object: `assert.x = function(){ return 1; }; if (assert.x() !== 1) throw 1;`.
+  Depends on Fb (the call through the read value with `assert` as receiver).
+- **C3**: `F.prototype.m = function(){ return this.a; }; new F(2).m() === 2`. C1 + C2 composed; no new mechanism is
+  expected, and a gap found here is named, not patched in a call site.
+- **C4**: `F.name === "F"`, `F.length === 2`, and the attributes (`delete F.length`, non-writable `name`).
+
+### Reused, and what duplicate goes
+
+- Reused: the closure struct and its `$bag`; the invocation substrate's `__current_this` and the call:N /
+  apply-vector dispatch; the realm kernel's object protocol and prototype walk; the builtin kernel's
+  `length` / `name` seeding; the IR operations `dyn.current_this`, `dyn.construct`, `dyn.instanceof_fn` and
+  `function-object-lowering.ts`; O's binding arm, reconciler and kind chain.
+- Removed duplicate: the `js.closure.call:N` name helpers become one prefix-parameterised pair shared with
+  `js.function.construct:N`; the bag seeding of builtin and source functions becomes one body.
+
+### Acceptance
+
+- Each step's proving program validates and runs through the strict Prepared entry; a wrong answer throws; node
+  agrees. Tests in `tests/issue-7354-c-function-objects.test.ts`, with the refusals still left pinned by name
+  (e.g. `new` on a non-constructor value throws a TypeError; `instanceof` with a non-object `prototype`).
+- Mutation checks on every new arm and table row (removing the arm turns its test red).
+- Ordinary-pipeline bytes identical on the 100-file sample, default and standalone, against the base.
+- After each step, S9's stand-in census on the files that carried the label: where they stop next.
+- **Code quality:** one contract family, one bodies module, no second binding arm or reconciler; one row per
+  kind in each dynamic-value table; `construct:N` and `call:N` share their naming and their builder pattern; no
+  adapter re-implements a kernel algorithm; no file or function over its budget without a dated grant.
+
+### Open questions
+
+1. A sloppy function's `this` with an `undefined` receiver is the global object. The native realm has none today
+   (S5 / S10). Until it has, C1's sloppy arm throws a named internal error instead of returning `undefined`.
+   `Test262Error` reads `this` only under `new`, so C1's proof does not reach that arm.
+2. A function value is filled by `js.function.init` where Fa makes it a value. If Fa creates a value in more than
+   one place, the call goes into Fa's one helper, not into each site.
