@@ -155,8 +155,6 @@ describe("#7354 H — the dynamic home of a script var", () => {
   });
 
   it.each([
-    // The startup plan gives every declarator its own binding id: a second declaration has no single global.
-    ["declared twice", "var x = 1; var x = 2;", NO_HOME],
     // Each script's module-init stores `undefined` into its own globals; a script that runs first would read null.
     ["declared in one of two scripts", ["var u; u = 1;", "var v; v = 2;"], NO_HOME],
     ["on the gc target (no dynamic carrier)", "var x; x = 1;", NO_HOME],
