@@ -144,10 +144,11 @@ Corrections of 2026-11-19 (second pass, same rows; the classifier is
   declaration (40 files) and a comma inside a call's arguments as a list
   separator (20: `var newObj = Object.create({}, props)`). Those 60 are now
   under their initialiser: object literal 35, RegExp literal 14, primitive
-  literal 6, `new X` 4, IIFE 1. The S10 lane's count on its branch (not
-  re-measured here): with slice 1b, 243 of the 255 get past this gap; of the
-  12 that do not, 8 stop at `Object.defineProperty(props, …)` (O) and 4 at
-  `this.x = 1` (C). Not seen by the detector: 7 `future-reserved-words` files
+  literal 6, `new X` 4, IIFE 1. Re-measured on the S10 lane's branch
+  (`claude/7354-script-scope` `2c3a877c`, slice 1b of #7372, stand-in, the
+  old 255-file list): exactly the 195 repeated-var files get past this gap
+  and none of the 60. The lane's earlier "243 of 255" did not reproduce.
+  Not seen by the detector: 7 `future-reserved-words` files
   repeat the `var` through a Unicode escape (under primitive literal).
 - **Rows 12 and 25 were one row, "nested var declaration" (245).** By the
   compiler's own rule (`isModuleInitVarList`): 185 files have a for-in head
