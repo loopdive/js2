@@ -2316,6 +2316,11 @@
       "layer": "foundation"
     },
     {
+      "path": "src/shared/contracts/dynamic-call-helpers.ts",
+      "state": "clean",
+      "layer": "foundation"
+    },
+    {
       "path": "src/ir/analysis/contracts/allocations.ts",
       "state": "clean",
       "layer": "ir-analysis"
@@ -16705,6 +16710,11 @@
     },
     {
       "path": "src/backend/wasmgc/program/native-realm.ts",
+      "state": "clean",
+      "layer": "backend-wasmgc"
+    },
+    {
+      "path": "src/backend/wasmgc/program/native-function-value-setup.ts",
       "state": "clean",
       "layer": "backend-wasmgc"
     },

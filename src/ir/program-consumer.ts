@@ -53,6 +53,10 @@ import {
 } from "../backend/wasmgc/resources/native-invocation.js";
 import { nativeSourceClosureCallableBindings } from "./program-native-invocation.js";
 import {
+  functionValueSetupSlots,
+  type FunctionValueSetupSlots,
+} from "../backend/wasmgc/program/native-function-value-setup.js";
+import {
   reservePreparedAsyncFrame,
   fillPreparedAsyncFrame,
   type PreparedAsyncFrameReservations,
@@ -190,6 +194,7 @@ export interface EmittedSupportFunctionReceipt {
 }
 interface EmissionObservation {
   readonly physical: PhysicalSetupPlan;
+  readonly functionValues?: FunctionValueSetupSlots;
   readonly reservations: PhysicalModuleReservations;
   readonly functions: readonly FunctionReservation[];
   readonly support: readonly EmittedSupportFunctionReceipt[];
@@ -441,6 +446,16 @@ export function emittedPhysicalSetupPlan(emitted: EmittedPreparedIrProgram): Phy
   if (!record) programInvariant("invalid-transaction-capability", "emission was not produced by this consumer");
   emittedSupportFunctionReceipts(emitted);
   return record.physical;
+}
+
+/**
+ * (#7354 Fa) The function-value setup this emission certified complete, if it has one. A reader joins it beside
+ * `emittedSupportFunctionReceipts`, which authenticates the completed module it indexes.
+ */
+export function emittedFunctionValueSetup(emitted: EmittedPreparedIrProgram): FunctionValueSetupSlots | undefined {
+  const record = startupAdapters.get(emitted);
+  if (!record) programInvariant("invalid-transaction-capability", "emission was not produced by this consumer");
+  return record.functionValues;
 }
 
 /** Final binding index observed at emission; does not authenticate later module mutations. */
@@ -767,6 +782,7 @@ function recordEmissionObservation(
   startAdapter: FunctionReservation | undefined,
   sourceFunctions: readonly FunctionReservation[],
   supportFunctions: readonly FunctionReservation[],
+  functionValues: FunctionValueSetupSlots | undefined,
 ): void {
   const bindings: (readonly [IrBindingId, ProgramAbiFinalIndex])[] = [];
   for (const entry of abi.entries()) {
@@ -792,6 +808,7 @@ function recordEmissionObservation(
       reservations,
       functions: Object.freeze(functions),
       support: Object.freeze(support),
+      ...(functionValues ? { functionValues } : {}),
     }),
   );
 }
@@ -1350,7 +1367,8 @@ function materializePhysicalProgram(
     emissionFailed("native invocation prerequisites were not reserved");
   const invocationFunctions = invocationPack ? nativeInvocationFunctions(reservations, invocationPack) : [];
   if (realm) reserveNativeRealmKernel(reservations, realm, sourceClosures?.types);
-  const realmFunctions = realm ? nativeRealmReservationInventory(reservations, realm).functions : [];
+  const realmInventory = realm && nativeRealmReservationInventory(reservations, realm);
+  const realmFunctions = realmInventory?.functions ?? [];
   for (const token of [...invocationFunctions, ...realmFunctions]) {
     if (nativeFunctions.has(token.object)) emissionFailed("invocation function has competing native owners");
     nativeFunctions.add(token.object);
@@ -1507,6 +1525,7 @@ function materializePhysicalProgram(
     startAdapter,
     [...slots.values()],
     [...supportFunctions.values()],
+    realmInventory && functionValueSetupSlots(reservations, realmInventory, sourceClosures?.types, invocationPack),
   );
   return result;
 }

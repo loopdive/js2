@@ -286,6 +286,16 @@ export class AllocSiteRegistry {
     return id;
   }
 
+  /**
+   * (#7354 Fa) Re-type a live site whose allocating instruction a whole-function rewrite re-typed (the Prepared
+   * dynamic-value legalization's carrier form of a closure). The caller states the instruction's new type.
+   */
+  retype(id: AllocSiteId, type: IrType): void {
+    const entry = this.sites[id as number];
+    if (entry?.state !== "live") throw new Error(`alloc registry: retype of non-live site ${id}`);
+    entry.site = { ...entry.site, type };
+  }
+
   /** True iff `id` indexes a known site (any state). */
   isKnown(id: AllocSiteId): boolean {
     const idx = id as number;

@@ -34,7 +34,18 @@ related: [7188, 2949, 3526, 3527, 3518, 7106, 7349, 7350, 7352]
 # 2026-11-17 (slice Str, merge onto H): src/compiler/ir-program-presentation.ts +1,
 # `inCall`, the ABI join's admission of a native string in an internal callable
 # contract (string parameters and results), beside H's `carried` it extends.
+# 2026-11-19 (slice Fa): src/ir/from-ast.ts +33, the Prepared function-value arms
+# beside their siblings: the `dynamicClosureSignature` / `staticFunctionValue`
+# resolver hooks, the static closure kept on a script var's `moduleGlobal` scope
+# entry and its call arm, and `argumentIntoDynamic`, which the direct and the
+# closure call now share (the direct call's inline copy is gone). The contracts
+# live in src/ir/source-dynamic-contracts.ts. src/ir/program-consumer.ts +19: the
+# emission record of the certified function-value setup and its accessor; the
+# slot census lives in src/backend/wasmgc/program/native-function-value-setup.ts.
+# ir-program-presentation.ts +1: `native`, the ABI join's admission of a lifted
+# closure body's `__self`.
 loc-budget-allow:
+  - src/ir/program-consumer.ts
   - src/ir/program-physical-plan.ts
   - src/compiler.ts
   - src/ir/program-source.ts
@@ -2060,4 +2071,74 @@ Should-fixes, both recorded under "Known gaps (T and X)" below:
   return e; }` refuses "redeclaration of 'e'". This comes from the hoisted-var fix (#7290): a catch parameter counts
   as a second binding of the `var` name. It belongs to the "one slot per `var` name per function" follow-up (see
   Known gaps (H)) and is left unchanged.
+
+## Fa — function values: creation and storage (2026-11-19)
+
+Lane S4, branch `claude/7354-fa` from `origin/main` `ee3fcdd610` (H, T, X, Str on main).
+
+### Implementation Plan
+
+Measured first (main `ee3fcdd610`, strict Prepared entry, standalone): `var f = function (v) { return v; }` stops in
+from-ast ("module-level closure binding 'f' not in module-init Slice 2 scope", "closure params must have
+annotations"). Even an annotated closure (`const f = (v: number): number => v` in a `.ts`) stops, at presentation,
+with three gaps: the lifted body's callable contract (its `__self` is a closure), the runtime census (a closure pulls
+in the #3518 native realm: function objects, their property storage and the invocation substrate, about 70 support
+functions the census does not know), and reference widening of the realm and closure types. The backend itself
+works: with the three gaps skipped the annotated program validates and answers like node.
+
+Target structure, one concern per module:
+
+| concern | module | reuses | removes |
+| --- | --- | --- | --- |
+| the all-dynamic closure contract, and "this `var` holds its initializer's closure" | `src/ir/source-dynamic-contracts.ts` (beside the parameter and result contracts) | `scriptVarWrites`, `isTopLevelStatementDeclaration`, the source-scope predicates | — |
+| lowering | `src/ir/from-ast.ts`: one resolver hook in `lowerClosureExpression`, the dynamic-home store the planned closure already has, a static-closure call arm beside the local-closure arm | `lowerClosureExpressionWithSignature`, `functionObjectDynamicValue` (the one function-value projection), `lowerClosureCall` | the direct call's inline argument boxing becomes `argumentIntoDynamic`, shared with the closure call |
+| carrier form | `src/ir/program/dynamic-value-legalization.ts`: closure / callable signatures, `closure.new`, `closureSubtype`; the projection's `__ir_dyn_call_box` of a packed callable is the carrier itself; closure allocation sites re-typed | `carrierOf`, `coerce.to_externref` (as the string arm) | — |
+| certified setup | `src/backend/wasmgc/program/native-function-value-setup.ts` (new); the consumer records it beside its support receipts | the owners' own inventories (`nativeRealmReservationInventory`, `nativeClosureReservationInventory`, `nativeInvocationFunctions`), read where the consumer already reads them | — |
+| presentation | `src/compiler/prepared-provider-census.ts`: the support join and the setup slots take the certified population; `ir-program-presentation.ts`: the ABI join admits a closure | `supportPopulationJoins`, `NativeSetupSlots` | — |
+
+No new representation: the value is the existing closure struct (`closure.new`), boxed by the existing projection;
+no new intrinsic, provider, host import or census table row.
+
+Quality criterion: no second closure path in from-ast (the contract only supplies a signature to the existing
+lowering); no copy of the argument boxing; the census takes one more population, not a parallel join; the setup
+census reads inventories once (no second authentication pass).
+
+### Result
+
+Built as planned. Behaviour:
+
+- An unannotated function expression (no default, rest, pattern, generator or async) on the native lane is a
+  closure with the all-dynamic signature; its body runs off its end into `undefined` like a dynamic-result function.
+- Stored into a script `var`'s dynamic home it is the boxed closure (identity kept: `g === f`, `h() === f`,
+  `f(f) === f`); passed to an untyped parameter it boxes the same way; thrown, the catch binding is it.
+- A top-level `var f = function …` written nowhere else, in a single-source program that runs no unspelled code and
+  does not let the global object escape, holds that closure from its declaration on; a module-init call placed
+  after the declaration is the closure's direct `closure.call` (the prelude's `print(…)`).
+- Every other call through a value (from another function, before the declaration, after a second store) still
+  refuses by name: that is slice Fb.
+- Admitted value set (D1's soundness note, updated): a function value under strict equality is compared by identity,
+  ToBoolean true, ToNumber NaN (no own `valueOf` yet), the `undefined` probe false.
+
+Proof: `tests/issue-7354-fa-function-values.test.ts` (acceptance: each program returns with node's answer and throws
+with a wrong one; refusals pinned by name; the legalization arms). Pin updated: H's "holding a function expression"
+refusal (it runs now).
+
+### Named gaps (refused, not built here)
+
+- A function declaration read as a value (`assert`, `compareArray`, `Test262Error` in the prelude) — `identifier
+  "id" is not in scope`. It needs one closure per declaration (identity) created before the first statement: a
+  trampoline lifted body and a home global the module-init prologue fills. Next step of this lane (stacked).
+- A call through a value whose callee is not static (slice Fb); a call with a missing or an extra argument on the
+  static call (`closure call arity mismatch`); a closure returned from a closure (`concrete return needs a dynamic
+  box`); a captured local written after the closure is created; `this` / `arguments` / properties (slice C);
+  `typeof` of a function value (Str2's `typeof` must answer `"function"` for it); an arrow function or a parameter
+  default (no all-dynamic contract).
+
+### Compile time
+
+A program with one closure compiles in about 22 s through the strict entry on a 4-core box (one with no closure:
+under 1 s). About 17.5 s of it is the realm emission that main already pays for an annotated closure before it
+refuses at presentation; the census's emission re-authentication passes (`emittedSupportFunctionReceipts`, several
+per presentation) are most of the rest. This is the realm's `#verifyLayout` cost (Perf lane), not this slice's code:
+the setup census reads the inventories the consumer already holds and adds no authentication pass.
 

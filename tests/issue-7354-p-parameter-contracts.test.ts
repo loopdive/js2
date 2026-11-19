@@ -7,6 +7,7 @@
 // contract either way: a converted value returns as typed, an unconverted one meets D1's implicit-flow rule.
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { programDynamicContracts } from "../src/ir/source-dynamic-contracts.js";
+import { AllocSiteRegistry } from "../src/ir/analysis/alloc-registry.js";
 import { ts } from "../src/ts-api.js";
 import * as gc from "../src/codegen/index.js";
 import * as linear from "../src/codegen-linear/index.js";
@@ -245,18 +246,25 @@ describe("#7354 P — the parameter and result contracts", () => {
   // A host async frame keeps its own contracts: an untyped parameter there is no dynamic value.
   it("gives an untyped parameter of a host async function no dynamic contract", () => {
     const { checker, file, f } = declarationOf("async function f(n) { return 1; }");
-    const host = programDynamicContracts(checker, { backend: "wasmgc", target: "host" }, [file]);
+    const host = programDynamicContracts(
+      checker,
+      { backend: "wasmgc", target: "host" },
+      [file],
+      new AllocSiteRegistry(),
+    );
     expect(host.parameter(f, f.parameters[0]!)).toBeUndefined();
     const sync = declarationOf("function f(n) { return 1; }");
-    const native = programDynamicContracts(sync.checker, STANDALONE, [sync.file]);
+    const native = programDynamicContracts(sync.checker, STANDALONE, [sync.file], new AllocSiteRegistry());
     expect(native.parameter(sync.f, sync.f.parameters[0]!)).toEqual({ kind: "dynamic" });
   });
 
   it("keeps an annotated non-any result whose body runs off its end: the annotation is the contract", () => {
     const { checker, file, f } = declarationOf("function f(v: any): number | undefined { if (v === 1) return 2; }");
-    expect(programDynamicContracts(checker, STANDALONE, [file]).result(f)).toBeUndefined();
+    expect(programDynamicContracts(checker, STANDALONE, [file], new AllocSiteRegistry()).result(f)).toBeUndefined();
     const bare = declarationOf("function f(v: any) { if (v === 1) return 2; }");
-    expect(programDynamicContracts(bare.checker, STANDALONE, [bare.file]).result(bare.f)).toEqual({
+    expect(
+      programDynamicContracts(bare.checker, STANDALONE, [bare.file], new AllocSiteRegistry()).result(bare.f),
+    ).toEqual({
       kind: "dynamic",
     });
   });

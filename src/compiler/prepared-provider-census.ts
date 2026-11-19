@@ -8,9 +8,11 @@
 
 import type { EmittedPreparedIrProgram, PreparedIrBackendOptions, PreparedIrProgram } from "../ir/program.js";
 import {
+  emittedFunctionValueSetup,
   emittedPhysicalSetupPlan,
   emittedProgramBindingIndex,
   emittedSupportFunctionReceipts,
+  type EmittedSupportFunctionReceipt,
 } from "../ir/program-consumer.js";
 import {
   nativeRole,
@@ -107,8 +109,12 @@ const runtimeCallable = (symbol: string) => ({ kind: "runtime-callable", symbol 
  * its signature, and the rows' (slot index, key) pairs are exactly the receipts' — no receipt joins nothing, none
  * joins twice, and no row lacks its receipt.
  */
-function supportPopulationJoins(emission: EmittedPreparedIrProgram, rows: readonly SupportCallableRow[]): boolean {
-  const joined: (readonly [number, string])[] = [];
+function supportPopulationJoins(
+  emission: EmittedPreparedIrProgram,
+  rows: readonly SupportCallableRow[],
+  certified: readonly EmittedSupportFunctionReceipt[],
+): boolean {
+  const joined: (readonly [number, string])[] = certified.map((row) => [row.index, row.key] as const);
   for (const row of rows) {
     const slot = completedFunctionSlot(emission, row.bindingId);
     // A binding without a completed function slot has no signature, so it fails this comparison too.
@@ -412,7 +418,19 @@ export function runtimeCensus(
     setup && projection && backend.target === "standalone"
       ? nativeRows(projection, program, emission, setup, natives, backend.utf8Storage)
       : undefined;
-  if (!remainders || (!native && natives.length)) return undefined;
-  if (!supportPopulationJoins(emission, [...remainders, ...(native?.rows ?? [])])) return undefined;
-  return native ? { native: native.slots } : {};
+  // (#7354 Fa) The function-value setup exists only beside the native setup it extends, which the plan selected for
+  // the program's own closures; its support functions and reference slots are the ones the consumer certified.
+  const functionValues = emittedFunctionValueSetup(emission);
+  if (!remainders || (!native && (natives.length || functionValues))) return undefined;
+  if (!supportPopulationJoins(emission, [...remainders, ...(native?.rows ?? [])], functionValues?.functions ?? []))
+    return undefined;
+  if (!native) return {};
+  return {
+    native: functionValues
+      ? {
+          types: new Set([...native.slots.types, ...functionValues.types]),
+          globals: new Set([...native.slots.globals, ...functionValues.globals]),
+        }
+      : native.slots,
+  };
 }
