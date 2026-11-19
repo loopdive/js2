@@ -169,6 +169,113 @@ only"; they pay out when #7350 G4, #7349 S1a and #7353 have also landed.
 - No budget grant for `select.ts` or `from-ast.ts` beyond a dated, justified
   one.
 
+## Arrays on the Prepared path: Implementation Plan (2026-11-19)
+
+Lane S13, branch `claude/7354-arrays` on `claude/7354-realm` (`e9e64e5d`). This is the array half of this
+issue for the Prepared whole-program path (`TEST262_COMPILER_PATH=ir`, standalone); the "A1" row of the slice
+table above (`vec<f64>` homes in the ordinary pipeline) is a different, parked slice. Lane S3 holds the object
+half (#7354 slice O).
+
+### Measured on the base
+
+- `function f(){ var a = [1, 2, 3]; return a[1] + a.length; }` and `var a = [1,2]; a[0]` both refuse with
+  "resolver cannot register vec for array literal": the Prepared resolver offers no vec layout to from-ast.
+- S9's stand-in census (main `ee3fcdd610`, PR #7308): array literals are the first gap of 456 positive ES5
+  files, `script-var-home-array-literal` 257 and `array-literals` 198. Of the 198, 139 stop in module-init
+  and 58 in the harness function `testWithIntlConstructors` (an array of strings); with the 257, about 400 of the
+  456 need the script-level array (A2), not only the function-local one (A1). The stand-in `compareArray(actual, expected)` reads `actual.length` and `actual[i]` on dynamic
+  parameters.
+- The realm kernel has no Array object: its object layout is the final `$Object`
+  (`createOpenObjectDeclaration`), its lookup admits "only an effectively final ordinary type; extensible roots
+  need an authenticated heterogeneous own-property dispatcher" (`buildBuiltinFunctionLookup`). The realm already
+  reserves the native vector layouts (`$Vec` carrier: length + backing array) and the vector grow/store helper
+  supports a hole-global gap fill (`vector-grow-store.ts`).
+
+### Representation (decided by the foundations rule)
+
+**An array is an Array exotic object of the realm: `$Array`, a subtype of the realm's `$Object`, whose index
+properties live in a dense `$Vec<externref>` field; a hole is the realm's hole sentinel.** Named properties
+(expandos) live in the inherited property map; `[[Prototype]]` is the realm's `%Array.prototype%`, an ordinary
+object on Object.prototype created on first use like `objectPrototype`.
+
+| | Array exotic object of the realm | typed vec slot (ordinary pipeline) |
+| --- | --- | --- |
+| index read, typed receiver | subtype test, bounds check, `array.get`, unbox (about 8 instructions) | `array.get` (about 3) |
+| `.length` | `struct.get` of the vec length, box | `struct.get` |
+| index write with growth | the existing grow/store helper | the same helper |
+| holes `[1,,3]`, `a[5] = 1` | hole sentinel, distinct from `undefined` | `vec<f64>` cannot tell a hole from NaN without a sentinel per kind; `vec<string>` cannot |
+| `compareArray(a, b)` on dynamic parameters | the object kind of the carrier (S3's O2) dispatches to it: no new carrier kind | a second object-like carrier kind, with its own row in every dynamic table (typeof, member get/set, `in`, ToPrimitive), and boxing at every dynamic use |
+| expandos, `Array.isArray`, `Object.getOwnPropertyNames`, `arguments`, a RegExp `exec` result | inherited ordinary storage; one subtype test | each needs a further representation |
+
+Costs are counted from the instruction sequences, not measured at run time. The typed vec is faster only while
+the array never reaches a dynamic slot, and in the 456 files almost every array does (script `var`, harness
+calls). A typed fast path, if ever measured to matter, is an element-kind specialisation of the same `$Array`,
+not a second representation. Rejected therefore: the typed vec slot on this path.
+
+### Target structure
+
+- **Contracts** (`src/ir/runtime/ordinary-object-callables.ts`, `ORDINARY_OBJECT_RUNTIME_FEATURES`): three rows
+  in the existing ordinary-object family, no new family:
+  - `js.object.create-array(length: f64) -> externref` — ArrayCreate on `%Array.prototype%`;
+  - `js.object.get-index(object, index: f64, receiver) -> externref` — [[Get]] with an array-index key;
+  - `js.object.set-index(object, index: f64, value)` — [[Set]] with an array-index key (growth, holes).
+  An index-keyed contract is how an index reaches the dense storage without a ToString round trip; on an
+  ordinary object its body converts the index to its canonical string key and runs the string-keyed operation.
+- **Layouts** (`native-object-layouts.ts`, `object-layouts.ts`): the realm reserves the `extensible` `$Object`
+  root when the program uses an array contract, and one `$Array` subtype declaration beside the ordinary one.
+  A program without arrays keeps the final layout: its bytes do not change.
+- **Kernel** (`builtin-function-prototype-bodies.ts`): the own-property step of `lookup` gains the
+  heterogeneous dispatcher its comment asks for, one arm: an `$Array` answers `length` and canonical index keys
+  from the vec (a fresh data entry with the spec attributes), every other key from the ordinary map. `get`,
+  `has` and every builtin that walks through `lookup` see arrays without their own arm. (A3; A1 and A2 reach
+  arrays only through the index contracts and `length`.)
+- **Bodies** (`src/runtime/wasmgc/values/source-array-bodies.ts`, new, beside `source-object-bodies.ts`):
+  create, get-index, set-index, and the `length` read; set-index reuses `buildVectorGrowStoreBody` with the
+  hole-global gap fill, never a second grow loop.
+- **Resources** (`native-source-objects.ts`): the three contracts are rows of its `ADAPTERS` table, served by
+  the bodies above; the binding rows come from the existing `nativeSourceObjectResourceKey` /
+  `planNativeSourceObjectSetup` (one binding row per callable, the shared `nativeCallAbiBindings`).
+- **Front end.** The Prepared resolver (`src/frontend/builtins/prepare-ordinary-object-access.ts`) answers
+  `preparedArrayLiteral(literal)` for every array literal it owns (the Prepared backend has no vec home for a
+  literal) and plans typed element reads like O1's typed member reads; from-ast's `lowerArrayLiteral` takes one
+  early arm to a new `lowerOrdinaryArrayLiteral` (create-array, then set-index per present element), and the
+  element access / `length` lowering takes one arm onto get-index / `js.object.get(…, "length", …)`. No second
+  literal lowering, no vec types on this path.
+- **Dynamic value (A2, after S3's O2–O4).** An array is a value of S3's `object` carrier kind (`typeof` is
+  `"object"`); `dyn.member_get` / `dyn.member_set` with a number key take the index contracts, with a string key
+  the string-keyed ones; `Array.isArray` is the `$Array` subtype test (one intrinsic in the dynamic-value
+  family). Rows go into S3's tables, coordinated with S3.
+
+### Reused, and what duplicate goes
+
+Reused: the realm's object layouts, storage, descriptor pack and kernel lookup; the native vector layout and its
+grow/store helper; the source-object binding builder and reconciler; O1's typed-read plan and boundary boxes.
+Removed: on the Prepared path an array literal no longer asks for a vec layout it cannot get (the
+"resolver cannot register vec" refusals become either a lowering or a named refusal of a later slice).
+
+### Slices
+
+| slice | content | proving program | depends on |
+| --- | --- | --- | --- |
+| A1 | array literal in a function, typed index read, `.length` | `function f(){ var a = [1, 2, 3]; return a[1] + a.length; } if (f() !== 5) throw 1;` | realm (O1) |
+| A2 | array in a script `var` / the dynamic carrier; index write with growth and holes; `length` write | `var a = [1,2]; if (a[0] !== 1) throw 1;`, `a[5] = 1; a.length === 6; a[3] === undefined` | S3 O2–O4 |
+| A3 | the harness shapes: stand-in `compareArray(a, b)`, nested arrays, an array of strings, `Array.isArray`; the kernel's own-property arm | `compareArray([1, "a"], [1, "a"])` | A2, Str |
+
+Not in A1–A3, refused by name at selection: `Array.prototype` methods (push, join, slice, indexOf, concat;
+forEach / map / filter with a callback wait for lane S4's Fb); `new Array(n)` and `Array` as a value (lane S5,
+#7350); spread elements; `for-in` over an array. After each slice S9's stand-in census re-runs on the two array
+lists and this section records where the files stop next.
+
+### Acceptance
+
+- Each slice's proving program validates and runs through the strict Prepared entry: the right answer returns,
+  a wrong answer throws, node agrees. Tests in `tests/issue-7354-a-arrays.test.ts`, refusals pinned by name,
+  a mutation check on each new arm.
+- Ordinary-pipeline bytes identical on the 100-file sample, JS environment and standalone.
+- Code quality: one representation of an array on this path; the three contracts are rows of the existing
+  ordinary-object tables and adapters, not a parallel family; the hole and growth logic is the existing helper;
+  no file or function over budget without a dated grant.
+
 ## Acceptance criteria
 
 Per slice:
