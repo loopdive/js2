@@ -210,14 +210,19 @@ needs the same table, so it lands first, as pure data.
 **Target structure.** A sibling of the realm catalog, `src/runtime/contracts/native-realm-globals.ts`:
 `NATIVE_REALM_GLOBALS`, the complete own-property population of the global object in the realm's edition
 (`NATIVE_REALM_EDITION` in `native-realm-catalog.ts`, 2026 — the newest ratified edition, the year before
-`CURRENT_DRAFT_EDITION` in `scripts/generate-editions.ts`, and pinned to it by the test): §19.1–19.4 with
-`Temporal` (ES2026, #5173) plus Annex B.2.1 `escape` / `unescape`. Explicit resource management
-(`SuppressedError`, `DisposableStack`, `AsyncDisposableStack`) is ES2027 in the repo's edition map, so it is not
-a row. Each entry carries its attributes and its value: a number (`NaN`, `Infinity`), `undefined`, the global
-object (`globalThis`), a function (intrinsic id, `length`, construct behaviour: `none`, `ordinary`, or `throws`
-for `Symbol`, `BigInt` and `Iterator`, whose IsConstructor is true but whose `new X()` throws), or a namespace
-(intrinsic id). `nativeRealmGlobalTypeof(name)` answers a tag or `"not-a-language-global"` (a host name such as
-`console`: no `typeof` answer, the caller refuses).
+`CURRENT_DRAFT_EDITION` in `scripts/generate-editions.ts` and `T262_CURRENT_DRAFT_EDITION_YEAR` in
+`website/components/t262-charts.js`, all three pinned together by the test). **Scope** (lead, RV7315 delta):
+every global the test262 runner's classifier (`classifyTestScope`) scores as a language global — §19.1–19.4 with
+`Temporal` (ES2026, #5173), Annex B.2.1 `escape` / `unescape`, and the draft's explicit-resource-management
+globals (`SuppressedError`, `DisposableStack`, `AsyncDisposableStack`), which the runner counts as standard. Each
+row carries an **edition**: the realm's edition, or the draft after it for a draft-only global — a property of
+the row, not a filter. One exception, recorded in the test: `ShadowRealm` (stage 2.7, in no edition or draft) is
+scored as standard by the runner but is not a row, so the Prepared path refuses it by name. Each entry carries
+its attributes and its value: a number (`NaN`, `Infinity`), `undefined`, the global object (`globalThis`), a
+function (intrinsic id, `length`, construct behaviour: `none`, `ordinary`, or `throws` for exactly `BigInt`,
+`Iterator` and `Symbol`, whose IsConstructor is true but whose `new X()` throws), or a namespace (intrinsic
+id). `nativeRealmGlobalTypeof(name)` answers a tag or `"not-a-language-global"` (host-only: `console`,
+`document` — no `typeof` answer, the caller refuses).
 
 **The duplicate it removes.** `AMBIENT_TYPEOF_TAGS` (`src/ir/ambient-typeof.ts`) is a second typeof list on
 main. It sits in lane S1's region; S1 removes its tags in Ty (#7305) and keeps only the ordinary lane's
@@ -247,10 +252,12 @@ body: `object-constructor-body.ts` (Object), `primitive-wrapper-bodies.ts` (Stri
 `json-standalone.ts` (JSON) and `codegen/math-helpers.ts` (Math), moving codegen-side pure bodies to
 `runtime/wasmgc/values/` when they are bound.
 
-**Acceptance.** A unit test: every row the running node has equals node's `globalThis` descriptor (attributes,
-typeof tag, `length`, `name`, IsConstructor, and `new` throwing for the `throws` rows); the rows a node engine
-may predate (`Float16Array`, `Temporal`) are compared with their spec values written in the test, and node
-may lack no other row; a fresh V8 context (only the engine's own globals) has no ECMAScript global the table
+**Acceptance.** A unit test, run on node 22 and on CI's node 25: every row the running node has equals node's
+`globalThis` descriptor (attributes, typeof tag, `length`, `name`, IsConstructor, and `new` throwing for the
+`throws` rows); the rows an engine may predate (`Float16Array`, `Temporal`, the three draft globals) are compared
+with their spec values written in the test, and node may lack no other row; every `built-ins/` directory the
+runner's classifier scores as standard names a row (directories of non-global intrinsics are listed, and
+`ShadowRealm` is the one named exception); the `throws` rows are exactly `BigInt`, `Iterator`, `Symbol`; a fresh V8 context (only the engine's own globals) has no ECMAScript global the table
 misses; `length` / construct of the catalog's complete rows equal the catalog's. Output byte-identical
 (nothing under `src/` reads the table yet; `check:dead-exports` only scans `src/codegen/`, so it says nothing
 about this file). Quality: one table; the typeof answer is derived from it.
