@@ -59,6 +59,8 @@ const DECLARATIONS: Readonly<Record<OrdinaryObjectRuntimeFeature, IrRuntimeCalla
   // (#7354 O4) A TypeError the realm builds, its message a native string: the dynamic-value legalization's
   // RequireObjectCoercible.
   "js.object.create-type-error": declaration("js.object.create-type-error", [EXTERNAL], [EXTERNAL]),
+  // (#7354 O3) OrdinarySet (§10.1.9.2): the original receiver beside the object whose chain it walks, as Get's.
+  "js.object.set": declaration("js.object.set", [EXTERNAL, EXTERNAL, EXTERNAL, EXTERNAL], [BOOLEAN]),
   // (#7350 B2b) The realm's global object (§9.3.1 [[GlobalObject]]), built once: the value `dyn.global_object` names.
   "js.object.global": declaration("js.object.global", [], [EXTERNAL]),
 });

@@ -21,6 +21,8 @@ const CONTRACTS = [
   ["js.object.has", [REF, REF], [BOOL]],
   // (#7354 O4) the dynamic-value legalization's RequireObjectCoercible TypeError
   ["js.object.create-type-error", [REF], [REF]],
+  // (#7354 O3) OrdinarySet, its original receiver beside the object, as Get's
+  ["js.object.set", [REF, REF, REF, REF], [BOOL]],
   // (#7350 B2b) the realm's global object
   ["js.object.global", [], [REF]],
 ] as const;
