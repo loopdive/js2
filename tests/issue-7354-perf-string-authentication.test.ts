@@ -23,9 +23,9 @@ import {
   fillNativeStringValueResources,
   emitPreparedNativeStringLiteral,
   requireCompletedNativeStringValues,
-  isImmutablePreparedIrValue,
   type NativeStringValueReservationInput,
 } from "../src/backend/wasmgc/program/native-string-values.js";
+import { isImmutablePreparedIrValue } from "../src/ir/program/settled-verdict.js";
 
 // Test seam: a write to module storage from inside the emit's completion check, before its closing audit.
 const inject = vi.hoisted(() => ({ write: undefined as (() => void) | undefined }));

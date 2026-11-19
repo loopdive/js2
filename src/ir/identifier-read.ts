@@ -7,7 +7,7 @@
  * only on a DOM preparation mismatch).
  */
 import ts from "typescript";
-import { isAmbientIntrinsicValueUse } from "../shared/ambient-intrinsics.js";
+import { builtinGlobalValueAdmitted } from "./builtin-globals.js";
 import { outermostParenthesized } from "../shared/binding-writes.js";
 import { IrInvariantError } from "./outcomes.js";
 import type { IrFromAstResolver } from "./from-ast.js";
@@ -75,8 +75,7 @@ export function classifyIdentifierRead<Binding>(
       global,
       certifiedDom: dom?.kind === "global-get" && dom.identifier === expr && dom.importName === global.importName,
     };
-  if (isAmbientIntrinsicValueUse(expr, (node) => resolver?.isLibOnlyBinding?.(node) === true, resolver))
-    return { kind: "ambient-intrinsic" };
+  if (builtinGlobalValueAdmitted(expr, resolver ?? {})) return { kind: "ambient-intrinsic" };
   const tag = isTypeofOperand(expr) ? resolver?.unresolvedGlobalTypeof?.(expr) : undefined;
   return tag === undefined ? { kind: "unresolved" } : { kind: "global-typeof", tag };
 }

@@ -42,7 +42,7 @@
  *     {@link sourceCreatePrototypes} (what every `Object.create` makes from).
  */
 import { forEachChild, ts } from "../ts-api.js";
-import { isUnshadowedGlobalConstant } from "./ambient-intrinsics.js";
+import { isUndeclaredInFile, isUnshadowedGlobalConstant } from "./ambient-intrinsics.js";
 import { isBindingSiteName, isStoreTarget, skipOuterExpressions } from "./binding-writes.js";
 
 export type PatchableIntrinsic = "Array" | "Boolean" | "Function" | "Number" | "Object" | "RegExp" | "String";
@@ -124,6 +124,18 @@ export function sourceRunsDynamicCode(sourceFile: ts.SourceFile): boolean {
   return prototypeUse(sourceFile).dynamicCode;
 }
 
+/**
+ * Whether a binding named `name` may be written by a route that is no identifier write of it: code the source does
+ * not spell, a reflective route, or a member of that name stored, deleted or defined on any object. A script binding
+ * is a property of the global object, so `this.f = v`, `globalThis["f"] = v` and
+ * `Object.defineProperty(globalThis, "f", …)` all write it; a write under a computed name is
+ * {@link sourceMayWriteGlobalObject}'s question.
+ */
+export function sourceMayWriteBindingUnseen(sourceFile: ts.SourceFile, name: string): boolean {
+  const use = prototypeUse(sourceFile);
+  return use.dynamicCode || use.reflective || use.writtenNames.has(name);
+}
+
 /** Whether a member may be installed under a name the source does not spell ({@link installsUnspelledMember}). */
 export function sourceMayWriteUnspelledMember(sourceFile: ts.SourceFile): boolean {
   return prototypeUse(sourceFile).unspelledWrite;
@@ -142,6 +154,32 @@ export function sourceCreatePrototypes(sourceFile: ts.SourceFile): readonly (ts.
 /** Whether the source writes, deletes or defines a member or binding named `name` (`x.call = f`, `String = v`). */
 export function sourceWritesMemberNamed(sourceFile: ts.SourceFile, name: string): boolean {
   return prototypeUse(sourceFile).writtenNames.has(name);
+}
+
+/**
+ * (#7350) `identifier` reads the realm's own global of its name: nothing in
+ * the file declares the name, nothing writes, deletes or defines a member or
+ * binding of that name by a literal route (`Math = v`, `globalThis.Math = v`,
+ * `delete globalThis.Math`), and no enclosing `with` body can resolve it to an
+ * object's property (a `with` elsewhere in the file does not reach it). A
+ * write under a computed name is outside this boundary, as for the object
+ * statics (#3776). Syntactic: dead-binding elision asks it before a checker
+ * exists; a checker consumer also asks for the lib binding.
+ */
+export function isPristineIntrinsic(identifier: ts.Identifier): boolean {
+  return (
+    isUndeclaredInFile(identifier) &&
+    !sourceWritesMemberNamed(identifier.getSourceFile(), identifier.text) &&
+    !isInWithBody(identifier)
+  );
+}
+
+/** Inside the body of a `with` statement, where a free name may resolve to the object's property. */
+function isInWithBody(node: ts.Node): boolean {
+  for (let child = node; child.parent !== undefined; child = child.parent) {
+    if (ts.isWithStatement(child.parent) && child.parent.statement === child) return true;
+  }
+  return false;
 }
 
 function prototypeUse(sourceFile: ts.SourceFile): PrototypeUse {

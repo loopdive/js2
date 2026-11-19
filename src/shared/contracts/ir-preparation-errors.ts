@@ -64,6 +64,15 @@ export function demoteToLegacy(code: IrUnsupportedCode, detail: string): never {
   throw new IrUnsupportedError(code, "build", detail);
 }
 
+/**
+ * (#7364) A construct only the selector refuses reached the builder. After a selector's claim that is a drift (an
+ * invariant); on a producer without a selector (`unselected`, the Prepared path) it is the selector's named refusal.
+ */
+export function refuseUnselected(unselected: boolean | undefined, code: IrUnsupportedCode, detail: string): never {
+  if (unselected) demoteToLegacy(code, detail);
+  throw new IrInvariantError("selection-preparation-mismatch", "build", detail);
+}
+
 /** Preserve a typed failure; unknown throws are compiler invariants. */
 export function classifyIrFailure(error: unknown, stage: Exclude<IrPreparationStage, "select">): IrPreparationFailure {
   if (error instanceof IrUnsupportedError) {

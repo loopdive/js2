@@ -336,7 +336,7 @@ function entries(
   pack: NativeInvocationReservations,
 ): NativeClosureMethodEntry[] {
   const { values } = owner.dependencies;
-  return callables.entries.map((row) => {
+  const arms = callables.entries.map((row): NativeClosureMethodEntry => {
     const info = row.signature.info;
     const booleanResult =
       objectResultIsBoolean(row.source.closureSubtype?.signature.returnType) &&
@@ -370,6 +370,16 @@ function entries(
             ],
           },
     };
+  });
+  // (#7354 Fb) An arm is a function of its types alone (it calls through the closure's own funcref), so closures of
+  // one allocation type and lifted signature share one arm: the dispatcher grows with the program's signatures, not
+  // with its closures (every all-dynamic closure of one arity is one arm).
+  const seen = new Set<string>();
+  return arms.filter((arm) => {
+    const key = JSON.stringify(arm);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
   });
 }
 

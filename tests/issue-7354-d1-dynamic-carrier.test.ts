@@ -13,6 +13,7 @@ import { irRuntimeFuncRef } from "../src/ir/core/callable-bindings.js";
 import type { IrFunction, IrInstr, IrInstrIntrinsic } from "../src/ir/core/nodes.js";
 import type { IrType } from "../src/ir/core/types.js";
 import { DynamicValueGap, legalizeDynamicValues } from "../src/ir/program/dynamic-value-legalization.js";
+import { AllocSiteRegistry } from "../src/ir/analysis/alloc-registry.js";
 import { dynamicValuePolicyMismatch } from "../src/ir/runtime/dynamic-value-callables.js";
 import { JS_TAG_IDS } from "../src/ir/runtime/js-tag-domain.js";
 import { instantiatePreparedArtifact } from "../src/test262/test262-prepared-runtime.js";
@@ -21,6 +22,8 @@ import {
   requiredPreparedEmission,
   type Test262CompileOptions,
 } from "../src/test262/test262-prepared-entry.js";
+
+const legalize = (fn: IrFunction): IrFunction => legalizeDynamicValues(fn, new AllocSiteRegistry());
 
 const options = (target: "standalone" | "gc"): Test262CompileOptions =>
   ({
@@ -191,7 +194,8 @@ describe("#7354 D1 — the dynamic value on the Prepared standalone path", () =>
       "a typed literal property",
       "",
       "const o: { a: number } = { a: id(1) }; return o.a;",
-      "dynamic operation on a value of composite type",
+      // (#7354 O1) The literal is an ordinary object now; the annotated binding is a typed position.
+      flow("{ a: number; }", "VariableDeclaration"),
     ],
     ["a typed array element", "", "const a: number[] = [id(1)]; return a[0];", "resolver cannot register vec"],
   ])("refuses a dynamic value flowing into %s", async (_label, helper, body, expected) => {
@@ -201,32 +205,24 @@ describe("#7354 D1 — the dynamic value on the Prepared standalone path", () =>
   it.each([
     ["loose equality", "return id(1) == id(1) ? 1 : 0;", "dynamic operation dyn.eq (loose) has no Prepared intrinsic"],
     // (#7354 T) The null tag test and ToBoolean are expressed now (tests/issue-7354-t-truthiness-null.test.ts).
-    [
-      "dynamic +",
-      "return add(id(1), id(2)) === 3 ? 1 : 0;",
-      "dynamic operation __ir_dyn_add has no Prepared intrinsic",
-    ],
+    // (#7354 Str2-c) Dynamic `+` is expressed now (tests/issue-7354-str2c-dynamic-add.test.ts).
     // (#7354 Str) The property key enters the dynamic value as a string now; the member read itself has no intrinsic.
     ["a member read", "return id(1).x === 1 ? 1 : 0;", "dynamic operation dyn.member_get has no Prepared intrinsic"],
-    // (#7354 Ty) A typeof comparison is expressed now (tests/issue-7354-ty-typeof-comparisons.test.ts); a typeof
-    // value answers a string, a later slice.
-    [
-      "typeof",
-      "return typeof id(1) === typeof id(2) ? 1 : 0;",
-      "dynamic operation dyn.typeof has no Prepared intrinsic",
-    ],
+    // (#7354 Ty, Str2) A typeof comparison and a typeof value are expressed now
+    // (tests/issue-7354-ty-typeof-comparisons.test.ts, tests/issue-7354-str2-to-string.test.ts).
     ["`**`", "return id(2) ** 3;", "'**' on a dynamic operand"],
     ["`**` on the right", "return 2 ** id(3);", "'**' on a dynamic operand"],
     ["a value-position prefix update", "let x: any = id(1); return ++x;", "value-position prefix update"],
     // (#7354 X) A thrown dynamic value is expressed now (tests/issue-7354-x-dynamic-throw.test.ts).
+    // (#7354 O1) The literal is an ordinary object holding the dynamic value; reading the field back as one is
+    // slice O's member read of a dynamic value (tests/issue-7354-o-objects.test.ts).
     [
       "a dynamic object field",
       "const o = { a: id(1) }; return o.a === 1 ? 1 : 0;",
-      "dynamic operation on a value of composite type has no Prepared intrinsic",
+      "dynamic operation box of a non-primitive value has no Prepared intrinsic",
     ],
   ])("refuses %s by name", async (_label, body, expected) => {
-    const add = body.includes("add(") ? "function add(a: any, b: any): any {\n  return a + b;\n}\n" : "";
-    expect(await refusal(`${ID}${add}export function main(): number {\n  ${body}\n}\n`)).toContain(expected);
+    expect(await refusal(`${ID}export function main(): number {\n  ${body}\n}\n`)).toContain(expected);
   });
 
   it.each([
@@ -269,11 +265,11 @@ describe("#7354 D1 — the legalization pass", () => {
       valueCount: 3,
     }) as unknown as IrFunction;
   const one = (instr: object, params?: readonly IrType[]) =>
-    legalizeDynamicValues(fn([instr as unknown as IrInstr], params)).blocks[0]!.instrs[0];
+    legalize(fn([instr as unknown as IrInstr], params)).blocks[0]!.instrs[0];
 
   it("rewrites a proven number unbox and the dynamic parameter to the externref carrier", () => {
     const unbox = { kind: "unbox", value: 0, tagId: JS_TAG_IDS.NumberF64, result: 1, resultType: f64 };
-    const out = legalizeDynamicValues(fn([unbox as unknown as IrInstr]));
+    const out = legalize(fn([unbox as unknown as IrInstr]));
     expect(out.params[0]!.type).toEqual({ kind: "val", val: { kind: "externref" } });
     expect(out.blocks[0]!.instrs[0]).toMatchObject({ kind: "intrinsic", id: "js.number.unbox", args: [0] });
   });
@@ -293,14 +289,15 @@ describe("#7354 D1 — the legalization pass", () => {
       { kind: "tag.test", value: 0, tagId: JS_TAG_IDS.NumberF64, result: 1, resultType: i32 },
       "tag",
     ],
-    [
-      "a dynamic externref coercion",
-      { kind: "coerce.to_externref", value: 0, result: 1, resultType: dynamic },
-      "coerce",
-    ],
   ])("refuses %s, which has no source producer here", (_label, instr, name) => {
     expect(() => one(instr)).toThrow(DynamicValueGap);
     expect(() => one(instr)).toThrow(name);
+  });
+
+  // (#7354 O1) The carrier is the native value an ordinary object's property stores, so the coercion keeps.
+  it("keeps a dynamic externref coercion", () => {
+    const coerce = { kind: "coerce.to_externref", value: 0, result: 1, resultType: dynamic };
+    expect(one(coerce)).toEqual({ ...coerce, resultType: { kind: "val", val: { kind: "externref" } } });
   });
 
   // Operations on non-dynamic values inside a function that has a dynamic one stay exactly as they were.
@@ -320,21 +317,21 @@ describe("#7354 D1 — the legalization pass", () => {
   it("carries a dynamic block argument as the externref carrier", () => {
     const input = fn([], [dynamic]);
     const joined = { ...input, blocks: [{ ...input.blocks[0]!, blockArgs: [2], blockArgTypes: [dynamic] }] };
-    expect(legalizeDynamicValues(joined as IrFunction).blocks[0]!.blockArgTypes).toEqual([
+    expect(legalize(joined as IrFunction).blocks[0]!.blockArgTypes).toEqual([
       { kind: "val", val: { kind: "externref" } },
     ]);
   });
 
   it("refuses a dynamic type left inside a composite type", () => {
     const vec = { kind: "vec", element: dynamic, nullable: false } as unknown as IrType;
-    expect(() => legalizeDynamicValues(fn([], [dynamic, vec]))).toThrow(
+    expect(() => legalize(fn([], [dynamic, vec]))).toThrow(
       new DynamicValueGap("dynamic operation on a value of composite type has no Prepared intrinsic"),
     );
   });
 
   it("returns a function without a dynamic value unchanged", () => {
     const input = fn([], [f64]);
-    expect(legalizeDynamicValues(input)).toBe(input);
+    expect(legalize(input)).toBe(input);
   });
 });
 
@@ -358,6 +355,9 @@ describe("#7354 D1 — the native dynamic-value resources", () => {
       toBoolean: false,
       undefinedValue: false,
       isUndefined: true,
+      isString: false,
+      asString: false,
+      isFunction: false,
     });
   });
 

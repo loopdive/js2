@@ -171,7 +171,7 @@ describe("#7118 — ambient intrinsics as IR values", () => {
   });
 
   // The admission predicate itself, against a real checker with the lib loaded.
-  describe("isAmbientIntrinsicValueUse", () => {
+  describe("builtinGlobalValueAdmitted", () => {
     const intrinsicUses = (source: string): boolean[] => intrinsicUseVerdicts(source, "Error");
 
     it("admits a lib-only value use", () => {

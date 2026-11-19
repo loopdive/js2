@@ -7,6 +7,7 @@ import type { IrFunctionBuilder } from "./builder.js";
 import type { IrImportedCallLoweringPlan, IrTopLevelFunctionValueLoweringPlan } from "./ast-lowering-plans.js";
 import type { IrFunctionMemberClosures } from "./function-member-closure-plan.js";
 import { irRuntimeFuncRef } from "./callable-bindings.js";
+import { irClosureMethodReference } from "./core/closure-invocation-callables.js";
 import type { IrUnitId } from "./identity.js";
 import { JS_TAG_IDS } from "./runtime/js-tag-domain.js";
 import { asVal, irDynamic, irVal, type IrType, type IrValueId } from "./nodes.js";
@@ -37,6 +38,8 @@ export interface FunctionObjectLoweringHost {
   readonly ownerUnitId: IrUnitId;
   readonly funcName: string;
   readonly dynamicCarrierIsExternref: () => boolean;
+  /** (#7354 Fb) A call through a value is the native `js.closure.call:N`, which also does IsCallable's TypeError. */
+  readonly nativeClosureCalls: boolean;
   readonly requireOwner: (ownerUnitId: IrUnitId) => void;
   readonly lowerExpression: (source: ts.Expression) => IrValueId;
   readonly boxConcrete: (value: IrValueId, type: IrType, source: ts.Expression) => IrValueId | null;
@@ -202,6 +205,7 @@ function applyDynamicCallee(
   notCallableMessages: NotCallableMessages,
   cx: FunctionObjectLoweringHost,
 ): IrValueId {
+  if (cx.nativeClosureCalls) return applyNativeClosureCall(callee, receiver, argumentSources, cx);
   const args = cx.builder.emitCall(irRuntimeFuncRef("__objvec_new"), [], irVal({ kind: "externref" }));
   if (args === null) throw new Error("native argument vector returned void");
   for (const argument of argumentSources) {
@@ -263,6 +267,33 @@ function applyDynamicCallee(
   if (result === null) throw new Error("native closure application returned void");
   const dynamic = cx.builder.emitCall(irRuntimeFuncRef(cx.symbols.IR_DYN_CALL_BOX_FN), [result], irDynamic());
   if (dynamic === null) throw new Error("function-object call result projection returned void");
+  return dynamic;
+}
+
+/**
+ * (#7354 Fb) The Prepared native lane's call through a value: every operand in the externref carrier, in source order
+ * (callee first, as the other path evaluates it), and one `js.closure.call:N(receiver, callee, …args)`, whose native
+ * dispatcher answers the TypeError for a value that is not callable. Its result is the carrier.
+ */
+function applyNativeClosureCall(
+  callee: IrValueId,
+  receiver: IrValueId,
+  argumentSources: readonly ts.Expression[],
+  cx: FunctionObjectLoweringHost,
+): IrValueId {
+  const { builder } = cx;
+  const external = irVal({ kind: "externref" });
+  const calleeCarrier = builder.emitCoerceToExternref(callee);
+  const args = argumentSources.map((argument) =>
+    builder.emitCoerceToExternref(functionObjectDynamicValue(cx.lowerExpression(argument), argument, cx)),
+  );
+  const result = builder.emitCall(
+    irClosureMethodReference(args.length),
+    [builder.emitCoerceToExternref(receiver), calleeCarrier, ...args],
+    external,
+  );
+  const dynamic = result && builder.emitCall(irRuntimeFuncRef(cx.symbols.IR_DYN_CALL_BOX_FN), [result], irDynamic());
+  if (!dynamic) throw new Error("native closure call returned void");
   return dynamic;
 }
 

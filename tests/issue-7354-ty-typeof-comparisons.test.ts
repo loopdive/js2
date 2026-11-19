@@ -3,7 +3,8 @@
 // #7354 slice Ty — `typeof v <op> "literal"` on the Prepared dynamic value. from-ast lowers it as a string
 // comparison of `dyn.typeof` with a constant; the dynamic-value legalization answers it with a tag test on `v`
 // (the native `__typeof_number` / `__typeof_boolean` predicates, the `undefined` probe, the null test for
-// "object"), so no string is needed. A literal no admitted kind answers ("function", a typo) is constant. Strings
+// "object", and (#7354 Fa) `__typeof_function` for "function"), so no string is needed. A literal no admitted kind
+// answers ("symbol", a typo) is constant. Strings
 // are admitted (slice Str) but the native lane has no string predicate yet, so a test for "string" refuses by name.
 // A `typeof` result used any other way still refuses as `dyn.typeof` (slice Str2).
 import { runInThisContext } from "node:vm";
@@ -16,6 +17,8 @@ import type { TagId } from "../src/ir/core/tag-domain.js";
 import { irDynamic, irVal } from "../src/ir/core/types.js";
 import { DynamicValueGap, legalizeDynamicValues } from "../src/ir/program/dynamic-value-legalization.js";
 import { JS_TAG_IDS } from "../src/ir/runtime/js-tag-domain.js";
+import { irRuntimeFuncRef } from "../src/ir/callable-bindings.js";
+import { IR_DYN_CALL_BOX_FN } from "../src/shared/contracts/dynamic-call-helpers.js";
 import { NATIVE_REALM_GLOBALS, nativeRealmGlobalTypeof } from "../src/runtime/contracts/native-realm-globals.js";
 import { instantiatePreparedArtifact } from "../src/test262/test262-prepared-runtime.js";
 import {
@@ -83,8 +86,9 @@ async function expectLikeNode(program: (right: boolean) => string, warnings: rea
   expect(await run(program(false), warnings as string[])).toBe("threw");
 }
 
-const VALUES = ["1", "0", "-0", "0 / 0", "1 / 0", "true", "false", "undefined", "null", '""', '"a"'] as const;
-const LITERALS = ["number", "boolean", "undefined", "object", "function", "symbol", "bigint"] as const;
+// (#7354 Str2 merge) Slice Str admitted native strings into the carrier, so `typeof v === "string"` is a real tag test.
+const VALUES = ["1", "0", "-0", "0 / 0", "1 / 0", "true", "false", "undefined", "null", "''", "'a'"] as const;
+const LITERALS = ["number", "boolean", "undefined", "object", "function", "string", "symbol", "bigint"] as const;
 const OPERATORS = ["===", "!==", "==", "!="] as const;
 const answer = (expression: string): string => String(new Function(`return ${expression};`)());
 
@@ -123,20 +127,9 @@ describe("#7354 Ty — typeof comparisons on the Prepared dynamic value", () => 
       await expectLikeNode((right) =>
         [...functions, "var bad = 0;", ...checks(right), "if (bad !== 0) throw bad;"].join("\n"),
       );
-      // Four compiles of 176 checks each: ~15 s alone, past the default timeout on a loaded machine.
+      // (#7354 Str2 merge) Two compiles of ~180 checks with string values: about 15 s alone, more under load.
     },
     120_000,
-  );
-
-  // (#7354 Str) Strings are in the carrier, so "string" is an admitted kind: its test refuses instead of answering
-  // false, in both operand orders and under every operator.
-  it.each(OPERATORS.flatMap((op) => [`typeof v ${op} "string"`, `"string" ${op} typeof v`]))(
-    "refuses %s by name",
-    async (comparison) => {
-      expect(await refusal(`function f(v) { return ${comparison}; }\nf(1);`)).toContain(
-        "dynamic operation typeof test for string has no Prepared intrinsic",
-      );
-    },
   );
 
   // TypeScript warns (the literal is outside `typeof`'s answers) but the program compiles; JavaScript says false.
@@ -155,7 +148,7 @@ describe("#7354 Ty — typeof comparisons on the Prepared dynamic value", () => 
     await expectLikeNode(
       (right) =>
         "var calls = 0;\nfunction f(v) { calls = calls + 1; return v; }\n" +
-        'if (typeof f(1) === "function") throw 1;\nif (typeof f(undefined) !== "undefined") throw 2;\n' +
+        'if (typeof f(1) === "symbol") throw 1;\nif (typeof f(undefined) !== "undefined") throw 2;\n' +
         `if (calls !== ${right ? 2 : 1}) throw 3;`,
     );
   });
@@ -183,6 +176,8 @@ describe("#7354 Ty — typeof comparisons on the Prepared dynamic value", () => 
       "t(true) * 100 + t(null) * 10 + t(undefined)",
       "123",
     ],
+    // (#7354 Str2 merge) No native string pack: no string can reach the carrier, the string test is constant false.
+    ["a string test with no string in the program", 'function t(v) { return typeof v === "string"; }', "t(1)", "false"],
     ["a caught null", 'var r = 0;\ntry { throw null; } catch (e) { if (typeof e === "object") r = 1; }', "r", "1"],
     // The number test alone (no box anywhere) still selects the value resources it binds.
     [
@@ -196,22 +191,8 @@ describe("#7354 Ty — typeof comparisons on the Prepared dynamic value", () => 
     await expectLikeNode((right) => `${declarations}\nif (${probe} !== ${right ? expected : wrong}) throw 1;`);
   });
 
-  it.each([
-    ["an unused typeof", "function f(v) { var s = typeof v; return 1; }\nf(1);"],
-    ["a typeof statement", "function f(v) { typeof v; return 1; }\nf(1);"],
-    ["a returned typeof", "function f(v) { return typeof v; }\nf(1);"],
-    ["a non-literal comparison", "function f(v, w) { return typeof v === w; }\nf(1, 2);"],
-    ["two typeofs compared", "function f(v, w) { return typeof v === typeof w; }\nf(1, 2);"],
-    [
-      "a typeof also compared with a non-literal",
-      'function f(v, w) { var t = typeof v; return t === "number" && t === w; }\nf(1, 2);',
-    ],
-    ["a typeof also returned", 'function f(v) { var t = typeof v; if (t === "number") {} return t; }\nf(1);'],
-    ["a template literal operand", 'function f(v) { return `${typeof v}` === "number"; }\nf(1);'],
-    ["a concatenation", 'function f(v) { return typeof v + "" === "number"; }\nf(1);'],
-  ])("refuses %s by name", async (_label, source) => {
-    expect(await refusal(source)).toContain("dynamic operation dyn.typeof has no Prepared intrinsic");
-  });
+  // (#7354 Str2) A `typeof` read any other way (assigned, returned, concatenated, compared with a non-literal or with
+  // another `typeof`) is its answer string now: tests/issue-7354-str2-to-string.test.ts proves each position.
 
   // The string dispatch compares only literal tests; any other case test (first, last, only, or a call) refuses by
   // name instead of being skipped — never compared, its expression never evaluated (a wrong answer, review round 1).
@@ -290,10 +271,12 @@ describe("#7354 Ty — typeof comparisons on the Prepared dynamic value", () => 
   });
 });
 
-// The comparison arm folds a literal no admitted kind answers ("function", "symbol") to false. That is sound only
+// The comparison arm folds a literal no admitted kind answers ("symbol", "bigint") to false. That is sound only
 // while every value in the carrier has a kind: a box that admitted an unknown value (lane S4's Fb boxed a native
 // call's externref result) would turn `typeof f() === "function"` into a wrong constant. So such a box must refuse,
-// and each kind that does enter must be answered by a runtime test, never by the fold.
+// and each kind that does enter must be answered by a runtime test, never by the fold. (#7354 Fa) A function value
+// enters as a packed callable through the function-value projection, so only that entry answers "function"; a
+// call's externref result stays refused whatever its tag, until an admission proves its kind.
 describe("#7354 Ty — the carrier admits only known kinds", () => {
   const externref = irVal({ kind: "externref" });
   const box = (tag?: TagId) => ({
@@ -352,18 +335,23 @@ describe("#7354 Ty — the carrier admits only known kinds", () => {
     ["a Boolean", [call(irVal({ kind: "i32" })), box(JS_TAG_IDS.Boolean)], true],
     ["null", [call(externref), box(JS_TAG_IDS.Null)], null],
     ["undefined", [{ kind: "dyn.undefined", result: 1, resultType: irDynamic() }], undefined],
+    // INTEGRATION (S8): Str2 gives the string kind a real predicate (`js.value.is_string`), so a string is answered
+    // by a runtime test here instead of Ty's "typeof test for string" refusal.
+    ["a string", [call({ kind: "string" }), box()], "a"],
+    [
+      "a function value",
+      [
+        call({ kind: "callable", signature: { params: [irDynamic()], returnType: irDynamic() } }),
+        { kind: "call", target: irRuntimeFuncRef(IR_DYN_CALL_BOX_FN), args: [0], result: 1, resultType: irDynamic() },
+      ],
+      () => {},
+    ],
   ])("answers typeof of %s in the carrier with a runtime test", (_label, enter, value) => {
     const test = legalizeDynamicValues(compareTypeof(enter, typeof value)).blocks[0]!.instrs.find(
       (instr) => instr.result === 4,
     );
     expect(test).toBeDefined();
     expect(test!.kind).not.toBe("const");
-  });
-
-  it("refuses typeof of a string in the carrier by name rather than folding it", () => {
-    expect(() => legalizeDynamicValues(compareTypeof([call({ kind: "string" }), box()], typeof "a"))).toThrow(
-      "dynamic operation typeof test for string has no Prepared intrinsic",
-    );
   });
 });
 

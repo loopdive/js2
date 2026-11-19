@@ -327,6 +327,7 @@
         "src/backend/wasmgc/resources/native-prototype-layouts.ts",
         "src/backend/wasmgc/resources/native-prototype-seeder-bindings.ts",
         "src/backend/wasmgc/resources/native-object-get.ts",
+        "src/backend/wasmgc/resources/native-source-objects.ts",
         "src/backend/wasmgc/program/native-primitive-boundary-abi.ts",
         "src/backend/wasmgc/resources/native-primitive-wrapper-layouts.ts",
         "src/backend/wasmgc/resources/native-primitive-wrapper-storage.ts",
@@ -420,6 +421,7 @@
         "src/runtime/wasmgc/values/closure-vector-apply-body.ts",
         "src/runtime/wasmgc/values/object-same-value-body.ts",
         "src/runtime/wasmgc/values/ordinary-object-access-bodies.ts",
+        "src/runtime/wasmgc/values/source-object-bodies.ts",
         "src/runtime/wasmgc/values/ordinary-object-descriptor-accessor.ts",
         "src/runtime/wasmgc/values/ordinary-object-descriptor-common.ts",
         "src/runtime/wasmgc/values/ordinary-object-descriptor-data.ts",
@@ -2341,6 +2343,16 @@
     },
     {
       "path": "src/shared/contracts/in-operator-helper.ts",
+      "state": "clean",
+      "layer": "foundation"
+    },
+    {
+      "path": "src/shared/contracts/dynamic-call-helpers.ts",
+      "state": "clean",
+      "layer": "foundation"
+    },
+    {
+      "path": "src/shared/contracts/dynamic-add-helper.ts",
       "state": "clean",
       "layer": "foundation"
     },
@@ -13200,6 +13212,14 @@
       "nextBoundary": "TypeScript-AST plan of the `Object` statics table (`Object.<static>(…)` through the dynamic carrier), shared by the selector and from-ast (#7338); moves with the frontend inventory split."
     },
     {
+      "path": "src/ir/builtin-globals.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "7350",
+      "nextBoundary": "TypeScript-AST admission of a built-in global read as a value (one admission for the selector and from-ast, #7350); moves with the frontend inventory split."
+    },
+    {
       "path": "src/ir/binding-pattern-plan.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
@@ -13694,6 +13714,14 @@
       "destination": "ir-program",
       "owner": "3518-coordinator",
       "nextBoundary": "Explicit identity-preserving compatibility exports for the canonical prepared-program owner; retain existing callers until the complete IR path is tested and equivalent."
+    },
+    {
+      "path": "src/ir/program-source-globals.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "frontend-ts",
+      "owner": "7372",
+      "nextBoundary": "Registry of the Prepared program's source globals (#7372): one row per module-init global with its storage and the startup plan's instantiation, which the producer and the module-init prologue read; moves with program-source.ts under frontend/ts."
     },
     {
       "path": "src/ir/program-source.ts",
@@ -15078,6 +15106,14 @@
       "nextBoundary": "Source-owned AST/checker preparation; isolate checker/library identity dependencies before certifying the complete frontend boundary."
     },
     {
+      "path": "src/frontend/eval/realm-eval.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "frontend-ts",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Program-wide proof that an `eval` call names the realm's eval (#7363); isolate the TypeScript and checker dependencies before certifying the complete frontend boundary."
+    },
+    {
       "path": "src/backend/wasmgc/resources/native-source-closures.ts",
       "state": "clean",
       "layer": "backend-wasmgc"
@@ -15226,6 +15262,11 @@
     },
     {
       "path": "src/runtime/wasmgc/values/ordinary-object-access-bodies.ts",
+      "state": "clean",
+      "layer": "native-runtime"
+    },
+    {
+      "path": "src/runtime/wasmgc/values/source-object-bodies.ts",
       "state": "clean",
       "layer": "native-runtime"
     },
@@ -16620,6 +16661,11 @@
       "layer": "backend-wasmgc"
     },
     {
+      "path": "src/backend/wasmgc/resources/native-source-objects.ts",
+      "state": "clean",
+      "layer": "backend-wasmgc"
+    },
+    {
       "path": "src/backend/wasmgc/resources/native-primitive-wrapper-layouts.ts",
       "state": "clean",
       "layer": "backend-wasmgc"
@@ -17030,6 +17076,14 @@
       "nextBoundary": "Prepared presentation runtime census (#7354 R): the presentation's runtime policy and the authentication of each selected provider against the completed physical plan; moves with ir-program-presentation.ts at compiler-layer activation."
     },
     {
+      "path": "src/compiler/prepared-formatter-census.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "compiler",
+      "owner": "7354",
+      "nextBoundary": "The number formatter's part of the Prepared provider census (#7354 Str2-c): joins the formatter setup, scratch, adapter provider and runtime-support batch to their canonical declarations; moves with prepared-provider-census.ts at compiler-layer activation."
+    },
+    {
       "path": "src/ir/source-dynamic-contracts.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
@@ -17055,6 +17109,11 @@
     },
     {
       "path": "src/ir/program/dynamic-value-legalization.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
+      "path": "src/ir/program/number-to-string-target.ts",
       "state": "clean",
       "layer": "ir-program"
     },

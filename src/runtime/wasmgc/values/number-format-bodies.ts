@@ -285,6 +285,14 @@ export function buildNumberFormatFinalizeBody(types: NumberFormatStringTypes): N
   };
 }
 
+/**
+ * Whether `number_toString` answers a safe integer before it allocates its scratch buffer: on unless
+ * `JS2WASM_NUMBER_TO_STRING_INTEGER_FASTPATH=0`. One reading for both pipelines, which must agree on the body.
+ */
+export function numberToStringIntegerBeforeScratch(): boolean {
+  return process.env.JS2WASM_NUMBER_TO_STRING_INTEGER_FASTPATH !== "0";
+}
+
 export function buildNumberFormatToStringBody(resources: {
   readonly types: NumberFormatStringTypes;
   readonly finalize: FuncHandle;

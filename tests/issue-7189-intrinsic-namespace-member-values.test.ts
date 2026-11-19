@@ -107,7 +107,7 @@ describe("#7189 — static method values off ambient namespace intrinsics", () =
   // The predicate itself: only the plain value read of a listed static method
   // admits; a call, a further read and every write form — destructuring and a
   // for-of head included — refuse.
-  describe("isAmbientIntrinsicValueUse on static-method reads", () => {
+  describe("builtinGlobalValueAdmitted on static-method reads", () => {
     it("admits a listed static method read as a plain value", () => {
       expect(intrinsicUseVerdicts(`var f = Array.isArray; var g = (Array).from;`, "Array")).toEqual([true, true]);
     });

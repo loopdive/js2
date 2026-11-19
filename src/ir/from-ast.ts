@@ -103,7 +103,10 @@ import {
   type SourceClosureInvocationPlan,
 } from "./source-closure-invocation.js";
 import { exactGlobalEvalStatement } from "../eval-call-shape.js";
-import { resolveOrdinaryObjectClosureSignature } from "./ordinary-object-closure-signatures.js";
+import {
+  ownedByDescriptorLiteral,
+  resolveOrdinaryObjectClosureSignature,
+} from "./ordinary-object-closure-signatures.js";
 import { isDirectObjectCreateNullCall } from "../frontend/builtins/prepare-object-create.js";
 
 import { TsCheckerOracle, type TypeOracle } from "../checker/oracle.js";
@@ -128,6 +131,7 @@ import {
   matchArrayPrototypeBorrowCall,
 } from "./array-prototype-borrow-call.js";
 import { REGEXP_CARRIER_METHODS } from "./regexp-runtime-contract.js";
+import { nativeStaticRegExpBuilt, regExpLiteralBuilt, type RegExpBuildCapability } from "./regexp-literal-admission.js";
 import {
   matchRegExpCarrierCall,
   type RegExpCarrierCall,
@@ -309,7 +313,7 @@ import {
 // #4177 — fixpoint-fact consumption for the `+` operand proof.
 import { collectLatticeParamFacts, latticeAdditiveFact, type LatticeParamFacts } from "./lattice-param-facts.js";
 import { tryEmitUnrolledReduction } from "./reduction-unroll.js";
-import { demoteToLegacy, IrInvariantError, IrUnsupportedError } from "./outcomes.js";
+import { demoteToLegacy, IrInvariantError, IrUnsupportedError, refuseUnselected } from "./outcomes.js";
 import {
   boxWrapper,
   emitToPrimitive,
@@ -571,8 +575,10 @@ export interface IrFromAstResolver extends PreparedAsyncFromAstResolver {
   sourceClosureInvocation?(expression: ts.CallExpression): SourceClosureInvocationPlan | undefined;
   /** Exact higher-order parameter certified by the complete source invocation proof. */
   sourceClosureCallableParameter?(node: ts.FunctionTypeNode): boolean;
-  /** (#7106 A2c) The runtime-eval support function a certified global eval statement calls with its source. */
+  /** (#7106 A2c) The runtime-eval function a certified global eval calls; absent: no provider (#7363, Prepared). */
   globalEvalTarget?(call: ts.CallExpression): IrFuncRef | null;
+  /** (#7363) Whether this `eval` identifier is the realm's eval, never shadowed or rebound (`prepareRealmEvalResolver`). */
+  isRealmEval?(identifier: ts.Identifier): boolean;
   /** Exact pre-scanned sparse constructor sites. */
   isHoleyArrayConstructor?(expr: ts.NewExpression): boolean;
   /** Exact direct filter consumers of those sparse constructors. */
@@ -648,7 +654,12 @@ export interface IrFromAstResolver extends PreparedAsyncFromAstResolver {
    * claim and the lowering read one capability (`number-to-string` for a `+`).
    */
   supportsBackendCapability?(
-    capability: "number-to-string" | "native-regexp" | IrAmbientGlobalFunctionCapability | ObjectStaticCapability,
+    capability:
+      | "number-to-string"
+      | RegExpBuildCapability
+      | "native-builtin-globals"
+      | IrAmbientGlobalFunctionCapability
+      | ObjectStaticCapability,
   ): boolean;
   /**
    * (#7253) The host-free provider legacy calls for a direct ambient
@@ -913,6 +924,8 @@ export interface IrFromAstResolver extends PreparedAsyncFromAstResolver {
    * the receiver is lowered as an IR value).
    */
   isNativeRegExpReceiver?(receiver: ts.Expression): boolean;
+  /** (#7364) The selector's `nativeRegExpCompiles`, asked again where a static construction is built. */
+  nativeRegExpCompiles?(pattern: string, flags: string): boolean;
   nativeRegExpMethodPlan?(
     receiver: ts.Expression,
     method: RegExpCarrierMethod,
@@ -960,6 +973,8 @@ export interface IrFromAstResolver extends PreparedAsyncFromAstResolver {
   preparedOrdinaryPropertyRead?(
     expression: ts.PropertyAccessExpression,
   ): { readonly key: string; readonly resultType: IrType } | undefined;
+  /** (#7354 O1) The literal is an ordinary object on the Prepared path. */
+  preparedOrdinaryObjectLiteral?(literal: ts.ObjectLiteralExpression): boolean;
   /**
    * #3787 checker identity for the global String constructor. JavaScript
    * inputs compiled without lib declarations may leave the identifier
@@ -974,6 +989,13 @@ export interface IrFromAstResolver extends PreparedAsyncFromAstResolver {
    * unbox. Fast AnyValue carriers return false.
    */
   dynamicCarrierIsExternref?(): boolean;
+  /**
+   * (#7354 Fa) The all-dynamic signature the Prepared native lane gives an unannotated function expression, if any
+   * (`source-dynamic-contracts.ts`). A lane without it keeps the annotated-closure rule.
+   */
+  dynamicClosureSignature?(expression: ts.FunctionExpression): IrClosureSignature | undefined;
+  /** (#7354 Fa) The script `var` holds its function-expression initializer from its declaration on. */
+  staticFunctionValue?(declaration: ts.VariableDeclaration): boolean;
   /**
    * (#7106 Stage 4) True when this lane lowers `recv.<method>(…arity args)` on
    * a dynamic receiver through the `__ir_dyn_mcall_<m>_<n>` brand-dispatch
@@ -1277,6 +1299,8 @@ export interface AstToIrOptions extends functionObjects.FunctionValueLoweringPla
   readonly stringNumericCoercion?: "number-boundary";
   /** Explicit semantic f64 throw boxing; provider admission remains a separate preparation decision. */
   readonly numericThrow?: "number-boundary";
+  /** (#7364) No selector claimed the unit (the Prepared producer): see `refuseUnselected`. */
+  readonly unselected?: true;
   /** Authoritative identity for the main artifact and exact feature-plan owner. */
   readonly ownerUnitId: IrUnitId;
   /**
@@ -1536,7 +1560,7 @@ function sourceMapResult(scope: FrontendSourceScope) {
 }
 function lowerMutableParameterStorage(
   param: { name: string; type: IrType; value: IrValueId },
-  options: AstToIrOptions,
+  options: Pick<AstToIrOptions, "logicalVectorTypes" | "resolver">,
   name: string,
   scope: Map<string, ScopeBinding>,
   builder: IrFunctionBuilder,
@@ -1673,9 +1697,10 @@ function lowerConstructorBody(
   terminateImplicitSourceReturn(cx, [thisValue]);
 }
 
-/** Preserve explicit numeric projections across top-level and lifted contexts. */
-function numericProjectionOptions(options: Pick<AstToIrOptions, "stringNumericCoercion" | "numericThrow">) {
-  return { stringNumericCoercion: options.stringNumericCoercion, numericThrow: options.numericThrow };
+/** Preserve the producer's explicit policies (numeric projections, #7364 `unselected`) across lifted contexts. */
+function producerPolicyOptions(options: Pick<AstToIrOptions, "stringNumericCoercion" | "numericThrow" | "unselected">) {
+  const { stringNumericCoercion, numericThrow, unselected } = options;
+  return { stringNumericCoercion, numericThrow, unselected };
 }
 
 export function lowerFunctionAstToIr(
@@ -1956,7 +1981,7 @@ export function lowerFunctionAstToIr(
     funcName: name,
     ownerUnitId: options.ownerUnitId,
     returnType,
-    ...numericProjectionOptions(options),
+    ...producerPolicyOptions(options),
     logicalVectorTypes: options.logicalVectorTypes,
     logicalVectorConsumed,
     calleeTypes: options.calleeTypes,
@@ -3031,6 +3056,11 @@ type ScopeBinding =
       globalRef: IrGlobalRef;
       type: IrType;
       stringEncoding?: Encoding;
+      /**
+       * (#7354 Fa) The closure the slot holds at every read this unit lowers after the store
+       * (`staticFunctionValue`): a call through the name is that closure's direct call.
+       */
+      functionValue?: { readonly value: IrValueId; readonly signature: IrClosureSignature };
     }
   | {
       kind: "nestedFunc";
@@ -3101,6 +3131,7 @@ interface LowerCtx extends FrontendSourceScope, functionObjects.FunctionValueLow
   readonly booleanReturnBuilder?: IrFunctionBuilder;
   readonly stringNumericCoercion?: AstToIrOptions["stringNumericCoercion"];
   readonly numericThrow?: AstToIrOptions["numericThrow"];
+  readonly unselected?: AstToIrOptions["unselected"];
   readonly logicalVectorTypes?: AstToIrOptions["logicalVectorTypes"];
   readonly logicalVectorConsumed?: Set<ts.Node>;
   readonly scope: Map<string, ScopeBinding>;
@@ -4436,7 +4467,9 @@ function lowerVariableDeclaration(d: ts.VariableDeclaration, isConst: boolean, c
   const moduleBinding = cx.moduleBindings?.get(name);
   if (moduleBinding) requireMatchingModuleBindingOwner(moduleBinding, cx.ownerUnitId, cx.funcName);
   const dynamicHomeClosure =
-    moduleBinding?.type.kind === "dynamic" && isPlannedScriptVarClosure(cx.functionMemberClosures, d.initializer);
+    moduleBinding?.type.kind === "dynamic" &&
+    (isPlannedScriptVarClosure(cx.functionMemberClosures, d.initializer) ||
+      (ts.isFunctionExpression(d.initializer) && cx.resolver?.dynamicClosureSignature?.(d.initializer) !== undefined));
   if (
     moduleBinding &&
     !dynamicHomeClosure &&
@@ -4524,6 +4557,7 @@ function lowerVariableDeclaration(d: ts.VariableDeclaration, isConst: boolean, c
   let value = promoteI32Slot
     ? lowerAsI32(d.initializer as ts.Expression, cx, "canon")
     : lowerExpr(d.initializer, cx, hint);
+  const closure = value;
   if (dynamicHomeClosure) {
     value = functionObjects.functionObjectDynamicValue(value, d.initializer, functionObjectLoweringHost(cx));
   } else if (widenDynamic && cx.builder.typeOf(value).kind !== "dynamic") {
@@ -4593,6 +4627,15 @@ function lowerVariableDeclaration(d: ts.VariableDeclaration, isConst: boolean, c
   }
   if (moduleBinding) {
     storeModuleBinding(name, moduleBinding, value, cx, stringEncoding);
+    const stored = cx.scope.get(name);
+    const closureType = cx.builder.typeOf(closure);
+    if (
+      stored?.kind === "moduleGlobal" &&
+      dynamicHomeClosure &&
+      closureType.kind === "closure" &&
+      cx.resolver?.staticFunctionValue?.(d) === true
+    )
+      cx.scope.set(name, { ...stored, functionValue: { value: closure, signature: closureType.signature } });
     return;
   }
   bindLocalName(d, name, value, isConst, cx, { widenDynamic, promoteI32Slot, stringEncoding });
@@ -5249,10 +5292,7 @@ function lowerExprUnchecked(expr: ts.Expression, cx: LowerCtx, hint: IrType): Ir
       case "ambient-intrinsic":
         return lowerAmbientIntrinsicValue(expr, cx);
       case "unresolved":
-        demoteToLegacy(
-          "body-shape-rejected",
-          `ir/from-ast: identifier "${expr.text}" is not in scope in ${cx.funcName}`,
-        );
+        demoteToLegacy("body-shape-rejected", `ir/from-ast: ${unboundIdentifierDetail(expr, cx)}`);
     }
     const p = read.binding;
     // Slice 6 part 2 (#1181): slot-bound identifier (let mutated across
@@ -5336,10 +5376,11 @@ function lowerExprUnchecked(expr: ts.Expression, cx: LowerCtx, hint: IrType): Ir
     if (hostDateSnapshot !== undefined) return hostDateSnapshot;
     return lowerNewExpression(expr, cx);
   }
-  // Slice 10 (#1169i): RegExp literal `/pattern/flags`. Lowers to
-  // `extern.regex` which materializes the pattern + flags strings and
-  // calls the `RegExp_new` host import.
+  // Slice 10 (#1169i): `/pattern/flags` lowers to `extern.regex`, built by the host constructor or the in-module
+  // engine. (#7364) The selector refuses a literal neither builds; a producer without one meets that rule here.
   if (expr.kind === ts.SyntaxKind.RegularExpressionLiteral) {
+    if (!regExpLiteralBuilt(expr, cx.resolver))
+      demoteToLegacy("regexp-constructor-unsupported", `ir/from-ast: RegExp literal has no provider (${cx.funcName})`);
     return lowerRegExpLiteral(expr, cx);
   }
   // (#7106) `delete <expr>`: the selector refuses every form
@@ -5820,11 +5861,6 @@ function lowerArrayLiteral(expr: ts.ArrayLiteralExpression, cx: LowerCtx, hint: 
 /** (#7106 lever R) `staticRegExpPair` over the resolver's lib-only proof, as the selector asks it. */
 function regExpPairOf(expr: ts.Expression, cx: LowerCtx): { pattern: string; flags: string } | undefined {
   return staticRegExpPair(expr, (node) => cx.resolver?.isLibOnlyBinding?.(node) === true);
-}
-
-/** (#7106 lever R) A static construction this lane builds in-module: a `$NativeRegExp` carrier. */
-function lowersAsNativeRegExp(expr: ts.Expression, cx: LowerCtx): boolean {
-  return cx.resolver?.supportsBackendCapability?.("native-regexp") === true && regExpPairOf(expr, cx) !== undefined;
 }
 
 /**
@@ -6600,10 +6636,12 @@ function lowerObjectLiteral(expr: ts.ObjectLiteralExpression, cx: LowerCtx, hint
   // the carrier: a property of the slot, not of the admitting arm (#7280 S1).
   const openCarrierHome = admittedOpenCarrierHome(expr);
   if (openCarrierHome !== undefined) return emitOpenCarrierObject(cx.builder, openCarrierHome);
+  // (#7354 O1) The Prepared backend has no closed object struct: a literal it owns is an ordinary object.
   if (
+    cx.resolver?.preparedOrdinaryObjectLiteral?.(expr) === true ||
     expr.properties.some((property) => ts.isGetAccessorDeclaration(property) || ts.isSetAccessorDeclaration(property))
   ) {
-    return lowerOrdinaryDescriptorLiteral(expr, cx);
+    return lowerOrdinaryObjectLiteral(expr, cx);
   }
   const ordinaryToPrimitive = lowerOrdinaryToPrimitiveObjectLiteral(expr, cx);
   if (ordinaryToPrimitive !== null) return ordinaryToPrimitive;
@@ -6702,9 +6740,9 @@ function lowerObjectLiteral(expr: ts.ObjectLiteralExpression, cx: LowerCtx, hint
 }
 
 /** Install descriptors in source order; creating a getter never invokes it. */
-function lowerOrdinaryDescriptorLiteral(expr: ts.ObjectLiteralExpression, cx: LowerCtx): IrValueId {
+function lowerOrdinaryObjectLiteral(expr: ts.ObjectLiteralExpression, cx: LowerCtx): IrValueId {
   if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== expr)
-    return withNodeSourceSite(cx, expr, () => lowerOrdinaryDescriptorLiteral(expr, cx));
+    return withNodeSourceSite(cx, expr, () => lowerOrdinaryObjectLiteral(expr, cx));
   const external = irVal({ kind: "externref" });
   const object = cx.builder.emitCall(irIntrinsicFuncRef("js.object.create-default"), [], external);
   if (object === null) throw new Error("ordinary object constructor returned no value");
@@ -6740,7 +6778,9 @@ function lowerOrdinaryDescriptorLiteral(expr: ts.ObjectLiteralExpression, cx: Lo
     else if (ts.isShorthandPropertyAssignment(property)) value = lowerExpr(property.name, cx, IR_F64);
     else demoteToLegacy("body-shape-rejected", "unsupported ordinary descriptor member");
     const type = cx.builder.typeOf(value);
+    const boxed = boundaryBox(value, type, cx);
     if (type.kind === "closure") value = cx.builder.emitCallablePack(value, type.signature);
+    else if (boxed !== null) value = boxed;
     else if (asVal(type)?.kind === "f64") value = cx.builder.emitBox(value, irDynamic(JS_TAG_IDS.NumberF64));
     else if (type.kind === "val" && type.val.kind === "i32" && type.val.boolean === true)
       value = cx.builder.emitBox(value, irDynamic(JS_TAG_IDS.Boolean));
@@ -7664,6 +7704,7 @@ function functionObjectLoweringHost(cx: LowerCtx): functionObjects.FunctionObjec
     funcName: cx.funcName,
     dynamicCarrierIsExternref: () =>
       cx.resolver?.dynamicCarrierIsExternref?.() === true && cx.resolver.resolveDynamic?.()?.kind === "externref",
+    nativeClosureCalls: preparedFunctionValues(cx),
     requireOwner: (ownerUnitId) =>
       requireMatchingLoweringPlanOwner("top-level function value", ownerUnitId, cx.ownerUnitId, cx.funcName),
     lowerExpression: (source) => lowerExpr(source, cx, irDynamic()),
@@ -7703,11 +7744,13 @@ function lowerCall(expr: ts.CallExpression, cx: LowerCtx, statementPosition = fa
     demoteToLegacy("call-resolution-unsupported", `ir/from-ast: optional call (?.()) not in slice 11 (${cx.funcName})`);
   }
   const globalEval = exactGlobalEvalStatement(expr);
-  if (globalEval) {
-    const target = cx.resolver?.globalEvalTarget?.(expr);
+  if (globalEval && cx.resolver?.isRealmEval?.(globalEval.evalIdentifier) === true)
+    demoteToLegacy("call-resolution-unsupported", `ir/from-ast: eval statement has no eval provider in ${cx.funcName}`);
+  if (globalEval && cx.resolver?.globalEvalTarget) {
+    const target = cx.resolver.globalEvalTarget(expr);
     if (
       !statementPosition ||
-      cx.resolver?.isAmbientBinding?.(globalEval.evalIdentifier) !== true ||
+      cx.resolver.isAmbientBinding?.(globalEval.evalIdentifier) !== true ||
       cx.scope.has("eval") ||
       !target
     ) {
@@ -7830,6 +7873,10 @@ function lowerCall(expr: ts.CallExpression, cx: LowerCtx, statementPosition = fa
   if (binding?.kind === "local" && (binding.type.kind === "closure" || binding.type.kind === "callable")) {
     return lowerClosureCall(binding.value, binding.type.signature, expr.arguments, cx, statementPosition);
   }
+  if (binding?.kind === "moduleGlobal" && binding.functionValue) {
+    const { value, signature } = binding.functionValue;
+    return lowerClosureCall(value, signature, expr.arguments, cx, statementPosition);
+  }
   if (binding?.kind === "nestedFunc") {
     return lowerNestedFuncCall(binding, expr.arguments, cx);
   }
@@ -7855,12 +7902,14 @@ function lowerCall(expr: ts.CallExpression, cx: LowerCtx, statementPosition = fa
   const bindingLogicalType =
     binding?.kind === "slot" ? (binding.asType ?? binding.type) : binding?.kind === "local" ? binding.type : undefined;
   // (#7287) …or a script `var` in its dynamic module home (the prelude's `print`).
+  const dynamicModuleBinding = (callee: ts.Identifier) =>
+    cx.resolver?.resolveModuleBinding?.(callee)?.type.kind === "dynamic";
+  // (#7354 Fb) The native closure call is exact in any position; the ordinary pipeline's only in a statement.
   const dynamicModuleCallee =
     binding === undefined &&
-    isStatementDynamicModuleCall(
-      expr,
-      (callee) => cx.resolver?.resolveModuleBinding?.(callee)?.type.kind === "dynamic",
-    );
+    (preparedFunctionValues(cx)
+      ? dynamicModuleBinding(expr.expression)
+      : isStatementDynamicModuleCall(expr, dynamicModuleBinding));
   if (bindingLogicalType?.kind === "dynamic" || dynamicModuleCallee) {
     const callee = lowerExpr(expr.expression, cx, irDynamic());
     if (cx.builder.typeOf(callee).kind !== "dynamic") {
@@ -7934,21 +7983,9 @@ function lowerCall(expr: ts.CallExpression, cx: LowerCtx, statementPosition = fa
       argVal = cx.builder.emitCallablePack(argVal, expected.signature);
       argType = cx.builder.typeOf(argVal);
     }
-    // #2949 S5.P — a concrete value passed to an `any`/dynamic parameter
-    // crosses the same explicit carrier boundary as a concrete equality
-    // operand. Reuse the canonical tag-aware boxer; ambiguous refs/i32 values
-    // still decline and demote through the existing assignability error.
-    if (expected.kind === "dynamic" && argType.kind !== "dynamic") {
-      // (#7320) A closure argument boxes as a function value, the way a
-      // dynamic call's arguments do (`functionObjectDynamicValue`).
-      const boxed =
-        argType.kind === "closure"
-          ? functionObjects.functionObjectDynamicValue(argVal, argExpr, functionObjectLoweringHost(cx))
-          : boxConcreteToDynamic(argVal, argType, argExpr, cx);
-      if (boxed !== null) {
-        argVal = boxed;
-        argType = cx.builder.typeOf(argVal);
-      }
+    if (expected.kind === "dynamic") {
+      argVal = argumentIntoDynamic(argVal, argExpr, cx);
+      argType = cx.builder.typeOf(argVal);
     }
     // A dynamic value flowing into a proven numeric local ABI observes the
     // ordinary JavaScript ToNumber boundary. This keeps generic parser loops
@@ -8146,6 +8183,36 @@ function isUnshadowedGlobalExpression(expr: ts.Expression, name: string, cx: Low
   );
 }
 
+/**
+ * Why a read of `identifier` has no binding. (#7354 Fa) A closure reading a local of its enclosing function that
+ * is declared after the closure is created names that: the hoisted binding exists in JavaScript, but the closure
+ * captures only what is bound where it is created.
+ */
+function unboundIdentifierDetail(identifier: ts.Identifier, cx: LowerCtx): string {
+  const declaration = cx.checker?.getSymbolAtLocation(identifier)?.valueDeclaration;
+  const closure = ts.findAncestor(identifier, ts.isFunctionLike);
+  const home = declaration && ts.isVariableDeclaration(declaration) && ts.findAncestor(declaration, ts.isFunctionLike);
+  return closure && home && home !== closure && declaration.pos >= closure.end
+    ? `closure ${cx.funcName} reads "${identifier.text}", a local of its enclosing function declared after the closure is created`
+    : `identifier "${identifier.text}" is not in scope in ${cx.funcName}`;
+}
+
+/**
+ * A concrete argument for a dynamic parameter crosses the same explicit carrier boundary as a concrete equality
+ * operand (#2949 S5.P): the canonical tag-aware boxer, and (#7320) a closure boxes as a function value, the way a
+ * dynamic call's arguments do (`functionObjectDynamicValue`). An argument with no box (an ambiguous ref or i32) is
+ * returned as it is, so the caller's assignability check refuses it.
+ */
+function argumentIntoDynamic(argVal: IrValueId, argExpr: ts.Expression, cx: LowerCtx): IrValueId {
+  const argType = cx.builder.typeOf(argVal);
+  if (argType.kind === "dynamic") return argVal;
+  const boxed =
+    argType.kind === "closure"
+      ? functionObjects.functionObjectDynamicValue(argVal, argExpr, functionObjectLoweringHost(cx))
+      : boxConcreteToDynamic(argVal, argType, argExpr, cx);
+  return boxed ?? argVal;
+}
+
 function lowerClosureCall(
   callee: IrValueId,
   signature: IrClosureSignature,
@@ -8165,10 +8232,12 @@ function lowerClosureCall(
   for (let i = 0; i < signature.params.length; i++) {
     const expected = signature.params[i]!;
     const argument = expandedArgExprs[i];
-    const argVal =
+    let argVal =
       i >= defaultParamStart && (argument === undefined || isUnshadowedGlobalExpression(argument, "undefined", cx))
         ? emitExpressionDefaultMissingF64(expected, cx)
         : lowerExpr(argument!, cx, expected);
+    // (#7354 Fa) A parameter of a function value's all-dynamic signature boxes its argument as a direct call's does.
+    if (expected.kind === "dynamic") argVal = argumentIntoDynamic(argVal, argument!, cx);
     if (!irTypeAssignable(cx.builder.typeOf(argVal), expected)) {
       demoteToLegacy(
         "call-resolution-unsupported",
@@ -8394,7 +8463,7 @@ function lowerNewExpression(expr: ts.NewExpression, cx: LowerCtx): IrValueId {
   const nativeMap = tryLowerNativeMapConstruction(expr, cx);
   if (nativeMap !== null) return nativeMap;
   // (#7106 lever R) A host-free lane builds a static `new RegExp(…)` in-module, as it builds a literal.
-  if (lowersAsNativeRegExp(expr, cx)) return lowerRegExpLiteral(expr, cx);
+  if (nativeStaticRegExpBuilt(expr, cx.resolver)) return lowerRegExpLiteral(expr, cx);
   if (!ts.isIdentifier(expr.expression)) {
     demoteToLegacy(
       "unknown-class-construction",
@@ -9188,16 +9257,10 @@ function tryLowerNativeMapMethodCall(
   return result;
 }
 
-/**
- * ES5 `Object.defineProperty` that reached from-ast: (#7338) the `Object` statics table lowers every
- * admitted define and the selector refuses every other one, so this is a drift, not a fallback.
- */
+/** ES5 `Object.defineProperty` the `Object` statics table (#7338) did not admit: the selector refuses it. */
 function unadmittedObjectDefineProperty(cx: LowerCtx): never {
-  throw new IrInvariantError(
-    "selection-preparation-mismatch",
-    "build",
-    `ir/from-ast: Object.defineProperty is not an admitted Object static (${cx.funcName})`,
-  );
+  const detail = `ir/from-ast: Object.defineProperty is not an admitted Object static (${cx.funcName})`;
+  return refuseUnselected(cx.unselected, "call-resolution-unsupported", detail);
 }
 
 /** (#7338) The selector's `Object` statics plan, on from-ast's scope and the same program facts. */
@@ -13212,11 +13275,20 @@ function lowerEarlyReturn(stmt: ts.ReturnStatement, cx: LowerCtx): void {
   cx.builder.emitEarlyReturn(coerceReturnValue(v, cx, stmt.expression));
 }
 
-/** (#7106) A dynamic module slot (`var o = undefined; o = 4`) takes the boxed value. */
+/**
+ * (#7106) A dynamic module slot (`var o = undefined; o = 4`) takes the boxed value; (#7354 Fb) on the Prepared lane a
+ * function value too.
+ */
 function boxForDynamicModuleStorage(value: IrValueId, target: IrType, rhs: ts.Expression, cx: LowerCtx): IrValueId {
   const type = cx.builder.typeOf(value);
   if (target.kind !== "dynamic" || type.kind === "dynamic") return value;
+  if (preparedFunctionValues(cx)) return argumentIntoDynamic(value, rhs, cx);
   return boxConcreteToDynamic(value, type, rhs, cx) ?? value;
+}
+
+/** (#7354 Fa, Fb) The Prepared native lane, whose contracts give function values the all-dynamic signature. */
+function preparedFunctionValues(cx: LowerCtx): boolean {
+  return cx.resolver?.dynamicClosureSignature !== undefined;
 }
 
 /** Write a mutable identifier and return the RHS before any storage boxing. */
@@ -14232,9 +14304,13 @@ function emitUnaryToNumber(
 function lowerPrefixUnary(expr: ts.PrefixUnaryExpression, cx: LowerCtx): IrValueId {
   if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== expr)
     return withNodeSourceSite(cx, expr, () => lowerPrefixUnary(expr, cx));
-  // (#7354 D1) Deferred, so only the selector-less Prepared producer gets here.
+  // (#7354 D1) Deferred: the selector never claims one.
   if (expr.operator === ts.SyntaxKind.PlusPlusToken || expr.operator === ts.SyntaxKind.MinusMinusToken)
-    demoteToLegacy("body-shape-rejected", `ir/from-ast: value-position prefix update in ${cx.funcName}`);
+    refuseUnselected(
+      cx.unselected,
+      "body-shape-rejected",
+      `ir/from-ast: value-position prefix update in ${cx.funcName}`,
+    );
   // #2135 — capability-table invariant, mirroring `lowerBinary`. A deferred
   // prefix op post-claim is a selector↔table disagreement (compiler bug).
   assertNotDeferred(
@@ -14450,7 +14526,7 @@ function additiveLaneOf(cx: LowerCtx): AdditiveLane {
  */
 function additiveOperandProof(node: ts.Expression, cx: LowerCtx): AdditiveProof | null {
   if (addsAsCarrier(node, cx)) return "dynamic";
-  if (lowersAsNativeRegExp(peelParensExpr(node), cx)) return "regexp";
+  if (nativeStaticRegExpBuilt(peelParensExpr(node), cx.resolver)) return "regexp";
   const proof = proveAdditiveOperand(node, cx);
   return proof === "no-checker" ? null : proof;
 }
@@ -15769,9 +15845,13 @@ function emitExactNumericExponentiation(
   right: ts.Expression,
   cx: LowerCtx,
 ): IrValueId {
-  // (#7354 D1) No dynamic `**`; only the selector-less Prepared producer gets here.
+  // (#7354 D1) No dynamic `**`: the selector never claims a dynamic operand.
   if (cx.builder.typeOf(lhs).kind === "dynamic" || cx.builder.typeOf(rhs).kind === "dynamic")
-    demoteToLegacy("operand-coercion-unsupported", `ir/from-ast: '**' on a dynamic operand in ${cx.funcName}`);
+    refuseUnselected(
+      cx.unselected,
+      "operand-coercion-unsupported",
+      `ir/from-ast: '**' on a dynamic operand in ${cx.funcName}`,
+    );
   if (!checkerProvesExactNumericExponentOperand(left, cx) || !checkerProvesExactNumericExponentOperand(right, cx)) {
     throw new IrInvariantError(
       "selection-preparation-mismatch",
@@ -16432,21 +16512,12 @@ function lowerClosureExpression(expr: IrClosureLiteral, cx: LowerCtx): IrValueId
       functionMemberClosure: memberPlan,
     });
   }
+  const dynamicSignature = ts.isFunctionExpression(expr) ? cx.resolver?.dynamicClosureSignature?.(expr) : undefined;
+  if (dynamicSignature)
+    return lowerClosureExpressionWithSignature(expr, dynamicSignature, undefined, cx, { writtenParameterSlots: true });
   // Inference is owned by the actual checker and confined to descriptor
   // literals and their nested closures. Other closure admission is unchanged.
-  let descriptorOwner: ts.Node | undefined = expr.parent;
-  while (
-    descriptorOwner &&
-    !(
-      ts.isObjectLiteralExpression(descriptorOwner) &&
-      descriptorOwner.properties.some(
-        (property) => ts.isGetAccessorDeclaration(property) || ts.isSetAccessorDeclaration(property),
-      )
-    )
-  ) {
-    descriptorOwner = descriptorOwner.parent;
-  }
-  if (descriptorOwner) {
+  if (ownedByDescriptorLiteral(expr)) {
     if (!cx.checker)
       demoteToLegacy("type-resolution-unsupported", "ordinary descriptor closure needs its source checker");
     const plan = resolveOrdinaryObjectClosureSignature(cx.checker, expr);
@@ -16695,18 +16766,7 @@ function lowerClosureExpressionWithSignature(
 
   // Lift body. The lifted function takes (__self: IrType.closure,
   // ...sig.params) and reads captures via `closure.cap`.
-  const lifted = liftClosureBody(
-    liftedIdentity,
-    expr,
-    signature,
-    captures,
-    captureFieldTypes,
-    cx,
-    exact?.allowConciseVoidBody === true,
-    exact?.hostOneShot === true,
-    exact?.domCallbackAuthority,
-    exact?.functionMemberClosure,
-  );
+  const lifted = liftClosureBody(liftedIdentity, expr, signature, captures, captureFieldTypes, cx, exact);
   cx.lifted.push(lifted);
   recordSourceMapDerived(cx, liftedIdentity, expr);
 
@@ -16822,7 +16882,7 @@ function liftNestedFunction(
     funcName: liftedName,
     ownerUnitId: cx.ownerUnitId,
     returnType: signature.returnType,
-    ...numericProjectionOptions(cx),
+    ...producerPolicyOptions(cx),
     calleeTypes: cx.calleeTypes,
     directCalls: cx.directCalls,
     ...functionObjects.projectFunctionValueLoweringPlans(cx),
@@ -16891,10 +16951,13 @@ function liftClosureBody(
   captures: readonly NestedCapture[],
   captureFieldTypes: readonly IrType[],
   cx: LowerCtx,
-  allowConciseVoidBody = false,
-  hostOneShot = false,
-  domCallbackAuthority?: import("./nodes.js").IrDomCallbackAuthority,
-  functionMemberClosure?: import("./function-member-closure-plan.js").IrFunctionMemberClosurePlan,
+  {
+    allowConciseVoidBody,
+    hostOneShot,
+    domCallbackAuthority,
+    functionMemberClosure,
+    writtenParameterSlots,
+  }: ExactClosureLoweringOptions = {},
 ): IrFunction {
   const body = expr.body;
   if (!body) {
@@ -16972,32 +17035,19 @@ function liftClosureBody(
       if (sourceScope) withGeneratedSourceSite(sourceScope, "binding-scaffold", expr, bindThis);
       else bindThis();
     }
-    // (#7106 Stage 4) A reassigned parameter (`message += ' '` in assert.js's
-    // `sameValue`) reads through mutable storage, seeded from its entry value
-    // — the same slot model a top-level function's reassigned parameter uses.
-    const reassigned = ts.isBlock(body) ? collectMutatedLetNamesFromBlock(body) : new Set<string>();
+  }
+  // (#7106 Stage 4, #7354 Fa) A reassigned parameter (`message += ' '` in assert.js's `sameValue`,
+  // `if (a === undefined) a = 3` in a function value) reads through mutable storage, seeded from its entry value:
+  // the slot a top-level function's reassigned parameter gets. Any other closure keeps its parameters immutable.
+  const mutatedLets = ts.isBlock(body) ? collectMutatedLetNamesFromBlock(body) : new Set<string>();
+  if (functionMemberClosure || writtenParameterSlots) {
     for (const parameter of expr.parameters) {
-      if (!ts.isIdentifier(parameter.name) || !reassigned.has(parameter.name.text)) continue;
+      if (!ts.isIdentifier(parameter.name) || !mutatedLets.has(parameter.name.text)) continue;
       const binding = scope.get(parameter.name.text);
       if (binding?.kind !== "local") demoteToLegacy("body-shape-rejected", "function-member closure parameter binding");
-      const name = parameter.name.text;
-      const seed = (): void => {
-        const representation = resolveIrSlotRepresentation(binding.type, cx.resolver, liftedName);
-        if (!representation) {
-          demoteToLegacy(
-            "param-shape-rejected",
-            `ir/from-ast: mutable parameter "${name}" has no slot (${liftedName})`,
-          );
-        }
-        const slotIndex = builder.declareSlot(name, representation.storageType);
-        builder.emitSlotWrite(slotIndex, binding.value);
-        scope.set(name, {
-          kind: "slot",
-          slotIndex,
-          type: representation.bindingType,
-          ...(representation.asType ? { asType: representation.asType } : {}),
-        });
-      };
+      const param = { name: parameter.name.text, type: binding.type, value: binding.value };
+      const seed = (): void =>
+        lowerMutableParameterStorage(param, { resolver: cx.resolver }, liftedName, scope, builder);
       if (sourceScope) withGeneratedSourceSite(sourceScope, "binding-scaffold", parameter, seed);
       else seed();
     }
@@ -17018,7 +17068,7 @@ function liftClosureBody(
     funcName: liftedName,
     ownerUnitId: cx.ownerUnitId,
     returnType: signature.returnType,
-    ...numericProjectionOptions(cx),
+    ...producerPolicyOptions(cx),
     calleeTypes: cx.calleeTypes,
     directCalls: cx.directCalls,
     ...functionObjects.projectFunctionValueLoweringPlans(cx),
@@ -17039,7 +17089,7 @@ function liftClosureBody(
     // Slice 6 part 2 (#1181) — closure-body mutated lets are scanned
     // per closure (block bodies) or empty (concise expression bodies,
     // which can't host a let declaration).
-    mutatedLets: ts.isBlock(body) ? collectMutatedLetNamesFromBlock(body) : new Set<string>(),
+    mutatedLets,
     dynamicStringLocals: new Set(),
     // (#3758) same independent-per-closure reasoning as mutatedLets above;
     // computeI32PureNames itself no-ops on a non-block (concise) body.
@@ -17263,6 +17313,18 @@ function analyseCaptures(
  * embedding the throw within a try buffer (where the catch_all wrapping
  * implicitly catches the unreachability).
  */
+/**
+ * A number or (#7354 O1) Boolean crossing into an externref position under the number-boundary projection (the
+ * `numericThrow` option): its boundary box, never a dynamic value, so a program without one stays free of them.
+ * `null` everywhere else.
+ */
+function boundaryBox(value: IrValueId, type: IrType, cx: LowerCtx): IrValueId | null {
+  if (cx.numericThrow !== "number-boundary" || type.kind !== "val") return null;
+  if (type.val.kind === "f64" && (type.signed ?? true)) return cx.builder.emitIntrinsic("js.number.box", [value]);
+  if (type.val.kind === "i32" && type.val.boolean === true) return cx.builder.emitIntrinsic("js.boolean.box", [value]);
+  return null;
+}
+
 function lowerThrowStatement(stmt: ts.ThrowStatement, cx: LowerCtx): void {
   if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== stmt) {
     withNodeSourceSite(cx, stmt, () => lowerThrowStatement(stmt, cx));
@@ -17273,14 +17335,8 @@ function lowerThrowStatement(stmt: ts.ThrowStatement, cx: LowerCtx): void {
   }
   const value = lowerExpr(stmt.expression, cx, irVal({ kind: "externref" }));
   const valueType = cx.builder.typeOf(value);
-  const valTy = asVal(valueType);
-  if (
-    cx.numericThrow === "number-boundary" &&
-    valueType.kind === "val" &&
-    valTy?.kind === "f64" &&
-    (valueType.signed ?? true)
-  ) {
-    const boxed = cx.builder.emitIntrinsic("js.number.box", [value]);
+  const boxed = asVal(valueType)?.kind === "f64" ? boundaryBox(value, valueType, cx) : null;
+  if (boxed !== null) {
     cx.builder.emitThrow(boxed);
     return;
   }
