@@ -387,10 +387,14 @@ describe("#7354 Ty — typeof of a global the program does not declare, on the P
   });
 });
 
-/** A global newer than the checker's lib (`Float16Array`) compiles with TypeScript's warning and nothing else. */
+/**
+ * A global newer than the checker's lib compiles with TypeScript's lib-gap warning and nothing else: `Float16Array`
+ * is undeclared there, `Iterator` only an interface.
+ */
 async function expectAnswerTag(name: string, tag: string) {
   const warnings = messages(await compile(`typeof ${name};`, options()));
-  expect(warnings.every((warning) => warning === `Cannot find name '${name}'.`)).toBe(true);
+  const libGap = [`Cannot find name '${name}'.`, `'${name}' only refers to a type, but is being used as a value here.`];
+  expect(warnings.every((warning) => libGap.includes(warning))).toBe(true);
   expect(await run(`if (typeof ${name} !== "${tag}") throw 1;`, warnings)).toBe("returned");
   expect(await run(`if (typeof ${name} === "${tag}") throw 1;`, warnings)).toBe("threw");
 }
