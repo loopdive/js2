@@ -42,7 +42,7 @@ loc-budget-allow:
   - src/compiler/ir-program-presentation.ts
 import-cycles-allow:
   - backend->ir: 119 # 2026-11-17 (#7354 Str review 2): the native string length emitter reads the selected carrier field through the shared preparedStringLenProvider (ir/runtime/intrinsic-preparation.ts) instead of re-implementing it
-  - ir->runtime: 11 # 2026-11-19 (#7354 Ty review): source-dynamic-contracts.ts reads the realm's global table (runtime/contracts/native-realm-globals.ts, #7350 B2a) for typeof of a global, as realm-keys.ts reads the catalog; no SCC grows
+  - ir->runtime: 11 # 2026-11-19 (#7354 Ty review): source-dynamic-contracts.ts reads the realm's global table (runtime/contracts/native-realm-globals.ts, #7350 B2a). runtime/contracts is a leaf (it imports nothing from ir); it is the layer IR reads realm data from, as in 4 of the 10 existing edges (realm-keys.ts and native-realm-requirements.ts read native-realm-catalog.ts, js-tag.ts reads js-value-tags.ts, native-prototype-requirements.ts reads builtin-brands.ts). The pair is two-way only through runtime/standalone-timer-callback-bridge.ts -> ir/async-runtime-providers.ts; no SCC grows
 ---
 
 # #7354 — Prepared IR path, milestone 1
