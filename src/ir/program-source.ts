@@ -1514,7 +1514,8 @@ function prepareStartupDirectCalls(
     diagnostic.active = plan.unitId;
     const ownerUnitId = plan.unitId;
     const visit = (node: ts.Node): void => {
-      if (ts.isFunctionLike(node)) return;
+      if (ts.isFunctionLike(node) && !(process.env.CENSUS_STUBS ?? "").includes("s0")) return; // RESEARCH STAND-IN S0
+      if (ts.isFunctionLike(node) && !ts.isFunctionExpression(node)) return;
       if (ts.isCallExpression(node) && ts.isIdentifier(node.expression)) {
         const target =
           callableResolver.resolveImportedFunctionTarget(node.expression) ??
@@ -1815,6 +1816,7 @@ export function prepareIrProgramSources(
       allocations,
     };
     if (sourceMap !== undefined) assertPreparedSourceMap(prepared);
+    if (process.env.CENSUS_PREP_ONLY === "1") throw new Error("CENSUS-PREPARED-OK"); // RESEARCH: stop after preparation
     return prepared;
   } catch (error) {
     const owner = diagnostic.active

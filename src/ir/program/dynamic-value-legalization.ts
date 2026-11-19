@@ -60,6 +60,7 @@ import {
   type ProgramKinds,
 } from "./dynamic-value-kinds.js";
 
+const STUB = new Set((process.env.CENSUS_STUBS ?? "").split(",")); // RESEARCH STUBS (never committed)
 const CARRIER: IrType = Object.freeze({ kind: "val", val: Object.freeze({ kind: "externref" }) });
 
 /** A dynamic operation the Prepared path has no intrinsic for; the message names it. */
@@ -160,6 +161,7 @@ function legalizationBuilders(
     operation: string,
   ): void => {
     const refused = kinds.find((kind) => table[kind] === "refused");
+    if (refused && STUB.has("tostr-fn") && refused === "function") return;
     if (refused) gap(`${operation} a ${refused} value`);
   };
   const fresh = (): IrValueId => valueCount++ as IrValueId;
@@ -266,9 +268,22 @@ function legalizationBuilders(
       case "name":
         return [text(kind, result)];
       case "plain-object":
+        if (STUB.has("toprim") && plainObjectRefusal(program) !== undefined) {
+          const undef = fresh();
+          return [
+            intrinsic(instr, "js.value.undefined", [], undef),
+            intrinsic(instr, "js.value.as_string", [undef], result),
+          ];
+        }
         return [text(plainObjectToPrimitive(), result)];
-      case "refused":
-        return gap(`ToString of a ${kind} value`);
+      case "refused": {
+        if (!STUB.has("tostr-fn")) return gap(`ToString of a ${kind} value`);
+        const undef = fresh();
+        return [
+          intrinsic(instr, "js.value.undefined", [], undef),
+          intrinsic(instr, "js.value.as_string", [undef], result),
+        ];
+      }
     }
   };
   /** (#7354 O2) OrdinaryToPrimitive of a plain object (`TO_STRING_ARM`), or the named refusal. */
@@ -281,7 +296,7 @@ function legalizationBuilders(
     const kinds = kindsOf(value);
     const unbox = (r: IrValueId): IrInstr[] => [intrinsic(instr, "js.number.unbox", [value], r)];
     if (kinds.every((kind) => TO_NUMBER_ARM[kind] === "unbox")) return unbox(result);
-    plainObjectToPrimitive();
+    if (!STUB.has("toprim")) plainObjectToPrimitive();
     const nan = (r: IrValueId): IrInstr[] => [
       { kind: "const", value: { kind: "f64", value: NaN }, result: r, resultType: F64 },
     ];
@@ -525,6 +540,20 @@ export function legalizeDynamicValues(
         }
         if (instr.target.binding.kind === "runtime" && instr.target.binding.symbol === IR_DYN_ADD_FN)
           return builders.addition(instr, instr.args, instr.result!);
+        // RESEARCH STUB mcall: a dynamic method call aborts uncatchably; the trapping string re-enters the carrier.
+        if (
+          STUB.has("mcall") &&
+          instr.target.binding.kind === "runtime" &&
+          instr.target.name.startsWith("__ir_dyn_method_call")
+        ) {
+          const undef = fresh();
+          const str = fresh();
+          return [
+            intrinsic(instr, "js.value.undefined", [], undef),
+            intrinsic(instr, "js.value.as_string", [undef], str),
+            { kind: "coerce.to_externref", value: str, result: instr.result, resultType: CARRIER },
+          ];
+        }
         return instr.target.binding.kind === "runtime" &&
           !irRuntimeCallableDeclaration(instr.target) &&
           [instr.resultType, ...instr.args.map((arg) => types.get(arg))].some((type) => type?.kind === "dynamic")
@@ -539,6 +568,24 @@ export function legalizeDynamicValues(
         // function value entering the carrier.
         if (isFunctionValue(instr.value)) return admit("function", instr, instr.value);
         return [instr];
+      case "dyn.json_stringify":
+      case "dyn.object_tag":
+        if (STUB.has(instr.kind)) {
+          const undef = fresh();
+          return [intrinsic(instr, "js.value.undefined", [], undef), intrinsic(instr, "js.value.as_string", [undef])];
+        }
+        return gap(instr.kind);
+      case "dyn.member_get":
+        if (STUB.has(instr.kind)) {
+          const undef = fresh();
+          const str = fresh();
+          return [
+            intrinsic(instr, "js.value.undefined", [], undef),
+            intrinsic(instr, "js.value.as_string", [undef], str),
+            { kind: "coerce.to_externref", value: str, result: instr.result, resultType: CARRIER },
+          ];
+        }
+        return gap(instr.kind);
       default:
         return instr.kind.startsWith("dyn.") ? gap(instr.kind) : [instr];
     }

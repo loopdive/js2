@@ -14992,6 +14992,12 @@ function expressionProducesDynamic(expr: ts.Expression, cx: LowerCtx): boolean {
         // (#7106 Stage 4) A call THROUGH a dynamic binding (`format(actual)`)
         // returns whatever the called value returns: the carrier.
         if (cx.scope.has(call.expression.text)) return expressionProducesDynamic(call.expression, cx);
+        // RESEARCH STAND-IN S1: a call through a dynamic module home returns the carrier.
+        if (
+          (process.env.CENSUS_STUBS ?? "").includes("s1") &&
+          cx.resolver?.resolveModuleBinding?.(call.expression)?.type.kind === "dynamic"
+        )
+          return true;
         return cx.calleeTypes?.get(call.expression.text)?.returnType?.kind === "dynamic";
       }
       if (!ts.isPropertyAccessExpression(call.expression)) return false;

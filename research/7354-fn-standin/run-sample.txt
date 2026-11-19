@@ -1,0 +1,6 @@
+language/asi/S7.9_A6.1_T2.js
+language/literals/numeric/S7.8.3_A4.2_T7.js
+language/statements/do-while/S12.6.1_A1.js
+built-ins/String/prototype/trim/15.5.4.20-1-8.js
+language/expressions/compound-assignment/add-whitespace.js
+built-ins/String/S15.5.1.1_A1_T18.js
