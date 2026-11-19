@@ -59,6 +59,8 @@ export function refusalLabel(part, code) {
       .replace(/[«'"`].*$/s, "")
       .slice(0, 60)
       .trim()})`;
+  const bare = /^(?:[\w-]+@)?([a-z][\w-]*(?::[a-z][\w-]*)?)$/.exec(text);
+  if (bare) return bare[1];
   return code ?? (text.slice(0, 60) || "no-detail");
 }
 
