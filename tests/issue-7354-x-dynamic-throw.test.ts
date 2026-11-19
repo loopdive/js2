@@ -193,7 +193,8 @@ describe("#7354 X — throw and catch with the Prepared dynamic value", () => {
     [
       "a call through a dynamic value (a TypeError)",
       "function f(v) { try { v(); } catch (e) { return e; } }\nf(1);",
-      "dynamic operation __ir_dyn_call_value has no Prepared intrinsic",
+      // (#7354 Fb) The call goes through the closure dispatcher, which a program without closures cannot reserve.
+      "intrinsic callable js.closure.call:0 needs runtime function materialization",
     ],
     [
       "a member read of a dynamic value (a TypeError on null)",

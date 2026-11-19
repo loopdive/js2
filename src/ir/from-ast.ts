@@ -7681,6 +7681,7 @@ function functionObjectLoweringHost(cx: LowerCtx): functionObjects.FunctionObjec
     funcName: cx.funcName,
     dynamicCarrierIsExternref: () =>
       cx.resolver?.dynamicCarrierIsExternref?.() === true && cx.resolver.resolveDynamic?.()?.kind === "externref",
+    nativeClosureCalls: preparedFunctionValues(cx),
     requireOwner: (ownerUnitId) =>
       requireMatchingLoweringPlanOwner("top-level function value", ownerUnitId, cx.ownerUnitId, cx.funcName),
     lowerExpression: (source) => lowerExpr(source, cx, irDynamic()),
@@ -7876,12 +7877,14 @@ function lowerCall(expr: ts.CallExpression, cx: LowerCtx, statementPosition = fa
   const bindingLogicalType =
     binding?.kind === "slot" ? (binding.asType ?? binding.type) : binding?.kind === "local" ? binding.type : undefined;
   // (#7287) …or a script `var` in its dynamic module home (the prelude's `print`).
+  const dynamicModuleBinding = (callee: ts.Identifier) =>
+    cx.resolver?.resolveModuleBinding?.(callee)?.type.kind === "dynamic";
+  // (#7354 Fb) The native closure call is exact in any position; the ordinary pipeline's only in a statement.
   const dynamicModuleCallee =
     binding === undefined &&
-    isStatementDynamicModuleCall(
-      expr,
-      (callee) => cx.resolver?.resolveModuleBinding?.(callee)?.type.kind === "dynamic",
-    );
+    (preparedFunctionValues(cx)
+      ? dynamicModuleBinding(expr.expression)
+      : isStatementDynamicModuleCall(expr, dynamicModuleBinding));
   if (bindingLogicalType?.kind === "dynamic" || dynamicModuleCallee) {
     const callee = lowerExpr(expr.expression, cx, irDynamic());
     if (cx.builder.typeOf(callee).kind !== "dynamic") {
@@ -13239,11 +13242,20 @@ function lowerEarlyReturn(stmt: ts.ReturnStatement, cx: LowerCtx): void {
   cx.builder.emitEarlyReturn(coerceReturnValue(v, cx, stmt.expression));
 }
 
-/** (#7106) A dynamic module slot (`var o = undefined; o = 4`) takes the boxed value. */
+/**
+ * (#7106) A dynamic module slot (`var o = undefined; o = 4`) takes the boxed value; (#7354 Fb) on the Prepared lane a
+ * function value too.
+ */
 function boxForDynamicModuleStorage(value: IrValueId, target: IrType, rhs: ts.Expression, cx: LowerCtx): IrValueId {
   const type = cx.builder.typeOf(value);
   if (target.kind !== "dynamic" || type.kind === "dynamic") return value;
+  if (preparedFunctionValues(cx)) return argumentIntoDynamic(value, rhs, cx);
   return boxConcreteToDynamic(value, type, rhs, cx) ?? value;
+}
+
+/** (#7354 Fa, Fb) The Prepared native lane, whose contracts give function values the all-dynamic signature. */
+function preparedFunctionValues(cx: LowerCtx): boolean {
+  return cx.resolver?.dynamicClosureSignature !== undefined;
 }
 
 /** Write a mutable identifier and return the RHS before any storage boxing. */

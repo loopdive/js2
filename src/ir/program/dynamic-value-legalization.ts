@@ -395,6 +395,14 @@ export function legalizeDynamicValues(
       { kind: "unary", op: "i32.eqz", rand: value, result: instr.result, resultType: instr.resultType },
     ];
   };
+  /** `instr`'s result is the externref that wraps `value`, which is its own carrier payload. */
+  const carried = (instr: IrInstr, value: IrValueId): IrInstr => ({
+    kind: "coerce.to_externref",
+    value,
+    result: instr.result,
+    resultType: CARRIER,
+    ...(instr.site === undefined ? {} : { site: instr.site }),
+  });
   /** A value entering the carrier as `kind`; a value of no admitted kind refuses. */
   const admit = (kind: CarrierKind | undefined, instr: IrInstr, value: IrValueId): readonly IrInstr[] => {
     switch (kind) {
@@ -409,15 +417,7 @@ export function legalizeDynamicValues(
       // that wraps it.
       case "string":
       case "function":
-        return [
-          {
-            kind: "coerce.to_externref",
-            value,
-            result: instr.result,
-            resultType: CARRIER,
-            ...(instr.site === undefined ? {} : { site: instr.site }),
-          },
-        ];
+        return [carried(instr, value)];
       // `undefined` enters only as `dyn.undefined`, never by a box.
       case "undefined":
       case undefined:
@@ -488,14 +488,15 @@ export function legalizeDynamicValues(
         );
       }
       // A front-end dynamic helper (`__ir_dyn_lt`, ...) has no runtime declaration; (#7354 Str2-c) `__ir_dyn_add`
-      // is the dynamic `+`, expanded here.
+      // is the dynamic `+`, expanded here. (#7354 Fa, Fb) The function-value projection (`functionObjectDynamicValue`) boxes a packed callable, and a
+      // native closure call boxes its result, an externref, into the dynamic value: the carrier is that externref.
       case "call":
-        if (
-          instr.target.binding.kind === "runtime" &&
-          instr.target.name === IR_DYN_CALL_BOX_FN &&
-          types.get(instr.args[0]!)?.kind === "callable"
-        )
-          return admit("function", instr, instr.args[0]!);
+        if (instr.target.binding.kind === "runtime" && instr.target.name === IR_DYN_CALL_BOX_FN) {
+          const operand = types.get(instr.args[0]!);
+          if (operand?.kind === "callable") return admit("function", instr, instr.args[0]!);
+          // A native closure call's result already is a carrier value, of whichever kind it holds.
+          if (operand?.kind === "val" && operand.val.kind === "externref") return [carried(instr, instr.args[0]!)];
+        }
         if (instr.target.binding.kind === "runtime" && instr.target.binding.symbol === IR_DYN_ADD_FN)
           return addition(instr, instr.args, instr.result!);
         return instr.target.binding.kind === "runtime" &&

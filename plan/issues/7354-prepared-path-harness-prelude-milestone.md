@@ -47,6 +47,12 @@ related: [7188, 2949, 3526, 3527, 3518, 7106, 7349, 7350, 7352]
 # invocation population (`nativeRealmCompletedSlots`, native-realm.ts).
 # ir-program-presentation.ts +1: `native`, the ABI join's admission of a lifted
 # closure body's `__self`.
+# 2026-11-19 (slice Fb): src/ir/from-ast.ts +20 more (+57 with Fa): a call through a
+# script var in any position on the Prepared lane, the function-value box of a
+# module-slot store (`boxForDynamicModuleStorage` reuses `argumentIntoDynamic`), and
+# `preparedFunctionValues`, the one lane predicate the three arms share. The call
+# itself lives in src/ir/function-object-lowering.ts (`applyNativeClosureCall`), the
+# dispatch selection in native-invocation-requirements.ts.
 # 2026-11-19 (realm join, slice O step O1): src/ir/program-consumer.ts, the emission wiring of the realm's
 # source-object family: the second `reconcileNativeCallBindings` call (the reconciler itself is the renamed, shared
 # invocation one), the realm-slot record on the emission observation with its one reader `emittedNativeRealmSlots`
@@ -2817,3 +2823,58 @@ carrier; C builds on it.
    `Test262Error` reads `this` only under `new`, so C1's proof does not reach that arm.
 2. A function value is filled by `js.function.init` where Fa makes it a value. If Fa creates a value in more than
    one place, the call goes into Fa's one helper, not into each site.
+
+## Fb — calls through a dynamic value (2026-11-19)
+
+Branch `claude/7354-fb`, stacked on `claude/7354-fa`.
+
+### Implementation Plan
+
+Measured first (on Fa's head): `function t(fn){ return fn(2); } t(function (x) { return x * 2; })` already reaches
+from-ast's one dynamic-call path (`lowerDynamicValueCall` → `applyDynamicCallee`, function-object-lowering.ts), which
+emits the ordinary pipeline's runtime helpers (`__objvec_new/push`, `__is_callable`, `__new_TypeError`,
+`__apply_closure`); the legalization refuses at `__ir_dyn_call_argument`. The #3518 native dispatcher
+`js.closure.call:N` already does IsCallable and throws the TypeError itself (`buildClosureInvocationFailure`), but
+its planner (`native-invocation-requirements.ts`) admits only a callee that is a packed `closure.new` of the same unit
+(built for `f.call` on a known closure), and the dispatch entries are those callees' units only.
+
+| concern | module | reuses | removes |
+| --- | --- | --- | --- |
+| the call | `function-object-lowering.ts`: on the Prepared lane `applyDynamicCallee` emits one `js.closure.call:N(receiver, callee, …args)` over carrier operands | `functionObjectDynamicValue`, `irClosureMethodReference`, `coerce.to_externref` of a dynamic value (O1) | the runtime-helper sequence on this lane |
+| a dynamic callee | `native-invocation-requirements.ts`: a method use whose callee is no packed allocation is a `dynamicCallee` use; every source closure must be dispatchable (fixed parameters, carrier slots), else a named gap | `calculate`, `external` | — |
+| dispatch | `native-source-closure-callables.ts` `resolveEntries`: a dynamic use selects every source unit; `native-invocation.ts` `entries`: one arm per distinct signature | `resolveSourceEntries` | the per-closure duplicate arms |
+| result | legalization: `__ir_dyn_call_box` of any externref is the carrier (Fa's arm, widened from packed callables) | Fa's arm | — |
+| script vars | from-ast: a call through a dynamic home in any position on the lane; a function value stored by assignment | `isStatementDynamicModuleCall` (ordinary lane only now), `argumentIntoDynamic` | — |
+
+Quality criterion: one call path for a non-static callee on the lane (the same `lowerDynamicValueCall`), no second
+dispatcher, one lane predicate in from-ast.
+
+**Dispatcher or `call_ref` at the call site** (lead's question, measured on this branch, one dynamic call, n
+closures `var cI = function (x) { return x; }`, strict Prepared entry, standalone):
+
+| n | module bytes before dedupe | after | compile |
+| ---: | ---: | ---: | ---: |
+| 1 | 23,588 | 23,588 | 26 s |
+| 10 | 24,628 | 24,097 | 52 s (static calls only: 38 s) |
+| 50 | 29,424 | 26,533 | 277 s |
+
+The `js.closure.call:N` dispatcher already is a `call_ref` through the closure struct's own funcref, behind a
+`ref.test` of the allocation type and the lifted func type; what grew with every closure was one identical arm per
+closure. Its arms are now one per distinct (allocation type, lifted signature): every all-dynamic closure of one
+arity shares one. The remaining growth is the closures' own bodies and allocations. The dispatcher stays the one call
+path because it does what a call site cannot without copying it everywhere: IsCallable and the catchable TypeError,
+the saved/restored `currentThis` / `argc` / extra-argument protocol (`this` and `arguments` of slice C), `undefined`
+for missing arguments by the callee's arity, and it is where the realm's builtin function objects (S5) and construct
+(S11) are added as rows. Compile time is the realm's quadratic reservation audit (S6, #7365), not the dispatch.
+
+### Result
+
+`function t(fn){ return fn(2); } if (t(function (x) { return x * 2; }) !== 4) throw 1;` validates and runs through the
+strict Prepared entry. Missing arguments read `undefined`, extra ones are dropped, a non-callable value (number,
+`undefined`) throws a catchable TypeError, a script var is called from another function and after a second store.
+Proof: `tests/issue-7354-fb-dynamic-calls.test.ts`.
+
+Named gaps: a dynamic call in a program with no source closure (no dispatcher: `js.closure.call:N needs runtime
+function materialization`), spread arguments, `new`, method calls and `fn.call` / `fn.apply` on a dynamic value
+(slice C), a receiver other than `undefined` (`this`, slice C).
+

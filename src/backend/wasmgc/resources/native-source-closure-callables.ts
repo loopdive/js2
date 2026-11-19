@@ -94,15 +94,14 @@ function resolveEntries(
   requireNativeSourceClosureTypes(tx, types, types.requirements);
   assertNativeInvocationRequirementsCurrent(requirements);
   if (requirements.source !== types.requirements) fail("selected invocation belongs to a different source owner");
-  return resolveSourceEntries(
-    tx,
-    types,
-    slots,
-    new Set([
-      ...requirements.uses.flatMap((use) => (use.liftedUnitId ? [use.liftedUnitId] : [])),
-      ...requirements.getterUses.map((use) => use.liftedUnitId),
-    ]),
-  );
+  // (#7354 Fb) A call through a dynamic value may reach any source closure.
+  const selected = requirements.uses.some((use) => use.dynamicCallee)
+    ? types.requirements.units.map((unit) => unit.unitId)
+    : [
+        ...requirements.uses.flatMap((use) => (use.liftedUnitId ? [use.liftedUnitId] : [])),
+        ...requirements.getterUses.map((use) => use.liftedUnitId),
+      ];
+  return resolveSourceEntries(tx, types, slots, new Set(selected));
 }
 
 /** Associate the consumer's sole unit-slot population after reservation freeze. No allocation or fill. */
