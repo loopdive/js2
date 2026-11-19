@@ -32,6 +32,7 @@ import {
 } from "./compiler/ir-cutover-invocation.js";
 import { assertCodegenRegistrationsComplete } from "./codegen/shared.js";
 import { isFatalCodegenDiagnostic } from "./codegen/context/errors.js";
+import { isStrictContext } from "./codegen/helpers/is-strict-function.js";
 import type { WasmModule } from "./ir/types.js";
 import {
   prepareIrProgramPresentation,
@@ -1163,6 +1164,7 @@ export function runPreparedIrPipelinePresentation(input: PipelineInput): Prepare
       checker: entryAst.checker,
       policy: preparedPresentationPolicy(backendOptions.backend, target),
       deferTopLevelInit: options.deferTopLevelInit === true,
+      functionCodeStrictness: (code) => isStrictContext(code, options.inferModuleStrictArguments ?? true),
     },
     backendOptions,
     output: {

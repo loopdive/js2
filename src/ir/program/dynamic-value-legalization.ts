@@ -42,6 +42,7 @@ import { IR_DYN_ADD_FN } from "../../shared/contracts/dynamic-add-helper.js";
 import { NO_OBJECTS, type ProgramObjects } from "../source-plain-objects.js";
 import { gap } from "./dynamic-value-gap.js";
 import { dynamicMemberRead } from "./dynamic-member-read.js";
+import { dynamicMemberWrite } from "./dynamic-member-write.js";
 import {
   ADD_ROLE,
   KIND_TEST,
@@ -51,7 +52,7 @@ import {
   TYPEOF_NAME,
   admittedKinds,
   boxedKind,
-  plainObjectRefusal,
+  objectToPrimitiveRefusal,
   type CarrierKind,
 } from "./dynamic-value-kinds.js";
 
@@ -222,7 +223,7 @@ function legalizationBuilders(
   };
   /** (#7354 O2) OrdinaryToPrimitive of a plain object (`TO_STRING_ARM`), or the named refusal. */
   const plainObjectToPrimitive = (): string => {
-    const refusal = plainObjectRefusal(objects, "ToPrimitive of an object");
+    const refusal = objectToPrimitiveRefusal(objects, "ToPrimitive of an object");
     return refusal === undefined ? "[object Object]" : gap(refusal);
   };
   /** (#7354 O2) ToNumber of the once-evaluated `value` (`TO_NUMBER_ARM`): a plain object's is NaN. */
@@ -262,15 +263,11 @@ function legalizationBuilders(
       ),
     ];
   };
+  const access = { carrier: CARRIER, definitions, fresh, text, intrinsic, kindsOf, kindChain, toNumber };
   const memberRead = (instr: IrInstr, receiver: IrValueId, key: IrValueId, result: IrValueId): IrInstr[] =>
-    dynamicMemberRead(
-      { carrier: CARRIER, definitions, fresh, text, intrinsic, kindsOf, kindChain },
-      { objects, catches },
-      instr,
-      receiver,
-      key,
-      result,
-    );
+    dynamicMemberRead(access, { objects, catches }, instr, receiver, key, result);
+  const memberWrite = (instr: Extract<IrInstr, { kind: "dyn.member_set" }>): IrInstr[] =>
+    dynamicMemberWrite(access, { objects, catches }, instr);
   const stringOf = (instr: IrInstr, value: IrValueId, result: IrValueId): IrInstr[] =>
     kindChain(instr, value, result, (kind, r) => toStringArm(instr, kind, value, r), kindsOf(value));
   /**
@@ -341,6 +338,7 @@ function legalizationBuilders(
     toStringArm,
     toNumber,
     memberRead,
+    memberWrite,
     addition,
     admitted,
     valueCount: () => valueCount,
@@ -464,6 +462,8 @@ export function legalizeDynamicValues(
         return toNumber(instr, instr.value, instr.result!);
       case "dyn.member_get":
         return builders.memberRead(instr, instr.recv, instr.key, instr.result!);
+      case "dyn.member_set":
+        return builders.memberWrite(instr);
       case "dyn.eq": {
         if (instr.loose) return gap("dyn.eq (loose)");
         return withSense(instr, instr.negate, (result) => [

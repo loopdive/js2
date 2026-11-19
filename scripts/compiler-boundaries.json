@@ -17089,6 +17089,16 @@
       "layer": "ir-program"
     },
     {
+      "path": "src/ir/program/dynamic-member-write.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
+      "path": "src/ir/program/dynamic-member-access.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
       "path": "src/ir/program/builtin-prototype-keys.ts",
       "state": "clean",
       "layer": "ir-program"

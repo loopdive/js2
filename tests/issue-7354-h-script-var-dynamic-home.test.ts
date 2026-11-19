@@ -184,10 +184,12 @@ describe("#7354 H — the dynamic home of a script var", () => {
     // (#7354 Str2-c) `x + 1` on the dynamic home runs now (below).
     // (#7354 T) `x || 0` runs now (below).
     // A member write on the binding is no second declaration: the binding keeps its home and the write refuses.
+    // (#7352 A2) The write reaches the dynamic member chain, where an object's OrdinarySet refuses (a primitive's
+    // fails: tests/issue-7352-a-arrays.test.ts).
     [
       "given a property by a member write (slice O)",
-      "var o; o = 1; function p() { o.q = 2; }",
-      "property assignment on dynamic is not in slice 4",
+      "var o = {}; function p() { o.q = 2; }",
+      "member write 'q' needs OrdinarySet",
     ],
     // `Object.defineProperty(o, …)` still counts as a declaration: the Prepared path admits no `Object` static yet,
     // so the binding has no home and refuses by name instead of reaching from-ast's drift invariant.
@@ -198,8 +200,8 @@ describe("#7354 H — the dynamic home of a script var", () => {
     ],
     ["of a number given a property by Object.defineProperty", "var o = 1; Object.defineProperty(o, 'p', {});", NO_HOME],
     // A value kind the carrier cannot hold yet is refused at its store, by the slice that owns it.
-    // (#7354 O2) An object literal is the object kind of the dynamic value now (tests/issue-7354-o2-object-values.test.ts).
-    ["holding an array literal", "var arr = [1];", "resolver cannot register vec for array literal"],
+    // (#7354 O2) An object literal is the object kind of the dynamic value now (tests/issue-7354-o2-object-values.test.ts),
+    // and (#7352 A2) so is an array literal (tests/issue-7352-a-arrays.test.ts).
     [
       "holding a function expression (slice Fa)",
       "var f = function () {};",

@@ -106,6 +106,20 @@ export const MEMBER_READ_ARM: Readonly<Record<CarrierKind, "type-error" | "get" 
   object: "get",
 };
 
+/**
+ * (#7352 A2) How a member write (§13.15.2 PutValue) answers each receiver kind: `undefined` and `null` throw a
+ * TypeError; an object is the realm's [[Set]]; a primitive's [[Set]] reaches only built-in prototypes, which hold no
+ * setter for the keys a plain program writes, so it fails: a TypeError in strict code, nothing in sloppy code.
+ */
+export const MEMBER_WRITE_ARM: Readonly<Record<CarrierKind, "type-error" | "set" | "fail">> = {
+  number: "fail",
+  boolean: "fail",
+  string: "fail",
+  undefined: "type-error",
+  null: "type-error",
+  object: "set",
+};
+
 /** The kinds the `plain-object` rows were proved for: none of them is a callable. */
 type PlainObjectKinds = "number" | "boolean" | "string" | "undefined" | "null" | "object";
 
@@ -119,6 +133,16 @@ type PlainObjectKinds = "number" | "boolean" | "string" | "undefined" | "null" |
 export function plainObjectRefusal(objects: ProgramObjects, operation: string): string | undefined {
   const provedKinds: [Exclude<CarrierKind, PlainObjectKinds>] extends [never] ? true : never = true;
   return provedKinds && objects.unplain === undefined ? undefined : `${operation} (${objects.unplain})`;
+}
+
+/**
+ * (#7352 A2) The verdict of the OrdinaryToPrimitive rows ("[object Object]"): in a program with Arrays an object may be
+ * one, whose ToPrimitive is `join`.
+ */
+export function objectToPrimitiveRefusal(objects: ProgramObjects, operation: string): string | undefined {
+  return objects.arrays
+    ? `${operation} (array ToPrimitive needs Array.prototype.join)`
+    : plainObjectRefusal(objects, operation);
 }
 
 const OBJECT_PRODUCERS: ReadonlySet<string> = new Set(["js.object.create-default", "js.object.create-array"]);

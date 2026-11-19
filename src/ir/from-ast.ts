@@ -6951,9 +6951,25 @@ function dynamicIndexedRead(recv: IrValueId, arg: ts.Expression, cx: LowerCtx): 
  * dynamic carrier. A function-local vec keeps the vec-only paths.
  */
 function isScriptVarVec(receiver: ts.Expression, cx: LowerCtx): boolean {
-  const root = peelParensExpr(receiver);
-  const binding = ts.isIdentifier(root) ? cx.scope.get(root.text) : undefined;
+  const binding = receiverBinding(receiver, cx);
   return binding?.kind === "moduleGlobal" && binding.type.kind === "vec";
+}
+
+function receiverBinding(receiver: ts.Expression, cx: LowerCtx): ScopeBinding | undefined {
+  const root = peelParensExpr(receiver);
+  return ts.isIdentifier(root) ? cx.scope.get(root.text) : undefined;
+}
+
+/**
+ * (#7292, #7352 A2) An element read of a script-var vec or of a dynamic binding is the carrier, which holds
+ * `undefined` for an absent element.
+ */
+function isCarrierElementRead(receiver: ts.Expression, cx: LowerCtx): boolean {
+  const binding = receiverBinding(receiver, cx);
+  return (
+    isScriptVarVec(receiver, cx) ||
+    ((binding?.kind === "local" || binding?.kind === "moduleGlobal") && binding.type.kind === "dynamic")
+  );
 }
 
 /** (#7292) A vec as the dynamic carrier's object: the array legacy reads through the same carrier. */
@@ -15935,8 +15951,12 @@ function tryLowerUndefinedCompare(expr: ts.BinaryExpression, op: ts.SyntaxKind, 
   // `undefined` through a numeric-vector read, only a proven in-bounds access
   // may participate in the never-undefined fold below. Unproven reads stay on
   // the direct SAFE path instead of folding `a[i] === undefined` to false.
-  // (#7292) A script-var vec's read is the carrier: the tag test below.
-  if (ts.isElementAccessExpression(other) && !isProvenInBoundsIr(other, cx) && !isScriptVarVec(other.expression, cx)) {
+  // (#7292, #7352 A2) A script-var vec's or a dynamic binding's read is the carrier: the tag test below.
+  if (
+    ts.isElementAccessExpression(other) &&
+    !isProvenInBoundsIr(other, cx) &&
+    !isCarrierElementRead(other.expression, cx)
+  ) {
     throw new IrUnsupportedError(
       "nullish-value-unsupported",
       "build",
@@ -16186,9 +16206,13 @@ function boxConcreteToDynamic(v: IrValueId, t: IrType, operand: ts.Expression, c
   if (family === "number" || (asVal(t) !== null && ts.isNumericLiteral(operand))) {
     return cx.builder.emitBox(v, irDynamic(JS_TAG_IDS.NumberF64));
   }
-  // (#7354 O2) An object literal the Prepared path builds as an ordinary object.
+  // (#7354 O2) An object literal the Prepared path builds as an ordinary object; (#7352 arrays) an array literal it
+  // builds as an Array, the same kind.
   const literal = peelParensExpr(operand);
-  if (ts.isObjectLiteralExpression(literal) && cx.resolver?.preparedOrdinaryObjectLiteral?.(literal) === true)
+  if (
+    (ts.isObjectLiteralExpression(literal) && cx.resolver?.preparedOrdinaryObjectLiteral?.(literal) === true) ||
+    (ts.isArrayLiteralExpression(literal) && isPreparedArrayLiteral(literal, cx))
+  )
     return cx.builder.emitBox(v, irDynamic(JS_TAG_IDS.Object));
   return null;
 }

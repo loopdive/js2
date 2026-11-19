@@ -2,9 +2,9 @@
 /**
  * (#7354 O4) The string-keyed properties the specification (ES2025, Annex B included) gives the built-in prototypes a
  * member read can reach without an own property: Object.prototype for every object and primitive, and each
- * primitive's wrapper prototype. A read of a key outside these, off a value whose prototypes no program code can
- * change, answers the object's own property or `undefined`. The realm's prototypes do not hold these properties yet,
- * so a read of one of them refuses by name.
+ * primitive's wrapper prototype, and (#7352 A2) %Array.prototype% for an Array. A read of a key outside these, off a
+ * value whose prototypes no program code can change, answers the object's own property or `undefined`. The realm's
+ * prototypes do not hold these properties yet, so a read of one of them refuses by name.
  */
 const OBJECT_PROTOTYPE = [
   "constructor",
@@ -72,9 +72,52 @@ const STRING_PROTOTYPE = [
   "trimRight",
 ];
 
-/** The keys a read of each value reaches through built-in prototypes (or, for a string, its own exotic keys). */
+const ARRAY_PROTOTYPE = [
+  "at",
+  "concat",
+  "copyWithin",
+  "entries",
+  "every",
+  "fill",
+  "filter",
+  "find",
+  "findIndex",
+  "findLast",
+  "findLastIndex",
+  "flat",
+  "flatMap",
+  "forEach",
+  "includes",
+  "indexOf",
+  "join",
+  "keys",
+  "lastIndexOf",
+  "map",
+  "pop",
+  "push",
+  "reduce",
+  "reduceRight",
+  "reverse",
+  "shift",
+  "slice",
+  "some",
+  "sort",
+  "splice",
+  "toReversed",
+  "toSorted",
+  "toSpliced",
+  "unshift",
+  "values",
+  "with",
+];
+
+/**
+ * The keys a read of each value reaches through built-in prototypes (or, for a string, its own exotic keys). An
+ * Array's own `length` shadows %Array.prototype%'s.
+ */
 export const BUILTIN_REACHABLE_KEYS = {
   object: new Set(OBJECT_PROTOTYPE),
+  array: new Set([...OBJECT_PROTOTYPE, ...ARRAY_PROTOTYPE]),
   number: new Set([...OBJECT_PROTOTYPE, ...NUMBER_PROTOTYPE]),
   boolean: new Set(OBJECT_PROTOTYPE),
   string: new Set([...OBJECT_PROTOTYPE, ...STRING_PROTOTYPE, "length"]),

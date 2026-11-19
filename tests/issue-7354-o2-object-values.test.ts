@@ -160,11 +160,14 @@ describe("#7354 O2 — whether a program's objects are plain", () => {
   };
 
   it("answers no objects, and plain objects", () => {
-    expect(objects("export const n = 1;")).toEqual({ present: false, unplain: undefined });
+    expect(objects("export const n = 1;")).toEqual({ present: false, arrays: false, unplain: undefined });
     expect(objects("export const o = { a: 1, b: 'x' }; export const v = o.a;")).toEqual({
       present: true,
+      arrays: false,
       unplain: undefined,
     });
+    // (#7352 A2) An Array is an object of the kind; its ToPrimitive (`join`) is the `arrays` flag's refusal.
+    expect(objects("export const a = [1]; a[0] = 2;")).toEqual({ present: true, arrays: true, unplain: undefined });
   });
 
   it.each([
@@ -190,8 +193,7 @@ describe("#7354 O2 — whether a program's objects are plain", () => {
     ["the Object global", "export const t = typeof Object;", "the program names 'Object'"],
     ["the String global", "export const s = String(1);", "the program names 'String'"],
     ["globalThis", "export const g = globalThis;", "the program names 'globalThis'"],
-    // (#7352 arrays) An array is the object kind; its ToPrimitive is `join`, not "[object Object]".
-    ["an array literal", "export const a = [1];", "array ToPrimitive needs Array.prototype.join"],
+    ["an array element function", "export const a = [function () {}];", "an object property holds a function"],
   ])("is not plain with %s", (_label, source, reason) => {
     expect(objects(source).unplain).toBe(reason);
   });

@@ -19,6 +19,11 @@ related: [7349, 7350, 7353, 7335, 7280, 7338, 7339, 7292]
 # sit next to their O1 siblings and share two helpers factored out of O1's code in the same
 # change (`ordinaryPropertyValue`, `ordinaryReadResult`), which removes their duplicate; moving
 # them out would need `lowerExpr` and `LowerCtx` behind a host interface for two small arms.
+# 2026-11-19 (A2 dynamic value, branch claude/7354-arrays-a2-dyn): src/ir/from-ast.ts +16 net. An array
+# literal joins the object literal's carrier box arm (`boxConcreteToDynamic`), and the undefined-compare guard
+# reads an element of a dynamic binding as the carrier (`isCarrierElementRead`, sharing `receiverBinding` with
+# `isScriptVarVec`). Both sit in the scope-lookup helpers they extend; the member chain itself lives in
+# src/ir/program/dynamic-member-*.ts.
 loc-budget-allow:
   - src/ir/from-ast.ts
 ---

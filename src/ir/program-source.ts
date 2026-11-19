@@ -851,6 +851,11 @@ export interface IrProgramSourceInput {
   readonly policy: RuntimeManifestPolicy;
   readonly deferTopLevelInit: boolean;
   /**
+   * (#7352 A2) The code strictness of a function or a script, computed by the caller as for the selector's
+   * `functionCodeStrictness`; it reaches from-ast as the unit's `functionCodeStrict`. Absent → unknown.
+   */
+  readonly functionCodeStrictness?: (code: ts.FunctionDeclaration | ts.SourceFile) => boolean;
+  /**
    * Explicit frontend lowering selection; not provider availability or
    * permission to emit. Omission preserves historical source lowering.
    */
@@ -1774,6 +1779,7 @@ export function prepareIrProgramSources(
             : resolver,
         ...(nativeStringValues ? { stringNumericCoercion: "number-boundary" as const } : {}),
         numericThrow: "number-boundary",
+        functionCodeStrict: input.functionCodeStrictness?.(moduleInit ? source : declaration),
         ...(nativeDelay ? { promiseDelays: promiseDelaysBySource.get(source) } : {}),
         ...(family ? { logicalVectorTypes: family.logicalVectorTypes } : {}),
         ...(moduleInit
