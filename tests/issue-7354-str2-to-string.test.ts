@@ -4,6 +4,7 @@
 // the ambient `String` (`prepareConversionResolvers`); from-ast lowers them (`tryLowerAmbientStringToStringCall`):
 // a typed primitive inline, a dynamic operand through `dyn.to_string`. Every typed Number::toString is retargeted
 // to the one native formatter binding (`number-to-string-target.ts`).
+import { setImmediate } from "node:timers/promises";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as gc from "../src/codegen/index.js";
 import * as linear from "../src/codegen-linear/index.js";
@@ -27,7 +28,11 @@ const options = (target: "standalone" | "gc" = "standalone"): Test262CompileOpti
     allowJs: true,
   }) as Test262CompileOptions;
 
-afterEach(() => vi.restoreAllMocks());
+// A compile runs synchronously for seconds; yielding a macrotask between tests lets the worker answer vitest's RPC.
+afterEach(async () => {
+  vi.restoreAllMocks();
+  await setImmediate();
+});
 
 const messages = (result: { errors: readonly { message: string }[] }) => result.errors.map((error) => error.message);
 

@@ -5,6 +5,7 @@
 // string data type, bound twice), the adapter provider and the runtime-support batch to the canonical declarations
 // of the runtime ABI anchor, by identity (`src/compiler/prepared-formatter-census.ts`). Each forgery below alters ONE
 // population the census reads and must refuse by name, never with an exception out of compile().
+import { setImmediate } from "node:timers/promises";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import * as gc from "../src/codegen/index.js";
 import * as linear from "../src/codegen-linear/index.js";
@@ -107,11 +108,13 @@ const options = (target: "standalone" | "gc" = "standalone"): Test262CompileOpti
     allowJs: true,
   }) as Test262CompileOptions;
 
-afterEach(() => {
+// A compile runs synchronously for seconds; yielding a macrotask between tests lets the worker answer vitest's RPC.
+afterEach(async () => {
   vi.restoreAllMocks();
   forge.providers = forge.program = forge.contract = forge.receipts = forge.strings = forge.formatter = undefined;
   forge.index = undefined;
   forge.forged = new WeakMap();
+  await setImmediate();
 });
 
 const messages = (result: { errors: readonly { message: string }[] }) => result.errors.map((error) => error.message);
