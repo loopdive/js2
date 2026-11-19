@@ -368,6 +368,7 @@
         "src/runtime/wasmgc/values/number-bodies.ts",
         "src/runtime/wasmgc/values/string-number-grammar.ts",
         "src/runtime/wasmgc/values/decimal-scale-bodies.ts",
+        "src/runtime/wasmgc/values/parse-number-bodies.ts",
         "src/runtime/wasmgc/values/string-number-bodies.ts",
         "src/runtime/wasmgc/values/string-to-bigint-body.ts",
         "src/runtime/wasmgc/values/string-flatten-bodies.ts",
@@ -2157,6 +2158,11 @@
     },
     {
       "path": "src/runtime/wasmgc/values/decimal-scale-bodies.ts",
+      "state": "clean",
+      "layer": "native-runtime"
+    },
+    {
+      "path": "src/runtime/wasmgc/values/parse-number-bodies.ts",
       "state": "clean",
       "layer": "native-runtime"
     },
