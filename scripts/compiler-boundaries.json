@@ -364,6 +364,8 @@
         "src/runtime/wasmgc/values/string-layouts.ts",
         "src/runtime/wasmgc/values/string-literal-bodies.ts",
         "src/runtime/wasmgc/values/error-bodies.ts",
+        "src/runtime/wasmgc/values/emit-idioms.ts",
+        "src/runtime/wasmgc/values/json-bodies.ts",
         "src/runtime/wasmgc/values/primitive-layouts.ts",
         "src/runtime/wasmgc/values/number-bodies.ts",
         "src/runtime/wasmgc/values/string-number-grammar.ts",
@@ -2232,6 +2234,16 @@
     },
     {
       "path": "src/runtime/wasmgc/values/error-bodies.ts",
+      "state": "clean",
+      "layer": "native-runtime"
+    },
+    {
+      "path": "src/runtime/wasmgc/values/emit-idioms.ts",
+      "state": "clean",
+      "layer": "native-runtime"
+    },
+    {
+      "path": "src/runtime/wasmgc/values/json-bodies.ts",
       "state": "clean",
       "layer": "native-runtime"
     },
@@ -5294,14 +5306,6 @@
     },
     {
       "path": "src/codegen/emit-helpers.ts",
-      "state": "unmigrated",
-      "layer": "mixed-needs-split",
-      "destination": "backend-wasmgc",
-      "owner": "3518-coordinator",
-      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
-    },
-    {
-      "path": "src/codegen/emit-idioms.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
       "destination": "backend-wasmgc",

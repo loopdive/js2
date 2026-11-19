@@ -280,7 +280,7 @@ import {
   tryEmitJsonParseLiteral,
   tryEmitJsonStringifyStatic,
 } from "../json-standalone.js";
-import { emitJsonParsePrimitive, emitJsonQuoteString } from "../json-runtime.js";
+import { emitJsonQuoteString } from "../json-runtime.js";
 import {
   emitJsonParseText,
   emitJsonParseTextReviver,
@@ -2202,59 +2202,6 @@ export function tryEmitJsonStringifyPrimitive(
   // bigint / unhandled — fall through to the host import. Full
   // pure-Wasm support tracked under #1353.
   return undefined;
-}
-
-/**
- * (#1599 Phase 2) Try to emit `JSON.parse(s)` for a runtime string-typed
- * argument in standalone / WASI mode, where there is no `env::JSON_parse`
- * host import. Handles the JSON *primitive* slice — number / `true` / `false`
- * / `null` — via the pure-Wasm `__json_parse_primitive` helper, which boxes
- * the parsed value into the host-free `$AnyValue` tagged union.
- *
- * Returns the emitted `ref $AnyValue` type (so the downstream AnyValue→
- * primitive coercion path unboxes it to number / boolean as the consumer
- * requires) and pushes the value; returns `undefined` (no stack effect) when
- * the argument is not a runtime string — objects, arrays, and string *values*
- * still fall through to the #1599 refusal (they need the full Phase 2 codec).
- *
- * Spec: ECMA-262 §25.5.2 `JSON.parse` / `ParseJSON`, ECMA-404.
- */
-export function tryEmitJsonParsePrimitive(
-  ctx: CodegenContext,
-  fctx: FunctionContext,
-  call: ts.CallExpression,
-  arg: ts.Expression,
-): ValType | undefined {
-  // A property/element read on the result — `JSON.parse(s).x` / `JSON.parse(s)[i]`
-  // — means the parsed value is consumed as an object/array, which the primitive
-  // slice does not produce. Leave those to the #1599 refusal (full Phase 2 codec).
-  const parent = call.parent;
-  if (
-    (ts.isPropertyAccessExpression(parent) && parent.expression === call) ||
-    (ts.isElementAccessExpression(parent) && parent.expression === call)
-  ) {
-    return undefined;
-  }
-  let argType: ts.Type;
-  try {
-    argType = ctx.checker.getTypeAtLocation(arg);
-  } catch {
-    return undefined;
-  }
-  // Only a string-typed argument routes here. `JSON.parse(<string literal>)`
-  // is folded earlier by tryEmitJsonParseLiteral; this handles the runtime
-  // string-value case.
-  if ((argType.flags & ts.TypeFlags.StringLike) === 0) return undefined;
-
-  const argResult = compileExpression(ctx, fctx, arg, { kind: "externref" });
-  if (argResult === null) return undefined;
-  if (argResult.kind !== "externref") {
-    coerceType(ctx, fctx, argResult, { kind: "externref" });
-  }
-  const parseIdx = emitJsonParsePrimitive(ctx);
-  flushLateImportShifts(ctx, fctx);
-  fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__json_parse_primitive") ?? parseIdx });
-  return { kind: "ref", typeIdx: ctx.anyValueTypeIdx };
 }
 
 /**

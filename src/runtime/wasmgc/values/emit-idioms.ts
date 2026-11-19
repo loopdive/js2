@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 //
-// Emit-idiom builders for the WasmGC backend (#3105).
+// Emit-idiom builders for the WasmGC native runtime (#3105; moved from
+// `src/codegen/` with its only user, the JSON bodies, in #7350 B2c-2).
 //
 // The WasmGC runtime hand-rolls the same small Wasm instruction scaffolds at
 // dozens of sites — one copy per operation. Each copy re-derives the same
@@ -14,7 +15,7 @@
 // (`scripts/prove-emit-identity.mjs`). They are per-backend by design: the
 // WasmGC and linear backends stay separate (#1527).
 
-import type { Instr } from "../ir/types.js";
+import type { Instr } from "../../../wasm/model/instructions.js";
 
 /**
  * Counted forward loop: `for (; i < bound; i += step) { body }`.
@@ -23,7 +24,7 @@ import type { Instr } from "../ir/types.js";
  * head tests `i >= bound` (signed) and `br_if`s out of the enclosing block, runs
  * `body`, then increments `i` by `step` and `br`s back to the loop top. It is the
  * exact scaffold hand-rolled across the WasmGC runtimes (e.g. the JSON string /
- * value writers in `json-runtime.ts`).
+ * value writers in `json-bodies.ts`).
  *
  * The caller supplies:
  *  - `i`      — the local holding the counter (read for the guard + the bump);
