@@ -21,7 +21,9 @@ const CONTRACTS = [
   ["js.object.has", [REF, REF], [BOOL]],
   // (#7354 O4) the dynamic-value legalization's RequireObjectCoercible TypeError
   ["js.object.create-type-error", [REF], [REF]],
-  // (#7354 O2b) the same TypeError in a program that catches: the realm aborts uncatchably
+  // (#7354 O3) OrdinarySet, its original receiver beside the object, as Get's
+  ["js.object.set", [REF, REF, REF, REF], [BOOL]],
+  // (#7354 O2b) the same TypeError in a program that catches: the realm fails loudly instead
   ["js.object.uncatchable-type-error", [], []],
 ] as const;
 
@@ -54,7 +56,8 @@ describe("ordinary object semantic contracts", () => {
 
   // On standalone WasmGC each contract has one provider, its native one: the manifest lists all of them
   // (`ORDINARY_OBJECT_RUNTIME_PROVIDER_IDS`). Selecting a provider is not serving it: since #7354 O1 the native
-  // realm serves create-default, define-data and get; (#7354 O4, O2b) create-type-error, has and uncatchable-type-error.
+  // realm serves create-default, define-data and get; (#7354 O4, O3, O2b) create-type-error, set, has and
+  // uncatchable-type-error.
   it.each(CONTRACTS)("selects the native provider for %s on standalone WasmGC", (name) => {
     const builder = new RuntimeManifestBuilder({ target: "standalone", backend: "wasmgc" });
     builder.requestFeature(name);

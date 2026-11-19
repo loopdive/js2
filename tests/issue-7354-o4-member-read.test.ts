@@ -1,6 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 //
-// #7354 slice O, step O4 — a member read of a dynamic value with a constant key (`MEMBER_READ_ARM` in
+// #7354 slice O, step O4 — a member read of a dynamic value with a constant key (`MEMBER_ACCESS_ARM` in
 // src/ir/program/dynamic-value-kinds.ts): `undefined` / `null` throw a TypeError, an object reads through the realm's
 // [[Get]], a primitive reads `undefined` for a key no built-in prototype holds. A key a built-in prototype holds, a
 // computed key, or a primitive receiver in a program whose prototypes code can reach refuses by name; (#7354 O2b) a

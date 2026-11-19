@@ -124,10 +124,7 @@ describe("#7354 O — object literals are ordinary objects of the realm", () => 
     expect(await refusal("function f(){ var o = { a: 1 }; return o; } f();")).toContain(
       "concrete return needs a dynamic box in f",
     );
-    // O3: a member write.
-    expect(await refusal("function f(){ var o = { a: 1 }; o.a = 2; return o.a; } f();")).toContain(
-      "property assignment on externref is not in slice 4",
-    );
+    // O3 writes members, a function-local object's too (tests/issue-7354-o3-member-write.test.ts).
     // O4: a member read with no typed plan (here of a key the literal lacks) is a dynamic member read, and this
     // program has no dynamic contract to legalize it.
     expect(await refusal("function f(){ var o = {}; return o.a === undefined ? 1 : 0; } f();")).toContain(

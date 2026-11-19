@@ -43,6 +43,12 @@ related: [7188, 2949, 3526, 3527, 3518, 7106, 7349, 7350, 7352]
 # `emittedNativeRealmSlots` (the record lives beside the consumer-private observation map; the slot computation
 # itself, `nativeRealmCompletedSlots`, lives in native-realm.ts) and the imports. The two native binding lists
 # fold through `plannedNativeCallBindings` (program-physical-plan.ts) instead of growing each.
+# 2026-11-19 (slice O, step O3): src/ir/program-source.ts +12, the compiler-supplied `codeStrictness` input on
+# IrProgramSourceInput (its doc and field) and `sourceCodeStrictness`, the helper that turns it into the lowering's
+# `functionCodeStrict`, so `prepareIrProgramSources` grows by one spread line, not past its budget; src/compiler.ts
+# +2, the import and the one `codeStrictness:` row of the preparation input (the strictness itself lives in
+# src/compiler/prepared-code-strictness.ts); src/ir/from-ast.ts +3, the externref receiver of a member write taking
+# the read's carrier box.
 loc-budget-allow:
   - src/ir/program-consumer.ts
   - src/ir/program-physical-plan.ts
@@ -2644,6 +2650,108 @@ Acceptance:
 - Code quality: one OrdinaryToPrimitive builder for ToString, ToNumber and `+`; one realm-call builder and one
   synthesized-TypeError helper for both arms that raise one; one row per realm contract; no function or file over
   budget; ordinary-pipeline bytes identical.
+### O3 plan (2026-11-19, `claude/7354-o3` from `claude/7354-o` 0c7109594b)
+
+Measured on the base (Prepared entry, standalone): `var o = { a: 1 }; o.b = 2; …` refuses "property assignment on
+dynamic is not in slice 4"; `function s(v){ v.k = 3; } …` the same; `function f(){ var o = { a: 1 }; o.a = 2; … }`
+refuses "property assignment on externref is not in slice 4", and a read of such a function-local object without a
+typed plan refuses "box of a non-primitive value" (the box arm admits an object only under the Object tag).
+
+- **Contract (`js.object.set`).** One declaration in `ordinary-object-callables.ts` and one manifest row, appended
+  after `create-type-error`: `(object, key, value, receiver) → boolean`, OrdinarySet (§10.1.9.2). The realm serves it
+  as one adapter row in `native-source-objects.ts` (`ROWS`), its body in `source-object-bodies.ts` beside `get`. No
+  kernel function is OrdinarySet over an ordinary `$Object` (the kernel's `writeOwn` works on builtin-function bags),
+  so the body composes the kernel's `lookup` (the same walk `get` uses) and the descriptor pack's public define: a
+  writable data entry, or none found, is CreateDataProperty on the receiver (mask 191). Under O's plain-objects
+  precondition every own property of a source object is writable, enumerable and configurable (a literal's
+  define-data or this set), so that define and OrdinarySet's `{ [[Value]] }` define agree. Its other answers (a
+  setter call, `false` for a read-only property) and an unknown carrier trap, like `get`'s status 3: no plain
+  program reaches them.
+- **Legalization arm.** `dynamic-member-read.ts` becomes `dynamic-member-access.ts`: one chain for both accesses,
+  `MEMBER_READ_ARM` becomes `MEMBER_ACCESS_ARM` (GetV and PutValue both throw for a nullish base, go to the object's
+  internal method for an object, and to the wrapper prototypes for a primitive). The shared part (the constant key,
+  the plain-objects refusal, the nullish TypeError with its catch refusal, the Object.prototype key refusal, the
+  chain) is written once; each access supplies only its object call, its primitive arm and its result type. An
+  object write needs no failure branch: every key that could make OrdinarySet answer `false` refuses at compile time.
+- **A write to a primitive (revised while building).** Refusing it by name, as first planned, refuses every write
+  through a dynamic receiver of unknown kind, the proving program's `o.b = 2` on a script var included. With pristine
+  prototypes the wrapper's [[Set]] answers `false` for every key a plain program writes (no setter but `__proto__`'s,
+  which is unplain; data properties are read only or land on a receiver that is no object), so PutValue is a no-op in
+  sloppy code and a TypeError in strict code: the arm reads `dyn.member_set`'s `sloppy` bit, and the strict TypeError
+  takes the nullish arm's throw, with the same refusal in a program that catches.
+- **Prepared emits `dyn.member_set`** (coordinator decision of 2026-11-19, replacing a move of
+  `is-strict-function.ts`, whose path hash-pinned receipts name). `IrProgramSourceInput` gains one compiler-supplied
+  input, `codeStrictness(node)` for a function or a source file's code; `src/compiler/prepared-code-strictness.ts`
+  builds it from `isStrictContext` with the `inferModuleStrictArguments` option, the call the ordinary pipeline's
+  `irFunctionCodeStrictness` makes, so `src/ir` imports no codegen helper. The producer sets `functionCodeStrict`
+  from it through one helper (`sourceCodeStrictness`), so `prepareIrProgramSources` does not grow past its budget.
+  Lane S11 derives its `this` binding from the same input later. from-ast's externref receiver of a member write
+  takes the read's arm (box onto the carrier), so the function-local object case writes too, and the box arm admits
+  an object by its producer (`js.object.create-default`) whatever the box's tag.
+- **Typed-read soundness.** No change: the reference scan already drops a written binding's typed plan. One run
+  test pins it (`o.a = 2; return o.a` answers 2).
+- **Code-quality acceptance.** One member-access chain and one arm table for reads and writes (no second key/receiver
+  walk); one adapter row for the new contract; no adapter re-implements the kernel's lookup; one definition of code
+  strictness, which `src/ir` receives as an input; no function or file over its budget without a dated grant.
+
+### O3 result (2026-11-19, `claude/7354-o3`)
+
+- The proving program `var o = { a: 1 }; o.b = 2; if (o.a + o.b !== 3) throw 1;` returns through the strict
+  Prepared entry, standalone; with `===` it throws; node agrees. Also run: an own member overwritten, a member added
+  to `{}`, a write through an unannotated parameter, a nested object's member, a function-local object's written
+  member (reads 2, not the initializer's 1), a sloppy write to a primitive (ignored); a write to `undefined`, to
+  `null` and (strict) to a primitive throws. `tests/issue-7354-o3-member-write.test.ts`, which also drives the set
+  adapter's Wasm body over a stub lookup.
+- Named refusals: a computed key ("dyn.member_set with a computed key"), an Object.prototype key, and a write that
+  may throw (nullish, or strict on a primitive) in a program that catches.
+- Pins moved: O's "O3: a member write" (now runs); H's "given a property by a member write" (now a run row); D1's
+  "a dynamic object field" (the read of a function-local object now boxes it by its producer, so it runs).
+- Mutations, each failing its tests: the object arm calling `js.object.get` (the right answers throw); the nullish
+  arm answering without its throw (the nullish writes return); the `sloppy` bit inverted (the sloppy primitive write
+  throws, the strict one returns).
+- Ordinary-pipeline output byte-identical on the 13 playground examples and 11 member-write snippets (strict and
+  sloppy, dynamic, untyped, literal, accessor-literal, catch-binding, open-carrier, script-var and element writes),
+  each default and standalone.
+
+### O2b result (2026-11-19, `claude/7354-o-toprim`)
+
+- Built as planned above. The one builder is `ordinary-to-primitive.ts`. `dynamic-realm-calls.ts` holds `realmCall`
+  and `typeError(builders, message, catches)`. The realm rows are `js.object.has` and
+  `js.object.uncatchable-type-error`.
+- After the merge onto O3, `dynamic-member-access.ts` takes the helper for reads and writes (its copy of the TypeError
+  and its two catch refusals go). The prototype gate sits on the primitive arm of both accesses.
+- Programs that run and agree with node (tests/issue-7354-o2b-to-primitive.test.ts):
+  - `""+o`, `o+"!"`, `+o` and `1/o` in a program that names `Object`;
+  - `message += " "` on a string in a program that builds objects;
+  - `{ valueOf: 1 }`.
+- TypeError cases that throw as node does: `{ toString: undefined }` and `+{ toString: 1 }`. The same in a program
+  that catches traps (WebAssembly.RuntimeError), as do O4's nullish read and O3's throwing writes there.
+- The `Symbol` refusal is pinned by name. The has adapter is pinned on statuses 0/1/2 and traps on 3, 4, 0x7fffffff
+  and -1.
+- Mutations, each failing its tests:
+  - a held `toString` treated as absent: 3 tests fail;
+  - the Symbol refusal removed: 1 test fails;
+  - `valueOf` probed instead of `toString`: 3 tests fail.
+  "The arm skips the `valueOf` read" is an equivalent mutant: there is no `valueOf` read while no kind is callable.
+- Ordinary-pipeline bytes are identical against `claude/7354-o` 0c7109594b on the 13 playground examples, default
+  and standalone (26 hashes).
+- 411-row sample (`TEST262_COMPILER_PATH=ir`, standalone):
+  - every run passes 20: integration 94abeb8347, the integration with O merged (`9426e5e1c2`), and that plus O2b
+    (local merge, not pushed).
+  - Before O2b, the first gap of 301 rows is "ToPrimitive of an object (an object property holds a function)".
+    After it, those same 301 rows stop at "dyn.json_stringify has no Prepared intrinsic". That is assert.js:27,
+    `JSON.stringify(value)` in `formatIdentityFreeValue`, the prelude's only `JSON.stringify`. ToNumber of the
+    object kind (`isNegativeZero`'s `1 / value`, line 17) no longer stops it.
+  - The other first gaps are unchanged ("module binding … has no exact typed storage", `assert` not in scope in
+    `verifyProperty`).
+- **For the integration merge.** The integration admits Fa's `function` kind, so the kind pin in
+  `ordinary-to-primitive.ts` fails the build there, as designed. The local measurement merge resolved it like this:
+  - read each held `toString` / `valueOf`, and test it with `js.value.is_function`;
+  - if either is callable, fail loudly, because calling it needs Call on a function value;
+  - otherwise keep the arm's answer.
+
+  Fa's `TO_NUMBER_ARM.function: "nan"` sits beside the object row's `"to-primitive"`. The integration's
+  `ProgramKinds` carries `catches`, which the builder takes as it is.
 
 ## Slice O: Implementation Plan (2026-11-19)
 

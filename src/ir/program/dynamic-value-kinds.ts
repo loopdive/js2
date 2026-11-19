@@ -92,17 +92,18 @@ export const TO_NUMBER_ARM: Readonly<Record<CarrierKind, "unbox" | "to-primitive
 };
 
 /**
- * (#7354 O4) How a member read (§13.3.2.1, GetV) answers each receiver kind: `undefined` and `null` throw a TypeError
- * (RequireObjectCoercible); an object is the realm's [[Get]]; a primitive reaches only built-in prototypes, so a key
- * none of them names reads `undefined` (`builtin-prototype-keys.ts`) while no code can reach them to change them.
+ * (#7354 O4, O3) How a member read (GetValue) and a member write (PutValue) take each receiver
+ * kind: both ToObject the base, so `undefined` and `null` throw a TypeError; an object is the realm's [[Get]] or
+ * [[Set]]; a primitive reaches only built-in prototypes (`builtin-prototype-keys.ts`), and (O2b) only while no code
+ * can reach them to change them.
  */
-export const MEMBER_READ_ARM: Readonly<Record<CarrierKind, "type-error" | "get" | "primitive">> = {
+export const MEMBER_ACCESS_ARM: Readonly<Record<CarrierKind, "type-error" | "object" | "primitive">> = {
   number: "primitive",
   boolean: "primitive",
   string: "primitive",
   undefined: "type-error",
   null: "type-error",
-  object: "get",
+  object: "object",
 };
 
 /**
@@ -131,20 +132,21 @@ export function admittedKinds(objects: ProgramObjects): readonly CarrierKind[] {
 
 /**
  * The kind a box to the dynamic value admits, from its tag refinement and its operand; `undefined` refuses. An object
- * box is admitted only over the value `js.object.create-default` answered (`definition`).
+ * box is admitted only over the value `js.object.create-default` answered (`definition`), (#7354 O3) whatever its tag:
+ * a function-local object's member access boxes the externref it holds without one.
  */
 export function boxedKind(
   tag: TagId | undefined,
   source: IrType | undefined,
   definition: IrInstr | undefined,
 ): CarrierKind | undefined {
+  if (
+    definition?.kind === "call" &&
+    irOrdinaryObjectCallableDeclaration(definition.target)?.feature === "js.object.create-default"
+  )
+    return "object";
   if (tag === JS_TAG_IDS.Boolean) return "boolean";
   if (tag === JS_TAG_IDS.Null) return "null";
-  if (tag === JS_TAG_IDS.Object)
-    return definition?.kind === "call" &&
-      irOrdinaryObjectCallableDeclaration(definition.target)?.feature === "js.object.create-default"
-      ? "object"
-      : undefined;
   if (source?.kind === "string") return "string";
   return source?.kind === "val" && source.val.kind === "f64" ? "number" : undefined;
 }

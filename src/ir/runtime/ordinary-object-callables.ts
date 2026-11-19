@@ -59,6 +59,8 @@ const DECLARATIONS: Readonly<Record<OrdinaryObjectRuntimeFeature, IrRuntimeCalla
   // (#7354 O4) A TypeError the realm builds, its message a native string: the dynamic-value legalization's
   // RequireObjectCoercible.
   "js.object.create-type-error": declaration("js.object.create-type-error", [EXTERNAL], [EXTERNAL]),
+  // (#7354 O3) OrdinarySet (§10.1.9.2): the original receiver beside the object whose chain it walks, as Get's.
+  "js.object.set": declaration("js.object.set", [EXTERNAL, EXTERNAL, EXTERNAL, EXTERNAL], [BOOLEAN]),
   // (#7354 O2b, interim) The legalization's TypeError in a program that catches: the realm's TypeError is not yet
   // catchable from source code (a catch would read it as a dynamic value, and no carrier kind holds an error), so the
   // program fails loudly instead of throwing. It is a call, not an intrinsic, on purpose: every intrinsic is certified

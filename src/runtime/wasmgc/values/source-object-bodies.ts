@@ -4,6 +4,7 @@
  * of the realm kernel's own algorithm, so no object algorithm is written twice.
  */
 import type { FuncHandle, Instr, LocalDef, TypeHandle } from "../../../wasm/model/instructions.js";
+import { ORDINARY_OBJECT_DESCRIPTOR_ENCODING as flags } from "./ordinary-object-descriptor-common.js";
 
 export interface SourceObjectDefinition {
   readonly locals: LocalDef[];
@@ -55,6 +56,68 @@ export function buildSourceObjectGetDefinition(d: { readonly get: FuncHandle }):
   };
 }
 
+/** A data property's whole descriptor, every attribute present and true, with its value: CreateDataProperty's. */
+const CREATE_DATA_PROPERTY =
+  flags.writable |
+  flags.enumerable |
+  flags.configurable |
+  flags.writableSpecified |
+  flags.enumerableSpecified |
+  flags.configurableSpecified |
+  flags.hasValue;
+
+/**
+ * (#7354 O3) `js.object.set(object, key, value, receiver)`: OrdinarySet (§10.1.9.2) over the kernel's lookup, the walk
+ * `get` takes. A writable data property it finds, or none (absent, or a miss at the realm's Object.prototype, which
+ * every caller's key refusal makes a true miss), is CreateDataProperty on the receiver through the descriptor pack's
+ * define. That agrees with OrdinarySet's `{ [[Value]] }` define of an existing own property because every own
+ * property of a source object is writable, enumerable and configurable (a literal's define-data, or this set), and a
+ * plain program writes no realm prototype. OrdinarySet's other answers (a setter call, `false` for a read-only or
+ * setter-less property) are unreachable from a plain program and trap, as an unknown carrier (status 3) does.
+ */
+export function buildSourceObjectSetDefinition(d: {
+  readonly entryTypeIdx: TypeHandle;
+  readonly lookup: FuncHandle;
+  readonly defineData: FuncHandle;
+}): SourceObjectDefinition {
+  const [status, entry] = [4, 5];
+  return {
+    locals: [
+      { name: "status", type: { kind: "i32" } },
+      { name: "entry", type: { kind: "ref_null", typeIdx: d.entryTypeIdx } },
+    ],
+    body: [
+      { op: "local.get", index: 0 },
+      { op: "local.get", index: 1 },
+      { op: "call", funcIdx: d.lookup },
+      { op: "local.set", index: entry },
+      { op: "local.tee", index: status },
+      { op: "i32.const", value: 1 },
+      { op: "i32.eq" },
+      {
+        op: "if",
+        blockType: { kind: "val", type: { kind: "i32" } },
+        then: [
+          { op: "local.get", index: entry },
+          { op: "ref.as_non_null" },
+          { op: "struct.get", typeIdx: d.entryTypeIdx, fieldIdx: 2 },
+          { op: "i32.const", value: flags.accessor | flags.writable },
+          { op: "i32.and" },
+          { op: "i32.const", value: flags.writable },
+          { op: "i32.ne" },
+        ],
+        else: [{ op: "local.get", index: status }, { op: "i32.const", value: 2 }, { op: "i32.gt_u" }],
+      },
+      { op: "if", blockType: { kind: "empty" }, then: [{ op: "unreachable" }] },
+      { op: "local.get", index: 3 },
+      { op: "local.get", index: 1 },
+      { op: "local.get", index: 2 },
+      { op: "f64.const", value: CREATE_DATA_PROPERTY },
+      { op: "call", funcIdx: d.defineData },
+      { op: "i32.const", value: 1 },
+    ],
+  };
+}
 /**
  * (#7354 O2b) `js.object.has(object, key)`: the kernel's HasProperty, read as found (status 1). A miss at the realm's
  * Object.prototype (2) is absent, as in the get adapter: its one caller, OrdinaryToPrimitive, takes an absent
