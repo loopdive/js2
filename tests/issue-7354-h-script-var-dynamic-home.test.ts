@@ -196,11 +196,7 @@ describe("#7354 H — the dynamic home of a script var", () => {
     ],
     ["of a number given a property by Object.defineProperty", "var o = 1; Object.defineProperty(o, 'p', {});", NO_HOME],
     // A value kind the carrier cannot hold yet is refused at its store, by the slice that owns it.
-    [
-      "holding an object literal (slice O)",
-      "var o = { a: 1 };",
-      "proven dynamic binding 'o' initializer has no supported carrier",
-    ],
+    // (#7354 O2) An object literal is the object kind of the dynamic value now (tests/issue-7354-o2-object-values.test.ts).
     ["holding an array literal", "var arr = [1];", "resolver cannot register vec for array literal"],
     // (#7354 Fa) A function expression is stored now (tests/issue-7354-fa-function-values.test.ts).
     ["holding a built-in member (slice B)", "var g = Math.max;", 'identifier "Math" is not in scope'],

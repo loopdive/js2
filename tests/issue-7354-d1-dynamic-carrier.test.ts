@@ -5,6 +5,7 @@
 // semantic intrinsics the Prepared backend binds (`js.number.*`, `js.boolean.box`, `js.extern.is_undefined`,
 // `js.value.*`) and carries the value physically as `externref`. Every other dynamic operation, and every flow of a
 // dynamic value into a typed position without a conversion the source wrote, refuses by name.
+import { NO_PROGRAM_KINDS } from "../src/ir/program/dynamic-value-kinds.js";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as gc from "../src/codegen/index.js";
 import * as linear from "../src/codegen-linear/index.js";
@@ -23,7 +24,7 @@ import {
   type Test262CompileOptions,
 } from "../src/test262/test262-prepared-entry.js";
 
-const legalize = (fn: IrFunction): IrFunction => legalizeDynamicValues(fn, new AllocSiteRegistry());
+const legalize = (fn: IrFunction): IrFunction => legalizeDynamicValues(fn, new AllocSiteRegistry(), NO_PROGRAM_KINDS);
 
 const options = (target: "standalone" | "gc"): Test262CompileOptions =>
   ({

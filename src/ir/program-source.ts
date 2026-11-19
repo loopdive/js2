@@ -1,8 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
 import { ts } from "../ts-api.js";
-import { functionLikeReferencesOwnThis } from "../codegen/helpers/body-references-own-this.js";
-import { isStrictContext } from "../codegen/helpers/is-strict-function.js";
 import { sourceBooleanAnyResult, assertSourceBooleanAnyReturns } from "../frontend/boolean-return-boundary.js";
 import { preparedIrProgramCallableResults } from "./program-callable-contract.js";
 import { prepareSourceClosureInvocations } from "./source-closure-invocation.js";
@@ -864,6 +862,11 @@ export interface IrProgramSourceInput {
   readonly nativeStringValueProjection?: "standalone-native";
   /** Independent string-only console intents; no async family or runtime availability is implied. */
   readonly nativeStringOutputProjection?: "standalone-native";
+  /**
+   * (#7354 C) OrdinaryCallBindThis: the strictness a function binds its own `this` with, `undefined` when its body
+   * never reads it. Omission binds no `this` (historical source lowering).
+   */
+  readonly functionThisStrictness?: (declaration: ts.FunctionDeclaration) => boolean | undefined;
 }
 
 /** Frontend-only carrier; declarations never cross into PreparedIrProgram. */
@@ -1536,19 +1539,17 @@ function prepareStartupDirectCalls(
 }
 
 /**
- * The lowering options of a function unit: its contracted signature and (#7354 C) OrdinaryCallBindThis, which binds
- * `this` once at entry in a body that reads its own `this`.
+ * The lowering options of a function unit: its contracted signature and (#7354 C) the strictness its own `this` is
+ * bound with, if it reads it.
  */
 function functionUnitLowering(
+  input: IrProgramSourceInput,
   declaration: ts.FunctionDeclaration,
   paramTypeOverrides: readonly IrType[],
   returnTypeOverride: IrType | null,
 ) {
-  return {
-    paramTypeOverrides,
-    returnTypeOverride,
-    ...(functionLikeReferencesOwnThis(declaration) ? { ambientThisStrict: isStrictContext(declaration) } : {}),
-  };
+  const ambientThisStrict = input.functionThisStrictness?.(declaration);
+  return { paramTypeOverrides, returnTypeOverride, ...(ambientThisStrict === undefined ? {} : { ambientThisStrict }) };
 }
 
 export function prepareIrProgramSources(
@@ -1770,7 +1771,7 @@ export function prepareIrProgramSources(
                   .map((global) => [global.binding.globalName, { ...global.binding, ownerUnitId: unit.id }]),
               ),
             }
-          : functionUnitLowering(declaration, signature!.params, bodyResults.get(unit.id)!)),
+          : functionUnitLowering(input, declaration, signature!.params, bodyResults.get(unit.id)!)),
         numericLocalScalarForDecl: (declaration) =>
           checkerScalar(input.checker, declaration)?.kind === "val" &&
           (input.checker.getTypeAtLocation(declaration).flags & ts.TypeFlags.NumberLike) !== 0

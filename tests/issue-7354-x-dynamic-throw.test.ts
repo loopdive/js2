@@ -4,10 +4,12 @@
 // payload, so throwing a dynamic value converts nothing, and the catch binding reads the payload back as the
 // dynamic value: `e === v`, ToBoolean(e) and `throw e` work on it. An unannotated result the checker types
 // `unknown` (a returned catch binding) is the dynamic value, like `any`.
+import { NO_PROGRAM_KINDS } from "../src/ir/program/dynamic-value-kinds.js";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as gc from "../src/codegen/index.js";
 import * as linear from "../src/codegen-linear/index.js";
 import { legalizeDynamicValues } from "../src/ir/program/dynamic-value-legalization.js";
+import { AllocSiteRegistry } from "../src/ir/analysis/alloc-registry.js";
 import type { IrFunction, IrInstr } from "../src/ir/core/nodes.js";
 import { instantiatePreparedArtifact } from "../src/test262/test262-prepared-runtime.js";
 import {
@@ -29,6 +31,8 @@ const options = (target: "standalone" | "gc" = "standalone"): Test262CompileOpti
   }) as Test262CompileOptions;
 
 afterEach(() => vi.restoreAllMocks());
+
+const legalize = (fn: IrFunction) => legalizeDynamicValues(fn, new AllocSiteRegistry(), NO_PROGRAM_KINDS);
 
 const messages = (result: { errors: readonly { message: string }[] }) => result.errors.map((error) => error.message);
 
@@ -211,26 +215,28 @@ describe("#7354 X — throw and catch with the Prepared dynamic value", () => {
     expect(messages(result).join("\n")).toContain(expected);
   });
 
-  // Pre-existing on the base: an object throw passes the producer and fails in emission (an invariant, not a
-  // named refusal). Pinned so that the slice which makes it compile meets the catch-binding rule above.
-  // (#7354 O1) An object literal is an ordinary object now; until the carrier admits objects, throwing one refuses.
-  const OBJECT_THROW = "throw of a value outside the dynamic carrier's kinds";
-  it("does not compile an object throw", async () => {
-    const result = await compile("try { throw {}; } catch (e) { if (!e) throw 1; }", options());
-    expect(result.success).toBe(false);
-    expect(result.errors.map((error) => error.message).join("\n")).toContain(OBJECT_THROW);
-  });
-
-  // (#7354 Ty review) The same invariant for a populated literal thrown from a callee and tested with `typeof`: the
-  // slice that admits object payloads must add the object kind to TYPEOF_KIND (it merges with the `null` row).
-  it("does not compile an object-literal throw tested with typeof", async () => {
-    const result = await compile(
+  // (#7354 O2) An ordinary object is a kind of the dynamic value, so a thrown object reaches the catch binding as
+  // one: `typeof` answers it and its plain ToString is "[object Object]" (tests/issue-7354-o2-object-values.test.ts).
+  it.each([
+    [
+      "an object throw",
+      "try { throw {}; } catch (e) { if (!e) throw 1; }",
+      "try { throw {}; } catch (e) { if (e) throw 1; }",
+    ],
+    [
+      "an object-literal throw from a callee, tested with typeof",
       'function f() { throw { a: 1 }; }\ntry { f(); } catch (e) { if (typeof e !== "object") throw 1; }',
-      options(),
-    );
-    expect(result.success).toBe(false);
-    expect(result.errors.map((error) => error.message).join("\n")).toContain(OBJECT_THROW);
-  });
+      'function f() { throw { a: 1 }; }\ntry { f(); } catch (e) { if (typeof e === "object") throw 1; }',
+    ],
+  ])(
+    "catches %s as the object kind",
+    async (_label, right, wrong) => {
+      expect([node(right), node(wrong)]).toEqual(["returned", "threw"]);
+      expect(await run(right)).toBe("returned");
+      expect(await run(wrong)).toBe("threw");
+    },
+    180_000,
+  );
 });
 
 describe("#7354 X — the legalization arm", () => {
@@ -257,7 +263,7 @@ describe("#7354 X — the legalization arm", () => {
   const coerce = { kind: "coerce.to_externref", value: 0, result: 1, resultType: externref };
 
   it("keeps the coercion of a thrown dynamic value, over the legalized carrier", () => {
-    const out = legalizeDynamicValues(fn([coerce, { kind: "throw", value: 1, result: null, resultType: null }]));
+    const out = legalize(fn([coerce, { kind: "throw", value: 1, result: null, resultType: null }]));
     expect(out.params[0]!.type).toEqual(externref);
     expect(out.blocks[0]!.instrs[0]).toEqual(coerce);
   });
@@ -271,11 +277,11 @@ describe("#7354 X — the legalization arm", () => {
       result: null,
       resultType: null,
     };
-    expect(legalizeDynamicValues(fn([coerce, nested])).blocks[0]!.instrs[0]).toEqual(coerce);
+    expect(legalize(fn([coerce, nested])).blocks[0]!.instrs[0]).toEqual(coerce);
   });
 
   // (#7354 O1) An ordinary object's property stores the carrier too, so an unthrown coercion keeps as well.
   it("keeps the coercion of a dynamic value that is not thrown", () => {
-    expect(legalizeDynamicValues(fn([coerce])).blocks[0]!.instrs[0]).toEqual(coerce);
+    expect(legalize(fn([coerce])).blocks[0]!.instrs[0]).toEqual(coerce);
   });
 });

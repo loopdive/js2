@@ -2966,6 +2966,32 @@ O1 to O4 (these are this slice's steps, not #7352's parked ordinary-pipeline sli
   dynamic-value table; no adapter re-implements a kernel algorithm; no file or function over its budget without a
   dated grant.
 
+### O2–O4 design, revised (2026-11-19, after O1)
+
+- **The object kind.** `CarrierKind` gains `object`, last in `KIND_ORDER`, so every total chain reaches it untested.
+  Its kind test is the complement of the others (`KIND_TEST.object = "complement"`: no other admitted kind), exact
+  because the admitted set is exact; a later kind (Fa's `function`) gets its own test and leaves the complement
+  right. `typeof` answers `"object"` for `null` and `object` (the `string.eq` arm tests the union). A box of a value
+  whose producer is `js.object.create-default` is the object kind; any other reference still refuses.
+- **ToPrimitive of an ordinary object, with a checked precondition.** OrdinaryToPrimitive of an object built by
+  `create-default` on the realm's pristine Object.prototype, in a program that stores no callable into an object and
+  defines no own `toString` / `valueOf`, answers `"[object Object]"` for every hint (ToNumber: NaN). The legalization
+  asks one program-wide predicate (`objectsArePlain`): no `define-accessor`, no callable value stored by
+  `define-data` / `set`, every defined or set key a string constant other than `toString` / `valueOf`, and no
+  producer of a realm object other than `create-default`. When it does not hold, the object arm of ToString, `+` and
+  ToNumber refuses by name. The arm is also keyed on the kind table: a compile-time assertion that `CarrierKind` has
+  no callable kind fails the build when Fa adds one, so the arm cannot outlive its precondition silently.
+- **Member read (O4).** `dyn.member_get(receiver, key)` with a constant key legalizes to one kind chain over the
+  receiver: `undefined` / `null` throw a TypeError (the source `__new_TypeError` call binds the realm errors pack's
+  constructor, one more realm-served row); `object` is `js.object.get(receiver, key, receiver)`; a primitive answers
+  `undefined` when the key names no property of its wrapper prototype or Object.prototype (a fixed list from the
+  specification, plus `length` and array indices for strings) under the same pristine-prototype precondition, and
+  refuses by name otherwise. A non-constant key refuses by name.
+- **Member write (O3).** `js.object.set` = OrdinarySet on the realm (a contract beside `get`, an adapter over the
+  kernel's lookup and the descriptor pack's define); the same receiver chain, a primitive receiver refusing by name.
+- **Catch.** The program-wide throw rule applies only where the program binds a catch: a TypeError thrown from a
+  member read is no carrier kind, so a program that also catches refuses by name until an error kind exists.
+
 ## Slice C: Implementation Plan (2026-11-19)
 
 Branch `claude/7354-c`. Base for this plan: `claude/7354-o` at `3adb860fc8` (O's plan, on Perf2). `claude/7354-fa`
@@ -3060,6 +3086,22 @@ source-closure arm (`ref.test` of the realm's closure root), whose bag is the cl
 `js.object.get` / `set` with the closure as the object, and `js.function.object` is dropped. The `function` carrier
 kind (its `typeof`, ToString, `+` and kind-test rows) is Fa's (PR #7309), which admits function values into the
 carrier; C builds on it.
+
+### The kernel's source-closure arm (design, 2026-11-19)
+
+- `match` gains one arm after the builtin entries: a value that passes `ref.test` of the closure root and fails
+  `ref.test` of every builtin metadata type is a source closure (one ordinal after the builtin entries). The metadata
+  exclusion is load-bearing: the kernel's pins require a cloned or forged builtin function object not to match, and
+  those structs are subtypes of the same root; `requireSourceMetadataSeparation` (native-source-closures.ts) is the
+  layout guarantee the exclusion relies on.
+- `bag` is the header's `$bag` already (generic over the root). `getPrototypeOf` answers the realm's
+  `Function.prototype` (`entries[0]`, always requested) for the source ordinal; `setPrototypeOf` on a source closure
+  answers status 3 (unknown) until a slice needs a mutable source `[[Prototype]]` (ES5 has no way to ask);
+  `callVector` on a source closure dispatches through the invocation substrate's apply-vector (a source getter).
+- A source closure's bag must exist before any kernel operation reads it: `js.function.init` fills it where Fa makes
+  the closure a value. Both that call and `is-callable` are realm-family calls, so they wait for O4's one collection of
+  realm source-callable uses (S3), which also deletes the receiver-provenance gaps an `is-callable` on an arbitrary
+  value would meet today.
 
 ### Order
 

@@ -37,7 +37,9 @@ import {
   legalizeDynamicValues,
   refuseUnadmittedThrows,
 } from "./program/dynamic-value-legalization.js";
+import type { ProgramKinds } from "./program/dynamic-value-kinds.js";
 import { retargetNumberToString } from "./program/number-to-string-target.js";
+import { programObjects } from "./source-plain-objects.js";
 import type { AllocSiteRegistry } from "./analysis/alloc-registry.js";
 import type { RuntimeManifestPolicy } from "../runtime/contracts/provider-policy.js";
 import type { ValType } from "../wasm/model/instructions.js";
@@ -295,6 +297,13 @@ export function programDynamicContracts(
   sourceFiles: readonly ts.SourceFile[],
   allocations: AllocSiteRegistry,
 ): ProgramDynamicContracts {
+  // (#7354 O2, Fa) The kinds the program's values may be beyond the primitives, one answer every group asks: whether
+  // it builds objects and whether they are plain; and whether it creates function values, which enter the carrier
+  // only as all-dynamic closures.
+  const kinds: ProgramKinds = {
+    objects: programObjects(checker, sourceFiles),
+    functions: sourceFiles.some((file) => holds(file, (node) => isDynamicClosure(policy, node))),
+  };
   const provenance = sourceDynamicProvenance(
     checker,
     sourceFiles,
@@ -340,6 +349,7 @@ export function programDynamicContracts(
         functions,
         allocations,
         provenance.carries,
+        kinds,
       ),
   };
 }
@@ -430,6 +440,7 @@ function legalizeSourceDynamicValues(
   functions: readonly IrFunction[],
   allocations: AllocSiteRegistry,
   carries: Carries,
+  kinds: ProgramKinds,
 ): readonly IrFunction[] {
   const roots = "kind" in declaration ? [declaration] : declaration;
   const contracted =
@@ -444,7 +455,7 @@ function legalizeSourceDynamicValues(
   const retargeted = functions.map(retargetNumberToString);
   let legalized: readonly IrFunction[] = retargeted;
   try {
-    if (contracted) legalized = retargeted.map((fn) => legalizeDynamicValues(fn, allocations));
+    if (contracted) legalized = retargeted.map((fn) => legalizeDynamicValues(fn, allocations, kinds));
     retargeted.forEach(refuseUnadmittedThrows);
   } catch (error) {
     if (!(error instanceof DynamicValueGap)) throw error;
