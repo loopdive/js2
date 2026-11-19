@@ -2665,3 +2665,8 @@ Results on the integrated head:
   verifyProperty`, 14 pass (negatives), 1 `unknown class "Test262Error"`, 1 `print` direct call, plus 3 rows whose
   parse error precedes `dyn.member_get`. The error text carries no source location (`L1:1`).
 - Not verified: `--utf8-storage`, `compileMulti`, the gc target's Prepared bytes.
+- Review (behaviour and code quality) at `de8a5e923b`: MET.
+- Should-fix 1 closed (`cd34d67f40`): chain tests whose first pair is numeric (`a + b + c`, `a + b + c + d`); the
+  mutant that learns every dynamic `+` result as a known string now fails them (illegal cast), reverted.
+- Should-fix 2 closed (`1d9ef98203`): `additionBuilder(builders)` reads `kinds` / `allocations` from the chain
+  builders instead of taking them again; Prepared bytes of 6 dynamic-add programs identical.
