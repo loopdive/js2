@@ -51,7 +51,7 @@ index, and throws an internal compiler error when the helper is absent. The
 | `object-proto-tostring.ts` | 1 | `__typeof_undefined` |
 | `object-ops.ts` | 1 | `__is_truthy` (defineProperty trap rejection) |
 
-Net −43 lines. No file or function grows.
+Net −24 lines in `src/` (108 added, 132 removed, including the new helper file). No file or function grows.
 
 ## Not changed, and why
 
@@ -73,7 +73,11 @@ Net −43 lines. No file or function grows.
 
 ## Acceptance
 
-- Bytes unchanged: compile outputs on gc and standalone are identical to
-  main on the 1,200-file sample, and no sample program reaches the new
-  error.
-- All gates pass bare.
+- **Bytes unchanged.** Compile outputs on gc and standalone are identical to
+  main on the 1,200-file sample: 2,400 outputs, 0 differences. The 26
+  compile throws are the same on both sides, so none of them comes from
+  `requireHelper`.
+- **The equivalence gate passes** (4 shards, no regressions). Its first run
+  caught `array-methods.ts:6470` being reached, and that site was reverted
+  (see above).
+- **All gates pass bare.**
