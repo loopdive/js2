@@ -143,4 +143,16 @@ describe.each(["gc", "standalone"] as const)("#7394 — a wrapped assignment tar
     const result = await compile(source, { fileName: "test.ts", target: runTarget });
     expect(result.success).toBe(false);
   });
+
+  // A call target is not a reference: like `f() += 1` (Annex B), a wrapped one evaluates `f()` and then throws a
+  // ReferenceError instead of compiling to nothing.
+  it.each(["(f() as number) += 1", "(f()!)++", "++(f()!)", "(f()) += 1"])(
+    "`%s` calls `f()` and throws",
+    async (write) => {
+      const source =
+        "let calls = 0; function f(): any { calls++; return 1; } let x = 1; " +
+        `export function main(): number { try { ${write}; } catch (e) { x = 7; } return x * 100 + calls; }`;
+      expect(await runMain(source, runTarget)).toBe(701);
+    },
+  );
 });

@@ -122,3 +122,9 @@ unsupported target would be silent the same way.
 | nit: stale comment at `assignment.ts:337` | Rewritten. |
 | neighbours: on the legacy path, `x >>>= 0` on −1 and `x++` at INT32_MAX give wrong results (pre-existing) | Filed as #7411. |
 
+## Review round 2 (RV7335, 2026-11-19, on 25e7d7f512): BLOCKER
+
+| finding | answer |
+| --- | --- |
+| MUST-FIX: once `isCallExpressionTarget` looked through `as`/`!`, `(f() as number) += 1`, `(f()!)++` and `++(f()!)` reached the sloppy call-target path, but `emitWebCompatCallAssignmentTarget` still unwrapped parentheses only, so they compiled to nothing | **Fixed.** The codegen helper now unwraps with `skipTransparentExpressions`, the same wrappers the early-error check looks through. That was the last parenthesis-only unwrap on an assignment path. All three forms now call `f()` and then throw a ReferenceError, like `f() += 1`. Pinned on gc and standalone (`try`/`catch` reaches the catch, `f` ran once). |
+
