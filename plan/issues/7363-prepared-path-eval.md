@@ -15,6 +15,17 @@ area: ir
 goal: ir-full-coverage
 depends_on: []
 related: [7354, 7106, 7345, 3630]
+# 2026-11-19 (review RV7310 M1): the realm-eval proof is one resolver predicate. from-ast +4 lines: the
+# `isRealmEval` hook on the resolver contract and the Prepared refusal, which now asks it (lowerCall +2). The
+# proof lives in src/frontend/eval/realm-eval.ts; program-source +2 (its import and one spread line beside the
+# Number plan's), which is also the one new ir->frontend edge.
+loc-budget-allow:
+  - src/ir/from-ast.ts
+  - src/ir/program-source.ts
+func-budget-allow:
+  - src/ir/from-ast.ts::lowerCall
+import-cycles-allow:
+  - ir->frontend: 9 # 2026-11-19 (#7363): program-source asks the realm-eval proof, like the Number plan's
 ---
 
 # #7363 — `eval` on the Prepared IR path
@@ -92,14 +103,27 @@ to one shared module both pipelines ask, instead of a second copy.
 
 ### Slice 1 — the invariant becomes a named refusal (this PR)
 
-- `lowerCall`: an `eval` bound in scope is an ordinary callee and skips the global-eval branch. A resolver without
-  `globalEvalTarget` has no eval provider, so the statement refuses by name: `ir/from-ast: eval statement has no
-  eval provider in <fn>` (`call-resolution-unsupported`). The certified-eval invariant stays for a resolver that
-  has a provider (the ordinary pipeline, where the selector certified the statement).
-- Proving program: `tests/issue-7363-prepared-eval-refusal.test.ts`. Literal, in-function, computed and
-  `(0, eval)` statements refuse by name through the strict entry; an `eval` parameter is lowered as a call.
-- Quality criterion: no new predicate. The capability check reuses the resolver hook that already exists, and the
-  shadow check moves ahead of the shape match instead of being re-tested inside it.
+- One predicate decides whether an `eval` callee is the realm's: `isRealmEval` on the resolver, answered on the
+  Prepared path by `prepareRealmEvalResolver` (`src/frontend/eval/realm-eval.ts`, beside the Number plan's proof).
+  The symbol must be the lib's alone, and no source may rebind the global binding. Its rebinding rules are
+  program-wide and conservative: a top-level declaration named `eval`, any use other than as a callee
+  (`evalCalleeCall`, `src/eval-call-shape.ts`), `globalThis`, or an `eval` property name or string.
+  - A checker-only test is not enough: the checker reports a script's `var eval = f` as a duplicate and keeps
+    resolving the name to the lib (review RV7310 M1).
+- `lowerCall`: on the realm's eval, the Prepared resolver has no provider, so the statement refuses by name:
+  `ir/from-ast: eval statement has no eval provider in <fn>` (`call-resolution-unsupported`). Any other `eval` is an
+  ordinary callee. A resolver with a provider (the ordinary pipeline) keeps its certified-eval branch and invariant
+  unchanged.
+- Proving program: `tests/issue-7363-prepared-eval-refusal.test.ts`.
+  - Literal, in-function, computed and `(0, eval)` statements refuse by name through the strict entry.
+  - Each of these stops at its own call gap, never at the eval refusal or the invariant:
+    - hoisted top-level and local `var eval`;
+    - a hoisted top-level `function eval`;
+    - a parameter, a catch binding and a block binding;
+    - a later alias, a `globalThis` use, an `.eval` property write, and an `"eval"` string.
+  - The ordinary pipeline's invariant still throws when a provider-bearing resolver disagrees.
+- Quality criterion: one predicate for "this `eval` is the realm's", asked by slice 1 and by slice 2's direct-eval
+  test. The proof follows the Number plan's existing pattern; it is not a second copy of that analysis.
 
 ### Slice 2 — direct eval of a string literal as a certified nested program
 
@@ -132,7 +156,9 @@ to one shared module both pipelines ask, instead of a second copy.
 
 ## Slice 1 result (2026-11-19)
 
-- `src/ir/from-ast.ts` `lowerCall` and the `globalEvalTarget` contract doc; the test file above, 5 tests, green.
+- `src/ir/from-ast.ts` `lowerCall` and the resolver contract, `src/frontend/eval/realm-eval.ts`, `evalCalleeCall`;
+  the test file above, 15 tests, green. Mutation: deleting any of the six rules of the proof (declaration,
+  non-callee use, `globalThis`, property name, string, symbol identity) turns a test red.
 - S9's list of the 196 files that crashed (`plan/log/es5-ir-only-census-2026-11-19-lists/crash-eval-owning-predicate.tsv`,
   PR #7308) re-measured on this head with `scripts/ir-census/prepared-census.mts --harness stand-in`: 196 of 196 now
   stop at `ir/from-ast: eval statement has no eval provider` in the test body; none throws.
