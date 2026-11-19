@@ -23,6 +23,7 @@ import { ensureExternIsUndefinedImport, flushLateImportShifts } from "./late-imp
 import { getFuncParamTypes } from "./helpers.js";
 import { resolveStructName } from "./misc.js";
 import { compileReceiverMethodCall } from "./call-receiver-method.js";
+import { tryCompileStandaloneRegExpMethod } from "../regexp-method-call.js";
 import { isBuiltinTypeName } from "../builtin-tags.js";
 import { emitIsUndefF64, f64MayHoldUndefined, pushUndefF64 } from "../value-tags.js";
 
@@ -406,9 +407,11 @@ function nullableJoin(type: ValType): ValType {
  * (#7395) The type of a call result joined with the `undefined` that `optionalUndefinedInstrs` yields, converting the
  * result on the stack where needed: a number (`declared` f64, even when the method lowers to an i32 such as a string
  * `indexOf`) becomes an f64 carrying the sentinel, an anyref (`Map.get`) an externref, and any other reference its
- * nullable form.
+ * nullable form. An i32 the declared type calls a boolean (`Set.has`) keeps the boolean brand, so `String(r)` reads
+ * "true"; its `undefined` still reads as `false` (#7406).
  */
 function undefinableJoin(fctx: FunctionContext, type: ValType, declared: ValType): ValType {
+  if (type.kind === "i32" && declared.kind === "i32") return declared;
   if (type.kind === "anyref") {
     fctx.body.push({ op: "extern.convert_any" });
     return { kind: "externref" };
@@ -440,9 +443,10 @@ function compileHeldReceiverMethodCall(
   propAccess: ts.PropertyAccessExpression,
   receiverLocal: number,
 ): InnerResult | undefined {
-  return withPreEvaluatedExpression(fctx, propAccess.expression, receiverLocal, () =>
-    compileReceiverMethodCall(ctx, fctx, expr, propAccess),
-  );
+  return withPreEvaluatedExpression(fctx, propAccess.expression, receiverLocal, () => {
+    const regExpMethod = tryCompileStandaloneRegExpMethod(ctx, fctx, expr, propAccess);
+    return regExpMethod !== undefined ? regExpMethod : compileReceiverMethodCall(ctx, fctx, expr, propAccess);
+  });
 }
 
 /**

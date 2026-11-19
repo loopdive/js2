@@ -168,6 +168,26 @@ Measurements:
 - **Gates**: loc/func budget (also with `LOC_GATE_BASE=origin/main`), coercion sites, oracle ratchet and dead exports
   all pass. `calls-optional.ts` goes from 504 to 464 lines.
 
+### RV7336 round 1 (2026-11-19)
+
+- **Must-fix, RegExp.** Two separate causes made `g?.test('a')`, `g?.exec('a')` and `g?.toString()` on a
+  `RegExp | undefined` fail to compile (`Missing import for method: RegExp_test`):
+  - the held-receiver ladder skipped the native RegExp arms, which only the plain call path in `calls.ts` asked;
+  - `compileExternMethodCall` narrowed every receiver class, but only Map and Set have a native dispatch there.
+
+  The RegExp arms (exec, test, toString, compile) are now one helper, `tryCompileStandaloneRegExpMethod`
+  (new `regexp-method-call.ts`; `regexp-standalone.ts` is at its size ceiling). The plain call path and `compileHeldReceiverMethodCall` both call it. The extern read
+  narrows only Map / Set / ReadonlyMap / ReadonlySet.
+  - A narrowed `const g: RegExp | undefined = /a/` now answers like node: 111, where #7374's head gave 0.
+  - `let g: RegExp | undefined; g?.test('a')` compiles again.
+- **Should-fix 1.** Merged #7374's head bdeedb9f89 into this branch.
+- **Should-fix 2.** `undefinableJoin` gave `Set.has`'s i32 result an unbranded i32, so `String(s?.has(1))` read "1".
+  An i32 result now takes the declared type's boolean brand.
+- **Pins.** 4 programs × gc/standalone added. 6 of the 8 rows fail on the pre-fix merge head; all 8 pass now.
+- **Neighbour suites.** 88 files, 1,294 tests (regexp / optional): 44 failing before, 38 after. The only change is
+  the 6 newly pinned rows.
+- **Byte identity.** 200/200 identical to the pre-fix merge head.
+
 ### Left open
 
 - `const r: T | undefined = undefined` locals (the row above): wrong for every receiver type.
@@ -175,5 +195,7 @@ Measurements:
   the result to an f64 made those U rows pass, but it stores `true` as the number 1, so it was dropped.
   Testing the result directly (`s?.has(1) ? …`) works.
 - `?.size`: #7401.
+- A RegExp receiver whose type is still `RegExp | undefined` at the call (a parameter, or a value via `as any`)
+  compiles, but `test` / `exec` answer `false`, as on the base. The native arms check the unnarrowed type.
 - `a?.map(f).length` with `a` undefined: the chain past the call does not short-circuit, so it traps (null deref).
 

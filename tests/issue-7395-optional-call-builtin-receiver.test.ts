@@ -104,6 +104,29 @@ const PROGRAMS: readonly (readonly [string, string, number])[] = [
     "export function main(): number { const s: Set<number> | undefined = new Set([1]); return s?.has(1) ? 1 : 0; }",
     1,
   ],
+  // RV7336: RegExp methods take the native RegExp arms, and a boolean result keeps its brand.
+  [
+    "RegExp `test` / `exec` / `toString` on a narrowed local",
+    "export function main(): number { const g: RegExp | undefined = /a/; " +
+      "return (g?.test('a') ? 1 : 0) + (g?.exec('a') ? 10 : 0) + (g?.toString() === '/a/' ? 100 : 0); }",
+    111,
+  ],
+  [
+    "RegExp `test` on an unassigned local",
+    "export function main(): number { let g: RegExp | undefined; return g?.test('a') ? 1 : 0; }",
+    0,
+  ],
+  [
+    "`String()` of a Set `has` on a parameter",
+    "function f(s: Set<number> | undefined) { return String(s?.has(1)); } " +
+      "export function main(): number { return (f(new Set([1])) === 'true' ? 1 : 0) + (f(new Set([2])) === 'false' ? 10 : 0); }",
+    11,
+  ],
+  [
+    "`String()` of a Set `has` on a local",
+    "export function main(): number { const s: Set<number> | undefined = new Set([1]); return String(s?.has(1)) === 'true' ? 1 : 0; }",
+    1,
+  ],
 ];
 
 describe.each(["gc", "standalone"] as const)("#7395 — `?.` calls a method on a built-in receiver (%s)", (target) => {
