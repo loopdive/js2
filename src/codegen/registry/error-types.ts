@@ -46,7 +46,11 @@ import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "../func-space.j
 import type { Instr, ValType } from "../../ir/types.js";
 
 import { BUILTIN_TYPE_TAGS } from "../builtin-tags.js";
-import { buildErrorConstructorBody, type ErrorNameValue } from "../../runtime/wasmgc/values/error-bodies.js";
+import {
+  buildErrorConstructorBody,
+  buildUndefinedAwareMessageSlot,
+  type ErrorNameValue,
+} from "../../runtime/wasmgc/values/error-bodies.js";
 import { nativeStringLiteralMaterialization } from "../native-string-literals.js";
 import { userErrorCtorCarrierGlobal } from "../error-ctor-carrier.js"; // (#4262) carrier precedence
 import { addFuncType, getOrRegisterErrorStructType } from "./types.js";
@@ -323,45 +327,6 @@ function emitErrorStructConstructor(
 }
 
 /**
- * (#6651 cluster C) Map an `undefined` message argument back to a NULL field.
- *
- * ## The defect, measured on this branch's base (standalone, `.tmp/w6651C/e2.ts`)
- *
- * | probe | base | node |
- * | --- | --- | --- |
- * | `new TypeError().hasOwnProperty("message")` | false | false |
- * | `class Err extends TypeError {}; new Err().hasOwnProperty("message")` | **true** | false |
- *
- * The two disagree because they reach `__new_TypeError` differently. A direct
- * `new TypeError()` is lowered with `argCount === 0`, so the builder stores
- * `ref.null.extern` in field 1 and every own-property surface
- * (`fillErrorStructMessageOwnPropArms`) correctly reports absence. The derived
- * subclass goes through a fixed-arity forwarder — `Err_new : (externref) ->
- * externref` — and `new Err()` pads slot 0 with the canonical `undefined`
- * singleton (`global.get $undefined`, WAT-verified). That is a NON-null
- * externref, so the same field said "present".
- *
- * Which is why the fix belongs here and not in the forwarder: passing
- * `undefined` to `super()` is exactly what the default derived constructor
- * does (§15.7.14 — `constructor(...args) { super(...args) }` with zero args),
- * so the value is right and the CONSTRUCTOR is the step that must ignore it.
- * §20.5.1.1 step 3: *"If message is not undefined, then … CreateNonEnumerable
- * DataPropertyOrThrow(O, "message", msg)"*.
- *
- * ## Narrowing
- *
- * Only the tag-1 `$AnyValue` box — the one canonical `undefined` — is mapped to
- * null. A `$BoxedNumber` carrying the UNDEF_F64 sentinel is NOT tested for:
- * that arm exists in `buildIsUndefinedExternBody` for values that have crossed
- * an f64 slot, which a message argument has not, and testing it would cost a
- * second branch in every error construction for a shape no row produces.
- * Absent-not-wrong: an unrecognised carrier keeps today's behaviour exactly.
- *
- * Returns `undefined` — so the caller emits the byte-identical old body — when
- * the module has no `$AnyValue` type (host/gc lane, or a native-first module
- * that never reserved it).
- */
-/**
  * (#6651 cluster C) FINALIZE pass — weave the §20.5.1.1 step-3 `undefined`
  * test into every `__new_<Error>` body recorded by
  * {@link emitErrorStructConstructor}. Byte-identical (does nothing) when the
@@ -370,10 +335,12 @@ function emitErrorStructConstructor(
 export function fillErrorCtorUndefinedMessage(ctx: CodegenContext): void {
   const pending = ctx.errorCtorMessageSlots;
   if (pending === undefined || pending.length === 0) return;
+  ctx.errorCtorMessageSlots = [];
+  if (ctx.anyValueTypeIdx < 0) return;
   for (const { funcIdx, argCount } of pending) {
     const fn = definedFuncAt(ctx, funcIdx);
     if (fn === undefined) continue;
-    const slot = buildUndefinedAwareMessageSlot(ctx, argCount, fn.locals.length);
+    const slot = buildUndefinedAwareMessageSlot(ctx.anyValueTypeIdx, argCount, fn.locals.length);
     if (slot === undefined) continue;
     // The body is exactly `[i32.const tag, local.get 0, …]` — index 1 is the
     // message operand. Refuse rather than guess if it is not.
@@ -382,48 +349,6 @@ export function fillErrorCtorUndefinedMessage(ctx: CodegenContext): void {
     fn.locals.push(...slot.locals);
     fn.body.splice(1, 1, ...slot.instrs);
   }
-  ctx.errorCtorMessageSlots = [];
-}
-
-function buildUndefinedAwareMessageSlot(
-  ctx: CodegenContext,
-  argCount: number,
-  existingLocalCount: number,
-): { instrs: Instr[]; locals: { name: string; type: ValType }[] } | undefined {
-  if (argCount <= 0) return undefined;
-
-  if (ctx.anyValueTypeIdx < 0) return undefined;
-  const anyTypeIdx = ctx.anyValueTypeIdx;
-  // APPENDED after the params and any existing locals, so every index already
-  // baked into the body keeps its meaning.
-  const scratch = argCount + existingLocalCount;
-  return {
-    locals: [{ name: "__errmsg_any", type: { kind: "anyref" } }],
-    instrs: [
-      { op: "local.get", index: 0 },
-      { op: "any.convert_extern" },
-      { op: "local.tee", index: scratch },
-      { op: "ref.test", typeIdx: anyTypeIdx },
-      {
-        op: "if",
-        blockType: { kind: "val", type: { kind: "externref" } },
-        then: [
-          { op: "local.get", index: scratch },
-          { op: "ref.cast", typeIdx: anyTypeIdx },
-          { op: "struct.get", typeIdx: anyTypeIdx, fieldIdx: 0 },
-          { op: "i32.const", value: 1 },
-          { op: "i32.eq" },
-          {
-            op: "if",
-            blockType: { kind: "val", type: { kind: "externref" } },
-            then: [{ op: "ref.null.extern" }],
-            else: [{ op: "local.get", index: 0 }],
-          },
-        ],
-        else: [{ op: "local.get", index: 0 }],
-      },
-    ],
-  };
 }
 
 /**
