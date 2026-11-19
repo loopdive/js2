@@ -13689,7 +13689,8 @@ function convertMixedPrimitiveArm(
  * operand folds inline exactly as the #5092 mixed-conditional arms do. Any
  * other operand representation demotes — the selector admitted the shape, the
  * dynamic scan proved the operand's family, so reaching the demote is a
- * producer/selector disagreement worth a withdrawal, not an invariant.
+ * producer/selector disagreement worth a withdrawal, not an invariant. (#7354
+ * Str2) `String()` is "" (§22.1.1.1); only the Prepared path, which has no selector, reaches it.
  */
 function tryLowerAmbientStringToStringCall(expr: ts.CallExpression, cx: LowerCtx): IrValueId | null {
   if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== expr)
@@ -13698,13 +13699,12 @@ function tryLowerAmbientStringToStringCall(expr: ts.CallExpression, cx: LowerCtx
     !ts.isIdentifier(expr.expression) ||
     expr.expression.text !== "String" ||
     cx.scope.has("String") ||
-    expr.arguments.length !== 1 ||
-    ts.isSpreadElement(expr.arguments[0]!) ||
+    expr.arguments.length > 1 ||
+    expr.arguments.some(ts.isSpreadElement) ||
     cx.resolver?.isAmbientStringBinding?.(expr.expression) !== true
-  ) {
+  )
     return null;
-  }
-  return lowerToStringOperand(expr.arguments[0]!, cx);
+  return expr.arguments[0] ? lowerToStringOperand(expr.arguments[0], cx) : cx.builder.emitStringConst("");
 }
 
 /** `String(v)`'s ToString of one operand: the carrier through `dyn.to_string`, a primitive inline. */

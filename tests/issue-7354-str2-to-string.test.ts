@@ -77,8 +77,36 @@ describe("#7354 Str2 — String(x) on the Prepared path", () => {
     ["a typed string", 'String("ab")', '"ab"', '"a"'],
     ["a typed true", "String(1 < 2)", '"true"', '"false"'],
     ["a typed false", "String(1 > 2)", '"false"', '"true"'],
+    // (#7354 Str2 review 1) `String()` is "", and a literal null / undefined operand is a known kind.
+    ["no argument", "String()", '""', '" "'],
+    ["a literal null", "String(null)", '"null"', '"nul"'],
+    ["a literal undefined", "String(undefined)", '"undefined"', '"null"'],
+    ["void 0", "String(void 0)", '"undefined"', '""'],
   ])("answers String of %s", async (_label, call, right, wrong) => {
     await expectLikeNode((ok) => `var s = ${call};\nif (s !== ${ok ? right : wrong}) throw 1;`);
+  });
+
+  // A program with no other dynamic value: the literal's box is the only one (once "no accepted host async dynamic
+  // carrier"), read directly in a condition, inside a function, and unused.
+  it.each([
+    ["String(null) in a condition", (ok: boolean) => `if (String(null) !== ${ok ? '"null"' : '"nul"'}) throw 1;`],
+    [
+      "String(undefined) in a condition",
+      (ok: boolean) => `if (String(undefined) !== ${ok ? '"undefined"' : '""'}) throw 1;`,
+    ],
+    ["String() in a condition", (ok: boolean) => `if (String() !== ${ok ? '""' : '"x"'}) throw 1;`],
+    [
+      "both in a function",
+      (ok: boolean) =>
+        `function f() { return String(null) + String() + String(undefined); }\nif (f() !== ${ok ? '"nullundefined"' : '"null"'}) throw 1;`,
+    ],
+    [
+      "an unused String(null) beside a throwing call",
+      (ok: boolean) =>
+        `var n = 0;\nfunction h() { n = n + 1; return null; }\nString(h());\nString(null);\nif (n !== ${ok ? 1 : 0}) throw 1;`,
+    ],
+  ])("answers %s", async (_label, program) => {
+    await expectLikeNode(program);
   });
 
   it("answers String(x) inside a function and in a condition", async () => {
@@ -88,7 +116,7 @@ describe("#7354 Str2 — String(x) on the Prepared path", () => {
   });
 
   it.each([
-    ["no argument", "var s = String();", 'direct call to "String" has no exact AST-site plan'],
+    ["two arguments", 'var s = String("a", "b");', 'direct call to "String" has no exact AST-site plan'],
     ["String.fromCharCode", "var s = String.fromCharCode(65);", 'identifier "String" is not in scope'],
     ["new String", 'var s = new String("a");', 'unknown class "String"'],
     // An alias reads `String` as a value, which has no Prepared answer (the plan is also invalidated program-wide).
