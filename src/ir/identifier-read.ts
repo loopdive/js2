@@ -8,10 +8,11 @@
  */
 import ts from "typescript";
 import { isAmbientIntrinsicValueUse } from "../shared/ambient-intrinsics.js";
+import { outermostParenthesized } from "../shared/binding-writes.js";
 import { IrInvariantError } from "./outcomes.js";
 import type { IrFromAstResolver } from "./from-ast.js";
 import type { FunctionValueLoweringPlans } from "./function-object-lowering.js";
-import type { UnresolvedGlobalTypeof } from "./source-dynamic-contracts.js";
+import type { UnresolvedGlobalTypeof } from "./ambient-typeof.js";
 
 type ModuleBinding = NonNullable<ReturnType<NonNullable<IrFromAstResolver["resolveModuleBinding"]>>>;
 type HostGlobal = NonNullable<ReturnType<NonNullable<IrFromAstResolver["getHostGlobalInfo"]>>>;
@@ -81,7 +82,5 @@ export function classifyIdentifierRead<Binding>(
 }
 
 function isTypeofOperand(expr: ts.Identifier): boolean {
-  let node: ts.Node = expr;
-  while (ts.isParenthesizedExpression(node.parent)) node = node.parent;
-  return ts.isTypeOfExpression(node.parent);
+  return ts.isTypeOfExpression(outermostParenthesized(expr).parent);
 }

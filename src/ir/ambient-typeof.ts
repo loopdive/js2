@@ -2,6 +2,8 @@
 
 import ts from "typescript";
 import { nativeRealmGlobalTypeof } from "../runtime/contracts/native-realm-globals.js";
+import { isUnshadowedLibBinding } from "../shared/ambient-intrinsics.js";
+import { makeIrAmbientBindingPredicate } from "./module-bindings.js";
 
 /**
  * (#7106 S1b) The globals every lane provides whose `typeof` the ordinary lane folds: the fold the selector admits
@@ -34,6 +36,40 @@ export function ambientGlobalTypeofTag(name: string): "object" | "function" | un
   if (!AMBIENT_TYPEOF_NAMES.has(name)) return undefined;
   const tag = nativeRealmGlobalTypeof(name);
   return tag === "object" || tag === "function" ? tag : undefined;
+}
+
+/** (#7354 Ty) The `typeof` answer for a global the program does not declare, or a named refusal. */
+export type UnresolvedGlobalTypeof =
+  | Exclude<ReturnType<typeof nativeRealmGlobalTypeof>, "not-a-language-global">
+  | "refuse";
+
+/**
+ * (#7354 Ty) `typeof X` of a global the program does not declare, answered like ECMAScript: the tag the realm's
+ * global table gives a language global (`nativeRealmGlobalTypeof`, the one table, owned by #7350). A name the table
+ * does not list is "undefined" when nothing declares it, and "refuse" when only a lib does (a host global such as
+ * `document` or `console`, which this environment may or may not provide). `undefined`: the program declares the
+ * name. A script's top-level `function Error() {}` is reported by the checker as the lib declarations alone, hence
+ * `isUnshadowedLibBinding`.
+ */
+export function makeUnresolvedGlobalTypeof(
+  checker: ts.TypeChecker,
+): (node: ts.Identifier) => UnresolvedGlobalTypeof | undefined {
+  // A declaration-less symbol is a global only when it is the one the global scope resolves (`globalThis`): the
+  // checker also synthesizes a function's `arguments` without a declaration.
+  const libOrSynthesized = makeIrAmbientBindingPredicate(checker, "no-user");
+  const isLibBinding = (node: ts.Identifier) => {
+    const symbol = checker.getSymbolAtLocation(node);
+    return (
+      symbol === undefined ||
+      (symbol === checker.resolveName(node.text, undefined, ts.SymbolFlags.Value, false) && libOrSynthesized(node))
+    );
+  };
+  return (node) => {
+    if (!isUnshadowedLibBinding(node, isLibBinding)) return undefined;
+    const tag = nativeRealmGlobalTypeof(node.text);
+    if (tag !== "not-a-language-global") return tag;
+    return checker.getSymbolAtLocation(node)?.declarations?.length ? "refuse" : "undefined";
+  };
 }
 
 function unwrapParens(expr: ts.Expression): ts.Expression {
