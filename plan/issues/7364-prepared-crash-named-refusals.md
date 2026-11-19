@@ -15,6 +15,18 @@ area: ir, compiler
 goal: ir-full-coverage
 depends_on: []
 related: [7354, 7338, 7106, 3791]
+# 2026-11-19 (review round 1): one shared RegExp construction rule and the `unselected` producer fact. The rule's
+# body lives in src/ir/regexp-literal-admission.ts and `refuseUnselected` beside `demoteToLegacy`; what is left is
+# wiring: from-ast.ts +3 (the `unselected` option, its LowerCtx field, the admission import), integration.ts +1
+# (the resolver's `nativeRegExpCompiles`, the selector's own answer), program-source.ts +1 (`unselected: true`).
+loc-budget-allow:
+  - src/ir/from-ast.ts
+  - src/ir/integration.ts
+  - src/ir/program-source.ts
+# 2026-11-19 (review round 1): makeFromAstResolver +1, the `nativeRegExpCompiles` row beside the resolver's other
+# native RegExp rows.
+func-budget-allow:
+  - src/ir/integration.ts::makeFromAstResolver
 ---
 
 # #7364 — Prepared-path compile crashes become named refusals
@@ -47,19 +59,20 @@ member use on that extern receiver tripped the capability assert.
 
 ## Implementation Plan
 
-- **Module:** `src/ir/from-ast.ts`, at the two places where the value or call is
-  built: the `RegularExpressionLiteral` arm of `lowerExprUnchecked` and
-  `unadmittedObjectDefineProperty`. No new module; no try/catch.
-- **Reuse:** the literal asks the selector's own rule through the existing
-  `supportsBackendCapability` resolver query and `lowersAsNativeRegExp`; the
-  define refusal uses the selector's code. The capability pair is named once,
-  as `RegExpBuildCapability` in `src/ir/regexp-runtime-contract.ts`, next to the
-  carrier ABI (the same `Extract<IrBackendTargetCapability, …>` pattern as
-  `ObjectStaticCapability`).
-- **Removed:** the stale "calls the `RegExp_new` host import" comment, and the
-  invariant that called a reachable path a drift.
-- **Quality criterion:** `from-ast.ts` does not grow; ordinary-pipeline bytes
-  stay identical (default, standalone and linear).
+- **One rule, two askers.** `src/ir/regexp-literal-admission.ts` holds the static RegExp construction rule
+  (`regExpLiteralBuilt`, `nativeStaticRegExpBuilt`, `hostRegExpBuilt`): the host constructor, or the in-module
+  engine when the pattern compiles there and its consumer is one the IR lowers. The selector (its
+  `SELECTOR_REGEXP_LANE`) and from-ast (the resolver itself) both call it. An unanswered question builds nothing,
+  in both; before, the selector read an absent seam as "host available" and from-ast as "no host", so the linear
+  lane claimed a RegExp unit and then hit the capability assert (base) or withdrew it (round 0).
+- **`unselected`, a producer fact.** The Prepared producer passes `unselected: true` to `lowerFunctionAstToIr`.
+  `refuseUnselected` (beside `demoteToLegacy` in `ir-preparation-errors.ts`) is the one arm for a construct only
+  the selector refuses: an invariant after a selector's claim, the selector's named refusal without one. The
+  unadmitted `Object.defineProperty` and D1's two declines (value-position prefix `++`/`--`, dynamic `**`) use it.
+- **Removed duplicate:** the selector's private `nativeStaticRegExp` (now the shared rule), from-ast's weaker
+  `lowersAsNativeRegExp` (no consumer or compile check), and D1's unconditional declines.
+- **Quality criterion:** no RegExp rule spelled twice; ordinary bytes identical on default, standalone and linear;
+  no post-claim error for a RegExp unit on any ordinary lane.
 
 ## Result
 

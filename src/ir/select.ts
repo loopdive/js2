@@ -169,6 +169,12 @@ import { collectModuleInitPopulation, makeModuleInitSynthetic, MODULE_INIT_UNIT_
 export { collectModuleInitPopulation, makeModuleInitSynthetic, MODULE_INIT_UNIT_NAME } from "./module-init.js";
 
 import { binaryOpCapability, domSurfaceCapability, hostExternCapability, prefixOpCapability } from "./capability.js";
+import {
+  hostRegExpBuilt,
+  nativeStaticRegExpBuilt,
+  regExpLiteralBuilt,
+  type RegExpBuildAnswers,
+} from "./regexp-literal-admission.js";
 import { stringUseRefusal } from "./select-string-uses.js";
 import { nativeBufferOperationParts, type IrNativeBufferSurfacePlan } from "./native-buffer-surface.js";
 import type { IrStandaloneDomCapabilityPlan, IrStandaloneDomOperation } from "./dom-capability.js";
@@ -9223,37 +9229,20 @@ function ambientObjectToStringTagCall(expr: ts.CallExpression): ts.Expression | 
   return arg;
 }
 
+/** (#7364) The selector's answers to the shared RegExp construction rule (`regexp-literal-admission.ts`). */
+const SELECTOR_REGEXP_LANE: RegExpBuildAnswers = {
+  supportsBackendCapability: (capability) => currentSelectionOptions?.supportsBackendCapability?.(capability) === true,
+  nativeRegExpCompiles: (pattern, flags) => currentSelectionOptions?.nativeRegExpCompiles?.(pattern, flags) === true,
+  isLibOnlyBinding: selectorSeesLibOnlyBinding,
+};
+
 /**
  * Is the host RegExp (`env.RegExp_new`, the `RegExp` extern class) unavailable
  * on this lane? Every RegExp construct the IR would lower through it — a
- * literal, `new RegExp(…)`, a method on a RegExp value — refuses then. An
- * absent capability seam (bare selector) is not a refusal.
+ * literal, `new RegExp(…)`, a method on a RegExp value — refuses then.
  */
 function hostRegExpUnavailable(): boolean {
-  return currentSelectionOptions?.supportsBackendCapability?.("host-regexp-constructor") === false;
-}
-
-/**
- * (#7106 lever R) A static construction (`staticRegExpPair`) a `native-regexp` lane builds in-module, where the IR
- * consumes it: the receiver of `.test(…)` / `.exec(…)` (R1/R2), a discarded statement (which still throws an invalid
- * pair's SyntaxError), or (R3) an operand of `+`, which the `+` rule admits only beside a string (its
- * `RegExp.prototype.toString`). A property read (`/a/.source`) or a binding has no lowering for it yet.
- */
-function nativeStaticRegExp(expr: ts.Expression): boolean {
-  const pair = staticRegExpPair(expr, selectorSeesLibOnlyBinding);
-  const consumer = outermostParenthesized(expr).parent;
-  const methodReceiver =
-    ts.isPropertyAccessExpression(consumer) &&
-    ts.isCallExpression(consumer.parent) &&
-    consumer.parent.expression === consumer &&
-    matchRegExpCarrierCall(consumer.parent) !== undefined;
-  const additionOperand = ts.isBinaryExpression(consumer) && consumer.operatorToken.kind === ts.SyntaxKind.PlusToken;
-  return (
-    pair !== undefined &&
-    (methodReceiver || additionOperand || ts.isExpressionStatement(consumer)) &&
-    currentSelectionOptions?.supportsBackendCapability?.("native-regexp") === true &&
-    currentSelectionOptions.nativeRegExpCompiles?.(pair.pattern, pair.flags) === true
-  );
+  return !hostRegExpBuilt(SELECTOR_REGEXP_LANE);
 }
 
 /** (#7106 levers R2, S2) A read of a match result: an `.exec` call's, or a `regexp-match` slot's. */
@@ -9690,7 +9679,7 @@ function binaryOperandFamily(
   )
     return "number";
   if (isUnshadowedUndefinedIdentifier(candidate, scope) || ts.isVoidExpression(candidate)) return "undefined";
-  if (nativeStaticRegExp(candidate)) return "regexp";
+  if (nativeStaticRegExpBuilt(candidate, SELECTOR_REGEXP_LANE)) return "regexp";
   const proven = provenIrFamily(operand, scope);
   return proven === "unknown" && obviousSelectorValueFamily(operand, scope) === "reference" ? "reference" : proven;
 }
@@ -12049,7 +12038,10 @@ function phase1NewExpression(
     return true;
   }
   if (ctorName === "RegExp" && isAmbientConstructor && hostRegExpUnavailable()) {
-    return nativeStaticRegExp(expr) || capabilityNo("regexp-constructor-unsupported", "expr-new-regexp-target", expr);
+    return (
+      nativeStaticRegExpBuilt(expr, SELECTOR_REGEXP_LANE) ||
+      capabilityNo("regexp-constructor-unsupported", "expr-new-regexp-target", expr)
+    );
   }
   if (!isLocalClass && isKnownExternClass(ctorName) && !isAmbientConstructor) {
     return capabilityNo("constructor-resolution-unsupported", "expr-new-extern-identity", expr.expression);
@@ -12399,7 +12391,7 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
   // `src/codegen/index.ts:3274-3278`). Only the host-RegExp lane registers
   // `env.RegExp_new`; elsewhere legacy's native engine owns the literal.
   if (expr.kind === ts.SyntaxKind.RegularExpressionLiteral) {
-    if (!hostRegExpUnavailable() || nativeStaticRegExp(expr)) return true;
+    if (regExpLiteralBuilt(expr, SELECTOR_REGEXP_LANE)) return true;
     return capabilityNo("regexp-constructor-unsupported", "expr-regexp-literal", expr);
   }
   // Slice 1 (issue #1168): claim string literals and `null` so that
