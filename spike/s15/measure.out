@@ -1,0 +1,24 @@
+M0 ordinary standalone: prelude + assert.sameValue(1,1) { bytes: 343717, coldMs: 2483, warmMedianMs: 982 }
+M1 per-program shim (33 prelude exports) { bytes: 439885, coldMs: 992, warmMedianMs: 736 }
+M2 shared library (112 exports) { bytes: 634044, coldMs: 1524, warmMedianMs: 1166 }
+Prepared module with the prelude import surface { bytes: 6445, compileMs: 1929 }
+link with shim {
+  libInstantiateMs: 2,
+  prepInstantiateAgainstLibMs: 0,
+  mergeMs: 536,
+  mergedBytes: 386149,
+  dceMs: 465,
+  dceBytes: 235447,
+  o2Ms: 2529,
+  o2Bytes: 183399
+}
+link with wide {
+  libInstantiateMs: 2,
+  prepInstantiateAgainstLibMs: 0,
+  mergeMs: 685,
+  mergedBytes: 574071,
+  dceMs: 650,
+  dceBytes: 266395,
+  o2Ms: 2809,
+  o2Bytes: 210725
+}
