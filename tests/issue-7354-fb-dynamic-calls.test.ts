@@ -7,6 +7,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as gc from "../src/codegen/index.js";
 import * as linear from "../src/codegen-linear/index.js";
+import type { IrFunction } from "../src/ir/core/nodes.js";
+import { irRuntimeFuncRef } from "../src/ir/callable-bindings.js";
+import { legalizeDynamicValues } from "../src/ir/program/dynamic-value-legalization.js";
+import { IR_DYN_CALL_BOX_FN } from "../src/shared/contracts/dynamic-call-helpers.js";
 import { instantiatePreparedArtifact } from "../src/test262/test262-prepared-runtime.js";
 import {
   compile,
@@ -158,5 +162,41 @@ describe("#7354 Fb — calls through a dynamic value", () => {
     ],
   ])("refuses %s by name", async (_, program, message) => {
     expect(await refusal(program)).toContain(message);
+  });
+});
+
+describe("#7354 Fb — the call result's admission", () => {
+  const externref = { kind: "val", val: { kind: "externref" } } as const;
+  // A native closure call returns a carrier value some producer admitted: its kind is tested at run time, so the
+  // legalization records no static kind for it (no `box` a kind table could read), only the carrier itself.
+  it("carries a native call's externref result with no static kind", () => {
+    const fn = {
+      unitId: "ir-unit:v1:fb:t",
+      name: "t",
+      params: [{ value: 0, type: externref, name: "r" }],
+      resultTypes: [{ kind: "dynamic" }],
+      blocks: [
+        {
+          id: 0,
+          blockArgs: [],
+          blockArgTypes: [],
+          instrs: [
+            {
+              kind: "call",
+              target: irRuntimeFuncRef(IR_DYN_CALL_BOX_FN),
+              args: [0],
+              result: 1,
+              resultType: { kind: "dynamic" },
+            },
+          ],
+          terminator: { kind: "return", values: [1] },
+        },
+      ],
+      exported: false,
+      valueCount: 2,
+    } as unknown as IrFunction;
+    expect(legalizeDynamicValues(fn).blocks[0]!.instrs).toEqual([
+      { kind: "coerce.to_externref", value: 0, result: 1, resultType: externref },
+    ]);
   });
 });

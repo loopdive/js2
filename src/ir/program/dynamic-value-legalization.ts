@@ -102,6 +102,8 @@ const TYPEOF_KIND = {
   function: "function",
 } as const;
 type CarrierKind = (typeof TYPEOF_KIND)[keyof typeof TYPEOF_KIND];
+/** (#7354 Fb) The admission of a carrier value whose kind no static fact names (it is none of {@link TYPEOF_KIND}'s). */
+const TESTED_AT_RUN_TIME = "tested-at-run-time";
 
 /** The kind a box to the dynamic value admits, from its tag refinement or its operand; `undefined` refuses. */
 function boxedKind(tag: TagId | undefined, source: IrType | undefined): CarrierKind | undefined {
@@ -137,8 +139,16 @@ export function legalizeDynamicValues(fn: IrFunction): IrFunction {
     ...(instr.site === undefined ? {} : { site: instr.site }),
   });
   /** A value entering the carrier as `kind`; a value of no admitted kind refuses. */
-  const admit = (kind: CarrierKind | undefined, instr: IrInstr, value: IrValueId): readonly IrInstr[] => {
+  const admit = (
+    kind: CarrierKind | typeof TESTED_AT_RUN_TIME | undefined,
+    instr: IrInstr,
+    value: IrValueId,
+  ): readonly IrInstr[] => {
     switch (kind) {
+      // (#7354 Fb) A native closure call's result already is a carrier value, admitted by whichever producer returned
+      // it: its kind is known only at run time, as a parameter's is, so no kind table may answer it statically.
+      case TESTED_AT_RUN_TIME:
+        return [carried(instr, value)];
       case "boolean":
         return [intrinsic(instr, "js.boolean.box", [value])];
       // The Null partition has one value, the carrier's null reference.
@@ -202,10 +212,9 @@ export function legalizeDynamicValues(fn: IrFunction): IrFunction {
       case "call":
         if (instr.target.binding.kind === "runtime" && instr.target.name === IR_DYN_CALL_BOX_FN) {
           if (isFunctionValue(instr.args[0]!)) return admit("function", instr, instr.args[0]!);
-          // (#7354 Fb) A native closure call's result already is a carrier value. Its kind is not known statically:
-          // like a parameter's, it is whatever its producer admitted, and kind tests read it at run time.
           const operand = types.get(instr.args[0]!);
-          if (operand?.kind === "val" && operand.val.kind === "externref") return [carried(instr, instr.args[0]!)];
+          if (operand?.kind === "val" && operand.val.kind === "externref")
+            return admit(TESTED_AT_RUN_TIME, instr, instr.args[0]!);
         }
         // A front-end dynamic helper (`__ir_dyn_add`, ...) has no runtime declaration.
         return instr.target.binding.kind === "runtime" &&
