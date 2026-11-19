@@ -1,10 +1,11 @@
 ---
 id: 7350
 title: "IR foundation: built-in globals as values — one admission on the realm"
-status: ready
+status: in-progress
+assignee: ttraenkler/senior-dev
 sprint: current
 created: 2026-11-15
-updated: 2026-11-16
+updated: 2026-11-19
 priority: high
 horizon: xl
 feasibility: hard
@@ -14,6 +15,12 @@ area: ir
 goal: ir-full-coverage
 depends_on: [7349]
 related: [7349, 7352, 7353, 7343, 7189, 7127, 7294, 7106, 7342]
+loc-budget-allow:
+  # 2026-11-16 (#7350 G1): +4 in from-ast.ts and +3 in select.ts are the lane capability
+  # `native-builtin-globals` in each file's capability union (the JS environment keeps its output) and the
+  # selector's lane object; the admission itself moved out of both callers into `ir/builtin-globals.ts`.
+  - src/ir/from-ast.ts
+  - src/ir/select.ts
 ---
 
 # #7350 — IR foundation: built-in globals as values
@@ -201,3 +208,97 @@ Code quality:
 6. No second call mechanism beside #7349's.
 7. A fresh-context adversarial review per slice records its verdict in the
    PR body.
+
+## G1 result (2026-11-16, branch `claude/7350-g1`)
+
+**Corrected yield.** Re-measured before coding on main `ed17563bc2` with a research switch that admits a built-in
+name only outside member positions: G1 alone frees **about 2** of the 272 only-family files, not 22. The
+research prototype's 22 counted `X.m` values and `X.m = v` writes, which are G2 / G6 positions; the 34
+`X` as an argument files are `Object.isExtensible(Math)`-style, which is G1b. Decision (2026-11-16): land G1
+as planned, then widen in the same branch, one commit each with its own measurement: G1b (object-statics
+operands may be built-ins) and `X.m` own-data reads that the runtime already answers (asked from the
+runtime-side fact, no hand list). Writes stay out (G6).
+
+**What G1 builds.**
+- `src/ir/builtin-globals.ts`: the one admission, `builtinGlobalValueAdmitted`, asked by the selector
+  (`isAmbientIntrinsicValue`) and the from-ast identifier arm. It asks the name set, which lives in
+  `src/shared/ambient-intrinsics.ts` (`builtinGlobalLanes`: the ES5 constructors, namespaces and global
+  functions plus `Symbol`; new: `Math`, `JSON`, `Date`, `RegExp`, the eleven global functions), and holds
+  the position walk and the #7189 / #7127 member-value reads, which go through the same
+  admission. `src/shared/ambient-intrinsics.ts` keeps the lib-binding helpers and #7294's member shapes.
+- `isPristineIntrinsic` (`shared/intrinsic-prototype-writes.ts`, the shared write scanner): not declared,
+  not written / deleted / defined by a literal route. (A lexical `with` screen was dropped in review RV7263:
+  no unit that contains or sits inside a `with` body is claimed by the IR, so it decided nothing.) `function-mention.ts`'s
+  `objectStaticIsPristine` asks it instead of its own copy and keeps its file-wide `with` screen (elision's
+  boundary; a lexical one there would change JS-environment output). A file-wide `with` screen in the
+  admission dropped 12 units that main lowers in 2 non-ES5 files (`propertyHelper.js`'s
+  `e instanceof TypeError` beside an unrelated `with`), so the admission's test is lexical.
+- The walk refuses at select two positions from-ast cannot lower, which main claimed and then withdrew for
+  the old names: a loose compare with `null` (`nullComparisonFolds`) and a conditional beside a bare `null`
+  (`nullValueAdmissible`). On the JS environment main's claim is kept for those (`null-mix`), because the
+  withdrawn claim leaves different bytes there.
+- The new names were measured on standalone only, so they ask a lane capability, `native-builtin-globals`
+  (`backend/legality.ts`, the same profile as `native-object-statics`); #7118's names keep every lane. With
+  the new names on the JS environment its output changed in 112 of 666 probe binaries; with the gate, 0.
+
+**Differences from the plan.**
+- `return X` and other escapes (array / object literal, an unresolvable callee's argument) stay refused:
+  the walk cannot follow the value to the member reads behind it, and an unseeded member answers
+  `undefined` (hazard 3). The walk follows locals and same-file parameters, as before.
+- Conversions (`"" + Math`) stay refused: a constructor carrier is a `$Object` whose ToPrimitive is not the
+  function's source text.
+- The static folds still use their own screens (`objectStaticsArePristine`, `realmIsUnpatched`); moving
+  them onto `isPristineIntrinsic` is G6.
+
+**Measured** (standalone, main `ba6652f671`, QuickJS and the Temporal provider built per tree,
+`TEST262_FULL_RUNTIME_EVAL=1`):
+
+| population | files | gained | lost | units newly legacy | new post-claim | new CE | standalone binaries differ |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| ES5 carriers (1,837) + 500 IR-only controls | 2,337 | 2 | 0 | 0 | 0 | 0 | 2 |
+| non-ES5: bare uses of the new names, and files writing / deleting / defining a built-in or with `with` | 1,982 | 0 | 0 | 0 | 0 | 0 | 0 |
+
+- Gained: `built-ins/JSON/15.12-0-1.js`, `built-ins/global/S10.2.3_A1.1_T4.js`; both pass on both trees.
+- Probes against node (module level and in a function): 408 position programs, 228 identity programs,
+  120 realm-graph programs: 0 claimed-wrong, 0 lost, 0 new post-claim errors.
+- JS-environment output: identical on 666 binaries (the 408 position programs, the 2 gained files and 256
+  sampled carrier, control and `with` files).
+
+**Re-measured 2026-11-19** (lead takeover; branch head after merging main `ee3fcdd610`, standalone, compile census
+without the Temporal provider, verdicts with `scripts/run-test262-paths.mts`). Population: the 1,327 ES5 files
+that pass on the standalone baseline of 2026-11-19, still carry legacy units, and name a built-in global outside
+a call, `new`, `instanceof` or member position (`.tmp` prefilter; the earlier 1,837-file carrier list is not in
+the repository).
+
+| population | files | gained | lost | units newly legacy | new post-claim | new CE | standalone binaries differ |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| ES5 candidates | 1,327 | 3 | 0 | 0 | 0 | 0 | 3 |
+| random test262 sample, default and standalone | 100 | 0 | 0 | 0 | 0 | 0 | 0 (JS environment 0 of 103 incl. the gained) |
+
+- Gained: `built-ins/JSON/15.12-0-1.js`, `built-ins/global/S10.2.3_A1.1_T4.js` and (new since 2026-11-16)
+  `built-ins/global/S10.2.3_A1.2_T4.js`; all three pass on both trees.
+- `tests/issue-7294-builtin-proto-member-provider.test.ts` fails the same 4 rows on main `ee3fcdd610` as on
+  the branch (`operand-coercion-unsupported` on `Object.is`); not caused by G1.
+
+### Review RV7263 (2026-11-19, APPROVE on `46c3e8d62f`) — follow-ups recorded here
+
+- **Named item, G2: `admittedBuiltinProtoMember` is a second admission.** Reviewer: "#7294's
+  `admittedBuiltinProtoMember` admits the built-in `B` in `<B>.prototype.<m>` with only
+  `builtinProtoMemberGlobalsUnshadowed`: no pristine screen and no lane name set. #7127's
+  `isExactProtoMethodValueRead` admits the same source shape behind a different screen." G2 folds
+  `src/ir/builtin-proto-member.ts:50` into `builtinGlobalValueAdmitted`.
+- **Named item, G6:** `objectStaticsArePristine` (`src/ir/object-integrity.ts`) and `realmIsUnpatched`
+  (`src/ir/wrapper-construction.ts`) keep their own pristine screens; G6 moves them onto
+  `isPristineIntrinsic`.
+- **Not folded, layering:** `STRICT_EQUALITY_OPERATORS` (`src/shared/ambient-intrinsics.ts`) duplicates
+  `isStrictEqualityOperator` (`src/ir/analysis/operand-admissibility.ts`), but `src/shared/` may not import
+  `src/ir/`. The fold is moving the operator predicates to `src/shared/` with their 11 IR importers; filed as
+  part of G2 rather than widened here.
+
+## Known
+
+- **`null` mix of #7118's names on the JS environment** (lead decision 2026-11-19, accepted as is): there
+  `if (TypeError == null) throw 0;` is claimed and then withdrawn after the claim, the routing it had before
+  #7350, so the JS environment's output stays byte-identical; on standalone it is refused at select. The
+  `native-builtin-globals` capability decides both the new names and this refusal. Remove the exception with
+  the JS lane.

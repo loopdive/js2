@@ -13202,6 +13202,14 @@
       "nextBoundary": "TypeScript-AST plan of the `Object` statics table (`Object.<static>(…)` through the dynamic carrier), shared by the selector and from-ast (#7338); moves with the frontend inventory split."
     },
     {
+      "path": "src/ir/builtin-globals.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "7350",
+      "nextBoundary": "TypeScript-AST admission of a built-in global read as a value (one admission for the selector and from-ast, #7350); moves with the frontend inventory split."
+    },
+    {
       "path": "src/ir/binding-pattern-plan.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",

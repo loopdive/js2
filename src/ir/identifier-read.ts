@@ -6,7 +6,7 @@
  * `typeof` of a name nothing resolves) asks the same function, so the two cannot drift. Pure: it emits nothing.
  */
 import ts from "typescript";
-import { isAmbientIntrinsicValueUse } from "../shared/ambient-intrinsics.js";
+import { builtinGlobalValueAdmitted } from "./builtin-globals.js";
 import { IrInvariantError } from "./outcomes.js";
 import type { IrFromAstResolver } from "./from-ast.js";
 import type { FunctionValueLoweringPlans } from "./function-object-lowering.js";
@@ -72,8 +72,7 @@ export function classifyIdentifierRead<Binding>(
       global,
       certifiedDom: dom?.kind === "global-get" && dom.identifier === expr && dom.importName === global.importName,
     };
-  if (isAmbientIntrinsicValueUse(expr, (node) => resolver?.isLibOnlyBinding?.(node) === true, resolver))
-    return { kind: "ambient-intrinsic" };
+  if (builtinGlobalValueAdmitted(expr, resolver ?? {})) return { kind: "ambient-intrinsic" };
   return isTypeofOperand(expr) && resolver?.unresolvedNameIsAbsent?.(expr) === true
     ? { kind: "absent-global" }
     : { kind: "unresolved" };
