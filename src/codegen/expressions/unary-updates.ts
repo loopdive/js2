@@ -72,17 +72,10 @@ import { emitStructMemberIncDec } from "./host-bigint-updates.js";
  */
 function emitSymbolUpdateThrow(ctx: CodegenContext, fctx: FunctionContext, operand: ts.Expression): boolean {
   // (#1930 Slice 2) oracle fold: was a direct isSymbolType check on the
-  // checker type of the paren-unwrapped operand.
-  if (ctx.oracle.staticJsTypeOf(unwrapParens(operand)) !== "symbol") return false;
+  // checker type of the unwrapped operand.
+  if (ctx.oracle.staticJsTypeOf(skipTransparentExpressions(operand)) !== "symbol") return false;
   emitThrowTypeError(ctx, fctx, "Cannot convert a Symbol value to a number");
   return true;
-}
-
-function unwrapParens(node: ts.Expression): ts.Expression {
-  while (ts.isParenthesizedExpression(node)) {
-    node = node.expression;
-  }
-  return node;
 }
 
 /**
@@ -559,7 +552,7 @@ function compileMemberIncDec(
   const i32Op = arithOp === "add" ? "i32.add" : "i32.sub";
 
   // Unwrap parenthesized expressions: ++(obj.x) -> ++obj.x
-  operand = unwrapParens(operand);
+  operand = skipTransparentExpressions(operand);
   // (#7164) `arr.length++`: the static length store, so a grow fills its new slots.
   const step = { kind: "step", delta: arithOp === "add" ? 1 : -1, postfix: mode === "postfix" } as const;
   const lengthUpdate = tryCompileArrayLengthUpdate(ctx, fctx, operand, step);
@@ -1049,7 +1042,7 @@ function compilePrefixUpdate(
   // A pre-scanned sloppy implicit global is the one exception: its property
   // already exists on the realm global object and is handled by the dedicated
   // read-modify-write arm below.
-  const updateOperand = unwrapParens(expr.operand);
+  const updateOperand = skipTransparentExpressions(expr.operand);
   if (!(ts.isIdentifier(updateOperand) && isSloppyImplicitGlobalBinding(ctx, fctx, updateOperand.text))) {
     const unresolvablePre = tryEmitUnresolvableUpdateThrow(ctx, fctx, updateOperand);
     if (unresolvablePre !== undefined) return unresolvablePre;
@@ -1063,7 +1056,7 @@ function compilePrefixUpdate(
   }
   switch (expr.operator) {
     case ts.SyntaxKind.PlusPlusToken: {
-      const ppOperand = unwrapParens(expr.operand);
+      const ppOperand = skipTransparentExpressions(expr.operand);
       if (ts.isIdentifier(ppOperand)) {
         if (fctx.localMap.get(ppOperand.text) === undefined) {
           // (#3039) ++x on a boxed captured global — update through the cell.
@@ -1236,7 +1229,7 @@ function compilePrefixUpdate(
       const arithOp = isIncrement ? "f64.add" : "f64.sub";
       const arithOpI32 = isIncrement ? "i32.add" : "i32.sub";
 
-      const mmOperand = unwrapParens(expr.operand);
+      const mmOperand = skipTransparentExpressions(expr.operand);
       if (ts.isIdentifier(mmOperand)) {
         if (fctx.localMap.get(mmOperand.text) === undefined) {
           // (#3039) --x on a boxed captured global — update through the cell.
@@ -1427,7 +1420,7 @@ function compilePostfixUnary(
   const arithOpI32 = isIncrement ? "i32.add" : "i32.sub";
 
   // Unwrap parenthesized expressions: (x)++ -> x++
-  const postOperand = unwrapParens(expr.operand);
+  const postOperand = skipTransparentExpressions(expr.operand);
 
   // (#2663 Slice 3) `with` Object Environment Record precedence — see with-rmw.ts.
   if (ts.isIdentifier(postOperand)) {

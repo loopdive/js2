@@ -1,10 +1,11 @@
 ---
 id: 7394
 title: "An assignment to a wrapped target (`(x) += 1`, `(x!) = 5`, `(x!)++`) compiles to nothing"
-status: in-progress
+status: done
 sprint: current
 created: 2026-11-19
 updated: 2026-11-19
+completed: 2026-11-19
 priority: high
 horizon: s
 feasibility: easy
@@ -46,16 +47,29 @@ RV7307 round 2). Every other bold cell still fails there.
 
 ### Separate row — `(x as number) ??= 7` (and every `as` / `satisfies` target)
 
-These are refused by the early-error pass (`src/compiler/early-errors/node-checks.ts`,
+These are refused by the early-error pass (`src/compiler/early-errors/predicates.ts`,
 `isInvalidAssignmentTarget`), which does not look through `as` / `satisfies` / `<T>`. TypeScript accepts
 them and erases the wrapper, so the refusal is wrong but loud: a compile error, never a wrong answer.
+
+### Two analyses that also missed the write (found while fixing)
+
+Once codegen assigned the wrapped target, two analyses still read it as unwritten:
+
+- **The legacy i32-local analysis** (`collectI32CoercedLocals`, `src/ir/analysis/i32-coerced-locals.ts`) gives an
+  integer-initialised local an i32 slot unless a write proves otherwise. It looked only at a bare identifier target and
+  recorded only `=`, `+=`, `-=`, `*=` and the bitwise compounds, so `/=`, `%=`, `**=` and the logical operators were
+  never seen. This is a wrong answer on main without any wrapper: `let x: number = 10; x /= 4; return x;` returns `2`
+  whenever the IR leaves the function to legacy codegen (`experimentalIR: false` shows it).
+- **The single-assignment write scan** (`writingOccurrences`, `src/codegen/single-assignment-binding.ts`) looked
+  through parentheses only, so after `(s!) += "cd"` the `s.length` fold (`tryStaticToNumber`) still took the
+  initializer's length.
 
 ### Why it is silent
 
 `compileCompoundAssignment` reaches `reportError(... "Compound assignment only supported for simple
 identifiers")` for a parenthesised target (traced), yet `compile()` returns `success: true` with no
-diagnostic, and the statement emits `f64.const 0; drop`. Some caller discards the diagnostic; the plan below
-finds which.
+diagnostic, and the statement emits `f64.const 0; drop`. Some caller discards the diagnostic (see Left open
+below).
 
 ## Implementation Plan
 
@@ -71,5 +85,28 @@ Legacy codegen only (no `src/ir/` change). Stacked on #7307 (same file, same pee
 - **The dropped diagnostic.** Find where the `reportError` from an unsupported target is discarded and say
   in the PR whether it is fixed here or filed separately. A target codegen cannot lower must fail the compile,
   not ship `f64.const 0`.
-- **Quality criterion.** One peel per entry point through the shared helper; the parenthesis-only loop in
-  `compileAssignment` goes away; no new predicate.
+- **The two analyses** (found while fixing). They peel the target with the same helper. The i32-local walk records
+  every assignment operator (`FirstAssignment..LastAssignment`) and leaves the verdict to `isCompoundI32Safe`, which
+  already returned `false` for every non-bitwise compound.
+- **Quality criterion.** One peel per entry point through the shared helper; the parenthesis-only loops in
+  `compileAssignment`, `unary-updates.ts` (its private `unwrapParens`) and `isInvalidAssignmentTarget` go away; no new
+  predicate.
+
+## Result (2026-11-19)
+
+- `tests/issue-7394-wrapped-assignment-target.test.ts`: every assignment form (`=`, the 12 compound operators, the
+  three logical ones, prefix/postfix `++`/`--`, the value of the expression) through `(t)`, `((t))`, `(t!)`,
+  `(t as number)`, `(t satisfies number)`, `(<number>t)` on a local, a captured local, a field, an element and a module
+  global, plus a string `+=`, an `any` target and five legacy-path `x /= 4`-style rows; gc + standalone, answers from
+  node. Base (#7307 head 68604aadf8): 844 of 964 fail; after: 964/964.
+- Byte identity: 100 test262 files × gc/standalone, binaries identical (200/200).
+- Net −31 lines in `src/`: the change removes `unwrapParens` and two parenthesis-only loops, and collapses a
+  9-operator allowlist.
+
+### Left open
+
+**The dropped diagnostic.** `compileCompoundAssignment`'s `reportError` for a target it cannot lower is discarded:
+the statement ships `f64.const 0; drop` with `success: true`. With every wrapper peeled this arm is no longer reached
+by any target the early-error pass admits, so it is not chased here. It is worth a follow-up, because any future
+unsupported target would be silent the same way.
+

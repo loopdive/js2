@@ -332,11 +332,8 @@ function emitAnnexBOuterBindingWriteFlag(fctx: FunctionContext, name: string): v
 }
 
 export function compileAssignment(ctx: CodegenContext, fctx: FunctionContext, expr: ts.BinaryExpression): InnerResult {
-  // Unwrap parenthesized LHS: (x) = 1 → x = 1
-  let lhs = expr.left;
-  while (ts.isParenthesizedExpression(lhs)) {
-    lhs = lhs.expression;
-  }
+  // `(x) = 1` and `x! = 1` assign to `x`: a wrapper that emits nothing does not change the reference (#7394).
+  const lhs = skipTransparentExpressions(expr.left);
   // If we unwrapped parentheses, create a synthetic-like view for the checks below
   // by rebinding the checks to use `lhs` instead of `expr.left`
   if (lhs !== expr.left) {
