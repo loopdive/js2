@@ -366,8 +366,9 @@ export function assertPreparedIrProgram(program: PreparedIrProgram, options?: Ir
     );
     if (plan.executable && (original.length !== 1 || plan.unitId !== original[0]!.id || !functions.has(plan.unitId)))
       invalid(`startup source ${source.id} lacks its one exact typed body`);
-    if (!plan.executable && (plan.unitId !== null || original.length !== 0))
-      invalid(`empty startup source ${source.id} claims an executable body`);
+    // A source of declarations only (`var x;`) owns one module-init unit that the startup never invokes.
+    if (!plan.executable && (original.length > 1 || plan.unitId !== (original[0]?.id ?? null)))
+      invalid(`non-executable startup source ${source.id} names other than its one module-init unit`);
     if (plan.gaps.length) invalid(`startup source ${source.id} retains unresolved binding/export gaps`);
     for (const binding of plan.bindings)
       for (const id of [binding.globalBindingId, binding.tdzBindingId])
