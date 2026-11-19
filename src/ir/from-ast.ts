@@ -194,7 +194,7 @@ import { irCountedStringAppendSiteIdIsCurrent } from "./counted-string-append-pr
 import { timerArg, timerResult } from "./timer-shim-lowering.js";
 import { irBool, irTypeIsBoolean } from "./boolean-brand.js";
 import { carrierStringFamily, lowerConcatOperand, lowerPrimitiveToString } from "./primitive-to-string.js";
-import { AMBIENT_TYPEOF_TAGS, foldAmbientTypeofComparison } from "./ambient-typeof.js";
+import { ambientGlobalTypeofTag, foldAmbientTypeofComparison, type UnresolvedGlobalTypeof } from "./ambient-typeof.js";
 import {
   collectOuterWrites,
   collectTransitiveClosureCaptures,
@@ -438,7 +438,6 @@ import {
 } from "./vector-runtime.js";
 import { readEnv } from "../env.js";
 import { classifyIdentifierRead } from "./identifier-read.js";
-import type { UnresolvedGlobalTypeof } from "./source-dynamic-contracts.js";
 import { numericCaseTestValue, stringCaseTestValue, switchCaseTests } from "./switch-case-tests.js";
 
 interface ResolvedIrVecType {
@@ -13999,7 +13998,7 @@ function globalTypeofTag(id: ts.Identifier, cx: LowerCtx): string | undefined {
 /** (#7106 S1b) from-ast's half of the `typeof <ambient>` fold proof (see `lowerTypeOf`). */
 function ambientTypeofIdentifierTagFromAst(id: ts.Identifier, cx: LowerCtx): "object" | "function" | undefined {
   if (cx.scope.get(id.text) !== undefined) return undefined;
-  const tag = AMBIENT_TYPEOF_TAGS[id.text];
+  const tag = ambientGlobalTypeofTag(id.text);
   if (tag === undefined) return undefined;
   if (cx.resolver?.isAmbientBinding?.(id) !== true) return undefined;
   if (cx.resolver?.isDirectModuleBinding?.(id) === true) return undefined;

@@ -203,7 +203,7 @@ import type {
 import type { IrFnctorAdmission, IrFnctorSelectionAdmissionResolver, LatticeType, TypeMap } from "./propagate.js";
 import type { RecursiveTypeEvidence } from "./type-evidence.js";
 import type { IntrinsicId } from "./intrinsics.js";
-import { AMBIENT_TYPEOF_TAGS, foldAmbientTypeofComparison } from "./ambient-typeof.js";
+import { ambientGlobalTypeofTag, foldAmbientTypeofComparison } from "./ambient-typeof.js";
 import { matchRegExpCarrierCall, staticRegExpPair } from "../shared/regexp-static.js";
 import { regExpMatchReadValueAdmitted, regExpMatchUseAdmitted } from "./regexp-match-uses.js";
 import type { IrFallbackReason } from "../shared/contracts/ir-preparation-failure.js";
@@ -9351,7 +9351,7 @@ function ambientTypeofIdentifierTag(
   scope: ReadonlySet<string>,
 ): "object" | "function" | undefined {
   if (scope.has(operand.text)) return undefined;
-  const tag = AMBIENT_TYPEOF_TAGS[operand.text];
+  const tag = ambientGlobalTypeofTag(operand.text);
   if (tag === undefined) return undefined;
   if (!selectorSeesAmbientBinding(operand)) return undefined;
   if (currentModuleBindingResolver?.isDirectModuleBinding(operand) === true) return undefined;

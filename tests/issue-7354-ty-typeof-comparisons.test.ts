@@ -6,9 +6,16 @@
 // "object"), so no string is needed. A literal no admitted kind answers ("function", a typo) is constant. Strings
 // are admitted (slice Str) but the native lane has no string predicate yet, so a test for "string" refuses by name.
 // A `typeof` result used any other way still refuses as `dyn.typeof` (slice Str2).
+import { runInThisContext } from "node:vm";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as gc from "../src/codegen/index.js";
 import * as linear from "../src/codegen-linear/index.js";
+import { ambientGlobalTypeofTag } from "../src/ir/ambient-typeof.js";
+import type { IrFunction, IrInstr } from "../src/ir/core/nodes.js";
+import type { TagId } from "../src/ir/core/tag-domain.js";
+import { irDynamic, irVal } from "../src/ir/core/types.js";
+import { DynamicValueGap, legalizeDynamicValues } from "../src/ir/program/dynamic-value-legalization.js";
+import { JS_TAG_IDS } from "../src/ir/runtime/js-tag-domain.js";
 import { NATIVE_REALM_GLOBALS, nativeRealmGlobalTypeof } from "../src/runtime/contracts/native-realm-globals.js";
 import { instantiatePreparedArtifact } from "../src/test262/test262-prepared-runtime.js";
 import {
@@ -261,9 +268,83 @@ describe("#7354 Ty — typeof comparisons on the Prepared dynamic value", () => 
   });
 });
 
-// #7354 Ty step 2 — `typeof` of a global the program does not declare answers like ECMAScript: the realm catalog's
-// tag for an ES global (`nativeRealmGlobalTypeof`, the one table), "undefined" for a name nothing declares, and a
-// named refusal for a lib-only name the catalog lacks (a host global). Never a wrong answer.
+// The comparison arm folds a literal no admitted kind answers ("function", "symbol") to false. That is sound only
+// while every value in the carrier has a kind: a box that admitted an unknown value (lane S4's Fb boxed a native
+// call's externref result) would turn `typeof f() === "function"` into a wrong constant. So such a box must refuse,
+// and each kind that does enter must be answered by a runtime test, never by the fold.
+describe("#7354 Ty — the carrier admits only known kinds", () => {
+  const externref = irVal({ kind: "externref" });
+  const box = (tag?: TagId) => ({
+    kind: "box",
+    value: 0,
+    toType: irDynamic(tag),
+    result: 1,
+    resultType: irDynamic(tag),
+  });
+  /** `enter` defines the dynamic value 1; its `typeof` is compared with `literal` into value 4. */
+  const compareTypeof = (enter: readonly object[], literal: string): IrFunction =>
+    ({
+      unitId: "ir-unit:test",
+      name: "f",
+      params: [],
+      resultTypes: [],
+      blocks: [
+        {
+          id: 0,
+          blockArgs: [],
+          blockArgTypes: [],
+          instrs: [
+            ...enter,
+            { kind: "dyn.typeof", value: 1, result: 2, resultType: { kind: "string" } },
+            { kind: "string.const", value: literal, result: 3, resultType: { kind: "string" } },
+            { kind: "string.eq", lhs: 2, rhs: 3, negate: false, result: 4, resultType: irVal({ kind: "i32" }) },
+          ] as IrInstr[],
+          terminator: { kind: "return", values: [] },
+        },
+      ],
+      exported: false,
+      valueCount: 5,
+    }) as unknown as IrFunction;
+  /** A call's result, value 0: its type is all the box arm can know about it. */
+  const call = (resultType: object) => ({
+    kind: "call",
+    target: { kind: "func", name: "native", binding: { kind: "unit", unitId: "ir-unit:native" } },
+    args: [],
+    result: 0,
+    resultType,
+  });
+
+  it.each([
+    ["untagged", undefined],
+    ["tagged Function", JS_TAG_IDS.Function],
+    ["tagged Object", JS_TAG_IDS.Object],
+  ])('refuses a box of a call\'s externref result (%s) instead of folding typeof === "function"', (_label, tag) => {
+    const legalize = () => legalizeDynamicValues(compareTypeof([call(externref), box(tag)], "function"));
+    expect(legalize).toThrow(DynamicValueGap);
+    expect(legalize).toThrow("dynamic operation box of a non-primitive value has no Prepared intrinsic");
+  });
+
+  // The literal is JavaScript's own answer for the value, not the legalization's table.
+  it.each([
+    ["a number", [call(irVal({ kind: "f64" })), box()], 1],
+    ["a Boolean", [call(irVal({ kind: "i32" })), box(JS_TAG_IDS.Boolean)], true],
+    ["null", [call(externref), box(JS_TAG_IDS.Null)], null],
+    ["undefined", [{ kind: "dyn.undefined", result: 1, resultType: irDynamic() }], undefined],
+    // INTEGRATION (S8): Str2 gives the string kind a real predicate (`js.value.is_string`), so a string is answered
+    // by a runtime test here instead of Ty's "typeof test for string" refusal.
+    ["a string", [call({ kind: "string" }), box()], "a"],
+  ])("answers typeof of %s in the carrier with a runtime test", (_label, enter, value) => {
+    const test = legalizeDynamicValues(compareTypeof(enter, typeof value)).blocks[0]!.instrs.find(
+      (instr) => instr.result === 4,
+    );
+    expect(test).toBeDefined();
+    expect(test!.kind).not.toBe("const");
+  });
+});
+
+// #7354 Ty step 2 — `typeof` of a global the program does not declare answers like ECMAScript: the realm table's
+// tag for a language global (`nativeRealmGlobalTypeof`, the one table), "undefined" for a name nothing declares, and
+// a named refusal for a lib-only name the table does not list (a host global). Never a wrong answer.
 describe("#7354 Ty — typeof of a global the program does not declare, on the Prepared path", () => {
   it.each([
     ["the assert.js conditional", 'function f(v) { return typeof JSON !== "undefined" ? 1 : 2; }', "f(0)", "1"],
@@ -307,6 +388,27 @@ describe("#7354 Ty — typeof of a global the program does not declare, on the P
     await expectLikeNode(program, [expect.stringContaining("Cannot find name 'notDeclared'")]);
   });
 
+  // A function's `arguments` is a symbol the checker synthesizes without a declaration, like `globalThis`, but it
+  // is no global: the read refuses by name (node answers "object"; the Prepared path has no `arguments` yet).
+  it.each([
+    ["a comparison", 'function f() { return typeof arguments === "object"; }\nif (!f()) throw 1;'],
+    ["a conditional", 'function f() { return typeof arguments === "undefined" ? 1 : 2; }\nf();'],
+  ])("refuses typeof arguments in %s inside a function by name", async (_label, source) => {
+    expect(await refusal(source)).toContain('identifier "arguments" is not in scope in f');
+  });
+
+  // A script's top level has no `arguments` binding. `new Function` bodies do, so node's answer is read from the
+  // same source run as a script.
+  it("answers typeof arguments at a script's top level like JavaScript", async () => {
+    const program = (right: boolean) => `if ((typeof arguments === "undefined") !== ${right}) throw 1;`;
+    for (const right of [true, false]) {
+      const script = () => runInThisContext(program(right));
+      if (right) expect(script).not.toThrow();
+      else expect(script).toThrow();
+      expect(await run(program(right), ["Cannot find name 'arguments'."])).toBe(right ? "returned" : "threw");
+    }
+  });
+
   it("answers a var declaring the global's name with the program's binding", async () => {
     const program = (right: boolean) => `var JSON = 1;\nif ((typeof JSON === "number") !== ${right}) throw 1;`;
     await expectLikeNode(program, [
@@ -346,26 +448,63 @@ describe("#7354 Ty — typeof of a global the program does not declare, on the P
     );
   });
 
-  // The pin: every global of the realm catalog answers its tag, which is node's where node has the global.
+  // The pin: every global of the realm table answers its tag, which is node's where node has the global.
   it.each(
     NATIVE_REALM_GLOBALS.map(({ name }) => name).filter((name) => !["undefined", "NaN", "Infinity"].includes(name)),
-  )("answers typeof of the ES global %s from the realm catalog", async (name) => {
-    const tag = nativeRealmGlobalTypeof(name)!;
+  )("answers typeof of the ES global %s from the realm table", async (name) => {
+    const tag = nativeRealmGlobalTypeof(name);
     const host = (globalThis as Record<string, unknown>)[name];
     if (host !== undefined) expect(typeof host).toBe(tag);
     await expectAnswerTag(name, tag);
   });
 
-  // A lib-only name outside the catalog (a host global) refuses by name, in a comparison and in a fold.
+  // The ordinary lane's fold reads the same table, narrowed to "object" | "function": every name it folds is such a
+  // row, so the narrowing drops none.
   it.each([
-    `if (typeof document !== "undefined") throw 1;`,
-    `function f() { return typeof document !== "undefined" ? 1 : 2; }\nf();`,
-  ])("refuses typeof of the host global document by name: %s", async (source) => {
-    expect(await refusal(source)).toContain("typeof of the host global document has no Prepared answer");
+    "JSON",
+    "Math",
+    "Reflect",
+    "Object",
+    "Function",
+    "Array",
+    "String",
+    "Number",
+    "Boolean",
+    "Symbol",
+    "Error",
+    "TypeError",
+    "RangeError",
+    "Date",
+    "RegExp",
+    "Promise",
+  ])("folds typeof %s on the ordinary lane to the realm table's tag", (name) => {
+    expect(ambientGlobalTypeofTag(name)).toBe(nativeRealmGlobalTypeof(name));
+  });
+
+  // ES2026: this node has no `Temporal` to compare with, so the tag is pinned by hand.
+  it("answers typeof of the ES2026 global Temporal with object", async () => {
+    await expectAnswerTag("Temporal", "object");
+  });
+
+  // A lib-only name the table does not list (a host global) refuses by name, in a comparison and in a fold.
+  // `console` and `Intl` exist in node, and ECMA-262 defines neither.
+  it.each(["document", "console", "Intl"])("refuses typeof of the host global %s by name", async (name) => {
+    for (const source of [
+      `if (typeof ${name} !== "undefined") throw 1;`,
+      `function f() { return typeof ${name} !== "undefined" ? 1 : 2; }\nf();`,
+    ])
+      expect(await refusal(source)).toContain(`typeof of the host global ${name} has no Prepared answer`);
   });
 });
 
+/**
+ * A global newer than the checker's lib compiles with TypeScript's lib-gap warning and nothing else: `Float16Array`
+ * is undeclared there, `Iterator` only an interface.
+ */
 async function expectAnswerTag(name: string, tag: string) {
-  expect(await run(`if (typeof ${name} !== "${tag}") throw 1;`)).toBe("returned");
-  expect(await run(`if (typeof ${name} === "${tag}") throw 1;`)).toBe("threw");
+  const warnings = messages(await compile(`typeof ${name};`, options()));
+  const libGap = [`Cannot find name '${name}'.`, `'${name}' only refers to a type, but is being used as a value here.`];
+  expect(warnings.every((warning) => libGap.includes(warning))).toBe(true);
+  expect(await run(`if (typeof ${name} !== "${tag}") throw 1;`, warnings)).toBe("returned");
+  expect(await run(`if (typeof ${name} === "${tag}") throw 1;`, warnings)).toBe("threw");
 }

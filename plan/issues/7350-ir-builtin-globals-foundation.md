@@ -215,11 +215,26 @@ Lead decision 2026-11-19: S5 owns the realm rows for the global object. Lane S1 
 needs the same table, so it lands first, as pure data.
 
 **Target structure.** A sibling of the realm catalog, `src/runtime/contracts/native-realm-globals.ts`:
-`NATIVE_REALM_GLOBALS`, the complete own-property population of the global object (ES2025 §19.1–19.4 plus
-Annex B.2.1 `escape` / `unescape`), each entry with its attributes and its value — a number (`NaN`,
-`Infinity`), `undefined`, the global object itself (`globalThis`), or an intrinsic named by id, with that
-intrinsic's typeof tag, `length` and constructibility. `nativeRealmGlobalTypeof(name)` answers from it; Ty
-reads that export, not a list of its own.
+`NATIVE_REALM_GLOBALS`, the complete own-property population of the global object in the realm's edition
+(`NATIVE_REALM_EDITION` in `native-realm-catalog.ts`, 2026 — the newest ratified edition, the year before
+`CURRENT_DRAFT_EDITION` in `scripts/generate-editions.ts` and `T262_CURRENT_DRAFT_EDITION_YEAR` in
+`website/components/t262-charts.js`, all three pinned together by the test). **Scope** (lead, RV7315 delta):
+every global the test262 runner's classifier (`classifyTestScope`) scores as a language global — §19.1–19.4 with
+`Temporal` (ES2026, #5173), Annex B.2.1 `escape` / `unescape`, and the draft's explicit-resource-management
+globals (`SuppressedError`, `DisposableStack`, `AsyncDisposableStack`), which the runner counts as standard. Each
+row carries an **edition**: the realm's edition, or the draft after it for a draft-only global — a property of
+the row, not a filter. One exception, recorded in the test: `ShadowRealm` (stage 2.7, in no edition or draft) is
+scored as standard by the runner but is not a row, so the Prepared path refuses it by name. Each entry carries
+its attributes and its value: a number (`NaN`, `Infinity`), `undefined`, the global object (`globalThis`), a
+function (intrinsic id, `length`, construct behaviour: `none`, `ordinary`, or `throws` for exactly `BigInt`,
+`Iterator` and `Symbol`, whose IsConstructor is true but whose `new X()` throws), or a namespace (intrinsic
+id). `nativeRealmGlobalTypeof(name)` answers a tag or `"not-a-language-global"` (host-only: `console`,
+`document` — no `typeof` answer, the caller refuses).
+
+**The duplicate it removes.** `AMBIENT_TYPEOF_TAGS` (`src/ir/ambient-typeof.ts`) is a second typeof list on
+main. It sits in lane S1's region; S1 removes its tags in Ty (#7305) and keeps only the ordinary lane's
+16-name admission set, whose tags come from this table, so gc output stays byte-identical (S1's ack,
+2026-11-19).
 
 **Why a sibling and not catalog rows.** The realm's literal plan (`native-realm-literals.ts`,
 `native-builtin-function-requests.ts`) interns every catalog row's name and property keys into every realm
@@ -229,9 +244,14 @@ realm program. The global table references catalog rows by id and adds none.
 **Identity only.** An intrinsic the catalog has a row for (`%Object%`, `%Function%`) has its complete
 property population there (`nativeRealmGlobalSurface` answers `"complete"`). Every other intrinsic the table
 names is identity only (`"identity"`): its identity, typeof tag, `length` and constructibility are known, its
-members are not. B2b's rule for an identity intrinsic: a member read refuses by name at compile time (static
-key) or throws a named error at run time (dynamic key), never `undefined`; a call or `new` of an
-`implementation: "unavailable"` algorithm throws a named TypeError.
+members are not. B2b's rule for an identity intrinsic (lead, 2026-11-19): an unsupported member or algorithm is never a
+catchable JavaScript error, which would let `assert.throws(TypeError, …)` pass for the wrong reason — a
+statically visible callee or key refuses by name at compile time, a dynamic one aborts with an uncatchable
+trap; never `undefined`. Its `name`, `length`, `prototype` and constructibility are part of the identity. Checked
+2026-11-19: no realm row breaks the rule today — the kernel materializes only `%Function.prototype%` and
+`%ThrowTypeError%` (both spec behaviour) and its request validator refuses every `unavailable` algorithm, so
+the abort tests (inside `try` / `catch` and inside `assert.throws`-style code) land with B2b, which
+materializes the first identity row.
 
 **Reuse.** Nothing is implemented here. When a row's surface is filled (B2c…), it binds the existing native
 body: `object-constructor-body.ts` (Object), `primitive-wrapper-bodies.ts` (String, Number, Boolean),
@@ -239,11 +259,22 @@ body: `object-constructor-body.ts` (Object), `primitive-wrapper-bodies.ts` (Stri
 `json-standalone.ts` (JSON) and `codegen/math-helpers.ts` (Math), moving codegen-side pure bodies to
 `runtime/wasmgc/values/` when they are bound.
 
-**Acceptance.** A unit test against node 22: every entry's attributes, typeof tag, `length`, `name` and
-constructibility equal node's `globalThis` descriptor (`Float16Array`, ES2025, is absent in node 22 and checked
-by its spec values); every intrinsic id the table names is unique, and the catalog rows it names exist.
-Output byte-identical (nothing reads the table yet). Quality: one table; the typeof answer is derived from it;
-no second list in Ty.
+**Acceptance.** A unit test, run on node 22 and on CI's node 25: every row the running node has equals node's
+`globalThis` descriptor (attributes, typeof tag, `length`, `name`, IsConstructor, and `new` throwing for the
+`throws` rows); the rows an engine may predate (`Float16Array`, `Temporal`, the three draft globals) are compared
+with their spec values written in the test, and node may lack no other row; every `built-ins/` directory the
+runner's classifier scores as standard names a row (directories of non-global intrinsics are listed, and
+`ShadowRealm` is the one named exception); the `throws` rows are exactly `BigInt`, `Iterator`, `Symbol`; a fresh V8 context (only the engine's own globals) has no ECMAScript global the table
+misses; `length` / construct of the catalog's complete rows equal the catalog's. Output byte-identical
+(nothing under `src/` reads the table yet; `check:dead-exports` only scans `src/codegen/`, so it says nothing
+about this file). Quality: one table; the typeof answer is derived from it.
+
+**Named follow-up (needs an issue id; allocation was refused in this session):** fold the other global-name
+lists into this table once their lanes allow — `GLOBAL_VALUE_NAMES` / `NAMESPACE_GLOBALS`
+(`src/checker/inhouse-globals.ts`, the second mixing in `console`, `process` and `Intl`), `BUILTIN_CLASS_NAMES`
+(`src/codegen/expressions/builtin-class-names.ts`), `ES5_INTRINSIC_OBJECTS` (`src/ir/object-integrity.ts`) —
+and the literal-interning `flatMap` duplicated in `native-realm-literals.ts` and
+`native-builtin-function-requests.ts`.
 
 ## G1 result (2026-11-16, branch `claude/7350-g1`)
 

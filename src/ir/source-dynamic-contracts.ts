@@ -48,9 +48,7 @@ import { ownedByDescriptorLiteral } from "./ordinary-object-closure-signatures.j
 import { bindingIsUniqueAndNeverWritten } from "../shared/binding-writes.js";
 import { isTopLevelStatementDeclaration } from "../shared/var-declaration-lists.js";
 import { sourceMayWriteBindingUnseen, sourceMayWriteGlobalObject } from "../shared/intrinsic-prototype-writes.js";
-import { isUnshadowedLibBinding } from "../shared/ambient-intrinsics.js";
-import { nativeRealmGlobalTypeof } from "../runtime/contracts/native-realm-globals.js";
-import { makeIrAmbientBindingPredicate } from "./module-bindings.js";
+import { makeUnresolvedGlobalTypeof, type UnresolvedGlobalTypeof } from "./ambient-typeof.js";
 
 type Carries = SourceDynamicProvenance["carries"];
 type Signature = { readonly params: readonly IrType[]; readonly returnType: IrType | null };
@@ -59,8 +57,6 @@ type SourceGlobal = { readonly binding: { readonly type: IrType } };
 type SourcePolicy = Pick<RuntimeManifestPolicy, "backend" | "target">;
 type DynamicLane = "host-async" | "native" | undefined;
 const DYNAMIC: IrType = Object.freeze({ kind: "dynamic" });
-/** (#7354 Ty) The `typeof` answer for a global the program does not declare, or a named refusal. */
-export type UnresolvedGlobalTypeof = NonNullable<ReturnType<typeof nativeRealmGlobalTypeof>> | "refuse";
 const IR_BOOLEAN_RESULT: IrType = Object.freeze({ kind: "val", val: Object.freeze({ kind: "i32", boolean: true }) });
 
 /** Canonical any identity excludes TypeScript's separate error-any recovery type. */
@@ -308,11 +304,6 @@ export function programDynamicContracts(
       ts.isFunctionDeclaration(parameter.parent) &&
       sourceDynamicParameter(checker, policy, parameter.parent, parameter)?.kind === "dynamic",
   );
-  // A name the program does not declare: lib-only, unresolved, or (`"no-user"`) a symbol the checker synthesizes
-  // without a declaration (`globalThis`).
-  const libOrUnresolved = makeIrAmbientBindingPredicate(checker, "every-or-unresolved");
-  const synthesized = makeIrAmbientBindingPredicate(checker, "no-user");
-  const isLibBinding = (node: ts.Identifier) => libOrUnresolved(node) || synthesized(node);
   return {
     ...provenance,
     parameter: (declaration, parameter) => sourceDynamicParameter(checker, policy, declaration, parameter),
@@ -322,7 +313,7 @@ export function programDynamicContracts(
           dynamicCarrierIsExternref: () => true,
           dynamicClosureSignature: (expression) => sourceDynamicClosureSignature(policy, expression),
           staticFunctionValue: (declaration) => staticFunctionValue(policy, sourceFiles, declaration),
-          unresolvedGlobalTypeof: (node) => unresolvedGlobalTypeof(checker, isLibBinding, node),
+          unresolvedGlobalTypeof: makeUnresolvedGlobalTypeof(checker),
         }
       : {},
     result: (declaration) =>
@@ -351,24 +342,6 @@ export function programDynamicContracts(
         provenance.carries,
       ),
   };
-}
-
-/**
- * (#7354 Ty) `typeof X` of a global the program does not declare, answered like ECMAScript: the tag the realm
- * catalog gives an ES global (`nativeRealmGlobalTypeof`, the one table, owned by #7350), "undefined" for a name
- * nothing declares, and "refuse" for a lib-only name the catalog lacks (a host global such as `document`, which this
- * environment may or may not provide). `undefined`: the program declares the name. A script's top-level
- * `function Error() {}` is reported by the checker as the lib declarations alone, hence `isUnshadowedLibBinding`.
- */
-function unresolvedGlobalTypeof(
-  checker: ts.TypeChecker,
-  isLibBinding: (node: ts.Identifier) => boolean,
-  node: ts.Identifier,
-): UnresolvedGlobalTypeof | undefined {
-  if (!isUnshadowedLibBinding(node, isLibBinding)) return undefined;
-  const tag = nativeRealmGlobalTypeof(node.text);
-  if (tag !== undefined) return tag;
-  return checker.getSymbolAtLocation(node)?.declarations?.length ? "refuse" : "undefined";
 }
 
 /**
