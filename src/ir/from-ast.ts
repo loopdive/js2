@@ -5367,7 +5367,11 @@ function lowerExprUnchecked(expr: ts.Expression, cx: LowerCtx, hint: IrType): Ir
   // engine. (#7364) The selector refuses a literal neither builds; a producer without one meets that rule here.
   if (expr.kind === ts.SyntaxKind.RegularExpressionLiteral) {
     if (!regExpLiteralBuilt(expr, cx.resolver))
-      demoteToLegacy("regexp-constructor-unsupported", `ir/from-ast: RegExp literal has no provider (${cx.funcName})`);
+      refuseUnselected(
+        cx.unselected,
+        "regexp-constructor-unsupported",
+        `ir/from-ast: RegExp literal has no provider (${cx.funcName})`,
+      );
     return lowerRegExpLiteral(expr, cx);
   }
   // (#7106) `delete <expr>`: the selector refuses every form
