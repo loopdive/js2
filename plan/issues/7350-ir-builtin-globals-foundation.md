@@ -293,14 +293,18 @@ resolver (`ir/program-source.ts`) answers none of the lib-binding questions the 
 | step | content | depends on | proving program |
 | --- | --- | --- | --- |
 | B1a | One per-identifier lib-binding predicate: `integration.ts`'s private `makeAmbientStringBindingPredicate` folds into `makeIrAmbientBindingPredicate` (`ir/module-bindings.ts`) as the quantifier `every-or-unresolved`. Pure refactor. | G1 | none; output byte-identical |
-| B1b | The Prepared resolver answers `isAmbientStringBinding` from the same predicate, so `String(x)` takes the existing `tryLowerAmbientStringToStringCall` arm. | B1a, S2 `claude/7354-perf2` (`dyn.to_string`, number formatter) | `function f(v){ return String(v); } if (f(1) !== "1") throw 1;` |
+| B1b | Dropped 2026-11-19: S2's slice Str2 (`claude/7354-perf2`, `prepareConversionResolvers`) already plans `String(x)` on the Prepared path; on that branch `function f(v){ return String(v); } if (f(1) !== "1") throw 1;` runs (and throws with a wrong answer) with no change here. A second resolver answer would be a second mechanism. | — | — |
 | B2 | `dyn.global_object` on the Prepared path (the realm's global object as a dynamic value); the resolver answers `isLibOnlyBinding`, so G1's admission (`builtinGlobalValueAdmitted`) and its lowering (`dyn.member_get(dyn.global_object, name)`) serve both pipelines. | B1a, S3 `claude/7354-realm`, S3 O4 (`dyn.member_get` kind chain) | `var E = TypeError; if (E !== TypeError) throw 1;`, `if (typeof JSON !== "object") throw 1;` |
 | B3 | `globalThis` and `console` (absent on standalone) as values: `typeof console`, `globalThis.X`. | B2 | measured after B2 |
 
-Measured during B1b's probe (experiment, not committed): with `isAmbientStringBinding` answered,
-`String("ab")` and `String(true)` already run on main; `String(1)` stops with an invariant crash in the
-number formatter (`__ir_number_to_string` undeclared), as `` `${1}` `` does on main today. That is why B1b
-waits for S2's formatter instead of landing on main with a crash path.
+Measured during B1b's probe (experiment, not committed): on main, answering `isAmbientStringBinding` lets
+`String("ab")` and `String(true)` run, but `String(1)` stops with an invariant crash in the number formatter
+(`__ir_number_to_string` undeclared), as `` `${1}` `` does on main today. On `claude/7354-perf2` the call is
+planned by Str2 and every probe (number, fraction, `-0`, `1e21`, string, boolean, `undefined`, `null`, typed and
+dynamic operands) answers as node. Merge note for whichever of G1 and perf2 lands second: perf2 moves the
+identifier read into `ir/identifier-read.ts`, which still calls `isAmbientIntrinsicValueUse`; G1 removes that
+function, so the classification must ask `builtinGlobalValueAdmitted(expr, resolver ?? {})` (checked: the merged
+tree typechecks and the 7350, 7354 Str2, Ty, X and R suites pass).
 
 **B1a target structure.** Module: `ir/module-bindings.ts`, which already owns the checker-only
 ambient-binding predicate and is imported by both pipelines (`ir/integration.ts`, `ir/program-source.ts`).
