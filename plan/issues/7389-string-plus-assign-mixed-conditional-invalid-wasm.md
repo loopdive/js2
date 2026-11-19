@@ -81,3 +81,10 @@ measured on gc, standalone and wasi, and is the same with or without #7333:
 - **An element target on a `string[]`** gives the wrong value:
   `const o: string[] = ['x']; var c: any = 0; o[0] += c ? 'a' : 1;`
   leaves `o[0] !== 'x1'` (node: `"x1"`).
+- **An `any`/`unknown` RHS holding a non-string** traps with `illegal cast`
+  (from the missing-helper audit):
+  `function g(): unknown { return 42; } … let s = "a"; s += g() as any;`
+  (node: `s.length === 3`). The cause is
+  `src/codegen/expressions/operator-assignment.ts:1520`: the externref arm
+  looks up `__extern_toString` but never ensures it, then does a bare
+  `ref.cast`. This is the same site as #7300 item 2.
