@@ -1,35 +1,28 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 /**
- * (#7350 B2c-2) Native JSON primitive bodies for standalone / WASI targets
+ * (#7350 B2c-2) The native `QuoteJSONString` body for standalone / WASI targets
  * (#1599 Phase 2), shared by the codegen registration
  * (`src/codegen/json-runtime.ts`) and, later, the realm's `JSON` object. Pure:
- * each builder reads only its bindings.
+ * the builder reads only its bindings.
  *
- * - `__json_quote_string(s: externref) -> ref $NativeString` — ECMA-262
- *   §25.5.4.3 `QuoteJSONString` over the flattened UTF-16 code units of a
- *   runtime string:
- *   - wrap in `"`…`"`
- *   - escape `"`  → `\"`
- *   - escape `\`  → `\\`
- *   - escape `\b` (U+0008), `\t` (U+0009), `\n` (U+000A), `\f` (U+000C),
- *     `\r` (U+000D) with their short forms
- *   - escape every other control char U+0000–U+001F as `\u00XX`
- *   - escape a **lone** UTF-16 surrogate (unpaired U+D800–U+DFFF) as `\uXXXX`
- *     (well-formed JSON.stringify, ES2019 §25.5.4.3); copy the two code units
- *     of a valid high+low pair through verbatim
- *   - copy all other code units verbatim
- * - `__json_parse_primitive(s: externref) -> ref $AnyValue` — §25.5.2
- *   `JSON.parse` of a runtime string holding one JSON primitive (ECMA-404):
- *   - `"null"`             → tag 0 (null)
- *   - `"true"` / `"false"` → tag 4 (boolean), i32val 1 / 0
- *   - JSON number          → tag 3 (f64), f64val = parsed value
- *   - anything else        → `unreachable` (Wasm trap; matches a SyntaxError
- *                             throw under the standalone no-host contract)
+ * `__json_quote_string(s: externref) -> ref $NativeString` — ECMA-262
+ * §25.5.4.3 `QuoteJSONString` over the flattened UTF-16 code units of a
+ * runtime string:
+ * - wrap in `"`…`"`
+ * - escape `"`  → `\"`
+ * - escape `\`  → `\\`
+ * - escape `\b` (U+0008), `\t` (U+0009), `\n` (U+000A), `\f` (U+000C),
+ *   `\r` (U+000D) with their short forms
+ * - escape every other control char U+0000–U+001F as `\u00XX`
+ * - escape a **lone** UTF-16 surrogate (unpaired U+D800–U+DFFF) as `\uXXXX`
+ *   (well-formed JSON.stringify, ES2019 §25.5.4.3); copy the two code units
+ *   of a valid high+low pair through verbatim
+ * - copy all other code units verbatim
  */
 import type { Instr, ValType } from "../../../wasm/model/instructions.js";
 import { counterLoopInstrs } from "./emit-idioms.js";
 
-/** Module resources both bodies read. */
+/** Module resources the body reads. */
 export interface JsonBodyBindings {
   /** `$AnyString`, which the argument is cast to before flattening. */
   readonly anyStrTypeIdx: number;
@@ -41,11 +34,7 @@ export interface JsonBodyBindings {
   readonly flattenHandle: number;
 }
 
-export interface JsonParsePrimitiveBindings extends JsonBodyBindings {
-  readonly anyValueTypeIdx: number;
-}
-
-/** Locals in the run-length form the encoder groups; these bodies carry no local names. */
+/** Locals in the run-length form the encoder groups; the body carries no local names. */
 export interface JsonBodyDefinition {
   readonly locals: { count: number; type: ValType }[];
   readonly body: Instr[];
@@ -76,14 +65,14 @@ const SURR_LOW_HI = 0xdfff;
 
 const I32: ValType = { kind: "i32" };
 
-// Local index layout. Both bodies (param 0 = s:externref) open with the same
-// five locals:  1 flat  2 data  3 end  4 i  5 c
+// Local index layout (param 0 = s:externref):
+//  1 flat  2 data  3 end  4 i  5 c
 const L_FLAT = 1;
 const L_DATA = 2;
 const L_END = 3;
 const L_I = 4;
 const L_C = 5;
-// __json_quote_string, shared by the sizing and fill passes:
+// shared by the sizing and fill passes:
 //  6 outLen  7 out  8 w  9 off  10 nib  11 nb
 const L_OUTLEN = 6;
 const L_OUT = 7;
@@ -108,11 +97,10 @@ function cEq(code: number): Instr[] {
 }
 
 /**
- * flat = flatten(s); data = flat.data; `offLocal` = flat.off; end = off + len
- * (exclusive). The quote body keeps the offset in its own local, the parser
- * starts its cursor there.
+ * flat = flatten(s); data = flat.data; off = flat.off; end = off + len
+ * (exclusive). Both passes restart their cursor at `off`.
  */
-function flatStringPreamble(b: JsonBodyBindings, offLocal: number): Instr[] {
+function flatStringPreamble(b: JsonBodyBindings): Instr[] {
   const strTypeIdx = b.nativeStrTypeIdx;
   return [
     { op: "local.get", index: 0 },
@@ -126,10 +114,10 @@ function flatStringPreamble(b: JsonBodyBindings, offLocal: number): Instr[] {
     { op: "local.set", index: L_DATA },
     { op: "local.get", index: L_FLAT },
     { op: "struct.get", typeIdx: strTypeIdx, fieldIdx: 1 }, // off
-    { op: "local.set", index: offLocal },
+    { op: "local.set", index: L_OFF },
     { op: "local.get", index: L_FLAT },
     { op: "struct.get", typeIdx: strTypeIdx, fieldIdx: 0 }, // len
-    { op: "local.get", index: offLocal },
+    { op: "local.get", index: L_OFF },
     { op: "i32.add" },
     { op: "local.set", index: L_END }, // end = off + len (exclusive)
   ];
@@ -475,348 +463,6 @@ export function buildJsonQuoteStringDefinition(b: JsonBodyBindings): JsonBodyDef
       { count: 1, type: I32 }, // L_NIB
       { count: 1, type: I32 }, // L_NB
     ],
-    body: [...flatStringPreamble(b, L_OFF), ...sizingLoop, ...allocOut, ...fillLoop, ...finalize],
-  };
-}
-
-// __json_parse_primitive, after the shared five:
-//  6 sign:f64  7 mant:f64  8 frac:f64 (the parsed number)  9 expSign:i32
-// 10 exp:i32 (net base-10 exponent)  11 expMag:i32
-const P_SIGN = 6;
-const P_MANT = 7;
-const P_FRAC = 8;
-const P_EXPSIGN = 9;
-const P_EXP = 10;
-const P_EXPMAG = 11;
-
-const F64: ValType = { kind: "f64" };
-
-// eq abstract heap type, signed-LEB128 → 0x6d. Used for the AnyValue $refval
-// null payload (matches ensureAnyHelpers in any-helpers.ts).
-const EQ_HEAP_TYPE = -19;
-
-// i = i + 1
-const advance = (): Instr[] => [
-  { op: "local.get", index: L_I },
-  { op: "i32.const", value: 1 },
-  { op: "i32.add" },
-  { op: "local.set", index: L_I },
-];
-
-// i < end  (leaves i32 bool)
-const inBounds = (): Instr[] => [
-  { op: "local.get", index: L_I },
-  { op: "local.get", index: L_END },
-  { op: "i32.lt_s" },
-];
-
-// c = data[i]; leave the enclosing digit loop unless '0' <= c <= '9'
-function digitOrExit(d: number): Instr[] {
-  return [
-    ...readCodeUnit(d),
-    { op: "local.get", index: L_C },
-    { op: "i32.const", value: 48 },
-    { op: "i32.lt_s" },
-    { op: "br_if", depth: 1 },
-    { op: "local.get", index: L_C },
-    { op: "i32.const", value: 57 },
-    { op: "i32.gt_s" },
-    { op: "br_if", depth: 1 },
-  ];
-}
-
-// while i<end && '0'<=c<='9' { body; i++ }
-function digitLoop(d: number, body: Instr[]): Instr[] {
-  return counterLoopInstrs({ i: L_I, bound: [{ op: "local.get", index: L_END }], body: [...digitOrExit(d), ...body] });
-}
-
-// mant = mant*10 + (c-'0')
-const accumulateMantissa = (): Instr[] => [
-  { op: "local.get", index: P_MANT },
-  { op: "f64.const", value: 10 },
-  { op: "f64.mul" },
-  { op: "local.get", index: L_C },
-  { op: "i32.const", value: 48 },
-  { op: "i32.sub" },
-  { op: "f64.convert_i32_s" },
-  { op: "f64.add" },
-  { op: "local.set", index: P_MANT },
-];
-
-// A boxed `$AnyValue` (pushes a ref $AnyValue) with null ref / extern payloads.
-function boxAnyValue(
-  anyTypeIdx: number,
-  tag: number,
-  i32val: number,
-  f64val: Instr = { op: "f64.const", value: 0 },
-): Instr[] {
-  return [
-    { op: "i32.const", value: tag },
-    { op: "i32.const", value: i32val },
-    f64val,
-    { op: "ref.null", typeIdx: EQ_HEAP_TYPE },
-    { op: "ref.null.extern" },
-    { op: "struct.new", typeIdx: anyTypeIdx },
-  ];
-}
-
-// skip whitespace: while i<end && (c==' '|'\t'|'\n'|'\r') i++; then c = the
-// first non-ws char. If i>=end the input is empty → trap.
-function skipJsonWhitespace(d: number): Instr[] {
-  return [
-    ...counterLoopInstrs({
-      i: L_I,
-      bound: [{ op: "local.get", index: L_END }],
-      body: [
-        ...readCodeUnit(d),
-        // ws = c==32 | c==9 | c==10 | c==13
-        ...cEq(32),
-        ...cEq(9),
-        { op: "i32.or" },
-        ...cEq(10),
-        { op: "i32.or" },
-        ...cEq(13),
-        { op: "i32.or" },
-        { op: "i32.eqz" },
-        { op: "br_if", depth: 1 }, // non-ws → stop
-      ],
-    }),
-    { op: "local.get", index: L_I },
-    { op: "local.get", index: L_END },
-    { op: "i32.ge_s" },
-    { op: "if", blockType: { kind: "empty" }, then: [{ op: "unreachable" }] },
-    ...readCodeUnit(d),
-  ];
-}
-
-// sign? int frac?  Reads from cursor i (positioned at the first digit or '-').
-// Accumulates the mantissa as f64 (sufficient precision for the primitive
-// slice); each fraction digit lowers the exponent by one.
-function jsonNumberMantissa(d: number): Instr[] {
-  return [
-    { op: "f64.const", value: 1 },
-    { op: "local.set", index: P_SIGN },
-    { op: "f64.const", value: 0 },
-    { op: "local.set", index: P_MANT },
-    { op: "i32.const", value: 0 },
-    { op: "local.set", index: P_EXP },
-    // optional '-'
-    ...cEq(45),
-    {
-      op: "if",
-      blockType: { kind: "empty" },
-      then: [{ op: "f64.const", value: -1 }, { op: "local.set", index: P_SIGN }, ...advance()],
-    },
-    ...digitLoop(d, accumulateMantissa()),
-    // fraction: if c=='.' { i++; while digit { mant=mant*10+d; exp--; i++ } }
-    ...inBounds(),
-    {
-      op: "if",
-      blockType: { kind: "empty" },
-      then: [
-        ...readCodeUnit(d),
-        ...cEq(46), // '.'
-        {
-          op: "if",
-          blockType: { kind: "empty" },
-          then: [
-            ...advance(),
-            ...digitLoop(d, [
-              ...accumulateMantissa(),
-              { op: "local.get", index: P_EXP },
-              { op: "i32.const", value: 1 },
-              { op: "i32.sub" },
-              { op: "local.set", index: P_EXP },
-            ]),
-          ],
-        },
-      ],
-    },
-  ];
-}
-
-// exponent: if c=='e'|'E' { i++; optional sign; exp += expSign * digits }
-function jsonNumberExponent(d: number): Instr[] {
-  return [
-    ...inBounds(),
-    {
-      op: "if",
-      blockType: { kind: "empty" },
-      then: [
-        ...readCodeUnit(d),
-        ...cEq(101), // 'e'
-        ...cEq(69), // 'E'
-        { op: "i32.or" },
-        {
-          op: "if",
-          blockType: { kind: "empty" },
-          then: [
-            ...advance(), // consume 'e'/'E'
-            { op: "i32.const", value: 1 },
-            { op: "local.set", index: P_EXPSIGN },
-            // optional exponent sign
-            ...inBounds(),
-            {
-              op: "if",
-              blockType: { kind: "empty" },
-              then: [
-                ...readCodeUnit(d),
-                ...cEq(45), // '-'
-                {
-                  op: "if",
-                  blockType: { kind: "empty" },
-                  then: [{ op: "i32.const", value: -1 }, { op: "local.set", index: P_EXPSIGN }, ...advance()],
-                  else: [
-                    ...cEq(43), // '+'
-                    { op: "if", blockType: { kind: "empty" }, then: advance() },
-                  ],
-                },
-              ],
-            },
-            // explicit exponent digits: expMag = Σ digits; exp += expSign*expMag
-            { op: "i32.const", value: 0 },
-            { op: "local.set", index: P_EXPMAG },
-            ...digitLoop(d, [
-              { op: "local.get", index: P_EXPMAG },
-              { op: "i32.const", value: 10 },
-              { op: "i32.mul" },
-              { op: "local.get", index: L_C },
-              { op: "i32.const", value: 48 },
-              { op: "i32.sub" },
-              { op: "i32.add" },
-              { op: "local.set", index: P_EXPMAG },
-            ]),
-            { op: "local.get", index: P_EXP },
-            { op: "local.get", index: P_EXPSIGN },
-            { op: "local.get", index: P_EXPMAG },
-            { op: "i32.mul" },
-            { op: "i32.add" },
-            { op: "local.set", index: P_EXP },
-          ],
-        },
-      ],
-    },
-  ];
-}
-
-// while exp != 0 { pow = pow (op) 10; exp += step }
-function scaleByTenLoop(op: "f64.mul" | "f64.div", step: "i32.sub" | "i32.add"): Instr {
-  return {
-    op: "block",
-    blockType: { kind: "empty" },
-    body: [
-      {
-        op: "loop",
-        blockType: { kind: "empty" },
-        body: [
-          { op: "local.get", index: P_EXP },
-          { op: "i32.eqz" },
-          { op: "br_if", depth: 1 },
-          { op: "local.get", index: P_FRAC },
-          { op: "f64.const", value: 10 },
-          { op },
-          { op: "local.set", index: P_FRAC },
-          { op: "local.get", index: P_EXP },
-          { op: "i32.const", value: 1 },
-          { op: step },
-          { op: "local.set", index: P_EXP },
-          { op: "br", depth: 0 },
-        ],
-      },
-    ],
-  };
-}
-
-// frac = sign * mant * 10^exp, with 10^exp by repeated multiply / divide
-// (exp is small for the primitive slice; the loop runs |exp| times).
-const jsonNumberScale = (): Instr[] => [
-  { op: "f64.const", value: 1 },
-  { op: "local.set", index: P_FRAC }, // pow = 1
-  { op: "local.get", index: P_EXP },
-  { op: "i32.const", value: 0 },
-  { op: "i32.ge_s" },
-  {
-    op: "if",
-    blockType: { kind: "empty" },
-    then: [scaleByTenLoop("f64.mul", "i32.sub")],
-    else: [scaleByTenLoop("f64.div", "i32.add")],
-  },
-  { op: "local.get", index: P_SIGN },
-  { op: "local.get", index: P_MANT },
-  { op: "f64.mul" },
-  { op: "local.get", index: P_FRAC },
-  { op: "f64.mul" },
-  { op: "local.set", index: P_FRAC },
-];
-
-/**
- * `__json_parse_primitive`: flatten, skip leading whitespace, then switch on the
- * first character — `n` / `t` / `f` box the literal, `-` or a digit parses a
- * number into `frac`, anything else traps.
- */
-export function buildJsonParsePrimitiveDefinition(b: JsonParsePrimitiveBindings): JsonBodyDefinition {
-  const d = b.nativeStrDataTypeIdx;
-  const anyTypeIdx = b.anyValueTypeIdx;
-  const anyRef: ValType = { kind: "ref", typeIdx: anyTypeIdx };
-  const parseNumber: Instr[] = [...jsonNumberMantissa(d), ...jsonNumberExponent(d), ...jsonNumberScale()];
-  const isNumberStart: Instr[] = [
-    ...cEq(45),
-    { op: "local.get", index: L_C },
-    { op: "i32.const", value: 48 },
-    { op: "i32.ge_s" },
-    { op: "local.get", index: L_C },
-    { op: "i32.const", value: 57 },
-    { op: "i32.le_s" },
-    { op: "i32.and" },
-    { op: "i32.or" },
-  ];
-  const dispatch: Instr[] = [
-    ...cEq(110), // 'n' → null
-    {
-      op: "if",
-      blockType: { kind: "val", type: anyRef },
-      then: boxAnyValue(anyTypeIdx, 0, 0),
-      else: [
-        ...cEq(116), // 't' → true
-        {
-          op: "if",
-          blockType: { kind: "val", type: anyRef },
-          then: boxAnyValue(anyTypeIdx, 4, 1),
-          else: [
-            ...cEq(102), // 'f' → false
-            {
-              op: "if",
-              blockType: { kind: "val", type: anyRef },
-              then: boxAnyValue(anyTypeIdx, 4, 0),
-              else: [
-                ...isNumberStart,
-                {
-                  op: "if",
-                  blockType: { kind: "val", type: anyRef },
-                  then: [...parseNumber, ...boxAnyValue(anyTypeIdx, 3, 0, { op: "local.get", index: P_FRAC })],
-                  else: [{ op: "unreachable" }],
-                },
-              ],
-            },
-          ],
-        },
-      ],
-    },
-  ];
-  return {
-    locals: [
-      { count: 1, type: { kind: "ref", typeIdx: b.nativeStrTypeIdx } }, // L_FLAT
-      { count: 1, type: { kind: "ref", typeIdx: d } }, // L_DATA
-      { count: 1, type: I32 }, // L_END
-      { count: 1, type: I32 }, // L_I
-      { count: 1, type: I32 }, // L_C
-      { count: 1, type: F64 }, // P_SIGN
-      { count: 1, type: F64 }, // P_MANT
-      { count: 1, type: F64 }, // P_FRAC
-      { count: 1, type: I32 }, // P_EXPSIGN
-      { count: 1, type: I32 }, // P_EXP
-      { count: 1, type: I32 }, // P_EXPMAG
-    ],
-    body: [...flatStringPreamble(b, L_I), ...skipJsonWhitespace(d), ...dispatch],
+    body: [...flatStringPreamble(b), ...sizingLoop, ...allocOut, ...fillLoop, ...finalize],
   };
 }

@@ -72,10 +72,20 @@ describe("#1599 Phase 2 — runtime JSON.stringify(string) standalone", () => {
   });
 });
 
-// (#1599 Phase 2) Runtime JSON.parse(s) primitive slice — number / true / false
-// / null — in --target standalone, lowered to the pure-Wasm
-// `__json_parse_primitive` helper (no env::JSON_parse host import).
+// (#1599 Phase 2) Runtime JSON.parse(s) of a primitive — number / true / false
+// / null — in --target standalone, lowered to the pure-Wasm `__json_parse_text`
+// codec (no env::JSON_parse host import). The primitive-only
+// `__json_parse_primitive` helper it superseded was deleted by #7350 B2c-2.
 describe("#1599 Phase 2 — runtime JSON.parse(primitive) standalone", () => {
+  it("routes through __json_parse_text and never emits __json_parse_primitive", async () => {
+    const result = await compile("export function test(s: string): number { return JSON.parse(s); }", {
+      target: "standalone",
+    });
+    expect(result.success, result.errors.map((e) => e.message).join("\n")).toBe(true);
+    expect(result.wat).toContain("$__json_parse_text");
+    expect(result.wat).not.toContain("__json_parse_primitive");
+  });
+
   it("parses a runtime JSON number", async () => {
     const r = await runStandalone(`
       let s: string = "123";

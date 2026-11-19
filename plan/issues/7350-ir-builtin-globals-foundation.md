@@ -248,3 +248,12 @@ type, handle and `funcMap` registration. Sizes: `json-runtime.ts` 991 → 109 li
 `issue-1636-json-stringify`, `issue-2933`, `issue-6651-error-undefined-message`, `issue-4376`, `issue-4262`,
 `issue-5161`, `issue-2029-…-standalone`, `issue-3518-native-string-error-resources`, `issue-3105`): 160 pass /
 21 fail on both trees, the same rows.
+
+**RV7330 follow-up (2026-11-19).** `__json_parse_primitive` is deleted instead of moved (review S2): it was
+unreachable, so moving it kept a second decimal scanner alive for nothing. Removed: `buildJsonParsePrimitiveDefinition`
+and its helpers (`digitLoop`, `accumulateMantissa`, `scaleByTenLoop`, `boxAnyValue`, `skipJsonWhitespace`, …),
+`emitJsonParsePrimitive`, `tryEmitJsonParsePrimitive` and its `void` reference. With one body left,
+`registerJsonHelper` and `jsonBodyBindings` fold into `emitJsonQuoteString`, and `flatStringPreamble` loses its
+offset-local parameter. A `tests/issue-1599-runtime.test.ts` row pins that runtime `JSON.parse` emits
+`__json_parse_text` and never `__json_parse_primitive`. The three copies of the flatten preamble across the
+native runtime (review S1) are #7402, after #7323 and #7330 land.
