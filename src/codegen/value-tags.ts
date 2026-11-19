@@ -102,6 +102,15 @@ export function emitIsUndefF64(body: Instr[]): void {
 }
 
 /**
+ * (#7360) Can the f64 `expr` (of Wasm type `type`) hold `undefined`? A `number | undefined` slot carries it as the
+ * {@link UNDEF_F64_BITS} sentinel, so a nullish test (`??`, `??=`) must compare those bits instead of folding to
+ * "never nullish". A plain `number` f64 cannot, and a genuine `NaN` never matches the exact bits.
+ */
+export function f64MayHoldUndefined(ctx: CodegenContext, expr: ts.Expression, type: ValType): boolean {
+  return type.kind === "f64" && (type.undefSentinel === true || ctx.oracle.nullabilityOf(expr).undefinable);
+}
+
+/**
  * Box a value of Wasm ValType `from` (top of stack) into a `ref $AnyValue`,
  * the single boxing entry point. `jsType` is the static JS-type hint when
  * resolvable; `"unknown"` reproduces the historical Wasm-kind-keyed dispatch
