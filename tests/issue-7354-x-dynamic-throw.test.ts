@@ -7,7 +7,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as gc from "../src/codegen/index.js";
 import * as linear from "../src/codegen-linear/index.js";
-import { DynamicValueGap, legalizeDynamicValues } from "../src/ir/program/dynamic-value-legalization.js";
+import { legalizeDynamicValues } from "../src/ir/program/dynamic-value-legalization.js";
 import type { IrFunction, IrInstr } from "../src/ir/core/nodes.js";
 import { instantiatePreparedArtifact } from "../src/test262/test262-prepared-runtime.js";
 import {
@@ -208,21 +208,23 @@ describe("#7354 X — throw and catch with the Prepared dynamic value", () => {
 
   // Pre-existing on the base: an object throw passes the producer and fails in emission (an invariant, not a
   // named refusal). Pinned so that the slice which makes it compile meets the catch-binding rule above.
+  // (#7354 O1) An object literal is an ordinary object now; until the carrier admits objects, throwing one refuses.
+  const OBJECT_THROW = "throw of a value outside the dynamic carrier's kinds";
   it("does not compile an object throw", async () => {
-    await expect(compile("try { throw {}; } catch (e) { if (!e) throw 1; }", options())).rejects.toThrow(
-      "resolver cannot lower object<>",
-    );
+    const result = await compile("try { throw {}; } catch (e) { if (!e) throw 1; }", options());
+    expect(result.success).toBe(false);
+    expect(result.errors.map((error) => error.message).join("\n")).toContain(OBJECT_THROW);
   });
 
   // (#7354 Ty review) The same invariant for a populated literal thrown from a callee and tested with `typeof`: the
   // slice that admits object payloads must add the object kind to TYPEOF_KIND (it merges with the `null` row).
   it("does not compile an object-literal throw tested with typeof", async () => {
-    await expect(
-      compile(
-        'function f() { throw { a: 1 }; }\ntry { f(); } catch (e) { if (typeof e !== "object") throw 1; }',
-        options(),
-      ),
-    ).rejects.toThrow("resolver cannot lower object<a:f64>");
+    const result = await compile(
+      'function f() { throw { a: 1 }; }\ntry { f(); } catch (e) { if (typeof e !== "object") throw 1; }',
+      options(),
+    );
+    expect(result.success).toBe(false);
+    expect(result.errors.map((error) => error.message).join("\n")).toContain(OBJECT_THROW);
   });
 });
 
@@ -267,7 +269,8 @@ describe("#7354 X — the legalization arm", () => {
     expect(legalizeDynamicValues(fn([coerce, nested])).blocks[0]!.instrs[0]).toEqual(coerce);
   });
 
-  it("refuses the coercion of a dynamic value that is not thrown", () => {
-    expect(() => legalizeDynamicValues(fn([coerce]))).toThrow(DynamicValueGap);
+  // (#7354 O1) An ordinary object's property stores the carrier too, so an unthrown coercion keeps as well.
+  it("keeps the coercion of a dynamic value that is not thrown", () => {
+    expect(legalizeDynamicValues(fn([coerce])).blocks[0]!.instrs[0]).toEqual(coerce);
   });
 });
