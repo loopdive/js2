@@ -18,11 +18,15 @@ const EXTERNAL: IrType = Object.freeze({ kind: "val", val: Object.freeze({ kind:
 const FLAGS: IrType = Object.freeze({ kind: "val", val: Object.freeze({ kind: "f64" }) });
 const BOOLEAN: IrType = Object.freeze({ kind: "val", val: Object.freeze({ kind: "i32", boolean: true }) });
 
+type OrdinaryObjectCallableDeclaration = IrRuntimeCallableDeclaration & {
+  readonly feature: OrdinaryObjectRuntimeFeature;
+};
+
 function declaration(
   feature: OrdinaryObjectRuntimeFeature,
   params: readonly IrType[],
   results: readonly IrType[],
-): IrRuntimeCallableDeclaration {
+): OrdinaryObjectCallableDeclaration {
   return Object.freeze({
     feature,
     ref: irIntrinsicFuncRef(feature),
@@ -43,7 +47,7 @@ function declaration(
  * attributes-only operation preserves the existing property's kind and value.
  * These declarations do not grant physical provider or receiver authority.
  */
-const DECLARATIONS: Readonly<Record<OrdinaryObjectRuntimeFeature, IrRuntimeCallableDeclaration>> = Object.freeze({
+const DECLARATIONS: Readonly<Record<OrdinaryObjectRuntimeFeature, OrdinaryObjectCallableDeclaration>> = Object.freeze({
   "js.object.create-default": declaration("js.object.create-default", [], [EXTERNAL]),
   "js.object.create-null": declaration("js.object.create-null", [], [EXTERNAL]),
   "js.object.create-with-prototype": declaration("js.object.create-with-prototype", [EXTERNAL], [EXTERNAL]),
@@ -62,7 +66,7 @@ const DECLARATIONS: Readonly<Record<OrdinaryObjectRuntimeFeature, IrRuntimeCalla
 });
 
 /** Exact semantic binding only; neither display names nor runtime aliases qualify. */
-export function irOrdinaryObjectCallableDeclaration(ref: IrFuncRef): IrRuntimeCallableDeclaration | undefined {
+export function irOrdinaryObjectCallableDeclaration(ref: IrFuncRef): OrdinaryObjectCallableDeclaration | undefined {
   if (ref.binding.kind !== "intrinsic" || !Object.hasOwn(DECLARATIONS, ref.binding.symbol)) return undefined;
   return DECLARATIONS[ref.binding.symbol as OrdinaryObjectRuntimeFeature];
 }

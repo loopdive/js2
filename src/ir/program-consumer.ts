@@ -1370,7 +1370,7 @@ function materializePhysicalProgram(
     nativeFunctions.add(token.object);
   }
   reconcileNativeCallBindings(plan.nativeInvocation?.bindings ?? [], invocationFunctions, reconciliation);
-  reconcileNativeCallBindings(plan.nativeSourceObjects?.bindings ?? [], realmFunctions, reconciliation);
+  reconcileNativeCallBindings(plan.realmSourceCalls?.bindings ?? [], realmFunctions, reconciliation);
   const asyncReservations = new Map<IrUnitId, PreparedAsyncFrameReservations>();
   const supportFunctions = indexSupportFunctions([...nativeRows, ...formatterRows]);
   for (const token of [...invocationFunctions, ...realmFunctions]) supportFunctions.set(token.object, token);

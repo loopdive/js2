@@ -2698,6 +2698,35 @@ square of the reserved resources. Reproducer: `.tmp/prof.mts` pattern, i.e. comp
 through `src/test262/test262-prepared-entry.ts` (options `wholeProgram: prepared-program-required`, `wasmgc`,
 `standalone`, `allowJs`) and profile the second.
 
+### Realm source calls: one collection over family tables (2026-11-19, branch `claude/7354-c-calls`)
+
+The realm used to hold `objectUses`, the `js.object.*` rows of the object-access pack (#3518's static-provenance
+design: receiver creation, descriptor masks, gaps). Slice C needs a second family (`js.function.*`) bound the same
+way, and those calls have no receivers to prove, so the realm now walks its own collection.
+
+- **One walk, a table of families.** `native-source-calls.ts` pairs every call a `SourceCallFamily` declares with its
+  semantic original (population, order, target, site, region, the canonical declaration) and lets a family add what
+  else a projection must keep (`samePair`). The ordinary-object family (`ordinary-object-source-calls.ts`) is its
+  declaration lookup plus the descriptor check (mask and accessor halves), which moved there from the access pack. The
+  realm's `REALM_SOURCE_CALL_FAMILIES` (native-realm-requirements.ts) is `[ORDINARY_OBJECT_SOURCE_CALLS]`; its
+  `sourceCalls` (occurrence, semantic occurrence, owner, feature) replace `objectUses`, and the feature type is derived
+  from the table.
+- **One backend table.** `native-realm-source-calls.ts` holds a row per feature: the resource below the realm key and,
+  when the realm reserves nothing there yet, the adapter (signature, body). `define-data` and O4's
+  `create-type-error` are rows bound to existing resources; `create-default` and `get` are adapter rows. The plan's
+  binding (`planRealmSourceCallSetup`, field `realmSourceCalls`), the realm reservation, the consumer's reconcile and
+  the census join read it.
+- **The access pack keeps its own walk on the same helper** (`pairedSourceCalls(demands, [ORDINARY_OBJECT_SOURCE_CALLS])`)
+  for its #3518 consumers: the invocation planner's object-result proof, prototype requirements and the static get.
+- **Gaps: none deleted.** The realm never read the access pack's gaps: on the Prepared path they were already inert.
+  The programs of the O tests hit two, "default prototype requires its actual implicit-prototype companion" (every
+  `create-default`) and "receiver needs its actual ordinary creation/alias provenance" (every `get` of a script var or
+  parameter, and every `create-type-error`, which has no receiver). Both are pinned by #3518 tests of the static
+  design (getter invocation, the 7139 async scopes), which still exists in `src/`, so they stay. The realm's collection
+  simply no longer carries `creationOccurrence` / `descriptorMask`.
+- **Unchanged output.** 35 programs (the O1, O2, O4 and census programs, a Fb call, six refusals) through the strict
+  entry: binaries and refusal texts identical before and after.
+
 ## Slice C: Implementation Plan (2026-11-19)
 
 Branch `claude/7354-c`. Base for this plan: `claude/7354-o` at `3adb860fc8` (O's plan, on Perf2). `claude/7354-fa`

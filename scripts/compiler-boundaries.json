@@ -15292,6 +15292,16 @@
       "layer": "ir-program"
     },
     {
+      "path": "src/ir/program/native-source-calls.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
+      "path": "src/ir/program/ordinary-object-source-calls.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
       "path": "src/ir/program/native-getter-invocation-requirements.ts",
       "state": "clean",
       "layer": "ir-program"
@@ -16633,6 +16643,11 @@
     },
     {
       "path": "src/backend/wasmgc/resources/native-source-objects.ts",
+      "state": "clean",
+      "layer": "backend-wasmgc"
+    },
+    {
+      "path": "src/backend/wasmgc/resources/native-realm-source-calls.ts",
       "state": "clean",
       "layer": "backend-wasmgc"
     },

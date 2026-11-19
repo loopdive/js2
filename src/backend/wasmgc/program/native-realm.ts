@@ -129,9 +129,9 @@ import {
 } from "../resources/native-builtin-functions.js";
 
 import {
-  reserveNativeSourceObjectResources,
-  fillNativeSourceObjectResources,
-} from "../resources/native-source-objects.js";
+  reserveRealmSourceCallResources,
+  fillRealmSourceCallResources,
+} from "../resources/native-realm-source-calls.js";
 
 function fail(detail: string): never {
   throw Error("native realm composition: " + detail);
@@ -434,10 +434,10 @@ function reserveKernelResources(tx: PhysicalModuleReservations, pack: NativeReal
     descriptorDependencies,
   };
   const kernel = reserveNativeBuiltinFunctionResources(tx, kernelDependencies);
-  const sourceObjects = reserveNativeSourceObjectResources(
+  const sourceCalls = reserveRealmSourceCallResources(
     tx,
     key,
-    pack.requirements.description.objectUses.map((use) => use.feature),
+    pack.requirements.description.sourceCalls.map((call) => call.feature),
     { layouts, storage, descriptors, kernel },
   );
   return {
@@ -457,7 +457,7 @@ function reserveKernelResources(tx: PhysicalModuleReservations, pack: NativeReal
     descriptorDependencies,
     kernel,
     kernelDependencies,
-    sourceObjects,
+    sourceCalls,
   };
 }
 /** Consumer retains genuine source binding/lowering authority; no callback can attest its completion. */
@@ -508,7 +508,7 @@ export function nativeRealmReservationInventory(tx: PhysicalModuleReservations, 
     ...nativeObjectSameValueReservationInventory(tx, k.sameValue, k.sameValueDependencies).functions,
     ...nativeObjectDescriptorReservationInventory(tx, k.descriptors, k.descriptorDependencies).functions,
     ...kernel.functions,
-    ...k.sourceObjects.adapters.values(),
+    ...k.sourceCalls.adapters.values(),
   ];
   const types: TypeReservation[] = [
     ...substrate.types,
@@ -562,7 +562,7 @@ export function fillNativeRealmResources(tx: PhysicalModuleReservations, pack: N
     fillNativeObjectSameValueResources(tx, k.sameValue);
     fillNativeObjectDescriptorResources(tx, k.descriptors, k.kernel.exception);
     fillNativeBuiltinFunctionResources(tx, k.kernel);
-    fillNativeSourceObjectResources(tx, k.sourceObjects);
+    fillRealmSourceCallResources(tx, k.sourceCalls);
     owner.phase = "complete";
   } catch (error) {
     owner.phase = "failed";

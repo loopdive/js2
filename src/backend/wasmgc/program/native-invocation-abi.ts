@@ -23,7 +23,7 @@ import { irCallableBindingKey } from "../../../ir/core/callable-bindings.js";
 import type { IrFuncRef } from "../../../ir/core/value-references.js";
 import type { ProgramAbiPlanEntry } from "../../../ir/program/abi.js";
 import type { NativeRealmRequirements } from "../../../ir/program/native-realm-requirements.js";
-import { nativeSourceObjectResourceKey } from "../resources/native-source-objects.js";
+import { realmSourceCallResourceKey } from "../resources/native-realm-source-calls.js";
 
 export interface NativeInvocationAbiBinding {
   readonly resourceKey: string;
@@ -186,33 +186,33 @@ export function nativeCallAbiBindings(
 }
 
 /**
- * (#7354 O1) The physical plan's binding of a program's `js.object.*` calls: each call route binds the realm function
- * that serves its contract (`native-source-objects.ts`), through the same row builder as native invocation.
+ * (#7354) The physical plan's binding of a program's realm source calls: each call route binds the realm function
+ * that serves its feature (`native-realm-source-calls.ts`), through the same row builder as native invocation.
  */
-export interface NativeSourceObjectPhysicalSetup {
+export interface RealmSourceCallPhysicalSetup {
   readonly key: string;
   readonly bindings: readonly NativeInvocationAbiBinding[];
 }
 
-/** The rows for every object use the realm selected, or a gap per contract with no native source provider. */
-export function planNativeSourceObjectSetup(
+/** The rows for every source call the realm selected, or a gap per feature with no native source provider. */
+export function planRealmSourceCallSetup(
   realm: NativeRealmRequirements | undefined,
   declarationOrder: number,
 ): {
-  readonly setup: NativeSourceObjectPhysicalSetup | undefined;
+  readonly setup: RealmSourceCallPhysicalSetup | undefined;
   readonly gaps: readonly { readonly detail: string; readonly unitId: IrUnitId }[];
 } {
-  const uses = realm?.description.objectUses ?? [];
-  if (!realm || uses.length === 0) return { setup: undefined, gaps: [] };
+  const calls = realm?.description.sourceCalls ?? [];
+  if (!realm || calls.length === 0) return { setup: undefined, gaps: [] };
   const gaps: { detail: string; unitId: IrUnitId }[] = [];
-  const served = uses.flatMap((use) => {
-    const resourceKey = nativeSourceObjectResourceKey(realm.description.key, use.feature);
+  const served = calls.flatMap((call) => {
+    const resourceKey = realmSourceCallResourceKey(realm.description.key, call.feature);
     if (resourceKey === undefined) {
-      gaps.push({ detail: `${use.feature} has no native source provider`, unitId: use.ownerUnitId });
+      gaps.push({ detail: `${call.feature} has no native source provider`, unitId: call.ownerUnitId });
       return [];
     }
-    return [{ occurrence: use.occurrence, ownerUnitId: use.ownerUnitId, resourceKey }];
+    return [{ occurrence: call.occurrence, ownerUnitId: call.ownerUnitId, resourceKey }];
   });
-  const bindings = nativeCallAbiBindings(realm.access.demands, served, declarationOrder, "native source object ABI");
+  const bindings = nativeCallAbiBindings(realm.access.demands, served, declarationOrder, "realm source call ABI");
   return { setup: { key: realm.description.key, bindings }, gaps };
 }

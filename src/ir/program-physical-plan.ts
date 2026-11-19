@@ -17,9 +17,9 @@ import { forEachPreparedIrInstruction } from "./runtime/prepared-instructions.js
 import {
   planNativeInvocationInput,
   nativeInvocationSetup,
-  planNativeSourceObjectSetup,
+  planRealmSourceCallSetup,
   type NativeInvocationAbiBinding,
-  type NativeSourceObjectPhysicalSetup,
+  type RealmSourceCallPhysicalSetup,
   type NativeInvocationPhysicalSetup,
 } from "../backend/wasmgc/program/native-invocation-abi.js";
 import { nativeStringOutputAbiBindings } from "../backend/wasmgc/program/native-string-output-abi.js";
@@ -257,9 +257,9 @@ function sourceClosureDescription(
   return { key, signatures, shapes, units, allocations, refCells, refCellAllocations, gaps };
 }
 
-/** The plan's native call rows: invocation and (#7354 O1) source objects. */
+/** The plan's native call rows: invocation and (#7354) the realm's source calls. */
 export function plannedNativeCallBindings(plan: PhysicalSetupPlan): readonly NativeInvocationAbiBinding[] {
-  return [...(plan.nativeInvocation?.bindings ?? []), ...(plan.nativeSourceObjects?.bindings ?? [])];
+  return [...(plan.nativeInvocation?.bindings ?? []), ...(plan.realmSourceCalls?.bindings ?? [])];
 }
 
 /** Everything emission will reserve, in the order it will reserve it. Deep-frozen. */
@@ -271,8 +271,8 @@ export interface PhysicalSetupPlan {
   readonly numberRemainders: readonly PhysicalNumberRemainder[];
   readonly sourceClosures?: Omit<NativeSourceClosureRequirements, "demands">;
   readonly nativeInvocation?: NativeInvocationPhysicalSetup;
-  /** (#7354 O1) The realm functions serving the program's `js.object.*` calls. */
-  readonly nativeSourceObjects?: NativeSourceObjectPhysicalSetup;
+  /** (#7354) The realm functions serving the program's source calls (`js.object.*`, …). */
+  readonly realmSourceCalls?: RealmSourceCallPhysicalSetup;
   readonly nativeRealm?: NativeRealmDescription;
   readonly asyncFrames?: AsyncFrameSetup;
   /** Descriptive only: the issued reservation input stays in the consumer's private record. */
@@ -1283,15 +1283,15 @@ export function planPhysicalSetup(
     ...priorBindings.map((row) => row.entry.order.declarationOrder + 1),
   );
   const nativeInvocation = nativeInvocationSetup(invocation.requirements, invocationOrder);
-  const sourceObjects = planNativeSourceObjectSetup(
+  const sourceCalls = planRealmSourceCallSetup(
     native?.realmRequirements,
     invocationOrder + (nativeInvocation?.bindings.length ?? 0),
   );
-  for (const gap of sourceObjects.gaps) gaps.add(gap.detail, gap.unitId);
+  for (const gap of sourceCalls.gaps) gaps.add(gap.detail, gap.unitId);
   const nativeBindings = [
     ...priorBindings,
     ...(nativeInvocation?.bindings ?? []),
-    ...(sourceObjects.setup?.bindings ?? []),
+    ...(sourceCalls.setup?.bindings ?? []),
   ];
   if (nativeBindings.length) sealNativeBindingPlan(program, nativeBindings);
   const hostNumberOutcome = planHostNumberBoundary(
@@ -1516,7 +1516,7 @@ export function planPhysicalSetup(
     numberRemainders,
     ...(sourceClosures ? { sourceClosures: sourceClosureDescription(sourceClosures) } : {}),
     ...(nativeInvocation ? { nativeInvocation } : {}),
-    ...(sourceObjects.setup ? { nativeSourceObjects: sourceObjects.setup } : {}),
+    ...(sourceCalls.setup ? { realmSourceCalls: sourceCalls.setup } : {}),
     ...(native?.realmRequirements ? { nativeRealm: native.realmRequirements.description } : {}),
     ...(asyncFrames?.frames.length ? { asyncFrames } : {}),
     ...(hostNumberBoundary?.imports.length ? { hostNumberBoundary } : {}),

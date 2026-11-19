@@ -413,10 +413,10 @@ function nativeRows(
   const strings = providers.filter((row) => STRING_FEATURES.has(row.feature));
   const callables = providers.filter((row) => !strings.includes(row) && row.implementation.kind === "runtime-callable");
   const formatterCallables = formatterJoins(program, formatter, formatted!);
-  // (#7354 O1) The realm functions bound to the program's `js.object.*` calls answer their contract's providers.
+  // (#7354) The realm functions bound to the program's source calls answer their contract's providers.
   const answered: RuntimeProviderDefinition["implementation"][] = [
     ...(formatterCallables ?? []),
-    ...(emittedPhysicalSetupPlan(emission).nativeSourceObjects?.bindings ?? []).map((row) =>
+    ...(emittedPhysicalSetupPlan(emission).realmSourceCalls?.bindings ?? []).map((row) =>
       runtimeCallable(row.reference.binding.kind === "intrinsic" ? row.reference.binding.symbol : ""),
     ),
   ];

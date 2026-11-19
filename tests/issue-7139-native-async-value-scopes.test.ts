@@ -192,7 +192,7 @@ describe("native SSA definitions retain async representation boundaries", () => 
       body[at] = { ...call, target: irIntrinsicFuncRef("js.object.create-null"), args: [] };
     }
     expect(() => deriveNativeObjectAccessRequirements(program, program.runtime[0]!)).toThrow(
-      "property operation population differs",
+      "source call population differs",
     );
   });
 
