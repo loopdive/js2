@@ -274,9 +274,11 @@ function catalog(): readonly NativeRealmIntrinsic[] {
     ],
   }));
 }
+/** The ECMA-262 edition the realm models (the newest ratified one); the global table shares it. */
+export const NATIVE_REALM_EDITION = 2026;
 /** Complete retained Object/Function population, including Normative Optional legacy members. */
 export const NATIVE_REALM_CATALOG = freeze({
-  version: "ecma262-2026:Object+Function:v1" as const,
+  version: `ecma262-${NATIVE_REALM_EDITION}:Object+Function:v1` as const,
   intrinsics: catalog(),
   bootstrap: [functionPrototype, throwTypeError],
   remaining: [
