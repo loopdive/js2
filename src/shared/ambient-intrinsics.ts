@@ -225,7 +225,5 @@ export function builtinProtoMemberGlobalsUnshadowed(
   ref: BuiltinProtoMemberRef,
   isLibOnlyBinding: (node: ts.Identifier) => boolean,
 ): boolean {
-  return [ref.builtin, ...ref.namespaces].every(
-    (node) => isLibOnlyBinding(node) && !declaredNames(node.getSourceFile()).has(node.text),
-  );
+  return [ref.builtin, ...ref.namespaces].every((node) => isUnshadowedLibBinding(node, isLibOnlyBinding));
 }

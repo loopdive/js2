@@ -17,7 +17,7 @@ import {
   nullComparisonFolds,
   nullValueAdmissible,
 } from "./analysis/operand-admissibility.js";
-import { builtinGlobalLanes, isUnshadowedLibBinding } from "../shared/ambient-intrinsics.js";
+import { builtinGlobalLanes } from "../shared/ambient-intrinsics.js";
 import { outermostParenthesized } from "../shared/binding-writes.js";
 import { isPristineIntrinsic } from "../shared/intrinsic-prototype-writes.js";
 
@@ -31,10 +31,10 @@ export interface BuiltinGlobalLane {
 /**
  * The admission. All of:
  *   - a built-in global's name the lane measured (`builtinGlobalLanes`),
- *     bound to its lib declaration and declared nowhere in the file
- *     (`isUnshadowedLibBinding`);
+ *     bound to its lib declaration only (`isLibOnlyBinding`: no import,
+ *     `namespace` or `enum` merges with it);
  *   - the realm keeps its own value under the name (`isPristineIntrinsic`):
- *     no write, delete or define of the name, and no enclosing `with` body;
+ *     nothing in the file declares it, and nothing writes, deletes or defines it;
  *   - the value reaches only positions whose answer does not depend on a
  *     member the realm may not have seeded: {@link intrinsicUseVerdict}, or
  *     the receiver of an exact `<Namespace>.<staticMethod>` value read
@@ -47,12 +47,12 @@ export function builtinGlobalValueAdmitted(node: ts.Identifier, lane: BuiltinGlo
   const native = lane.supportsBackendCapability?.("native-builtin-globals") === true;
   const lanes = builtinGlobalLanes(node.text);
   if (lanes === undefined || (lanes === "standalone" && !native)) return false;
-  const libOnly = (id: ts.Identifier) => lane.isLibOnlyBinding?.(id) === true;
-  if (!isUnshadowedLibBinding(node, libOnly) || !isPristineIntrinsic(node)) return false;
+  if (lane.isLibOnlyBinding?.(node) !== true || !isPristineIntrinsic(node)) return false;
   const use = intrinsicUseVerdict(node);
   return (
     use === "opaque" ||
-    // The JS environment keeps main's claim of a `null` mix, withdrawn after the claim: its output stays identical.
+    // On the JS environment a `null` mix is still claimed and then withdrawn, the routing it had before #7350, so its
+    // output stays byte-identical while that lane exists (the issue's "Known" list).
     (use === "null-mix" && !native) ||
     isExactStaticMethodValueRead(node) ||
     (lane.builtinProtoCompanionSeeded?.() === true && isExactProtoMethodValueRead(node))

@@ -32,7 +32,9 @@ const CLAIMED: Record<string, string> = {
 const REFUSED: Record<string, string> = {
   "a member read through an alias": `var M = Math; if (M.max(1, 2) !== 2) { throw "m"; }`,
   "the name written": `function w() { Math = 5; } if (!Math) { throw "w"; }`,
-  "inside a with body": `var o = { Math: 3 }; var r; with (o) { r = Math === 3; } if (!r) { throw "b"; }`,
+  // A unit that contains a `with` statement is never claimed (`body-shape-rejected`), so no admission check is
+  // needed for a read inside the body.
+  "a unit containing a with statement": `var o = { Math: 3 }; var r; with (o) { r = Math === 3; } if (!r) { throw "b"; }`,
   "a loose compare with null": `if (Math == null) { throw "n"; }`,
   "a conditional beside null": `var c = 1; var v = c ? JSON : null; if (v !== JSON) { throw "c"; }`,
 };

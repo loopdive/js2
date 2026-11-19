@@ -221,12 +221,14 @@ runtime-side fact, no hand list). Writes stay out (G6).
 
 **What G1 builds.**
 - `src/ir/builtin-globals.ts`: the one admission, `builtinGlobalValueAdmitted`, asked by the selector
-  (`isAmbientIntrinsicValue`) and the from-ast identifier arm. It holds the name set (the ES5 constructors,
-  namespaces and global functions plus `Symbol`; new: `Math`, `JSON`, `Date`, `RegExp`, the eleven global
-  functions), the position walk and the #7189 / #7127 member-value reads, which go through the same
+  (`isAmbientIntrinsicValue`) and the from-ast identifier arm. It asks the name set, which lives in
+  `src/shared/ambient-intrinsics.ts` (`builtinGlobalLanes`: the ES5 constructors, namespaces and global
+  functions plus `Symbol`; new: `Math`, `JSON`, `Date`, `RegExp`, the eleven global functions), and holds
+  the position walk and the #7189 / #7127 member-value reads, which go through the same
   admission. `src/shared/ambient-intrinsics.ts` keeps the lib-binding helpers and #7294's member shapes.
 - `isPristineIntrinsic` (`shared/intrinsic-prototype-writes.ts`, the shared write scanner): not declared,
-  not written / deleted / defined by a literal route, and not inside a `with` body. `function-mention.ts`'s
+  not written / deleted / defined by a literal route. (A lexical `with` screen was dropped in review RV7263:
+  no unit that contains or sits inside a `with` body is claimed by the IR, so it decided nothing.) `function-mention.ts`'s
   `objectStaticIsPristine` asks it instead of its own copy and keeps its file-wide `with` screen (elision's
   boundary; a lexical one there would change JS-environment output). A file-wide `with` screen in the
   admission dropped 12 units that main lowers in 2 non-ES5 files (`propertyHelper.js`'s
@@ -277,3 +279,26 @@ the repository).
   `built-ins/global/S10.2.3_A1.2_T4.js`; all three pass on both trees.
 - `tests/issue-7294-builtin-proto-member-provider.test.ts` fails the same 4 rows on main `ee3fcdd610` as on
   the branch (`operand-coercion-unsupported` on `Object.is`); not caused by G1.
+
+### Review RV7263 (2026-11-19, APPROVE on `46c3e8d62f`) — follow-ups recorded here
+
+- **Named item, G2: `admittedBuiltinProtoMember` is a second admission.** Reviewer: "#7294's
+  `admittedBuiltinProtoMember` admits the built-in `B` in `<B>.prototype.<m>` with only
+  `builtinProtoMemberGlobalsUnshadowed`: no pristine screen and no lane name set. #7127's
+  `isExactProtoMethodValueRead` admits the same source shape behind a different screen." G2 folds
+  `src/ir/builtin-proto-member.ts:50` into `builtinGlobalValueAdmitted`.
+- **Named item, G6:** `objectStaticsArePristine` (`src/ir/object-integrity.ts`) and `realmIsUnpatched`
+  (`src/ir/wrapper-construction.ts`) keep their own pristine screens; G6 moves them onto
+  `isPristineIntrinsic`.
+- **Not folded, layering:** `STRICT_EQUALITY_OPERATORS` (`src/shared/ambient-intrinsics.ts`) duplicates
+  `isStrictEqualityOperator` (`src/ir/analysis/operand-admissibility.ts`), but `src/shared/` may not import
+  `src/ir/`. The fold is moving the operator predicates to `src/shared/` with their 11 IR importers; filed as
+  part of G2 rather than widened here.
+
+## Known
+
+- **`null` mix of #7118's names on the JS environment** (lead decision 2026-11-19, accepted as is): there
+  `if (TypeError == null) throw 0;` is claimed and then withdrawn after the claim, the routing it had before
+  #7350, so the JS environment's output stays byte-identical; on standalone it is refused at select. The
+  `native-builtin-globals` capability decides both the new names and this refusal. Remove the exception with
+  the JS lane.
