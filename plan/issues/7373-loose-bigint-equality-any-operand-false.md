@@ -93,15 +93,21 @@ so a BigInt on the dynamic side is never equal to anything.
 - Probe (89 rows): every row with a static BigInt operand now matches node on gc and standalone (13 BAD before,
   including the side-effect-order row); the 3 BAD `b == 1` rows are the neighbour below. Also fixed: `bigint | undefined` / `bigint | null` holding
   `1n`, a `bigint` local against an `any`, a BigInt past 2^53 (fits i64), `-7n`.
-- `tests/issue-7373-loose-bigint-equality.test.ts`: 34/48 on 6a7d520d23, 48/48 after.
+- `tests/issue-7373-loose-bigint-equality.test.ts`: 34/48 on 6a7d520d23, 48/48 after; 54/54 with the null rows.
 - Neighbour suites (`*bigint*`, `*6642*`, `*loose*`, `*equal*`, 45 files): identical failing set (47) before and after.
 - Byte hashes of the 100-file test262 sample, gc and standalone: identical.
 
-Left open (unchanged by this fix, same answer before and after):
+- RV7339 round 1: `null == 0n` (an `any`, `unknown` or `number | bigint` holding `null`) answered true through this
+  arm's ToNumber fallback (ToNumber(null) is 0). The fallback now answers false for a null externref first, since
+  §7.2.15 makes `null` / `undefined` loosely equal only to each other. Pinned by 6 test rows (3 types × gc/standalone);
+  the 200-row byte sample is unchanged.
+
+Left open (unchanged by this fix, same answer before and after; pre-existing rows are listed in #7403):
 
 - No operand statically BigInt: `b == 1` with `b` holding `1n` answers false; two `any` holding `1n` answer false
   for `==`; an `any` `1n` against an `any` `1` traps (`illegal cast` in `__any_eq`). `__extern_loose_eq` /
   `__any_eq` need a BigInt arm.
-- `null == 0n` (an `any` or `bigint | null` holding null) answers true: the fallback's ToNumber(null) is 0.
-- `Object(1n) == 1n` and `{ valueOf() { return 1n } } == 1n` answer false (ToPrimitive yielding a BigInt).
-- A BigInt wider than i64 on the dynamic side goes through `__to_bigint` (i64), as #7403 notes for `===`.
+- A statically typed `null == 0n` (`const b: null`) answers true; it never reaches this arm.
+- The string, object, invalid-Wasm and past-2^53 rows from RV7339 are recorded in #7403.
+- Structural follow-up: give `__extern_loose_eq` a BigInt case (§7.2.15 steps 6–13) and fold this arm into it, so
+  loose equality has one helper. Not a drop-in today: that provider traps on BigInt against Number or Boolean.

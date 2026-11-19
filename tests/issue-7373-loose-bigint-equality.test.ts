@@ -34,6 +34,7 @@ const PROGRAMS: readonly (readonly [string, string, number])[] = [
     [`\`${type}\` holding 0n`, program(type, "0n"), UNEQUAL] as const,
     [`\`${type}\` holding -1n`, program(type, "-1n"), UNEQUAL] as const,
     [`\`${type}\` holding the number 1`, program(type, "1"), EQUAL] as const,
+    [`\`${type}\` holding null`, program(type, "null"), UNEQUAL] as const,
   ]),
   ['`any` holding the string "1"', program("any", '"1"'), EQUAL],
   ['`unknown` holding the string "1"', program("unknown", '"1"'), EQUAL],

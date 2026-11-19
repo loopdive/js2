@@ -95,8 +95,9 @@ export function emitStandaloneAnyBigIntBinary(
 
 /**
  * (#7373) `==` / `!=` when exactly one side is statically BigInt and the other may hold a BigInt at run time
- * (`typeMayBeBigInt`). A BigInt there is compared as a BigInt (§7.2.15 step 1); anything else keeps the static
- * mixed arm's ToNumber comparison, which answers NaN, so never equal, for a BigInt. Returns `undefined` having
+ * (`typeMayBeBigInt`). A BigInt there is compared as a BigInt (§7.2.15 step 1). `null` / `undefined` (a null
+ * externref) are loosely equal only to each other (steps 2–3), so they answer `false` before ToNumber would turn
+ * `null` into 0. Anything else keeps the static mixed arm's ToNumber comparison. Returns `undefined` having
  * emitted nothing when a helper is unavailable.
  */
 export function emitMaybeBigIntLooseEquality(
@@ -138,7 +139,16 @@ export function emitMaybeBigIntLooseEquality(
         { op: "call", funcIdx: ctx.funcMap.get("__to_bigint")! },
         { op: "i64.eq" },
       ],
-      else: asNumbers,
+      else: [
+        { op: "local.get", index: anyLocal },
+        { op: "ref.is_null" },
+        {
+          op: "if",
+          blockType: { kind: "val", type: { kind: "i32" } },
+          then: [{ op: "i32.const", value: 0 }],
+          else: asNumbers,
+        },
+      ],
     },
   );
   if (negate) fctx.body.push({ op: "i32.eqz" });
