@@ -265,3 +265,49 @@ Every consumer reads this registry. No step adds a second loop over the program'
 
 A1 about 15 source lines and a 150-line test. A2 about 150. A3 about 30. A4 about 60. A5a about 40. A5b about 100.
 A6 about 200.
+
+### A0 measured (2026-11-19, base `07f19e42`)
+
+Script: `.tmp/a0-site-census.mts` (TS API; `resolvesToSourceBinding` from this base, `src/frontend/eval/` copied
+verbatim from `0cf01923`). Population: the 474 ES5 files with a literal direct eval in the 2026-11-19 shape census
+(main `ee3fcdd610`), 881 sites. A site qualifies when every rule of the predicate holds: `eval(<string literal>)`
+with `eval` unbound in the source; a script without a file-level `"use strict"` or an `onlyStrict` flag; no
+enclosing function, class, `catch`, `with`, or block/loop/switch with lexical declarations; the text passes
+`parseEvalSource` and `foldedEvalStaticSyntaxError`; it declares nothing and has no nested `var` or `eval`.
+
+| qualifying | sites | files |
+| --- | ---: | ---: |
+| all | 485 | 118 |
+| statement position | 49 | 38 |
+| expression position | 436 | 82 |
+
+| completion tail of the text | statement | expression |
+| --- | ---: | ---: |
+| none (empty text, `;`, comments) | 22 | 2 |
+| a single expression statement | 12 | 409 |
+| ends in an expression statement after a `"use strict"` directive | 1 | 1 |
+| needs a register: `with` / loop / `if` / `switch` / block | 12 / 0 / 0 / 0 / 0 | 0 / 15 / 3 / 2 / 2 |
+| `throw` (abrupt, no value) | 1 | 1 |
+| `return` (a SyntaxError, see below) | 1 | 1 |
+
+| excluded, by first failing rule | sites |
+| --- | ---: |
+| the text declares `var` or a function | 174 |
+| inside a function or class | 173 |
+| strict file | 24 |
+| static SyntaxError: early error / parse failure | 11 / 2 |
+| inside a `catch` | 9 |
+| the text has a nested `eval` | 2 |
+| inside a `with` | 1 |
+| inside a block, loop or switch with lexical declarations | 0 |
+
+Files whose every literal direct eval qualifies: 115, all positive and none with another `eval` use. 36 of them
+have statement-position sites only, which A4 alone serves.
+
+Findings:
+
+- `eval("return;")` (`language/eval-code/direct/parse-failure-5.js`) passes both shared checks, yet `return` at a
+  Script's top level is an early SyntaxError. A2's predicate refuses a top-level `return` by name, and the shared
+  check gains the rule in the same PR.
+- 12 statement texts are `with (…) {…}` (`S12.10_A4_*`) and 2 call `Function`: they qualify as sites but also need
+  those foundations.
