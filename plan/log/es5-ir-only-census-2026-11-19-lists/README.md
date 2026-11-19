@@ -9,7 +9,7 @@ exactly one list.
 
 | list | files |
 | --- | ---: |
-| `script-var-home-object-literal.tsv` | 1449 |
+| `script-var-home-object-literal.tsv` | 1383 |
 | `call-through-a-value.tsv` | 1225 |
 | `new-on-a-plain-function-this-instanceof.tsv` | 924 |
 | `built-in-global-as-a-value.tsv` | 860 |
@@ -18,34 +18,34 @@ exactly one list.
 | `function-expression-or-closure-as-a-value.tsv` | 381 |
 | `crash-regexp-capability-deferred.tsv` | 259 |
 | `script-var-home-array-literal.tsv` | 257 |
+| `script-var-home-repeated-var.tsv` | 255 |
 | `var-nested-in-top-level-code.tsv` | 245 |
 | `function-declaration-read-as-a-value.tsv` | 226 |
 | `array-literals.tsv` | 198 |
 | `crash-eval-owning-predicate.tsv` | 196 |
 | `other.tsv` | 167 |
-| `script-var-home-primitive-literal.tsv` | 117 |
 | `eval.tsv` | 96 |
-| `script-var-home-new-expression.tsv` | 87 |
 | `regexp-methods.tsv` | 83 |
 | `native-intrinsic-provider-missing.tsv` | 75 |
 | `function-declaration-in-a-block.tsv` | 69 |
-| `script-var-home-regexp-literal.tsv` | 68 |
+| `script-var-home-new-expression.tsv` | 58 |
 | `dynamic-operators-compare-update.tsv` | 53 |
 | `assignment-to-an-undeclared-global.tsv` | 53 |
-| `script-var-home-iife-result.tsv` | 39 |
+| `script-var-home-regexp-literal.tsv` | 46 |
+| `script-var-home-iife-result.tsv` | 38 |
 | `delete.tsv` | 37 |
-| `script-var-home-call-result.tsv` | 28 |
 | `crash-object-static-not-admitted.tsv` | 26 |
 | `script-var-home-no-initialiser.tsv` | 25 |
+| `script-var-home-call-result.tsv` | 22 |
 | `member-get-set-on-a-dynamic-value.tsv` | 22 |
 | `async-test.tsv` | 22 |
 | `crash-other.tsv` | 14 |
 | `with.tsv` | 13 |
-| `script-var-home-string.tsv` | 13 |
-| `script-var-home-member-read.tsv` | 11 |
 | `direct-call-into-a-refused-callee.tsv` | 10 |
+| `script-var-home-primitive-literal.tsv` | 8 |
 | `script-var-home-function-expression.tsv` | 7 |
 | `script-var-home-other.tsv` | 2 |
+| `script-var-home-member-read.tsv` | 2 |
 | `typeof.tsv` | 1 |
 
 Regenerate (whole census, about 5 minutes on 4 cores, then the lists):

@@ -20,6 +20,7 @@ const BUILTIN = new Set(
 
 /** slice / issue per mechanism; the mechanism label is the key. */
 export const MECHANISMS = {
+  "script-var home: repeated var": "S10 script-scope issue slice 1b, id pending",
   "script-var home: object literal": "O · #7352",
   "script-var home: array literal": "O · #7352",
   "script-var home: function expression": "Fa · #7349",
@@ -44,14 +45,14 @@ export const MECHANISMS = {
   "native intrinsic provider missing": "B · #7350",
   typeof: "T",
   "dynamic operators (+, compare, update)": "Str2 (`__ir_dyn_add`) · #7354",
-  "var nested in top-level code": "#7365 (mostly for-in heads and with bodies)",
-  "assignment to an undeclared global": "#7365",
-  "function declaration in a block": "#7365",
+  "var nested in top-level code": "S10 script-scope issue, id pending (mostly for-in heads and with bodies)",
+  "assignment to an undeclared global": "S10 script-scope issue, id pending",
+  "function declaration in a block": "S10 script-scope issue, id pending",
   "async test": "out of scope of the stand-in",
   "direct call into a refused callee": "cascade (callee's own gap)",
   eval: "#7363 (slices 2+)",
   with: "no issue yet",
-  delete: "#7365",
+  delete: "S10 script-scope issue, id pending",
   "RegExp methods": "B · #7369",
   "parameter carriers": "#7353",
   "crash: RegExp capability-deferred": "#7364 (refusal), #7369 (RegExp)",
@@ -60,6 +61,15 @@ export const MECHANISMS = {
   "crash: other": "#7364",
   other: "",
 };
+
+/** A script `var` declared more than once (`var x = +0; … var x = -0;`), also inside a declaration list. */
+function declaredTwice(name, text) {
+  const declaration = new RegExp(
+    String.raw`\bvar\s+(?:[\w$]+\s*(?:=[^,;]*)?,\s*)*` + name.replace(/\$/g, "\\$") + String.raw`\b`,
+    "g",
+  );
+  return (text.match(declaration)?.length ?? 0) > 1;
+}
 
 function initialiserKind(name, text) {
   const escaped = name.replace(/\$/g, "\\$");
@@ -95,7 +105,10 @@ export function mechanismOf(row, text) {
   if (/\.(?:exec|test)\b.*capability-deferred|regexp/i.test(d)) return "RegExp methods";
   const binding =
     /module binding ([\w$]+) has no exact typed storage|proven dynamic binding '([\w$]+)' initializer/.exec(d);
-  if (binding) return `script-var home: ${initialiserKind(binding[1] ?? binding[2], text)}`;
+  if (binding) {
+    const name = binding[1] ?? binding[2];
+    return `script-var home: ${declaredTwice(name, text) ? "repeated var" : initialiserKind(name, text)}`;
+  }
   if (/unknown class/.test(d))
     return BUILTIN.has(quoted(d)) ? "built-in constructor (new X)" : "new on a plain function, this, instanceof";
   if (/is not in scope/.test(d))
