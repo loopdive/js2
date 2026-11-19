@@ -5,8 +5,8 @@
  * only rules whose answer is fully syntactic. Unsupported node kinds remain
  * the responsibility of eval-inline's conservative dynamic-eval fallback.
  */
-import { ts } from "../../ts-api.js";
-import { isUseStrictDirectiveExpression } from "../helpers/use-strict-directive.js";
+import { ts } from "../typescript.js";
+import { isUseStrictDirectiveExpression } from "../use-strict-directive.js";
 
 const STRICT_RESERVED_WORDS = new Set([
   "implements",
