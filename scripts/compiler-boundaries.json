@@ -17042,6 +17042,14 @@
       "nextBoundary": "Prepared presentation runtime census (#7354 R): the presentation's runtime policy and the authentication of each selected provider against the completed physical plan; moves with ir-program-presentation.ts at compiler-layer activation."
     },
     {
+      "path": "src/compiler/prepared-this-binding.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "compiler",
+      "owner": "7354",
+      "nextBoundary": "Prepared OrdinaryCallBindThis policy (#7354 C): asks the two pure codegen helpers for a function's own-`this` strictness so the IR source producer does not; moves with the helpers when they move below ir."
+    },
+    {
       "path": "src/compiler/prepared-formatter-census.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
