@@ -12,7 +12,7 @@ reasoning_effort: high
 task_type: bugfix
 area: compiler
 goal: ir-full-coverage
-depends_on: [7409]
+depends_on: []
 related: [7409, 7369, 1539]
 ---
 
