@@ -7,6 +7,8 @@
 // returns) and with a wrong answer (throws).
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as gc from "../src/codegen/index.js";
+import { irIntrinsicFuncRef, irRuntimeFuncRef } from "../src/ir/core/callable-bindings.js";
+import { irRuntimeCallableDeclaration } from "../src/ir/runtime/callable-declarations.js";
 import * as linear from "../src/codegen-linear/index.js";
 import { instantiatePreparedArtifact } from "../src/test262/test262-prepared-runtime.js";
 import {
@@ -84,6 +86,24 @@ const PROGRAMS: readonly { name: string; body: string; answers: readonly [string
     answers: ["3", "2"],
   },
 ];
+
+const REF = { kind: "val", val: { kind: "externref" } };
+const INDEX = { kind: "val", val: { kind: "f64" } };
+const CONTRACTS = [
+  ["js.object.create-array", [INDEX], [REF]],
+  ["js.object.get-index", [REF, INDEX, REF], [REF]],
+  ["js.object.set-index", [REF, INDEX, REF], []],
+] as const;
+
+describe("#7352 arrays — the index contracts of the ordinary-object family", () => {
+  it.each(CONTRACTS)("%s has its declared shape and only its exact intrinsic binding", (name, params, results) => {
+    const declared = irRuntimeCallableDeclaration(irIntrinsicFuncRef(name));
+    expect(declared).toMatchObject({ feature: name, params, results });
+    expect(Object.isFrozen(declared)).toBe(true);
+    expect(irRuntimeCallableDeclaration(irRuntimeFuncRef(name))).toBeUndefined();
+    expect(irRuntimeCallableDeclaration(irIntrinsicFuncRef(name + ".foreign", name))).toBeUndefined();
+  });
+});
 
 describe("#7352 arrays — array literals are Array exotic objects of the realm", () => {
   for (const { name, body, answers } of PROGRAMS) {

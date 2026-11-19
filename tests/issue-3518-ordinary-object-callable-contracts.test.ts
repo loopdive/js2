@@ -19,15 +19,13 @@ const CONTRACTS = [
   ["js.object.define-attributes", [REF, REF, FLAGS], []],
   ["js.object.get", [REF, REF, REF], [REF]],
   ["js.object.has", [REF, REF], [BOOL]],
-  // (#7352 arrays) Array-index keys are integer f64s.
-  ["js.object.create-array", [FLAGS], [REF]],
-  ["js.object.get-index", [REF, FLAGS, REF], [REF]],
-  ["js.object.set-index", [REF, FLAGS, REF], []],
 ] as const;
+/** (#7352 arrays) The index contracts; their shape and binding are checked in tests/issue-7352-a-arrays.test.ts. */
+const ARRAY_FEATURES = ["js.object.create-array", "js.object.get-index", "js.object.set-index"];
 
 describe("ordinary object semantic contracts", () => {
   it("declares prototype modes, descriptor presence, original receiver and boolean Has independently", () => {
-    expect(ORDINARY_OBJECT_RUNTIME_FEATURES).toEqual(CONTRACTS.map(([name]) => name));
+    expect(ORDINARY_OBJECT_RUNTIME_FEATURES).toEqual([...CONTRACTS.map(([name]) => name), ...ARRAY_FEATURES]);
     for (const [name, params, results] of CONTRACTS) {
       const declaration = irRuntimeCallableDeclaration(irIntrinsicFuncRef(name));
       expect(declaration).toMatchObject({ feature: name, params, results });

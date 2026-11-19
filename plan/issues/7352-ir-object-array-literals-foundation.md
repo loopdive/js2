@@ -304,6 +304,35 @@ lists and this section records where the files stop next.
   | `Array.prototype` method on the array: `forEach` 59 (all in `testWithIntlConstructors`), `every` 1, `filter` 1 | 61 | Array.prototype methods with callbacks, after lane S4's Fb |
   | property write on the array, a static predicate operand | 2 | A2 / S3 O3 |
 
+### A2 rules (lead review of the plan, 2026-11-19)
+
+1. **Sparse and huge indices never allocate.** `$Array` gets its own `length` field (a u32, held in an i32 read
+   unsigned); the vector holds the dense prefix. An index write at `i` is dense when `i < vector length + 1024`
+   (the density bound; growth doubles the store, as the shared helper does) and `i <= 2^31 - 2`; any other array
+   index (up to 2^32 - 2) is an ordinary keyed property under its canonical index string, and `length` becomes
+   `i + 1` when `i >= length` (ArrayDefineOwnProperty, §10.4.2.1). Reads look in the vector, then in the map (the
+   kernel arm already falls back to `findOrdinary`). `a.length = n` is ArraySetLength (§10.4.2.4): a value whose
+   ToUint32 differs from its ToNumber throws a real, catchable RangeError; shrinking cuts the vector and sets the
+   length; shrinking an array that holds map indices at or above the new length is an uncatchable named abort
+   (`unreachable`, its comment names it) until a slice deletes map indices. Never a wrong `length`, never an
+   allocation of the index's size.
+2. **One key classification per key type.** A string key is classified only by the kernel's `arrayIndex`
+   (`buildStringExoticIndexDefinition`, shared with String exotic objects): `a["1"]` is index 1, `a["01"]` and
+   `a["-0"]` are ordinary keys, `a["length"]` is the arm's `length`. A number key is classified only by
+   `arrayIndexOf` in `array-exotic-bodies.ts` (CanonicalNumericIndexString of a number is the number:
+   `a[1.0]` and `a[-0]` are index 1 and 0; `a[1.5]`, `a[-1]`, `a[2**32 - 1]` are ordinary keys and take the
+   string-keyed path with ToString of the number). No other parser of array indices.
+3. **"Bytes unchanged without arrays" is proven on realm programs too**: S3's O test programs compile to
+   identical binaries on S3's head and on this branch.
+4. **The typed-read shortcut's precondition is checked by the compiler** (`onlyRead` in
+   `prepare-ordinary-object-access.ts`: every reference of the binding is its declaration or a plain read;
+   only a function's binding). The verdict of the review hunting this class in S3's object shortcut (#7312) is
+   applied here when it lands.
+5. **Kind.** An array is the carrier's `object` kind (`typeof` "object"); `Array.isArray` is a separate brand
+   test (`ref.test $Array`), one intrinsic used where source calls it. Agreed with S3 (proposal sent
+   2026-11-19); the producer admits `create-array` values through the same admission as `create-default`, and a
+   program that creates arrays is not "plain" for ToString/ToNumber until A3 brings `join`.
+
 ### Acceptance
 
 - Each slice's proving program validates and runs through the strict Prepared entry: the right answer returns,
