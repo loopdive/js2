@@ -6,7 +6,8 @@ import type {
   FunctionReservation,
 } from "../../../wasm/physical/module-reservations.js";
 import { createErrorStructType } from "../../../runtime/wasmgc/values/string-layouts.js";
-import { buildErrorConstructorBody } from "../../../runtime/wasmgc/values/error-bodies.js";
+import type { Instr } from "../../../wasm/model/instructions.js";
+import { buildErrorConstructorBody, buildErrorStringRead } from "../../../runtime/wasmgc/values/error-bodies.js";
 import {
   requireNativeStringLiteral,
   requireCompletedNativeStringLiterals,
@@ -114,17 +115,48 @@ export function fillNativeErrorResources(tx: PhysicalModuleReservations, pack: N
   requireNativeErrorReservations(tx, pack, owner.requirements, owner.sourceDependencies);
   if (owner.filled) throw new Error("native errors: duplicate fill");
   tx.physicalIndex(pack.type);
-  const name = requireNativeStringLiteral(tx, owner.dependencies.strings, "TypeError");
   tx.fillFunction(pack.newTypeError, {
     locals: [],
     body: buildErrorConstructorBody(
       pack.type.typeIndex,
       owner.dependencies.typeErrorTag,
       1,
-      name.kind === "global"
-        ? { kind: "global", index: tx.physicalIndex(name.global), representation: "gc" }
-        : { kind: "callable", handle: name.function.handle, representation: "gc" },
+      literal(tx, owner.dependencies.strings, "TypeError"),
     ),
   });
   owner.filled = true;
+}
+function literal(tx: PhysicalModuleReservations, strings: NativeStringLiteralReservations, text: string) {
+  const binding = requireNativeStringLiteral(tx, strings, text);
+  return binding.kind === "global"
+    ? ({ kind: "global", index: tx.physicalIndex(binding.global), representation: "gc" } as const)
+    : ({ kind: "callable", handle: binding.function.handle, representation: "gc" } as const);
+}
+
+/**
+ * A further native error kind over this pack's layout, for a caller that throws it with a fixed message. `tag` is
+ * the kind's value in the builtin tag catalog, an ABI invariant its caller supplies like `typeErrorTag`; `name` and
+ * `message` are literals of the pack's string owner.
+ */
+export interface NativeErrorKind {
+  readonly name: string;
+  readonly tag: number;
+  readonly message: string;
+}
+/** Instructions that leave a new error of `kind`. */
+export function buildNativeErrorValue(
+  tx: PhysicalModuleReservations,
+  pack: NativeErrorReservations,
+  kind: NativeErrorKind,
+): Instr[] {
+  const owner = owners.get(pack);
+  if (!owner || owner.tx !== tx) throw new Error("native errors: foreign or forged resource owner");
+  const { strings } = owner.dependencies;
+  return buildErrorConstructorBody(
+    pack.type.typeIndex,
+    kind.tag,
+    1,
+    literal(tx, strings, kind.name),
+    buildErrorStringRead(literal(tx, strings, kind.message)),
+  );
 }

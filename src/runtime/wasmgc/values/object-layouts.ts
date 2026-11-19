@@ -45,9 +45,10 @@ export function createExtensibleOpenObjectDeclaration(objectKey: string, mapKey:
 }
 
 /**
- * (#7352 arrays) The realm's Array exotic object: an ordinary object (named properties, prototype, flags) whose
- * index properties live in a dense element vector, `elementsKey` (length + backing store; a hole is the realm's
- * hole sentinel). It extends the extensible ordinary root, so every ordinary algorithm reads its named part.
+ * (#7352 arrays) The realm's Array exotic object: an ordinary object (named properties, prototype, flags) with its
+ * own `length` (a u32 in an i32) and a dense element vector, `elementsKey`, that holds the index properties below
+ * the vector's length (a hole is the realm's hole sentinel); an index above it is a property of the inherited map.
+ * It extends the extensible ordinary root, so every ordinary algorithm reads its named part.
  */
 export function createArrayObjectDeclaration(
   objectKey: string,
@@ -61,6 +62,10 @@ export function createArrayObjectDeclaration(
     name: "$Array",
     parent: { kind: "resource", typeKey: objectKey },
     final: true,
-    fields: [...ordinary.fields, { name: "elements", type: { kind: "ref", typeKey: elementsKey }, mutable: false }],
+    fields: [
+      ...ordinary.fields,
+      { name: "elements", type: { kind: "ref", typeKey: elementsKey }, mutable: false },
+      { name: "length", type: { kind: "i32" }, mutable: true },
+    ],
   };
 }

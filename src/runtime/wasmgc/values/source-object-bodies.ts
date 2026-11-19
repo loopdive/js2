@@ -31,12 +31,25 @@ export function buildSourceObjectCreateDefinition(d: {
 }
 
 /**
- * `js.object.get(object, key, receiver)`: the kernel's [[Get]], whose absent answer already is `undefined`. Its
- * "incomplete parent" state is a miss at the realm's Object.prototype, which does not hold the specification's
- * properties yet: (#7354 O4) every caller refuses the keys Object.prototype defines (`builtin-prototype-keys.ts`), so
- * a miss there is a true miss and answers `undefined` too. Its "not an object" state cannot occur: every object a
- * source program reaches was built by `create-default` on this realm's Object.prototype.
+ * The kernel's [[Get]] of the (object, key, receiver) on the stack, whose absent answer already is `undefined`;
+ * `value` is an externref scratch local. Its "incomplete parent" state (2) is a miss at the realm's Object.prototype,
+ * which does not hold the specification's properties yet: (#7354 O4) every caller refuses the keys Object.prototype
+ * defines (`builtin-prototype-keys.ts`), and (#7352 arrays) no standard prototype property is an array index, so a
+ * miss there is a true miss and answers `undefined` too. Its "not an object" state (3) cannot occur: every object a
+ * source program reaches was built by a `create-*` contract on this realm's prototypes.
  */
+export function sourceObjectGet(get: FuncHandle, value: number): Instr[] {
+  return [
+    { op: "call", funcIdx: get },
+    { op: "local.set", index: value },
+    { op: "i32.const", value: 3 },
+    { op: "i32.eq" },
+    { op: "if", blockType: { kind: "empty" }, then: [{ op: "unreachable" }] },
+    { op: "local.get", index: value },
+  ];
+}
+
+/** `js.object.get(object, key, receiver)`: the kernel's [[Get]] (`sourceObjectGet`). */
 export function buildSourceObjectGetDefinition(d: { readonly get: FuncHandle }): SourceObjectDefinition {
   return {
     locals: [{ name: "value", type: { kind: "externref" } }],
@@ -44,12 +57,7 @@ export function buildSourceObjectGetDefinition(d: { readonly get: FuncHandle }):
       { op: "local.get", index: 0 },
       { op: "local.get", index: 1 },
       { op: "local.get", index: 2 },
-      { op: "call", funcIdx: d.get },
-      { op: "local.set", index: 3 },
-      { op: "i32.const", value: 3 },
-      { op: "i32.eq" },
-      { op: "if", blockType: { kind: "empty" }, then: [{ op: "unreachable" }] },
-      { op: "local.get", index: 3 },
+      ...sourceObjectGet(d.get, 3),
     ],
   };
 }

@@ -32,13 +32,7 @@ export function buildErrorConstructorBody(
   /** Replaces the bare `local.get 0` read of the message argument. */
   messageSlot?: readonly Instr[],
 ): Instr[] {
-  const nameInstrs: Instr[] =
-    name.kind === "legacy-missing"
-      ? [{ op: "ref.null.extern" }]
-      : name.kind === "global"
-        ? [{ op: "global.get", index: name.index }]
-        : [{ op: "call", funcIdx: name.handle }];
-  if (name.kind !== "legacy-missing" && name.representation === "gc") nameInstrs.push({ op: "extern.convert_any" });
+  const nameInstrs = buildErrorStringRead(name);
   const messageInstrs: Instr[] =
     argCount > 0
       ? messageSlot !== undefined
@@ -56,4 +50,14 @@ export function buildErrorConstructorBody(
     { op: "struct.new", typeIdx: structIdx },
     { op: "extern.convert_any" },
   ];
+}
+
+/** The read of a registered string as the externref an error slot holds. */
+export function buildErrorStringRead(value: ErrorNameValue): Instr[] {
+  if (value.kind === "legacy-missing") return [{ op: "ref.null.extern" }];
+  const read: Instr[] = [
+    value.kind === "global" ? { op: "global.get", index: value.index } : { op: "call", funcIdx: value.handle },
+  ];
+  if (value.representation === "gc") read.push({ op: "extern.convert_any" });
+  return read;
 }

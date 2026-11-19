@@ -15,8 +15,8 @@ import { canonicalProviderMismatch } from "./canonical-provider-mismatch.js";
 import type { RuntimeManifestPolicy } from "../../runtime/contracts/provider-policy.js";
 
 const EXTERNAL: IrType = Object.freeze({ kind: "val", val: Object.freeze({ kind: "externref" }) });
-const FLAGS: IrType = Object.freeze({ kind: "val", val: Object.freeze({ kind: "f64" }) });
-const INDEX: IrType = Object.freeze({ kind: "val", val: Object.freeze({ kind: "f64" }) });
+/** Descriptor words, (#7352 arrays) array indices and lengths: all exact f64 numbers. */
+const NUMBER: IrType = Object.freeze({ kind: "val", val: Object.freeze({ kind: "f64" }) });
 const BOOLEAN: IrType = Object.freeze({ kind: "val", val: Object.freeze({ kind: "i32", boolean: true }) });
 
 function declaration(
@@ -46,26 +46,29 @@ function declaration(
  *
  * (#7352 arrays) `create-array` is ArrayCreate(length) on %Array.prototype%; `get-index` / `set-index` are [[Get]]
  * / [[Set]] with an array-index key, an integer f64, so an index reaches an Array's elements without a key string.
+ * `set-length` is ArraySetLength on an Array; its length operand is ToNumber of the written value, which the
+ * operation checks against its ToUint32 (a RangeError when they differ).
  */
 const DECLARATIONS: Readonly<Record<OrdinaryObjectRuntimeFeature, IrRuntimeCallableDeclaration>> = Object.freeze({
   "js.object.create-default": declaration("js.object.create-default", [], [EXTERNAL]),
   "js.object.create-null": declaration("js.object.create-null", [], [EXTERNAL]),
   "js.object.create-with-prototype": declaration("js.object.create-with-prototype", [EXTERNAL], [EXTERNAL]),
-  "js.object.define-data": declaration("js.object.define-data", [EXTERNAL, EXTERNAL, EXTERNAL, FLAGS], []),
+  "js.object.define-data": declaration("js.object.define-data", [EXTERNAL, EXTERNAL, EXTERNAL, NUMBER], []),
   "js.object.define-accessor": declaration(
     "js.object.define-accessor",
-    [EXTERNAL, EXTERNAL, EXTERNAL, EXTERNAL, FLAGS],
+    [EXTERNAL, EXTERNAL, EXTERNAL, EXTERNAL, NUMBER],
     [],
   ),
-  "js.object.define-attributes": declaration("js.object.define-attributes", [EXTERNAL, EXTERNAL, FLAGS], []),
+  "js.object.define-attributes": declaration("js.object.define-attributes", [EXTERNAL, EXTERNAL, NUMBER], []),
   "js.object.get": declaration("js.object.get", [EXTERNAL, EXTERNAL, EXTERNAL], [EXTERNAL]),
   "js.object.has": declaration("js.object.has", [EXTERNAL, EXTERNAL], [BOOLEAN]),
   // (#7354 O4) A TypeError the realm builds, its message a native string: the dynamic-value legalization's
   // RequireObjectCoercible.
   "js.object.create-type-error": declaration("js.object.create-type-error", [EXTERNAL], [EXTERNAL]),
-  "js.object.create-array": declaration("js.object.create-array", [INDEX], [EXTERNAL]),
-  "js.object.get-index": declaration("js.object.get-index", [EXTERNAL, INDEX, EXTERNAL], [EXTERNAL]),
-  "js.object.set-index": declaration("js.object.set-index", [EXTERNAL, INDEX, EXTERNAL], []),
+  "js.object.create-array": declaration("js.object.create-array", [NUMBER], [EXTERNAL]),
+  "js.object.get-index": declaration("js.object.get-index", [EXTERNAL, NUMBER, EXTERNAL], [EXTERNAL]),
+  "js.object.set-index": declaration("js.object.set-index", [EXTERNAL, NUMBER, EXTERNAL], []),
+  "js.object.set-length": declaration("js.object.set-length", [EXTERNAL, NUMBER], []),
 });
 
 /** Exact semantic binding only; neither display names nor runtime aliases qualify. */
