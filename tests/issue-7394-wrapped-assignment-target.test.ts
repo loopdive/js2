@@ -105,6 +105,13 @@ describe.each(["gc", "standalone"] as const)("#7394 — a wrapped assignment tar
     expect(await runMain(source, runTarget)).toBe(41);
   });
 
+  it("`(o.a as number) ??= 7` on a `number | undefined` field", async () => {
+    const source =
+      "class C { a: number | undefined = undefined; } " +
+      "export function main(): number { const o = new C(); const r = ((o.a as number) ??= 7); return r * 10 + (o.a ?? 0); }";
+    expect(await runMain(source, runTarget)).toBe(77);
+  });
+
   it("an `any` target under `+=`", async () => {
     const source = "export function main(): number { let v: any = 2; (v as number) += 5; return v; }";
     expect(await runMain(source, runTarget)).toBe(7);

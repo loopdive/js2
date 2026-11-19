@@ -51,6 +51,9 @@ These are refused by the early-error pass (`src/compiler/early-errors/predicates
 `isInvalidAssignmentTarget`), which does not look through `as` / `satisfies` / `<T>`. TypeScript accepts
 them and erases the wrapper, so the refusal is wrong but loud: a compile error, never a wrong answer.
 
+`(o.a as number) ??= 7` (RV7307) is in the same compile-error row; with this fix it assigns. On a field that is
+left uninitialised it still reads `0` first, which is #7366 (the field's default), not this issue.
+
 ### Two analyses that also missed the write (found while fixing)
 
 Once codegen assigned the wrapped target, two analyses still read it as unwritten:
@@ -97,8 +100,8 @@ Legacy codegen only (no `src/ir/` change). Stacked on #7307 (same file, same pee
 - `tests/issue-7394-wrapped-assignment-target.test.ts`: every assignment form (`=`, the 12 compound operators, the
   three logical ones, prefix/postfix `++`/`--`, the value of the expression) through `(t)`, `((t))`, `(t!)`,
   `(t as number)`, `(t satisfies number)`, `(<number>t)` on a local, a captured local, a field, an element and a module
-  global, plus a string `+=`, an `any` target and five legacy-path `x /= 4`-style rows; gc + standalone, answers from
-  node. Base (#7307 head 68604aadf8): 844 of 964 fail; after: 964/964.
+  global, plus a string `+=`, an `any` target, `(o.a as number) ??= 7` and five legacy-path `x /= 4`-style rows; gc + standalone, answers from
+  node. Base (#7307 head 68604aadf8): 846 of 966 fail; after: 966/966.
 - Byte identity: 100 test262 files × gc/standalone, binaries identical (200/200).
 - Net −31 lines in `src/`: the change removes `unwrapParens` and two parenthesis-only loops, and collapses a
   9-operator allowlist.
