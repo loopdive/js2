@@ -28,6 +28,8 @@ export const MECHANISMS = {
   "script-var home: member read": "O · #7352",
   "script-var home: RegExp literal": "B · #7350",
   "script-var home: string": "H / Str follow-up · no issue yet",
+  "script-var home: IIFE result": "Fb · #7349",
+  "script-var home: primitive literal": "H follow-up · no issue yet",
   "script-var home: no initialiser": "H follow-up · no issue yet",
   "script-var home: other": "H follow-up · no issue yet",
   "array literals": "O · #7352",
@@ -65,6 +67,8 @@ function initialiserKind(name, text) {
   if (init.startsWith("new ")) return "new expression";
   if (/^[\w$.]+\s*\(/.test(init)) return "call result";
   if (/^[\w$]+(?:\.[\w$]+|\[)/.test(init)) return "member read";
+  if (/^\(\s*function\b/.test(init)) return "IIFE result";
+  if (/^[-+]?(?:\d|\.\d)|^(?:true|false|null)\b/.test(init)) return "primitive literal";
   if (init.startsWith("/")) return "RegExp literal";
   if (/^["']/.test(init)) return "string";
   if (init === "") return "no initialiser";
