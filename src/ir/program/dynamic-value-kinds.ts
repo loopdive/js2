@@ -14,7 +14,6 @@ import type { IrInstr, IrType } from "../core/nodes.js";
 import type { TagId } from "../core/tag-domain.js";
 import { irOrdinaryObjectCallableDeclaration } from "../runtime/ordinary-object-callables.js";
 import { JS_TAG_IDS } from "../runtime/js-tag-domain.js";
-import { NO_OBJECTS, type ProgramObjects } from "../source-plain-objects.js";
 
 /**
  * `typeof`'s answer for each kind. A `typeof` comparison with a literal no kind answers ("symbol", a typo) is
@@ -100,6 +99,19 @@ export const TO_NUMBER_ARM: Readonly<Record<CarrierKind, "unbox" | "nan">> = {
   object: "nan",
   function: "nan",
 };
+
+/**
+ * What a program's objects allow (`src/ir/source-plain-objects.ts` answers it from the source): whether the program
+ * builds ordinary objects, and `undefined` when they and the built-in prototypes are plain, else the first reason
+ * they are not.
+ */
+export interface ProgramObjects {
+  readonly present: boolean;
+  readonly unplain: string | undefined;
+}
+
+/** A program that builds no ordinary object. */
+export const NO_OBJECTS: ProgramObjects = Object.freeze({ present: false, unplain: undefined });
 
 /**
  * The kinds a program's values may be beyond the primitives, which every program has: its ordinary objects, and

@@ -9,9 +9,8 @@ import type { IrInstr, IrValueId } from "../core/nodes.js";
 import type { IrType } from "../core/types.js";
 import { irIntrinsicFuncRef } from "../core/callable-bindings.js";
 import { BUILTIN_REACHABLE_KEYS, isArrayIndexKey } from "./builtin-prototype-keys.js";
-import { MEMBER_READ_ARM, plainObjectRefusal, type CarrierKind } from "./dynamic-value-kinds.js";
+import { MEMBER_READ_ARM, plainObjectRefusal, type CarrierKind, type ProgramObjects } from "./dynamic-value-kinds.js";
 import { gap } from "./dynamic-value-gap.js";
-import type { ProgramObjects } from "../source-plain-objects.js";
 
 /** The legalization builders a member read is written with. */
 export interface MemberReadBuilders {

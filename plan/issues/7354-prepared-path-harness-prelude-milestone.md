@@ -67,7 +67,7 @@ loc-budget-allow:
   - src/ir/from-ast.ts
   - src/compiler/ir-program-presentation.ts
 import-cycles-allow:
-  - backend->ir: 119 # 2026-11-17 (#7354 Str review 2): the native string length emitter reads the selected carrier field through the shared preparedStringLenProvider (ir/runtime/intrinsic-preparation.ts) instead of re-implementing it
+  - backend->ir: 120 # 2026-11-17 (#7354 Str review 2): the native string length emitter reads the selected carrier field through the shared preparedStringLenProvider (ir/runtime/intrinsic-preparation.ts) instead of re-implementing it; 2026-11-19 (#7354 Perf2, f6694dada4): native-string-values.ts settles its reservation-input currentness check with the shared settled verdict (ir/program/settled-verdict.ts) that the IR requirement modules use; the verdict cannot move to src/shared because it reads the frozen-collection brand private to ir/program/data.ts
 ---
 
 # #7354 — Prepared IR path, milestone 1
@@ -2636,6 +2636,26 @@ O1 to O4 (these are this slice's steps, not #7352's parked ordinary-pipeline sli
   kernel's lookup and the descriptor pack's define); the same receiver chain, a primitive receiver refusing by name.
 - **Catch.** The program-wide throw rule applies only where the program binds a catch: a TypeError thrown from a
   member read is no carrier kind, so a program that also catches refuses by name until an error kind exists.
+
+- **for-in (O5, #7377).** `for (k in o)` over an ordinary object (188 files in the ES5 sample) is its own lane,
+  stacked on `claude/7354-o` after O3: it enumerates the realm object's own enumerable string keys in insertion order
+  under the same pristine-prototype precondition, and refuses by name otherwise.
+
+### O4 result (2026-11-19, `claude/7354-o` 53357b3b9f)
+
+- Built as designed above, in `src/ir/program/dynamic-member-read.ts`. The prototype key lists are in
+  `builtin-prototype-keys.ts`, and the gap error is in a leaf, `dynamic-value-gap.ts`, so `legalizationBuilders`
+  stays under its function budget. The source `__new_TypeError` call is the contract `js.object.create-type-error`,
+  served by the realm errors pack's existing constructor.
+- The get adapter traps only on an unknown carrier (status 3); an incomplete parent (status 2) reads `undefined`,
+  because every key the realm's prototypes would hold refuses at the call site.
+- Integration (lead, 2026-11-19): the perf2 base's `backend->ir` edge (`native-string-values.ts` ->
+  `settled-verdict.ts`) is granted in this file's frontmatter, and `settled-verdict.ts` is classified. `ProgramObjects`
+  and `NO_OBJECTS` live in `dynamic-value-kinds.ts`, so the clean `ir-program` modules do not reach the
+  frontend-side predicate `source-plain-objects.ts`.
+- Open for whichever of O and Ty (#7327) lands second: the Str2 pin "typeof String" in
+  `tests/issue-7354-str2-to-string.test.ts` still expects `identifier "String" is not in scope`. After Ty, it
+  answers from the realm table.
 
 ## Realm join (2026-11-19, branch `claude/7354-realm` from `origin/main`)
 
