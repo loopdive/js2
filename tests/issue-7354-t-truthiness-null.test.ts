@@ -4,6 +4,7 @@
 // `js.value.to_boolean`, whose native function is the ordinary pipeline's `__is_truthy` body (one shared
 // builder). `null` is the carrier's null reference, as on the ordinary standalone pipeline, so it stays apart
 // from the `undefined` singleton under strict equality and the `undefined` probe; `=== null` is `ref.is_null`.
+import { AllocSiteRegistry } from "../src/ir/analysis/alloc-registry.js";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as gc from "../src/codegen/index.js";
 import * as linear from "../src/codegen-linear/index.js";
@@ -382,23 +383,27 @@ describe("#7354 T — the legalization arms", () => {
   const externref = { kind: "val", val: { kind: "externref" } } as const;
   const i32 = { kind: "val", val: { kind: "i32" } } as const;
   const one = (instr: object, params: readonly object[] = [dynamic]) =>
-    legalizeDynamicValues({
-      unitId: "ir-unit:test",
-      name: "f",
-      params: params.map((type, index) => ({ value: index, type, name: `p${index}` })),
-      resultTypes: [i32],
-      blocks: [
-        {
-          id: 0,
-          blockArgs: [],
-          blockArgTypes: [],
-          instrs: [instr as IrInstr],
-          terminator: { kind: "return", values: [1] },
-        },
-      ],
-      exported: false,
-      valueCount: 2,
-    } as unknown as IrFunction).blocks[0]!.instrs[0];
+    legalizeDynamicValues(
+      {
+        unitId: "ir-unit:test",
+        name: "f",
+        params: params.map((type, index) => ({ value: index, type, name: `p${index}` })),
+        resultTypes: [i32],
+        blocks: [
+          {
+            id: 0,
+            blockArgs: [],
+            blockArgTypes: [],
+            instrs: [instr as IrInstr],
+            terminator: { kind: "return", values: [1] },
+          },
+        ],
+        exported: false,
+        valueCount: 2,
+      } as unknown as IrFunction,
+      new AllocSiteRegistry(),
+      { functions: false },
+    ).blocks[0]!.instrs[0];
 
   it("lowers ToBoolean to its intrinsic", () => {
     expect(one({ kind: "dyn.truthy", value: 0, result: 1, resultType: i32 })).toMatchObject({

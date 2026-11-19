@@ -464,7 +464,9 @@ function legalizeSourceDynamicValues(
   const retargeted = functions.map(retargetNumberToString);
   let legalized: readonly IrFunction[] = retargeted;
   try {
-    if (contracted) legalized = retargeted.map((fn) => legalizeDynamicValues(fn, allocations));
+    // (#7354 Fa) A function value enters the carrier only as an all-dynamic closure, created anywhere in the program.
+    const program = { functions: sourceFiles.some((file) => holdsDynamicClosure(policy, file)) };
+    if (contracted) legalized = retargeted.map((fn) => legalizeDynamicValues(fn, allocations, program));
     retargeted.forEach(refuseUnadmittedThrows);
   } catch (error) {
     if (!(error instanceof DynamicValueGap)) throw error;

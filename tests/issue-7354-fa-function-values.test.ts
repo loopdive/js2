@@ -127,6 +127,12 @@ describe("#7354 Fa — function values on the Prepared path", () => {
       "f() !== 3",
     ],
     [
+      "of the function kind: ToBoolean true, strict equality by reference",
+      "var f = function () {}; var g = function () {};",
+      "!f || f !== f || f === g || g === f",
+      "f !== g",
+    ],
+    [
       "thrown and caught",
       "var f = function () {}; var c; try { throw f; } catch (e) { c = e; }",
       "c !== f || !c",
@@ -192,8 +198,15 @@ describe("#7354 Fa — function values on the Prepared path", () => {
       "function g() { var x = 1; var f = function () { return x; }; x = 2; return f(); } g();",
       'captures non-local binding "x"',
     ],
-    // `typeof` is a string producer (slice Str2); a declaration read as a value is not built yet.
-    ["`typeof`", "var f = function () {}; var t = typeof f;", "dynamic operation dyn.typeof has no Prepared intrinsic"],
+    // (#7354 C) ToString and `+` of a function value are ToPrimitive's, and a test for the function kind is the
+    // realm's IsCallable: none is served yet. A declaration read as a value is not built yet.
+    ["`+` with a string", 'var f = function () {}; var s = f + "";', "dynamic operation + on a function value"],
+    ["`String(f)`", "var f = function () {}; var s = String(f);", "dynamic operation ToString of a function value"],
+    [
+      'a `typeof` comparison with "function"',
+      'var f = function () {}; var b = typeof f === "function";',
+      "dynamic operation kind test of a function value",
+    ],
     [
       "a function declaration read as a value",
       "function id(v) { return v; } var g = id;",
@@ -249,7 +262,11 @@ describe("#7354 Fa — the legalization arms", () => {
   const box = { kind: "call", target: irRuntimeFuncRef(IR_DYN_CALL_BOX_FN), args: [3], result: 1, resultType: dynamic };
 
   it("gives a closure, its packed callable and its lifted body the carrier signature", () => {
-    const out = legalizeDynamicValues(fn([closureNew, pack], { signature: logical, captureFieldTypes: [dynamic] }));
+    const out = legalizeDynamicValues(
+      fn([closureNew, pack], { signature: logical, captureFieldTypes: [dynamic] }),
+      new AllocSiteRegistry(),
+      { functions: true },
+    );
     const [allocated, packed] = out.blocks[0]!.instrs as IrInstr[];
     expect(allocated).toMatchObject({
       signature: carrier,
@@ -263,20 +280,26 @@ describe("#7354 Fa — the legalization arms", () => {
   });
 
   it("expresses the function-value box of a packed callable as the carrier itself", () => {
-    const [, , boxed] = legalizeDynamicValues(fn([closureNew, pack, box])).blocks[0]!.instrs as IrInstr[];
+    const [, , boxed] = legalizeDynamicValues(fn([closureNew, pack, box]), new AllocSiteRegistry(), { functions: true })
+      .blocks[0]!.instrs as IrInstr[];
     expect(boxed).toEqual({ kind: "coerce.to_externref", value: 3, result: 1, resultType: externref });
   });
 
   it("leaves the function-value box of anything but a packed callable to the helper refusal", () => {
     const helper = { ...box, args: [0] };
-    expect(() => legalizeDynamicValues(fn([helper]))).toThrow("__ir_dyn_call_box");
+    expect(() => legalizeDynamicValues(fn([helper]), new AllocSiteRegistry(), { functions: true })).toThrow(
+      "__ir_dyn_call_box",
+    );
   });
 
   it("re-types each closure allocation site to its legalized type", () => {
     const retyped: [number, unknown][] = [];
-    legalizeDynamicAllocations([legalizeDynamicValues(fn([closureNew]))], {
-      retype: (id, type) => retyped.push([id, type]),
-    });
+    legalizeDynamicAllocations(
+      [legalizeDynamicValues(fn([closureNew]), new AllocSiteRegistry(), { functions: true })],
+      {
+        retype: (id, type) => retyped.push([id, type]),
+      },
+    );
     expect(retyped).toEqual([[7, { kind: "closure", signature: carrier }]]);
   });
 });

@@ -8,6 +8,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import * as gc from "../src/codegen/index.js";
 import * as linear from "../src/codegen-linear/index.js";
 import { legalizeDynamicValues } from "../src/ir/program/dynamic-value-legalization.js";
+import { AllocSiteRegistry } from "../src/ir/analysis/alloc-registry.js";
 import type { IrFunction, IrInstr } from "../src/ir/core/nodes.js";
 import { instantiatePreparedArtifact } from "../src/test262/test262-prepared-runtime.js";
 import {
@@ -29,6 +30,8 @@ const options = (target: "standalone" | "gc" = "standalone"): Test262CompileOpti
   }) as Test262CompileOptions;
 
 afterEach(() => vi.restoreAllMocks());
+
+const legalize = (fn: IrFunction) => legalizeDynamicValues(fn, new AllocSiteRegistry(), { functions: false });
 
 const messages = (result: { errors: readonly { message: string }[] }) => result.errors.map((error) => error.message);
 
@@ -254,7 +257,7 @@ describe("#7354 X — the legalization arm", () => {
   const coerce = { kind: "coerce.to_externref", value: 0, result: 1, resultType: externref };
 
   it("keeps the coercion of a thrown dynamic value, over the legalized carrier", () => {
-    const out = legalizeDynamicValues(fn([coerce, { kind: "throw", value: 1, result: null, resultType: null }]));
+    const out = legalize(fn([coerce, { kind: "throw", value: 1, result: null, resultType: null }]));
     expect(out.params[0]!.type).toEqual(externref);
     expect(out.blocks[0]!.instrs[0]).toEqual(coerce);
   });
@@ -268,11 +271,11 @@ describe("#7354 X — the legalization arm", () => {
       result: null,
       resultType: null,
     };
-    expect(legalizeDynamicValues(fn([coerce, nested])).blocks[0]!.instrs[0]).toEqual(coerce);
+    expect(legalize(fn([coerce, nested])).blocks[0]!.instrs[0]).toEqual(coerce);
   });
 
   // (#7354 O1) An ordinary object's property stores the carrier too, so an unthrown coercion keeps as well.
   it("keeps the coercion of a dynamic value that is not thrown", () => {
-    expect(legalizeDynamicValues(fn([coerce])).blocks[0]!.instrs[0]).toEqual(coerce);
+    expect(legalize(fn([coerce])).blocks[0]!.instrs[0]).toEqual(coerce);
   });
 });

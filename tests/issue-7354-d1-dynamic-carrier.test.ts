@@ -23,7 +23,8 @@ import {
   type Test262CompileOptions,
 } from "../src/test262/test262-prepared-entry.js";
 
-const legalize = (fn: IrFunction): IrFunction => legalizeDynamicValues(fn, new AllocSiteRegistry());
+const legalize = (fn: IrFunction): IrFunction =>
+  legalizeDynamicValues(fn, new AllocSiteRegistry(), { functions: false });
 
 const options = (target: "standalone" | "gc"): Test262CompileOptions =>
   ({

@@ -62,3 +62,16 @@ describe("#7354 C — `this` on the Prepared path", () => {
     expect(result).toContain("dynamic operation dyn.current_this has no Prepared intrinsic");
   });
 });
+
+describe("#7354 C — the function kind of the dynamic value", () => {
+  it("answers `typeof` of a function value as the chain's last kind", async () => {
+    const program = (answer: string) => `var f = function () {}; var t = typeof f; if (t !== "${answer}") throw 1;`;
+    expect(await run(program("function"))).toBe("returned");
+    expect(await run(program("object"))).toBe("threw");
+  }, 120_000); // two programs that pull in the native realm (~20 s each to compile)
+
+  it("keeps a program without function values off the function kind", async () => {
+    expect(await run('function g(v) { return "" + v; } if (g(1) !== "1") throw 1;')).toBe("returned");
+    expect(await run('function g(v) { return typeof v === "function"; } if (g(1)) throw 1;')).toBe("returned");
+  });
+});
