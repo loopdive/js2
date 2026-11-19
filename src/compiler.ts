@@ -47,6 +47,7 @@ import {
 } from "./compiler/ir-program-presentation.js";
 import { freezePreparedIrValue, PreparedIrProgramInvariantError, type PreparedIrBackendOptions } from "./ir/program.js";
 import { preparedNumberFormatOptions, preparedPresentationPolicy } from "./compiler/prepared-provider-census.js";
+import { preparedCodeStrictness } from "./compiler/prepared-code-strictness.js";
 import { buildHostImportInventory, summarizeHostImportInventory } from "./host-import-policy.js";
 import { buildCapabilityRequirements, validatePlatformCapabilityRequirements } from "./capability-registry.js";
 import { createJavaScriptAdapterManifest } from "./adapter-manifest.js";
@@ -1165,6 +1166,7 @@ export function runPreparedIrPipelinePresentation(input: PipelineInput): Prepare
       policy: preparedPresentationPolicy(backendOptions.backend, target),
       deferTopLevelInit: options.deferTopLevelInit === true,
       functionThisStrictness: preparedFunctionThisStrictness,
+      codeStrictness: preparedCodeStrictness(options.inferModuleStrictArguments),
     },
     backendOptions,
     output: {

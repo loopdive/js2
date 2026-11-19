@@ -17080,6 +17080,14 @@
       "nextBoundary": "Prepared OrdinaryCallBindThis policy (#7354 C): asks the two pure codegen helpers for a function's own-`this` strictness so the IR source producer does not; moves with the helpers when they move below ir."
     },
     {
+      "path": "src/compiler/prepared-code-strictness.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "compiler",
+      "owner": "7354",
+      "nextBoundary": "The code strictness the compiler hands the Prepared source producer (#7354 O3), read from codegen's isStrictContext so src/ir imports no codegen helper; moves with ir-program-presentation.ts at compiler-layer activation."
+    },
+    {
       "path": "src/compiler/prepared-formatter-census.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
@@ -17132,7 +17140,7 @@
       "layer": "ir-program"
     },
     {
-      "path": "src/ir/program/dynamic-member-read.ts",
+      "path": "src/ir/program/dynamic-member-access.ts",
       "state": "clean",
       "layer": "ir-program"
     },

@@ -46,7 +46,7 @@ import { typeofComparisons } from "./typeof-comparisons.js";
 import { PREPARED_NUMBER_TO_STRING } from "./number-to-string-target.js";
 import { IR_DYN_ADD_FN } from "../../shared/contracts/dynamic-add-helper.js";
 import { gap } from "./dynamic-value-gap.js";
-import { dynamicMemberRead } from "./dynamic-member-read.js";
+import { dynamicMemberRead, dynamicMemberWrite } from "./dynamic-member-access.js";
 import {
   ADD_ROLE,
   KIND_TEST,
@@ -352,15 +352,8 @@ function legalizationBuilders(
       ),
     ];
   };
-  const memberRead = (instr: IrInstr, receiver: IrValueId, key: IrValueId, result: IrValueId): IrInstr[] =>
-    dynamicMemberRead(
-      { carrier: CARRIER, definitions, fresh, text, intrinsic, kindsOf, kindChain },
-      program,
-      instr,
-      receiver,
-      key,
-      result,
-    );
+  // (#7354 O4, O3) What a member read or write is written with (`dynamic-member-access.ts`).
+  const memberAccess = { carrier: CARRIER, definitions, fresh, text, intrinsic, kindsOf, kindChain };
   const stringOf = (instr: IrInstr, value: IrValueId, result: IrValueId): IrInstr[] =>
     kindChain(instr, value, result, (kind, r) => toStringArm(instr, kind, value, r), kindsOf(value));
   /**
@@ -431,7 +424,7 @@ function legalizationBuilders(
     kindChain,
     toStringArm,
     toNumber,
-    memberRead,
+    memberAccess,
     addition,
     definitions,
     admitted,
@@ -564,7 +557,17 @@ export function legalizeDynamicValues(
       case "dyn.to_number":
         return toNumber(instr, instr.value, instr.result!);
       case "dyn.member_get":
-        return builders.memberRead(instr, instr.recv, instr.key, instr.result!);
+        return dynamicMemberRead(builders.memberAccess, program, instr, instr.recv, instr.key, instr.result!);
+      case "dyn.member_set":
+        return dynamicMemberWrite(
+          builders.memberAccess,
+          program,
+          instr,
+          instr.recv,
+          instr.key,
+          instr.value,
+          instr.sloppy === true,
+        );
       case "dyn.eq": {
         if (instr.loose) return gap("dyn.eq (loose)");
         return withSense(instr, instr.negate, (result) => [
