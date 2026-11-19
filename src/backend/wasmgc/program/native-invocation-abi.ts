@@ -1,5 +1,13 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
-
+/**
+ * The native call ABI: the physical plan's rows for the native functions that serve source calls, built by one row
+ * builder (`nativeCallAbiBindings`) for both families:
+ *   - native invocation (source closures, their methods and getters);
+ *   - (#7354 O1) source objects: each `js.object.*` call route binds the realm function that serves its contract
+ *     (`native-source-objects.ts`).
+ * The module keeps its first family's name: it is an entry of the backend-wasmgc layer, which the boundaries gate
+ * does not let a change remove, and a separate source-object module would be a new ir->backend import edge.
+ */
 import {
   assertNativeInvocationRequirementsCurrent,
   planNativeInvocationRequirements,
@@ -25,7 +33,8 @@ import type { ProgramAbiPlanEntry } from "../../../ir/program/abi.js";
 import type { NativeRealmRequirements } from "../../../ir/program/native-realm-requirements.js";
 import { nativeSourceObjectResourceKey } from "../resources/native-source-objects.js";
 
-export interface NativeInvocationAbiBinding {
+/** One call route's ABI row and the key of the reserved function that serves it. */
+export interface NativeCallAbiBinding {
   readonly resourceKey: string;
   readonly reference: IrFuncRef;
   readonly entry: ProgramAbiPlanEntry;
@@ -33,7 +42,7 @@ export interface NativeInvocationAbiBinding {
 
 export interface NativeInvocationPhysicalSetup {
   readonly key: string;
-  readonly bindings: readonly NativeInvocationAbiBinding[];
+  readonly bindings: readonly NativeCallAbiBinding[];
   readonly methodArities: readonly number[];
   readonly applyVector: boolean;
   readonly sourceUseCount: number;
@@ -108,7 +117,7 @@ export function nativeInvocationSetup(
 export function nativeInvocationAbiBindings(
   requirements: NativeInvocationRequirements,
   declarationOrder: number,
-): readonly NativeInvocationAbiBinding[] {
+): readonly NativeCallAbiBinding[] {
   assertNativeInvocationRequirementsCurrent(requirements);
   return nativeCallAbiBindings(
     requirements.source.demands,
@@ -139,9 +148,9 @@ export function nativeCallAbiBindings(
   uses: readonly NativeCallUse[],
   declarationOrder: number,
   label: string,
-): readonly NativeInvocationAbiBinding[] {
+): readonly NativeCallAbiBinding[] {
   const anchor = preparedIrRuntimeAbiAnchor(demands.program.inventory);
-  const bindings = new Map<string, NativeInvocationAbiBinding>();
+  const bindings = new Map<string, NativeCallAbiBinding>();
   for (const use of uses) {
     const call = demands.occurrences[use.occurrence]!.instruction;
     if (call.kind !== "call") throw new Error(`${label}: lost selected call`);
@@ -191,7 +200,7 @@ export function nativeCallAbiBindings(
  */
 export interface NativeSourceObjectPhysicalSetup {
   readonly key: string;
-  readonly bindings: readonly NativeInvocationAbiBinding[];
+  readonly bindings: readonly NativeCallAbiBinding[];
 }
 
 /** The rows for every object use the realm selected, or a gap per contract with no native source provider. */
@@ -202,7 +211,7 @@ export function planNativeSourceObjectSetup(
   readonly setup: NativeSourceObjectPhysicalSetup | undefined;
   readonly gaps: readonly { readonly detail: string; readonly unitId: IrUnitId }[];
 } {
-  const uses = realm?.description.objectUses ?? [];
+  const uses = realm?.description.sourceCalls ?? [];
   if (!realm || uses.length === 0) return { setup: undefined, gaps: [] };
   const gaps: { detail: string; unitId: IrUnitId }[] = [];
   const served = uses.flatMap((use) => {

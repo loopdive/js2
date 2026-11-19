@@ -10,11 +10,22 @@ import {
   assertNativeObjectAccessRequirementsCurrent,
   type NativeObjectAccessRequirements,
 } from "./native-object-access-requirements.js";
+import { pairedSourceCalls, type SourceCall, type SourceCallFamily } from "./native-source-calls.js";
+import { ORDINARY_OBJECT_SOURCE_CALLS } from "./ordinary-object-source-calls.js";
 import {
   planNativeSourceClosureRequirements,
   assertNativeSourceClosureRequirementsCurrent,
   type NativeSourceClosureRequirements,
 } from "./native-source-closure-requirements.js";
+
+/**
+ * (#7354) The families of source calls the realm serves, walked once into `sourceCalls`. A family is its
+ * `SourceCallFamily` here (`ordinary-object-source-calls.ts`) and its rows in the realm's served-row table
+ * (`native-source-objects.ts`).
+ */
+const REALM_SOURCE_CALL_FAMILIES = Object.freeze([ORDINARY_OBJECT_SOURCE_CALLS] as const);
+type FamilyFeature<T> = T extends SourceCallFamily<infer F> ? F : never;
+export type RealmSourceCallFeature = FamilyFeature<(typeof REALM_SOURCE_CALL_FAMILIES)[number]>;
 
 export interface NativeRealmDescription {
   readonly key: string;
@@ -22,7 +33,8 @@ export interface NativeRealmDescription {
   readonly sourceUnits: readonly IrUnitId[];
   readonly sourceSignatureIds: readonly string[];
   readonly sourceAllocationOccurrences: readonly number[];
-  readonly objectUses: NativeObjectAccessRequirements["uses"];
+  /** Every executed call a realm family declares, in occurrence order: each binds the function serving its feature. */
+  readonly sourceCalls: readonly SourceCall<RealmSourceCallFeature>[];
   readonly numberUses: readonly {
     readonly occurrence: number;
     readonly semanticOccurrence: number;
@@ -96,8 +108,9 @@ function calculate(
   const selectedSource =
     !!source &&
     !!(source.signatures.length || source.shapes.length || source.units.length || source.allocations.length);
+  const sourceCalls = pairedSourceCalls(access.demands, REALM_SOURCE_CALL_FAMILIES);
   const numbers = numberUses(access);
-  if (!selectedSource && !access.uses.length && !numbers.length) return undefined;
+  if (!selectedSource && !sourceCalls.length && !numbers.length) return undefined;
   const anchor = program.inventory.sources.find((row) => row.kind === "entry");
   if (!anchor) fail("missing prepared entry anchor");
   return {
@@ -106,7 +119,7 @@ function calculate(
     sourceUnits: source?.units.map((row) => row.unitId) ?? [],
     sourceSignatureIds: source?.signatures.map((row) => row.id) ?? [],
     sourceAllocationOccurrences: source?.allocations.map((row) => row.occurrence) ?? [],
-    objectUses: access.uses,
+    sourceCalls,
     numberUses: numbers,
     unavailable: [
       ...NATIVE_REALM_CATALOG.intrinsics.flatMap((row) =>

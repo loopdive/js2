@@ -13759,7 +13759,7 @@
       "nextBoundary": "Separate pure IR contracts from frontend inventory and physical/backend dependencies."
     },
     {
-      "path": "src/ir/property-key-fold.ts",
+      "path": "src/shared/property-key-fold.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
       "destination": "ir-core",
@@ -15288,6 +15288,16 @@
     },
     {
       "path": "src/ir/program/native-object-access-requirements.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
+      "path": "src/ir/program/native-source-calls.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
+      "path": "src/ir/program/ordinary-object-source-calls.ts",
       "state": "clean",
       "layer": "ir-program"
     },
@@ -17085,6 +17095,39 @@
       "path": "src/ir/program/dynamic-value-legalization.ts",
       "state": "clean",
       "layer": "ir-program"
+    },
+    {
+      "path": "src/ir/program/settled-verdict.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
+      "path": "src/ir/program/dynamic-value-kinds.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
+      "path": "src/ir/program/dynamic-value-gap.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
+      "path": "src/ir/program/dynamic-member-read.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
+      "path": "src/ir/program/builtin-prototype-keys.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
+      "path": "src/ir/source-plain-objects.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "frontend-ts",
+      "owner": "7354",
+      "nextBoundary": "The checker-and-source predicate whether a Prepared program's objects are plain (#7354 O2): which literals and member writes could change ToPrimitive or a built-in prototype; moves with source-dynamic-contracts.ts under frontend/ts."
     },
     {
       "path": "src/ir/program/number-to-string-target.ts",

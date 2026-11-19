@@ -18,7 +18,7 @@ import {
   planNativeInvocationInput,
   nativeInvocationSetup,
   planNativeSourceObjectSetup,
-  type NativeInvocationAbiBinding,
+  type NativeCallAbiBinding,
   type NativeSourceObjectPhysicalSetup,
   type NativeInvocationPhysicalSetup,
 } from "../backend/wasmgc/program/native-invocation-abi.js";
@@ -258,7 +258,7 @@ function sourceClosureDescription(
 }
 
 /** The plan's native call rows: invocation and (#7354 O1) source objects. */
-export function plannedNativeCallBindings(plan: PhysicalSetupPlan): readonly NativeInvocationAbiBinding[] {
+export function plannedNativeCallBindings(plan: PhysicalSetupPlan): readonly NativeCallAbiBinding[] {
   return [...(plan.nativeInvocation?.bindings ?? []), ...(plan.nativeSourceObjects?.bindings ?? [])];
 }
 

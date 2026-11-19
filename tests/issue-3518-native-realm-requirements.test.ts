@@ -135,7 +135,7 @@ describe("semantic native realm catalog and real selected demands", () => {
     expect(r.source!.units).toHaveLength(1);
     expect(r.description.sourceUnits).toEqual(r.source!.units.map((row) => row.unitId));
     expect(r.description.sourceAllocationOccurrences.length).toBeGreaterThan(0);
-    expect(r.description.objectUses).toEqual([]);
+    expect(r.description.sourceCalls).toEqual([]);
     expect(r.access.uses).toEqual([]);
     expect(r.description.catalog).toEqual(NATIVE_REALM_CATALOG);
     expect(r.description.completionScope).toBe("native-realm-bootstrap");
@@ -147,7 +147,7 @@ describe("semantic native realm catalog and real selected demands", () => {
     const { requirements: r, input } = realmInput(program);
     expect(r.source).toBeUndefined();
     expect(r.description.sourceUnits).toEqual([]);
-    expect(r.description.objectUses.map((row) => row.feature)).toEqual(["js.object.create-null"]);
+    expect(r.description.sourceCalls.map((row) => row.feature)).toEqual(["js.object.create-null"]);
     expect(r.description.numberUses).toEqual([]);
     for (const functions of [program.ir.functions, r.projection.prepared.functions]) {
       const calls = functions

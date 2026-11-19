@@ -14,7 +14,6 @@ import type { IrInstr, IrType } from "../core/nodes.js";
 import type { TagId } from "../core/tag-domain.js";
 import { irOrdinaryObjectCallableDeclaration } from "../runtime/ordinary-object-callables.js";
 import { JS_TAG_IDS } from "../runtime/js-tag-domain.js";
-import { NO_OBJECTS, type ProgramObjects } from "../source-plain-objects.js";
 
 /**
  * `typeof`'s answer for each kind. A `typeof` comparison with a literal no kind answers ("symbol", a typo) is
@@ -102,6 +101,19 @@ export const TO_NUMBER_ARM: Readonly<Record<CarrierKind, "unbox" | "nan">> = {
 };
 
 /**
+ * What a program's objects allow (`src/ir/source-plain-objects.ts` answers it from the source): whether the program
+ * builds ordinary objects, and `undefined` when they and the built-in prototypes are plain, else the first reason
+ * they are not.
+ */
+export interface ProgramObjects {
+  readonly present: boolean;
+  readonly unplain: string | undefined;
+}
+
+/** A program that builds no ordinary object. */
+export const NO_OBJECTS: ProgramObjects = Object.freeze({ present: false, unplain: undefined });
+
+/**
  * The kinds a program's values may be beyond the primitives, which every program has: its ordinary objects, and
  * whether it creates function values.
  */
@@ -113,21 +125,37 @@ export interface ProgramKinds {
 /** A program of primitives only. */
 export const NO_PROGRAM_KINDS: ProgramKinds = Object.freeze({ objects: NO_OBJECTS, functions: false });
 
+/**
+ * (#7354 O4) How a member read (§13.3.2.1, GetV) answers each receiver kind: `undefined` and `null` throw a TypeError
+ * (RequireObjectCoercible); an object is the realm's [[Get]]; a primitive reaches only built-in prototypes, so a key
+ * none of them names reads `undefined` (`builtin-prototype-keys.ts`). A function refuses: the realm's [[Get]] does not
+ * recognise a source closure as an object until slice C gives the kernel its source-closure arm.
+ */
+export const MEMBER_READ_ARM: Readonly<Record<CarrierKind, "type-error" | "get" | "primitive" | "refused">> = {
+  number: "primitive",
+  boolean: "primitive",
+  string: "primitive",
+  undefined: "type-error",
+  null: "type-error",
+  object: "get",
+  function: "refused",
+};
+
 /** The kinds the `plain-object` rows were proved for. */
 type PlainObjectKinds = "number" | "boolean" | "string" | "undefined" | "null" | "object" | "function";
 
 /**
- * The plain-object rows' verdict for a program: `undefined` when they may answer, else the named refusal
- * (`source-plain-objects.ts` says why the program's objects are not plain). The OrdinaryToPrimitive shortcut is exact
+ * The plain-object rows' verdict for a program: `undefined` when they may answer, else the named refusal of
+ * `operation` (`source-plain-objects.ts` says why the program's objects are not plain). (#7354 O4) The member-read
+ * rows ask it too: a key outside the built-in prototypes reads `undefined` only while no code can change them. The OrdinaryToPrimitive shortcut is exact
  * only while no callable can be a property value, so the kind set is pinned here: a slice that admits another kind
  * fails to compile until it decides the same question. (Fa) A function value is no property value by itself: the
  * plainness check refuses every function a program stores in a property and every write of `toString` / `valueOf`,
  * so a function value elsewhere leaves the shortcut exact.
  */
-export function plainObjectRefusal(program: ProgramKinds): string | undefined {
+export function plainObjectRefusal(objects: ProgramObjects, operation: string): string | undefined {
   const provedKinds: [Exclude<CarrierKind, PlainObjectKinds>] extends [never] ? true : never = true;
-  const reason = program.objects.unplain;
-  return provedKinds && reason === undefined ? undefined : `ToPrimitive of an object (${reason})`;
+  return provedKinds && objects.unplain === undefined ? undefined : `${operation} (${objects.unplain})`;
 }
 
 /** The kinds a value of a program may be: the object and function kinds only where the program creates them. */
