@@ -1,6 +1,6 @@
 ---
 id: 7416
-title: "Make the silent missing-helper fallbacks loud: 19 sites that emitted nothing (or null/0) when a helper was absent now fail the compile"
+title: "Make the silent missing-helper fallbacks loud: 18 sites that emitted nothing (or null/0) when a helper was absent now fail the compile"
 status: done
 sprint: current
 created: 2026-11-19
@@ -36,12 +36,11 @@ where an externref is expected.
 One shared `requireHelper(ctx, name)` in
 `src/codegen/helpers/required-helper.ts` returns the helper's function
 index, and throws an internal compiler error when the helper is absent. The
-19 sites call it in place of their silent fallback.
+18 sites call it in place of their silent fallback.
 
 | file | sites | helper |
 | --- | ---: | --- |
 | `expressions/operator-assignment.ts` | 3 | `number_toString` |
-| `array-methods.ts` | 1 | `__box_number` (array HOF `arguments` extras) |
 | `regex-replace-fn.ts` | 2 | `__box_number` (replace callback `offset`) |
 | `statements/nested-declarations.ts` | 2 | `__box_number` (`arguments` extras) |
 | `statements/destructuring.ts` | 2 | `__box_number` (nested default on externref) |
@@ -60,6 +59,13 @@ Net −43 lines. No file or function grows.
   The correct fallback is the native `undefined` (as #7413 does for the
   argument pad), which is a value change rather than a loud failure. Its own
   follow-up.
+- **`array-methods.ts:6470`** (array HOF callback `arguments` extras,
+  `__box_number`). **This one is reached**: the equivalence gate found it on
+  gc (`issue-7165-string-vec-sort-undefined`, `a.map(show)`). The null
+  stand-in is harmless there only because the callback never reads
+  `arguments`. A hard error would break valid programs; the right fix is to
+  register the helper (`ensureLateImport` plus a flush) before the detached
+  instruction list is built. Its own follow-up.
 - **`object-runtime.ts:11574`** (`primitiveNumberRead`). The helper reads
   are built eagerly for every length-field kind, including kinds that never
   use them, so requiring them there could fail a compile that does not need
