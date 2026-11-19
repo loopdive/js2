@@ -180,6 +180,55 @@ shuffle (seed 7353), first 1,200 files. A sample, not the full census.
    pair's divergent slots come from `@type {typeof …}` JSDoc, not call sites;
    re-measure after slice 3.
 
+### Measured after the scope correction (2026-11-19, main `ee3fcdd610`)
+
+The goal is measured on the Prepared whole-program path (CLAUDE.md, decisions
+of 2026-11-15/16), so both pipelines were measured before going on.
+
+**(a) Prepared path** (`src/test262/test262-prepared-entry.ts`, standalone,
+`wholeProgram: prepared-program-required`). Real files still stop in the
+prelude (5 of 5 tried: `dyn.typeof`, a not-direct module binding), so each
+point was probed directly:
+
+| probe | result |
+|---|---|
+| untyped parameter (`id(3)`) | compiles |
+| point 1: member read on a dynamic parameter beside the carrier | refused: `dyn.member_get has no Prepared intrinsic` (objects, #7354 slice O) |
+| bare dynamic parameter beside the carrier | compiles |
+| point 3: JSDoc type literal (`@param {object} d` + `[d.x]`) | compiles |
+| point 4: call-site-refined parameter (`sq(3)`) | compiles |
+| `@type {typeof f}` | compiles |
+| unbracketed `@param {number} n` | refused: `type override (dynamic) disagrees with annotation (f64)` |
+| bracketed `@param {number} [n]` | compiles |
+
+- #7354 P's rule (an untyped parameter is always the dynamic value) already is
+  this issue's "one carrier" on the Prepared path; points 3 and 4 do not
+  exist there.
+- The one parameter gap left there is P's named gap: from-ast treats an
+  unbracketed JSDoc `number` / `string` / `boolean` `@param` as a contract.
+  Harness sites: `propertyHelper.js` (`functionLength`), `atomicsHelper.js`
+  ×3, `testIntl.js` ×10, `testIntlNumberFormat.js`, `wellKnownIntrinsicObjects.js`.
+  Rows reach it only after #7354 O / Fa / Fb.
+
+**(b) Ordinary pipeline**, slices 1 and 3 against the base run (same 1,200 files):
+
+| | slice 1 | slice 3 (99 `propertyHelper.js` files) |
+|---|---|---|
+| IR-only gained / lost | 0 / 0 | 0 / 0 |
+| legacy units | 2,048 → 2,048 | 860 → 860 |
+| verdict flips | 0 | 0 |
+| post-claim legacy rows | 112 → 112 | — |
+
+Slice 1 moves 6 units in probe programs (results equal node), none in the
+census. Slice 3 moves `verifyAccessorProperty` to its next refusal
+(`checkGet || checkSet`).
+
+**Recommendation sent to the lead:** park slices 1 and 3 (ordinary-only,
+measured yield 0). Count points 3 and 4 as done on the Prepared path by
+#7354 P. Take the JSDoc-contract gap as a Prepared-only rule once a run shows
+rows reaching it. Branches `claude/7353-param-carriers` (slice 1, committed)
+and `claude/7353-param-carriers-s3` (slice 3, WIP) are kept; no PR is open.
+
 ## Acceptance criteria
 
 1. Step 0 table, dated, with the head it ran on.
