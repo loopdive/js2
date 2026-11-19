@@ -130,6 +130,7 @@ import {
 import {
   reserveNativeSourceObjectResources,
   fillNativeSourceObjectResources,
+  nativeSourceObjectsUseArrays,
 } from "../resources/native-source-objects.js";
 
 function fail(detail: string): never {
@@ -355,11 +356,6 @@ export function reserveNativeProgramFoundation(
   return { vectorTypes, stringTypes, earlyStrings, realm };
 }
 
-const ARRAY_FEATURES: ReadonlySet<string> = new Set([
-  "js.object.create-array",
-  "js.object.get-index",
-  "js.object.set-index",
-]);
 function reserveKernelResources(tx: PhysicalModuleReservations, pack: NativeRealmReservations, owner: Owner) {
   const number = pack.strings.number,
     valuePlan = owner.input.valueRequirements,
@@ -376,9 +372,8 @@ function reserveKernelResources(tx: PhysicalModuleReservations, pack: NativeReal
     bigints = reserveNativeBigIntResources(tx, key + ":bigints", bigintPlan);
   const symbols = reserveNativeSymbolCarrierResources(tx, key + ":symbols", strings);
   // (#7352 arrays) An array contract declares `$Array`, whose elements are the realm's argument vector.
-  const elements = pack.requirements.description.objectUses.some((use) => ARRAY_FEATURES.has(use.feature))
-    ? pack.substrate.arguments.carrier
-    : undefined;
+  const objectFeatures = pack.requirements.description.objectUses.map((use) => use.feature);
+  const elements = nativeSourceObjectsUseArrays(objectFeatures) ? pack.substrate.arguments.carrier : undefined;
   const layoutRequirements = {
       key: key + ":objects",
       ...(elements ? { extensible: true as const, arrayElements: elements.key } : {}),
@@ -445,12 +440,13 @@ function reserveKernelResources(tx: PhysicalModuleReservations, pack: NativeReal
     descriptorDependencies,
   };
   const kernel = reserveNativeBuiltinFunctionResources(tx, kernelDependencies);
-  const sourceObjects = reserveNativeSourceObjectResources(
-    tx,
-    key,
-    pack.requirements.description.objectUses.map((use) => use.feature),
-    { layouts, storage, descriptors, kernel },
-  );
+  const sourceObjects = reserveNativeSourceObjectResources(tx, key, objectFeatures, {
+    layouts,
+    storage,
+    descriptors,
+    kernel,
+    errors: pack.substrate.errors,
+  });
   return {
     equality,
     booleans,
@@ -520,7 +516,7 @@ export function nativeRealmReservationInventory(tx: PhysicalModuleReservations, 
     ...nativeObjectDescriptorReservationInventory(tx, k.descriptors, k.descriptorDependencies).functions,
     ...kernel.functions,
     ...k.sourceObjects.adapters.values(),
-    ...(k.sourceObjects.elementStore ? [k.sourceObjects.elementStore] : []),
+    ...k.sourceObjects.helpers.values(),
   ];
   const types: TypeReservation[] = [
     ...substrate.types,

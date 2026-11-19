@@ -31,10 +31,23 @@ export function buildSourceObjectCreateDefinition(d: {
 }
 
 /**
- * `js.object.get(object, key, receiver)`: the kernel's [[Get]], whose absent answer already is `undefined`. Its two
- * incomplete states (a parent outside the realm, a carrier that is not an object) cannot occur: every object a
- * source program reaches was built by `create-default` on this realm's Object.prototype.
+ * The kernel's [[Get]] of the (object, key, receiver) on the stack, whose absent answer already is `undefined`;
+ * `value` is an externref scratch local. Its two incomplete states (a parent outside the realm, a carrier that is
+ * not an object) cannot occur: every object a source program reaches was built by a `create-*` contract on this
+ * realm's prototypes.
  */
+export function sourceObjectGet(get: FuncHandle, value: number): Instr[] {
+  return [
+    { op: "call", funcIdx: get },
+    { op: "local.set", index: value },
+    { op: "i32.const", value: 2 },
+    { op: "i32.ge_u" },
+    { op: "if", blockType: { kind: "empty" }, then: [{ op: "unreachable" }] },
+    { op: "local.get", index: value },
+  ];
+}
+
+/** `js.object.get(object, key, receiver)`: the kernel's [[Get]]. */
 export function buildSourceObjectGetDefinition(d: { readonly get: FuncHandle }): SourceObjectDefinition {
   return {
     locals: [{ name: "value", type: { kind: "externref" } }],
@@ -42,12 +55,7 @@ export function buildSourceObjectGetDefinition(d: { readonly get: FuncHandle }):
       { op: "local.get", index: 0 },
       { op: "local.get", index: 1 },
       { op: "local.get", index: 2 },
-      { op: "call", funcIdx: d.get },
-      { op: "local.set", index: 3 },
-      { op: "i32.const", value: 2 },
-      { op: "i32.ge_u" },
-      { op: "if", blockType: { kind: "empty" }, then: [{ op: "unreachable" }] },
-      { op: "local.get", index: 3 },
+      ...sourceObjectGet(d.get, 3),
     ],
   };
 }

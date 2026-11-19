@@ -17,6 +17,7 @@ import type { RuntimeManifestPolicy } from "../../runtime/contracts/provider-pol
 const EXTERNAL: IrType = Object.freeze({ kind: "val", val: Object.freeze({ kind: "externref" }) });
 const FLAGS: IrType = Object.freeze({ kind: "val", val: Object.freeze({ kind: "f64" }) });
 const INDEX: IrType = Object.freeze({ kind: "val", val: Object.freeze({ kind: "f64" }) });
+const LENGTH: IrType = Object.freeze({ kind: "val", val: Object.freeze({ kind: "f64" }) });
 const BOOLEAN: IrType = Object.freeze({ kind: "val", val: Object.freeze({ kind: "i32", boolean: true }) });
 
 function declaration(
@@ -46,6 +47,8 @@ function declaration(
  *
  * (#7352 arrays) `create-array` is ArrayCreate(length) on %Array.prototype%; `get-index` / `set-index` are [[Get]]
  * / [[Set]] with an array-index key, an integer f64, so an index reaches an Array's elements without a key string.
+ * `set-length` is ArraySetLength on an Array; its length operand is ToNumber of the written value, which the
+ * operation checks against its ToUint32 (a RangeError when they differ).
  */
 const DECLARATIONS: Readonly<Record<OrdinaryObjectRuntimeFeature, IrRuntimeCallableDeclaration>> = Object.freeze({
   "js.object.create-default": declaration("js.object.create-default", [], [EXTERNAL]),
@@ -63,6 +66,7 @@ const DECLARATIONS: Readonly<Record<OrdinaryObjectRuntimeFeature, IrRuntimeCalla
   "js.object.create-array": declaration("js.object.create-array", [INDEX], [EXTERNAL]),
   "js.object.get-index": declaration("js.object.get-index", [EXTERNAL, INDEX, EXTERNAL], [EXTERNAL]),
   "js.object.set-index": declaration("js.object.set-index", [EXTERNAL, INDEX, EXTERNAL], []),
+  "js.object.set-length": declaration("js.object.set-length", [EXTERNAL, LENGTH], []),
 });
 
 /** Exact semantic binding only; neither display names nor runtime aliases qualify. */

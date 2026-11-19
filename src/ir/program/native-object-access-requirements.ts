@@ -278,8 +278,9 @@ function calculate(demands: NativeStringValueDemands) {
       else if (feature === "js.object.define-accessor" && !(descriptorMask & 768))
         fail("accessor descriptor has no explicit getter/setter presence");
     }
-    // (#7352 arrays) An index contract's key is an integer f64, not a PropertyKey.
-    if (!feature.startsWith("js.object.create-") && !feature.endsWith("-index")) {
+    // A property operation's second operand is its PropertyKey; (#7352 arrays) an index or a length is a number.
+    const keyOperand = declaration.params[1];
+    if (keyOperand?.kind === "val" && keyOperand.val.kind === "externref") {
       const key = original(call.args[1]!, definitions)?.instruction;
       const keyType = key?.resultType;
       if (
