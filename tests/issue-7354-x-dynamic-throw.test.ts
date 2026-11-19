@@ -187,10 +187,13 @@ describe("#7354 X — throw and catch with the Prepared dynamic value", () => {
       "try { var a = [1]; a[5] = 2; } catch (e) { if (!e) throw 1; }",
       "resolver cannot register vec for array literal",
     ],
+    // (#7354 Fb) A call through a dynamic value is the native closure call now, and its TypeError (an Error object)
+    // reaches the catch once the program has a function value (tests/issue-7354-fb-dynamic-calls.test.ts); without
+    // one there is no dispatcher.
     [
-      "a call through a dynamic value (a TypeError)",
+      "a call through a dynamic value in a program with no function value",
       "function f(v) { try { v(); } catch (e) { return e; } }\nf(1);",
-      "dynamic operation __ir_dyn_call_value has no Prepared intrinsic",
+      "intrinsic callable js.closure.call:0 needs runtime function materialization",
     ],
     [
       "a member read of a dynamic value (a TypeError on null)",

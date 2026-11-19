@@ -44,9 +44,10 @@ import type { ValType } from "../wasm/model/instructions.js";
 import { functionBodyAlwaysTerminates, irFunctionBodyReturnsValue } from "./select.js";
 import { someReturnedValue } from "./function-returns.js";
 import { sourceDynamicProvenance, type SourceDynamicProvenance } from "./source-dynamic-provenance.js";
-import { scriptVarWrites } from "./module-binding-script-var.js";
+import { ownedByDescriptorLiteral } from "./ordinary-object-closure-signatures.js";
+import { bindingIsUniqueAndNeverWritten } from "../shared/binding-writes.js";
 import { isTopLevelStatementDeclaration } from "../shared/var-declaration-lists.js";
-import { sourceMayWriteGlobalObject, sourceRunsDynamicCode } from "../shared/intrinsic-prototype-writes.js";
+import { sourceMayWriteBindingUnseen, sourceMayWriteGlobalObject } from "../shared/intrinsic-prototype-writes.js";
 import { isUnshadowedLibBinding } from "../shared/ambient-intrinsics.js";
 import { nativeRealmGlobalTypeof } from "../runtime/contracts/native-realm-globals.js";
 import { makeIrAmbientBindingPredicate } from "./module-bindings.js";
@@ -183,7 +184,8 @@ function sourceBooleanResult(
  * with P's all-dynamic signature on the native lane: every parameter and the result are the dynamic value. Its
  * callers include calls through values (`js.closure.call:N` passes and returns the carrier), so, as for an
  * unannotated declaration's parameters, no call site types it. A parameter list with a default, a rest element or
- * a pattern, and a generator or async literal, have no such contract.
+ * a pattern, and a generator or async literal, have no such contract; neither has a literal inside a descriptor
+ * literal, whose signature is the checker's ({@link ownedByDescriptorLiteral}).
  */
 function sourceDynamicClosureSignature(
   policy: SourcePolicy,
@@ -194,6 +196,7 @@ function sourceDynamicClosureSignature(
     expression.type !== undefined ||
     expression.asteriskToken !== undefined ||
     expression.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword) ||
+    ownedByDescriptorLiteral(expression) ||
     expression.parameters.some(
       (parameter) =>
         parameter.type !== undefined ||
@@ -209,31 +212,36 @@ function sourceDynamicClosureSignature(
 
 /**
  * (#7354 Fa) A script `var` that holds its function-expression initializer from its declaration on: a top-level
- * statement's declarator of the program's only source, written nowhere else, in a source that neither runs code it
- * does not spell nor lets the global object escape (which could write the binding by a computed name). from-ast
- * keeps the closure on the binding's module-init scope entry when it lowers the store, so only module-init code
- * after the declaration, outside every function, sees it: there the slot holds exactly that closure, and a call
- * through the name is the closure's direct call.
+ * statement's declarator of the program's only source, whose binding nothing else writes. The proof is the shared,
+ * name-based one: the declarator is the name's only binding site in the file and no identifier of that name is
+ * assigned, with no `eval` or `with` (`bindingIsUniqueAndNeverWritten`, so an Annex B block-level function of the
+ * same name declines too); no route that is no identifier write reaches it (`sourceMayWriteBindingUnseen`:
+ * `this.f = v`, `globalThis["f"] = v`, `Function`, a reflective route); and the global object does not escape,
+ * which could write it under a computed name. from-ast keeps the closure on the binding's module-init scope entry
+ * when it lowers the store, so only module-init code after the declaration, outside every function, sees it: there
+ * the slot holds exactly that closure, and a call through the name is the closure's direct call.
  */
 function staticFunctionValue(
-  checker: ts.TypeChecker,
   policy: SourcePolicy,
   sourceFiles: readonly ts.SourceFile[],
   declaration: ts.VariableDeclaration,
 ): boolean {
-  const { initializer } = declaration;
+  const { name, initializer } = declaration;
   if (
     sourceFiles.length !== 1 ||
     !initializer ||
     !ts.isFunctionExpression(initializer) ||
     !sourceDynamicClosureSignature(policy, initializer) ||
-    !isTopLevelStatementDeclaration(declaration)
+    !isTopLevelStatementDeclaration(declaration) ||
+    !ts.isIdentifier(name)
   )
     return false;
   const source = declaration.getSourceFile();
-  if (sourceRunsDynamicCode(source) || sourceMayWriteGlobalObject(source)) return false;
-  const writes = scriptVarWrites(checker, declaration);
-  return writes?.length === 1 && writes[0]!.target === declaration.name;
+  return (
+    bindingIsUniqueAndNeverWritten(name, declaration) &&
+    !sourceMayWriteBindingUnseen(source, name.text) &&
+    !sourceMayWriteGlobalObject(source)
+  );
 }
 
 /** The lane has the native dynamic carrier (wasmgc standalone). */
@@ -313,7 +321,7 @@ export function programDynamicContracts(
           resolveDynamic: () => ({ kind: "externref" }),
           dynamicCarrierIsExternref: () => true,
           dynamicClosureSignature: (expression) => sourceDynamicClosureSignature(policy, expression),
-          staticFunctionValue: (declaration) => staticFunctionValue(checker, policy, sourceFiles, declaration),
+          staticFunctionValue: (declaration) => staticFunctionValue(policy, sourceFiles, declaration),
           unresolvedGlobalTypeof: (node) => unresolvedGlobalTypeof(checker, isLibBinding, node),
         }
       : {},
@@ -452,8 +460,7 @@ function legalizeSourceDynamicValues(
 ): readonly IrFunction[] {
   const roots = "kind" in declaration ? [declaration] : declaration;
   const contracted =
-    roots.some(bindsCatch) ||
-    roots.some((root) => holdsDynamicClosure(policy, root)) ||
+    roots.some((root) => holds(root, (node) => bindsCatch(node) || isDynamicClosure(policy, node))) ||
     globals.some((global) => global.binding.type.kind === "dynamic") ||
     [...signatures].some(
       (signature) =>
@@ -475,17 +482,17 @@ function legalizeSourceDynamicValues(
   return legalized;
 }
 
-/** (#7354 Fa) `node` holds a function expression with the all-dynamic contract (nested functions included). */
-function holdsDynamicClosure(policy: SourcePolicy, node: ts.Node): boolean {
-  return (
-    (ts.isFunctionExpression(node) && sourceDynamicClosureSignature(policy, node) !== undefined) ||
-    ts.forEachChild(node, (child) => holdsDynamicClosure(policy, child)) === true
-  );
+/** `node`, or a node under it (nested functions included: they are lowered from the same roots), is a `match`. */
+function holds(node: ts.Node, match: (node: ts.Node) => boolean): boolean {
+  return match(node) || ts.forEachChild(node, (child) => holds(child, match)) === true;
 }
 
-/** `node` holds a `catch` clause with a binding (nested functions included: they are lowered from the same roots). */
+/** (#7354 Fa) A function expression with the all-dynamic contract. */
+function isDynamicClosure(policy: SourcePolicy, node: ts.Node): boolean {
+  return ts.isFunctionExpression(node) && sourceDynamicClosureSignature(policy, node) !== undefined;
+}
+
+/** A `catch` clause with a binding. */
 function bindsCatch(node: ts.Node): boolean {
-  return (
-    (ts.isCatchClause(node) && node.variableDeclaration !== undefined) || ts.forEachChild(node, bindsCatch) === true
-  );
+  return ts.isCatchClause(node) && node.variableDeclaration !== undefined;
 }

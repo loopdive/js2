@@ -103,7 +103,10 @@ import {
   type SourceClosureInvocationPlan,
 } from "./source-closure-invocation.js";
 import { exactGlobalEvalStatement } from "../eval-call-shape.js";
-import { resolveOrdinaryObjectClosureSignature } from "./ordinary-object-closure-signatures.js";
+import {
+  ownedByDescriptorLiteral,
+  resolveOrdinaryObjectClosureSignature,
+} from "./ordinary-object-closure-signatures.js";
 import { isDirectObjectCreateNullCall } from "../frontend/builtins/prepare-object-create.js";
 
 import { TsCheckerOracle, type TypeOracle } from "../checker/oracle.js";
@@ -1558,7 +1561,7 @@ function sourceMapResult(scope: FrontendSourceScope) {
 }
 function lowerMutableParameterStorage(
   param: { name: string; type: IrType; value: IrValueId },
-  options: AstToIrOptions,
+  options: Pick<AstToIrOptions, "logicalVectorTypes" | "resolver">,
   name: string,
   scope: Map<string, ScopeBinding>,
   builder: IrFunctionBuilder,
@@ -4625,12 +4628,15 @@ function lowerVariableDeclaration(d: ts.VariableDeclaration, isConst: boolean, c
   }
   if (moduleBinding) {
     storeModuleBinding(name, moduleBinding, value, cx, stringEncoding);
+    const stored = cx.scope.get(name);
     const closureType = cx.builder.typeOf(closure);
-    if (dynamicHomeClosure && closureType.kind === "closure" && cx.resolver?.staticFunctionValue?.(d) === true)
-      cx.scope.set(name, {
-        ...(cx.scope.get(name) as Extract<ScopeBinding, { kind: "moduleGlobal" }>),
-        functionValue: { value: closure, signature: closureType.signature },
-      });
+    if (
+      stored?.kind === "moduleGlobal" &&
+      dynamicHomeClosure &&
+      closureType.kind === "closure" &&
+      cx.resolver?.staticFunctionValue?.(d) === true
+    )
+      cx.scope.set(name, { ...stored, functionValue: { value: closure, signature: closureType.signature } });
     return;
   }
   bindLocalName(d, name, value, isConst, cx, { widenDynamic, promoteI32Slot, stringEncoding });
@@ -5287,10 +5293,7 @@ function lowerExprUnchecked(expr: ts.Expression, cx: LowerCtx, hint: IrType): Ir
       case "ambient-intrinsic":
         return lowerAmbientIntrinsicValue(expr, cx);
       case "unresolved":
-        demoteToLegacy(
-          "body-shape-rejected",
-          `ir/from-ast: identifier "${expr.text}" is not in scope in ${cx.funcName}`,
-        );
+        demoteToLegacy("body-shape-rejected", `ir/from-ast: ${unboundIdentifierDetail(expr, cx)}`);
     }
     const p = read.binding;
     // Slice 6 part 2 (#1181): slot-bound identifier (let mutated across
@@ -8179,6 +8182,20 @@ function isUnshadowedGlobalExpression(expr: ts.Expression, name: string, cx: Low
     !cx.scope.has(name) &&
     cx.resolver?.resolveModuleBinding?.(candidate) === undefined
   );
+}
+
+/**
+ * Why a read of `identifier` has no binding. (#7354 Fa) A closure reading a local of its enclosing function that
+ * is declared after the closure is created names that: the hoisted binding exists in JavaScript, but the closure
+ * captures only what is bound where it is created.
+ */
+function unboundIdentifierDetail(identifier: ts.Identifier, cx: LowerCtx): string {
+  const declaration = cx.checker?.getSymbolAtLocation(identifier)?.valueDeclaration;
+  const closure = ts.findAncestor(identifier, ts.isFunctionLike);
+  const home = declaration && ts.isVariableDeclaration(declaration) && ts.findAncestor(declaration, ts.isFunctionLike);
+  return closure && home && home !== closure && declaration.pos >= closure.end
+    ? `closure ${cx.funcName} reads "${identifier.text}", a local of its enclosing function declared after the closure is created`
+    : `identifier "${identifier.text}" is not in scope in ${cx.funcName}`;
 }
 
 /**
@@ -16497,22 +16514,11 @@ function lowerClosureExpression(expr: IrClosureLiteral, cx: LowerCtx): IrValueId
     });
   }
   const dynamicSignature = ts.isFunctionExpression(expr) ? cx.resolver?.dynamicClosureSignature?.(expr) : undefined;
-  if (dynamicSignature) return lowerClosureExpressionWithSignature(expr, dynamicSignature, undefined, cx);
+  if (dynamicSignature)
+    return lowerClosureExpressionWithSignature(expr, dynamicSignature, undefined, cx, { writtenParameterSlots: true });
   // Inference is owned by the actual checker and confined to descriptor
   // literals and their nested closures. Other closure admission is unchanged.
-  let descriptorOwner: ts.Node | undefined = expr.parent;
-  while (
-    descriptorOwner &&
-    !(
-      ts.isObjectLiteralExpression(descriptorOwner) &&
-      descriptorOwner.properties.some(
-        (property) => ts.isGetAccessorDeclaration(property) || ts.isSetAccessorDeclaration(property),
-      )
-    )
-  ) {
-    descriptorOwner = descriptorOwner.parent;
-  }
-  if (descriptorOwner) {
+  if (ownedByDescriptorLiteral(expr)) {
     if (!cx.checker)
       demoteToLegacy("type-resolution-unsupported", "ordinary descriptor closure needs its source checker");
     const plan = resolveOrdinaryObjectClosureSignature(cx.checker, expr);
@@ -16761,18 +16767,7 @@ function lowerClosureExpressionWithSignature(
 
   // Lift body. The lifted function takes (__self: IrType.closure,
   // ...sig.params) and reads captures via `closure.cap`.
-  const lifted = liftClosureBody(
-    liftedIdentity,
-    expr,
-    signature,
-    captures,
-    captureFieldTypes,
-    cx,
-    exact?.allowConciseVoidBody === true,
-    exact?.hostOneShot === true,
-    exact?.domCallbackAuthority,
-    exact?.functionMemberClosure,
-  );
+  const lifted = liftClosureBody(liftedIdentity, expr, signature, captures, captureFieldTypes, cx, exact);
   cx.lifted.push(lifted);
   recordSourceMapDerived(cx, liftedIdentity, expr);
 
@@ -16957,10 +16952,13 @@ function liftClosureBody(
   captures: readonly NestedCapture[],
   captureFieldTypes: readonly IrType[],
   cx: LowerCtx,
-  allowConciseVoidBody = false,
-  hostOneShot = false,
-  domCallbackAuthority?: import("./nodes.js").IrDomCallbackAuthority,
-  functionMemberClosure?: import("./function-member-closure-plan.js").IrFunctionMemberClosurePlan,
+  {
+    allowConciseVoidBody,
+    hostOneShot,
+    domCallbackAuthority,
+    functionMemberClosure,
+    writtenParameterSlots,
+  }: ExactClosureLoweringOptions = {},
 ): IrFunction {
   const body = expr.body;
   if (!body) {
@@ -17038,32 +17036,19 @@ function liftClosureBody(
       if (sourceScope) withGeneratedSourceSite(sourceScope, "binding-scaffold", expr, bindThis);
       else bindThis();
     }
-    // (#7106 Stage 4) A reassigned parameter (`message += ' '` in assert.js's
-    // `sameValue`) reads through mutable storage, seeded from its entry value
-    // — the same slot model a top-level function's reassigned parameter uses.
-    const reassigned = ts.isBlock(body) ? collectMutatedLetNamesFromBlock(body) : new Set<string>();
+  }
+  // (#7106 Stage 4, #7354 Fa) A reassigned parameter (`message += ' '` in assert.js's `sameValue`,
+  // `if (a === undefined) a = 3` in a function value) reads through mutable storage, seeded from its entry value:
+  // the slot a top-level function's reassigned parameter gets. Any other closure keeps its parameters immutable.
+  const mutatedLets = ts.isBlock(body) ? collectMutatedLetNamesFromBlock(body) : new Set<string>();
+  if (functionMemberClosure || writtenParameterSlots) {
     for (const parameter of expr.parameters) {
-      if (!ts.isIdentifier(parameter.name) || !reassigned.has(parameter.name.text)) continue;
+      if (!ts.isIdentifier(parameter.name) || !mutatedLets.has(parameter.name.text)) continue;
       const binding = scope.get(parameter.name.text);
       if (binding?.kind !== "local") demoteToLegacy("body-shape-rejected", "function-member closure parameter binding");
-      const name = parameter.name.text;
-      const seed = (): void => {
-        const representation = resolveIrSlotRepresentation(binding.type, cx.resolver, liftedName);
-        if (!representation) {
-          demoteToLegacy(
-            "param-shape-rejected",
-            `ir/from-ast: mutable parameter "${name}" has no slot (${liftedName})`,
-          );
-        }
-        const slotIndex = builder.declareSlot(name, representation.storageType);
-        builder.emitSlotWrite(slotIndex, binding.value);
-        scope.set(name, {
-          kind: "slot",
-          slotIndex,
-          type: representation.bindingType,
-          ...(representation.asType ? { asType: representation.asType } : {}),
-        });
-      };
+      const param = { name: parameter.name.text, type: binding.type, value: binding.value };
+      const seed = (): void =>
+        lowerMutableParameterStorage(param, { resolver: cx.resolver }, liftedName, scope, builder);
       if (sourceScope) withGeneratedSourceSite(sourceScope, "binding-scaffold", parameter, seed);
       else seed();
     }
@@ -17105,7 +17090,7 @@ function liftClosureBody(
     // Slice 6 part 2 (#1181) — closure-body mutated lets are scanned
     // per closure (block bodies) or empty (concise expression bodies,
     // which can't host a let declaration).
-    mutatedLets: ts.isBlock(body) ? collectMutatedLetNamesFromBlock(body) : new Set<string>(),
+    mutatedLets,
     dynamicStringLocals: new Set(),
     // (#3758) same independent-per-closure reasoning as mutatedLets above;
     // computeI32PureNames itself no-ops on a non-block (concise) body.

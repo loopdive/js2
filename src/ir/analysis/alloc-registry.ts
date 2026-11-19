@@ -287,12 +287,14 @@ export class AllocSiteRegistry {
   }
 
   /**
-   * (#7354 Fa) Re-type a live site whose allocating instruction a whole-function rewrite re-typed (the Prepared
-   * dynamic-value legalization's carrier form of a closure). The caller states the instruction's new type.
+   * (#7354 Fa) Re-type a live closure site whose `closure.new` a whole-function rewrite re-typed (the Prepared
+   * dynamic-value legalization's carrier form). The caller states the instruction's new closure type; a site of
+   * any other kind keeps the type it was allocated with.
    */
-  retype(id: AllocSiteId, type: IrType): void {
+  retypeClosure(id: AllocSiteId, type: Extract<IrType, { kind: "closure" }>): void {
     const entry = this.sites[id as number];
-    if (entry?.state !== "live") throw new Error(`alloc registry: retype of non-live site ${id}`);
+    if (entry?.state !== "live" || entry.site.kind !== "closure")
+      throw new Error(`alloc registry: closure retype of site ${id}, which is not a live closure site`);
     entry.site = { ...entry.site, type };
   }
 
