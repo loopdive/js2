@@ -9,10 +9,9 @@ import type { IrInstr, IrValueId } from "../core/nodes.js";
 import type { IrType } from "../core/types.js";
 import { irIntrinsicFuncRef } from "../core/callable-bindings.js";
 import { isArrayIndexKey } from "./builtin-prototype-keys.js";
-import { plainObjectRefusal, type CarrierKind } from "./dynamic-value-kinds.js";
+import { plainObjectRefusal, type CarrierKind, type ProgramObjects } from "./dynamic-value-kinds.js";
 import { gap } from "./dynamic-value-gap.js";
 import type { OrdinaryObjectRuntimeFeature } from "../runtime/contracts/manifest.js";
-import type { ProgramObjects } from "../source-plain-objects.js";
 
 /** The legalization builders a member access is written with. */
 export interface MemberAccessBuilders {

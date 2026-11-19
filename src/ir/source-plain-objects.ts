@@ -9,22 +9,8 @@
  * this one answer before it takes either shortcut.
  */
 import { ts } from "../ts-api.js";
-import { objectLiteralDataPropertyName } from "./property-key-fold.js";
-
-export interface ProgramObjects {
-  /** The program builds ordinary objects: the dynamic value admits the object kind. */
-  readonly present: boolean;
-  /**
-   * (#7352) The program builds Arrays: an object may be one, whose ToPrimitive is `join` and whose prototype is
-   * %Array.prototype%.
-   */
-  readonly arrays: boolean;
-  /** `undefined` when the objects and the built-in prototypes are plain, else the first reason they are not. */
-  readonly unplain: string | undefined;
-}
-
-/** A program that builds no ordinary object. */
-export const NO_OBJECTS: ProgramObjects = Object.freeze({ present: false, arrays: false, unplain: undefined });
+import { objectLiteralDataPropertyName } from "../shared/property-key-fold.js";
+import type { ProgramObjects } from "./program/dynamic-value-kinds.js";
 
 /** Own keys whose definition changes what OrdinaryToPrimitive or a prototype lookup answers. */
 const CONVERSION_KEYS: ReadonlySet<string> = new Set(["toString", "valueOf", "__proto__"]);
