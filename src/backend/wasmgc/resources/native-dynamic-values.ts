@@ -2,14 +2,20 @@
 
 /**
  * (#7354 D1) The dynamic value's own runtime functions on the Prepared
- * standalone lane: strict equality, ToBoolean (#7354 T), the `undefined` value
- * and the `undefined` probe. Every body is a shared pure builder; the number and Boolean carrier
- * functions they call are the issued primitive owners', never a lookalike.
+ * standalone lane: strict equality, ToBoolean (#7354 T), the `undefined` value,
+ * the `undefined` probe and (#7354 Fa) the function test. Every body is a
+ * shared pure builder; the number and Boolean carrier functions they call are
+ * the issued primitive owners', never a lookalike.
  */
-import type { PhysicalModuleReservations, FunctionReservation } from "../../../wasm/physical/module-reservations.js";
+import type {
+  PhysicalModuleReservations,
+  FunctionReservation,
+  TypeReservation,
+} from "../../../wasm/physical/module-reservations.js";
 import type { IrInstrIntrinsic } from "../../../ir/core/nodes.js";
 import type { NativeValueResourcePlan } from "../../../ir/program/native-value-resources.js";
 import { buildObjectSameValueBody } from "../../../runtime/wasmgc/values/object-same-value-body.js";
+import { buildClosureRootTest } from "../../../runtime/wasmgc/values/closure-invocation-bodies.js";
 import {
   buildIsUndefinedBody,
   buildToBooleanBody,
@@ -38,6 +44,7 @@ export interface NativeDynamicValueSelection {
   readonly toBoolean: boolean;
   readonly undefinedValue: boolean;
   readonly isUndefined: boolean;
+  readonly isFunction: boolean;
 }
 
 /**
@@ -61,6 +68,7 @@ export function selectNativeDynamicValues(
         instruction.provider?.kind === "callable" &&
         instruction.provider.target.binding.kind === "runtime",
     ),
+    isFunction: has("js.value.is_function"),
   };
   return Object.values(selection).some(Boolean) ? selection : undefined;
 }
@@ -72,6 +80,7 @@ const ROWS = [
   ["toBoolean", "to-boolean", "__is_truthy", { params: [EXTERNREF], results: [I32] }],
   ["undefinedValue", "undefined-value", "__js_undefined", { params: [], results: [EXTERNREF] }],
   ["isUndefined", "is-undefined", "__extern_is_undefined", { params: [EXTERNREF], results: [I32] }],
+  ["isFunction", "typeof-function", "__typeof_function", { params: [EXTERNREF], results: [I32] }],
 ] as const;
 
 export function declareNativeDynamicValueResources(key: string, selection: NativeDynamicValueSelection) {
@@ -99,6 +108,7 @@ export interface NativeDynamicValueReservations {
   readonly toBoolean?: FunctionReservation;
   readonly undefinedValue?: FunctionReservation;
   readonly isUndefined?: FunctionReservation;
+  readonly isFunction?: FunctionReservation;
 }
 /** (#7354 Str) The issued string resources strict equality's string arm calls. */
 export interface NativeDynamicValueStrings {
@@ -147,9 +157,14 @@ export function reserveNativeDynamicValueResources(
   return pack;
 }
 
+/**
+ * `closureRoot`: the native closures root — the source's, or (once a built-in function value can reach the carrier
+ * without a source closure) the realm's.
+ */
 export function fillNativeDynamicValueResources(
   tx: PhysicalModuleReservations,
   pack: NativeDynamicValueReservations,
+  closureRoot: TypeReservation | undefined,
 ): void {
   const owner = owners.get(pack);
   if (!owner || owner.tx !== tx) fail("foreign resource owner");
@@ -208,6 +223,13 @@ export function fillNativeDynamicValueResources(
         1,
         UNDEF_F64_BITS,
       ),
+    });
+  // (#7354 Fa) A function value enters the carrier only as a source closure, and every source closure carrier
+  // descends from the wrapper root; a program without a closure has no function value to find.
+  if (pack.isFunction)
+    tx.fillFunction(pack.isFunction, {
+      locals: [],
+      body: closureRoot ? buildClosureRootTest(0, tx.physicalIndex(closureRoot)) : [{ op: "i32.const", value: 0 }],
     });
   owner.filled = true;
 }

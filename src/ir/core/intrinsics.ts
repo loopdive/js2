@@ -214,6 +214,7 @@ export const INTRINSIC_DEFINITIONS: Readonly<Record<IntrinsicId, IntrinsicDefini
   "js.boolean.unbox": definition("js.boolean.unbox", EXTERNREF_TO_BOOLEAN_INTRINSIC_SIGNATURE),
   "js.extern.is_undefined": definition("js.extern.is_undefined", EXTERNREF_TO_I32_INTRINSIC_SIGNATURE),
   "js.value.is_boolean": definition("js.value.is_boolean", EXTERNREF_TO_I32_INTRINSIC_SIGNATURE),
+  "js.value.is_function": definition("js.value.is_function", EXTERNREF_TO_I32_INTRINSIC_SIGNATURE),
   "js.value.is_number": definition("js.value.is_number", EXTERNREF_TO_I32_INTRINSIC_SIGNATURE),
   "js.value.strict_eq": definition("js.value.strict_eq", EXTERNREF_PAIR_TO_I32_INTRINSIC_SIGNATURE),
   "js.value.to_boolean": definition("js.value.to_boolean", EXTERNREF_TO_I32_INTRINSIC_SIGNATURE),
