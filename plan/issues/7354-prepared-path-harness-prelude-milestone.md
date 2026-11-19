@@ -2435,3 +2435,34 @@ Not verified:
   audit cost is fixed.
 - `--utf8-storage`.
 - `compileMulti`.
+
+### Review round 1 (Str2)
+
+Verdict was NOT MET: no wrong answers, but the formatter census accepted forged setups (compile() SUCCESS) whose
+roles or binding references alone were altered. Each finding, fixed or rebutted:
+
+| Finding | Resolution |
+| --- | --- |
+| Kernel roles not checked (new/get, set/fin, get/trap swapped; trap relabelled `new`) | Fixed. `formatterSetupJoins` (`src/compiler/prepared-formatter-census.ts`): the formatter setup's declarations must EQUAL the recipe the runtime ABI anchor, the string owner and the accepted number-format policy determine (`declareNativeNumberFormatResources(nativeNumberFormatResourceInput(anchor, stringKey, integerBeforeScratch))`), so every row's role, name, signature / type and mutability is pinned, one row per role. |
+| Binding references not checked (kernel references swapped, radix body under `new`'s reference, Ryu inverse/powers swapped) | Fixed, same join: the setup's bindings, as (resource key, entry id, reference) triples, must equal exactly one triple per canonical declaration — the canonical callable's entry and reference for kernels, radix body and adapter (`numberFormatSetupAssociations`, `src/ir/program/formatter-support.ts`, now the one table the physical plan binds from too), the setup-derived binding (`internalNativeBinding`, now exported) for every other row. Bijective by construction (sorted population equality). |
+| One join, table-driven, not per-row special cases | `nativeRows` runs the join before `nativeSlots` over the formatter setup; `nativeSlots` takes a `canonical` flag and skips its derived-id check there, so the join is the only identity check of formatter bindings. `canonicalSupportRole` (the kernel exemption that let roles slip) and the adapter role/reference checks in `formatterJoins` are deleted (implied). Slots, signatures and receipts stay the census's existing joins. The scratch pair is also pinned to the canonical scratch entry id (both bindings). |
+| Forgeries field by field | `tests/issue-7354-str2c-formatter-census.test.ts`, block "every field of every formatter row is joined by identity", generated from the row table: role, entry id, reference, slot, signature, receipt of each of the 16 rows, forged alone to another real row's value (93) and to a value no row has (88); the same-shape pair (Ryu inverse/powers, the only one) swapped in role / entry id / reference (3); the review's repros (7); a formatter setup injected into a formatter-free program (1); one end to end through compile() per field (6). Scratch: each binding's entry id alone (2), a structurally equal but distinct scratch type (1). 202 new, 375 in the file; the 173 earlier forgeries still refuse. |
+| Mutation sweep over the join | 6 mutations, 0 survivors: declaration equality (35 tests fail), binding comparison (35), reference dropped from the triple (36), entry id dropped (1: the same-shape entry-id swap, the only forgery no slot/receipt join catches), scratch entry ids (1), the `canonical` flag ignored (acceptance fails). |
+| Should-fix: dead `tested.length === 0` sum | Deleted. Probed: every `+` whose operands would both be known non-string kinds (`null + 1`, `true + null`, `null + true + v`, ...) refuses in from-ast first (`'+' operands not provably ...`). Comment at the site says why a test always exists. |
+| Should-fix: `dyn.to_string` re-spelled `stringOf` | It calls `stringOf`, which reads the operand's known kinds; Prepared bytes of the 19 previously accepted probe programs are unchanged. |
+| Should-fix: `legalizationBuilders` ~170 lines | Split by concern: `knownKinds` (proven kinds, `learn`), `chainBuilders` (fresh values, intrinsics, kind tests, ToString / typeof chains, `stringOf`), `additionBuilder` (the dynamic `+`). |
+| Should-fix: `dynamic-add-helper.ts` one-constant module | Kept, with the reason in its doc: codegen imports nothing from the IR and a clean IR module (`ir-program` layer) nothing from codegen (`dyn-ops.ts`, where the siblings live, is `mixed-needs-split`), so the name both read needs a shared leaf; `in-operator-helper.ts` is the same pattern. `src/ir/core/runtime-symbols.ts` would add the first codegen→ir/core edge. |
+| Should-fix: `String()` | Answers "" (`tryLowerAmbientStringToStringCall`, from-ast net zero lines). The ordinary selector never admits a zero-argument `String` call (`ambientStringToStringCall`), so only the Prepared path reaches it; ordinary bytes of `String()` probes are identical. |
+| Should-fix: literal `String(null)` / `String(undefined)` | Same arm. The refusal came from a program with no dynamic contract: from-ast boxes the literal into the dynamic value and the legalization never ran, so the physical plan met a `dynamic` type ("no accepted host async dynamic carrier"). `legalizeSourceDynamicValues` now also legalizes a function holding `dyn.to_string` (`convertsBoxedLiteralToString`); `String(null)` then takes only the null arm. |
+
+Known limit, pinned by a test: a slot is the completed emission's own binding-index record, the root every census
+join reads. Two globals of one shape exchanged in that record (Ryu inverse/powers) leave no second record to
+contradict it; a function has its support receipt, a global has none.
+
+Proof: Prepared bytes of 19 previously accepted programs and one refusal identical to 649e432d35 (2 more, `String(null)` in a
+condition and `String()`, compile only now); ordinary bytes identical on 100 test262 files of the sample × {JS,
+standalone} and on the 22 probe programs × {JS, standalone}. Tests pass: formatter census (in two groups), to-string,
+Ty, R, D1, T, X, Str, Str emitter, Perf, H, P, #7359, #3518 ×2, prepared entry/runtime, #7188, dynamic add (in
+groups; "at top level pairs chunk 0" times out at its 150 s limit on this branch AND on 649e432d35 under load,
+~165 s both, and passes with the limit raised). Gates: typecheck, loc, func (also against origin/main's tip),
+coercion, oracle ratchet, dead exports, import cycles, compiler-boundaries inventory.
