@@ -16714,11 +16714,6 @@
       "layer": "backend-wasmgc"
     },
     {
-      "path": "src/backend/wasmgc/program/native-function-value-setup.ts",
-      "state": "clean",
-      "layer": "backend-wasmgc"
-    },
-    {
       "path": "src/runtime/wasmgc/values/realm-object-layouts.ts",
       "state": "clean",
       "layer": "native-runtime"

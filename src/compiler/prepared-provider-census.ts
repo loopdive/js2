@@ -8,12 +8,12 @@
 
 import type { EmittedPreparedIrProgram, PreparedIrBackendOptions, PreparedIrProgram } from "../ir/program.js";
 import {
-  emittedFunctionValueSetup,
+  emittedNativeRealmSlots,
   emittedPhysicalSetupPlan,
   emittedProgramBindingIndex,
   emittedSupportFunctionReceipts,
-  type EmittedSupportFunctionReceipt,
 } from "../ir/program-consumer.js";
+import type { EmittedNativeRealmSlots } from "../backend/wasmgc/program/native-realm.js";
 import {
   nativeRole,
   type NativeStringValueAbiBinding,
@@ -109,12 +109,16 @@ const runtimeCallable = (symbol: string) => ({ kind: "runtime-callable", symbol 
  * its signature, and the rows' (slot index, key) pairs are exactly the receipts' — no receipt joins nothing, none
  * joins twice, and no row lacks its receipt.
  */
+/**
+ * Every support receipt is exactly one joined row, except (#7354 O1) the realm's own functions, which the realm's
+ * completion check authenticated as one owner.
+ */
 function supportPopulationJoins(
   emission: EmittedPreparedIrProgram,
   rows: readonly SupportCallableRow[],
-  certified: readonly EmittedSupportFunctionReceipt[],
+  realm: EmittedNativeRealmSlots | undefined,
 ): boolean {
-  const joined: (readonly [number, string])[] = certified.map((row) => [row.index, row.key] as const);
+  const joined: (readonly [number, string])[] = [];
   for (const row of rows) {
     const slot = completedFunctionSlot(emission, row.bindingId);
     // A binding without a completed function slot has no signature, so it fails this comparison too.
@@ -122,7 +126,9 @@ function supportPopulationJoins(
     if (preparedIrDataMismatch([row.params, row.results], signature) !== undefined) return false;
     joined.push([slot!.index, row.key]);
   }
-  const receipts = emittedSupportFunctionReceipts(emission).map((row) => [row.index, row.key] as const);
+  const receipts = emittedSupportFunctionReceipts(emission)
+    .filter((row) => !realm?.functions.has(row.index))
+    .map((row) => [row.index, row.key] as const);
   return samePopulation(joined, receipts);
 }
 /** The provider exactly as its canonical catalogue (ids unique) defines it, free of dependencies and host
@@ -362,7 +368,10 @@ function nativeRows(
   if (!slots?.every((slot) => nativeGlobalMatches(emission, slots, slot))) return undefined;
   const strings = providers.filter((row) => STRING_FEATURES.has(row.feature));
   const callables = providers.filter((row) => !strings.includes(row) && row.implementation.kind === "runtime-callable");
-  const answered: ReturnType<typeof runtimeCallable>[] = [];
+  // (#7354 O1) The realm functions bound to the program's `js.object.*` calls answer their contract's providers.
+  const answered: ReturnType<typeof runtimeCallable>[] = (
+    emittedPhysicalSetupPlan(emission).nativeSourceObjects?.bindings ?? []
+  ).map((row) => runtimeCallable(row.reference.binding.kind === "intrinsic" ? row.reference.binding.symbol : ""));
   const rows: SupportCallableRow[] = [];
   for (const { declaration, binding } of slots) {
     if (declaration.space !== "function") continue;
@@ -418,19 +427,14 @@ export function runtimeCensus(
     setup && projection && backend.target === "standalone"
       ? nativeRows(projection, program, emission, setup, natives, backend.utf8Storage)
       : undefined;
-  // (#7354 Fa) The function-value setup exists only beside the native setup it extends, which the plan selected for
-  // the program's own closures; its support functions and reference slots are the ones the consumer certified.
-  const functionValues = emittedFunctionValueSetup(emission);
-  if (!remainders || (!native && (natives.length || functionValues))) return undefined;
-  if (!supportPopulationJoins(emission, [...remainders, ...(native?.rows ?? [])], functionValues?.functions ?? []))
-    return undefined;
+  if (!remainders || (!native && natives.length)) return undefined;
+  const realm = emittedNativeRealmSlots(emission);
+  if (!supportPopulationJoins(emission, [...remainders, ...(native?.rows ?? [])], realm)) return undefined;
   if (!native) return {};
+  // (#7354 O1) The realm's types and globals are native setup slots too: its completion check authenticated them.
+  const union = (owned: ReadonlySet<number>, borrowed: ReadonlySet<number> | undefined) =>
+    new Set([...owned, ...(borrowed ?? [])]);
   return {
-    native: functionValues
-      ? {
-          types: new Set([...native.slots.types, ...functionValues.types]),
-          globals: new Set([...native.slots.globals, ...functionValues.globals]),
-        }
-      : native.slots,
+    native: { types: union(native.slots.types, realm?.types), globals: union(native.slots.globals, realm?.globals) },
   };
 }
