@@ -2,11 +2,12 @@
 /**
  * (#7354 O1) The public source-object functions on the realm. A source program reaches an ordinary object only
  * through the `js.object.*` contracts (`ordinary-object-callables.ts`); each contract it calls binds one function
- * here, whose signature is the contract's and whose algorithm is the realm's own:
- *   - `define-data` is the descriptor pack's public define, bound as it is, and (#7354 O4) `create-type-error` the
- *     invocation substrate's TypeError constructor;
- *   - `create-default` and `get` are adapters (`source-object-bodies.ts`) over the storage pack and the builtin-object
- *     kernel.
+ * here, whose signature is the contract's and whose algorithm is the realm's own. A row either
+ *   - adapts the realm (`create-default`, `get`, (#7350 B2b) `global`): a function this module reserves, with the
+ *     contract's signature and a body (`source-object-bodies.ts`) over the storage pack and the builtin-object kernel;
+ *     or
+ *   - binds a realm function as it is (`define-data`: the descriptor pack's public define; (#7354 O4)
+ *     `create-type-error`: the invocation substrate's TypeError constructor).
  * A contract without a row here has no native source provider yet.
  */
 import type {
@@ -32,10 +33,18 @@ import {
 } from "./native-builtin-functions.js";
 import { nativeBuiltinFunctionRequestDependencies } from "./native-builtin-function-requests.js";
 import { requireNativeStringLiteral } from "./native-string-literals.js";
+import type { NativeErrorReservations } from "./native-errors.js";
 import type { NativeObjectDescriptorReservations } from "./native-object-descriptors.js";
 import type { NativeObjectLayoutReservations } from "./native-object-layouts.js";
 import type { NativeObjectStorageReservations } from "./native-object-storage.js";
 
+export interface NativeSourceObjectDependencies {
+  readonly layouts: NativeObjectLayoutReservations;
+  readonly storage: NativeObjectStorageReservations;
+  readonly descriptors: NativeObjectDescriptorReservations;
+  readonly kernel: NativeBuiltinFunctionReservations;
+  readonly errors: NativeErrorReservations;
+}
 const EXTERNREF = { kind: "externref" } as const;
 /** What an adapter's body is built from: the realm's packs, and (#7350 B2b) the global object's population. */
 interface AdapterContext extends NativeSourceObjectDependencies {
@@ -44,15 +53,17 @@ interface AdapterContext extends NativeSourceObjectDependencies {
   /** The realm global a `cache` adapter keeps its answer in. */
   readonly cache?: GlobalReservation;
 }
-/** One adapter: the contract signature it reserves and its body over the realm's packs. */
-interface Adapter {
-  readonly signature: { readonly params: readonly ValType[]; readonly results: readonly ValType[] };
-  /** (#7350 B2b) The answer is built once, on the first call, and kept in a realm global. */
-  readonly cache?: true;
-  readonly body: (context: AdapterContext) => SourceObjectDefinition;
-}
-/** The adapters this module owns. A new realm-served contract is one row. */
-const ADAPTERS = {
+/** An adapter (the contract signature it reserves, its body over the realm's packs) or a bound realm function. */
+type Row =
+  | {
+      readonly signature: { readonly params: readonly ValType[]; readonly results: readonly ValType[] };
+      /** (#7350 B2b) The answer is built once, on the first call, and kept in a realm global. */
+      readonly cache?: true;
+      readonly body: (context: AdapterContext) => SourceObjectDefinition;
+    }
+  | { readonly binds: (dependencies: NativeSourceObjectDependencies) => FunctionReservation };
+/** The contracts the realm serves. A new realm-served contract is one row. */
+const ROWS = {
   "js.object.create-default": {
     signature: { params: [], results: [EXTERNREF] },
     body: ({ layouts, storage, kernel }) =>
@@ -62,6 +73,8 @@ const ADAPTERS = {
         createWithPrototype: storage.createWithPrototype.handle,
       }),
   },
+  "js.object.define-data": { binds: ({ descriptors }) => descriptors.defineData },
+  "js.object.create-type-error": { binds: ({ errors }) => errors.newTypeError },
   "js.object.get": {
     signature: { params: [EXTERNREF, EXTERNREF, EXTERNREF], results: [EXTERNREF] },
     body: ({ kernel }) => buildSourceObjectGetDefinition({ get: kernel.functions.get.handle }),
@@ -79,77 +92,124 @@ const ADAPTERS = {
         properties: context.globals.map((row) => globalProperty(context, row)),
       }),
   },
-} as const satisfies Readonly<Record<string, Adapter>>;
-type Adapted = keyof typeof ADAPTERS;
-const isAdapted = (feature: OrdinaryObjectRuntimeFeature): feature is Adapted => Object.hasOwn(ADAPTERS, feature);
+} as const satisfies Readonly<Partial<Record<OrdinaryObjectRuntimeFeature, Row>>>;
+/** A contract the realm serves. */
+export type NativeSourceObjectFeature = keyof typeof ROWS;
+const isServed = (feature: OrdinaryObjectRuntimeFeature): feature is NativeSourceObjectFeature =>
+  Object.hasOwn(ROWS, feature);
+const servedKey = (realmKey: string, feature: NativeSourceObjectFeature) => realmKey + ":source-objects:" + feature;
 
 /**
- * The reservation key of the function that serves `feature` in the realm keyed `realmKey`, or `undefined` when the
- * contract has no native source provider. The physical plan's binding rows and the reservations below both use it.
+ * The key the program's call rows bind for `feature` in the realm keyed `realmKey`, or `undefined` when the contract
+ * has no native source provider.
  */
 export function nativeSourceObjectResourceKey(
   realmKey: string,
   feature: OrdinaryObjectRuntimeFeature,
 ): string | undefined {
-  if (feature === "js.object.define-data") return realmKey + ":descriptors:define-data";
-  // (#7354 O4) The invocation substrate's errors pack builds the realm's TypeError.
-  if (feature === "js.object.create-type-error") return realmKey + ":invocation-substrate:errors:new-TypeError";
-  return isAdapted(feature) ? realmKey + ":source-objects:" + feature : undefined;
+  return isServed(feature) ? servedKey(realmKey, feature) : undefined;
 }
 
-export interface NativeSourceObjectDependencies {
-  readonly layouts: NativeObjectLayoutReservations;
-  readonly storage: NativeObjectStorageReservations;
-  readonly descriptors: NativeObjectDescriptorReservations;
-  readonly kernel: NativeBuiltinFunctionReservations;
+/** The function serving one called contract, under the key its call rows bind. */
+export interface NativeSourceObjectFunction {
+  readonly feature: NativeSourceObjectFeature;
+  readonly key: string;
+  readonly token: FunctionReservation;
 }
 export interface NativeSourceObjectReservations {
-  readonly adapters: ReadonlyMap<Adapted, FunctionReservation>;
-  /** (#7350 B2b) The realm globals of the `cache` adapters. */
-  readonly caches: ReadonlyMap<Adapted, GlobalReservation>;
+  /** One row per contract the program calls, in contract order. */
+  readonly served: readonly NativeSourceObjectFunction[];
+  /** (#7350 B2b) The realm global of each `cache` adapter. */
+  readonly caches: ReadonlyMap<NativeSourceObjectFeature, GlobalReservation>;
+}
+interface Owner {
+  readonly tx: PhysicalModuleReservations;
   readonly dependencies: NativeSourceObjectDependencies;
+  readonly identities: NativeSourceObjectDependencies;
+  /** (#7350 B2b) The global object's population. */
   readonly globals: readonly NativeRealmGlobal[];
+  filled: boolean;
+}
+const owners = new WeakMap<NativeSourceObjectReservations, Owner>();
+function fail(detail: string): never {
+  throw new Error("native source objects: " + detail);
+}
+function requireOwner(tx: PhysicalModuleReservations, pack: NativeSourceObjectReservations): Owner {
+  const owner = owners.get(pack);
+  if (!owner || owner.tx !== tx) fail("foreign or copied owner");
+  for (const key of Object.keys(owner.identities) as (keyof NativeSourceObjectDependencies)[])
+    if (owner.dependencies[key] !== owner.identities[key]) fail("substituted dependency identity");
+  return owner;
 }
 
-/** One adapter per adapted contract the program calls; `define-data` needs none. */
+/** A function per served contract the program calls: an adapter reserved here, or the realm function a row binds. */
 export function reserveNativeSourceObjectResources(
   tx: PhysicalModuleReservations,
   realm: NativeRealmDescription,
   dependencies: NativeSourceObjectDependencies,
 ): NativeSourceObjectReservations {
-  const adapted = [...new Set(realm.objectUses.map((use) => use.feature))].filter(isAdapted).sort();
-  const adapters = new Map(
-    adapted.map((feature) => {
-      const key = nativeSourceObjectResourceKey(realm.key, feature)!;
-      const { signature } = ADAPTERS[feature];
-      return [
-        feature,
-        tx.reserveFunction(key, key, { params: [...signature.params], results: [...signature.results] }),
-      ] as const;
-    }),
-  );
+  const served = [...new Set(realm.objectUses.map((use) => use.feature))]
+    .filter(isServed)
+    .sort()
+    .map((feature) => {
+      const key = servedKey(realm.key, feature);
+      const row: Row = ROWS[feature];
+      const token =
+        "binds" in row
+          ? row.binds(dependencies)
+          : tx.reserveFunction(key, key, { params: [...row.signature.params], results: [...row.signature.results] });
+      return Object.freeze({ feature, key, token });
+    });
   const caches = new Map(
-    adapted
-      .filter((feature) => (ADAPTERS[feature] as Adapter).cache)
-      .map((feature) => {
-        const key = nativeSourceObjectResourceKey(realm.key, feature)! + ":cache";
-        return [feature, tx.reserveGlobal(key, key, EXTERNREF, true)] as const;
-      }),
+    served.flatMap(({ feature, key }) =>
+      "cache" in ROWS[feature]
+        ? [[feature, tx.reserveGlobal(key + ":cache", key + ":cache", EXTERNREF, true)] as const]
+        : [],
+    ),
   );
+  const pack = Object.freeze({ served: Object.freeze(served), caches });
   const globals = realm.globalKeys.map((name) => nativeRealmGlobal(name)!);
-  return Object.freeze({ adapters, caches, dependencies, globals });
+  owners.set(pack, { tx, dependencies, identities: Object.freeze({ ...dependencies }), globals, filled: false });
+  return pack;
+}
+
+/** The functions and globals this pack owns: its adapters and their caches. A bound function stays with its producer. */
+export function nativeSourceObjectReservationInventory(
+  tx: PhysicalModuleReservations,
+  pack: NativeSourceObjectReservations,
+): { readonly functions: readonly FunctionReservation[]; readonly globals: readonly GlobalReservation[] } {
+  requireOwner(tx, pack);
+  return {
+    functions: pack.served.filter((row) => "body" in ROWS[row.feature]).map((row) => row.token),
+    globals: [...pack.caches.values()],
+  };
 }
 
 export function fillNativeSourceObjectResources(
   tx: PhysicalModuleReservations,
   pack: NativeSourceObjectReservations,
 ): void {
+  const owner = requireOwner(tx, pack);
+  if (owner.filled) fail("duplicate canonical fill");
   for (const cache of pack.caches.values()) tx.fillGlobal(cache, [{ op: "ref.null.extern" }]);
-  for (const [feature, token] of pack.adapters) {
+  for (const { feature, token } of pack.served) {
+    const row: Row = ROWS[feature];
     const cache = pack.caches.get(feature);
-    const context = { ...pack.dependencies, tx, globals: pack.globals, ...(cache ? { cache } : {}) };
-    tx.fillFunction(token, ADAPTERS[feature].body(context));
+    const context = { ...owner.dependencies, tx, globals: owner.globals, ...(cache ? { cache } : {}) };
+    if ("body" in row) tx.fillFunction(token, row.body(context));
   }
+  owner.filled = true;
+}
+
+/** The canonical fill ran, and every served function (adapter or bound) is completed. */
+export function requireCompletedNativeSourceObjects(
+  tx: PhysicalModuleReservations,
+  pack: NativeSourceObjectReservations,
+): NativeSourceObjectReservations {
+  if (!requireOwner(tx, pack).filled) fail("missing canonical fill");
+  for (const { token } of pack.served) tx.assertCompletedReservation(token);
+  for (const cache of pack.caches.values()) tx.assertCompletedReservation(cache);
+  return pack;
 }
 
 /**

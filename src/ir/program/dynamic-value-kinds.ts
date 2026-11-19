@@ -13,7 +13,6 @@ import type { IrInstr, IrType } from "../core/nodes.js";
 import type { TagId } from "../core/tag-domain.js";
 import { irOrdinaryObjectCallableDeclaration } from "../runtime/ordinary-object-callables.js";
 import { JS_TAG_IDS } from "../runtime/js-tag-domain.js";
-import type { ProgramObjects } from "../source-plain-objects.js";
 
 /**
  * `typeof`'s answer for each kind. A `typeof` comparison with a literal no kind answers ("function", a typo) is
@@ -105,6 +104,24 @@ export const MEMBER_READ_ARM: Readonly<Record<CarrierKind, "type-error" | "get" 
   null: "type-error",
   object: "get",
 };
+
+/**
+ * What a program's objects allow (`src/ir/source-plain-objects.ts` answers it from the source): whether the program
+ * builds ordinary objects, and `undefined` when they and the built-in prototypes are plain, else the first reason
+ * they are not.
+ */
+export interface ProgramObjects {
+  readonly present: boolean;
+  readonly unplain: string | undefined;
+  /**
+   * (#7350 B2b) `undefined` when no value of the object kind is callable, else the first reason one may be: the
+   * program reads a built-in function off the realm's global object.
+   */
+  readonly callable: string | undefined;
+}
+
+/** A program that builds no ordinary object. */
+export const NO_OBJECTS: ProgramObjects = Object.freeze({ present: false, unplain: undefined, callable: undefined });
 
 /** The kinds the `plain-object` rows were proved for: none of them is a callable. */
 type PlainObjectKinds = "number" | "boolean" | "string" | "undefined" | "null" | "object";

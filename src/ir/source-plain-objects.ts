@@ -8,24 +8,10 @@
  * prototype properties: the dynamic-value legalization asks this one answer before it takes either shortcut.
  */
 import { ts } from "../ts-api.js";
-import { objectLiteralDataPropertyName } from "./property-key-fold.js";
+import { objectLiteralDataPropertyName } from "../shared/property-key-fold.js";
+import type { ProgramObjects } from "./program/dynamic-value-kinds.js";
 import { builtinGlobalValueAdmitted, preparedBuiltinGlobalLane } from "./builtin-globals.js";
 import { nativeRealmGlobalTypeof } from "../runtime/contracts/native-realm-globals.js";
-
-export interface ProgramObjects {
-  /** The program builds ordinary objects: the dynamic value admits the object kind. */
-  readonly present: boolean;
-  /** `undefined` when the objects and the built-in prototypes are plain, else the first reason they are not. */
-  readonly unplain: string | undefined;
-  /**
-   * (#7350 B2b) `undefined` when no value of the object kind is callable, else the first reason one may be: the
-   * program reads a built-in function off the realm's global object.
-   */
-  readonly callable: string | undefined;
-}
-
-/** A program that builds no ordinary object. */
-export const NO_OBJECTS: ProgramObjects = Object.freeze({ present: false, unplain: undefined, callable: undefined });
 
 /** Own keys whose definition changes what OrdinaryToPrimitive or a prototype lookup answers. */
 const CONVERSION_KEYS: ReadonlySet<string> = new Set(["toString", "valueOf", "__proto__"]);
