@@ -556,14 +556,18 @@ export function compoundWriteAdmissible(op: ts.SyntaxKind, slot: OperandFamily, 
     if (slot === "string") return value === "string";
     if (slot === "dynamic") return boxableIntoDynamic(value);
   }
+  if (!isNumberCompoundAssignOperator(op)) return false;
+  // (#7375) A boolean or string right-hand side is read with ToNumber, as the binary form reads it
+  // (`numericReaderOperandToF64`); `**=` keeps its exact-exponentiation operands.
+  const toNumbered = op !== ts.SyntaxKind.AsteriskAsteriskEqualsToken && (value === "boolean" || value === "string");
   // Dynamic numeric compounds use the same ToNumber path as binary arithmetic.
-  if (slot === "dynamic" && isNumberCompoundAssignOperator(op))
+  if (slot === "dynamic")
     return (
       op !== ts.SyntaxKind.AsteriskAsteriskEqualsToken &&
-      (value === "dynamic" || value === "number" || value === "undefined")
+      (value === "dynamic" || value === "number" || value === "undefined" || toNumbered)
     );
   // ToNumber(undefined) is the NaN sentinel the number arithmetic reads.
-  return isNumberCompoundAssignOperator(op) && slot === "number" && (value === "number" || value === "undefined");
+  return slot === "number" && (value === "number" || value === "undefined" || toNumbered);
 }
 
 /**

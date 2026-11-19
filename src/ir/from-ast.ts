@@ -13543,7 +13543,7 @@ function lowerCompoundAssignment(
   if (binaryOp === undefined)
     throw new Error(`ir/from-ast: admitted compound operator has no binary form in ${cx.funcName}`);
   const numericLhs = relOperandToF64(lhs, logicalType, cx);
-  const numericRhs = relOperandToF64(rhsValue, rhsType, cx);
+  const numericRhs = numericReaderOperandToF64(rhsValue, rhs, cx);
   if (numericLhs === null || numericRhs === null)
     throw new Error(`ir/from-ast: admitted numeric compound has no numeric operands in ${cx.funcName}`);
   const numericResult = emitNumberBinary(binaryOp, numericLhs, numericRhs, id, rhs, cx);
@@ -15470,10 +15470,24 @@ function booleansReadAsNumbers(
   const leftFamily = irOperandFamily(typeOfValue(lhs, cx), expr.left);
   const rightFamily = irOperandFamily(typeOfValue(rhs, cx), expr.right);
   if (!booleanReadAsNumber(op, leftFamily, rightFamily)) return [lhs, rhs];
-  // Signed and unsigned agree on 0 / 1; `f64.convert_i32_s` is the IR's i32→f64 unop.
   const toNumber = (value: IrValueId, family: OperandFamily): IrValueId =>
-    family === "boolean" ? cx.builder.emitUnary("f64.convert_i32_s", value, IR_F64) : value;
+    family === "boolean" ? booleanToNumber(value, cx) : value;
   return [toNumber(lhs, leftFamily), toNumber(rhs, rightFamily)];
+}
+
+/** ToNumber of a boolean: signed and unsigned agree on 0 / 1; `f64.convert_i32_s` is the IR's i32→f64 unop. */
+function booleanToNumber(value: IrValueId, cx: LowerCtx): IrValueId {
+  return cx.builder.emitUnary("f64.convert_i32_s", value, IR_F64);
+}
+
+/** (#7375) ToNumber of a compound assignment's right-hand side, by the binary form's steps (above, `boxNumericReaderOperands`). */
+function numericReaderOperandToF64(value: IrValueId, source: ts.Expression, cx: LowerCtx): IrValueId | null {
+  const type = cx.builder.typeOf(value);
+  const family = irOperandFamily(type, source);
+  if (family === "boolean") return booleanToNumber(value, cx);
+  if (family !== "string") return relOperandToF64(value, type, cx);
+  const boxed = boxConcreteToDynamic(value, type, source, cx);
+  return boxed === null ? null : cx.builder.emitDynToNumber(boxed);
 }
 
 /**
