@@ -7,6 +7,7 @@
  */
 import type { Instr, LocalDef, ValType } from "../../../wasm/model/instructions.js";
 import { buildApplyDecimalExp, type DecimalPowerResources } from "./decimal-scale-bodies.js";
+import { buildDecimalMantissa } from "./string-number-bodies.js";
 import {
   C_PLUS,
   C_MINUS,
@@ -34,9 +35,9 @@ export interface ParseNumberDefinition {
 }
 
 // parseFloat locals (after param 0 = s:externref):
-//  1 flat:ref$NativeString  2 data:ref$i16arr  3 len:i32  4 i:i32
-//  5 c:i32  6 sign:f64  7 mant:f64  8 sawDigit:i32  9 frac:f64
-// 10 expSign:i32 11 exp:i32 12 result:f64 13 start:i32
+//  1 flat:ref$NativeString  2 data:ref$i16arr  3 len:i32  4 i:i32  5 c:i32  6 sign:f64  7 mant:i64
+//  8 sawDigit:i32  9 fracScale:f64  10 expSign:i32  11 exp:i32  12 result:f64  13 fracCount:i32
+// 14 texp:i32  15 pow:f64  16 intDrop:i32  17 arg:anyref
 const PF_FLAT = 1;
 const PF_DATA = 2;
 const PF_LEN = 3;
@@ -45,7 +46,7 @@ const PF_C = 5;
 const PF_SIGN = 6;
 const PF_MANT = 7;
 const PF_SAW = 8;
-// index 9 = fracScale (legacy, now unused after the #2654 integer-mantissa rewrite)
+// index 9 = fracScale: unread since the #2654 integer-mantissa rewrite, kept so the local layout (and the bytes) stay
 const PF_EXPSIGN = 10;
 const PF_EXP = 11;
 const PF_RESULT = 12;
@@ -53,176 +54,8 @@ const PF_RESULT = 12;
 const PF_FRACCOUNT = 13; // i32: number of fraction digits consumed
 const PF_TEXP = 14; // i32: total decimal exponent (expSign*exp + intDrop - fracCount)
 const PF_POW = 15; // f64: 10^|totalExp|
-const PF_INTDROP = 16; // i32: integer digits dropped past the ~15-sig-digit cap
+const PF_INTDROP = 16; // i32: integer digits dropped past the ~18-digit cap (mant < 9e17)
 const PF_ANY = 17; // (#6969) anyref: the argument, for the ToString arm
-
-/** The integer and fraction digits: every significant digit into `PF_MANT`, fraction digits counted. */
-function parseFloatMantissa(getC: readonly Instr[]): Instr[] {
-  return [
-    // --- integer digits ---
-    {
-      op: "block",
-      blockType: { kind: "empty" },
-      body: [
-        {
-          op: "loop",
-          blockType: { kind: "empty" },
-          body: [
-            { op: "local.get", index: PF_I },
-            { op: "local.get", index: PF_LEN },
-            { op: "i32.ge_s" },
-            { op: "br_if", depth: 1 },
-            ...getC,
-            // if c<'0' || c>'9' break
-            { op: "local.get", index: PF_C },
-            { op: "i32.const", value: C_ZERO },
-            { op: "i32.lt_s" },
-            { op: "local.get", index: PF_C },
-            { op: "i32.const", value: C_NINE },
-            { op: "i32.gt_s" },
-            { op: "i32.or" },
-            { op: "br_if", depth: 1 },
-            // (#2654) Cap the i64 integer-mantissa accumulation at ~18
-            // significant digits (mant < 9e17 keeps mant*10+9 < 2^63, the i64
-            // range — and well within the ~17 digits an f64 can resolve). Past
-            // the cap an integer digit is DROPPED from the mantissa but its
-            // place value is preserved by bumping the decimal exponent
-            // (PF_INTDROP), so "12345678901234567890" keeps ~18 sig digits + exp
-            // instead of overflowing and corrupting the value.
-            { op: "local.get", index: PF_MANT },
-            { op: "i64.const", value: 900000000000000000n },
-            { op: "i64.lt_u" },
-            {
-              op: "if",
-              blockType: { kind: "empty" },
-              then: [
-                // mant = mant*10 + (c-'0')
-                { op: "local.get", index: PF_MANT },
-                { op: "i64.const", value: 10n },
-                { op: "i64.mul" },
-                { op: "local.get", index: PF_C },
-                { op: "i32.const", value: C_ZERO },
-                { op: "i32.sub" },
-                { op: "i64.extend_i32_s" },
-                { op: "i64.add" },
-                { op: "local.set", index: PF_MANT },
-              ],
-              else: [
-                // dropped integer digit → exponent += 1
-                { op: "local.get", index: PF_INTDROP },
-                { op: "i32.const", value: 1 },
-                { op: "i32.add" },
-                { op: "local.set", index: PF_INTDROP },
-              ],
-            },
-            { op: "i32.const", value: 1 },
-            { op: "local.set", index: PF_SAW },
-            { op: "local.get", index: PF_I },
-            { op: "i32.const", value: 1 },
-            { op: "i32.add" },
-            { op: "local.set", index: PF_I },
-            { op: "br", depth: 0 },
-          ],
-        },
-      ],
-    },
-
-    // --- fraction ---
-    { op: "local.get", index: PF_I },
-    { op: "local.get", index: PF_LEN },
-    { op: "i32.lt_s" },
-    {
-      op: "if",
-      blockType: { kind: "empty" },
-      then: [
-        ...getC,
-        { op: "local.get", index: PF_C },
-        { op: "i32.const", value: C_DOT },
-        { op: "i32.eq" },
-        {
-          op: "if",
-          blockType: { kind: "empty" },
-          then: [
-            // advance past '.'
-            { op: "local.get", index: PF_I },
-            { op: "i32.const", value: 1 },
-            { op: "i32.add" },
-            { op: "local.set", index: PF_I },
-            {
-              op: "block",
-              blockType: { kind: "empty" },
-              body: [
-                {
-                  op: "loop",
-                  blockType: { kind: "empty" },
-                  body: [
-                    { op: "local.get", index: PF_I },
-                    { op: "local.get", index: PF_LEN },
-                    { op: "i32.ge_s" },
-                    { op: "br_if", depth: 1 },
-                    ...getC,
-                    { op: "local.get", index: PF_C },
-                    { op: "i32.const", value: C_ZERO },
-                    { op: "i32.lt_s" },
-                    { op: "local.get", index: PF_C },
-                    { op: "i32.const", value: C_NINE },
-                    { op: "i32.gt_s" },
-                    { op: "i32.or" },
-                    { op: "br_if", depth: 1 },
-                    // (#2654) i64 integer-mantissa accumulation, capped at ~18
-                    // sig digits (mant < 9e17). Within the cap: mant = mant*10 +
-                    // digit and fracCount++ (final scaling divides by 10^count).
-                    // Past the cap a fraction digit is dropped (no visible effect
-                    // on the rounded double), NOT counted.
-                    { op: "local.get", index: PF_MANT },
-                    { op: "i64.const", value: 900000000000000000n },
-                    { op: "i64.lt_u" },
-                    {
-                      op: "if",
-                      blockType: { kind: "empty" },
-                      then: [
-                        { op: "local.get", index: PF_MANT },
-                        { op: "i64.const", value: 10n },
-                        { op: "i64.mul" },
-                        { op: "local.get", index: PF_C },
-                        { op: "i32.const", value: C_ZERO },
-                        { op: "i32.sub" },
-                        { op: "i64.extend_i32_s" },
-                        { op: "i64.add" },
-                        { op: "local.set", index: PF_MANT },
-                        { op: "local.get", index: PF_FRACCOUNT },
-                        { op: "i32.const", value: 1 },
-                        { op: "i32.add" },
-                        { op: "local.set", index: PF_FRACCOUNT },
-                      ],
-                      else: [],
-                    },
-                    { op: "i32.const", value: 1 },
-                    { op: "local.set", index: PF_SAW },
-                    { op: "local.get", index: PF_I },
-                    { op: "i32.const", value: 1 },
-                    { op: "i32.add" },
-                    { op: "local.set", index: PF_I },
-                    { op: "br", depth: 0 },
-                  ],
-                },
-              ],
-            },
-          ],
-        },
-      ],
-    },
-
-    // if !sawDigit return NaN
-    { op: "local.get", index: PF_SAW },
-    { op: "i32.eqz" },
-    {
-      op: "if",
-      blockType: { kind: "empty" },
-      then: [{ op: "f64.const", value: NaN }, { op: "return" }],
-    },
-  ];
-}
 
 /** `parseFloat(string)`: `(externref) -> f64`, the longest StrDecimalLiteral prefix. */
 export function buildParseFloatDefinition(
@@ -340,7 +173,10 @@ export function buildParseFloatDefinition(
     // --- Infinity check ---
     ...emitInfinityCheck(PF_I, PF_LEN, PF_DATA, PF_C, PF_SIGN, strDataTypeIdx),
 
-    ...parseFloatMantissa(getC),
+    ...buildDecimalMantissa(
+      { i: PF_I, end: PF_LEN, c: PF_C, mant: PF_MANT, saw: PF_SAW, fracCount: PF_FRACCOUNT, intDrop: PF_INTDROP },
+      getC,
+    ),
 
     // --- exponent ---
     { op: "i32.const", value: 0 },
@@ -351,7 +187,7 @@ export function buildParseFloatDefinition(
 
     // (#2654) result = sign * mant * 10^(expSign*exp + intDrop - fracCount),
     // applied as a single correctly-rounded multiply/divide (see
-    // emitApplyDecimalExp).
+    // buildApplyDecimalExp).
     ...buildApplyDecimalExp(
       bindings.powerResources,
       PF_SIGN,

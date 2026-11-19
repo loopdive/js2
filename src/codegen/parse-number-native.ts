@@ -187,28 +187,9 @@ export function emitNativeParseNumber(ctx: CodegenContext, which: Set<string>): 
   const flattenIdx = ctx.nativeStrHelpers.get("__str_flatten")!;
   const strTypeIdx = ctx.nativeStrTypeIdx;
   const strDataTypeIdx = ctx.nativeStrDataTypeIdx;
-  const f64: ValType = { kind: "f64" };
-  const extern: ValType = { kind: "externref" };
 
   if (which.has("parseFloat") && !ctx.funcMap.has("parseFloat")) {
-    // (externref) -> f64
-    const typeIdx = addFuncType(ctx, [extern], [f64]);
-    const funcIdx = mintDefinedFunc(ctx); // (#1916 S3b) stable-regime handle
-    ctx.funcMap.set("parseFloat", funcIdx);
-
-    const { locals, body } = buildParseFloatDefinition({
-      nativeStrTypeIdx: strTypeIdx,
-      nativeStrDataTypeIdx: strDataTypeIdx,
-      flatString: (argLocal) => externToFlat(ctx, flattenIdx, argLocal),
-      powerResources: { globalIndex: ensurePow10TableGlobal(ctx), arrayTypeIndex: ctx.pow10ArrTypeIdx as number },
-    });
-    pushDefinedFunc(ctx, funcIdx, {
-      name: "parseFloat",
-      typeIdx,
-      locals,
-      body,
-      exported: false,
-    });
+    emitParseFloat(ctx, flattenIdx, strTypeIdx, strDataTypeIdx);
   }
 
   if (which.has("parseInt") && !ctx.funcMap.has("parseInt")) {
@@ -261,6 +242,30 @@ function emitStrToNumber(ctx: CodegenContext, flattenIdx: number, strTypeIdx: nu
     name: "__str_to_number",
     typeIdx,
     locals: buildStringToNumberLocals(layout),
+    body,
+    exported: false,
+  });
+}
+
+/** Native `parseFloat(s)` — signature `(externref) -> f64`, ECMA-262 §19.2.4. */
+function emitParseFloat(ctx: CodegenContext, flattenIdx: number, strTypeIdx: number, strDataTypeIdx: number): void {
+  const f64: ValType = { kind: "f64" };
+  const extern: ValType = { kind: "externref" };
+  // (externref) -> f64
+  const typeIdx = addFuncType(ctx, [extern], [f64]);
+  const funcIdx = mintDefinedFunc(ctx); // (#1916 S3b) stable-regime handle
+  ctx.funcMap.set("parseFloat", funcIdx);
+
+  const { locals, body } = buildParseFloatDefinition({
+    nativeStrTypeIdx: strTypeIdx,
+    nativeStrDataTypeIdx: strDataTypeIdx,
+    flatString: (argLocal) => externToFlat(ctx, flattenIdx, argLocal),
+    powerResources: { globalIndex: ensurePow10TableGlobal(ctx), arrayTypeIndex: ctx.pow10ArrTypeIdx as number },
+  });
+  pushDefinedFunc(ctx, funcIdx, {
+    name: "parseFloat",
+    typeIdx,
+    locals,
     body,
     exported: false,
   });

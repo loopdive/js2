@@ -221,20 +221,25 @@ instructions that leave a flat native string, which codegen supplies with its fi
 `src/codegen/parse-number-native.ts` keeps only what touches the module: the function type, the handle, the
 `funcMap` row, the pow10 global and the prologue's pending ToString arm.
 
-**What it removes.** Nothing is duplicated today; the move makes the two bodies bindable by the realm without a
-second implementation.
+**What it removes.** (Corrected after review RV7323b.) The parseFloat digit loops duplicated
+`buildDecimalMantissa` (`string-number-bodies.ts`, `__str_to_number`'s) except for local indices and a 4-instruction
+`mant = 0; sawDigit = 0` init: they are one exported builder now, taking a locals record, with the init left to
+the caller; its dead `strDataTypeIdx` parameter goes. The move itself makes the two bodies bindable by the realm
+without a second implementation.
 
 **Acceptance.** Bytes identical on every test262 file whose source names `parseInt` or `parseFloat`, on the
-default, standalone and linear targets (check script `scripts/check-bytes-identical.mts`, committed);
+default, standalone and linear targets (measured with a scratch hashing script; review RV7323b asked not to
+commit a third byte-identity tool beside `prove-emit-identity.mjs` and `byte-diff-corpus.mts`, and to count
+rows that fail on both trees separately from identical binaries);
 `parse-number-native.ts` shrinks; the new file joins the `native-runtime` layer. Quality: the builders read
 no context, only their bindings.
 
-**B2c-1 measured (2026-11-19, main `89e4748241`).** `scripts/check-bytes-identical.mts` over the 216 test262
+**B2c-1 measured (2026-11-19, main `89e4748241`).** A scratch hashing script over the 216 test262
 files whose source names `parseInt` / `parseFloat` plus a 103-file random control sample (317 files, 925
 rows): 0 rows differ. Binaries compared: 291 default and 291 standalone (13 files compile on neither tree, 13
 are runner skips). The linear target compiles none of these harness-wrapped files on either tree (the linear
 backend has no `try` / `catch`), and nothing under `src/codegen-linear/` imports the moved code, so linear is
-unaffected by construction. `buildParseFloatDefinition` was split at the digit loops
-(`parseFloatMantissa`) to stay under the 300-line function budget; bytes identical after the split.
+unaffected by construction. `buildParseFloatDefinition` stays under the 300-line budget by calling the shared
+`buildDecimalMantissa`; the codegen side has an `emitParseFloat` beside `emitParseInt` and `emitStrToNumber`.
 `tests/issue-1663.test.ts` (1 row) and `tests/issue-6969-parse-number-tostring.test.ts` (8 parseFloat rows)
 fail identically on main `89e4748241`; `issue-2654` and `parseint-edge` pass.
