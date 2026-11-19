@@ -55,6 +55,7 @@ import { postStartupCallableUnits } from "./program-startup-proof.js";
 import { makeIrIdentityImportedFunctionResolver } from "./imported-functions.js";
 import { makeIrPromiseDelayResolver } from "./promise-delay.js";
 import { prepareOrdinaryObjectAccessResolver } from "../frontend/builtins/prepare-ordinary-object-access.js";
+import { scriptVarGlobalKinds } from "./script-var-kinds.js";
 import { prepareConversionResolvers } from "../frontend/builtins/prepare-number-conversion.js";
 import { prepareObjectCreateResolver } from "../frontend/builtins/prepare-object-create.js";
 import { prepareNativeStringOutputResolver } from "../frontend/builtins/prepare-string-output.js";
@@ -851,6 +852,11 @@ export interface IrProgramSourceInput {
   readonly policy: RuntimeManifestPolicy;
   readonly deferTopLevelInit: boolean;
   /**
+   * (#7352 A2) The code strictness of a function or a script, computed by the caller as for the selector's
+   * `functionCodeStrictness`; it reaches from-ast as the unit's `functionCodeStrict`. Absent → unknown.
+   */
+  readonly functionCodeStrictness?: (code: ts.FunctionDeclaration | ts.SourceFile) => boolean;
+  /**
    * Explicit frontend lowering selection; not provider availability or
    * permission to emit. Omission preserves historical source lowering.
    */
@@ -1062,6 +1068,44 @@ function storageType(identity: IrModuleBindingIdentity): IrType {
     default:
       return unsupported(`whole-program source storage has no typed carrier for ${value.kind}`);
   }
+}
+
+type SourceGlobalEntry = IrProgramSourcePreparation["globals"][number];
+
+/** The storage of every top-level variable declaration of the program's sources, in source order. */
+function sourceGlobals(
+  sourceFiles: readonly ts.SourceFile[],
+  identity: ReturnType<typeof buildIrPlanningIdentityContext>,
+  moduleResolver: ReturnType<typeof makeIrIdentityModuleBindingResolver>,
+  diagnostic: SourceDiagnosticOwner,
+): Map<ts.VariableDeclaration, SourceGlobalEntry> {
+  const globals = new Map<ts.VariableDeclaration, SourceGlobalEntry>();
+  for (const source of sourceFiles) {
+    for (const statement of source.statements) {
+      if (!ts.isVariableStatement(statement)) continue;
+      for (const declaration of statement.declarationList.declarations) {
+        diagnostic.active = requireIrPlanningOwnerUnitId(identity, declaration);
+        if (!ts.isIdentifier(declaration.name))
+          unsupported("whole-program binding pattern requires the existing destructuring producer");
+        const inspected = moduleResolver.inspectDirectBinding(declaration.name);
+        if (inspected.kind !== "supported")
+          unsupported(`module binding ${declaration.name.text} has no exact typed storage: ${inspected.kind}`);
+        const global = inspected.identity;
+        diagnostic.active = global.storageOwnerUnitId;
+        const lexical = (statement.declarationList.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const)) !== 0;
+        const binding: ModuleBindingGlobal = {
+          ownerUnitId: global.ownerUnitId,
+          globalRef: irSourceGlobalRef(global.globalBindingId, declaration.name.text),
+          tdzGlobalRef: lexical ? irSourceGlobalRef(global.tdzBindingId, `${declaration.name.text}$tdz`) : null,
+          globalName: declaration.name.text,
+          tdzGlobalName: lexical ? `${declaration.name.text}$tdz` : null,
+          type: storageType(global),
+        };
+        globals.set(declaration, { binding, identity: global });
+      }
+    }
+  }
+  return globals;
 }
 
 /** Validate the explicit source request before inventory construction or source planning. */
@@ -1572,8 +1616,6 @@ export function prepareIrProgramSources(
   const allocations = new AllocSiteRegistry();
   const functions: IrFunction[] = [];
   const derivedUnits: ProgramAbiDerivedUnitRecord[] = [];
-  const globals: IrProgramSourcePreparation["globals"][number][] = [];
-  const globalByDeclaration = new Map<ts.Declaration, IrProgramSourcePreparation["globals"][number]>();
   const signatures = new Map<IrUnitId, { params: readonly IrType[]; returnType: IrType | null }>();
   const bodyResults = new Map<IrUnitId, IrType | null>();
   const delayPlans: NativePromiseDelaySourcePlans = {
@@ -1656,33 +1698,15 @@ export function prepareIrProgramSources(
       dynamicContracts,
       diagnostic,
     );
-    for (const source of sourceFiles) {
-      for (const statement of source.statements) {
-        if (!ts.isVariableStatement(statement)) continue;
-        for (const declaration of statement.declarationList.declarations) {
-          diagnostic.active = requireIrPlanningOwnerUnitId(identity, declaration);
-          if (!ts.isIdentifier(declaration.name))
-            unsupported("whole-program binding pattern requires the existing destructuring producer");
-          const inspected = moduleResolver.inspectDirectBinding(declaration.name);
-          if (inspected.kind !== "supported")
-            unsupported(`module binding ${declaration.name.text} has no exact typed storage: ${inspected.kind}`);
-          const global = inspected.identity;
-          diagnostic.active = global.storageOwnerUnitId;
-          const lexical = (statement.declarationList.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const)) !== 0;
-          const binding: ModuleBindingGlobal = {
-            ownerUnitId: global.ownerUnitId,
-            globalRef: irSourceGlobalRef(global.globalBindingId, declaration.name.text),
-            tdzGlobalRef: lexical ? irSourceGlobalRef(global.tdzBindingId, `${declaration.name.text}$tdz`) : null,
-            globalName: declaration.name.text,
-            tdzGlobalName: lexical ? `${declaration.name.text}$tdz` : null,
-            type: storageType(global),
-          };
-          const entry = { binding, identity: global };
-          globals.push(entry);
-          globalByDeclaration.set(declaration, entry);
-        }
-      }
-    }
+    const globalByDeclaration: ReadonlyMap<ts.Declaration, SourceGlobalEntry> = sourceGlobals(
+      sourceFiles,
+      identity,
+      moduleResolver,
+      diagnostic,
+    );
+    const globals = [...globalByDeclaration.values()];
+    // (#7352 A2) The kinds a dynamic script var holds, where its writes name them.
+    const globalKinds = scriptVarGlobalKinds(input.checker, globalByDeclaration);
     const closureInvocations = prepareSourceClosureInvocations(input.checker, sourceFiles);
     const closureCallableParameters = new Set(
       [...closureInvocations.values()].flatMap((plan) => plan.callbacks.map((row) => row.parameter.type)),
@@ -1774,6 +1798,7 @@ export function prepareIrProgramSources(
             : resolver,
         ...(nativeStringValues ? { stringNumericCoercion: "number-boundary" as const } : {}),
         numericThrow: "number-boundary",
+        functionCodeStrict: input.functionCodeStrictness?.(moduleInit ? source : declaration),
         ...(nativeDelay ? { promiseDelays: promiseDelaysBySource.get(source) } : {}),
         ...(family ? { logicalVectorTypes: family.logicalVectorTypes } : {}),
         ...(moduleInit
@@ -1800,7 +1825,10 @@ export function prepareIrProgramSources(
           `certified native Promise-delay ${unit.id} fabricated support bodies or provenance`,
         );
       functions.push(
-        ...dynamicContracts.legalize(signatures.values(), globals, sourceRoots, [lowered.main, ...lowered.lifted]),
+        ...dynamicContracts.legalize(signatures.values(), globals, globalKinds, sourceRoots, [
+          lowered.main,
+          ...lowered.lifted,
+        ]),
       );
       appendLiftedSourceProvenance(lowered.liftedUnitProvenance, inventory, unit, derivedUnits);
       if (derivedSourceRows !== undefined) appendSourceMapDerivedRows(derivedSourceRows, lowered, identity, unit);

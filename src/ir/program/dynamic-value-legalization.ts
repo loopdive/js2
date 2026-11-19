@@ -33,7 +33,7 @@ import {
   type IrValueId,
 } from "../core/nodes.js";
 import type { IrType } from "../core/types.js";
-import type { IrUnitId } from "../../shared/contracts/ir-identity.js";
+import type { IrBindingId, IrUnitId } from "../../shared/contracts/ir-identity.js";
 import { irRuntimeCallableDeclaration } from "../runtime/callable-declarations.js";
 import { JS_TAG_IDS } from "../runtime/js-tag-domain.js";
 import { typeofComparisons } from "./typeof-comparisons.js";
@@ -41,6 +41,7 @@ import { PREPARED_NUMBER_TO_STRING } from "./number-to-string-target.js";
 import { IR_DYN_ADD_FN } from "../../shared/contracts/dynamic-add-helper.js";
 import { gap } from "./dynamic-value-gap.js";
 import { dynamicMemberRead } from "./dynamic-member-read.js";
+import { dynamicMemberWrite } from "./dynamic-member-write.js";
 import {
   ADD_ROLE,
   KIND_TEST,
@@ -51,7 +52,7 @@ import {
   TYPEOF_NAME,
   admittedKinds,
   boxedKind,
-  plainObjectRefusal,
+  objectToPrimitiveRefusal,
   type CarrierKind,
   type ProgramObjects,
 } from "./dynamic-value-kinds.js";
@@ -127,7 +128,7 @@ function legalizationBuilders(
   fn: IrFunction,
   allocations: AllocSiteRegistry,
   types: ReturnType<typeof irValueTypes>,
-  { objects, catches }: LegalizationProgram,
+  { objects, catches, handlesExceptions, globalKinds }: LegalizationProgram,
 ) {
   let valueCount = fn.valueCount;
   const admitted = admittedKinds(objects);
@@ -153,9 +154,15 @@ function legalizationBuilders(
     const kind = i.kind === "box" && kindOfBox(i);
     if (kind) boxed.set(i.result!, kind);
   }
+  // (#7352 A2) A read of a script var whose writes name the kinds its home holds (`script-var-kinds.ts`).
+  const readKinds = (value: IrValueId): readonly CarrierKind[] | undefined => {
+    const read = definitions.get(value);
+    const kinds = read?.kind === "global.get" ? globalKinds.get(read.target.binding.bindingId) : undefined;
+    return kinds?.filter((kind) => admitted.includes(kind));
+  };
   const kindsOf = (value: IrValueId): readonly CarrierKind[] => {
     const kind = boxed.get(value);
-    return kind ? [kind] : admitted;
+    return kind ? [kind] : (readKinds(value) ?? admitted);
   };
   const fresh = (): IrValueId => valueCount++ as IrValueId;
   /** (#7354 O2) Whether `value` is one of `kinds`: their tests, or-ed into `result`. */
@@ -262,7 +269,7 @@ function legalizationBuilders(
   };
   /** (#7354 O2) OrdinaryToPrimitive of a plain object (`TO_STRING_ARM`), or the named refusal. */
   const plainObjectToPrimitive = (): string => {
-    const refusal = plainObjectRefusal(objects, "ToPrimitive of an object");
+    const refusal = objectToPrimitiveRefusal(objects, "ToPrimitive of an object");
     return refusal === undefined ? "[object Object]" : gap(refusal);
   };
   /** (#7354 O2) ToNumber of the once-evaluated `value` (`TO_NUMBER_ARM`): a plain object's is NaN. */
@@ -302,15 +309,11 @@ function legalizationBuilders(
       ),
     ];
   };
+  const access = { carrier: CARRIER, definitions, fresh, text, intrinsic, kindsOf, kindChain, toNumber };
   const memberRead = (instr: IrInstr, receiver: IrValueId, key: IrValueId, result: IrValueId): IrInstr[] =>
-    dynamicMemberRead(
-      { carrier: CARRIER, definitions, fresh, text, intrinsic, kindsOf, kindChain },
-      { objects, catches },
-      instr,
-      receiver,
-      key,
-      result,
-    );
+    dynamicMemberRead(access, { objects, catches, handlesExceptions }, instr, receiver, key, result);
+  const memberWrite = (instr: Extract<IrInstr, { kind: "dyn.member_set" }>): IrInstr[] =>
+    dynamicMemberWrite(access, { objects, catches, handlesExceptions }, instr);
   const stringOf = (instr: IrInstr, value: IrValueId, result: IrValueId): IrInstr[] =>
     kindChain(instr, value, result, (kind, r) => toStringArm(instr, kind, value, r), kindsOf(value));
   /**
@@ -381,6 +384,7 @@ function legalizationBuilders(
     toStringArm,
     toNumber,
     memberRead,
+    memberWrite,
     addition,
     definitions,
     admitted,
@@ -394,6 +398,10 @@ export interface LegalizationProgram {
   readonly objects: ProgramObjects;
   /** Whether the program binds a catch: a value thrown here may then be read back as a dynamic value. */
   readonly catches: boolean;
+  /** (#7352 A2) Whether the program has a catch clause, bound or not: an error the realm throws escapes it. */
+  readonly handlesExceptions: boolean;
+  /** (#7352 A2) The kinds a dynamic global holds, by its binding, where its writes name them. */
+  readonly globalKinds: ReadonlyMap<IrBindingId, readonly CarrierKind[]>;
 }
 
 /**
@@ -403,7 +411,12 @@ export interface LegalizationProgram {
 export function legalizeDynamicValues(
   fn: IrFunction,
   allocations: AllocSiteRegistry,
-  program: LegalizationProgram = { objects: NO_OBJECTS, catches: false },
+  program: LegalizationProgram = {
+    objects: NO_OBJECTS,
+    catches: false,
+    handlesExceptions: false,
+    globalKinds: new Map(),
+  },
 ): IrFunction {
   if (!containsDynamic(fn)) return fn;
   const types = irValueTypes(fn);
@@ -506,6 +519,8 @@ export function legalizeDynamicValues(
         return toNumber(instr, instr.value, instr.result!);
       case "dyn.member_get":
         return builders.memberRead(instr, instr.recv, instr.key, instr.result!);
+      case "dyn.member_set":
+        return builders.memberWrite(instr);
       case "dyn.eq": {
         if (instr.loose) return gap("dyn.eq (loose)");
         return withSense(instr, instr.negate, (result) => [

@@ -182,10 +182,11 @@ describe("#7354 X — throw and catch with the Prepared dynamic value", () => {
       // (#7354 O1) The thrown ReferenceError is no carrier kind: the program-wide throw rule refuses it first.
       "throw of a value outside the dynamic carrier's kinds",
     ],
+    // (#7352 A2) A `var` in a block is a module-init local holding the Array as an externref, not the dynamic home.
     [
-      "a vector store (the null-vector guard throws a null payload)",
+      "an element write on a module-init local's Array",
       "try { var a = [1]; a[5] = 2; } catch (e) { if (!e) throw 1; }",
-      "resolver cannot register vec for array literal",
+      "element store on externref not in IR scope",
     ],
     [
       "a call through a dynamic value (a TypeError)",

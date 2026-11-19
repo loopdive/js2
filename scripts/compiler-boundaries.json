@@ -17094,6 +17094,16 @@
       "layer": "ir-program"
     },
     {
+      "path": "src/ir/program/dynamic-member-write.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
+      "path": "src/ir/program/dynamic-member-access.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
       "path": "src/ir/program/builtin-prototype-keys.ts",
       "state": "clean",
       "layer": "ir-program"
@@ -17105,6 +17115,14 @@
       "destination": "frontend-ts",
       "owner": "7354",
       "nextBoundary": "The checker-and-source predicate whether a Prepared program's objects are plain (#7354 O2): which literals and member writes could change ToPrimitive or a built-in prototype; moves with source-dynamic-contracts.ts under frontend/ts."
+    },
+    {
+      "path": "src/ir/script-var-kinds.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "frontend-ts",
+      "owner": "7352",
+      "nextBoundary": "The checker-and-source fact which carrier kinds a Prepared script var's dynamic home holds (#7352 A2), from its writes; moves with module-binding-script-var.ts and source-dynamic-contracts.ts under frontend/ts."
     },
     {
       "path": "src/ir/program/number-to-string-target.ts",
