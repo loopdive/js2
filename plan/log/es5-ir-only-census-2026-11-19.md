@@ -29,10 +29,12 @@ Every number here was measured in this session on main `ee3fcdd610`
 - **Ordinary pipeline: 1,767 IR-only files (+166 since 2026-11-14, 0 lost)**,
   1,759 of them passing. The re-run of the 2026-11-14 tree reproduces that
   census exactly (1,601 IR-only), so the two are comparable.
-- No new issue is filed. Four Prepared mechanisms with 20 or more files have
-  no owner yet (1.3): a read of an undeclared name (109), compound assignment
-  with a non-numeric right side (30), the `arguments` object (28), a script
-  `var` without an initialiser (23). `with` (60) is deferred.
+- One issue is filed: #7375, compound assignment with a non-numeric right
+  side (30). The three other Prepared mechanisms with 20 or more files that
+  had no owner are assigned (1.3): a read of an undeclared name (109) to
+  #7372 slice 3, the `arguments` object (28) to slice C as a subsection of
+  #7354, a script `var` without an initialiser (23) to O · #7352 (19) and
+  #7372 (4). `with` (60) is deferred.
 
 ## 1. Prepared path
 
@@ -118,8 +120,8 @@ calling its function argument) · `propertyHelper.js` 885 · other includes
 | 11 | crash: certified global eval lost an owning predicate | #7363 slice 1 (PR #7310) | 196 | 0 | |
 | 12 | `for (var k in …)` head in top-level code (11 of them also have a `var` in a `with` body) | O follow-up: #7352 plus a for-in runtime | 196 | 0 | |
 | 13 | script `var` declared twice (`var x = +0; … var x = -0;`) | S10 · #7372 slice 1b | 195 | 0 | `x` 123 |
-| 14 | other (largest labels: compound assignment with a non-numeric right side 30, redeclaration 18, empty statement 11) | | 167 | 4 | |
-| 15 | read of an undeclared name (98: the read must throw a ReferenceError; 11: a `var` of a nested statement) | no issue yet | 109 | 1 | `x` 51, `y` 35 |
+| 14 | other (largest labels: compound assignment with a non-numeric right side 30, redeclaration 18, empty statement 11) | #7375 for the 30 | 167 | 4 | |
+| 15 | read of an undeclared name (98: the read must throw a ReferenceError; 11: a `var` of a nested statement) | S10 · #7372 slice 3 (to pass: ReferenceError, #7350, and `catch`, X) | 109 | 1 | `x` 51, `y` 35 |
 | 16 | `eval` | #7363 slices 2+ | 96 | 0 | |
 | 17 | function declaration read as a value | Fa · #7349 | 83 | 0 | |
 | 18 | native intrinsic provider missing | B · #7350 | 75 | 0 | |
@@ -132,7 +134,7 @@ calling its function argument) · `propertyHelper.js` 885 · other includes
 | 25 | `var` in a `with` body | deferred, no issue | 47 | 0 | |
 | 26 | script `var` initialised with an IIFE result | Fb · #7349 | 39 | 25 | |
 | 27 | `delete` (first `delete` of the file: `this.x` 15, a member 13, a name 6, `arguments` 2, `this` 1) | by operand: O · #7352 and C / B for the 28 member and `this.x` files, #7372 slices 3/4 for the other 9 | 37 | 0 | |
-| 28 | `arguments` object | no issue yet | 28 | 0 | |
+| 28 | `arguments` object | C · #7354 (`arguments` subsection) | 28 | 0 | |
 | 29 | crash: `Object.defineProperty` is not an admitted Object static | #7364, #7368 | 26 | 0 | |
 | | the rest (no initialiser 23, async test 22, member get/set 22, call result 22, primitive literal 16, other crashes 14, `with` 13, …) | | 155 | | |
 
@@ -176,23 +178,27 @@ Corrections of 2026-11-19 (second pass, same rows; the classifier is
 | Fa · #7349 | 472 | function expressions and declarations as values |
 | S10 · #7372 | 317 | repeated `var` (slice 1b) 195, block functions (slice 2) 69, undeclared writes (slice 3) 53 |
 | O follow-up: #7352 plus a for-in runtime | 196 | for-in `var` heads |
-| no owner yet | 137 | read of an undeclared name 109, `arguments` object 28 |
+| S10 · #7372 slice 3 (to pass: ReferenceError, #7350, and `catch`, X) | 109 | read of an undeclared name |
+| C · #7354 (`arguments` subsection; S11 after C1) | 28 | `arguments` object |
 | `eval` · #7363 | 96 | |
 | `with`, deferred (no issue) | 60 | `var` in a `with` body 47, `with` statement 13 |
 | Str2 · #7354 | 53 | dynamic operators |
 | `delete`, by operand | 37 | O / C / B 28, #7372 slices 3/4 9 |
-| unmapped tail | 167 | compound assignment with a non-numeric right side 30, redeclaration 18, … |
-| not in a row above | 160 | script `var` from `new X` 62 (C / B), without initialiser 23, from a call result 22 (Fb / B), from a primitive literal 16; async test 22; cascade 10; other 5 |
+| unmapped tail | 167 | compound assignment with a non-numeric right side 30 (#7375, no owner yet), redeclaration 18, … |
+| not in a row above | 160 | script `var` from `new X` 62 (C / B), without initialiser 23 (O · #7352 19: `var arg; Object.defineProperty(arg, …)`; #7372 4), from a call result 22 (Fb / B), from a primitive literal 16; async test 22; cascade 10; other 5 |
 
 Function values together (Fa + Fb + C, all #7349) are the largest single
 foundation at 2,659 first gaps; built-in globals (B) are next.
 
-**Issues filed: none.** Owners, confirmed with the lanes on 2026-11-19: S10
-(script scope, #7372, slices 1b to 4), S12 (#7364 crash → refusal, #7368,
-#7369), S2 (#7363 eval). Four mechanisms with 20 or more files have no owner
-yet: a read of an undeclared name (109), compound assignment with a
-non-numeric right side (30, in the unmapped tail), the `arguments` object
-(28), a script `var` without an initialiser (23). `with` (60 files) is
+**Issues filed: #7375**, compound assignment with a non-numeric right side
+(30, in the unmapped tail; no owner yet). Owners, confirmed with the lanes on
+2026-11-19: S10 (script scope, #7372, slices 1b to 4), S12 (#7364 crash →
+refusal, #7368, #7369), S2 (#7363 eval). The three other mechanisms with 20
+or more files that had no owner are assigned: a read of an undeclared name
+(109) is #7372 slice 3; the `arguments` object (28) is slice C's, a
+subsection of #7354 (S11, after C1); a script `var` without an initialiser
+(23) is O · #7352 for 19 files and #7372 for 4 (`NaN`, `Infinity`,
+`undefined`, and one `var` read through `this[…]`). `with` (60 files) is
 deferred.
 
 ## 2. Ordinary pipeline (secondary)
