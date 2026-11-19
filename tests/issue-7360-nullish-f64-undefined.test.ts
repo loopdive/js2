@@ -82,6 +82,11 @@ const PROGRAMS: readonly (readonly [string, string, number])[] = [
     207,
   ],
   [
+    "a wrapped optional property under `??=`",
+    "interface O { a?: number } function f(o: O): number { (o.a!) ??= 7; return o.a; } export function main(): number { return f({}) + f({ a: 2 }) * 100; }",
+    207,
+  ],
+  [
     "a class field under `??=`",
     "class C { a: number | undefined = undefined; } function f(c: C): number { c.a ??= 7; return c.a; } " +
       "export function main(): number { const c = new C(); const d = new C(); d.a = 2; return f(c) + f(d) * 100; }",
@@ -151,6 +156,14 @@ const WRAPPED_OPERANDS: readonly (readonly [string, string])[] = [
   ["`x satisfies number | undefined`", "(x satisfies number | undefined)"],
 ];
 
+// (review RV7307 round 2) A type-only wrapper or parentheses around the `??=` target: [shape, target]. node answers
+// 127. `(x as number) ??= 7` is not a row: the early-error pass refuses an `as` target before codegen.
+const WRAPPED_TARGETS: readonly (readonly [string, string])[] = [
+  ["`(x!)`", "(x!)"],
+  ["`(x)`", "(x)"],
+  ["`x!`", "x!"],
+];
+
 describe.each(["gc", "standalone"] as const)("#7360 — nullish tests see an f64 `undefined` (%s)", (target) => {
   it.each(PROGRAMS)("%s answers like node", async (_, source, expected) => {
     expect(await runMain(source, target)).toBe(expected);
@@ -170,5 +183,11 @@ describe.each(["gc", "standalone"] as const)("#7360 — nullish tests see an f64
       `function f(x: number | undefined): number { return ${operand} ?? 7; } ` +
       "export function main(): number { return f(2) * 10 + f(undefined); }";
     expect(await runMain(source, target)).toBe(27);
+  });
+  it.each(WRAPPED_TARGETS)("%s under `??=` assigns when `x` is `undefined`", async (_, wrapped) => {
+    const source =
+      `function f(x: number | undefined): number { ${wrapped} ??= 7; return x; } ` +
+      "export function main(): number { const n = f(NaN); return f(2) * 10 + f(undefined) + (n !== n ? 100 : 0); }";
+    expect(await runMain(source, target)).toBe(127);
   });
 });

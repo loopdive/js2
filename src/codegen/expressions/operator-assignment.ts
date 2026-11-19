@@ -61,7 +61,7 @@ import {
   emitNullGuardedStructGet,
   getCapturedBoxGlobal,
 } from "../property-access.js";
-import { coerceType, compileExpression } from "../shared.js";
+import { coerceType, compileExpression, skipTransparentExpressions } from "../shared.js";
 import { tryEmitNativeStringFieldAppend, tryEmitNativeStringGlobalAppend } from "./string-field-append.js";
 import { emitBoolToAnyStr, rhsStringForcesConcatLane } from "../string-compound-lane.js";
 import { compileStringLiteral, emitBoolToString } from "../string-ops.js";
@@ -114,17 +114,20 @@ export function compileLogicalAssignment(
   expr: ts.BinaryExpression,
   op: ts.SyntaxKind,
 ): ValType | null {
+  // (#7360) `(x) ??= v` and `x! ??= v` assign to `x`: a wrapper that emits nothing does not change the reference.
+  const target = skipTransparentExpressions(expr.left);
+
   // Handle property access logical assignment: obj.prop ??= default
-  if (ts.isPropertyAccessExpression(expr.left)) {
-    return compilePropertyLogicalAssignment(ctx, fctx, expr.left, expr.right, op);
+  if (ts.isPropertyAccessExpression(target)) {
+    return compilePropertyLogicalAssignment(ctx, fctx, target, expr.right, op);
   }
 
   // Handle element access logical assignment: arr[i] ||= default
-  if (ts.isElementAccessExpression(expr.left)) {
-    return compileElementLogicalAssignment(ctx, fctx, expr.left, expr.right, op);
+  if (ts.isElementAccessExpression(target)) {
+    return compileElementLogicalAssignment(ctx, fctx, target, expr.right, op);
   }
 
-  if (!ts.isIdentifier(expr.left)) {
+  if (!ts.isIdentifier(target)) {
     reportError(
       ctx,
       expr,
@@ -133,7 +136,7 @@ export function compileLogicalAssignment(
     return null;
   }
 
-  const name = expr.left.text;
+  const name = target.text;
 
   // Resolve the variable storage location
   let storage:
@@ -278,7 +281,7 @@ export function compileLogicalAssignment(
     // a ??= b  →  if (a is null/undefined) { a = b }; result = a
     // Other value types (i32, i64, f32, plain-number f64) can never be null/undefined,
     // so just return the current value without evaluating RHS (short-circuit).
-    const undefinedF64 = f64MayHoldUndefined(ctx, expr.left, varType);
+    const undefinedF64 = f64MayHoldUndefined(ctx, target, varType);
     if (!isRefType(varType) && !undefinedF64) {
       emitGet();
       return varType;
