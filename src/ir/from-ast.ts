@@ -61,7 +61,7 @@ import {
 import { IR_ASYNC_CONSOLE_LOG_STRING_FN, IR_ASYNC_NUMBER_TO_STRING_FN } from "./async-semantic-runtime.js";
 import { ts, forEachChild } from "../ts-api.js";
 import { isPlannedScriptVarClosure } from "./function-member-closure-plan.js";
-import { isLexicalBindingWrite } from "../shared/binding-writes.js";
+import { isLexicalBindingWrite, skipOuterExpressions } from "../shared/binding-writes.js";
 import { isLogicalAssignmentFunctionTarget } from "./logical-assignment-name-targets.js";
 import {
   additiveOperandsProvable,
@@ -14265,7 +14265,12 @@ function lowerPrefixUnary(expr: ts.PrefixUnaryExpression, cx: LowerCtx): IrValue
     `prefix operator '${ts.tokenToString(expr.operator) ?? expr.operator}'`,
     cx.funcName,
   );
-  const rand = lowerExpr(expr.operand, cx, irVal({ kind: "f64" }));
+  // (#7332) `null` has no f64 value, but `-`, `+` and `~` read ToNumber(null), +0, and `!` reads a
+  // falsy value either way.
+  const rand =
+    skipOuterExpressions(expr.operand).kind === ts.SyntaxKind.NullKeyword
+      ? cx.builder.emitConst({ kind: "f64", value: 0 }, irVal({ kind: "f64" }))
+      : lowerExpr(expr.operand, cx, irVal({ kind: "f64" }));
   switch (expr.operator) {
     case ts.SyntaxKind.MinusToken: {
       const randType = typeOfValue(rand, cx);

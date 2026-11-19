@@ -13798,6 +13798,10 @@ function isPhase1ObjectLiteral(
       if (name === null) return shapeNo("objectlit-computed-key", prop.name);
       if (seen.has(name)) return shapeNo("objectlit-duplicate-key", prop.name); // duplicate key — defer
       seen.add(name);
+      // (#7332) from-ast lowers a field's value under an f64 hint, where `null` has no value
+      // (`nullValueAdmissible`); a conditional or comma may yield it too.
+      if (!everyYieldedValue(prop.initializer, (value) => value.kind !== ts.SyntaxKind.NullKeyword))
+        return shapeNo("objectlit-null-field", prop.initializer);
       if (!isPhase1Expr(prop.initializer, scope, localClasses))
         return shapeNo("objectlit-property-init", prop.initializer);
       continue;
