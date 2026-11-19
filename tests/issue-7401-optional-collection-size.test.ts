@@ -1,6 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 //
-// #7401 — `m?.size` on a typed Map/Set: the optional-chain arm asked for the host `Map_get_size` / `Set_get_size`
+// #7401 — `m?.size` on a typed Map/Set (and RegExp / Error members): the optional-chain arm asked for the host `Map_get_size` / `Set_get_size`
 // getter import, which the native lanes do not have, emitted nothing, and left the receiver as the "property". The
 // read now falls to the dynamic member read, whose native `$Map` arm answers `size`. Each program carries node's answer.
 import { describe, expect, it } from "vitest";
@@ -30,7 +30,7 @@ const node = (source: string): unknown =>
     `${source
       .replace(/export /g, "")
       .replace(/\?: Set<number>/g, "")
-      .replace(/: (Map<string, number>|Set<number>)( \| undefined)?/g, "")
+      .replace(/: (Map<string, number>|Set<number>|RegExp|Error)( \| undefined)?/g, "")
       .replace(/\): number/g, ")")
       .replace(/!\./g, ".")
       .replace(/\)!/g, ")")
@@ -79,6 +79,17 @@ describe("#7401 optional-chain .size on a typed Map / Set", () => {
       "an undefined class field (was invalid Wasm)",
       "class W { r: Map<string, number> | undefined = undefined; } export function main(): number { const w = new W(); const v = w.r?.size; return v === undefined ? 2 : 0; }",
       2,
+    ],
+    // Other extern classes without a host getter import take the same arm.
+    [
+      "RegExp ?.source / ?.flags",
+      'export function main(): number { const r: RegExp | undefined = /ab/g; return (r?.source ?? "").length + (r?.flags === "g" ? 10 : 0); }',
+      12,
+    ],
+    [
+      "Error ?.message / ?.name",
+      'export function main(): number { const e: Error | undefined = new RangeError("boom"); return (e?.message === "boom" ? 1 : 0) + (e?.name === "RangeError" ? 10 : 0); }',
+      11,
     ],
   ])("%s", async (_, source, expected) => {
     expect(node(source)).toBe(expected);

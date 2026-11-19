@@ -2461,7 +2461,8 @@ export function compileOptionalPropertyAccess(
   const tsObjType = ctx.checker.getNonNullableType(ctx.checker.getTypeAtLocation(expr.expression));
   const propName = expr.name.text;
   let elseResultType: ValType | null = null;
-  // (#7401) No host getter import (native `Map`/`Set` `.size`) → the dynamic member read below, not the receiver.
+  // (#7401) An extern class with no host getter import (native `Map`/`Set` `.size`, RegExp, Error, …) → the dynamic
+  // member read below, not the receiver.
   if (compileExternPropertyGetFromStack(ctx, fctx, tsObjType, propName)) {
     elseResultType = { kind: "externref" };
   } else if (isStringType(tsObjType) && propName === "length") {
@@ -2612,19 +2613,11 @@ export function compileExternPropertyGetFromStack(
   const className =
     hostMapCarrierClassName(ctx, objType) ??
     (isExternalDeclaredClass(objType, ctx.checker) ? objType.getSymbol()?.name : undefined);
-  if (!className) return false;
-  let current: string | undefined = className;
-  while (current) {
-    const info = ctx.externClasses.get(current);
-    if (info?.properties.has(propName)) {
-      const funcIdx = ctx.funcMap.get(`${info.importPrefix}_get_${propName}`);
-      if (funcIdx === undefined) return false;
-      fctx.body.push({ op: "call", funcIdx });
-      return true;
-    }
-    current = (ctx as any).externClassParent?.get(current);
-  }
-  return false;
+  const info = className ? findExternInfoForMember(ctx, className, propName, "property") : null;
+  const funcIdx = info ? ctx.funcMap.get(`${info.importPrefix}_get_${propName}`) : undefined;
+  if (funcIdx === undefined) return false;
+  fctx.body.push({ op: "call", funcIdx });
+  return true;
 }
 
 // ── Property access ──────────────────────────────────────────────────

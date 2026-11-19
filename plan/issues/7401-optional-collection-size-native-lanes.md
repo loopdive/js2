@@ -74,7 +74,8 @@ Set into a number (`__to_primitive` + `__unbox_number` → `NaN`).
   - a Set grown after construction;
   - a short-circuited `?:` parameter (`?? -1`);
   - `=== undefined`.
-- The test also pins the three invalid-module shapes above.
+- The test also pins the three invalid-module shapes above, plus a RegExp
+  row and an Error row (10 cases).
 - On the base code, four of the five wrong-answer cases fail, and the three
   invalid-module shapes fail validation.
 - Byte identity: 1,200 files × {gc, standalone}, so 2,400 outputs, with
@@ -82,6 +83,27 @@ Set into a number (`__to_primitive` + `__unbox_number` → `NaN`).
   `language/expressions/{optional-chaining,compound-assignment,addition,conditional}`,
   plus the playground, benchmarks and examples. These are untyped JS, so none
   of them reaches the typed arm.
+
+## Scope beyond Map/Set (from review RV7338)
+
+The arm serves every extern-declared class that has no host getter import.
+The same fix therefore also corrects optional reads of:
+
+- RegExp: `?.source`, `?.flags`, `?.global`, `?.lastIndex` and the other
+  flags;
+- Error / RangeError: `?.message`, `?.name`.
+
+On local, parameter, global and field receivers, base gave a null-deref
+trap, `0` or `-11`; all now match node. The test pins one RegExp row and one
+Error row.
+
+**A program meant to change:**
+`tests/equivalence/issue-6996-await-settled-ordering.test.ts` reads
+`activeInstance?.exports` on a typed `WebAssembly.Instance`. That is a
+declared class without a getter import, so it now takes the dynamic read
+instead of returning the receiver. Its output changes on gc and standalone.
+The reviewer's typed corpus showed this; the untyped 2,400-output sample
+above does not exercise the arm.
 
 ## Found on the way (not fixed here)
 
