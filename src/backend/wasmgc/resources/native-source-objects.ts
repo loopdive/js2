@@ -3,8 +3,9 @@
  * (#7354 O1) The public source-object functions on the realm. A source program reaches an ordinary object only
  * through the `js.object.*` contracts (`ordinary-object-callables.ts`); each contract it calls binds one function
  * here, whose signature is the contract's and whose algorithm is the realm's own. A row either
- *   - adapts the realm (`create-default`, `get`): a function this module reserves, with the contract's signature
- *     and a body (`source-object-bodies.ts`) over the storage pack and the builtin-object kernel; or
+ *   - adapts the realm (`create-default`, `get`, (#7354 O3) `set`): a function this module reserves, with the
+ *     contract's signature and a body (`source-object-bodies.ts`) over the realm's storage, kernel and descriptor
+ *     packs; or
  *   - binds a realm function as it is (`define-data`: the descriptor pack's public define; (#7354 O4)
  *     `create-type-error`: the invocation substrate's TypeError constructor).
  * A contract without a row here has no native source provider yet.
@@ -15,6 +16,7 @@ import type { OrdinaryObjectRuntimeFeature } from "../../../ir/runtime/contracts
 import {
   buildSourceObjectCreateDefinition,
   buildSourceObjectGetDefinition,
+  buildSourceObjectSetDefinition,
   type SourceObjectDefinition,
 } from "../../../runtime/wasmgc/values/source-object-bodies.js";
 import type { NativeBuiltinFunctionReservations } from "./native-builtin-functions.js";
@@ -31,6 +33,7 @@ export interface NativeSourceObjectDependencies {
   readonly errors: NativeErrorReservations;
 }
 const EXTERNREF = { kind: "externref" } as const;
+const I32 = { kind: "i32" } as const;
 /** An adapter (the contract signature it reserves, its body over the realm's packs) or a bound realm function. */
 type Row =
   | {
@@ -54,6 +57,15 @@ const ROWS = {
   "js.object.get": {
     signature: { params: [EXTERNREF, EXTERNREF, EXTERNREF], results: [EXTERNREF] },
     body: ({ kernel }) => buildSourceObjectGetDefinition({ get: kernel.functions.get.handle }),
+  },
+  "js.object.set": {
+    signature: { params: [EXTERNREF, EXTERNREF, EXTERNREF, EXTERNREF], results: [I32] },
+    body: ({ layouts, kernel, descriptors }) =>
+      buildSourceObjectSetDefinition({
+        entryTypeIdx: layouts.propEntry.typeIndex,
+        lookup: kernel.functions.lookup.handle,
+        defineData: descriptors.defineData.handle,
+      }),
   },
 } as const satisfies Readonly<Partial<Record<OrdinaryObjectRuntimeFeature, Row>>>;
 /** A contract the realm serves. */
