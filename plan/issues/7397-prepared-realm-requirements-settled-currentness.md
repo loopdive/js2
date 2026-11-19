@@ -12,8 +12,8 @@ reasoning_effort: high
 task_type: implementation
 area: ir
 goal: ir-full-coverage
-depends_on: [7365]
-related: [7354, 7398]
+depends_on: []
+related: [7354, 7365, 7398]
 ---
 
 # #7397 — realm requirements: one currentness check per unchangeable pack
