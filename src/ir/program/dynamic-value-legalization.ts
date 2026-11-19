@@ -85,6 +85,11 @@ function carrierClosureInstr(instr: IrInstr): IrInstr {
   };
 }
 
+/** A packed callable, or a raw externref: values the carrier holds as they are. */
+function isExternal(type: IrType | undefined): boolean {
+  return type?.kind === "callable" || (type?.kind === "val" && type.val.kind === "externref");
+}
+
 /** Rewrite one function. A function without a dynamic value is returned unchanged. */
 export function legalizeDynamicValues(fn: IrFunction): IrFunction {
   if (!containsDynamic(fn)) return fn;
@@ -158,13 +163,13 @@ export function legalizeDynamicValues(fn: IrFunction): IrFunction {
           { kind: "unary", op: "i32.eqz", rand: positive, result: instr.result, resultType: instr.resultType },
         ];
       }
-      // (#7354 Fa) The function-value projection (`functionObjectDynamicValue`) boxes a packed callable, an
-      // externref, into the dynamic value; the carrier is that externref itself.
+      // (#7354 Fa, Fb) The function-value projection (`functionObjectDynamicValue`) boxes a packed callable, and a
+      // native closure call boxes its result, an externref, into the dynamic value: the carrier is that externref.
       case "call":
         if (
           instr.target.binding.kind === "runtime" &&
           instr.target.name === IR_DYN_CALL_BOX_FN &&
-          types.get(instr.args[0]!)?.kind === "callable"
+          isExternal(types.get(instr.args[0]!))
         )
           return [
             {

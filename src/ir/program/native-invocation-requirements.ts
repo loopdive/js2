@@ -38,7 +38,10 @@ export interface NativeInvocationUse {
   readonly ownerUnitId: IrUnitId;
   readonly kind: "method" | "apply-vector" | "undefined";
   readonly arity?: number;
+  /** The callee's own allocation; absent for (#7354 Fb) a call through a dynamic value, which dispatches over every
+   * source closure of the program (`dynamicCallee`). */
   readonly liftedUnitId?: IrUnitId;
+  readonly dynamicCallee?: true;
   readonly callbacks?: readonly {
     readonly argument: number;
     readonly allocationOccurrence: number;
@@ -70,6 +73,34 @@ function external(type: IrType | undefined): boolean {
     type?.kind === "callable" ||
     (type?.kind === "val" && !type.typeRef && type.val.kind === "externref")
   );
+}
+
+/** The callee is a packed source allocation (`callableAllocation` then reconciles it), not a dynamic value. */
+function packedCallable(
+  value: IrValueId,
+  defs: ReadonlyMap<IrValueId, IrInstr>,
+  types: ReadonlyMap<IrValueId, IrType>,
+): boolean {
+  const erased = defs.get(value);
+  return erased?.kind === "coerce.to_externref" && types.get(erased.value)?.kind === "callable";
+}
+
+/**
+ * (#7354 Fb) A dynamic callee may be any source closure, so each one must be dispatchable: the fixed-parameter
+ * contract the dispatcher reads its arity from, and carrier (externref) parameters and result.
+ */
+function dynamicCalleeGaps(source: NativeSourceClosureRequirements): NativeInvocationRequirements["gaps"][number][] {
+  return source.units.flatMap(({ unitId }) => {
+    const closure = source.demands.owners.find((owner) => owner.unitId === unitId)?.projectedFunction.closureSubtype;
+    const { signature, parameters } = closure ?? {};
+    const dispatchable =
+      signature &&
+      parameters?.kind === "fixed" &&
+      parameters.count === signature.params.length &&
+      signature.params.every(external) &&
+      (signature.returnType === null || external(signature.returnType));
+    return dispatchable ? [] : [{ unitId, detail: `callable ${unitId} is not dispatchable through a dynamic value` }];
+  });
 }
 
 /** Reconcile the actual pack graph with this projection's current allocation site. */
@@ -219,6 +250,12 @@ function calculate(
       }
       definitions.set(unitId, defs);
     }
+    // (#7354 Fb) A callee that is no packed allocation is a dynamic value: the dispatcher answers it over every source
+    // closure (each meets the all-dynamic contract checked in `dynamicCalleeGaps`), or throws its TypeError.
+    if (kind === "method" && !packedCallable(callee, defs, types)) {
+      uses.push({ occurrence, ownerUnitId: unitId, kind, arity: arity!, dynamicCallee: true });
+      continue;
+    }
     const { type: calleeType, liftedUnitId } = callableAllocation(
       source,
       unitId,
@@ -269,6 +306,7 @@ function calculate(
       callbacks,
     });
   }
+  if (uses.some((use) => use.dynamicCallee)) gaps.push(...dynamicCalleeGaps(source));
   const getters = objectAccess
     ? reconcileNativeGetterInvocationRequirements(source, objectAccess)
     : { getterUses: [], gaps: [] };

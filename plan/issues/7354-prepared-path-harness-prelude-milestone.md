@@ -44,6 +44,12 @@ related: [7188, 2949, 3526, 3527, 3518, 7106, 7349, 7350, 7352]
 # invocation population (`nativeRealmCompletedSlots`, native-realm.ts).
 # ir-program-presentation.ts +1: `native`, the ABI join's admission of a lifted
 # closure body's `__self`.
+# 2026-11-19 (slice Fb): src/ir/from-ast.ts +20 more (+57 with Fa): a call through a
+# script var in any position on the Prepared lane, the function-value box of a
+# module-slot store (`boxForDynamicModuleStorage` reuses `argumentIntoDynamic`), and
+# `preparedFunctionValues`, the one lane predicate the three arms share. The call
+# itself lives in src/ir/function-object-lowering.ts (`applyNativeClosureCall`), the
+# dispatch selection in native-invocation-requirements.ts.
 # 2026-11-19 (realm join, slice O step O1): src/ir/program-consumer.ts, the emission wiring of the realm's
 # source-object family: the second `reconcileNativeCallBindings` call (the reconciler itself is the renamed, shared
 # invocation one), the realm-slot record on the emission observation with its one reader `emittedNativeRealmSlots`
@@ -2209,3 +2215,40 @@ covers it, and the realm's fill and owner checks call `physicalIndex` thousands 
 square of the reserved resources. Reproducer: `.tmp/prof.mts` pattern, i.e. compile the proving program above twice
 through `src/test262/test262-prepared-entry.ts` (options `wholeProgram: prepared-program-required`, `wasmgc`,
 `standalone`, `allowJs`) and profile the second.
+
+## Fb — calls through a dynamic value (2026-11-19)
+
+Branch `claude/7354-fb`, stacked on `claude/7354-fa`.
+
+### Implementation Plan
+
+Measured first (on Fa's head): `function t(fn){ return fn(2); } t(function (x) { return x * 2; })` already reaches
+from-ast's one dynamic-call path (`lowerDynamicValueCall` → `applyDynamicCallee`, function-object-lowering.ts), which
+emits the ordinary pipeline's runtime helpers (`__objvec_new/push`, `__is_callable`, `__new_TypeError`,
+`__apply_closure`); the legalization refuses at `__ir_dyn_call_argument`. The #3518 native dispatcher
+`js.closure.call:N` already does IsCallable and throws the TypeError itself (`buildClosureInvocationFailure`), but
+its planner (`native-invocation-requirements.ts`) admits only a callee that is a packed `closure.new` of the same unit
+(built for `f.call` on a known closure), and the dispatch entries are those callees' units only.
+
+| concern | module | reuses | removes |
+| --- | --- | --- | --- |
+| the call | `function-object-lowering.ts`: on the Prepared lane `applyDynamicCallee` emits one `js.closure.call:N(receiver, callee, …args)` over carrier operands | `functionObjectDynamicValue`, `irClosureMethodReference`, `coerce.to_externref` of a dynamic value (O1) | the runtime-helper sequence on this lane |
+| a dynamic callee | `native-invocation-requirements.ts`: a method use whose callee is no packed allocation is a `dynamicCallee` use; every source closure must be dispatchable (fixed parameters, carrier slots), else a named gap | `calculate`, `external` | — |
+| dispatch | `native-source-closure-callables.ts` `resolveEntries`: a dynamic use selects every source unit | `resolveSourceEntries` | — |
+| result | legalization: `__ir_dyn_call_box` of any externref is the carrier (Fa's arm, widened from packed callables) | Fa's arm | — |
+| script vars | from-ast: a call through a dynamic home in any position on the lane; a function value stored by assignment | `isStatementDynamicModuleCall` (ordinary lane only now), `argumentIntoDynamic` | — |
+
+Quality criterion: one call path for a non-static callee on the lane (the same `lowerDynamicValueCall`), no second
+dispatcher, one lane predicate in from-ast.
+
+### Result
+
+`function t(fn){ return fn(2); } if (t(function (x) { return x * 2; }) !== 4) throw 1;` validates and runs through the
+strict Prepared entry. Missing arguments read `undefined`, extra ones are dropped, a non-callable value (number,
+`undefined`) throws a catchable TypeError, a script var is called from another function and after a second store.
+Proof: `tests/issue-7354-fb-dynamic-calls.test.ts`.
+
+Named gaps: a dynamic call in a program with no source closure (no dispatcher: `js.closure.call:N needs runtime
+function materialization`), spread arguments, `new`, method calls and `fn.call` / `fn.apply` on a dynamic value
+(slice C), a receiver other than `undefined` (`this`, slice C).
+
