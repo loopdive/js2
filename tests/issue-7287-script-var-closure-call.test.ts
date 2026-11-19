@@ -61,8 +61,6 @@ interface Case {
   readonly wasiLegacy?: true;
   /** Units that keep the legacy body on every lane. */
   readonly legacyUnits?: readonly string[];
-  /** Legacy (IR off) traps here instead of throwing the TypeError node and the IR throw. */
-  readonly legacyTraps?: true;
   /** The source reassigns the var to a value outside its declared type. */
   readonly skipSemanticDiagnostics?: true;
 }
@@ -199,7 +197,6 @@ try { h(); throw "no throw"; } catch (e) {
   if (!(e instanceof TypeError) || e.message !== "called value is not a function") throw "msg";
 }`,
     expected: "completed",
-    legacyTraps: true,
     irUnits: ["h"],
   },
   "slice B: a throwing callee propagates": {
@@ -290,7 +287,7 @@ describe("#7287 script-var closures callable from IR units", () => {
           : lane.options;
         const off = await verdict(testCase.source, { ...options, experimentalIR: false });
         const { result, value } = await verdict(testCase.source, options);
-        expect(off.value).toBe(testCase.legacyTraps ? "threw" : value);
+        expect(off.value).toBe(value);
         expect(value).toBe(testCase.expected);
         const irRoute = !(testCase.wasiLegacy && lane.options.target === "wasi");
         for (const unit of testCase.irUnits ?? []) expect(route(result, unit), unit).toBe(irRoute);

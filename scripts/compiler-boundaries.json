@@ -5493,6 +5493,14 @@
       "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
     },
     {
+      "path": "src/codegen/expressions/var-non-callable-writes.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Oracle-typed scan of a var's writes for a non-callable value, steering legacy's identifier-call routes (#7334); move into a frontend analysis module once it no longer needs CodegenContext."
+    },
+    {
       "path": "src/codegen/expressions/call-namespace-static.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
