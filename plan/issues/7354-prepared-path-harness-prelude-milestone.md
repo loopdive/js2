@@ -2262,3 +2262,6 @@ through `src/test262/test262-prepared-entry.ts` (options `wholeProgram: prepared
     intrinsic"); a gap could carry its own sentence.
   - `nativeRealmReservationInventory` records `owner.inventory` as a side effect of a query; a separate record step
     would be clearer.
+- **Timeout (lead decision).** `tests/issue-3518-ordinary-object-runtime-providers.test.ts` "empty void closure
+  bodies" ×2 run at 90 s instead of the global 35 s. Each case compiles a realm program twice (≈36 s locally, ≈39.5 s
+  on CI). Restore the default once #7397, #7398 and #7365 land; #7397's issue file carries that as an acceptance line.
