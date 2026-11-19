@@ -15,6 +15,8 @@ area: ir, compiler
 goal: ir-full-coverage
 depends_on: [7364]
 related: [7354, 7338, 7339, 7350]
+import-cycles-allow:
+  - frontend->ir: 19 # 2026-11-19 (#7368): prepare-object-statics.ts asks the one Object statics table (ir/object-statics.ts) and its realm predicates (ir/module-bindings.ts); both move with the frontend inventory split
 ---
 
 # #7368 — Object statics on the Prepared path
@@ -74,10 +76,27 @@ plus one adapter row in `src/backend/wasmgc/resources/native-source-objects.ts`,
 planned by neither …") go through `refuseUnselected` (#7364): an invariant after a selector's claim, a named refusal on
 the Prepared path.
 
-**Not in this issue.** §20.1.2.4 step 1's Object test (`emitThrowTypeErrorUnlessObject`) needs the Prepared
-`tag.test` of the Object kind, and the own-property tests' nullish TypeError needs `js.object.create-type-error`. Both
-are #7354 O4 (lane S3). Until O4 lands, a define on a target that is not an inline `{}` refuses by that name
-(`tag.test of tag 6 has no Prepared intrinsic`). A read of a descriptor's field needs the Prepared dynamic member read.
+**The TypeErrors, over #7354 O4.** §20.1.2.4 step 1's Object test (`emitThrowTypeErrorUnlessObject`) lowers on the
+Prepared path through O4's Object `tag.test` (lane S3, merged here). Two arms are added to the dynamic-value
+legalization (`src/ir/program/dynamic-value-legalization.ts`) so that it lowers completely:
+
+- the Function test is constant false, because no carrier kind is callable;
+- `throw new TypeError(m)` from `throw-type-error.ts` builds the realm's TypeError through `js.object.create-type-error`,
+  the contract O4 added.
+
+In a program that binds a catch, a caught error would be read as a dynamic value, and no carrier kind holds an error
+(O4's rule for a nullish member read). So two cases refuse by name there:
+
+- an IR-level TypeError throw (`refuseUnadmittedThrows`, unchanged);
+- a define or [[GetOwnProperty]] on anything but a fresh `create-default` object, because it may reject with the
+  realm's own TypeError (`REALM_REJECTING`).
+
+A unit that calls a planned static is legalized even when none of its bindings or signatures is dynamic
+(`callsObjectStatic` in `source-dynamic-contracts.ts`). Before this, `var n = 5; Object.defineProperty(n, …)` reached
+the program driver with an unlowered `__new_TypeError` and crashed.
+
+**Not in this issue.** Reading the defined property back (`o.x`, `desc.writable`) is #7354 O4's member read. That read
+refuses by name in a program that names `Object`, because a static could install a property it has not proved.
 
 **Code-quality acceptance criteria.**
 
@@ -111,6 +130,57 @@ Read on 2026-11-19 in `src/runtime/wasmgc/values/ordinary-object-descriptor-{dat
 
 ## Result
 
-See the PR-visible summary below; figures were measured on this branch on 2026-11-19.
+Measured on this branch on 2026-11-19. The branch merges lane S3's `origin/claude/7354-o` at `0c7109594b` and
+`origin/claude/7354-crashes` at `f0a23832`. The base is `origin/main` at `89e47482`.
 
-RESULT_PLACEHOLDER
+**Tests.** `tests/issue-7368-prepared-object-statics.test.ts` has 11 cases, all passing. Each runnable program goes through the
+strict Prepared entry and is checked against node twice: with the right answer it returns, with a wrong one it throws.
+
+- A data define on a fresh object; a descriptor map; FromPropertyDescriptor as an object, and `undefined` for a
+  primitive's absent property.
+- ToObject's TypeError for a `null` or `undefined` receiver.
+- A define on a binding, checked through `hasOwnProperty`, and a number target that throws the Object test's TypeError.
+- A non-configurable redefinition: the same value returns, a different value throws the descriptor pack's TypeError.
+- Pinned named refusals:
+  - reading the defined property, or a descriptor's field (#7354 O4's member read in a program that names `Object`);
+  - a define that may reject, in a program that catches;
+  - `getOwnPropertyNames`, whose answer is an array;
+  - a descriptor that is not an inline literal.
+
+Related suites were run with `--maxWorkers=1`: the `issue-7354-*` and `issue-7364-*` files, every file matching
+`*object-static*` or `*define-property*`, and the five `issue-3518` files the commit hook selects. The failure sets
+were:
+
+| tree | failing tests |
+| --- | --- |
+| head (31 files, 1,544 passed) | `issue-3663` host paths (2); `issue-7354-h` "object literal returned from an unannotated function" (1) |
+| S3's merged branches (`0c7109594b` + `f0a23832`) | the same three |
+| `origin/main` (22 of the files exist there) | `issue-3663` host paths (2) |
+
+No failure is new against S3's branches. Pins this issue moves on purpose:
+
+- `#3518`: the accessor-literal pins now expect acceptance, because `define-accessor` is realm-served; the provider-id
+  count is twelve.
+- `#7354 H`: the `Object.defineProperty` row runs now, instead of refusing for want of a home.
+- `#7364`: the unadmitted define uses a descriptor held in a variable.
+
+**Byte identity.** The ordinary pipeline was compiled on 100 test262 files that call `Object.defineProperty` (every
+7th match under `built-ins/Object/defineProperty`, `language` and `built-ins/Array`, with their harness includes), in
+both the default and the standalone mode. Head and base agree on all 200 rows: 176 binaries are identical, and 24 rows
+fail to compile with the same errors on both.
+
+**Gates.** All run unpiped: loc, func, coercion-sites, oracle-ratchet, dead-exports, compiler-boundaries inventory,
+lint, format, import-cycles, ir-layering and issues, plus loc and func again against
+`LOC_GATE_BASE=origin/main`. One grant was needed: `import-cycles-allow` `frontend->ir: 19` (+2, dated above). No
+function-budget grant is needed.
+
+**Census.** Run with `scripts/ir-census/prepared-census.mts --harness stand-in --jobs 1`, from
+`origin/claude/es5-census-1119` at `940936f9`.
+
+| files | stopped before (census of 2026-11-19, main `ee3fcdd610`) | stop now |
+| --- | --- | --- |
+| 26 of `crash-object-static-not-admitted.tsv` | `Object.defineProperty is not an admitted Object static` | 20: the stand-in's `__assert_sameValue` (`1 / actual`, ToPrimitive of an object in a program that names `Object`, #7354 O4); 3: a descriptor that is not an inline literal (`descriptor`); 2: `Object` read as a value; 1: `Array` not in scope |
+| 40 `propertyHelper.js` includers (every 22nd of 905) | 17 built-in call or method, 14 script-var home of an object literal, 7 array literal, 1 call result, 1 new-expression | all 40: `propertyHelper.js` `verifyProperty`, `empty array 'failures' escapes before its element type is closed` |
+
+No file passes yet. 23 of the 26 no longer stop at a define. The other 3 still stop there, now with the table's
+reason (`descriptor`). The 20 stand-in stops are the next gap, and that gap belongs to S3's ToPrimitive of an object.
