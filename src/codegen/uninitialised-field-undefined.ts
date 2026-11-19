@@ -41,7 +41,9 @@
 //     and re-routing it would move emitted bytes for no semantic gain.
 //   * An f64 (`n!: number`) slot. Extending `undefinedDefault` from `?` to `!`
 //     is a separate, wider change to numeric field storage — see the issue's
-//     `## Landed` note.
+//     `## Landed` note. (#7366) A field whose TYPE admits `undefined`
+//     (`n: number | undefined`) is the `?` case under another spelling and
+//     takes the sentinel default too: {@link fieldStartsUndefined}.
 
 import type { FieldDef, Instr, ValType } from "../ir/types.js";
 import { ts } from "../ts-api.js";
@@ -51,6 +53,21 @@ import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { ensureExternIsUndefinedImport, flushLateImportShifts } from "./expressions/late-imports.js";
 import { compileExpression } from "./shared.js";
 import { compileStringLiteral } from "./string-ops.js";
+import { f64MayHoldUndefined } from "./value-tags.js";
+
+/**
+ * (#7366) Does a never-initialised field's f64 slot start as the `undefined` sentinel (`FieldDef.undefinedDefault`)?
+ * True for an optional field (`n?: number`, whatever `strictNullChecks` says) and for one whose type admits
+ * `undefined` (`n: number | undefined`).
+ */
+export function fieldStartsUndefined(
+  ctx: CodegenContext,
+  declaration: ts.PropertyDeclaration | ts.ParameterDeclaration | undefined,
+  fieldType: ValType,
+): boolean {
+  if (declaration === undefined || declaration.initializer !== undefined || fieldType.kind !== "f64") return false;
+  return declaration.questionToken !== undefined || f64MayHoldUndefined(ctx, declaration.name, fieldType);
+}
 
 /** The struct slot behind a declared-but-never-initialised class field. */
 export interface UninitialisedFieldSlot {

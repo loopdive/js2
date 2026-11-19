@@ -106,7 +106,7 @@ export function emitIsUndefF64(body: Instr[]): void {
  * {@link UNDEF_F64_BITS} sentinel, so a nullish test (`??`, `??=`) must compare those bits instead of folding to
  * "never nullish". A plain `number` f64 cannot, and a genuine `NaN` never matches the exact bits.
  */
-export function f64MayHoldUndefined(ctx: CodegenContext, expr: ts.Expression, type: ValType): boolean {
+export function f64MayHoldUndefined(ctx: CodegenContext, expr: ts.Node, type: ValType): boolean {
   return type.kind === "f64" && (type.undefSentinel === true || ctx.oracle.nullabilityOf(expr).undefinable);
 }
 

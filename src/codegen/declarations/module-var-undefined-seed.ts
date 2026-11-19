@@ -60,11 +60,12 @@
  * Host/gc mode is excluded on #4264's grounds: there `undefined` IS the null
  * extern, and the singleton would surface to host helpers as an object.
  */
-import type { ts } from "../../ts-api.js";
+import { ts } from "../../ts-api.js";
 import { emitUndefinedExtern } from "../any-helpers.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
 import { localGlobalIdx } from "../registry/imports.js";
-import { scriptVarBindingNames } from "../source-scan-predicates.js";
+import { forEachScriptVarDeclaration, scriptVarBindingNames } from "../source-scan-predicates.js";
+import { f64MayHoldUndefined, pushUndefF64 } from "../value-tags.js";
 
 /**
  * Emit `global.set $__mod_<name> (undefined)` for every externref module global
@@ -101,6 +102,45 @@ export function emitModuleVarUndefinedSeeds(
     seeded.add(globalIdx);
     seededNames.add(varName);
   }
+}
+
+/**
+ * (#7366) The f64 twin of the seed above: an initializer-less module-scope `var` or top-level `let` whose f64 slot
+ * can hold `undefined` (`let g: number | undefined;`) starts as the exact {@link pushUndefF64} sentinel instead of
+ * the constant initializer's `0`. A Wasm global initializer is a constant expression, and `f64.const` cannot carry
+ * the sentinel's signaling-NaN bits reliably, so the value is stored here. For a `let` the TDZ flag still guards
+ * every read before the declaration; the seed is the value its `let g;` statement binds.
+ */
+export function emitModuleF64UndefinedSeeds(
+  ctx: CodegenContext,
+  sourceFile: ts.SourceFile,
+  initFctx: FunctionContext,
+): void {
+  for (const globalIdx of moduleF64UndefinedSeedGlobals(ctx, sourceFile)) {
+    pushUndefF64(initFctx.body);
+    initFctx.body.push({ op: "global.set", index: globalIdx });
+  }
+}
+
+/**
+ * The globals {@link emitModuleF64UndefinedSeeds} stores into: initializer-less module-scope `var`s (skipped where a
+ * Script's shared record owns them, as in {@link emitModuleVarUndefinedSeeds}) and top-level `let`s.
+ */
+export function moduleF64UndefinedSeedGlobals(ctx: CodegenContext, sourceFile: ts.SourceFile): Set<number> {
+  const declarations: ts.VariableDeclaration[] = [];
+  if (!sourceFile.isDeclarationFile && !(ctx.standaloneScriptVarBindings && !ctx.sourceIsModule))
+    forEachScriptVarDeclaration(sourceFile, (declaration) => declarations.push(declaration));
+  for (const statement of sourceFile.statements)
+    if (ts.isVariableStatement(statement) && (statement.declarationList.flags & ts.NodeFlags.Let) !== 0)
+      declarations.push(...statement.declarationList.declarations);
+  const globals = new Set<number>();
+  for (const { name, initializer } of declarations) {
+    if (initializer !== undefined || !ts.isIdentifier(name)) continue;
+    const globalIdx = ctx.moduleGlobals.get(name.text);
+    const type = globalIdx === undefined ? undefined : ctx.mod.globals[localGlobalIdx(ctx, globalIdx)]?.type;
+    if (globalIdx !== undefined && type && f64MayHoldUndefined(ctx, name, type)) globals.add(globalIdx);
+  }
+  return globals;
 }
 
 /**
