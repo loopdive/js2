@@ -119,7 +119,7 @@ const KIND_TEST: Readonly<Record<CarrierKind, IntrinsicId | "ref.is_null" | "ref
   undefined: "js.extern.is_undefined",
   null: "ref.is_null",
   string: "refuse",
-  function: "refuse",
+  function: "js.value.is_function",
 };
 
 /** The kind a box to the dynamic value admits, from its tag refinement or its operand; `undefined` refuses. */

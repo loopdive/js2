@@ -704,9 +704,11 @@ export function nativeStringValueReservationInventory(
 ): readonly NativeStringValueResourceRow[] {
   return ownerFor(tx, pack).rows;
 }
+/** `closureRoot`: the source closures' wrapper root, which the dynamic value's function test reads. */
 export function fillNativeStringValueResources(
   tx: PhysicalModuleReservations,
   pack: NativeStringValueReservations,
+  closureRoot: TypeReservation | undefined,
 ): void {
   const owner = ownerFor(tx, pack);
   if (owner.filled) fail("duplicate native string value fill");
@@ -719,7 +721,7 @@ export function fillNativeStringValueResources(
     });
     if (pack.number.booleanBoxes) fillNativeBooleanBoxResources(tx, pack.number.booleanBoxes);
     if (pack.number.booleans) fillNativeBooleanResources(tx, pack.number.booleans);
-    if (pack.number.dynamicValues) fillNativeDynamicValueResources(tx, pack.number.dynamicValues);
+    if (pack.number.dynamicValues) fillNativeDynamicValueResources(tx, pack.number.dynamicValues, closureRoot);
   }
   if (pack.equality) fillNativeStringEqualityResources(tx, pack.equality);
   if (pack.output) fillNativeStringOutputResources(tx, pack.output);

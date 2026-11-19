@@ -3,7 +3,8 @@
 // #7354 slice Ty — `typeof v <op> "literal"` on the Prepared dynamic value. from-ast lowers it as a string
 // comparison of `dyn.typeof` with a constant; the dynamic-value legalization answers it with a tag test on `v`
 // (the native `__typeof_number` / `__typeof_boolean` predicates, the `undefined` probe, the null test for
-// "object"), so no string is needed. A literal no admitted kind answers ("function", a typo) is constant. Strings
+// "object", and (#7354 Fa) `__typeof_function` for "function"), so no string is needed. A literal no admitted kind
+// answers ("symbol", a typo) is constant. Strings
 // are admitted (slice Str) but the native lane has no string predicate yet, so a test for "string" refuses by name.
 // A `typeof` result used any other way still refuses as `dyn.typeof` (slice Str2).
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -14,6 +15,8 @@ import type { TagId } from "../src/ir/core/tag-domain.js";
 import { irDynamic, irVal } from "../src/ir/core/types.js";
 import { DynamicValueGap, legalizeDynamicValues } from "../src/ir/program/dynamic-value-legalization.js";
 import { JS_TAG_IDS } from "../src/ir/runtime/js-tag-domain.js";
+import { irRuntimeFuncRef } from "../src/ir/callable-bindings.js";
+import { IR_DYN_CALL_BOX_FN } from "../src/shared/contracts/dynamic-call-helpers.js";
 import { NATIVE_REALM_GLOBALS, nativeRealmGlobalTypeof } from "../src/runtime/contracts/native-realm-globals.js";
 import { instantiatePreparedArtifact } from "../src/test262/test262-prepared-runtime.js";
 import {
@@ -153,7 +156,7 @@ describe("#7354 Ty — typeof comparisons on the Prepared dynamic value", () => 
     await expectLikeNode(
       (right) =>
         "var calls = 0;\nfunction f(v) { calls = calls + 1; return v; }\n" +
-        'if (typeof f(1) === "function") throw 1;\nif (typeof f(undefined) !== "undefined") throw 2;\n' +
+        'if (typeof f(1) === "symbol") throw 1;\nif (typeof f(undefined) !== "undefined") throw 2;\n' +
         `if (calls !== ${right ? 2 : 1}) throw 3;`,
     );
   });
@@ -288,10 +291,12 @@ describe("#7354 Ty — typeof comparisons on the Prepared dynamic value", () => 
   });
 });
 
-// The comparison arm folds a literal no admitted kind answers ("function", "symbol") to false. That is sound only
+// The comparison arm folds a literal no admitted kind answers ("symbol", "bigint") to false. That is sound only
 // while every value in the carrier has a kind: a box that admitted an unknown value (lane S4's Fb boxed a native
 // call's externref result) would turn `typeof f() === "function"` into a wrong constant. So such a box must refuse,
-// and each kind that does enter must be answered by a runtime test, never by the fold.
+// and each kind that does enter must be answered by a runtime test, never by the fold. (#7354 Fa) A function value
+// enters as a packed callable through the function-value projection, so only that entry answers "function"; a
+// call's externref result stays refused whatever its tag, until an admission proves its kind.
 describe("#7354 Ty — the carrier admits only known kinds", () => {
   const externref = irVal({ kind: "externref" });
   const box = (tag?: TagId) => ({
@@ -350,6 +355,14 @@ describe("#7354 Ty — the carrier admits only known kinds", () => {
     ["a Boolean", [call(irVal({ kind: "i32" })), box(JS_TAG_IDS.Boolean)], true],
     ["null", [call(externref), box(JS_TAG_IDS.Null)], null],
     ["undefined", [{ kind: "dyn.undefined", result: 1, resultType: irDynamic() }], undefined],
+    [
+      "a function value",
+      [
+        call({ kind: "callable", signature: { params: [irDynamic()], returnType: irDynamic() } }),
+        { kind: "call", target: irRuntimeFuncRef(IR_DYN_CALL_BOX_FN), args: [0], result: 1, resultType: irDynamic() },
+      ],
+      () => {},
+    ],
   ])("answers typeof of %s in the carrier with a runtime test", (_label, enter, value) => {
     const test = legalizeDynamicValues(compareTypeof(enter, typeof value)).blocks[0]!.instrs.find(
       (instr) => instr.result === 4,

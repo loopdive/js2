@@ -495,17 +495,19 @@ describe("#7354 D1/T — the census on a dynamic-value program", () => {
 });
 
 describe("#7354 Ty — the census on typeof comparisons", () => {
-  // The two `typeof` tag tests bind the native value and Boolean resources' existing predicates.
+  // The number and Boolean `typeof` tag tests bind the native value and Boolean resources' existing predicates;
+  // (#7354 Fa × Ty) the function test is the dynamic-value resources' own `__typeof_function`.
   const program =
     "function id(v: any): any { return v; }\n" +
-    'export function main(): number { return (typeof id(1) === "number" ? 1 : 0) + (typeof id(true) === "boolean" ? 2 : 0); }';
+    'export function main(): number { return (typeof id(1) === "number" ? 1 : 0) + (typeof id(true) === "boolean" ? 2 : 0) + ' +
+    '(typeof id(1) === "function" ? 4 : 0); }';
   const refusal = async () => {
     const result = await compile(program, options("standalone", "entry.ts"));
     expect(result.success).toBe(false);
     return messages(result).join("\n");
   };
   const RUNTIME_DEMAND = "host provider or async demand is outside this numeric presentation contract";
-  const IDS = ["native.js.value.is_number", "native.js.value.is_boolean"];
+  const IDS = ["native.js.value.is_number", "native.js.value.is_boolean", "native.js.value.is_function"];
 
   it("presents the unaltered program", async () => {
     expect(((await present(program, "entry.ts")).main as () => number)()).toBe(3);
@@ -521,7 +523,7 @@ describe("#7354 Ty — the census on typeof comparisons", () => {
     expect(await refusal()).toContain(RUNTIME_DEMAND);
   });
 
-  it.each(["__typeof_number", "__typeof_boolean"])(
+  it.each(["__typeof_number", "__typeof_boolean", "__typeof_function"])(
     "refuses a native setup that renames the %s resource",
     async (name) => {
       census.setup = (setup) =>
