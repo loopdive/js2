@@ -205,11 +205,7 @@ describe("#7354 H — the dynamic home of a script var", () => {
       "proven dynamic binding 'o' initializer has no supported carrier",
     ],
     ["holding an array literal", "var arr = [1];", "resolver cannot register vec for array literal"],
-    [
-      "holding a function expression (slice Fa)",
-      "var f = function () {};",
-      "module-level closure binding 'f' not in module-init Slice 2 scope",
-    ],
+    // (#7354 Fa) A function expression is stored now (tests/issue-7354-fa-function-values.test.ts).
     ["holding a built-in member (slice B)", "var g = Math.max;", 'identifier "Math" is not in scope'],
     [
       "holding a function declaration (slice Fa)",
