@@ -189,14 +189,8 @@ describe("#7354 H — the dynamic home of a script var", () => {
       "var o; o = 1; function p() { o.q = 2; }",
       "property assignment on dynamic is not in slice 4",
     ],
-    // `Object.defineProperty(o, …)` still counts as a declaration: the Prepared path admits no `Object` static yet,
-    // so the binding has no home and refuses by name instead of reaching from-ast's drift invariant.
-    [
-      "given a property by Object.defineProperty (slice O)",
-      'var obj = {}; Object.defineProperty(obj, "foo", { value: 1 });',
-      NO_HOME,
-    ],
-    ["of a number given a property by Object.defineProperty", "var o = 1; Object.defineProperty(o, 'p', {});", NO_HOME],
+    // (#7368) `Object.defineProperty(o, …)` is no second declaration either: the binding keeps its home and the define
+    // runs (below; a number target throws §20.1.2.4's TypeError, tests/issue-7368-prepared-object-statics.test.ts).
     // A value kind the carrier cannot hold yet is refused at its store, by the slice that owns it.
     // (#7354 O2) An object literal is the object kind of the dynamic value now (tests/issue-7354-o2-object-values.test.ts).
     ["holding an array literal", "var arr = [1];", "resolver cannot register vec for array literal"],
@@ -264,6 +258,13 @@ describe("#7354 H — the dynamic home of a script var", () => {
       "function k() { return null; } var r = k();",
       "r !== null",
       "r === null",
+    ],
+    // (#7368) A define on the binding is no second declaration of it.
+    [
+      "given a property by Object.defineProperty",
+      'var obj = {}; Object.defineProperty(obj, "foo", { value: 1 });',
+      '!obj.hasOwnProperty("foo")',
+      '!obj.hasOwnProperty("bar")',
     ],
   ])("runs %s holding a dynamic home's value", async (_, program, holds, fails) => {
     expect(await run(`${program} if (${holds}) throw 1;`)).toBe("returned");

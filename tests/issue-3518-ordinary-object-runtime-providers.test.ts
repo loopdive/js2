@@ -39,9 +39,9 @@ describe("ordinary object symbolic provider obligations", () => {
     expect(irOrdinaryObjectCallableDeclaration(irRuntimeFuncRef(feature))).toBeUndefined();
     expect(Object.isFrozen(ORDINARY_OBJECT_RUNTIME_PROVIDERS.find((p) => p.feature === feature))).toBe(true);
   });
-  it("pins all nine identifiers without duplicates (#7354 O4 adds create-type-error)", () => {
+  it("pins all twelve identifiers without duplicates (#7354 O4 adds create-type-error, #7368 the own-property three)", () => {
     expect(ORDINARY_OBJECT_RUNTIME_PROVIDER_IDS).toEqual(ORDINARY_OBJECT_RUNTIME_FEATURES.map((f) => `native.${f}`));
-    expect(new Set(ORDINARY_OBJECT_RUNTIME_PROVIDER_IDS).size).toBe(9);
+    expect(new Set(ORDINARY_OBJECT_RUNTIME_PROVIDER_IDS).size).toBe(12);
   });
   for (const feature of ORDINARY_OBJECT_RUNTIME_FEATURES) {
     it.each([
@@ -101,7 +101,7 @@ describe("ordinary getter source symbolic preparation", () => {
     { label: "getter", members: "get value() {return 7;}", setters: 0 },
     { label: "getter and setter", members: "get value() {return 7;}, set value(value: number) {}", setters: 1 },
   ])(
-    "transports genuine $label obligations through the codec while refusing the accessor's physical materialization",
+    "transports genuine $label obligations through the codec and materializes the accessor (#7368)",
     ({ members, setters }) => {
       const files = {
         "./entry.ts": `export function run() {const object = {${members}}; return object.value;}`,
@@ -159,13 +159,9 @@ describe("ordinary getter source symbolic preparation", () => {
         ).toEqual(expectedFeatures.map((feature) => `native.${feature}`).sort());
         expect(manifest.hostCapabilities).toEqual([]);
         const result = acceptPreparedIrProgram(program, replayOptions("wasmgc", "standalone"));
-        expect(result.kind, JSON.stringify(result)).toBe("unsupported");
-        if (result.kind !== "unsupported") throw new Error("an accessor definition has no native source provider yet");
-        expect(result.code).toBe("body-shape-rejected");
-        // (#7354 O1) create-default and get have realm providers now; define-accessor is still a named gap.
-        expect(result.detail).toContain("js.object.define-accessor has no native source provider");
-        for (const feature of ["js.object.create-default", "js.object.get"])
-          expect(result.detail).not.toContain(`intrinsic callable ${feature} needs runtime function materialization`);
+        // (#7354 O1) create-default and get have realm providers; (#7368) define-accessor is the descriptor pack's
+        // public define, so the accessor is materialized too.
+        expect(result.kind, JSON.stringify(result).slice(0, 2000)).toBe("accepted");
       }
     },
   );

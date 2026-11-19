@@ -41,7 +41,8 @@ describe("#7364 — Prepared-path refusals instead of invariant crashes", () => 
   });
 
   it("refuses an unadmitted Object.defineProperty by the selector's code", async () => {
-    const source = 'function f() { var o = {}; Object.defineProperty(o, "x", { value: 1 }); }\nf();';
+    // (#7368) The table admits an inline descriptor on the Prepared path; one held in a variable it refuses.
+    const source = 'function f() { var o = {}; var d = { value: 1 }; Object.defineProperty(o, "x", d); }\nf();';
     const result = await compile(source, options());
     expect(result.success).toBe(false);
     expect(result.errors.map((error) => [error.code, error.message])).toEqual([

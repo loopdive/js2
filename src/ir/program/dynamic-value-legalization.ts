@@ -34,6 +34,7 @@ import {
 } from "../core/nodes.js";
 import type { IrType } from "../core/types.js";
 import type { IrUnitId } from "../../shared/contracts/ir-identity.js";
+import { irIntrinsicFuncRef } from "../core/callable-bindings.js";
 import { irRuntimeCallableDeclaration } from "../runtime/callable-declarations.js";
 import { JS_TAG_IDS } from "../runtime/js-tag-domain.js";
 import { typeofComparisons } from "./typeof-comparisons.js";
@@ -425,6 +426,11 @@ export function legalizeDynamicValues(
               : instr.tagId === JS_TAG_IDS.Object && builders.admitted.includes("object")
                 ? "object"
                 : undefined;
+        // (#7368) No admitted kind is callable, so the Function test (§7.2.3) is false.
+        if (instr.tagId === JS_TAG_IDS.Function)
+          return [
+            { kind: "const", value: { kind: "bool", value: false }, result: instr.result, resultType: TEST_RESULT },
+          ];
         return kind === undefined
           ? gap(`tag.test of tag ${instr.tagId}`)
           : kindTest(instr, kind, instr.value, instr.result!);
@@ -475,6 +481,9 @@ export function legalizeDynamicValues(
       case "call":
         if (instr.target.binding.kind === "runtime" && instr.target.binding.symbol === IR_DYN_ADD_FN)
           return builders.addition(instr, instr.args, instr.result!);
+        // (#7368) `throw new TypeError(message)` (`throw-type-error.ts`) builds the realm's TypeError.
+        if (instr.target.binding.kind === "runtime" && instr.target.binding.symbol === "__new_TypeError")
+          return [{ ...instr, target: irIntrinsicFuncRef("js.object.create-type-error"), resultType: CARRIER }];
         return instr.target.binding.kind === "runtime" &&
           !irRuntimeCallableDeclaration(instr.target) &&
           [instr.resultType, ...instr.args.map((arg) => types.get(arg))].some((type) => type?.kind === "dynamic")
@@ -515,6 +524,24 @@ export function legalizeDynamicValues(
 }
 
 /**
+ * (#7368) The `js.object.*` operations that reject with the realm's TypeError: a define (§10.1.6.3) and
+ * [[GetOwnProperty]] of a nullish receiver. On an object `js.object.create-default` has just built, none can.
+ */
+const REALM_REJECTING: ReadonlySet<string> = new Set([
+  "js.object.define-data",
+  "js.object.define-accessor",
+  "js.object.define-attributes",
+  "js.object.get-own-property",
+]);
+
+function isFreshObject(value: IrValueId, definitions: ReadonlyMap<IrValueId, IrInstr>): boolean {
+  let definition = definitions.get(value);
+  while (definition?.kind === "coerce.to_externref" || definition?.kind === "box")
+    definition = definitions.get(definition.value);
+  return definition?.kind === "call" && definition.target.name === "js.object.create-default";
+}
+
+/**
  * (#7354 X, O1) A catch binding reads the thrown payload back as the dynamic value, so every throw of the program, in
  * whichever function, must be a value the carrier admits: a dynamic value, a boxed number, `null`, a coerced (string
  * or dynamic) value or (#7354 O2) an ordinary object. Any other reference (an error object, a closure) refuses by name.
@@ -522,12 +549,18 @@ export function legalizeDynamicValues(
 export function refuseUnadmittedThrows(fn: IrFunction): void {
   const definitions = new Map<IrValueId, IrInstr>();
   const throws: IrValueId[] = [];
+  const rejecting: IrValueId[] = [];
   for (const block of fn.blocks)
     for (const root of block.instrs)
       forEachInstrDeep(root, (i) => {
         if (i.result !== null && i.result !== undefined) definitions.set(i.result, i);
         if (i.kind === "throw") throws.push(i.value);
+        if (i.kind === "call" && i.target.binding.kind === "intrinsic" && REALM_REJECTING.has(i.target.binding.symbol))
+          rejecting.push(i.args[0]!);
       });
+  // (#7368) The realm's own TypeError is no carrier kind either: an operation that may reject throws it.
+  if (rejecting.some((object) => !isFreshObject(object, definitions)))
+    gap("an object operation that may reject with a TypeError, in a program that catches");
   if (throws.length === 0) return;
   const types = irValueTypes(fn);
   for (const value of throws) {

@@ -82,8 +82,8 @@ async function refuses(source: string, code: string, detail: string): Promise<vo
 }
 
 const SLOW = 120_000;
-/** (#7354 O4) `emitThrowTypeErrorUnlessObject`'s tag test, which the Prepared path does not lower yet. */
-const NEEDS_OBJECT_TEST = "dynamic operation tag.test of tag 6 has no Prepared intrinsic";
+/** (#7354 O4) A member read in a program that names `Object`, whose statics could install a property elsewhere. */
+const memberRead = (key: string) => `member read '${key}' (the program names 'Object') has no Prepared intrinsic`;
 
 describe("#7368 — Object statics on the Prepared path", () => {
   it(
@@ -142,28 +142,58 @@ describe("#7368 — Object statics on the Prepared path", () => {
     },
     SLOW,
   );
+
+  it(
+    "defines on a binding, behind §20.1.2.4's Object test",
+    async () => {
+      await twice(
+        (answer) =>
+          `var o = {};\nObject.defineProperty(o, "x", { value: 1, writable: false });\n` +
+          `if (!o.hasOwnProperty(${answer})) throw 1;`,
+        '"x"',
+        '"y"',
+      );
+      const primitive = 'var n = 5; Object.defineProperty(n, "x", { value: 1 });';
+      expect(node(primitive)).toBe("threw");
+      expect(await run(primitive)).toBe("threw");
+    },
+    SLOW,
+  );
+
+  it(
+    "rejects a non-configurable redefinition with the descriptor pack's TypeError",
+    async () => {
+      await twice(
+        (answer) => `var o = Object.defineProperty({}, "x", { value: 1 });\nObject.defineProperty(o, "x", ${answer});`,
+        "{ value: 1 }",
+        "{ value: 2 }",
+      );
+    },
+    SLOW,
+  );
 });
 
 describe("#7368 — named refusals on the Prepared path", () => {
-  it("a define on a binding needs the Object test (#7354 O4)", async () => {
+  it("reading the defined property needs #7354 O4's member read in a program that names Object", async () => {
     const source = 'var o = {}; Object.defineProperty(o, "x", { value: 1, writable: false }); if (o.x !== 1) throw 1;';
     expect(node(source)).toBe("returned");
-    await refuses(source, "type-resolution-unsupported", NEEDS_OBJECT_TEST);
+    await refuses(source, "type-resolution-unsupported", memberRead("x"));
   });
 
-  it("a non-configurable redefinition needs the Object test (#7354 O4)", async () => {
-    const source =
-      'var o = Object.defineProperty({}, "x", { value: 1 });\nObject.defineProperty(o, "x", { value: 2 });';
-    expect(node(source)).toBe("threw");
-    await refuses(source, "type-resolution-unsupported", NEEDS_OBJECT_TEST);
-  });
-
-  it("reading a descriptor's field needs the dynamic member read", async () => {
+  it("reading a descriptor's field likewise", async () => {
     const source =
       'var o = Object.defineProperty({}, "x", { value: 1 });\n' +
       'if (Object.getOwnPropertyDescriptor(o, "x").writable !== false) throw 1;';
     expect(node(source)).toBe("returned");
-    await refuses(source, "type-resolution-unsupported", "dyn.member_get has no Prepared intrinsic");
+    await refuses(source, "type-resolution-unsupported", memberRead("writable"));
+  });
+
+  it("a define that may reject, in a program that catches: no carrier kind holds the TypeError", async () => {
+    const source =
+      'var o = Object.defineProperty({}, "x", { value: 1 });\n' +
+      'try { Object.defineProperty(o, "x", { value: 2 }); throw 1; } catch (e) { if (e === 1) throw 2; }';
+    expect(node(source)).toBe("returned");
+    await refuses(source, "type-resolution-unsupported", "may reject with a TypeError, in a program that catches");
   });
 
   it("Object.getOwnPropertyNames needs an array result", async () => {

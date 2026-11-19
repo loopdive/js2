@@ -403,6 +403,7 @@ function legalizeSourceDynamicValues(
   const contracted =
     roots.some(bindsCatch) ||
     roots.some((root) => readsTypeofOfAbsentGlobal(checker, sourceFiles, root)) ||
+    (staticPlan !== undefined && roots.some((root) => callsObjectStatic(root, staticPlan))) ||
     globals.some((global) => global.binding.type.kind === "dynamic") ||
     [...signatures].some(
       (signature) =>
@@ -440,6 +441,14 @@ function readsTypeofOfAbsentGlobal(
 }
 
 /** `node` holds a `catch` clause with a binding (nested functions included: they are lowered from the same roots). */
+/** (#7368) An `Object` static the lane plans: it takes its values as dynamic carriers. */
+function callsObjectStatic(node: ts.Node, staticPlan: NonNullable<StaticPlan>): boolean {
+  return (
+    (ts.isCallExpression(node) && staticPlan(node) !== undefined) ||
+    ts.forEachChild(node, (child) => callsObjectStatic(child, staticPlan)) === true
+  );
+}
+
 function bindsCatch(node: ts.Node): boolean {
   return (
     (ts.isCatchClause(node) && node.variableDeclaration !== undefined) || ts.forEachChild(node, bindsCatch) === true
