@@ -7,9 +7,10 @@
  * Every body here is a pure builder over physical operands; the kernel's lookup asks `buildArrayOwnEntry`, the
  * source contracts `js.object.create-array` / `get-index` / `set-index` use the three definitions below.
  */
-import type { FuncHandle, Instr, LocalDef } from "../../../wasm/model/instructions.js";
+import type { FuncHandle, Instr } from "../../../wasm/model/instructions.js";
 import { ORDINARY_OBJECT_DESCRIPTOR_ENCODING as flags } from "./ordinary-object-descriptor-common.js";
 import { buildOrdinaryObjectCreateBody } from "./ordinary-object-storage-bodies.js";
+import type { SourceObjectDefinition } from "./source-object-bodies.js";
 
 export interface ArrayExoticOperands {
   readonly arrayTypeIdx: number;
@@ -34,10 +35,6 @@ export interface ArrayOwnEntryOperands extends ArrayExoticOperands {
 /** What the kernel holds for arrays: the own-property operands and the prototype's constructor. */
 export interface ArrayRealmOperands extends ArrayOwnEntryOperands {
   readonly createWithPrototype: FuncHandle;
-}
-interface Definition {
-  readonly locals: LocalDef[];
-  readonly body: Instr[];
 }
 
 /** `$Array.elements`: the field after the ordinary object's six. */
@@ -213,7 +210,7 @@ export function buildArrayRealmAllocation(d: ArrayRealmOperands, objectPrototype
 }
 
 /** `js.object.create-array(length)`: ArrayCreate(length) on %Array.prototype%, every index a hole. */
-export function buildArrayCreateDefinition(d: ArrayExoticOperands): Definition {
+export function buildArrayCreateDefinition(d: ArrayExoticOperands): SourceObjectDefinition {
   const ordinaryFields = buildOrdinaryObjectCreateBody({
     objectTypeIdx: d.objectTypeIdx,
     propMapTypeIdx: d.propMapTypeIdx,
@@ -248,7 +245,7 @@ export function buildArrayCreateDefinition(d: ArrayExoticOperands): Definition {
  * inside it (`prepare-ordinary-object-access.ts`), so the receiver is an `$Array` and the element present; the
  * prototype walk for a miss and the ordinary receiver come with the dynamic carrier (slice A2).
  */
-export function buildArrayGetIndexDefinition(d: ArrayExoticOperands): Definition {
+export function buildArrayGetIndexDefinition(d: ArrayExoticOperands): SourceObjectDefinition {
   return {
     locals: [
       { name: "index", type: { kind: "i64" } },
@@ -280,7 +277,7 @@ export function buildArrayGetIndexDefinition(d: ArrayExoticOperands): Definition
  * Its callers so far store an array literal's own elements; a non-array receiver or a non-index number reaches the
  * string-keyed [[Set]] once the dynamic carrier admits them (slice A2).
  */
-export function buildArraySetIndexDefinition(d: ArrayExoticOperands, elementStore: FuncHandle): Definition {
+export function buildArraySetIndexDefinition(d: ArrayExoticOperands, elementStore: FuncHandle): SourceObjectDefinition {
   return {
     locals: [{ name: "index", type: { kind: "i64" } }],
     body: [

@@ -11,6 +11,7 @@
  * A contract without a row here has no native source provider yet.
  */
 import type { FunctionReservation, PhysicalModuleReservations } from "../../../wasm/physical/module-reservations.js";
+import type { ValType } from "../../../wasm/model/instructions.js";
 import {
   buildArrayCreateDefinition,
   buildArrayGetIndexDefinition,
@@ -21,26 +22,60 @@ import type { OrdinaryObjectRuntimeFeature } from "../../../ir/runtime/contracts
 import {
   buildSourceObjectCreateDefinition,
   buildSourceObjectGetDefinition,
+  type SourceObjectDefinition,
 } from "../../../runtime/wasmgc/values/source-object-bodies.js";
+import { nativeBuiltinFunctionRequestDependencies } from "./native-builtin-function-requests.js";
 import {
   nativeBuiltinFunctionArrayOperands,
   type NativeBuiltinFunctionReservations,
 } from "./native-builtin-functions.js";
-import { nativeBuiltinFunctionRequestDependencies } from "./native-builtin-function-requests.js";
 import type { NativeObjectDescriptorReservations } from "./native-object-descriptors.js";
 import type { NativeObjectLayoutReservations } from "./native-object-layouts.js";
 import type { NativeObjectStorageReservations } from "./native-object-storage.js";
 
 const EXTERNREF = { kind: "externref" } as const;
 const INDEX = { kind: "f64" } as const;
-/** The adapters this module owns, with the contract signature each reserves. */
+/** What a body reads at fill time beyond the packs: the transaction and (#7352 arrays) the element store. */
+interface AdapterFill {
+  readonly tx: PhysicalModuleReservations;
+  readonly elementStore?: FunctionReservation;
+}
+/** One adapter: the contract signature it reserves and its body over the realm's packs. */
+interface Adapter {
+  readonly signature: { readonly params: readonly ValType[]; readonly results: readonly ValType[] };
+  readonly body: (dependencies: NativeSourceObjectDependencies, fill: AdapterFill) => SourceObjectDefinition;
+}
+/** (#7352 arrays) The kernel's array operands; present whenever an array contract reserved the `$Array` layout. */
+const arrayOperands = ({ kernel }: NativeSourceObjectDependencies, { tx }: AdapterFill) =>
+  nativeBuiltinFunctionArrayOperands(tx, kernel) ?? fail("array contract without the realm's array layout");
+/** The adapters this module owns. A new realm-served contract is one row. */
 const ADAPTERS = {
-  "js.object.create-default": { params: [], results: [EXTERNREF] },
-  "js.object.get": { params: [EXTERNREF, EXTERNREF, EXTERNREF], results: [EXTERNREF] },
-  "js.object.create-array": { params: [INDEX], results: [EXTERNREF] },
-  "js.object.get-index": { params: [EXTERNREF, INDEX, EXTERNREF], results: [EXTERNREF] },
-  "js.object.set-index": { params: [EXTERNREF, INDEX, EXTERNREF], results: [] },
-} as const;
+  "js.object.create-default": {
+    signature: { params: [], results: [EXTERNREF] },
+    body: ({ layouts, storage, kernel }) =>
+      buildSourceObjectCreateDefinition({
+        objectTypeIdx: layouts.object.typeIndex,
+        objectPrototype: kernel.functions.objectPrototype.handle,
+        createWithPrototype: storage.createWithPrototype.handle,
+      }),
+  },
+  "js.object.get": {
+    signature: { params: [EXTERNREF, EXTERNREF, EXTERNREF], results: [EXTERNREF] },
+    body: ({ kernel }) => buildSourceObjectGetDefinition({ get: kernel.functions.get.handle }),
+  },
+  "js.object.create-array": {
+    signature: { params: [INDEX], results: [EXTERNREF] },
+    body: (d, fill) => buildArrayCreateDefinition(arrayOperands(d, fill)),
+  },
+  "js.object.get-index": {
+    signature: { params: [EXTERNREF, INDEX, EXTERNREF], results: [EXTERNREF] },
+    body: (d, fill) => buildArrayGetIndexDefinition(arrayOperands(d, fill)),
+  },
+  "js.object.set-index": {
+    signature: { params: [EXTERNREF, INDEX, EXTERNREF], results: [] },
+    body: (d, fill) => buildArraySetIndexDefinition(arrayOperands(d, fill), fill.elementStore!.handle),
+  },
+} as const satisfies Readonly<Record<string, Adapter>>;
 type Adapted = keyof typeof ADAPTERS;
 const isAdapted = (feature: OrdinaryObjectRuntimeFeature): feature is Adapted => Object.hasOwn(ADAPTERS, feature);
 
@@ -80,24 +115,17 @@ export function reserveNativeSourceObjectResources(
   const adapters = new Map(
     adapted.map((feature) => {
       const key = nativeSourceObjectResourceKey(realmKey, feature)!;
-      const signature = ADAPTERS[feature];
+      const { signature } = ADAPTERS[feature];
       return [
         feature,
         tx.reserveFunction(key, key, { params: [...signature.params], results: [...signature.results] }),
       ] as const;
     }),
   );
+  const carrier = nativeBuiltinFunctionRequestDependencies(tx, dependencies.kernel.requests).arguments.carrier;
   const elementStore = adapters.has("js.object.set-index")
     ? tx.reserveFunction(realmKey + ":source-objects:element-store", realmKey + ":element-store", {
-        params: [
-          {
-            kind: "ref_null",
-            typeIdx: nativeBuiltinFunctionRequestDependencies(tx, dependencies.kernel.requests).arguments.carrier
-              .typeIndex,
-          },
-          { kind: "i32" },
-          EXTERNREF,
-        ],
+        params: [{ kind: "ref_null", typeIdx: carrier.typeIndex }, { kind: "i32" }, EXTERNREF],
         results: [],
       })
     : undefined;
@@ -108,36 +136,16 @@ export function fillNativeSourceObjectResources(
   tx: PhysicalModuleReservations,
   pack: NativeSourceObjectReservations,
 ): void {
-  const { layouts, storage, kernel } = pack.dependencies;
-  const array = () =>
-    nativeBuiltinFunctionArrayOperands(tx, kernel) ?? fail("array contract without the realm's array layout");
-  const definition = (feature: Adapted) => {
-    switch (feature) {
-      case "js.object.create-default":
-        return buildSourceObjectCreateDefinition({
-          objectTypeIdx: layouts.object.typeIndex,
-          objectPrototype: kernel.functions.objectPrototype.handle,
-          createWithPrototype: storage.createWithPrototype.handle,
-        });
-      case "js.object.get":
-        return buildSourceObjectGetDefinition({ get: kernel.functions.get.handle });
-      case "js.object.create-array":
-        return buildArrayCreateDefinition(array());
-      case "js.object.get-index":
-        return buildArrayGetIndexDefinition(array());
-      case "js.object.set-index":
-        return buildArraySetIndexDefinition(array(), pack.elementStore!.handle);
-    }
-  };
-  for (const [feature, token] of pack.adapters) tx.fillFunction(token, definition(feature));
+  const fill: AdapterFill = { tx, ...(pack.elementStore ? { elementStore: pack.elementStore } : {}) };
+  for (const [feature, token] of pack.adapters) tx.fillFunction(token, ADAPTERS[feature].body(pack.dependencies, fill));
   if (pack.elementStore) {
-    const { vectorTypeIdx, vectorArrayTypeIdx, hole } = array();
+    const { vectorTypeIdx, vectorArrayTypeIdx, hole } = arrayOperands(pack.dependencies, fill);
     tx.fillFunction(
       pack.elementStore,
       buildVectorGrowStoreBody({
         carrierTypeIndex: vectorTypeIdx,
         arrayTypeIndex: vectorArrayTypeIdx,
-        exceptionTagIndex: tx.physicalIndex(kernel.exception),
+        exceptionTagIndex: tx.physicalIndex(pack.dependencies.kernel.exception),
         gapFill: { kind: "hole-global", globalIndex: hole },
       }),
     );
