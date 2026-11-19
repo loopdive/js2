@@ -46,7 +46,12 @@ function getInto(getFn: FuncHandle, object: number, key: readonly Instr[], into:
   return [get(object), ...structuredClone(key), get(object), call(getFn), set(into), { op: "drop" }];
 }
 
-/** `js.function.is-callable(value)`: the realm's function objects are exactly the values `match` admits. */
+/**
+ * `js.function.is-callable(value)`: the realm's function objects are exactly the values `match` admits.
+ * To fold when `claude/7354-fa-ty` lands: its `js.value.is_function` (`__typeof_function`) answers the same question
+ * with `buildClosureRootTest` (closure-invocation-bodies.ts), a `ref.test` of the closure root that every source and
+ * builtin function carrier descends from; the two must become one predicate body.
+ */
 export function buildSourceFunctionIsCallableDefinition(kernel: Pick<Kernel, "match">): SourceObjectDefinition {
   return { locals: [], body: [get(0), call(kernel.match), n(0), { op: "i32.ne" }] };
 }
@@ -270,6 +275,7 @@ export function buildSourceFunctionThisDefinition(d: {
       get(1),
       call(d.isUndefined),
       { op: "i32.or" },
+      // The realm's global object, `js.object.global` (#7350 B2b), answers here once it lands.
       { op: "if", blockType: empty, then: builtinTypeError(kernel, d.unboundSloppy) },
       ...isObject(kernel, 1),
       { op: "i32.eqz" },

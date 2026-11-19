@@ -24,12 +24,16 @@ export const IR_FUNCTION_CONSTRUCT_PREFIX = "js.function.construct:";
 /** The `flags` word of `js.function.init`, an exact integer f64 like the descriptor words. */
 export const FUNCTION_OBJECT_INIT_FLAGS = Object.freeze({ constructible: 1 });
 
+type FunctionObjectCallableDeclaration = IrRuntimeCallableDeclaration & {
+  readonly feature: FunctionObjectRuntimeFeature;
+};
+
 function declaration(
   feature: FunctionObjectRuntimeFeature,
   symbol: string,
   params: readonly IrType[],
   results: readonly IrType[],
-): IrRuntimeCallableDeclaration {
+): FunctionObjectCallableDeclaration {
   return Object.freeze({
     feature,
     ref: irIntrinsicFuncRef(symbol),
@@ -50,7 +54,7 @@ const fixed = (feature: FunctionObjectRuntimeFeature, params: readonly IrType[],
  * These declarations do not grant physical provider or receiver authority.
  */
 const DECLARATIONS: Readonly<
-  Record<Exclude<FunctionObjectRuntimeFeature, "js.function.construct">, IrRuntimeCallableDeclaration>
+  Record<Exclude<FunctionObjectRuntimeFeature, "js.function.construct">, FunctionObjectCallableDeclaration>
 > = Object.freeze({
   "js.function.is-callable": fixed("js.function.is-callable", [EXTERNAL], [BOOLEAN]),
   "js.function.init": fixed("js.function.init", [EXTERNAL, EXTERNAL, NUMBER, NUMBER], []),
@@ -59,7 +63,7 @@ const DECLARATIONS: Readonly<
 });
 
 /** Exact semantic binding only; `js.function.construct:N` is the one arity family. */
-export function irFunctionObjectCallableDeclaration(ref: IrFuncRef): IrRuntimeCallableDeclaration | undefined {
+export function irFunctionObjectCallableDeclaration(ref: IrFuncRef): FunctionObjectCallableDeclaration | undefined {
   if (ref.binding.kind !== "intrinsic") return undefined;
   const { symbol } = ref.binding;
   const arity = arityCallableArity(IR_FUNCTION_CONSTRUCT_PREFIX, symbol);

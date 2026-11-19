@@ -62,6 +62,7 @@ import { IR_ASYNC_CONSOLE_LOG_STRING_FN, IR_ASYNC_NUMBER_TO_STRING_FN } from "./
 import { ts, forEachChild } from "../ts-api.js";
 import { isPlannedScriptVarClosure } from "./function-member-closure-plan.js";
 import { isLexicalBindingWrite } from "../shared/binding-writes.js";
+import { namedEvaluationName } from "../shared/named-evaluation.js";
 import { isLogicalAssignmentFunctionTarget } from "./logical-assignment-name-targets.js";
 import {
   additiveOperandsProvable,
@@ -7876,15 +7877,13 @@ function lowerCall(expr: ts.CallExpression, cx: LowerCtx, statementPosition = fa
   // script `var`s in a dynamic module home too, but keep legacy's provider.
   const bindingLogicalType =
     binding?.kind === "slot" ? (binding.asType ?? binding.type) : binding?.kind === "local" ? binding.type : undefined;
-  // (#7287) …or a script `var` in its dynamic module home (the prelude's `print`).
-  const dynamicModuleBinding = (callee: ts.Identifier) =>
-    cx.resolver?.resolveModuleBinding?.(callee)?.type.kind === "dynamic";
-  // (#7354 Fb) The native closure call is exact in any position; the ordinary pipeline's only in a statement.
+  // (#7287) …or a script `var` in its dynamic module home (the prelude's `print`). (#7354 Fb) The native closure call
+  // is exact in any position; the ordinary pipeline's only in a statement.
   const dynamicModuleCallee =
     binding === undefined &&
     (preparedFunctionValues(cx)
-      ? dynamicModuleBinding(expr.expression)
-      : isStatementDynamicModuleCall(expr, dynamicModuleBinding));
+      ? dynamicModuleBinding(expr.expression, cx)
+      : isStatementDynamicModuleCall(expr, (callee) => dynamicModuleBinding(callee, cx)));
   if (bindingLogicalType?.kind === "dynamic" || dynamicModuleCallee) {
     const callee = lowerExpr(expr.expression, cx, irDynamic());
     if (cx.builder.typeOf(callee).kind !== "dynamic") {
@@ -8435,11 +8434,10 @@ function lowerNewExpression(expr: ts.NewExpression, cx: LowerCtx): IrValueId {
   // (#7106 S3a) `new <dynamic param>(args)` → `dyn.construct`: the selector
   // admitted only a dynamic-typed parameter callee; every argument becomes a
   // dynamic carrier (concrete operands box exactly like a member-store value).
-  const calleeBinding = cx.scope.get(className);
   // (#7106 S3c) …or a self-guarded constructor VALUE (its function-object plan).
   const functionValueCallee =
-    calleeBinding === undefined && cx.topLevelFunctionValues?.get(expr.expression) !== undefined;
-  if ((calleeBinding?.kind === "local" && calleeBinding.type.kind === "dynamic") || functionValueCallee) {
+    cx.scope.get(className) === undefined && cx.topLevelFunctionValues?.get(expr.expression) !== undefined;
+  if (namesDynamicValue(expr.expression, cx) || functionValueCallee) {
     const callee = lowerExpr(expr.expression, cx, irDynamic());
     if (cx.builder.typeOf(callee).kind !== "dynamic") {
       throw new IrUnsupportedError(
@@ -13258,6 +13256,23 @@ function preparedFunctionValues(cx: LowerCtx): boolean {
   return cx.resolver?.dynamicClosureSignature !== undefined;
 }
 
+/** (#7287) `id` names a script `var` in its dynamic module home. */
+function dynamicModuleBinding(id: ts.Identifier, cx: LowerCtx): boolean {
+  return cx.resolver?.resolveModuleBinding?.(id)?.type.kind === "dynamic";
+}
+
+/**
+ * (#7106 S3a) `id` reads a dynamic value: a dynamic local, or (#7354 C) on the Prepared lane a script `var` in its
+ * dynamic module home.
+ */
+function namesDynamicValue(id: ts.Identifier, cx: LowerCtx): boolean {
+  const binding = cx.scope.get(id.text);
+  if (binding?.kind === "local") return binding.type.kind === "dynamic";
+  if (!preparedFunctionValues(cx)) return false;
+  // Module-init code reads the script var through its own scope entry; other code through the module binding.
+  return binding ? binding.kind === "moduleGlobal" && binding.type.kind === "dynamic" : dynamicModuleBinding(id, cx);
+}
+
 /** Write a mutable identifier and return the RHS before any storage boxing. */
 function lowerIdentifierAssignment(id: ts.Identifier, rhs: ts.Expression, cx: LowerCtx): IrValueId {
   if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== id) {
@@ -14818,6 +14833,8 @@ function lowerInstanceOf(expr: ts.BinaryExpression, cx: LowerCtx): IrValueId {
   // (#7106) `<dynamic> instanceof <dynamic parameter>`: both carriers, then
   // legacy's generic runtime operator (`dyn.instanceof`).
   if (cx.resolver?.dynamicInstanceOfAtLegacyParity?.(expr) === true) return lowerDynamicInstanceOf(expr, cx);
+  // (#7354 C) On the Prepared lane a function is a dynamic value, and `instanceof` is the realm's OrdinaryHasInstance.
+  if (preparedFunctionValues(cx) && namesDynamicValue(expr.right, cx)) return lowerDynamicInstanceOf(expr, cx);
   if (cx.scope.get(className) !== undefined) {
     // A local binding shadows the class name — the selector rejects this
     // shape, so reaching here is only possible via drift; demote cleanly.
@@ -16451,6 +16468,21 @@ function assertUndefinedOnlyVoidClosure(expr: IrClosureLiteral, cx: LowerCtx): v
   visit(expr.body);
 }
 
+/**
+ * (#7354 Fa, C) A Prepared function expression: its closure under the all-dynamic contract, created as a function
+ * object. Its `length` counts every parameter, as that contract admits no default or rest.
+ */
+function lowerPreparedFunctionExpression(
+  expr: ts.FunctionExpression,
+  signature: IrClosureSignature,
+  cx: LowerCtx,
+): IrValueId {
+  const closure = lowerClosureExpressionWithSignature(expr, signature, undefined, cx);
+  const name = expr.name?.text ?? namedEvaluationName(expr);
+  functionObjects.emitFunctionObjectInit(cx.builder, closure, name, expr.parameters.length);
+  return closure;
+}
+
 function lowerClosureExpression(expr: IrClosureLiteral, cx: LowerCtx): IrValueId {
   if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== expr)
     return withNodeSourceSite(cx, expr, () => lowerClosureExpression(expr, cx));
@@ -16463,7 +16495,7 @@ function lowerClosureExpression(expr: IrClosureLiteral, cx: LowerCtx): IrValueId
     });
   }
   const dynamicSignature = ts.isFunctionExpression(expr) ? cx.resolver?.dynamicClosureSignature?.(expr) : undefined;
-  if (dynamicSignature) return lowerClosureExpressionWithSignature(expr, dynamicSignature, undefined, cx);
+  if (dynamicSignature) return lowerPreparedFunctionExpression(expr as ts.FunctionExpression, dynamicSignature, cx);
   // Inference is owned by the actual checker and confined to descriptor
   // literals and their nested closures. Other closure admission is unchanged.
   let descriptorOwner: ts.Node | undefined = expr.parent;

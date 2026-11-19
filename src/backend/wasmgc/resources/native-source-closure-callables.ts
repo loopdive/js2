@@ -94,8 +94,8 @@ function resolveEntries(
   requireNativeSourceClosureTypes(tx, types, types.requirements);
   assertNativeInvocationRequirementsCurrent(requirements);
   if (requirements.source !== types.requirements) fail("selected invocation belongs to a different source owner");
-  // (#7354 Fb) A call through a dynamic value may reach any source closure.
-  const selected = requirements.uses.some((use) => use.dynamicCallee)
+  // (#7354 Fb) A call through a dynamic value may reach any source closure, (#7354 C) and so may a `new` of one.
+  const selected = requirements.dynamicDispatch
     ? types.requirements.units.map((unit) => unit.unitId)
     : [
         ...requirements.uses.flatMap((use) => (use.liftedUnitId ? [use.liftedUnitId] : [])),

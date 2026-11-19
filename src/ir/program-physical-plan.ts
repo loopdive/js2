@@ -1285,6 +1285,7 @@ export function planPhysicalSetup(
   const nativeInvocation = nativeInvocationSetup(invocation.requirements, invocationOrder);
   const sourceObjects = planNativeSourceObjectSetup(
     native?.realmRequirements,
+    invocation.requirements,
     invocationOrder + (nativeInvocation?.bindings.length ?? 0),
   );
   for (const gap of sourceObjects.gaps) gaps.add(gap.detail, gap.unitId);

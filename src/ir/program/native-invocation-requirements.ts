@@ -10,6 +10,7 @@ import {
   arityCallableArity,
 } from "../core/closure-invocation-callables.js";
 import { nativeAsyncCallableValueTypes } from "../runtime/native-async-callables.js";
+import { IR_FUNCTION_CONSTRUCT_PREFIX } from "../runtime/function-object-callables.js";
 import {
   assertNativeSourceClosureRequirementsCurrent,
   type NativeSourceClosureRequirements,
@@ -60,6 +61,10 @@ export interface NativeInvocationRequirements {
   readonly getterUses: readonly NativeGetterInvocationUse[];
   readonly methodArities: readonly number[];
   readonly applyVector: boolean;
+  /** (#7354 Fb, C) A call or a `new` through a dynamic value: the dispatcher answers it over every source closure. */
+  readonly dynamicDispatch: boolean;
+  /** (#7354 C) `js.function.this` reads the receiver the dispatcher installs. */
+  readonly readsReceiver: boolean;
   readonly gaps: readonly { readonly unitId: IrUnitId; readonly detail: string }[];
   /** This owner cannot certify other compiler-created callable producers. */
   readonly completionScope: "selected-source-invocation";
@@ -102,6 +107,27 @@ function dynamicCalleeGaps(source: NativeSourceClosureRequirements): NativeInvoc
       (signature.returnType === null || external(signature.returnType));
     return dispatchable ? [] : [{ unitId, detail: `callable ${unitId} is not dispatchable through a dynamic value` }];
   });
+}
+
+/**
+ * (#7354 C) The realm's function-object contracts that run inside this invocation: `js.function.construct:N` calls
+ * through `js.closure.call:N`, and `js.function.this` reads the receiver the dispatcher installs (a direct call of a
+ * function that reads it was refused at its source, `receiverlessDirectCall`).
+ */
+function functionObjectDemands(source: NativeSourceClosureRequirements) {
+  const { demands } = source;
+  const constructArities = new Set<number>();
+  let readsReceiver = false;
+  for (const row of demands.occurrences) {
+    const buffer = demands.buffers[row.bufferIndex]!,
+      call = row.instruction;
+    if (buffer.view !== "projection" || call.kind !== "call" || call.target.binding.kind !== "intrinsic") continue;
+    const { symbol } = call.target.binding;
+    const arity = arityCallableArity(IR_FUNCTION_CONSTRUCT_PREFIX, symbol);
+    if (arity !== undefined) constructArities.add(arity);
+    readsReceiver ||= symbol === "js.function.this";
+  }
+  return { constructArities: [...constructArities], readsReceiver };
 }
 
 /** Reconcile the actual pack graph with this projection's current allocation site. */
@@ -307,7 +333,9 @@ function calculate(
       callbacks,
     });
   }
-  if (uses.some((use) => use.dynamicCallee)) gaps.push(...dynamicCalleeGaps(source));
+  const functionObjects = functionObjectDemands(source);
+  const dynamicDispatch = uses.some((use) => use.dynamicCallee) || functionObjects.constructArities.length > 0;
+  if (dynamicDispatch) gaps.push(...dynamicCalleeGaps(source));
   const getters = objectAccess
     ? reconcileNativeGetterInvocationRequirements(source, objectAccess)
     : { getterUses: [], gaps: [] };
@@ -319,9 +347,12 @@ function calculate(
       ...new Set([
         ...uses.flatMap((use) => (use.arity === undefined ? [] : [use.arity])),
         ...(getters.getterUses.length ? [0] : []),
+        ...functionObjects.constructArities,
       ]),
     ].sort((a, b) => a - b),
     applyVector: uses.some((use) => use.kind === "apply-vector"),
+    dynamicDispatch,
+    readsReceiver: functionObjects.readsReceiver,
     gaps,
   };
 }
@@ -337,7 +368,8 @@ export function planNativeInvocationRequirements(
       : undefined);
   const objectResults = objectAccess ? deriveNativeObjectResultRequirements(source, objectAccess) : undefined;
   const data = calculate(source, objectAccess, objectResults);
-  if (!data.uses.length && !data.getterUses.length && !objectResults?.gaps.length) return undefined;
+  if (!data.methodArities.length && !data.uses.length && !data.readsReceiver && !objectResults?.gaps.length)
+    return undefined;
   const { program, projection } = source.demands;
   const runtimeCreated = collectNativePromiseSourceCensus(program, projection, {
     backend: projection.backend,
@@ -406,6 +438,8 @@ export function assertNativeInvocationRequirementsCurrent(pack: NativeInvocation
       getterUses: pack.getterUses,
       methodArities: pack.methodArities,
       applyVector: pack.applyVector,
+      dynamicDispatch: pack.dynamicDispatch,
+      readsReceiver: pack.readsReceiver,
       gaps: pack.gaps,
     }) !== undefined
   )

@@ -12,6 +12,7 @@ import {
 } from "./native-object-access-requirements.js";
 import { pairedSourceCalls, type SourceCall, type SourceCallFamily } from "./native-source-calls.js";
 import { ORDINARY_OBJECT_SOURCE_CALLS } from "./ordinary-object-source-calls.js";
+import { FUNCTION_OBJECT_SOURCE_CALLS } from "./function-object-source-calls.js";
 import {
   planNativeSourceClosureRequirements,
   assertNativeSourceClosureRequirementsCurrent,
@@ -20,10 +21,10 @@ import {
 
 /**
  * (#7354) The families of source calls the realm serves, walked once into `sourceCalls`. A family is its
- * `SourceCallFamily` here (`ordinary-object-source-calls.ts`) and its rows in the realm's served-row table
- * (`native-source-objects.ts`).
+ * `SourceCallFamily` here (`ordinary-object-source-calls.ts`, (#7354 C) `function-object-source-calls.ts`) and its
+ * rows in the realm's served-row table (`native-source-objects.ts`).
  */
-const REALM_SOURCE_CALL_FAMILIES = Object.freeze([ORDINARY_OBJECT_SOURCE_CALLS] as const);
+const REALM_SOURCE_CALL_FAMILIES = Object.freeze([ORDINARY_OBJECT_SOURCE_CALLS, FUNCTION_OBJECT_SOURCE_CALLS] as const);
 type FamilyFeature<T> = T extends SourceCallFamily<infer F> ? F : never;
 export type RealmSourceCallFeature = FamilyFeature<(typeof REALM_SOURCE_CALL_FAMILIES)[number]>;
 

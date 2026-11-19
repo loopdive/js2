@@ -62,6 +62,13 @@ related: [7188, 2949, 3526, 3527, 3518, 7106, 7349, 7350, 7352]
 # 2026-11-19 (slice C, step C1 realm side): src/ir/runtime/manifest.ts +4, the registration of the `js.function.*`
 # contract family (`function-object-callables.ts`): its features and provider ids in the manifest's FEATURE_SET and
 # PROVIDER_ID_SET and their two imports, one row each beside the ordinary-object family.
+# 2026-11-19 (slice C, wiring on claude/7354-c-int): src/ir/from-ast.ts +32: `lowerPreparedFunctionExpression`
+# (Fa's function-expression arm, now creating the function object through `emitFunctionObjectInit`, which lives in
+# function-object-lowering.ts), `namesDynamicValue` shared by `new` and `instanceof` (it replaces the `new` arm's inline
+# test) and `dynamicModuleBinding`, lifted out of the call arm so the three share it, plus the import.
+# src/ir/program-source.ts +5: `refuseReceiverlessDirectCalls`, the call of the program-wide `this` rule
+# (`receiverlessDirectCall`, dynamic-value-legalization.ts) beside the globals arm. src/ir/program-physical-plan.ts
+# +1: the invocation requirements passed to `planNativeSourceObjectSetup`.
 loc-budget-allow:
   - src/ir/runtime/manifest.ts
   - src/ir/program-consumer.ts
@@ -71,7 +78,7 @@ loc-budget-allow:
   - src/ir/from-ast.ts
   - src/compiler/ir-program-presentation.ts
 import-cycles-allow:
-  - backend->ir: 120 # 2026-11-17 (#7354 Str review 2): the native string length emitter reads the selected carrier field through the shared preparedStringLenProvider (ir/runtime/intrinsic-preparation.ts) instead of re-implementing it; 2026-11-19 (#7354 Perf2, f6694dada4): native-string-values.ts settles its reservation-input currentness check with the shared settled verdict (ir/program/settled-verdict.ts) that the IR requirement modules use; the verdict cannot move to src/shared because it reads the frozen-collection brand private to ir/program/data.ts
+  - backend->ir: 122 # 2026-11-19 (#7354 C): the realm's served-row table (native-source-objects.ts) reads the js.function.* contract family it serves: `arityCallableArity` (ir/core/closure-invocation-callables.ts) to spell the `construct:N` member it reserves, the same parse native-string-values.ts already makes for js.closure.call:N, and the `js.function.init` flags word (ir/runtime/function-object-callables.ts) its init body tests; 2026-11-17 (#7354 Str review 2): the native string length emitter reads the selected carrier field through the shared preparedStringLenProvider (ir/runtime/intrinsic-preparation.ts) instead of re-implementing it; 2026-11-19 (#7354 Perf2, f6694dada4): native-string-values.ts settles its reservation-input currentness check with the shared settled verdict (ir/program/settled-verdict.ts) that the IR requirement modules use; the verdict cannot move to src/shared because it reads the frozen-collection brand private to ir/program/data.ts
 ---
 
 # #7354 — Prepared IR path, milestone 1
@@ -3109,3 +3116,52 @@ on `claude/7354-c-calls`; this family joins it as one row).
   adapter dependencies (`invocation`); `js.closure.call:N` selected for every `construct:N` arity; the adapter strings
   (`NATIVE_SOURCE_FUNCTION_LITERALS`) in the realm literal plan; the family in `intrinsic-preparation.ts`'s runtime
   call census.
+
+## C wiring: the js.function.* family end to end (2026-11-19, branch `claude/7354-c-int`)
+
+Integration of `claude/7354-c` + `-c-calls` + `-c-fn` + `-c-tests`, then the wiring the C1 realm side owed.
+
+- **One served-row table.** c-fn's adapters are rows of S3's `ROWS` (native-source-objects.ts). A row's body takes the
+  fill context and an arity: a member `<feature>:N` of an arity family reserves N more externref operands. Call rows
+  bind by symbol, so `SourceCall` carries the call's `symbol` beside its feature (`construct:N` is one row per arity).
+- **The family joins the collection** as `FUNCTION_OBJECT_SOURCE_CALLS` (function-object-source-calls.ts) in
+  `REALM_SOURCE_CALL_FAMILIES`; the adapter strings are in the realm literal plan; the family is in the runtime-call
+  census.
+- **The invocation.** The consumer passes its invocation pack to `reserveNativeRealmKernel`, and the adapters read it
+  from `NativeSourceObjectDependencies.invocation`. The invocation planner counts the family's calls that run inside it
+  (`functionObjectDemands`): each `construct:N` adds arity N to `methodArities` and makes the dispatch dynamic (every
+  source closure, `dynamicDispatch`, which replaces Fb's `uses.some(dynamicCallee)` at its two readers); a
+  `js.function.this` keeps the invocation planned. A program without a closure has no invocation, so a `construct` or
+  `this` call there is a named gap in `planNativeSourceObjectSetup` (`NATIVE_SOURCE_OBJECT_INVOCATION_FEATURES`).
+- **Legalization.** `dyn.construct` → `js.function.construct:N`, `dyn.instanceof` (what from-ast emits for `v instanceof
+  F` on a dynamic value) → `js.function.has-instance`, `dyn.current_this` → `js.function.this(strict)`, each through
+  one `realmCall` builder that member reads now share. `MEMBER_READ_ARM.function` is `get` with the closure as the
+  object, refusing the keys Function.prototype and Object.prototype hold (`BUILTIN_REACHABLE_KEYS.function`).
+  `carrierKind` answers `function` for a packed closure, so the throw rule admits a thrown function value.
+  `KIND_TEST.function` is unchanged (lead's correction: `claude/7354-fa-ty` gives it `js.value.is_function`).
+- **The bag.** `emitFunctionObjectInit(builder, closure, name, length)` (function-object-lowering.ts) is called once
+  per creation, right after `closure.new`, from `lowerPreparedFunctionExpression` (from-ast); S4's declaration
+  prologue is to call the same helper. Name: the expression's own, else NamedEvaluation's (`namedEvaluationName`,
+  src/shared/named-evaluation.ts). Init is not at the dynamic-carrier projection, which can run more than once per
+  closure (a closure-typed local boxed twice would re-create its bag).
+- **`new` and `instanceof` in from-ast.** `namesDynamicValue` (a dynamic local, or on the Prepared lane a script `var`
+  in its dynamic home, through its module-init scope entry or its module binding) admits `new F()` and `v instanceof
+  F`; the ordinary pipeline keeps its dynamic-local-only rule.
+- **`this`.** A direct call installs no receiver, so `receiverlessDirectCall` (dynamic-value-legalization.ts, run by
+  program-source over the legalized program) refuses the first direct call of a function that reads `this`, by name.
+  It runs before inlining: an inlined call is otherwise invisible to the invocation planner (measured: `f()` of a
+  `this`-reading declaration is inlined into module-init). Every `this` the Prepared lane binds today is in a
+  declaration, so no program reaches `js.function.this` at run time yet; S4's declaration values (`new F()`) and O3's
+  function-code strictness are what give it callers.
+- **is-callable.** Kept as a realm row (has-instance and construct test IsCallable through the kernel's `match`). To
+  fold at the fa-ty integration: `js.value.is_function` answers from `buildClosureRootTest`; the two must become one
+  predicate body (comment at `buildSourceFunctionIsCallableDefinition`).
+- **Sloppy `this`** of `undefined`/`null` stays a named error, "unbound sloppy this needs js.object.global (#7350
+  B2b)", where `js.object.global` plugs in.
+
+Running through the strict Prepared entry (node agrees, wrong answer throws): `new F()` of a script var with
+`o instanceof F`, `instanceof` of another function, `new F(1, 2)`, `new fn()` of a parameter, a member read of a
+function value's bag, a thrown function value. Refused by name: `typeof f` and the object complement with function
+values ("kind test of a function value", fa-ty), `f.length` and `o.constructor` (the receiver may be a string, whose
+wrapper prototype the realm lacks), `fn.call` (Function.prototype's properties). C1–C4 (declaration-based) keep
+their pins: S4's declaration values come first.

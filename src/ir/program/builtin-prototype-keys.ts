@@ -1,9 +1,9 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 /**
  * (#7354 O4) The string-keyed properties the specification (ES2025, Annex B included) gives the built-in prototypes a
- * member read can reach without an own property: Object.prototype for every object and primitive, and each
- * primitive's wrapper prototype. A read of a key outside these, off a value whose prototypes no program code can
- * change, answers the object's own property or `undefined`. The realm's prototypes do not hold these properties yet,
+ * member read can reach without an own property: Object.prototype for every object and primitive, each primitive's
+ * wrapper prototype and (#7354 C) Function.prototype for a function. A read of a key outside these, off a value whose
+ * prototypes no program code can change, answers the object's own property or `undefined`. The realm's prototypes do not hold these properties yet,
  * so a read of one of them refuses by name.
  */
 const OBJECT_PROTOTYPE = [
@@ -21,6 +21,8 @@ const OBJECT_PROTOTYPE = [
   "__lookupSetter__",
 ];
 const NUMBER_PROTOTYPE = ["toExponential", "toFixed", "toPrecision"];
+/** Function.prototype's own keys, and the restricted `caller` / `arguments` an implementation may give a function. */
+const FUNCTION_PROTOTYPE = ["apply", "bind", "call", "caller", "arguments"];
 const STRING_PROTOTYPE = [
   "at",
   "charAt",
@@ -75,6 +77,7 @@ const STRING_PROTOTYPE = [
 /** The keys a read of each value reaches through built-in prototypes (or, for a string, its own exotic keys). */
 export const BUILTIN_REACHABLE_KEYS = {
   object: new Set(OBJECT_PROTOTYPE),
+  function: new Set([...OBJECT_PROTOTYPE, ...FUNCTION_PROTOTYPE]),
   number: new Set([...OBJECT_PROTOTYPE, ...NUMBER_PROTOTYPE]),
   boolean: new Set(OBJECT_PROTOTYPE),
   string: new Set([...OBJECT_PROTOTYPE, ...STRING_PROTOTYPE, "length"]),

@@ -314,22 +314,19 @@ describe("#7354 X — the legalization arm", () => {
       undefined,
       { kind: "call", target: irIntrinsicFuncRef("js.object.create-default"), args: [] },
     ],
+    // (#7354 C) a function value's packed closure; node throws and catches one as it is (`throw function () {}`)
+    ["a closure pack", { kind: "callable", signature: { params: [], returnType: null } }],
   ])("admits %s in both rules", (_label, type, definition?: object) => {
     const { coerced, program } = operand(type, definition);
     expect(legalizeDynamicValues(program).blocks[0]!.instrs).toContainEqual(coerced);
     expect(() => refuseUnadmittedThrows(program)).not.toThrow();
   });
-  it.each([
-    [
-      "a closure pack",
-      { kind: "callable", signature: { params: [], returnType: null } },
-      undefined,
-      "a value of type callable",
-    ],
-    ["an externref of unknown kind", externref, undefined, "a value of type externref"],
-  ])("refuses %s by name in both rules", (_label, type, definition, name) => {
-    const { program } = operand(type, definition);
-    expect(() => legalizeDynamicValues(program)).toThrow(`coerce.to_externref of ${name}`);
-    expect(() => refuseUnadmittedThrows(program)).toThrow(`carrier's kinds (${name})`);
-  });
+  it.each([["an externref of unknown kind", externref, undefined, "a value of type externref"]])(
+    "refuses %s by name in both rules",
+    (_label, type, definition, name) => {
+      const { program } = operand(type, definition);
+      expect(() => legalizeDynamicValues(program)).toThrow(`coerce.to_externref of ${name}`);
+      expect(() => refuseUnadmittedThrows(program)).toThrow(`carrier's kinds (${name})`);
+    },
+  );
 });

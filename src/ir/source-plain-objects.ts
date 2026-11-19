@@ -1,8 +1,9 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 /**
- * (#7354 O2) Whether a Prepared program's ordinary objects are plain. On this path an object literal is the only
- * producer of an ordinary object (`js.object.create-default` on the realm's Object.prototype), so the program decides
- * what its objects can hold. They are plain when no object can hold a callable, none defines its own `toString` or
+ * (#7354 O2) Whether a Prepared program's ordinary objects are plain. On this path an object literal
+ * (`js.object.create-default` on the realm's Object.prototype) and (#7354 C) a `new` (an object whose [[Prototype]] is
+ * the constructor's `prototype`, which a program reaches only by reading `prototype`) produce ordinary objects, so the
+ * program decides what its objects can hold. They are plain when no object can hold a callable, none defines its own `toString` or
  * `valueOf`, and no code can reach a prototype to change it. Then OrdinaryToPrimitive of any of them answers
  * "[object Object]" for every hint, and a member read off a primitive meets only the specification's built-in
  * prototype properties: the dynamic-value legalization asks this one answer before it takes either shortcut.
@@ -63,6 +64,7 @@ export function programObjects(checker: ts.TypeChecker, sourceFiles: readonly ts
   let present = false;
   let unplain: string | undefined;
   const reasonAt = (node: ts.Node): string | undefined => {
+    if (ts.isNewExpression(node)) present = true;
     if (ts.isObjectLiteralExpression(node)) {
       present = true;
       for (const member of node.properties) {

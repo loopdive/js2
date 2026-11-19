@@ -16,7 +16,6 @@ import type { Instr, ValType } from "../../../wasm/model/instructions.js";
 import type { RealmSourceCallFeature } from "../../../ir/program/native-realm-requirements.js";
 import { arityCallableArity } from "../../../ir/core/closure-invocation-callables.js";
 import { FUNCTION_OBJECT_INIT_FLAGS } from "../../../ir/runtime/function-object-callables.js";
-import type { FunctionObjectRuntimeFeature } from "../../../ir/runtime/contracts/manifest.js";
 import type { BuiltinFunctionPrototypeOperands } from "../../../runtime/wasmgc/values/builtin-function-prototype-bodies.js";
 import {
   buildSourceObjectCreateDefinition,
@@ -60,7 +59,7 @@ const TEXT = Object.freeze({
   notConstructor: "TypeError: function is not a constructor",
   functionPrototype: "TypeError: new with a function-valued prototype needs a function [[Prototype]] link",
   nonObjectPrototype: "TypeError: instanceof needs an object prototype",
-  unboundSloppy: "TypeError: unbound sloppy this needs the realm global object",
+  unboundSloppy: "TypeError: unbound sloppy this needs js.object.global (#7350 B2b)",
   primitiveSloppy: "TypeError: sloppy this of a primitive needs ToObject",
 });
 export const NATIVE_SOURCE_FUNCTION_LITERALS: readonly string[] = Object.freeze(Object.values(TEXT));
@@ -91,7 +90,14 @@ const create = ({ layouts, storage, kernel }: NativeSourceObjectDependencies): S
   objectPrototype: kernel.functions.objectPrototype.handle,
   createWithPrototype: storage.createWithPrototype.handle,
 });
-/** `this` and `construct` run inside the closure invocation, which a realm with source closures reserves. */
+/**
+ * The contracts whose adapter runs inside the closure invocation, which only a realm with source closures reserves:
+ * `construct:N` calls `js.closure.call:N`, `this` reads the receiver the dispatcher installs.
+ */
+export const NATIVE_SOURCE_OBJECT_INVOCATION_FEATURES: ReadonlySet<string> = new Set([
+  "js.function.construct",
+  "js.function.this",
+]);
 function invocation(context: AdapterContext): NativeInvocationReservations {
   return context.invocation ?? fail("a function-object adapter needs the realm's closure invocation");
 }
@@ -162,12 +168,12 @@ const ROWS = {
         primitiveSloppy: context.text("primitiveSloppy"),
       }),
   },
-} as const satisfies Readonly<Partial<Record<RealmSourceCallFeature | FunctionObjectRuntimeFeature, Row>>>;
+} as const satisfies Readonly<Partial<Record<RealmSourceCallFeature, Row>>>;
 /** A contract the realm serves. */
 export type NativeSourceObjectFeature = keyof typeof ROWS;
 /** A called contract: its feature, and the symbol its call rows name (`<feature>` or `<feature>:N`). */
 export interface NativeSourceObjectCall {
-  readonly feature: RealmSourceCallFeature | FunctionObjectRuntimeFeature;
+  readonly feature: RealmSourceCallFeature;
   readonly symbol: string;
 }
 

@@ -56,10 +56,97 @@ describe("#7354 C — `this` on the Prepared path", () => {
     expect(await run("function f(a) { return a; } if (f(1) !== 1) throw 1;")).toBe("returned");
   });
 
-  it("binds a body's own `this` at entry, so the next gap is the receiver read itself", async () => {
-    const result = messages(await strict('"use strict"; function f() { return this; } f();'));
+  // `this` is `js.function.this`, the receiver a closure dispatcher installs; a direct call installs none.
+  it("refuses a direct call of a function that reads its `this`", async () => {
+    const result = messages(await strict('var g = function () {}; function f() { "use strict"; return this; } f();'));
     expect(result.join("\n")).not.toContain("'this' reference outside an instance method body");
-    expect(result).toContain("dynamic operation dyn.current_this has no Prepared intrinsic");
+    expect(result).toContain("a direct call of f installs no receiver for its 'this'");
+  }, 60_000);
+
+  it("refuses `this` in a program without a closure invocation", async () => {
+    expect(messages(await strict('"use strict"; function f() { return this; }')).join("\n")).toContain(
+      "js.function.this needs a closure invocation, and the program has none",
+    );
+  });
+});
+
+/** Node returns on `right` and throws on `wrong`, and so does the Prepared entry. */
+async function expectAgrees(right: string, wrong: string) {
+  for (const [source, answer] of [
+    [right, "returned"],
+    [wrong, "threw"],
+  ] as const) {
+    let node: string;
+    try {
+      new Function(source)();
+      node = "returned";
+    } catch {
+      node = "threw";
+    }
+    expect(node).toBe(answer);
+    expect(await run(source)).toBe(answer);
+  }
+}
+
+describe("#7354 C — `new` and `instanceof` on a function value", () => {
+  // Each program pulls in the native realm (~20 s per compile).
+  const SLOW = 120_000;
+  it.each([
+    [
+      "`new F()` of a script var, then `o instanceof F`",
+      "var F = function () {}; var o = new F(); if (!(o instanceof F)) throw 1;",
+      "var F = function () {}; var o = new F(); if (o instanceof F) throw 1;",
+    ],
+    [
+      "`instanceof` of another function",
+      "var F = function () {}; var G = function () {}; if (new F() instanceof G) throw 1;",
+      "var F = function () {}; var G = function () {}; if (!(new F() instanceof G)) throw 1;",
+    ],
+    [
+      "`new` with arguments",
+      "var F = function (a, b) {}; if (!(new F(1, 2) instanceof F)) throw 1;",
+      "var F = function (a, b) {}; if (new F(1, 2) instanceof F) throw 1;",
+    ],
+    [
+      "`new` of a parameter",
+      "function t(fn) { return new fn(); } if (t(function () {}) === undefined) throw 1;",
+      "function t(fn) { return new fn(); } if (t(function () {}) !== undefined) throw 1;",
+    ],
+    [
+      "a member read of a function value (its bag)",
+      "function t(fn) { return fn.x; } if (t(function () {}) !== undefined) throw 1;",
+      "function t(fn) { return fn.x; } if (t(function () {}) === undefined) throw 1;",
+    ],
+    [
+      "a thrown function value",
+      "var f = function () {}; try { throw f; } catch (e) { if (e !== f) throw 1; }",
+      "var f = function () {}; try { throw f; } catch (e) { if (e === f) throw 1; }",
+    ],
+  ])("%s", async (_, right, wrong) => expectAgrees(right, wrong), SLOW);
+
+  it.each([
+    [
+      "a function's own `length`: the receiver may be a string, whose `length` the realm lacks",
+      "var f = function (a, b) {}; if (f.length !== 2) throw 1;",
+      "dynamic operation member read 'length' of a string needs its wrapper prototype has no Prepared intrinsic",
+    ],
+    [
+      "`o.constructor`: a key Object.prototype holds",
+      "var F = function () {}; var o = new F(); if (o.constructor !== F) throw 1;",
+      "dynamic operation member read 'constructor' of a string needs its wrapper prototype has no Prepared intrinsic",
+    ],
+    [
+      "a key Function.prototype holds",
+      "function t(fn) { return fn.call; } t(function () {});",
+      "dynamic operation member read 'call' needs Function.prototype's properties has no Prepared intrinsic",
+    ],
+    [
+      "`typeof` of a function value (its kind test is #7354 Fa × Ty's `js.value.is_function`)",
+      'var f = function () {}; if (typeof f !== "function") throw 1;',
+      "dynamic operation kind test of a function value has no Prepared intrinsic",
+    ],
+  ])("refuses %s by name", async (_, program, message) => {
+    expect(messages(await strict(program))).toContain(message);
   });
 });
 

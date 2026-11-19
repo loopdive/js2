@@ -165,6 +165,11 @@ describe("#7354 O2 — whether a program's objects are plain", () => {
       present: true,
       unplain: undefined,
     });
+    // (#7354 C) `new` on a function value creates an ordinary object too.
+    expect(objects("const F = function () {}; export const o = new (F as any)();")).toEqual({
+      present: true,
+      unplain: undefined,
+    });
   });
 
   it.each([

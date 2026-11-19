@@ -141,11 +141,7 @@ describe("#7354 Fb — calls through a dynamic value", () => {
       "optional/spread dynamic value call is unsupported",
     ],
     // Function objects (slice C).
-    [
-      "`new` on a value",
-      "function t(fn) { return new fn(); } t(function () {});",
-      "dynamic operation dyn.construct has no Prepared intrinsic",
-    ],
+    // (#7354 C) `new` on a value is `js.function.construct:N` now: tests/issue-7354-c-function-objects.test.ts.
     [
       "a method call on a value",
       "function t(o) { return o.m(1); } t(1);",

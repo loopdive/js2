@@ -128,17 +128,17 @@ export const NO_PROGRAM_KINDS: ProgramKinds = Object.freeze({ objects: NO_OBJECT
 /**
  * (#7354 O4) How a member read (§13.3.2.1, GetV) answers each receiver kind: `undefined` and `null` throw a TypeError
  * (RequireObjectCoercible); an object is the realm's [[Get]]; a primitive reaches only built-in prototypes, so a key
- * none of them names reads `undefined` (`builtin-prototype-keys.ts`). A function refuses: the realm's [[Get]] does not
- * recognise a source closure as an object until slice C gives the kernel its source-closure arm.
+ * none of them names reads `undefined` (`builtin-prototype-keys.ts`). (#7354 C) A function is an object of the
+ * realm's kernel (its source-closure arm), whose own properties live in its bag.
  */
-export const MEMBER_READ_ARM: Readonly<Record<CarrierKind, "type-error" | "get" | "primitive" | "refused">> = {
+export const MEMBER_READ_ARM: Readonly<Record<CarrierKind, "type-error" | "get" | "primitive">> = {
   number: "primitive",
   boolean: "primitive",
   string: "primitive",
   undefined: "type-error",
   null: "type-error",
   object: "get",
-  function: "refused",
+  function: "get",
 };
 
 /** The kinds the `plain-object` rows were proved for. */

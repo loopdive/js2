@@ -38,6 +38,10 @@ import {
   type IrValueId,
 } from "../core/nodes.js";
 import type { IrClosureSignature, IrType } from "../core/types.js";
+import type { IrFuncRef } from "../core/value-references.js";
+import { irIntrinsicFuncRef } from "../core/callable-bindings.js";
+import { irArityCallableReference } from "../core/closure-invocation-callables.js";
+import { IR_FUNCTION_CONSTRUCT_PREFIX } from "../runtime/function-object-callables.js";
 import { IR_DYN_CALL_BOX_FN } from "../../shared/contracts/dynamic-call-helpers.js";
 import type { IrUnitId } from "../../shared/contracts/ir-identity.js";
 import { irRuntimeCallableDeclaration } from "../runtime/callable-declarations.js";
@@ -115,16 +119,17 @@ function valueDefinitions(fn: IrFunction): Map<IrValueId, IrInstr> {
 /**
  * (#7354 X, O1, O2) The kind the carrier holds `value` as, from its type and defining instruction: the dynamic value
  * itself, a native string (its own payload), a boundary box's number or Boolean, the null constant's null reference,
- * an ordinary object `boxedKind` admits, or, through a coercion, its operand's kind. Any other value has none: a
- * callable until slice Fa gives it its tag.
+ * an ordinary object `boxedKind` admits, (#7354 C) a function value's packed closure (the payload the function-value
+ * projection admits), or, through a coercion, its operand's kind. Any other value has none.
  */
 export function carrierKind(
   value: IrValueId,
   types: ReadonlyMap<IrValueId, IrType>,
   definitions: ReadonlyMap<IrValueId, IrInstr>,
-): "dynamic" | "string" | "number" | "boolean" | "null" | "object" | undefined {
+): "dynamic" | "string" | "number" | "boolean" | "null" | "object" | "function" | undefined {
   const type = types.get(value);
   if (type?.kind === "dynamic" || type?.kind === "string") return type.kind;
+  if (type?.kind === "callable") return "function";
   const definition = definitions.get(value);
   if (definition?.kind === "intrinsic" && definition.id === "js.number.box") return "number";
   if (definition?.kind === "intrinsic" && definition.id === "js.boolean.box") return "boolean";
@@ -148,6 +153,7 @@ function unadmittedValue(
 const STRING: IrType = Object.freeze({ kind: "string" });
 const F64: IrType = Object.freeze({ kind: "val", val: Object.freeze({ kind: "f64" }) });
 const TEST_RESULT: IrType = INTRINSIC_DEFINITIONS["js.value.is_string"].signature.result;
+const BOOLEAN: IrType = Object.freeze({ kind: "val", val: Object.freeze({ kind: "i32", boolean: true }) });
 
 /**
  * The instruction builders of one function's legalization: fresh values after the function's own, intrinsic
@@ -245,6 +251,14 @@ function legalizationBuilders(
         : intrinsic(instr, test, [value], result),
     ];
   };
+  /** (#7354 O4, C) A call of a realm-served contract, with the result type its declaration gives. */
+  const realmCall = (target: IrFuncRef, args: readonly IrValueId[], result: IrValueId | null): IrInstr => ({
+    kind: "call",
+    target,
+    args,
+    result,
+    resultType: irRuntimeCallableDeclaration(target)!.results[0] ?? null,
+  });
   const text = (value: string, result: IrValueId): IrInstr => ({
     kind: "string.const",
     value,
@@ -351,7 +365,7 @@ function legalizationBuilders(
   };
   const memberRead = (instr: IrInstr, receiver: IrValueId, key: IrValueId, result: IrValueId): IrInstr[] =>
     dynamicMemberRead(
-      { carrier: CARRIER, definitions, fresh, text, intrinsic, kindsOf, kindChain },
+      { carrier: CARRIER, definitions, fresh, text, intrinsic, realmCall, kindsOf, kindChain },
       program,
       instr,
       receiver,
@@ -429,6 +443,7 @@ function legalizationBuilders(
     toStringArm,
     toNumber,
     memberRead,
+    realmCall,
     addition,
     definitions,
     admitted,
@@ -558,6 +573,26 @@ export function legalizeDynamicValues(
         return toNumber(instr, instr.value, instr.result!);
       case "dyn.member_get":
         return builders.memberRead(instr, instr.recv, instr.key, instr.result!);
+      // (#7354 C) `new`, `instanceof` and `this` of a function value are the realm's function-object contracts.
+      case "dyn.construct":
+        return [
+          builders.realmCall(
+            irArityCallableReference(IR_FUNCTION_CONSTRUCT_PREFIX, instr.args.length),
+            [instr.callee, ...instr.args],
+            instr.result,
+          ),
+        ];
+      case "dyn.instanceof":
+        return [
+          builders.realmCall(irIntrinsicFuncRef("js.function.has-instance"), [instr.value, instr.target], instr.result),
+        ];
+      case "dyn.current_this": {
+        const strict = fresh();
+        return [
+          { kind: "const", value: { kind: "bool", value: instr.strict }, result: strict, resultType: BOOLEAN },
+          builders.realmCall(irIntrinsicFuncRef("js.function.this"), [strict], instr.result),
+        ];
+      }
       case "dyn.eq": {
         if (instr.loose) return gap("dyn.eq (loose)");
         return withSense(instr, instr.negate, (result) => [
@@ -648,6 +683,37 @@ export function legalizeDynamicAllocations(functions: readonly IrFunction[], all
           if (instr.kind === "closure.new" && instr.alloc !== undefined)
             allocations.retype(instr.alloc, instr.resultType!);
         });
+}
+
+/**
+ * (#7354 C) `js.function.this` reads the receiver a closure dispatcher installs; a direct call installs none, so a
+ * direct call of a function that reads it would read a stale receiver. The first such call in the legalized program
+ * (before any inlining hides it): its caller and callee, which the source producer refuses by name.
+ */
+export function receiverlessDirectCall(
+  functions: readonly IrFunction[],
+): { readonly caller: IrUnitId; readonly callee: string } | undefined {
+  const calls = functions.map((fn) => {
+    const found: IrFuncRef[] = [];
+    for (const block of fn.blocks)
+      for (const root of block.instrs)
+        forEachInstrDeep(root, (i) => {
+          if (i.kind === "call") found.push(i.target);
+        });
+    return { caller: fn.unitId, targets: found };
+  });
+  const readers = new Set(
+    calls.flatMap(({ caller, targets }) =>
+      targets.some(({ binding }) => binding.kind === "intrinsic" && binding.symbol === "js.function.this")
+        ? [caller]
+        : [],
+    ),
+  );
+  for (const { caller, targets } of calls) {
+    const callee = targets.find(({ binding }) => binding.kind === "unit" && readers.has(binding.unitId));
+    if (callee) return { caller, callee: callee.name };
+  }
+  return undefined;
 }
 
 /**

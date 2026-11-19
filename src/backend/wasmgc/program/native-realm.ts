@@ -361,7 +361,12 @@ export function reserveNativeProgramFoundation(
   return { vectorTypes, stringTypes, earlyStrings, realm };
 }
 
-function reserveKernelResources(tx: PhysicalModuleReservations, pack: NativeRealmReservations, owner: Owner) {
+function reserveKernelResources(
+  tx: PhysicalModuleReservations,
+  pack: NativeRealmReservations,
+  owner: Owner,
+  invocation: NativeInvocationReservations | undefined,
+) {
   const number = pack.strings.number,
     valuePlan = owner.input.valueRequirements,
     population = owner.population;
@@ -445,6 +450,7 @@ function reserveKernelResources(tx: PhysicalModuleReservations, pack: NativeReal
     descriptors,
     kernel,
     errors: pack.substrate.errors,
+    ...(invocation ? { invocation } : {}),
   });
   return {
     equality,
@@ -466,11 +472,15 @@ function reserveKernelResources(tx: PhysicalModuleReservations, pack: NativeReal
     sourceObjects,
   };
 }
-/** Consumer retains genuine source binding/lowering authority; no callback can attest its completion. */
+/**
+ * Consumer retains genuine source binding/lowering authority; no callback can attest its completion. (#7354 C) The
+ * closure invocation, reserved before the kernel, is what `js.function.construct:N` and `js.function.this` run in.
+ */
 export function reserveNativeRealmKernel(
   tx: PhysicalModuleReservations,
   pack: NativeRealmReservations,
   sourceTypes?: NativeSourceClosureTypes,
+  invocation?: NativeInvocationReservations,
 ) {
   const owner = current(tx, pack);
   if (tx.state !== "reserving" || owner.phase !== "foundation") fail("invalid or duplicate kernel reservation phase");
@@ -485,7 +495,7 @@ export function reserveNativeRealmKernel(
   } else if (sourceTypes !== undefined) fail("unexpected source owner for no-source realm");
   owner.phase = "reserving-kernel";
   try {
-    owner.kernel = reserveKernelResources(tx, pack, owner);
+    owner.kernel = reserveKernelResources(tx, pack, owner, invocation);
     owner.phase = "reserved";
     return owner.kernel.kernel;
   } catch (error) {

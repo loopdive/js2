@@ -51,7 +51,7 @@ const NOT_CONSTRUCTOR = "TypeError: function is not a constructor";
 const FUNCTION_PROTOTYPE = "TypeError: new with a function-valued prototype needs a function [[Prototype]] link";
 const NOT_CALLABLE = "Value is not callable";
 const NON_OBJECT_PROTOTYPE = "TypeError: instanceof needs an object prototype";
-const UNBOUND_SLOPPY = "TypeError: unbound sloppy this needs the realm global object";
+const UNBOUND_SLOPPY = "TypeError: unbound sloppy this needs js.object.global (#7350 B2b)";
 const PRIMITIVE_SLOPPY = "TypeError: sloppy this of a primitive needs ToObject";
 
 describe("#7354 C — the function-object contracts", () => {

@@ -6,10 +6,11 @@ import { ts } from "../ts-api.js";
 import type { IrFunctionBuilder } from "./builder.js";
 import type { IrImportedCallLoweringPlan, IrTopLevelFunctionValueLoweringPlan } from "./ast-lowering-plans.js";
 import type { IrFunctionMemberClosures } from "./function-member-closure-plan.js";
-import { irRuntimeFuncRef } from "./callable-bindings.js";
+import { irIntrinsicFuncRef, irRuntimeFuncRef } from "./callable-bindings.js";
 import { IR_CLOSURE_METHOD_PREFIX, irArityCallableReference } from "./core/closure-invocation-callables.js";
 import type { IrUnitId } from "./identity.js";
 import { JS_TAG_IDS } from "./runtime/js-tag-domain.js";
+import { FUNCTION_OBJECT_INIT_FLAGS } from "./runtime/function-object-callables.js";
 import { asVal, irDynamic, irVal, type IrType, type IrValueId } from "./nodes.js";
 import { demoteToLegacy } from "./outcomes.js";
 
@@ -93,6 +94,30 @@ export function lowerTopLevelFunctionValue(
   // externref global carrier. Retagging the final read avoids an unsound
   // externref→closure cast while preserving singleton identity.
   return cx.builder.emitGlobalGet(cache, { kind: "callable", signature: plan.signature });
+}
+
+/**
+ * (#7354 C) A Prepared source function is a function object from its creation on: `js.function.init` gives the bag
+ * of the fresh `closure` its `length` (OrdinaryFunctionCreate), its `name` (SetFunctionName) and MakeConstructor's
+ * `prototype`. Every site that creates a function object calls this once, right after `closure.new`, so the bag is
+ * filled once per closure however many times the closure later becomes a dynamic value.
+ */
+export function emitFunctionObjectInit(builder: IrFunctionBuilder, closure: IrValueId, name: string, length: number) {
+  const type = builder.typeOf(closure);
+  // invariant (producer-promise): callers pass the value `closure.new` just produced — #4502.
+  if (type.kind !== "closure") throw new Error("ir/function-object-lowering: function object init needs its closure");
+  const value = builder.emitCoerceToExternref(builder.emitCallablePack(closure, type.signature));
+  const number = (n: number) => builder.emitConst({ kind: "f64", value: n }, irVal({ kind: "f64" }));
+  builder.emitCall(
+    irIntrinsicFuncRef("js.function.init"),
+    [
+      value,
+      builder.emitCoerceToExternref(builder.emitStringConst(name)),
+      number(length),
+      number(FUNCTION_OBJECT_INIT_FLAGS.constructible),
+    ],
+    null,
+  );
 }
 
 export function functionObjectDynamicValue(

@@ -6,7 +6,7 @@ import { preparedIrProgramCallableResults } from "./program-callable-contract.js
 import { prepareSourceClosureInvocations } from "./source-closure-invocation.js";
 import { checkerAny, programDynamicContracts, type ProgramDynamicContracts } from "./source-dynamic-contracts.js";
 import type { TypedIrProgramInput } from "./program/input-contracts.js";
-import { legalizeDynamicGlobals } from "./program/dynamic-value-legalization.js";
+import { legalizeDynamicGlobals, receiverlessDirectCall } from "./program/dynamic-value-legalization.js";
 import type { TypeOracle } from "../checker/oracle.js";
 import { AllocSiteRegistry } from "./analysis/alloc-registry.js";
 import { irModuleGlobalBindingId, irModuleTdzGlobalBindingId, irSourceGlobalRef } from "./abi-bindings.js";
@@ -966,6 +966,14 @@ function unsupported(detail: string): never {
   throw new IrUnsupportedError("type-resolution-unsupported", "build", detail);
 }
 
+/** (#7354 C) A direct call of a function that reads its `this` refuses, owned by the calling unit. */
+function refuseReceiverlessDirectCalls(functions: readonly IrFunction[], diagnostic: SourceDiagnosticOwner): void {
+  const receiverless = receiverlessDirectCall(functions);
+  if (!receiverless) return;
+  diagnostic.active = receiverless.caller;
+  unsupported(`a direct call of ${receiverless.callee} installs no receiver for its 'this'`);
+}
+
 function checkerScalar(checker: ts.TypeChecker, node: ts.Node): IrType | undefined {
   const type = checker.getTypeAtLocation(node);
   if ((type.flags & ts.TypeFlags.NumberLike) !== 0) return { kind: "val", val: { kind: "f64" } };
@@ -1836,6 +1844,7 @@ export function prepareIrProgramSources(
       sourceMapProjector === undefined
         ? undefined
         : finishSourceMapCatalog(sourceMapProjector, derivedSourceRows!, derivedUnits);
+    refuseReceiverlessDirectCalls(functions, diagnostic);
     const dynamic = legalizeDynamicGlobals(functions, globals);
     const prepared: IrProgramSourcePreparation = {
       kind: "prepared",

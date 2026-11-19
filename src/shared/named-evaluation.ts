@@ -19,3 +19,30 @@ export function isAnonymousFunctionDefinition(expr: ts.Expression): boolean {
   if (ts.isClassExpression(expr) && !expr.name) return true;
   return false;
 }
+
+/**
+ * The name NamedEvaluation gives the anonymous function definition `expr` from where it stands (ES2015+): the bound
+ * identifier of a variable declarator or of a simple assignment, or the key of an object literal's data property;
+ * `""` anywhere else.
+ */
+export function namedEvaluationName(expr: ts.Expression): string {
+  let node: ts.Node = expr;
+  while (ts.isParenthesizedExpression(node.parent)) node = node.parent;
+  const { parent } = node;
+  if (ts.isVariableDeclaration(parent) && parent.initializer === node && ts.isIdentifier(parent.name))
+    return parent.name.text;
+  if (
+    ts.isBinaryExpression(parent) &&
+    parent.right === node &&
+    parent.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+    ts.isIdentifier(parent.left)
+  )
+    return parent.left.text;
+  if (
+    ts.isPropertyAssignment(parent) &&
+    parent.initializer === node &&
+    (ts.isIdentifier(parent.name) || ts.isStringLiteral(parent.name) || ts.isNumericLiteral(parent.name))
+  )
+    return parent.name.text;
+  return "";
+}

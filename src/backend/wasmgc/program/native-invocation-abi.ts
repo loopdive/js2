@@ -31,7 +31,10 @@ import { irCallableBindingKey } from "../../../ir/core/callable-bindings.js";
 import type { IrFuncRef } from "../../../ir/core/value-references.js";
 import type { ProgramAbiPlanEntry } from "../../../ir/program/abi.js";
 import type { NativeRealmRequirements } from "../../../ir/program/native-realm-requirements.js";
-import { nativeSourceObjectResourceKey } from "../resources/native-source-objects.js";
+import {
+  NATIVE_SOURCE_OBJECT_INVOCATION_FEATURES,
+  nativeSourceObjectResourceKey,
+} from "../resources/native-source-objects.js";
 
 /** One call route's ABI row and the key of the reserved function that serves it. */
 export interface NativeCallAbiBinding {
@@ -203,9 +206,13 @@ export interface NativeSourceObjectPhysicalSetup {
   readonly bindings: readonly NativeCallAbiBinding[];
 }
 
-/** The rows for every object use the realm selected, or a gap per contract with no native source provider. */
+/**
+ * The rows for every object use the realm selected, or a gap per contract with no native source provider, and (#7354
+ * C) per function-object contract that runs inside a closure invocation the program does not have.
+ */
 export function planNativeSourceObjectSetup(
   realm: NativeRealmRequirements | undefined,
+  invocation: NativeInvocationRequirements | undefined,
   declarationOrder: number,
 ): {
   readonly setup: NativeSourceObjectPhysicalSetup | undefined;
@@ -218,6 +225,13 @@ export function planNativeSourceObjectSetup(
     const resourceKey = nativeSourceObjectResourceKey(realm.description.key, use);
     if (resourceKey === undefined) {
       gaps.push({ detail: `${use.feature} has no native source provider`, unitId: use.ownerUnitId });
+      return [];
+    }
+    if (!invocation && NATIVE_SOURCE_OBJECT_INVOCATION_FEATURES.has(use.feature)) {
+      gaps.push({
+        detail: `${use.feature} needs a closure invocation, and the program has none`,
+        unitId: use.ownerUnitId,
+      });
       return [];
     }
     return [{ occurrence: use.occurrence, ownerUnitId: use.ownerUnitId, resourceKey }];

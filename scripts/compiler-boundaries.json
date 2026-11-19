@@ -196,6 +196,7 @@
         "src/ir/runtime/vector-callables.ts",
         "src/ir/runtime/number-conversion-callable.ts",
         "src/ir/runtime/ordinary-object-callables.ts",
+        "src/ir/runtime/function-object-callables.ts",
         "src/ir/runtime/closure-invocation-callables.ts",
         "src/ir/runtime/js-tag-domain.ts",
         "src/ir/runtime/producer.ts",
@@ -419,6 +420,7 @@
         "src/runtime/wasmgc/values/object-same-value-body.ts",
         "src/runtime/wasmgc/values/ordinary-object-access-bodies.ts",
         "src/runtime/wasmgc/values/source-object-bodies.ts",
+        "src/runtime/wasmgc/values/source-function-object-bodies.ts",
         "src/runtime/wasmgc/values/ordinary-object-descriptor-accessor.ts",
         "src/runtime/wasmgc/values/ordinary-object-descriptor-common.ts",
         "src/runtime/wasmgc/values/ordinary-object-descriptor-data.ts",
@@ -15061,6 +15063,11 @@
       "layer": "ir-runtime"
     },
     {
+      "path": "src/ir/runtime/function-object-callables.ts",
+      "state": "clean",
+      "layer": "ir-runtime"
+    },
+    {
       "path": "src/ir/ordinary-object-closure-signatures.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
@@ -15242,6 +15249,11 @@
       "layer": "native-runtime"
     },
     {
+      "path": "src/runtime/wasmgc/values/source-function-object-bodies.ts",
+      "state": "clean",
+      "layer": "native-runtime"
+    },
+    {
       "path": "src/runtime/wasmgc/values/ordinary-object-descriptor-accessor.ts",
       "state": "clean",
       "layer": "native-runtime"
@@ -15298,6 +15310,11 @@
     },
     {
       "path": "src/ir/program/ordinary-object-source-calls.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
+      "path": "src/ir/program/function-object-source-calls.ts",
       "state": "clean",
       "layer": "ir-program"
     },

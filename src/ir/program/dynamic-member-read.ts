@@ -1,12 +1,14 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 /**
  * (#7354 O4) A member read of the dynamic value with a constant key (`MEMBER_READ_ARM`): a TypeError for `undefined`
- * / `null`, the realm's [[Get]] for an object, `undefined` for a primitive. A key a built-in prototype holds (the
- * realm's prototypes do not hold it yet), or a program whose prototypes code can change, refuses by name.
+ * / `null`, the realm's [[Get]] for an object and (#7354 C) a function, `undefined` for a primitive. A key a built-in
+ * prototype holds (the realm's prototypes do not hold it yet), or a program whose prototypes code can change, refuses
+ * by name.
  */
 import type { IntrinsicId } from "../core/intrinsics.js";
 import type { IrInstr, IrValueId } from "../core/nodes.js";
 import type { IrType } from "../core/types.js";
+import type { IrFuncRef } from "../core/value-references.js";
 import { irIntrinsicFuncRef } from "../core/callable-bindings.js";
 import { BUILTIN_REACHABLE_KEYS, isArrayIndexKey } from "./builtin-prototype-keys.js";
 import { MEMBER_READ_ARM, plainObjectRefusal, type CarrierKind, type ProgramObjects } from "./dynamic-value-kinds.js";
@@ -24,6 +26,7 @@ export interface MemberReadBuilders {
     args: readonly IrValueId[],
     result?: IrValueId | null,
   ) => IrInstr;
+  readonly realmCall: (target: IrFuncRef, args: readonly IrValueId[], result: IrValueId | null) => IrInstr;
   readonly kindsOf: (value: IrValueId) => readonly CarrierKind[];
   readonly kindChain: (
     instr: IrInstr,
@@ -54,17 +57,8 @@ export function dynamicMemberRead(
   const name = constantKey(b.definitions, key) ?? gap("dyn.member_get with a computed key");
   const refusal = plainObjectRefusal(program.objects, `member read '${name}'`);
   if (refusal !== undefined) gap(refusal);
-  const call = (
-    feature: "js.object.create-type-error" | "js.object.get",
-    args: IrValueId[],
-    r: IrValueId,
-  ): IrInstr => ({
-    kind: "call",
-    target: irIntrinsicFuncRef(feature),
-    args,
-    result: r,
-    resultType: b.carrier,
-  });
+  const call = (feature: "js.object.create-type-error" | "js.object.get", args: IrValueId[], r: IrValueId) =>
+    b.realmCall(irIntrinsicFuncRef(feature), args, r);
   const arm = (kind: CarrierKind, r: IrValueId): IrInstr[] => {
     switch (MEMBER_READ_ARM[kind]) {
       case "type-error": {
@@ -79,8 +73,10 @@ export function dynamicMemberRead(
           b.intrinsic(instr, "js.value.undefined", [], r),
         ];
       }
+      // (#7354 C) A function value is an object of the realm's kernel too: its own properties are in its bag.
       case "get":
-        if (BUILTIN_REACHABLE_KEYS.object.has(name)) gap(`member read '${name}' needs Object.prototype's properties`);
+        if (BUILTIN_REACHABLE_KEYS[kind as keyof typeof BUILTIN_REACHABLE_KEYS].has(name))
+          gap(`member read '${name}' needs ${kind === "function" ? "Function" : "Object"}.prototype's properties`);
         return [call("js.object.get", [receiver, key, receiver], r)];
       case "primitive": {
         const reachable = BUILTIN_REACHABLE_KEYS[kind as keyof typeof BUILTIN_REACHABLE_KEYS];
@@ -88,8 +84,6 @@ export function dynamicMemberRead(
           gap(`member read '${name}' of a ${kind} needs its wrapper prototype`);
         return [b.intrinsic(instr, "js.value.undefined", [], r)];
       }
-      case "refused":
-        return gap(`member read '${name}' of a ${kind} needs its function object`);
     }
   };
   return b.kindChain(instr, receiver, result, arm, b.kindsOf(receiver), b.carrier);
