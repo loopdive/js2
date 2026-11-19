@@ -365,6 +365,25 @@ Branch `claude/7354-arrays-a2-runtime` (`dcb364c2`), merged into `claude/7354-ar
 - Bytes: ordinary pipeline identical on 111 files × default/standalone vs `53357b3b`; the 32 non-array realm
   programs identical vs `53357b3b` (26 binaries sha-equal, 6 refusals).
 
+### A2 census (2026-11-19, `e584e28d2a`, S9's stand-in census on the 455 array-list files)
+
+No file passes yet; 130 moved to a new first gap (125 of A1's 133 "no supported carrier" script vars now have
+their home), 325 did not.
+
+| first gap | files | owner |
+| --- | ---: | --- |
+| script var passed to `Object.defineProperty` / `defineProperties`: "no exact typed storage: not-direct" (`arrObj` 141, `arr` 81, `obj` 27; 168 of them at the stand-in's propertyHelper-style line) | 252 | the Object statics on a dynamic home (lane S12); A2's home itself is not the blocker |
+| ToPrimitive of an array ("array ToPrimitive needs Array.prototype.join"), from the stand-in's `1 / actual` in `sameValue` (the real `assert.js` has the same `1/a === 1/b`) | 97 | A3: Array.prototype.join / toString |
+| `.forEach` on an array | 59 | Array.prototype methods with callbacks, after S4's Fb |
+| `throw new Test262Error` | 17 | function values as constructors (slice C) |
+| a RegExp in a script var | 9 | RegExp values (S12) |
+| `Object` as a value | 8 | built-in globals (S5) |
+| others (`const` homes 5, `str.match` 5, `instanceof Array`, closure annotations, direct eval) | 13 | various |
+
+The real prelude's `var failures = []` (propertyHelper.js) has its home: `failures.length` and `failures[0] = 1`
+inside a function pass; `failures.push(1)` refuses ("__ir_dyn_method_call_1 has no Prepared intrinsic"), so
+Array.prototype.push is its next gap.
+
 ### Acceptance
 
 - Each slice's proving program validates and runs through the strict Prepared entry: the right answer returns,
