@@ -314,3 +314,22 @@ the repository).
   #7350, so the JS environment's output stays byte-identical; on standalone it is refused at select. The
   `native-builtin-globals` capability decides both the new names and this refusal. Remove the exception with
   the JS lane.
+
+## Slice B-String plan — the `String(v)` call plan asks the pristine realm binding (2026-11-19)
+
+Lead decision 2026-11-19, first before the rest of B2b: with S4's function kind the real prelude's first wall is
+assert.js:24 `String(value)` (`direct call to "String" has no exact AST-site plan in formatIdentityFreeValue`).
+Str2's call plan (`prepareConversionResolvers`, `src/frontend/builtins/prepare-number-conversion.ts`) rested on
+"every value read of `String` refuses by name on the Prepared path" — true today, false once B2b admits value
+reads through the global object, and blind to writes (`String = …`, `globalThis.String = …`, `delete`), which it
+left to their own refusals.
+
+**Target structure.** The plan's `binding` mode becomes `"pristine"` for `String`: it holds while every
+occurrence of `String` passes G1's `isPristineIntrinsic` (no source declaration, no write / delete / define by a
+literal route, no enclosing `with`), whatever value reads the program makes; `Number` keeps `"unaliased"`. No new
+predicate: the shared write scanner answers. Stacked on `claude/7354-o` (Str2) plus G1; PR after #7312 and #7263.
+
+**Acceptance.** `tests/issue-7350-string-call-plan.test.ts`: the plan holds beside `map.call(x, String)`, a
+stored `String` value and `globalThis.String` read; it is withdrawn by an assignment, a `globalThis.String`
+write, a `delete`, a declaration, and a call inside a `with` body (the first three rows fail on the old
+resolver). Str2's own suite, the O suites and the G1 suite pass unchanged.

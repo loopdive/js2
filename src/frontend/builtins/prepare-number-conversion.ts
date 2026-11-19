@@ -1,22 +1,22 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import { ts } from "../typescript.js";
 import { isCurrentCompilerLibrarySourceFile } from "../../checker/index.js";
-import { isUndeclaredInFile } from "../../shared/ambient-intrinsics.js";
+import { isPristineIntrinsic } from "../../shared/intrinsic-prototype-writes.js";
 
 /**
  * Source binding evidence for direct calls `Name(…)` of one ambient conversion constructor; the conversion's
- * semantics require their own provider. Admits a call only against the lib declaration, and only while no source
- * file declares the name (the checker reports a script's top-level `function String() {}` as the lib declarations
- * alone) and, unless `escapesRefuse`, the binding is never read as a value anywhere in the program (an alias could
- * be stored or rebound). `escapesRefuse` is the Prepared program's guarantee that every such read already refuses
- * by name.
+ * semantics require their own provider. Admits a call only against the lib declaration. `binding` says what else
+ * must hold program-wide: `"pristine"` — the realm keeps its own value under the name (G1's `isPristineIntrinsic`
+ * at every occurrence: no source declaration, which the checker would not report for a script's top-level
+ * `function String() {}`, no write, delete or define, no enclosing `with`), whatever value reads the program makes;
+ * `"unaliased"` — in addition, the binding is never read as a value (an alias could be stored or rebound).
  */
 function ambientConversionCalls(
   checker: ts.TypeChecker,
   sourceFiles: readonly ts.SourceFile[],
   declaration: ts.FunctionDeclaration | readonly ts.Statement[],
   name: "Number" | "String",
-  escapesRefuse: boolean,
+  binding: "pristine" | "unaliased",
 ): (call: ts.CallExpression) => boolean {
   const calls = new WeakSet<ts.CallExpression>();
   const ambient = checker.resolveName(name, undefined, ts.SymbolFlags.Value, false);
@@ -33,8 +33,8 @@ function ambientConversionCalls(
   const roots: readonly ts.Node[] = "kind" in declaration ? [declaration] : declaration;
   let invalidated = roots.some((root) => !sourceFiles.includes(root.getSourceFile())) || !canonical();
   const inspect = (node: ts.Node): void => {
-    if (ts.isIdentifier(node) && escapesRefuse) {
-      if (node.text === name && !isUndeclaredInFile(node)) invalidated = true;
+    if (ts.isIdentifier(node) && binding === "pristine") {
+      if (node.text === name && !isPristineIntrinsic(node)) invalidated = true;
     } else if (ts.isIdentifier(node)) {
       const symbol = checker.getSymbolAtLocation(node);
       // A bare constructor alias can subsequently be stored/rebound by arbitrary
@@ -83,25 +83,24 @@ export function prepareNumberConversionResolver(
   sourceFiles: readonly ts.SourceFile[],
   declaration: ts.FunctionDeclaration | readonly ts.Statement[],
 ): { readonly preparedNumberCall: (call: ts.CallExpression) => boolean } {
-  return { preparedNumberCall: ambientConversionCalls(checker, sourceFiles, declaration, "Number", false) };
+  return { preparedNumberCall: ambientConversionCalls(checker, sourceFiles, declaration, "Number", "unaliased") };
 }
 
 /**
  * (#7354 Str2) The Prepared program's conversion plans: `Number(v)` and `String(v)`. from-ast asks the `String`
  * question of the callee identifier (`isAmbientStringBinding`), so only the callee of an admitted direct call
  * answers yes; every other read of `String` (`String.fromCharCode`, `new String(v)`, `typeof String`) keeps its
- * own refusal. The `String` plan is not invalidated by an escape: the Prepared program is closed, and every way to
- * rebind the ambient `String` (a value read of `String` or `globalThis`, an assignment) refuses by name
- * (tests/issue-7354-str2-to-string.test.ts pins each), while a program's own `String` declaration is not the lib
- * symbol. The harness prelude escapes both (`String: globalThis.String`, `map.call(a, String)`), so the
- * invalidation would deny its every `String(v)`.
+ * own refusal. (#7350) The `String` plan holds while the realm's `String` is pristine, independent of value reads:
+ * a read of the value (`map.call(a, String)`, `String: globalThis.String` in the harness prelude) is the global
+ * object's business (#7350 G1 / B2b) and cannot rebind the name, while a declaration, write, delete or define of
+ * `String` anywhere in the program withdraws the plan.
  */
 export function prepareConversionResolvers(
   checker: ts.TypeChecker,
   sourceFiles: readonly ts.SourceFile[],
   declaration: ts.FunctionDeclaration | readonly ts.Statement[],
 ) {
-  const stringCall = ambientConversionCalls(checker, sourceFiles, declaration, "String", true);
+  const stringCall = ambientConversionCalls(checker, sourceFiles, declaration, "String", "pristine");
   return {
     ...prepareNumberConversionResolver(checker, sourceFiles, declaration),
     isAmbientStringBinding: (node: ts.Identifier): boolean =>
