@@ -9,7 +9,7 @@
 
 import { describe, expect, it } from "vitest";
 
-import { runModuleInit } from "./helpers/ambient-intrinsic-probe.js";
+import { runExportedUnit, runModuleInit } from "./helpers/ambient-intrinsic-probe.js";
 
 const run = (target: "standalone" | undefined, source: string) =>
   runModuleInit(target, source, { fileName: "issue-7350-builtin-globals.js" });
@@ -32,11 +32,39 @@ const CLAIMED: Record<string, string> = {
 const REFUSED: Record<string, string> = {
   "a member read through an alias": `var M = Math; if (M.max(1, 2) !== 2) { throw "m"; }`,
   "the name written": `function w() { Math = 5; } if (!Math) { throw "w"; }`,
-  // A unit that contains a `with` statement is never claimed (`body-shape-rejected`), so no admission check is
-  // needed for a read inside the body.
-  "a unit containing a with statement": `var o = { Math: 3 }; var r; with (o) { r = Math === 3; } if (!r) { throw "b"; }`,
+  // This unit is refused for its shape before the read is asked about; REFUSED_UNITS pins the `with` screen itself.
+  "inside a with body": `var o = { Math: 3 }; var r; with (o) { r = Math === 3; } if (!r) { throw "b"; }`,
   "a loose compare with null": `if (Math == null) { throw "n"; }`,
   "a conditional beside null": `var c = 1; var v = c ? JSON : null; if (v !== JSON) { throw "c"; }`,
+};
+
+/**
+ * TypeScript modules whose exported `test` stays refused at select on
+ * standalone, each for one check of the admission; `answer` is node's.
+ */
+const REFUSED_UNITS: Record<string, { readonly source: string; readonly answer: number }> = {
+  // `isPristineIntrinsic`'s `with` screen. The selector's `with` lane (#4206, `isPhase1WithStatement`) admits a
+  // closure in the body of `with (<object literal>)` and scopes the literal's own field names; a name the target only
+  // inherits is not among them and reaches the admission. That lane is broken on main today (its own control is
+  // refused as `external-call`), so this unit is refused without the screen too; the screen is what keeps it
+  // refused once #4206 is repaired.
+  "a closure in a with body whose target inherits the name": {
+    source: `export function test(): number {
+      let out = 0;
+      with ({ __proto__: { Math: 3 }, value: 1 }) {
+        const read = function (): number { return Math === 3 ? value : 0; };
+        out = read();
+      }
+      return out;
+    }`,
+    answer: 1,
+  },
+  // `isLibOnlyBinding`: the namespace merges with the lib's `TypeError`, and no other check of the admission sees it.
+  "a namespace merged with the name": {
+    source: `namespace TypeError { export const z = 1; }
+    export function test(): number { return typeof TypeError === "object" ? 1 : 0; }`,
+    answer: 1,
+  },
 };
 
 describe("#7350 G1 — a built-in global read as a value", () => {
@@ -51,6 +79,16 @@ describe("#7350 G1 — a built-in global read as a value", () => {
     it(`refuses <module-init> at select on standalone: ${name}`, async () => {
       expect(() => new Function(source)()).not.toThrow();
       expect(await run("standalone", source)).toEqual({ claimed: false, threw: false });
+    });
+  }
+
+  for (const [name, { source, answer }] of Object.entries(REFUSED_UNITS)) {
+    it(`refuses the unit at select on standalone and answers as node: ${name}`, async () => {
+      const fileName = "issue-7350-builtin-globals.ts";
+      expect(await runExportedUnit("standalone", source, { fileName, unit: "test" })).toEqual({
+        claimed: false,
+        answer,
+      });
     });
   }
 

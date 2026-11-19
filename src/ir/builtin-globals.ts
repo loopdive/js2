@@ -34,7 +34,8 @@ export interface BuiltinGlobalLane {
  *     bound to its lib declaration only (`isLibOnlyBinding`: no import,
  *     `namespace` or `enum` merges with it);
  *   - the realm keeps its own value under the name (`isPristineIntrinsic`):
- *     nothing in the file declares it, and nothing writes, deletes or defines it;
+ *     nothing in the file declares it, nothing writes, deletes or defines it,
+ *     and no enclosing `with` body can resolve it to an object's property;
  *   - the value reaches only positions whose answer does not depend on a
  *     member the realm may not have seeded: {@link intrinsicUseVerdict}, or
  *     the receiver of an exact `<Namespace>.<staticMethod>` value read

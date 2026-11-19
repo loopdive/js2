@@ -227,8 +227,11 @@ runtime-side fact, no hand list). Writes stay out (G6).
   the position walk and the #7189 / #7127 member-value reads, which go through the same
   admission. `src/shared/ambient-intrinsics.ts` keeps the lib-binding helpers and #7294's member shapes.
 - `isPristineIntrinsic` (`shared/intrinsic-prototype-writes.ts`, the shared write scanner): not declared,
-  not written / deleted / defined by a literal route. (A lexical `with` screen was dropped in review RV7263:
-  no unit that contains or sits inside a `with` body is claimed by the IR, so it decided nothing.) `function-mention.ts`'s
+  not written / deleted / defined by a literal route, and not inside a `with` body. (Review RV7263 delta: the
+  lexical `with` screen stays. It decides nothing on today's main only because the #4206 with-closure lane is
+  broken — `isPhase1WithStatement` admits a closure in `with (<object literal>)` by design and scopes only the
+  literal's own field names — so "measured dead on today's main" is not "unreachable". Pinned by the
+  `__proto__: { Math: 3 }` closure row, which keeps refusing through a #4206 repair.) `function-mention.ts`'s
   `objectStaticIsPristine` asks it instead of its own copy and keeps its file-wide `with` screen (elision's
   boundary; a lexical one there would change JS-environment output). A file-wide `with` screen in the
   admission dropped 12 units that main lowers in 2 non-ES5 files (`propertyHelper.js`'s
@@ -294,6 +297,10 @@ the repository).
   `isStrictEqualityOperator` (`src/ir/analysis/operand-admissibility.ts`), but `src/shared/` may not import
   `src/ir/`. The fold is moving the operator predicates to `src/shared/` with their 11 IR importers; filed as
   part of G2 rather than widened here.
+
+- **Review RV7263 delta (BLOCKER on `8926554a54`), fixed:** the `with` screen is restored (above) and the
+  `isLibOnlyBinding` guard is pinned by a REFUSED row, `namespace TypeError { export const z = 1; }` with
+  `typeof TypeError === "object"` in a function (without the guard the IR claims it and answers 0).
 
 ## Known
 
