@@ -7,7 +7,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as gc from "../src/codegen/index.js";
 import * as linear from "../src/codegen-linear/index.js";
-import { DynamicValueGap, legalizeDynamicValues } from "../src/ir/program/dynamic-value-legalization.js";
+import { legalizeDynamicValues } from "../src/ir/program/dynamic-value-legalization.js";
 import type { IrFunction, IrInstr } from "../src/ir/core/nodes.js";
 import { instantiatePreparedArtifact } from "../src/test262/test262-prepared-runtime.js";
 import {
@@ -156,6 +156,8 @@ describe("#7354 X — throw and catch with the Prepared dynamic value", () => {
     ["`=== 'x'`", "try { throw 'x'; } catch (e) { if ((e === 'x') !== @A) throw 1; }", "true", "false"],
     ["ToBoolean of 'x'", "try { throw 'x'; } catch (e) { if (!e !== @A) throw 1; }", "false", "true"],
     ["ToBoolean of ''", "try { throw ''; } catch (e) { if (!e !== @A) throw 1; }", "true", "false"],
+    // (#7354 Str2 merge) TYPEOF_KIND lists the string kind.
+    ["typeof 'x'", "try { throw 'x'; } catch (e) { if ((typeof e === 'string') !== @A) throw 1; }", "true", "false"],
     [
       "a string through `||`",
       "function g(v) { throw v; } try { g(''); } catch (e) { if ((e || 7) !== @A) throw 1; }",
@@ -169,13 +171,15 @@ describe("#7354 X — throw and catch with the Prepared dynamic value", () => {
   // The catch binding is the dynamic value, which is exact only for numbers, booleans, `undefined`, `null` and
   // native strings (and for Error objects, under every operation the carrier has). Each other payload that could
   // reach a catch refuses before it does; the slice that makes one reachable must give the dynamic operations its
-  // arm and update this list.
+  // arm and update this list. (#7354 Ty) The catch binding enters the carrier without the box arm's `boxedKind`, so
+  // this list is also what keeps `TYPEOF_KIND` (the `typeof` answers of the admitted kinds) complete.
   it.each([
     ["a typed Boolean throw", "try { throw true; } catch (e) { if (!e) throw 1; }", "throw val not in slice 9"],
     [
       "a TDZ ReferenceError",
       "function f() { return x; }\ntry { f(); } catch (e) { if (!e) throw 1; }\nlet x = 1;",
-      "runtime callable __new_ReferenceError needs runtime function materialization",
+      // (#7354 O1) The thrown ReferenceError is no carrier kind: the program-wide throw rule refuses it first.
+      "throw of a value outside the dynamic carrier's kinds",
     ],
     [
       "a vector store (the null-vector guard throws a null payload)",
@@ -195,16 +199,33 @@ describe("#7354 X — throw and catch with the Prepared dynamic value", () => {
     ],
   ])("refuses %s before it reaches a catch", async (_label, source, expected) => {
     const result = await compile(source, options());
-    expect(result.success).toBe(false);
+    expect(
+      result.success,
+      "a new payload kind reaches a catch: add its kind to TYPEOF_KIND (src/ir/program/dynamic-value-legalization.ts) " +
+        "so `typeof e` answers it, and give the dynamic operations its arm",
+    ).toBe(false);
     expect(messages(result).join("\n")).toContain(expected);
   });
 
   // Pre-existing on the base: an object throw passes the producer and fails in emission (an invariant, not a
   // named refusal). Pinned so that the slice which makes it compile meets the catch-binding rule above.
+  // (#7354 O1) An object literal is an ordinary object now; until the carrier admits objects, throwing one refuses.
+  const OBJECT_THROW = "throw of a value outside the dynamic carrier's kinds";
   it("does not compile an object throw", async () => {
-    await expect(compile("try { throw {}; } catch (e) { if (!e) throw 1; }", options())).rejects.toThrow(
-      "resolver cannot lower object<>",
+    const result = await compile("try { throw {}; } catch (e) { if (!e) throw 1; }", options());
+    expect(result.success).toBe(false);
+    expect(result.errors.map((error) => error.message).join("\n")).toContain(OBJECT_THROW);
+  });
+
+  // (#7354 Ty review) The same invariant for a populated literal thrown from a callee and tested with `typeof`: the
+  // slice that admits object payloads must add the object kind to TYPEOF_KIND (it merges with the `null` row).
+  it("does not compile an object-literal throw tested with typeof", async () => {
+    const result = await compile(
+      'function f() { throw { a: 1 }; }\ntry { f(); } catch (e) { if (typeof e !== "object") throw 1; }',
+      options(),
     );
+    expect(result.success).toBe(false);
+    expect(result.errors.map((error) => error.message).join("\n")).toContain(OBJECT_THROW);
   });
 });
 
@@ -249,7 +270,8 @@ describe("#7354 X — the legalization arm", () => {
     expect(legalizeDynamicValues(fn([coerce, nested])).blocks[0]!.instrs[0]).toEqual(coerce);
   });
 
-  it("refuses the coercion of a dynamic value that is not thrown", () => {
-    expect(() => legalizeDynamicValues(fn([coerce]))).toThrow(DynamicValueGap);
+  // (#7354 O1) An ordinary object's property stores the carrier too, so an unthrown coercion keeps as well.
+  it("keeps the coercion of a dynamic value that is not thrown", () => {
+    expect(legalizeDynamicValues(fn([coerce])).blocks[0]!.instrs[0]).toEqual(coerce);
   });
 });

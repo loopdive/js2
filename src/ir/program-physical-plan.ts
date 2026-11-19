@@ -17,9 +17,14 @@ import { forEachPreparedIrInstruction } from "./runtime/prepared-instructions.js
 import {
   planNativeInvocationInput,
   nativeInvocationSetup,
+  type NativeInvocationAbiBinding,
   type NativeInvocationPhysicalSetup,
 } from "../backend/wasmgc/program/native-invocation-abi.js";
 import { nativeStringOutputAbiBindings } from "../backend/wasmgc/program/native-string-output-abi.js";
+import {
+  planNativeSourceObjectSetup,
+  type NativeSourceObjectPhysicalSetup,
+} from "../backend/wasmgc/program/native-source-object-abi.js";
 import {
   nativeIntrinsicAbiBindings,
   nativeNumberBinding,
@@ -246,6 +251,19 @@ function planNumberRemainders(
   return resources;
 }
 
+/** The source closure requirements as the plan describes them: every field but the borrowed demand census. */
+function sourceClosureDescription(
+  sourceClosures: NativeSourceClosureRequirements,
+): NonNullable<PhysicalSetupPlan["sourceClosures"]> {
+  const { key, signatures, shapes, units, allocations, refCells, refCellAllocations, gaps } = sourceClosures;
+  return { key, signatures, shapes, units, allocations, refCells, refCellAllocations, gaps };
+}
+
+/** The plan's native call rows: invocation and (#7354 O1) source objects. */
+export function plannedNativeCallBindings(plan: PhysicalSetupPlan): readonly NativeInvocationAbiBinding[] {
+  return [...(plan.nativeInvocation?.bindings ?? []), ...(plan.nativeSourceObjects?.bindings ?? [])];
+}
+
 /** Everything emission will reserve, in the order it will reserve it. Deep-frozen. */
 export interface PhysicalSetupPlan {
   readonly backend: PreparedIrBackendOptions["backend"];
@@ -255,6 +273,8 @@ export interface PhysicalSetupPlan {
   readonly numberRemainders: readonly PhysicalNumberRemainder[];
   readonly sourceClosures?: Omit<NativeSourceClosureRequirements, "demands">;
   readonly nativeInvocation?: NativeInvocationPhysicalSetup;
+  /** (#7354 O1) The realm functions serving the program's `js.object.*` calls. */
+  readonly nativeSourceObjects?: NativeSourceObjectPhysicalSetup;
   readonly nativeRealm?: NativeRealmDescription;
   readonly asyncFrames?: AsyncFrameSetup;
   /** Descriptive only: the issued reservation input stays in the consumer's private record. */
@@ -1265,7 +1285,16 @@ export function planPhysicalSetup(
     ...priorBindings.map((row) => row.entry.order.declarationOrder + 1),
   );
   const nativeInvocation = nativeInvocationSetup(invocation.requirements, invocationOrder);
-  const nativeBindings = [...priorBindings, ...(nativeInvocation?.bindings ?? [])];
+  const sourceObjects = planNativeSourceObjectSetup(
+    native?.realmRequirements,
+    invocationOrder + (nativeInvocation?.bindings.length ?? 0),
+  );
+  for (const gap of sourceObjects.gaps) gaps.add(gap.detail, gap.unitId);
+  const nativeBindings = [
+    ...priorBindings,
+    ...(nativeInvocation?.bindings ?? []),
+    ...(sourceObjects.setup?.bindings ?? []),
+  ];
   if (nativeBindings.length) sealNativeBindingPlan(program, nativeBindings);
   const hostNumberOutcome = planHostNumberBoundary(
     program,
@@ -1487,21 +1516,9 @@ export function planPhysicalSetup(
     exceptionTag: { required: exceptionRequired || options.sharedExceptionTag, shared: options.sharedExceptionTag },
     vectors,
     numberRemainders,
-    ...(sourceClosures
-      ? {
-          sourceClosures: {
-            key: sourceClosures.key,
-            signatures: sourceClosures.signatures,
-            shapes: sourceClosures.shapes,
-            units: sourceClosures.units,
-            allocations: sourceClosures.allocations,
-            refCells: sourceClosures.refCells,
-            refCellAllocations: sourceClosures.refCellAllocations,
-            gaps: sourceClosures.gaps,
-          },
-        }
-      : {}),
+    ...(sourceClosures ? { sourceClosures: sourceClosureDescription(sourceClosures) } : {}),
     ...(nativeInvocation ? { nativeInvocation } : {}),
+    ...(sourceObjects.setup ? { nativeSourceObjects: sourceObjects.setup } : {}),
     ...(native?.realmRequirements ? { nativeRealm: native.realmRequirements.description } : {}),
     ...(asyncFrames?.frames.length ? { asyncFrames } : {}),
     ...(hostNumberBoundary?.imports.length ? { hostNumberBoundary } : {}),
