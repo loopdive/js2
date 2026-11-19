@@ -1776,6 +1776,7 @@ export function prepareIrProgramSources(
             : resolver,
         ...(nativeStringValues ? { stringNumericCoercion: "number-boundary" as const } : {}),
         numericThrow: "number-boundary",
+        unselected: true,
         ...(nativeDelay ? { promiseDelays: promiseDelaysBySource.get(source) } : {}),
         ...(family ? { logicalVectorTypes: family.logicalVectorTypes } : {}),
         ...(moduleInit
