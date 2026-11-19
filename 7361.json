@@ -1,11 +1,10 @@
 {
   "id": "7361",
-  "assignee": "",
-  "requested_by": "ttraenkler/senior-dev",
-  "status": "reserved",
-  "branch": "",
-  "reserved_at": "2026-11-18T03:54:25Z",
-  "updated_at": "2026-11-18T03:54:25Z",
-  "write_id": "12264-50vy1l38",
-  "pr_scan": "degraded"
+  "assignee": "ttraenkler/c-lead",
+  "requested_by": "ttraenkler/c-lead",
+  "status": "in-progress",
+  "branch": "claude/7361-typeof-static",
+  "claimed_at": "2026-11-19T12:33:56Z",
+  "updated_at": "2026-11-19T12:33:56Z",
+  "write_id": "2890-qovbg3hf"
 }
