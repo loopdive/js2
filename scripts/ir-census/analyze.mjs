@@ -13,6 +13,8 @@
  * - a lever "frees" a blocked file when every reason of the file is in it.
  */
 import { readFileSync, writeFileSync } from "node:fs";
+import { resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { LEVERS, leverOf } from "./levers.mjs";
 import { fileReasons } from "./reasons.mjs";
@@ -214,7 +216,7 @@ function withReasons(rows) {
   );
 }
 
-if (process.argv[1]?.endsWith("analyze.mjs")) {
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const today = withReasons(readRows(arg("--rows")));
   const basePath = arg("--base");
   const base = basePath ? withReasons(readRows(basePath)) : undefined;
