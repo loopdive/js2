@@ -2337,3 +2337,220 @@ Fresh-context review of `66e72e6df9..e3dbdce3b6`. Answers per finding:
 Ordinary pipeline: 38 programs (`typeof` of the 16 names in comparisons and `?:`, `typeof arguments` in and out of a
 function, a switch, `globalThis`) × {default, standalone}, origin/main `89e4748241` vs this head: 76/76 identical
 binary hashes and diagnostics.
+
+## J plan (dyn.json_stringify, 2026-11-19)
+
+Branch `claude/7354-json` (`093a410582` = `claude/7354-ty-r2` + merge of `claude/7350-b2c-error-json`). Figures below
+were read from this head and from `origin/claude/7354-integration` (`87655f3f65`) with `git show`; only the probes
+named here were run. Probes: `.tmp/j-probe*.mts` (IR dump through a loader hook, `.tmp/dvl-wrap.ts`).
+
+### 1. How `JSON.stringify(v)` lowers today
+
+- **from-ast** (`src/ir/from-ast.ts:9747-9767`): a one-argument call on the ambient `JSON` lowers the argument with a
+  dynamic hint and calls `emitDynJsonStringify` (`src/ir/builder.ts:704-718`). A concrete operand is boxed first.
+- **The IR instruction** (`src/ir/core/dialect/js.ts:180-191`) is `dyn.json_stringify{value}`. Its result type is
+  always `string`: the ordinary pipeline lowers it to the codec root `__json_stringify_root`
+  (`src/ir/integration.ts:10047-10055`, `src/codegen/json-codec-native.ts:1490-1527`). That root returns `"null"`
+  for a top-level `undefined` (a documented PR-A limitation). The spec answer is `undefined`.
+- **Probe, on this head.** `function g(v){ return typeof JSON !== "undefined" ? JSON.stringify(v) : "x"; }`. Ty
+  folds the conditional, and the IR is `s = dyn.json_stringify v : string; d = box s : dynamic(String); return d`.
+- **Where it refuses.** `legalizeDynamicValues` has no arm for it. The default arm
+  (`src/ir/program/dynamic-value-legalization.ts:229`) calls `gap("dyn.json_stringify")` (`:47`):
+  `dynamic operation dyn.json_stringify has no Prepared intrinsic`. This is pinned in
+  `tests/issue-7354-ty-typeof-comparisons.test.ts:394-400`.
+- **Harness site.** In `test262/harness/assert.js` the call is line 27 (`formatIdentityFreeValue`, `case 'string'`).
+  The census label "assert.js:135/136" is a position in the assembled prelude; that mapping was not checked.
+  Other prelude sites (`iteratorZipUtils.js`, `nativeFunctionMatcher.js`, `testIntl.js`) are all `"…" + JSON.stringify(x)`.
+
+### 2. Base: J needs Str2 and Fa
+
+Building J on this head alone would duplicate other slices. It needs three things this head lacks:
+
+- Str2's per-kind ToString machinery: `TO_STRING_ARM`, `kindChain`, `toStringArm`, `text`, `js.value.is_string`,
+  `js.value.as_string`, and the number formatter `PREPARED_NUMBER_TO_STRING` with its formatter census
+  (`src/ir/program/number-to-string-target.ts`, `src/compiler/prepared-formatter-census.ts`).
+- Fa's `function` carrier kind. Without it no non-primitive kind exists, so there is no abort arm to build or test.
+- B2c's quote body. This head has it; integration does not.
+
+`origin/claude/7354-integration` has Str2's tables, Ty-r2 and Fa, but not B2c. **First step:** merge
+`origin/claude/7354-integration` into `claude/7354-json`. This head lacks Str2 and Fa, so J cannot start before that
+merge. The integration file is already 658 lines (`legalizationBuilders` 187 lines, `legalizeDynamicValues` 195).
+
+### 3. Target structure
+
+One kind table, no parallel switch. Every piece is a row next to its siblings.
+
+- **`src/ir/program/dynamic-value-legalization.ts`**:
+  - New table `JSON_ARM: Readonly<Record<CarrierKind, "quote" | "number" | "to-string" | "undefined" | "abort">>`,
+    placed next to `TO_STRING_ARM` and `ADD_ROLE`. Rows:
+    - `string: "quote"`;
+    - `number: "number"`;
+    - `boolean: "to-string"`;
+    - `null: "to-string"`;
+    - `undefined: "undefined"`;
+    - `function: "abort"`.
+  - Being a `Record`, the table makes the next kind (O's object kind, A2's arrays) state its row. Until
+    SerializeJSONObject/Array exists, that row is `"abort"`.
+  - New builder `jsonOf(instr, value, result)` in `legalizationBuilders`, a sibling of `stringOf`. It is
+    `kindChain(..., CARRIER)` over `kindsOf(value)`. A box-proven kind takes one arm with no test
+    (`JSON.stringify(1)`).
+  - The arms:
+    - `quote`: `js.value.json_quote(v)` → string → `coerce.to_externref`.
+    - `number`: `js.number.unbox`, then a finite test in IR (`f64.sub n n`, `f64.eq` with `0`; NaN and ±Infinity
+      fail it). Finite → the formatter (Number::toString; −0 prints "0"). Otherwise `text("null")`. Then
+      `coerce.to_externref`.
+    - `to-string`: `toStringArm(instr, kind, …)` (boolean → "true"/"false", null → "null"), then
+      `coerce.to_externref`.
+    - `undefined`: `js.value.undefined`.
+    - `abort`: `js.value.json_unsupported()`.
+  - `expand` gains `case "dyn.json_stringify": return jsonOf(instr, instr.value, instr.result!)`.
+  - **Small refactors this needs, not copies:**
+    - `kindChain` takes a `resultType` (default `STRING`). It passes it to `branch`, which already has the
+      parameter.
+    - ToString's `format` arm is split into `formatNumber(number, result)`. ToString and the JSON number arm both
+      call it, so the number is unboxed once.
+- **Intrinsics** (two new ids, same files and shape as Ty's `is_number` / `is_boolean` rows, commit `1ac186e0cf`):
+  - `js.value.json_quote`: `(externref) -> string`. It reuses Str2's `EXTERNREF_TO_STRING_INTRINSIC_SIGNATURE`.
+  - `js.value.json_unsupported`: `() -> externref`. It reuses `NULLARY_TO_EXTERNREF_INTRINSIC_SIGNATURE`, so there is
+    no dead operand.
+  - Files: `src/ir/core/intrinsic-vocabulary.ts` (`DYNAMIC_VALUE_INTRINSIC_IDS`), `src/ir/core/intrinsics.ts`
+    (`INTRINSIC_DEFINITIONS`), `src/ir/runtime/contracts/intrinsics.ts` (`DYNAMIC_VALUE_RUNTIME_FEATURES`),
+    `src/ir/runtime/contracts/manifest.ts` (`native.js.value.json_quote`, `native.js.value.json_unsupported`),
+    `src/ir/runtime/dynamic-value-callables.ts` (`SYMBOLS`: `__json_quote_string`, `__json_stringify_unsupported`),
+    and `src/backend/wasmgc/program/native-primitive-boundary-abi.ts` (`canonicalRow` ×2).
+- **Resources** (`src/backend/wasmgc/resources/native-dynamic-values.ts`): two `ROWS` entries and two selection
+  fields (`jsonQuote`, `jsonUnsupported`).
+  - **Quote fill.** `buildJsonQuoteStringDefinition` from `src/runtime/wasmgc/values/json-bodies.ts` (#7330), reused
+    and not copied.
+    - Its bindings come from the string pack: `layout.anyStrTypeIdx`, the NativeString and `$__str_data` type
+      indices, and the flatten handle.
+    - The flatten pack comes with the existing `strings` dependency. The condition that passes it widens from
+      `strictEqStrings` to `strictEqStrings || jsonQuote` (`native-string-values.ts`).
+    - The body's locals are run-length (`{count, type}`); `fillFunction` takes `LocalDef` (`{name, type}`). This
+      needs a three-line expansion at the fill. Better: lane S5 has json-bodies return named locals, if the legacy
+      bytes stay identical.
+  - **Abort fill.** The body is `[unreachable]`.
+- **Front end, result type.** The honest result is "a string or `undefined`", which is the dynamic value. So on the
+  Prepared lane only:
+  - `programDynamicContracts().resolver` (`src/ir/source-dynamic-contracts.ts:196-200`, `:228-232`) gains
+    `jsonStringifyResultIsDynamic: () => true`. The interface is at `src/ir/from-ast.ts:976`.
+  - `emitDynJsonStringify(value, resultType)` takes the type: `irDynamic()` when the flag holds, otherwise `string`.
+  - `verify.ts:1131-1137` accepts `string | dynamic` as the result.
+  - The doc in `dialect/js.ts` says which lane uses which result.
+  - The ordinary resolver (`integration.ts:7253`, `dynamicCarrierIsExternref = !ctx.fast`) does not set the flag.
+    So the ordinary IR, and its bytes, do not change.
+  - `dynamicCarrierIsExternref` is not reused here: it is true on ordinary standalone too.
+- **Reused:**
+  - the quote body (`json-bodies.ts`);
+  - Number::toString (Str2's formatter binding, no second formatter);
+  - ToString's boolean and null arms;
+  - `kindChain`, `kindsOf`, `text` and `branch`;
+  - `js.value.undefined`;
+  - the dynamic-value resource row and fill pattern.
+- **Duplicate removed:** none exists today. The `formatNumber` split prevents one: without it the JSON number arm
+  would copy the format arm.
+- **The abort mechanism.** No IR-level named abort exists to reuse.
+  - B2a (`native-realm-globals.ts:196-201`) states the rule ("a dynamic one aborts uncatchably"). It has no mechanism:
+    its abort tests land with B2b.
+  - A2 (`claude/7354-arrays-a2-runtime`, `array-length-bodies.ts`) uses an inline `unreachable` in a runtime body,
+    named by a comment, and tests it with `toThrow(WebAssembly.RuntimeError)`.
+  - J's abort is a runtime function with its own name. Prepared binaries carry a name section (probe: one `name`
+    section), so the trap's stack names `__json_stringify_unsupported`.
+  - Only J uses it now, so it gets no generic family. A second user generalises it (see 7, risk 1).
+
+### 4. The result value
+
+- From the flag on, `dyn.json_stringify`'s result on this path is `dynamic`, so the legalization's existing
+  `resultType` mapping turns it into `CARRIER`.
+- Every string arm wraps its native string with `coerce.to_externref`. This is the string carrier Str uses, the
+  same pattern as Str2-c's `concat`.
+- The `undefined` arm returns the `undefined` singleton (`js.value.undefined`).
+- The probe's `box s` disappears: from-ast boxes only a non-dynamic value, so `return JSON.stringify(v)` returns the
+  carrier directly.
+- `"…" + JSON.stringify(x)` becomes Str2-c's dynamic `+`, so `undefined` prints as "undefined", as in node.
+
+### 5. Tests (`tests/issue-7354-j-json-stringify.test.ts`)
+
+Each program runs twice against node: once with node's answer (it returns) and once with a wrong answer (it throws).
+This is Ty's `expectLikeNode`.
+
+- **Strings.** `""`, `"a"`, `"\""`, `"\\"`, `"\b\t\n\f\r"`, `"\u0001"`, `"\u001f"`, a lone `"\ud800"`, a lone
+  `"\udc00"`, the pair `"😀"`, `" "`, and a concatenation (a rope) as the operand.
+- **Numbers.** `0`, `-0`, `1`, `-1.5`, `1e21`, `1e-7`, `NaN`, `Infinity`, `-Infinity` (the last three give "null").
+- **Others.** `true`, `false` and `null`. For `undefined`: `JSON.stringify(undefined) === undefined`,
+  `typeof JSON.stringify(void 0) === "undefined"`, and `"x" + JSON.stringify(undefined) === "xundefined"`.
+- **Positions.** The operand as a parameter (all kinds), as a literal (one arm: an IR-level unit test asserts no
+  kind test is emitted), as a return value, in `?:`, and in Ty's assert.js conditional shape.
+- **Abort** (needs Fa):
+  - `function f(){}; JSON.stringify(f)` throws `WebAssembly.RuntimeError`, whose `stack` contains
+    `__json_stringify_unsupported`.
+  - It is not caught by `try { JSON.stringify(f) } catch (e) {}` in the program, nor by an `assert.throws`-style
+    wrapper that catches everything.
+  - A program whose `JSON.stringify(f)` is never executed compiles and returns.
+- **Pins:**
+  - Ty's refusal pin (`issue-7354-ty-typeof-comparisons.test.ts:394-400`) becomes a run against node.
+  - R census (`tests/issue-7354-r-provider-census.test.ts`): two provider rows, same form as the `IDS` table at :508.
+  - `issue-3518-core-vocabulary-seam.test.ts:173`: the count rises by 2.
+  - `issue-3518-semantic-verification-ownership`: the `INTRINSIC_DEFINITIONS` pin hash.
+  - D1's selection pin: the two new fields.
+- **Mutations.** Each `JSON_ARM` row, the finite test, the `undefined` arm, the abort arm, and the flag. Deleting
+  each one must turn a test red.
+- **Bytes.** The ordinary pipeline's bytes must be identical on the 100-file sample plus all of
+  `built-ins/JSON/stringify`, × JS environment and `--target standalone`.
+
+### 6. Acceptance
+
+- Every row above answers like node through the strict Prepared entry. A wrong answer throws.
+- The object kinds abort, uncatchably, with the name in the trap's stack. They never give a wrong string.
+- The pins are updated and the mutations are killed. The ordinary bytes are identical. Typecheck, loc, func,
+  coercion, oracle, dead-exports, import-cycles and boundaries all pass, and loc/func also pass with
+  `LOC_GATE_BASE` set to the upstream tip.
+- **Code quality:**
+  - one `JSON_ARM` row per kind and no second kind switch;
+  - `jsonOf` sits beside `stringOf` and is built from `kindChain`;
+  - the quote body is imported from `json-bodies.ts`, never copied;
+  - there is one Number::toString binding;
+  - both intrinsics follow the `is_number` row pattern in every file;
+  - no function grows past its budget without a dated grant. If `legalizationBuilders` passes about 220 lines, the
+    JSON builder and its table move out together.
+- **Re-measure.** After J, the census of the 6,674 files is re-run on integration. The first gaps are tallied
+  before and after.
+
+### 7. Will assert.js compile for a passing test?
+
+- **The `JSON.stringify` site: yes.** The abort is a run-time arm, so compiling never depends on which kinds reach
+  the call. A passing test never calls `formatIdentityFreeValue`, so it never runs the abort.
+- **The function as a whole: probably not yet. This is an estimate, not measured.**
+  - The next lines are `String(value) + "n"` (assert.js:29) and `String(value)` (:36). They are ToString of a
+    parameter, so the chain includes Fa's `function` kind.
+  - On integration, `TO_STRING_ARM.function` is `"refuse"`, a compile-time gap.
+  - So the 6,674 files would most likely move about two lines down, to `ToString of a function value has no Prepared
+    intrinsic`, and none would newly pass from J alone.
+
+### 8. Open questions and risks
+
+1. **Does J also change ToString's `function` row to the run-time abort?** The lead's rule: a dynamic case aborts,
+   never a wrong answer. This decides whether J moves any file.
+   - If yes, the abort has two users. It becomes one named-abort family (`js.value.unsupported:<operation>`, parsed
+     like `js.closure.call:N`, one runtime function per operation name), instead of two copied rows.
+   - That widens J by about 40 lines and touches the R census differently.
+   - **Alternative:** narrow the kind under a `typeof` guard. Inside `case 'string':` the value is a string, so
+     JSON gets only the quote arm and ToString gets no function arm. That is a larger mechanism (flow-sensitive
+     `kindsOf`, like Ty's comparison analysis) and its own slice. Neither is assumed here.
+2. **Function kind: spec vs abort.** Node answers `undefined` for a function. J aborts anyway: SerializeJSONProperty
+   step 2 first reads `toJSON` (GetV), and a function object's bag can hold one once C2 lands. Answering `undefined`
+   needs the member read first.
+3. **Base merge.** Merging integration into this branch is a prerequisite (section 2). Its conflicts in the
+   legalization tables are not estimated.
+4. **Function size.** `legalizationBuilders` (187 lines) and `legalizeDynamicValues` (195) are already large.
+   About 30 more lines fits under the 300 limit but adds to a growing builder. Splitting the per-kind tables and
+   builders into their own module is a candidate cleanup issue, not J's job.
+5. **UTF-8 storage.** The quote body reads WTF-16 code units after flatten. Under `utf8Storage: true` this is
+   unverified. The row should refuse by name there, unless flatten always yields WTF-16.
+6. **The ordinary root's `undefined` → `"null"` is a wrong answer.** It is not fixed here: that would change gc and
+   standalone bytes. File it as its own issue.
+7. **Size estimate (not measured).**
+   - Source: about 110 lines (intrinsic rows about 15, resources about 20, legalization about 50, front end and
+     verifier about 15, string-values wiring about 5).
+   - Tests: about 250 lines.
+   - It fits in one slice only if questions 1 and 3 do not grow it.
