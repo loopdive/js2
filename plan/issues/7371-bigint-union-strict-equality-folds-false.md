@@ -61,4 +61,4 @@ out of the fold, routing them to the runtime strict-equality helper (`ensureExte
 
 **Loose `==`** against a BigInt (`b == 1n`) with a BigInt value in an `externref` answers `false` even for
 `b: any`, so it is not this fold. The BigInt × Number loose-equality arm converts the dynamic side through ToNumber.
-It needs its own issue.
+Filed as #7373.
