@@ -5,6 +5,7 @@
 // semantic intrinsics the Prepared backend binds (`js.number.*`, `js.boolean.box`, `js.extern.is_undefined`,
 // `js.value.*`) and carries the value physically as `externref`. Every other dynamic operation, and every flow of a
 // dynamic value into a typed position without a conversion the source wrote, refuses by name.
+import { NO_PROGRAM_KINDS } from "../src/ir/program/dynamic-value-kinds.js";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as gc from "../src/codegen/index.js";
 import * as linear from "../src/codegen-linear/index.js";
@@ -23,7 +24,7 @@ import {
   type Test262CompileOptions,
 } from "../src/test262/test262-prepared-entry.js";
 
-const legalize = (fn: IrFunction): IrFunction => legalizeDynamicValues(fn, new AllocSiteRegistry());
+const legalize = (fn: IrFunction): IrFunction => legalizeDynamicValues(fn, new AllocSiteRegistry(), NO_PROGRAM_KINDS);
 
 const options = (target: "standalone" | "gc"): Test262CompileOptions =>
   ({
@@ -207,7 +208,12 @@ describe("#7354 D1 — the dynamic value on the Prepared standalone path", () =>
     // (#7354 T) The null tag test and ToBoolean are expressed now (tests/issue-7354-t-truthiness-null.test.ts).
     // (#7354 Str2-c) Dynamic `+` is expressed now (tests/issue-7354-str2c-dynamic-add.test.ts).
     // (#7354 Str) The property key enters the dynamic value as a string now; the member read itself has no intrinsic.
-    ["a member read", "return id(1).x === 1 ? 1 : 0;", "dynamic operation dyn.member_get has no Prepared intrinsic"],
+    // (#7354 O4) A member read with a constant key is expressed now (tests/issue-7354-o4-member-read.test.ts).
+    [
+      "a computed member read",
+      'return id(1)[id("x")] === 1 ? 1 : 0;',
+      "dynamic operation dyn.member_get with a computed key has no Prepared intrinsic",
+    ],
     // (#7354 Ty, Str2) A typeof comparison and a typeof value are expressed now
     // (tests/issue-7354-ty-typeof-comparisons.test.ts, tests/issue-7354-str2-to-string.test.ts).
     ["`**`", "return id(2) ** 3;", "'**' on a dynamic operand"],

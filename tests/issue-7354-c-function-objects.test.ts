@@ -62,3 +62,35 @@ describe("#7354 C — `this` on the Prepared path", () => {
     expect(result).toContain("dynamic operation dyn.current_this has no Prepared intrinsic");
   });
 });
+
+describe("#7354 C — the function kind of the dynamic value", () => {
+  it("answers `typeof` of a function value as the chain's last kind", async () => {
+    const program = (answer: string) => `var f = function () {}; var t = typeof f; if (t !== "${answer}") throw 1;`;
+    expect(await run(program("function"))).toBe("returned");
+    expect(await run(program("object"))).toBe("threw");
+  }, 120_000); // two programs that pull in the native realm (~20 s each to compile)
+
+  it("keeps a program without function values off the function kind", async () => {
+    expect(await run('function g(v) { return "" + v; } if (g(1) !== "1") throw 1;')).toBe("returned");
+    expect(await run('function g(v) { return typeof v === "function"; } if (g(1)) throw 1;')).toBe("returned");
+  });
+});
+
+describe("#7354 C — objects and function values in one program", () => {
+  // The object kind's test is the complement of the other kinds, and the function kind has none yet; a value that may
+  // be either is ToPrimitive'd through Get and Call, which are not built.
+  it.each([
+    [
+      "`+` on a value that may be an object or a function",
+      'var o = { a: 1 }; var f = function () {}; var s = "" + o;',
+      "+ on a function value",
+    ],
+    [
+      "the object kind's test",
+      'var o = { a: 1 }; var f = function () {}; var b = typeof o === "object";',
+      "kind test of a function value",
+    ],
+  ])("refuses %s by name", async (_, program, message) => {
+    expect(messages(await strict(program))).toContain(`dynamic operation ${message} has no Prepared intrinsic`);
+  });
+});

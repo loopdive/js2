@@ -15,7 +15,9 @@ import {
   type Test262CompileOptions,
 } from "../src/test262/test262-prepared-entry.js";
 import type { RuntimeProviderDefinition } from "../src/ir/runtime/contracts/manifest.js";
-import type { PhysicalNativeStringSetup } from "../src/ir/program-physical-plan.js";
+import type { PhysicalNativeStringSetup, PhysicalSetupPlan } from "../src/ir/program-physical-plan.js";
+import type { EmittedPreparedIrProgram } from "../src/ir/program.js";
+import { emittedNativeRealmSlots } from "../src/ir/program-consumer.js";
 import type { NativeSetupSlots } from "../src/compiler/prepared-provider-census.js";
 import { RUNTIME_PROVIDERS } from "../src/ir/runtime/manifest.js";
 import { preparedIrDataMismatch } from "../src/ir/program/data.js";
@@ -33,8 +35,11 @@ const census = vi.hoisted(() => ({
     | undefined
     | ((providers: readonly RuntimeProviderDefinition[]) => readonly RuntimeProviderDefinition[]),
   slots: undefined as undefined | ((slots: NativeSetupSlots) => NativeSetupSlots),
-  receipts: undefined as undefined | ((receipts: readonly Receipt[]) => readonly Receipt[]),
+  receipts: undefined as
+    | undefined
+    | ((receipts: readonly Receipt[], emitted: EmittedPreparedIrProgram) => readonly Receipt[]),
   setup: undefined as undefined | ((setup: PhysicalNativeStringSetup) => PhysicalNativeStringSetup | undefined),
+  plan: undefined as undefined | ((plan: PhysicalSetupPlan) => PhysicalSetupPlan),
   target: undefined as undefined | "gc" | "wasi",
   forged: new WeakMap<object, unknown>(),
 }));
@@ -55,17 +60,17 @@ vi.mock("../src/ir/program-consumer.js", async (original) => {
     ...real,
     emittedSupportFunctionReceipts: (...args: Parameters<typeof real.emittedSupportFunctionReceipts>) => {
       const receipts = real.emittedSupportFunctionReceipts(...args);
-      return census.receipts?.(receipts) ?? receipts;
+      return census.receipts?.(receipts, args[0]) ?? receipts;
     },
     // (#7354 Str) A forged plan is ONE object, as the emission's own plan is: the census, the presentation's record
     // and its finalization all read the same forgery. (A fresh object per read would be a plan replaced between
     // presentation and finalization, which the finalization's identity check exists to catch.)
     emittedPhysicalSetupPlan: (...args: Parameters<typeof real.emittedPhysicalSetupPlan>) => {
       const plan = real.emittedPhysicalSetupPlan(...args);
-      if (!plan.nativeStrings || !census.setup) return plan;
       if (!census.forged.has(plan)) {
-        const setup = census.setup(plan.nativeStrings);
-        census.forged.set(plan, setup === plan.nativeStrings ? plan : { ...plan, nativeStrings: setup });
+        const setup = plan.nativeStrings && census.setup ? census.setup(plan.nativeStrings) : plan.nativeStrings;
+        const strings = setup === plan.nativeStrings ? plan : { ...plan, nativeStrings: setup };
+        census.forged.set(plan, census.plan?.(strings) ?? strings);
       }
       return census.forged.get(plan) as typeof plan;
     },
@@ -95,7 +100,7 @@ function forbidDirectGenerators(): void {
 }
 afterEach(() => {
   vi.restoreAllMocks();
-  census.providers = census.slots = census.receipts = census.setup = census.target = undefined;
+  census.providers = census.slots = census.receipts = census.setup = census.plan = census.target = undefined;
   census.forged = new WeakMap();
 });
 
@@ -245,6 +250,46 @@ describe("#7354 R — the census refuses what joins nothing", () => {
   ])("refuses a support population that %s", async (_, alter) => {
     census.receipts = alter;
     expect(await refusal()).toContain(RUNTIME_DEMAND);
+  });
+
+  // (#7354 O1) The realm's functions are support receipts like any other: each joins the realm's own completed slot,
+  // by index and key, exactly once. (The unaltered realm program presents: `issue-7354-o-objects.test.ts`.)
+  const realmProgram = "function f(){ var o = { a: 1 }; return o.a; } if (f() !== 1) throw 1;";
+  const realmFunctions = (emitted: EmittedPreparedIrProgram) => emittedNativeRealmSlots(emitted)!.functions;
+  it.each([
+    [
+      "adds a receipt at a realm function's index with a key the realm never reserved",
+      (rows: readonly Receipt[], emitted: EmittedPreparedIrProgram) => [
+        ...rows,
+        { key: "forged:not-a-realm-key", index: realmFunctions(emitted)[0]!.index },
+      ],
+    ],
+    [
+      "duplicates a realm function's receipt",
+      (rows: readonly Receipt[], emitted: EmittedPreparedIrProgram) => [
+        ...rows,
+        rows.find((row) => row.index === realmFunctions(emitted)[0]!.index)!,
+      ],
+    ],
+    [
+      "drops every realm function's receipt",
+      (rows: readonly Receipt[], emitted: EmittedPreparedIrProgram) =>
+        rows.filter((row) => !realmFunctions(emitted).some((realm) => realm.index === row.index)),
+    ],
+  ])("refuses a realm program's support population that %s", async (_, alter) => {
+    census.receipts = alter;
+    expect(await refusal(realmProgram)).toContain(RUNTIME_DEMAND);
+  });
+
+  it("refuses a realm program whose object call row binds a key the realm never served", async () => {
+    census.plan = (plan) => ({
+      ...plan,
+      nativeSourceObjects: {
+        ...plan.nativeSourceObjects!,
+        bindings: plan.nativeSourceObjects!.bindings.map((row, i) => (i ? row : { ...row, resourceKey: "forged" })),
+      },
+    });
+    expect(await refusal(realmProgram)).toContain(RUNTIME_DEMAND);
   });
 
   type Declaration = PhysicalNativeStringSetup["resources"]["declarations"][number];

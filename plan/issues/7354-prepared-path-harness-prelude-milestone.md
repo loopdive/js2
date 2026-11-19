@@ -67,7 +67,7 @@ loc-budget-allow:
   - src/ir/from-ast.ts
   - src/compiler/ir-program-presentation.ts
 import-cycles-allow:
-  - backend->ir: 119 # 2026-11-17 (#7354 Str review 2): the native string length emitter reads the selected carrier field through the shared preparedStringLenProvider (ir/runtime/intrinsic-preparation.ts) instead of re-implementing it
+  - backend->ir: 120 # 2026-11-17 (#7354 Str review 2): the native string length emitter reads the selected carrier field through the shared preparedStringLenProvider (ir/runtime/intrinsic-preparation.ts) instead of re-implementing it; 2026-11-19 (#7354 Perf2, f6694dada4): native-string-values.ts settles its reservation-input currentness check with the shared settled verdict (ir/program/settled-verdict.ts) that the IR requirement modules use; the verdict cannot move to src/shared because it reads the frozen-collection brand private to ir/program/data.ts
   - ir->runtime: 11 # 2026-11-19 (#7354 Ty review 3): ambient-typeof.ts (the ordinary lane's typeof fold, whose duplicate tag list it replaces, and the Prepared typeof of a global, moved there from source-dynamic-contracts.ts) reads the realm's global table (runtime/contracts/native-realm-globals.ts, #7350 B2a). runtime/contracts is a leaf (it imports nothing from ir); it is the layer IR reads realm data from, as in 4 of the 10 existing edges (realm-keys.ts and native-realm-requirements.ts read native-realm-catalog.ts, js-tag.ts reads js-value-tags.ts, native-prototype-requirements.ts reads builtin-brands.ts). The pair is two-way only through runtime/standalone-timer-callback-bridge.ts -> ir/async-runtime-providers.ts; no SCC grows
 ---
 
@@ -2188,6 +2188,13 @@ had no arm that binds a source call to a realm function, and the Prepared runtim
 string and formatter setups. This branch builds the shared join, and its first row, the source objects of slice O
 (step O1). Lane S4 (slice Fa) adds the closure/invocation owner as one more row.
 
+Review round 2 (RV7312, branch `claude/7354-realm-r2b`): the property-key fold moved to
+`src/shared/property-key-fold.ts`, so the resolver and the lowering share it and `{ ['a']: 3 }` runs again; both
+carrier rules ask one predicate (`carrierKind`: dynamic, string, boundary-boxed number or Boolean, `null`), and the
+throw rule binds only a program with a catch binding; the reference scan sees `{ o }` shorthand references and has
+resolver-level tests; the #3525 allocation and method-key pins and the #3518 callable-contract pin follow the new
+shape.
+
 ### Built
 
 - **Census join.** The consumer records the physical indices of the realm's completed functions, types and globals
@@ -2966,6 +2973,52 @@ O1 to O4 (these are this slice's steps, not #7352's parked ordinary-pipeline sli
   dynamic-value table; no adapter re-implements a kernel algorithm; no file or function over its budget without a
   dated grant.
 
+### O2–O4 design, revised (2026-11-19, after O1)
+
+- **The object kind.** `CarrierKind` gains `object`, last in `KIND_ORDER`, so every total chain reaches it untested.
+  Its kind test is the complement of the others (`KIND_TEST.object = "complement"`: no other admitted kind), exact
+  because the admitted set is exact; a later kind (Fa's `function`) gets its own test and leaves the complement
+  right. `typeof` answers `"object"` for `null` and `object` (the `string.eq` arm tests the union). A box of a value
+  whose producer is `js.object.create-default` is the object kind; any other reference still refuses.
+- **ToPrimitive of an ordinary object, with a checked precondition.** OrdinaryToPrimitive of an object built by
+  `create-default` on the realm's pristine Object.prototype, in a program that stores no callable into an object and
+  defines no own `toString` / `valueOf`, answers `"[object Object]"` for every hint (ToNumber: NaN). The legalization
+  asks one program-wide predicate (`objectsArePlain`): no `define-accessor`, no callable value stored by
+  `define-data` / `set`, every defined or set key a string constant other than `toString` / `valueOf`, and no
+  producer of a realm object other than `create-default`. When it does not hold, the object arm of ToString, `+` and
+  ToNumber refuses by name. The arm is also keyed on the kind table: a compile-time assertion that `CarrierKind` has
+  no callable kind fails the build when Fa adds one, so the arm cannot outlive its precondition silently.
+- **Member read (O4).** `dyn.member_get(receiver, key)` with a constant key legalizes to one kind chain over the
+  receiver: `undefined` / `null` throw a TypeError (the source `__new_TypeError` call binds the realm errors pack's
+  constructor, one more realm-served row); `object` is `js.object.get(receiver, key, receiver)`; a primitive answers
+  `undefined` when the key names no property of its wrapper prototype or Object.prototype (a fixed list from the
+  specification, plus `length` and array indices for strings) under the same pristine-prototype precondition, and
+  refuses by name otherwise. A non-constant key refuses by name.
+- **Member write (O3).** `js.object.set` = OrdinarySet on the realm (a contract beside `get`, an adapter over the
+  kernel's lookup and the descriptor pack's define); the same receiver chain, a primitive receiver refusing by name.
+- **Catch.** The program-wide throw rule applies only where the program binds a catch: a TypeError thrown from a
+  member read is no carrier kind, so a program that also catches refuses by name until an error kind exists.
+
+- **for-in (O5, #7377).** `for (k in o)` over an ordinary object (188 files in the ES5 sample) is its own lane,
+  stacked on `claude/7354-o` after O3: it enumerates the realm object's own enumerable string keys in insertion order
+  under the same pristine-prototype precondition, and refuses by name otherwise.
+
+### O4 result (2026-11-19, `claude/7354-o` 53357b3b9f)
+
+- Built as designed above, in `src/ir/program/dynamic-member-read.ts`. The prototype key lists are in
+  `builtin-prototype-keys.ts`, and the gap error is in a leaf, `dynamic-value-gap.ts`, so `legalizationBuilders`
+  stays under its function budget. The source `__new_TypeError` call is the contract `js.object.create-type-error`,
+  served by the realm errors pack's existing constructor.
+- The get adapter traps only on an unknown carrier (status 3); an incomplete parent (status 2) reads `undefined`,
+  because every key the realm's prototypes would hold refuses at the call site.
+- Integration (lead, 2026-11-19): the perf2 base's `backend->ir` edge (`native-string-values.ts` ->
+  `settled-verdict.ts`) is granted in this file's frontmatter, and `settled-verdict.ts` is classified. `ProgramObjects`
+  and `NO_OBJECTS` live in `dynamic-value-kinds.ts`, so the clean `ir-program` modules do not reach the
+  frontend-side predicate `source-plain-objects.ts`.
+- Open for whichever of O and Ty (#7327) lands second: the Str2 pin "typeof String" in
+  `tests/issue-7354-str2-to-string.test.ts` still expects `identifier "String" is not in scope`. After Ty, it
+  answers from the realm table.
+
 ## Slice C: Implementation Plan (2026-11-19)
 
 Branch `claude/7354-c`. Base for this plan: `claude/7354-o` at `3adb860fc8` (O's plan, on Perf2). `claude/7354-fa`
@@ -3060,6 +3113,22 @@ source-closure arm (`ref.test` of the realm's closure root), whose bag is the cl
 `js.object.get` / `set` with the closure as the object, and `js.function.object` is dropped. The `function` carrier
 kind (its `typeof`, ToString, `+` and kind-test rows) is Fa's (PR #7309), which admits function values into the
 carrier; C builds on it.
+
+### The kernel's source-closure arm (design, 2026-11-19)
+
+- `match` gains one arm after the builtin entries: a value that passes `ref.test` of the closure root and fails
+  `ref.test` of every builtin metadata type is a source closure (one ordinal after the builtin entries). The metadata
+  exclusion is load-bearing: the kernel's pins require a cloned or forged builtin function object not to match, and
+  those structs are subtypes of the same root; `requireSourceMetadataSeparation` (native-source-closures.ts) is the
+  layout guarantee the exclusion relies on.
+- `bag` is the header's `$bag` already (generic over the root). `getPrototypeOf` answers the realm's
+  `Function.prototype` (`entries[0]`, always requested) for the source ordinal; `setPrototypeOf` on a source closure
+  answers status 3 (unknown) until a slice needs a mutable source `[[Prototype]]` (ES5 has no way to ask);
+  `callVector` on a source closure dispatches through the invocation substrate's apply-vector (a source getter).
+- A source closure's bag must exist before any kernel operation reads it: `js.function.init` fills it where Fa makes
+  the closure a value. Both that call and `is-callable` are realm-family calls, so they wait for O4's one collection of
+  realm source-callable uses (S3), which also deletes the receiver-provenance gaps an `is-callable` on an arbitrary
+  value would meet today.
 
 ### Order
 

@@ -4,10 +4,13 @@
 // payload, so throwing a dynamic value converts nothing, and the catch binding reads the payload back as the
 // dynamic value: `e === v`, ToBoolean(e) and `throw e` work on it. An unannotated result the checker types
 // `unknown` (a returned catch binding) is the dynamic value, like `any`.
+import { NO_PROGRAM_KINDS } from "../src/ir/program/dynamic-value-kinds.js";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as gc from "../src/codegen/index.js";
 import * as linear from "../src/codegen-linear/index.js";
-import { legalizeDynamicValues } from "../src/ir/program/dynamic-value-legalization.js";
+import { irIntrinsicFuncRef } from "../src/ir/core/callable-bindings.js";
+import { legalizeDynamicValues, refuseUnadmittedThrows } from "../src/ir/program/dynamic-value-legalization.js";
+import { AllocSiteRegistry } from "../src/ir/analysis/alloc-registry.js";
 import type { IrFunction, IrInstr } from "../src/ir/core/nodes.js";
 import { instantiatePreparedArtifact } from "../src/test262/test262-prepared-runtime.js";
 import {
@@ -29,6 +32,8 @@ const options = (target: "standalone" | "gc" = "standalone"): Test262CompileOpti
   }) as Test262CompileOptions;
 
 afterEach(() => vi.restoreAllMocks());
+
+const legalize = (fn: IrFunction) => legalizeDynamicValues(fn, new AllocSiteRegistry(), NO_PROGRAM_KINDS);
 
 const messages = (result: { errors: readonly { message: string }[] }) => result.errors.map((error) => error.message);
 
@@ -198,8 +203,8 @@ describe("#7354 X — throw and catch with the Prepared dynamic value", () => {
     [
       "a member read of a dynamic value (a TypeError on null)",
       "function f(v) { try { return v.x; } catch (e) { return 0; } }\nf(null);",
-      // (after the merge with Str) the read itself now refuses first
-      "dynamic operation dyn.member_get has no Prepared intrinsic",
+      // (#7354 O4) the legalization's own TypeError is not yet catchable
+      "dynamic operation member read 'x' of a possibly nullish value in a program that catches has no Prepared intrinsic",
     ],
   ])("refuses %s before it reaches a catch", async (_label, source, expected) => {
     const result = await compile(source, options());
@@ -211,36 +216,48 @@ describe("#7354 X — throw and catch with the Prepared dynamic value", () => {
     expect(messages(result).join("\n")).toContain(expected);
   });
 
-  // Pre-existing on the base: an object throw passes the producer and fails in emission (an invariant, not a
-  // named refusal). Pinned so that the slice which makes it compile meets the catch-binding rule above.
-  // (#7354 O1) An object literal is an ordinary object now; until the carrier admits objects, throwing one refuses.
-  const OBJECT_THROW = "throw of a value outside the dynamic carrier's kinds";
-  it("does not compile an object throw", async () => {
-    const result = await compile("try { throw {}; } catch (e) { if (!e) throw 1; }", options());
+  // (#7354 O1) The throw rule binds only a program with a catch binding: without one no source code reads a payload,
+  // so a throw the compiler synthesizes meets its own step, not the carrier's kinds.
+  it("leaves a TDZ ReferenceError in a program without a catch to its own refusal", async () => {
+    const result = await compile("function f() { return x; }\nf();\nlet x = 1;", options());
     expect(result.success).toBe(false);
-    expect(result.errors.map((error) => error.message).join("\n")).toContain(OBJECT_THROW);
+    expect(messages(result).join("\n")).toContain(
+      "runtime callable __new_ReferenceError needs runtime function materialization",
+    );
   });
 
-  // (#7354 Ty review) The same invariant for a populated literal thrown from a callee and tested with `typeof`: the
-  // slice that admits object payloads must add the object kind to TYPEOF_KIND (it merges with the `null` row).
-  it("does not compile an object-literal throw tested with typeof", async () => {
-    const result = await compile(
+  // (#7354 O2) An ordinary object is a kind of the dynamic value, so a thrown object reaches the catch binding as
+  // one: `typeof` answers it and its plain ToString is "[object Object]" (tests/issue-7354-o2-object-values.test.ts).
+  it.each([
+    [
+      "an object throw",
+      "try { throw {}; } catch (e) { if (!e) throw 1; }",
+      "try { throw {}; } catch (e) { if (e) throw 1; }",
+    ],
+    [
+      "an object-literal throw from a callee, tested with typeof",
       'function f() { throw { a: 1 }; }\ntry { f(); } catch (e) { if (typeof e !== "object") throw 1; }',
-      options(),
-    );
-    expect(result.success).toBe(false);
-    expect(result.errors.map((error) => error.message).join("\n")).toContain(OBJECT_THROW);
-  });
+      'function f() { throw { a: 1 }; }\ntry { f(); } catch (e) { if (typeof e === "object") throw 1; }',
+    ],
+  ])(
+    "catches %s as the object kind",
+    async (_label, right, wrong) => {
+      expect([node(right), node(wrong)]).toEqual(["returned", "threw"]);
+      expect(await run(right)).toBe("returned");
+      expect(await run(wrong)).toBe("threw");
+    },
+    180_000,
+  );
 });
 
 describe("#7354 X — the legalization arm", () => {
   const dynamic = { kind: "dynamic" } as const;
   const externref = { kind: "val", val: { kind: "externref" } } as const;
-  const fn = (instrs: readonly object[]): IrFunction =>
+  const fn = (instrs: readonly object[], params: readonly object[] = [dynamic]): IrFunction =>
     ({
       unitId: "ir-unit:test",
       name: "f",
-      params: [{ value: 0, type: dynamic, name: "p0" }],
+      params: params.map((type, value) => ({ value, type, name: `p${value}` })),
       resultTypes: [],
       blocks: [
         {
@@ -257,7 +274,7 @@ describe("#7354 X — the legalization arm", () => {
   const coerce = { kind: "coerce.to_externref", value: 0, result: 1, resultType: externref };
 
   it("keeps the coercion of a thrown dynamic value, over the legalized carrier", () => {
-    const out = legalizeDynamicValues(fn([coerce, { kind: "throw", value: 1, result: null, resultType: null }]));
+    const out = legalize(fn([coerce, { kind: "throw", value: 1, result: null, resultType: null }]));
     expect(out.params[0]!.type).toEqual(externref);
     expect(out.blocks[0]!.instrs[0]).toEqual(coerce);
   });
@@ -271,11 +288,47 @@ describe("#7354 X — the legalization arm", () => {
       result: null,
       resultType: null,
     };
-    expect(legalizeDynamicValues(fn([coerce, nested])).blocks[0]!.instrs[0]).toEqual(coerce);
+    expect(legalize(fn([coerce, nested])).blocks[0]!.instrs[0]).toEqual(coerce);
   });
 
   // (#7354 O1) An ordinary object's property stores the carrier too, so an unthrown coercion keeps as well.
   it("keeps the coercion of a dynamic value that is not thrown", () => {
-    expect(legalizeDynamicValues(fn([coerce])).blocks[0]!.instrs[0]).toEqual(coerce);
+    expect(legalize(fn([coerce])).blocks[0]!.instrs[0]).toEqual(coerce);
   });
+
+  // (#7354 O1) Both carrier rules ask one predicate (`carrierKind`): a coercion to the carrier keeps, and a throw of
+  // it is admitted, only over an operand of a kind the carrier holds. Value 1 is the operand: a parameter of `type`,
+  // or the result of `definition`.
+  const operand = (type: object | undefined, definition?: object) => {
+    const coerced = { kind: "coerce.to_externref", value: 1, result: 2, resultType: externref };
+    const thrown = { kind: "throw", value: 2, result: null, resultType: null };
+    const instrs = [...(definition ? [{ ...definition, result: 1, resultType: externref }] : []), coerced, thrown];
+    return { coerced, program: { ...fn(instrs, type ? [dynamic, type] : [dynamic]), valueCount: 3 } };
+  };
+  it.each([
+    ["a native string", { kind: "string" }],
+    ["a boundary-boxed number", undefined, { kind: "intrinsic", id: "js.number.box", version: 1, args: [0] }],
+    ["a boundary-boxed Boolean", undefined, { kind: "intrinsic", id: "js.boolean.box", version: 1, args: [0] }],
+    ["the null constant", undefined, { kind: "const", value: { kind: "null", ty: externref } }],
+    // (#7354 O2) the object kind
+    [
+      "an ordinary object",
+      undefined,
+      { kind: "call", target: irIntrinsicFuncRef("js.object.create-default"), args: [] },
+    ],
+    // (#7354 Fa) the function kind: a closure pack coerced to the carrier is a function value
+    ["a closure pack", { kind: "callable", signature: { params: [], returnType: null } }],
+  ])("admits %s in both rules", (_label, type, definition?: object) => {
+    const { coerced, program } = operand(type, definition);
+    expect(legalizeDynamicValues(program).blocks[0]!.instrs).toContainEqual(coerced);
+    expect(() => refuseUnadmittedThrows(program)).not.toThrow();
+  });
+  it.each([["an externref of unknown kind", externref, undefined, "a value of type externref"]])(
+    "refuses %s by name in both rules",
+    (_label, type, definition, name) => {
+      const { program } = operand(type, definition);
+      expect(() => legalizeDynamicValues(program)).toThrow(`coerce.to_externref of ${name}`);
+      expect(() => refuseUnadmittedThrows(program)).toThrow(`carrier's kinds (${name})`);
+    },
+  );
 });

@@ -5,6 +5,7 @@
 // and the result the dynamic value); it is the existing closure struct, typed `closure<sig>` while the callee is
 // known statically and the externref carrier once it reaches a dynamic slot. A never-rewritten top-level
 // `var f = function …` read later in module-init is that closure, so a call through it is its direct call.
+import { NO_PROGRAM_KINDS } from "../src/ir/program/dynamic-value-kinds.js";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ts } from "../src/ts-api.js";
 import { AllocSiteRegistry } from "../src/ir/analysis/alloc-registry.js";
@@ -214,7 +215,7 @@ describe("#7354 Fa — function values on the Prepared path", () => {
     [
       "`+=` on a parameter",
       "var f = function (a) { a += 1; return a; }; f(1);",
-      "dynamic operation __ir_dyn_add has no Prepared intrinsic",
+      "dynamic operation + on a function value",
     ],
     [
       "a nested closure reading a written parameter",
@@ -242,16 +243,10 @@ describe("#7354 Fa — function values on the Prepared path", () => {
       "function g() { var k = function () { return x; }; var x = 1; return k(); } g();",
       'closure g__closure_0 reads "x", a local of its enclosing function declared after the closure is created',
     ],
-    // ToString and `+` of a function value have no arm yet (the source text is the function's own string).
-    [
-      "`+` with a string",
-      'var f = function () {}; var s = f + "";',
-      "dynamic operation __ir_dyn_add has no Prepared intrinsic",
-    ],
-    ["`String(f)`", "var f = function () {}; var s = String(f);", 'direct call to "String" has no exact AST-site plan'],
-    // `typeof` is a string producer (slice Str2; its kind table must answer "function"); a declaration read as a
-    // value is not built yet.
-    ["`typeof`", "var f = function () {}; var t = typeof f;", "dynamic operation dyn.typeof has no Prepared intrinsic"],
+    // (#7354 C) ToString and `+` of a function value are ToPrimitive's, and a test for the function kind is the
+    // realm's IsCallable: none is served yet. A declaration read as a value is not built yet.
+    ["`+` with a string", 'var f = function () {}; var s = f + "";', "dynamic operation + on a function value"],
+    ["`String(f)`", "var f = function () {}; var s = String(f);", "dynamic operation ToString of a function value"],
     [
       "a function declaration read as a value",
       "function id(v) { return v; } var g = id;",
@@ -322,7 +317,11 @@ describe("#7354 Fa — the legalization arms", () => {
   const box = { kind: "call", target: irRuntimeFuncRef(IR_DYN_CALL_BOX_FN), args: [3], result: 1, resultType: dynamic };
 
   it("gives a closure, its packed callable and its lifted body the carrier signature", () => {
-    const out = legalizeDynamicValues(fn([closureNew, pack], { signature: logical, captureFieldTypes: [dynamic] }));
+    const out = legalizeDynamicValues(
+      fn([closureNew, pack], { signature: logical, captureFieldTypes: [dynamic] }),
+      new AllocSiteRegistry(),
+      { ...NO_PROGRAM_KINDS, functions: true },
+    );
     const [allocated, packed] = out.blocks[0]!.instrs as IrInstr[];
     expect(allocated).toMatchObject({
       signature: carrier,
@@ -336,13 +335,18 @@ describe("#7354 Fa — the legalization arms", () => {
   });
 
   it("expresses the function-value box of a packed callable as the carrier itself", () => {
-    const [, , boxed] = legalizeDynamicValues(fn([closureNew, pack, box])).blocks[0]!.instrs as IrInstr[];
+    const [, , boxed] = legalizeDynamicValues(fn([closureNew, pack, box]), new AllocSiteRegistry(), {
+      ...NO_PROGRAM_KINDS,
+      functions: true,
+    }).blocks[0]!.instrs as IrInstr[];
     expect(boxed).toEqual({ kind: "coerce.to_externref", value: 3, result: 1, resultType: externref });
   });
 
   it("leaves the function-value box of anything but a packed callable to the helper refusal", () => {
     const helper = { ...box, args: [0] };
-    expect(() => legalizeDynamicValues(fn([helper]))).toThrow("__ir_dyn_call_box");
+    expect(() =>
+      legalizeDynamicValues(fn([helper]), new AllocSiteRegistry(), { ...NO_PROGRAM_KINDS, functions: true }),
+    ).toThrow("__ir_dyn_call_box");
   });
 
   it("states the function kind for a packed callable coerced into an object's property", () => {
@@ -360,9 +364,17 @@ describe("#7354 Fa — the legalization arms", () => {
       alloc: 8,
     };
     const retyped: [number, unknown][] = [];
-    legalizeDynamicAllocations([legalizeDynamicValues(fn([closureNew, cell]))], {
-      retypeClosure: (id, type) => retyped.push([id, type]),
-    });
+    legalizeDynamicAllocations(
+      [
+        legalizeDynamicValues(fn([closureNew, cell]), new AllocSiteRegistry(), {
+          ...NO_PROGRAM_KINDS,
+          functions: true,
+        }),
+      ],
+      {
+        retypeClosure: (id, type) => retyped.push([id, type]),
+      },
+    );
     expect(retyped).toEqual([[7, { kind: "closure", signature: carrier }]]);
   });
 
