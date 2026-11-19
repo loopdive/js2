@@ -23,6 +23,7 @@ import { ensureExternIsUndefinedImport, flushLateImportShifts } from "./late-imp
 import { getFuncParamTypes } from "./helpers.js";
 import { resolveStructName } from "./misc.js";
 import { compileReceiverMethodCall } from "./call-receiver-method.js";
+import { emitIsUndefF64, f64MayHoldUndefined } from "../value-tags.js";
 
 export function compileOptionalCallExpression(
   ctx: CodegenContext,
@@ -56,15 +57,17 @@ export function compileOptionalCallExpression(
   let resultType: ValType = callReturnType === VOID_RESULT ? { kind: "externref" } : callReturnType;
 
   // `?.` short-circuits on null/undefined. `ref.is_null` only validates on a
-  // reference operand, but the receiver can lower to a non-reference value type
-  // (e.g. a `const x = undefined` stored as an i32 global — #1603). A
-  // non-reference receiver here is the compiler's representation of
-  // `undefined`/`null`, which short-circuits the call: drop it and emit the
-  // default result.
+  // reference operand, but the receiver can lower to a non-reference value type.
+  // (#7370) A primitive receiver (`x: number | undefined` as an f64) calls its
+  // method unless it holds the `undefined` sentinel. Any other non-reference
+  // receiver is the compiler's representation of `undefined`/`null` (e.g. a
+  // `const x = undefined` stored as an i32 global — #1603), which
+  // short-circuits the call: drop it and emit the default result.
   if (objType.kind !== "ref" && objType.kind !== "ref_null" && objType.kind !== "externref") {
+    const valueCall = compileOptionalValueReceiverCall(ctx, fctx, expr, propAccess, objType, resultType);
+    if (valueCall !== undefined) return valueCall;
     fctx.body.push({ op: "drop" });
-    let shortType: ValType = resultType;
-    if (shortType.kind === "ref") shortType = { kind: "ref_null", typeIdx: shortType.typeIdx };
+    const shortType = nullableJoin(resultType);
     fctx.body.push(...defaultValueInstrs(shortType));
     return shortType;
   }
@@ -252,18 +255,17 @@ export function compileOptionalCallExpression(
   // the nullish short-circuit. The delegated path re-evaluates its receiver, so
   // property chains are deliberately excluded: even a syntactically simple
   // `box.value` can invoke an observable getter.
+  // (#7370) The same holds for a primitive receiver boxed in an externref
+  // (`x?: number`): no arm above dispatches a Number/Boolean/BigInt method.
+  const primitiveReceiver = isPrimitiveMethodReceiver(tsReceiverType);
   if (
     !methodResolved &&
-    (tsReceiverType.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0 &&
-    isRepeatableDynamicOptionalReceiver(propAccess.expression)
+    ((tsReceiverType.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0 || primitiveReceiver) &&
+    isRepeatableOptionalReceiver(propAccess.expression)
   ) {
     const delegated = compileReceiverMethodCall(ctx, fctx, expr, propAccess);
     if (delegated !== undefined) {
-      if (delegated === VOID_RESULT || delegated === null) {
-        fctx.body.push(...defaultValueInstrs(resultType));
-      } else {
-        resultType = delegated;
-      }
+      resultType = settleDelegatedResult(fctx, delegated, resultType);
       methodResolved = true;
     }
   }
@@ -284,11 +286,7 @@ export function compileOptionalCallExpression(
         type: objType,
       });
       if (delegated !== undefined) {
-        if (delegated !== null && delegated !== VOID_RESULT) {
-          resultType = delegated;
-        } else if (delegated === VOID_RESULT) {
-          fctx.body.push(...defaultValueInstrs(resultType));
-        }
+        resultType = settleDelegatedResult(fctx, delegated, resultType);
         methodResolved = true;
       }
     }
@@ -299,16 +297,21 @@ export function compileOptionalCallExpression(
   const elseInstrs = fctx.body;
   popBody(fctx, savedBody);
 
-  if (resultType.kind === "ref") resultType = { kind: "ref_null", typeIdx: resultType.typeIdx };
+  resultType = nullableJoin(resultType);
 
   fctx.body.push({
     op: "if",
     blockType: { kind: "val", type: resultType },
-    then: defaultValueInstrs(resultType),
+    then: primitiveReceiver ? optionalUndefinedInstrs(ctx, resultType) : defaultValueInstrs(resultType),
     else: elseInstrs,
   });
 
   return resultType;
+}
+
+/** (#7370) The value a short-circuited `?.` call yields: the lane's real `undefined` for an externref result. */
+function optionalUndefinedInstrs(ctx: CodegenContext, type: ValType): Instr[] {
+  return type.kind === "externref" ? canonicalUndefinedExternInstrs(ctx) : defaultValueInstrs(type);
 }
 
 function compileOptionalPropertyValueCall(
@@ -395,8 +398,78 @@ function compileOptionalPropertyValueCall(
   return externref;
 }
 
-/** A dynamic optional-method receiver that can be read twice observably safely. */
-function isRepeatableDynamicOptionalReceiver(expr: ts.Expression): boolean {
+/** Receiver types whose methods only the generic receiver-method ladder dispatches. */
+const PRIMITIVE_METHOD_RECEIVER = ts.TypeFlags.NumberLike | ts.TypeFlags.BooleanLike | ts.TypeFlags.BigIntLike;
+
+/** A Number/Boolean/BigInt receiver type, including the `true | false` union that `boolean` is. */
+function isPrimitiveMethodReceiver(type: ts.Type): boolean {
+  return type.isUnion()
+    ? type.types.every((member) => (member.flags & PRIMITIVE_METHOD_RECEIVER) !== 0)
+    : (type.flags & PRIMITIVE_METHOD_RECEIVER) !== 0;
+}
+
+/**
+ * (#7370) `x?.m(args)` on a receiver that lowered to a Wasm value type, with its value on the stack. A receiver that
+ * can hold `undefined` (`f64MayHoldUndefined`) short-circuits on the sentinel; one whose static type admits neither
+ * `null` nor `undefined` is a primitive and the method always runs. Any other value slot is left to the caller. The
+ * call goes through the ordinary receiver-method ladder, which re-reads the receiver, so only a repeatable one is
+ * taken. `undefined` leaves the stack untouched for the caller's fallback.
+ */
+function compileOptionalValueReceiverCall(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expr: ts.CallExpression,
+  propAccess: ts.PropertyAccessExpression,
+  receiverType: ValType,
+  resultType: ValType,
+): InnerResult | undefined {
+  if (!isRepeatableOptionalReceiver(propAccess.expression)) return undefined;
+  const holdsUndefined = f64MayHoldUndefined(ctx, propAccess.expression, receiverType);
+  const nullability = ctx.oracle.nullabilityOf(propAccess.expression);
+  if (!holdsUndefined && (nullability.nullable || nullability.undefinable)) return undefined;
+  const savedBody = pushBody(fctx);
+  const delegated = compileReceiverMethodCall(ctx, fctx, expr, propAccess);
+  if (delegated === undefined) {
+    popBody(fctx, savedBody);
+    return undefined;
+  }
+  const callType = settleDelegatedResult(fctx, delegated, resultType);
+  const callInstrs = fctx.body;
+  popBody(fctx, savedBody);
+  // A primitive receiver cannot be nullish, so its value is only the ladder's input: the call re-reads it.
+  if (!holdsUndefined) {
+    fctx.body.push({ op: "drop" }, ...callInstrs);
+    return callType;
+  }
+  emitIsUndefF64(fctx.body);
+  const joined = nullableJoin(callType);
+  fctx.body.push({
+    op: "if",
+    blockType: { kind: "val", type: joined },
+    then: optionalUndefinedInstrs(ctx, joined),
+    else: callInstrs,
+  });
+  return joined;
+}
+
+/** The result of a short-circuiting branch joined with a default: a non-null reference widens to its nullable form. */
+function nullableJoin(type: ValType): ValType {
+  return type.kind === "ref" ? { kind: "ref_null", typeIdx: type.typeIdx } : type;
+}
+
+/** The type a delegated call leaves on the stack: a value-less result (`void`, a failed compile) pushes a default. */
+function settleDelegatedResult(
+  fctx: FunctionContext,
+  delegated: ValType | null | typeof VOID_RESULT,
+  fallback: ValType,
+): ValType {
+  if (delegated !== null && delegated !== VOID_RESULT) return delegated;
+  fctx.body.push(...defaultValueInstrs(fallback));
+  return fallback;
+}
+
+/** An optional-method receiver that can be read twice observably safely. */
+function isRepeatableOptionalReceiver(expr: ts.Expression): boolean {
   let cur = expr;
   while (ts.isParenthesizedExpression(cur) || ts.isNonNullExpression(cur)) cur = cur.expression;
   return ts.isIdentifier(cur) || cur.kind === ts.SyntaxKind.ThisKeyword;
