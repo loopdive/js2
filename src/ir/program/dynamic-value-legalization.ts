@@ -131,10 +131,32 @@ function boxedKind(tag: TagId | undefined, source: IrType | undefined): CarrierK
 }
 
 /**
- * The instruction builders of one function's legalization: fresh values after the function's own, intrinsic
- * calls, kind tests and the per-kind chains (`kindChain`) that ToString, `typeof` and (#7354 Str2-c) `+` share.
+ * (#7354 Str2-c) The kind each value of `fn` is proven to hold: a box to the dynamic value proves its operand's, and
+ * the legalization records a concatenation's result as a string (`learn`). Any other value may hold every kind.
  */
-function legalizationBuilders(fn: IrFunction, allocations: AllocSiteRegistry, types: ReturnType<typeof irValueTypes>) {
+function knownKinds(fn: IrFunction, types: ReturnType<typeof irValueTypes>) {
+  const known = new Map<IrValueId, CarrierKind>();
+  for (const block of fn.blocks)
+    for (const root of block.instrs)
+      forEachInstrDeep(root, (i) => {
+        const kind = i.kind === "box" && i.toType.kind === "dynamic" && boxedKind(i.toType.tag, types.get(i.value));
+        if (kind) known.set(i.result!, kind);
+      });
+  return {
+    kindsOf: (value: IrValueId): readonly CarrierKind[] => {
+      const kind = known.get(value);
+      return kind ? [kind] : KIND_ORDER;
+    },
+    learn: (value: IrValueId, kind: CarrierKind) => known.set(value, kind),
+  };
+}
+type KnownKinds = ReturnType<typeof knownKinds>;
+
+/**
+ * The instruction builders of one function's legalization: fresh values after the function's own, intrinsic calls,
+ * kind tests, and the per-kind chains (`kindChain`) that ToString (`stringOf`), `typeof` and `+` share.
+ */
+function chainBuilders(fn: IrFunction, allocations: AllocSiteRegistry, kinds: KnownKinds) {
   let valueCount = fn.valueCount;
   const intrinsic = (instr: IrInstr, id: IntrinsicId, args: readonly IrValueId[], result = instr.result): IrInstr => ({
     kind: "intrinsic",
@@ -145,19 +167,6 @@ function legalizationBuilders(fn: IrFunction, allocations: AllocSiteRegistry, ty
     resultType: INTRINSIC_DEFINITIONS[id].signature.result,
     ...(instr.site === undefined ? {} : { site: instr.site }),
   });
-  // (#7354 Str2-c) The kind a box to the dynamic value (or a concatenation, below) proves for its result: a `+`
-  // operand of a known kind takes only that kind's arm.
-  const boxed = new Map<IrValueId, CarrierKind>();
-  for (const block of fn.blocks)
-    for (const root of block.instrs)
-      forEachInstrDeep(root, (i) => {
-        const kind = i.kind === "box" && i.toType.kind === "dynamic" && boxedKind(i.toType.tag, types.get(i.value));
-        if (kind) boxed.set(i.result!, kind);
-      });
-  const kindsOf = (value: IrValueId): readonly CarrierKind[] => {
-    const kind = boxed.get(value);
-    return kind ? [kind] : KIND_ORDER;
-  };
   const kindTest = (
     instr: IrInstr,
     kind: CarrierKind,
@@ -249,58 +258,66 @@ function legalizationBuilders(fn: IrFunction, allocations: AllocSiteRegistry, ty
       ),
     ];
   };
+  // ToString of the once-evaluated `value`: only the arms of the kinds it may hold.
   const stringOf = (instr: IrInstr, value: IrValueId, result: IrValueId): IrInstr[] =>
-    kindChain(instr, value, result, (kind, r) => toStringArm(instr, kind, value, r), kindsOf(value));
-  /**
-   * (#7354 Str2-c) The dynamic `+` of two once-evaluated operands (`ADD_ROLE`): a string on either side concatenates
-   * their ToStrings, otherwise the ToNumbers are summed; either answer is boxed back into the carrier. An operand of
-   * a known kind takes only its own arms: a known string makes the whole addition a concatenation without a test,
-   * and only a side that may hold a string is tested.
-   */
-  const addition = (instr: IrInstr, operands: readonly IrValueId[], result: IrValueId): IrInstr[] => {
-    const concat = (r: IrValueId): IrInstr[] => {
-      const [left, right, text] = [fresh(), fresh(), fresh()];
-      return [
-        ...stringOf(instr, operands[0]!, left),
-        ...stringOf(instr, operands[1]!, right),
-        {
-          kind: "string.concat",
-          lhs: left,
-          rhs: right,
-          result: text,
-          resultType: STRING,
-          alloc: allocations.fresh("string", STRING),
-          concatMode: "immutable",
-        },
-        { kind: "coerce.to_externref", value: text, result: r, resultType: CARRIER },
-      ];
-    };
-    const sum = (r: IrValueId): IrInstr[] => {
-      const [left, right, total] = [fresh(), fresh(), fresh()];
-      return [
-        intrinsic(instr, "js.number.unbox", [operands[0]!], left),
-        intrinsic(instr, "js.number.unbox", [operands[1]!], right),
-        { kind: "binary", op: "f64.add", lhs: left, rhs: right, result: total, resultType: F64 },
-        intrinsic(instr, "js.number.box", [total], r),
-      ];
-    };
-    const roles = operands.map((value) => kindsOf(value).map((kind) => ADD_ROLE[kind]));
+    kindChain(instr, value, result, (kind, r) => toStringArm(instr, kind, value, r), kinds.kindsOf(value));
+  return { intrinsic, fresh, kindTest, text, branch, kindChain, stringOf, valueCount: () => valueCount };
+}
+type ChainBuilders = ReturnType<typeof chainBuilders>;
+
+/**
+ * (#7354 Str2-c) The dynamic `+` of two once-evaluated operands (`ADD_ROLE`): a string on either side concatenates
+ * their ToStrings, otherwise the ToNumbers are summed; either answer is boxed back into the carrier. An operand of a
+ * known kind takes only its own arms: a known string makes the whole addition a concatenation without a test, and
+ * only a side that may hold a string is tested.
+ */
+function additionBuilder(builders: ChainBuilders, kinds: KnownKinds, allocations: AllocSiteRegistry) {
+  const { intrinsic, fresh, kindTest, branch, stringOf } = builders;
+  const concat = (instr: IrInstr, operands: readonly IrValueId[], r: IrValueId): IrInstr[] => {
+    const [left, right, text] = [fresh(), fresh(), fresh()];
+    return [
+      ...stringOf(instr, operands[0]!, left),
+      ...stringOf(instr, operands[1]!, right),
+      {
+        kind: "string.concat",
+        lhs: left,
+        rhs: right,
+        result: text,
+        resultType: STRING,
+        alloc: allocations.fresh("string", STRING),
+        concatMode: "immutable",
+      },
+      { kind: "coerce.to_externref", value: text, result: r, resultType: CARRIER },
+    ];
+  };
+  const sum = (instr: IrInstr, operands: readonly IrValueId[], r: IrValueId): IrInstr[] => {
+    const [left, right, total] = [fresh(), fresh(), fresh()];
+    return [
+      intrinsic(instr, "js.number.unbox", [operands[0]!], left),
+      intrinsic(instr, "js.number.unbox", [operands[1]!], right),
+      { kind: "binary", op: "f64.add", lhs: left, rhs: right, result: total, resultType: F64 },
+      intrinsic(instr, "js.number.box", [total], r),
+    ];
+  };
+  return (instr: IrInstr, operands: readonly IrValueId[], result: IrValueId): IrInstr[] => {
+    const roles = operands.map((value) => kinds.kindsOf(value).map((kind) => ADD_ROLE[kind]));
     if (roles.some((role) => role.every((r) => r === "concat"))) {
       // A concatenation is a known string to the next `+` of a chain (`"a" + v + "b"`). Legalization meets a value's
       // definition before its uses, so the next site reads this.
-      boxed.set(result, "string");
-      return concat(result);
+      kinds.learn(result, "string");
+      return concat(instr, operands, result);
     }
-    const tested = operands.flatMap((value) =>
-      kindsOf(value)
+    // The front end makes a `+` dynamic only over an operand of unknown kind (`emitDynamicAdd` in from-ast), which
+    // may hold a string, so at least one operand is tested here.
+    const tests = operands.flatMap((value) =>
+      kinds
+        .kindsOf(value)
         .filter((kind) => ADD_ROLE[kind] === "concat")
-        .map((kind) => ({ kind, value })),
+        .map((kind) => {
+          const cond = fresh();
+          return { cond, instrs: [kindTest(instr, kind, value, cond, TEST_RESULT)] };
+        }),
     );
-    if (tested.length === 0) return sum(result);
-    const tests = tested.map(({ kind, value }) => {
-      const cond = fresh();
-      return { cond, instrs: [kindTest(instr, kind, value, cond, TEST_RESULT)] };
-    });
     const conds: IrInstr[] = tests.flatMap((test) => test.instrs);
     let cond = tests[0]!.cond;
     for (const test of tests.slice(1)) {
@@ -308,9 +325,17 @@ function legalizationBuilders(fn: IrFunction, allocations: AllocSiteRegistry, ty
       conds.push({ kind: "binary", op: "i32.or", lhs: cond, rhs: test.cond, result: either, resultType: TEST_RESULT });
       cond = either;
     }
-    return [...conds, branch(cond, concat, sum, result, CARRIER)];
+    return [
+      ...conds,
+      branch(
+        cond,
+        (r) => concat(instr, operands, r),
+        (r) => sum(instr, operands, r),
+        result,
+        CARRIER,
+      ),
+    ];
   };
-  return { intrinsic, fresh, kindTest, text, kindChain, toStringArm, addition, valueCount: () => valueCount };
 }
 
 /**
@@ -320,11 +345,10 @@ function legalizationBuilders(fn: IrFunction, allocations: AllocSiteRegistry, ty
 export function legalizeDynamicValues(fn: IrFunction, allocations: AllocSiteRegistry): IrFunction {
   if (!containsDynamic(fn)) return fn;
   const types = irValueTypes(fn);
-  const { intrinsic, fresh, kindTest, text, kindChain, toStringArm, addition, valueCount } = legalizationBuilders(
-    fn,
-    allocations,
-    types,
-  );
+  const kinds = knownKinds(fn, types);
+  const builders = chainBuilders(fn, allocations, kinds);
+  const { intrinsic, fresh, kindTest, text, kindChain, stringOf, valueCount } = builders;
+  const addition = additionBuilder(builders, kinds, allocations);
   const isDynamic = (value: IrValueId): boolean => types.get(value)?.kind === "dynamic";
   const thrown = new Set<IrValueId>();
   for (const block of fn.blocks)
@@ -407,9 +431,7 @@ export function legalizeDynamicValues(fn: IrFunction, allocations: AllocSiteRegi
       case "dyn.undefined":
         return [intrinsic(instr, "js.value.undefined", [])];
       case "dyn.to_string":
-        return kindChain(instr, instr.value, instr.result!, (kind, result) =>
-          toStringArm(instr, kind, instr.value, result),
-        );
+        return stringOf(instr, instr.value, instr.result!);
       case "dyn.truthy":
         return [intrinsic(instr, "js.value.to_boolean", [instr.value])];
       // ToNumber over the admitted set (number, boolean, undefined, null) is

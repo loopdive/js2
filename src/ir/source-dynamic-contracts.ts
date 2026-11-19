@@ -29,7 +29,7 @@
  */
 import { ts } from "../ts-api.js";
 import type { IrType } from "./core/types.js";
-import type { IrFunction } from "./core/nodes.js";
+import { forEachInstrDeep, type IrFunction } from "./core/nodes.js";
 import { IrUnsupportedError } from "./outcomes.js";
 import { DynamicValueGap, legalizeDynamicValues } from "./program/dynamic-value-legalization.js";
 import { retargetNumberToString } from "./program/number-to-string-target.js";
@@ -386,16 +386,30 @@ function legalizeSourceDynamicValues(
   if (!nativeDynamicLane(policy)) return functions;
   // (#7354 Str2) Number::toString has one binding on this lane, typed or dynamic (number-to-string-target.ts).
   const retargeted = functions.map(retargetNumberToString);
-  if (!contracted) return retargeted;
+  const legalizes = contracted ? () => true : convertsDynamicToString;
+  if (!retargeted.some(legalizes)) return retargeted;
   let legalized: readonly IrFunction[];
   try {
-    legalized = retargeted.map((fn) => legalizeDynamicValues(fn, allocations));
+    legalized = retargeted.map((fn) => (legalizes(fn) ? legalizeDynamicValues(fn, allocations) : fn));
   } catch (error) {
     if (!(error instanceof DynamicValueGap)) throw error;
     throw new IrUnsupportedError("type-resolution-unsupported", "build", error.message);
   }
   if (legalized.some((fn, index) => fn !== retargeted[index])) refuseImplicitDynamicFlows(checker, roots, carries);
   return legalized;
+}
+
+/**
+ * (#7354 Str2) A ToString of the dynamic value in a program without a dynamic contract. from-ast boxes an operand
+ * into the dynamic value when it has no primitive representation (a literal `null` or `undefined`, `String(null)`),
+ * and only the legalization expresses that ToString on this lane, whatever the operand was. Only such a function is
+ * legalized: without a contract no dynamic value crosses a function boundary, so the others keep their path.
+ */
+function convertsDynamicToString(fn: IrFunction): boolean {
+  let found = false;
+  for (const block of fn.blocks)
+    for (const root of block.instrs) forEachInstrDeep(root, (i) => (found ||= i.kind === "dyn.to_string"));
+  return found;
 }
 
 /** `node` holds `typeof <name>` of an absent global (nested functions included). */

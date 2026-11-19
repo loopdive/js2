@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
 import type { IrTypeRef } from "../../../ir/core/types.js";
-import type { IrUnitId } from "../../../shared/contracts/ir-identity.js";
+import type { IrSourceId, IrUnitId } from "../../../shared/contracts/ir-identity.js";
 import type { ProgramAbiPlanEntry } from "../../../ir/program/abi.js";
 import { preparedIrDataMismatch } from "../../../ir/program/data.js";
 import { PreparedIrProgramInvariantError } from "../../../ir/program/errors.js";
@@ -40,8 +40,20 @@ export interface NativeNumberFormatPhysicalPlan extends NativeResourceRecipe {
   readonly supportUnitId: IrUnitId;
 }
 
-function formatterKey(requirements: NativeNumberFormatRequirements): string {
-  return "native-number-format:v1:" + JSON.stringify(requirements.batch.sourceId);
+function formatterKey(sourceId: IrSourceId): string {
+  return "native-number-format:v1:" + JSON.stringify(sourceId);
+}
+
+/**
+ * The formatter recipe's input for a batch of `sourceId` joined to the string owner `stringKey`: the one derivation
+ * the physical plan declares from and the Prepared provider census authenticates against (#7354 Str2).
+ */
+export function nativeNumberFormatResourceInput(
+  sourceId: IrSourceId,
+  stringKey: string,
+  integerBeforeScratch: boolean,
+): NativeNumberFormatResourceInput {
+  return Object.freeze({ key: formatterKey(sourceId), stringKey, integerBeforeScratch });
 }
 
 /** An independent layout dependency, never a fabricated source literal demand. */
@@ -51,7 +63,7 @@ export function planNativeNumberFormatStringLayout(
 ): NativeNumberFormatStringLayoutPlan {
   assertNativeNumberFormatRequirementsCurrent(requirements, requirements);
   if (typeof utf8Storage !== "boolean") fail("invalid UTF8 storage option");
-  const key = formatterKey(requirements) + ":strings";
+  const key = formatterKey(requirements.batch.sourceId) + ":strings";
   const literalRequirements: NativeStringLiteralRequirements = Object.freeze({
     key,
     utf8Storage,
@@ -77,11 +89,11 @@ export function planNativeNumberFormatPhysical(
 ): NativeNumberFormatPhysicalPlan {
   assertNativeNumberFormatRequirementsCurrent(requirements, requirements);
   const scratch = planNativeNumberFormatScratch(requirements, stringKey, strings);
-  const input = Object.freeze({
-    key: formatterKey(requirements),
+  const input = nativeNumberFormatResourceInput(
+    requirements.batch.sourceId,
     stringKey,
-    integerBeforeScratch: requirements.integerBeforeScratch,
-  });
+    requirements.integerBeforeScratch,
+  );
   const recipe = declareNativeNumberFormatResources(input);
   // Keep the scratch plan's borrowed semantic entry and declaration identities.
   return Object.freeze({ ...recipe, input, scratch, supportUnitId: requirements.batch.implementation.body.unitId });
