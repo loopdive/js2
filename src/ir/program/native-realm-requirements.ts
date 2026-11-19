@@ -4,6 +4,7 @@ import type { IrUnitId } from "../../shared/contracts/ir-identity.js";
 import { irNumberConversionCallableDeclaration } from "../runtime/number-conversion-callable.js";
 import { nativeAsyncCallableValueTypes, nativeAsyncCallMismatch } from "../runtime/native-async-callables.js";
 import { freezePreparedIrValue, preparedIrDataMismatch } from "./data.js";
+import { checkUnlessSettled, settledAtIssue, type PreparedIrSettlement } from "./settled-verdict.js";
 import type { PreparedIrProgram, PreparedIrProgramRuntimeProjection } from "./prepared-contracts.js";
 import {
   deriveNativeObjectAccessRequirements,
@@ -45,6 +46,7 @@ interface Owner {
   readonly source: NativeSourceClosureRequirements | undefined;
   readonly access: NativeObjectAccessRequirements;
   readonly description: NativeRealmDescription;
+  readonly authentication: PreparedIrSettlement;
 }
 const owners = new WeakMap<NativeRealmRequirements, Owner>();
 function fail(detail: string): never {
@@ -131,7 +133,7 @@ export function deriveNativeRealmRequirements(
   if (!data) return undefined;
   const description = freezePreparedIrValue(data) as NativeRealmDescription;
   const pack = Object.freeze({ program, projection, ...(source ? { source } : {}), access, description });
-  owners.set(pack, { program, projection, source, access, description });
+  owners.set(pack, { program, projection, source, access, description, authentication: settledAtIssue(pack) });
   return pack;
 }
 export function assertNativeRealmRequirementsCurrent(pack: NativeRealmRequirements): void {
@@ -145,9 +147,11 @@ export function assertNativeRealmRequirementsCurrent(pack: NativeRealmRequiremen
     pack.description !== owner.description
   )
     fail("unissued, copied or detached realm requirements");
-  same(
-    calculate(owner.program, owner.projection, owner.source, owner.access),
-    owner.description,
-    "realm catalog or demand selection changed",
+  checkUnlessSettled(owner.authentication, pack, () =>
+    same(
+      calculate(owner.program, owner.projection, owner.source, owner.access),
+      owner.description,
+      "realm catalog or demand selection changed",
+    ),
   );
 }
