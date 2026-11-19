@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 /**
  * (#7354 O2) Whether a Prepared program's ordinary objects are plain. On this path an object literal is the only
- * producer of an ordinary object (`js.object.create-default` on the realm's Object.prototype), so the program decides
+ * producer of a plain ordinary object (an array literal, #7352, makes the program unplain) (`js.object.create-default` on the realm's Object.prototype), so the program decides
  * what its objects can hold. They are plain when no object can hold a callable, none defines its own `toString` or
  * `valueOf`, and no code can reach a prototype to change it. Then OrdinaryToPrimitive of any of them answers
  * "[object Object]" for every hint, and a member read off a primitive meets only the specification's built-in
@@ -79,6 +79,11 @@ export function programObjects(checker: ts.TypeChecker, sourceFiles: readonly ts
         if (reason !== undefined) return reason;
       }
       return undefined;
+    }
+    // (#7352 arrays) An Array is an ordinary object whose OrdinaryToPrimitive calls `join`.
+    if (ts.isArrayLiteralExpression(node)) {
+      present = true;
+      return "array ToPrimitive needs Array.prototype.join";
     }
     if (
       ts.isBinaryExpression(node) &&
