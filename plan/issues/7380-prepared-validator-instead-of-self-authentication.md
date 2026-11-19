@@ -613,6 +613,18 @@ single fork.
   - Per this plan, PR 2 retires the pin. It is not re-hashed here. No other pin moved: the edits to `data.ts` and
     `module-reservations.ts` turned no green test red.
 
+Pin retired in this PR (coordinator's decision, 2026-11-19): `tests/issue-3518-allocation-runtime-seam.test.ts`.
+
+- **What was deleted:** "retains every declaration, method, getter, private field, initializer and comment", and
+  the five "rejects changed … in the complete relocation receipt". Their only helpers went with them:
+  - the declaration and member SHA-256 receipts;
+  - `verifyCanonical`, `declarationName` and `sha`.
+- **Why:** they hash every top-level declaration of `src/ir/analysis/alloc-registry.ts`, so any edit of that file
+  breaks them. #7380 PR 2 retires the remaining pins.
+- **Size:** 226 test lines deleted.
+- **What is left:** the 18 tests that remain check the registry's behaviour, and all pass. None of the file's tests
+  was red on main.
+
 Gates, each run bare: all exit 0.
 
 - `npm run -s typecheck`
