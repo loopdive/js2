@@ -17079,6 +17079,11 @@
       "layer": "ir-program"
     },
     {
+      "path": "src/ir/program/alloc-registry-restore.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
       "path": "src/ir/program/dynamic-value-kinds.ts",
       "state": "clean",
       "layer": "ir-program"

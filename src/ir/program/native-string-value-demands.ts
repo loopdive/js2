@@ -11,7 +11,8 @@ import {
 import type { IrAsyncStateId } from "../core/async-plan.js";
 import type { PreparedIrFunction } from "../runtime/contracts/prepared.js";
 import type { AllocRegistrySnapshot, AllocRegistryMetadataSnapshot } from "../analysis/contracts/allocations.js";
-import { AllocSiteRegistry, ALLOC_NAMESPACES } from "../analysis/alloc-registry.js";
+import { ALLOC_NAMESPACES } from "../analysis/alloc-registry.js";
+import { restoredAllocRegistry, type AllocSiteResolver } from "./alloc-registry-restore.js";
 import { irValueTypes } from "../analysis/value-types.js";
 import type { IrUnitId } from "../../shared/contracts/ir-identity.js";
 import type { PreparedIrProgram, PreparedIrProgramRuntimeProjection } from "./prepared-contracts.js";
@@ -155,9 +156,9 @@ export function collectNativeStringValueDemands(
   });
   // Restoration is a private read authority. Output evidence always borrows the
   // ORIGINAL snapshot rows/payloads, not the registry's detached copy.
-  let registry: AllocSiteRegistry;
+  let registry: AllocSiteResolver;
   try {
-    registry = AllocSiteRegistry.fromSnapshot(program.allocations);
+    registry = restoredAllocRegistry(program.allocations);
   } catch (error) {
     return fail("invalid allocation snapshot: " + (error instanceof Error ? error.message : String(error)));
   }

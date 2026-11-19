@@ -8,7 +8,7 @@ import {
   type IrInstrStringConst,
 } from "../core/nodes.js";
 import type { IrUnitId } from "../../shared/contracts/ir-identity.js";
-import { AllocSiteRegistry } from "../analysis/alloc-registry.js";
+import { restoredAllocRegistry } from "./alloc-registry-restore.js";
 import type { AllocRegistryMetadataSnapshot } from "../analysis/contracts/allocations.js";
 import {
   irNativeAsyncCallableDeclaration,
@@ -78,7 +78,7 @@ function supportEvidence(
   supportBuffers: readonly NativeNumberFormatSupportBuffer[];
   literals: readonly NativeNumberFormatLiteralUse[];
 } {
-  const registry = AllocSiteRegistry.fromSnapshot(program.allocations);
+  const registry = restoredAllocRegistry(program.allocations);
   const metadata = new Map(program.allocations.metadata.map((row) => [row.id, row]));
   const supportBuffers: NativeNumberFormatSupportBuffer[] = [];
   const literals: NativeNumberFormatLiteralUse[] = [];

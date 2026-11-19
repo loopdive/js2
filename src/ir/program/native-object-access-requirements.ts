@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import type { AllocSiteId, IrClosureSignature, IrInstr, IrInstrCall, IrType, IrValueId } from "../core/nodes.js";
 import type { IrUnitId } from "../../shared/contracts/ir-identity.js";
-import { AllocSiteRegistry } from "../analysis/alloc-registry.js";
+import { restoredAllocRegistry } from "./alloc-registry-restore.js";
 import { irOrdinaryObjectCallableDeclaration } from "../runtime/ordinary-object-callables.js";
 import type { OrdinaryObjectRuntimeFeature } from "../runtime/contracts/manifest.js";
 import { nativeAsyncCallableValueTypes, nativeAsyncCallMismatch } from "../runtime/native-async-callables.js";
@@ -108,7 +108,7 @@ function descriptorHalfIdentity(
   if (row?.kind === "const") return { kind: "constant", value: row.value };
   if (row?.kind !== "closure.new") return undefined;
   if (row.alloc === undefined) fail("descriptor closure is missing its allocation identity");
-  const allocation = AllocSiteRegistry.fromSnapshot(demands.allocations).resolve(row.alloc);
+  const allocation = restoredAllocRegistry(demands.allocations).resolve(row.alloc);
   if (!allocation || allocation.kind !== "closure") fail("descriptor closure allocation is not live");
   return {
     kind: "closure",
@@ -212,7 +212,7 @@ function getterAllocation(
   same(lifted.closureSubtype.signature, instruction.signature, "getter allocation/lifted signature differs");
   same(lifted.closureSubtype.captureFieldTypes, instruction.captureFieldTypes, "getter capture shape differs");
   if (instruction.captures.length !== instruction.captureFieldTypes.length) fail("getter capture operands incomplete");
-  const registry = AllocSiteRegistry.fromSnapshot(demands.allocations),
+  const registry = restoredAllocRegistry(demands.allocations),
     allocation = registry.resolve(instruction.alloc);
   if (!allocation || allocation.kind !== "closure") fail("getter allocation lacks a live closure registry record");
   const site = demands.allocations.entries[allocation.id];
