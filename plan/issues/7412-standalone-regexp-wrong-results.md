@@ -1,6 +1,6 @@
 ---
 id: 7412
-title: "Standalone RegExp: `replace` with a global sticky RegExp does not stop at the first failed match; reported `exec` trap on `/(a*)*b/`"
+title: "Standalone RegExp: `replace` with a global sticky RegExp does not stop at the first failed match"
 status: ready
 sprint: Backlog
 created: 2026-11-19
@@ -33,16 +33,14 @@ export function run(): number { return "aaba".replace(/a/gy, "x") === "xxba" ? 1
 node: `"aaba".replace(/a/gy, "x")` is `"xxba"`. Compiled `--target standalone` on main `89e47482`, `run()` returns 0:
 the sticky failure at index 2 does not end the loop.
 
-## 2. `/(a*)*b/.exec` traps (reported, not yet reproduced)
+## 2. Not a RegExp bug: `String()` of a null `exec` result (moved to #7414 row 16)
 
-The reviewer reports that `/(a*)*b/.exec(...)` traps on standalone. These shapes do NOT trap on main `89e47482` and
-answer as node does: a typed `run()` over `/(a*)*b/.exec("aaab")` (m[0] `"aaab"`, m[1] `"aaa"`) and over
-`.exec("aaa")` (null); a JS script over `.exec("aaab")` and `.exec("b")` (m[1] undefined). The exact failing shape is
-still to be recorded from the reviewer before this half is worked on.
+The reported `/(a*)*b/.exec` trap is `String(m)` of a null `RegExpExecArray`: `/zzz/.exec("aaaac")` traps the same
+way, while `m === null` answers correctly. It is any array-typed null (`"abc".match(/z/)`, a `number[] | null`), so
+it is filed as #7414 row 16. The reviewer's case 2 matches item 1 above: `"aaba".replace(/a/gy, "X")` gives
+`"XXbX"` on standalone, node `"XXba"`.
 
 ## Acceptance
 
 - `"aaba".replace(/a/gy, "x")` answers `"xxba"` on standalone and wasi; pinned against node, with a wrong answer that
   throws.
-- The `/(a*)*b/` trap reproduced from the reviewer's shape and fixed (an empty-iteration guard in the VM's star loop is
-  the usual cause), or closed as not reproducible with the shapes above recorded.

@@ -1,6 +1,6 @@
 ---
 id: 7414
-title: "Tracking: 15 wrong answers (most also on gc) found during the missing-helper audit (one row per bug)"
+title: "Tracking: 16 wrong answers (most also on gc) found during the missing-helper audit (one row per bug)"
 status: ready
 sprint: current
 created: 2026-11-19
@@ -48,6 +48,7 @@ own issue when it starts. Context:
 | 13 |  | dynamic read of a class getter | `class C { get g() { return 6; } } function rd(a: any) { return a.g; } return rd(new C());` | NaN / 6 (gc correct) | 6 | — |
 | 14 |  | dynamic method call through `any`; `yield*` over a class iterator | `function call(o: any) { return o.m(); }` with `class C { m() { return 3; } }`, then `call(new C())`; and `function* g() { yield* new It(); }` | uncaught Wasm exception / 3 (gc correct) | 3; the iterated values | — |
 | 15 |  | destructuring a method off a boxed primitive | `const { toFixed } = (5 as any); return typeof toFixed === "function" ? 1 : 0;` | 0 / 0 | 1 | — |
+| 16 |  | `String()` of a null array-typed value | `const m = /zzz/.exec("aaaac"); return String(m);` (also `"abc".match(/z/)`, and a `number[] \| null` from a function), read back as a string | trap / not measured | "null" | the String() lowering for an array-typed (`RegExpExecArray`, `T[]`) operand does not test null first. `String(null)`, an object-typed `\| null` operand and `"" + m` answer "null" correctly. Reported in the #7337 review (first read as a RegExp bug, #7412); re-run on standalone and wasi on 2026-11-19 |
 
 **Not in this list, tracked elsewhere:**
 
