@@ -8115,12 +8115,7 @@ function emitIteratorMethodExport(ctx: CodegenContext): void {
           instrs.push({ op: "call", funcIdx: boxBooleanIdx });
           return;
         }
-        const boxIdx = ctx.funcMap.get("__box_number");
-        instrs.push(
-          ...(boxIdx !== undefined
-            ? ([{ op: "f64.convert_i32_s" }, { op: "call", funcIdx: boxIdx }] satisfies Instr[])
-            : ([{ op: "drop" }, { op: "ref.null.extern" }] satisfies Instr[])),
-        );
+        instrs.push({ op: "f64.convert_i32_s" }, { op: "call", funcIdx: requireHelper(ctx, "__box_number") });
       } else if (resultType.kind === "i64") {
         const boxIdx = ctx.funcMap.get("__box_number");
         instrs.push(
@@ -8504,13 +8499,9 @@ function emitToPrimitiveMethodExport(ctx: CodegenContext): void {
 
     if (entry.resultType.kind === "ref" || entry.resultType.kind === "ref_null") {
       testAndCall.push({ op: "extern.convert_any" });
-    } else if (entry.resultType.kind === "f64") {
-      const boxIdx = ctx.funcMap.get("__box_number");
-      if (boxIdx !== undefined) testAndCall.push({ op: "call", funcIdx: boxIdx });
-    } else if (entry.resultType.kind === "i32") {
-      testAndCall.push({ op: "f64.convert_i32_s" });
-      const boxIdx = ctx.funcMap.get("__box_number");
-      if (boxIdx !== undefined) testAndCall.push({ op: "call", funcIdx: boxIdx });
+    } else if (entry.resultType.kind === "f64" || entry.resultType.kind === "i32") {
+      if (entry.resultType.kind === "i32") testAndCall.push({ op: "f64.convert_i32_s" });
+      testAndCall.push({ op: "call", funcIdx: requireHelper(ctx, "__box_number") });
     }
 
     current = [
@@ -14480,4 +14471,5 @@ export {
   getOrRegisterTemplateVecType,
   getOrRegisterVecType,
 } from "./registry/types.js";
+import { requireHelper } from "./helpers/required-helper.js";
 export { compileExpression, compileStatement } from "./shared.js";

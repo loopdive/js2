@@ -152,6 +152,7 @@ const {
   isLocalizedJoin,
 } = tls;
 import { emitFuncRefAsClosure } from "./closures/funcref-as-closure.js";
+import { requireHelper } from "./helpers/required-helper.js";
 import { callbackClosureInfo } from "./closures/closure-type-sources.js"; // (#6913)
 import { emitSymbolOperandCoercionThrow } from "./tonumber-symbol-throw.js"; // (#3481)
 import { buildSpreadArgList, hasSpreadArgument } from "./spread-arg-list.js"; // (#5361)
@@ -6467,14 +6468,9 @@ function emitArrayCallbackArgsPlumbing(
   //   numParams=2 → [arr]
   const extrasCount = specArity - numParams;
   instrs.push({ op: "i32.const", value: extrasCount });
-  const boxIdx = ctx.funcMap.get("__box_number");
+  const boxIdx = requireHelper(ctx, "__box_number");
   const pushBoxed = (): void => {
-    if (boxIdx !== undefined) {
-      instrs.push({ op: "call", funcIdx: boxIdx });
-    } else {
-      instrs.push({ op: "drop" });
-      instrs.push({ op: "ref.null.extern" });
-    }
+    instrs.push({ op: "call", funcIdx: boxIdx });
   };
   if (numParams < 1) {
     // Push the element. Inline-load from data[i], coerced to externref.

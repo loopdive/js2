@@ -79,6 +79,7 @@ import { buildOrdinaryConstructCall, unwrapRuntimeEvalCarrierCallee } from "./co
 import { CLASS_CONSTRUCT_DISPATCH, ensureStandaloneClassConstructDispatch } from "./standalone-class-construct.js"; // (#5383 S2g)
 import { RUNTIME_EVAL_INTERP_CALLBACK_BRAND_A, RUNTIME_EVAL_INTERP_CALLBACK_BRAND_B } from "./runtime-eval-boundary.js";
 import { ordinaryConstructTargetFrame } from "./closures/ordinary-new-target.js";
+import { requireHelper } from "./helpers/required-helper.js";
 import { constructorProtoNullToDefaultInstrs } from "./object-model/construct-default-proto.js"; // (#6651 W2b)
 import { boundConstructDriverArm } from "./construct-bound.js"; // (#6651 W2b)
 
@@ -440,18 +441,16 @@ function fillArgvConstructDriver(ctx: CodegenContext): void {
     { op: "local.set", index: resultLocal },
   );
 
-  const isObjectProbe: Instr[] = [];
-  if (typeofObjectIdx !== undefined) {
-    isObjectProbe.push({ op: "local.get", index: resultLocal }, { op: "call", funcIdx: typeofObjectIdx });
-    if (typeofFunctionIdx !== undefined) {
-      isObjectProbe.push(
-        { op: "local.get", index: resultLocal },
-        { op: "call", funcIdx: typeofFunctionIdx },
-        { op: "i32.or" },
-      );
-    }
-  } else {
-    isObjectProbe.push({ op: "i32.const", value: 0 });
+  const isObjectProbe: Instr[] = [
+    { op: "local.get", index: resultLocal },
+    { op: "call", funcIdx: typeofObjectIdx ?? requireHelper(ctx, "__typeof_object") },
+  ];
+  if (typeofFunctionIdx !== undefined) {
+    isObjectProbe.push(
+      { op: "local.get", index: resultLocal },
+      { op: "call", funcIdx: typeofFunctionIdx },
+      { op: "i32.or" },
+    );
   }
   body.push(
     { op: "local.get", index: resultLocal },
