@@ -44,7 +44,7 @@ loc-budget-allow:
   - src/ir/from-ast.ts
   - src/compiler/ir-program-presentation.ts
 import-cycles-allow:
-  - backend->ir: 119 # 2026-11-17 (#7354 Str review 2): the native string length emitter reads the selected carrier field through the shared preparedStringLenProvider (ir/runtime/intrinsic-preparation.ts) instead of re-implementing it
+  - backend->ir: 120 # 2026-11-17 (#7354 Str review 2): the native string length emitter reads the selected carrier field through the shared preparedStringLenProvider (ir/runtime/intrinsic-preparation.ts) instead of re-implementing it; 2026-11-19 (#7354 Perf2): native-string-values.ts uses the one settled-verdict mechanism (ir/program/settled-verdict.ts), which moved out of it because the ir requirement modules use it too and ir cannot import backend
 ---
 
 # #7354 — Prepared IR path, milestone 1
@@ -2435,3 +2435,82 @@ Not verified:
   audit cost is fixed.
 - `--utf8-storage`.
 - `compileMulti`.
+
+## Perf2 result (2026-11-19)
+
+Branch `claude/7354-perf2` on `claude/7354-str2` @ 649e432d35. Compile time of string emission on the Prepared path
+is now linear in the number of string sites; no check was removed or weakened, output is byte-identical.
+
+### Call chains found, and what replaced each
+
+| Cost centre (6 dynamic `+` sites, base 36 s profiled) | Who called it per emit, and why it was safe to stop | Now |
+| --- | --- | --- |
+| `assertNativeStringOutputRequirementsCurrent` 21 s | every emit → `completedOwner` → output pack `ownerFor` → `checkPlan` → full re-derivation (census re-collection + three whole-demands compares). A pure function of the issued requirements and options. | settled per issued record (`checkUnlessSettled`); a fresh derivation is settled at issue when its requirements and options are immutable (`settledAtIssue`: the derivation is its own re-derivation) |
+| `authenticateCensus` 12 s | every output-requirements derivation (14 per compile, all on ONE demands object) | once per demands object (`PreparedIrSettledChecks`) |
+| `assertNativeNumberFormatRequirementsCurrent`, `assertNativeObjectAccessRequirementsCurrent`, `assertNativeStringValueReservationInput` | same shape: whole re-derivation per call (12 / 1 / 3 per compile) | number format: settled per requirements (the input's `integerBeforeScratch` is compared outside, it is the only input field not carried by the requirements); object access: settled at issue; reservation input: settled per input object |
+| `AllocSiteRegistry.fromSnapshot` (75 validated deep copies per compile, 5 throwing slot probes per record) | the four censuses (string demands, formatter support, ref cells, source closures) only `resolve` through it | `preparedAllocationSites` (`src/ir/program/prepared-allocations.ts`): restored once per immutable snapshot, read-only interface |
+| `PhysicalModuleReservations.#verifyLayout` per emit (O(module), the quadratic part) | literal emit: 3 audits (completion, inventory, index); receipt census: one audit per module function (O(F × module)) ×5 per compile | the whole lowering of a body runs in one `audited` scope (one trailing audit per body); the literal emit and the receipt census each take one audit |
+| `hasNativeCollectionState` | throwing probes on every array | an Array exotic object answers without a probe (`data.ts`) |
+
+One mechanism: `src/ir/program/settled-verdict.ts` holds the first Perf slice's predicate and prototype-state rule
+(moved, not copied) and adds `checkUnlessSettled` (holder), `PreparedIrSettledChecks` (holders keyed by input
+object; a check's result is `void`, the allocation restore's is the registry) and `settledAtIssue`.
+
+Tried and withdrawn:
+- a shared cached slot-probe module also used by `alloc-registry.ts`: that file is content-pinned by the relocation
+  receipt (`issue-3518-allocation-runtime-seam` failed 6 tests); replaced by the restore-once view above.
+- a "permanent initializer" audit skip with frozen literal initializers: an in-place write became a TypeError instead
+  of the audit refusal (`issue-3518-native-string-error-resources`), and after the per-body audit it no longer measured
+  above noise.
+
+### Measurements (strict Prepared entry, standalone, second compile in the process; base = 649e432d35)
+
+| program | base | after | bytes |
+| --- | ---: | ---: | --- |
+| 1 dynamic `+` site | 6.1 s | 2.0 s | identical |
+| 5 sites | 30.5 s | 4.1 s | identical |
+| 20 sites | 235 s (brief) | 11.7 s | — (base not re-run) |
+| 50 sites | — | 26.3 s | — |
+| 100 lines (literal + concat + length + `===`, in a function) | 15.0 s | 7.4 s | identical |
+| 200 lines | 34.5 s | 15.5 s | identical |
+| 400 lines | 83.9 s | 34.4 s | identical |
+
+Per site ~0.5 s, flat from 5 to 50 sites; per line 74 / 78 / 86 ms (base 150 / 173 / 210 ms). Load average was
+~2.5 from another agent during the after runs. `tests/issue-7354-str2c-dynamic-add.test.ts`: ~12 min → 206-230 s
+(still over 3 min). The 1-site fixed cost is ~3 s of module loading plus ~2 s of one-time checks.
+
+Profile of 20 sites after (12.6 s in the driver): materialization 6.7 s (emission 0.85 s of it), acceptance 4.0 s,
+preparation 1.9 s; self time `hasNativeCollectionState` 4.1 s and `immutableCopy` 2.4 s spread over ~20 distinct
+one-time whole-program compares and snapshot copies (`planNativeStringValuePhysical` ×3 compares, `assertPreparedIrProgram`
+×5, …), the audit 1.2 s.
+
+### Proofs
+
+- Bytes: 539 distinct Prepared programs logged from Str, Str2, Str2-c census, Str2-c dynamic add, D1, T, X,
+  prepared entry/runtime and #7188 test runs, replayed on base and after: 539 identical (465 binaries, 74 refusal
+  messages). Ordinary pipeline: 100 test262 files of the sample × (JS, standalone): identical.
+- Refusal sets: 43 files (the 24 `issue-3518-native-string-*`, module reservations, physical snapshot, allocation
+  seam/replay, number format, object descriptors, realm, ref cells, source closures, ownership/abi seams, policy
+  evolution, provider boundary, compiler boundaries, 3527 receipts, source maps): failing sets equal to base.
+  R census (113) and Str2-c formatter census (173) pass.
+- New `tests/issue-7354-perf2-settled-checks.test.ts` (12): mutable input re-checked every use; frozen input checked
+  once and again after `Object.prototype` changes; immutability decided before the check; a throwing check never
+  settles; one verdict per object (a copy is re-checked); unfrozen options changed after issue refused; a copied
+  requirements record / object-access pack refused after the issued one settled; reordered census refused; a mutable
+  allocation snapshot changed after a restore refused.
+- Mutation sweep (14): all killed — prototype comparison, settle-always, decide-after-check, settle-at-issue always,
+  options dropped from the settled input (both places), census keyed by program, number-format option check, and the
+  withdrawn permanence predicate's guards. Survivors, performance-only: the per-body `audited` scope, the single-audit
+  literal emit / receipt census, the array shortcut, the restore memo itself (killed by its identity test only).
+- Gates: typecheck, loc and func budgets (merge-base and `origin/main`), coercion sites, oracle ratchet, dead exports,
+  import cycles (grant: `backend->ir` 119 → 120, frontmatter), changed-root tests (interpreter engine). All 7354
+  slice tests, prepared entry/runtime and #7188 pass.
+
+### Still superlinear / not met
+
+- 20 sites 11.7 s (goal ≤ 10 s). What remains is linear: ~20 one-time whole-program compares and copies with throwing
+  slot probes on fresh records. The next lever is one derivation shared per immutable program (e.g. collecting the
+  demand census once per program) and a non-throwing slot probe in `alloc-registry.ts` together with its receipt
+  refresh (#7358).
+- One O(module) audit per function body remains (quadratic in the number of functions, small constant).
+- Not verified: the 20/50-site and 400-line outputs against base (base too slow), `--utf8-storage`, `compileMulti`.
