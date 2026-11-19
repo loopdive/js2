@@ -45,7 +45,9 @@ function refusals(text) {
       text
         .slice(start, index - 1)
         .replace(/\s+/g, " ")
-        .trim(),
+        .trim()
+        // Formatting only: a trailing comma does not change the expectation.
+        .replace(/,$/, ""),
     );
   }
   return out.sort();
