@@ -6,6 +6,7 @@
  */
 import type { Instr, ValType } from "../../ir/types.js";
 import { walkChildren } from "../walk-instructions.js";
+import type { ts } from "../../ts-api.js";
 import type { FunctionContext } from "./types.js";
 
 export function allocLocal(fctx: FunctionContext, name: string, type: ValType): number {
@@ -273,6 +274,25 @@ export function releaseTempLocal(fctx: FunctionContext, index: number): void {
     fctx.tempFreeList.set(key, bucket);
   }
   bucket.push(index);
+}
+
+/**
+ * Run `emit()` with `expr` bound to the value already held in local `index`: a `compileExpression(expr)` inside
+ * reads the local instead of evaluating `expr` again. The binding ends with `emit()`.
+ */
+export function withPreEvaluatedExpression<T>(
+  fctx: FunctionContext,
+  expr: ts.Expression,
+  index: number,
+  emit: () => T,
+): T {
+  const bound = (fctx.preEvaluatedExpressionLocals ??= new Map());
+  bound.set(expr, index);
+  try {
+    return emit();
+  } finally {
+    bound.delete(expr);
+  }
 }
 
 export function getLocalType(fctx: FunctionContext, index: number): ValType | undefined {

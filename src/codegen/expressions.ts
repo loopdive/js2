@@ -675,14 +675,13 @@ function compileExpressionBody(
     return fallbackType;
   }
 
-  // (#680) Literal public fast paths normally avoid inner dispatch. When a
-  // continuation has captured this exact operand, defer those shortcuts so
+  // (#680) Literal public fast paths normally avoid inner dispatch. When this
+  // exact operand is pre-evaluated into a local, defer those shortcuts so
   // `compileExpressionInner` supplies the raw spill and this public layer still
   // performs its ordinary expected-type coercion / boxing. The only local
   // lookup remains in common inner dispatch below.
-  const hasNativeGeneratorExpressionReplacement = (inner: ts.Expression): boolean =>
-    fctx.nativeGeneratorExpressionValueLocals?.has(expr) === true ||
-    fctx.nativeGeneratorExpressionValueLocals?.has(inner) === true;
+  const hasPreEvaluatedExpression = (inner: ts.Expression): boolean =>
+    fctx.preEvaluatedExpressionLocals?.has(expr) === true || fctx.preEvaluatedExpressionLocals?.has(inner) === true;
 
   // Fast-path: null/undefined in numeric context
   if (expectedType?.kind === "f64" || expectedType?.kind === "i32") {
@@ -703,7 +702,7 @@ function compileExpressionBody(
     }
     const isNull = inner.kind === ts.SyntaxKind.NullKeyword;
     const isUndefined = (ts.isIdentifier(inner) && inner.text === "undefined") || ts.isOmittedExpression(inner);
-    if (!hasNativeGeneratorExpressionReplacement(inner) && (isNull || isUndefined)) {
+    if (!hasPreEvaluatedExpression(inner) && (isNull || isUndefined)) {
       if (expectedType.kind === "f64") {
         if (isNull) {
           fctx.body.push({ op: "f64.const", value: 0 });
@@ -718,14 +717,14 @@ function compileExpressionBody(
         return { kind: "i32" };
       }
     }
-    if (!hasNativeGeneratorExpressionReplacement(inner) && expectedType.kind === "i32" && ts.isNumericLiteral(inner)) {
+    if (!hasPreEvaluatedExpression(inner) && expectedType.kind === "i32" && ts.isNumericLiteral(inner)) {
       const litVal = Number(inner.text.replace(/_/g, ""));
       if (Number.isInteger(litVal) && litVal >= -2147483648 && litVal <= 2147483647) {
         fctx.body.push({ op: "i32.const", value: litVal });
         return { kind: "i32" };
       }
     }
-    if (!hasNativeGeneratorExpressionReplacement(inner) && ts.isVoidExpression(inner)) {
+    if (!hasPreEvaluatedExpression(inner) && ts.isVoidExpression(inner)) {
       emitVoidOperandSideEffects(ctx, fctx, () => compileExpressionInner(ctx, fctx, inner.expression));
       if (expectedType.kind === "f64") {
         fctx.body.push({ op: "i64.const", value: 0x7ff00000deadc0den });
@@ -760,7 +759,7 @@ function compileExpressionBody(
     }
     const isNull = inner.kind === ts.SyntaxKind.NullKeyword;
     const isUndefined = (ts.isIdentifier(inner) && inner.text === "undefined") || ts.isOmittedExpression(inner);
-    if (!hasNativeGeneratorExpressionReplacement(inner) && (isNull || isUndefined)) {
+    if (!hasPreEvaluatedExpression(inner) && (isNull || isUndefined)) {
       const typeIdx = (expectedType as { typeIdx: number }).typeIdx;
       fctx.body.push({ op: "ref.null", typeIdx });
       return { kind: "ref_null", typeIdx };
@@ -786,7 +785,7 @@ function compileExpressionBody(
     }
     const isNull = inner.kind === ts.SyntaxKind.NullKeyword;
     const isUndefined = (ts.isIdentifier(inner) && inner.text === "undefined") || ts.isOmittedExpression(inner);
-    if (!hasNativeGeneratorExpressionReplacement(inner) && (isNull || isUndefined)) {
+    if (!hasPreEvaluatedExpression(inner) && (isNull || isUndefined)) {
       ensureAnyHelpers(ctx);
       const helperName = isNull ? "__any_box_null" : "__any_box_undefined";
       const funcIdx = ctx.funcMap.get(helperName);
@@ -795,7 +794,7 @@ function compileExpressionBody(
         return expectedType;
       }
     }
-    if (!hasNativeGeneratorExpressionReplacement(inner) && ts.isVoidExpression(inner)) {
+    if (!hasPreEvaluatedExpression(inner) && ts.isVoidExpression(inner)) {
       emitVoidOperandSideEffects(ctx, fctx, () => compileExpressionInner(ctx, fctx, inner.expression));
       ensureAnyHelpers(ctx);
       const funcIdx = ctx.funcMap.get("__any_box_undefined");
@@ -805,7 +804,7 @@ function compileExpressionBody(
       }
     }
     if (
-      !hasNativeGeneratorExpressionReplacement(inner) &&
+      !hasPreEvaluatedExpression(inner) &&
       (inner.kind === ts.SyntaxKind.TrueKeyword || inner.kind === ts.SyntaxKind.FalseKeyword)
     ) {
       ensureAnyHelpers(ctx);
@@ -1074,15 +1073,15 @@ function compileExpressionInner(
     return asyncOperandType;
   }
 
-  const nativeGeneratorExpressionLocal = fctx.nativeGeneratorExpressionValueLocals?.get(expr);
-  if (nativeGeneratorExpressionLocal !== undefined) {
-    const nativeGeneratorExpressionType = getLocalType(fctx, nativeGeneratorExpressionLocal);
-    if (nativeGeneratorExpressionType === undefined) {
-      reportError(ctx, expr, "Internal error: native generator continuation spill local is unavailable");
+  const preEvaluatedLocal = fctx.preEvaluatedExpressionLocals?.get(expr);
+  if (preEvaluatedLocal !== undefined) {
+    const preEvaluatedType = getLocalType(fctx, preEvaluatedLocal);
+    if (preEvaluatedType === undefined) {
+      reportError(ctx, expr, "Internal error: pre-evaluated expression local is unavailable");
       return null;
     }
-    fctx.body.push({ op: "local.get", index: nativeGeneratorExpressionLocal });
-    return nativeGeneratorExpressionType;
+    fctx.body.push({ op: "local.get", index: preEvaluatedLocal });
+    return preEvaluatedType;
   }
 
   if (ts.isNumericLiteral(expr)) {

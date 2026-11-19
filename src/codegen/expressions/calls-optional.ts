@@ -7,7 +7,7 @@ import { ts } from "../../ts-api.js";
 import { isExternalDeclaredClass, isStringType, isVoidType } from "../../checker/type-mapper.js";
 import type { Instr, ValType } from "../../ir/types.js";
 import { popBody, pushBody } from "../context/bodies.js";
-import { allocLocal } from "../context/locals.js";
+import { allocLocal, withPreEvaluatedExpression } from "../context/locals.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
 import { addStringImports, resolveWasmType } from "../index.js";
 import type { InnerResult } from "../shared.js";
@@ -251,20 +251,17 @@ export function compileOptionalCallExpression(
   // JavaScript parameter: the static string arm above cannot prove its brand,
   // but at runtime it is a native string. The old fallback emitted only the
   // default result, so `.at()` became undefined even for a non-null receiver.
-  // Delegate repeatable local dynamic receivers to the same generic runtime
-  // method ladder as a non-optional call; the outer branch has already applied
-  // the nullish short-circuit. The delegated path re-evaluates its receiver, so
-  // property chains are deliberately excluded: even a syntactically simple
-  // `box.value` can invoke an observable getter.
-  // (#7370) The same holds for a primitive receiver boxed in an externref
-  // (`x?: number`): no arm above dispatches a Number/Boolean/BigInt method.
+  // Delegate dynamic receivers to the same generic runtime method ladder as a
+  // non-optional call; the outer branch has already applied the nullish
+  // short-circuit. (#7370) The same holds for a primitive receiver boxed in an
+  // externref (`x?: number`): no arm above dispatches a Number/Boolean/BigInt
+  // method.
   const primitiveReceiver = isPrimitiveMethodReceiver(tsReceiverType);
   if (
     !methodResolved &&
-    ((tsReceiverType.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0 || primitiveReceiver) &&
-    isRepeatableOptionalReceiver(propAccess.expression)
+    ((tsReceiverType.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0 || primitiveReceiver)
   ) {
-    const delegated = compileReceiverMethodCall(ctx, fctx, expr, propAccess);
+    const delegated = compileHeldReceiverMethodCall(ctx, fctx, expr, propAccess, tmp);
     if (delegated !== undefined) {
       if (delegated === VOID_RESULT || delegated === null) {
         fctx.body.push(...defaultValueInstrs(resultType));
@@ -420,8 +417,8 @@ function isPrimitiveMethodReceiver(type: ts.Type): boolean {
 /**
  * (#7370) `x?.m(args)` on a receiver that lowered to a Wasm value type, with its value on the stack. A receiver that
  * can hold `undefined` (`f64MayHoldUndefined`) short-circuits on the sentinel; one whose static type admits neither
- * `null` nor `undefined` is a primitive and the method always runs. Any other value slot is left to the caller. The call goes through the ordinary receiver-method ladder, which re-reads the
- * receiver, so only a repeatable one is taken. `undefined` leaves the stack untouched for the caller's fallback.
+ * `null` nor `undefined` is a primitive and the method always runs. Any other value slot is left to the caller.
+ * `undefined` leaves the stack untouched for the caller's fallback.
  */
 function compileOptionalValueReceiverCall(
   ctx: CodegenContext,
@@ -431,12 +428,12 @@ function compileOptionalValueReceiverCall(
   receiverType: ValType,
   resultType: ValType,
 ): InnerResult | undefined {
-  if (!isRepeatableOptionalReceiver(propAccess.expression)) return undefined;
   const holdsUndefined = f64MayHoldUndefined(ctx, propAccess.expression, receiverType);
   const nullability = ctx.oracle.nullabilityOf(propAccess.expression);
   if (!holdsUndefined && (nullability.nullable || nullability.undefinable)) return undefined;
+  const receiverLocal = allocLocal(fctx, `__optcall_${fctx.locals.length}`, receiverType);
   const savedBody = pushBody(fctx);
-  const delegated = compileReceiverMethodCall(ctx, fctx, expr, propAccess);
+  const delegated = compileHeldReceiverMethodCall(ctx, fctx, expr, propAccess, receiverLocal);
   const callType: ValType =
     delegated === undefined || delegated === null || delegated === VOID_RESULT ? resultType : delegated;
   if (delegated === null || delegated === VOID_RESULT) fctx.body.push(...defaultValueInstrs(callType));
@@ -444,9 +441,10 @@ function compileOptionalValueReceiverCall(
   popBody(fctx, savedBody);
   if (delegated === undefined) return undefined;
   if (!holdsUndefined) {
-    fctx.body.push({ op: "drop" }, ...callInstrs);
+    fctx.body.push({ op: "local.set", index: receiverLocal }, ...callInstrs);
     return callType;
   }
+  fctx.body.push({ op: "local.tee", index: receiverLocal });
   emitIsUndefF64(fctx.body);
   const joined: ValType = callType.kind === "ref" ? { kind: "ref_null", typeIdx: callType.typeIdx } : callType;
   fctx.body.push({
@@ -458,11 +456,20 @@ function compileOptionalValueReceiverCall(
   return joined;
 }
 
-/** An optional-method receiver that can be read twice observably safely. */
-function isRepeatableOptionalReceiver(expr: ts.Expression): boolean {
-  let cur = expr;
-  while (ts.isParenthesizedExpression(cur) || ts.isNonNullExpression(cur)) cur = cur.expression;
-  return ts.isIdentifier(cur) || cur.kind === ts.SyntaxKind.ThisKeyword;
+/**
+ * (#7374) The receiver-method ladder for `recv?.m(args)` with `recv` read from `receiverLocal`, which already holds the
+ * value the nullish test saw: a call or a getter in `recv` runs once.
+ */
+function compileHeldReceiverMethodCall(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expr: ts.CallExpression,
+  propAccess: ts.PropertyAccessExpression,
+  receiverLocal: number,
+): InnerResult | undefined {
+  return withPreEvaluatedExpression(fctx, propAccess.expression, receiverLocal, () =>
+    compileReceiverMethodCall(ctx, fctx, expr, propAccess),
+  );
 }
 
 /**
