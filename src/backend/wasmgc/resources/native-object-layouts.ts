@@ -6,6 +6,7 @@ import {
   createObjectPropertyMapDeclaration,
   createOpenObjectDeclaration,
   createExtensibleOpenObjectDeclaration,
+  createArrayObjectDeclaration,
 } from "../../../runtime/wasmgc/values/object-layouts.js";
 import { preparedIrDataMismatch } from "../../../ir/program/data.js";
 import {
@@ -20,15 +21,26 @@ export interface NativeObjectLayoutRequirements {
   readonly key: string;
   /** Explicit opt-in; absent preserves the final ordinary layout. */
   readonly extensible?: true;
+  /**
+   * (#7352 arrays) The type key of the element vector an Array object holds. Its presence declares the `$Array`
+   * subtype, which needs the extensible root.
+   */
+  readonly arrayElements?: string;
 }
 export interface NativeObjectLayoutDeclarationPlan extends NativeResourceRecipe {
   readonly key: string;
-  readonly types: { readonly propEntry: string; readonly propMap: string; readonly object: string };
+  readonly types: {
+    readonly propEntry: string;
+    readonly propMap: string;
+    readonly object: string;
+    readonly array?: string;
+  };
 }
 export interface NativeObjectLayoutReservations {
   readonly propEntry: TypeReservation;
   readonly propMap: TypeReservation;
   readonly object: TypeReservation;
+  readonly array?: TypeReservation;
 }
 interface Owner {
   readonly tx: PhysicalModuleReservations;
@@ -36,6 +48,8 @@ interface Owner {
   readonly plan: NativeObjectLayoutDeclarationPlan;
   readonly sourcePlan: NativeObjectLayoutDeclarationPlan;
   readonly tokens: readonly TypeReservation[];
+  /** The element vector type an `$Array` declaration references; absent without arrays. */
+  readonly prerequisites: ReadonlyMap<string, TypeReservation>;
 }
 const owners = new WeakMap<NativeObjectLayoutReservations, Owner>();
 function fail(detail: string): never {
@@ -55,7 +69,16 @@ export function declareNativeObjectLayouts(
   if (extensible && (!Object.hasOwn(extensible, "value") || extensible.value !== true))
     fail("extensible layout requires an explicit true data field");
   const key: string = descriptor.value;
-  const types = { propEntry: key + ":entry", propMap: key + ":map", object: key + ":object" };
+  const elements = Object.getOwnPropertyDescriptor(requirements, "arrayElements");
+  if (elements && (!Object.hasOwn(elements, "value") || typeof elements.value !== "string" || !elements.value))
+    fail("array layout requires an element vector type key");
+  if (elements && !extensible) fail("array layout requires the extensible root");
+  const types = {
+    propEntry: key + ":entry",
+    propMap: key + ":map",
+    object: key + ":object",
+    ...(elements ? { array: key + ":array" } : {}),
+  };
   const declarations = [
     {
       key: types.propEntry,
@@ -77,6 +100,16 @@ export function declareNativeObjectLayouts(
         ? createExtensibleOpenObjectDeclaration(types.object, types.propMap)
         : createOpenObjectDeclaration(types.object, types.propMap),
     },
+    ...(types.array
+      ? [
+          {
+            key: types.array,
+            role: ["object", "array"],
+            space: "type" as const,
+            shape: createArrayObjectDeclaration(types.object, types.propMap, elements!.value as string),
+          },
+        ]
+      : []),
   ];
   return freezeNativeResourceRecipe({
     key,
@@ -94,22 +127,28 @@ export function reserveNativeObjectLayouts(
   tx: PhysicalModuleReservations,
   requirements: NativeObjectLayoutRequirements,
   expectedPlan: NativeObjectLayoutDeclarationPlan,
+  arrayElements?: TypeReservation,
 ): NativeObjectLayoutReservations {
-  const plan = preflightNativeResourceRecipe(expectedPlan);
+  if (arrayElements?.key !== requirements.arrayElements) fail("array element vector differs from the requirements");
+  const prerequisites = new Map(arrayElements ? [[arrayElements.key, arrayElements]] : []);
+  const plan = preflightNativeResourceRecipe(expectedPlan, [...prerequisites.keys()]);
   same(declareNativeObjectLayouts(requirements), plan, "substituted declaration plan");
   const retainedPlan = freezeNativeResourceRecipe(plan);
-  const records = executeNativeResourceRecipe(tx, retainedPlan);
+  const records = executeNativeResourceRecipe(tx, retainedPlan, prerequisites);
+  const array = retainedPlan.types.array;
   const pack = Object.freeze({
     propEntry: requireNativeDeclaredReservation(records, retainedPlan.types.propEntry, "type"),
     propMap: requireNativeDeclaredReservation(records, retainedPlan.types.propMap, "type"),
     object: requireNativeDeclaredReservation(records, retainedPlan.types.object, "type"),
+    ...(array ? { array: requireNativeDeclaredReservation(records, array, "type") } : {}),
   });
   owners.set(pack, {
     tx,
     requirements,
     plan: retainedPlan,
     sourcePlan: expectedPlan,
-    tokens: Object.freeze([pack.propEntry, pack.propMap, pack.object]),
+    tokens: Object.freeze([pack.propEntry, pack.propMap, pack.object, ...(pack.array ? [pack.array] : [])]),
+    prerequisites,
   });
   return pack;
 }
@@ -121,11 +160,16 @@ export function requireNativeObjectLayouts(
 ): NativeObjectLayoutReservations {
   const owner = owners.get(pack);
   if (!owner || owner.tx !== tx || owner.sourcePlan !== expectedPlan) fail("foreign or substituted layout owner/plan");
-  same(preflightNativeResourceRecipe(expectedPlan), owner.plan, "changed retained declaration plan");
+  same(
+    preflightNativeResourceRecipe(expectedPlan, [...owner.prerequisites.keys()]),
+    owner.plan,
+    "changed retained declaration plan",
+  );
   same(declareNativeObjectLayouts(owner.requirements), owner.plan, "stale layout requirements");
-  const current = [pack.propEntry, pack.propMap, pack.object];
-  if (owner.tokens.some((token, i) => current[i] !== token)) fail("substituted layout token");
-  const types = new Map(owner.tokens.map((token) => [token.key, token]));
+  const current = [pack.propEntry, pack.propMap, pack.object, ...(pack.array ? [pack.array] : [])];
+  if (current.length !== owner.tokens.length || owner.tokens.some((token, i) => current[i] !== token))
+    fail("substituted layout token");
+  const types = new Map([...owner.prerequisites, ...owner.tokens.map((token) => [token.key, token] as const)]);
   owner.tokens.forEach((token, i) => {
     if (tx.state === "reserving") tx.assertTypeReservation(token);
     else tx.physicalIndex(token);

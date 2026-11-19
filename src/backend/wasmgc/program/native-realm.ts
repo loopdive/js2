@@ -355,6 +355,11 @@ export function reserveNativeProgramFoundation(
   return { vectorTypes, stringTypes, earlyStrings, realm };
 }
 
+const ARRAY_FEATURES: ReadonlySet<string> = new Set([
+  "js.object.create-array",
+  "js.object.get-index",
+  "js.object.set-index",
+]);
 function reserveKernelResources(tx: PhysicalModuleReservations, pack: NativeRealmReservations, owner: Owner) {
   const number = pack.strings.number,
     valuePlan = owner.input.valueRequirements,
@@ -370,9 +375,16 @@ function reserveKernelResources(tx: PhysicalModuleReservations, pack: NativeReal
   const bigintPlan = declareNativeBigIntResources(key + ":bigints"),
     bigints = reserveNativeBigIntResources(tx, key + ":bigints", bigintPlan);
   const symbols = reserveNativeSymbolCarrierResources(tx, key + ":symbols", strings);
-  const layoutRequirements = { key: key + ":objects" },
+  // (#7352 arrays) An array contract declares `$Array`, whose elements are the realm's argument vector.
+  const elements = pack.requirements.description.objectUses.some((use) => ARRAY_FEATURES.has(use.feature))
+    ? pack.substrate.arguments.carrier
+    : undefined;
+  const layoutRequirements = {
+      key: key + ":objects",
+      ...(elements ? { extensible: true as const, arrayElements: elements.key } : {}),
+    },
     layoutPlan = declareNativeObjectLayouts(layoutRequirements);
-  const layouts = reserveNativeObjectLayouts(tx, layoutRequirements, layoutPlan);
+  const layouts = reserveNativeObjectLayouts(tx, layoutRequirements, layoutPlan, elements);
   const lookupDependencies = { layouts, layoutPlan, strings, flatten, equality, symbols };
   const lookup = reserveNativeObjectLookupResources(
     tx,
@@ -508,6 +520,7 @@ export function nativeRealmReservationInventory(tx: PhysicalModuleReservations, 
     ...nativeObjectDescriptorReservationInventory(tx, k.descriptors, k.descriptorDependencies).functions,
     ...kernel.functions,
     ...k.sourceObjects.adapters.values(),
+    ...(k.sourceObjects.elementStore ? [k.sourceObjects.elementStore] : []),
   ];
   const types: TypeReservation[] = [
     ...substrate.types,

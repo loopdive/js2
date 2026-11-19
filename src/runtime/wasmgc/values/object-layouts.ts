@@ -43,3 +43,24 @@ export function createExtensibleOpenObjectDeclaration(objectKey: string, mapKey:
   if (ordinary.kind !== "struct") throw new Error("ordinary object declaration is not a struct");
   return { ...ordinary, parent: { kind: "root" }, final: false };
 }
+
+/**
+ * (#7352 arrays) The realm's Array exotic object: an ordinary object (named properties, prototype, flags) whose
+ * index properties live in a dense element vector, `elementsKey` (length + backing store; a hole is the realm's
+ * hole sentinel). It extends the extensible ordinary root, so every ordinary algorithm reads its named part.
+ */
+export function createArrayObjectDeclaration(
+  objectKey: string,
+  mapKey: string,
+  elementsKey: string,
+): NativeDeclaredType {
+  const ordinary = createOpenObjectDeclaration(objectKey, mapKey);
+  if (ordinary.kind !== "struct") throw new Error("ordinary object declaration is not a struct");
+  return {
+    kind: "struct",
+    name: "$Array",
+    parent: { kind: "resource", typeKey: objectKey },
+    final: true,
+    fields: [...ordinary.fields, { name: "elements", type: { kind: "ref", typeKey: elementsKey }, mutable: false }],
+  };
+}

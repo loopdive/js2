@@ -8,9 +8,22 @@ export interface PreparedOrdinaryPropertyRead {
   readonly key: string;
   readonly resultType: IrType;
 }
+/** (#7352 arrays) A typed read of an array literal's element at a constant index. */
+export interface PreparedArrayElementRead {
+  readonly index: number;
+  readonly resultType: IrType;
+}
 
 const F64: IrType = Object.freeze({ kind: "val", val: Object.freeze({ kind: "f64" }) });
 const BOOLEAN: IrType = Object.freeze({ kind: "val", val: Object.freeze({ kind: "i32", boolean: true }) });
+
+/** The array index a numeric-literal key names, when it lies inside `length`. */
+function constantIndex(access: ts.ElementAccessExpression, length: number): number | undefined {
+  const key = access.argumentExpression;
+  if (!ts.isNumericLiteral(key)) return undefined;
+  const index = Number(key.text);
+  return Number.isInteger(index) && index >= 0 && index < length ? index : undefined;
+}
 
 const isAccessor = (property: ts.ObjectLiteralElementLike): boolean =>
   ts.isGetAccessorDeclaration(property) || ts.isSetAccessorDeclaration(property);
@@ -26,12 +39,17 @@ function isDataOnlyLiteral(literal: ts.ObjectLiteralExpression): boolean {
 }
 
 /**
- * A read `o.k` that neither writes, deletes, calls nor otherwise passes on the property or `o`. A member inside an
- * array or object literal is refused outright: that is where a destructuring assignment target hides.
+ * A read `o.k` (or, #7352 arrays, `o[k]`) that neither writes, deletes, calls nor otherwise passes on the property
+ * or `o`. A member inside an array or object literal is refused outright: that is where a destructuring assignment
+ * target hides.
  */
 function isPlainMemberRead(reference: ts.Identifier): boolean {
   const access = reference.parent;
-  if (!ts.isPropertyAccessExpression(access) || access.expression !== reference || access.questionDotToken)
+  if (
+    !(ts.isPropertyAccessExpression(access) || ts.isElementAccessExpression(access)) ||
+    access.expression !== reference ||
+    access.questionDotToken
+  )
     return false;
   let outer: ts.Node = access;
   while (ts.isParenthesizedExpression(outer.parent)) outer = outer.parent;
@@ -68,8 +86,11 @@ export function prepareOrdinaryObjectAccessResolver(
     expression: ts.PropertyAccessExpression,
   ) => PreparedOrdinaryPropertyRead | undefined;
   readonly preparedOrdinaryObjectLiteral: (literal: ts.ObjectLiteralExpression) => boolean;
+  readonly preparedArrayLiteral: (literal: ts.ArrayLiteralExpression) => boolean;
+  readonly preparedArrayElementRead: (expression: ts.ElementAccessExpression) => PreparedArrayElementRead | undefined;
 } {
   const plans = new WeakMap<ts.PropertyAccessExpression, PreparedOrdinaryPropertyRead>();
+  const elementPlans = new WeakMap<ts.ElementAccessExpression, PreparedArrayElementRead>();
   const roots: readonly ts.Node[] =
     "kind" in declarationOrStatements ? [declarationOrStatements] : declarationOrStatements;
   // (#7354 O1) Every reference to a symbol in the program's sources, gathered once.
@@ -94,28 +115,68 @@ export function prepareOrdinaryObjectAccessResolver(
    * `const`, or (#7354 O1) a data-only literal whose binding is only ever read as `o.k`, so no property is written
    * after the literal stored it.
    */
-  const ordinaryLiteral = (expression: ts.Expression): ts.ObjectLiteralExpression | undefined => {
+  /** The variable declaration and symbol behind an identifier receiver declared in the program's sources. */
+  const sourceVariable = (expression: ts.Expression) => {
     if (!ts.isIdentifier(expression)) return undefined;
     const symbol = checker.getSymbolAtLocation(expression);
     const declaration = symbol?.valueDeclaration;
-    if (
-      !declaration ||
-      !ts.isVariableDeclaration(declaration) ||
-      !ts.isIdentifier(declaration.name) ||
-      !sourceFiles.includes(declaration.getSourceFile()) ||
-      !ts.isVariableDeclarationList(declaration.parent) ||
-      !declaration.initializer ||
-      !ts.isObjectLiteralExpression(declaration.initializer)
-    )
-      return undefined;
-    const literal = declaration.initializer;
-    if (literal.properties.some(isAccessor)) return declaration.parent.flags & ts.NodeFlags.Const ? literal : undefined;
-    return isDataOnlyLiteral(literal) &&
-      referencesOf(symbol!).every((reference) => reference === declaration.name || isPlainMemberRead(reference))
+    return declaration &&
+      ts.isVariableDeclaration(declaration) &&
+      ts.isIdentifier(declaration.name) &&
+      sourceFiles.includes(declaration.getSourceFile()) &&
+      ts.isVariableDeclarationList(declaration.parent) &&
+      declaration.initializer
+      ? { symbol: symbol!, declaration, initializer: declaration.initializer }
+      : undefined;
+  };
+  const onlyRead = (variable: NonNullable<ReturnType<typeof sourceVariable>>, read: (access: ts.Node) => boolean) =>
+    referencesOf(variable.symbol).every(
+      (reference) =>
+        reference === variable.declaration.name || (isPlainMemberRead(reference) && read(reference.parent)),
+    );
+  const ordinaryLiteral = (expression: ts.Expression): ts.ObjectLiteralExpression | undefined => {
+    const variable = sourceVariable(expression);
+    if (!variable || !ts.isObjectLiteralExpression(variable.initializer)) return undefined;
+    const literal = variable.initializer;
+    if (literal.properties.some(isAccessor))
+      return variable.declaration.parent.flags & ts.NodeFlags.Const ? literal : undefined;
+    return isDataOnlyLiteral(literal) && onlyRead(variable, () => true) ? literal : undefined;
+  };
+  /**
+   * (#7352 arrays) The literal behind a receiver that is only read as `a.length` or `a[i]` with a constant `i`
+   * inside it, and has no elision or spread: every planned read finds its element present.
+   */
+  const arrayLiteral = (expression: ts.Expression): ts.ArrayLiteralExpression | undefined => {
+    const variable = sourceVariable(expression);
+    if (!variable || !ts.isArrayLiteralExpression(variable.initializer)) return undefined;
+    const literal = variable.initializer;
+    const inside = (access: ts.Node) =>
+      ts.isPropertyAccessExpression(access)
+        ? access.name.text === "length"
+        : ts.isElementAccessExpression(access) && constantIndex(access, literal.elements.length) !== undefined;
+    return literal.elements.every((element) => !ts.isOmittedExpression(element) && !ts.isSpreadElement(element)) &&
+      onlyRead(variable, inside)
       ? literal
       : undefined;
   };
+  const numeric = (node: ts.Expression) => {
+    const type = checker.getTypeAtLocation(node);
+    const parts = type.isUnion() ? type.types : [type];
+    return parts.length > 0 && parts.every((part) => (part.flags & ts.TypeFlags.NumberLike) !== 0);
+  };
   const visit = (node: ts.Node): void => {
+    if (ts.isElementAccessExpression(node) && !node.questionDotToken && numeric(node)) {
+      const literal = arrayLiteral(node.expression);
+      const index = literal && constantIndex(node, literal.elements.length);
+      if (index !== undefined) elementPlans.set(node, Object.freeze({ index, resultType: F64 }));
+    }
+    if (
+      ts.isPropertyAccessExpression(node) &&
+      !node.questionDotToken &&
+      node.name.text === "length" &&
+      arrayLiteral(node.expression)
+    )
+      plans.set(node, Object.freeze({ key: "length", resultType: F64 }));
     if (
       ts.isPropertyAccessExpression(node) &&
       !node.questionDotToken &&
@@ -155,6 +216,13 @@ export function prepareOrdinaryObjectAccessResolver(
     // (#7354 O1) The Prepared backend has no closed object struct: every literal it owns is an ordinary object.
     preparedOrdinaryObjectLiteral(literal: ts.ObjectLiteralExpression) {
       return owned && sourceFiles.includes(literal.getSourceFile());
+    },
+    // (#7352 arrays) Nor a vec home for a literal: every array literal it owns is an Array exotic object.
+    preparedArrayLiteral(literal: ts.ArrayLiteralExpression) {
+      return owned && sourceFiles.includes(literal.getSourceFile());
+    },
+    preparedArrayElementRead(expression: ts.ElementAccessExpression) {
+      return elementPlans.get(expression);
     },
   });
 }

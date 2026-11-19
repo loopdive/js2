@@ -5,6 +5,7 @@ import {
   buildBuiltinFunctionEntryGet,
   type BuiltinFunctionPropertyOperands,
 } from "./builtin-function-property-bodies.js";
+import { buildArrayOwnEntry } from "./array-exotic-bodies.js";
 import { BUILTIN_FUNCTION_PROTOTYPE_FIELD } from "./builtin-function-layouts.js";
 
 export interface BuiltinFunctionPrototypeOperands extends BuiltinFunctionPropertyOperands {
@@ -65,6 +66,12 @@ export function buildBuiltinFunctionLookup(d: BuiltinFunctionPrototypeOperands):
       { name: "cursor", type: { kind: "externref" } },
       { name: "entry", type: { kind: "ref_null", typeIdx: d.entryTypeIdx } },
       { name: "next", type: { kind: "externref" } },
+      ...(d.array
+        ? [
+            { name: "index", type: { kind: "i64" as const } },
+            { name: "value", type: { kind: "externref" as const } },
+          ]
+        : []),
     ],
     body: [
       call(d.initializer),
@@ -89,10 +96,15 @@ export function buildBuiltinFunctionLookup(d: BuiltinFunctionPrototypeOperands):
               { op: "ref.test", typeIdx: d.objectTypeIdx },
               { op: "i32.eqz" },
               { op: "if", blockType: empty, then: missing(3) },
-              ...object(d, 2),
-              get(1),
-              call(d.findOrdinary),
-              set(3),
+              ...(d.array
+                ? buildArrayOwnEntry(d.array, [...object(d, 2), get(1), call(d.findOrdinary)], {
+                    cursor: 2,
+                    key: 1,
+                    entry: 3,
+                    index: 5,
+                    value: 6,
+                  })
+                : [...object(d, 2), get(1), call(d.findOrdinary), set(3)]),
               // Do not follow a parent or report its incompleteness until the own entry misses.
               get(3),
               { op: "ref.is_null" },

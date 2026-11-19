@@ -1,4 +1,5 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+import type { ArrayRealmOperands } from "../../../runtime/wasmgc/values/array-exotic-bodies.js";
 import type { Instr, ValType } from "../../../wasm/model/instructions.js";
 import type {
   PhysicalModuleReservations,
@@ -133,6 +134,9 @@ export interface NativeBuiltinFunctionReservations {
     readonly objectPrototype: GlobalReservation;
     readonly state: GlobalReservation;
     readonly realmReady: GlobalReservation;
+    /** (#7352 arrays) %Array.prototype% and the hole sentinel, present when the layouts declare `$Array`. */
+    readonly arrayPrototype?: GlobalReservation;
+    readonly arrayHole?: GlobalReservation;
   };
   readonly realmType: TypeReservation;
   readonly exception: TagReservation;
@@ -183,7 +187,8 @@ function dependencies(tx: PhysicalModuleReservations, d: NativeBuiltinFunctionDe
   // ref.test includes subtypes. Plain storage lookup cannot stand in for an
   // exotic carrier's own-property method (String's virtual indices, for example).
   // Parentless structs are implicitly final in the emitted Wasm representation.
-  if (ordinary.kind !== "struct" || (ordinary.superTypeIdx !== undefined && ordinary.final !== true))
+  // (#7352 arrays) The one subtype the layouts may declare, `$Array`, has its arm in `lookup`.
+  if (ordinary.kind !== "struct" || (!arrayLayout(d) && ordinary.superTypeIdx !== undefined && ordinary.final !== true))
     fail("extensible ordinary carrier requires heterogeneous prototype dispatch");
   if (
     dd.closures !== d.closures ||
@@ -226,12 +231,16 @@ function dependencies(tx: PhysicalModuleReservations, d: NativeBuiltinFunctionDe
   same(declaration.signature, { params: [ext, ext, ext, f64], results: [ext] }, "wrong descriptor return-target ABI");
   return inventory;
 }
-function resourceKeys(requests: NativeBuiltinFunctionRequests): readonly string[] {
+const arrayLayout = (d: NativeBuiltinFunctionDependencies) =>
+  d.descriptorDependencies.storageDependencies.lookupDependencies.layouts.array;
+function resourceKeys(requests: NativeBuiltinFunctionRequests, arrays: boolean): readonly string[] {
   const key = requests.requirements.key;
   return [
     key + ":realm-type",
     key + ":exception",
-    ...["realm", "object-prototype", "state", "realm-ready"].map((role) => key + ":global:" + role),
+    ...["realm", "object-prototype", "state", "realm-ready", ...(arrays ? ["array-prototype", "array-hole"] : [])].map(
+      (role) => key + ":global:" + role,
+    ),
     ...functionRoles.map((role) => key + ":function:" + role),
     ...requests.requirements.intrinsics.flatMap((row) =>
       ["type", "singleton", "algorithm", "lifted", "getter"].map((role) => key + ":" + row.id + ":" + role),
@@ -245,7 +254,7 @@ export function reserveNativeBuiltinFunctionResources(
   if (tx.state !== "reserving") fail("invalid reservation phase");
   const inventory = dependencies(tx, d),
     input = nativeBuiltinFunctionRequestDependencies(tx, d.requests);
-  const keys = Object.freeze(resourceKeys(d.requests));
+  const keys = Object.freeze(resourceKeys(d.requests, arrayLayout(d) !== undefined));
   tx.assertReservationKeysAvailable(keys);
   const key = d.requests.requirements.key,
     realmType = tx.reserveType(key + ":realm-type", createBuiltinFunctionRealmType(key + ":realm"));
@@ -259,6 +268,18 @@ export function reserveNativeBuiltinFunctionResources(
   const state = tx.reserveGlobal(key + ":global:state", key + ":state", i32, true);
   // Intentionally never raised by kernel completion. The actual standard realm graph is still missing.
   const realmReady = tx.reserveGlobal(key + ":global:realm-ready", key + ":realm-ready", i32, false);
+  const entryType = d.descriptorDependencies.storageDependencies.lookupDependencies.layouts.propEntry.typeIndex;
+  const arrayGlobals = arrayLayout(d)
+    ? {
+        arrayPrototype: tx.reserveGlobal(key + ":global:array-prototype", key + ":array-prototype", ext, true),
+        arrayHole: tx.reserveGlobal(
+          key + ":global:array-hole",
+          key + ":array-hole",
+          { kind: "ref_null", typeIdx: entryType },
+          true,
+        ),
+      }
+    : {};
   const entries = d.requests.requirements.intrinsics.map((row) => {
     const metadata = d.closures.metadata.find((entry) => entry.id === row.metadataId)!.binding;
     const prefix = key + ":" + row.id;
@@ -336,7 +357,7 @@ export function reserveNativeBuiltinFunctionResources(
     { params: [ext], results: [] },
     { kind: "defined", name: key + ":exception" },
   ) as TagReservation;
-  const globals = Object.freeze({ realm, objectPrototype, state, realmReady });
+  const globals = Object.freeze({ realm, objectPrototype, state, realmReady, ...arrayGlobals });
   const pack = Object.freeze({
     requests: d.requests,
     entries: Object.freeze(entries),
@@ -493,6 +514,26 @@ function operands(
     lookup: pack.functions.lookup.handle,
     isExtensible: pack.functions.isExtensible.handle,
     sameValue: dd.sameValue.sameValue.handle,
+    ...(lookup.layouts.array && pack.globals.arrayPrototype && pack.globals.arrayHole
+      ? {
+          array: {
+            arrayTypeIdx: lookup.layouts.array.typeIndex,
+            objectTypeIdx: lookup.layouts.object.typeIndex,
+            propMapTypeIdx: lookup.layouts.propMap.typeIndex,
+            entryTypeIdx: lookup.layouts.propEntry.typeIndex,
+            vectorTypeIdx: input.arguments.carrier.typeIndex,
+            vectorArrayTypeIdx: input.arguments.array.typeIndex,
+            hole: tx.physicalIndex(pack.globals.arrayHole),
+            arrayPrototype: tx.physicalIndex(pack.globals.arrayPrototype),
+            initializer: pack.functions.initialize.handle,
+            lengthKey: literal("length"),
+            sameValue: dd.sameValue.sameValue.handle,
+            arrayIndex: pack.functions.arrayIndex.handle,
+            boxNumber: values.functions.boxNumber.handle,
+            createWithPrototype: dd.storage.createWithPrototype.handle,
+          },
+        }
+      : {}),
   };
 }
 export function fillNativeBuiltinFunctionResources(
@@ -508,6 +549,8 @@ export function fillNativeBuiltinFunctionResources(
   tx.fillGlobal(pack.globals.objectPrototype, [{ op: "ref.null.extern" }]);
   tx.fillGlobal(pack.globals.state, [{ op: "i32.const", value: 0 }]);
   tx.fillGlobal(pack.globals.realmReady, [{ op: "i32.const", value: 0 }]);
+  if (pack.globals.arrayPrototype) tx.fillGlobal(pack.globals.arrayPrototype, [{ op: "ref.null.extern" }]);
+  if (pack.globals.arrayHole) tx.fillGlobal(pack.globals.arrayHole, [{ op: "ref.null", typeIdx: d.entryTypeIdx }]);
   pack.entries.forEach((entry, index) => {
     tx.fillGlobal(entry.singleton, [{ op: "ref.null", typeIdx: entry.type.typeIndex }]);
     tx.fillFunction(entry.algorithm, buildBuiltinFunctionAlgorithmDefinition(d, d.entries[index]!.behavior));
@@ -581,6 +624,13 @@ export function fillNativeBuiltinFunctionResources(
   for (const arity of [0, 1, 2, 3] as const)
     fill(("method" + arity) as FunctionRole, buildBuiltinFunctionMethodDefinition(d, arity));
   owner.filled = true;
+}
+/** (#7352 arrays) The kernel's array operands for the source contracts that create and index arrays. */
+export function nativeBuiltinFunctionArrayOperands(
+  tx: PhysicalModuleReservations,
+  pack: NativeBuiltinFunctionReservations,
+): ArrayRealmOperands | undefined {
+  return operands(tx, pack, current(tx, pack)).array;
 }
 /** Kernel completion deliberately grants no standard realm/provider acceptance. */
 export function requireCompletedNativeBuiltinFunctionKernel(

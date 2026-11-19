@@ -14,6 +14,13 @@ area: ir
 goal: ir-full-coverage
 depends_on: []
 related: [7349, 7350, 7353, 7335, 7280, 7338, 7339, 7292]
+# 2026-11-19 (arrays slice A1, lane S13): src/ir/from-ast.ts +60 net. The array literal arm
+# (`lowerOrdinaryArrayLiteral`) and the planned element read (`lowerPreparedArrayElementRead`)
+# sit next to their O1 siblings and share two helpers factored out of O1's code in the same
+# change (`ordinaryPropertyValue`, `ordinaryReadResult`), which removes their duplicate; moving
+# them out would need `lowerExpr` and `LowerCtx` behind a host interface for two small arms.
+loc-budget-allow:
+  - src/ir/from-ast.ts
 ---
 
 # #7352 — IR foundation: object and array literals
@@ -194,7 +201,9 @@ half (#7354 slice O).
 ### Representation (decided by the foundations rule)
 
 **An array is an Array exotic object of the realm: `$Array`, a subtype of the realm's `$Object`, whose index
-properties live in a dense `$Vec<externref>` field; a hole is the realm's hole sentinel.** Named properties
+properties live in a dense element vector, the realm's own `$ObjVec` (length + externref store, already in every
+realm as the argument vector); a hole is the realm's hole sentinel, a `$PropEntry`, which no ECMAScript value
+is.** Named properties
 (expandos) live in the inherited property map; `[[Prototype]]` is the realm's `%Array.prototype%`, an ordinary
 object on Object.prototype created on first use like `objectPrototype`.
 
@@ -222,16 +231,20 @@ not a second representation. Rejected therefore: the typed vec slot on this path
   An index-keyed contract is how an index reaches the dense storage without a ToString round trip; on an
   ordinary object its body converts the index to its canonical string key and runs the string-keyed operation.
 - **Layouts** (`native-object-layouts.ts`, `object-layouts.ts`): the realm reserves the `extensible` `$Object`
-  root when the program uses an array contract, and one `$Array` subtype declaration beside the ordinary one.
-  A program without arrays keeps the final layout: its bytes do not change.
-- **Kernel** (`builtin-function-prototype-bodies.ts`): the own-property step of `lookup` gains the
-  heterogeneous dispatcher its comment asks for, one arm: an `$Array` answers `length` and canonical index keys
-  from the vec (a fresh data entry with the spec attributes), every other key from the ordinary map. `get`,
-  `has` and every builtin that walks through `lookup` see arrays without their own arm. (A3; A1 and A2 reach
-  arrays only through the index contracts and `length`.)
-- **Bodies** (`src/runtime/wasmgc/values/source-array-bodies.ts`, new, beside `source-object-bodies.ts`):
-  create, get-index, set-index, and the `length` read; set-index reuses `buildVectorGrowStoreBody` with the
-  hole-global gap fill, never a second grow loop.
+  root when the program uses an array contract, and one `$Array` subtype row in the same recipe (the pattern of
+  the primitive-wrapper objects). A program without arrays keeps the final layout: its bytes do not change.
+- **Kernel** (`native-builtin-functions.ts`): with `$Array` declared it owns two more globals,
+  `%Array.prototype%` (an ordinary object on Object.prototype) and the hole sentinel, both allocated by its
+  initializer, and accepts the extensible root because its lookup dispatches `$Array`.
+- **Kernel lookup** (`builtin-function-prototype-bodies.ts`): the own-property step of `lookup` gains the
+  heterogeneous dispatcher its comment asks for, one arm (`buildArrayOwnEntry`): an `$Array` answers `length`
+  and canonical index keys (the kernel's existing `arrayIndex`) from the vector as a fresh data entry with the
+  spec attributes, every other key from the ordinary map. `get`, `has` and every builtin that walks through
+  `lookup` see arrays without their own arm. Built in A1, because `a.length` is `js.object.get`.
+- **Bodies** (`src/runtime/wasmgc/values/array-exotic-bodies.ts`, new): the lookup arm, the initializer step,
+  create, get-index and set-index; create reuses the ordinary object's field initialisers
+  (`buildOrdinaryObjectCreateBody`), set-index stores through `buildVectorGrowStoreBody` with the hole-global gap
+  fill, never a second grow loop.
 - **Resources** (`native-source-objects.ts`): the three contracts are rows of its `ADAPTERS` table, served by
   the bodies above; the binding rows come from the existing `nativeSourceObjectResourceKey` /
   `planNativeSourceObjectSetup` (one binding row per callable, the shared `nativeCallAbiBindings`).
@@ -266,10 +279,26 @@ forEach / map / filter with a callback wait for lane S4's Fb); `new Array(n)` an
 #7350); spread elements; `for-in` over an array. After each slice S9's stand-in census re-runs on the two array
 lists and this section records where the files stop next.
 
+### A1 result (2026-11-19)
+
+- Built as above. `function f(){ var a = [1, 2, 3]; return a[1] + a.length; } if (f() !== 5) throw 1;` validates
+  and returns through the strict Prepared entry, standalone; with `!== 6` it throws; node agrees. Also `[]`,
+  strings, nested arrays (`tests/issue-7352-a-arrays.test.ts`).
+- The resolver plans a typed read only on a literal without elision or spread whose binding is only read as
+  `a.length` or `a[i]` with a constant `i` inside it; get-index and set-index trap (named in their comments) on
+  the receivers and keys A2 admits: a miss's prototype walk, a non-array receiver, a non-index number key.
+- Refusals pinned by name: script `var` home, an array into a dynamic slot, an element store, a read outside the
+  literal, a hole (unplanned `.length`), spread.
+- Mutation checks: `length` answered as length + 1, and an element read one index off, each make the proving
+  program throw.
+- Ordinary pipeline: bytes identical on 111 files (playground examples, test262 `built-ins/Array` and
+  `language/expressions` samples) × default and standalone, against `claude/7354-realm` `e9e64e5d`.
+- Native async family units keep their logical-vector literals (`isPreparedArrayLiteral` defers to them).
+
 ### Acceptance
 
 - Each slice's proving program validates and runs through the strict Prepared entry: the right answer returns,
-  a wrong answer throws, node agrees. Tests in `tests/issue-7354-a-arrays.test.ts`, refusals pinned by name,
+  a wrong answer throws, node agrees. Tests in `tests/issue-7352-a-arrays.test.ts`, refusals pinned by name,
   a mutation check on each new arm.
 - Ordinary-pipeline bytes identical on the 100-file sample, JS environment and standalone.
 - Code quality: one representation of an array on this path; the three contracts are rows of the existing

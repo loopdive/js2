@@ -19,6 +19,10 @@ const CONTRACTS = [
   ["js.object.define-attributes", [REF, REF, FLAGS], []],
   ["js.object.get", [REF, REF, REF], [REF]],
   ["js.object.has", [REF, REF], [BOOL]],
+  // (#7352 arrays) Array-index keys are integer f64s.
+  ["js.object.create-array", [FLAGS], [REF]],
+  ["js.object.get-index", [REF, FLAGS, REF], [REF]],
+  ["js.object.set-index", [REF, FLAGS, REF], []],
 ] as const;
 
 describe("ordinary object semantic contracts", () => {

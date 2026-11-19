@@ -68,11 +68,7 @@ function original(value: IrValueId, definitions: ReadonlyMap<IrValueId, Definiti
 function createFeature(row: Definition | undefined): OrdinaryObjectRuntimeFeature | undefined {
   if (row?.instruction.kind !== "call") return undefined;
   const feature = irOrdinaryObjectCallableDeclaration(row.instruction.target)?.feature;
-  return feature === "js.object.create-default" ||
-    feature === "js.object.create-null" ||
-    feature === "js.object.create-with-prototype"
-    ? feature
-    : undefined;
+  return feature?.startsWith("js.object.create-") ? (feature as OrdinaryObjectRuntimeFeature) : undefined;
 }
 function mask(call: IrInstrCall, definitions: ReadonlyMap<IrValueId, Definition>): number | undefined {
   const row = definitions.get(call.args[call.args.length - 1]!);
@@ -279,7 +275,8 @@ function calculate(demands: NativeStringValueDemands) {
       else if (feature === "js.object.define-accessor" && !(descriptorMask & 768))
         fail("accessor descriptor has no explicit getter/setter presence");
     }
-    if (!feature.startsWith("js.object.create-")) {
+    // (#7352 arrays) An index contract's key is an integer f64, not a PropertyKey.
+    if (!feature.startsWith("js.object.create-") && !feature.endsWith("-index")) {
       const key = original(call.args[1]!, definitions)?.instruction;
       const keyType = key?.resultType;
       if (

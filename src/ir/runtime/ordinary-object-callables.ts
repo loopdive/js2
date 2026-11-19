@@ -16,6 +16,7 @@ import type { RuntimeManifestPolicy } from "../../runtime/contracts/provider-pol
 
 const EXTERNAL: IrType = Object.freeze({ kind: "val", val: Object.freeze({ kind: "externref" }) });
 const FLAGS: IrType = Object.freeze({ kind: "val", val: Object.freeze({ kind: "f64" }) });
+const INDEX: IrType = Object.freeze({ kind: "val", val: Object.freeze({ kind: "f64" }) });
 const BOOLEAN: IrType = Object.freeze({ kind: "val", val: Object.freeze({ kind: "i32", boolean: true }) });
 
 function declaration(
@@ -42,6 +43,9 @@ function declaration(
  * zero must never inherit the historical "both specified" fallback. The
  * attributes-only operation preserves the existing property's kind and value.
  * These declarations do not grant physical provider or receiver authority.
+ *
+ * (#7352 arrays) `create-array` is ArrayCreate(length) on %Array.prototype%; `get-index` / `set-index` are [[Get]]
+ * / [[Set]] with an array-index key, an integer f64, so an index reaches an Array's elements without a key string.
  */
 const DECLARATIONS: Readonly<Record<OrdinaryObjectRuntimeFeature, IrRuntimeCallableDeclaration>> = Object.freeze({
   "js.object.create-default": declaration("js.object.create-default", [], [EXTERNAL]),
@@ -56,6 +60,9 @@ const DECLARATIONS: Readonly<Record<OrdinaryObjectRuntimeFeature, IrRuntimeCalla
   "js.object.define-attributes": declaration("js.object.define-attributes", [EXTERNAL, EXTERNAL, FLAGS], []),
   "js.object.get": declaration("js.object.get", [EXTERNAL, EXTERNAL, EXTERNAL], [EXTERNAL]),
   "js.object.has": declaration("js.object.has", [EXTERNAL, EXTERNAL], [BOOLEAN]),
+  "js.object.create-array": declaration("js.object.create-array", [INDEX], [EXTERNAL]),
+  "js.object.get-index": declaration("js.object.get-index", [EXTERNAL, INDEX, EXTERNAL], [EXTERNAL]),
+  "js.object.set-index": declaration("js.object.set-index", [EXTERNAL, INDEX, EXTERNAL], []),
 });
 
 /** Exact semantic binding only; neither display names nor runtime aliases qualify. */

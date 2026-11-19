@@ -1,4 +1,5 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+import { buildArrayRealmAllocation, type ArrayRealmOperands } from "./array-exotic-bodies.js";
 import type { Instr, LocalDef, FuncHandle } from "../../../wasm/model/instructions.js";
 import {
   BFN_ID_FIELD_IDX,
@@ -50,6 +51,8 @@ export interface BuiltinFunctionBodyOperands {
   readonly nameKey: readonly Instr[];
   readonly errors: readonly (readonly Instr[])[];
   readonly entries: readonly BuiltinFunctionEntryOperands[];
+  /** (#7352 arrays) Present when the realm's layouts declare `$Array`. */
+  readonly array?: ArrayRealmOperands;
 }
 export type BuiltinFunctionDefinition = { locals: LocalDef[]; body: Instr[] };
 const get = (index: number): Instr => ({ op: "local.get", index });
@@ -114,6 +117,7 @@ export function buildBuiltinFunctionInitializer(d: BuiltinFunctionBodyOperands):
     { op: "global.set", index: d.realm },
     call(d.createNull),
     { op: "global.set", index: d.objectPrototype },
+    ...(d.array ? buildArrayRealmAllocation(d.array, d.objectPrototype) : []),
     ...d.entries.flatMap((entry): Instr[] => [
       { op: "ref.func", funcIdx: entry.lifted },
       { op: "i32.const", value: entry.userFormalCount },

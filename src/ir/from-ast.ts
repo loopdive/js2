@@ -959,6 +959,12 @@ export interface IrFromAstResolver extends PreparedAsyncFromAstResolver {
   ): { readonly key: string; readonly resultType: IrType } | undefined;
   /** (#7354 O1) The literal is an ordinary object on the Prepared path. */
   preparedOrdinaryObjectLiteral?(literal: ts.ObjectLiteralExpression): boolean;
+  /** (#7352 arrays) The literal is an Array exotic object of the realm on the Prepared path. */
+  preparedArrayLiteral?(literal: ts.ArrayLiteralExpression): boolean;
+  /** (#7352 arrays) A typed read of a planned array element: its constant index and logical result. */
+  preparedArrayElementRead?(
+    expression: ts.ElementAccessExpression,
+  ): { readonly index: number; readonly resultType: IrType } | undefined;
   /**
    * #3787 checker identity for the global String constructor. JavaScript
    * inputs compiled without lib declarations may leave the identifier
@@ -4486,7 +4492,13 @@ function lowerVariableDeclaration(d: ts.VariableDeclaration, isConst: boolean, c
     annotated = irVec(irVal(elementValType), true);
   }
   let inferredEmptyArrayHint: IrType | undefined;
-  if (annotated === undefined && ts.isArrayLiteralExpression(d.initializer) && d.initializer.elements.length === 0) {
+  // (#7352 arrays) A Prepared array literal is an Array object, never a vec whose element type needs inferring.
+  if (
+    annotated === undefined &&
+    ts.isArrayLiteralExpression(d.initializer) &&
+    d.initializer.elements.length === 0 &&
+    !isPreparedArrayLiteral(d.initializer, cx)
+  ) {
     const inference = cx.emptyArrayInference.resultForLiteral(d.initializer);
     if (inference?.kind === "rejected") {
       demoteToLegacy("body-shape-rejected", emptyArrayInferenceDiagnostic(inference, cx.funcName));
@@ -5586,6 +5598,7 @@ function denseFillPlanForLoop(loop: ts.ForStatement): DenseFillPlan | null {
 function lowerArrayLiteral(expr: ts.ArrayLiteralExpression, cx: LowerCtx, hint: IrType): IrValueId {
   if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== expr)
     return withNodeSourceSite(cx, expr, () => lowerArrayLiteral(expr, cx, hint));
+  if (isPreparedArrayLiteral(expr, cx)) return lowerOrdinaryArrayLiteral(expr, cx);
   if (cx.logicalVectorTypes !== undefined) {
     const fact = requireLogicalVector(expr, cx);
     const elements = expr.elements.map((element) => {
@@ -6225,15 +6238,6 @@ function lowerPreparedOrdinaryPropertyRead(expr: ts.PropertyAccessExpression, cx
     return withNodeSourceSite(cx, expr, () => lowerPreparedOrdinaryPropertyRead(expr, cx));
   const ordinary = cx.resolver?.preparedOrdinaryPropertyRead?.(expr);
   if (ordinary) {
-    const result = ordinary.resultType;
-    const boolean =
-      result.kind === "val" && !result.typeRef && result.val.kind === "i32" && result.val.boolean === true;
-    if (!irTypeEquals(result, IR_F64) && !boolean && result.kind !== "callable")
-      throw new IrInvariantError(
-        "selection-preparation-mismatch",
-        "build",
-        "ordinary property read lost its supported logical result contract",
-      );
     const object = lowerExpr(expr.expression, cx, irVal({ kind: "externref" }));
     if (asVal(cx.builder.typeOf(object))?.kind !== "externref")
       throw new IrInvariantError(
@@ -6248,11 +6252,37 @@ function lowerPreparedOrdinaryPropertyRead(expr: ts.PropertyAccessExpression, cx
       irVal({ kind: "externref" }),
     );
     if (value === null) throw new Error("ordinary Get contract returned no value");
-    if (result.kind === "callable") return cx.builder.emitOrdinaryGetCallableResult(value, result.signature);
-    if (boolean) return cx.builder.emitIntrinsic("js.boolean.unbox", [value]);
-    return cx.builder.emitIntrinsic("js.number.unbox", [value]);
+    return ordinaryReadResult(value, ordinary.resultType, cx);
   }
   return null;
+}
+
+/** The planned logical result of an ordinary [[Get]] (#7354 O1, #7352 arrays): a number, a Boolean or a callable. */
+function ordinaryReadResult(value: IrValueId, result: IrType, cx: LowerCtx): IrValueId {
+  const boolean = result.kind === "val" && !result.typeRef && result.val.kind === "i32" && result.val.boolean === true;
+  if (!irTypeEquals(result, IR_F64) && !boolean && result.kind !== "callable")
+    throw new IrInvariantError(
+      "selection-preparation-mismatch",
+      "build",
+      "ordinary property read lost its supported logical result contract",
+    );
+  if (result.kind === "callable") return cx.builder.emitOrdinaryGetCallableResult(value, result.signature);
+  if (boolean) return cx.builder.emitIntrinsic("js.boolean.unbox", [value]);
+  return cx.builder.emitIntrinsic("js.number.unbox", [value]);
+}
+
+/** (#7352 arrays) A planned element read: [[Get]] with the constant array-index key. */
+function lowerPreparedArrayElementRead(
+  expr: ts.ElementAccessExpression,
+  plan: { readonly index: number; readonly resultType: IrType },
+  cx: LowerCtx,
+): IrValueId {
+  const external = irVal({ kind: "externref" });
+  const array = lowerExpr(expr.expression, cx, external);
+  const index = cx.builder.emitConst({ kind: "f64", value: plan.index }, IR_F64);
+  const value = cx.builder.emitCall(irIntrinsicFuncRef("js.object.get-index"), [array, index, array], external);
+  if (value === null) throw new Error("array index Get contract returned no value");
+  return ordinaryReadResult(value, plan.resultType, cx);
 }
 
 function lowerPropertyAccess(expr: ts.PropertyAccessExpression, cx: LowerCtx): IrValueId {
@@ -6759,20 +6789,59 @@ function lowerOrdinaryObjectLiteral(expr: ts.ObjectLiteralExpression, cx: LowerC
     else if (ts.isPropertyAssignment(property)) value = lowerExpr(property.initializer, cx, IR_F64);
     else if (ts.isShorthandPropertyAssignment(property)) value = lowerExpr(property.name, cx, IR_F64);
     else demoteToLegacy("body-shape-rejected", "unsupported ordinary descriptor member");
-    const type = cx.builder.typeOf(value);
-    const boxed = boundaryBox(value, type, cx);
-    if (type.kind === "closure") value = cx.builder.emitCallablePack(value, type.signature);
-    else if (boxed !== null) value = boxed;
-    else if (asVal(type)?.kind === "f64") value = cx.builder.emitBox(value, irDynamic(JS_TAG_IDS.NumberF64));
-    else if (type.kind === "val" && type.val.kind === "i32" && type.val.boolean === true)
-      value = cx.builder.emitBox(value, irDynamic(JS_TAG_IDS.Boolean));
-    else if (type.kind === "val" && type.val.kind !== "externref" && type.val.kind !== "ref_extern")
-      demoteToLegacy("body-shape-rejected", "ordinary descriptor value has no exact boxing contract");
-    value = cx.builder.emitCoerceToExternref(value);
     const flags = cx.builder.emitConst({ kind: "f64", value: 191 }, IR_F64);
-    cx.builder.emitCall(irIntrinsicFuncRef("js.object.define-data"), [object, key, value, flags], null);
+    cx.builder.emitCall(
+      irIntrinsicFuncRef("js.object.define-data"),
+      [object, key, ordinaryPropertyValue(value, cx), flags],
+      null,
+    );
   }
   return object;
+}
+
+/** A data property's value as the externref an ordinary object stores (#7354 O1; #7352 array elements). */
+function ordinaryPropertyValue(value: IrValueId, cx: LowerCtx): IrValueId {
+  const type = cx.builder.typeOf(value);
+  const boxed = boundaryBox(value, type, cx);
+  if (type.kind === "closure") value = cx.builder.emitCallablePack(value, type.signature);
+  else if (boxed !== null) value = boxed;
+  else if (asVal(type)?.kind === "f64") value = cx.builder.emitBox(value, irDynamic(JS_TAG_IDS.NumberF64));
+  else if (type.kind === "val" && type.val.kind === "i32" && type.val.boolean === true)
+    value = cx.builder.emitBox(value, irDynamic(JS_TAG_IDS.Boolean));
+  else if (type.kind === "val" && type.val.kind !== "externref" && type.val.kind !== "ref_extern")
+    demoteToLegacy("body-shape-rejected", "ordinary descriptor value has no exact boxing contract");
+  return cx.builder.emitCoerceToExternref(value);
+}
+
+/**
+ * (#7352 arrays) The Prepared resolver owns the literal as an Array object, unless the unit is a native async
+ * family member, whose certified logical vectors keep their vec lowering.
+ */
+function isPreparedArrayLiteral(
+  expr: ts.ArrayLiteralExpression,
+  cx: Pick<LowerCtx, "resolver" | "logicalVectorTypes">,
+): boolean {
+  return cx.logicalVectorTypes === undefined && cx.resolver?.preparedArrayLiteral?.(expr) === true;
+}
+
+/** (#7352 arrays) ArrayCreate(n), then each present element stored at its index in order; an elision is a hole. */
+function lowerOrdinaryArrayLiteral(expr: ts.ArrayLiteralExpression, cx: LowerCtx): IrValueId {
+  if (expr.elements.some(ts.isSpreadElement))
+    demoteToLegacy(
+      "array-representation-unsupported",
+      `ir/from-ast: array literal spread needs the iteration protocol (${cx.funcName})`,
+    );
+  const external = irVal({ kind: "externref" });
+  const length = cx.builder.emitConst({ kind: "f64", value: expr.elements.length }, IR_F64);
+  const array = cx.builder.emitCall(irIntrinsicFuncRef("js.object.create-array"), [length], external);
+  if (array === null) throw new Error("ArrayCreate contract returned no value");
+  expr.elements.forEach((element, position) => {
+    if (ts.isOmittedExpression(element)) return;
+    const value = ordinaryPropertyValue(lowerExpr(element, cx, IR_F64), cx);
+    const index = cx.builder.emitConst({ kind: "f64", value: position }, IR_F64);
+    cx.builder.emitCall(irIntrinsicFuncRef("js.object.set-index"), [array, index, value], null);
+  });
+  return array;
 }
 
 /**
@@ -7274,6 +7343,8 @@ function lowerElementAccess(expr: ts.ElementAccessExpression, cx: LowerCtx, hint
       `ir/from-ast: optional element access (a?.[i]) not in IR scope (${cx.funcName})`,
     );
   }
+  const planned = cx.resolver?.preparedArrayElementRead?.(expr);
+  if (planned) return lowerPreparedArrayElementRead(expr, planned, cx);
   const arg = expr.argumentExpression;
   const isStringLitKey = ts.isStringLiteral(arg) || arg.kind === ts.SyntaxKind.NoSubstitutionTemplateLiteral;
   // Lower the receiver first so we can dispatch by its IrType.
