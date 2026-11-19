@@ -235,11 +235,10 @@ export function fillPreparedPrimaryUnit(
     fail("source canonical lowering uses a changed function/slot or repeats completion");
   if (fn.closureSubtype && source && !association) fail("unbound source closure body");
   const emitter = backend === "wasmgc" ? new WasmGcEmitter(resolver) : new LinearEmitter();
-  const lowered = lowerIrFunctionBody<Instr[], ValType>(
-    fn,
-    resolver,
-    emitter,
-    wasmValueTypeConverter(backend, resolver, fn.name),
+  // Lowering only reads the ledger. Its emits (one per string literal, concat, ...) share one layout audit taken
+  // after the body instead of one each, which grew with module size per occurrence.
+  const lowered = tx.audited(() =>
+    lowerIrFunctionBody<Instr[], ValType>(fn, resolver, emitter, wasmValueTypeConverter(backend, resolver, fn.name)),
   );
   const params = lowered.params.flatMap((param) => [...param.slots]);
   const results = lowered.results.flatMap((result) => [...result]);
