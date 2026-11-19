@@ -40,6 +40,7 @@ export type RuntimeFeature =
   | "js.closure.undefined"
   | VectorCallableRuntimeFeature
   | OrdinaryObjectRuntimeFeature
+  | FunctionObjectRuntimeFeature
   | NumberRemainderRuntimeFeature
   | "js.number.from-value"
   | ReferenceErrorRuntimeFeature;
@@ -437,6 +438,24 @@ export const ORDINARY_OBJECT_RUNTIME_PROVIDER_IDS = Object.freeze([
 ] as const);
 export type OrdinaryObjectRuntimeProviderId = (typeof ORDINARY_OBJECT_RUNTIME_PROVIDER_IDS)[number];
 
+/** (#7354 C) Function objects: semantic declarations only, like the ordinary object catalogue above. */
+export const FUNCTION_OBJECT_RUNTIME_FEATURES = Object.freeze([
+  "js.function.is-callable",
+  "js.function.init",
+  "js.function.construct",
+  "js.function.has-instance",
+  "js.function.this",
+] as const);
+export type FunctionObjectRuntimeFeature = (typeof FUNCTION_OBJECT_RUNTIME_FEATURES)[number];
+export const FUNCTION_OBJECT_RUNTIME_PROVIDER_IDS = Object.freeze([
+  "native.js.function.is-callable",
+  "native.js.function.init",
+  "native.js.function.construct",
+  "native.js.function.has-instance",
+  "native.js.function.this",
+] as const);
+export type FunctionObjectRuntimeProviderId = (typeof FUNCTION_OBJECT_RUNTIME_PROVIDER_IDS)[number];
+
 /** The two existing numeric remainder recipes; not an open symbol family. */
 export const NUMBER_REMAINDER_RUNTIME_FEATURES = Object.freeze([
   "js.number.remainder",
@@ -473,6 +492,7 @@ export type RuntimeProviderId =
   | ReferenceErrorRuntimeProviderId
   | NativeAsyncCallableRuntimeProviderId
   | OrdinaryObjectRuntimeProviderId
+  | FunctionObjectRuntimeProviderId
   | NumberRemainderRuntimeProviderId
   | NumberConversionRuntimeProviderId
   | VectorCallableRuntimeProviderId

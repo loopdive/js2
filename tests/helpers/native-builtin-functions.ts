@@ -2,7 +2,7 @@
 import { createEmptyModule } from "../../src/ir/types.js";
 import { emitBinary } from "../../src/emit/binary.js";
 import { PhysicalModuleReservations } from "../../src/wasm/physical/module-reservations.js";
-import type { Instr, ValType } from "../../src/wasm/model/instructions.js";
+import type { Instr, LocalDef, ValType } from "../../src/wasm/model/instructions.js";
 import { deriveNativeObjectAccessRequirements } from "../../src/ir/program/native-object-access-requirements.js";
 import { deriveNativeValueResourcePlan } from "../../src/ir/program/native-value-resources.js";
 import {
@@ -89,6 +89,7 @@ import {
   NATIVE_BUILTIN_FUNCTION_LITERALS,
   type NativeBuiltinFunctionRequirements,
 } from "../../src/backend/wasmgc/resources/native-builtin-function-requests.js";
+import { NATIVE_SOURCE_FUNCTION_LITERALS } from "../../src/backend/wasmgc/resources/native-source-objects.js";
 import { planNativeSourceClosureRequirements } from "../../src/ir/program/native-source-closure-requirements.js";
 import {
   beginNativeSourceClosureEmission,
@@ -188,6 +189,7 @@ export function builtinFunctionFixture(
       "missing",
       ...NATIVE_OBJECT_DESCRIPTOR_LITERALS,
       ...NATIVE_BUILTIN_FUNCTION_LITERALS,
+      ...NATIVE_SOURCE_FUNCTION_LITERALS,
       ...BUILTIN_TEST_KEYS,
     ]),
   ];
@@ -368,7 +370,14 @@ export function fillDescriptorDependencies(f: ReturnType<typeof builtinFunctionF
   fillNativeErrorResources(f.tx, f.errors);
 }
 
-export function completeBuiltinFunctionFixture(f: ReturnType<typeof builtinFunctionFixture>) {
+/**
+ * `handBodies` (evaluated after the freeze) replaces the canonical lowering of the listed source units with a
+ * test-owned body; such a population is then not certified as canonical source lowering.
+ */
+export function completeBuiltinFunctionFixture(
+  f: ReturnType<typeof builtinFunctionFixture>,
+  handBodies?: () => ReadonlyMap<IrUnitId, { locals: LocalDef[]; body: Instr[] }>,
+) {
   if (!f.kernel) throw Error("fixture kernel not reserved");
   f.tx.freezeReservations();
   bindNativeSourceClosureUnits(f.tx, f.source, f.sourceSlots);
@@ -392,11 +401,17 @@ export function completeBuiltinFunctionFixture(f: ReturnType<typeof builtinFunct
       return f.tx.internFunctionType(signature.params, signature.results);
     },
   };
+  const hand = handBodies?.();
   for (const [id, slot] of f.sourceSlots) {
+    const body = hand?.get(id);
+    if (body) {
+      f.tx.fillFunction(slot, body);
+      continue;
+    }
     const fn = f.projection.prepared.functions.find((row) => row.unitId === id)!;
     fillPreparedPrimaryUnit(f.tx, fn, slot, f.sourceSignatures.get(id)!, resolver, "wasmgc", f.source);
   }
-  requireCompletedNativeSourceClosures(f.tx, f.source);
+  if (!hand) requireCompletedNativeSourceClosures(f.tx, f.source);
   fillNativeBuiltinFunctionResources(f.tx, f.kernel);
   requireCompletedNativeBuiltinFunctionKernel(f.tx, f.kernel, f.kernelDependencies);
 }
