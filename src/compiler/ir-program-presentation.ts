@@ -743,7 +743,7 @@ function joinStartup(
     if (
       adapterIndex !== undefined ||
       mod.startFuncIdx !== undefined ||
-      program.startup.some((row) => !row.executable && row.invocation.kind !== "none")
+      program.startup.some((row) => row.invocation.kind !== "none")
     )
       gap(
         "startup",

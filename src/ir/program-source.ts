@@ -1550,6 +1550,20 @@ function prepareStartupDirectCalls(
   }
 }
 
+/** The input's inventory options for its own entry and checker; (#7363 A3) each called eval source after its caller. */
+function sourceInventoryOptions(
+  input: IrProgramSourceInput,
+  evalDependencies: ReadonlyMap<ts.SourceFile, readonly ts.SourceFile[]>,
+): BuildIrUnitInventoryOptions {
+  const resolved = input.inventoryOptions?.resolvedDependencies ?? [];
+  return {
+    ...input.inventoryOptions,
+    entrySource: input.entrySource,
+    checker: input.checker,
+    resolvedDependencies: new Map([...resolved, ...evalDependencies]),
+  };
+}
+
 export function prepareIrProgramSources(
   input: IrProgramSourceInput,
 ): IrProgramSourcePreparation | PreparedIrProgramFailure {
@@ -1559,11 +1573,7 @@ export function prepareIrProgramSources(
   const nativeStringValues = selectNativeStringValueProjection(input);
   const nativeStringOutput = selectNativeStringOutputProjection(input);
   const literalEval = verifyLiteralEvalSources(input.literalEvalSources ?? [], input.sourceFiles, input.entrySource);
-  const inventory = buildIrUnitInventory(input.sourceFiles, {
-    ...input.inventoryOptions,
-    entrySource: input.entrySource,
-    checker: input.checker,
-  });
+  const inventory = buildIrUnitInventory(input.sourceFiles, sourceInventoryOptions(input, literalEval.dependencies));
   if (sourceMapRequest !== undefined) sourceMapPreflightScannerTree(inventory);
   const identity = buildIrPlanningIdentityContext(inventory);
   const sourceFiles = inventory.sources.map((source) => identity.sourceFileBySourceId.get(source.id)!);
@@ -1595,7 +1605,8 @@ export function prepareIrProgramSources(
       sourceFiles,
       identityContext: identity,
     });
-    const dynamicContracts = programDynamicContracts(input.checker, input.policy, sourceFiles);
+    const startupSources = sourceFiles.filter((source) => !literalEval.sources.has(source));
+    const dynamicContracts = programDynamicContracts(input.checker, input.policy, startupSources);
     const moduleResolver = makeIrIdentityModuleBindingResolver(
       input.checker,
       {

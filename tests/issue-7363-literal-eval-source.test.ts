@@ -74,14 +74,14 @@ describe("#7363 A2 — a qualifying site adds a called source and refuses by nam
 
   it("compiles the called source, and startup does not run it", async () => {
     expect(run(await compile(DEAD_SITE, options))).toEqual({
-      sources: [literalEvalFileName(0), "test.js"],
+      sources: ["test.js", literalEvalFileName(0)],
       startup: "returned",
     });
   });
 
   it("runs the same text at startup when it is an ordinary script", async () => {
     const result = await compileMulti({ "called.js": "throw 1;", "test.js": DEAD_SITE }, "test.js", options);
-    expect(run(result)).toEqual({ sources: [literalEvalFileName(0), "called.js", "test.js"], startup: "threw" });
+    expect(run(result)).toEqual({ sources: ["test.js", literalEvalFileName(0), "called.js"], startup: "threw" });
   });
 
   it("leaves a program with no qualifying site with its one source", async () => {
@@ -90,11 +90,6 @@ describe("#7363 A2 — a qualifying site adds a called source and refuses by nam
       sources: ["test.js"],
       startup: "returned",
     });
-  });
-
-  // A3's work: a script var's home requires the program's only source, and an eval source is a second one.
-  it("leaves a script var of the entry without a home, so the compile stops at the var first", async () => {
-    expect(await gaps('var x = 1;\neval("1");')).toEqual(["module binding x has no exact typed storage: not-direct"]);
   });
 
   it("refuses by name without allowJs, since an eval source is a JavaScript root", async () => {

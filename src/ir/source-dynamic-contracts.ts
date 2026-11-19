@@ -205,11 +205,11 @@ export interface ProgramDynamicContracts extends SourceDynamicProvenance {
 export function programDynamicContracts(
   checker: ts.TypeChecker,
   policy: SourcePolicy,
-  sourceFiles: readonly ts.SourceFile[],
+  startupSources: readonly ts.SourceFile[],
 ): ProgramDynamicContracts {
   const provenance = sourceDynamicProvenance(
     checker,
-    sourceFiles,
+    startupSources,
     nativeDynamicLane(policy),
     (declaration, carries) => sourceDynamicResult(checker, policy, declaration, carries) !== undefined,
   );

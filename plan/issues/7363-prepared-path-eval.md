@@ -23,6 +23,9 @@ related: [7354, 7106, 7345, 3630]
 # program-source.ts +6: the input field, the receipt call, `called` for buildIrModuleInitPlan and the resolver
 # capability. compiler.ts +4: the field passes from the Prepared pipeline input into `preparation`. from-ast +5 in
 # lowerCall: the site's label asks the capability.
+# 2026-11-19 (slice A, A3): program-source.ts +11, the two seams that read the relation: `sourceInventoryOptions`
+# (the inventory options moved out of prepareIrProgramSources, plus the edge that orders an eval source after its
+# caller; the function itself shrinks by 3) and the startup sources the script-var home is asked over.
 loc-budget-allow:
   - src/ir/from-ast.ts
   - src/ir/program-physical-plan.ts
@@ -377,3 +380,41 @@ Findings:
   reason. Every file was a compile error before and is one after.
 - Programs with no qualifying site: Prepared output identical on the 100-file sample, and ordinary-pipeline bytes
   identical (100 files × default and standalone). The listed regression tests fail the same 48 tests as the base.
+
+### A3 result (2026-11-19)
+
+- Script-var homes: `irOwnedScriptVarHome` is asked over the program's startup sources, every source the A2
+  relation does not mark called (`prepareIrProgramSources` filters them once; `programDynamicContracts` and
+  `sourceDynamicProvenance` pass the list on). The "only source" rule becomes "only startup source". Its reasons
+  still hold, and the doc says why: a called eval source declares nothing (so it stores no hoisted `undefined` and
+  owns no binding the home is asked about), runs only from its site after the startup source's prologue, and its
+  caller holds a direct eval, so that file has no typed home (`sourceRunsDynamicCode`) and no write list
+  (`hasDynamicScope`). The eval text's reads and writes resolve to the entry's globals by checker identity; no
+  globals registry or cross-source key is needed.
+- Order: `verifyLiteralEvalSources` also returns each source's dependency on the entry, and the inventory gets it as
+  `resolvedDependencies` (merged with the caller's own edges, `sourceInventoryOptions`). The inventory's
+  dependency-first order then plans and lowers the entry before `<eval:N>.js`, whatever the names sort to.
+- `joinStartup`: the zero-demand branch stays. A program with no executable init reaches it (`function f() {}`,
+  now tested). A1's extra condition in it (`!row.executable &&`, so that a called row passed) is removed: it served
+  only a program whose every executable init is called, and the relation cannot make one, since the entry holds
+  the site's statement and always runs at startup (tested on two never-lowered site shapes). A called row there is
+  a gap again, as before A1.
+- Plan corrections. (1) The Steps row said `scriptVarReadsFollowInitializer` would also walk the eval texts. It
+  need not: the entry of every related source has a direct eval, so the reads proof never runs for its vars.
+  (2) "The startup source is the one whose plan `runsAtStartup`" would be unsound: `runsAtStartup` is also false for
+  a non-executable script (only function declarations), whose hoisted functions the reads proof does not walk. The
+  rule asks the relation, which is exactly the `"called"` invocation kind.
+- The `return` rule stays in the IR predicate; the legacy-bytes reason is stated in A2's result above.
+- Measured on the 118 A0 files against base `4e7d2921` (slice 1 + A0/A1, before A2), S9's census, both harnesses.
+  Per file, a first gap's position is its source file and line: within the one assembled `test.js` a lower line is
+  earlier (the census's harness / stand-in / test origin follows from the line); a gap inside an eval text counts as
+  after the whole entry; a compiled program is later than any gap. Result: no file moves earlier in either harness.
+  Stand-in: 95 identical; 23 at the same line, now with the A2 label at the site instead of slice 1's "eval
+  statement has no eval provider". Real harness: 118 identical (`assert.js`, `dyn.typeof`). No file stops at a
+  script `var` with no home or inside an eval text (A2 alone: 50 and 20 stand-in, 116 real).
+- Tests: `tests/issue-7363-eval-source-home-order.test.ts` (9; 7 fail on A2). The A2 file's source-order
+  expectations follow the new order, and its A3-pending case moved there as the positive. Each of the 8 mutations
+  of a new or changed condition turns a test red; re-adding A1's removed conjunct is test-neutral, as it should be.
+  The 51 listed regression files fail the same 48 tests as A2 (`7883f81a`). Ordinary-pipeline bytes identical on the
+  100-file sample × default and standalone; Prepared output identical to base on the sample's 92 files with no
+  qualifying site.

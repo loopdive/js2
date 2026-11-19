@@ -60,13 +60,19 @@ export function pairLiteralEvalSources(
 
 /**
  * The receipt: each row's call is a qualifying site of the entry, its source is a script of the program whose text is
- * the literal's value, and no call or source occurs twice. Returns the related calls and sources.
+ * the literal's value, and no call or source occurs twice. Returns the related calls and sources, and each source's
+ * dependency on the entry, which holds its call: the inventory orders a source after its dependencies, so the entry
+ * is planned and lowered before the texts it runs, whatever the names sort to.
  */
 export function verifyLiteralEvalSources(
   rows: readonly LiteralEvalSource[],
   sourceFiles: readonly ts.SourceFile[],
   entry: ts.SourceFile,
-): { readonly calls: ReadonlySet<ts.CallExpression>; readonly sources: ReadonlySet<ts.SourceFile> } {
+): {
+  readonly calls: ReadonlySet<ts.CallExpression>;
+  readonly sources: ReadonlySet<ts.SourceFile>;
+  readonly dependencies: ReadonlyMap<ts.SourceFile, readonly ts.SourceFile[]>;
+} {
   const calls = new Set<ts.CallExpression>();
   const sources = new Set<ts.SourceFile>();
   for (const { call, source } of rows) {
@@ -83,7 +89,7 @@ export function verifyLiteralEvalSources(
     if (text === undefined) refused("the call is not a qualifying site");
     if (text !== source.text) refused("the source text is not the literal's value");
   }
-  return { calls, sources };
+  return { calls, sources, dependencies: new Map([...sources].map((source) => [source, [entry]])) };
 }
 
 function literalEvalSites(file: ts.SourceFile): readonly LiteralEvalSite[] {

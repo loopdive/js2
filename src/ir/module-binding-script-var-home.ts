@@ -30,19 +30,23 @@ const NON_WRITABLE_GLOBALS: ReadonlySet<string> = new Set(["undefined", "NaN", "
 
 /**
  * The `scriptVarHome` resolver option of a pipeline whose IR owns every script `var`'s storage, over the
- * program's `sourceFiles`. Every script of a program shares one global scope, and the reads proof walks only the
- * declaration's file, so a typed home needs that file to be the program's only source: a read in a script that
- * runs first would otherwise go unseen. The dynamic home needs it too: each script's module-init stores the
- * hoisted `undefined` into its own globals, so a script that runs first would read the carrier's null.
+ * program's `startupSources`: every source but its called eval sources (#7363 A3). Every script of a program
+ * shares one global scope, and the reads proof walks only the declaration's file, so a typed home needs that file
+ * to be the program's only startup source: a read in a script that runs first would otherwise go unseen. The
+ * dynamic home needs it too: each script's module-init stores the hoisted `undefined` into its own globals, so a
+ * script that runs first would read the carrier's null. A called eval source breaks neither rule. It declares
+ * nothing, so it stores no hoisted `undefined` and owns no binding asked about here. It runs only from its site in
+ * the startup source, after that source's prologue. And the site is a direct eval, so its caller has no typed
+ * home (`sourceRunsDynamicCode`) and no write list (`hasDynamicScope`): no proof the eval text's uses could break.
  * `storesDynamic` (the lane's dynamic provenance, absent without a carrier) says whether a store may be the
  * dynamic value.
  */
 export function irOwnedScriptVarHome(
   checker: ts.TypeChecker,
-  sourceFiles: readonly ts.SourceFile[],
+  startupSources: readonly ts.SourceFile[],
   storesDynamic?: (declaration: ts.VariableDeclaration) => boolean,
 ): (declaration: IrModuleBindingDeclaration) => IrScriptVarHome | undefined {
-  const soleSource = sourceFiles.length === 1 ? sourceFiles[0] : undefined;
+  const soleSource = startupSources.length === 1 ? startupSources[0] : undefined;
   return (declaration) => {
     if (!isNamedVariableDeclaration(declaration)) return undefined;
     // A script `var` only: the resolver asks for nothing else, but the dynamic provenance asks for every

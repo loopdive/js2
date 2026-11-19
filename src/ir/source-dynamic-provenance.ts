@@ -34,12 +34,13 @@ export interface SourceDynamicProvenance {
 }
 
 /**
- * The provenance of a program's `sourceFiles`. Without a `dynamicCarrier` on the lane no script `var` gets the
- * dynamic home. `resultIsDynamic` is the unannotated-result contract, which asks `carries` of each returned value.
+ * The provenance of a program, over its `startupSources` (see `irOwnedScriptVarHome`). Without a `dynamicCarrier`
+ * on the lane no script `var` gets the dynamic home. `resultIsDynamic` is the unannotated-result contract, which
+ * asks `carries` of each returned value.
  */
 export function sourceDynamicProvenance(
   checker: ts.TypeChecker,
-  sourceFiles: readonly ts.SourceFile[],
+  startupSources: readonly ts.SourceFile[],
   dynamicCarrier: boolean,
   resultIsDynamic: (declaration: ts.FunctionDeclaration, carries: Carries) => boolean,
 ): SourceDynamicProvenance {
@@ -60,7 +61,7 @@ export function sourceDynamicProvenance(
     scriptVarWrites(checker, declaration)?.some((write) =>
       write.kind === "value" ? carries(write.expr, declaration) : write.kind !== "numeric",
     ) ?? true;
-  const classify = irOwnedScriptVarHome(checker, sourceFiles, dynamicCarrier ? storesCarry : undefined);
+  const classify = irOwnedScriptVarHome(checker, startupSources, dynamicCarrier ? storesCarry : undefined);
   const scriptVarHome = (declaration: IrModuleBindingDeclaration) =>
     once(homes, declaration, "dynamic", () => classify(declaration));
   // from-ast is the authority on a local: it types the local from the value it is created with and refuses a
