@@ -314,3 +314,36 @@ declaration in the compiler's own library, `isCurrentCompilerLibrarySourceFile`,
 and the type-symbol checks (`isAmbientRegExp`, `isNativeMapStorageType`) ask about a type's symbol, not a
 binding. Quality criterion: one per-identifier lib-binding predicate remains; no new helper; output
 byte-identical (100 sampled test262 files, default and standalone).
+
+## Slice B2b plan — the global object as a value on the Prepared path (2026-11-19)
+
+Stacked on `claude/7354-o` (S3, realm join PR #7312 plus O2–O4). Ownership (lead, 2026-11-19): S5 owns the
+global table (B2a, PR #7315), the global object's materialization, the `dyn.global_object` arm and the Prepared
+resolver's lib-binding answer; S3 owns the kind chain (`dyn.member_get` → `js.object.get`), the kernel [[Get]]
+and the object callables.
+
+**First-gap counts** (S9's Prepared census, PR #7308 lists, main `ee3fcdd610`): built-in global as a value
+860 files (`Object` 487, `Number` 151, `String` 117, `Function` 37); `new String/Object/Number/Boolean` 448;
+direct `String()` 442 (Str2, perf2); `isNaN` 70.
+
+| step | content | module | proving program |
+| --- | --- | --- | --- |
+| 1 | The resolver answers `isLibOnlyBinding` (B1a's `makeIrAmbientBindingPredicate(checker, "every")`), so G1's `builtinGlobalValueAdmitted` claims a read and from-ast lowers it to `dyn.member_get(dyn.global_object, "<Name>")` exactly as on the ordinary pipeline. | `ir/program-source.ts` | refusal moves from "not in scope" to "dyn.global_object has no Prepared intrinsic" |
+| 2 | A realm contract `js.object.global` (no arguments, externref), served by one ADAPTERS row in `native-source-objects.ts`; `dyn.global_object` legalizes to it and its value is tagged as the object kind (S3 lists it beside `js.object.create-default`). | `ir/program/dynamic-value-legalization.ts`, `backend/wasmgc/resources/native-source-objects.ts`, `runtime/wasmgc/values/source-object-bodies.ts` | `var g = globalThis` (B3) |
+| 3 | Demand: the realm requirements collect the static keys read off the global object; the global object is an ordinary `$Object` (`createWithPrototype(%Object.prototype%)`) whose own data slots, defined with B2a's attributes, are exactly the demanded globals. | `ir/program/native-realm-requirements.ts` (demand), the adapter body (population) | `var E = TypeError; if (E !== TypeError) throw 1;` |
+| 4 | The demanded intrinsics: a `"complete"` row (`%Object%`, `%Function%`) through the existing catalog-wide public builtin requests (`declareNativePublicBuiltinFunctionRequests`, scoped to the demanded ids); an `"identity"` callable as a builtin function object with its name, `length` and constructibility whose call or construct throws `TypeError: <Name> is not supported on this target`; an `"identity"` namespace as an ordinary `$Object`. | `backend/wasmgc/resources/native-builtin-function*.ts` (S3's kernel — see below) | `if (typeof JSON !== "object") throw 1;`, `if (typeof Object !== "function") throw 1;` |
+
+**What it needs from S3's kernel.** (a) The builtin request validator accepts `constructible` and an
+`unavailable` behavior (today it allows only `function-prototype` and `throw-type-error`, non-constructible).
+(b) The kernel [[Get]] answers a member of an identity intrinsic with a named TypeError instead of
+`undefined` (lead condition 1): the harness reads members of values G1 lets through opaquely
+(`assert.throws(TypeError, f)` reads `.name` and compares `.constructor`), so a runtime-named error is
+needed even though G1 refuses every static member read at select. Both go to S3 as concrete programs before
+B2b's step 4 starts.
+
+**Not built twice.** One global object (S11's sloppy `this` reads it through `js.object.global`); one
+lowering (G1's); one table (B2a); identity intrinsics later get their surface by binding the existing native
+bodies listed in B2a's plan, never a second Error / JSON / Math.
+
+**Quality criterion.** One adapter row and one legalization arm; the population derived from B2a's table and
+the program's demand, no name list in the backend.
