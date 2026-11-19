@@ -1,0 +1,7 @@
+built-ins/Object/create/15.2.3.5-4-5.js	module binding props has no exact typed storage: not-direct
+built-ins/Object/defineProperties/15.2.3.7-2-9.js	module binding props has no exact typed storage: not-direct
+built-ins/Object/defineProperties/15.2.3.7-5-a-7.js	module binding props has no exact typed storage: not-direct
+built-ins/Object/defineProperties/15.2.3.7-6-a-12.js	module binding fun has no exact typed storage: not-direct
+built-ins/Object/defineProperties/15.2.3.7-6-a-22.js	module binding arg has no exact typed storage: not-direct
+built-ins/Object/defineProperty/15.2.3.6-4-33.js	module binding fun has no exact typed storage: not-direct
+built-ins/Object/isFrozen/15.2.3.12-2-a-13.js	module binding obj has no exact typed storage: not-direct

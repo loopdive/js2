@@ -1,0 +1,924 @@
+built-ins/Array/isArray/15.4.3.2-1-15.js	ir/from-ast: 'this' reference outside an instance method body (<module-init>)
+built-ins/Array/prototype/every/15.4.4.16-5-1-s.js	ir/from-ast: 'this' reference outside an instance method body (callbackfn)
+built-ins/Array/prototype/every/15.4.4.16-5-1.js	ir/from-ast: 'this' reference outside an instance method body (callbackfn)
+built-ins/Array/prototype/every/15.4.4.16-5-10.js	ir/from-ast: 'this' reference outside an instance method body (callbackfn)
+built-ins/Array/prototype/every/15.4.4.16-5-11.js	ir/from-ast: 'this' reference outside an instance method body (callbackfn)
+built-ins/Array/prototype/every/15.4.4.16-5-12.js	ir/from-ast: 'this' reference outside an instance method body (callbackfn)
+built-ins/Array/prototype/every/15.4.4.16-5-13.js	ir/from-ast: 'this' reference outside an instance method body (callbackfn)
+built-ins/Array/prototype/every/15.4.4.16-5-14.js	ir/from-ast: 'this' reference outside an instance method body (callbackfn)
+built-ins/Array/prototype/every/15.4.4.16-5-15.js	ir/from-ast: 'this' reference outside an instance method body (callbackfn)
+built-ins/Array/prototype/every/15.4.4.16-5-16.js	ir/from-ast: 'this' reference outside an instance method body (callbackfn)
+built-ins/Array/prototype/every/15.4.4.16-5-17.js	ir/from-ast: 'this' reference outside an instance method body (callbackfn)
+built-ins/Array/prototype/every/15.4.4.16-5-18.js	ir/from-ast: 'this' reference outside an instance method body (callbackfn)
+built-ins/Array/prototype/every/15.4.4.16-5-19.js	ir/from-ast: 'this' reference outside an instance method body (callbackfn)
+built-ins/Array/prototype/every/15.4.4.16-5-2.js	ir/from-ast: 'this' reference outside an instance method body (callbackfn)
+built-ins/Array/prototype/every/15.4.4.16-5-21.js	ir/from-ast: 'this' reference outside an instance method body (callbackfn)
+built-ins/Array/prototype/every/15.4.4.16-5-22.js	ir/from-ast: 'this' reference outside an instance method body (callbackfn)
+built-ins/Array/prototype/every/15.4.4.16-5-23.js	ir/from-ast: 'this' reference outside an instance method body (callbackfn)
+built-ins/Array/prototype/every/15.4.4.16-5-24.js	ir/from-ast: 'this' reference outside an instance method body (callbackfn)
+built-ins/Array/prototype/every/15.4.4.16-5-3.js	ir/from-ast: 'this' reference outside an instance method body (callbackfn)
+built-ins/Array/prototype/filter/15.4.4.20-5-4.js	ir/from-ast: 'this' reference outside an instance method body (callbackfn)
+built-ins/Array/prototype/filter/15.4.4.20-5-5.js	ir/from-ast: 'this' reference outside an instance method body (callbackfn)
+built-ins/Array/prototype/filter/15.4.4.20-5-6.js	ir/from-ast: 'this' reference outside an instance method body (callbackfn)
+built-ins/Array/prototype/filter/15.4.4.20-5-7.js	ir/from-ast: 'this' reference outside an instance method body (callbackfn)
+built-ins/Array/prototype/filter/15.4.4.20-5-9.js	ir/from-ast: 'this' reference outside an instance method body (callbackfn)
+built-ins/Function/S10.1.1_A1_T3.js	ir/from-ast: only direct constructor names supported in slice 4 (<module-init>)
+built-ins/Function/S15.3_A3_T2.js	ir/from-ast: 'this' reference outside an instance method body (<module-init>)
+built-ins/Function/prototype/apply/15.3.4.3-1-s.js	ir/from-ast: instanceof RHS class "String" has no projected shape (fun)
+built-ins/Function/prototype/apply/15.3.4.3-2-s.js	ir/from-ast: instanceof RHS class "Number" has no projected shape (fun)
+built-ins/Function/prototype/apply/15.3.4.3-3-s.js	ir/from-ast: instanceof RHS class "Boolean" has no projected shape (fun)
+built-ins/Function/prototype/apply/S15.3.4.3_A8_T3.js	ir/from-ast: only direct constructor names supported in slice 4 (<module-init>)
+built-ins/Function/prototype/apply/S15.3.4.3_A8_T4.js	ir/from-ast: only direct constructor names supported in slice 4 (<module-init>)
+built-ins/Function/prototype/apply/S15.3.4.3_A8_T6.js	ir/from-ast: only direct constructor names supported in slice 4 (<module-init>)
+built-ins/Function/prototype/call/15.3.4.4-1-s.js	ir/from-ast: instanceof RHS class "String" has no projected shape (fun)
+built-ins/Function/prototype/call/15.3.4.4-2-s.js	ir/from-ast: instanceof RHS class "Number" has no projected shape (fun)
+built-ins/Function/prototype/call/15.3.4.4-3-s.js	ir/from-ast: instanceof RHS class "Boolean" has no projected shape (fun)
+built-ins/Function/prototype/call/S15.3.4.4_A7_T3.js	ir/from-ast: only direct constructor names supported in slice 4 (<module-init>)
+built-ins/Function/prototype/call/S15.3.4.4_A7_T4.js	ir/from-ast: only direct constructor names supported in slice 4 (<module-init>)
+built-ins/Function/prototype/call/S15.3.4.4_A7_T6.js	ir/from-ast: only direct constructor names supported in slice 4 (<module-init>)
+built-ins/Object/S9.9_A6.js	ir/from-ast: 'this' reference outside an instance method body (MyObject)
+built-ins/Object/create/15.2.3.5-2-1.js	ir/from-ast: unknown class "base" in <module-init>
+built-ins/Object/create/15.2.3.5-3-1.js	ir/from-ast: unknown class "base" in <module-init>
+built-ins/Object/create/15.2.3.5-4-1.js	ir/from-ast: unknown class "base" in <module-init>
+built-ins/Object/create/15.2.3.5-4-124.js	ir/from-ast: 'this' reference outside an instance method body (<module-init>)
+built-ins/Object/create/15.2.3.5-4-177.js	ir/from-ast: 'this' reference outside an instance method body (<module-init>)
+built-ins/Object/create/15.2.3.5-4-203.js	ir/from-ast: 'this' reference outside an instance method body (<module-init>)
+built-ins/Object/create/15.2.3.5-4-256.js	ir/from-ast: 'this' reference outside an instance method body (<module-init>)
+built-ins/Object/create/15.2.3.5-4-291.js	ir/from-ast: 'this' reference outside an instance method body (<module-init>)
+built-ins/Object/defineProperties/15.2.3.7-2-18.js	ir/from-ast: 'this' reference outside an instance method body (<module-init>)
+built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-4-10.js	ir/from-ast: 'this' reference outside an instance method body (<module-init>)
+built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-4-11.js	ir/from-ast: 'this' reference outside an instance method body (<module-init>)
+built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-4-4.js	ir/from-ast: 'this' reference outside an instance method body (<module-init>)
+built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-4-5.js	ir/from-ast: 'this' reference outside an instance method body (<module-init>)
+built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-4-6.js	ir/from-ast: 'this' reference outside an instance method body (<module-init>)
+built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-4-7.js	ir/from-ast: 'this' reference outside an instance method body (<module-init>)
+built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-4-8.js	ir/from-ast: 'this' reference outside an instance method body (<module-init>)
+built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-4-9.js	ir/from-ast: 'this' reference outside an instance method body (<module-init>)
+built-ins/Object/isExtensible/15.2.3.13-2-1.js	ir/from-ast: 'this' reference outside an instance method body (<module-init>)
+built-ins/Object/prototype/propertyIsEnumerable/S15.2.4.7_A1_T1.js	ir/from-ast: 'this' reference outside an instance method body (AVISFACTORY)
+built-ins/RegExp/prototype/toString/S15.10.6.4_A6.js	ir/from-ast: unknown class "Test262Error" in isConstructor
+built-ins/RegExp/prototype/toString/S15.10.6.4_A7.js	ir/from-ast: unknown class "Test262Error" in isConstructor
+built-ins/String/S15.5.5_A2_T2.js	ir/from-ast: only direct constructor names supported in slice 4 (<module-init>)
+built-ins/String/prototype/charAt/S15.5.4.4_A1.1.js	ir/from-ast: 'this' reference outside an instance method body (__FACTORY)
+built-ins/String/prototype/charCodeAt/S15.5.4.5_A1.1.js	ir/from-ast: 'this' reference outside an instance method body (__FACTORY)
+built-ins/String/prototype/indexOf/S15.5.4.7_A4_T5.js	ir/from-ast: 'this' reference outside an instance method body (__FACTORY)
+built-ins/String/prototype/lastIndexOf/S15.5.4.8_A4_T5.js	ir/from-ast: 'this' reference outside an instance method body (__FACTORY)
+built-ins/String/prototype/localeCompare/S15.5.4.9_A1_T2.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+built-ins/String/prototype/match/S15.5.4.10_A2_T1.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+built-ins/String/prototype/replace/15.5.4.11-1.js	ir/from-ast: 'this' reference outside an instance method body (<module-init>)
+built-ins/String/prototype/replace/S15.5.4.11_A12.js	ir/from-ast: 'this' reference outside an instance method body (<module-init>)
+built-ins/String/prototype/slice/S15.5.4.13_A3_T4.js	ir/from-ast: 'this' reference outside an instance method body (__FACTORY)
+built-ins/String/prototype/substring/S15.5.4.15_A3_T10.js	ir/from-ast: 'this' reference outside an instance method body (__FACTORY)
+built-ins/global/S10.2.3_A1.1_T1.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+built-ins/global/S10.2.3_A1.2_T1.js	ir/from-ast: unknown class "Test262Error" in test
+harness/assertRelativeDateMs.js	ir/from-ast: unknown class "Test262Error" in assertRelativeDateMs
+harness/detachArrayBuffer-host-detachArrayBuffer.js	ir/from-ast: unknown class "Test262Error" in $DETACHBUFFER
+harness/detachArrayBuffer.js	ir/from-ast: unknown class "ArrayBuffer" in <module-init>
+intl402/Collator/instance-proto-and-extensible.js	ir/from-ast: only direct constructor names supported in slice 4 (<module-init>)
+intl402/Collator/prototype/compare/builtin.js	ir/from-ast: unknown class "Test262Error" in isConstructor
+intl402/Collator/prototype/compare/compare-function-builtin.js	ir/from-ast: unknown class "Test262Error" in isConstructor
+intl402/Collator/prototype/resolvedOptions/builtin.js	ir/from-ast: unknown class "Test262Error" in isConstructor
+intl402/Collator/subclassing.js	whole-program source producer has no body producer for class-constructor
+intl402/Collator/supportedLocalesOf/basic.js	ir/from-ast: only direct constructor names supported in slice 4 (<module-init>)
+intl402/Collator/supportedLocalesOf/builtin.js	ir/from-ast: unknown class "Test262Error" in isConstructor
+intl402/Date/prototype/toLocaleDateString/builtin.js	ir/from-ast: unknown class "Test262Error" in isConstructor
+intl402/Date/prototype/toLocaleString/builtin.js	ir/from-ast: unknown class "Test262Error" in isConstructor
+intl402/Date/prototype/toLocaleTimeString/builtin.js	ir/from-ast: unknown class "Test262Error" in isConstructor
+intl402/DateTimeFormat/instance-proto-and-extensible.js	ir/from-ast: only direct constructor names supported in slice 4 (<module-init>)
+intl402/DateTimeFormat/prototype/format/builtin.js	ir/from-ast: unknown class "Test262Error" in isConstructor
+intl402/DateTimeFormat/prototype/format/format-function-builtin.js	ir/from-ast: unknown class "Test262Error" in isConstructor
+intl402/DateTimeFormat/prototype/resolvedOptions/builtin.js	ir/from-ast: unknown class "Test262Error" in isConstructor
+intl402/DateTimeFormat/subclassing.js	whole-program source producer has no body producer for class-constructor
+intl402/DateTimeFormat/supportedLocalesOf/basic.js	ir/from-ast: only direct constructor names supported in slice 4 (<module-init>)
+intl402/DateTimeFormat/supportedLocalesOf/builtin.js	ir/from-ast: unknown class "Test262Error" in isConstructor
+intl402/Number/prototype/toLocaleString/builtin.js	ir/from-ast: unknown class "Test262Error" in isConstructor
+intl402/NumberFormat/instance-proto-and-extensible.js	ir/from-ast: only direct constructor names supported in slice 4 (<module-init>)
+intl402/NumberFormat/prototype/format/builtin.js	ir/from-ast: unknown class "Test262Error" in isConstructor
+intl402/NumberFormat/prototype/format/format-function-builtin.js	ir/from-ast: unknown class "Test262Error" in isConstructor
+intl402/NumberFormat/prototype/format/format-negative-numbers.js	ir/from-ast: only direct constructor names supported in slice 4 (<module-init>)
+intl402/NumberFormat/prototype/format/percent-formatter.js	ir/from-ast: only direct constructor names supported in slice 4 (<module-init>)
+intl402/NumberFormat/prototype/format/value-arg-coerced-to-number.js	ir/from-ast: only direct constructor names supported in slice 4 (<module-init>)
+intl402/NumberFormat/prototype/resolvedOptions/builtin.js	ir/from-ast: unknown class "Test262Error" in isConstructor
+intl402/NumberFormat/subclassing.js	whole-program source producer has no body producer for class-constructor
+intl402/NumberFormat/supportedLocalesOf/basic.js	ir/from-ast: only direct constructor names supported in slice 4 (<module-init>)
+intl402/NumberFormat/supportedLocalesOf/builtin.js	ir/from-ast: unknown class "Test262Error" in isConstructor
+intl402/String/prototype/localeCompare/builtin.js	ir/from-ast: unknown class "Test262Error" in isConstructor
+language/arguments-object/S10.1.6_A1_T2.js	ir/from-ast: 'this' reference outside an instance method body (f1)
+language/asi/S7.9.2_A1_T5.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/asi/S7.9.2_A1_T7.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/asi/S7.9_A11_T1.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/asi/S7.9_A11_T10.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/asi/S7.9_A11_T2.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/asi/S7.9_A11_T5.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/asi/S7.9_A11_T6.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/asi/S7.9_A11_T7.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/asi/S7.9_A11_T9.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/asi/S7.9_A5.2_T1.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/asi/S7.9_A5.4_T1.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/asi/S7.9_A5.6_T1.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/asi/S7.9_A5.6_T2.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/asi/S7.9_A5.9_T1.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/comments/S7.4_A1_T1.js	ir/from-ast: 'this' reference outside an instance method body (<module-init>)
+language/directive-prologue/14.1-1-s.js	ir/from-ast: 'this' reference outside an instance method body (foo)
+language/directive-prologue/14.1-10-s.js	ir/from-ast: 'this' reference outside an instance method body (foo)
+language/directive-prologue/14.1-11-s.js	ir/from-ast: 'this' reference outside an instance method body (foo)
+language/directive-prologue/14.1-12-s.js	ir/from-ast: 'this' reference outside an instance method body (foo)
+language/directive-prologue/14.1-13-s.js	ir/from-ast: 'this' reference outside an instance method body (foo)
+language/directive-prologue/14.1-14-s.js	ir/from-ast: 'this' reference outside an instance method body (foo)
+language/directive-prologue/14.1-15-s.js	ir/from-ast: 'this' reference outside an instance method body (foo)
+language/directive-prologue/14.1-17-s.js	ir/from-ast: 'this' reference outside an instance method body (foo)
+language/directive-prologue/14.1-2-s.js	ir/from-ast: 'this' reference outside an instance method body (foo)
+language/directive-prologue/14.1-3-s.js	ir/from-ast: 'this' reference outside an instance method body (foo)
+language/directive-prologue/14.1-4-s.js	ir/from-ast: 'this' reference outside an instance method body (foo)
+language/directive-prologue/14.1-5-s.js	ir/from-ast: 'this' reference outside an instance method body (foo)
+language/directive-prologue/14.1-6-s.js	ir/from-ast: 'this' reference outside an instance method body (foo)
+language/directive-prologue/14.1-7-s.js	ir/from-ast: 'this' reference outside an instance method body (foo)
+language/directive-prologue/14.1-8-s.js	ir/from-ast: 'this' reference outside an instance method body (foo)
+language/directive-prologue/14.1-9-s.js	ir/from-ast: 'this' reference outside an instance method body (foo)
+language/eval-code/indirect/var-env-var-strict.js	ir/from-ast: 'this' reference outside an instance method body (<module-init>)
+language/expressions/addition/S11.6.1_A3.1_T1.2.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/addition/S11.6.1_A3.2_T1.1.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/addition/S11.6.1_A3.2_T2.2.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/addition/S11.6.1_A4_T5.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/addition/S11.6.1_A4_T6.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/assignment/S11.13.1_A3.1.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/assignment/S11.13.1_A3.2.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/assignment/S11.13.1_A4_T1.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/assignment/line-terminator.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/assignment/white-space.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/bitwise-and/S11.10.1_A3_T1.1.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/bitwise-and/S11.10.1_A3_T1.2.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/bitwise-and/S11.10.1_A3_T1.3.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/bitwise-and/S11.10.1_A3_T1.4.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/bitwise-and/S11.10.1_A3_T2.1.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/bitwise-and/S11.10.1_A3_T2.2.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/bitwise-and/S11.10.1_A3_T2.3.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/bitwise-and/S11.10.1_A3_T2.4.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/bitwise-and/S11.10.1_A3_T2.5.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/bitwise-and/S11.10.1_A3_T2.6.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/bitwise-and/S11.10.1_A3_T2.7.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/bitwise-and/S11.10.1_A3_T2.8.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/bitwise-and/S11.10.1_A3_T2.9.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/bitwise-not/S11.4.8_A3_T2.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/bitwise-not/S11.4.8_A3_T4.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/bitwise-not/S9.5_A2.1_T2.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/bitwise-not/S9.5_A2.2_T2.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/bitwise-not/S9.5_A2.3_T2.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/bitwise-not/S9.5_A3.2_T2.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/bitwise-or/S11.10.3_A3_T1.1.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/bitwise-or/S11.10.3_A3_T1.2.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/bitwise-or/S11.10.3_A3_T1.3.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/bitwise-or/S11.10.3_A3_T1.4.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/bitwise-or/S11.10.3_A3_T2.1.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/bitwise-or/S11.10.3_A3_T2.2.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/bitwise-or/S11.10.3_A3_T2.3.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/bitwise-or/S11.10.3_A3_T2.4.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/bitwise-or/S11.10.3_A3_T2.5.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/bitwise-or/S11.10.3_A3_T2.6.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/bitwise-or/S11.10.3_A3_T2.7.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/bitwise-or/S11.10.3_A3_T2.8.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/bitwise-or/S11.10.3_A3_T2.9.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/bitwise-xor/S11.10.2_A3_T1.1.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/bitwise-xor/S11.10.2_A3_T1.2.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/bitwise-xor/S11.10.2_A3_T1.3.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/bitwise-xor/S11.10.2_A3_T1.4.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/bitwise-xor/S11.10.2_A3_T2.1.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/bitwise-xor/S11.10.2_A3_T2.2.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/bitwise-xor/S11.10.2_A3_T2.3.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/bitwise-xor/S11.10.2_A3_T2.4.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/bitwise-xor/S11.10.2_A3_T2.5.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/bitwise-xor/S11.10.2_A3_T2.6.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/bitwise-xor/S11.10.2_A3_T2.7.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/bitwise-xor/S11.10.2_A3_T2.8.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/bitwise-xor/S11.10.2_A3_T2.9.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/compound-assignment/S11.13.2_A3.1_T1.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/compound-assignment/S11.13.2_A3.1_T10.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/compound-assignment/S11.13.2_A3.1_T11.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/compound-assignment/S11.13.2_A3.1_T2.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/compound-assignment/S11.13.2_A3.1_T3.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/compound-assignment/S11.13.2_A3.1_T4.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/compound-assignment/S11.13.2_A3.1_T5.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/compound-assignment/S11.13.2_A3.1_T6.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/compound-assignment/S11.13.2_A3.1_T7.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/compound-assignment/S11.13.2_A3.1_T8.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/compound-assignment/S11.13.2_A3.1_T9.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/compound-assignment/S11.13.2_A3.2_T1.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/compound-assignment/S11.13.2_A3.2_T10.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/compound-assignment/S11.13.2_A3.2_T11.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/compound-assignment/S11.13.2_A3.2_T2.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/compound-assignment/S11.13.2_A3.2_T3.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/compound-assignment/S11.13.2_A3.2_T4.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/compound-assignment/S11.13.2_A3.2_T5.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/compound-assignment/S11.13.2_A3.2_T6.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/compound-assignment/S11.13.2_A3.2_T7.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/compound-assignment/S11.13.2_A3.2_T8.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/compound-assignment/S11.13.2_A3.2_T9.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/compound-assignment/S11.13.2_A4.10_T1.2.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/compound-assignment/S11.13.2_A4.10_T1.4.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/compound-assignment/S11.13.2_A4.10_T2.1.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/compound-assignment/S11.13.2_A4.10_T2.2.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/compound-assignment/S11.13.2_A4.10_T2.3.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/compound-assignment/S11.13.2_A4.10_T2.4.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/compound-assignment/S11.13.2_A4.10_T2.6.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/compound-assignment/S11.13.2_A4.10_T2.7.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/compound-assignment/S11.13.2_A4.10_T2.8.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/compound-assignment/S11.13.2_A4.10_T2.9.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/compound-assignment/S11.13.2_A4.11_T1.2.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/compound-assignment/S11.13.2_A4.11_T1.4.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/compound-assignment/S11.13.2_A4.11_T2.1.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/compound-assignment/S11.13.2_A4.11_T2.2.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/compound-assignment/S11.13.2_A4.11_T2.3.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/compound-assignment/S11.13.2_A4.11_T2.4.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/compound-assignment/S11.13.2_A4.11_T2.6.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/compound-assignment/S11.13.2_A4.11_T2.7.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/compound-assignment/S11.13.2_A4.11_T2.8.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/compound-assignment/S11.13.2_A4.11_T2.9.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/compound-assignment/S11.13.2_A4.1_T1.2.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/compound-assignment/S11.13.2_A4.1_T2.1.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/compound-assignment/S11.13.2_A4.1_T2.2.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/compound-assignment/S11.13.2_A4.1_T2.3.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/compound-assignment/S11.13.2_A4.1_T2.7.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/compound-assignment/S11.13.2_A4.1_T2.9.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/compound-assignment/S11.13.2_A4.2_T1.2.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/compound-assignment/S11.13.2_A4.2_T2.1.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/compound-assignment/S11.13.2_A4.2_T2.2.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/compound-assignment/S11.13.2_A4.3_T1.2.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/compound-assignment/S11.13.2_A4.3_T2.1.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/compound-assignment/S11.13.2_A4.3_T2.2.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/compound-assignment/S11.13.2_A4.4_T1.1.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/compound-assignment/S11.13.2_A4.4_T1.2.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/compound-assignment/S11.13.2_A4.4_T1.4.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/compound-assignment/S11.13.2_A4.4_T2.1.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/compound-assignment/S11.13.2_A4.4_T2.2.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/compound-assignment/S11.13.2_A4.4_T2.5.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/compound-assignment/S11.13.2_A4.4_T2.6.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/compound-assignment/S11.13.2_A4.4_T2.7.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/compound-assignment/S11.13.2_A4.4_T2.8.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/compound-assignment/S11.13.2_A4.4_T2.9.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/compound-assignment/S11.13.2_A4.5_T1.2.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/compound-assignment/S11.13.2_A4.5_T2.1.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/compound-assignment/S11.13.2_A4.5_T2.2.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/compound-assignment/S11.13.2_A4.5_T2.3.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/compound-assignment/S11.13.2_A4.5_T2.7.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/compound-assignment/S11.13.2_A4.5_T2.9.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/compound-assignment/S11.13.2_A4.6_T1.2.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/compound-assignment/S11.13.2_A4.6_T1.4.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/compound-assignment/S11.13.2_A4.6_T2.1.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/compound-assignment/S11.13.2_A4.6_T2.2.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/compound-assignment/S11.13.2_A4.6_T2.3.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/compound-assignment/S11.13.2_A4.6_T2.4.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/compound-assignment/S11.13.2_A4.6_T2.6.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/compound-assignment/S11.13.2_A4.6_T2.7.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/compound-assignment/S11.13.2_A4.6_T2.8.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/compound-assignment/S11.13.2_A4.6_T2.9.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/compound-assignment/S11.13.2_A4.7_T1.2.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/compound-assignment/S11.13.2_A4.7_T1.4.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/compound-assignment/S11.13.2_A4.7_T2.1.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/compound-assignment/S11.13.2_A4.7_T2.2.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/compound-assignment/S11.13.2_A4.7_T2.3.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/compound-assignment/S11.13.2_A4.7_T2.4.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/compound-assignment/S11.13.2_A4.7_T2.6.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/compound-assignment/S11.13.2_A4.7_T2.7.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/compound-assignment/S11.13.2_A4.7_T2.8.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/compound-assignment/S11.13.2_A4.7_T2.9.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/compound-assignment/S11.13.2_A4.8_T1.2.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/compound-assignment/S11.13.2_A4.8_T1.4.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/compound-assignment/S11.13.2_A4.8_T2.1.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/compound-assignment/S11.13.2_A4.8_T2.2.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/compound-assignment/S11.13.2_A4.8_T2.3.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/compound-assignment/S11.13.2_A4.8_T2.4.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/compound-assignment/S11.13.2_A4.8_T2.6.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/compound-assignment/S11.13.2_A4.8_T2.7.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/compound-assignment/S11.13.2_A4.8_T2.8.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/compound-assignment/S11.13.2_A4.8_T2.9.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/compound-assignment/S11.13.2_A4.9_T1.2.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/compound-assignment/S11.13.2_A4.9_T1.4.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/compound-assignment/S11.13.2_A4.9_T2.1.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/compound-assignment/S11.13.2_A4.9_T2.2.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/compound-assignment/S11.13.2_A4.9_T2.3.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/compound-assignment/S11.13.2_A4.9_T2.4.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/compound-assignment/S11.13.2_A4.9_T2.6.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/compound-assignment/S11.13.2_A4.9_T2.7.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/compound-assignment/S11.13.2_A4.9_T2.8.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/compound-assignment/S11.13.2_A4.9_T2.9.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/concatenation/S9.8_A3_T2.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/concatenation/S9.8_A4_T2.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/conditional/S11.12_A3_T1.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/conditional/S11.12_A3_T2.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/conditional/S11.12_A3_T3.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/division/S11.5.2_A3_T1.1.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/division/S11.5.2_A3_T1.2.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/division/S11.5.2_A3_T1.3.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/division/S11.5.2_A3_T2.1.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/division/S11.5.2_A3_T2.2.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/division/S11.5.2_A3_T2.5.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/division/S11.5.2_A4_T2.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/division/S11.5.2_A4_T8.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/does-not-equals/S11.9.2_A3.1.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/does-not-equals/S11.9.2_A4.2.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/does-not-equals/S11.9.2_A5.1.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/does-not-equals/S11.9.2_A6.1.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/does-not-equals/S11.9.2_A6.2_T1.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/does-not-equals/S11.9.2_A6.2_T2.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/equals/S11.9.1_A3.1.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/equals/S11.9.1_A4.2.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/equals/S11.9.1_A5.1.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/equals/S11.9.1_A6.1.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/equals/S11.9.1_A6.2_T1.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/equals/S11.9.1_A6.2_T2.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/greater-than-or-equal/S11.8.4_A3.1_T1.1.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/greater-than-or-equal/S11.8.4_A3.1_T1.2.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/greater-than-or-equal/S11.8.4_A3.1_T1.3.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/greater-than-or-equal/S11.8.4_A3.1_T2.1.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/greater-than-or-equal/S11.8.4_A3.1_T2.2.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/greater-than-or-equal/S11.8.4_A3.1_T2.3.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/greater-than-or-equal/S11.8.4_A3.1_T2.4.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/greater-than-or-equal/S11.8.4_A3.1_T2.5.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/greater-than-or-equal/S11.8.4_A3.1_T2.6.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/greater-than-or-equal/S11.8.4_A3.1_T2.7.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/greater-than-or-equal/S11.8.4_A3.1_T2.8.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/greater-than-or-equal/S11.8.4_A3.1_T2.9.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/greater-than-or-equal/S11.8.4_A3.2_T1.1.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/greater-than-or-equal/S11.8.4_A4.10.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/greater-than-or-equal/S11.8.4_A4.11.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/greater-than-or-equal/S11.8.4_A4.12_T1.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/greater-than-or-equal/S11.8.4_A4.12_T2.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/greater-than-or-equal/S11.8.4_A4.3.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/greater-than-or-equal/S11.8.4_A4.4.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/greater-than-or-equal/S11.8.4_A4.9.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/greater-than/S11.8.2_A3.1_T1.1.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/greater-than/S11.8.2_A3.1_T1.2.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/greater-than/S11.8.2_A3.1_T1.3.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/greater-than/S11.8.2_A3.1_T2.1.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/greater-than/S11.8.2_A3.1_T2.2.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/greater-than/S11.8.2_A3.1_T2.3.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/greater-than/S11.8.2_A3.1_T2.4.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/greater-than/S11.8.2_A3.1_T2.5.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/greater-than/S11.8.2_A3.1_T2.6.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/greater-than/S11.8.2_A3.1_T2.7.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/greater-than/S11.8.2_A3.1_T2.8.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/greater-than/S11.8.2_A3.1_T2.9.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/greater-than/S11.8.2_A3.2_T1.1.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/greater-than/S11.8.2_A4.10.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/greater-than/S11.8.2_A4.11.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/greater-than/S11.8.2_A4.12_T1.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/greater-than/S11.8.2_A4.12_T2.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/greater-than/S11.8.2_A4.3.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/greater-than/S11.8.2_A4.4.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/greater-than/S11.8.2_A4.9.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/grouping/S11.1.6_A3_T1.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/grouping/S11.1.6_A3_T2.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/grouping/S11.1.6_A3_T3.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/grouping/S11.1.6_A3_T4.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/in/S8.12.6_A2_T2.js	ir/from-ast: 'this' reference outside an instance method body (Robin)
+language/expressions/instanceof/S11.8.6_A2.1_T2.js	ir/from-ast: instanceof RHS class "Object" has no projected shape (<module-init>)
+language/expressions/instanceof/S11.8.6_A2.1_T3.js	ir/from-ast: instanceof RHS class "OBJECT" has no projected shape (<module-init>)
+language/expressions/instanceof/S11.8.6_A2.4_T3.js	ir/from-ast: instanceof RHS must be a class identifier (<module-init>)
+language/expressions/instanceof/S11.8.6_A2.4_T4.js	ir/from-ast: instanceof RHS class "OBJECT" has no projected shape (<module-init>)
+language/expressions/instanceof/S11.8.6_A3.js	ir/from-ast: instanceof RHS must be a class identifier (<module-init>)
+language/expressions/instanceof/S11.8.6_A4_T1.js	ir/from-ast: instanceof RHS class "Boolean" has no projected shape (<module-init>)
+language/expressions/instanceof/S11.8.6_A4_T2.js	ir/from-ast: instanceof RHS class "Number" has no projected shape (<module-init>)
+language/expressions/instanceof/S11.8.6_A4_T3.js	ir/from-ast: instanceof RHS class "String" has no projected shape (<module-init>)
+language/expressions/instanceof/S11.8.6_A6_T1.js	ir/from-ast: instanceof RHS must be a class identifier (<module-init>)
+language/expressions/instanceof/S11.8.6_A6_T2.js	ir/from-ast: instanceof RHS class "Math" has no projected shape (<module-init>)
+language/expressions/instanceof/S11.8.6_A6_T3.js	ir/from-ast: instanceof RHS class "MyFunct" has no projected shape (<module-init>)
+language/expressions/left-shift/S11.7.1_A3_T1.1.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/left-shift/S11.7.1_A3_T1.2.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/left-shift/S11.7.1_A3_T1.3.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/left-shift/S11.7.1_A3_T1.4.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/left-shift/S11.7.1_A3_T2.1.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/left-shift/S11.7.1_A3_T2.2.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/left-shift/S11.7.1_A3_T2.3.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/left-shift/S11.7.1_A3_T2.4.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/left-shift/S11.7.1_A3_T2.5.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/left-shift/S11.7.1_A3_T2.6.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/left-shift/S11.7.1_A3_T2.7.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/left-shift/S11.7.1_A3_T2.8.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/left-shift/S11.7.1_A3_T2.9.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/left-shift/S11.7.1_A4_T1.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/left-shift/S11.7.1_A4_T2.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/left-shift/S11.7.1_A4_T3.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/left-shift/S11.7.1_A4_T4.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/left-shift/S11.7.1_A5.1_T1.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/left-shift/S11.7.1_A5.2_T1.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/left-shift/S9.5_A2.1_T1.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/left-shift/S9.5_A2.2_T1.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/left-shift/S9.5_A2.3_T1.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/left-shift/S9.5_A3.2_T1.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/less-than-or-equal/S11.8.3_A3.1_T1.1.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/less-than-or-equal/S11.8.3_A3.1_T1.2.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/less-than-or-equal/S11.8.3_A3.1_T1.3.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/less-than-or-equal/S11.8.3_A3.1_T2.1.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/less-than-or-equal/S11.8.3_A3.1_T2.2.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/less-than-or-equal/S11.8.3_A3.1_T2.3.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/less-than-or-equal/S11.8.3_A3.1_T2.4.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/less-than-or-equal/S11.8.3_A3.1_T2.5.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/less-than-or-equal/S11.8.3_A3.1_T2.6.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/less-than-or-equal/S11.8.3_A3.1_T2.7.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/less-than-or-equal/S11.8.3_A3.1_T2.8.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/less-than-or-equal/S11.8.3_A3.1_T2.9.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/less-than-or-equal/S11.8.3_A3.2_T1.1.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/less-than-or-equal/S11.8.3_A4.10.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/less-than-or-equal/S11.8.3_A4.11.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/less-than-or-equal/S11.8.3_A4.12_T1.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/less-than-or-equal/S11.8.3_A4.12_T2.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/less-than-or-equal/S11.8.3_A4.3.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/less-than-or-equal/S11.8.3_A4.4.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/less-than-or-equal/S11.8.3_A4.9.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/less-than/S11.8.1_A3.1_T1.1.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/less-than/S11.8.1_A3.1_T1.2.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/less-than/S11.8.1_A3.1_T1.3.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/less-than/S11.8.1_A3.1_T2.1.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/less-than/S11.8.1_A3.1_T2.2.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/less-than/S11.8.1_A3.1_T2.3.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/less-than/S11.8.1_A3.1_T2.4.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/less-than/S11.8.1_A3.1_T2.5.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/less-than/S11.8.1_A3.1_T2.6.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/less-than/S11.8.1_A3.1_T2.7.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/less-than/S11.8.1_A3.1_T2.8.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/less-than/S11.8.1_A3.1_T2.9.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/less-than/S11.8.1_A3.2_T1.1.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/less-than/S11.8.1_A4.10.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/less-than/S11.8.1_A4.11.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/less-than/S11.8.1_A4.12_T1.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/less-than/S11.8.1_A4.12_T2.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/less-than/S11.8.1_A4.3.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/less-than/S11.8.1_A4.4.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/less-than/S11.8.1_A4.9.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/logical-and/S11.11.1_A3_T1.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/logical-and/S11.11.1_A3_T4.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/logical-and/S11.11.1_A4_T4.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/logical-not/S11.4.9_A3_T1.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/logical-not/S11.4.9_A3_T2.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/logical-not/S11.4.9_A3_T3.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/logical-not/S11.4.9_A3_T4.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/logical-not/S11.4.9_A3_T5.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/logical-not/S9.2_A1_T2.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/logical-not/S9.2_A3_T2.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/logical-not/S9.2_A4_T2.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/logical-not/S9.2_A5_T2.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/logical-not/S9.2_A5_T4.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/logical-or/S11.11.2_A3_T4.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/logical-or/S11.11.2_A4_T4.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/modulus/S11.5.3_A3_T1.1.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/modulus/S11.5.3_A3_T1.2.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/modulus/S11.5.3_A3_T1.3.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/modulus/S11.5.3_A3_T2.1.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/modulus/S11.5.3_A3_T2.2.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/modulus/S11.5.3_A3_T2.5.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/modulus/S11.5.3_A4_T2.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/modulus/S11.5.3_A4_T6.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/multiplication/S11.5.1_A3_T1.1.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/multiplication/S11.5.1_A3_T1.2.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/multiplication/S11.5.1_A3_T1.3.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/multiplication/S11.5.1_A3_T2.1.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/multiplication/S11.5.1_A3_T2.2.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/multiplication/S11.5.1_A3_T2.3.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/multiplication/S11.5.1_A3_T2.5.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/multiplication/S11.5.1_A3_T2.7.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/multiplication/S11.5.1_A3_T2.9.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/multiplication/S11.5.1_A4_T2.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/new/S11.2.2_A2.js	ir/from-ast: unknown class "x" in <module-init>
+language/expressions/new/S11.2.2_A3_T1.js	ir/from-ast: only direct constructor names supported in slice 4 (<module-init>)
+language/expressions/new/S11.2.2_A3_T2.js	ir/from-ast: only direct constructor names supported in slice 4 (<module-init>)
+language/expressions/new/S11.2.2_A3_T3.js	ir/from-ast: only direct constructor names supported in slice 4 (<module-init>)
+language/expressions/new/S11.2.2_A3_T5.js	ir/from-ast: only direct constructor names supported in slice 4 (<module-init>)
+language/expressions/new/S11.2.2_A4_T1.js	ir/from-ast: only direct constructor names supported in slice 4 (<module-init>)
+language/expressions/new/S11.2.2_A4_T2.js	ir/from-ast: only direct constructor names supported in slice 4 (<module-init>)
+language/expressions/new/S11.2.2_A4_T3.js	ir/from-ast: only direct constructor names supported in slice 4 (<module-init>)
+language/expressions/new/S11.2.2_A4_T4.js	ir/from-ast: only direct constructor names supported in slice 4 (<module-init>)
+language/expressions/property-accessors/S11.2.1_A3_T4.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/property-accessors/S11.2.1_A4_T1.js	ir/from-ast: 'this' reference outside an instance method body (<module-init>)
+language/expressions/right-shift/S11.7.2_A3_T1.1.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/right-shift/S11.7.2_A3_T1.2.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/right-shift/S11.7.2_A3_T1.3.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/right-shift/S11.7.2_A3_T1.4.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/right-shift/S11.7.2_A3_T2.1.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/right-shift/S11.7.2_A3_T2.2.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/right-shift/S11.7.2_A3_T2.3.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/right-shift/S11.7.2_A3_T2.4.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/right-shift/S11.7.2_A3_T2.5.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/right-shift/S11.7.2_A3_T2.6.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/right-shift/S11.7.2_A3_T2.7.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/right-shift/S11.7.2_A3_T2.8.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/right-shift/S11.7.2_A3_T2.9.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/right-shift/S11.7.2_A4_T1.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/right-shift/S11.7.2_A4_T2.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/right-shift/S11.7.2_A4_T3.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/right-shift/S11.7.2_A4_T4.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/right-shift/S11.7.2_A5.1_T1.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/right-shift/S11.7.2_A5.2_T1.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/strict-does-not-equals/S11.9.5_A3.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/strict-does-not-equals/S11.9.5_A4.2.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/strict-does-not-equals/S11.9.5_A5.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/strict-does-not-equals/S11.9.5_A6.1.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/strict-does-not-equals/S11.9.5_A8_T5.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/strict-equals/S11.9.4_A3.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/strict-equals/S11.9.4_A4.2.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/strict-equals/S11.9.4_A5.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/strict-equals/S11.9.4_A6.1.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/strict-equals/S11.9.4_A8_T5.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/subtraction/S11.6.2_A3_T1.1.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/subtraction/S11.6.2_A3_T1.2.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/subtraction/S11.6.2_A3_T1.3.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/subtraction/S11.6.2_A3_T2.1.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/subtraction/S11.6.2_A3_T2.2.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/subtraction/S11.6.2_A3_T2.3.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/subtraction/S11.6.2_A3_T2.5.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/subtraction/S11.6.2_A3_T2.7.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/subtraction/S11.6.2_A3_T2.9.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/subtraction/S11.6.2_A4_T5.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/subtraction/S11.6.2_A4_T6.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/this/11.1.1-1.js	ir/from-ast: 'this' reference outside an instance method body (<module-init>)
+language/expressions/this/S11.1.1_A3.1.js	ir/from-ast: 'this' reference outside an instance method body (ReturnThis)
+language/expressions/this/S11.1.1_A3.2.js	ir/from-ast: 'this' reference outside an instance method body (SetThis)
+language/expressions/unary-minus/S11.4.7_A3_T1.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/unary-minus/S11.4.7_A3_T2.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/unary-minus/S11.4.7_A3_T3.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/unary-plus/S11.4.6_A3_T1.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/unary-plus/S11.4.6_A3_T2.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/unary-plus/S11.4.6_A3_T3.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/unary-plus/S9.3_A3_T2.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/unary-plus/S9.3_A4.1_T2.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/unsigned-right-shift/S11.7.3_A3_T1.1.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/unsigned-right-shift/S11.7.3_A3_T1.2.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/unsigned-right-shift/S11.7.3_A3_T1.3.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/unsigned-right-shift/S11.7.3_A3_T1.4.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/unsigned-right-shift/S11.7.3_A3_T2.1.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/unsigned-right-shift/S11.7.3_A3_T2.2.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/unsigned-right-shift/S11.7.3_A3_T2.3.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/unsigned-right-shift/S11.7.3_A3_T2.4.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/unsigned-right-shift/S11.7.3_A3_T2.5.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/unsigned-right-shift/S11.7.3_A3_T2.6.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/unsigned-right-shift/S11.7.3_A3_T2.7.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/unsigned-right-shift/S11.7.3_A3_T2.8.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/unsigned-right-shift/S11.7.3_A3_T2.9.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/unsigned-right-shift/S11.7.3_A4_T1.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/unsigned-right-shift/S11.7.3_A4_T2.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/unsigned-right-shift/S11.7.3_A4_T3.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/unsigned-right-shift/S11.7.3_A4_T4.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/unsigned-right-shift/S11.7.3_A5.1_T1.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/unsigned-right-shift/S11.7.3_A5.2_T1.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/unsigned-right-shift/S9.6_A2.1.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/unsigned-right-shift/S9.6_A2.2.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/expressions/unsigned-right-shift/S9.6_A3.2_T1.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/function-code/10.4.3-1-1-s.js	ir/from-ast: 'this' reference outside an instance method body (foo)
+language/function-code/10.4.3-1-100-s.js	ir/from-ast: 'this' reference outside an instance method body (f)
+language/function-code/10.4.3-1-100gs.js	ir/from-ast: 'this' reference outside an instance method body (f)
+language/function-code/10.4.3-1-101-s.js	ir/from-ast: 'this' reference outside an instance method body (f)
+language/function-code/10.4.3-1-101gs.js	ir/from-ast: 'this' reference outside an instance method body (f)
+language/function-code/10.4.3-1-2-s.js	ir/from-ast: 'this' reference outside an instance method body (foo)
+language/function-code/10.4.3-1-21-s.js	ir/from-ast: 'this' reference outside an instance method body (f)
+language/function-code/10.4.3-1-21gs.js	ir/from-ast: 'this' reference outside an instance method body (f)
+language/function-code/10.4.3-1-22-s.js	ir/from-ast: 'this' reference outside an instance method body (f)
+language/function-code/10.4.3-1-22gs.js	ir/from-ast: 'this' reference outside an instance method body (f)
+language/function-code/10.4.3-1-25-s.js	ir/from-ast: only direct constructor names supported in slice 4 (<module-init>)
+language/function-code/10.4.3-1-25gs.js	ir/from-ast: only direct constructor names supported in slice 4 (<module-init>)
+language/function-code/10.4.3-1-26-s.js	ir/from-ast: only direct constructor names supported in slice 4 (<module-init>)
+language/function-code/10.4.3-1-26gs.js	ir/from-ast: only direct constructor names supported in slice 4 (<module-init>)
+language/function-code/10.4.3-1-3-s.js	ir/from-ast: 'this' reference outside an instance method body (foo)
+language/function-code/10.4.3-1-4-s.js	ir/from-ast: 'this' reference outside an instance method body (foo)
+language/function-code/10.4.3-1-48-s.js	ir/from-ast: 'this' reference outside an instance method body (<module-init>)
+language/function-code/10.4.3-1-48gs.js	ir/from-ast: 'this' reference outside an instance method body (<module-init>)
+language/function-code/10.4.3-1-49-s.js	ir/from-ast: 'this' reference outside an instance method body (<module-init>)
+language/function-code/10.4.3-1-49gs.js	ir/from-ast: 'this' reference outside an instance method body (<module-init>)
+language/function-code/10.4.3-1-5-s.js	ir/from-ast: 'this' reference outside an instance method body (foo)
+language/function-code/10.4.3-1-50-s.js	ir/from-ast: 'this' reference outside an instance method body (<module-init>)
+language/function-code/10.4.3-1-50gs.js	ir/from-ast: 'this' reference outside an instance method body (<module-init>)
+language/function-code/10.4.3-1-51-s.js	ir/from-ast: 'this' reference outside an instance method body (<module-init>)
+language/function-code/10.4.3-1-51gs.js	ir/from-ast: 'this' reference outside an instance method body (<module-init>)
+language/function-code/10.4.3-1-52-s.js	ir/from-ast: 'this' reference outside an instance method body (<module-init>)
+language/function-code/10.4.3-1-52gs.js	ir/from-ast: 'this' reference outside an instance method body (<module-init>)
+language/function-code/10.4.3-1-53-s.js	ir/from-ast: 'this' reference outside an instance method body (<module-init>)
+language/function-code/10.4.3-1-53gs.js	ir/from-ast: 'this' reference outside an instance method body (<module-init>)
+language/function-code/10.4.3-1-62-s.js	ir/from-ast: 'this' reference outside an instance method body (f)
+language/function-code/10.4.3-1-62gs.js	ir/from-ast: 'this' reference outside an instance method body (f)
+language/function-code/10.4.3-1-63-s.js	ir/from-ast: 'this' reference outside an instance method body (f)
+language/function-code/10.4.3-1-63gs.js	ir/from-ast: 'this' reference outside an instance method body (f)
+language/function-code/10.4.3-1-64-s.js	ir/from-ast: 'this' reference outside an instance method body (<module-init>)
+language/function-code/10.4.3-1-64gs.js	ir/from-ast: 'this' reference outside an instance method body (f)
+language/function-code/10.4.3-1-65-s.js	ir/from-ast: 'this' reference outside an instance method body (<module-init>)
+language/function-code/10.4.3-1-65gs.js	ir/from-ast: 'this' reference outside an instance method body (f)
+language/function-code/10.4.3-1-66-s.js	ir/from-ast: 'this' reference outside an instance method body (f)
+language/function-code/10.4.3-1-66gs.js	ir/from-ast: 'this' reference outside an instance method body (f)
+language/function-code/10.4.3-1-67-s.js	ir/from-ast: 'this' reference outside an instance method body (f)
+language/function-code/10.4.3-1-67gs.js	ir/from-ast: 'this' reference outside an instance method body (f)
+language/function-code/10.4.3-1-68-s.js	ir/from-ast: 'this' reference outside an instance method body (f)
+language/function-code/10.4.3-1-68gs.js	ir/from-ast: 'this' reference outside an instance method body (f)
+language/function-code/10.4.3-1-69-s.js	ir/from-ast: 'this' reference outside an instance method body (f)
+language/function-code/10.4.3-1-69gs.js	ir/from-ast: 'this' reference outside an instance method body (f)
+language/function-code/10.4.3-1-7-s.js	ir/from-ast: 'this' reference outside an instance method body (f)
+language/function-code/10.4.3-1-70-s.js	ir/from-ast: 'this' reference outside an instance method body (f)
+language/function-code/10.4.3-1-70gs.js	ir/from-ast: 'this' reference outside an instance method body (f)
+language/function-code/10.4.3-1-71-s.js	ir/from-ast: 'this' reference outside an instance method body (f)
+language/function-code/10.4.3-1-71gs.js	ir/from-ast: 'this' reference outside an instance method body (f)
+language/function-code/10.4.3-1-72-s.js	ir/from-ast: 'this' reference outside an instance method body (f)
+language/function-code/10.4.3-1-72gs.js	ir/from-ast: 'this' reference outside an instance method body (f)
+language/function-code/10.4.3-1-73-s.js	ir/from-ast: 'this' reference outside an instance method body (f)
+language/function-code/10.4.3-1-73gs.js	ir/from-ast: 'this' reference outside an instance method body (f)
+language/function-code/10.4.3-1-74-s.js	ir/from-ast: 'this' reference outside an instance method body (f)
+language/function-code/10.4.3-1-74gs.js	ir/from-ast: 'this' reference outside an instance method body (f)
+language/function-code/10.4.3-1-75-s.js	ir/from-ast: 'this' reference outside an instance method body (f)
+language/function-code/10.4.3-1-75gs.js	ir/from-ast: 'this' reference outside an instance method body (f)
+language/function-code/10.4.3-1-76-s.js	ir/from-ast: 'this' reference outside an instance method body (f)
+language/function-code/10.4.3-1-76gs.js	ir/from-ast: 'this' reference outside an instance method body (f)
+language/function-code/10.4.3-1-77-s.js	ir/from-ast: 'this' reference outside an instance method body (f)
+language/function-code/10.4.3-1-77gs.js	ir/from-ast: 'this' reference outside an instance method body (f)
+language/function-code/10.4.3-1-78-s.js	ir/from-ast: 'this' reference outside an instance method body (f)
+language/function-code/10.4.3-1-78gs.js	ir/from-ast: 'this' reference outside an instance method body (f)
+language/function-code/10.4.3-1-79-s.js	ir/from-ast: 'this' reference outside an instance method body (f)
+language/function-code/10.4.3-1-79gs.js	ir/from-ast: 'this' reference outside an instance method body (f)
+language/function-code/10.4.3-1-7gs.js	ir/from-ast: 'this' reference outside an instance method body (f)
+language/function-code/10.4.3-1-8-s.js	ir/from-ast: 'this' reference outside an instance method body (f)
+language/function-code/10.4.3-1-80-s.js	ir/from-ast: 'this' reference outside an instance method body (f)
+language/function-code/10.4.3-1-80gs.js	ir/from-ast: 'this' reference outside an instance method body (f)
+language/function-code/10.4.3-1-81-s.js	ir/from-ast: 'this' reference outside an instance method body (f)
+language/function-code/10.4.3-1-81gs.js	ir/from-ast: 'this' reference outside an instance method body (f)
+language/function-code/10.4.3-1-82-s.js	ir/from-ast: 'this' reference outside an instance method body (f)
+language/function-code/10.4.3-1-82gs.js	ir/from-ast: 'this' reference outside an instance method body (f)
+language/function-code/10.4.3-1-83-s.js	ir/from-ast: 'this' reference outside an instance method body (<module-init>)
+language/function-code/10.4.3-1-83gs.js	ir/from-ast: 'this' reference outside an instance method body (f)
+language/function-code/10.4.3-1-84-s.js	ir/from-ast: 'this' reference outside an instance method body (<module-init>)
+language/function-code/10.4.3-1-84gs.js	ir/from-ast: 'this' reference outside an instance method body (f)
+language/function-code/10.4.3-1-85-s.js	ir/from-ast: 'this' reference outside an instance method body (f)
+language/function-code/10.4.3-1-85gs.js	ir/from-ast: 'this' reference outside an instance method body (f)
+language/function-code/10.4.3-1-86-s.js	ir/from-ast: 'this' reference outside an instance method body (f)
+language/function-code/10.4.3-1-86gs.js	ir/from-ast: 'this' reference outside an instance method body (f)
+language/function-code/10.4.3-1-87-s.js	ir/from-ast: 'this' reference outside an instance method body (f)
+language/function-code/10.4.3-1-87gs.js	ir/from-ast: 'this' reference outside an instance method body (f)
+language/function-code/10.4.3-1-88-s.js	ir/from-ast: 'this' reference outside an instance method body (f)
+language/function-code/10.4.3-1-88gs.js	ir/from-ast: 'this' reference outside an instance method body (f)
+language/function-code/10.4.3-1-89-s.js	ir/from-ast: 'this' reference outside an instance method body (f)
+language/function-code/10.4.3-1-89gs.js	ir/from-ast: 'this' reference outside an instance method body (f)
+language/function-code/10.4.3-1-8gs.js	ir/from-ast: 'this' reference outside an instance method body (f)
+language/function-code/10.4.3-1-90-s.js	ir/from-ast: 'this' reference outside an instance method body (f)
+language/function-code/10.4.3-1-90gs.js	ir/from-ast: 'this' reference outside an instance method body (f)
+language/function-code/10.4.3-1-91-s.js	ir/from-ast: 'this' reference outside an instance method body (f)
+language/function-code/10.4.3-1-91gs.js	ir/from-ast: 'this' reference outside an instance method body (f)
+language/function-code/10.4.3-1-92-s.js	ir/from-ast: 'this' reference outside an instance method body (f)
+language/function-code/10.4.3-1-92gs.js	ir/from-ast: 'this' reference outside an instance method body (f)
+language/function-code/10.4.3-1-93-s.js	ir/from-ast: 'this' reference outside an instance method body (f)
+language/function-code/10.4.3-1-93gs.js	ir/from-ast: 'this' reference outside an instance method body (f)
+language/function-code/10.4.3-1-94-s.js	ir/from-ast: 'this' reference outside an instance method body (f)
+language/function-code/10.4.3-1-94gs.js	ir/from-ast: 'this' reference outside an instance method body (f)
+language/function-code/10.4.3-1-95-s.js	ir/from-ast: 'this' reference outside an instance method body (f)
+language/function-code/10.4.3-1-95gs.js	ir/from-ast: 'this' reference outside an instance method body (f)
+language/function-code/10.4.3-1-96-s.js	ir/from-ast: 'this' reference outside an instance method body (f)
+language/function-code/10.4.3-1-96gs.js	ir/from-ast: 'this' reference outside an instance method body (f)
+language/function-code/10.4.3-1-97-s.js	ir/from-ast: 'this' reference outside an instance method body (f)
+language/function-code/10.4.3-1-97gs.js	ir/from-ast: 'this' reference outside an instance method body (f)
+language/function-code/10.4.3-1-98-s.js	ir/from-ast: 'this' reference outside an instance method body (f)
+language/function-code/10.4.3-1-98gs.js	ir/from-ast: 'this' reference outside an instance method body (f)
+language/function-code/10.4.3-1-99-s.js	ir/from-ast: 'this' reference outside an instance method body (f)
+language/function-code/10.4.3-1-99gs.js	ir/from-ast: 'this' reference outside an instance method body (f)
+language/function-code/S10.2.1_A1.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/function-code/S10.2.1_A3.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/function-code/S10.4A1.1_T2.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/function-code/S10.4_A1.1_T1.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/global-code/S10.4.1_A1_T1.js	ir/from-ast: 'this' reference outside an instance method body (<module-init>)
+language/identifier-resolution/S11.1.2_A1_T1.js	ir/from-ast: 'this' reference outside an instance method body (<module-init>)
+language/identifier-resolution/S11.1.2_A1_T2.js	ir/from-ast: 'this' reference outside an instance method body (<module-init>)
+language/line-terminators/between-tokens-cr.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/line-terminators/comment-multi-cr.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/literals/numeric/S7.8.3_A1.1_T1.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/literals/numeric/S7.8.3_A1.1_T2.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/literals/numeric/S7.8.3_A1.2_T1.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/literals/numeric/S7.8.3_A1.2_T2.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/literals/numeric/S7.8.3_A1.2_T3.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/literals/numeric/S7.8.3_A1.2_T4.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/literals/numeric/S7.8.3_A1.2_T5.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/literals/numeric/S7.8.3_A1.2_T6.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/literals/numeric/S7.8.3_A1.2_T7.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/literals/numeric/S7.8.3_A1.2_T8.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/literals/numeric/S7.8.3_A2.1_T1.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/literals/numeric/S7.8.3_A2.1_T2.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/literals/numeric/S7.8.3_A2.1_T3.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/literals/numeric/S7.8.3_A2.2_T1.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/literals/numeric/S7.8.3_A2.2_T2.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/literals/numeric/S7.8.3_A2.2_T3.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/literals/numeric/S7.8.3_A2.2_T4.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/literals/numeric/S7.8.3_A2.2_T5.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/literals/numeric/S7.8.3_A2.2_T6.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/literals/numeric/S7.8.3_A2.2_T7.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/literals/numeric/S7.8.3_A2.2_T8.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/literals/numeric/S7.8.3_A3.1_T1.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/literals/numeric/S7.8.3_A3.1_T2.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/literals/numeric/S7.8.3_A3.2_T1.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/literals/numeric/S7.8.3_A3.2_T2.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/literals/numeric/S7.8.3_A3.2_T3.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/literals/numeric/S7.8.3_A3.3_T1.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/literals/numeric/S7.8.3_A3.3_T2.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/literals/numeric/S7.8.3_A3.3_T3.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/literals/numeric/S7.8.3_A3.3_T4.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/literals/numeric/S7.8.3_A3.3_T5.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/literals/numeric/S7.8.3_A3.3_T6.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/literals/numeric/S7.8.3_A3.3_T7.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/literals/numeric/S7.8.3_A3.3_T8.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/literals/numeric/S7.8.3_A3.4_T1.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/literals/numeric/S7.8.3_A3.4_T2.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/literals/numeric/S7.8.3_A3.4_T3.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/literals/numeric/S7.8.3_A3.4_T4.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/literals/numeric/S7.8.3_A3.4_T5.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/literals/numeric/S7.8.3_A3.4_T6.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/literals/numeric/S7.8.3_A3.4_T7.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/literals/numeric/S7.8.3_A3.4_T8.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/literals/numeric/S7.8.3_A4.2_T1.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/literals/numeric/S7.8.3_A4.2_T2.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/literals/numeric/S7.8.3_A4.2_T3.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/literals/numeric/S7.8.3_A4.2_T4.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/literals/numeric/S7.8.3_A4.2_T5.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/literals/numeric/S7.8.3_A4.2_T6.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/literals/numeric/S7.8.3_A4.2_T7.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/literals/numeric/S7.8.3_A4.2_T8.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/literals/numeric/S7.8.3_A5.1_T1.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/literals/numeric/S7.8.3_A5.1_T2.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/literals/numeric/S7.8.3_A5.1_T3.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/literals/numeric/S7.8.3_A5.1_T4.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/literals/numeric/S7.8.3_A5.1_T5.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/literals/numeric/S7.8.3_A5.1_T6.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/literals/numeric/S7.8.3_A5.1_T7.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/literals/numeric/S7.8.3_A5.1_T8.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/literals/string/S7.8.4_A4.2_T2.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/literals/string/S7.8.4_A4.2_T4.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/literals/string/S7.8.4_A4.2_T6.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/literals/string/S7.8.4_A4.2_T8.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/literals/string/S7.8.4_A4.3_T7.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/literals/string/S7.8.4_A5.1_T2.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/literals/string/S7.8.4_A5.1_T3.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/punctuators/S7.7_A1.js	ir/from-ast: 'this' reference outside an instance method body (<module-init>)
+language/source-text/6.1.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/statements/block/S12.1_A5.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/statements/do-while/S12.6.1_A1.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/statements/do-while/S12.6.1_A4_T1.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/statements/do-while/S12.6.1_A4_T5.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/statements/for-in/S12.6.4_A6.1.js	ir/from-ast: 'this' reference outside an instance method body (FACTORY)
+language/statements/for-in/S12.6.4_A6.js	ir/from-ast: 'this' reference outside an instance method body (FACTORY)
+language/statements/for/S12.6.3_A11.1_T1.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/statements/for/S12.6.3_A11_T1.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/statements/for/S12.6.3_A11_T2.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/statements/for/S12.6.3_A12.1_T1.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/statements/for/S12.6.3_A12_T1.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/statements/for/S12.6.3_A12_T2.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/statements/function/S13.2.1_A8_T1.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/statements/function/S13.2.2_A10.js	ir/from-ast: 'this' reference outside an instance method body (FACTORY)
+language/statements/function/S13.2.2_A11.js	ir/from-ast: 'this' reference outside an instance method body (FACTORY)
+language/statements/function/S13.2.2_A12.js	ir/from-ast: 'this' reference outside an instance method body (FACTORY)
+language/statements/function/S13.2.2_A13.js	ir/from-ast: 'this' reference outside an instance method body (FACTORY)
+language/statements/function/S13.2.2_A14.js	ir/from-ast: 'this' reference outside an instance method body (FACTORY)
+language/statements/function/S13.2.2_A15_T1.js	ir/from-ast: 'this' reference outside an instance method body (__FACTORY)
+language/statements/function/S13.2.2_A15_T2.js	ir/from-ast: 'this' reference outside an instance method body (__FACTORY)
+language/statements/function/S13.2.2_A17_T2.js	ir/from-ast: 'this' reference outside an instance method body (<module-init>)
+language/statements/function/S13.2.2_A5_T1.js	ir/from-ast: 'this' reference outside an instance method body (__FACTORY)
+language/statements/function/S13.2.2_A6_T2.js	ir/from-ast: 'this' reference outside an instance method body (__func)
+language/statements/function/S13.2.2_A7_T1.js	ir/from-ast: 'this' reference outside an instance method body (__func)
+language/statements/function/S13.2.2_A9.js	ir/from-ast: 'this' reference outside an instance method body (FACTORY)
+language/statements/function/S13_A3_T3.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/statements/if/S12.5_A1.1_T1.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/statements/if/S12.5_A1.1_T2.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/statements/if/S12.5_A12_T1.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/statements/if/S12.5_A12_T2.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/statements/if/S12.5_A12_T3.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/statements/if/S12.5_A12_T4.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/statements/if/S12.5_A1_T1.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/statements/if/S12.5_A1_T2.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/statements/throw/S12.13_A2_T1.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/statements/throw/S12.13_A2_T2.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/statements/throw/S12.13_A2_T4.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/statements/throw/S12.13_A2_T5.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/statements/throw/S12.13_A3_T2.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/statements/throw/S12.13_A3_T3.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/statements/throw/S12.13_A3_T5.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/statements/try/12.14-14.js	ir/from-ast: 'this' reference outside an instance method body (<module-init>)
+language/statements/try/12.14-15.js	ir/from-ast: 'this' reference outside an instance method body (<module-init>)
+language/statements/try/12.14-16.js	ir/from-ast: 'this' reference outside an instance method body (<module-init>)
+language/statements/try/S12.14_A1.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/statements/try/S12.14_A10_T1.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/statements/try/S12.14_A10_T2.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/statements/try/S12.14_A10_T3.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/statements/try/S12.14_A10_T4.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/statements/try/S12.14_A10_T5.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/statements/try/S12.14_A11_T1.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/statements/try/S12.14_A13_T1.js	ir/from-ast: unknown class "Test262Error" in myFunction1
+language/statements/try/S12.14_A17.js	ir/from-ast: 'this' reference outside an instance method body (Integer)
+language/statements/try/S12.14_A18_T1.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/statements/try/S12.14_A18_T2.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/statements/try/S12.14_A2.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/statements/try/S12.14_A4.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/statements/try/S12.14_A7_T1.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/statements/try/S12.14_A7_T2.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/statements/try/S12.14_A7_T3.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/statements/try/S12.14_A8.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/statements/try/S12.14_A9_T1.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/statements/try/S12.14_A9_T2.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/statements/try/S12.14_A9_T3.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/statements/try/S12.14_A9_T4.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/statements/try/S12.14_A9_T5.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/statements/variable/S12.2_A4.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/statements/while/S12.6.2_A1.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/statements/while/S12.6.2_A4_T1.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/statements/while/S12.6.2_A4_T5.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/statements/with/S12.10_A1.11_T1.js	ir/from-ast: 'this' reference outside an instance method body (<module-init>)
+language/statements/with/S12.10_A1.11_T2.js	ir/from-ast: 'this' reference outside an instance method body (<module-init>)
+language/statements/with/S12.10_A1.11_T3.js	ir/from-ast: 'this' reference outside an instance method body (<module-init>)
+language/statements/with/S12.10_A1.11_T4.js	ir/from-ast: 'this' reference outside an instance method body (<module-init>)
+language/statements/with/S12.10_A1.11_T5.js	ir/from-ast: 'this' reference outside an instance method body (<module-init>)
+language/statements/with/S12.10_A1.2_T1.js	ir/from-ast: 'this' reference outside an instance method body (<module-init>)
+language/statements/with/S12.10_A1.2_T2.js	ir/from-ast: 'this' reference outside an instance method body (<module-init>)
+language/statements/with/S12.10_A1.2_T3.js	ir/from-ast: 'this' reference outside an instance method body (<module-init>)
+language/statements/with/S12.10_A1.2_T4.js	ir/from-ast: 'this' reference outside an instance method body (<module-init>)
+language/statements/with/S12.10_A1.2_T5.js	ir/from-ast: 'this' reference outside an instance method body (<module-init>)
+language/statements/with/S12.10_A1.3_T1.js	ir/from-ast: 'this' reference outside an instance method body (<module-init>)
+language/statements/with/S12.10_A1.3_T2.js	ir/from-ast: 'this' reference outside an instance method body (<module-init>)
+language/statements/with/S12.10_A1.3_T3.js	ir/from-ast: 'this' reference outside an instance method body (<module-init>)
+language/statements/with/S12.10_A1.3_T4.js	ir/from-ast: 'this' reference outside an instance method body (<module-init>)
+language/statements/with/S12.10_A1.3_T5.js	ir/from-ast: 'this' reference outside an instance method body (<module-init>)
+language/statements/with/S12.10_A3.10_T1.js	ir/from-ast: 'this' reference outside an instance method body (<module-init>)
+language/statements/with/S12.10_A3.10_T2.js	ir/from-ast: 'this' reference outside an instance method body (<module-init>)
+language/statements/with/S12.10_A3.10_T3.js	ir/from-ast: 'this' reference outside an instance method body (<module-init>)
+language/statements/with/S12.10_A3.10_T4.js	ir/from-ast: 'this' reference outside an instance method body (<module-init>)
+language/statements/with/S12.10_A3.10_T5.js	ir/from-ast: 'this' reference outside an instance method body (<module-init>)
+language/statements/with/S12.10_A3.11_T1.js	ir/from-ast: 'this' reference outside an instance method body (<module-init>)
+language/statements/with/S12.10_A3.11_T2.js	ir/from-ast: 'this' reference outside an instance method body (<module-init>)
+language/statements/with/S12.10_A3.11_T3.js	ir/from-ast: 'this' reference outside an instance method body (<module-init>)
+language/statements/with/S12.10_A3.11_T4.js	ir/from-ast: 'this' reference outside an instance method body (<module-init>)
+language/statements/with/S12.10_A3.11_T5.js	ir/from-ast: 'this' reference outside an instance method body (<module-init>)
+language/statements/with/S12.10_A3.1_T1.js	ir/from-ast: 'this' reference outside an instance method body (<module-init>)
+language/statements/with/S12.10_A3.1_T2.js	ir/from-ast: 'this' reference outside an instance method body (<module-init>)
+language/statements/with/S12.10_A3.1_T3.js	ir/from-ast: 'this' reference outside an instance method body (<module-init>)
+language/statements/with/S12.10_A3.2_T1.js	ir/from-ast: 'this' reference outside an instance method body (<module-init>)
+language/statements/with/S12.10_A3.2_T2.js	ir/from-ast: 'this' reference outside an instance method body (<module-init>)
+language/statements/with/S12.10_A3.2_T3.js	ir/from-ast: 'this' reference outside an instance method body (<module-init>)
+language/statements/with/S12.10_A3.2_T4.js	ir/from-ast: 'this' reference outside an instance method body (<module-init>)
+language/statements/with/S12.10_A3.2_T5.js	ir/from-ast: 'this' reference outside an instance method body (<module-init>)
+language/statements/with/S12.10_A3.4_T1.js	ir/from-ast: 'this' reference outside an instance method body (<module-init>)
+language/statements/with/S12.10_A3.4_T2.js	ir/from-ast: 'this' reference outside an instance method body (<module-init>)
+language/statements/with/S12.10_A3.4_T3.js	ir/from-ast: 'this' reference outside an instance method body (<module-init>)
+language/statements/with/S12.10_A3.4_T4.js	ir/from-ast: 'this' reference outside an instance method body (<module-init>)
+language/statements/with/S12.10_A3.4_T5.js	ir/from-ast: 'this' reference outside an instance method body (<module-init>)
+language/statements/with/S12.10_A3.6_T1.js	ir/from-ast: 'this' reference outside an instance method body (<module-init>)
+language/statements/with/S12.10_A3.6_T2.js	ir/from-ast: 'this' reference outside an instance method body (<module-init>)
+language/statements/with/S12.10_A3.6_T3.js	ir/from-ast: 'this' reference outside an instance method body (<module-init>)
+language/statements/with/S12.10_A3.7_T1.js	ir/from-ast: 'this' reference outside an instance method body (<module-init>)
+language/statements/with/S12.10_A3.7_T2.js	ir/from-ast: 'this' reference outside an instance method body (<module-init>)
+language/statements/with/S12.10_A3.7_T3.js	ir/from-ast: 'this' reference outside an instance method body (<module-init>)
+language/statements/with/S12.10_A3.7_T4.js	ir/from-ast: 'this' reference outside an instance method body (<module-init>)
+language/statements/with/S12.10_A3.7_T5.js	ir/from-ast: 'this' reference outside an instance method body (<module-init>)
+language/statements/with/S12.10_A4_T1.js	ir/from-ast: 'this' reference outside an instance method body (<module-init>)
+language/statements/with/S12.10_A4_T2.js	ir/from-ast: 'this' reference outside an instance method body (<module-init>)
+language/statements/with/S12.10_A4_T3.js	ir/from-ast: 'this' reference outside an instance method body (<module-init>)
+language/statements/with/S12.10_A4_T4.js	ir/from-ast: 'this' reference outside an instance method body (<module-init>)
+language/statements/with/S12.10_A4_T5.js	ir/from-ast: 'this' reference outside an instance method body (<module-init>)
+language/statements/with/S12.10_A4_T6.js	ir/from-ast: 'this' reference outside an instance method body (<module-init>)
+language/statements/with/S12.10_A5_T1.js	ir/from-ast: 'this' reference outside an instance method body (<module-init>)
+language/statements/with/S12.10_A5_T2.js	ir/from-ast: 'this' reference outside an instance method body (<module-init>)
+language/statements/with/S12.10_A5_T3.js	ir/from-ast: 'this' reference outside an instance method body (<module-init>)
+language/statements/with/S12.10_A5_T4.js	ir/from-ast: 'this' reference outside an instance method body (<module-init>)
+language/statements/with/S12.10_A5_T5.js	ir/from-ast: 'this' reference outside an instance method body (<module-init>)
+language/statements/with/S12.10_A5_T6.js	ir/from-ast: 'this' reference outside an instance method body (<module-init>)
+language/types/boolean/S8.3_A1_T1.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/types/boolean/S8.3_A1_T2.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/types/boolean/S8.3_A3.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/types/number/S8.5_A11_T1.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/types/number/S8.5_A11_T2.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/types/number/S8.5_A13_T2.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/types/number/S8.5_A14_T1.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/types/number/S8.5_A14_T2.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/types/number/S8.5_A2.1.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/types/number/S8.5_A2.2.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/types/number/S8.5_A3.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/types/number/S8.5_A6.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/types/number/S8.5_A7.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/types/number/S8.5_A8.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/types/object/S8.6.2_A5_T1.js	ir/from-ast: 'this' reference outside an instance method body (<module-init>)
+language/types/object/S8.6.2_A5_T2.js	ir/from-ast: 'this' reference outside an instance method body (<module-init>)
+language/types/object/S8.6.2_A5_T4.js	ir/from-ast: 'this' reference outside an instance method body (<module-init>)
+language/types/reference/S8.7.1_A1.js	ir/from-ast: 'this' reference outside an instance method body (<module-init>)
+language/types/reference/S8.7.2_A2.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/types/reference/S8.7.2_A3.js	ir/from-ast: 'this' reference outside an instance method body (<module-init>)
+language/types/reference/S8.7_A5_T1.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/types/string/S8.4_A1.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/types/string/S8.4_A10.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/types/string/S8.4_A3.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/types/string/S8.4_A4.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/types/string/S8.4_A5.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/types/string/S8.4_A6.1.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/types/string/S8.4_A6.2.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/types/string/S8.4_A8.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/types/undefined/S8.1_A2_T1.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/types/undefined/S8.1_A2_T2.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/types/undefined/S8.1_A5.js	ir/from-ast: unknown class "Test262Error" in test
+language/white-space/S7.2_A2.1_T2.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/white-space/S7.2_A2.2_T2.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/white-space/S7.2_A2.3_T2.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/white-space/S7.2_A2.4_T2.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/white-space/S7.2_A2.5_T2.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/white-space/S7.2_A3.1_T2.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/white-space/S7.2_A3.2_T2.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/white-space/S7.2_A3.3_T2.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/white-space/S7.2_A3.4_T2.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/white-space/S7.2_A3.5_T2.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/white-space/S7.2_A4.1_T2.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/white-space/S7.2_A4.2_T2.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/white-space/S7.2_A4.3_T2.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/white-space/S7.2_A4.4_T2.js	ir/from-ast: unknown class "Test262Error" in <module-init>
+language/white-space/S7.2_A4.5_T2.js	ir/from-ast: unknown class "Test262Error" in <module-init>
