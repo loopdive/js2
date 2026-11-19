@@ -318,6 +318,25 @@ describe("#7354 Ty — typeof of an absent global on the Prepared path", () => {
     );
   });
 
+  // (#7354 Tj) The prelude relies on one answer for `typeof JSON`: the conditional fold, the value read into a local
+  // and assert.js's formatter (whose JSON arm is dead here) must agree. node has JSON, so the formatter's expected
+  // result is the Prepared environment's `'"' + value + '"'`, not node's.
+  it("gives the conditional fold, the typeof value and assert.js's formatter one answer for JSON", async () => {
+    const formatter = `function formatIdentityFreeValue(value) {
+  switch (value === null ? 'null' : typeof value) {
+    case 'string':
+      return typeof JSON !== "undefined" ? JSON.stringify(value) : '"' + value + '"';
+  }
+}`;
+    await expectAnswer(
+      (right) => `${formatter}
+function folded() { return typeof JSON !== "undefined" ? 1 : 2; }
+function read() { var t = typeof JSON; return t !== "undefined" ? 1 : 2; }
+if (folded() !== read()) throw 1;
+if (formatIdentityFreeValue("a") !== ${right ? `'"a"'` : `'a'`}) throw 2;`,
+    );
+  });
+
   // The pin. A name this path provides through some use cannot be denied by `typeof`: it refuses by name.
   it.each([...PREPARED_PROVIDED_GLOBALS])("refuses typeof of the provided global %s by name", async (name) => {
     expect(await refusal(`if (typeof ${name} !== "undefined") throw 1;`)).toContain(
