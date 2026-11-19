@@ -127,7 +127,7 @@ import {
   ambientStringPrototypeBorrow,
   matchArrayPrototypeBorrowCall,
 } from "./array-prototype-borrow-call.js";
-import { REGEXP_CARRIER_METHODS } from "./regexp-runtime-contract.js";
+import { REGEXP_CARRIER_METHODS, type RegExpBuildCapability } from "./regexp-runtime-contract.js";
 import {
   matchRegExpCarrierCall,
   type RegExpCarrierCall,
@@ -647,7 +647,7 @@ export interface IrFromAstResolver extends PreparedAsyncFromAstResolver {
    * claim and the lowering read one capability (`number-to-string` for a `+`).
    */
   supportsBackendCapability?(
-    capability: "number-to-string" | "native-regexp" | IrAmbientGlobalFunctionCapability | ObjectStaticCapability,
+    capability: "number-to-string" | RegExpBuildCapability | IrAmbientGlobalFunctionCapability | ObjectStaticCapability,
   ): boolean;
   /**
    * (#7253) The host-free provider legacy calls for a direct ambient
@@ -5356,10 +5356,11 @@ function lowerExprUnchecked(expr: ts.Expression, cx: LowerCtx, hint: IrType): Ir
     if (hostDateSnapshot !== undefined) return hostDateSnapshot;
     return lowerNewExpression(expr, cx);
   }
-  // Slice 10 (#1169i): RegExp literal `/pattern/flags`. Lowers to
-  // `extern.regex` which materializes the pattern + flags strings and
-  // calls the `RegExp_new` host import.
+  // Slice 10 (#1169i): `/pattern/flags` lowers to `extern.regex`, built by the host constructor or the in-module
+  // engine. (#7364) The selector refuses a literal neither builds; a producer without one meets that rule here.
   if (expr.kind === ts.SyntaxKind.RegularExpressionLiteral) {
+    if (cx.resolver?.supportsBackendCapability?.("host-regexp-constructor") !== true && !lowersAsNativeRegExp(expr, cx))
+      demoteToLegacy("regexp-constructor-unsupported", `ir/from-ast: RegExp literal has no provider (${cx.funcName})`);
     return lowerRegExpLiteral(expr, cx);
   }
   // (#7106) `delete <expr>`: the selector refuses every form
@@ -9205,13 +9206,12 @@ function tryLowerNativeMapMethodCall(
 }
 
 /**
- * ES5 `Object.defineProperty` that reached from-ast: (#7338) the `Object` statics table lowers every
- * admitted define and the selector refuses every other one, so this is a drift, not a fallback.
+ * ES5 `Object.defineProperty` the `Object` statics table (#7338) did not admit. The selector refuses the same call
+ * with the same code; (#7364) a producer without a selector (the Prepared path) meets the refusal here.
  */
 function unadmittedObjectDefineProperty(cx: LowerCtx): never {
-  throw new IrInvariantError(
-    "selection-preparation-mismatch",
-    "build",
+  demoteToLegacy(
+    "call-resolution-unsupported",
     `ir/from-ast: Object.defineProperty is not an admitted Object static (${cx.funcName})`,
   );
 }

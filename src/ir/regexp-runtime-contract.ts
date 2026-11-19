@@ -9,9 +9,10 @@
  * (#3113 S2) Lives BELOW the IR, not in `src/codegen/`, for the same reason
  * `js-tag.ts` moved in slice 1: it is shared *vocabulary* — names that both
  * the IR front-end and the legacy codegen must agree on — so homing it in
- * codegen forced `src/ir/` to import upward. Its one import is type-only.
+ * codegen forced `src/ir/` to import upward. Its imports are type-only.
  */
 import type { RegExpCarrierMethod } from "../shared/regexp-static.js";
+import type { IrBackendTargetCapability } from "./backend/legality.js";
 
 export const STANDALONE_REGEXP_CARRIER_TEST_HELPER = "__regexp_test_carrier";
 /** (#6672) The `exec` twin: `(recv, subject) -> externref`, the match array or null. */
@@ -30,3 +31,6 @@ export const REGEXP_CARRIER_METHODS: Readonly<
   test: { helper: STANDALONE_REGEXP_CARRIER_TEST_HELPER, result: "boolean" },
   exec: { helper: STANDALONE_REGEXP_CARRIER_EXEC_HELPER, result: "dynamic" },
 };
+
+/** (#7364) What a lane builds a static RegExp with: its in-module engine, or the host constructor. */
+export type RegExpBuildCapability = Extract<IrBackendTargetCapability, "native-regexp" | "host-regexp-constructor">;
