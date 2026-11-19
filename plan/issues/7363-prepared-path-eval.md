@@ -15,17 +15,12 @@ area: ir
 goal: ir-full-coverage
 depends_on: []
 related: [7354, 7106, 7345, 3630]
-# 2026-11-19 (review RV7310 M1): the realm-eval proof is one resolver predicate. from-ast +4 lines: the
-# `isRealmEval` hook on the resolver contract and the Prepared refusal, which now asks it (lowerCall +2). The
-# proof lives in src/frontend/eval/realm-eval.ts; program-source +2 (its import and one spread line beside the
-# Number plan's), which is also the one new ir->frontend edge.
+# 2026-11-19 (review RV7310, round 2): the realm-eval proof is dropped. from-ast +3 lines, all in lowerCall: the
+# Prepared refusal, which asks the lexical walk `resolvesToSourceBinding` (src/ir/analysis/ast-scope.ts).
 loc-budget-allow:
   - src/ir/from-ast.ts
-  - src/ir/program-source.ts
 func-budget-allow:
   - src/ir/from-ast.ts::lowerCall
-import-cycles-allow:
-  - ir->frontend: 9 # 2026-11-19 (#7363): program-source asks the realm-eval proof, like the Number plan's
 ---
 
 # #7363 — `eval` on the Prepared IR path

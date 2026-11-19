@@ -250,3 +250,64 @@ export function collectReferencedIdentifiers(node: ts.Node, names: Set<string>, 
   }
   forEachChild(node, (child) => collectReferencedIdentifiers(child, names, shadowed));
 }
+
+/**
+ * (#7363) Whether `identifier` resolves to a binding that its own source declares in an enclosing scope. The
+ * question is lexical and needs no checker: it covers the JavaScript declaration forms, with hoisting. False means
+ * the name is read from the global environment, whatever that holds at run time.
+ *
+ * Where hoisting depends on strictness the answer leans to yes: a function declaration in a block counts for its
+ * whole function or file, because Annex B.3.3 makes it a `var` there in sloppy code.
+ */
+export function resolvesToSourceBinding(identifier: ts.Identifier): boolean {
+  const name = identifier.text;
+  return ts.findAncestor(identifier.parent, (scope) => scopeBinds(scope, name)) !== undefined;
+}
+
+function scopeBinds(scope: ts.Node, name: string): boolean {
+  const names = new Set<string>();
+  collectFunctionOwnLocals(scope, names);
+  collectVarAndTopLevelDecls(scope, names, false);
+  if ((ts.isFunctionExpression(scope) || ts.isClassExpression(scope)) && scope.name) names.add(scope.name.text);
+  for (const declaration of scopedDeclarations(scope)) addDeclaredNames(declaration, names);
+  return names.has(name) || declaresFunction(scope, name);
+}
+
+/** The declarations whose bindings belong to `scope` itself: a block's, a switch's, a loop head's, a catch's. */
+function scopedDeclarations(scope: ts.Node): readonly ts.Node[] {
+  if (ts.isBlock(scope) || ts.isSourceFile(scope)) return scope.statements;
+  if (ts.isCaseBlock(scope)) return scope.clauses.flatMap((clause) => clause.statements);
+  if (ts.isForStatement(scope) || ts.isForInStatement(scope) || ts.isForOfStatement(scope)) {
+    return scope.initializer ? [scope.initializer] : [];
+  }
+  if (ts.isCatchClause(scope)) return scope.variableDeclaration ? [scope.variableDeclaration] : [];
+  return [];
+}
+
+function addDeclaredNames(declaration: ts.Node, names: Set<string>): void {
+  if (ts.isVariableStatement(declaration)) {
+    addDeclaredNames(declaration.declarationList, names);
+  } else if (ts.isVariableDeclarationList(declaration)) {
+    for (const each of declaration.declarations) addDeclaredNames(each, names);
+  } else if (ts.isVariableDeclaration(declaration)) {
+    for (const bound of collectPatternBindingNames(declaration.name)) names.add(bound);
+  } else if (ts.isClassDeclaration(declaration) && declaration.name) {
+    names.add(declaration.name.text);
+  } else if (ts.isImportDeclaration(declaration) && declaration.importClause) {
+    const { name, namedBindings } = declaration.importClause;
+    if (name) names.add(name.text);
+    if (namedBindings && ts.isNamespaceImport(namedBindings)) names.add(namedBindings.name.text);
+    if (namedBindings && ts.isNamedImports(namedBindings)) {
+      for (const element of namedBindings.elements) names.add(element.name.text);
+    }
+  }
+}
+
+/** A function declaration named `name` at any block depth under `scope`, outside nested functions. */
+function declaresFunction(scope: ts.Node, name: string): boolean {
+  const found = (child: ts.Node): true | undefined =>
+    (ts.isFunctionDeclaration(child) && child.name?.text === name) ||
+    (!isFunctionScopeBoundary(child) && declaresFunction(child, name)) ||
+    undefined;
+  return forEachChild(scope, found) === true;
+}
