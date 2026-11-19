@@ -2658,3 +2658,51 @@ whole run-time path), then the compile-time-only families, cheapest being the on
   with `typeof error.message` / `.indexOf`), so the "then" order inside those units is by source, not by measurement.
 - Why `verifyProperty` precedes `formatSimpleValue` for the 26 propertyHelper rows (unit order of the runner's
   concatenation; not inspected).
+
+## Fa part 1 result (2026-11-19): STOPPED at the risk-1 inventory
+
+Base `origin/claude/7354-tj` @ 6fd6486b32, branch `claude/7354-fa1`. No code changed: the brief's stop rule
+applies ("if more than the three named owners are unmatched, stop and report"). Probe scripts (worktree `.tmp/fa/`):
+`inv.mts` wraps `PhysicalModuleReservations.prototype.reserve*` / `internFunctionType`, compiles a program through
+`prepareWholeIrProgram` → `replayProgram` (standalone) and dumps every reservation, the support receipts and the
+plan's `nativeRealm` / `sourceClosures`; `regen.mts` calls the owners' `declare…` recipes alone with the realm key and
+joins their rows to the emitted keys.
+
+### Inventory (trivial closure `const g = function (x: number): number { return x + 1; }; return g(seed);`)
+
+Module: 74 types (29 keyed reservations + 45 interned function types), 74 functions (72 support receipts + 2 source
+units), 77 globals, 1 tag. In the realm / source-closure key spaces: 94 keyed reservations (the object carrier is
+reserved twice: `reserveType` then `reserveSelfReferentialStructType`).
+
+| owner | rows | recipe today | joins from recipes alone |
+|---|---|---|---|
+| argument vectors (substrate) | 2 types + 2 fns | `declareNativeArgumentVectorResources` via `declareNativeInvocationSubstrateResources(...).argumentPlan` | yes |
+| realm-mode string equality | 1 fn | `declareNativeStringEqualityResources`, used by its `reserve…` | **yes** (the brief named it as recipe-less; it is not) |
+| BigInt carrier | 3 types + 4 fns | `declareNativeBigIntResources` | yes |
+| object layouts / lookup / storage / SameValue / descriptors | 3 types + 16 fns | their `declare…` | yes |
+| booleans (`__typeof_boolean`, `__unbox_boolean`; realm-owned when the number setup has none) | 2 fns | `declareNativeBooleanResources` exists, but `reserveNativeBooleanResources` restates key, name and signature instead of using it | by key only |
+| Symbol carrier | 2 types + 1 global + 1 fn | `declareNativeSymbolCarrierResources` exists and is used, but its rows are not `NativeStringValueDeclaration`s (role is a string, the global has `type` instead of `valueType`, the array's name kind `symbol-index` is not a `NativeDeclaredName`) | by key only (named owner) |
+| **builtin function kernel** | 3 types + 6 globals + 39 fns + 1 tag | none (`resourceKeys` + inline `signature(role)`) | **no** (named owner) |
+| **native errors** (`errors:type`, `__new_TypeError`) | 1 type + 1 fn | none (`reserveNativeErrorResources` reserves inline; the substrate plan lists only the two keys) | **no** (not named) |
+| **substrate-owned vector base** (`invocation-substrate:vector-base`) | 1 type | none (`ownedBaseKey` is a key in `reservationKeys`, reserved inline with `createVectorBaseType()`) | **no** (not named) |
+| **source-closure population** (`wrapper:signature:N`, `wrapper:realm:signature:N`, `metadata:realm:metadata:N`) | 4 types | `declareNativeClosureResources`, but its requests are built inside the private `physicalPlan(tx, …)` (`native-source-closures.ts`): every parameter type goes through `carrierValue(tx, …)` to a physical index and back to a key, so the rows cannot be derived from `plan.sourceClosures` without a transaction | **no** (not named) |
+| **capture shape types** (`capture:shape:N`) | 1 type per capturing shape | none (reserved inline in `reserveNativeSourceClosureTypes`) | **no** (not named; absent from the trivial program) |
+| **ref cells** (`ref-cell:f64`) | 1 type per mutated captured scalar kind | none checked by `regen.mts` (`reserveNativeRefCells`) | **no** (not named; absent from the trivial program) |
+
+Totals, trivial program: 94 realm/closure reservations; 38 joined by a standard recipe, 6 by key only through a
+recipe that is not shaped or not used as the census needs (booleans 2, Symbol 4), 56 unmatched (kernel 49, errors 2,
+vector base 1, source closures 4). Capturing program (`let n = 1; const g = function (x: number): number { n = n + 1;
+return x + seed + n; }`): 58 unmatched (+ `capture:shape:0`, + `ref-cell:f64`). Every recipe row that exists was
+emitted (no declared-but-missing key).
+
+**Outcome against the stop rule:** besides the builtin kernel and the Symbol carrier (string equality turned out to
+have a recipe), five owners need work before a plan-side list can exist: native errors, the substrate's own vector
+base, booleans (recipe unused by its `reserve…`), the source-closure population (requests need a plan-side carrier
+mapping instead of `carrierValue(tx, …)`), capture shape types and ref cells. That is the split the ladder's risk 1
+predicted: "recipes for every owner" first, then the join.
+
+Not a blocker, noted for the join: the 45 interned function types belong to no declaration. `referenceDemand` checks a
+`func` type only for `ref`s to types outside the setup, so they need no rows once every keyed realm type is a setup
+slot.
+
+Compile time of the trivial program on the base: prepare 0.7 s + replay 16.5 s (`.tmp/fa/pop.mts`).
