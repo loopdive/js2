@@ -116,6 +116,7 @@ import { emitVecProtoLinkInstall } from "./vec-proto-link.js"; // (#2917)
 import { buildTargetTaggedTry } from "../ir/try-table.js";
 import { UNDEF_F64_BITS } from "./value-tags.js";
 import { fieldStartsUndefined } from "./uninitialised-field-undefined.js";
+import { noteStaticF64UndefinedSeed } from "./declarations/module-var-undefined-seed.js";
 import { emitWasiErrorConstructor, getOrRegisterErrorStructType, isWasiErrorName } from "./registry/error-types.js";
 import {
   emitStandaloneArrayConstructor, // (#2917) native `class Sub extends Array`
@@ -2119,6 +2120,7 @@ export function collectClassDeclaration(
         init,
       });
       ctx.staticProps.set(fullName, globalIdx);
+      if (fieldStartsUndefined(ctx, member, wasmType)) noteStaticF64UndefinedSeed(ctx, fullName);
 
       // Store initializer expression for later compilation. (#1395) Carrying
       // `className` lets the init compile loop set `enclosingClassName` +

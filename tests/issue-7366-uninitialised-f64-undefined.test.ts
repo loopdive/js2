@@ -4,13 +4,16 @@
 // sits in an f64 slot whose default was `0`, so it read `0` instead of `undefined`. The slot now starts as the
 // UNDEF_F64_BITS sentinel the nullish tests of #7360 read. A plain `number` slot keeps its zero default.
 import { describe, expect, it } from "vitest";
-import { compile } from "../src/index.js";
+import { compile, compileMulti, type CompileResult } from "../src/index.js";
 import { buildImports } from "../src/runtime.js";
 
 type Target = "gc" | "standalone";
 
 async function runMain(source: string, target: Target): Promise<number> {
-  const result = await compile(source, { fileName: "test.ts", target });
+  return instantiateMain(await compile(source, { fileName: "test.ts", target }), target);
+}
+
+async function instantiateMain(result: CompileResult, target: Target): Promise<number> {
   if (!result.success) throw new Error(result.errors.map((error) => error.message).join(" | "));
   const built = buildImports(result.imports, {}, result.stringPool);
   const imports = target === "standalone" ? {} : { env: built.env, string_constants: built.string_constants };
@@ -94,10 +97,160 @@ const PROGRAMS: readonly (readonly [string, string, number])[] = [
     4,
   ],
   ["a local `let`", "export function main(): number { let x: number | undefined; return x === undefined ? 1 : 2; }", 1],
+  // Review round 1 (RV7320).
+  [
+    "a never-initialised field before an initialised one",
+    "class C { a: number | undefined; y = 2; } " +
+      "export function main(): number { const c = new C(); return (c.a === undefined ? 10 : 20) + c.y; }",
+    12,
+  ],
+  [
+    "a module `var` read before its initializer runs",
+    "function r(): number { return g ?? 7; } const a = r(); var g: number | undefined = 5; " +
+      "export function main(): number { return a * 10 + (g ?? 0); }",
+    75,
+  ],
+  [
+    "a module `var` under `typeof` before its initializer runs",
+    "function r(): number { return typeof g === 'undefined' ? 1 : 2; } const a = r(); var g: number | undefined = 5; " +
+      "export function main(): number { return a * 10 + (g ?? 0); }",
+    15,
+  ],
+  [
+    "a module `var` in a block, read before its initializer runs",
+    "function r(): number { return g ?? 7; } const a = r(); { var g: number | undefined = 3; } " +
+      "export function main(): number { return a * 10 + (g ?? 0); }",
+    73,
+  ],
+  [
+    "a module `var` assigned before its bare declaration",
+    "g = 5; var g: number | undefined; export function main(): number { return g ?? 7; }",
+    5,
+  ],
+  [
+    "a top-level `for (let …)` head",
+    "let r = 0; for (let g: number | undefined; r < 1; r++) { r += g === undefined ? 10 : 20; } " +
+      "export function main(): number { return r; }",
+    11,
+  ],
+  [
+    "a `for (let …)` head in a function",
+    "export function main(): number { let r = 0; for (let g: number | undefined; r < 3; r++) { r += g ?? 10; g = 1; } return r; }",
+    11,
+  ],
+  [
+    "a `for (let …)` head entered twice",
+    "export function main(): number { let s = 0; for (let i = 0; i < 2; i++) { " +
+      "for (let g: number | undefined, n = 0; n < 2; n++) { s += g ?? 50; g = 1; } } return s; }",
+    102,
+  ],
+  [
+    "a top-level `for (let …)` head captured by a closure",
+    "let r = 0; let f: (() => number) | undefined; for (let g: number | undefined; r < 1; r++) { f = () => g ?? 10; r += f(); } " +
+      "export function main(): number { return r; }",
+    11,
+  ],
+  [
+    "a static field under `??`",
+    "class C { static a: number | undefined; } export function main(): number { return C.a ?? 7; }",
+    7,
+  ],
+  [
+    "a static field under `typeof`",
+    "class C { static a: number | undefined; } export function main(): number { return typeof C.a === 'undefined' ? 1 : 2; }",
+    1,
+  ],
+  [
+    "a static field assigned later",
+    "class C { static a: number | undefined; } " +
+      "export function main(): number { const r = C.a ?? 7; C.a = 3; return r * 10 + (C.a ?? 0); }",
+    73,
+  ],
+  ["an optional static field", "class C { static a?: number; } export function main(): number { return C.a ?? 7; }", 7],
+  [
+    "a private static field",
+    "class C { static #a: number | undefined; static get(): number { return C.#a ?? 7; } } " +
+      "export function main(): number { return C.get(); }",
+    7,
+  ],
+  [
+    "a static field read by a later static initializer",
+    "class C { static b = 3; static a: number | undefined; static c = C.a === undefined ? 10 : 20; } " +
+      "export function main(): number { return (C.a ?? 7) + C.b + C.c; }",
+    20,
+  ],
+  [
+    "an inherited static field",
+    "class A { static a: number | undefined; } class B extends A {} export function main(): number { return B.a ?? 7; }",
+    7,
+  ],
+  [
+    "a static field of a class expression",
+    "const C = class { static a: number | undefined; }; export function main(): number { return C.a ?? 7; }",
+    7,
+  ],
+  [
+    "a static field of plain `number`",
+    "class C { static a: number; } export function main(): number { C.a = 3; return C.a; }",
+    3,
+  ],
+];
+
+// [shape, files, node's `main()` of `./main.ts`] — `__module_init` is one function for the whole graph, so the seed
+// has to cover the files the entry imports, not only the entry.
+const GRAPHS: readonly (readonly [string, Record<string, string>, number])[] = [
+  [
+    "a `let` of an imported file",
+    {
+      "./dep.ts": "export let g: number | undefined; export function get(): number { return g ?? 7; }",
+      "./main.ts": "import { get } from './dep'; export function main(): number { return get(); }",
+    },
+    7,
+  ],
+  [
+    "a `var` of an imported file",
+    {
+      "./dep.ts": "export var g: number | undefined; export function get(): number { return g === undefined ? 1 : 2; }",
+      "./main.ts": "import { get } from './dep'; export function main(): number { return get(); }",
+    },
+    1,
+  ],
+  [
+    "a `var` of an imported file read before its initializer runs",
+    {
+      "./dep.ts":
+        "export function early(): number { return g ?? 7; } export const r = early(); export var g: number | undefined = 5;",
+      "./main.ts": "import { r, g } from './dep'; export function main(): number { return r * 10 + (g ?? 0); }",
+    },
+    75,
+  ],
+  [
+    "a static field of an imported class",
+    {
+      "./dep.ts": "export class C { static a: number | undefined; }",
+      "./main.ts": "import { C } from './dep'; export function main(): number { return C.a ?? 7; }",
+    },
+    7,
+  ],
+  [
+    "`let`s of three files",
+    {
+      "./a.ts": "export let x: number | undefined; export function gx(): number { return x ?? 1; }",
+      "./b.ts":
+        "import { gx } from './a'; export let y: number | undefined; export function gy(): number { return (y ?? 20) + gx(); }",
+      "./main.ts":
+        "import { gy } from './b'; let z: number | undefined; export function main(): number { return (z ?? 300) + gy(); }",
+    },
+    321,
+  ],
 ];
 
 describe.each(["gc", "standalone"] as const)("#7366 — an uninitialised f64 slot holds `undefined` (%s)", (target) => {
   it.each(PROGRAMS)("%s answers like node", async (_, source, expected) => {
     expect(await runMain(source, target)).toBe(expected);
+  });
+
+  it.each(GRAPHS)("%s answers like node", async (_, files, expected) => {
+    expect(await instantiateMain(await compileMulti(files, "./main.ts", { target }), target)).toBe(expected);
   });
 });
