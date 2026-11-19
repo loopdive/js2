@@ -1522,7 +1522,7 @@ function materializePhysicalProgram(
     startAdapter,
     [...slots.values()],
     [...supportFunctions.values()],
-    realm ? nativeRealmCompletedSlots(reservations, realm) : undefined,
+    realm ? nativeRealmCompletedSlots(reservations, realm, sourceClosures?.types, invocationPack) : undefined,
   );
   return result;
 }

@@ -70,6 +70,7 @@ import {
   type NativeClosureDeclarationPlan,
 } from "../resources/native-closures.js";
 import { requireNativeSourceClosureTypes, type NativeSourceClosureTypes } from "../resources/native-source-closures.js";
+import { nativeInvocationFunctions, type NativeInvocationReservations } from "../resources/native-invocation.js";
 import {
   reserveNativeStringEqualityResources,
   fillNativeStringEqualityResources,
@@ -574,15 +575,35 @@ export interface EmittedNativeRealmSlots {
   readonly types: ReadonlySet<number>;
   readonly globals: ReadonlySet<number>;
 }
-/** The physical indices of the realm's completed functions, types and globals. */
+/**
+ * The physical indices of the realm's completed functions, types and globals; (#7354 Fa) with the realm's source
+ * closures, also the closure types it composes and the closure invocation population (each authenticated by its own
+ * `requireCompleted…` check before the consumer records these slots).
+ */
 export function nativeRealmCompletedSlots(
   tx: PhysicalModuleReservations,
   pack: NativeRealmReservations,
+  closureTypes: NativeSourceClosureTypes | undefined,
+  invocation: NativeInvocationReservations | undefined,
 ): EmittedNativeRealmSlots {
   const { functions, types, globals } = nativeRealmReservationInventory(tx, pack);
   const indices = (tokens: readonly (FunctionReservation | TypeReservation | GlobalReservation)[]) =>
     new Set(tx.physicalIndices(tokens));
-  return Object.freeze({ functions: indices(functions), types: indices(types), globals: indices(globals) });
+  return Object.freeze({
+    functions: indices([...functions, ...(invocation ? nativeInvocationFunctions(tx, invocation) : [])]),
+    types: indices([
+      ...types,
+      ...(closureTypes
+        ? [
+            ...closureTypes.shapes.map((shape) => shape.type),
+            ...nativeClosureReservationInventory(tx, closureTypes.closures, closureTypes.closurePlan).filter(
+              (row): row is TypeReservation => row.kind === "type",
+            ),
+          ]
+        : []),
+    ]),
+    globals: indices([...globals, ...(invocation ? Object.values(invocation.globals) : [])]),
+  });
 }
 /** This certifies bootstrap resources only. The consumer separately authenticates its real source bodies. */
 export function requireCompletedNativeRealmBootstrap(

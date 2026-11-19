@@ -974,6 +974,13 @@ export interface IrFromAstResolver extends PreparedAsyncFromAstResolver {
    */
   dynamicCarrierIsExternref?(): boolean;
   /**
+   * (#7354 Fa) The all-dynamic signature the Prepared native lane gives an unannotated function expression, if any
+   * (`source-dynamic-contracts.ts`). A lane without it keeps the annotated-closure rule.
+   */
+  dynamicClosureSignature?(expression: ts.FunctionExpression): IrClosureSignature | undefined;
+  /** (#7354 Fa) The script `var` holds its function-expression initializer from its declaration on. */
+  staticFunctionValue?(declaration: ts.VariableDeclaration): boolean;
+  /**
    * (#7106 Stage 4) True when this lane lowers `recv.<method>(…arity args)` on
    * a dynamic receiver through the `__ir_dyn_mcall_<m>_<n>` brand-dispatch
    * wrapper (host-free, non-fast lanes).
@@ -3030,6 +3037,11 @@ type ScopeBinding =
       globalRef: IrGlobalRef;
       type: IrType;
       stringEncoding?: Encoding;
+      /**
+       * (#7354 Fa) The closure the slot holds at every read this unit lowers after the store
+       * (`staticFunctionValue`): a call through the name is that closure's direct call.
+       */
+      functionValue?: { readonly value: IrValueId; readonly signature: IrClosureSignature };
     }
   | {
       kind: "nestedFunc";
@@ -4435,7 +4447,9 @@ function lowerVariableDeclaration(d: ts.VariableDeclaration, isConst: boolean, c
   const moduleBinding = cx.moduleBindings?.get(name);
   if (moduleBinding) requireMatchingModuleBindingOwner(moduleBinding, cx.ownerUnitId, cx.funcName);
   const dynamicHomeClosure =
-    moduleBinding?.type.kind === "dynamic" && isPlannedScriptVarClosure(cx.functionMemberClosures, d.initializer);
+    moduleBinding?.type.kind === "dynamic" &&
+    (isPlannedScriptVarClosure(cx.functionMemberClosures, d.initializer) ||
+      (ts.isFunctionExpression(d.initializer) && cx.resolver?.dynamicClosureSignature?.(d.initializer) !== undefined));
   if (
     moduleBinding &&
     !dynamicHomeClosure &&
@@ -4523,6 +4537,7 @@ function lowerVariableDeclaration(d: ts.VariableDeclaration, isConst: boolean, c
   let value = promoteI32Slot
     ? lowerAsI32(d.initializer as ts.Expression, cx, "canon")
     : lowerExpr(d.initializer, cx, hint);
+  const closure = value;
   if (dynamicHomeClosure) {
     value = functionObjects.functionObjectDynamicValue(value, d.initializer, functionObjectLoweringHost(cx));
   } else if (widenDynamic && cx.builder.typeOf(value).kind !== "dynamic") {
@@ -4592,6 +4607,12 @@ function lowerVariableDeclaration(d: ts.VariableDeclaration, isConst: boolean, c
   }
   if (moduleBinding) {
     storeModuleBinding(name, moduleBinding, value, cx, stringEncoding);
+    const closureType = cx.builder.typeOf(closure);
+    if (dynamicHomeClosure && closureType.kind === "closure" && cx.resolver?.staticFunctionValue?.(d) === true)
+      cx.scope.set(name, {
+        ...(cx.scope.get(name) as Extract<ScopeBinding, { kind: "moduleGlobal" }>),
+        functionValue: { value: closure, signature: closureType.signature },
+      });
     return;
   }
   bindLocalName(d, name, value, isConst, cx, { widenDynamic, promoteI32Slot, stringEncoding });
@@ -7852,6 +7873,10 @@ function lowerCall(expr: ts.CallExpression, cx: LowerCtx, statementPosition = fa
   if (binding?.kind === "local" && (binding.type.kind === "closure" || binding.type.kind === "callable")) {
     return lowerClosureCall(binding.value, binding.type.signature, expr.arguments, cx, statementPosition);
   }
+  if (binding?.kind === "moduleGlobal" && binding.functionValue) {
+    const { value, signature } = binding.functionValue;
+    return lowerClosureCall(value, signature, expr.arguments, cx, statementPosition);
+  }
   if (binding?.kind === "nestedFunc") {
     return lowerNestedFuncCall(binding, expr.arguments, cx);
   }
@@ -7956,21 +7981,9 @@ function lowerCall(expr: ts.CallExpression, cx: LowerCtx, statementPosition = fa
       argVal = cx.builder.emitCallablePack(argVal, expected.signature);
       argType = cx.builder.typeOf(argVal);
     }
-    // #2949 S5.P — a concrete value passed to an `any`/dynamic parameter
-    // crosses the same explicit carrier boundary as a concrete equality
-    // operand. Reuse the canonical tag-aware boxer; ambiguous refs/i32 values
-    // still decline and demote through the existing assignability error.
-    if (expected.kind === "dynamic" && argType.kind !== "dynamic") {
-      // (#7320) A closure argument boxes as a function value, the way a
-      // dynamic call's arguments do (`functionObjectDynamicValue`).
-      const boxed =
-        argType.kind === "closure"
-          ? functionObjects.functionObjectDynamicValue(argVal, argExpr, functionObjectLoweringHost(cx))
-          : boxConcreteToDynamic(argVal, argType, argExpr, cx);
-      if (boxed !== null) {
-        argVal = boxed;
-        argType = cx.builder.typeOf(argVal);
-      }
+    if (expected.kind === "dynamic") {
+      argVal = argumentIntoDynamic(argVal, argExpr, cx);
+      argType = cx.builder.typeOf(argVal);
     }
     // A dynamic value flowing into a proven numeric local ABI observes the
     // ordinary JavaScript ToNumber boundary. This keeps generic parser loops
@@ -8168,6 +8181,22 @@ function isUnshadowedGlobalExpression(expr: ts.Expression, name: string, cx: Low
   );
 }
 
+/**
+ * A concrete argument for a dynamic parameter crosses the same explicit carrier boundary as a concrete equality
+ * operand (#2949 S5.P): the canonical tag-aware boxer, and (#7320) a closure boxes as a function value, the way a
+ * dynamic call's arguments do (`functionObjectDynamicValue`). An argument with no box (an ambiguous ref or i32) is
+ * returned as it is, so the caller's assignability check refuses it.
+ */
+function argumentIntoDynamic(argVal: IrValueId, argExpr: ts.Expression, cx: LowerCtx): IrValueId {
+  const argType = cx.builder.typeOf(argVal);
+  if (argType.kind === "dynamic") return argVal;
+  const boxed =
+    argType.kind === "closure"
+      ? functionObjects.functionObjectDynamicValue(argVal, argExpr, functionObjectLoweringHost(cx))
+      : boxConcreteToDynamic(argVal, argType, argExpr, cx);
+  return boxed ?? argVal;
+}
+
 function lowerClosureCall(
   callee: IrValueId,
   signature: IrClosureSignature,
@@ -8187,10 +8216,12 @@ function lowerClosureCall(
   for (let i = 0; i < signature.params.length; i++) {
     const expected = signature.params[i]!;
     const argument = expandedArgExprs[i];
-    const argVal =
+    let argVal =
       i >= defaultParamStart && (argument === undefined || isUnshadowedGlobalExpression(argument, "undefined", cx))
         ? emitExpressionDefaultMissingF64(expected, cx)
         : lowerExpr(argument!, cx, expected);
+    // (#7354 Fa) A parameter of a function value's all-dynamic signature boxes its argument as a direct call's does.
+    if (expected.kind === "dynamic") argVal = argumentIntoDynamic(argVal, argument!, cx);
     if (!irTypeAssignable(cx.builder.typeOf(argVal), expected)) {
       demoteToLegacy(
         "call-resolution-unsupported",
@@ -16461,6 +16492,8 @@ function lowerClosureExpression(expr: IrClosureLiteral, cx: LowerCtx): IrValueId
       functionMemberClosure: memberPlan,
     });
   }
+  const dynamicSignature = ts.isFunctionExpression(expr) ? cx.resolver?.dynamicClosureSignature?.(expr) : undefined;
+  if (dynamicSignature) return lowerClosureExpressionWithSignature(expr, dynamicSignature, undefined, cx);
   // Inference is owned by the actual checker and confined to descriptor
   // literals and their nested closures. Other closure admission is unchanged.
   let descriptorOwner: ts.Node | undefined = expr.parent;

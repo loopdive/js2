@@ -166,8 +166,9 @@ describe("#7354 X — throw and catch with the Prepared dynamic value", () => {
     await twice((answer) => template.replace("@A", answer), right, wrong);
   });
 
-  // The catch binding is the dynamic value, which is exact only for numbers, booleans, `undefined`, `null` and
-  // native strings (and for Error objects, under every operation the carrier has). Each other payload that could
+  // The catch binding is the dynamic value, which is exact only for numbers, booleans, `undefined`, `null`,
+  // native strings and (#7354 Fa, tests/issue-7354-fa-function-values.test.ts) function values (and for Error
+  // objects, under every operation the carrier has). Each other payload that could
   // reach a catch refuses before it does; the slice that makes one reachable must give the dynamic operations its
   // arm and update this list.
   it.each([
