@@ -26,6 +26,7 @@ node scripts/ir-census/prepared-analyze.mjs --rows .tmp/ir-census/integ-<sha>-st
 | 3 | `43f5fb1ffd` | 0 | `typeof test for function` in `assert.js` (6,536) | 154 | 15 |
 | 4 | `87655f3f65` | 0 | `dyn.json_stringify` in `assert.js` (6,722) | 155 | 15 |
 | 5 | `94abeb8347` | 0 | ToPrimitive of an object in `assert.js` (6,714) | 163 | 18 |
+| 7 | `e24d01e175` | 0 (S8's tally) | unchanged from round 5/6 (6,551 + 139) | 165 | 18 |
 
 ## Round 1: `bc07f68fc0` (2026-11-19)
 
@@ -170,3 +171,20 @@ function rows are gone.
 | 11 | script `var` initialised with an array literal | O · #7352 | 258 |
 | 12 | other | | 215 |
 | | everything else | | 1,478 |
+
+## Round 7: `e24d01e175` (2026-11-19)
+
+Round 6 (`9426e5e1c2`, O at `0c7109594b`) plus O3 (`14345199fe`, member
+write). Round 6 was not sent for a separate measurement.
+
+- **Real prelude** (S8's tally on this head, the same script): 0 pass, and
+  no first gap moved since round 6: ToPrimitive of an object in `assert.js`
+  (6,551 at line 127, 139 at line 128), the test's own script `var` (`obj`
+  577, …) and `"assert" is not in scope in verifyProperty` (325). O3's
+  member write reaches no first gap, because every file stops earlier.
+- **Stand-in: 165 pass** (+2, −0 against round 5): gained
+  `language/expressions/object/11.1.5-2gs.js` and
+  `language/types/reference/8.7.2-8-s.js`. Crashes 18.
+- The first-gap ranking is the round-5 one within a few files: built-in
+  global as a value 1,271 (B), `new` / `this` 1,196 (C), `var obj = {…}`
+  1,069 (O), ToPrimitive of an object 708 (O2), array literals 574 (O).
