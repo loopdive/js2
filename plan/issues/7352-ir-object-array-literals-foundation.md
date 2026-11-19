@@ -337,6 +337,29 @@ lists and this section records where the files stop next.
    (`dynamic-value-kinds.ts`), and an array literal makes a program unplain, "array ToPrimitive needs
    Array.prototype.join" (`source-plain-objects.ts`), until A3 brings `join`.
 
+### A2 runtime result (2026-11-19)
+
+Branch `claude/7354-arrays-a2-runtime` (`dcb364c2`), merged into `claude/7354-arrays` (`acb8acf4`).
+
+- `$Array` has its own u32 `length`; `create-array` presizes at most 1024 slots. `array-index-bodies.ts`:
+  get-index / set-index; `array-length-bodies.ts`: `js.object.set-length` (ArraySetLength), one new contract row.
+- Rule 1 as written: a dense write through the grow/store helper below the density bound; any other index up to
+  2^32 - 2 is `defineData` under its index string (from the existing String index-key body; the realm reserves its
+  own physical copy of that function); reads walk vector, map, %Array.prototype%, Object.prototype; a non-array
+  receiver of get-index takes the kernel's string-keyed get; a bad length throws a catchable RangeError.
+- Rule 2 as written: strings through `arrayIndex`, numbers through `arrayIndexOf`.
+- Named traps left: a non-index number key (1.5, -1, 2^32 - 1, NaN) on get-index / set-index (it needs ToString of
+  a number, and the only formatter is program-level, `native-number-format.ts`, not reachable from the kernel);
+  set-index / set-length on a non-array receiver (no `js.object.set` yet); set-length shrinking past a map index;
+  get-index status 3 (not an object).
+- Known imperfection: a map entry can sit under a dense slot after the vector grows over it; reads are right (the
+  vector wins) but a later shrink past it aborts.
+- Tests: 17 in `tests/issue-7352-a-arrays.test.ts` (8 body-level on a realm built from a typed-IR program naming the
+  four contracts, `tests/helpers/native-array-realm.ts`). Mutation checks: 9 of 10 arms caught; the 2^31 - 2 limit
+  cannot be reached without a 16 GB vector.
+- Bytes: ordinary pipeline identical on 111 files × default/standalone vs `53357b3b`; the 32 non-array realm
+  programs identical vs `53357b3b` (26 binaries sha-equal, 6 refusals).
+
 ### Acceptance
 
 - Each slice's proving program validates and runs through the strict Prepared entry: the right answer returns,
