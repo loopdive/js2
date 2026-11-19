@@ -68,7 +68,7 @@ export function irOwnedScriptVarHome(
       (annotated || !storesDynamic?.(declaration))
     )
       return "typed";
-    // A nested `var` answered here stays a module-init local: the producer gives globals to top-level statements only.
+    // (#7365) A `var` nested in top-level code has the same global; its reads never follow a proven initializer.
     return storesDynamic && !annotated ? "dynamic" : undefined;
   };
 }

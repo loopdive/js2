@@ -18,7 +18,7 @@
  * own direct read inside the values it stores (`x = x + 1`): if every other value is typed, so is that one.
  */
 import { ts } from "../ts-api.js";
-import { isTopLevelStatementDeclaration } from "../shared/var-declaration-lists.js";
+import { isModuleInitVarList, isTopLevelStatementDeclaration } from "../shared/var-declaration-lists.js";
 import { skipOuterExpressions } from "../shared/binding-writes.js";
 import { scriptVarWrites } from "./module-binding-script-var.js";
 import { irOwnedScriptVarHome } from "./module-binding-script-var-home.js";
@@ -84,8 +84,10 @@ export function sourceDynamicProvenance(
     if (!ts.isVariableDeclaration(declaration)) return true;
     // A top-level declaration's storage is a global, whose home the classifier names: only a script `var` of the
     // program can have the dynamic home (a lexical, ES-module or ambient global is typed by its declaration, and
-    // the resolver refuses a dynamic store into it). Any other variable is a local.
-    if (isTopLevelStatementDeclaration(declaration)) return scriptVarHome(declaration) === "dynamic";
+    // the resolver refuses a dynamic store into it). (#7365) So is a script `var` nested in top-level code. Any
+    // other variable is a local.
+    if (isTopLevelStatementDeclaration(declaration) || isModuleInitVarList(declaration.parent))
+      return scriptVarHome(declaration) === "dynamic";
     return localCarries(declaration);
   };
   const callCarries = (call: ts.CallExpression): boolean => {

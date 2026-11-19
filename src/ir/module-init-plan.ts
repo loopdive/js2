@@ -4,6 +4,7 @@ import { ts } from "../ts-api.js";
 import { irModuleGlobalBindingId, irModuleTdzGlobalBindingId } from "./abi-bindings.js";
 import { irUnitCallableBindingId } from "./callable-bindings.js";
 import { createIrBindingId, type IrBindingId } from "./identity.js";
+import { moduleBindingDeclarationOrder } from "./module-init-vars.js";
 import type { IrPlanningIdentityContext } from "./planning-identity.js";
 
 import type {
@@ -417,6 +418,26 @@ export function buildIrModuleInitPlan(input: BuildIrModuleInitPlanInput): IrModu
         end,
       });
     }
+  }
+
+  // (#7365) A script `var` bound by a nested modelled list (a block, branch, loop, `try` or `switch` of top-level
+  // code) or a pattern leaf: its ordinal follows every top-level statement's (`moduleBindingDeclarationOrder`),
+  // and it is `undefined` from instantiation, as a top-level `var` is.
+  for (const declaration of moduleBindingDeclarationOrder(sourceFile).slice(declarationOrdinal)) {
+    const name = (declaration as ts.VariableDeclaration | ts.BindingElement).name as ts.Identifier;
+    bindings.push(
+      frozen({
+        declarationOrdinal,
+        names: Object.freeze([name.text]),
+        declarationKind: "var" as const,
+        mutable: true,
+        initialization: "undefined-at-instantiation" as const,
+        globalBindingId: irModuleGlobalBindingId(sourceId, declarationOrdinal),
+        tdzBindingId: null,
+        ...sourceRange(declaration, sourceFile),
+      }),
+    );
+    declarationOrdinal++;
   }
 
   const functions = sourceFile.statements.filter(ts.isFunctionDeclaration);
