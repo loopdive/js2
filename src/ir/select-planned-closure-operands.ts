@@ -146,7 +146,7 @@ function nullIsValue(nullLiteral: ts.Node): boolean {
  * or (`functionsOnly` false) as any binding (function, class, variable,
  * import)? Syntactic: the module scope is what shadows a global.
  */
-function moduleDeclares(file: ts.SourceFile, name: string, functionsOnly: boolean): boolean {
+export function moduleDeclares(file: ts.SourceFile, name: string, functionsOnly: boolean): boolean {
   return file.statements.some((statement) => {
     if (ts.isFunctionDeclaration(statement)) return statement.name?.text === name;
     if (functionsOnly) return false;

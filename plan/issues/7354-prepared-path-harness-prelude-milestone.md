@@ -2161,6 +2161,15 @@ Verified on the rework head: typecheck, loc, func (also against `origin/main`), 
 dead-exports, import-cycles, compiler-boundaries pass; 420 tests (the Fa file, #7354 H/H2/X/P/D1/O, prepared
 entry/runtime, the three issue-3518 getter files) all pass.
 
+### Review round 2 (BLOCKER on 1474338c53)
+
+| finding | answer | proof |
+| --- | --- | --- |
+| N1: `var f = function … ; function f(a) {…}`: the call `f(0)` bound the hoisted declaration and ignored the var's store (also `var f = 1`, older than Fa; both orders, and from inside a function) | The root: the checker gives the var and the declaration two symbols, so the direct-call resolvers (`targetForSymbol`, `makeCallableForSymbol`) see a never-written function, and the var's home never holds the hoisted function. The Prepared module-binding planning (`prepareIrProgramSources`) now refuses a top-level var whose name a top-level function declaration also binds (`moduleDeclares`, the selector's existing predicate, now exported): `script var f shares its binding with a function declaration`. One place, before any unit is lowered, so store, read and call of the name all refuse; `var f;` with a declaration refuses too (its home would read `undefined` for the function). Ordinary pipeline untouched (the check is on the whole-program preparation only) | four refusal pins: function-expression store and number store, both orders, one called from a function |
+| kind rule: every carrier entry Fa adds goes through `admit` | Confirmed: the `__ir_dyn_call_box` arm (the function-value projection) and the coerce of a packed callable both return `admit("function", …)`; nothing Fa adds bypasses it | — |
+| kind rule (a)/(c) still open | Not in realm head `f8d848bfdc` (its only commit since `cd03504321` is the O1 adapter-row refactor), so not merged. Open for #7312: `dynamic-value-legalization.ts` coerce arm `return [instr]` (L223), the blanket `carrierOf` re-type of every other result (L233), and `refuseUnadmittedThrows` admitting any `coerce.to_externref` (L302). **Ordering: Fa merges #7312's head, and re-points those lines at `admit`, before Fa lands on main.** | — |
+| the "states the function kind" unit test survives deleting the coerce-arm `admit` | `admit("function")` emits the coercion it was given: the arm is a statement about types only. Renamed the test to say so (it pins the output, not the arm) | — |
+
 ### Compile time
 
 A program with one closure compiles in about 22 s through the strict entry on a 4-core box (one with no closure:
