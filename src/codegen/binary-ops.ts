@@ -17,13 +17,13 @@ import { ts } from "../ts-api.js";
 import {
   getNullablePrimitiveInfo,
   isBigIntType,
-  typeMayBeBigInt,
   isBooleanType,
   isDeclaredHeterogeneousPrimitiveUnion,
   isHeterogeneousPrimitiveUnion,
   isNumberType,
   isStringType,
   isWrapperObjectType,
+  typeMayBeBigInt,
 } from "../checker/type-mapper.js";
 import type { Instr, ValType } from "../ir/types.js";
 import { emitWasmInt32Coercion } from "../ir/backend/wasm-int32-coercion.js";
@@ -1708,25 +1708,11 @@ export function compileBinaryExpression(
       const isStrictEq = op === ts.SyntaxKind.EqualsEqualsEqualsToken;
       const isStrictNeq = op === ts.SyntaxKind.ExclamationEqualsEqualsToken;
 
-      // Strict equality: BigInt and a PROVABLY non-bigint (#7371: `typeMayBeBigInt`) Number/String/Boolean
-      // are different types → always false/true, decidable at compile time.
-      //
-      // (#6642) That fold is WRONG when the non-bigint side's static type is
-      // `any`/`unknown` — which is exactly what a value read across a
-      // standalone link boundary is typed as (the consumer's checker sees the
-      // provider through an `any`-returning stub; it cannot know the runtime
-      // value is a BigInt even when the provider's own source says so). The
-      // fold still ran because `isBigIntType`/`leftIsBigInt` reads the STATIC
-      // TS type, and `any` is never bigint statically — so `zdt.epochNanoseconds
-      // === 217175010123456789n` (both operands genuinely bigint at runtime)
-      // compiled its RHS, compiled its LHS (correctly reaching the provider
-      // across the link), dropped both, and answered a hardcoded `false`. Route
-      // an any/unknown non-bigint side through the native standalone strict-
-      // equality helper instead, which classifies BOTH operands dynamically
-      // (`extern-eq-fast.ts` already has a bigint×bigint `i64.eq` arm — it
-      // could not fire before because this fold never reached it). Gated to
-      // native-first/standalone (`ensureExternStrictEqHelper` returns
-      // undefined off that lane) so JS-host mode is untouched.
+      // Strict equality: a BigInt against an operand that cannot hold a BigInt is decidable at compile time (always
+      // false / true). Any type that may hold one (`any`, `unknown`, a union with a bigint member) is decided at run
+      // time by the strict-equality helper, which classifies both operands; a value read across a standalone link
+      // boundary is typed `any` even when it is a BigInt (#6642, #7371). Where `ensureExternStrictEqHelper` returns
+      // undefined, the fold still answers.
       if (isStrictEq || isStrictNeq) {
         const nonBigIntMayBeBigInt = typeMayBeBigInt(leftIsBigInt ? rightTsType : leftTsType);
         // `ensureExternStrictEqHelper` needs `ctx.nativeBoxNumberTypeIdx` /
