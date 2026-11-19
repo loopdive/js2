@@ -494,6 +494,53 @@ describe("#7354 D1/T — the census on a dynamic-value program", () => {
   );
 });
 
+describe("#7354 Ty — the census on typeof comparisons", () => {
+  // The number and Boolean `typeof` tag tests bind the native value and Boolean resources' existing predicates;
+  // (#7354 Str2 merge) the string test is the dynamic-value resources' own.
+  const program =
+    "function id(v: any): any { return v; }\n" +
+    'export function main(): number { return (typeof id(1) === "number" ? 1 : 0) + (typeof id(true) === "boolean" ? 2 : 0) +' +
+    ' (typeof id("a") === "string" ? 4 : 0); }';
+  const refusal = async () => {
+    const result = await compile(program, options("standalone", "entry.ts"));
+    expect(result.success).toBe(false);
+    return messages(result).join("\n");
+  };
+  const RUNTIME_DEMAND = "host provider or async demand is outside this numeric presentation contract";
+  const IDS = ["native.js.value.is_number", "native.js.value.is_boolean", "native.js.value.is_string"];
+
+  it("presents the unaltered program", async () => {
+    expect(((await present(program, "entry.ts")).main as () => number)()).toBe(7);
+  });
+
+  it.each(IDS)("refuses a census that drops %s", async (id) => {
+    census.providers = (rows) => rows.filter((row) => row.id !== id);
+    expect(await refusal()).toContain(RUNTIME_DEMAND);
+  });
+
+  it.each(IDS)("refuses a census that renames %s", async (id) => {
+    census.providers = (rows) => rows.map((row) => (row.id === id ? { ...row, id: `${id}.renamed` } : row));
+    expect(await refusal()).toContain(RUNTIME_DEMAND);
+  });
+
+  it.each(["__typeof_number", "__typeof_boolean", "__typeof_string"])(
+    "refuses a native setup that renames the %s resource",
+    async (name) => {
+      census.setup = (setup) =>
+        ({
+          ...setup,
+          resources: {
+            ...setup.resources,
+            declarations: setup.resources.declarations.map((row) =>
+              "name" in row && row.name === name ? { ...row, name: `${name}_renamed` } : row,
+            ),
+          },
+        }) as never;
+      expect(await refusal()).toContain(RUNTIME_DEMAND);
+    },
+  );
+});
+
 describe("#7354 H — the census on a script var in the dynamic home", () => {
   // The program-level demand a dynamic home adds is the `undefined` the module-init stores into it first.
   const program = "var x; if (x !== undefined) throw 1; x = 2; if (x !== 2) throw 2;";

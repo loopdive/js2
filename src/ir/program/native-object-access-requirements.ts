@@ -8,6 +8,7 @@ import { nativeAsyncCallableValueTypes, nativeAsyncCallMismatch } from "../runti
 import { collectNativeStringValueDemands, type NativeStringValueDemands } from "./native-string-value-demands.js";
 import { freezePreparedIrValue, preparedIrDataMismatch } from "./data.js";
 import type { PreparedIrProgram, PreparedIrProgramRuntimeProjection } from "./prepared-contracts.js";
+import { checkUnlessSettled, settledAtIssue, type PreparedIrSettlement } from "./settled-verdict.js";
 
 import {
   indexNativeValueDefinitions,
@@ -54,6 +55,8 @@ interface Issued {
   readonly demands: NativeStringValueDemands;
   readonly sourceSnapshot: unknown;
   readonly dataSnapshot: unknown;
+  /** The currentness check below, settled at issue once the requirements can no longer change. */
+  readonly authentication: PreparedIrSettlement;
 }
 const issued = new WeakMap<NativeObjectAccessRequirements, Issued>();
 function fail(detail: string): never {
@@ -360,12 +363,20 @@ export function deriveNativeObjectAccessRequirements(
     ...snapshot,
     completionScope: "ordinary-object-read-prerequisite" as const,
   });
-  issued.set(pack, { demands, dataSnapshot: snapshot, sourceSnapshot: freezePreparedIrValue(demands) });
+  issued.set(pack, {
+    demands,
+    dataSnapshot: snapshot,
+    sourceSnapshot: freezePreparedIrValue(demands),
+    authentication: settledAtIssue(pack),
+  });
   return pack;
 }
 export function assertNativeObjectAccessRequirementsCurrent(pack: NativeObjectAccessRequirements): void {
   const owner = issued.get(pack);
   if (!owner || owner.demands !== pack.demands) fail("unissued or detached object-access requirements");
+  checkUnlessSettled(owner.authentication, pack, () => checkCurrent(pack, owner));
+}
+function checkCurrent(pack: NativeObjectAccessRequirements, owner: Issued): void {
   same(pack.demands, owner.sourceSnapshot, "borrowed source changed after selection");
   const fresh = collectNativeStringValueDemands(pack.demands.program, pack.demands.projection);
   same(fresh, pack.demands, "complete occurrence census changed");

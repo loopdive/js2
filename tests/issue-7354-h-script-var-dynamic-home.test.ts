@@ -181,8 +181,7 @@ describe("#7354 H — the dynamic home of a script var", () => {
       "var e = f(); var x = 1; function f() { return x; } function h(n: number) { return n; } h(x);",
       "a dynamic value flows into number without a conversion (CallExpression)",
     ],
-    // An operation on the dynamic value the legalization has no intrinsic for (slices Str and T).
-    ["added to", `${HOISTED_X}var y = 1; y = x + 1;`, "dynamic operation __ir_dyn_add has no Prepared intrinsic"],
+    // (#7354 Str2-c) `x + 1` on the dynamic home runs now (below).
     // (#7354 T) `x || 0` runs now (below).
     // A member write on the binding is no second declaration: the binding keeps its home and the write refuses.
     [
@@ -199,11 +198,7 @@ describe("#7354 H — the dynamic home of a script var", () => {
     ],
     ["of a number given a property by Object.defineProperty", "var o = 1; Object.defineProperty(o, 'p', {});", NO_HOME],
     // A value kind the carrier cannot hold yet is refused at its store, by the slice that owns it.
-    [
-      "holding an object literal (slice O)",
-      "var o = { a: 1 };",
-      "proven dynamic binding 'o' initializer has no supported carrier",
-    ],
+    // (#7354 O2) An object literal is the object kind of the dynamic value now (tests/issue-7354-o2-object-values.test.ts).
     ["holding an array literal", "var arr = [1];", "resolver cannot register vec for array literal"],
     [
       "holding a function expression (slice Fa)",
@@ -292,6 +287,12 @@ describe("#7354 H — the dynamic home of a script var", () => {
     ["a function read as a value", "function k() { return k2; } function k2() { return 1; } k();", 'identifier "k2"'],
   ])("refuses the value of %s returned from an unannotated function", async (_, program, message) => {
     expect(await refusal(program)).toContain(message);
+  });
+
+  // (#7354 Str2-c) The dynamic home added to a number: the legalization's dynamic `+`.
+  it("runs the dynamic home added to a number", async () => {
+    expect(await run(`${HOISTED_X}var y = 1; y = x + 1;\nif (y !== 2 || e !== undefined) throw 1;`)).toBe("returned");
+    expect(await run(`${HOISTED_X}var y = 1; y = x + 1;\nif (y !== 3) throw 1;`)).toBe("threw");
   });
 
   // `void 0` is not modelled: the result is dynamic and still compares like JavaScript.

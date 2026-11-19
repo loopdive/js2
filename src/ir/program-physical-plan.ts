@@ -17,14 +17,12 @@ import { forEachPreparedIrInstruction } from "./runtime/prepared-instructions.js
 import {
   planNativeInvocationInput,
   nativeInvocationSetup,
+  planNativeSourceObjectSetup,
   type NativeInvocationAbiBinding,
+  type NativeSourceObjectPhysicalSetup,
   type NativeInvocationPhysicalSetup,
 } from "../backend/wasmgc/program/native-invocation-abi.js";
 import { nativeStringOutputAbiBindings } from "../backend/wasmgc/program/native-string-output-abi.js";
-import {
-  planNativeSourceObjectSetup,
-  type NativeSourceObjectPhysicalSetup,
-} from "../backend/wasmgc/program/native-source-object-abi.js";
 import {
   nativeIntrinsicAbiBindings,
   nativeNumberBinding,

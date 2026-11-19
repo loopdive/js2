@@ -156,6 +156,8 @@ describe("#7354 X — throw and catch with the Prepared dynamic value", () => {
     ["`=== 'x'`", "try { throw 'x'; } catch (e) { if ((e === 'x') !== @A) throw 1; }", "true", "false"],
     ["ToBoolean of 'x'", "try { throw 'x'; } catch (e) { if (!e !== @A) throw 1; }", "false", "true"],
     ["ToBoolean of ''", "try { throw ''; } catch (e) { if (!e !== @A) throw 1; }", "true", "false"],
+    // (#7354 Str2 merge) TYPEOF_KIND lists the string kind.
+    ["typeof 'x'", "try { throw 'x'; } catch (e) { if ((typeof e === 'string') !== @A) throw 1; }", "true", "false"],
     [
       "a string through `||`",
       "function g(v) { throw v; } try { g(''); } catch (e) { if ((e || 7) !== @A) throw 1; }",
@@ -169,7 +171,8 @@ describe("#7354 X — throw and catch with the Prepared dynamic value", () => {
   // The catch binding is the dynamic value, which is exact only for numbers, booleans, `undefined`, `null` and
   // native strings (and for Error objects, under every operation the carrier has). Each other payload that could
   // reach a catch refuses before it does; the slice that makes one reachable must give the dynamic operations its
-  // arm and update this list.
+  // arm and update this list. (#7354 Ty) The catch binding enters the carrier without the box arm's `boxedKind`, so
+  // this list is also what keeps `TYPEOF_KIND` (the `typeof` answers of the admitted kinds) complete.
   it.each([
     ["a typed Boolean throw", "try { throw true; } catch (e) { if (!e) throw 1; }", "throw val not in slice 9"],
     [
@@ -196,29 +199,36 @@ describe("#7354 X — throw and catch with the Prepared dynamic value", () => {
     ],
   ])("refuses %s before it reaches a catch", async (_label, source, expected) => {
     const result = await compile(source, options());
-    expect(result.success).toBe(false);
+    expect(
+      result.success,
+      "a new payload kind reaches a catch: add its kind to TYPEOF_KIND (src/ir/program/dynamic-value-legalization.ts) " +
+        "so `typeof e` answers it, and give the dynamic operations its arm",
+    ).toBe(false);
     expect(messages(result).join("\n")).toContain(expected);
   });
 
-  // Pre-existing on the base: an object throw passes the producer and fails in emission (an invariant, not a
-  // named refusal). Pinned so that the slice which makes it compile meets the catch-binding rule above.
-  // (#7354 O1) An object literal is an ordinary object now; until the carrier admits objects, throwing one refuses.
-  const OBJECT_THROW = "throw of a value outside the dynamic carrier's kinds";
-  it("does not compile an object throw", async () => {
-    const result = await compile("try { throw {}; } catch (e) { if (!e) throw 1; }", options());
-    expect(result.success).toBe(false);
-    expect(result.errors.map((error) => error.message).join("\n")).toContain(OBJECT_THROW);
-  });
-
-  // The same rule for a literal thrown from a callee whose declaration group has no catch of its own.
-  it("does not compile an object-literal throw tested with typeof", async () => {
-    const result = await compile(
+  // (#7354 O2) An ordinary object is a kind of the dynamic value, so a thrown object reaches the catch binding as
+  // one: `typeof` answers it and its plain ToString is "[object Object]" (tests/issue-7354-o2-object-values.test.ts).
+  it.each([
+    [
+      "an object throw",
+      "try { throw {}; } catch (e) { if (!e) throw 1; }",
+      "try { throw {}; } catch (e) { if (e) throw 1; }",
+    ],
+    [
+      "an object-literal throw from a callee, tested with typeof",
       'function f() { throw { a: 1 }; }\ntry { f(); } catch (e) { if (typeof e !== "object") throw 1; }',
-      options(),
-    );
-    expect(result.success).toBe(false);
-    expect(result.errors.map((error) => error.message).join("\n")).toContain(OBJECT_THROW);
-  });
+      'function f() { throw { a: 1 }; }\ntry { f(); } catch (e) { if (typeof e === "object") throw 1; }',
+    ],
+  ])(
+    "catches %s as the object kind",
+    async (_label, right, wrong) => {
+      expect([node(right), node(wrong)]).toEqual(["returned", "threw"]);
+      expect(await run(right)).toBe("returned");
+      expect(await run(wrong)).toBe("threw");
+    },
+    180_000,
+  );
 });
 
 describe("#7354 X — the legalization arm", () => {
