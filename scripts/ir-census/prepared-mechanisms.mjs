@@ -43,18 +43,21 @@ export const MECHANISMS = {
   "built-in call or method": "B · #7350",
   "native intrinsic provider missing": "B · #7350",
   typeof: "T",
-  "dynamic operators (+, compare, update)": "Str / T follow-up · no issue yet",
-  "var nested in top-level code": "no issue yet",
-  "assignment to an undeclared global": "no issue yet",
-  "function declaration in a block": "no issue yet",
+  "dynamic operators (+, compare, update)": "Str2 (`__ir_dyn_add`) · #7354",
+  "var nested in top-level code": "#7365 (mostly for-in heads and with bodies)",
+  "assignment to an undeclared global": "#7365",
+  "function declaration in a block": "#7365",
   "async test": "out of scope of the stand-in",
   "direct call into a refused callee": "cascade (callee's own gap)",
-  eval: "#3630",
+  eval: "#7363 (slices 2+)",
   with: "no issue yet",
-  delete: "no issue yet",
-  "RegExp methods": "B · #7350",
+  delete: "#7365",
+  "RegExp methods": "B · #7369",
   "parameter carriers": "#7353",
-  "compile crash": "invariant (file per message)",
+  "crash: RegExp capability-deferred": "#7364 (refusal), #7369 (RegExp)",
+  "crash: eval owning predicate": "#7363 slice 1",
+  "crash: Object static not admitted": "#7364 (refusal), #7368",
+  "crash: other": "#7364",
   other: "",
 };
 
@@ -80,7 +83,12 @@ const quoted = (detail) => /"([^"]+)"|'([^']+)'/.exec(detail)?.slice(1).find(Boo
 /** Mechanism of one prepared-census row's first gap; `text` is the test source with its includes. */
 export function mechanismOf(row, text) {
   const d = row.detail ?? "";
-  if (row.status === "crash") return "compile crash";
+  if (row.status === "crash") {
+    if (/capability-deferred/.test(d)) return "crash: RegExp capability-deferred";
+    if (/owning predicate/.test(d)) return "crash: eval owning predicate";
+    if (/not an admitted Object static/.test(d)) return "crash: Object static not admitted";
+    return "crash: other";
+  }
   if (/\beval\b/.test(d)) return "eval";
   if (/WithStatement|\bwith target/.test(d)) return "with";
   if (/\bdelete\b/.test(d)) return "delete";

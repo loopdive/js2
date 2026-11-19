@@ -2,7 +2,6 @@
 /**
  * Per-mechanism file lists from prepared-census.mts rows: one `<slug>.tsv` per
  * first-gap mechanism (prepared-mechanisms.mjs), rows `file<TAB>gap detail`.
- * Crashes are split by message family, since each family is its own bug.
  *
  *   node scripts/ir-census/prepared-lists.mjs --rows <prepared.jsonl> --out <dir>
  *
@@ -25,12 +24,6 @@ function arg(flag) {
   return index >= 0 ? process.argv[index + 1] : undefined;
 }
 
-const CRASH_FAMILIES = [
-  ["crash-regexp-capability-deferred", /capability-deferred/],
-  ["crash-eval-owning-predicate", /certified global eval lost an owning predicate/],
-  ["crash-object-static-not-admitted", /is not an admitted Object static/],
-];
-
 const slug = (text) =>
   text
     .toLowerCase()
@@ -38,8 +31,7 @@ const slug = (text) =>
     .replace(/^-|-$/g, "");
 
 function listOf(row) {
-  if (row.status !== "crash") return slug(mechanismOf(row, readFileSync(join(TEST262, "test", row.file), "utf8")));
-  return CRASH_FAMILIES.find(([, pattern]) => pattern.test(row.detail ?? ""))?.[0] ?? "crash-other";
+  return slug(mechanismOf(row, readFileSync(join(TEST262, "test", row.file), "utf8")));
 }
 
 const out = resolve(arg("--out"));
