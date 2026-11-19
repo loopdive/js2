@@ -252,8 +252,7 @@ export function isInvalidAssignmentTarget(node: ts.Expression, allowDestructurin
  * CallExpression assignment targets are SyntaxErrors in strict mode per ES spec.
  */
 export function isCallExpressionTarget(node: ts.Node): boolean {
-  let expr: ts.Node = node;
-  while (ts.isParenthesizedExpression(expr)) expr = (expr as ts.ParenthesizedExpression).expression;
+  const expr = ts.isExpression(node) ? skipTransparentExpressions(node) : node;
   return (
     ts.isCallExpression(expr) &&
     expr.expression.kind !== ts.SyntaxKind.ImportKeyword &&
@@ -263,8 +262,8 @@ export function isCallExpressionTarget(node: ts.Node): boolean {
 
 /** Check if an expression involves optional chaining (?.) */
 export function hasOptionalChain(node: ts.Expression): boolean {
-  let expr: ts.Node = node;
-  while (ts.isParenthesizedExpression(expr)) expr = expr.expression;
+  // (#7394) `(o?.a as number) = 5` and `(o?.a!) = 5` are still optional-chain targets: the wrapper emits nothing.
+  const expr = skipTransparentExpressions(node);
   // TS models optional chains with questionDotToken
   if (
     (ts.isPropertyAccessExpression(expr) || ts.isElementAccessExpression(expr) || ts.isCallExpression(expr)) &&

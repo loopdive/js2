@@ -113,3 +113,12 @@ the statement ships `f64.const 0; drop` with `success: true`. With every wrapper
 by any target the early-error pass admits, so it is not chased here. It is worth a follow-up, because any future
 unsupported target would be silent the same way.
 
+## Review round 1 (RV7335, 2026-11-19, on 3557b051b7): BLOCKER
+
+| finding | answer |
+| --- | --- |
+| MUST-FIX: unwrapping the target in `isInvalidAssignmentTarget` let an optional chain under `as`/`satisfies` compile and assign (`(o?.a as number) = 5`, `+=`, `++`), where the base correctly rejected it (TS2779) | **Fixed.** `hasOptionalChain` and `isCallExpressionTarget` now use the same helper (they unwrapped parentheses only), so the optional chain is seen through every wrapper. This also fixes `(o?.a!) = 5`, which has compiled since #4417. Pinned: those five targets are compile errors again, on gc and standalone. |
+| nit: `compilePrefixUpdate` unwraps the operand three times | It unwraps once (`updateOperand`), and the `++`/`--` arms use that value. |
+| nit: stale comment at `assignment.ts:337` | Rewritten. |
+| neighbours: on the legacy path, `x >>>= 0` on −1 and `x++` at INT32_MAX give wrong results (pre-existing) | Filed as #7411. |
+

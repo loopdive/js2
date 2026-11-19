@@ -129,4 +129,18 @@ describe.each(["gc", "standalone"] as const)("#7394 — a wrapped assignment tar
     const source = `export function main(): number { let x: number = 10; ${write}; return x; }`;
     expect(await runMain(source, runTarget, false)).toBe(expected);
   });
+
+  // An optional chain stays an invalid target through a type-erased wrapper (TS2779 / §13.15.1); peeling the wrapper
+  // must not admit it.
+  it.each([
+    "(o?.a as number) = 5",
+    "(o?.a as number) += 5",
+    "(o?.a as number)++",
+    "(o?.a!) = 5",
+    "(o?.a satisfies number) = 5",
+  ])("`%s` is still a compile error", async (write) => {
+    const source = `class C { a = 1; } export function main(): number { const o: C | undefined = new C(); ${write}; return 0; }`;
+    const result = await compile(source, { fileName: "test.ts", target: runTarget });
+    expect(result.success).toBe(false);
+  });
 });
