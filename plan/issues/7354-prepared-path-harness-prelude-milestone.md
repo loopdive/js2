@@ -3388,3 +3388,240 @@ This is Ty's `expectLikeNode`.
      verifier about 15, string-values wiring about 5).
    - Tests: about 250 lines.
    - It fits in one slice only if questions 1 and 3 do not grow it.
+
+## Function value with own properties: plan (split S4 / S11, 2026-11-19)
+
+The wall: assert.js's `function assert` reads itself as a value with own properties (`assert._toString(…)` in its
+body; `assert.throws = function …`, `assert.sameValue = …` at top level, read inside calls). propertyHelper.js's
+`verifyProperty` reads `assert` the same way and reads itself as a plain value (`options.verifyProperty ||
+verifyProperty`, `var verifyPrimordialProperty = verifyProperty`). Lane (a) is S4 (a declaration as a value); lane
+(b) is S11 (own properties of a function object).
+
+Measured on integration `94abeb8347` (C, O2, Fa, Fb, Ty, globals registry), strict Prepared entry, standalone, by
+small probes and the S9 census (`--harness real --jobs 3`). Stand-ins were research hacks in a throw-away worktree,
+never committed. Outputs: the session scratchpad `census-fn/` (rows, diffs, probe scripts).
+
+### 1. Refusal sites, in order
+
+Each one shows once the one before it is stood in.
+
+| # | refusal | site | what is missing |
+| --- | --- | --- | --- |
+| R1 | `identifier "assert" is not in scope in assert` (also in `<module-init>`, in any other function, and `… in verifyProperty`) | from-ast.ts:5295, the identifier read's `unresolved` arm; text from `unboundIdentifierDetail` (from-ast.ts:8191) | `classifyIdentifierRead` (identifier-read.ts:48) finds no scope entry and no module binding: the Prepared resolver's `resolveBinding` (program-source.ts:1692) answers only for `globalByDeclaration`, and the registry (`collectProgramSourceGlobals`, program-source-globals.ts:54) has `VariableDeclaration` rows only. The ordinary pipeline's `topLevelFunctionValues` plans (codegen-planned lazy singletons) do not exist on this path. **(a)** |
+| R2 | `__ir_dyn_method_call_1 has no Prepared intrinsic` (`assert._toString(x)`); with two or more arguments from-ast refuses first: `dynamic method .k/2 has no brand-dispatch wrapper on this lane` | legalization gap, dynamic-value-legalization.ts:531; from-ast.ts:10026 | A method call on a dynamic receiver takes the ordinary pipeline's brand-dispatch helper (from-ast.ts:10036). On this lane it must be [[Get]] plus `js.closure.call:N` with the receiver as `this`: `lowerFunctionObjectMemberCall` (function-object-lowering.ts:131) already does exactly that, but from-ast routes to it only for the ordinary pipeline's plans (`isPreparedFunctionObjectAccess`, from-ast.ts:7833). **(b)** |
+| R3 | `property assignment on dynamic is not in slice 4` (`assert.throws = …`) | from-ast.ts:10854 | Same routing gap for writes (from-ast.ts:10724 asks only the plans). `lowerFunctionObjectPropertyWrite` (function-object-lowering.ts:328) emits the ordinary pipeline's `__extern_set_strict` when the carrier is externref, which it is here, so it is not reusable as is. **(b)** |
+| R4 | `dyn.member_get has no Prepared intrinsic` (`f.k`) | dynamic-value-legalization.ts:543, the `default` arm | No member chain with a `function` row (O3/O4's chain, C's kernel source-closure arm). **(b)** |
+| R5 | `'+' operands not provably both-number or string-concatenable (string/unprovable)` (`'Expected true but got ' + assert._toString(mustBeTrue)`, assert.js:59) | from-ast.ts:14505 | `expressionProducesDynamic` (from-ast.ts:14978) does not count a method call on a dynamic receiver (the property-access arm, :14997) nor a call through a dynamic module home (:14995 reads only `calleeTypes`) as the carrier. **(b)** for the method call; Fb for the home call. |
+| R6 | `unknown class "Test262Error" in assert` | from-ast.ts:8622 | `new` on a plain function: C1 (S11). Every file includes assert.js, so this is the next wall of all of them. |
+| R7 | `direct call to "assert" has no exact AST-site plan in <module-init>__closure_N` (`assert.compareArray`'s `assert(false, …)`, `isPrimitive(…)`) | from-ast.ts:7932 | `prepareStartupDirectCalls` skips every function-like node (program-source.ts:1517), so a closure lifted out of module-init has no direct-call plan for a declaration it calls. Not (a) or (b): Fa/Fb's lane (S4). |
+
+The brief's repros (94abeb8347):
+
+| program | first refusal |
+| --- | --- |
+| `function f(){ return f._x; } f._x = 1; f();` | R1 in `f` |
+| `function f(){ f._y = 2; } f();` | R1 in `f` |
+| `function f(n){ if (n) return f(n - 1); return 0; }` | runs: a self-*call* is a direct call |
+| `function f(n){ return n ? f(n-1) : 0 }` | `ternary branches have different types (dynamic vs f64)` (from-ast.ts:14210): the conditional, not this mechanism |
+| `function assert(){} assert.throws = function(){};` | R1 in `<module-init>` |
+| `assert._toString(1)` from `g`, declared after / before `g` | R1 in `g` (both) |
+| `var alias = vp; … opts \|\| vp` (propertyHelper's shape) | R1 |
+
+The same shapes on Fa's function-expression value (what (a) hands to (b)):
+
+| program | first refusal |
+| --- | --- |
+| `var f = function(){}; f.k = 1;` | R3 |
+| `var f = function(){}; f.k !== undefined` | R4 |
+| `var f = function(){ return f.k; }; f();` | R4: the self-read inside the body already works, through the dynamic home |
+| `function g(){ return f.k(1); }` / `f.k(1, 2)` | R2 / R2 (brand-dispatch wrapper) |
+| `function g(x){ return 'a' + h(x); }`, `h` a function-valued script var | R5 |
+| `var o = function (x) { a(x); }`, `a` a declaration | R7 |
+
+### 2. Measured yield (census, full ES5 list: 9,174 files, 457 negative skipped)
+
+Stand-ins (all research hacks, never committed):
+
+- **Formatting stubs (S9's, still all needed on 94abeb8347).** The 6,674 stop in this order: ToPrimitive of an
+  object holding a function (assert.js:127, O's; abort stand-in), `dyn.json_stringify` (:135), ToString of a
+  function value (:135), `dyn.member_get` (:151), `dyn.object_tag` (:151); then assert.js:164 R1. So the four
+  earlier stand-ins (json_stringify, ToString of a function, member_get, object_tag) are all still needed, and the
+  ToPrimitive wall comes first. J is not yet obsolete on this head.
+- **(a) + (b) as a source rewrite** of the assembled program (same lines, so origins stay valid): a top-level
+  declaration `F` read as a value becomes one wrapper `var F$fv = function (a0, …) { return F(a0, …); }` created
+  before the first statement (Fa's value: identity per declaration, all-dynamic signature); a static own property
+  `F.p` (and `F.prototype.q`) becomes a script var `F$$p` (Fb's call through a value). Coarser than the real
+  mechanism (no receiver as `this`, no computed keys), but it removes exactly R1 to R4.
+- **Behind them:** R5 (stand-in: a call through a dynamic home counts as the carrier), R7 (stand-in: plan direct
+  calls inside module-init function expressions), C1 (stand-in: `Test262Error` a plain function returning 262,
+  `new Test262Error(…)` a call), the `+` of a function value (abort), a dynamic method call (abort, needed for
+  `message.toString()` in `assert.compareArray`), and three prelude lines (`console.log` in `print`, the `$262`
+  literal with `globalThis`, `Array.prototype.map.call` in `compareArray.format`, `this.message` in
+  `Test262Error.prototype.toString`).
+- Compile time made the full run impossible (see risks): one fully compiled harness program takes 776 s. So the
+  census stopped each file right after preparation (lowering + legalization) and counts it as **prepared**. Later
+  phases (presentation, runtime census) and the run itself were checked on a sample.
+
+| state | files at the R1 wall (6,674 assert + 383 propertyHelper) |
+| --- | --- |
+| integration + formatting stubs (base) | 6,674 stop at assert.js:164/165 R1; 383 at propertyHelper.js:45/46/57 R1 |
+| + (a) only (no slot rewrite), sample 30 | 30/30 at assert.js:164 R2 (`__ir_dyn_method_call_1`) |
+| + (a) + (b) | 30/30 at assert.js:164 R5 |
+| + (a) + (b) + R5 | 30/30 at assert.js:164 R6 (C1, `new Test262Error`): every file, by construction |
+| + all stand-ins, full list | 6,674: **564 prepared**, 6,106 compile errors in the test's own top-level code, 4 crashes. 383 propertyHelper files: all stop in `verifyProperty` (propertyHelper.js:45/46/57: 325/2/56) at `empty array 'failures' escapes before its element type is closed` (arrays, O · #7352) |
+| run of prepared files (random sample of 6, full compile and run, 40 min timeout) | 5 pass, 1 fails with `illegal cast` (a stand-in's uncatchable abort, `String.prototype.trim` test). Each compile takes about 13 min. Estimate, not measured: about 470 of the 564 would pass with every stand-in |
+
+Where the 6,106 stop next (first gap by mechanism, prepared-analyze.mjs; "harness:runtime:1" in the raw rows is the
+module-init unit's start, i.e. the test's top-level code):
+
+| # | mechanism | slice | files |
+| --- | --- | --- | --- |
+| 1 | built-in global as a value / `new String(…)` / `Object.*` (`Object` 634, `String`, `Number`, `TypeError`, `ReferenceError`) | B · #7350 | 2,702 |
+| 2 | unmapped (`only direct calls supported`, nested `var`, `.trim()` on string, compound assign with a string, …) | — | 953 |
+| 3 | call through a value | Fb · #7349 | 476 |
+| 4 | dynamic operators (`+` 383) | Str2 | 455 |
+| 5 | eval | #7363 | 329 |
+| 6 | array literals | O · #7352 | 222 |
+| 7 | for-in head var | O follow-up | 204 |
+| 8 | `new` on a plain function, `this`, `instanceof` | C · #7349 | 197 |
+| 9 | function expression or closure as a value | Fa · #7349 | 136 |
+| 10 | read of an undeclared name | #7372 slice 3 | 98 |
+
+Also: a function declaration read as a value inside a block or a function (26) and a function declaration in a block
+(66) are not (a)'s top-level case.
+
+**What this says.** (a) and (b) are necessary for every one of the 7,057 files but not sufficient: right behind them
+the harness needs C1 (Test262Error), R5, R7, the dynamic method call (`message.toString()`), and the prelude's
+`$262`/`globalThis`/`console`. With all of those, 564 of the 6,674 (8.5 %) clear preparation; the rest stop in their
+own test code, mostly at built-in globals (B).
+
+### 3. What (a) builds (S4)
+
+- **Module.** A new `src/ir/program-source-function-values.ts`, beside `program-source-globals.ts` (one concern:
+  the value of a top-level function declaration). It owns:
+  - `functionDeclarationsReadAsValues(sourceFile)`: the top-level declarations with at least one reference that is
+    not the callee of a call (`f(x)`) or a `new` (C1's), in any function of the source. One walker, no second
+    predicate.
+  - `functionValueTrampoline(declaration, unitId, signature)`: an IR function `(__self, a0 … aN-1) → dynamic` with
+    Fa's all-dynamic signature (N = the declaration's formal count, so `$arity` and `F.length` are right), whose
+    body is the direct call to the declaration's unit and boxes its result into the carrier (dynamic as is, number
+    `js.number.box`, Boolean, void → `undefined`). A derived unit record (`ProgramAbiDerivedUnitRecord`), like a
+    lifted closure. A declaration whose parameters are not all dynamic (a typed `.ts` parameter) refuses by name.
+- **Storage: one registry row per such declaration.** `collectProgramSourceGlobals` adds a row whose global is a
+  dynamic carrier home and whose instantiation is a new `function-at-startup` (the S10 seam,
+  `instantiateProgramSourceGlobals`, program-source-globals.ts:90). The binding id follows the startup plan's
+  existing live-seed derivation (`createIrBindingId({ ownerId: unitId, domain: "global", role: … })`,
+  module-init-plan.ts:443) with its own role. The startup plan itself (`liveSeeds`) is not extended: its ordinary
+  pipeline consumers bail on a non-empty list (codegen/index.ts:4616), so gc bytes stay identical.
+  `byDeclaration` maps the `FunctionDeclaration` to the row, so `resolveBinding` (program-source.ts:1692) answers
+  for its name with no new resolver hook. The row is immutable: a write refuses through the existing
+  `write to immutable module binding` (program-source.ts:1701).
+- **The single creation site.** `instantiateProgramSourceGlobals` prepends, to module-init's entry block and before
+  any statement: `closure.new` of the trampoline (no captures), the function value admitted into the carrier, and
+  `global.set` of the home. This is the declaration's only creation; it runs before the first statement, as
+  GlobalDeclarationInstantiation does, so a property assigned at top level after the declaration and a read inside
+  any call both see one initialised value. The prologue runs after legalization (as `storeUndefinedFirst` does), so
+  it is emitted in carrier form, and its `closure.new` site is registered in `allocations` with the carrier type
+  (no retype pass needed).
+- **Reads.** Inside and outside the body, the name reads the home through the existing module-binding read
+  (`lowerResolvedModuleBindingRead`, from-ast.ts:4937): a dynamic value. No new from-ast arm, no TDZ check. Fa's
+  `var f = function …` self-read already works this way (measured).
+- **Calls stay direct.** `f(x)` keeps its static callee. One ordering change in from-ast's call lowering: the
+  direct-call plan (`cx.directCalls.get(expr)`, from-ast.ts:7928) is asked before the dynamic-home callee
+  (`dynamicModuleCallee`, :7908); today a resolved dynamic home wins, which would turn every `assert(…)` into a
+  call through a value.
+- **Soundness of the home.** The row exists only while the binding holds its declaration: the name has one binding
+  site and no write (`bindingIsUniqueAndNeverWritten`, binding-writes.ts:512) and no unseen write route
+  (`sourceMayWriteBindingUnseen`, intrinsic-prototype-writes.ts:134). Fa's `staticFunctionValue`
+  (source-dynamic-contracts.ts:222) asks the same two; the two callers share one extracted predicate instead of a
+  second conjunction. Global-object escape (`sourceMayWriteGlobalObject`) is not required for the home (reads
+  always go through it); it becomes S10's `global-object-property` row when `globalThis` is a value.
+- **Also S4 (measured as next walls, not (a) itself):** R7 (direct calls inside lifted closures:
+  `prepareStartupDirectCalls`, program-source.ts:1517, and the call graph for closures in function bodies), and
+  the home-call row of R5 (`expressionProducesDynamic`, from-ast.ts:14995).
+
+### 4. What (b) builds (S11)
+
+- **Storage.** The closure struct's `$bag` (closure-layouts.ts: `func`, `$arity`, `$bag` mutable externref null at
+  birth, captures). Every source closure has it, the trampoline's included, so (a) needs no layout change. The bag
+  is a native ordinary object with `[[Prototype]]` the realm's `Function.prototype`, filled by
+  `js.function.init(closure, name, length, flags)` (C's plan).
+- **Get / set.** The realm kernel's `match` gains the source-closure arm (C's "A", branch `claude/7354-c-fn`), so
+  own-property get / set on a function value is the existing `js.object.get` / `js.object.set` with the closure as
+  the object. The legalization's member chain (O3/O4) gets the `function` row; R4 goes away.
+- **From-ast routing (R2, R3).** On the Prepared lane (`preparedFunctionValues`, from-ast.ts:13290), a method call
+  on a dynamic receiver goes to `lowerFunctionObjectMemberCall` (get, then `js.closure.call:N` with the receiver as
+  `this`), not the brand-dispatch helper; a property write on a dynamic receiver emits `dyn.member_set` (the
+  non-externref branch of `lowerFunctionObjectPropertyWrite`, selected by the lane flag the call path already has,
+  `nativeClosureCalls`), not `__extern_set_strict`. One lane predicate, no second receiver predicate: the receiver
+  is a dynamic value, its kind is tested at run time.
+- **R5, method-call row.** `expressionProducesDynamic` answers the carrier for a method call on a dynamic receiver.
+- **Intrinsics.** `js.function.init` (new, S11's family `function-object-callables.ts`); get / set reuse
+  `js.object.get` / `js.object.set`; calls reuse `js.closure.call:N`. `js.function.construct:N`,
+  `js.function.has-instance`, `js.function.this` are C1's, not needed for this wall but for R6 right behind it.
+
+### 5. Shared contract
+
+1. **Value.** A declaration read as a value is a dynamic carrier value (IR type `dynamic`, physically the native
+   externref) read from its immutable `function-at-startup` home; at run time it is the trampoline's closure struct,
+   admitted as kind `function` (so `js.value.is_function`, `typeof` and Fb's calls work unchanged).
+2. **One creation site.** (a)'s prologue in `instantiateProgramSourceGlobals` creates it once per declaration,
+   before the first statement. **S11 emits the init:** its PR adds `js.function.init(closure, "<name>", N,
+   constructible)` to that one prologue builder, between `closure.new` and `global.set`, and to Fa's one
+   expression-creation helper in from-ast (`lowerClosureExpression`, from-ast.ts:16508). Both call one S11 helper;
+   the bag is never filled lazily.
+3. **Self-reference.** Inside its own body the name reads the same home; there is no second value.
+4. **Files.** S4: `program-source-function-values.ts` (new), `program-source-globals.ts` (the row and prologue),
+   `program-source.ts` (wiring, R7), from-ast's call ordering (:7908/:7928). S11: `function-object-callables.ts`,
+   the kernel arm, the legalization's member-chain `function` row, from-ast's dynamic-receiver routing (R2, R3) and
+   R5's method-call row. `function-object-lowering.ts` is shared: S11 changes `lowerFunctionObjectPropertyWrite`'s
+   lane branch, S4 does not touch it.
+5. **No duplicated predicate.** "Is this a function value" is never asked at compile time by (b): (b) works on any
+   dynamic receiver. (a)'s only predicates are `functionDeclarationsReadAsValues` and the shared "binding holds its
+   declaration" proof.
+
+### 6. Order
+
+1. **(a) first** (S4, stacked on the globals registry, which integration has). Proof without (b): `var g = f;
+   g === f`, `typeof f === "function"`, `id(f) === f`, a function returning itself (`return f`), `var g = f;
+   g(1)` through `js.closure.call:N`, propertyHelper's `options.verifyProperty || verifyProperty`. R7 can land in
+   the same PR or right after it.
+2. **(b) in parallel** on Fa's function expressions (`var f = function(){}; f.k = 1; f.k`), after S11's A and G and
+   O3/O4's member chain. Its tests need no declaration value.
+3. **Join:** after both, assert.js's own shape (`function assert(){ … assert._x(…) }; assert._x = …`) as one
+   program in each lane's test file. The S11 PR that lands second adds the init call to whichever creation site
+   exists then.
+4. The census moves only when C1 (R6) also lands: every file includes `new Test262Error` in assert.js.
+
+### 7. Acceptance criteria
+
+- Each proving program validates and runs through the strict Prepared entry and returns with node's answer; a wrong
+  answer throws (no folded constant passes).
+- Refusals left are pinned by name: a written declaration name, a nested or block-level declaration read as a value,
+  a typed parameter on the trampoline, a computed key on a function value (until the chain has one).
+- Ordinary-pipeline bytes identical on the 100-file sample, default and standalone (the startup plan and the
+  codegen-planned `topLevelFunctionValues` are untouched).
+- Census after (a)+(b)+C1: no file stops at R1 to R4 or R6; report where they stop.
+- **Code quality:** one module per concern (a value of a declaration; function-object properties); the creation is
+  one prologue builder, the init one helper with two callers; no second call path (the trampoline is a direct call,
+  the dispatch stays `js.closure.call:N`); no second receiver predicate; no defensive branch for a written binding
+  (it has no row); every new file and function within its budget without a grant; adversarial review per the IR
+  rule.
+
+### 8. Risks and open questions
+
+1. **Compile time blocks the census.** The full real prelude with every stand-in compiles in 776 s (one 4-core
+   box, one program). This is the realm's quadratic reservation audit (Perf / S6 #7365), multiplied by the
+   harness's ~10 closures. Until that is fixed, no ES5 file can pass in the 60 s census budget whatever (a) and (b)
+   do.
+2. **The home and the global object.** Once `globalThis` is a value (`$262.global`), a write through the global
+   object (`globalThis.assert = …`) can bypass the home. Today the source routes are refused by name; the general
+   case is S10's `global-object-property` row.
+3. **Trampoline result boxing.** A declaration whose propagated result is a typed scalar (f64) boxes it in the
+   trampoline; a void declaration returns `undefined`. Verify that no result contract other than dynamic, Boolean,
+   number and void reaches it, or refuse by name.
+4. **Where the prologue lives.** It is built after legalization, in carrier form. If that proves awkward (the
+   closure site's registration, S11's intrinsic in raw form), the alternative is to emit it from from-ast's
+   module-init lowering through the builder; the contract (one site, before the first statement) does not change.
+5. **Name for `js.function.init`.** A declaration's name is its own; an expression's needs NamedEvaluation (`var f
+   = function(){}` is "f"). Fa's helper must receive it.
