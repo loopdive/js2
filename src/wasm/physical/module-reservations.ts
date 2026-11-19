@@ -377,6 +377,11 @@ export class PhysicalModuleReservations {
     if (!this.#tokens.has(token)) this.#fail("foreign or forged reservation token");
   }
 
+  /** After seal the layout is final: every read audits it fresh, so nothing emitted can rest on an altered layout. */
+  #verifySealed(): void {
+    if (this.#state === "sealed") this.#verifyLayout();
+  }
+
   #verifyLayout(): void {
     if (this.#auditing) return;
     for (const key of populationKeys) {
@@ -766,6 +771,7 @@ export class PhysicalModuleReservations {
   /** Final raw index at this frozen layout; never hand .handle to ProgramAbiMap. */
   physicalIndex(token: PhysicalReservation): number {
     if (this.#state !== "filling" && this.#state !== "sealed") this.#fail(`physical index requested in ${this.#state}`);
+    this.#verifySealed();
     return this.#coordinate(token);
   }
 
@@ -798,6 +804,7 @@ export class PhysicalModuleReservations {
     }
     // A Proxy descriptor trap can run during capture: recheck the phase after it.
     if (this.#state !== "filling" && this.#state !== "sealed") this.#fail(`physical index requested in ${this.#state}`);
+    this.#verifySealed();
     const indices = captured.map((token) => this.#coordinate(token));
     return Object.freeze(indices);
   }
@@ -805,6 +812,7 @@ export class PhysicalModuleReservations {
   /** Authenticate producer completion without sealing unrelated reservations. */
   assertCompletedReservation(token: FunctionReservation | GlobalReservation): void {
     if (this.#state !== "filling" && this.#state !== "sealed") this.#fail(`completion requested in ${this.#state}`);
+    this.#verifySealed();
     this.#owned(token);
     if (token.kind === "function") {
       if (!this.#filledFunctions.has(token)) this.#fail(`missing function fill ${token.key}`);
