@@ -77,6 +77,7 @@ import {
 import {
   emitAnyStrToExternrefSlot,
   emitExternrefSlotToAnyStr,
+  emitNonStringRefToAnyStr,
   slotNeedsExternrefBridge,
 } from "../native-string-slot-bridge.js";
 import { compileComputedMemberKeyAfterBaseGuard, emitToPropertyKeyOnce } from "./computed-member-reference.js";
@@ -1479,17 +1480,14 @@ function compileNativeStringCompoundAssignment(
   }
 
   // Compile RHS
-  const rhsType = compileExpression(ctx, fctx, expr.right);
+  let rhsType = compileExpression(ctx, fctx, expr.right);
   if (!rhsType) {
     reportError(ctx, expr, "Failed to compile string += RHS");
     return null;
   }
-  // Coerce RHS to ref $AnyString.
-  if (rhsType.kind === "ref" || rhsType.kind === "ref_null") {
-    // Already a ref. Assume it's an AnyString-compatible type; if not,
-    // ref.cast at __str_concat boundary will trap. Common case: native
-    // string method calls return ref $AnyString already.
-  } else if (rhsType.kind === "f64" || rhsType.kind === "i32") {
+  // Coerce RHS to ref $AnyString; a native string ref is used as-is.
+  rhsType = emitNonStringRefToAnyStr(ctx, fctx, rhsType) ?? rhsType;
+  if (rhsType.kind === "f64" || rhsType.kind === "i32") {
     const rhsTsType = ctx.checker.getTypeAtLocation(expr.right);
     if (isBooleanType(rhsTsType) && rhsType.kind === "i32") {
       emitBoolToAnyStr(ctx, fctx);
@@ -1590,8 +1588,9 @@ function compileNativeStringCompoundAssignment(
  */
 function compileAndCoerceToAnyStr(ctx: CodegenContext, fctx: FunctionContext, expr: ts.Expression): ValType | null {
   const anyStrType: ValType = { kind: "ref", typeIdx: ctx.anyStrTypeIdx };
-  const rhsType = compileExpression(ctx, fctx, expr);
-  if (!rhsType) return null;
+  const compiled = compileExpression(ctx, fctx, expr);
+  if (!compiled) return null;
+  const rhsType = emitNonStringRefToAnyStr(ctx, fctx, compiled) ?? compiled;
 
   if (rhsType.kind === "ref" || rhsType.kind === "ref_null") {
     // Already a ref to a string-like type. If nullable, force non-null —
