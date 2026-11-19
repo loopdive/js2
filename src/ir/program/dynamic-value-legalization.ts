@@ -261,7 +261,18 @@ function chainBuilders(fn: IrFunction, allocations: AllocSiteRegistry, kinds: Kn
   // ToString of the once-evaluated `value`: only the arms of the kinds it may hold.
   const stringOf = (instr: IrInstr, value: IrValueId, result: IrValueId): IrInstr[] =>
     kindChain(instr, value, result, (kind, r) => toStringArm(instr, kind, value, r), kinds.kindsOf(value));
-  return { intrinsic, fresh, kindTest, text, branch, kindChain, stringOf, valueCount: () => valueCount };
+  return {
+    kinds,
+    allocations,
+    intrinsic,
+    fresh,
+    kindTest,
+    text,
+    branch,
+    kindChain,
+    stringOf,
+    valueCount: () => valueCount,
+  };
 }
 type ChainBuilders = ReturnType<typeof chainBuilders>;
 
@@ -271,8 +282,8 @@ type ChainBuilders = ReturnType<typeof chainBuilders>;
  * known kind takes only its own arms: a known string makes the whole addition a concatenation without a test, and
  * only a side that may hold a string is tested.
  */
-function additionBuilder(builders: ChainBuilders, kinds: KnownKinds, allocations: AllocSiteRegistry) {
-  const { intrinsic, fresh, kindTest, branch, stringOf } = builders;
+function additionBuilder(builders: ChainBuilders) {
+  const { kinds, allocations, intrinsic, fresh, kindTest, branch, stringOf } = builders;
   const concat = (instr: IrInstr, operands: readonly IrValueId[], r: IrValueId): IrInstr[] => {
     const [left, right, text] = [fresh(), fresh(), fresh()];
     return [
@@ -348,7 +359,7 @@ export function legalizeDynamicValues(fn: IrFunction, allocations: AllocSiteRegi
   const kinds = knownKinds(fn, types);
   const builders = chainBuilders(fn, allocations, kinds);
   const { intrinsic, fresh, kindTest, text, kindChain, stringOf, valueCount } = builders;
-  const addition = additionBuilder(builders, kinds, allocations);
+  const addition = additionBuilder(builders);
   const isDynamic = (value: IrValueId): boolean => types.get(value)?.kind === "dynamic";
   const thrown = new Set<IrValueId>();
   for (const block of fn.blocks)
