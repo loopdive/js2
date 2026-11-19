@@ -255,7 +255,7 @@ import {
   type OperandFamily,
   compoundWriteAdmissible,
 } from "./analysis/operand-admissibility.js";
-import { everyYieldedValue } from "./analysis/carrier-expression.js";
+import { everyYieldedValue, familyBesideCarrier } from "./analysis/carrier-expression.js";
 import { isSlotFreeI32IdentityLowered } from "./analysis/i32-slots.js";
 import { selectVecSearchOrJoin, type IrArrayElementFamily } from "./array-methods/selection.js";
 import { selectStaticPredicateCall } from "./static-predicates/selection.js";
@@ -9589,8 +9589,10 @@ function selectorPrimitiveWrapperOrGenericBinary(
   const leftWrapper = selectorPrimitiveWrapperConstruction(expr.left, scope, localClasses) !== null;
   const rightWrapper = selectorPrimitiveWrapperConstruction(expr.right, scope, localClasses) !== null;
   const isEquality = isEqualityOperator(binOp);
-  const left = leftWrapper ? "dynamic" : binaryOperandFamily(expr.left, scope, localClasses);
-  const right = rightWrapper ? "dynamic" : binaryOperandFamily(expr.right, scope, localClasses);
+  const leftFamily = leftWrapper ? "dynamic" : binaryOperandFamily(expr.left, scope, localClasses);
+  const rightFamily = rightWrapper ? "dynamic" : binaryOperandFamily(expr.right, scope, localClasses);
+  const left = familyBesideCarrier(expr.left, leftFamily, rightFamily, isSubjectDynamicParam);
+  const right = familyBesideCarrier(expr.right, rightFamily, leftFamily, isSubjectDynamicParam);
   if (leftWrapper || rightWrapper) {
     if (!selectorWrapperToPrimitiveSupported(expr)) return false;
     const other = leftWrapper ? right : left;
@@ -12255,6 +12257,10 @@ function provenIrFamily(expression: ts.Expression, scope: ReadonlySet<string>): 
   if (obvious === "string" || obvious === "boolean") return obvious;
   return "unknown";
 }
+
+/** (#7353) The subject's own dynamic parameter; a nested function's same-named binding is not it. */
+const isSubjectDynamicParam = (id: ts.Identifier): boolean =>
+  currentDynamicParamNames.has(id.text) && ts.findAncestor(id.parent, ts.isFunctionLike) === currentSelectionSubject;
 
 const RESOLVED_KIND_FAMILIES: Partial<Record<NonNullable<ResolvedKind>, OperandFamily>> = {
   f64: "number",

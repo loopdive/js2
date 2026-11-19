@@ -14,7 +14,7 @@
  */
 
 import { ts } from "../../ts-api.js";
-import { isCarrierAddition } from "./operand-admissibility.js";
+import { isCarrierAddition, type OperandFamily } from "./operand-admissibility.js";
 
 /** What a side knows about the leaves of an expression. */
 export interface CarrierLeaves {
@@ -44,6 +44,26 @@ export function producesCarrier(expression: ts.Expression, leaves: CarrierLeaves
     return isCarrierAddition(e, (operand) => carrier(operand) || leaves.addsAsCarrier?.(operand) === true);
   };
   return everyYieldedValue(expression, leaf, leaves.conditional);
+}
+
+/**
+ * (#7353) The selector's family for an operand it left `unknown` beside a
+ * carrier operand: the carrier too when the operand is a dynamic parameter
+ * (`isCarrierParam`) or a member or element read through one, as from-ast's
+ * `expressionProducesDynamic` lowers it over this same {@link producesCarrier}.
+ * Only a carrier operand makes the pair judged, so this turns a refused pair
+ * into a proved one and never judges a new pair. A call proves nothing: a
+ * method call on the carrier may answer a boolean (`hasOwnProperty`).
+ */
+export function familyBesideCarrier(
+  operand: ts.Expression,
+  family: OperandFamily,
+  other: OperandFamily,
+  isCarrierParam: (id: ts.Identifier) => boolean,
+): OperandFamily {
+  if (family !== "unknown" || other !== "dynamic") return family;
+  const leaves: CarrierLeaves = { binding: (node) => ts.isIdentifier(node) && isCarrierParam(node), call: () => false };
+  return producesCarrier(operand, leaves) ? "dynamic" : family;
 }
 
 /**
