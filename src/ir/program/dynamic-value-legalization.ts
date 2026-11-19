@@ -21,8 +21,9 @@
  * standalone pipeline; `undefined` is the non-null singleton, so the two stay
  * apart under strict equality and the `undefined` probe. (#7354 Fa) A function
  * value enters as its closure struct: strict equality compares it by identity,
- * ToBoolean answers true, ToNumber NaN (it has no own properties yet, so no
- * `valueOf` of its own), and the `undefined` probe false.
+ * ToBoolean answers true and the `undefined` probe false. (#7354 O2) An ordinary
+ * object enters as the reference it is. `dynamic-value-kinds.ts` holds what each
+ * operation answers each kind.
  */
 import { irValueTypes } from "../analysis/value-types.js";
 import type { AllocSiteRegistry } from "../analysis/alloc-registry.js";
@@ -36,7 +37,6 @@ import {
   type IrInstr,
   type IrValueId,
 } from "../core/nodes.js";
-import type { TagId } from "../core/tag-domain.js";
 import type { IrClosureSignature, IrType } from "../core/types.js";
 import { IR_DYN_CALL_BOX_FN } from "../../shared/contracts/dynamic-call-helpers.js";
 import type { IrUnitId } from "../../shared/contracts/ir-identity.js";
@@ -45,6 +45,20 @@ import { JS_TAG_IDS } from "../runtime/js-tag-domain.js";
 import { typeofComparisons } from "./typeof-comparisons.js";
 import { PREPARED_NUMBER_TO_STRING } from "./number-to-string-target.js";
 import { IR_DYN_ADD_FN } from "../../shared/contracts/dynamic-add-helper.js";
+import {
+  ADD_ROLE,
+  KIND_TEST,
+  KINDS_OF_TYPEOF,
+  NO_PROGRAM_KINDS,
+  TO_NUMBER_ARM,
+  TO_STRING_ARM,
+  TYPEOF_NAME,
+  admittedKinds,
+  boxedKind,
+  plainObjectRefusal,
+  type CarrierKind,
+  type ProgramKinds,
+} from "./dynamic-value-kinds.js";
 
 const CARRIER: IrType = Object.freeze({ kind: "val", val: Object.freeze({ kind: "externref" }) });
 
@@ -90,91 +104,9 @@ function carrierClosureInstr(instr: IrInstr): IrInstr {
   };
 }
 
-/**
- * (#7354 Ty, Fa) `typeof`'s answer for each kind of value the carrier admits, keyed by the answer so that no two kinds
- * share one (`typeof null` is "object": an admitted object kind must merge with that row). The admitted kinds ARE this
- * table's values: a value enters the carrier only as one of them (`boxedKind` and the function-value projection both
- * go through `admit`, exhaustive by type), so a slice that admits a kind adds its row here and every per-kind table
- * (`Record<CarrierKind, …>`) must then give it a row before the program compiles.
- */
-const TYPEOF_KIND = {
-  number: "number",
-  boolean: "boolean",
-  string: "string",
-  undefined: "undefined",
-  object: "null",
-  function: "function",
-} as const;
-type CarrierKind = (typeof TYPEOF_KIND)[keyof typeof TYPEOF_KIND];
-const KIND_OF_TYPEOF: ReadonlyMap<string, CarrierKind> = new Map(Object.entries(TYPEOF_KIND));
-
-/**
- * How the carrier tests for each admitted kind: a runtime predicate or the null test. (#7354 Fa, C) A function value
- * has no test until the realm serves IsCallable, so a test of that kind refuses by name; the kind chains reach it
- * untested, as their last kind.
- */
-const KIND_TEST: Readonly<Record<CarrierKind, IntrinsicId | "ref.is_null" | "refused">> = {
-  number: "js.value.is_number",
-  boolean: "js.value.is_boolean",
-  string: "js.value.is_string",
-  undefined: "js.extern.is_undefined",
-  null: "ref.is_null",
-  function: "refused",
-};
-
-/**
- * (#7354 Str2) How ToString (§7.1.17) answers each admitted kind, in the order `dyn.to_string`'s chain tests them:
- * the native string it carries, the number formatter, "true"/"false", or the kind's own name. A `Record` over the
- * kinds, so a slice that admits a kind must say how it prints; the last kind is reached untested because the chain
- * is total over this table. (#7354 Fa, C) ToString of a function value is ToPrimitive's, which reads the function's
- * `valueOf` and `toString`: it refuses by name until the realm serves those reads.
- */
-const TO_STRING_ARM: Readonly<Record<CarrierKind, "as-string" | "format" | "boolean" | "name" | "refused">> = {
-  string: "as-string",
-  number: "format",
-  boolean: "boolean",
-  undefined: "name",
-  null: "name",
-  function: "refused",
-};
-const KIND_ORDER = Object.keys(TO_STRING_ARM) as readonly CarrierKind[];
-/** (#7354 Str2) `typeof`'s answer for each admitted kind: `TYPEOF_KIND` read backwards (`typeof null` is "object"). */
-const TYPEOF_NAME = Object.fromEntries(Object.entries(TYPEOF_KIND).map(([answer, kind]) => [kind, answer])) as Readonly<
-  Record<CarrierKind, string>
->;
-/**
- * (#7354 Str2-c) How `+` (§13.15.3) takes each admitted kind after ToPrimitive, which is the identity on every kind
- * here because all are primitives: a string makes the addition a concatenation, any other kind is summed through
- * ToNumber. A `Record` over the kinds, so a slice admitting an object kind must give it a row, and an object has none
- * until `+` applies ToPrimitive to it; (#7354 Fa, C) a function value refuses for the same reason.
- */
-const ADD_ROLE: Readonly<Record<CarrierKind, "concat" | "numeric" | "refused">> = {
-  number: "numeric",
-  boolean: "numeric",
-  string: "concat",
-  undefined: "numeric",
-  null: "numeric",
-  function: "refused",
-};
 const STRING: IrType = Object.freeze({ kind: "string" });
 const F64: IrType = Object.freeze({ kind: "val", val: Object.freeze({ kind: "f64" }) });
 const TEST_RESULT: IrType = INTRINSIC_DEFINITIONS["js.value.is_string"].signature.result;
-
-/** The kind a box to the dynamic value admits, from its tag refinement or its operand; `undefined` refuses. */
-function boxedKind(tag: TagId | undefined, source: IrType | undefined): CarrierKind | undefined {
-  if (tag === JS_TAG_IDS.Boolean) return "boolean";
-  if (tag === JS_TAG_IDS.Null) return "null";
-  if (source?.kind === "string") return "string";
-  return source?.kind === "val" && source.val.kind === "f64" ? "number" : undefined;
-}
-
-/**
- * (#7354 Fa, C) The kinds a value of the program may have: every admitted kind, except a function value in a program
- * that makes none (it then never meets that kind's refusals).
- */
-export interface ProgramCarrierKinds {
-  readonly functions: boolean;
-}
 
 /**
  * The instruction builders of one function's legalization: fresh values after the function's own, intrinsic
@@ -184,10 +116,10 @@ function legalizationBuilders(
   fn: IrFunction,
   allocations: AllocSiteRegistry,
   types: ReturnType<typeof irValueTypes>,
-  program: ProgramCarrierKinds,
+  program: ProgramKinds,
 ) {
   let valueCount = fn.valueCount;
-  const order = program.functions ? KIND_ORDER : KIND_ORDER.filter((kind) => kind !== "function");
+  const admitted = admittedKinds(program);
   const intrinsic = (instr: IrInstr, id: IntrinsicId, args: readonly IrValueId[], result = instr.result): IrInstr => ({
     kind: "intrinsic",
     id,
@@ -199,31 +131,84 @@ function legalizationBuilders(
   });
   // (#7354 Str2-c) The kind a box to the dynamic value (or a concatenation, below) proves for its result: a `+`
   // operand of a known kind takes only that kind's arm.
-  const boxed = new Map<IrValueId, CarrierKind>();
+  const definitions = new Map<IrValueId, IrInstr>();
   for (const block of fn.blocks)
     for (const root of block.instrs)
       forEachInstrDeep(root, (i) => {
-        const kind = i.kind === "box" && i.toType.kind === "dynamic" && boxedKind(i.toType.tag, types.get(i.value));
-        if (kind) boxed.set(i.result!, kind);
+        if (i.result !== null && i.result !== undefined) definitions.set(i.result, i);
       });
+  /** The kind a box to the dynamic value admits (`boxedKind`); `undefined` for any other box. */
+  const kindOfBox = (box: Extract<IrInstr, { kind: "box" }>): CarrierKind | undefined =>
+    box.toType.kind === "dynamic"
+      ? boxedKind(box.toType.tag, types.get(box.value), definitions.get(box.value))
+      : undefined;
+  const boxed = new Map<IrValueId, CarrierKind>();
+  for (const i of definitions.values()) {
+    const kind = i.kind === "box" && kindOfBox(i);
+    if (kind) boxed.set(i.result!, kind);
+  }
   const kindsOf = (value: IrValueId): readonly CarrierKind[] => {
     const kind = boxed.get(value);
-    return kind ? [kind] : order;
+    return kind ? [kind] : admitted;
   };
+  /** Refuse by name when a value of one of `kinds` has no arm in `table` (a `refused` row). */
+  const refuseUnbuilt = (
+    kinds: readonly CarrierKind[],
+    table: Readonly<Record<CarrierKind, string>>,
+    operation: string,
+  ): void => {
+    const refused = kinds.find((kind) => table[kind] === "refused");
+    if (refused) gap(`${operation} a ${refused} value`);
+  };
+  const fresh = (): IrValueId => valueCount++ as IrValueId;
+  /** (#7354 O2) Whether `value` is one of `kinds`: their tests, or-ed into `result`. */
+  const anyKind = (instr: IrInstr, kinds: readonly CarrierKind[], value: IrValueId, result: IrValueId): IrInstr[] =>
+    disjunction(
+      kinds.map((kind) => (r: IrValueId) => kindTest(instr, kind, value, r, TEST_RESULT)),
+      result,
+    );
+  /** The tests or-ed into `result`, each answering into its own value. */
+  const disjunction = (tests: readonly ((result: IrValueId) => IrInstr[])[], result: IrValueId): IrInstr[] => {
+    const [first, ...rest] = tests;
+    if (rest.length === 0) return first!(result);
+    const [left, right] = [fresh(), fresh()];
+    return [
+      ...first!(left),
+      ...disjunction(rest, right),
+      { kind: "binary", op: "i32.or", lhs: left, rhs: right, result, resultType: TEST_RESULT },
+    ];
+  };
+  /**
+   * The kind's test into `result`; (#7354 O2) an object is none of the other admitted kinds, so its test refuses with
+   * theirs: (#7354 Fa) a function value has none.
+   */
   const kindTest = (
     instr: IrInstr,
     kind: CarrierKind,
     value: IrValueId,
     result: IrValueId,
     resultType = instr.resultType,
-  ): IrInstr => {
+  ): IrInstr[] => {
     const test = KIND_TEST[kind];
     if (test === "refused") return gap(`kind test of a ${kind} value`);
-    return test === "ref.is_null"
-      ? { kind: "unary", op: "ref.is_null", rand: value, result, resultType }
-      : intrinsic(instr, test, [value], result);
+    if (test === "complement") {
+      const other = fresh();
+      return [
+        ...anyKind(
+          instr,
+          admitted.filter((candidate) => KIND_TEST[candidate] !== "complement"),
+          value,
+          other,
+        ),
+        { kind: "unary", op: "i32.eqz", rand: other, result, resultType },
+      ];
+    }
+    return [
+      test === "ref.is_null"
+        ? { kind: "unary", op: "ref.is_null", rand: value, result, resultType }
+        : intrinsic(instr, test, [value], result),
+    ];
   };
-  const fresh = (): IrValueId => valueCount++ as IrValueId;
   const text = (value: string, result: IrValueId): IrInstr => ({
     kind: "string.const",
     value,
@@ -278,9 +263,31 @@ function legalizationBuilders(
       }
       case "name":
         return [text(kind, result)];
+      case "plain-object":
+        return [text(plainObjectToPrimitive(), result)];
       case "refused":
         return gap(`ToString of a ${kind} value`);
     }
+  };
+  /** (#7354 O2) OrdinaryToPrimitive of a plain object (`TO_STRING_ARM`), or the named refusal. */
+  const plainObjectToPrimitive = (): string => {
+    const refusal = plainObjectRefusal(program);
+    return refusal === undefined ? "[object Object]" : gap(refusal);
+  };
+  /** (#7354 O2) ToNumber of the once-evaluated `value` (`TO_NUMBER_ARM`): a plain object's, and a function's, is NaN. */
+  const toNumber = (instr: IrInstr, value: IrValueId, result: IrValueId): IrInstr[] => {
+    const kinds = kindsOf(value);
+    const unbox = (r: IrValueId): IrInstr[] => [intrinsic(instr, "js.number.unbox", [value], r)];
+    if (kinds.every((kind) => TO_NUMBER_ARM[kind] === "unbox")) return unbox(result);
+    plainObjectToPrimitive();
+    const nan = (r: IrValueId): IrInstr[] => [
+      { kind: "const", value: { kind: "f64", value: NaN }, result: r, resultType: F64 },
+    ];
+    const unboxed = kinds.filter((kind) => TO_NUMBER_ARM[kind] === "unbox");
+    if (unboxed.length === 0) return nan(result);
+    // The unboxed kinds all have their own tests; any other kind is NaN, so no object or function test is needed.
+    const cond = fresh();
+    return [...anyKind(instr, unboxed, value, cond), branch(cond, unbox, nan, result, F64)];
   };
   // A string per admitted kind of the once-evaluated `value`: a chain of tag tests in `KIND_ORDER`, the last kind
   // untested (the chain is total over the kinds), each arm answering into its own value.
@@ -289,13 +296,13 @@ function legalizationBuilders(
     value: IrValueId,
     result: IrValueId,
     arm: (kind: CarrierKind, result: IrValueId) => IrInstr[],
-    kinds: readonly CarrierKind[] = order,
+    kinds: readonly CarrierKind[] = admitted,
   ): IrInstr[] => {
     const [kind, ...rest] = kinds;
     if (rest.length === 0) return arm(kind!, result);
     const cond = fresh();
     return [
-      kindTest(instr, kind!, value, cond, TEST_RESULT),
+      ...kindTest(instr, kind!, value, cond, TEST_RESULT),
       branch(
         cond,
         (r) => arm(kind!, r),
@@ -339,8 +346,7 @@ function legalizationBuilders(
         intrinsic(instr, "js.number.box", [total], r),
       ];
     };
-    const refused = operands.flatMap(kindsOf).find((kind) => ADD_ROLE[kind] === "refused");
-    if (refused) return gap(`+ on a ${refused} value`);
+    refuseUnbuilt(operands.flatMap(kindsOf), ADD_ROLE, "+ on");
     const roles = operands.map((value) => kindsOf(value).map((kind) => ADD_ROLE[kind]));
     if (roles.some((role) => role.every((r) => r === "concat"))) {
       // A concatenation is a known string to the next `+` of a chain (`"a" + v + "b"`). Legalization meets a value's
@@ -354,20 +360,31 @@ function legalizationBuilders(
         .map((kind) => ({ kind, value })),
     );
     if (tested.length === 0) return sum(result);
-    const tests = tested.map(({ kind, value }) => {
-      const cond = fresh();
-      return { cond, instrs: [kindTest(instr, kind, value, cond, TEST_RESULT)] };
-    });
-    const conds: IrInstr[] = tests.flatMap((test) => test.instrs);
-    let cond = tests[0]!.cond;
-    for (const test of tests.slice(1)) {
-      const either = fresh();
-      conds.push({ kind: "binary", op: "i32.or", lhs: cond, rhs: test.cond, result: either, resultType: TEST_RESULT });
-      cond = either;
-    }
+    const cond = fresh();
+    const conds = disjunction(
+      tested.map(
+        ({ kind, value }) =>
+          (r: IrValueId) =>
+            kindTest(instr, kind, value, r, TEST_RESULT),
+      ),
+      cond,
+    );
     return [...conds, branch(cond, concat, sum, result, CARRIER)];
   };
-  return { intrinsic, fresh, order, kindTest, text, kindChain, toStringArm, addition, valueCount: () => valueCount };
+  return {
+    intrinsic,
+    fresh,
+    kindTest,
+    anyKind,
+    kindOfBox,
+    text,
+    kindChain,
+    toStringArm,
+    toNumber,
+    addition,
+    admitted,
+    valueCount: () => valueCount,
+  };
 }
 
 /**
@@ -378,20 +395,20 @@ function legalizationBuilders(
 export function legalizeDynamicValues(
   fn: IrFunction,
   allocations: AllocSiteRegistry,
-  program: ProgramCarrierKinds,
+  program: ProgramKinds = NO_PROGRAM_KINDS,
 ): IrFunction {
   if (!containsDynamic(fn)) return fn;
   const types = irValueTypes(fn);
-  const { intrinsic, fresh, order, kindTest, text, kindChain, toStringArm, addition, valueCount } =
-    legalizationBuilders(fn, allocations, types, program);
+  const builders = legalizationBuilders(fn, allocations, types, program);
+  const { intrinsic, fresh, kindTest, anyKind, kindOfBox, text, kindChain, toStringArm, toNumber } = builders;
   const isDynamic = (value: IrValueId): boolean => types.get(value)?.kind === "dynamic";
   const typeofs = typeofComparisons(fn);
   // `!==`/`!=`: the positive test into a fresh value, then its negation into the comparison's result.
-  const withSense = (instr: IrInstr, negate: boolean, positive: (result: IrValueId) => IrInstr): IrInstr[] => {
-    if (!negate) return [positive(instr.result!)];
+  const withSense = (instr: IrInstr, negate: boolean, positive: (result: IrValueId) => IrInstr[]): IrInstr[] => {
+    if (!negate) return positive(instr.result!);
     const value = fresh();
     return [
-      positive(value),
+      ...positive(value),
       { kind: "unary", op: "i32.eqz", rand: value, result: instr.result, resultType: instr.resultType },
     ];
   };
@@ -413,9 +430,10 @@ export function legalizeDynamicValues(
         return [{ kind: "const", value: { kind: "null", ty: CARRIER }, result: instr.result, resultType: CARRIER }];
       case "number":
         return [intrinsic(instr, "js.number.box", [value])];
-      // (#7354 Str) A native string, and (#7354 Fa) a function value's closure, are their own payload: the externref
-      // that wraps it.
+      // (#7354 Str) A native string, (#7354 O2) an ordinary object and (#7354 Fa) a function value's closure are their
+      // own payload: the externref that wraps it.
       case "string":
+      case "object":
       case "function":
         return [carried(instr, value)];
       // `undefined` enters only as `dyn.undefined`, never by a box.
@@ -428,9 +446,7 @@ export function legalizeDynamicValues(
   const expand = (instr: IrInstr): readonly IrInstr[] => {
     switch (instr.kind) {
       case "box":
-        return instr.toType.kind === "dynamic"
-          ? admit(boxedKind(instr.toType.tag, types.get(instr.value)), instr, instr.value)
-          : [instr];
+        return instr.toType.kind === "dynamic" ? admit(kindOfBox(instr), instr, instr.value) : [instr];
       case "unbox":
         if (!isDynamic(instr.value)) return [instr];
         if (instr.tagId === JS_TAG_IDS.NumberF64) return [intrinsic(instr, "js.number.unbox", [instr.value])];
@@ -443,15 +459,15 @@ export function legalizeDynamicValues(
           instr.tagId === JS_TAG_IDS.Undefined ? "undefined" : instr.tagId === JS_TAG_IDS.Null ? "null" : undefined;
         return kind === undefined
           ? gap(`tag.test of tag ${instr.tagId}`)
-          : [kindTest(instr, kind, instr.value, instr.result!)];
+          : kindTest(instr, kind, instr.value, instr.result!);
       }
       // (#7354 Ty) `typeof v <op> "literal"` is a tag test on `v`; the `typeof` string and the literal are
       // consumed by it. A literal no kind of the program's values answers is constant: `v` was already evaluated.
       case "string.eq": {
         const comparison = typeofs.comparisons.get(instr.result!);
         if (comparison === undefined) return [instr];
-        const kind = KIND_OF_TYPEOF.get(comparison.literal);
-        if (kind === undefined || !order.includes(kind))
+        const kinds = KINDS_OF_TYPEOF.get(comparison.literal)?.filter((kind) => builders.admitted.includes(kind));
+        if (kinds === undefined || kinds.length === 0)
           return [
             {
               kind: "const",
@@ -460,7 +476,7 @@ export function legalizeDynamicValues(
               resultType: instr.resultType,
             },
           ];
-        return withSense(instr, comparison.negate, (result) => kindTest(instr, kind, comparison.operand, result));
+        return withSense(instr, comparison.negate, (result) => anyKind(instr, kinds, comparison.operand, result));
       }
       // (#7354 Str2) A `typeof` read other than by a literal comparison is its answer string.
       case "dyn.typeof":
@@ -476,16 +492,13 @@ export function legalizeDynamicValues(
         );
       case "dyn.truthy":
         return [intrinsic(instr, "js.value.to_boolean", [instr.value])];
-      // ToNumber over the admitted set (number, boolean, undefined, null) is
-      // exactly the primitive unboxer: a number reads its payload, a boolean
-      // 0/1, the `undefined` singleton NaN, the null reference 0.
       case "dyn.to_number":
-        return [intrinsic(instr, "js.number.unbox", [instr.value])];
+        return toNumber(instr, instr.value, instr.result!);
       case "dyn.eq": {
         if (instr.loose) return gap("dyn.eq (loose)");
-        return withSense(instr, instr.negate, (result) =>
+        return withSense(instr, instr.negate, (result) => [
           intrinsic(instr, "js.value.strict_eq", [instr.lhs, instr.rhs], result),
-        );
+        ]);
       }
       // A front-end dynamic helper (`__ir_dyn_lt`, ...) has no runtime declaration; (#7354 Str2-c) `__ir_dyn_add`
       // is the dynamic `+`, expanded here. (#7354 Fa, Fb) The function-value projection (`functionObjectDynamicValue`) boxes a packed callable, and a
@@ -498,7 +511,7 @@ export function legalizeDynamicValues(
           if (operand?.kind === "val" && operand.val.kind === "externref") return [carried(instr, instr.args[0]!)];
         }
         if (instr.target.binding.kind === "runtime" && instr.target.binding.symbol === IR_DYN_ADD_FN)
-          return addition(instr, instr.args, instr.result!);
+          return builders.addition(instr, instr.args, instr.result!);
         return instr.target.binding.kind === "runtime" &&
           !irRuntimeCallableDeclaration(instr.target) &&
           [instr.resultType, ...instr.args.map((arg) => types.get(arg))].some((type) => type?.kind === "dynamic")
@@ -532,7 +545,7 @@ export function legalizeDynamicValues(
       blockArgTypes: block.blockArgTypes.map(carrierOf),
       instrs: mapBuffer(block.instrs),
     })),
-    valueCount: valueCount(),
+    valueCount: builders.valueCount(),
     ...(fn.closureSubtype
       ? {
           closureSubtype: {
@@ -570,8 +583,8 @@ export function legalizeDynamicAllocations(functions: readonly IrFunction[], all
 
 /**
  * (#7354 X, O1) A catch binding reads the thrown payload back as the dynamic value, so every throw of the program, in
- * whichever function, must be a value the carrier admits: a dynamic value, a boxed number, `null` or a coerced (string
- * or dynamic) value. Any other reference (an ordinary object, until the carrier admits objects) refuses by name.
+ * whichever function, must be a value the carrier admits: a dynamic value, a boxed number, `null`, a coerced (string
+ * or dynamic) value or (#7354 O2) an ordinary object. Any other reference (an error object, a closure) refuses by name.
  */
 export function refuseUnadmittedThrows(fn: IrFunction): void {
   const definitions = new Map<IrValueId, IrInstr>();
@@ -590,7 +603,9 @@ export function refuseUnadmittedThrows(fn: IrFunction): void {
       types.get(value)?.kind === "dynamic" ||
       definition?.kind === "coerce.to_externref" ||
       (definition?.kind === "intrinsic" && definition.id === "js.number.box") ||
-      (definition?.kind === "const" && definition.value.kind === "null");
+      (definition?.kind === "const" && definition.value.kind === "null") ||
+      // (#7354 O2) An ordinary object is the carrier's object kind.
+      boxedKind(JS_TAG_IDS.Object, undefined, definition) === "object";
     if (!admitted) gap("throw of a value outside the dynamic carrier's kinds");
   }
 }

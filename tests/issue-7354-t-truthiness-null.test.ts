@@ -4,6 +4,7 @@
 // `js.value.to_boolean`, whose native function is the ordinary pipeline's `__is_truthy` body (one shared
 // builder). `null` is the carrier's null reference, as on the ordinary standalone pipeline, so it stays apart
 // from the `undefined` singleton under strict equality and the `undefined` probe; `=== null` is `ref.is_null`.
+import { NO_PROGRAM_KINDS } from "../src/ir/program/dynamic-value-kinds.js";
 import { AllocSiteRegistry } from "../src/ir/analysis/alloc-registry.js";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as gc from "../src/codegen/index.js";
@@ -402,7 +403,7 @@ describe("#7354 T — the legalization arms", () => {
         valueCount: 2,
       } as unknown as IrFunction,
       new AllocSiteRegistry(),
-      { functions: false },
+      NO_PROGRAM_KINDS,
     ).blocks[0]!.instrs[0];
 
   it("lowers ToBoolean to its intrinsic", () => {

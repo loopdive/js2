@@ -5,6 +5,7 @@
 // and the result the dynamic value); it is the existing closure struct, typed `closure<sig>` while the callee is
 // known statically and the externref carrier once it reaches a dynamic slot. A never-rewritten top-level
 // `var f = function …` read later in module-init is that closure, so a call through it is its direct call.
+import { NO_PROGRAM_KINDS } from "../src/ir/program/dynamic-value-kinds.js";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ts } from "../src/ts-api.js";
 import { AllocSiteRegistry } from "../src/ir/analysis/alloc-registry.js";
@@ -251,7 +252,7 @@ describe("#7354 Fa — the legalization arms", () => {
     const out = legalizeDynamicValues(
       fn([closureNew, pack], { signature: logical, captureFieldTypes: [dynamic] }),
       new AllocSiteRegistry(),
-      { functions: true },
+      { ...NO_PROGRAM_KINDS, functions: true },
     );
     const [allocated, packed] = out.blocks[0]!.instrs as IrInstr[];
     expect(allocated).toMatchObject({
@@ -266,22 +267,24 @@ describe("#7354 Fa — the legalization arms", () => {
   });
 
   it("expresses the function-value box of a packed callable as the carrier itself", () => {
-    const [, , boxed] = legalizeDynamicValues(fn([closureNew, pack, box]), new AllocSiteRegistry(), { functions: true })
-      .blocks[0]!.instrs as IrInstr[];
+    const [, , boxed] = legalizeDynamicValues(fn([closureNew, pack, box]), new AllocSiteRegistry(), {
+      ...NO_PROGRAM_KINDS,
+      functions: true,
+    }).blocks[0]!.instrs as IrInstr[];
     expect(boxed).toEqual({ kind: "coerce.to_externref", value: 3, result: 1, resultType: externref });
   });
 
   it("leaves the function-value box of anything but a packed callable to the helper refusal", () => {
     const helper = { ...box, args: [0] };
-    expect(() => legalizeDynamicValues(fn([helper]), new AllocSiteRegistry(), { functions: true })).toThrow(
-      "__ir_dyn_call_box",
-    );
+    expect(() =>
+      legalizeDynamicValues(fn([helper]), new AllocSiteRegistry(), { ...NO_PROGRAM_KINDS, functions: true }),
+    ).toThrow("__ir_dyn_call_box");
   });
 
   it("re-types each closure allocation site to its legalized type", () => {
     const retyped: [number, unknown][] = [];
     legalizeDynamicAllocations(
-      [legalizeDynamicValues(fn([closureNew]), new AllocSiteRegistry(), { functions: true })],
+      [legalizeDynamicValues(fn([closureNew]), new AllocSiteRegistry(), { ...NO_PROGRAM_KINDS, functions: true })],
       {
         retype: (id, type) => retyped.push([id, type]),
       },

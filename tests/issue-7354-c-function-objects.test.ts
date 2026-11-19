@@ -75,3 +75,22 @@ describe("#7354 C — the function kind of the dynamic value", () => {
     expect(await run('function g(v) { return typeof v === "function"; } if (g(1)) throw 1;')).toBe("returned");
   });
 });
+
+describe("#7354 C — objects and function values in one program", () => {
+  // The object kind's test is the complement of the other kinds, and the function kind has none yet; a value that may
+  // be either is ToPrimitive'd through Get and Call, which are not built.
+  it.each([
+    [
+      "`+` on a value that may be an object or a function",
+      'var o = { a: 1 }; var f = function () {}; var s = "" + o;',
+      "+ on a function value",
+    ],
+    [
+      "the object kind's test",
+      'var o = { a: 1 }; var f = function () {}; var b = typeof o === "object";',
+      "kind test of a function value",
+    ],
+  ])("refuses %s by name", async (_, program, message) => {
+    expect(messages(await strict(program))).toContain(`dynamic operation ${message} has no Prepared intrinsic`);
+  });
+});
