@@ -70,6 +70,26 @@ comes first), so this removes a wall that sits behind the current one.
    it; a unit that names neither gets no shim binding
    (`tests/issue-7376-shim-on-demand.test.ts`).
 
-## Results
+## Results (2026-11-19, main `89e4748241`)
 
-See the PR body for the measured verdict identity and the stop-point table.
+- **Ordinary standalone verdicts: identical.** `pnpm run test:262` with
+  `TEST262_TARGET=standalone`, the ES5 path set (`TEST262_PATH_FILTER_FILE`,
+  9,029 rows the runner selects) and `TEST262_REALM_CANARY=""` for both runs,
+  base harness then new: 9,029 pass in each, 0 rows differ. A full-corpus
+  run was not feasible on the 4-core box (the realm canary recycled a worker
+  per test, about 20 tests per minute).
+- **Prepared stop point (8,717 positive ES5 files, primary variant):** the
+  first refusal message is identical in every file; no file stops at the
+  shim. 1,021 files whose first refusal is "module binding X has no exact
+  typed storage" report it at the unit's first top-level statement, which
+  moves from shim line 4 to `assert.js:64`. Shim + `var x = 1;` refused at
+  shim line 4 before and compiles after.
+
+| first Prepared stop | before | after |
+| --- | ---: | ---: |
+| `assert.js:20` dyn.typeof has no Prepared intrinsic | 5,704 | 5,704 |
+| `propertyHelper.js:132` (type error) | 902 | 902 |
+| module binding without exact typed storage, at the first statement | 1,021 (shim:4) | 1,021 (assert.js:64) |
+| `with` in strict mode (body) | 182 | 182 |
+| other (309 groups) | 908 | 908 |
+| compiles | 0 | 0 |
