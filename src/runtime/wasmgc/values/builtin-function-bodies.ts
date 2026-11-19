@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import type { Instr, LocalDef, FuncHandle } from "../../../wasm/model/instructions.js";
+import { buildStandardTryTable } from "../../../wasm/physical/exception-control.js";
 import {
   BFN_ID_FIELD_IDX,
   CLOSURE_ARITY_FIELD_IDX,
@@ -181,17 +182,23 @@ export function buildBuiltinFunctionInitializer(d: BuiltinFunctionBodyOperands):
       { op: "if", blockType: { kind: "empty" }, then: [{ op: "return" }] },
       { op: "i32.const", value: 1 },
       { op: "global.set", index: d.state },
-      {
-        op: "try",
-        blockType: { kind: "empty" },
-        body: [...allocate, ...seed, { op: "i32.const", value: 2 }, { op: "global.set", index: d.state }],
-        catches: [],
-        catchAll: [
-          { op: "i32.const", value: -1 },
-          { op: "global.set", index: d.state },
-          { op: "rethrow", depth: 0 },
+      // A standard try_table, as every guard on this regime: V8 refuses a module that mixes it with a legacy try.
+      buildStandardTryTable(
+        { kind: "empty" },
+        [...allocate, ...seed, { op: "i32.const", value: 2 }, { op: "global.set", index: d.state }],
+        [
+          {
+            kind: "catch",
+            tagIdx: d.exceptionTag,
+            payloadType: { kind: "externref" },
+            body: [
+              { op: "i32.const", value: -1 },
+              { op: "global.set", index: d.state },
+              { op: "throw", tagIdx: d.exceptionTag },
+            ],
+          },
         ],
-      },
+      ),
     ],
   };
 }

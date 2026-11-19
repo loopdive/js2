@@ -139,7 +139,7 @@ export function buildNativeClosureVectorApplyDefinition(
       { name: "__result", type: { kind: "externref" } },
       ...argumentLocals.map((_, index): LocalDef => ({ name: `__arg${index}`, type: { kind: "externref" } })),
     ],
-    body: buildClosureInvocationBoundary(state, slots, [
+    body: buildClosureInvocationBoundary(state, failure.exceptionTag, slots, [
       ...(state.receiverPolicy === "exact"
         ? [{ op: "local.get", index: 1 } as Instr]
         : buildInstallableClosureReceiver(1, state.anyValueTypeIdx)),
