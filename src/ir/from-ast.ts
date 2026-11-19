@@ -353,8 +353,13 @@ import {
   admittedOwnPropertyCallMethod,
 } from "./select.js";
 import type { OwnPropertyMethod } from "./dynamic-home-open-object.js";
-import type { DescriptorDefinition } from "./descriptor-literal.js";
 import { lowerObjectCreateDescriptorMapCall } from "./object-create-call.js";
+import {
+  lowerDescriptorDefinition,
+  lowerObjectStaticCall,
+  refuseObjectStatic,
+  type ObjectStaticLoweringHost,
+} from "./object-static-lowering.js";
 import {
   isOwnPropertyTestTerritory,
   objectStaticCallPlan,
@@ -366,11 +371,10 @@ import { staticPrivateFieldOwner, staticPrivateThisCallClassName } from "./priva
 import {
   emitNewPlainObject,
   emitObjectRuntimeCall,
-  emitObjectStaticCall,
   emitOpenCarrierObject,
-  emitOwnPropertyTest,
-  type ObjectStaticDefinitionValues,
+  OPEN_CARRIER_RUNTIME,
 } from "./open-object-carrier.js";
+import { ORDINARY_OBJECT_RUNTIME } from "./ordinary-object-statics.js";
 import {
   isStatementDynamicModuleCall,
   localValueDeclaration,
@@ -965,6 +969,8 @@ export interface IrFromAstResolver extends PreparedAsyncFromAstResolver {
   ): { readonly key: string; readonly resultType: IrType } | undefined;
   /** (#7354 O1) The literal is an ordinary object on the Prepared path. */
   preparedOrdinaryObjectLiteral?(literal: ts.ObjectLiteralExpression): boolean;
+  /** (#7368) The `Object` statics table's plan of a call on the Prepared lane, whose runtime is the contracts'. */
+  preparedObjectStaticPlan?(call: ts.CallExpression): ObjectStaticPlan | undefined;
   /**
    * #3787 checker identity for the global String constructor. JavaScript
    * inputs compiled without lib declarations may leave the identifier
@@ -9187,15 +9193,14 @@ function tryLowerNativeMapMethodCall(
   return result;
 }
 
-/** ES5 `Object.defineProperty` the `Object` statics table (#7338) did not admit: the selector refuses it. */
-function unadmittedObjectDefineProperty(cx: LowerCtx): never {
-  const detail = `ir/from-ast: Object.defineProperty is not an admitted Object static (${cx.funcName})`;
-  return refuseUnselected(cx.unselected, "call-resolution-unsupported", detail);
-}
-
-/** (#7338) The selector's `Object` statics plan, on from-ast's scope and the same program facts. */
+/**
+ * (#7338) The `Object` statics plan of a call: the Prepared lane's own (#7368), else the selector's, on from-ast's
+ * scope and the same program facts.
+ */
 function objectStaticPlanOf(expr: ts.CallExpression, cx: LowerCtx): ObjectStaticPlan | undefined {
-  return objectStaticCallPlan(expr, objectStaticsRealmOf(cx));
+  return cx.resolver?.preparedObjectStaticPlan
+    ? cx.resolver.preparedObjectStaticPlan(expr)
+    : objectStaticCallPlan(expr, objectStaticsRealmOf(cx));
 }
 
 function objectStaticsRealmOf(cx: LowerCtx): ObjectStaticsRealm {
@@ -9213,60 +9218,17 @@ function objectStaticsRealmOf(cx: LowerCtx): ObjectStaticsRealm {
   };
 }
 
-/** A define's key (a literal stays static) and field values, each as a carrier (#7338, #7276). */
-function lowerDescriptorDefinition(
-  { key, fields }: DescriptorDefinition,
-  callName: string,
-  cx: LowerCtx,
-): ObjectStaticDefinitionValues {
+/** (#7338) from-ast as `object-static-lowering.ts` sees it; (#7368) a Prepared plan lowers onto the contracts. */
+function objectStaticHost(cx: LowerCtx): ObjectStaticLoweringHost {
   return {
-    key: typeof key === "string" ? key : lowerCarrierOperand(key, callName, cx),
-    fields: fields.map(({ name, initializer }) => ({
-      name,
-      value: lowerCarrierOperand(initializer, callName, cx),
-    })),
+    builder: cx.builder,
+    funcName: cx.funcName,
+    unselected: cx.unselected,
+    runtime: cx.resolver?.preparedObjectStaticPlan ? ORDINARY_OBJECT_RUNTIME : OPEN_CARRIER_RUNTIME,
+    plan: (call) => objectStaticPlanOf(call, cx),
+    isOwnPropertyTestTerritory: (call) => isOwnPropertyTestTerritory(call, objectStaticsRealmOf(cx)),
+    lowerCarrier: (operand, callName) => lowerCarrierOperand(operand, callName, cx),
   };
-}
-
-/**
- * (#7338) An admitted `Object.<static>(…)` (`object-statics.ts`), behind the
- * selector's plan: every value and definition as a carrier, in source order,
- * then `emitObjectStaticCall`; (#7339) the fallback test row's receiver, then
- * `emitOwnPropertyTest`, which lowers its key. Null when the call is no table
- * row on this lane, which leaves it to the other arms; a refused one never
- * reaches here.
- */
-function tryLowerObjectStaticCall(expr: ts.CallExpression, cx: LowerCtx): IrValueId | null {
-  const realm = objectStaticsRealmOf(cx);
-  const plan = objectStaticCallPlan(expr, realm);
-  if (plan === undefined) {
-    if (!isOwnPropertyTestTerritory(expr, realm)) return null;
-    throw new IrInvariantError(
-      "selection-preparation-mismatch",
-      "build",
-      `ir/from-ast: own-property test on a script var planned by neither #7335's arm nor the row (${cx.funcName})`,
-    );
-  }
-  if (plan.kind === "refused") {
-    throw new IrInvariantError(
-      "selection-preparation-mismatch",
-      "build",
-      `ir/from-ast: Object static refused (${plan.refusal}) after selection admitted it (${cx.funcName})`,
-    );
-  }
-  if (plan.kind === "test") {
-    const { name, receiver, key } = plan.test;
-    const object = lowerCarrierOperand(receiver, name, cx);
-    return emitOwnPropertyTest(cx.builder, plan.test, object, () => lowerCarrierOperand(key, name, cx));
-  }
-  const { name, operands, definitions } = plan.call;
-  const values = operands.map((operand) =>
-    operand.kind === "object"
-      ? cx.builder.emitBox(emitNewPlainObject(cx.builder, irVal({ kind: "externref" })), irDynamic())
-      : lowerCarrierOperand(operand.expr, name, cx),
-  );
-  const defined = definitions.map((definition) => lowerDescriptorDefinition(definition, name, cx));
-  return emitObjectStaticCall(cx.builder, plan.call, values, defined);
 }
 
 /** (#7276) The JS environment's `Object.create({}, { <literal data descriptors> })`, behind the selector's plan. */
@@ -9277,7 +9239,8 @@ function tryLowerObjectCreateDescriptorMapCall(expr: ts.CallExpression, cx: Lowe
       supportsBackendCapability: (capability) => cx.resolver?.supportsBackendCapability?.(capability) === true,
       isLibOnlyBinding: (node) => cx.resolver?.isLibOnlyBinding?.(node) === true,
     },
-    lowerDefinition: (definition) => lowerDescriptorDefinition(definition, "Object.create", cx),
+    lowerDefinition: (definition) =>
+      lowerDescriptorDefinition(definition, "Object.create", objectStaticHost(cx).lowerCarrier),
   });
 }
 
@@ -9344,7 +9307,8 @@ function lowerMethodCallWithSourcePlan(
   if (functionObjects.isPreparedFunctionObjectAccess(expr.expression, cx.topLevelFunctionValues)) {
     return functionObjects.lowerFunctionObjectMemberCall(expr, expr.expression, functionObjectLoweringHost(cx));
   }
-  const objectStatic = tryLowerObjectStaticCall(expr, cx) ?? tryLowerObjectCreateDescriptorMapCall(expr, cx);
+  const objectStatic =
+    lowerObjectStaticCall(expr, objectStaticHost(cx)) ?? tryLowerObjectCreateDescriptorMapCall(expr, cx);
   if (objectStatic !== null) return objectStatic;
   const globalFunction = tryLowerAmbientGlobalFunctionCall(expr, cx); // (#7267) `JSON.parse(s);`
   if (globalFunction !== null) return globalFunction;
@@ -9529,7 +9493,7 @@ function lowerMethodCall(expr: ts.CallExpression, cx: LowerCtx, statementPositio
     methodName === "defineProperty" &&
     isAmbientReceiver(receiverIdentifier, receiverIsDirectModuleBinding, cx)
   ) {
-    unadmittedObjectDefineProperty(cx);
+    refuseObjectStatic(cx, "Object.defineProperty is not an admitted Object static");
   }
 
   // #3787 — exact ambient String.fromCharCode(...). Intercept before receiver

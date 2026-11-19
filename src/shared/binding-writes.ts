@@ -549,12 +549,15 @@ export function bindingIsUniqueAndNeverWritten(id: ts.Identifier, declaration: t
   return !written && bindings === 1 && ownBinding;
 }
 
-/** `o` where a JS member write on it (`o.p = v`, `o[k] = v`) declares a property, which the checker counts. */
-export function isMemberWriteDeclaration(candidate: ts.Node): boolean {
+/**
+ * `o` in a JS property declaration on it, which the checker counts as a declaration of `o` though it declares no
+ * binding: a member write (`o.p = v`, `o[k] = v`) or `Object.defineProperty(o, …)` (#7106 lever S).
+ */
+export function isJsPropertyDeclarationTarget(candidate: ts.Node): boolean {
   const parent = candidate.parent;
+  if (!ts.isIdentifier(candidate)) return false;
+  if (ts.isCallExpression(parent)) return parent.arguments[0] === candidate;
   return (
-    ts.isIdentifier(candidate) &&
-    (ts.isPropertyAccessExpression(parent) || ts.isElementAccessExpression(parent)) &&
-    parent.expression === candidate
+    (ts.isPropertyAccessExpression(parent) || ts.isElementAccessExpression(parent)) && parent.expression === candidate
   );
 }

@@ -38,6 +38,7 @@ import {
 } from "./program/dynamic-value-legalization.js";
 import { retargetNumberToString } from "./program/number-to-string-target.js";
 import { programObjects, type ProgramObjects } from "./source-plain-objects.js";
+import { crossesAsCarrier, type ObjectStaticPlan } from "./object-statics.js";
 import type { AllocSiteRegistry } from "./analysis/alloc-registry.js";
 import type { RuntimeManifestPolicy } from "../runtime/contracts/provider-policy.js";
 import type { ValType } from "../wasm/model/instructions.js";
@@ -52,6 +53,8 @@ type Signature = { readonly params: readonly IrType[]; readonly returnType: IrTy
 type SourceGlobal = { readonly binding: { readonly type: IrType } };
 type SourcePolicy = Pick<RuntimeManifestPolicy, "backend" | "target">;
 type DynamicLane = "host-async" | "native" | undefined;
+/** (#7368) The lane's `Object` statics plan of a call, where it has one. */
+type StaticPlan = ((call: ts.CallExpression) => ObjectStaticPlan | undefined) | undefined;
 const IR_BOOLEAN_RESULT: IrType = Object.freeze({ kind: "val", val: Object.freeze({ kind: "i32", boolean: true }) });
 
 /** Canonical any identity excludes TypeScript's separate error-any recovery type. */
@@ -211,6 +214,7 @@ export interface ProgramDynamicContracts extends SourceDynamicProvenance {
     globals: readonly SourceGlobal[],
     roots: ts.FunctionDeclaration | readonly ts.Statement[],
     functions: readonly IrFunction[],
+    staticPlan: StaticPlan,
   ) => readonly IrFunction[];
 }
 
@@ -252,7 +256,7 @@ export function programDynamicContracts(
         `function ${declaration.name?.text} returns ${checker.typeToString(result)}, which has no Prepared result contract`,
       );
     },
-    legalize: (signatures, globals, roots, functions) =>
+    legalize: (signatures, globals, roots, functions, staticPlan) =>
       legalizeSourceDynamicValues(
         checker,
         policy,
@@ -264,6 +268,7 @@ export function programDynamicContracts(
         sourceFiles,
         allocations,
         objects,
+        staticPlan,
       ),
   };
 }
@@ -306,14 +311,22 @@ export const PREPARED_PROVIDED_GLOBALS: ReadonlySet<string> = new Set(["Number",
  * itself holds the dynamic value is no such flow, whatever the checker types
  * that binding. An operator that converts explicitly (`+v`, `v * 2`, `v === w`)
  * gives its operand no contextual type; the legalization expresses it or
- * refuses it by name.
+ * refuses it by name. (#7368) Neither is a value an admitted `Object` static
+ * evaluates: it takes each as a carrier.
  */
-function refuseImplicitDynamicFlows(checker: ts.TypeChecker, roots: readonly ts.Node[], carries: Carries): void {
+function refuseImplicitDynamicFlows(
+  checker: ts.TypeChecker,
+  roots: readonly ts.Node[],
+  carries: Carries,
+  staticPlan: StaticPlan,
+): void {
   const any = checker.getAnyType();
+  const kept = (node: ts.Expression) =>
+    storedIntoCarrier(node, carries) || (staticPlan !== undefined && crossesAsCarrier(node, staticPlan));
   const visit = (node: ts.Node): void => {
     if (ts.isExpression(node) && !passedOn(node) && carries(node)) {
       const contextual = checker.getContextualType(node);
-      if (contextual !== undefined && contextual !== any && !storedIntoCarrier(node, carries))
+      if (contextual !== undefined && contextual !== any && !kept(node))
         throw new IrUnsupportedError(
           "type-resolution-unsupported",
           "build",
@@ -383,6 +396,7 @@ function legalizeSourceDynamicValues(
   sourceFiles: readonly ts.SourceFile[],
   allocations: AllocSiteRegistry,
   objects: ProgramObjects,
+  staticPlan: StaticPlan,
 ): readonly IrFunction[] {
   const roots = "kind" in declaration ? [declaration] : declaration;
   const contracted =
@@ -404,7 +418,8 @@ function legalizeSourceDynamicValues(
     if (!(error instanceof DynamicValueGap)) throw error;
     throw new IrUnsupportedError("type-resolution-unsupported", "build", error.message);
   }
-  if (legalized.some((fn, index) => fn !== retargeted[index])) refuseImplicitDynamicFlows(checker, roots, carries);
+  if (legalized.some((fn, index) => fn !== retargeted[index]))
+    refuseImplicitDynamicFlows(checker, roots, carries, staticPlan);
   return legalized;
 }
 

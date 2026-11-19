@@ -41,6 +41,10 @@ function declaration(
  * presence in 8/9. Accessor operations require explicit half-presence bits;
  * zero must never inherit the historical "both specified" fallback. The
  * attributes-only operation preserves the existing property's kind and value.
+ *
+ * (#7368) The own-property operations: `get-own-property` is
+ * FromPropertyDescriptor of [[GetOwnProperty]] (`undefined` when absent),
+ * `has-own` is HasOwnProperty and `property-is-enumerable` its enumerable test.
  * These declarations do not grant physical provider or receiver authority.
  */
 const DECLARATIONS: Readonly<Record<OrdinaryObjectRuntimeFeature, IrRuntimeCallableDeclaration>> = Object.freeze({
@@ -56,6 +60,9 @@ const DECLARATIONS: Readonly<Record<OrdinaryObjectRuntimeFeature, IrRuntimeCalla
   "js.object.define-attributes": declaration("js.object.define-attributes", [EXTERNAL, EXTERNAL, FLAGS], []),
   "js.object.get": declaration("js.object.get", [EXTERNAL, EXTERNAL, EXTERNAL], [EXTERNAL]),
   "js.object.has": declaration("js.object.has", [EXTERNAL, EXTERNAL], [BOOLEAN]),
+  "js.object.get-own-property": declaration("js.object.get-own-property", [EXTERNAL, EXTERNAL], [EXTERNAL]),
+  "js.object.has-own": declaration("js.object.has-own", [EXTERNAL, EXTERNAL], [BOOLEAN]),
+  "js.object.property-is-enumerable": declaration("js.object.property-is-enumerable", [EXTERNAL, EXTERNAL], [BOOLEAN]),
 });
 
 /** Exact semantic binding only; neither display names nor runtime aliases qualify. */

@@ -12,8 +12,8 @@ import type { IrFunctionBuilder } from "./builder.js";
 import type { OpenCarrierHome } from "./empty-object-literal.js";
 import { irRuntimeFuncRef } from "./callable-bindings.js";
 import { JS_TAG_IDS } from "./js-tag-domain.js";
-import { irDynamic, irVal, type IrType, type IrValueId } from "./nodes.js";
-import type { ObjectStaticCall, OwnPropertyTestCall } from "./object-statics.js";
+import { irDynamic, irVal, type IrType, type IrValueId, type OwnPropertyTest } from "./nodes.js";
+import type { ObjectStaticCall, ObjectStaticProvider, OwnPropertyTestCall } from "./object-statics.js";
 import {
   NOT_COERCIBLE,
   emitThrowTypeErrorAlways,
@@ -107,6 +107,38 @@ export function emitObjectRuntimeCall(
 }
 
 /**
+ * (#7368) The object runtime a lane lowers an admitted static or own-property test onto. Values are `dynamic`
+ * carriers unless said otherwise. The ordinary pipeline's is {@link OPEN_CARRIER_RUNTIME}, legacy's helpers over the
+ * open-hash `$Object`; the Prepared path's binds the `js.object.*` contracts (`ordinary-object-statics.ts`).
+ */
+export interface ObjectStaticRuntime {
+  /** A fresh empty object: an inline `{}` operand. */
+  readonly newObject: (builder: IrFunctionBuilder) => IrValueId;
+  /** A row's helper over the static's values. */
+  readonly call: (
+    builder: IrFunctionBuilder,
+    provider: ObjectStaticProvider,
+    operands: readonly IrValueId[],
+  ) => IrValueId;
+  /** One definition applied to `object`, an `externref`; a [[DefineOwnProperty]] rejection throws a TypeError. */
+  readonly define: (builder: IrFunctionBuilder, object: IrValueId, definition: ObjectStaticDefinitionValues) => void;
+  /** Whether `receiver`, never nullish, has the own (enumerable) property `key`: an `i32`. */
+  readonly ownProperty: (
+    builder: IrFunctionBuilder,
+    receiver: IrValueId,
+    key: IrValueId,
+    test: OwnPropertyTest,
+  ) => IrValueId;
+}
+
+export const OPEN_CARRIER_RUNTIME: ObjectStaticRuntime = {
+  newObject: (builder) => builder.emitBox(emitNewPlainObject(builder, irVal({ kind: "externref" })), irDynamic()),
+  call: (builder, provider, operands) => emitObjectRuntimeCall(builder, provider, operands, irDynamic()),
+  define: emitOpenCarrierDefine,
+  ownProperty: (builder, receiver, key, test) => builder.emitDynOwnProperty(receiver, key, test),
+};
+
+/**
  * #7338 — an admitted `Object.<static>(…)` (`object-statics.ts`) over its
  * values, each a `dynamic` carrier, and its definitions, all evaluated before
  * (every argument is, before the static's first step):
@@ -117,13 +149,15 @@ export function emitObjectRuntimeCall(
  *   - the row's helper over the values, when it has one;
  *   - each definition, on the object the static answers: the helper's
  *     result, or the first value of a static that only defines.
- * Answers that object as a `dynamic` carrier.
+ * Answers that object as a `dynamic` carrier. The helper and the definitions
+ * are `runtime`'s, so every lane lowers a static in this one order.
  */
 export function emitObjectStaticCall(
   builder: IrFunctionBuilder,
   call: Pick<ObjectStaticCall, "name" | "provider" | "requires" | "throws">,
   operands: readonly IrValueId[],
   definitions: readonly ObjectStaticDefinitionValues[],
+  runtime: ObjectStaticRuntime,
 ): IrValueId {
   const first = operands[0]!;
   if (call.requires === "object") {
@@ -132,11 +166,10 @@ export function emitObjectStaticCall(
     emitThrowTypeErrorIfNullish(builder, first, NOT_COERCIBLE);
   }
   if (call.throws !== undefined) emitThrowTypeErrorAlways(builder, call.throws);
-  const answer =
-    call.provider === undefined ? first : emitObjectRuntimeCall(builder, call.provider, operands, irDynamic());
+  const answer = call.provider === undefined ? first : runtime.call(builder, call.provider, operands);
   if (call.throws === undefined && definitions.length > 0) {
     const object = builder.emitCoerceToExternref(answer);
-    for (const definition of definitions) emitOpenCarrierDefine(builder, object, definition);
+    for (const definition of definitions) runtime.define(builder, object, definition);
   }
   return answer;
 }
@@ -145,7 +178,7 @@ export function emitObjectStaticCall(
  * (#7339) An admitted own-property test `R.<name>(k)` (`object-statics.ts`):
  * the method is read from the receiver first, so the receiver's nullish
  * TypeError runs before the key is evaluated (§13.3.6.1 evaluates the member,
- * then the arguments); then `dyn.own_property`. Answers the boolean as the
+ * then the arguments); then `runtime`'s test. Answers the boolean as the
  * plan's `answer` says: the i32, or boxed onto the carrier.
  */
 export function emitOwnPropertyTest(
@@ -153,8 +186,9 @@ export function emitOwnPropertyTest(
   test: Pick<OwnPropertyTestCall, "name" | "answer">,
   receiver: IrValueId,
   key: () => IrValueId,
+  runtime: ObjectStaticRuntime,
 ): IrValueId {
   emitThrowTypeErrorIfNullish(builder, receiver, NOT_COERCIBLE);
-  const answer = builder.emitDynOwnProperty(receiver, key(), test.name);
+  const answer = runtime.ownProperty(builder, receiver, key(), test.name);
   return test.answer === "boolean" ? answer : builder.emitBox(answer, irDynamic(JS_TAG_IDS.Boolean));
 }

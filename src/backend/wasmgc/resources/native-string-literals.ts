@@ -397,6 +397,21 @@ export function requireNativeStringLiteral(
   return binding;
 }
 
+/** The literal `text` as an `externref` operand of a body filled in `tx`. */
+export function nativeStringLiteralOperand(
+  tx: PhysicalModuleReservations,
+  pack: NativeStringLiteralReservations,
+  text: string,
+): Instr[] {
+  const binding = requireNativeStringLiteral(tx, pack, text);
+  return [
+    binding.kind === "global"
+      ? { op: "global.get", index: tx.physicalIndex(binding.global) }
+      : { op: "call", funcIdx: binding.function.handle },
+    { op: "extern.convert_any" },
+  ];
+}
+
 /** Attest actual canonical fills through this owner's existing ledger, not a body-name heuristic. */
 export function requireCompletedNativeStringLiterals(
   tx: PhysicalModuleReservations,

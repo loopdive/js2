@@ -176,6 +176,23 @@ export function admittedValues(plan: ObjectStaticPlan | undefined): readonly ts.
   ];
 }
 
+/**
+ * (#7368) `node` belongs to the admitted call around it: a value the call evaluates, which crosses as a carrier, or
+ * the literal that holds its values (an inline `{}`, a descriptor, a descriptor map), which the lowering reads and
+ * never builds as the lib's declaration types it. An expression inside one of the values does not.
+ */
+export function crossesAsCarrier(
+  node: ts.Expression,
+  planOf: (call: ts.CallExpression) => ObjectStaticPlan | undefined,
+): boolean {
+  const call = ts.findAncestor(node.parent, ts.isCallExpression);
+  const values = call && admittedValues(planOf(call));
+  return (
+    values !== undefined &&
+    !values.some((value) => value !== node && ts.findAncestor(node.parent, (ancestor) => ancestor === value))
+  );
+}
+
 /** #7128's U1 define: an admitted call that only defines, literal keys and literal descriptors. */
 export function isLiteralDefine(plan: ObjectStaticPlan | undefined): boolean {
   return plan?.kind === "call" && plan.call.provider === undefined && definesLiteralsOnly(plan.call);

@@ -54,9 +54,7 @@ import { unwrapPromiseTypeNode } from "./async-static.js";
 import { postStartupCallableUnits } from "./program-startup-proof.js";
 import { makeIrIdentityImportedFunctionResolver } from "./imported-functions.js";
 import { makeIrPromiseDelayResolver } from "./promise-delay.js";
-import { prepareOrdinaryObjectAccessResolver } from "../frontend/builtins/prepare-ordinary-object-access.js";
-import { prepareConversionResolvers } from "../frontend/builtins/prepare-number-conversion.js";
-import { prepareObjectCreateResolver } from "../frontend/builtins/prepare-object-create.js";
+import { prepareSourceBuiltinResolvers } from "../frontend/builtins/prepare-source-builtins.js";
 import { prepareNativeStringOutputResolver } from "../frontend/builtins/prepare-string-output.js";
 import { prepareNativeAsyncSourceFamilies, type NativeAsyncSourceFamilies } from "./program-native-async-source.js";
 import {
@@ -1420,20 +1418,6 @@ function prepareSourceFunctionSignatures(
 }
 
 /** Build each original source body once, before any backend context or allocator exists. */
-/** Combine source-owned call/read plans; no physical provider is selected here. */
-function prepareSourceBuiltinResolvers(
-  input: IrProgramSourceInput,
-  roots: ts.FunctionDeclaration | readonly ts.Statement[],
-) {
-  return {
-    ...prepareConversionResolvers(input.checker, input.sourceFiles, roots),
-    ...prepareOrdinaryObjectAccessResolver(input.checker, input.sourceFiles, roots),
-    ...(input.policy.target === "standalone" && input.policy.backend === "wasmgc"
-      ? prepareObjectCreateResolver(input.checker, input.sourceFiles, roots)
-      : {}),
-  };
-}
-
 /** Preserve exact original lifted provenance before admitting derived records. */
 function appendLiftedSourceProvenance(
   provenanceRecords: ReturnType<typeof lowerFunctionAstToIr>["liftedUnitProvenance"],
@@ -1747,7 +1731,8 @@ export function prepareIrProgramSources(
         : identity.declarationByUnitId.get(unit.id)!;
       if (!ts.isFunctionDeclaration(declaration)) unsupported(`missing declaration producer for ${unit.kind}`);
       const sourceRoots = moduleInit ? (identity.moduleInitPopulationBySourceFile.get(source) ?? []) : declaration;
-      Object.assign(resolver, prepareSourceBuiltinResolvers(input, sourceRoots));
+      const holdsCarrier = (identifier: ts.Identifier) => resolveBinding(identifier)?.type.kind === "dynamic";
+      Object.assign(resolver, prepareSourceBuiltinResolvers(input, sourceRoots, holdsCarrier));
       const signature = signatures.get(unit.id);
       const lowered = lowerFunctionAstToIr(declaration, {
         booleanReturnBoundary: sourceBooleanAnyResult(input.checker, declaration) ? declaration : undefined,
@@ -1801,7 +1786,13 @@ export function prepareIrProgramSources(
           `certified native Promise-delay ${unit.id} fabricated support bodies or provenance`,
         );
       functions.push(
-        ...dynamicContracts.legalize(signatures.values(), globals, sourceRoots, [lowered.main, ...lowered.lifted]),
+        ...dynamicContracts.legalize(
+          signatures.values(),
+          globals,
+          sourceRoots,
+          [lowered.main, ...lowered.lifted],
+          resolver.preparedObjectStaticPlan,
+        ),
       );
       appendLiftedSourceProvenance(lowered.liftedUnitProvenance, inventory, unit, derivedUnits);
       if (derivedSourceRows !== undefined) appendSourceMapDerivedRows(derivedSourceRows, lowered, identity, unit);
