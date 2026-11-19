@@ -14,7 +14,9 @@ import { irTypeEquals, type IrType } from "../core/types.js";
 import type { IrFuncRef } from "../core/value-references.js";
 import type { IrUnitId } from "../../shared/contracts/ir-identity.js";
 import type { RuntimeManifestPolicy } from "../../runtime/contracts/provider-policy.js";
+import { forEachIrValueDefinition } from "../analysis/value-types.js";
 import type { IrRuntimeCallableDeclaration } from "./callable-declarations.js";
+import { canonicalProviderMismatch, canonicalProviderRow } from "./canonical-provider-mismatch.js";
 import {
   NATIVE_ASYNC_CALLABLE_RUNTIME_FEATURES,
   STRING_CONCAT_MANY_NATIVE_ARITY,
@@ -99,18 +101,9 @@ export const NATIVE_ASYNC_CALLABLE_RUNTIME_PROVIDERS: readonly RuntimeProviderDe
 
 /** A selected row must implement the entire canonical contract, not merely reuse its id. */
 export function nativeAsyncProviderMismatch(provider: RuntimeProviderDefinition): string | undefined {
-  const canonical = NATIVE_ASYNC_CALLABLE_RUNTIME_PROVIDERS.find(
-    (entry) => entry.id === provider.id || entry.feature === provider.feature,
-  );
-  if (!canonical)
+  if (!canonicalProviderRow(NATIVE_ASYNC_CALLABLE_RUNTIME_PROVIDERS, provider))
     return provider.implementation.kind === "standalone-clock-zero" ? "foreign clock projection" : undefined;
-  for (const field of ["id", "feature", "signature", "implementation"] as const)
-    if (JSON.stringify(provider[field]) !== JSON.stringify(canonical[field]))
-      return `native callable provider ${field} mismatch`;
-  for (const field of ["dependencies", "hostCapabilities", "supportedTargets", "supportedBackends"] as const)
-    if (JSON.stringify([...provider[field]].sort()) !== JSON.stringify([...canonical[field]].sort()))
-      return `native callable provider ${field} mismatch`;
-  return undefined;
+  return canonicalProviderMismatch(NATIVE_ASYNC_CALLABLE_RUNTIME_PROVIDERS, provider, "native callable");
 }
 
 /** Native strings are an explicit resolved storage policy, never a target/default inference. */
@@ -164,17 +157,7 @@ export function nativeAsyncCallableValueTypes(fn: IrFunction): ReadonlyMap<IrVal
       throw new IrNativeAsyncCallableError(fn.unitId, `conflicting SSA type for ${id}`);
     types.set(id, type);
   };
-  fn.params.forEach((param) => note(param.value, param.type));
-  fn.asyncPlan?.values.forEach((value) => note(value.value, value.type));
-  for (const block of fn.blocks)
-    block.blockArgs.forEach((value, index) => {
-      if (block.blockArgTypes[index]) note(value, block.blockArgTypes[index]!);
-    });
-  for (const { body } of buffers(fn))
-    for (const root of body)
-      forEachInstrDeep(root, (instr) => {
-        if (instr.result !== null && instr.resultType) note(instr.result, instr.resultType);
-      });
+  forEachIrValueDefinition(fn, note);
   return types;
 }
 

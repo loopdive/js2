@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
+import { irValueTypes } from "../analysis/value-types.js";
 import type { PreparedIrRuntimeManifest } from "./contracts/prepared.js";
 export type { PreparedIrRuntimeManifest } from "./contracts/prepared.js";
 
@@ -51,7 +52,6 @@ import {
   type IrInstr,
   type IrInstrIntrinsic,
   type IrIntrinsicProvider,
-  type IrValueId,
 } from "../core/nodes.js";
 import { irTypeEquals, type IrType } from "../core/types.js";
 import type { IrFuncRef } from "../core/value-references.js";
@@ -116,24 +116,6 @@ function mapArray<T>(values: readonly T[], map: (value: T) => T): readonly T[] {
     return next;
   });
   return changed ? mapped : values;
-}
-
-function valueTypesOf(fn: IrFunction): ReadonlyMap<IrValueId, IrType> {
-  const result = new Map<IrValueId, IrType>();
-  for (const param of fn.params) result.set(param.value, param.type);
-  for (const value of fn.asyncPlan?.values ?? []) result.set(value.value, value.type);
-  for (const block of fn.blocks) {
-    for (let index = 0; index < block.blockArgs.length; index++) {
-      const type = block.blockArgTypes[index];
-      if (type) result.set(block.blockArgs[index]!, type);
-    }
-    for (const root of block.instrs) {
-      forEachInstrDeep(root, (instr) => {
-        if (instr.result !== null && instr.resultType) result.set(instr.result, instr.resultType);
-      });
-    }
-  }
-  return result;
 }
 
 function providerAttachment(
@@ -819,7 +801,7 @@ export function prepareIrRuntimeManifest(input: PrepareIrRuntimeManifestInput): 
       } else if (fn.asyncRuntime) {
         throw new Error(`IR async runtime attachment for ${fn.name} has no semantic async plan`);
       }
-      const valueTypes = valueTypesOf(fn);
+      const valueTypes = irValueTypes(fn);
       const collectBuffer = (buffer: readonly IrInstr[]): void => {
         for (const root of buffer) {
           forEachInstrDeep(root, (instr) => {

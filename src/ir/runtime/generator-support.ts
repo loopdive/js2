@@ -1,7 +1,8 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
+import { irValueTypes } from "../analysis/value-types.js";
 import { irRuntimeFuncRef, sameIrCallableBinding } from "../core/callable-bindings.js";
-import { forEachInstrDeep, mapNestedBuffers, type IrInstr, type IrValueId } from "../core/nodes.js";
+import { forEachInstrDeep, mapNestedBuffers, type IrInstr } from "../core/nodes.js";
 import { asVal, type IrType } from "../core/types.js";
 import type { IrFuncRef } from "../core/value-references.js";
 import type { PreparedIrFunction as IrFunction } from "./contracts/prepared.js";
@@ -14,24 +15,6 @@ function mapArray<T>(values: readonly T[], map: (value: T) => T): readonly T[] {
     return next;
   });
   return changed ? mapped : values;
-}
-
-function valueTypesOf(fn: IrFunction): ReadonlyMap<IrValueId, IrType> {
-  const result = new Map<IrValueId, IrType>();
-  for (const param of fn.params) result.set(param.value, param.type);
-  for (const value of fn.asyncPlan?.values ?? []) result.set(value.value, value.type);
-  for (const block of fn.blocks) {
-    for (let index = 0; index < block.blockArgs.length; index++) {
-      const type = block.blockArgTypes[index];
-      if (type) result.set(block.blockArgs[index]!, type);
-    }
-    for (const root of block.instrs) {
-      forEachInstrDeep(root, (instr) => {
-        if (instr.result !== null && instr.resultType) result.set(instr.result, instr.resultType);
-      });
-    }
-  }
-  return result;
 }
 
 /**
@@ -67,7 +50,7 @@ export function irGeneratorSetReturnNeedsBoxing(valueType: IrType | undefined): 
  */
 export function forEachIrGeneratorSetReturn(fn: IrFunction, visit: (valueType: IrType | undefined) => void): void {
   if (fn.funcKind !== "generator") return;
-  const valueTypes = valueTypesOf(fn);
+  const valueTypes = irValueTypes(fn);
   for (const block of fn.blocks) {
     for (const root of block.instrs) {
       forEachInstrDeep(root, (instr) => {
@@ -119,7 +102,7 @@ function requireSameProvider(kind: string, existing: IrFuncRef, next: IrFuncRef)
  */
 export function attachIrGeneratorSupport(fn: IrFunction, numberBoxProvider: IrFuncRef | undefined): IrFunction {
   if (fn.funcKind !== "generator") return fn;
-  const valueTypes = valueTypesOf(fn);
+  const valueTypes = irValueTypes(fn);
   const mapBuffer = (buffer: readonly IrInstr[]): readonly IrInstr[] => mapArray(buffer, mapInstr);
   const mapInstr = (instr: IrInstr): IrInstr => {
     const nested = mapNestedBuffers(instr, mapBuffer);
