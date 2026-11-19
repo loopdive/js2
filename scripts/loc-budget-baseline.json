@@ -1,7 +1,7 @@
 {
   "generated": "2026-11-18",
   "threshold": 1500,
-  "totalCeiling": 1035393,
+  "totalCeiling": 1035531,
   "files": {
     "src/codegen-linear/index.ts": 5791,
     "src/codegen-linear/runtime.ts": 4195,
@@ -71,7 +71,7 @@
     "src/codegen/property-access-dispatch.ts": 5103,
     "src/codegen/property-access.ts": 6220,
     "src/codegen/regexp-standalone.ts": 6659,
-    "src/codegen/registry/imports.ts": 2034,
+    "src/codegen/registry/imports.ts": 1905,
     "src/codegen/stack-balance.ts": 3424,
     "src/codegen/statements/control-flow.ts": 1988,
     "src/codegen/statements/for-of-destructuring.ts": 2954,
@@ -98,7 +98,7 @@
     "src/ir/backend/porffor/assembler.ts": 1516,
     "src/ir/builder.ts": 2316,
     "src/ir/core/nodes.ts": 2599,
-    "src/ir/from-ast.ts": 17439,
+    "src/ir/from-ast.ts": 17427,
     "src/ir/identity.ts": 1517,
     "src/ir/integration.ts": 10939,
     "src/ir/lower-generic.ts": 4569,
