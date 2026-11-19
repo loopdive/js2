@@ -21,6 +21,12 @@ const CONTRACTS = [
   ["js.object.has", [REF, REF], [BOOL]],
   // (#7354 O4) the dynamic-value legalization's RequireObjectCoercible TypeError
   ["js.object.create-type-error", [REF], [REF]],
+  // (#7368) the Object statics' FromPropertyDescriptor and own-property tests
+  ["js.object.get-own-property", [REF, REF], [REF]],
+  ["js.object.has-own", [REF, REF], [BOOL]],
+  ["js.object.property-is-enumerable", [REF, REF], [BOOL]],
+  // (#7354 O3) OrdinarySet, its original receiver beside the object, as Get's
+  ["js.object.set", [REF, REF, REF, REF], [BOOL]],
 ] as const;
 
 describe("ordinary object semantic contracts", () => {

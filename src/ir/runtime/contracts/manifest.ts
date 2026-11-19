@@ -427,6 +427,7 @@ export const ORDINARY_OBJECT_RUNTIME_FEATURES = Object.freeze([
   "js.object.get-own-property",
   "js.object.has-own",
   "js.object.property-is-enumerable",
+  "js.object.set",
 ] as const);
 export type OrdinaryObjectRuntimeFeature = (typeof ORDINARY_OBJECT_RUNTIME_FEATURES)[number];
 export const ORDINARY_OBJECT_RUNTIME_PROVIDER_IDS = Object.freeze([
@@ -442,6 +443,7 @@ export const ORDINARY_OBJECT_RUNTIME_PROVIDER_IDS = Object.freeze([
   "native.js.object.get-own-property",
   "native.js.object.has-own",
   "native.js.object.property-is-enumerable",
+  "native.js.object.set",
 ] as const);
 export type OrdinaryObjectRuntimeProviderId = (typeof ORDINARY_OBJECT_RUNTIME_PROVIDER_IDS)[number];
 

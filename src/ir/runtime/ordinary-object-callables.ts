@@ -66,6 +66,8 @@ const DECLARATIONS: Readonly<Record<OrdinaryObjectRuntimeFeature, IrRuntimeCalla
   "js.object.get-own-property": declaration("js.object.get-own-property", [EXTERNAL, EXTERNAL], [EXTERNAL]),
   "js.object.has-own": declaration("js.object.has-own", [EXTERNAL, EXTERNAL], [BOOLEAN]),
   "js.object.property-is-enumerable": declaration("js.object.property-is-enumerable", [EXTERNAL, EXTERNAL], [BOOLEAN]),
+  // (#7354 O3) OrdinarySet (§10.1.9.2): the original receiver beside the object whose chain it walks, as Get's.
+  "js.object.set": declaration("js.object.set", [EXTERNAL, EXTERNAL, EXTERNAL, EXTERNAL], [BOOLEAN]),
 });
 
 /** (#7368) The descriptor word's bits, as documented on {@link DECLARATIONS}. */

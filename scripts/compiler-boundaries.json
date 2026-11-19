@@ -17077,6 +17077,14 @@
       "nextBoundary": "Prepared presentation runtime census (#7354 R): the presentation's runtime policy and the authentication of each selected provider against the completed physical plan; moves with ir-program-presentation.ts at compiler-layer activation."
     },
     {
+      "path": "src/compiler/prepared-code-strictness.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "compiler",
+      "owner": "7354",
+      "nextBoundary": "The code strictness the compiler hands the Prepared source producer (#7354 O3), read from codegen's isStrictContext so src/ir imports no codegen helper; moves with ir-program-presentation.ts at compiler-layer activation."
+    },
+    {
       "path": "src/compiler/prepared-formatter-census.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
@@ -17129,7 +17137,7 @@
       "layer": "ir-program"
     },
     {
-      "path": "src/ir/program/dynamic-member-read.ts",
+      "path": "src/ir/program/dynamic-member-access.ts",
       "state": "clean",
       "layer": "ir-program"
     },

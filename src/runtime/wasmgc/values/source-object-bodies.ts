@@ -67,6 +67,15 @@ const EMPTY = { kind: "empty" } as const;
 const EXTERN = { kind: "val", type: { kind: "externref" } } as const;
 /** The `$PropEntry` fields the own-property bodies read. */
 const ENTRY = { value: 1, flags: 2, get: 4, set: 5 } as const;
+/** A data property's whole descriptor, every attribute present and true, with its value: CreateDataProperty's. */
+const CREATE_DATA_PROPERTY =
+  ENCODING.writable |
+  ENCODING.enumerable |
+  ENCODING.configurable |
+  ENCODING.writableSpecified |
+  ENCODING.enumerableSpecified |
+  ENCODING.configurableSpecified |
+  ENCODING.hasValue;
 
 /** What an own-property body reads of an ordinary object and of the carrier's primitives. */
 export interface SourceObjectOwnOperands {
@@ -132,13 +141,6 @@ export function buildSourceObjectOwnTestDefinition(
     : { locals: [any], body: buildOwnPropertyBody(bindings) };
 }
 
-/** A data descriptor word with a value and every attribute present and true. */
-const ALL_TRUE =
-  ENCODING.hasValue |
-  (ENCODING.writable | ENCODING.writableSpecified) |
-  (ENCODING.enumerable | ENCODING.enumerableSpecified) |
-  (ENCODING.configurable | ENCODING.configurableSpecified);
-
 type DescriptorField = "value" | "writable" | "get" | "set" | "enumerable" | "configurable";
 
 /**
@@ -165,7 +167,7 @@ export function buildSourceObjectOwnDescriptorDefinition(
     get(descriptor),
     ...d.keys(name),
     ...value,
-    { op: "f64.const", value: ALL_TRUE },
+    { op: "f64.const", value: CREATE_DATA_PROPERTY },
     { op: "call", funcIdx: d.defineData },
   ];
   const attribute = (bit: number): Instr[] => [
@@ -229,6 +231,60 @@ export function buildSourceObjectOwnDescriptorDefinition(
       ...field("enumerable", attribute(ENCODING.enumerable)),
       ...field("configurable", attribute(ENCODING.configurable)),
       get(descriptor),
+    ],
+  };
+}
+
+/**
+ * (#7354 O3) `js.object.set(object, key, value, receiver)`: OrdinarySet (§10.1.9.2) over the kernel's lookup, the walk
+ * `get` takes. A writable data property it finds, or none (absent, or a miss at the realm's Object.prototype, which
+ * every caller's key refusal makes a true miss), is CreateDataProperty on the receiver through the descriptor pack's
+ * define. That agrees with OrdinarySet's `{ [[Value]] }` define of an existing own property because every own
+ * property of a source object is writable, enumerable and configurable (a literal's define-data, or this set), and a
+ * plain program writes no realm prototype. (#7368) An `Object` static can define any other property, but a program
+ * that names `Object` is not plain, so its member writes refuse before they reach here. OrdinarySet's other answers (a setter call, `false` for a read-only or
+ * setter-less property) are unreachable from a plain program and trap, as an unknown carrier (status 3) does.
+ */
+export function buildSourceObjectSetDefinition(d: {
+  readonly entryTypeIdx: TypeHandle;
+  readonly lookup: FuncHandle;
+  readonly defineData: FuncHandle;
+}): SourceObjectDefinition {
+  const [status, entry] = [4, 5];
+  return {
+    locals: [
+      { name: "status", type: { kind: "i32" } },
+      { name: "entry", type: { kind: "ref_null", typeIdx: d.entryTypeIdx } },
+    ],
+    body: [
+      { op: "local.get", index: 0 },
+      { op: "local.get", index: 1 },
+      { op: "call", funcIdx: d.lookup },
+      { op: "local.set", index: entry },
+      { op: "local.tee", index: status },
+      { op: "i32.const", value: 1 },
+      { op: "i32.eq" },
+      {
+        op: "if",
+        blockType: { kind: "val", type: { kind: "i32" } },
+        then: [
+          { op: "local.get", index: entry },
+          { op: "ref.as_non_null" },
+          { op: "struct.get", typeIdx: d.entryTypeIdx, fieldIdx: 2 },
+          { op: "i32.const", value: ENCODING.accessor | ENCODING.writable },
+          { op: "i32.and" },
+          { op: "i32.const", value: ENCODING.writable },
+          { op: "i32.ne" },
+        ],
+        else: [{ op: "local.get", index: status }, { op: "i32.const", value: 2 }, { op: "i32.gt_u" }],
+      },
+      { op: "if", blockType: { kind: "empty" }, then: [{ op: "unreachable" }] },
+      { op: "local.get", index: 3 },
+      { op: "local.get", index: 1 },
+      { op: "local.get", index: 2 },
+      { op: "f64.const", value: CREATE_DATA_PROPERTY },
+      { op: "call", funcIdx: d.defineData },
+      { op: "i32.const", value: 1 },
     ],
   };
 }

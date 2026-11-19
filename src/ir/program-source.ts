@@ -849,6 +849,11 @@ export interface IrProgramSourceInput {
   readonly policy: RuntimeManifestPolicy;
   readonly deferTopLevelInit: boolean;
   /**
+   * (#7354 O3) Whether a function's code, or a source file's script or module code, is strict, as the compiler
+   * decides it. Omission lowers without a code strictness, as before.
+   */
+  readonly codeStrictness?: (node: ts.FunctionLikeDeclaration | ts.SourceFile) => boolean;
+  /**
    * Explicit frontend lowering selection; not provider availability or
    * permission to emit. Omission preserves historical source lowering.
    */
@@ -1418,6 +1423,14 @@ function prepareSourceFunctionSignatures(
 }
 
 /** Build each original source body once, before any backend context or allocator exists. */
+/** (#7354 O3) The code strictness a unit lowers under, if the compiler supplies one. */
+function sourceCodeStrictness(
+  input: IrProgramSourceInput,
+  code: ts.FunctionDeclaration | ts.SourceFile,
+): { readonly functionCodeStrict?: boolean } {
+  return input.codeStrictness ? { functionCodeStrict: input.codeStrictness(code) } : {};
+}
+
 /** Preserve exact original lifted provenance before admitting derived records. */
 function appendLiftedSourceProvenance(
   provenanceRecords: ReturnType<typeof lowerFunctionAstToIr>["liftedUnitProvenance"],
@@ -1768,6 +1781,7 @@ export function prepareIrProgramSources(
             }),
         funcName: unit.displayName,
         exported: exportedUnits.has(unit.id),
+        ...sourceCodeStrictness(input, moduleInit ? source : declaration),
         identityContext: identity,
         checker: input.checker,
         oracle: input.oracle,
