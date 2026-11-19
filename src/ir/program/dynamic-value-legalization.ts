@@ -39,12 +39,12 @@ import { JS_TAG_IDS } from "../runtime/js-tag-domain.js";
 import { typeofComparisons } from "./typeof-comparisons.js";
 import { PREPARED_NUMBER_TO_STRING } from "./number-to-string-target.js";
 import { IR_DYN_ADD_FN } from "../../shared/contracts/dynamic-add-helper.js";
-import { NO_OBJECTS, type ProgramObjects } from "../source-plain-objects.js";
 import { gap } from "./dynamic-value-gap.js";
 import { dynamicMemberRead } from "./dynamic-member-read.js";
 import {
   ADD_ROLE,
   KIND_TEST,
+  NO_OBJECTS,
   KINDS_OF_TYPEOF,
   TO_NUMBER_ARM,
   TO_STRING_ARM,
@@ -53,6 +53,7 @@ import {
   boxedKind,
   plainObjectRefusal,
   type CarrierKind,
+  type ProgramObjects,
 } from "./dynamic-value-kinds.js";
 
 const CARRIER: IrType = Object.freeze({ kind: "val", val: Object.freeze({ kind: "externref" }) });

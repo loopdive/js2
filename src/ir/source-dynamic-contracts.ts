@@ -37,7 +37,8 @@ import {
   refuseUnadmittedThrows,
 } from "./program/dynamic-value-legalization.js";
 import { retargetNumberToString } from "./program/number-to-string-target.js";
-import { programObjects, type ProgramObjects } from "./source-plain-objects.js";
+import { programObjects } from "./source-plain-objects.js";
+import type { ProgramObjects } from "./program/dynamic-value-kinds.js";
 import type { AllocSiteRegistry } from "./analysis/alloc-registry.js";
 import type { RuntimeManifestPolicy } from "../runtime/contracts/provider-policy.js";
 import type { ValType } from "../wasm/model/instructions.js";
