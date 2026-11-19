@@ -364,6 +364,7 @@ import {
   type IrRetainedFunctionMethodPlan,
   type IrStaticNumericArrayPlan,
   type IrStaticRegExpTestPlan,
+  makeIrAmbientBindingPredicate,
 } from "./module-bindings.js";
 import { collectPatternBindingNames } from "./analysis/ast-scope.js";
 import { moduleInitBindings } from "./module-init-vars.js";
@@ -2326,26 +2327,6 @@ function fillSealedPreparedCallable(
   return previous;
 }
 
-function makeAmbientStringBindingPredicate(checker: ts.TypeChecker): (node: ts.Identifier) => boolean {
-  return (node) => {
-    try {
-      const symbol = checker.getSymbolAtLocation(node);
-      // allowJs programs can omit lib declarations entirely. An unresolved
-      // `String` is the global constructor; every source-owned shadow has a
-      // source declaration and is rejected by the branch below.
-      if (!symbol) return true;
-      const declarations = [symbol.valueDeclaration, ...(symbol.declarations ?? [])].filter(
-        (declaration): declaration is ts.Declaration => declaration !== undefined,
-      );
-      return (
-        declarations.length > 0 && declarations.every((declaration) => declaration.getSourceFile().isDeclarationFile)
-      );
-    } catch {
-      return false;
-    }
-  };
-}
-
 function makeIrDirectCallReconciler(
   sourceFile: ts.SourceFile,
   loweringPlans: IrIntegrationLoweringPlans | undefined,
@@ -2573,7 +2554,7 @@ export function compileIrPathFunctions(
     moduleBindingIdentityContext,
   );
   const classifyArrayElementFamily = makeIrArrayElementFamilyClassifier(ctx.checker, ctx.oracle);
-  const isAmbientStringBinding = makeAmbientStringBindingPredicate(ctx.checker);
+  const isAmbientStringBinding = makeIrAmbientBindingPredicate(ctx.checker, "every-or-unresolved");
   const declarationsByName = collectIntegrationFunctionDeclarations(integrationSourceFiles);
   const { implicitParamUsesNumericVecAbi, effectiveOverride } = makeMultiSourceOverrideResolvers({
     ctx,
@@ -7148,7 +7129,7 @@ function makeFromAstResolver(
   preparedNumberCall?: (call: ts.CallExpression) => boolean, // (#7106 module-init lever B)
   nativeBufferSurface?: IrNativeBufferSurfacePlan, // (#7274)
 ): IrFromAstResolver {
-  const isAmbientStringBinding = makeAmbientStringBindingPredicate(ctx.checker);
+  const isAmbientStringBinding = makeIrAmbientBindingPredicate(ctx.checker, "every-or-unresolved");
   const isRegExpExpression = makeIrRegExpExpressionPredicate(ctx.checker);
   const supportsBackendCapability = irBackendCapabilityQuery(ctx);
   // (#3526 F3-S3) Resolved once, pre-freeze: the arm below projects this value.

@@ -484,21 +484,21 @@ export function makeIrRegExpExpressionPredicate(checker: ts.TypeChecker): (expr:
  * without module-global lowering can still distinguish the real lib `Math`
  * object from a source declaration or parameter with the same name.
  *
- * `quantifier` picks how many of the symbol's declarations must be
- * declaration-file ones: `"some"` (the default) is the ambient test;
- * `"every"` (#7118) is the stricter lib-only test — a script's
- * `function Number() {}` merges with the lib's `declare var Number`, so
- * "some" calls it ambient and "every" does not. `"no-user"` (#7106) also
- * accepts a symbol with no declaration at all, the intrinsic `undefined`.
+ * `quantifier` picks how many of the symbol's declarations must be declaration-file ones: `"some"` (the
+ * default) is the ambient test; `"every"` (#7118) is the lib-only test — a script's `function Number() {}`
+ * merges with the lib's `declare var Number`, so "some" calls it ambient and "every" does not. `"no-user"`
+ * (#7106) also accepts a symbol with no declaration, the intrinsic `undefined`. `"every-or-unresolved"` also
+ * accepts a name with no symbol: an allowJs program may omit the lib, and an unresolved `String` is then the
+ * global constructor (every source-owned shadow has a declaration).
  */
 export function makeIrAmbientBindingPredicate(
   checker: ts.TypeChecker,
-  quantifier: "some" | "every" | "no-user" = "some",
+  quantifier: "some" | "every" | "every-or-unresolved" | "no-user" = "some",
 ): (node: ts.Identifier) => boolean {
   return (node) => {
     try {
       const symbol = checker.getSymbolAtLocation(node);
-      if (symbol === undefined) return false;
+      if (symbol === undefined) return quantifier === "every-or-unresolved";
       const declarations = [symbol.valueDeclaration, ...(symbol.declarations ?? [])].filter(
         (declaration): declaration is ts.Declaration => declaration !== undefined,
       );

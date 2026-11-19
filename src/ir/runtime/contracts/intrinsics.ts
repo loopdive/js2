@@ -63,6 +63,8 @@ export const EXTERN_BOUNDARY_RUNTIME_FEATURES = Object.freeze(["js.extern.is_und
 
 /** (#7354 D1) Dynamic-value feature rows, 1:1 with their intrinsic IDs. */
 export const DYNAMIC_VALUE_RUNTIME_FEATURES = Object.freeze([
+  "js.value.is_boolean",
+  "js.value.is_number",
   "js.value.strict_eq",
   "js.value.to_boolean",
   "js.value.undefined",

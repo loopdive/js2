@@ -56,6 +56,7 @@
 
 import { someReturnedValue } from "./function-returns.js";
 import { ts, forEachChild } from "../ts-api.js";
+import { switchCaseTests } from "./switch-case-tests.js";
 import { isStableDirectCallTarget, localIsRewritten } from "./lattice-param-facts.js";
 import { isPlannedScriptVarClosure } from "./function-member-closure-plan.js";
 import { exactGlobalEvalStatement } from "../eval-call-shape.js";
@@ -85,7 +86,7 @@ export { isAsyncIrReady } from "./async-selection.js";
 import { collectIrSafeVarDeclarationLists } from "./function-local-var.js";
 import { isInLoopOfOwnFunction, isModuleInitVarList } from "../shared/var-declaration-lists.js";
 import { carrierLeafReads, collectIrSafeModuleVarDeclarationLists } from "./module-init-vars.js";
-import { isAmbientIntrinsicValueUse } from "../shared/ambient-intrinsics.js";
+import { builtinGlobalValueAdmitted } from "./builtin-globals.js";
 import { collectDynamicStringLocalWidening } from "./dynamic-local-widening.js";
 import { irDynamicMethodCallNeedsWrapper, irWrapperSymbolIsNameable } from "./dynamic-method-call-names.js";
 import {
@@ -945,6 +946,7 @@ export interface IrSelectionOptions extends IrAsyncSelectionOptions {
       | "dynamic-method-call-wrapper"
       | "native-global-function-call"
       | "native-object-statics"
+      | "native-builtin-globals"
       | "native-string-uses",
   ) => boolean;
   /**
@@ -5521,17 +5523,6 @@ interface BreakScope {
 const NO_BREAKS: BreakScope = { inSwitch: false, names: NO_LABELS };
 
 /**
- * #2952 slice 4 — the numeric value of a claimable `case` test: a plain
- * NumericLiteral or prefix-minus NumericLiteral. EXACT mirror of
- * from-ast's `numericLiteralValue` (selector↔builder parity). `null`
- * for any other expression shape.
- */
-function stringCaseTestValue(expr: ts.Expression): string | null {
-  if (ts.isStringLiteral(expr) || ts.isNoSubstitutionTemplateLiteral(expr)) return expr.text;
-  return null;
-}
-
-/**
  * #2952 slice 6b — is there an indexed read anywhere in this value's own
  * producer subtree? (Nested closures are skipped: their bodies produce a
  * different value.)
@@ -5605,18 +5596,6 @@ function switchDiscHasIrStringCarrier(expr: ts.Expression, seen = new Set<ts.Var
   return switchDiscHasIrStringCarrier(declaration.initializer, seen);
 }
 
-function numericCaseTestValue(expr: ts.Expression): number | null {
-  if (ts.isNumericLiteral(expr)) return Number(expr.text.replace(/_/g, ""));
-  if (
-    ts.isPrefixUnaryExpression(expr) &&
-    expr.operator === ts.SyntaxKind.MinusToken &&
-    ts.isNumericLiteral(expr.operand)
-  ) {
-    return -Number(expr.operand.text.replace(/_/g, ""));
-  }
-  return null;
-}
-
 /**
  * #2952 slice 4 — shape-check `switch (disc) { case <numeric literal>:
  * ...; default: ... }`. Backed by `lowerSwitchStatement` (block-per-case
@@ -5644,30 +5623,10 @@ function isPhase1SwitchStatement(
     if (!isPhase1Expr(stmt.expression, scope, localClasses)) return shapeNo("switch-disc", stmt.expression);
     // The dispatch ladder takes an i32 / f64 (or string) discriminant, never the carrier.
     if (readsCarrier(stmt.expression)) return shapeNo("switch-disc-carrier", stmt.expression);
-    let defaults = 0;
-    // #2952 slice 6b — a clause test is a numeric OR a string literal. The two
-    // families are mutually exclusive within one switch: §14.12.9 dispatch is
-    // strict equality, so a numeric test can never match a string disc (and
-    // vice versa), and a mixed set would need both dispatch mechanisms in one
-    // ladder for zero real-world benefit. Reject the mixed shape outright.
-    let numericTests = 0;
-    let stringTests = 0;
-    for (const clause of stmt.caseBlock.clauses) {
-      if (ts.isCaseClause(clause)) {
-        if (numericCaseTestValue(clause.expression) !== null) {
-          numericTests++;
-        } else if (stringCaseTestValue(clause.expression) !== null) {
-          stringTests++;
-        } else {
-          return shapeNo("switch-case-test-nonliteral", clause.expression);
-        }
-      } else {
-        defaults++;
-        if (defaults > 1) return shapeNo("switch-multiple-defaults", clause);
-      }
-    }
-    if (numericTests > 0 && stringTests > 0) return shapeNo("switch-case-test-mixed", stmt.expression);
-    if (stringTests > 0) {
+    // #2952 slice 6b — every clause test a numeric literal, or every one a string literal (one shared predicate).
+    const tests = switchCaseTests(stmt);
+    if (tests.kind === "rejected") return shapeNo(tests.reason, tests.node);
+    if (tests.kind === "string") {
       // The string ladder lowers `disc === "lit"` through the IR's abstract
       // `string.eq` (mode-resolved at lower time: host `string_equals` /
       // native `__str_equals`), which requires the disc to be an
@@ -9065,7 +9024,7 @@ function exactNumericExponentiationOperand(
 /**
  * (#7106) An ambient intrinsic (`TypeError`, `Object`) read as a
  * VALUE: a named read off the realm's global object, on the lanes that carry
- * legacy's `globalThis` wrapper. Admission is `isAmbientIntrinsicValueUse`
+ * legacy's `globalThis` wrapper. Admission is `builtinGlobalValueAdmitted`
  * (shared with the from-ast producer: name, lib-only binding, opaque flow —
  * the #7123 member-read refusal, followed through aliases and parameters);
  * the selector adds only the lane checks. A source declaration is never
@@ -9076,8 +9035,10 @@ function isAmbientIntrinsicValue(expr: ts.Identifier): boolean {
   return (
     resolver !== null &&
     resolver(expr) === undefined &&
-    isAmbientIntrinsicValueUse(expr, (node) => resolver.isLibOnlyBinding(node), {
+    builtinGlobalValueAdmitted(expr, {
+      isLibOnlyBinding: (node) => resolver.isLibOnlyBinding(node),
       builtinProtoCompanionSeeded: () => currentSelectionOptions?.builtinProtoCompanionSeeded === true,
+      supportsBackendCapability: currentSelectionOptions?.supportsBackendCapability,
     }) &&
     currentDynamicRuntimeBuildable &&
     currentDynMemberReadBuildable &&

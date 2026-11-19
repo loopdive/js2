@@ -433,7 +433,9 @@ import {
   irVecNewSizedSymbol,
 } from "./vector-runtime.js";
 import { readEnv } from "../env.js";
-import { isAmbientIntrinsicValueUse } from "../shared/ambient-intrinsics.js";
+import { classifyIdentifierRead } from "./identifier-read.js";
+import type { UnresolvedGlobalTypeof } from "./source-dynamic-contracts.js";
+import { numericCaseTestValue, stringCaseTestValue, switchCaseTests } from "./switch-case-tests.js";
 
 interface ResolvedIrVecType {
   readonly lowering: IrVecLowering;
@@ -647,7 +649,12 @@ export interface IrFromAstResolver extends PreparedAsyncFromAstResolver {
    * claim and the lowering read one capability (`number-to-string` for a `+`).
    */
   supportsBackendCapability?(
-    capability: "number-to-string" | "native-regexp" | IrAmbientGlobalFunctionCapability | ObjectStaticCapability,
+    capability:
+      | "number-to-string"
+      | "native-regexp"
+      | "native-builtin-globals"
+      | IrAmbientGlobalFunctionCapability
+      | ObjectStaticCapability,
   ): boolean;
   /**
    * (#7253) The host-free provider legacy calls for a direct ambient
@@ -943,6 +950,8 @@ export interface IrFromAstResolver extends PreparedAsyncFromAstResolver {
   isAmbientBinding?(node: ts.Identifier): boolean;
   /** (#7118) Every declaration of the identifier's symbol is a lib one. */
   isLibOnlyBinding?(node: ts.Identifier): boolean;
+  /** (#7354 Ty) The `typeof` answer for a global the program does not declare (see `unresolvedGlobalTypeof`). */
+  unresolvedGlobalTypeof?(node: ts.Identifier): UnresolvedGlobalTypeof | undefined;
   /** (#7127) The module's builtin-prototype brand companion is seeded. */
   builtinProtoCompanionSeeded?(): boolean;
   /** (#7106 lever O) The program has a runtime-eval site that may run. */
@@ -5232,72 +5241,49 @@ function lowerExprUnchecked(expr: ts.Expression, cx: LowerCtx, hint: IrType): Ir
     return p.value;
   }
   if (ts.isIdentifier(expr)) {
-    const topLevelFunction = cx.topLevelFunctionValues?.get(expr);
-    if (topLevelFunction)
-      return functionObjects.lowerTopLevelFunctionValue(topLevelFunction, functionObjectLoweringHost(cx));
-    const p = cx.scope.get(expr.text);
-    // (#2856) Host ambient global (`document`, `window`, …): not a scope
-    // binding — resolves through the legacy declared-globals registry to the
-    // `global_<name>` handle import, typed as the global's extern class so
-    // member access on it dispatches through the extern arms. Scope bindings
-    // take priority (a local named `document` shadows the global, matching
-    // both JS semantics and the selector's checker-backed resolution).
-    // Host-free modes register no declared globals, so this resolves nothing
-    // there — and the capability gate means the selector never claims such a
-    // function in those modes anyway (`assertNotDeferred` guards the
-    // invariant).
-    if (!p) {
-      const moduleBinding = cx.resolver?.resolveModuleBinding?.(expr);
-      if (moduleBinding) return lowerResolvedModuleBindingRead(expr.text, moduleBinding, cx);
-      // (#7106 item 1) the global `undefined` as a value: the carrier's
-      // undefined (#7104 `dyn.undefined`); selector-admitted on the dynamic
-      // host-free lanes only.
-      if (expr.text === "undefined" && cx.resolver?.stringIsExternref?.() !== true) {
+    const read = classifyIdentifierRead(expr, cx);
+    switch (read.kind) {
+      case "top-level-function":
+        return functionObjects.lowerTopLevelFunctionValue(read.plan, functionObjectLoweringHost(cx));
+      case "module-binding":
+        return lowerResolvedModuleBindingRead(expr.text, read.binding, cx);
+      case "global-undefined":
         return cx.builder.emitDynUndefined(JS_TAG_IDS.Undefined);
-      }
-      // #7104 — global numeric constants (legacy: `identifiers.ts` NaN/Infinity arm).
-      if (expr.text === "NaN" || expr.text === "Infinity") {
-        return cx.builder.emitConst(
-          { kind: "f64", value: expr.text === "NaN" ? NaN : Infinity },
-          irVal({ kind: "f64" }),
-        );
-      }
-      const standaloneDomGlobal = cx.resolver?.standaloneDomOperation?.(expr);
-      const hg = cx.resolver?.getHostGlobalInfo?.(expr.text);
-      if (standaloneDomGlobal?.kind === "global-get" && !hg) {
+      case "global-typeof":
+        // invariant: `lowerTypeOf` answers a `typeof` of such a name before lowering its operand.
         throw new IrInvariantError(
           "selection-preparation-mismatch",
           "build",
-          `ir/from-ast: certified DOM global ${expr.text} has no prepared import (${cx.funcName})`,
+          `ir/from-ast: typeof ${expr.text} was lowered as a read (${cx.funcName})`,
         );
-      }
-      if (hg) {
-        const exactStandaloneDomGlobal =
-          standaloneDomGlobal?.kind === "global-get" &&
-          standaloneDomGlobal.identifier === expr &&
-          standaloneDomGlobal.importName === hg.importName;
+      case "global-number":
+        return cx.builder.emitConst({ kind: "f64", value: read.value }, irVal({ kind: "f64" }));
+      case "host-global": {
+        // The `global_<name>` handle import, typed as the global's extern class so member access dispatches
+        // through the extern arms; the capability gate keeps host-free modes from claiming it.
+        const { global } = read;
         assertNotDeferred(
-          domSurfaceCapability(platformExternAdmits(cx, hg.className), exactStandaloneDomGlobal),
+          domSurfaceCapability(platformExternAdmits(cx, global.className), read.certifiedDom),
           `host global "${expr.text}"`,
           cx.funcName,
         );
-        const r = cx.builder.emitCall(irImportFuncRef("env", hg.importName), [], {
+        const r = cx.builder.emitCall(irImportFuncRef("env", global.importName), [], {
           kind: "extern",
-          className: hg.className,
+          className: global.className,
         });
-        if (r === null) {
-          // invariant (producer-promise): a compiler-support/runtime helper declared non-void returned no SSA value — #4502.
-          throw new Error(`ir/from-ast: host global "${expr.text}" produced no result in ${cx.funcName}`);
-        }
+        // invariant (producer-promise): a compiler-support/runtime helper declared non-void returned no SSA value — #4502.
+        if (r === null) throw new Error(`ir/from-ast: host global "${expr.text}" produced no result in ${cx.funcName}`);
         return r;
       }
+      case "ambient-intrinsic":
+        return lowerAmbientIntrinsicValue(expr, cx);
+      case "unresolved":
+        demoteToLegacy(
+          "body-shape-rejected",
+          `ir/from-ast: identifier "${expr.text}" is not in scope in ${cx.funcName}`,
+        );
     }
-    // (#7106) An ambient intrinsic as a VALUE: a named read off the realm's
-    // global object; the selector's predicate, a refused use demotes below.
-    if (!p && isAmbientIntrinsicValueUse(expr, (node) => cx.resolver?.isLibOnlyBinding?.(node) === true, cx.resolver))
-      return lowerAmbientIntrinsicValue(expr, cx);
-    if (!p)
-      demoteToLegacy("body-shape-rejected", `ir/from-ast: identifier "${expr.text}" is not in scope in ${cx.funcName}`);
+    const p = read.binding;
     // Slice 6 part 2 (#1181): slot-bound identifier (let mutated across
     // for-of iterations). Reads emit `slot.read`, which lowers to a
     // `local.get` on the Wasm-local slot. The slot's type is recorded
@@ -6047,6 +6033,10 @@ function lowerTypeOf(expr: ts.TypeOfExpression, cx: LowerCtx): IrValueId {
     const ambientTag = ambientTypeofIdentifierTagFromAst(expr.expression, cx);
     if (ambientTag !== undefined) return cx.builder.emitStringConst(ambientTag);
   }
+  // (#7354 Ty) So is a global the program does not declare, on the Prepared path (also parenthesized).
+  const operand = peelParensExpr(expr.expression);
+  const globalTag = ts.isIdentifier(operand) ? globalTypeofTag(operand, cx) : undefined;
+  if (globalTag !== undefined) return cx.builder.emitStringConst(globalTag);
   const inner = lowerExpr(expr.expression, cx, irVal({ kind: "f64" }));
   const innerType = cx.builder.typeOf(inner);
   const tag = staticTypeOfFor(innerType);
@@ -13083,10 +13073,14 @@ function lowerSwitchStatement(stmt: ts.SwitchStatement, cx: LowerCtx): void {
     return;
   }
   const clauses = stmt.caseBlock.clauses;
+  // The selector's own predicate: the Prepared path has no selector, and the string dispatch skips non-literals.
+  const caseTests = switchCaseTests(stmt);
+  if (caseTests.kind === "rejected")
+    throw new IrUnsupportedError("body-shape-rejected", "build", `ir/from-ast: ${caseTests.reason} in ${cx.funcName}`);
   const stringTestTexts = clauses.map((clause) =>
-    ts.isCaseClause(clause) ? stringLiteralCaseTestValue(clause.expression) : null,
+    ts.isCaseClause(clause) ? stringCaseTestValue(clause.expression) : null,
   );
-  const isStringSwitch = stringTestTexts.some((text) => text !== null);
+  const isStringSwitch = caseTests.kind === "string";
 
   // #2952 slice 6b — a STRING-tested switch reuses the numeric ladder by
   // computing a dispatch INDEX first: `disc` is compared against each case's
@@ -13122,11 +13116,11 @@ function lowerSwitchStatement(stmt: ts.SwitchStatement, cx: LowerCtx): void {
       // String switch: the test IS the clause index (the dispatch chain
       // above already resolved the literal comparison). Numeric switch:
       // the literal's value, as slice 4.
-      const v = dispatch ? k : numericLiteralValue(clause.expression);
+      const v = dispatch ? k : numericCaseTestValue(clause.expression);
       if (v === null) {
-        // invariant (producer-promise): the selector's own gate already decided this predicate — #4502.
+        // invariant: `switchCaseTests` (asked above) admits a numeric switch only when every test is a numeric literal.
         throw new Error(
-          `ir/from-ast: switch case test must be a numeric literal — selector gate failed (${cx.funcName})`,
+          `ir/from-ast: switch case test must be a numeric literal — switchCaseTests admitted it (${cx.funcName})`,
         );
       }
       tests.push(v);
@@ -13208,33 +13202,6 @@ function lowerStringSwitchDispatch(
     cx.builder.emitIfStmt({ cond: matched, then, else: [] });
   }
   return { disc: cx.builder.emitSlotRead(matchSlot) };
-}
-
-/**
- * #2952 slice 6b — the text of a string-literal case test. `null` for any
- * other expression shape (numeric literals take the slice-4 path; everything
- * else is selector-rejected).
- */
-function stringLiteralCaseTestValue(expr: ts.Expression): string | null {
-  if (ts.isStringLiteral(expr) || ts.isNoSubstitutionTemplateLiteral(expr)) return expr.text;
-  return null;
-}
-
-/**
- * #2952 slice 4 — the numeric value of a literal case test: a plain
- * NumericLiteral or a prefix-minus NumericLiteral. `null` for any other
- * expression shape (the selector mirror rejects those).
- */
-function numericLiteralValue(expr: ts.Expression): number | null {
-  if (ts.isNumericLiteral(expr)) return Number(expr.text.replace(/_/g, ""));
-  if (
-    ts.isPrefixUnaryExpression(expr) &&
-    expr.operator === ts.SyntaxKind.MinusToken &&
-    ts.isNumericLiteral(expr.operand)
-  ) {
-    return -Number(expr.operand.text.replace(/_/g, ""));
-  }
-  return null;
 }
 
 /**
@@ -13998,6 +13965,19 @@ function boxMixedConditionalArm(
   return boxed;
 }
 
+/** (#7354 Ty) The `typeof` answer the read classifier gives a global the program does not declare, or a refusal. */
+function globalTypeofTag(id: ts.Identifier, cx: LowerCtx): string | undefined {
+  const read = classifyIdentifierRead(id, cx);
+  if (read.kind !== "global-typeof") return undefined;
+  if (read.tag === "refuse")
+    throw new IrUnsupportedError(
+      "type-resolution-unsupported",
+      "build",
+      `ir/from-ast: typeof of the host global ${id.text} has no Prepared answer (${cx.funcName})`,
+    );
+  return read.tag;
+}
+
 /** (#7106 S1b) from-ast's half of the `typeof <ambient>` fold proof (see `lowerTypeOf`). */
 function ambientTypeofIdentifierTagFromAst(id: ts.Identifier, cx: LowerCtx): "object" | "function" | undefined {
   if (cx.scope.get(id.text) !== undefined) return undefined;
@@ -14113,7 +14093,10 @@ function lowerConditional(expr: ts.ConditionalExpression, cx: LowerCtx, hint?: I
     return withNodeSourceSite(cx, expr, () => lowerConditional(expr, cx, hint));
   // (#7106 S1b) A constant `typeof <ambient>` condition selects its live arm
   // at build time — the selector admitted exactly that arm.
-  const folded = foldAmbientTypeofComparison(expr.condition, (id) => ambientTypeofIdentifierTagFromAst(id, cx));
+  const folded = foldAmbientTypeofComparison(
+    expr.condition,
+    (id) => ambientTypeofIdentifierTagFromAst(id, cx) ?? globalTypeofTag(id, cx),
+  );
   if (folded !== undefined) {
     return lowerExpr(folded ? expr.whenTrue : expr.whenFalse, cx, hint ?? irVal({ kind: "f64" }));
   }

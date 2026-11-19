@@ -91,8 +91,12 @@ export function selectNativeBooleans(
     (demands.projection.prepared.manifest.policy.booleanBoundary.box === "native" &&
       intrinsicDemands(demands, "js.boolean.box").length > 0);
   // (#7354 D1) Dynamic strict equality calls the same predicate and payload
-  // reader a proven extraction does.
-  const readers = unboxes.length > 0 || intrinsicDemands(demands, "js.value.strict_eq").length > 0;
+  // reader a proven extraction does; (#7354 Ty) the Boolean `typeof` test is
+  // that predicate.
+  const readers =
+    unboxes.length > 0 ||
+    intrinsicDemands(demands, "js.value.strict_eq").length > 0 ||
+    intrinsicDemands(demands, "js.value.is_boolean").length > 0;
   return box || readers
     ? { selection: Object.freeze({ ...(box ? { boxMode: "interned" as const } : {}), unbox: readers }) }
     : {};
@@ -131,6 +135,8 @@ function nativeIntrinsicRows(input: NativeStringValueReservationInput): readonly
       canonicalRow(`js.boolean.${direction}`, direction + "-boolean", policy.booleanBoundary[direction] === "native"),
     ),
     canonicalRow("js.extern.is_undefined", "is-undefined", policy.externIsUndefined.probe === "native"),
+    canonicalRow("js.value.is_boolean", "typeof-boolean", true),
+    canonicalRow("js.value.is_number", "typeof-number", true),
     canonicalRow("js.value.strict_eq", "strict-eq", true),
     canonicalRow("js.value.to_boolean", "to-boolean", true),
     canonicalRow("js.value.undefined", "undefined-value", true),

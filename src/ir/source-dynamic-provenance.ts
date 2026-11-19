@@ -35,13 +35,15 @@ export interface SourceDynamicProvenance {
 
 /**
  * The provenance of a program's `sourceFiles`. Without a `dynamicCarrier` on the lane no script `var` gets the
- * dynamic home. `resultIsDynamic` is the unannotated-result contract, which asks `carries` of each returned value.
+ * dynamic home. `resultIsDynamic` is the unannotated-result contract, which asks `carries` of each returned value;
+ * `parameterIsDynamic` is the parameter contract.
  */
 export function sourceDynamicProvenance(
   checker: ts.TypeChecker,
   sourceFiles: readonly ts.SourceFile[],
   dynamicCarrier: boolean,
   resultIsDynamic: (declaration: ts.FunctionDeclaration, carries: Carries) => boolean,
+  parameterIsDynamic: (parameter: ts.ParameterDeclaration) => boolean,
 ): SourceDynamicProvenance {
   const any = checker.getAnyType();
   const homes = new Map<IrModuleBindingDeclaration, IrScriptVarHome | undefined>();
@@ -78,9 +80,10 @@ export function sourceDynamicProvenance(
     const declaration = checker.getSymbolAtLocation(node)?.valueDeclaration;
     if (declaration === undefined) return true;
     if (declaration === self) return false;
-    // An untyped or `any` parameter is checker `any` (above); an annotated one is typed by its annotation, and the
-    // flow rule checks every argument against it.
-    if (ts.isParameter(declaration)) return false;
+    // A parameter with the dynamic contract holds the dynamic value even where the checker narrows its reference
+    // (`typeof x === "number" ? x : 0` types that `x` as `number`, #7354 Ty review). Any other parameter is typed
+    // by its annotation, and the flow rule checks every argument against it.
+    if (ts.isParameter(declaration)) return parameterIsDynamic(declaration);
     if (!ts.isVariableDeclaration(declaration)) return true;
     // A top-level declaration's storage is a global, whose home the classifier names: only a script `var` of the
     // program can have the dynamic home (a lexical, ES-module or ambient global is typed by its declaration, and

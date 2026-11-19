@@ -170,7 +170,8 @@ describe("#7354 X — throw and catch with the Prepared dynamic value", () => {
   // native strings and (#7354 Fa, tests/issue-7354-fa-function-values.test.ts) function values (and for Error
   // objects, under every operation the carrier has). Each other payload that could
   // reach a catch refuses before it does; the slice that makes one reachable must give the dynamic operations its
-  // arm and update this list.
+  // arm and update this list. (#7354 Ty) The catch binding enters the carrier without the box arm's `boxedKind`,
+  // so this list is also what keeps `TYPEOF_KIND` (the `typeof` answers of the admitted kinds) complete.
   it.each([
     ["a typed Boolean throw", "try { throw true; } catch (e) { if (!e) throw 1; }", "throw val not in slice 9"],
     [
@@ -197,7 +198,11 @@ describe("#7354 X — throw and catch with the Prepared dynamic value", () => {
     ],
   ])("refuses %s before it reaches a catch", async (_label, source, expected) => {
     const result = await compile(source, options());
-    expect(result.success).toBe(false);
+    expect(
+      result.success,
+      "a new payload kind reaches a catch: add its kind to TYPEOF_KIND (src/ir/program/dynamic-value-legalization.ts) " +
+        "so `typeof e` answers it, and give the dynamic operations its arm",
+    ).toBe(false);
     expect(messages(result).join("\n")).toContain(expected);
   });
 

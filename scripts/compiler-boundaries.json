@@ -1996,6 +1996,22 @@
   ],
   "files": [
     {
+      "path": "src/ir/switch-case-tests.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "7354-prepared-path",
+      "nextBoundary": "Frontend switch case-test admission shared by the selector and from-ast; moves with from-ast's frontend half."
+    },
+    {
+      "path": "src/ir/identifier-read.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "7354-prepared-path",
+      "nextBoundary": "Frontend identifier-read resolution order (scope, module binding, global constants, host and ambient globals), shared by from-ast's read and its typeof fold; moves with from-ast's frontend half."
+    },
+    {
       "path": "src/ir/function-object-lowering.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
@@ -13186,6 +13202,14 @@
       "nextBoundary": "TypeScript-AST plan of the `Object` statics table (`Object.<static>(…)` through the dynamic carrier), shared by the selector and from-ast (#7338); moves with the frontend inventory split."
     },
     {
+      "path": "src/ir/builtin-globals.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "7350",
+      "nextBoundary": "TypeScript-AST admission of a built-in global read as a value (one admission for the selector and from-ast, #7350); moves with the frontend inventory split."
+    },
+    {
       "path": "src/ir/binding-pattern-plan.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
@@ -17046,6 +17070,11 @@
     },
     {
       "path": "src/ir/program/dynamic-value-legalization.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
+      "path": "src/ir/program/typeof-comparisons.ts",
       "state": "clean",
       "layer": "ir-program"
     },

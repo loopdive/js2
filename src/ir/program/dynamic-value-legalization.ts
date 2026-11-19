@@ -15,8 +15,8 @@
  * backend.
  *
  * Soundness rests on the admitted value set: only numbers, booleans,
- * `undefined` and `null` can enter a dynamic value here (every other box
- * refuses), and the runtime functions behind the intrinsics are exact for that
+ * `undefined`, `null` and (#7354 Str) native strings can enter a dynamic
+ * value here (every other box refuses), and the runtime functions behind the intrinsics are exact for that
  * set. (#7354 T) `null` is the carrier's null reference, as on the ordinary
  * standalone pipeline; `undefined` is the non-null singleton, so the two stay
  * apart under strict equality and the `undefined` probe. (#7354 Fa) A function
@@ -40,6 +40,7 @@ import { IR_DYN_CALL_BOX_FN } from "../../shared/contracts/dynamic-call-helpers.
 import type { IrUnitId } from "../../shared/contracts/ir-identity.js";
 import { irRuntimeCallableDeclaration } from "../runtime/callable-declarations.js";
 import { JS_TAG_IDS } from "../runtime/js-tag-domain.js";
+import { typeofComparisons } from "./typeof-comparisons.js";
 import type { TagId } from "../core/tag-domain.js";
 
 const CARRIER: IrType = Object.freeze({ kind: "val", val: Object.freeze({ kind: "externref" }) });
@@ -102,6 +103,22 @@ const TYPEOF_KIND = {
   function: "function",
 } as const;
 type CarrierKind = (typeof TYPEOF_KIND)[keyof typeof TYPEOF_KIND];
+const KIND_OF_TYPEOF: ReadonlyMap<string, CarrierKind> = new Map(Object.entries(TYPEOF_KIND));
+
+/**
+ * How the carrier tests for each admitted kind: a runtime predicate, the null test, or `"refuse"`. The native
+ * lane has no string predicate resource yet, so a test for a string refuses by name rather than answering false.
+ * The refusal is a named entry, not a missing one: a missing literal in `KIND_OF_TYPEOF` means constant false.
+ */
+const KIND_TEST: Readonly<Record<CarrierKind, IntrinsicId | "ref.is_null" | "refuse">> = {
+  number: "js.value.is_number",
+  boolean: "js.value.is_boolean",
+  undefined: "js.extern.is_undefined",
+  null: "ref.is_null",
+  string: "refuse",
+  // INTEGRATION (S8): Fa admits function values; Ty's per-kind table needs their row. No predicate yet: refuse.
+  function: "refuse",
+};
 
 /** The kind a box to the dynamic value admits, from its tag refinement or its operand; `undefined` refuses. */
 function boxedKind(tag: TagId | undefined, source: IrType | undefined): CarrierKind | undefined {
@@ -126,6 +143,23 @@ export function legalizeDynamicValues(fn: IrFunction): IrFunction {
     ...(instr.site === undefined ? {} : { site: instr.site }),
   });
   const isDynamic = (value: IrValueId): boolean => types.get(value)?.kind === "dynamic";
+  const typeofs = typeofComparisons(fn);
+  // `!==`/`!=`: the positive test into a fresh value, then its negation into the comparison's result.
+  const withSense = (instr: IrInstr, negate: boolean, positive: (result: IrValueId) => IrInstr): IrInstr[] => {
+    if (!negate) return [positive(instr.result!)];
+    const value = valueCount++ as IrValueId;
+    return [
+      positive(value),
+      { kind: "unary", op: "i32.eqz", rand: value, result: instr.result, resultType: instr.resultType },
+    ];
+  };
+  const kindTest = (instr: IrInstr, kind: CarrierKind, value: IrValueId, result: IrValueId): IrInstr => {
+    const test = KIND_TEST[kind];
+    if (test === "refuse") return gap(`typeof test for ${kind}`);
+    return test === "ref.is_null"
+      ? { kind: "unary", op: "ref.is_null", rand: value, result, resultType: instr.resultType }
+      : intrinsic(instr, test, [value], result);
+  };
   /** A value entering the carrier as `kind`; a value of no admitted kind refuses. */
   const admit = (kind: CarrierKind | undefined, instr: IrInstr, value: IrValueId): readonly IrInstr[] => {
     switch (kind) {
@@ -166,34 +200,52 @@ export function legalizeDynamicValues(fn: IrFunction): IrFunction {
         if (!isDynamic(instr.value)) return [instr];
         if (instr.tagId === JS_TAG_IDS.NumberF64) return [intrinsic(instr, "js.number.unbox", [instr.value])];
         return gap(`unbox of tag ${instr.tagId}`);
-      // Only the `undefined` and `null` probes have a source producer here; the
-      // number and Boolean tag tests come from `typeof`, which refuses as
-      // `dyn.typeof`.
-      case "tag.test":
+      // Only the `undefined` and `null` probes have a source producer here; the number and Boolean tests come
+      // from a `typeof` comparison (the `string.eq` arm below).
+      case "tag.test": {
         if (!isDynamic(instr.value)) return [instr];
-        if (instr.tagId === JS_TAG_IDS.Undefined) return [intrinsic(instr, "js.extern.is_undefined", [instr.value])];
-        if (instr.tagId === JS_TAG_IDS.Null)
+        const kind =
+          instr.tagId === JS_TAG_IDS.Undefined ? "undefined" : instr.tagId === JS_TAG_IDS.Null ? "null" : undefined;
+        return kind === undefined
+          ? gap(`tag.test of tag ${instr.tagId}`)
+          : [kindTest(instr, kind, instr.value, instr.result!)];
+      }
+      // (#7354 Ty) `typeof v <op> "literal"` is a tag test on `v`; the `typeof` string and the literal are
+      // consumed by it. A literal no admitted kind answers is constant: `v` was already evaluated.
+      case "string.eq": {
+        const comparison = typeofs.comparisons.get(instr.result!);
+        if (comparison === undefined) return [instr];
+        const kind = KIND_OF_TYPEOF.get(comparison.literal);
+        if (kind === undefined)
           return [
-            { kind: "unary", op: "ref.is_null", rand: instr.value, result: instr.result, resultType: instr.resultType },
+            {
+              kind: "const",
+              value: { kind: "bool", value: comparison.negate },
+              result: instr.result,
+              resultType: instr.resultType,
+            },
           ];
-        return gap(`tag.test of tag ${instr.tagId}`);
+        return withSense(instr, comparison.negate, (result) => kindTest(instr, kind, comparison.operand, result));
+      }
+      case "dyn.typeof":
+        return typeofs.consumed.has(instr.result!) ? [] : gap("dyn.typeof");
+      case "string.const":
+        return typeofs.consumed.has(instr.result!) ? [] : [instr];
       case "dyn.undefined":
         return [intrinsic(instr, "js.value.undefined", [])];
       case "dyn.truthy":
         return [intrinsic(instr, "js.value.to_boolean", [instr.value])];
-      // ToNumber over the admitted set (number, boolean, undefined, null) is
-      // exactly the primitive unboxer: a number reads its payload, a boolean
-      // 0/1, the `undefined` singleton NaN, the null reference 0.
+      // ToNumber over the admitted set is exactly the primitive unboxer: a
+      // number reads its payload, a boolean 0/1, the `undefined` singleton
+      // NaN, the null reference 0, and (#7354 Str) a native string goes
+      // through StringToNumber.
       case "dyn.to_number":
         return [intrinsic(instr, "js.number.unbox", [instr.value])];
       case "dyn.eq": {
         if (instr.loose) return gap("dyn.eq (loose)");
-        if (!instr.negate) return [intrinsic(instr, "js.value.strict_eq", [instr.lhs, instr.rhs])];
-        const positive = valueCount++ as IrValueId;
-        return [
-          intrinsic(instr, "js.value.strict_eq", [instr.lhs, instr.rhs], positive),
-          { kind: "unary", op: "i32.eqz", rand: positive, result: instr.result, resultType: instr.resultType },
-        ];
+        return withSense(instr, instr.negate, (result) =>
+          intrinsic(instr, "js.value.strict_eq", [instr.lhs, instr.rhs], result),
+        );
       }
       // (#7354 Fa, Fb) The function-value projection (`functionObjectDynamicValue`) boxes a packed callable, and a
       // native closure call boxes its result, an externref, into the dynamic value: the carrier is that externref.

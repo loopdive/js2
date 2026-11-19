@@ -1,10 +1,11 @@
 ---
 id: 7350
 title: "IR foundation: built-in globals as values — one admission on the realm"
-status: ready
+status: in-progress
+assignee: ttraenkler/senior-dev
 sprint: current
 created: 2026-11-15
-updated: 2026-11-16
+updated: 2026-11-19
 priority: high
 horizon: xl
 feasibility: hard
@@ -14,6 +15,12 @@ area: ir
 goal: ir-full-coverage
 depends_on: [7349]
 related: [7349, 7352, 7353, 7343, 7189, 7127, 7294, 7106, 7342]
+loc-budget-allow:
+  # 2026-11-16 (#7350 G1): +4 in from-ast.ts and +3 in select.ts are the lane capability
+  # `native-builtin-globals` in each file's capability union (the JS environment keeps its output) and the
+  # selector's lane object; the admission itself moved out of both callers into `ir/builtin-globals.ts`.
+  - src/ir/from-ast.ts
+  - src/ir/select.ts
 ---
 
 # #7350 — IR foundation: built-in globals as values
@@ -201,3 +208,145 @@ Code quality:
 6. No second call mechanism beside #7349's.
 7. A fresh-context adversarial review per slice records its verdict in the
    PR body.
+
+## Slice B2a plan — the one global table (2026-11-19)
+
+Lead decision 2026-11-19: S5 owns the realm rows for the global object. Lane S1 (Ty, `typeof` of a global)
+needs the same table, so it lands first, as pure data.
+
+**Target structure.** A sibling of the realm catalog, `src/runtime/contracts/native-realm-globals.ts`:
+`NATIVE_REALM_GLOBALS`, the complete own-property population of the global object (ES2025 §19.1–19.4 plus
+Annex B.2.1 `escape` / `unescape`), each entry with its attributes and its value — a number (`NaN`,
+`Infinity`), `undefined`, the global object itself (`globalThis`), or an intrinsic named by id, with that
+intrinsic's typeof tag, `length` and constructibility. `nativeRealmGlobalTypeof(name)` answers from it; Ty
+reads that export, not a list of its own.
+
+**Why a sibling and not catalog rows.** The realm's literal plan (`native-realm-literals.ts`,
+`native-builtin-function-requests.ts`) interns every catalog row's name and property keys into every realm
+binary; adding about 60 rows to `NATIVE_REALM_CATALOG.intrinsics` would add their strings to every Prepared
+realm program. The global table references catalog rows by id and adds none.
+
+**Identity only.** An intrinsic the catalog has a row for (`%Object%`, `%Function%`) has its complete
+property population there (`nativeRealmGlobalSurface` answers `"complete"`). Every other intrinsic the table
+names is identity only (`"identity"`): its identity, typeof tag, `length` and constructibility are known, its
+members are not. B2b's rule for an identity intrinsic: a member read refuses by name at compile time (static
+key) or throws a named error at run time (dynamic key), never `undefined`; a call or `new` of an
+`implementation: "unavailable"` algorithm throws a named TypeError.
+
+**Reuse.** Nothing is implemented here. When a row's surface is filled (B2c…), it binds the existing native
+body: `object-constructor-body.ts` (Object), `primitive-wrapper-bodies.ts` (String, Number, Boolean),
+`number-bodies.ts` (isNaN, isFinite), `error-bodies.ts` (the NativeErrors), `codegen/json-codec-native.ts` /
+`json-standalone.ts` (JSON) and `codegen/math-helpers.ts` (Math), moving codegen-side pure bodies to
+`runtime/wasmgc/values/` when they are bound.
+
+**Acceptance.** A unit test against node 22: every entry's attributes, typeof tag, `length`, `name` and
+constructibility equal node's `globalThis` descriptor (`Float16Array`, ES2025, is absent in node 22 and checked
+by its spec values); every intrinsic id the table names is unique, and the catalog rows it names exist.
+Output byte-identical (nothing reads the table yet). Quality: one table; the typeof answer is derived from it;
+no second list in Ty.
+
+## G1 result (2026-11-16, branch `claude/7350-g1`)
+
+**Corrected yield.** Re-measured before coding on main `ed17563bc2` with a research switch that admits a built-in
+name only outside member positions: G1 alone frees **about 2** of the 272 only-family files, not 22. The
+research prototype's 22 counted `X.m` values and `X.m = v` writes, which are G2 / G6 positions; the 34
+`X` as an argument files are `Object.isExtensible(Math)`-style, which is G1b. Decision (2026-11-16): land G1
+as planned, then widen in the same branch, one commit each with its own measurement: G1b (object-statics
+operands may be built-ins) and `X.m` own-data reads that the runtime already answers (asked from the
+runtime-side fact, no hand list). Writes stay out (G6).
+
+**What G1 builds.**
+- `src/ir/builtin-globals.ts`: the one admission, `builtinGlobalValueAdmitted`, asked by the selector
+  (`isAmbientIntrinsicValue`) and the from-ast identifier arm. It holds the name set (the ES5 constructors,
+  namespaces and global functions plus `Symbol`; new: `Math`, `JSON`, `Date`, `RegExp`, the eleven global
+  functions), the position walk and the #7189 / #7127 member-value reads, which go through the same
+  admission. `src/shared/ambient-intrinsics.ts` keeps the lib-binding helpers and #7294's member shapes.
+- `isPristineIntrinsic` (`shared/intrinsic-prototype-writes.ts`, the shared write scanner): not declared,
+  not written / deleted / defined by a literal route, and not inside a `with` body. `function-mention.ts`'s
+  `objectStaticIsPristine` asks it instead of its own copy and keeps its file-wide `with` screen (elision's
+  boundary; a lexical one there would change JS-environment output). A file-wide `with` screen in the
+  admission dropped 12 units that main lowers in 2 non-ES5 files (`propertyHelper.js`'s
+  `e instanceof TypeError` beside an unrelated `with`), so the admission's test is lexical.
+- The walk refuses at select two positions from-ast cannot lower, which main claimed and then withdrew for
+  the old names: a loose compare with `null` (`nullComparisonFolds`) and a conditional beside a bare `null`
+  (`nullValueAdmissible`). On the JS environment main's claim is kept for those (`null-mix`), because the
+  withdrawn claim leaves different bytes there.
+- The new names were measured on standalone only, so they ask a lane capability, `native-builtin-globals`
+  (`backend/legality.ts`, the same profile as `native-object-statics`); #7118's names keep every lane. With
+  the new names on the JS environment its output changed in 112 of 666 probe binaries; with the gate, 0.
+
+**Differences from the plan.**
+- `return X` and other escapes (array / object literal, an unresolvable callee's argument) stay refused:
+  the walk cannot follow the value to the member reads behind it, and an unseeded member answers
+  `undefined` (hazard 3). The walk follows locals and same-file parameters, as before.
+- Conversions (`"" + Math`) stay refused: a constructor carrier is a `$Object` whose ToPrimitive is not the
+  function's source text.
+- The static folds still use their own screens (`objectStaticsArePristine`, `realmIsUnpatched`); moving
+  them onto `isPristineIntrinsic` is G6.
+
+**Measured** (standalone, main `ba6652f671`, QuickJS and the Temporal provider built per tree,
+`TEST262_FULL_RUNTIME_EVAL=1`):
+
+| population | files | gained | lost | units newly legacy | new post-claim | new CE | standalone binaries differ |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| ES5 carriers (1,837) + 500 IR-only controls | 2,337 | 2 | 0 | 0 | 0 | 0 | 2 |
+| non-ES5: bare uses of the new names, and files writing / deleting / defining a built-in or with `with` | 1,982 | 0 | 0 | 0 | 0 | 0 | 0 |
+
+- Gained: `built-ins/JSON/15.12-0-1.js`, `built-ins/global/S10.2.3_A1.1_T4.js`; both pass on both trees.
+- Probes against node (module level and in a function): 408 position programs, 228 identity programs,
+  120 realm-graph programs: 0 claimed-wrong, 0 lost, 0 new post-claim errors.
+- JS-environment output: identical on 666 binaries (the 408 position programs, the 2 gained files and 256
+  sampled carrier, control and `with` files).
+
+**Re-measured 2026-11-19** (lead takeover; branch head after merging main `ee3fcdd610`, standalone, compile census
+without the Temporal provider, verdicts with `scripts/run-test262-paths.mts`). Population: the 1,327 ES5 files
+that pass on the standalone baseline of 2026-11-19, still carry legacy units, and name a built-in global outside
+a call, `new`, `instanceof` or member position (`.tmp` prefilter; the earlier 1,837-file carrier list is not in
+the repository).
+
+| population | files | gained | lost | units newly legacy | new post-claim | new CE | standalone binaries differ |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| ES5 candidates | 1,327 | 3 | 0 | 0 | 0 | 0 | 3 |
+| random test262 sample, default and standalone | 100 | 0 | 0 | 0 | 0 | 0 | 0 (JS environment 0 of 103 incl. the gained) |
+
+- Gained: `built-ins/JSON/15.12-0-1.js`, `built-ins/global/S10.2.3_A1.1_T4.js` and (new since 2026-11-16)
+  `built-ins/global/S10.2.3_A1.2_T4.js`; all three pass on both trees.
+- `tests/issue-7294-builtin-proto-member-provider.test.ts` fails the same 4 rows on main `ee3fcdd610` as on
+  the branch (`operand-coercion-unsupported` on `Object.is`); not caused by G1.
+
+## Slice B (Prepared path), plan — 2026-11-19
+
+Scope correction from the lead (2026-11-19, CLAUDE.md "IR migration: foundations first"): from here on each
+slice is accepted by a proving program through the strict Prepared entry (`wholeProgram: { kind:
+"prepared-program-required" }`, standalone, validates and runs), and its mechanism is pure code both
+pipelines ask. The order follows the #7354 ladder's slice B (the built-in globals the harness prelude names).
+
+Probe on main `ee3fcdd610`, strict entry, standalone: `String(v)` refuses with "direct call to String has no
+exact AST-site plan"; `typeof JSON` and `var E = TypeError` with "identifier … is not in scope"; `new
+TypeError(…)` with "unknown class TypeError"; `globalThis` and `console` are not in scope. The Prepared
+resolver (`ir/program-source.ts`) answers none of the lib-binding questions the from-ast arms ask.
+
+| step | content | depends on | proving program |
+| --- | --- | --- | --- |
+| B1a | One per-identifier lib-binding predicate: `integration.ts`'s private `makeAmbientStringBindingPredicate` folds into `makeIrAmbientBindingPredicate` (`ir/module-bindings.ts`) as the quantifier `every-or-unresolved`. Pure refactor. | G1 | none; output byte-identical |
+| B1b | Dropped 2026-11-19: S2's slice Str2 (`claude/7354-perf2`, `prepareConversionResolvers`) already plans `String(x)` on the Prepared path; on that branch `function f(v){ return String(v); } if (f(1) !== "1") throw 1;` runs (and throws with a wrong answer) with no change here. A second resolver answer would be a second mechanism. | — | — |
+| B2 | `dyn.global_object` on the Prepared path (the realm's global object as a dynamic value); the resolver answers `isLibOnlyBinding`, so G1's admission (`builtinGlobalValueAdmitted`) and its lowering (`dyn.member_get(dyn.global_object, name)`) serve both pipelines. | B1a, S3 `claude/7354-realm`, S3 O4 (`dyn.member_get` kind chain) | `var E = TypeError; if (E !== TypeError) throw 1;`, `if (typeof JSON !== "object") throw 1;` |
+| B3 | `globalThis` and `console` (absent on standalone) as values: `typeof console`, `globalThis.X`. | B2 | measured after B2 |
+
+Measured during B1b's probe (experiment, not committed): on main, answering `isAmbientStringBinding` lets
+`String("ab")` and `String(true)` run, but `String(1)` stops with an invariant crash in the number formatter
+(`__ir_number_to_string` undeclared), as `` `${1}` `` does on main today. On `claude/7354-perf2` the call is
+planned by Str2 and every probe (number, fraction, `-0`, `1e21`, string, boolean, `undefined`, `null`, typed and
+dynamic operands) answers as node. Merge note for whichever of G1 and perf2 lands second: perf2 moves the
+identifier read into `ir/identifier-read.ts`, which still calls `isAmbientIntrinsicValueUse`; G1 removes that
+function, so the classification must ask `builtinGlobalValueAdmitted(expr, resolver ?? {})` (checked: the merged
+tree typechecks and the 7350, 7354 Str2, Ty, X and R suites pass).
+
+**B1a target structure.** Module: `ir/module-bindings.ts`, which already owns the checker-only
+ambient-binding predicate and is imported by both pipelines (`ir/integration.ts`, `ir/program-source.ts`).
+Removes: the private copy in `ir/integration.ts` (same body, except that an unresolved name answers `true`).
+Not folded, on purpose: `prepare-number-conversion.ts`'s canonical check asks a different fact (every
+declaration in the compiler's own library, `isCurrentCompilerLibrarySourceFile`, not any declaration file),
+and the type-symbol checks (`isAmbientRegExp`, `isNativeMapStorageType`) ask about a type's symbol, not a
+binding. Quality criterion: one per-identifier lib-binding predicate remains; no new helper; output
+byte-identical (100 sampled test262 files, default and standalone).
