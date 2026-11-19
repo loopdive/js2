@@ -20,6 +20,7 @@ import type { PreparedIrProgram } from "../src/ir/program.js";
 import { RUNTIME_PROVIDERS } from "../src/ir/runtime/manifest.js";
 import { callableCarried, runtimeCensus } from "../src/compiler/prepared-provider-census.js";
 import { emittedPhysicalSetupPlan } from "../src/ir/program-consumer.js";
+import { formatterSetupJoins } from "../src/compiler/prepared-formatter-census.js";
 
 type Receipt = { readonly key: string; readonly index: number };
 type Contract = Parameters<typeof import("../src/compiler/prepared-provider-census.js").callableCarried>[1];
@@ -610,16 +611,15 @@ describe("#7354 Str2 — every field of every formatter row is joined by identit
       }
     },
   );
-  // Known limit, pinned: a slot is the completed emission's own binding-index record, the root the census joins to.
-  // Two globals of one shape exchanged in that record leave no second record to contradict it (a function has its
-  // support receipt; a global has none).
-  it("accepts two same-shape globals exchanged in the emission's own index record", async () => {
+  // (#7354 Str2 review 2) Two same-shape globals exchanged in the emission's binding-index record: each slot's
+  // initializer is still the other table's.
+  it("refuses two same-shape globals exchanged in the emission's own index record", async () => {
     for (const [left, right] of sameShapePairs()) {
       arrangeField("slot", [
         [left, right],
         [right, left],
       ]);
-      expect(runtimeCensus(...censusInputs.census)).toBeDefined();
+      await refused(RUNTIME_DEMAND);
     }
   });
 
@@ -656,6 +656,157 @@ describe("#7354 Str2 — every field of every formatter row is joined by identit
   it.each(FIELDS)("refuses a forged %s through compile()", async (field) => {
     arrangeField(field, [[kernel("trap"), field === "receipt" || field === "slot" ? kernel("new") : undefined]]);
     await refusedOnCompile(RUNTIME_DEMAND);
+  });
+});
+
+// (#7354 Str2 review 2) The census reads no field of the formatter setup past: every leaf of the captured setup's
+// object graph, forged alone to another value of its type, refuses. The walk replaces hand-enumerated field lists.
+type Path = readonly string[];
+const LEAF_COUNT = 532;
+/** Every leaf (a primitive) of a plain-data graph, by path. An empty array or object has none. */
+function leavesOf(value: unknown, path: Path = []): Path[] {
+  if (value === null || typeof value !== "object") return [path];
+  return Object.keys(value).flatMap((key) => leavesOf((value as Record<string, unknown>)[key], [...path, key]));
+}
+/** `value` with the node at `path` replaced (copied along the path; the frozen original is untouched). */
+function withNode(value: unknown, path: Path, node: unknown): unknown {
+  if (path.length === 0) return node;
+  const [key, ...rest] = path;
+  const copy: Record<string, unknown> = Array.isArray(value) ? [...value] : { ...(value as object) };
+  copy[key!] = withNode((value as Record<string, unknown>)[key!], rest, node);
+  return copy;
+}
+const nodeAt = (value: unknown, path: Path): unknown =>
+  path.reduce((node, key) => (node as Record<string, unknown>)[key], value);
+/** Another value of the leaf's type; undefined for a leaf whose type has no second value (none occurs). */
+function otherLeaf(leaf: unknown): unknown {
+  if (typeof leaf === "string") return leaf + ":forged";
+  if (typeof leaf === "number") return leaf + 1;
+  if (typeof leaf === "boolean") return !leaf;
+  if (typeof leaf === "bigint") return leaf + 1n;
+  return undefined;
+}
+/** Replay the captured census with the formatter setup replaced by `setup`. */
+function censusWith(setup: unknown, backend = censusInputs.census[2]) {
+  forge.formatter = () => setup as Setup;
+  forge.forged = new WeakMap();
+  const [program, emission, , providers] = censusInputs.census;
+  return runtimeCensus(program, emission, backend, providers);
+}
+
+describe("#7354 Str2 review 2 — no field of the formatter setup is read past", () => {
+  // The join itself per leaf (the census refuses whenever it does not hold: the named repros below go through it).
+  it("refuses every leaf of the setup forged alone", () => {
+    const [program, emission, backend] = censusInputs.census;
+    const plan = emittedPhysicalSetupPlan(emission);
+    const setup = plan.nativeNumberFormat!;
+    const joins = (forged: unknown) =>
+      formatterSetupJoins(program, forged as Setup, plan.nativeStrings!.resources, backend.numberFormat);
+    expect(joins(setup)).toBe(true);
+    const leaves = leavesOf(setup);
+    // Reported in the issue file's review-round-2 section.
+    expect(leaves.length).toBe(LEAF_COUNT);
+    const accepted = leaves.filter((path) => {
+      const leaf = nodeAt(setup, path);
+      expect(otherLeaf(leaf), path.join(".")).not.toBeUndefined();
+      return joins(withNode(setup, path, otherLeaf(leaf)));
+    });
+    expect(accepted.map((path) => path.join("."))).toEqual([]);
+  });
+
+  // The review's repros, each by name.
+  const bindingIndex = (setup: Setup, role: readonly string[]) =>
+    String(setup.bindings.indexOf(bindingOf(setup, role)));
+  const kernelNew = ["number-format", "new"] as const;
+  it.each([
+    [
+      "a formatter binding's signature intent",
+      (s: Setup) => ["bindings", bindingIndex(s, kernelNew), "entry", "intent"],
+      (s: Setup) => bindingOf(s, ["number-format", "get"]).entry.intent,
+    ],
+    [
+      "a formatter binding's slot space",
+      (s: Setup) => ["bindings", bindingIndex(s, kernelNew), "entry", "slotSpace"],
+      () => "global",
+    ],
+    [
+      "a formatter binding's slot policy",
+      (s: Setup) => ["bindings", bindingIndex(s, kernelNew), "entry", "slotPolicy"],
+      () => "optional",
+    ],
+    [
+      "the support's resource key",
+      () => ["support", "resourceKey"],
+      (s: Setup) => bindingOf(s, ["number-format", "radix-thunk"]).resourceKey,
+    ],
+    ["the support's params", () => ["support", "params"], () => []],
+    ["the support's results", () => ["support", "results"], () => []],
+    ["the recipe input's key", () => ["resources", "input", "key"], (s: Setup) => s.resources.input.key + ":2"],
+    [
+      "the recipe input's integer policy",
+      () => ["resources", "input", "integerBeforeScratch"],
+      (s: Setup) => !s.resources.input.integerBeforeScratch,
+    ],
+    ["the support unit", () => ["resources", "supportUnitId"], (s: Setup) => s.bindings[0]!.entry.id],
+  ] as const)("refuses %s altered", (_label, path, value) => {
+    const setup = capturedSetup();
+    expect(censusWith(withNode(setup, path(setup), value(setup)))).toBeUndefined();
+  });
+  it("refuses the scratch removed", () => {
+    const setup = capturedSetup();
+    const { scratch: _scratch, ...resources } = setup.resources;
+    expect(censusWith({ ...setup, resources })).toBeUndefined();
+  });
+
+  // The number-format policy determines the recipe input (and the radix body), so it is compared, never assumed.
+  it.each([
+    [
+      "flipped",
+      (policy: { integerBeforeScratch: boolean }) => ({
+        numberFormat: { integerBeforeScratch: !policy.integerBeforeScratch },
+      }),
+    ],
+    ["absent", () => ({ numberFormat: undefined })],
+  ] as const)("refuses the number-format policy %s, without an exception", (_label, policy) => {
+    const backend = censusInputs.census[2];
+    expect(censusWith(capturedSetup(), { ...backend, ...policy(backend.numberFormat!) })).toBeUndefined();
+  });
+  it("refuses an empty string-setup literal key, without an exception", () => {
+    const setup = capturedSetup();
+    forge.strings = (strings) =>
+      ({
+        ...strings,
+        resources: { ...strings.resources, literalRequirements: { ...strings.resources.literalRequirements, key: "" } },
+      }) as PhysicalNativeStringSetup;
+    expect(censusWith(setup)).toBeUndefined();
+  });
+
+  // Known limit, ruled harmless (#7354 issue file, "Review round 2 (Str2)"): the binding-index record and the support receipts are snapshots the consumer
+  // takes after the module is complete (`recordEmissionObservation`); the module's bytes come from the reservations
+  // the join pins. Two same-signature functions exchanged in BOTH records leave the census nothing to tell them
+  // apart by, and change no byte: it is a forgery of evidence nothing else reads.
+  it("known limit: accepts two same-signature functions exchanged in both the index record and the receipts", () => {
+    const plan = emittedPhysicalSetupPlan(censusInputs.census[1]);
+    const strings = plan.nativeStrings as PhysicalNativeStringSetup;
+    const declared = (role: readonly string[]) =>
+      [...strings.resources.declarations, ...plan.nativeNumberFormat!.resources.declarations].find(
+        (row) => JSON.stringify(row.role) === JSON.stringify(role),
+      )!;
+    const pair = [declared(["values", "box-number"]), declared(["number-format", "to-string"])];
+    const ids = pair.map(
+      (row) =>
+        [...strings.bindings, ...plan.nativeNumberFormat!.bindings].find((b) => b.resourceKey === row.key)!.entry.id,
+    );
+    forge.index = (id, real) => real(id === ids[0] ? ids[1]! : id === ids[1] ? ids[0]! : id);
+    forge.receipts = (rows) =>
+      rows.map((row) =>
+        row.key === pair[0]!.key
+          ? { ...row, key: pair[1]!.key }
+          : row.key === pair[1]!.key
+            ? { ...row, key: pair[0]!.key }
+            : row,
+      );
+    expect(runtimeCensus(...censusInputs.census)).toBeDefined();
   });
 });
 

@@ -391,8 +391,7 @@ function nativeRows(
     }
   | undefined {
   const owned = nativeSlots(program, emission, setup, false);
-  const joined =
-    formatter && formatterSetupJoins(program, formatter, setup.resources.literalRequirements.key, backend.numberFormat);
+  const joined = formatter && formatterSetupJoins(program, formatter, setup.resources, backend.numberFormat);
   const formatted = !formatter ? [] : joined ? nativeSlots(program, emission, formatter, true) : undefined;
   const slots = owned && formatted && [...owned, ...formatted];
   // (#7354 Str2-c) One declaration per completed slot, across both setups: no row is a second name for another's.
@@ -404,7 +403,7 @@ function nativeRows(
     return undefined;
   const strings = providers.filter((row) => STRING_FEATURES.has(row.feature));
   const callables = providers.filter((row) => !strings.includes(row) && row.implementation.kind === "runtime-callable");
-  const formatterCallables = formatterJoins(program, formatter, formatted!);
+  const formatterCallables = formatterJoins(program, emission, formatter, formatted!);
   const answered: RuntimeProviderDefinition["implementation"][] = [...(formatterCallables ?? [])];
   const rows: SupportCallableRow[] = [];
   for (const { declaration, binding } of slots) {

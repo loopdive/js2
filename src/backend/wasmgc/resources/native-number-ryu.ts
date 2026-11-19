@@ -176,18 +176,29 @@ export function requireNativeRyuReservations(
   const owner = requireOwner(tx, pack);
   if (owner.key !== key || owner.strings !== strings) fail("substituted key or string pack");
 }
-export function fillNativeRyuResources(tx: PhysicalModuleReservations, pack: NativeRyuReservations): void {
-  const owner = requireOwner(tx, pack);
-  if (owner.filled) fail("already filled");
-  if (tx.state !== "filling") fail("fill requires frozen reservations");
-  const tableTypeIdx = tx.physicalIndex(pack.tableType);
+/**
+ * The initializers of the two Ryu table globals, keyed by their declaration role: the globals share one type, so
+ * only these tell them apart (the Prepared provider census, #7354 Str2 review 2).
+ */
+export function nativeRyuTableInitializers(tableTypeIdx: number): {
+  readonly inverse: Instr[];
+  readonly powers: Instr[];
+} {
   const tables = buildRyuPowerTables();
   const initializer = (values: readonly bigint[]): Instr[] => [
     ...values.map((value): Instr => ({ op: "i64.const", value })),
     { op: "array.new_fixed", typeIdx: tableTypeIdx, length: values.length },
   ];
-  tx.fillGlobal(pack.inverse, initializer(tables.inverse));
-  tx.fillGlobal(pack.powers, initializer(tables.powers));
+  return { inverse: initializer(tables.inverse), powers: initializer(tables.powers) };
+}
+export function fillNativeRyuResources(tx: PhysicalModuleReservations, pack: NativeRyuReservations): void {
+  const owner = requireOwner(tx, pack);
+  if (owner.filled) fail("already filled");
+  if (tx.state !== "filling") fail("fill requires frozen reservations");
+  const tableTypeIdx = tx.physicalIndex(pack.tableType);
+  const initializers = nativeRyuTableInitializers(tableTypeIdx);
+  tx.fillGlobal(pack.inverse, initializers.inverse);
+  tx.fillGlobal(pack.powers, initializers.powers);
   tx.fillFunction(pack.mulShift, buildRyuMulShiftBody());
   tx.fillFunction(
     pack.digits,

@@ -768,7 +768,8 @@ function sealNativeBindingPlan(program: PreparedIrProgram, bindings: readonly Na
   abi.sealPlan();
 }
 
-function nativeSupplementalOrder(program: PreparedIrProgram): number {
+/** The first declaration order after the runtime ABI anchor's own entries: where the native setups' entries begin. */
+export function nativeSupplementalOrder(program: PreparedIrProgram): number {
   const anchor = preparedIrRuntimeAbiAnchor(program.inventory);
   let order = 0;
   for (const entry of program.abi.entries)
