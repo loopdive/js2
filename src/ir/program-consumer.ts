@@ -437,7 +437,7 @@ export function emittedSupportFunctionReceipts(
 ): readonly EmittedSupportFunctionReceipt[] {
   const record = startupAdapters.get(emitted);
   if (!record) programInvariant("invalid-transaction-capability", "emission was not produced by this consumer");
-  for (const token of record.functions) record.reservations.assertCompletedReservation(token);
+  record.reservations.audited(() => record.functions.forEach((t) => record.reservations.assertCompletedReservation(t)));
   if (record.functions.length !== emitted.module.functions.length)
     emissionFailed("completed emission function census changed");
   return record.support;

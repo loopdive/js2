@@ -28,7 +28,7 @@ import { runIrProgramDriver } from "./ir-program-driver.js";
 import type { IrProgramDriverResult } from "./ir-program-result.js";
 import type { PreparedWitExport, PreparedWitView } from "../wit-generator.js";
 import { releaseOwnedFunctions } from "../wasm/physical/owned-function-data.js";
-import { runtimeCensus, type NativeSetupSlots } from "./prepared-provider-census.js";
+import { callableCarried, runtimeCensus, unjoinedSupport, type NativeSetupSlots } from "./prepared-provider-census.js";
 import { physicalCallableMatches } from "./prepared-physical-signature.js";
 
 export interface IrProgramPresentationRequest {
@@ -465,7 +465,7 @@ function checkAbiExports(
   for (const entry of program.abi.entries) {
     const { plan, contract } = entry;
     if (contract.kind === "callable") {
-      if (!mixed && (contract.promise || [...contract.params, ...contract.results].some((type) => !inCall(type))))
+      if (!mixed && (contract.promise || !callableCarried(program, contract, inCall)))
         gap(
           "abi.callable",
           "non-numeric-contract",
@@ -683,7 +683,7 @@ function checkResourceDemand(
   }
   if (
     program.ir.functions.some((fn) => fn.asyncPlan || fn.asyncRuntime) ||
-    program.runtimeSupport?.batches.length ||
+    unjoinedSupport(program, native) ||
     mod.asyncFunctions.size
   )
     gap("async", "async-demand", "source and prepared runtime must independently prove no async/support demand");

@@ -34,6 +34,9 @@ related: [7188, 2949, 3526, 3527, 3518, 7106, 7349, 7350, 7352]
 # 2026-11-17 (slice Str, merge onto H): src/compiler/ir-program-presentation.ts +1,
 # `inCall`, the ABI join's admission of a native string in an internal callable
 # contract (string parameters and results), beside H's `carried` it extends.
+# 2026-11-17 (slice Str2): src/compiler.ts +1, `...preparedNumberFormatOptions(...)` in the Prepared
+# backend options: the number formatter's physical policy, chosen in the census module beside
+# `preparedPresentationPolicy` (same import line).
 # 2026-11-19 (slice Fa): src/ir/from-ast.ts +33, the Prepared function-value arms
 # beside their siblings: the `dynamicClosureSignature` / `staticFunctionValue`
 # resolver hooks, the static closure kept on a script var's `moduleGlobal` scope
@@ -1328,474 +1331,6 @@ wrong answer in plain TypeScript on both targets.
   change for the repro programs, where the unused effectful `if` is now kept. Equivalence files on logical /
   conditional / optional / DCE shapes (23 files): failing set equals `scripts/equivalence-baseline.json`.
 
-## Str result
-
-Status 2026-11-17. Branch `claude/7354-str` on `claude/7354-p` (`1995dd6ef2`). Steps 1 and 2 of the slice are built;
-steps 3–5 (dynamic `+`, ToString/`String(x)`, `typeof`) are the follow-up slice Str2 (lead decision, below).
-
-### Built
-
-- **Step 1 — typed strings through the presentation.**
-  - `preparedPresentationPolicy` selects native string constants, equality, length and concatenation on wasmgc
-    standalone (not the relational compare: it has no join).
-  - The string value plan (`native-string-values.ts`) joins `string.eq` to the lazy `__str_equals` resource
-    (`native-string-equality.ts`, reused as is) and `string.len` to the carrier's length field.
-    `native-string-output-requirements.ts` no longer refuses those two kinds.
-  - One `preparedNativeStringResolver(tx, pack, unitId)` realises an owner's string operations; `fillPrimaryBody`
-    spreads it (program-consumer.ts shrinks by 11 lines).
-  - R's census: a storage provider (`native-global` literal, `carrier-field` length) is answered by the setup's
-    literal storage or string carrier type; a provider the IR reaches through its own instruction (`string.eq`,
-    `string.concat`) by the setup function named after the provider's symbol. Every other setup function stays a
-    declared dependency, as before.
-  - The ABI join admits a native string in an internal callable contract on standalone, beside D1's externref arm.
-- **Step 2 — a string in the dynamic value.**
-  - The legalization boxes a string as `coerce.to_externref` (the externref that wraps it), the ordinary standalone
-    carrier.
-  - `nativeStringsReachCarrier(demands)` (`native-string-value-demands.ts`): a native string can reach the carrier
-    only through an executable `coerce.to_externref` of a string (its box, a thrown string). When it can, strict
-    equality takes the shared SameValue builder's string arm (code units through flatten + `__str_equals`), which
-    D1 left off; otherwise its body is unchanged.
-
-### Differences from the brief and why
-
-- **No typed string home for a script `var`.** V's classifier can answer the existing `"string"` home soundly with
-  the same reads proof (tried), but the physical plan has no string global ("global s carries non-scalar IR type
-  string") — the same globals arm H builds for dynamic. Left to H/merge; proven with function locals.
-- **A reassigned typed string local** is refused by from-ast ("has no slot representation"): the Prepared resolver
-  has no `resolveString` slot type. Not built (a resolver seam, not a join).
-- **Step 3 needs a second body** (`__ir_dyn_add` = `emitAnyAddFromExternTemps`, entangled with the legacy object
-  runtime); per the lead: Str2 builds a Prepared-native add from shared pure builders.
-
-### Measured
-
-- `tests/issue-7354-str-strings.test.ts` (16 tests): typed string locals, concatenation, a non-ASCII literal,
-  `throw "x"` caught and escaping, strings out of `try`/`catch`; a string through an untyped parameter compared
-  with literals, numbers and `undefined`; fresh concatenations equal by code units through `any`; StringToNumber.
-  Refusals: compare, reassigned string local, script string var, gc target, ToBoolean, `==`, a method call.
-- Sweep (strict entry, against node): 11 operations (`===`, `!==`, against a typed string / number, `* 1`, `- 0`,
-  unary `+`/`-`, `< 2`, `>= 0`) × 19 values (numbers incl. NaN, ±0, ±Infinity; booleans; `undefined`; 9 strings
-  incl. `""`, `" 3 "`, `"0x10"`, `"-0"`, `"Infinity"`) × 4 positions (top level, function, value, condition):
-  44/44 correct. Named gaps for dynamic `+`, `typeof`, `!`, `==`; zero invariant errors, zero invalid Wasm.
-- Ordinary-pipeline bytes, base sources swapped into the same tree: 396 files of the 411-row list compiled, identical
-  on the JS environment and `--target standalone` (8 compile errors on both, 15 skipped).
-- Prepared bytes: every module the prepared-entry/runtime, #7188, R, D1, P and V/G tests instantiate (66) is
-  identical; the one new module is Str's census program.
-- Pins (base vs this branch, failing sets): the 22 #3518/#7139 files that import a touched module, and the changed
-  root tests: identical failing sets except the pins below. Pre-existing on the base (same sets): the core
-  vocabulary seam (source hash of `src/ir/ast-lowering-plans.ts`), semantic-verification ownership (`effects.ts`),
-  string-boundary-const (5), number-format requirements (2), realm requirements (1), and 626 receipt tests in the
-  validator/helper policy-evolution and semantic-provider-boundary files.
-- Pins updated: R (`throw "x"` → the compare refusal; Str census tests), D1 (object box refusal; member read names
-  `dyn.member_get`; `selectNativeDynamicValues` signal), `issue-3518-native-string-output-requirements`
-  (string length is a value-plan join, no output use).
-- 411-row sample: unchanged — 393 × not-direct (`print` 345, `__isArray` 43, `__globalObject` 5), 2 × switch-case
-  binding, 1 × `DD_operator`; negatives 14 pass.
-- Mutation survivors: the `string` kind check and the projection-view check of `nativeStringsReachCarrier` (today
-  every executable `coerce.to_externref` carries a string and the program view mirrors the projection).
-- Gates: typecheck, loc, func, coercion-sites, oracle-ratchet, dead-exports, import-cycles, boundaries inventory.
-
-### Known gaps and hand-over (Str2)
-
-- Every emitted string literal/concat re-authenticates the whole native string plan (`emitPreparedNativeStringLiteral`
-  → `requireCompletedNativeStringValues` → `ownerFor` → `assertNativeStringValueReservationInput` →
-  `planNativeStringValuePhysical` → `assertNativeStringOutputRequirementsCurrent`, twice per literal). Profile of a
-  20-string-op program: 38.5 s total, 24.6 s in `emitPreparedNativeStringLiteral`, 16.9 s in the re-plan.
-- #3518 receipt/pin tests are red on main and hide new breakage (the Perf data.ts edit breaks six more receipts):
-  [#7358](7358-3518-receipt-pin-tests-red-on-main.md), which must land before this stack is complete.
-- Number formatting is a runtime-support batch, which the presentation refuses (`ir-program-presentation.ts`
-  `checkResourceDemand`, "source and prepared runtime must independently prove no async/support demand").
-
-### Review round 1
-
-Adversarial review at `4318ee510f`: NOT MET (string semantics correct; the string provider census did not fail
-closed). Fixed:
-
-1. **Must-fix — the census joins string providers to their executable occurrences** (`stringProvidersJoin`,
-   `prepared-provider-census.ts`). The step-1/2 rules (some literal global or string type exists; any setup function
-   named after a provider symbol) are gone. Now:
-   - the selected string providers equal, as a multiset, the string features the executable projection demands
-     (the manifest's own scanners `irStringConstDemand`/`EqDemand`/`LenDemand`/`ConcatDemand`);
-   - the literal provider: every executable `string.const` is one literal use of the plan, and each use names exactly
-     one literal global or materializer by cache key;
-   - the length provider: exactly one string carrier type, whose completed field at the provider's `fieldIndex` is an
-     i32;
-   - `__str_equals` / `__str_concat`: exactly the one setup function of the provider's role, by symbol;
-   - the runtime-bound multiset excludes string providers; any other non-callable native provider refuses.
-   Each case the review listed now refuses by name (16 new census tests; drop tests restored). Mutation sweep over the
-   join (11 mutants: feature population, use count, use join, materializer arm, carrier count, carrier i32, owner
-   join, owner count, non-string non-callable): all killed.
-2. **Must-fix — `string.eq` / `string.len` emitters** share one helper with the concat emitter
-   (`requireOwnerOccurrence`: an occurrence of the owner's executable projection that admits the request, provider
-   included); `string.len` reads `fieldIndex` from the selected carrier-field provider.
-3. Should-fixes: tests for `string.eq` without concat (needs the empty literal) and an oversized literal (materializer);
-   the unreachable `!equality` clause and the redundant `standalone` check of the ABI string arm are gone (the +1 LOC
-   grant on `ir-program-presentation.ts` is given back).
-
-Evidence after the round: Str, R, D1, P, V/G, prepared-entry/runtime, #7188 tests pass; the 11 string-related
-#3518 files pass (base: same); Prepared bytes of the 32 modules the Str and R tests instantiate are identical to
-`4318ee510f`; ordinary bytes on 101 test262 files × 2 targets identical to the base; gates and
-`changed-root-tests.sh` (interpreter engine) pass. The emitters' provider/owner checks have no test (Prepared attaches
-no string provider, so only a forged emission request would reach them).
-
-### Review round 2
-
-Adversarial review at `82d6cb727c`: NOT MET (three forged setups passed the census, then threw
-`invalid-presentation` out of `compile()`). Fixed at `b237a1dca9` + `a26c134013`:
-
-1. **Must-fix 1 — forged setups refuse by name.**
-   - **Why they threw.** R's mock returned a *new* plan object on every `emittedPhysicalSetupPlan` read, so any
-     forgery the census accepted then failed the finalization's identity check (`plan !== record.plan`). In
-     production the plan is one frozen object, so that check is not reachable from a setup. The mock now forges
-     ONE object, like the emission's own plan. With that change, a forgery the census accepts presents the real,
-     unaltered module (test: reversed reservation steps run and answer 3); it never throws.
-   - **(a), (c) and the step further: identity join** (`nativeSlots`). Every binding the setup derives itself
-     (anything that is not a runtime or intrinsic callable's) must be the binding its declaration's space and role
-     derive under the runtime ABI anchor (`createIrBindingId` + `nativeRole`, the derivation of
-     `irSupportFuncRef`/`irSupportGlobalRef`/`irSourceTypeRef`; the name is not part of the id). So every role the
-     census reads is the one its completed slot was reserved under. Refused: equality↔flatten swap (a),
-     equality↔concat swap, two literal globals swapped, the `""` literal's role stripped (c), flatten, copy-tree and
-     a carrier subtype stripped. An intrinsic-bound setup function must be a by-instruction provider's slot (test:
-     flatten rebound as an intrinsic and relabelled).
-   - **Deviation from the decided fix: no separate signature join for eq/concat.** With the identity join, the eq
-     slot is the one reserved as `[string-equality, equals]`, and `supportPopulationJoins` already requires its
-     declared signature to be that slot's completed signature. A provider-signature check therefore cannot be broken
-     by any forged setup; it would be an unkillable mutant, so it was not added. The carrier field's `i32` check was
-     deleted for the same reason (it survived the mutation sweep).
-   - **(b) literal uses join by value** (`literalUsesJoin`). The uses equal the executable `string.const`
-     occurrences one to one (by `collectNativeStringValueDemands`, which replaces `countInstructions`). Each use's
-     cache key must be the key its own occurrence's value and encoding select. `selectNativeLiteralDemand` is moved
-     out of the planner, so planner and census share it. The key must name exactly one storage slot of the selected
-     kind. Refused: one use repointed to another literal, all uses to one key, two uses exchanging occurrences, one
-     occurrence used twice.
-   - **Not joined: labels nothing consumes.** A literal global's *name* is one (it is not in the binding id; a
-     renamed global is accepted and compiles the real module). The reservation steps and type shapes are others.
-2. **Must-fix 2 — emitter checks tested.** `tests/issue-7354-str-emitter-requests.test.ts` (9 tests) issues forged
-   requests through `preparedNativeStringResolver`: the wrong owner for eq/len/concat, another owner's occurrence, a
-   foreign provider for each, and a host-selected length provider. Deleted because implied:
-   - `!pack.equality`: an admitted `string.eq` implies the planned equality resource.
-   - `selected.length === 1` and `field.carrier !== "string"`: the length emitter now uses
-     `preparedStringLenProvider`, and the carrier is typed `"string"`.
-3. **Should-fixes.**
-   - The length emitter shares `preparedStringLenProvider`; this adds one `backend->ir` import edge, granted in the
-     frontmatter.
-   - `countInstructions` is gone.
-   - `hasRole` is now data equality, so the `roleLen` survivor is gone.
-   - `callableKind` is gone: the callable join compares the provider's implementation as data.
-   - The `useOne` survivor is killed by a duplicated literal global on the same slot.
-   - **Rebutted: sharing the manifest's demand→feature table.** `demandFeatures` is private to
-     `src/ir/program/runtime-manifest.ts`, and the #3518 validator relocation receipts byte-pin that file. Exporting a
-     wrapper failed 30 relocation tests, and re-pinning breaks its segment proofs. The census keeps its six scanner
-     rows, now spelled with the family constants.
-
-Evidence:
-- Tests: Str (18), R (96), Str emitter (9), D1 (46), P + V/G (70), prepared-entry/runtime + #7188 (58) pass. The
-  forks report a vitest `onTaskUpdate` RPC timeout under load on the slow string files; every test passed.
-- At `82d6cb727c` with the stable mock, 12 of the new R tests fail (the forgeries are accepted there).
-- 23 #3518 files: all files that import a changed module, plus the string equality/flatten/output/value files.
-  Failing sets are equal to the base: c1-current-source 271, number-format 2, realm-requirements 1,
-  validator-policy-evolution 143, validator-relocation 9, semantic-provider-boundary 349, helper-policy-evolution
-  134. Every other file passes.
-- Bytes against `82d6cb727c`:
-  - Prepared: the 33 modules (30 distinct) the Str and R tests instantiate are identical.
-  - Ordinary: 100 test262 files × {JS environment, standalone} are identical.
-- Mutation sweep, 19 mutants, each run alone:
-  - Census: 12 killed (identity off, runtime/intrinsic exemptions, intrinsic-owner, use population, value key,
-    useOne, kind, carrier count, callable named, demanded population, role equality); carrier `i32` survived and
-    was deleted.
-  - Emitter: owner, eq/len/concat provider and length arm are killed.
-  - **Survivor, justified:** `buffer.view === "projection"` in `requireOwnerOccurrence`. In every reachable program
-    the program view carries the same string instructions as the projection, so no request can name an occurrence
-    that only the program view has.
-- Gates: typecheck, loc, func, coercion-sites, oracle-ratchet, dead-exports, import-cycles (grant), boundaries
-  inventory, and `changed-root-tests.sh` (interpreter engine).
-
-### Review round 3: MET
-
-Fresh adversarial review at `50468e80c0` with the reviewer's own mock: MET, no must-fix.
-- Every forgery is refused by the census itself.
-- The dropped signature join and the dropped carrier-`i32` check are accepted as implied.
-- The manifest-table rebuttal is accepted; the follow-up is #7358.
-- Optional should-fix, not done: the census refusal names no join. Every census join, the string join included,
-  answers `undefined`, and the presentation turns that into the one `runtime-demand` gap. Naming the failing join
-  would change `runtimeCensus`'s result type and the gap call in `ir-program-presentation.ts`, which is at its size
-  budget. That belongs to a census-wide change, not to the string join alone.
-
-### Merged onto main (D1 reworked, P, H) — 2026-11-17
-
-Merged `origin/main` `0409838769` into the branch.
-- **Conflicts.** Three files:
-  - The issue file: both sides kept.
-  - `ir-program-presentation.ts`: string admission in internal callable contracts, as `inCall` beside H's `carried`
-    (+1 line, granted in the frontmatter).
-  - R's census test: H's describe and Str's describe are both kept.
-- **Ported cleanly onto D1's rework.** `selectNativeDynamicValues(intrinsics, stringsCarried)` and the string arm in
-  `buildObjectSameValueBody`'s three string parameters needed no change.
-- **One port for H.** H's provenance (`carries`) now treats string literals as a typed kind, beside the number and
-  Boolean literals. Without it, a literal passed to a typed string parameter refused as "a dynamic value flows into
-  string".
-- **A script `var` holding a string now works through H's dynamic home.** It equals node (two acceptance tests),
-  and its `.length` refuses by name (`dyn.member_get`). H's "holding a string (slice Str)" refusal row is removed.
-
-Evidence after the merge:
-- Tests: Str (20), emitter-requests (9), R (100), D1 (49), P + V/G, H (65), prepared-entry/runtime + #7188 (58)
-  pass. The vitest `onTaskUpdate` RPC timeout appears on the slow string files.
-- `changed-root-tests.sh` (interpreter engine): every changed root file passes. The script hit the time cap before
-  the last file, `str-strings`, which was run directly.
-- Gates against the `origin/main` tip pass: loc and func (with `LOC_GATE_BASE`), coercion-sites, oracle-ratchet,
-  dead-exports, import-cycles, boundaries inventory.
-- Bytes against `origin/main`:
-  - Ordinary: 100 test262 files × {JS environment, standalone} are identical.
-  - Prepared: all 148 modules the D1, P, V/G, H, prepared-entry/runtime, #7188 and R tests instantiate on main are
-    identical. The 5 extra modules are Str's string programs.
-- String sweep (`.tmp/sweep.mts`): 286 programs, compared with node. They cover 16 dynamic-string operations × 4
-  strings × {top level via the dynamic home, function, condition, loop across iterations with a sibling `while`},
-  plus typed string expressions in a function and a loop.
-
-| Outcome | Programs | Detail |
-| --- | --- | --- |
-| OK | 184 | equal to node |
-| `dyn.truthy` (ToBoolean, slice T) | 32 | `&&`/`||` with a string operand in condition position |
-| `operator '&&' requires bool operands` | 16 | from-ast, value position |
-| `operator '\|\|' requires bool operands` | 16 | from-ast, value position |
-| `dyn.typeof` | 16 | |
-| `__ir_dyn_add` | 16 | dynamic `+`, slice Str2 |
-| `source declaration and prepared callable slots disagree` | 6 | a .js function returning a Boolean of a typed string; numeric twins refuse the same way on main |
-
-  Wrong answers: 0. Invariant errors: 0.
-- 411-row sample: all 411 rows have the same status and first gap as `origin/main` (0 differ). The tally is 282
-  `dyn.truthy`, 84 `module binding … has no exact typed storage`, 26 `String` call, 2 switch-case binding,
-  1 `Test262Error`, 1 parse error, 1 `print`, and 14 negatives pass.
-
-## Perf result (2026-11-17)
-
-Branch `claude/7354-perf` on `claude/7354-str`. Change in `src/backend/wasmgc/program/native-string-values.ts` only
-(plus `tests/issue-7354-perf-string-authentication.test.ts`).
-
-### Why every emit re-planned, and what replaces it
-
-`ownerFor` is #3518 fail-closed machinery: before any use of a string pack it proves the retained reservation input
-(demands with the whole program, plan, value/output/invocation/realm requirements) is still what was authenticated —
-by comparing the demands to a frozen snapshot and re-running the whole plan (`assertNativeStringValueReservationInput`).
-That proof is a pure function of the retained input (the issue registries it consults — value plans, output
-requirements, invocation and realm requirements — are append-only and keyed by fresh frozen objects). So:
-
-- `isImmutablePreparedIrValue(owner.input)` walks the retained input once: every reachable object must be frozen
-  plain data (Object/null/Array prototype, data properties only, no functions) or a frozen collection of prepared
-  data. Freezing cannot be undone, so the answer is permanent.
-- The answer is computed BEFORE the checks run on the first use; if it is `true` and the checks pass, the owner is
-  `settled` and later uses skip the snapshot comparison and the re-plan. No key, no cache: input that cannot change
-  cannot go stale. Input that can still change (any unfrozen part) is re-authenticated at every use exactly as before.
-- Unchanged per use: the realm-literal identity check (it reads the caller's live input object), the inventories, the
-  completion checks of every sub-pack, and the physical layout audit.
-- The Prepared producers hand over fully frozen input (measured on the probe program: everything reachable is frozen).
-- Also: an emit checked the pack twice (`requireCompletedNativeStringValues` then `ownerFor` again with nothing in
-  between); it now checks once (`completedOwner`). The per-row `tx.physicalIndex` loops are one `tx.physicalIndices`
-  call (same state, ownership and layout checks; one layout audit instead of one per row).
-- The predicate sits beside its only check, not in `src/ir/program/data.ts`: that file and
-  `tests/issue-3518-program-ownership-runtime-seam.test.ts` are full-file historical pins.
-
-### Measurements (compile time through the strict Prepared entry, one line = literal + concat + length + `===`)
-
-| lines | base (s) | after (s) |
-| ----: | -------: | --------: |
-|     5 |      8.6 |       5.8 |
-|    20 |     71.9 |      16.5 |
-|    50 |    436.0 |      49.9 |
-|   100 |        — |     133.4 |
-|   200 |        — |     428.2 |
-
-CPU profile, 20 lines: base 66.8 s profiled (`ownerFor` 43.0 s, re-plan 29.9 s); after 18.9 s (`ownerFor` 1.7 s,
-re-plan 0.7 s once). The goal (20 lines under 3 s, flat per-op cost) is NOT met: the remaining per-emit cost is the
-physical layout audit. One literal emit runs `PhysicalModuleReservations.#verifyLayout` 63 times (each sub-pack's
-`requireCompleted*` re-checks its dependencies, each with its own audit), and each audit snapshots every filled
-function and global, so it grows with the module — still quadratic. That audit authenticates mutable module storage,
-so it cannot be keyed or memoised; it is a different mechanism (the transaction's) and is left for its own slice.
-Measured experiment (not committed): bracketing the completion check with one audit before and one after and
-skipping the nested audits brings 20 lines to 5.7 s (emit 0.65 s); the rest is one-time plan authentication
-(`preparedIrDataMismatch`/`hasNativeCollectionState` on freshly re-collected demands, ~2.7 s).
-
-### Proofs
-
-- Non-staleness: every refusal test of `tests/issue-3518-native-string-*` and the value-chain consumers fails the
-  same set as base; new tests refuse demands and plan mutated between two emits and after several emits, show the
-  physical audit still refuses an altered global after settling, and pin the predicate on 18 value shapes.
-- Prepared bytes identical to base for the 43 distinct programs of `issue-7354-str-strings`, `test262-prepared-entry`
-  and `test262-prepared-runtime`; ordinary pipeline identical on 200 test262 files × (default, standalone).
-- Failing sets equal to base in all 42 related test files (3518 native-string ×24, realm, number-format, promise,
-  ownership seam, provider-boundary, policy-evolution, …).
-- Mutation survivors: the FrozenSet content walk (no public way to build a FrozenSet with mutable content; kept so
-  the predicate does not depend on that) and `owner.settled = settles` (deleting it only costs time).
-
-### Same pattern nearby
-
-- `emitStringEquals`/`emitStringLen`/concat go through the same `completedOwner` — covered.
-- `requireCompletedNativeValues` → `assertNativeValueResourcePlan` re-derives the value plan from the program at
-  every call (~0.07 s over 20 lines here: cheap today, same shape, not fixed).
-- `readNativeRealmLiteralInput` → `assertNativeRealmRequirementsCurrent` recalculates the realm catalog per use when a
-  realm is present (not on this path's string programs; not fixed).
-
-### Step 2 (2026-11-17): the physical audit count, the tuple scans, one copy fact
-
-What changed:
-
-- `PhysicalModuleReservations.audited(check)` (`src/wasm/physical/module-reservations.ts`). It runs a read-only
-  check with the nested layout audits skipped and one audit after it. Two facts make that sound:
-  - every ledger mutation (`#require`) inside the check is refused;
-  - the check's result is returned only after the trailing audit passes.
-
-  So whatever the check read was the audited layout, or the call fails. `completedOwner` (every string emit) uses it:
-  one audit per emit instead of 63. There is no entry audit: an earlier change is caught by the trailing one.
-- Literal tuple matching (`sameDemandTuple`, used by planning's all-pairs ambiguity check and by every emit's plan
-  scan) compares value, owner and alloc with `Object.is` before the deep comparison. That was quadratic in the
-  literal count, and every deep comparison of fresh objects paid four thrown collection-slot probes.
-- `immutableCopy` (`src/ir/program/data.ts`) records "no collection slot" for each null-prototype record it creates,
-  instead of probing for it later. That is a permanent fact of a fresh `Object.create(null)`.
-
-The frozen-entry design was evaluated and not applied. `fillOwnedFunction` already makes bodies permanent, but no
-producer was moved:
-
-- Resource bodies (flatten, scanner, values, literals, equality, dynamic values): fixtures compare
-  `structuredClone(module)` with `toStrictEqual`, which the owned private-prototype arrays fail (#3518 getter
-  invocation).
-- Source primary bodies: `rejects an already-filled source body mutation` expects the audit refusal, not a
-  TypeError.
-- The remainder helper: its test spies on `fillFunction`.
-
-After the count fix, the body share of the audit was small (0.2 s at 20 lines), so (b) was not needed.
-
-| lines | base 4318ee (s) | step 1 (s) | step 2 (s) |
-| ----: | --------------: | ---------: | ---------: |
-|     5 |             8.6 |        5.8 |        2.7 |
-|    20 |            71.9 |       16.5 |        4.4 |
-|    50 |           436.0 |       49.9 |        9.8 |
-|   100 |               — |      133.4 |       19.0 |
-|   200 |               — |      428.2 |       45.4 |
-
-Synthetic program with 100 string literals/concats spread over 25 functions: 137.3 s on base, 7.1 s now, same bytes.
-
-The targets (20 lines < 3 s, 200 lines < 20 s, flat per line) are not met. Per-line cost still rises from ~0.13 s
-to ~0.26 s. CPU profile at 100 lines (30 s profiled):
-
-- `hasNativeCollectionState` 8.4 s: probes on freshly computed objects in `preparedIrDataMismatch`. The callers are
-  one-time currentness checks that re-derive and compare the whole program: object access, census, value plan,
-  output requirements.
-- `planNativeStringValuePhysical` 7.7 s: runs four times per compile (two setup derivations, the reservation check,
-  the settle pass).
-- The audit itself 6.9 s: one per emit, plus `physicalIndex` and inventory audits outside the scope. Each audit is
-  O(module), so the cost is still quadratic in the literal count.
-
-The next levers are those re-derivations (share one derivation per immutable program rather than re-deriving per
-component) and the audit's O(module) walk. Neither is a change to this module alone.
-
-Proofs:
-
-- Failing sets equal base for 112 test files touching the changed modules, in chunks of 4. One base-only failure
-  under load (object-key-foundation) passes alone.
-- Prepared bytes are identical for the 43 programs. Ordinary bytes are identical on 200 test262 files × (default,
-  standalone).
-- New tests:
-  - a filled global altered after 5 emits is refused;
-  - an extra population slot is refused;
-  - a write injected between the check and its trailing audit (through a vitest module mock of the literal
-    completion check) is refused;
-  - a ledger mutation inside `audited` is refused;
-  - a literal tuple that differs only in its storage reference is refused.
-- Mutation survivors are all performance-only: skipping nested audits, the `audited` wrapper in `completedOwner`,
-  the three primitive prefilters (implied by the deep comparison) and the copy-brand fact.
-
-### Review round 1 (2026-11-17)
-
-- **Must-fix: forged frozen collection.** The predicate recognised FrozenMap/FrozenSet by prototype alone. Fixed in
-  `src/ir/program/data.ts`:
-  - The two classes get a private-field brand check (`#map in v` / `#set in v`).
-  - New export `preparedIrFrozenCollectionMembers(v)` returns the members only for a branded instance with the exact
-    prototype, frozen, with no own keys. A subclass carries the brand but has its own prototype, so it is refused.
-    The frozen/no-own-keys checks are implied by brand plus exact prototype, because the constructor freezes `this`
-    (mutation survivor).
-  - `preparedIrDataMismatch`, `immutableCopy` and `freezePreparedIrRuntimeValue` use the brand instead of
-    `instanceof`. This is a drop-in for genuine collections. A borrowed prototype is now a non-data object and is
-    refused, so the reviewer's repro is refused at planning ("stale or mismatched demand census").
-  - Tests: the repro; forged map and set twins over mutable storage; a bare object on the borrowed prototype; a
-    branded subclass that overrides iteration.
-- **SF1, re-entrancy:** `audited` restores the outer flag, so a nested check no longer re-opens the ledger. Test: the
-  reviewer's probe.
-- **SF2, `internFunctionType`:** appending a new type inside `audited` is refused. Cache hits stay allowed, since they
-  are read-only. Test added.
-- **SF3, comments and test names:** they now describe the single trailing audit.
-- **SF4, the copy-brand fact in data.ts:** measured alone, it saves 20 lines 5.96 → 4.91 s and 50 lines 14.4 →
-  10.0 s, so it is kept. data.ts has to change for the must-fix anyway.
-  - Receipts that pin data.ts content: `tests/helpers/ir-runtime-program-relocation.json`, `ir-c1-authority.json`,
-    `ir-ownership-evolution.ts`, `ir-runtime-program-policy-program-validator.json`,
-    `ir-source-map-position-inventory-successor.json`, `ir-deno-post-position-main-successor.json`.
-  - Their consuming tests (ownership seam, provider-boundary, policy-evolution) already fail on base, so the extra
-    breakage is masked and these receipts need a refresh when the stack lands.
-- **SF5, inherited fields:** a settled verdict now records the own-property state of `Object.prototype` and
-  `Array.prototype` that it ran under. Any change re-runs full authentication. Requiring null-prototype records was
-  tried and rejected: the prepared program is built from frozen `Object.prototype` records, so nothing would settle
-  (20 lines took 29 s). Test: adding `Object.prototype.outputRequirements` after settling is refused ("unexpected
-  output requirements"); removing it re-settles.
-- **Results:**
-  - The 24 `issue-3518-native-string-*` files plus str-strings fail the same set as base.
-  - Prepared bytes are identical for the 43 programs. Ordinary bytes are identical on 100 files × 2 targets.
-  - Scaling: 5 lines 2.9 s, 20 lines 4.9 s, 50 lines 10.7 s.
-  - Mutants killed: re-entrant restore, intern guard, prototype state, map/set brand, map/set exact prototype, set
-    member walk, and the brand in `immutableCopy` / `preparedIrDataMismatch` / `freezePreparedIrRuntimeValue`.
-  - Survivors: the implied frozen/no-own-keys check, and the perf-only `owner.settled` assignment.
-
-### Review round 2: MET (2026-11-17)
-
-- `preparedIrFrozenCollectionMembers`: the frozen/no-own-keys check is dropped. Brand plus exact prototype suffice,
-  because the constructor freezes `this` before anyone holds it.
-- `sharedPrototypeState` now documents exactly what it tracks: the own properties of `Object.prototype` and
-  `Array.prototype`. The Map/Set/iterator built-ins and `Function.prototype.call` are trusted, not tracked. Base has
-  the same gap, because its per-use re-check reads through the same built-ins.
-- The six data.ts receipt pins and the other red-on-main pin families are filed as
-  [#7358](7358-3518-receipt-pin-tests-red-on-main.md) (priority high, sprint current). It must land before the #7354
-  stack is complete.
-
-### After the merge onto Str (2026-11-17)
-
-Perf (`8e92e8c3cb`, built on Str `4318ee510f`) merged with the reviewed Str (`eeb2e28a24`, PR #7291), then with main
-after #7291 landed. Main since the Str tip changed only benchmark artifacts and the LOC baseline.
-
-What the port changed:
-
-- One conflict in `native-string-values.ts`: Str had folded the concat emitter's occurrence scan into
-  `requireOwnerOccurrence`, the shared check of concat, `string.eq` and `string.len`. Str's structure is kept. Its
-  completion check (`requireCompletedNativeStringValues` and then `ownerFor` again) is now Perf's `completedOwner`. So
-  every string emit (literal, concat, equality, length) runs one owner check, takes the settled-owner fast path, and
-  does ONE `audited` layout audit. No check of either side is removed: Str's occurrence admission and Perf's realm
-  identity, inventory and completion checks all still run on every emit.
-- Issue file: Str's review sections first, Perf's after them; the frontmatter grants are Str's (Perf added none).
-- `data.ts`, `module-reservations.ts` and the census test merged without conflict.
-
-Scaling through the strict Prepared entry (one line = literal + concat + length + `===`, standalone):
-
-| lines | before: Str `eeb2e28a24` (s) | after (s) |
-| ----: | ---------------------------: | --------: |
-|     5 |                          9.3 |       1.8 |
-|    20 |                         76.4 |       3.6 |
-|    50 |      not finished in 480 s |       7.7 |
-
-Before and after produce the same binary at 5 and 20 lines.
-
-Proofs:
-
-- Gates: typecheck, LOC and function budgets with the base at the Str tip and at the main tip, coercion sites,
-  oracle ratchet, dead exports and import cycles are all green.
-- Tests pass: Perf, Str strings, Str emitter requests, R census (100), D1, P, V/G, H, H2, prepared entry and runtime,
-  and #7188.
-- The 24 `issue-3518-native-string-*` files, run in chunks of 4, fail the same 67 tests (same sets) as the Str tip.
-- Prepared bytes are identical to the Str tip for all 90 compiles of the Str strings, prepared-entry and D1 test
-  files: 45 binaries and the refusal messages of the rest.
-- Ordinary bytes are identical on 60 test262 files × (default, standalone).
-- Forgeries still refuse:
-  - Perf's: a forged frozen map or set; a mutation after a nested `audited` returns; demands or plan changed between
-    two emits.
-  - Str's: swapping the names of `__str_equals` and `__str_concat` (the census has no equals/flatten swap); repointing
-    a literal use to another literal's storage; stripping the role of the `""` literal global.
-- `changed-root-tests.sh` (interpreter engine): green.
-
 ## T and X result
 
 Status 2026-11-17. Branch `claude/7354-tx` on `claude/7354-p` (`1995dd6ef2`): T `5310a38b13`, X `01fd76c26c`.
@@ -2034,49 +1569,45 @@ positions and evaluation order correct over a 270-program cross product; a `?:` 
   `toBoolean`. Tests: "T after Str" (conditional, `if`, `||` operand, `!v` on `""` / `"a"`; all 4 fail without the
   arm).
 
-### Review round 4: MET
+## Str result
 
-T MET, X MET at `838688fd5f`, no must-fix.
+Status 2026-11-17. Branch `claude/7354-str` on `claude/7354-p` (`1995dd6ef2`). Steps 1 and 2 of the slice are built;
+steps 3–5 (dynamic `+`, ToString/`String(x)`, `typeof`) are the follow-up slice Str2 (lead decision, below).
 
-- **Strings and ToBoolean:** 120 string-ToBoolean programs equal node — values `""`, `"a"`, `" "`, `"0"`, `"false"`,
-  `"\0"` and a 3000-character string × positions `if`, `!`, `!!`, `?:`, `while`, `&&` / `||` as condition and as
-  value. The reviewer found no path by which a string reaches ToBoolean without the string arm. X with strings is
-  correct.
-- **Census:** forgeries of the `to_boolean` provider, of `__is_truthy` and of the five string type rows are refused
-  by name.
-- **Re-runs:** the 94 T probes and the 127 X probes of the earlier rounds, no regression. Both mutants of the string
-  arm are killed.
+### Built
 
-Should-fixes, both recorded under "Known gaps (T and X)" below:
+- **Step 1 — typed strings through the presentation.**
+  - `preparedPresentationPolicy` selects native string constants, equality, length and concatenation on wasmgc
+    standalone (not the relational compare: it has no join).
+  - The string value plan (`native-string-values.ts`) joins `string.eq` to the lazy `__str_equals` resource
+    (`native-string-equality.ts`, reused as is) and `string.len` to the carrier's length field.
+    `native-string-output-requirements.ts` no longer refuses those two kinds.
+  - One `preparedNativeStringResolver(tx, pack, unitId)` realises an owner's string operations; `fillPrimaryBody`
+    spreads it (program-consumer.ts shrinks by 11 lines).
+  - R's census: a storage provider (`native-global` literal, `carrier-field` length) is answered by the setup's
+    literal storage or string carrier type; a provider the IR reaches through its own instruction (`string.eq`,
+    `string.concat`) by the setup function named after the provider's symbol. Every other setup function stays a
+    declared dependency, as before.
+  - The ABI join admits a native string in an internal callable contract on standalone, beside D1's externref arm.
+- **Step 2 — a string in the dynamic value.**
+  - The legalization boxes a string as `coerce.to_externref` (the externref that wraps it), the ordinary standalone
+    carrier.
+  - `nativeStringsReachCarrier(demands)` (`native-string-value-demands.ts`): a native string can reach the carrier
+    only through an executable `coerce.to_externref` of a string (its box, a thrown string). When it can, strict
+    equality takes the shared SameValue builder's string arm (code units through flatten + `__str_equals`), which
+    D1 left off; otherwise its body is unchanged.
 
-- (a) the confusing refusal of an `any`-annotated local holding a string or a number;
-- (b) the "redeclaration of 'e'" refusal of a catch parameter that shadows a `var`.
+### Differences from the brief and why
 
-### Known gaps (T and X)
+- **No typed string home for a script `var`.** V's classifier can answer the existing `"string"` home soundly with
+  the same reads proof (tried), but the physical plan has no string global ("global s carries non-scalar IR type
+  string") — the same globals arm H builds for dynamic. Left to H/merge; proven with function locals.
+- **A reassigned typed string local** is refused by from-ast ("has no slot representation"): the Prepared resolver
+  has no `resolveString` slot type. Not built (a resolver seam, not a join).
+- **Step 3 needs a second body** (`__ir_dyn_add` = `emitAnyAddFromExternTemps`, entangled with the legacy object
+  runtime); per the lead: Str2 builds a Prepared-native add from shared pure builders.
 
-- **(a) An `any` local outside every dynamic contract refuses without naming its cause.** `function g(c: number):
-  number { let v: any = c > 0 ? "" : 1; return v ? 1 : 2; } if (g(1) !== 2) throw 1;` (`test.ts`, standalone)
-  refuses "wasmgc:standalone physical setup cannot be materialized (1 gap): body g has no accepted host async dynamic
-  carrier". The same refusal is on main without T (checked on `c105fc1cc0`).
-  - **Cause:** `legalizeSourceDynamicValues` (`src/ir/source-dynamic-contracts.ts`) legalizes a program only when it
-    has a dynamic contract: an `any` / untyped parameter or result, a dynamic script `var`, or a catch binding. That
-    gate is deliberate — from-ast also boxes values into dynamic ones internally in programs without a contract
-    (pinned by `issue-3518-native-string-number-source-admission`). Here the only dynamic value is an annotated
-    local, so `g` stays unlegalized. The first stage that sees the leftover dynamic type is the host async planner
-    (`src/ir/program/host-async-dynamic.ts`), and its message is about host async frames.
-  - **Why not fixed here:** naming the cause means making the contract gate recognise an `any`-annotated local and
-    then re-sweeping the flow rule over such locals. That is a change of the gate, not of one message. Rewording only
-    the planner's message would still not say what caused it.
-  - Without `: any`, or in a `.js` file, from-ast refuses earlier by name: "ternary branches have different types
-    (string vs f64)".
-- **gc target, pre-existing: an invariant error out of `compile()`.** `var c = 1; let v: any = c > 0 ? "" : 1; if
-  (v) throw 1;` (`t.ts`, target `gc`) throws `IrProgramDriverInvariantError` "ir/from-ast: #5092 dynamic carrier is
-  unavailable or incompatible in <module-init>". The same happens on `c105fc1cc0` (main plus #7359, without T). The
-  same program on standalone compiles and answers like node. Found while checking (a); not touched here.
-- **(b) A catch parameter shadowing a `var` refuses.** `function f(v){ var e = 5; try { throw v; } catch (e) { }
-  return e; }` refuses "redeclaration of 'e'". This comes from the hoisted-var fix (#7290): a catch parameter counts
-  as a second binding of the `var` name. It belongs to the "one slot per `var` name per function" follow-up (see
-  Known gaps (H)) and is left unchanged.
+### Measured
 
 ## Fa — function values: creation and storage (2026-11-19)
 
@@ -2148,6 +1679,931 @@ refuses at presentation; the census's emission re-authentication passes (`emitte
 per presentation) are most of the rest. This is the realm's `#verifyLayout` cost (Perf lane), not this slice's code:
 the closure owners add no authentication pass.
 
+
+- `tests/issue-7354-str-strings.test.ts` (16 tests): typed string locals, concatenation, a non-ASCII literal,
+  `throw "x"` caught and escaping, strings out of `try`/`catch`; a string through an untyped parameter compared
+  with literals, numbers and `undefined`; fresh concatenations equal by code units through `any`; StringToNumber.
+  Refusals: compare, reassigned string local, script string var, gc target, ToBoolean, `==`, a method call.
+- Sweep (strict entry, against node): 11 operations (`===`, `!==`, against a typed string / number, `* 1`, `- 0`,
+  unary `+`/`-`, `< 2`, `>= 0`) × 19 values (numbers incl. NaN, ±0, ±Infinity; booleans; `undefined`; 9 strings
+  incl. `""`, `" 3 "`, `"0x10"`, `"-0"`, `"Infinity"`) × 4 positions (top level, function, value, condition):
+  44/44 correct. Named gaps for dynamic `+`, `typeof`, `!`, `==`; zero invariant errors, zero invalid Wasm.
+- Ordinary-pipeline bytes, base sources swapped into the same tree: 396 files of the 411-row list compiled, identical
+  on the JS environment and `--target standalone` (8 compile errors on both, 15 skipped).
+- Prepared bytes: every module the prepared-entry/runtime, #7188, R, D1, P and V/G tests instantiate (66) is
+  identical; the one new module is Str's census program.
+- Pins (base vs this branch, failing sets): the 22 #3518/#7139 files that import a touched module, and the changed
+  root tests: identical failing sets except the pins below. Pre-existing on the base (same sets): the core
+  vocabulary seam (source hash of `src/ir/ast-lowering-plans.ts`), semantic-verification ownership (`effects.ts`),
+  string-boundary-const (5), number-format requirements (2), realm requirements (1), and 626 receipt tests in the
+  validator/helper policy-evolution and semantic-provider-boundary files.
+- Pins updated: R (`throw "x"` → the compare refusal; Str census tests), D1 (object box refusal; member read names
+  `dyn.member_get`; `selectNativeDynamicValues` signal), `issue-3518-native-string-output-requirements`
+  (string length is a value-plan join, no output use).
+- 411-row sample: unchanged — 393 × not-direct (`print` 345, `__isArray` 43, `__globalObject` 5), 2 × switch-case
+  binding, 1 × `DD_operator`; negatives 14 pass.
+- Mutation survivors: the `string` kind check and the projection-view check of `nativeStringsReachCarrier` (today
+  every executable `coerce.to_externref` carries a string and the program view mirrors the projection).
+- Gates: typecheck, loc, func, coercion-sites, oracle-ratchet, dead-exports, import-cycles, boundaries inventory.
+
+### Known gaps and hand-over (Str2)
+
+- Every emitted string literal/concat re-authenticates the whole native string plan (`emitPreparedNativeStringLiteral`
+  → `requireCompletedNativeStringValues` → `ownerFor` → `assertNativeStringValueReservationInput` →
+  `planNativeStringValuePhysical` → `assertNativeStringOutputRequirementsCurrent`, twice per literal). Profile of a
+  20-string-op program: 38.5 s total, 24.6 s in `emitPreparedNativeStringLiteral`, 16.9 s in the re-plan.
+- #3518 receipt/pin tests are red on main and hide new breakage (the Perf data.ts edit breaks six more receipts):
+  [#7358](7358-3518-receipt-pin-tests-red-on-main.md), which must land before this stack is complete.
+- Number formatting is a runtime-support batch, which the presentation refuses (`ir-program-presentation.ts`
+  `checkResourceDemand`, "source and prepared runtime must independently prove no async/support demand").
+
+### Review round 1
+
+Adversarial review at `4318ee510f`: NOT MET (string semantics correct; the string provider census did not fail
+closed). Fixed:
+
+1. **Must-fix — the census joins string providers to their executable occurrences** (`stringProvidersJoin`,
+   `prepared-provider-census.ts`). The step-1/2 rules (some literal global or string type exists; any setup function
+   named after a provider symbol) are gone. Now:
+   - the selected string providers equal, as a multiset, the string features the executable projection demands
+     (the manifest's own scanners `irStringConstDemand`/`EqDemand`/`LenDemand`/`ConcatDemand`);
+   - the literal provider: every executable `string.const` is one literal use of the plan, and each use names exactly
+     one literal global or materializer by cache key;
+   - the length provider: exactly one string carrier type, whose completed field at the provider's `fieldIndex` is an
+     i32;
+   - `__str_equals` / `__str_concat`: exactly the one setup function of the provider's role, by symbol;
+   - the runtime-bound multiset excludes string providers; any other non-callable native provider refuses.
+   Each case the review listed now refuses by name (16 new census tests; drop tests restored). Mutation sweep over the
+   join (11 mutants: feature population, use count, use join, materializer arm, carrier count, carrier i32, owner
+   join, owner count, non-string non-callable): all killed.
+2. **Must-fix — `string.eq` / `string.len` emitters** share one helper with the concat emitter
+   (`requireOwnerOccurrence`: an occurrence of the owner's executable projection that admits the request, provider
+   included); `string.len` reads `fieldIndex` from the selected carrier-field provider.
+3. Should-fixes: tests for `string.eq` without concat (needs the empty literal) and an oversized literal (materializer);
+   the unreachable `!equality` clause and the redundant `standalone` check of the ABI string arm are gone (the +1 LOC
+   grant on `ir-program-presentation.ts` is given back).
+
+Evidence after the round: Str, R, D1, P, V/G, prepared-entry/runtime, #7188 tests pass; the 11 string-related
+#3518 files pass (base: same); Prepared bytes of the 32 modules the Str and R tests instantiate are identical to
+`4318ee510f`; ordinary bytes on 101 test262 files × 2 targets identical to the base; gates and
+`changed-root-tests.sh` (interpreter engine) pass. The emitters' provider/owner checks have no test (Prepared attaches
+no string provider, so only a forged emission request would reach them).
+
+### Review round 2
+
+Adversarial review at `82d6cb727c`: NOT MET (three forged setups passed the census, then threw
+`invalid-presentation` out of `compile()`). Fixed at `b237a1dca9` + `a26c134013`:
+
+1. **Must-fix 1 — forged setups refuse by name.**
+   - **Why they threw.** R's mock returned a *new* plan object on every `emittedPhysicalSetupPlan` read, so any
+     forgery the census accepted then failed the finalization's identity check (`plan !== record.plan`). In
+     production the plan is one frozen object, so that check is not reachable from a setup. The mock now forges
+     ONE object, like the emission's own plan. With that change, a forgery the census accepts presents the real,
+     unaltered module (test: reversed reservation steps run and answer 3); it never throws.
+   - **(a), (c) and the step further: identity join** (`nativeSlots`). Every binding the setup derives itself
+     (anything that is not a runtime or intrinsic callable's) must be the binding its declaration's space and role
+     derive under the runtime ABI anchor (`createIrBindingId` + `nativeRole`, the derivation of
+     `irSupportFuncRef`/`irSupportGlobalRef`/`irSourceTypeRef`; the name is not part of the id). So every role the
+     census reads is the one its completed slot was reserved under. Refused: equality↔flatten swap (a),
+     equality↔concat swap, two literal globals swapped, the `""` literal's role stripped (c), flatten, copy-tree and
+     a carrier subtype stripped. An intrinsic-bound setup function must be a by-instruction provider's slot (test:
+     flatten rebound as an intrinsic and relabelled).
+   - **Deviation from the decided fix: no separate signature join for eq/concat.** With the identity join, the eq
+     slot is the one reserved as `[string-equality, equals]`, and `supportPopulationJoins` already requires its
+     declared signature to be that slot's completed signature. A provider-signature check therefore cannot be broken
+     by any forged setup; it would be an unkillable mutant, so it was not added. The carrier field's `i32` check was
+     deleted for the same reason (it survived the mutation sweep).
+   - **(b) literal uses join by value** (`literalUsesJoin`). The uses equal the executable `string.const`
+     occurrences one to one (by `collectNativeStringValueDemands`, which replaces `countInstructions`). Each use's
+     cache key must be the key its own occurrence's value and encoding select. `selectNativeLiteralDemand` is moved
+     out of the planner, so planner and census share it. The key must name exactly one storage slot of the selected
+     kind. Refused: one use repointed to another literal, all uses to one key, two uses exchanging occurrences, one
+     occurrence used twice.
+   - **Not joined: labels nothing consumes.** A literal global's *name* is one (it is not in the binding id; a
+     renamed global is accepted and compiles the real module). The reservation steps and type shapes are others.
+2. **Must-fix 2 — emitter checks tested.** `tests/issue-7354-str-emitter-requests.test.ts` (9 tests) issues forged
+   requests through `preparedNativeStringResolver`: the wrong owner for eq/len/concat, another owner's occurrence, a
+   foreign provider for each, and a host-selected length provider. Deleted because implied:
+   - `!pack.equality`: an admitted `string.eq` implies the planned equality resource.
+   - `selected.length === 1` and `field.carrier !== "string"`: the length emitter now uses
+     `preparedStringLenProvider`, and the carrier is typed `"string"`.
+3. **Should-fixes.**
+   - The length emitter shares `preparedStringLenProvider`; this adds one `backend->ir` import edge, granted in the
+     frontmatter.
+   - `countInstructions` is gone.
+   - `hasRole` is now data equality, so the `roleLen` survivor is gone.
+   - `callableKind` is gone: the callable join compares the provider's implementation as data.
+   - The `useOne` survivor is killed by a duplicated literal global on the same slot.
+   - **Rebutted: sharing the manifest's demand→feature table.** `demandFeatures` is private to
+     `src/ir/program/runtime-manifest.ts`, and the #3518 validator relocation receipts byte-pin that file. Exporting a
+     wrapper failed 30 relocation tests, and re-pinning breaks its segment proofs. The census keeps its six scanner
+     rows, now spelled with the family constants.
+
+Evidence:
+- Tests: Str (18), R (96), Str emitter (9), D1 (46), P + V/G (70), prepared-entry/runtime + #7188 (58) pass. The
+  forks report a vitest `onTaskUpdate` RPC timeout under load on the slow string files; every test passed.
+- At `82d6cb727c` with the stable mock, 12 of the new R tests fail (the forgeries are accepted there).
+- 23 #3518 files: all files that import a changed module, plus the string equality/flatten/output/value files.
+  Failing sets are equal to the base: c1-current-source 271, number-format 2, realm-requirements 1,
+  validator-policy-evolution 143, validator-relocation 9, semantic-provider-boundary 349, helper-policy-evolution
+  134. Every other file passes.
+- Bytes against `82d6cb727c`:
+  - Prepared: the 33 modules (30 distinct) the Str and R tests instantiate are identical.
+  - Ordinary: 100 test262 files × {JS environment, standalone} are identical.
+- Mutation sweep, 19 mutants, each run alone:
+  - Census: 12 killed (identity off, runtime/intrinsic exemptions, intrinsic-owner, use population, value key,
+    useOne, kind, carrier count, callable named, demanded population, role equality); carrier `i32` survived and
+    was deleted.
+  - Emitter: owner, eq/len/concat provider and length arm are killed.
+  - **Survivor, justified:** `buffer.view === "projection"` in `requireOwnerOccurrence`. In every reachable program
+    the program view carries the same string instructions as the projection, so no request can name an occurrence
+    that only the program view has.
+- Gates: typecheck, loc, func, coercion-sites, oracle-ratchet, dead-exports, import-cycles (grant), boundaries
+  inventory, and `changed-root-tests.sh` (interpreter engine).
+
+### Review round 3: MET
+
+Fresh adversarial review at `50468e80c0` with the reviewer's own mock: MET, no must-fix.
+- Every forgery is refused by the census itself.
+- The dropped signature join and the dropped carrier-`i32` check are accepted as implied.
+- The manifest-table rebuttal is accepted; the follow-up is #7358.
+- Optional should-fix, not done: the census refusal names no join. Every census join, the string join included,
+  answers `undefined`, and the presentation turns that into the one `runtime-demand` gap. Naming the failing join
+  would change `runtimeCensus`'s result type and the gap call in `ir-program-presentation.ts`, which is at its size
+  budget. That belongs to a census-wide change, not to the string join alone.
+
+### Merged onto main (D1 reworked, P, H) — 2026-11-17
+
+Merged `origin/main` `0409838769` into the branch.
+- **Conflicts.** Three files:
+  - The issue file: both sides kept.
+  - `ir-program-presentation.ts`: string admission in internal callable contracts, as `inCall` beside H's `carried`
+    (+1 line, granted in the frontmatter).
+  - R's census test: H's describe and Str's describe are both kept.
+- **Ported cleanly onto D1's rework.** `selectNativeDynamicValues(intrinsics, stringsCarried)` and the string arm in
+  `buildObjectSameValueBody`'s three string parameters needed no change.
+- **One port for H.** H's provenance (`carries`) now treats string literals as a typed kind, beside the number and
+  Boolean literals. Without it, a literal passed to a typed string parameter refused as "a dynamic value flows into
+  string".
+- **A script `var` holding a string now works through H's dynamic home.** It equals node (two acceptance tests),
+  and its `.length` refuses by name (`dyn.member_get`). H's "holding a string (slice Str)" refusal row is removed.
+
+Evidence after the merge:
+- Tests: Str (20), emitter-requests (9), R (100), D1 (49), P + V/G, H (65), prepared-entry/runtime + #7188 (58)
+  pass. The vitest `onTaskUpdate` RPC timeout appears on the slow string files.
+- `changed-root-tests.sh` (interpreter engine): every changed root file passes. The script hit the time cap before
+  the last file, `str-strings`, which was run directly.
+- Gates against the `origin/main` tip pass: loc and func (with `LOC_GATE_BASE`), coercion-sites, oracle-ratchet,
+  dead-exports, import-cycles, boundaries inventory.
+- Bytes against `origin/main`:
+  - Ordinary: 100 test262 files × {JS environment, standalone} are identical.
+  - Prepared: all 148 modules the D1, P, V/G, H, prepared-entry/runtime, #7188 and R tests instantiate on main are
+    identical. The 5 extra modules are Str's string programs.
+- String sweep (`.tmp/sweep.mts`): 286 programs, compared with node. They cover 16 dynamic-string operations × 4
+  strings × {top level via the dynamic home, function, condition, loop across iterations with a sibling `while`},
+  plus typed string expressions in a function and a loop.
+
+| Outcome | Programs | Detail |
+| --- | --- | --- |
+| OK | 184 | equal to node |
+| `dyn.truthy` (ToBoolean, slice T) | 32 | `&&`/`||` with a string operand in condition position |
+| `operator '&&' requires bool operands` | 16 | from-ast, value position |
+| `operator '\|\|' requires bool operands` | 16 | from-ast, value position |
+| `dyn.typeof` | 16 | |
+| `__ir_dyn_add` | 16 | dynamic `+`, slice Str2 |
+| `source declaration and prepared callable slots disagree` | 6 | a .js function returning a Boolean of a typed string; numeric twins refuse the same way on main |
+
+  Wrong answers: 0. Invariant errors: 0.
+- 411-row sample: all 411 rows have the same status and first gap as `origin/main` (0 differ). The tally is 282
+  `dyn.truthy`, 84 `module binding … has no exact typed storage`, 26 `String` call, 2 switch-case binding,
+  1 `Test262Error`, 1 parse error, 1 `print`, and 14 negatives pass.
+
+## Ty result
+
+Status 2026-11-17. Branch `claude/7354-ty` on `claude/7354-tx` (`37366b4667`).
+
+### Built
+
+- **Step 1, `typeof v <op> "lit"` on the dynamic value.** from-ast lowers every such comparison (all four
+  operators, both orders) as `string.eq(dyn.typeof v, string.const)`. `src/ir/program/typeof-comparisons.ts` finds
+  them; one arm of `dynamic-value-legalization.ts` answers each with a tag test on `v` and drops the `typeof`
+  result and literal when only those comparisons read them. A `typeof` result used any other way still refuses as
+  `dyn.typeof` (slice Str2). Tag tests: "number" → new `js.value.is_number`, "boolean" → new `js.value.is_boolean`
+  (bound to the native value / Boolean resources' existing `__typeof_number` / `__typeof_boolean`, no new
+  resource), "undefined" → `js.extern.is_undefined`, "object" → `ref.is_null`; any other literal is constant.
+- **Tie to the admitted kinds.** `TYPEOF_KIND` is keyed by the `typeof` answer and its values are the admitted
+  kinds; the box arm admits a value only through `boxedKind()` typed by it. A slice admitting strings/objects must
+  edit it (an object kind collides with `null` on "object"); until then an unanswered literal is constant false.
+- **Step 2a, refactor (`fa01b1aa4c`).** from-ast's identifier-read chain is one pure classifier,
+  `classifyIdentifierRead` (`src/ir/identifier-read.ts`); the read switches on it (from-ast −30 lines).
+- **Step 2b, `typeof` of an absent global (`af18d626f0`).** The native lane's resolver states
+  `unresolvedNameIsAbsent`: a name the program does not declare and not in `PREPARED_PROVIDED_GLOBALS` (`Number`,
+  since `Number(v)` compiles). The classifier answers such a `typeof` operand `absent-global`; the read lowers it to
+  the undefined value (step 1 answers the comparison) and the conditional fold answers "undefined" from the same
+  classification, so assert.js's dead `JSON.stringify` arm is not lowered. The legalization also runs for roots
+  holding such a `typeof`.
+- **Semantics, stated:** this is THIS environment's answer (it provides no such global), not ECMAScript's — node
+  says `typeof Math === "object"`. Sound because every value/member/call/`new` use of such a name refuses by name
+  (pinned for every name of `AMBIENT_TYPEOF_TAGS`, the failure says to add the name to `PREPARED_PROVIDED_GLOBALS`),
+  and the error is in the safe direction. The shape that could pass falsely (assertions all under
+  `if (typeof X !== "undefined")`): 0 es5id files; in test/built-ins + test/language 11 files compare a global's
+  `typeof`, of which 2 guard assertions (`Object/assign/target-Array.js` Proxy, `Error/isError/fake-errors.js`
+  Symbol) and 7 skip one table row (ArrayBuffer immutable, Error stack).
+
+### Differences from the brief
+
+- `switch (typeof v)` with only literal cases and `var k = typeof v; k === "x"` are accepted (the same SSA
+  comparisons; tested against node). Any non-literal case test refuses by name ("switch-case-test-nonliteral", review round 1; before it, only an all-non-literal switch refused).
+- A typed operand (`typeof n` with `n` an f64 local) still refuses ("js.string.const is unavailable"), as on base.
+
+### Measured
+
+- Tests: `tests/issue-7354-ty-typeof-comparisons.test.ts` 67 (isPrimitive; per literal every operator × order ×
+  9 values; side effects once; conditions, loops, `?:`, `&&`/`||`, switch, catch; refusals; absent globals, the
+  table-driven pin, shadowing var/parameter/local, hoisted var, undeclared identifier, TDZ, cross-script
+  declaration). R census +6 (providers dropped/renamed, `__typeof_number`/`__typeof_boolean` renamed). With D1, T,
+  H, X, P, V/G, R, prepared entry/runtime, #7188, 3518 seam/ownership: 445 pass.
+- Sweep: 566 programs (190 full + 376 sampled of 1,692: 9 literals × 10 values × operators × orders × 10
+  positions) against node: 530 correct (right answer returns, wrong throws), 36 named gaps (typed script var →
+  string const; TypeScript no-overlap errors), 0 wrong, 0 invariant, 0 invalid Wasm.
+- Mutations: step 1 — 2 survivors found and killed by new tests (literal guard: `typeof v === typeof w` gave a
+  wrong answer; the number-test resource selection); survivor kept: terminator use count (no source shape puts a
+  `typeof` result in a terminator; a use count must be complete). Step 2 — all 7 guards killed (file/checker
+  declaration checks gave wrong answers under mutation, now tested).
+- Ordinary bytes: refactor identical on 313 test262 files (ES5 sample + Math, JSON, Number, global, identifiers,
+  typeof, identifier-resolution) × JS and standalone; feature identical on 163 of them × 2. Prepared bytes of the
+  refactor identical for 343 distinct programs of the 7354/7188/prepared tests × standalone/gc.
+- Pins: 3518 core-vocabulary-seam 42 → 44; semantic-verification-ownership INTRINSIC_DEFINITIONS pin
+  bc21ec2c… → 242fb237… (predecessor step also removes the two rows); D1's tag-test refusal now uses a String tag;
+  T/D1 typeof refusals moved here. 3518/3526 base diff: the four pin files run on base and HEAD (evolution: same 117
+  failures); the other ~300 files were run on HEAD only for about half (no base comparison) — not complete.
+- 411-row sample: negatives 14 pass. After step 1: 282 moved from `dyn.typeof` (isPrimitive) to `identifier
+  "JSON" is not in scope in formatIdentityFreeValue`. After step 2: 308 × `direct call to "String" has no exact
+  AST-site plan` (282 in `formatIdentityFreeValue`, assert.js:29 `return String(value) + "n";`, 26 in
+  `verifyProperty`); 84 × `module binding X has no exact typed storage: not-direct` (obj 52, x 5, proto 4, o 4, …);
+  2 switch-case lexical binding; 1 `unknown class "Test262Error"` in isConstructor; 1 parse error; 1 `print`.
+
+### Known gaps
+
+- Pre-existing: an empty source program throws `PreparedIrProgramInvariantError` out of compile() on the Prepared
+  standalone entry ("native string/value demands: missing complete owner population").
+- `typeof Number` refuses by name (provided, real tag not wired).
+
+### Review round 1 (Ty)
+
+Adversarial review at `cb7aec7ab6`: NOT MET, one must-fix. Fixed at `9434ede322`:
+
+1. **Must-fix: a switch mixing literal and non-literal case tests gave a wrong answer.** `lowerStringSwitchDispatch`
+   compared only string-literal tests and skipped the rest (never compared, never evaluated); only the selector
+   stopped it, and the Prepared path has none. The selector's case-test admission is now one predicate,
+   `switchCaseTests` (`src/ir/switch-case-tests.ts`), asked by the selector and by from-ast's switch lowering, which
+   refuses by name (`switch-case-test-nonliteral`, `-mixed`, `switch-multiple-defaults`); the two files' duplicate
+   literal helpers fold into it (from-ast −18, select −48 lines). Siblings: the numeric dispatch with a non-constant
+   case used to reach a plain producer-promise `Error` (an exception, not a refusal) and now refuses by name; a
+   string switch with a numeric case was skipped the same way and is now `-mixed` (TypeScript also rejects most such
+   programs). Tests: the repro (last), first, only, a call with a side effect, a numeric switch's non-literal case,
+   default in the middle (runs like node). Mutation: deleting the refusal is killed.
+2. **Catch-payload tie (should-fix): pin.** The catch binding enters the carrier without `boxedKind`; T's per-throw-site
+   payload pins (`tests/issue-7354-x-dynamic-throw.test.ts`) now fail with a message pointing at `TYPEOF_KIND`.
+3. **`tag.test` widening (should-fix): withdrawn.** The arm keeps only its sourced `undefined`/`null` probes; the number
+   and Boolean tests come only from the `string.eq` arm; D1's number-tag refusal pin is restored.
+4. **Fold asks the classifier only (should-fix): rebutted.** `ambientTypeofIdentifierTagFromAst` is not part of the
+   identifier-read order: it answers the ordinary lane's host-provided `AMBIENT_TYPEOF_TAGS` (`isAmbientBinding`),
+   which the read chain never resolves (on that lane the read of `JSON` itself is `unresolved`), and it decides before
+   the operand is lowered (`typeof (JSON)` with parentheses is deliberately not folded there). Moving it into the
+   classifier would make the read answer it too and change which resolver calls run on the ordinary lane; the Ty
+   answer (`absent-global`) already comes only from the classifier.
+
+Measured after the fixes: Ty 72, D1/T/X 126, H/R 134 tests pass; `changed-root-tests.sh` (vs main): 7 of 9 files
+ran inside the 9-minute cap and pass, the other two (X, Ty) pass when run directly; `issue-2952-slice4/6` fail the same
+16 tests on base and HEAD; typecheck, loc, func, coercion, oracle, dead-exports, import-cycles, boundaries pass;
+ordinary bytes identical on 100 files (40 `language/statements/switch`, ES5 sample, typeof/identifier dirs) × JS and
+standalone (77 compile per target, 23 compile errors on both).
+
+## Perf result (2026-11-17)
+
+Branch `claude/7354-perf` on `claude/7354-str`. Change in `src/backend/wasmgc/program/native-string-values.ts` only
+(plus `tests/issue-7354-perf-string-authentication.test.ts`).
+
+### Why every emit re-planned, and what replaces it
+
+`ownerFor` is #3518 fail-closed machinery: before any use of a string pack it proves the retained reservation input
+(demands with the whole program, plan, value/output/invocation/realm requirements) is still what was authenticated —
+by comparing the demands to a frozen snapshot and re-running the whole plan (`assertNativeStringValueReservationInput`).
+That proof is a pure function of the retained input (the issue registries it consults — value plans, output
+requirements, invocation and realm requirements — are append-only and keyed by fresh frozen objects). So:
+
+- `isImmutablePreparedIrValue(owner.input)` walks the retained input once: every reachable object must be frozen
+  plain data (Object/null/Array prototype, data properties only, no functions) or a frozen collection of prepared
+  data. Freezing cannot be undone, so the answer is permanent.
+- The answer is computed BEFORE the checks run on the first use; if it is `true` and the checks pass, the owner is
+  `settled` and later uses skip the snapshot comparison and the re-plan. No key, no cache: input that cannot change
+  cannot go stale. Input that can still change (any unfrozen part) is re-authenticated at every use exactly as before.
+- Unchanged per use: the realm-literal identity check (it reads the caller's live input object), the inventories, the
+  completion checks of every sub-pack, and the physical layout audit.
+- The Prepared producers hand over fully frozen input (measured on the probe program: everything reachable is frozen).
+- Also: an emit checked the pack twice (`requireCompletedNativeStringValues` then `ownerFor` again with nothing in
+  between); it now checks once (`completedOwner`). The per-row `tx.physicalIndex` loops are one `tx.physicalIndices`
+  call (same state, ownership and layout checks; one layout audit instead of one per row).
+- The predicate sits beside its only check, not in `src/ir/program/data.ts`: that file and
+  `tests/issue-3518-program-ownership-runtime-seam.test.ts` are full-file historical pins.
+
+### Measurements (compile time through the strict Prepared entry, one line = literal + concat + length + `===`)
+
+| lines | base (s) | after (s) |
+| ----: | -------: | --------: |
+|     5 |      8.6 |       5.8 |
+|    20 |     71.9 |      16.5 |
+|    50 |    436.0 |      49.9 |
+|   100 |        — |     133.4 |
+|   200 |        — |     428.2 |
+
+CPU profile, 20 lines: base 66.8 s profiled (`ownerFor` 43.0 s, re-plan 29.9 s); after 18.9 s (`ownerFor` 1.7 s,
+re-plan 0.7 s once). The goal (20 lines under 3 s, flat per-op cost) is NOT met: the remaining per-emit cost is the
+physical layout audit. One literal emit runs `PhysicalModuleReservations.#verifyLayout` 63 times (each sub-pack's
+`requireCompleted*` re-checks its dependencies, each with its own audit), and each audit snapshots every filled
+function and global, so it grows with the module — still quadratic. That audit authenticates mutable module storage,
+so it cannot be keyed or memoised; it is a different mechanism (the transaction's) and is left for its own slice.
+Measured experiment (not committed): bracketing the completion check with one audit before and one after and
+skipping the nested audits brings 20 lines to 5.7 s (emit 0.65 s); the rest is one-time plan authentication
+(`preparedIrDataMismatch`/`hasNativeCollectionState` on freshly re-collected demands, ~2.7 s).
+
+### Proofs
+
+- Non-staleness: every refusal test of `tests/issue-3518-native-string-*` and the value-chain consumers fails the
+  same set as base; new tests refuse demands and plan mutated between two emits and after several emits, show the
+  physical audit still refuses an altered global after settling, and pin the predicate on 18 value shapes.
+- Prepared bytes identical to base for the 43 distinct programs of `issue-7354-str-strings`, `test262-prepared-entry`
+  and `test262-prepared-runtime`; ordinary pipeline identical on 200 test262 files × (default, standalone).
+- Failing sets equal to base in all 42 related test files (3518 native-string ×24, realm, number-format, promise,
+  ownership seam, provider-boundary, policy-evolution, …).
+- Mutation survivors: the FrozenSet content walk (no public way to build a FrozenSet with mutable content; kept so
+  the predicate does not depend on that) and `owner.settled = settles` (deleting it only costs time).
+
+### Same pattern nearby
+
+- `emitStringEquals`/`emitStringLen`/concat go through the same `completedOwner` — covered.
+- `requireCompletedNativeValues` → `assertNativeValueResourcePlan` re-derives the value plan from the program at
+  every call (~0.07 s over 20 lines here: cheap today, same shape, not fixed).
+- `readNativeRealmLiteralInput` → `assertNativeRealmRequirementsCurrent` recalculates the realm catalog per use when a
+  realm is present (not on this path's string programs; not fixed).
+
+### Step 2 (2026-11-17): the physical audit count, the tuple scans, one copy fact
+
+What changed:
+
+- `PhysicalModuleReservations.audited(check)` (`src/wasm/physical/module-reservations.ts`). It runs a read-only
+  check with the nested layout audits skipped and one audit after it. Two facts make that sound:
+  - every ledger mutation (`#require`) inside the check is refused;
+  - the check's result is returned only after the trailing audit passes.
+
+  So whatever the check read was the audited layout, or the call fails. `completedOwner` (every string emit) uses it:
+  one audit per emit instead of 63. There is no entry audit: an earlier change is caught by the trailing one.
+- Literal tuple matching (`sameDemandTuple`, used by planning's all-pairs ambiguity check and by every emit's plan
+  scan) compares value, owner and alloc with `Object.is` before the deep comparison. That was quadratic in the
+  literal count, and every deep comparison of fresh objects paid four thrown collection-slot probes.
+- `immutableCopy` (`src/ir/program/data.ts`) records "no collection slot" for each null-prototype record it creates,
+  instead of probing for it later. That is a permanent fact of a fresh `Object.create(null)`.
+
+The frozen-entry design was evaluated and not applied. `fillOwnedFunction` already makes bodies permanent, but no
+producer was moved:
+
+- Resource bodies (flatten, scanner, values, literals, equality, dynamic values): fixtures compare
+  `structuredClone(module)` with `toStrictEqual`, which the owned private-prototype arrays fail (#3518 getter
+  invocation).
+- Source primary bodies: `rejects an already-filled source body mutation` expects the audit refusal, not a
+  TypeError.
+- The remainder helper: its test spies on `fillFunction`.
+
+After the count fix, the body share of the audit was small (0.2 s at 20 lines), so (b) was not needed.
+
+| lines | base 4318ee (s) | step 1 (s) | step 2 (s) |
+| ----: | --------------: | ---------: | ---------: |
+|     5 |             8.6 |        5.8 |        2.7 |
+|    20 |            71.9 |       16.5 |        4.4 |
+|    50 |           436.0 |       49.9 |        9.8 |
+|   100 |               — |      133.4 |       19.0 |
+|   200 |               — |      428.2 |       45.4 |
+
+Synthetic program with 100 string literals/concats spread over 25 functions: 137.3 s on base, 7.1 s now, same bytes.
+
+The targets (20 lines < 3 s, 200 lines < 20 s, flat per line) are not met. Per-line cost still rises from ~0.13 s
+to ~0.26 s. CPU profile at 100 lines (30 s profiled):
+
+- `hasNativeCollectionState` 8.4 s: probes on freshly computed objects in `preparedIrDataMismatch`. The callers are
+  one-time currentness checks that re-derive and compare the whole program: object access, census, value plan,
+  output requirements.
+- `planNativeStringValuePhysical` 7.7 s: runs four times per compile (two setup derivations, the reservation check,
+  the settle pass).
+- The audit itself 6.9 s: one per emit, plus `physicalIndex` and inventory audits outside the scope. Each audit is
+  O(module), so the cost is still quadratic in the literal count.
+
+The next levers are those re-derivations (share one derivation per immutable program rather than re-deriving per
+component) and the audit's O(module) walk. Neither is a change to this module alone.
+
+Proofs:
+
+- Failing sets equal base for 112 test files touching the changed modules, in chunks of 4. One base-only failure
+  under load (object-key-foundation) passes alone.
+- Prepared bytes are identical for the 43 programs. Ordinary bytes are identical on 200 test262 files × (default,
+  standalone).
+- New tests:
+  - a filled global altered after 5 emits is refused;
+  - an extra population slot is refused;
+  - a write injected between the check and its trailing audit (through a vitest module mock of the literal
+    completion check) is refused;
+  - a ledger mutation inside `audited` is refused;
+  - a literal tuple that differs only in its storage reference is refused.
+- Mutation survivors are all performance-only: skipping nested audits, the `audited` wrapper in `completedOwner`,
+  the three primitive prefilters (implied by the deep comparison) and the copy-brand fact.
+
+### Review round 1 (2026-11-17)
+
+- **Must-fix: forged frozen collection.** The predicate recognised FrozenMap/FrozenSet by prototype alone. Fixed in
+  `src/ir/program/data.ts`:
+  - The two classes get a private-field brand check (`#map in v` / `#set in v`).
+  - New export `preparedIrFrozenCollectionMembers(v)` returns the members only for a branded instance with the exact
+    prototype, frozen, with no own keys. A subclass carries the brand but has its own prototype, so it is refused.
+    The frozen/no-own-keys checks are implied by brand plus exact prototype, because the constructor freezes `this`
+    (mutation survivor).
+  - `preparedIrDataMismatch`, `immutableCopy` and `freezePreparedIrRuntimeValue` use the brand instead of
+    `instanceof`. This is a drop-in for genuine collections. A borrowed prototype is now a non-data object and is
+    refused, so the reviewer's repro is refused at planning ("stale or mismatched demand census").
+  - Tests: the repro; forged map and set twins over mutable storage; a bare object on the borrowed prototype; a
+    branded subclass that overrides iteration.
+- **SF1, re-entrancy:** `audited` restores the outer flag, so a nested check no longer re-opens the ledger. Test: the
+  reviewer's probe.
+- **SF2, `internFunctionType`:** appending a new type inside `audited` is refused. Cache hits stay allowed, since they
+  are read-only. Test added.
+- **SF3, comments and test names:** they now describe the single trailing audit.
+- **SF4, the copy-brand fact in data.ts:** measured alone, it saves 20 lines 5.96 → 4.91 s and 50 lines 14.4 →
+  10.0 s, so it is kept. data.ts has to change for the must-fix anyway.
+  - Receipts that pin data.ts content: `tests/helpers/ir-runtime-program-relocation.json`, `ir-c1-authority.json`,
+    `ir-ownership-evolution.ts`, `ir-runtime-program-policy-program-validator.json`,
+    `ir-source-map-position-inventory-successor.json`, `ir-deno-post-position-main-successor.json`.
+  - Their consuming tests (ownership seam, provider-boundary, policy-evolution) already fail on base, so the extra
+    breakage is masked and these receipts need a refresh when the stack lands.
+- **SF5, inherited fields:** a settled verdict now records the own-property state of `Object.prototype` and
+  `Array.prototype` that it ran under. Any change re-runs full authentication. Requiring null-prototype records was
+  tried and rejected: the prepared program is built from frozen `Object.prototype` records, so nothing would settle
+  (20 lines took 29 s). Test: adding `Object.prototype.outputRequirements` after settling is refused ("unexpected
+  output requirements"); removing it re-settles.
+- **Results:**
+  - The 24 `issue-3518-native-string-*` files plus str-strings fail the same set as base.
+  - Prepared bytes are identical for the 43 programs. Ordinary bytes are identical on 100 files × 2 targets.
+  - Scaling: 5 lines 2.9 s, 20 lines 4.9 s, 50 lines 10.7 s.
+  - Mutants killed: re-entrant restore, intern guard, prototype state, map/set brand, map/set exact prototype, set
+    member walk, and the brand in `immutableCopy` / `preparedIrDataMismatch` / `freezePreparedIrRuntimeValue`.
+  - Survivors: the implied frozen/no-own-keys check, and the perf-only `owner.settled` assignment.
+
+### Review round 2: MET (2026-11-17)
+
+- `preparedIrFrozenCollectionMembers`: the frozen/no-own-keys check is dropped. Brand plus exact prototype suffice,
+  because the constructor freezes `this` before anyone holds it.
+- `sharedPrototypeState` now documents exactly what it tracks: the own properties of `Object.prototype` and
+  `Array.prototype`. The Map/Set/iterator built-ins and `Function.prototype.call` are trusted, not tracked. Base has
+  the same gap, because its per-use re-check reads through the same built-ins.
+- The six data.ts receipt pins and the other red-on-main pin families are filed as
+  [#7358](7358-3518-receipt-pin-tests-red-on-main.md) (priority high, sprint current). It must land before the #7354
+  stack is complete.
+
+### After the merge onto Str (2026-11-17)
+
+Perf (`8e92e8c3cb`, built on Str `4318ee510f`) merged with the reviewed Str (`eeb2e28a24`, PR #7291), then with main
+after #7291 landed. Main since the Str tip changed only benchmark artifacts and the LOC baseline.
+
+What the port changed:
+
+- One conflict in `native-string-values.ts`: Str had folded the concat emitter's occurrence scan into
+  `requireOwnerOccurrence`, the shared check of concat, `string.eq` and `string.len`. Str's structure is kept. Its
+  completion check (`requireCompletedNativeStringValues` and then `ownerFor` again) is now Perf's `completedOwner`. So
+  every string emit (literal, concat, equality, length) runs one owner check, takes the settled-owner fast path, and
+  does ONE `audited` layout audit. No check of either side is removed: Str's occurrence admission and Perf's realm
+  identity, inventory and completion checks all still run on every emit.
+- Issue file: Str's review sections first, Perf's after them; the frontmatter grants are Str's (Perf added none).
+- `data.ts`, `module-reservations.ts` and the census test merged without conflict.
+
+Scaling through the strict Prepared entry (one line = literal + concat + length + `===`, standalone):
+
+| lines | before: Str `eeb2e28a24` (s) | after (s) |
+| ----: | ---------------------------: | --------: |
+|     5 |                          9.3 |       1.8 |
+|    20 |                         76.4 |       3.6 |
+|    50 |      not finished in 480 s |       7.7 |
+
+Before and after produce the same binary at 5 and 20 lines.
+
+Proofs:
+
+- Gates: typecheck, LOC and function budgets with the base at the Str tip and at the main tip, coercion sites,
+  oracle ratchet, dead exports and import cycles are all green.
+- Tests pass: Perf, Str strings, Str emitter requests, R census (100), D1, P, V/G, H, H2, prepared entry and runtime,
+  and #7188.
+- The 24 `issue-3518-native-string-*` files, run in chunks of 4, fail the same 67 tests (same sets) as the Str tip.
+- Prepared bytes are identical to the Str tip for all 90 compiles of the Str strings, prepared-entry and D1 test
+  files: 45 binaries and the refusal messages of the rest.
+- Ordinary bytes are identical on 60 test262 files × (default, standalone).
+- Forgeries still refuse:
+  - Perf's: a forged frozen map or set; a mutation after a nested `audited` returns; demands or plan changed between
+    two emits.
+  - Str's: swapping the names of `__str_equals` and `__str_concat` (the census has no equals/flatten swap); repointing
+    a literal use to another literal's storage; stripping the role of the `""` literal global.
+- `changed-root-tests.sh` (interpreter engine): green.
+
+## Str2 result (2026-11-18, partial: steps (a) and (b) of four)
+
+Branch `claude/7354-str2` = `claude/7354-tx` + Ty + Perf (merges keep every result section) + the commits below.
+Stopped before the census admission of the number formatter, by the lead's rule ("stop after (b) if (c) needs more
+than L"): (c) needs five presentation joins, listed under Known gaps.
+
+Built:
+- Merge join (Ty x Str): `TYPEOF_KIND` lists the string kind; `typeof v === "string"` is a tag test, new intrinsic
+  `js.value.is_string` -> dynamic-value resource `__typeof_string`, body the new shared `buildExternRefTestBody`
+  (`src/runtime/wasmgc/values/primitive-layouts.ts`), which the ordinary `__typeof_string` and BigInt `typeof` now
+  compose too (same ops). Object-literal throw tested with `typeof` pinned at its invariant error (Known gaps).
+- (a) `String(v)`: `prepareConversionResolvers` (`src/frontend/builtins/prepare-number-conversion.ts`, one body
+  shared with the `Number(v)` plan) answers `isAmbientStringBinding` for the callee of a direct lib call; from-ast's
+  existing `tryLowerAmbientStringToStringCall` lowers it. The `String` plan is not invalidated by an escape (the
+  prelude has `String: globalThis.String` and `map.call(a, String)`): every rebinding refuses by name on this closed
+  path (pinned), and any source file declaring `String` loses the plan (the checker reports a script's
+  `function String` as the lib's; without the file check that was a wrong answer). `String` joins
+  `PREPARED_PROVIDED_GLOBALS`. Typed Number::toString (`IR_NUMBER_TO_STRING_FN`: `String(1)`, a template's number)
+  is retargeted to the one formatter binding `async.native.number-to-string` (`src/ir/program/number-to-string-target.ts`;
+  the "async" in the name is historical — renaming it means renaming the hash-pinned declaration in
+  `src/ir/runtime/native-async-callables.ts` and `IR_ASYNC_NUMBER_TO_STRING_FN`, #7358 territory). It used to be an
+  invariant error out of compile() (templates did this on base already); now a named presentation refusal. The
+  Prepared backend options carry the formatter's integer policy (`preparedNumberFormatOptions`, one env reading
+  shared with codegen: `numberToStringIntegerBeforeScratch`).
+- (b) `dyn.to_string` -> an IR `if` chain in the legalization, table `TO_STRING_ARM` (a Record over `CarrierKind`;
+  the last kind is reached untested because the chain is total): string -> new intrinsic `js.value.as_string`
+  (resource `__js_as_string`, `any.convert_extern; ref.cast AnyString`, string result resolved by type key in the
+  recipe and the ABI join); number -> `js.number.unbox` + direct call to the formatter binding; boolean ->
+  ToBoolean (its payload, no unbox policy) choosing "true"/"false"; undefined/null -> their names (string
+  allocation sites from the source registry, now passed to the legalization). `v` is one SSA value; the chain has
+  no effect of its own, so DCE of an unused result cannot drop an operand evaluation. Verified with the number arm
+  stubbed locally; as committed, every `dyn.to_string` refuses at the presentation by name.
+
+Measurements: 411-row sample (14 negatives pass every time): base 308 x `String` no plan (282
+`formatIdentityFreeValue`, 26 `verifyProperty`); after (a) and after (b) 282 x `dyn.typeof has no Prepared intrinsic`
+(`formatIdentityFreeValue`'s `switch (value === null ? 'null' : typeof value)`, assert.js:25 — a bare `typeof` value,
+step 4), 84 module binding not-direct, 26 `assert` not in scope (`verifyProperty`). Ordinary bytes identical on 310
+files (180 of the sample, String/typeof/template/addition dirs) x JS and standalone (13 CE on both). Tests: all
+slice tests, prepared entry/runtime, #7188, #7359, 3518 pins green. Pins: INTRINSIC_IDS 44 -> 46; INTRINSIC_DEFINITIONS
+successor -> c9f06f27 (predecessor step removes the two new rows); declaration receipt + EXTERNREF_TO_STRING (94 -> 95);
+D1 selection pin; D1/P call sites pass an allocation registry.
+
+Lane (lead's question): `mixed` is decided by captured callables with a Promise result; a sync program that calls the
+formatter is not mixed, so it goes through `checkResourceDemand`. `checkMixedDemand` refuses any mixed program
+outside wasmgc:host, so no async program presents on the standalone Prepared path; on the host target a mixed program
+skips the census (host lane, sunset) — not reproduced here.
+
+Known gaps: (c) census admission of the formatter. A sync `String(x)` program meets five presentation gaps: 3 x
+"promise/reference callable contracts require an explicit boundary producer" (the kernels' scratch `support-ref`
+contracts in `checkAbiExports`), "nondefaultable reference widening needs a separately authenticated physical
+post-state", the census ("host provider or async demand ..."), and "source and prepared runtime must independently
+prove no async/support demand" (`runtimeSupport.batches`). `String()` (no argument) refuses ("no exact AST-site plan").
+Object-literal throw: invariant error out of compile() ("resolver cannot lower object<a:f64>"), pinned. Mutation:
+the declaration file check, the retarget and the string tag test are killed by tests; the ToString arms,
+`__js_as_string` and the string carrier in the ABI join cannot run until (c) and are unverified survivors.
+
+### Str2 step 4: `typeof` as a value (2026-11-18)
+
+A `dyn.typeof` that is not consumed by a literal comparison materializes its answer string with the same kind chain
+as ToString (`kindChain` in `src/ir/program/dynamic-value-legalization.ts`; arms `TYPEOF_NAME[kind]`, i.e.
+`TYPEOF_KIND` read backwards, so `typeof null` is "object" and a new kind cannot be missed). Proven against node
+(right answer returns, wrong throws): every carrier value returned / in a local / as an argument / at top level,
+`"x" + typeof v`, `typeof v === k`, `typeof a === typeof b` (same kind, other kind, null vs undefined), a local also
+compared with a literal, loop iterations, the prelude's `switch (value === null ? 'null' : typeof value)`, statement
+position and an unread local with a throwing operand (the throw still happens). Prepared bytes of 14 unaffected
+programs (numeric, dynamic, throw, script var, typeof comparison, strings, loops; 11 compile, 3 refuse with the same
+message) identical against the branch base 33f5e33878. Mutations killed: answer table inverted, chain cut one kind
+short, the `String` declaration file check. Survivors: removing the `consumed` skip (only adds a dead chain);
+`node.parent.expression === node` in `isAmbientStringBinding` (an argument `String` refuses as a value read anyway).
+A Ty "like JavaScript" program (`"object"`) timed out at 35 s once inside a combined two-file run under load; it
+takes 15 s alone, and the whole Ty file passes alone.
+
+411-row sample after step 4 (14 negatives pass): 282 x "dynamic operation __ir_dyn_add has no Prepared intrinsic"
+(first: `harness/assert.js:27`, `'"' + value + '"'` in `formatIdentityFreeValue`'s string arm), 84 x "module binding X
+has no exact typed storage: not-direct" (`obj` 52, `x` 5, `proto` 4, `o` 4, `arr` 3), 26 x `ir/from-ast: identifier
+"assert" is not in scope` (`verifyProperty`), 2 x switch-case lexical binding, 1 x `unknown class "Test262Error"`.
+Dynamic `+` is not local: its number arm needs ToString's formatter, i.e. Str2-c.
+
+### Hand-over: admitting the number formatter (Str2-c)
+
+A sync `String(x)` (or `typeof`-free `"" + n`) program now reaches the formatter through one binding,
+`async.native.number-to-string` (`src/ir/program/number-to-string-target.ts`), and meets five presentation gaps.
+
+1. 3 x "promise/reference callable contracts require an explicit boundary producer" —
+   `src/compiler/ir-program-presentation.ts:467-471` (`checkAbiExports`): every callable ABI entry's params/results
+   must pass `inCall` (number, the dynamic externref, or `string`). The formatter kernels' entries
+   (`numberFormatRadixSupportDeclarations`, `src/ir/program/formatter-support.ts:45-49`: `__nfd_new` result,
+   `__nfd_get`/`__nfd_set`/`__nfd_fin` first param) carry the scratch type `support-ref`
+   (`number-format-radix:scratch`, the string owner's mutable i16 data array). "Explicit boundary producer" names no
+   existing mechanism: the only bypass is `mixed` (`!mixed &&` on the same line). Smallest sound admission: `inCall`
+   also accepts a `support-ref` equal (data identity) to the canonical scratch type of the program's entry anchor,
+   and only on an entry whose ref is one of the canonical kernel refs (binding identity) — the predicate in the
+   census module, one call in the presentation. Not: admitting `support-ref` generally, or classifying the program
+   as mixed.
+2. "nondefaultable reference widening needs a separately authenticated physical post-state" — line 708-712,
+   `referenceDemand` (line 226): any function local/body/type using a `ref` outside the census's `NativeSetupSlots`
+   (types/globals) counts. It fires because the census returned nothing; with the string owner alone (slice R/Str),
+   `nativeRows` hands its authenticated type/global slots back and the string refs are exempt. Admission: the census
+   also returns the formatter setup's authenticated type slots (the Ryu table type) and globals (Ryu
+   `inverse`/`powers`) — downstream of 3. Not: exempting `ref`s by type shape.
+3. "host provider or async demand is outside this numeric presentation contract" — line 673-681, `runtimeCensus`
+   (`src/compiler/prepared-provider-census.ts`, `nativeRows`/`supportPopulationJoins`) returns undefined: (a) the
+   provider `native.async.number-to-string` (`src/ir/runtime/native-async-callables.ts:82`, runtime-callable
+   `__ir_number_toString_native`) is answered by no runtime-bound setup function — its setup binding is
+   intrinsic-bound (`nativeFormatterSetup`, `src/ir/program-physical-plan.ts:840-940`, association
+   `native-to-string`, origin "intrinsic"); (b) the formatter setup (`emittedPhysicalSetupPlan(emission)
+   .nativeNumberFormat`: finalize, `__nfd_*`, trap, radix-body, radix-thunk, Ryu, `number_toString`, adapter) has
+   support receipts but no census rows; (c) `nativeSlots` accepts only runtime/intrinsic or anchor-derived bindings,
+   while the kernels and radix-body are `support` refs with the canonical declarations' own binding ids. Admission:
+   run `nativeSlots` over the formatter setup too, accepting a `support` binding only when its id equals the
+   canonical declaration's (`numberFormatRadixSupportDeclarations(anchor)` kernels / implementation); rows for each
+   function (slot + signature + receipt, the same `supportPopulationJoins`); answer the provider with the unique
+   declaration of role `["number-format","native-to-string"]` whose reference equals the canonical adapter
+   declaration's ref, and require the provider iff a direct formatter call exists (`irNumberFormatDemandOwners`);
+   authenticate the scratch entry (type slot = the string owner's data type slot, as
+   `planNativeNumberFormatScratch` does at physical-plan time). Forgeries: drop/add/duplicate/swap/relabel each row,
+   the provider, the scratch. Not: joining by function name.
+4. "source and prepared runtime must independently prove no async/support demand" — line 683-688: any
+   `program.runtimeSupport.batches` refuses. Replace only the batch half (keep asyncPlan/asyncRuntime/asyncFunctions):
+   exactly one batch, kind `number-format-radix-v1`, its declarations equal to
+   `numberFormatRadixSupportDeclarations(batch.sourceId)` with `sourceId` the runtime ABI anchor, its implementation
+   body's unit = the setup's `support.unitId` and its emitted slot = the census-authenticated radix-body row, its
+   `demandOwners` = the program's formatter-calling units, and admitted only when 3 authenticated the setup.
+5. The wasmgc:host async lane is not a consumer to reuse: `mixed` (captured Promise-result callables, line 846)
+   skips `checkResourceDemand` (line 873) and the ABI contract check (line 467), and `checkMixedDemand` (line 1175)
+   requires wasmgc:host, while the support batch requires wasmgc:standalone
+   (`src/frontend/builtins/prepare-number-format.ts:22`). So no program presents the formatter today; on standalone no
+   async program presents at all; on host a mixed program presents without the census (host lane, being retired).
+   The name `async.native.number-to-string` is historical; a rename touches the hash-pinned declarations (#7358).
+
+### Str2-c result (2026-11-18): the number formatter is admitted; dynamic `+` not started
+
+Step 1 of the brief only (formatter admission). Step 2 (dynamic `+` / `+=`) is not started: step 1 was about L, the
+brief's stop rule applies. Head after this section: see the branch.
+
+Built (`src/compiler/prepared-formatter-census.ts`, new, 143 lines; `prepared-provider-census.ts` +54;
+`ir-program-presentation.ts` unchanged in size, one call per gap):
+
+| Hand-over gap | How it is admitted |
+| --- | --- |
+| 3 census | `nativeRows` runs `nativeSlots` over the formatter setup too (one slot population for both setups, one row per function, the same `supportPopulationJoins`). A kernel / radix-body function keeps the batch's support binding id (`canonicalSupportRole`; a type or global with a kernel role stays setup-derived). The provider: the setup's unique `["number-format","native-to-string"]` role, bound to the adapter's intrinsic reference, answers the adapter's canonical provider (by feature, `formatterJoins`) — no function-name join; the existing provider/answer population comparison then requires it selected exactly once. Demand: `irNumberFormatDemandOwners(program.ir.functions)`; without demand no batch is admitted. New, for both setups: one declaration per completed slot (a second declaration on a Ryu type/global slot was accepted before). |
+| 2 widening | Falls out of 3: the formatter setup's type/global slots (Ryu table type, `inverse`, `powers`) join the census's `NativeSetupSlots`. |
+| 1 ABI | `callableCarried(program, contract, carried)` (census module): a `support-ref` is carried only when it equals the canonical scratch type (data) on a contract whose reference is a canonical kernel's (data). |
+| 4 support batch | `unjoinedSupport(program, native)`: a batch is admitted only beside native slots the census answered; the census (`batchJoins`) requires exactly one batch, kind `number-format-radix-v1`, `sourceId` = runtime ABI anchor, scratch / kernels / implementation declaration = `numberFormatRadixSupportDeclarations(anchor)`, body unit = canonical owner unit = the setup's `support.unitId`, `support.reference` canonical, `support.bindingId` = the radix-body slot's entry, `demandOwners` = the program's formatter-calling units. asyncPlan/asyncRuntime/asyncFunctions checks unchanged. |
+| scratch | The string setup binds its data type twice when it carries `formatterScratch`; `formatterScratchBinding` accepts exactly the canonical scratch reference plus the setup's own derived reference (`{kind:"source", bindingId: owned}`), with `formatterScratch` equal to the canonical scratch type; the slot is the data declaration's (one declaration per slot does the rest). |
+
+Deviations from the hand-over, and why: no kernel/adapter binding-id or name join — the mutation sweep showed the
+emission's support receipt join (slot + key + signature) already refuses every such forgery, so those checks were
+deleted as implied (rule: survivors are deleted when implied); the adapter answers its provider by feature
+instead of by the declaration's name. Gap 4 is checked inside the census (one call in the presentation).
+
+Proofs:
+- Acceptance (`tests/issue-7354-str2c-formatter-census.test.ts`, `tests/issue-7354-str2-to-string.test.ts`; right
+  answer returns, wrong throws, node agrees): typed `String(n)`, `String(v)` over number / -0 / NaN / -Infinity /
+  1e21 / 0.1 / boolean / undefined / null / string, a template literal's number, a loop across iterations, the
+  formatter alone (string layout setup), unused `String(h(v))` still throws from `h`.
+- Number sweep against node: 265 numbers (powers of ten 1e-10..1e25 and ±, 1.5eN, 2^31/2^32/±2^53 ±5, subnormals,
+  max, round-trip decimals, 80 random) × {dynamic `String(v)`, typed `String(n)`}: 0 wrong.
+- Forgeries (census replayed on one compiled program; six categories also end to end through compile(), refusal
+  by name, no exception): for each of the 16 formatter rows (5 kernels, radix body, radix thunk, finalize,
+  to-string, adapter, 6 Ryu) drop the binding, drop the row (end to end), duplicate, add a second row, relabel,
+  move to another key; 8 binding swaps; adapter reference / runtime-bound; support binding / unit / reference;
+  Ryu global mutability; kernel signature; Ryu type/global relabelled as a kernel; scratch: absent, nullability,
+  either binding dropped, derived duplicated, both canonical, derived under another id, on another entry,
+  relabelled, present without a formatter; provider dropped / duplicated / renamed / feature relabelled / replaced;
+  receipts dropped / duplicated / swapped; batch zero / two / kind / source / scratch / kernel dropped / kernels
+  swapped / implementation declaration / implementation unit / no or extra demand owner, a batch on a
+  formatter-free program; `support-ref` on the radix body, another support type / nullability on a kernel, a
+  kernel contract under a foreign reference. 173 tests.
+- Mutation sweep over every new check (52 mutations): 0 survivors after deleting the implied ones listed above
+  (`unjoinedSupport`'s `&& !native` is killed by R's numeric-only program).
+- Prepared bytes of 11 previously accepted programs (numeric, throw, box, strings, dynamic, typeof, typeof
+  comparison, script var, loop, string ternary, `String("ab")`) and one refusal: identical against bc71ae2e9b.
+  A program without a formatter call selects no formatter provider and has no batch (tested).
+- Ordinary pipeline: 100 test262 files of the sample × {JS, standalone}: bytes identical against bc71ae2e9b
+  (the change is Prepared-presentation only).
+- Gates: typecheck, loc, func, coercion, oracle ratchet, dead exports, import cycles, compiler-boundaries inventory
+  (new module registered): pass. Tests green: str2c, Str2, R, prepared entry/runtime, #7188, D1, P, VG, X, T, Str,
+  Str emitter, H, H2, H3, Ty, Perf (each file run alone or in small groups; every run printed vitest's
+  `Timeout calling "onTaskUpdate"` RPC error under machine load, with all tests passing). No intrinsic, provider
+  or resource added, so no pinned closed list changed.
+
+411-row sample: 14 negatives pass; first gap unchanged by design — 282 × "dynamic operation __ir_dyn_add has no
+Prepared intrinsic" (`harness/assert.js:27`, `'"' + value + '"'`), 52 × module binding `obj` not-direct
+(+ `x` 5, `proto` 4, `o` 4, `arr` 3, others ≤2), 26 × `identifier "assert" is not in scope in verifyProperty`,
+2 × switch-case lexical binding, 1 × `unknown class "Test262Error"` (isConstructor).
+
+Not verified: compile time of a prelude-sized test that reaches the formatter (none does until dynamic `+`);
+`--utf8-storage` with the formatter; multi-file (`compileMulti`) formatter programs. The census forgeries replay
+the census on captured inputs (end-to-end for one per category); the census test file takes ~4 min.
+
+Hand-over for step 2 (dynamic `+`): every ToString arm now runs, so `+` can be expanded in
+`dynamic-value-legalization.ts` beside `dyn.to_string` from existing pieces — `js.value.is_string` on both
+operands, `kindChain`/`toStringArm` + `string.concat`, else `js.number.unbox` (ToNumber) + `f64.add` + `js.number.box`
+— needing no new intrinsic, census row or pin. The brief asks for one intrinsic with a native provider instead;
+its body would have to call the formatter, i.e. a dependency of the dynamic-value resources on the formatter setup
+that this census does not authenticate yet. The cost to weigh: the IR expansion inlines two five-arm chains per
+site (282 prelude rows hit `+` sites; measure compile time first).
+
+### Str2-c step 2 (2026-11-18): dynamic `+` and `+=`
+
+**Compile time is the headline finding: it grows roughly quadratically with the number of dynamic `+` sites.**
+Measured in-process through the strict entry, standalone:
+
+| program | compile | module size |
+| --- | --- | --- |
+| 1 site, both operands unknown | 6.0 s | 23,635 B |
+| 5 sites, both unknown | 24.6 s | 24,391 B |
+| 20 sites, both unknown | 235 s | 27,312 B |
+| 1 site, string + unknown | 4.5 s | 23,092 B |
+| 20 sites, string + unknown | 224 s | 26,754 B |
+
+The module grows only about 190 B per site; the time is the emission's per-occurrence string-literal audit. Each
+ToString chain carries four literal occurrences ("true", "false", "undefined", "null"), and each occurrence
+re-authenticates the native string output plan. Profile of 6 unknown + unknown sites (36 s total), top inclusive
+entries:
+
+| ms | entry |
+| --- | --- |
+| 21,094 | `assertNativeStringOutputRequirementsCurrent` |
+| 17,337 | `checkCompletedOwner` / `completedOwner` (`native-string-values.ts`) |
+| 15,304 | `emitStringConst` → `emitPreparedNativeStringLiteral` |
+| 11,773 | `authenticateCensus` |
+| 13,587 self | `hasNativeCollectionState` (`data.ts`) |
+
+Not fixed in this step, as instructed. No sample test compiles past assert.js yet, so no sample test pays this
+cost today. A prelude-sized test that reaches emission will, and will take far longer than 15 s.
+
+Built:
+- The legalization expands the front end's `__ir_dyn_add` (the binary `+` and both `+=` arms) in
+  `src/ir/program/dynamic-value-legalization.ts`, through one builder, `addition`, beside `dyn.to_string`. No new
+  intrinsic, provider or census row.
+- If either operand is a string, the addition concatenates `kindChain`/`toStringArm` (the chain `dyn.to_string`
+  uses, no second copy), then `string.concat` and `coerce.to_externref`. Otherwise it boxes
+  `js.number.unbox(l) + js.number.unbox(r)`.
+- The operands are the call's SSA arguments, so each is evaluated once, left before right.
+- `ADD_ROLE` is a `Record` over `CarrierKind` (concat for string, numeric for every other kind). It ties
+  ToPrimitive-is-identity to the admitted kinds: a slice that admits an object kind must add a row here.
+- Known kinds come from the box that defines an operand (`boxedKind`), or from an earlier concatenation's result,
+  which is a known string. The effect:
+  - a known string side concatenates with no test;
+  - only a side that may hold a string is tested (`js.value.is_string`, `i32.or` over both);
+  - a typed number or boolean side takes only its own ToString arm;
+  - `"a" + v + "b"` formats `v` once and tests nothing.
+- Typed + typed is unchanged. The function's builders moved to `legalizationBuilders` (function-budget split).
+  `IR_DYN_ADD_FN` moved to the shared leaf `src/shared/contracts/dynamic-add-helper.ts`; codegen re-exports it, so
+  there is no new codegen→ir edge.
+
+Proofs (`tests/issue-7354-str2c-dynamic-add.test.ts`; right answer returns, wrong throws, node agrees):
+- **Cross product.** 13 values {1, 0, -0, NaN, -Infinity, 1.5, true, false, undefined, null, "", "a", " 12 "}
+  squared, i.e. 169 pairs, returned from a function. Each result is checked by kind and value, including the sign
+  of zero and NaN.
+- **Other positions.** Every 13th pair at top level over dynamic globals; every 3rd pair as a condition.
+- **Known kinds.** Typed number / string / boolean on either side; the literal + dynamic + literal shape.
+- **Order and loops.** Left-before-right evaluation, once each; the assert.js message shape with « »;
+  `formatIdentityFreeValue`'s string arm; `String(value) + "n"`; `+=` from number to string on a dynamic var;
+  `+=` across loop iterations with the kind changing; nested loops with sibling if/else blocks; switch and
+  try/catch/finally.
+- **Unused results.** An unused sum, an unread local and an unread `+=` still run their operands, and a throwing
+  operand still throws.
+- **Typed + typed.** Keeps its answer.
+- **Pins updated** (own commit): D1's "dynamic +" refusal row is removed (D1's unused `add` helper with it); H's
+  "added to" refusal becomes a run.
+
+Mutations:
+- Killed: ADD_ROLE.string set to numeric; the `i32.or` over both tests dropped; the string-test filter inverted.
+- Survivors, as these are performance shortcuts rather than correctness checks:
+  - the concat-without-test shortcut;
+  - recording a concatenation's result as a known string.
+- Survivor reached by no program today: the `tested.length === 0` sum. Both operands would need a known
+  non-string kind, and the front end always passes one unboxed dynamic operand.
+- Not run: a full sweep over every condition. Each run of this test file costs minutes.
+
+Refusals left, by name:
+- `ir/from-ast: '+' operands not provably both-number or string-concatenable (unprovable/…)` for:
+  - the results of untyped calls (`f(1) + f(2)`);
+  - a dynamic script global written from a function (`g = g + "x"`).
+  Both are pinned in the test file. The front end makes a `+` dynamic only over operands it knows are dynamic.
+- `dyn.member_get` (the next gap, below).
+
+Gates: typecheck, loc, func, coercion, oracle ratchet, dead exports, import cycles, compiler-boundaries inventory —
+pass.
+
+Tests: str2c dynamic-add (all, run in groups), Str2, Ty, Str, Str emitter, H, H2, H3, D1, P, VG, X, T, Perf, R,
+prepared entry/runtime, #7188, #7223 equivalence — pass. `tests/issue-2949-s5-5-dyn-arith.test.ts` "`+` stays
+EXCLUDED…" fails identically on bc71ae2e9b (pre-existing; its `x - "a"` expectation, unrelated).
+
+Bytes: ordinary pipeline is identical on 100 sample files × JS and standalone. Prepared bytes of the 12 programs
+are identical to bc71ae2e9b.
+
+411-row sample (14 negatives pass):
+
+| rows | first gap |
+| --- | --- |
+| 282 | "dynamic operation dyn.member_get has no Prepared intrinsic" — moved off `__ir_dyn_add` and still on `harness/assert.js:27`: the other arm of `typeof JSON !== "undefined" ? JSON.stringify(value) : '"' + value + '"'`, i.e. the `JSON.stringify` read |
+| 52 | module binding `obj` not-direct |
+| 26 | `identifier "assert" is not in scope in verifyProperty` |
+| 5 | `x` not-direct |
+| 4 | `proto` not-direct |
+| 4 | `o` not-direct |
+| 3 | `arr` not-direct |
+| 2 | switch-case lexical binding |
+| 1 | `unknown class "Test262Error"` |
+
+Compile time per row is still small (median 38 ms, max 743 ms), because every row stops in legalization, before
+emission.
+
+Not verified:
+- The full 15-value cross product: 1/0 and "1" were dropped to keep the test runnable.
+- The test file's total runtime: about 12 minutes in groups here, which is too heavy for CI until the literal
+  audit cost is fixed.
+- `--utf8-storage`.
+- `compileMulti`.
+
+## Slice O: Implementation Plan (2026-11-19)
+
+Branch `claude/7354-o` on `claude/7354-perf2` (`503ff2cb4d`). Lead decision of 2026-11-19: option A, in four steps
+O1 to O4 (these are this slice's steps, not #7352's parked ordinary-pipeline slice of the same name).
+
+### What exists, measured on the base
+
+- `var o = { a: 1 }` (script level) refuses: "proven dynamic binding 'o' initializer has no supported carrier".
+- `function f(){ var o = { a: 1 }; return o.a; }` is accepted and then fails at emission: "resolver cannot lower
+  object<a:f64>" (the closed-struct `object.new` the ordinary selector would have refused; the "object literal inside
+  a function throws an emission invariant error" of the P census).
+- `var o; o.x` refuses: "dynamic operation dyn.member_get has no Prepared intrinsic".
+- The source contracts `js.object.{create-default, create-null, create-with-prototype, define-data, define-accessor,
+  define-attributes, get, has}` (`src/ir/runtime/ordinary-object-callables.ts`) are declared, but none materializes:
+  an accessor literal fails with "intrinsic callable js.object.get … needs runtime function materialization"
+  (`program-physical-plan.ts`, the fall-through of the required-callable loop). There is no `set`.
+- The realm (`src/backend/wasmgc/program/native-realm.ts`) is reserved whenever a program has a `js.object.*` use.
+  Its builtin-object kernel (`native-builtin-functions.ts`) already owns the object protocol the source needs:
+  `objectPrototype` (the realm's Object.prototype, initialized on first use), `lookup` / `get` over ordinary
+  `$Object`s and builtin function objects (status + value, accessor entries dispatched through `method0`),
+  `has`; the storage pack owns `createWithPrototype`; the descriptor pack owns `defineData`. With no source
+  closures the realm builds its own closure population (`beginRealm`), so a program without closures needs nothing
+  from slice Fa.
+- `reserveNativeObjectGetResources` and the provenance gaps in `native-object-access-requirements.ts` belong to an
+  older design (static creation provenance per receiver). #3518 has no live claim (released 2026-09-03).
+
+### Target structure
+
+- **One public object family on the realm, one binding arm.** A new resource module
+  `src/backend/wasmgc/resources/native-source-objects.ts` reserves, inside the realm kernel's reservation, one
+  public function per `js.object.*` feature the program uses, with exactly the declared signature. Each is a thin
+  adapter over the kernel/storage/descriptor function that already implements it (bodies in a pure builder module
+  `src/runtime/wasmgc/values/source-object-bodies.ts`):
+  - `create-default` = `createWithPrototype(objectPrototype())` (an explicit Object.prototype link, so the kernel's
+    lookup never meets the "implicit prototype" state);
+  - `define-data` = the descriptor pack's `defineData` (CreateDataProperty on the literal's fresh object);
+  - `get` = kernel `get`, status folded (absent answers `undefined`; status 2/3 cannot occur for a receiver
+    built by `create-default`, and the adapter makes that a trap with a named invariant comment);
+  - O3 adds `set` = OrdinarySet here, beside `get`.
+- **Plan side.** `program-physical-plan.ts`: the required-callable loop's fall-through gains one arm for the
+  ordinary-object family, fed by a binding list built like `nativeInvocationAbiBindings` (one row per distinct
+  call route, resource key `<realm key>:source-object:<feature>`). The two binding builders share one helper
+  (`nativeCallableAbiBindings`) instead of a second copy.
+- **Consumer side.** `program-consumer.ts`: `reconcileInvocationBindings` becomes the one
+  `reconcileNativeBindings(rows, functions, context)` used for invocation and source-object rows.
+- **Front end (O1).** The Prepared resolver's ordinary-object plan (`src/frontend/builtins/prepare-ordinary-object-access.ts`)
+  extends from accessor literals to data-only literals; from-ast's existing `lowerOrdinaryDescriptorLiteral` (renamed
+  `lowerOrdinaryObjectLiteral`, it already lowers data members through `define-data` with mask 191) builds them. No
+  second literal lowering.
+- **Dynamic value (O2).** `dynamic-value-legalization.ts` gains the `object` carrier kind as one row in each
+  `Record<CarrierKind, …>` table (`KIND_TEST`, `TO_STRING_ARM`, `ADD_ROLE`, typeof answer). A box of an ordinary
+  object is the externref itself. Its kind test is a new `js.value.is_object` intrinsic in the dynamic-value
+  family (`dynamic-value-callables.ts`, one row). `+` and ToString on an object refuse by name until
+  ToPrimitive exists (the table row says so).
+- **Member access (O3/O4).** `dyn.member_get` / `dyn.member_set` legalize to one kind chain built by the existing
+  `kindChain`: `undefined`/`null` → TypeError (`emitThrowTypeErrorIfNullish`'s message), object →
+  `js.object.get`/`set`, a primitive kind → refusal by name at legalization ("member read of a primitive needs
+  its wrapper prototype"), recorded as the next gap for slice B / #7350.
+
+### Reused, and what duplicate goes
+
+- Reused: the realm kernel's object protocol, the storage and descriptor packs, the dynamic-value tables and
+  `kindChain`, `lowerOrdinaryDescriptorLiteral`, the invocation binding builder and reconciliation.
+- Removed duplicate: the per-family binding builder/reconciler pair becomes one parameterised pair. The static
+  provenance gaps that the runtime-typed adapters make obsolete are deleted, not bypassed (each named in the step's
+  commit).
+
+### Acceptance
+
+- O1: `function f(){ var o = { a: 1 }; return o.a; } if (f() !== 1) throw 1;` validates and runs through the
+  strict entry; a wrong answer throws; node agrees.
+- O2: `var o = { a: 1 }; if (o.a !== 1) throw 1;` at script level.
+- O3: the ladder's program `var o = { a: 1 }; o.b = 2; if (o.a + o.b !== 3) throw 1;`.
+- O4: `var o; o.x` throws a catchable TypeError; `var s = "a"; s.length` refuses by name.
+- Each step: refusals left pinned by name in `tests/issue-7354-o-objects.test.ts`; mutation checks on every new
+  table row and arm; ordinary-pipeline bytes identical on the 100-file sample × JS and standalone; the 411-row
+  sample tallied before and after.
+- Code quality: one binding arm and one reconciler for every native callable family; one row per kind in each
+  dynamic-value table; no adapter re-implements a kernel algorithm; no file or function over its budget without a
+  dated grant.
 
 ## Realm join (2026-11-19, branch `claude/7354-realm` from `origin/main`)
 
