@@ -127,6 +127,12 @@ describe("#7354 Fa — function values on the Prepared path", () => {
       "f() !== 3",
     ],
     [
+      "of the function kind: ToBoolean true, strict equality by reference",
+      "var f = function () {}; var g = function () {};",
+      "!f || f !== f || f === g || g === f",
+      "f !== g",
+    ],
+    [
       "thrown and caught",
       "var f = function () {}; var c; try { throw f; } catch (e) { c = e; }",
       "c !== f || !c",
@@ -145,22 +151,8 @@ describe("#7354 Fa — function values on the Prepared path", () => {
 
   // What the slice leaves to its neighbours, each pinned by its name so the slice that admits it updates this list.
   it.each([
-    // A call through a value whose callee is not known statically is a dynamic call (slice Fb).
-    [
-      "a call from another function",
-      "var f = function (a) { return a; }; function h() { return f(1); } h();",
-      'direct call to "f" has no exact AST-site plan in h',
-    ],
-    [
-      "a call before the declaration",
-      "if (f(1) !== 1) throw 1; var f = function (a) { return a; };",
-      'direct call to "f" has no exact AST-site plan in <module-init>',
-    ],
-    [
-      "a second store into the binding",
-      "var f = function (a) { return a; }; f = function (a) { return 2; }; f(1);",
-      'assignment to module binding "f" (dynamic) got closure(dynamic)->dynamic',
-    ],
+    // (#7354 Fb) A call through a value whose callee is not known statically runs now
+    // (tests/issue-7354-fb-dynamic-calls.test.ts): from another function, before the declaration, after a second store.
     // JavaScript pads a missing argument with `undefined` and drops an extra one; the static call does neither yet.
     ["a call with a missing argument", "var f = function (a) { return a; }; f();", "closure call arity mismatch"],
     // Function objects: `this`, `arguments` and properties (slice C).
@@ -192,7 +184,15 @@ describe("#7354 Fa — function values on the Prepared path", () => {
       "function g() { var x = 1; var f = function () { return x; }; x = 2; return f(); } g();",
       'captures non-local binding "x"',
     ],
-    // `typeof` is a string producer (slice Str2); a declaration read as a value is not built yet.
+    // ToString and `+` of a function value have no arm yet (the source text is the function's own string).
+    [
+      "`+` with a string",
+      'var f = function () {}; var s = f + "";',
+      "dynamic operation __ir_dyn_add has no Prepared intrinsic",
+    ],
+    ["`String(f)`", "var f = function () {}; var s = String(f);", 'direct call to "String" has no exact AST-site plan'],
+    // `typeof` is a string producer (slice Str2; its kind table must answer "function"); a declaration read as a
+    // value is not built yet.
     ["`typeof`", "var f = function () {}; var t = typeof f;", "dynamic operation dyn.typeof has no Prepared intrinsic"],
     [
       "a function declaration read as a value",
