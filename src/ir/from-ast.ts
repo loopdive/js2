@@ -322,7 +322,7 @@ import {
   type WrapperAmbience,
   type WrapperConstruction,
 } from "./wrapper-construction.js";
-import { collectPatternBindingNames } from "./analysis/ast-scope.js";
+import { collectPatternBindingNames, resolvesToSourceBinding } from "./analysis/ast-scope.js";
 import {
   isPatternDeclaration,
   planElementReads,
@@ -571,7 +571,7 @@ export interface IrFromAstResolver extends PreparedAsyncFromAstResolver {
   sourceClosureInvocation?(expression: ts.CallExpression): SourceClosureInvocationPlan | undefined;
   /** Exact higher-order parameter certified by the complete source invocation proof. */
   sourceClosureCallableParameter?(node: ts.FunctionTypeNode): boolean;
-  /** (#7106 A2c) The runtime-eval support function a certified global eval statement calls with its source. */
+  /** (#7106 A2c) The runtime-eval function a certified global eval calls; absent: no provider (#7363, Prepared). */
   globalEvalTarget?(call: ts.CallExpression): IrFuncRef | null;
   /** Exact pre-scanned sparse constructor sites. */
   isHoleyArrayConstructor?(expr: ts.NewExpression): boolean;
@@ -7726,11 +7726,11 @@ function lowerCall(expr: ts.CallExpression, cx: LowerCtx, statementPosition = fa
     demoteToLegacy("call-resolution-unsupported", `ir/from-ast: optional call (?.()) not in slice 11 (${cx.funcName})`);
   }
   const globalEval = exactGlobalEvalStatement(expr);
-  if (globalEval) {
-    const target = cx.resolver?.globalEvalTarget?.(expr);
+  if (globalEval && cx.resolver?.globalEvalTarget) {
+    const target = cx.resolver.globalEvalTarget(expr);
     if (
       !statementPosition ||
-      cx.resolver?.isAmbientBinding?.(globalEval.evalIdentifier) !== true ||
+      cx.resolver.isAmbientBinding?.(globalEval.evalIdentifier) !== true ||
       cx.scope.has("eval") ||
       !target
     ) {
@@ -7763,6 +7763,9 @@ function lowerCall(expr: ts.CallExpression, cx: LowerCtx, statementPosition = fa
     // Statement-position lowering records this as a zero-use side-effecting
     // call; the backend emits the mandated Wasm `drop` for its externref result.
     return result;
+  }
+  if (globalEval && !resolvesToSourceBinding(globalEval.evalIdentifier)) {
+    demoteToLegacy("call-resolution-unsupported", `ir/from-ast: eval statement has no eval provider in ${cx.funcName}`);
   }
   const preparedPromiseAll = tryLowerPreparedAsyncPromiseAll({
     expression: expr,
