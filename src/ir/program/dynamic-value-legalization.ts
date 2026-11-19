@@ -71,9 +71,6 @@ export function legalizeDynamicValues(fn: IrFunction): IrFunction {
     ...(instr.site === undefined ? {} : { site: instr.site }),
   });
   const isDynamic = (value: IrValueId): boolean => types.get(value)?.kind === "dynamic";
-  const thrown = new Set<IrValueId>();
-  for (const block of fn.blocks)
-    for (const instr of block.instrs) forEachInstrDeep(instr, (i) => i.kind === "throw" && thrown.add(i.value));
 
   const expand = (instr: IrInstr): readonly IrInstr[] => {
     switch (instr.kind) {
@@ -139,13 +136,12 @@ export function legalizeDynamicValues(fn: IrFunction): IrFunction {
           [instr.resultType, ...instr.args.map((arg) => types.get(arg))].some((type) => type?.kind === "dynamic")
           ? gap(instr.target.name)
           : [instr];
-      // (#7354 X) The carrier already is the externref exception payload, so a
-      // thrown dynamic value keeps the coercion, which lowers to nothing over
-      // the legalized operand. The catch binding reads the payload back as the
-      // dynamic value: every value an accepted program can throw (a dynamic
-      // value, a boxed number, `null`) is in the admitted set.
+      // (#7354 X, O1) The carrier already is the native externref value: the exception payload a thrown dynamic
+      // value carries and the value an ordinary object's property stores. The coercion keeps, and lowers to nothing
+      // over the legalized operand. The catch binding reads the payload back as the dynamic value: every value an
+      // accepted program can throw (a dynamic value, a boxed number, `null`) is in the admitted set.
       case "coerce.to_externref":
-        return isDynamic(instr.value) && !thrown.has(instr.result!) ? gap("coerce.to_externref") : [instr];
+        return [instr];
       default:
         return instr.kind.startsWith("dyn.") ? gap(instr.kind) : [instr];
     }
@@ -172,6 +168,33 @@ export function legalizeDynamicValues(fn: IrFunction): IrFunction {
   // signature) has no carrier on this projection.
   if (containsDynamic(legalized)) gap("on a value of composite type");
   return legalized;
+}
+
+/**
+ * (#7354 X, O1) A catch binding reads the thrown payload back as the dynamic value, so every throw of the program, in
+ * whichever function, must be a value the carrier admits: a dynamic value, a boxed number, `null` or a coerced (string
+ * or dynamic) value. Any other reference (an ordinary object, until the carrier admits objects) refuses by name.
+ */
+export function refuseUnadmittedThrows(fn: IrFunction): void {
+  const definitions = new Map<IrValueId, IrInstr>();
+  const throws: IrValueId[] = [];
+  for (const block of fn.blocks)
+    for (const root of block.instrs)
+      forEachInstrDeep(root, (i) => {
+        if (i.result !== null && i.result !== undefined) definitions.set(i.result, i);
+        if (i.kind === "throw") throws.push(i.value);
+      });
+  if (throws.length === 0) return;
+  const types = irValueTypes(fn);
+  for (const value of throws) {
+    const definition = definitions.get(value);
+    const admitted =
+      types.get(value)?.kind === "dynamic" ||
+      definition?.kind === "coerce.to_externref" ||
+      (definition?.kind === "intrinsic" && definition.id === "js.number.box") ||
+      (definition?.kind === "const" && definition.value.kind === "null");
+    if (!admitted) gap("throw of a value outside the dynamic carrier's kinds");
+  }
 }
 
 /** A source global as the producer hands it over: its storage, and the unit that initialises it. */
