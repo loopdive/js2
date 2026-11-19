@@ -93,6 +93,8 @@ Legacy codegen only.
 
 ### `boolean | undefined` — a representation gap, not fixed here
 
+Filed as #7406. It is a silent wrong answer on main beyond `?.`: `b === undefined`, `??`, `typeof` and `String(b)` all read `undefined` as `false`.
+
 - **Representation.** `mapTsTypeToWasm` (`src/checker/type-mapper.ts`, the union arm) strips `null`/`undefined`
   from the union; `boolean` is the union `true | false`, both map to `{ kind: "i32", boolean: true }`, so
   `boolean | undefined` lowers to that bare branded i32. There is no undefined sentinel for it (unlike the f64
@@ -112,3 +114,13 @@ Legacy codegen only.
   of `compileOptionalCallExpression`, which takes the native-string lowering only under `ctx.fast` and otherwise
   looks for a `string_*` import.
 - `b?.toString()` with `b: bigint | undefined` throws on base and head.
+
+## Review (RV7334, 2026-11-19, on 9a36a36f11): APPROVE
+
+| finding | answer |
+| --- | --- |
+| should-fix: `compileOptionalValueReceiverCall` allocates the receiver local before it knows the call compiles, so a fallback leaves the local unused | The ladder reads the receiver from that local while it compiles, so the local has to exist first. A call the ladder does not claim now rolls the attempt back with `snapshotSpeculative`/`rollbackSpeculative` (`context/speculative.ts`), and that removes the local and everything else the attempt allocated. |
+| nit: `withPreEvaluatedExpression` deletes its binding on exit | It now restores the outer binding of the same node, so nested use is safe. |
+| nit: `compileCallablePropertyCall`'s `precompiledReceiver` parameter is a second way to pass a held receiver | Folded. The optional-call caller now binds `tmp` through `withPreEvaluatedExpression`, and the parameter is gone. The function's internal spill (`receiverOverride`) stays private to it. |
+| `boolean \| undefined` is wrong beyond `?.` | Filed as #7406. |
+

@@ -8,6 +8,7 @@ import { isExternalDeclaredClass, isVoidType } from "../../checker/type-mapper.j
 import type { Instr, ValType } from "../../ir/types.js";
 import { popBody, pushBody } from "../context/bodies.js";
 import { allocLocal, withPreEvaluatedExpression } from "../context/locals.js";
+import { rollbackSpeculative, snapshotSpeculative } from "../context/speculative.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
 import { resolveWasmType } from "../index.js";
 import type { InnerResult } from "../shared.js";
@@ -204,15 +205,14 @@ export function compileOptionalCallExpression(
   // non-null branch would emit a default value and the call would never happen
   // (#2049). `compileCallablePropertyCall` implements exactly this — extract the
   // closure field, push self + args, `call_ref` — and already normalizes a
-  // nullable receiver via a guarded cast. Pass the receiver already captured
-  // for the nullish test so a live property chain is not evaluated twice.
+  // nullable receiver via a guarded cast. The receiver is the one already held
+  // for the nullish test, so a live property chain is not evaluated twice.
   if (!methodResolved && isSupportedOptionalCallableReceiverShape(propAccess.expression)) {
     const structName = resolveStructName(ctx, tsReceiverType);
     if (structName) {
-      const delegated = compileCallablePropertyCall(ctx, fctx, expr, propAccess, structName, {
-        localIdx: tmp,
-        type: objType,
-      });
+      const delegated = withPreEvaluatedExpression(fctx, propAccess.expression, tmp, () =>
+        compileCallablePropertyCall(ctx, fctx, expr, propAccess, structName),
+      );
       if (delegated !== undefined) {
         resultType = settleDelegatedResult(fctx, delegated, resultType);
         methodResolved = true;
@@ -366,11 +366,15 @@ function compileOptionalValueReceiverCall(
   const holdsUndefined = f64MayHoldUndefined(ctx, propAccess.expression, receiverType);
   const nullability = ctx.oracle.nullabilityOf(propAccess.expression);
   if (!holdsUndefined && (nullability.nullable || nullability.undefinable)) return undefined;
+  // The ladder reads the receiver from its local while it compiles, so the local exists first; an unclaimed call
+  // rolls it back with everything the attempt allocated.
+  const attempt = snapshotSpeculative(ctx, fctx);
   const receiverLocal = allocLocal(fctx, `__optcall_${fctx.locals.length}`, receiverType);
   const savedBody = pushBody(fctx);
   const delegated = compileHeldReceiverMethodCall(ctx, fctx, expr, propAccess, receiverLocal);
   if (delegated === undefined) {
     popBody(fctx, savedBody);
+    rollbackSpeculative(ctx, fctx, attempt);
     return undefined;
   }
   const settled = settleDelegatedResult(fctx, delegated, resultType);

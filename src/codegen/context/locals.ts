@@ -278,7 +278,7 @@ export function releaseTempLocal(fctx: FunctionContext, index: number): void {
 
 /**
  * Run `emit()` with `expr` bound to the value already held in local `index`: a `compileExpression(expr)` inside
- * reads the local instead of evaluating `expr` again. The binding ends with `emit()`.
+ * reads the local instead of evaluating `expr` again. The binding ends with `emit()`, restoring an outer one.
  */
 export function withPreEvaluatedExpression<T>(
   fctx: FunctionContext,
@@ -287,11 +287,13 @@ export function withPreEvaluatedExpression<T>(
   emit: () => T,
 ): T {
   const bound = (fctx.preEvaluatedExpressionLocals ??= new Map());
+  const outer = bound.get(expr);
   bound.set(expr, index);
   try {
     return emit();
   } finally {
-    bound.delete(expr);
+    if (outer === undefined) bound.delete(expr);
+    else bound.set(expr, outer);
   }
 }
 

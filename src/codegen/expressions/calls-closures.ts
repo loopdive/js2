@@ -1406,7 +1406,6 @@ export function compileCallablePropertyCall(
   expr: ts.CallExpression,
   propAccess: ts.PropertyAccessExpression,
   className: string,
-  precompiledReceiver?: { localIdx: number; type: ValType },
 ): InnerResult | undefined {
   const methodName = ts.isPrivateIdentifier(propAccess.name)
     ? "__priv_" + propAccess.name.text.slice(1)
@@ -1503,7 +1502,7 @@ export function compileCallablePropertyCall(
   // compiling the receiver, so the capture below rides the ONE evaluation.
   let bind: ObjectLiteralMethodReceiverBind | undefined;
 
-  let receiverOverride = precompiledReceiver;
+  let receiverOverride: { localIdx: number; type: ValType } | undefined;
   const compileReceiver = (expectedType?: ValType): ValType | null => {
     if (receiverOverride === undefined) {
       return compileExpression(ctx, fctx, propAccess.expression, expectedType);
