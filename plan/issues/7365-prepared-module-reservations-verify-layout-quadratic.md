@@ -173,6 +173,42 @@ If chosen:
     `issue-3518-native-number-primitive-classifier` 10.
   - Re-pointing these awaits the lead's decision.
 
+## The realm program, and the split (2026-11-19)
+
+Proving program of #7354 O (`function f(){ var o = { a: 1 }; return o.a; }
+if (f() !== 1) throw 1;`), compiled three times through
+`src/test262/test262-prepared-entry.ts`
+(`wholeProgram: prepared-program-required`, wasmgc, standalone, `allowJs`).
+The time is the second and third compile. The wasm is identical in all three
+rows (sha1 `511adde20023d0a9591f97307d7bab532509a41d`).
+
+| variant | compile |
+|---|---|
+| `claude/7354-realm` | 20.6 s |
+| A: post-seal readers under one `audited()` each (no contract change) | 9.2 s |
+| A + B: filling phase settled (B) | 1.5 s |
+
+- **A, contract-neutral** (branch `claude/7354-perf3-readers`):
+  - The pure readers after seal each run under ONE audit through the
+    existing `audited()` instead of one audit per read. Those readers are:
+    the completion checks after `seal()` (`requireCompletedPacks`),
+    `emittedSupportFunctionReceipts`, the support-receipt map and
+    `nativeRealmCompletedSlots` in `recordEmissionObservation`.
+  - `audited()` refuses any ledger mutation inside the block and audits once
+    after it, so each reader still sees an audited layout.
+  - Detection stays at the same calls, and no pinned test changes.
+- **B, contract change** (branch `claude/7354-perf3-reservations`, on top of A):
+  - During filling, queries read private state settled at freeze, and each
+    fill checks only its own data.
+  - The full audit runs at freeze and at seal, and every read after seal
+    still audits.
+  - 186 pinned tests move their detection point, from a query or another
+    resource's fill to the next fill of that resource or `seal()`.
+  - It waits for the project lead's OK on that contract change.
+- **Profile of A + B:** what is left is mostly realm inventory work
+  (`nativeRealmReservationInventory`, `preparedIrDataMismatch`), not this
+  audit.
+
 ## Implementation Plan (pending the decision above)
 
 - **Module:** `src/wasm/physical/module-reservations.ts` only. The check
