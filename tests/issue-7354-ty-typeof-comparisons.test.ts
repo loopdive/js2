@@ -283,9 +283,9 @@ describe("#7354 Ty — typeof comparisons on the Prepared dynamic value", () => 
   });
 });
 
-// #7354 Ty step 2 — `typeof` of a global the program does not declare answers like ECMAScript: the realm catalog's
-// tag for an ES global (`nativeRealmGlobalTypeof`, the one table), "undefined" for a name nothing declares, and a
-// named refusal for a lib-only name the catalog lacks (a host global). Never a wrong answer.
+// #7354 Ty step 2 — `typeof` of a global the program does not declare answers like ECMAScript: the realm table's
+// tag for a language global (`nativeRealmGlobalTypeof`, the one table), "undefined" for a name nothing declares, and
+// a named refusal for a lib-only name the table does not list (a host global). Never a wrong answer.
 describe("#7354 Ty — typeof of a global the program does not declare, on the Prepared path", () => {
   it.each([
     ["the assert.js conditional", 'function f(v) { return typeof JSON !== "undefined" ? 1 : 2; }', "f(0)", "1"],
@@ -368,22 +368,29 @@ describe("#7354 Ty — typeof of a global the program does not declare, on the P
     );
   });
 
-  // The pin: every global of the realm catalog answers its tag, which is node's where node has the global.
+  // The pin: every global of the realm table answers its tag, which is node's where node has the global.
   it.each(
     NATIVE_REALM_GLOBALS.map(({ name }) => name).filter((name) => !["undefined", "NaN", "Infinity"].includes(name)),
-  )("answers typeof of the ES global %s from the realm catalog", async (name) => {
-    const tag = nativeRealmGlobalTypeof(name)!;
+  )("answers typeof of the ES global %s from the realm table", async (name) => {
+    const tag = nativeRealmGlobalTypeof(name);
     const host = (globalThis as Record<string, unknown>)[name];
     if (host !== undefined) expect(typeof host).toBe(tag);
     await expectAnswerTag(name, tag);
   });
 
-  // A lib-only name outside the catalog (a host global) refuses by name, in a comparison and in a fold.
-  it.each([
-    `if (typeof document !== "undefined") throw 1;`,
-    `function f() { return typeof document !== "undefined" ? 1 : 2; }\nf();`,
-  ])("refuses typeof of the host global document by name: %s", async (source) => {
-    expect(await refusal(source)).toContain("typeof of the host global document has no Prepared answer");
+  // ES2026: this node has no `Temporal` to compare with, so the tag is pinned by hand.
+  it("answers typeof of the ES2026 global Temporal with object", async () => {
+    await expectAnswerTag("Temporal", "object");
+  });
+
+  // A lib-only name the table does not list (a host global) refuses by name, in a comparison and in a fold.
+  // `console` and `Intl` exist in node, and ECMA-262 defines neither.
+  it.each(["document", "console", "Intl"])("refuses typeof of the host global %s by name", async (name) => {
+    for (const source of [
+      `if (typeof ${name} !== "undefined") throw 1;`,
+      `function f() { return typeof ${name} !== "undefined" ? 1 : 2; }\nf();`,
+    ])
+      expect(await refusal(source)).toContain(`typeof of the host global ${name} has no Prepared answer`);
   });
 });
 

@@ -48,7 +48,9 @@ type SourceGlobal = { readonly binding: { readonly type: IrType } };
 type SourcePolicy = Pick<RuntimeManifestPolicy, "backend" | "target">;
 type DynamicLane = "host-async" | "native" | undefined;
 /** (#7354 Ty) The `typeof` answer for a global the program does not declare, or a named refusal. */
-export type UnresolvedGlobalTypeof = NonNullable<ReturnType<typeof nativeRealmGlobalTypeof>> | "refuse";
+export type UnresolvedGlobalTypeof =
+  | Exclude<ReturnType<typeof nativeRealmGlobalTypeof>, "not-a-language-global">
+  | "refuse";
 const IR_BOOLEAN_RESULT: IrType = Object.freeze({ kind: "val", val: Object.freeze({ kind: "i32", boolean: true }) });
 
 /** Canonical any identity excludes TypeScript's separate error-any recovery type. */
@@ -260,11 +262,12 @@ export function programDynamicContracts(
 }
 
 /**
- * (#7354 Ty) `typeof X` of a global the program does not declare, answered like ECMAScript: the tag the realm
- * catalog gives an ES global (`nativeRealmGlobalTypeof`, the one table, owned by #7350), "undefined" for a name
- * nothing declares, and "refuse" for a lib-only name the catalog lacks (a host global such as `document`, which this
- * environment may or may not provide). `undefined`: the program declares the name. A script's top-level
- * `function Error() {}` is reported by the checker as the lib declarations alone, hence `isUnshadowedLibBinding`.
+ * (#7354 Ty) `typeof X` of a global the program does not declare, answered like ECMAScript: the tag the realm's
+ * global table gives a language global (`nativeRealmGlobalTypeof`, the one table, owned by #7350). A name the table
+ * does not list is "undefined" when nothing declares it, and "refuse" when only a lib does (a host global such as
+ * `document` or `console`, which this environment may or may not provide). `undefined`: the program declares the
+ * name. A script's top-level `function Error() {}` is reported by the checker as the lib declarations alone, hence
+ * `isUnshadowedLibBinding`.
  */
 function unresolvedGlobalTypeof(
   checker: ts.TypeChecker,
@@ -273,7 +276,7 @@ function unresolvedGlobalTypeof(
 ): UnresolvedGlobalTypeof | undefined {
   if (!isUnshadowedLibBinding(node, isLibBinding)) return undefined;
   const tag = nativeRealmGlobalTypeof(node.text);
-  if (tag !== undefined) return tag;
+  if (tag !== "not-a-language-global") return tag;
   return checker.getSymbolAtLocation(node)?.declarations?.length ? "refuse" : "undefined";
 }
 

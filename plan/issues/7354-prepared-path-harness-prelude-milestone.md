@@ -2273,9 +2273,12 @@ Fresh-context review on the merge of Ty with main
      the lib-binding predicate `makeIrAmbientBindingPredicate(checker, "no-user")` (lib-only declarations, or
      none: the checker-synthesized `globalThis`) or an unresolved name, and the file-level shadow check
      (`isUnshadowedLibBinding`);
-   - an ES global answers its tag (`typeof Math === "object"`, `typeof eval === "function"`); a name nothing
-     declares answers "undefined"; a lib-only name the table lacks (`document`, `console`, `Intl`) refuses by name:
-     `typeof of the host global X has no Prepared answer`;
+   - the table's edition is ES2026 (adds `Temporal`, "object"), and its answer is three-way: a language tag
+     (`"function"`, `"object"`, `"number"`), `"undefined"` for the global `undefined` only, or
+     `"not-a-language-global"` for a name ECMA-262 does not define;
+   - a language global answers its tag (`typeof Math === "object"`, `typeof eval === "function"`); a
+     not-a-language-global that a lib declares (`document`, `console`, `Intl`) refuses by name:
+     `typeof of the host global X has no Prepared answer`; one nothing declares (`notDeclared`) answers "undefined";
    - `typeof` of such a name is a constant string, so the legalization trigger for it and
      `PREPARED_PROVIDED_GLOBALS` are gone (`Number` answers "function" from the table);
    - the classifier's kind is `global-typeof` with the resolver's tag (was `absent-global`);
@@ -2285,7 +2288,8 @@ Fresh-context review on the merge of Ty with main
    - consequence: assert.js's `typeof JSON !== "undefined" ? JSON.stringify(v) : …` now lowers its live arm, which
      refuses by name (`dyn.json_stringify has no Prepared intrinsic`); pinned.
    - Pin: every table row except `undefined`/`NaN`/`Infinity` (the classifier answers those earlier) answers its tag
-     both ways, and the tag equals node's where node has the global; `document` refuses in a comparison and in a fold.
+     both ways, and the tag equals node's where node has the global; `Temporal` (absent in node 22) answers
+     "object" by hand; `document`, `console` and `Intl` refuse in a comparison and in a fold.
 4. **Should-fix, fixed: a second decider for "absent global".** `readsTypeofOfAbsentGlobal` is gone with the
    trigger (item 3); the classifier is the only decider.
 5. **Should-fix, fixed: `switch-case-test-mixed` pinned** (mutation M4).
@@ -2294,6 +2298,6 @@ Fresh-context review on the merge of Ty with main
    `switchCaseTests`.
 
 **Stacking.** Branch `claude/7354-ty-r2` (replaces `claude/7354-ty`, whose merge of `claude/7350-b1` brought #7263's
-G1 history with it) is `65d64b13ae` plus a merge of #7350 B2a (`claude/7350-b2a` `ad0a89f013`, PR #7315) and this
-fix. Grant: `ir->runtime` 10 → 12 for the two table imports (frontmatter). The PR must not release before #7361 and #7315
+G1 history with it) is `65d64b13ae` plus a merge of #7350 B2a (`claude/7350-b2a` at its final head `40f37006fb`,
+PR #7315; first merged at `ad0a89f013`), a merge of main (`89e4748241`) and this fix. Grant: `ir->runtime` 10 → 12 for the two table imports (frontmatter). The PR must not release before #7361 and #7315
 are on main.
