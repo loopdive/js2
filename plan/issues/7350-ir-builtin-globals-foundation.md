@@ -298,6 +298,11 @@ the repository).
   `src/ir/`. The fold is moving the operator predicates to `src/shared/` with their 11 IR importers; filed as
   part of G2 rather than widened here.
 
+- **Review RV7263, third pass (APPROVE on `4b518eb2d9`):** the reviewer withdrew the #4206 rationale — the
+  checker binds no symbol inside a `with` body, so `isLibOnlyBinding` already refuses there and the lexical
+  screen is a second, syntactic guard. The `with` row is now an admission-level test (`intrinsicUseVerdicts`)
+  that turns red only when both guards are removed, and `heterogeneous-module-bindings.ts`'s private copy
+  `isInsideWithBody` is folded into the exported `isInWithBody`.
 - **Review RV7263 delta (BLOCKER on `8926554a54`), fixed:** the `with` screen is restored (above) and the
   `isLibOnlyBinding` guard is pinned by a REFUSED row, `namespace TypeError { export const z = 1; }` with
   `typeof TypeError === "object"` in a function (without the guard the IR claims it and answers 0).

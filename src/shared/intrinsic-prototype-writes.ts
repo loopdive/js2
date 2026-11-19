@@ -163,7 +163,7 @@ export function isPristineIntrinsic(identifier: ts.Identifier): boolean {
 }
 
 /** Inside the body of a `with` statement, where a free name may resolve to the object's property. */
-function isInWithBody(node: ts.Node): boolean {
+export function isInWithBody(node: ts.Node): boolean {
   for (let child = node; child.parent !== undefined; child = child.parent) {
     if (ts.isWithStatement(child.parent) && child.parent.statement === child) return true;
   }

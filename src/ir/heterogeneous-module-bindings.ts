@@ -17,6 +17,7 @@
 import { identifierWriteTag, TsCheckerOracle, type JsTag, type TypeOracle } from "../checker/oracle.js";
 import { ts } from "../ts-api.js";
 import { identifierWritesOf, type IdentifierWrite } from "../shared/binding-writes.js";
+import { isInWithBody } from "../shared/intrinsic-prototype-writes.js";
 
 type HeterogeneousBindingOracle = Pick<
   TypeOracle,
@@ -86,15 +87,6 @@ function isSyntacticVoidPlaceholder(expression: ts.Expression): boolean {
   let current = expression;
   while (ts.isParenthesizedExpression(current)) current = current.expression;
   return ts.isVoidExpression(current);
-}
-
-/** True when `node` sits in the dynamically-resolved body of a `with`. */
-function isInsideWithBody(node: ts.Node): boolean {
-  let previous: ts.Node | undefined;
-  for (let current: ts.Node | undefined = node; current; previous = current, current = current.parent) {
-    if (previous !== undefined && ts.isWithStatement(current) && current.statement === previous) return true;
-  }
-  return false;
 }
 
 /** Module-scoped `var`/`let` declarations keyed by their source binding name. */
@@ -210,7 +202,7 @@ export function collectHeterogeneouslyAssignedModuleVarNames(
           }
         }
       }
-    } else if (declaration === undefined && moduleVarsByName.size > 0 && isInsideWithBody(target)) {
+    } else if (declaration === undefined && moduleVarsByName.size > 0 && isInWithBody(target)) {
       // `with` can dynamically resolve the target to the object environment,
       // so only an unresolved identifier may use this deliberately name-keyed
       // fallback. A normally resolved local or cross-file binding of the same
