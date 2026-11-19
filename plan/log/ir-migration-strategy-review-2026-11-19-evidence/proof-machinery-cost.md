@@ -172,7 +172,7 @@ The pins are not even kept green:
 
 - `pnpm exec vitest run tests/issue-3518-runtime-program-relocation.test.ts` on main `89e47482`: **298 of 298 fail**
   ("length/SHA256: src/ir/prepared-component-dependencies.ts"), 10 s. Log: `.tmp/proofcost/vitest-relocation.log`.
-- `plan/issues/7365-…quadratic.md` (branch perf3-reservations): of 2,907 tests in the 43 files that name a
+- The issue file of #7365 (the quadratic reservation audit; it exists only on branch perf3-reservations): of 2,907 tests in the 43 files that name a
   reservation-audit failure, 331 already fail on main.
 - Cause, from `plan/issues/7357-red-ir-pin-tests-on-main.md`: "CI runs a root test file only when a PR touches it".
 
