@@ -132,8 +132,8 @@ export function scriptVarReadsFollowInitializer(
  * once, before every later top-level statement and, for a head, before the loop's test, body and update.
  */
 function runsBeforeLaterTopLevelCode(declaration: ts.VariableDeclaration): boolean {
-  const list = declaration.parent;
   if (isTopLevelStatementDeclaration(declaration)) return true;
+  const list = declaration.parent;
   return ts.isVariableDeclarationList(list) && ts.isForStatement(list.parent) && isTopLevelVarList(list);
 }
 

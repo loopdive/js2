@@ -111,6 +111,22 @@ describe("#7372 slice 1 — a var nested in top-level code", () => {
     }
   });
 
+  // Review RV7321b: in an ES module a nested `var` or `for` head is a module-init local, not a global; the
+  // producer leaves it to from-ast instead of refusing it.
+  it.each([
+    ["a for head", "export {}; for (var i = 0; i < 3; i++) {}", "i !== 3", "i !== 2"],
+    ["a two-name for head", "export {}; for (var i = 0, n = 0; i < 3; i++) { n += i; }", "n !== 3", "n !== 2"],
+    [
+      "a for head beside an exported var",
+      "var s = 0; for (var i = 0; i < 4; i++) s += i; export { s };",
+      "s !== 6",
+      "s !== 5",
+    ],
+  ])("an ES module keeps %s", async (_, program, holds, fails) => {
+    expect(await runPreparedScript(`${program} if (${holds}) throw 1;`, "test.mjs")).toBe("returned");
+    expect(await runPreparedScript(`${program} if (${fails}) throw 1;`, "test.mjs")).toBe("threw");
+  });
+
   // Not built here; each refuses by name instead of compiling to a wrong answer.
   it.each([
     [
@@ -128,7 +144,14 @@ describe("#7372 slice 1 — a var nested in top-level code", () => {
       'for (var key in [1]) {} if (key !== "0") throw 1;',
       "module-init unit contains a nested var declaration",
     ],
-  ])("refuses %s by name", async (_, program, message) => {
-    expect(await preparedScriptRefusal(program)).toContain(message);
+    // Review RV7321b: crashed with an invariant on the base (`module-init var leaf 'a' has no slot its value fits`).
+    [
+      "a pattern in a nested var of an ES module",
+      "export {}; { var [a] = [1]; } if (a !== 1) throw 1;",
+      "whole-program binding pattern requires the existing destructuring producer",
+      "test.mjs",
+    ],
+  ])("refuses %s by name", async (_, program, message, fileName = "test.js") => {
+    expect(await preparedScriptRefusal(program, fileName)).toContain(message);
   });
 });

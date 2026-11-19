@@ -20,9 +20,8 @@ import {
   isTopLevelStatementDeclaration,
   moduleInitVarLists,
 } from "../shared/var-declaration-lists.js";
-import { isMemberWriteDeclaration } from "../shared/binding-writes.js";
 import { ts } from "../ts-api.js";
-import { patternLeaves, type BindingLeaf } from "./binding-pattern-plan.js";
+import { bindingDeclarationList, patternLeaves, type BindingLeaf } from "./binding-pattern-plan.js";
 
 /** The modelled `var` lists ({@link moduleInitVarLists}) of every module-init statement. */
 export function collectIrSafeModuleVarDeclarationLists(
@@ -138,28 +137,11 @@ export function carrierLeafReads(
 }
 
 /**
- * (#7372 1b) Every declarator of the script `var` `name` names, in source order, when each is a module-init
- * binding's own (a top-level statement's or a modelled list's, `moduleInitBindings`): one binding with one
- * global, the first declarator its canonical identity, as the resolver's `uniqueTopLevelVariableDeclaration`
- * picks it. A JS member write on the binding (`o.p = v`) declares no binding. `undefined` when any declaration
- * is something else (a function, a lexical binding, an ambient, a pattern leaf or an unmodelled list).
+ * Whether `declaration` binds a module-init global: a top-level `VariableStatement`'s own name, in a script or an
+ * ES module, or (#7106 S5, L, L2) in a script a leaf, a `for` head's or a nested `var`'s name of a modelled list.
+ * The resolver, the startup plan and the Prepared producer all ask this one rule.
  */
-export function scriptVarDeclarations(
-  checker: ts.TypeChecker,
-  name: ts.Identifier,
-): readonly ts.VariableDeclaration[] | undefined {
-  const sourceFile = name.getSourceFile();
-  if (ts.isExternalModule(sourceFile)) return undefined;
-  const own = (checker.getSymbolAtLocation(name)?.declarations ?? []).filter(
-    (other) => !other.getSourceFile().isDeclarationFile && !isMemberWriteDeclaration(other),
-  );
-  const vars = own.filter(
-    (other): other is ts.VariableDeclaration =>
-      ts.isVariableDeclaration(other) &&
-      ts.isIdentifier(other.name) &&
-      other.getSourceFile() === sourceFile &&
-      (isTopLevelStatementDeclaration(other) || isModuleInitVarList(other.parent)) &&
-      (other.parent.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const)) === 0,
-  );
-  return vars.length === own.length && vars.length > 0 ? vars.sort((a, b) => a.pos - b.pos) : undefined;
+export function isModuleInitGlobalDeclaration(declaration: ts.VariableDeclaration | ts.BindingElement): boolean {
+  if (isTopLevelStatementDeclaration(declaration)) return true;
+  return !ts.isExternalModule(declaration.getSourceFile()) && isModuleInitVarList(bindingDeclarationList(declaration));
 }

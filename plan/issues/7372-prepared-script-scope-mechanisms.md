@@ -14,6 +14,11 @@ area: ir, compiler
 goal: ir-full-coverage
 depends_on: [7354]
 related: [7354, 7106]
+# 2026-11-19 (review RV7321b, must-fix 1): src/ir/program-source.ts +1, the producer's filter by the shared
+# module-init global rule (`isModuleInitGlobalDeclaration`): an ES module's nested `var` / `for` head is a
+# module-init local, not a global. The rule itself lives in src/ir/module-init-vars.ts.
+loc-budget-allow:
+  - src/ir/program-source.ts
 ---
 
 # #7372 — Prepared IR path: script-scope mechanisms
@@ -157,7 +162,10 @@ Measured:
   The test helper tolerates the checker's `Subsequent variable declarations must have the same type` on legal JS
   (`var x = 1; var x;`), which does not stop the compile.
 - Pins moved into this file: H's "declared twice", VG's "declared twice", H2's two script repeats.
-- S9's `script-var-home-repeated-var.tsv` (255 files, S9 @ `97f19439`), stand-in census on this tree: 12 still stop
+- S9's repeated-var list, stand-in census on this tree: all **195** real repeated-`var` files get past the gap
+  (S9 reproduced it on `2c3a877c`). An earlier figure here, 243/255, was 255 files minus the 12 still at
+  `not-direct`; S9's AST check found 60 of the 255 rows to be false hits. The 12 dropped are not repeated vars.
+  Earlier wording for the record: 12 still stopped
   at `not-direct`. None of the 12 is a repeated `var`: 8 are `Object.defineProperty(props, …)` (a JS property
   declaration, kept as slice O's named gap) and 4 are `this.x = 1` (the global object as `this`, slice C).
   The other 243 move on to: `unknown class` (Test262Error, slice C) 107, an object/array literal initializer with
@@ -173,3 +181,27 @@ Measured:
 - Prepared tests (#7188, every #7354 file, prepared-entry/-runtime, this issue): 733/733. Vitest exits 1 on one
   worker RPC timeout under CPU load, not a test failure.
 - Gates: typecheck, loc, func (also against `origin/main`), coercion-sites, oracle-ratchet, dead-exports.
+
+## Review round 1 (RV7321b, head `2c3a877c`): BLOCKER, addressed
+
+- **Must-fix 1, ES-module regression.** An ES module with a top-level `for (var …)` head refused (`not-direct`)
+  where the base ran it: the producer walked `moduleInitBindings`, which lists a `for` head in every source,
+  while the resolver makes it a global only in a script. Fix: ONE rule, `isModuleInitGlobalDeclaration`
+  (`module-init-vars.ts`), which the resolver's `isModuleBindingDeclaration`, the startup plan's
+  `nestedVarBindings` and the Prepared producer all ask; no per-caller `isExternalModule`. Measured base vs head
+  through the strict entry (`test.mjs`): the reviewer's three programs return again, and a nested `if` var and a
+  repeated `var` in a module refuse as on the base. An ES-module nested `var` pattern, which crashed the base with
+  an invariant (`module-init var leaf 'a' has no slot its value fits`), now refuses by name. Pinned: 3 ES-module
+  run programs and the pattern refusal.
+- **Should-fix 2, duplicate redeclaration rule.** `scriptVarDeclarations` is gone. The resolver exports
+  `moduleBindingDeclarations` (its own declarators in source order, which `uniqueTopLevelVariableDeclaration` now
+  reads); the home and the plan ask it. The home keeps only its own stricter rule, that a JS property declaration
+  (`Object.defineProperty(o, …)`) leaves the binding without a home.
+- **Nits.** The producer keys entries by `globalBindingId` in a `Map` (no linear `find`); the plan computes the
+  redeclared ordinals once per source (`redeclaredScriptVarOrdinals`, one map lookup per declarator); `const list`
+  moved below the early return.
+- Mutation check of the fix: the producer without the filter, and the plan without it, are both killed by the
+  ES-module pins. A third mutant (the plan's "no lexical among the declarators" check) survived because
+  `let x; var x;` is an early error the entry refuses first, so the check was removed as unreachable.
+- Ordinary-pipeline bytes, base vs head: 220 files (the 160 above + 60 ES modules flagged `module` that contain
+  `var`, compiled as `test.mjs`) × default and standalone: identical (440 compiles).

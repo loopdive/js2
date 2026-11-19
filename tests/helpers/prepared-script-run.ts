@@ -21,7 +21,7 @@ export const preparedScriptOptions = (fileName = "test.js"): Test262CompileOptio
     optimize: false,
     emitWat: false,
     fileName,
-    ...(fileName.endsWith(".js") ? { allowJs: true } : {}),
+    ...(/\.m?js$/.test(fileName) ? { allowJs: true } : {}),
   }) as Test262CompileOptions;
 
 const messages = (result: { errors: readonly { message: string }[] }) => result.errors.map((error) => error.message);

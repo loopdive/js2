@@ -4,7 +4,8 @@ import { ts } from "../ts-api.js";
 import { irModuleGlobalBindingId, irModuleTdzGlobalBindingId } from "./abi-bindings.js";
 import { irUnitCallableBindingId } from "./callable-bindings.js";
 import { createIrBindingId, type IrBindingId, type IrSourceId } from "./identity.js";
-import { moduleBindingDeclarationOrder, scriptVarDeclarations } from "./module-init-vars.js";
+import { moduleBindingDeclarations } from "./module-bindings.js";
+import { isModuleInitGlobalDeclaration, moduleBindingDeclarationOrder } from "./module-init-vars.js";
 import type { IrPlanningIdentityContext } from "./planning-identity.js";
 
 import type {
@@ -208,7 +209,7 @@ export function buildIrModuleInitPlan(input: BuildIrModuleInitPlanInput): IrModu
   let declarationOrdinal = 0;
   let sourceOrdinal = 0;
   const declarationOrder = moduleBindingDeclarationOrder(sourceFile);
-  const redeclaredVarOrdinal = redeclaredScriptVarOrdinal(checker, declarationOrder);
+  const redeclared = redeclaredScriptVarOrdinals(checker, declarationOrder);
 
   // Export declarations are order-independent (`export { value }` may appear
   // before `value`), so resolve their canonical local targets up front.
@@ -233,7 +234,7 @@ export function buildIrModuleInitPlan(input: BuildIrModuleInitPlanInput): IrModu
       const kind = declarationKind(statement.declarationList);
       const statementBindingIds: IrBindingId[] = [];
       for (const declaration of statement.declarationList.declarations) {
-        const canonical = redeclaredVarOrdinal(declaration);
+        const canonical = redeclared.get(declaration);
         if (canonical !== undefined) {
           statementBindingIds.push(irModuleGlobalBindingId(sourceId, canonical));
           declarationOrdinal++;
@@ -428,7 +429,7 @@ export function buildIrModuleInitPlan(input: BuildIrModuleInitPlanInput): IrModu
     }
   }
 
-  bindings.push(...nestedVarBindings(sourceFile, sourceId, declarationOrder, declarationOrdinal, redeclaredVarOrdinal));
+  bindings.push(...nestedVarBindings(sourceFile, sourceId, declarationOrder, declarationOrdinal, redeclared));
 
   const functions = sourceFile.statements.filter(ts.isFunctionDeclaration);
   for (const declaration of collectReassignedTopLevelFunctions(sourceFile, checker)) {
@@ -475,22 +476,26 @@ export function buildIrModuleInitPlan(input: BuildIrModuleInitPlanInput): IrModu
 
 /**
  * (#7372 1b) A repeated script `var` is one binding: a later declarator records no binding of its own, and its
- * statement initializes the first declarator's global. Answers that first declarator's ordinal.
+ * statement initializes the first declarator's global. Maps each later declarator to that first one's ordinal.
  */
-function redeclaredScriptVarOrdinal(
+function redeclaredScriptVarOrdinals(
   checker: ts.TypeChecker,
   declarationOrder: readonly ts.Node[],
-): (declaration: ts.Node) => number | undefined {
-  return (declaration) => {
-    if (!ts.isVariableDeclaration(declaration) || !ts.isIdentifier(declaration.name)) return undefined;
-    const first = scriptVarDeclarations(checker, declaration.name)?.[0];
-    return first !== undefined && first !== declaration ? declarationOrder.indexOf(first) : undefined;
-  };
+): ReadonlyMap<ts.Node, number> {
+  const ordinals = new Map(declarationOrder.map((declaration, ordinal) => [declaration, ordinal]));
+  const redeclared = new Map<ts.Node, number>();
+  for (const declaration of declarationOrder) {
+    if (!ts.isVariableDeclaration(declaration) || !ts.isIdentifier(declaration.name)) continue;
+    const [first, ...later] = moduleBindingDeclarations(declaration.name, checker);
+    if (first === declaration) for (const other of later) redeclared.set(other, ordinals.get(first)!);
+  }
+  return redeclared;
 }
 
 /**
  * (#7372) The bindings of the script `var`s a nested modelled list declares (a block, branch, loop, `try` or
- * `switch` of top-level code) and of pattern leaves: their ordinals follow every top-level statement's
+ * `switch` of top-level code) and of pattern leaves, where they are module-init globals (in a script, not an ES
+ * module: `isModuleInitGlobalDeclaration`): their ordinals follow every top-level statement's
  * (`moduleBindingDeclarationOrder`), and each is `undefined` from instantiation, as a top-level `var` is.
  */
 function nestedVarBindings(
@@ -498,12 +503,13 @@ function nestedVarBindings(
   sourceId: IrSourceId,
   declarationOrder: readonly ts.Node[],
   firstOrdinal: number,
-  redeclaredVarOrdinal: (declaration: ts.Node) => number | undefined,
+  redeclared: ReadonlyMap<ts.Node, number>,
 ): IrModuleInitBindingIntent[] {
   return declarationOrder.slice(firstOrdinal).flatMap((declaration, index) => {
-    if (redeclaredVarOrdinal(declaration) !== undefined) return [];
+    const binding = declaration as ts.VariableDeclaration | ts.BindingElement;
+    if (redeclared.has(declaration) || !isModuleInitGlobalDeclaration(binding)) return [];
     const declarationOrdinal = firstOrdinal + index;
-    const name = (declaration as ts.VariableDeclaration | ts.BindingElement).name as ts.Identifier;
+    const name = binding.name as ts.Identifier;
     return [
       frozen({
         declarationOrdinal,
