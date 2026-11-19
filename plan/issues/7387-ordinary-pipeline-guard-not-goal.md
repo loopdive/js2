@@ -1,8 +1,8 @@
 ---
-id: TO-ALLOCATE
+id: 7387
 title: "Ordinary pipeline: stop slice work, keep it as a regression guard, count legacy-emitted bodies"
-status: ready
-sprint: current
+status: backlog
+sprint: Backlog
 created: 2026-11-19
 updated: 2026-11-19
 priority: medium

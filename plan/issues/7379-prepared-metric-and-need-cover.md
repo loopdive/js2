@@ -1,8 +1,8 @@
 ---
-id: TO-ALLOCATE
+id: 7379
 title: "Prepared path: publish the stand-in pass count and an all-gaps need cover on every merge"
-status: ready
-sprint: current
+status: backlog
+sprint: Backlog
 created: 2026-11-19
 updated: 2026-11-19
 priority: critical

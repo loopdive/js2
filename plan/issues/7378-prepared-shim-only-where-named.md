@@ -1,8 +1,8 @@
 ---
-id: TO-ALLOCATE
+id: 7378
 title: "Prepared path: emit the test262 `$262` shim only for files that name it"
-status: ready
-sprint: current
+status: backlog
+sprint: Backlog
 created: 2026-11-19
 updated: 2026-11-19
 priority: critical

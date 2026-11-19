@@ -1,8 +1,8 @@
 ---
-id: TO-ALLOCATE
+id: 7382
 title: "Decide how eval and Function() run on the IR-only path"
-status: ready
-sprint: current
+status: backlog
+sprint: Backlog
 created: 2026-11-19
 updated: 2026-11-19
 priority: high

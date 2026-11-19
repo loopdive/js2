@@ -1,8 +1,8 @@
 ---
-id: TO-ALLOCATE
+id: 7386
 title: "Lane structure for the Prepared path: fewer lanes, file ownership, one coordinator, short plans"
-status: ready
-sprint: current
+status: backlog
+sprint: Backlog
 created: 2026-11-19
 updated: 2026-11-19
 priority: high

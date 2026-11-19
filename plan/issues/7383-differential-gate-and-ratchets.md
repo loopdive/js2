@@ -1,8 +1,8 @@
 ---
-id: TO-ALLOCATE
+id: 7383
 title: "Differential gate against node on the Prepared entry, with crash and post-claim ratchets"
-status: ready
-sprint: current
+status: backlog
+sprint: Backlog
 created: 2026-11-19
 updated: 2026-11-19
 priority: high

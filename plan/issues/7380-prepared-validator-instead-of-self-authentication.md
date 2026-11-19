@@ -1,8 +1,8 @@
 ---
-id: TO-ALLOCATE
+id: 7380
 title: "Prepared path: replace self-authentication (receipts, census, forgery pins, layout audits) with one validator"
-status: ready
-sprint: current
+status: backlog
+sprint: Backlog
 created: 2026-11-19
 updated: 2026-11-19
 priority: critical

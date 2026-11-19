@@ -1,8 +1,8 @@
 ---
-id: TO-ALLOCATE
+id: 7381
 title: "Spike: a Prepared program calls a legacy-emitted runtime helper"
-status: ready
-sprint: current
+status: backlog
+sprint: Backlog
 created: 2026-11-19
 updated: 2026-11-19
 priority: critical

@@ -229,8 +229,20 @@ What it costs, measured:
   `Record<Id, …>`, where TypeScript enforces completeness for free.
 - **The pins choose the design.** For the audit fix (#7365) the simple change fails 216 pinned tests; an option
   measured twice as fast fails 186 and was not built; the one chosen moved 65.
-- **The pins are not watched.** `tests/issue-3518-runtime-program-relocation.test.ts` fails 298 of 298 on main
-  and nobody noticed, because CI runs such files only when a PR touches them.
+- **The pins are not watched.** `tests/issue-3518-runtime-program-relocation.test.ts` fails 298 of 298 on main,
+  unnoticed, because CI runs such files only when a PR touches them. Repro, run twice on 2026-11-19 on main
+  `89e47482` (10 s):
+
+  ```bash
+  pnpm exec vitest run tests/issue-3518-runtime-program-relocation.test.ts
+  # Tests  298 failed (298)
+  # Error: runtime program relocation: length/SHA256: src/ir/prepared-component-dependencies.ts
+  #   reconstructC1CurrentSources tests/helpers/ir-c1-current-source.ts:943
+  #   tests/issue-3518-runtime-program-relocation.test.ts:591
+  ```
+
+  Every test fails at the same point: the pinned length and SHA-256 of one source file no longer match the file.
+  Not filed as its own issue; it is evidence for [#7380](../issues/7380-prepared-validator-instead-of-self-authentication.md).
 - **Pins, earlier.** Slice D1's first cut ran one pass in a different stage and broke 150 receipt tests (#7354, "D1
   result"). Slice T (one intrinsic, ToBoolean) edited seven closed lists and re-derived two pinned hashes. The lead's
   brief reports 66 to 216 pinned tests moved by one change today. Main carried 10 failing pin tests for days
@@ -342,9 +354,21 @@ each addition carries the proof cost of question 3.
 | R5 | Decide `eval` on the IR-only path | sets the ceiling (88 % or 100 %) and the scope model before more is built on it | 2 to 3 days of measurement and design | none in deciding | decision record with the constant/computed split |
 | R10 | Ordinary pipeline is a regression guard; publish "units with no legacy body" | frees 7 open PRs' worth of lanes and CI; an honest figure | a decision | `from-ast` improvements slow down | open ordinary PRs closed or re-scoped |
 
-Issue drafts for R1 to R10 are in `plan/log/ir-migration-strategy-review-2026-11-19-issue-drafts/`. They carry no
-ids: the reviewer's session was not permitted to run the id allocator. The lead allocates ids and moves them to
-`plan/issues/`.
+Issues, one per recommendation (ids reserved by the lead; `status: backlog`, proposals awaiting the project
+lead's decision):
+
+| recommendation | issue |
+| --- | --- |
+| R1 | [#7378](../issues/7378-prepared-shim-only-where-named.md) |
+| R2 | [#7379](../issues/7379-prepared-metric-and-need-cover.md) |
+| R3 | [#7380](../issues/7380-prepared-validator-instead-of-self-authentication.md) |
+| R4 | [#7381](../issues/7381-spike-prepared-borrows-legacy-runtime.md) |
+| R5 | [#7382](../issues/7382-decide-eval-on-ir-only-path.md) |
+| R6 | [#7383](../issues/7383-differential-gate-and-ratchets.md) |
+| R7 | [#7384](../issues/7384-review-policy-block-on-behaviour.md) |
+| R8 | [#7385](../issues/7385-pr-ci-affected-tests-only.md) |
+| R9 | [#7386](../issues/7386-lane-structure.md) |
+| R10 | [#7387](../issues/7387-ordinary-pipeline-guard-not-goal.md) |
 
 ## Open items and limits
 

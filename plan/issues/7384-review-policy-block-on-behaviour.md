@@ -1,8 +1,8 @@
 ---
-id: TO-ALLOCATE
+id: 7384
 title: "Review policy for IR PRs: block on behaviour, two rounds, no re-review of merges"
-status: ready
-sprint: current
+status: backlog
+sprint: Backlog
 created: 2026-11-19
 updated: 2026-11-19
 priority: high
