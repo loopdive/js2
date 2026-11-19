@@ -184,23 +184,6 @@ type PhysicalData =
   | Instr[]
   | LocalDef[];
 
-/**
- * Whether `dataText` of `data` can never change: frozen arrays and records all the way down, no byte views (whose
- * buffer can change under a frozen view) and no accessors (whose answer can change on a frozen object). Freezing
- * cannot be undone, so a fill that is permanent when it is recorded needs only its identity checked by later audits.
- * Only called on data `dataText` accepted, so it is acyclic.
- */
-function isPermanentData(data: unknown): boolean {
-  if (data === null || typeof data !== "object") return true;
-  return (
-    !ArrayBuffer.isView(data) &&
-    Object.isFrozen(data) &&
-    Object.values(Object.getOwnPropertyDescriptors(data)).every(
-      (field) => "value" in field && isPermanentData(field.value),
-    )
-  );
-}
-
 // Snapshots describe plain compiler-produced data, not transport authentication.
 // JSON alone erases NaN/infinities/-0 and present-undefined fields. Encode all
 // scalar kinds and own field presence explicitly, including array holes/length.
@@ -261,7 +244,7 @@ export class PhysicalModuleReservations {
     { locals: LocalDef[]; body: Instr[]; snapshot: PhysicalDataSnapshot }
   >();
   readonly #ownedFunctions = createOwnedFunctionSnapshotStore<FunctionReservation, PhysicalDataSnapshot>();
-  readonly #filledGlobals = new Map<GlobalReservation, { init: Instr[]; text: string; permanent: boolean }>();
+  readonly #filledGlobals = new Map<GlobalReservation, { init: Instr[]; text: string }>();
   readonly #publications = new Map<Element | WasmExport, string>();
   readonly #exportNames = new Set<string>();
   #start: number | undefined;
@@ -442,7 +425,7 @@ export class PhysicalModuleReservations {
         this.#fail(`altered completed function ${token.key}`);
     }
     for (const [token, fill] of this.#filledGlobals) {
-      if (token.object.init !== fill.init || (!fill.permanent && this.#snapshot(fill.init) !== fill.text))
+      if (token.object.init !== fill.init || this.#snapshot(fill.init) !== fill.text)
         this.#fail(`altered completed global ${token.key}`);
     }
     for (const [record, text] of this.#publications) {
@@ -907,8 +890,7 @@ export class PhysicalModuleReservations {
     if (initializer.length === 0) this.#fail(`global initializer is empty ${token.key}`);
     this.#validateInstructions(initializer);
     token.object.init = initializer;
-    const text = this.#snapshot(initializer);
-    this.#filledGlobals.set(token, { init: initializer, text, permanent: isPermanentData(initializer) });
+    this.#filledGlobals.set(token, { init: initializer, text: this.#snapshot(initializer) });
   }
 
   defineElement(

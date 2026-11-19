@@ -1,13 +1,11 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 //
 // #7354 Perf2 — the Prepared path's currentness checks re-derived the whole program at every string emit. Each check
-// that is a pure function of input that can no longer change now runs once per input (`checkUnlessSettled`,
-// `PreparedIrSettledChecks`, `settledAtIssue` in src/ir/program/settled-verdict.ts); the physical ledger skips the
-// snapshot of a global initializer that is permanent data, and a body's emits share one layout audit. These tests
-// try to pass a mutated input through every one of those paths: each must be refused, never a stale pass.
+// that is a pure function of input that can no longer change now runs once per input (checkUnlessSettled,
+// PreparedIrSettledChecks and settledAtIssue in src/ir/program/settled-verdict.ts; the allocation registry restore
+// of src/ir/program/prepared-allocations.ts), and a body's emits share one layout audit. These tests try to pass a
+// mutated input through every one of those paths: each must be refused, never a stale pass.
 import { describe, expect, it } from "vitest";
-import { createEmptyModule } from "../src/ir/types.js";
-import { PhysicalModuleReservations } from "../src/wasm/physical/module-reservations.js";
 import {
   checkUnlessSettled,
   PreparedIrSettledChecks,
@@ -25,8 +23,11 @@ import {
 import { collectNativeStringValueDemands } from "../src/ir/program/native-string-value-demands.js";
 import { prepareIrProgramSources, captureTypedIrProgramInput } from "../src/ir/program-source.js";
 import { prepareTypedIrProgram } from "../src/ir/program-prepare-ir.js";
+import { AllocSiteRegistry } from "../src/ir/analysis/alloc-registry.js";
+import { freezePreparedIrRuntimeValue } from "../src/ir/program/data.js";
+import { preparedAllocationSites } from "../src/ir/program/prepared-allocations.js";
+import { asAllocSiteId } from "../src/ir/core/nodes.js";
 import { sourceInput, typedOptions, requireProgram } from "./helpers/typed-program-fixtures.js";
-import type { Instr } from "../src/wasm/model/instructions.js";
 
 const policy = {
   target: "standalone",
@@ -169,57 +170,26 @@ describe("#7354 Perf2 — object-access requirements settled at issue", () => {
   });
 });
 
-describe("#7354 Perf2 — permanent global initializers", () => {
-  function filledGlobal(init: Instr[]) {
-    const module = createEmptyModule();
-    const tx = new PhysicalModuleReservations(module);
-    const token = tx.reserveGlobal("perf2:global", "g", { kind: "i32" }, false);
-    tx.freezeReservations();
-    tx.fillGlobal(token, init);
-    return { tx, token };
+describe("#7354 Perf2 — allocation registry restored once per immutable snapshot", () => {
+  function snapshotOf() {
+    const registry = new AllocSiteRegistry();
+    const id = registry.fresh("string", { kind: "string" } as never);
+    return { id, snapshot: registry.snapshot() };
   }
-  const audit = (tx: PhysicalModuleReservations, token: { kind: "global" }) =>
-    tx.assertCompletedReservation(token as never);
 
-  it("still refuses a replaced permanent initializer", () => {
-    const { tx, token } = filledGlobal(Object.freeze([Object.freeze({ op: "i32.const", value: 1 })]) as Instr[]);
-    for (let i = 0; i < 3; i++) audit(tx, token);
-    token.object.init = [{ op: "i32.const", value: 1 }];
-    expect(() => audit(tx, token)).toThrow(/altered completed global/);
+  it("restores a frozen snapshot once and a mutable one at every use", () => {
+    const frozen = snapshotOf();
+    freezePreparedIrRuntimeValue(frozen.snapshot);
+    expect(preparedAllocationSites(frozen.snapshot)).toBe(preparedAllocationSites(frozen.snapshot));
+    const mutable = snapshotOf();
+    expect(preparedAllocationSites(mutable.snapshot)).not.toBe(preparedAllocationSites(mutable.snapshot));
   });
 
-  it.each([
-    ["an unfrozen array", () => [{ op: "i32.const", value: 1 }] as Instr[], (i: Instr[]) => i.push({ op: "nop" })],
-    [
-      "a frozen array of an unfrozen instruction",
-      () => Object.freeze([{ op: "i32.const", value: 1 }]) as Instr[],
-      (i: Instr[]) => ((i[0] as { value: number }).value = 2),
-    ],
-  ])("audits the content of %s at every use", (_label, make, mutate) => {
-    const init = make();
-    const { tx, token } = filledGlobal(init);
-    for (let i = 0; i < 3; i++) audit(tx, token);
-    mutate(init);
-    expect(() => audit(tx, token)).toThrow(/altered completed global/);
-  });
-
-  it("audits a frozen byte view at every use: its buffer can still change", () => {
-    const buffer = new ArrayBuffer(0, { maxByteLength: 4 });
-    const bytes = Object.freeze(new Uint8Array(buffer));
-    const { tx, token } = filledGlobal(Object.freeze([Object.freeze({ op: "i32.const", value: 1, bytes })]) as Instr[]);
-    audit(tx, token);
-    buffer.resize(2);
-    expect(() => audit(tx, token)).toThrow(/altered completed global/);
-  });
-
-  it("audits a frozen instruction whose field is an accessor at every use", () => {
-    let value = 1;
-    const instr = Object.freeze(
-      Object.defineProperty({ op: "i32.const" }, "value", { get: () => value, enumerable: true }),
-    ) as Instr;
-    const { tx, token } = filledGlobal(Object.freeze([instr]) as Instr[]);
-    audit(tx, token);
-    value = 2;
-    expect(() => audit(tx, token)).toThrow(/altered completed global/);
+  it("refuses a mutable snapshot changed after a successful restore", () => {
+    const { id, snapshot } = snapshotOf();
+    expect(preparedAllocationSites(snapshot).resolve(id)?.kind).toBe("string");
+    (snapshot as { size: number }).size = 7;
+    expect(() => preparedAllocationSites(snapshot)).toThrow(/invalid allocation snapshot/);
+    expect(asAllocSiteId(0)).toBe(id);
   });
 });
