@@ -315,8 +315,6 @@ function capturePresentation(request: IrProgramPresentationRequest, gap: GapReco
       "unproved-output-option",
       "source maps, C ABI and optimization require a separate complete presentation contract",
     );
-  if (output.errors.some((error) => error.severity === "error"))
-    gap("errors", "frontend-errors", "analyzed frontend errors cannot become prepared artifacts");
   const expectedLinks = [...new Set(options.link ?? [])];
   if (
     expectedLinks.length !== (context.codegenOptions.link?.length ?? 0) ||
