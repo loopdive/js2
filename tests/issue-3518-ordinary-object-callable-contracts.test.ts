@@ -50,9 +50,33 @@ describe("ordinary object semantic contracts", () => {
     (name) => expect(irRuntimeCallableDeclaration(irIntrinsicFuncRef(name))).toBeUndefined(),
   );
 
-  it.each(CONTRACTS)("cannot materialize %s merely because its semantic declaration exists", (name) => {
+  // On standalone WasmGC each contract has one provider, its native one: the manifest lists all eight
+  // (`ORDINARY_OBJECT_RUNTIME_PROVIDER_IDS`). Selecting a provider is not serving it: since #7354 O1 the native
+  // realm serves create-default, define-data and get, and the other five still have no realm function.
+  it.each(CONTRACTS)("selects the native provider for %s on standalone WasmGC", (name) => {
     const builder = new RuntimeManifestBuilder({ target: "standalone", backend: "wasmgc" });
     builder.requestFeature(name);
-    expect(() => builder.freeze()).toThrow(expect.objectContaining({ code: "missing-runtime-provider" }));
+    expect(builder.freeze().providers.map((provider) => provider.id)).toEqual([`native.${name}`]);
+  });
+
+  // Every other policy still has no provider: the declaration alone materializes nothing there.
+  const ELSEWHERE = [
+    { target: "standalone", backend: "linear" },
+    { target: "wasi", backend: "wasmgc" },
+    { target: "wasi", backend: "linear" },
+    { target: "host", backend: "wasmgc" },
+    { target: "host", backend: "linear" },
+  ] as const;
+  it.each(CONTRACTS)("cannot materialize %s merely because its semantic declaration exists", (name) => {
+    for (const policy of ELSEWHERE) {
+      const builder = new RuntimeManifestBuilder(policy);
+      builder.requestFeature(name);
+      expect(() => builder.freeze(), JSON.stringify(policy)).toThrow(
+        expect.objectContaining({
+          code: "provider-target-unavailable",
+          message: `${name} requires standalone WasmGC`,
+        }),
+      );
+    }
   });
 });
