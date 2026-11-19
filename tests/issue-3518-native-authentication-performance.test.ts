@@ -7,6 +7,7 @@ import { freezePreparedIrRuntimeValue, preparedIrDataMismatch } from "../src/ir/
 import { createEmptyModule } from "../src/ir/types.js";
 import { emitBinary } from "../src/emit/binary.js";
 import { PhysicalModuleReservations, type PhysicalReservation } from "../src/wasm/physical/module-reservations.js";
+import { completionCheck, expectUnemittable, queryAfterAudit } from "./helpers/reservation-audit-points.js";
 
 afterEach(async () => await setImmediate());
 
@@ -314,12 +315,15 @@ describe("fresh batch physical-index authentication", () => {
         return 0;
       },
     });
-    expect(r.tx.physicalIndices(Array.from({ length: 17 }, () => r.fn))).toEqual(Array(17).fill(0));
+    expect(queryAfterAudit(r.tx, () => r.tx.physicalIndices(Array.from({ length: 17 }, () => r.fn)))).toEqual(
+      Array(17).fill(0),
+    );
     expect(reads).toBe(1);
     expect(r.fn.object.body).toHaveLength(1);
-    // The next call must perform a fresh audit, whose getter mutation is detected.
-    expect(() => r.tx.physicalIndices([])).toThrow("altered completed function fn");
+    // The next completion check must perform a fresh audit, whose getter mutation is detected.
+    expect(() => queryAfterAudit(r.tx, () => r.tx.physicalIndices([]))).toThrow("altered completed function fn");
     expect(reads).toBe(2);
+    expectUnemittable(r.tx);
   });
 
   it("audits input reflection-trap mutations before computing any coordinates", () => {
@@ -334,8 +338,9 @@ describe("fresh batch physical-index authentication", () => {
         return Reflect.getOwnPropertyDescriptor(target, key);
       },
     });
-    expect(() => r.tx.physicalIndices(tokens)).toThrow("altered completed function fn");
+    expect(() => completionCheck(r.tx, () => r.tx.physicalIndices(tokens))).toThrow("altered completed function fn");
     expect(traps).toBe(1);
+    expectUnemittable(r.tx);
   });
 
   it.each(["body", "locals", "initializer", "type", "ordinal", "population", "undefined", "hole", "nan-bits"])(
@@ -354,7 +359,8 @@ describe("fresh batch physical-index authentication", () => {
         expect(tx.physicalIndices([fn])).toEqual([0]);
         view.setBigUint64(0, 0x7ff8000000000002n, true);
         Object.assign(fn.object.body[0]!, { value: view.getFloat64(0, true) });
-        expect(() => tx.physicalIndices([])).toThrow("altered completed function nan");
+        expect(() => queryAfterAudit(tx, () => tx.physicalIndices([]))).toThrow("altered completed function nan");
+        expectUnemittable(tx);
         return;
       }
       expect(r.tx.physicalIndices([r.table])).toEqual([0]);
@@ -384,8 +390,9 @@ describe("fresh batch physical-index authentication", () => {
           Reflect.deleteProperty(r.fn.object.locals, "0");
           break;
       }
-      expect(() => r.tx.physicalIndices([])).toThrow(/altered|population/);
+      expect(() => queryAfterAudit(r.tx, () => r.tx.physicalIndices([]))).toThrow(/altered|population/);
       expect(r.tx.state).toBe("failed");
+      expectUnemittable(r.tx);
     },
   );
 });

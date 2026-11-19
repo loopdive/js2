@@ -7,6 +7,7 @@ import {
   requireNativeStringLiteral,
   requireCompletedNativeStringLiterals,
 } from "../src/backend/wasmgc/resources/native-string-literals.js";
+import { completionCheck, expectUnemittable } from "./helpers/reservation-audit-points.js";
 
 function fixture(oversized = false) {
   const tx = new PhysicalModuleReservations(createEmptyModule());
@@ -58,7 +59,10 @@ describe("native string producer completion", () => {
     const binding = requireNativeStringLiteral(tx, pack, "", "wtf16");
     if (binding.kind !== "global") throw Error("expected actual empty global");
     binding.global.object.init = [];
-    expect(() => requireCompletedNativeStringLiterals(tx, pack)).toThrow("altered completed global");
+    expect(() => completionCheck(tx, () => requireCompletedNativeStringLiterals(tx, pack))).toThrow(
+      "altered completed global",
+    );
+    expectUnemittable(tx);
   });
   it("rejects altered oversized literal bodies", () => {
     const { tx, pack } = fixture(true);
@@ -68,6 +72,9 @@ describe("native string producer completion", () => {
     const binding = pack.literals[2]!;
     if (binding.kind !== "callable") throw Error("expected actual oversized helper");
     binding.function.object.body = [];
-    expect(() => requireCompletedNativeStringLiterals(tx, pack)).toThrow("altered completed function");
+    expect(() => completionCheck(tx, () => requireCompletedNativeStringLiterals(tx, pack))).toThrow(
+      "altered completed function",
+    );
+    expectUnemittable(tx);
   });
 });

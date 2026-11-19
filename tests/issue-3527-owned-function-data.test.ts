@@ -5,6 +5,7 @@ import { PhysicalModuleReservations } from "../src/wasm/physical/module-reservat
 import { emitBinary } from "../src/emit/binary.js";
 import { emitWat } from "../src/emit/wat.js";
 import type { Instr } from "../src/wasm/model/instructions.js";
+import { expectUnemittable, sealed } from "./helpers/reservation-audit-points.js";
 
 function setup() {
   const module = createEmptyModule(),
@@ -412,9 +413,12 @@ describe.sequential("owned function admission", () => {
     });
     tx.freezeReservations();
     tx.fillFunction(prior, { locals: [], body: [] });
-    expect(() => tx.fillOwnedFunction(main, { locals: [], body: [] })).toThrow(/altered completed function main/);
+    tx.fillOwnedFunction(main, { locals: [], body: [] });
+    // The whole-layout audit that reads `prior` (and so corrupts `main`) runs at seal, no longer inside the fill.
+    expect(() => sealed(tx)).toThrow(/altered completed function main/);
     expect(changed).toBe(true);
     expect(tx.state).toBe("failed");
+    expectUnemittable(tx);
   });
 
   it.each([false, true])("does not rewrite reduce accumulator arrays frozen=%s", (frozen) => {

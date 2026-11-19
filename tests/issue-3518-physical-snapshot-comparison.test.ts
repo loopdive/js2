@@ -12,6 +12,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { createEmptyModule } from "../src/ir/types.js";
 import type { Instr, LocalDef } from "../src/wasm/model/instructions.js";
 import { PhysicalModuleReservations } from "../src/wasm/physical/module-reservations.js";
+import { expectUnemittable, queryAfterAudit } from "./helpers/reservation-audit-points.js";
 
 afterEach(async () => await setImmediate());
 
@@ -74,7 +75,7 @@ function pair(make: (events: string[]) => unknown = () => ({ nested: { value: 1 
           throw Error(altered);
         return [0];
       });
-      return { actual: observed(() => tx.physicalIndices([token])), original: oldResult };
+      return { actual: observed(() => queryAfterAudit(tx, () => tx.physicalIndices([token]))), original: oldResult };
     },
   };
 }
@@ -89,6 +90,7 @@ function refuses(p: ReturnType<typeof pair>, message = altered) {
   const result = p.check();
   expect(result.actual).toEqual(result.original);
   expect(result.actual).toEqual({ ok: false, error: message });
+  expectUnemittable(p.tx);
 }
 function nan(high: number, low: number): number {
   const bits = new DataView(new ArrayBuffer(8));
@@ -501,7 +503,7 @@ describe("batch indices cannot escape a failed private ledger state", () => {
       },
     });
     if (shadowed) Object.defineProperty(p.tx, "state", { get: () => "filling" });
-    expect(() => p.tx.physicalIndices([p.token])).toThrow(
+    expect(() => queryAfterAudit(p.tx, () => p.tx.physicalIndices([p.token]))).toThrow(
       "physical module reservations: physical index requested in failed",
     );
     expect(swallowed).toBeGreaterThan(0);

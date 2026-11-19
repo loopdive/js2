@@ -43,6 +43,7 @@ import {
 } from "../src/backend/wasmgc/resources/native-object-descriptors.js";
 import { requireNativeStringCreateReservations } from "../src/backend/wasmgc/resources/native-string-create.js";
 import { reserveBuiltinStringControl } from "./helpers/native-builtin-function-string-control.js";
+import { completionCheck, expectUnemittable } from "./helpers/reservation-audit-points.js";
 
 const population = (f: ReturnType<typeof builtinFunctionFixture>) => [
   f.module.types.length,
@@ -588,7 +589,10 @@ describe("native builtin issuer authentication", () => {
       entry.type.object.fields[6]!.mutable = true;
     }
     if (role === "singleton") entry.singleton.object.type = { kind: "externref" };
-    expect(() => requireNativeBuiltinFunctionReservations(f.tx, p, f.kernelDependencies)).toThrow(/altered|changed/);
+    expect(() =>
+      completionCheck(f.tx, () => requireNativeBuiltinFunctionReservations(f.tx, p, f.kernelDependencies)),
+    ).toThrow(/altered|changed/);
+    expectUnemittable(f.tx);
   });
   it("refuses invalid names, lengths, bodies, aliases and coercion callbacks without allocation", () => {
     const f = builtinFunctionFixture(false, false),

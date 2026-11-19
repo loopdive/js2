@@ -27,6 +27,7 @@ import {
 import { planNativeRealmLiterals } from "../src/backend/wasmgc/program/native-realm-literals.js";
 import { builtinRequirements } from "./helpers/native-builtin-functions.js";
 import { prepareGetterProgram } from "./helpers/native-getter-invocation-fixture.js";
+import { completionCheck, expectUnemittable } from "./helpers/reservation-audit-points.js";
 
 type Mode = "bootstrap" | "public";
 type Encoding = "wtf16" | "utf8-guaranteed";
@@ -160,9 +161,12 @@ describe.each([
       array = token.object;
     if (array.kind !== "array") throw Error("String data prerequisite is not the expected genuine array");
     array.mutable = !array.mutable;
-    expect(() => requireNativeBuiltinFunctionRequestIssuer(f.tx, pack)).toThrow(
+    const check = () => requireNativeBuiltinFunctionRequestIssuer(f.tx, pack);
+    // Reserving still audits at the issuer; filling observes the mutation at the completion check.
+    expect(phase === "filling" ? () => completionCheck(f.tx, check) : check).toThrow(
       `physical module reservations: altered type descriptor ${token.key}`,
     );
+    expectUnemittable(f.tx);
     expect(f.tx.state).toBe("failed");
   });
 

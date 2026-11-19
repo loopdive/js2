@@ -27,6 +27,7 @@ import {
   requireNativeStringFlattenReservations,
   requireCompletedNativeStringFlatten,
 } from "../src/backend/wasmgc/resources/native-string-flatten.js";
+import { completionCheck, expectUnemittable } from "./helpers/reservation-audit-points.js";
 
 const read = (path: string) => readFileSync(new URL("../" + path, import.meta.url), "utf8");
 function projectedFlattenSource(path: string, project: typeof projectCopyTreeUtf8): string {
@@ -592,30 +593,39 @@ describe("native flatten resource authentication", () => {
     const { tx, pack, strings } = filled(true);
     expect(pack.utf8Decoder).not.toBeNull();
     pack.utf8Decoder!.object.body = [{ op: "unreachable" }];
-    expect(() => requireCompletedNativeStringFlatten(tx, pack, strings)).toThrow();
+    expect(() => completionCheck(tx, () => requireCompletedNativeStringFlatten(tx, pack, strings))).toThrow();
+    expectUnemittable(tx);
   });
   for (const field of ["body", "locals"] as const)
     it(`rejects changed completed ${field}`, () => {
       const { tx, pack, strings } = filled();
       if (field === "body") pack.flatten.object.body = [{ op: "unreachable" }];
       else pack.flatten.object.locals = [];
-      expect(() => requireCompletedNativeStringFlatten(tx, pack, strings)).toThrow();
+      expect(() => completionCheck(tx, () => requireCompletedNativeStringFlatten(tx, pack, strings))).toThrow();
+      expectUnemittable(tx);
     });
   it("rejects mutation of the completed empty literal", () => {
     const { tx, pack, strings } = filled();
     pack.emptyLiteral.object.init = [{ op: "unreachable" }];
-    expect(() => requireCompletedNativeStringFlatten(tx, pack, strings)).toThrow();
+    expect(() => completionCheck(tx, () => requireCompletedNativeStringFlatten(tx, pack, strings))).toThrow();
+    expectUnemittable(tx);
   });
   it("rejects reordered completed functions", () => {
     const { tx, pack, strings, module } = filled();
     [module.functions[0], module.functions[1]] = [module.functions[1]!, module.functions[0]!];
-    expect(() => requireCompletedNativeStringFlatten(tx, pack, strings)).toThrow("reordered");
+    expect(() => completionCheck(tx, () => requireCompletedNativeStringFlatten(tx, pack, strings))).toThrow(
+      "reordered",
+    );
+    expectUnemittable(tx);
   });
   it("rejects a correctly named constant-return substitute for completed copy-tree", () => {
     const { tx, pack, strings } = filled();
     expect(pack.copyTree.object.name).toBe("__str_copy_tree");
     pack.copyTree.object.body = [{ op: "i32.const", value: 0 }];
-    expect(() => requireCompletedNativeStringFlatten(tx, pack, strings)).toThrow("altered completed function");
+    expect(() => completionCheck(tx, () => requireCompletedNativeStringFlatten(tx, pack, strings))).toThrow(
+      "altered completed function",
+    );
+    expectUnemittable(tx);
   });
 });
 
