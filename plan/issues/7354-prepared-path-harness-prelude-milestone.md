@@ -3840,3 +3840,21 @@ own test code, mostly at built-in globals (B).
    module-init lowering through the builder; the contract (one site, before the first statement) does not change.
 5. **Name for `js.function.init`.** A declaration's name is its own; an expression's needs NamedEvaluation (`var f
    = function(){}` is "f"). Fa's helper must receive it.
+
+### Amendments after the lanes' review (2026-11-19, accepted)
+
+- **S4, direct calls (accepted):** the shared predicate that keeps a direct call direct stays the three conjuncts of
+  Fa's `staticFunctionValue`: `bindingIsUniqueAndNeverWritten`, `!sourceMayWriteBindingUnseen` and
+  `!sourceMayWriteGlobalObject`. `globalThis.assert = g` (or `this.assert = g` at script level) rebinds a script-level
+  declaration; S10's `global-object-property` row may relax the global-object conjunct later, together with the
+  direct-call rule, never alone.
+- **S4, the startup prologue (accepted):** it is emitted BEFORE legalization: `closure.new` (a typed closure), then
+  S11's init helper, then the store into the dynamic home. Legalization admits it as `function` through the one
+  `admit` and retypes the site with `retypeClosure`, as for Fa's `var f = function`. No post-legalization emitter in
+  carrier form (it would be a second admission path).
+- **S4, note:** a top-level `var f` sharing its name with `function f` already refuses by name in program-source.ts
+  (#7309), so `functionDeclarationsReadAsValues` never sees it.
+- **S11, R3 moves to S3 (accepted):** `property assignment on dynamic is not in slice 4` (from-ast.ts:10854) is the
+  same site as `this.a = v`, assigned to S3's O3 (`claude/7354-o3`: Prepared `functionCodeStrict` +
+  `dyn.member_set` / `js.object.set`). Lane (b) adds only the `function` row of O3's set chain (`js.object.set` on
+  the closure) once O3 lands.
