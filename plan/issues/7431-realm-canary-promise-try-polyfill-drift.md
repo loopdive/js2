@@ -96,3 +96,33 @@ this fix does not touch. It expects the canary to report
    above.
 4. Verdicts unchanged on a measured path set. Node 24+ is unaffected by
    construction: the polyfill is a no-op there.
+
+## Suspended Work (2026-11-20, budget window closed)
+
+- **Branch:** `claude/7431-canary-promise-try`, head
+  `22f3de0a3cc02f5c44c442c70cb0d1cb4a73c5a0`, based on main `89e4748241`.
+  Pushed; no PR is open yet.
+- **Done on the branch:**
+  - the worker prime calls `_installSelectedPromiseCompatibility`;
+  - `src/runtime.ts` re-exports it, swapped in place, net −1 line;
+  - one mock name changed in `scripts/test262-compiler-path.test.mjs`, which
+    passes 23/23.
+  - All CLAUDE.md ratchet gates pass bare.
+- **Measured.** Node 22, 600 ES5 standalone files, pool 3,
+  `TEST262_REALM_CANARY=recycle`, all 600 pass in both runs:
+
+  | run | time | recycles | `Promise.try:added` lines |
+  | --- | ---: | ---: | ---: |
+  | base | 1,623 s | 612 | 1,224 |
+  | new | 802 s | 0 | 0 |
+
+  Both times include the bundle build.
+- **Next steps:**
+  1. Merge `origin/main` into the branch.
+  2. Set this file to `status: done` in the implementation PR, once #7328 has
+     landed.
+  3. Open the PR with the `hold` label.
+  4. Run an adversarial review.
+- **Not done:** the separate 3426 finding above needs its own issue id; none
+  has been allocated.
+- **Open review threads:** none.
