@@ -14535,6 +14535,11 @@
       "layer": "foundation"
     },
     {
+      "path": "src/shared/contracts/prepared-ir-program-errors.ts",
+      "state": "clean",
+      "layer": "foundation"
+    },
+    {
       "path": "src/shared/contracts/ir-identity.ts",
       "state": "clean",
       "layer": "foundation"

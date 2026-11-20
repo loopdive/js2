@@ -11,6 +11,7 @@ import type { TypeDef, FuncTypeDef, ImportDesc, WasmExport } from "../model/modu
 import type { PhysicalModuleStorage } from "./module-reservations.js";
 import { STABLE_FUNC_BASE } from "./function-handles.js";
 import { indexPhysicalTypes, planPhysicalTypeSection } from "./type-layout.js";
+import { PreparedIrProgramInvariantError } from "../../shared/contracts/prepared-ir-program-errors.js";
 
 type FlatType = Exclude<TypeDef, { kind: "rec" }>;
 
@@ -19,7 +20,7 @@ const ABSTRACT_HEAP_OPS = new Set(["ref.cast", "ref.cast_null", "ref.test", "ref
 const ABSTRACT_HEAP_TYPES = new Set([-16, -17, -18, -19, -20, -21, -22, -23, -24, -25]);
 
 function fail(detail: string): never {
-  throw new Error(detail);
+  throw new PreparedIrProgramInvariantError("invalid-prepared-data", detail);
 }
 
 function checkIndex(index: number, count: number, kind: string): void {
@@ -42,7 +43,7 @@ export function physicalType(module: PhysicalModuleStorage, index: number): Excl
   return type.kind === "sub" ? type.type : type;
 }
 
-export function physicalFunctionType(module: PhysicalModuleStorage, index: number): FuncTypeDef {
+function physicalFunctionType(module: PhysicalModuleStorage, index: number): FuncTypeDef {
   const type = physicalType(module, index);
   if (type.kind !== "func") fail(`type ${index} is not a function signature`);
   return type;
@@ -253,22 +254,33 @@ function assertExports(module: PhysicalModuleStorage): void {
   };
   const names = new Set<string>();
   for (const { name, desc } of module.exports) {
-    if (names.has(name)) fail(`duplicate export name ${name}`);
-    names.add(name);
+    claimExportName(names, name);
     checkIndex(desc.index, spaces[desc.kind], `${desc.kind} export`);
   }
+}
+
+/** Export names are unique: `name` joins `names` unless it is already there. */
+export function claimExportName(names: Set<string>, name: string): void {
+  if (names.has(name)) fail(`duplicate export name ${name}`);
+  names.add(name);
+}
+
+/** The start function takes and returns nothing. */
+export function assertStartSignature(module: PhysicalModuleStorage, typeIdx: number): void {
+  const signature = physicalFunctionType(module, typeIdx);
+  if (signature.params.length || signature.results.length) fail("start function must have signature () -> ()");
 }
 
 function assertStart(module: PhysicalModuleStorage): void {
   if (module.startFuncIdx === undefined) return;
   const index = functionIndex(module, module.startFuncIdx);
   const imports = module.imports.filter((record) => record.desc.kind === "func");
-  const typeIdx =
+  assertStartSignature(
+    module,
     index < imports.length
       ? (imports[index]!.desc as Extract<ImportDesc, { kind: "func" }>).typeIdx
-      : module.functions[index - imports.length]!.typeIdx;
-  const signature = physicalFunctionType(module, typeIdx);
-  if (signature.params.length || signature.results.length) fail("start function must have signature () -> ()");
+      : module.functions[index - imports.length]!.typeIdx,
+  );
 }
 
 /** Stage 4 entry: the finished module's every index resolves; exports are unique; the start function is `() -> ()`. */

@@ -5,15 +5,21 @@
 // same copy unchanged. Seed 16 shows what stops a broken module when the validator is off: the binary emitter's index
 // check and the engine gate.
 import ts from "typescript";
-import { beforeAll, describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it, vi } from "vitest";
 import { compile } from "../src/test262/test262-prepared-entry.js";
 import { gateEmittedModule } from "../src/compiler/validation.js";
 import { emitBinary } from "../src/emit/binary.js";
 import type { CompileError } from "../src/index.js";
 import { mapNestedBuffers, type IrFunction, type IrInstr } from "../src/ir/core/nodes.js";
 import { subscribePreparedIrProgram } from "../src/ir/program-observation.js";
+import * as consumer from "../src/ir/program-consumer.js";
 import { acceptPreparedIrProgram, emitAcceptedIrProgram } from "../src/ir/program-consumer.js";
-import type { PreparedIrBackendOptions, PreparedIrProgram } from "../src/ir/program.js";
+import * as programValidation from "../src/ir/program-validation.js";
+import {
+  PreparedIrProgramInvariantError,
+  type PreparedIrBackendOptions,
+  type PreparedIrProgram,
+} from "../src/ir/program.js";
 import { PreparedValidatorError, validatePreparedStage } from "../src/ir/program/prepared-validator.js";
 import { assertPreparedIrProgram } from "../src/ir/program/validation.js";
 import { verifyIrFunction } from "../src/ir/runtime/verify.js";
@@ -69,13 +75,22 @@ const withBody = (name: string, rewrite: (fn: IrFunction) => IrFunction): Prepar
   ir: { ...program.ir, functions: program.ir.functions.map((fn) => (fn.name === name ? rewrite(fn) : fn)) },
 });
 /** The program with its one runtime projection rewritten. */
-const withProjection = (
-  rewrite: (
-    prepared: PreparedIrProgram["runtime"][number]["prepared"],
-  ) => PreparedIrProgram["runtime"][number]["prepared"],
-): PreparedIrProgram => ({
-  ...program,
-  runtime: program.runtime.map((projection) => ({ ...projection, prepared: rewrite(projection.prepared) })),
+type Prepared = PreparedIrProgram["runtime"][number]["prepared"];
+const withProjection = (rewrite: (prepared: Prepared) => Prepared, base = program): PreparedIrProgram => ({
+  ...base,
+  runtime: base.runtime.map((projection) => ({ ...projection, prepared: rewrite(projection.prepared) })),
+});
+/** A `dyn.member_get` left at the top of `f`'s projection body. */
+const withDynMemberGet = (prepared: Prepared): Prepared => ({
+  ...prepared,
+  functions: prepared.functions.map((fn) =>
+    fn.name === "f"
+      ? withInstrs(fn, (instrs) => [
+          { kind: "dyn.member_get", recv: 0, key: 0, result: 98, resultType: null } as never,
+          ...instrs,
+        ])
+      : fn,
+  ),
 });
 /** `instr` and every instruction nested in it, with each intrinsic's provider removed. */
 const withoutProviders = (instr: IrInstr): IrInstr => {
@@ -86,9 +101,9 @@ const withoutProviders = (instr: IrInstr): IrInstr => {
 };
 const funcCount = (m: WasmModule) => m.imports.filter((row) => row.desc.kind === "func").length + m.functions.length;
 /** The module with an instruction placed in front of the startup body. */
-const withLeadingInstr = (instr: WasmModule["functions"][number]["body"][number]): WasmModule => ({
-  ...module,
-  functions: module.functions.map((fn) => (fn.name === "__module_init" ? { ...fn, body: [instr, ...fn.body] } : fn)),
+const withLeadingInstr = (instr: WasmModule["functions"][number]["body"][number], base = module): WasmModule => ({
+  ...base,
+  functions: base.functions.map((fn) => (fn.name === "__module_init" ? { ...fn, body: [instr, ...fn.body] } : fn)),
 });
 const fmodIndex = (): number =>
   funcCount(module) - module.functions.length + module.functions.findIndex((fn) => fn.name === "__fmod");
@@ -287,20 +302,7 @@ const SEEDS: readonly Seed[] = [
     stage: "2 prepared program",
     seed: "a dyn.member_get left in a body",
     twin: () => stage2(withProjection((prepared) => ({ ...prepared }))),
-    altered: () =>
-      stage2(
-        withProjection((prepared) => ({
-          ...prepared,
-          functions: prepared.functions.map((fn) =>
-            fn.name === "f"
-              ? withInstrs(fn, (instrs) => [
-                  { kind: "dyn.member_get", recv: 0, key: 0, result: 98, resultType: null } as never,
-                  ...instrs,
-                ])
-              : fn,
-          ),
-        })),
-      ),
+    altered: () => stage2(withProjection(withDynMemberGet)),
     expected: /prepared validator \(prepared program\): body .* retains dyn\.member_get after legalization/,
   },
   {
@@ -410,16 +412,57 @@ describe("#7380 — the Prepared validator rejects one seeded defect per row and
     });
   }
 
-  it("a stage 2 to 4 violation is an internal validator error that names its stage, never a refusal", () => {
-    const thrown = (() => {
-      try {
-        stage4(seed12())();
-      } catch (error) {
-        return error;
-      }
-    })();
-    expect(thrown).toBeInstanceOf(PreparedValidatorError);
-    expect((thrown as PreparedValidatorError).stage).toBe("physical module");
+  it("stages 2 and 4 throw the same invariant error", () => {
+    expect(() => assertPreparedIrProgram(withProjection(withDynMemberGet))).toThrow(PreparedIrProgramInvariantError);
+    expect(() => assertPhysicalModule(seed12())).toThrow(PreparedIrProgramInvariantError);
+  });
+
+  // The wiring: a compile through the strict entry and the driver, with one stage's real input seeded on its way in.
+  // The violation propagates out of compile() as an internal error naming the stage, never as a refusal.
+  async function compileThrown(): Promise<unknown> {
+    try {
+      await compile(SOURCE, {
+        wholeProgram: { kind: "prepared-program-required", version: 1 },
+        target: "standalone",
+        allowJs: true,
+        fileName: "test.js",
+      } as never);
+    } catch (error) {
+      return error;
+    }
+    throw new Error("the seeded compile must throw");
+  }
+
+  it("the producer runs stage 2 on the program it prepares", async () => {
+    const spy = vi
+      .spyOn(programValidation, "assertPreparedIrProgram")
+      .mockImplementation((value, options) =>
+        assertPreparedIrProgram({ ...value, runtime: withProjection(withDynMemberGet, value).runtime }, options),
+      );
+    try {
+      const thrown = await compileThrown();
+      expect(thrown).toBeInstanceOf(PreparedValidatorError);
+      expect((thrown as PreparedValidatorError).stage).toBe("prepared program");
+      expect((thrown as Error).message).toMatch(/retains dyn\.member_get after legalization/);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("the driver runs stage 4 on the module it emits", async () => {
+    const emit = consumer.emitAcceptedIrProgram;
+    const spy = vi.spyOn(consumer, "emitAcceptedIrProgram").mockImplementation((accepted) => {
+      const emission = emit(accepted);
+      return { ...emission, module: withLeadingInstr({ op: "global.get", index: 9999 }, emission.module) };
+    });
+    try {
+      const thrown = await compileThrown();
+      expect(thrown).toBeInstanceOf(PreparedValidatorError);
+      expect((thrown as PreparedValidatorError).stage).toBe("physical module");
+      expect((thrown as Error).message).toMatch(/unresolved global index 9999/);
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   // Seed 16: with stages 2 to 4 off (a production compile), the broken modules still never report success. The

@@ -33,7 +33,8 @@ import {
   assertPhysicalInstructions,
   assertPhysicalResources,
   assertPhysicalValue,
-  physicalFunctionType,
+  assertStartSignature,
+  claimExportName,
   physicalType,
 } from "./validate-module.js";
 import { funcTypeKey, internFunctionType, sameValTypes } from "./function-types.js";
@@ -943,7 +944,7 @@ export class PhysicalModuleReservations {
     this.#require("filling");
     this.#key(key);
     this.#owned(target);
-    if (this.#exportNames.has(externalName)) this.#fail(`duplicate export name ${externalName}`);
+    this.#check(() => claimExportName(this.#exportNames, externalName));
     let kind: WasmExport["desc"]["kind"];
     switch (target.kind) {
       case "function":
@@ -968,7 +969,6 @@ export class PhysicalModuleReservations {
         return this.#fail("resource kind cannot be exported");
     }
     const exported: WasmExport = { name: externalName, desc: { kind, index: this.physicalIndex(target) } };
-    this.#exportNames.add(externalName);
     this.#module.exports.push(exported);
     this.#expected.exports.push(exported);
     this.#publications.set(exported, this.#snapshot(exported));
@@ -991,8 +991,7 @@ export class PhysicalModuleReservations {
         : target.object.desc.kind === "func"
           ? target.object.desc.typeIdx
           : this.#fail("start import is not a function");
-    const signature = this.#check(() => physicalFunctionType(this.#module, typeIdx));
-    if (signature.params.length || signature.results.length) this.#fail("start function must have signature () -> ()");
+    this.#check(() => assertStartSignature(this.#module, typeIdx));
     const index = this.physicalIndex(target);
     this.#module.startFuncIdx = index;
     this.#start = index;
