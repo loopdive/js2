@@ -166,6 +166,14 @@ describe("Promise resolution bodies", () => {
     expect(() => buildPromiseThenableClassifier({ ...inventory, fields: undefined } as never)).toThrow("not finalized");
     expect(() => buildPromiseThenableClassifier({ ...inventory, finalized: false } as never)).toThrow("not finalized");
   });
+  it("refuses a settle closure whose capture slot is not the fifth metadata field", () => {
+    for (const capPromiseFieldIdx of [1, 17])
+      expect(() =>
+        buildPromiseSettleClosureValue({ capTypeIdx: 4, capMetaTypeIdx: 5, capPromiseFieldIdx }, 6, [
+          { op: "local.get", index: 2 },
+        ]),
+      ).toThrow("metadata/capture layout");
+  });
   it("settle closure metadata and bodies have independent instructions", () => {
     const resources = { capTypeIdx: 4, capMetaTypeIdx: 5, capPromiseFieldIdx: 5 };
     const first = buildPromiseSettleClosureValue(resources, 6, [{ op: "local.get", index: 2 }]);
