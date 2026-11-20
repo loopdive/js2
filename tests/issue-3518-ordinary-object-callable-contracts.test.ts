@@ -48,9 +48,13 @@ describe("ordinary object semantic contracts", () => {
     (name) => expect(irRuntimeCallableDeclaration(irIntrinsicFuncRef(name))).toBeUndefined(),
   );
 
-  it.each(CONTRACTS)("cannot materialize %s merely because its semantic declaration exists", (name) => {
+  // The declarations had no provider when this test was written; 85750eeee0 ("join native invocation with ordinary
+  // object preparation") registered one standalone runtime callable per feature.
+  it.each(CONTRACTS)("materializes %s through its one native runtime-callable provider", (name) => {
     const builder = new RuntimeManifestBuilder({ target: "standalone", backend: "wasmgc" });
     builder.requestFeature(name);
-    expect(() => builder.freeze()).toThrow(expect.objectContaining({ code: "missing-runtime-provider" }));
+    expect(builder.freeze().providers.map((provider) => [provider.id, provider.implementation.kind])).toEqual([
+      [`native.${name}`, "runtime-callable"],
+    ]);
   });
 });
