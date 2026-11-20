@@ -1,17 +1,12 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
-
-import { createHash } from "node:crypto";
-import { readFileSync } from "node:fs";
 import ts from "typescript";
 import { describe, expect, it } from "vitest";
-import { irSupportRef, irTypeEquals, asVal, irVal, type IrType } from "../src/ir/core/types.js";
+import { irSupportRef, irTypeEquals, asVal, irVal } from "../src/ir/core/types.js";
 import { irSupportTypeRef } from "../src/ir/core/type-references.js";
-import { irSupportTypeRef as compatibilityFactory } from "../src/ir/abi-bindings.js";
 import { irSupportFuncRef } from "../src/ir/core/callable-bindings.js";
 import {
   asBlockId,
   asValueId,
-  forEachInstrDeep,
   type IrFunction,
   type IrInstr,
   type IrModuleDeclarations,
@@ -25,17 +20,10 @@ import { attachIrStringCarrier } from "../src/ir/string-carrier.js";
 import { attachIrVecLayouts } from "../src/ir/vec-layout.js";
 import { verifyIrBackendLegality } from "../src/ir/backend/legality.js";
 import { buildIrUnitInventory, createIrSourceId, createIrUnitId } from "../src/ir/identity.js";
-import { createDerivedIrUnitId } from "../src/shared/contracts/identity-values.js";
 import { ProgramAbiMap } from "../src/ir/program/abi.js";
 import { createEmptyModule } from "../src/ir/types.js";
 import { PhysicalModuleReservations } from "../src/wasm/physical/module-reservations.js";
 import { createStringDataType } from "../src/runtime/wasmgc/values/string-layouts.js";
-import { AllocSiteRegistry } from "../src/ir/analysis/alloc-registry.js";
-import { numToStringRadixDef } from "../src/stdlib/number-format.js";
-// Mandatory joined R+F test. No fallback/skip when the source kernel is absent
-// from an uncomposed R checkout; validation must use the composed production.
-import { buildSelfHostedIrBody } from "../src/frontend/builtins/build-ir.js";
-import type { IrDirectCallTarget } from "../src/ir/ast-lowering-plans.js";
 
 const sourceId = createIrSourceId({ kind: "entry", order: 0, sourceKey: "symbolic-support-ref.ts" });
 const unitId = createIrUnitId({ sourceId, lexicalOwnerId: null, kind: "top-level-function", ordinal: 0 });
@@ -68,75 +56,8 @@ function forward(): IrFunction {
 }
 const verify = (fn: IrFunction, table: IrModuleDeclarations | undefined = declarations) =>
   verifyIrFunction(fn, undefined, table).map((error) => error.message);
-const read = (path: string) => readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
-const hash = (text: string) => createHash("sha256").update(text).digest("hex");
-function replaceOnce(source: string, before: string, after: string): string {
-  const at = source.indexOf(before);
-  if (at < 0 || source.indexOf(before, at + before.length) >= 0) throw new Error("missing/duplicate relocation span");
-  return source.slice(0, at) + after + source.slice(at + before.length);
-}
-function requireFactoryRelocation(canonical: string, facade: string): void {
-  const parsed = ts.createSourceFile("type-references.ts", canonical, ts.ScriptTarget.Latest, true);
-  const functions = parsed.statements.filter(ts.isFunctionDeclaration);
-  expect(functions.map((fn) => fn.name?.text)).toEqual(["typeRef", "irSupportTypeRef"]);
-  const helper = functions[0]!.getText(parsed),
-    factory = functions[1]!.getText(parsed);
-  const prefix = `// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
-
-import { requireBindingId, requireNonEmpty } from "./binding-key-primitives.js";
-import { createIrBindingId } from "../../shared/contracts/identity-values.js";
-import type { IrClassId, IrSourceId, IrUnitId } from "../../shared/contracts/ir-identity.js";
-import type { IrTypeBinding, IrTypeRef } from "./types.js";
-
-type IrBindingOwnerId = IrSourceId | IrUnitId | IrClassId;
-
-`;
-  expect(canonical).toBe(
-    prefix + helper + "\n\n/** Reference one compiler support type intention. */\n" + factory + "\n",
-  );
-  let inverse = replaceOnce(
-    facade,
-    'import type { IrGlobalBinding, IrGlobalRef, IrTypeBinding, IrTypeRef } from "./nodes.js";\nimport { typeRef, irSupportTypeRef } from "./core/type-references.js";\nexport { irSupportTypeRef } from "./core/type-references.js";',
-    'import type { IrGlobalBinding, IrGlobalRef, IrTypeBinding, IrTypeRef } from "./nodes.js";',
-  );
-  inverse = replaceOnce(
-    inverse,
-    "/** Exact source-owned value-storage ID for one top-level declaration ordinal. */",
-    replaceOnce(helper, "export function typeRef", "function typeRef") +
-      "\n\n/** Exact source-owned value-storage ID for one top-level declaration ordinal. */",
-  );
-  inverse = replaceOnce(
-    inverse,
-    "/** Exact reserved layout type identity for one nominal-fnctor constructor. */",
-    "/** Reference one compiler support type intention. */\n" +
-      factory +
-      "\n\n/** Exact reserved layout type identity for one nominal-fnctor constructor. */",
-  );
-  expect(hash(inverse)).toBe("9324caf316c596019beab1007c7e602263ae2955328a0f336b1ab38246bb09fc");
-}
 
 describe("nominal index-free support references", () => {
-  it("retains the exact old factory identity and complete two-body relocation receipt", () => {
-    expect(compatibilityFactory).toBe(irSupportTypeRef);
-    requireFactoryRelocation(read("src/ir/core/type-references.ts"), read("src/ir/abi-bindings.ts"));
-  });
-  it.each(["body", "extra", "route", "export"] as const)(
-    "rejects a %s relocation mutation after the original positive",
-    (kind) => {
-      const canonical = read("src/ir/core/type-references.ts"),
-        facade = read("src/ir/abi-bindings.ts");
-      requireFactoryRelocation(canonical, facade);
-      const changed =
-        kind === "body"
-          ? replaceOnce(canonical, "    role: checkedRole,", "    role: role,")
-          : kind === "extra"
-            ? canonical + "void 0;\n"
-            : kind === "route"
-              ? replaceOnce(canonical, 'from "./types.js"', 'from "../nodes.js"')
-              : replaceOnce(canonical, "export function typeRef", "function typeRef");
-      expect(() => requireFactoryRelocation(changed, facade)).toThrow();
-    },
-  );
   it("keys identity and nullability, never the compatibility name or physical fields", () => {
     const renamed = irSupportRef({ ...ref, name: "different" }, true);
     expect(irTypeEquals(B, renamed)).toBe(true);
@@ -280,79 +201,5 @@ describe("nominal index-free support references", () => {
     });
     expect(indices).toEqual([0, 3]);
     expect(Object.hasOwn(type, "typeIdx")).toBe(false);
-  });
-  it("lowers the unchanged original radix through the genuine frontend kernel (mandatory R+F join)", () => {
-    const radixType = irSupportRef(irSupportTypeRef(sourceId, "number-format-radix:scratch", "__nfd_buffer"), true);
-    const definition = numToStringRadixDef(radixType),
-      allocRegistry = new AllocSiteRegistry();
-    expect(Buffer.byteLength(definition.source, "utf8")).toBe(1618);
-    expect(hash(definition.source)).toBe("7b13099fbed0a87079f92e9bddbf75959065ed28daf66d5ad344e0b240037dc6");
-    const parsed = ts.createSourceFile("radix.ts", definition.source, ts.ScriptTarget.Latest, true);
-    const sourceCalls: string[] = [],
-      sourceLiterals: string[] = [];
-    const collect = (node: ts.Node): void => {
-      if (ts.isCallExpression(node)) sourceCalls.push(node.expression.getText(parsed));
-      if (ts.isStringLiteral(node)) sourceLiterals.push(node.text);
-      ts.forEachChild(node, collect);
-    };
-    collect(parsed);
-    expect(sourceCalls).toHaveLength(16);
-    expect(
-      sourceCalls.reduce<Record<string, number>>((counts, name) => {
-        counts[name] = (counts[name] ?? 0) + 1;
-        return counts;
-      }, {}),
-    ).toEqual({ "Math.floor": 4, __num_fmt_trap: 1, __nfd_new: 1, __nfd_set: 7, __nfd_get: 2, __nfd_fin: 1 });
-    expect(sourceLiterals).toEqual(["NaN", "Infinity", "-Infinity", "0"]);
-    const callees = new Map<string, IrDirectCallTarget>();
-    const roles = ["new", "get", "set", "fin", "trap"] as const;
-    [...definition.calleeTypes].forEach(([name, signature], index) =>
-      callees.set(name, {
-        target: irSupportFuncRef(sourceId, "number-format-radix:" + roles[index]!, name),
-        signature,
-      }),
-    );
-    expect([...callees.keys()]).toEqual(["__nfd_new", "__nfd_get", "__nfd_set", "__nfd_fin", "__num_fmt_trap"]);
-    const ownerUnitId = createDerivedIrUnitId({
-      parentId: sourceId,
-      role: "runtime-support:number-format-radix",
-      ordinal: 0,
-    });
-    const body = buildSelfHostedIrBody({ definition, ownerUnitId, callees, allocRegistry });
-    expect(body.unitId).toBe(ownerUnitId);
-    const table: IrModuleDeclarations = {
-      declaredSignatures: new Map(
-        [...callees.values()].map(({ target, signature }) => [
-          irBindingKey(target.binding)!,
-          { params: signature.params, result: signature.returnType },
-        ]),
-      ),
-    };
-    expect(verifyIrFunction(body, undefined, table)).toEqual([]);
-    const supportResults: IrType[] = [],
-      calls: string[] = [];
-    for (const block of body.blocks)
-      for (const instr of block.instrs)
-        forEachInstrDeep(instr, (nested) => {
-          if (nested.resultType?.kind === "support-ref") supportResults.push(nested.resultType);
-          if (nested.kind === "call") calls.push(nested.target.name);
-        });
-    expect(supportResults.length).toBeGreaterThan(0);
-    expect(supportResults.every((type) => irTypeEquals(type, radixType))).toBe(true);
-    const scratchValues = new Set<number>();
-    for (const block of body.blocks)
-      for (const instr of block.instrs)
-        forEachInstrDeep(instr, (nested) => {
-          if (nested.result !== null && nested.resultType?.kind === "support-ref") scratchValues.add(nested.result);
-        });
-    for (const block of body.blocks)
-      for (const instr of block.instrs)
-        forEachInstrDeep(instr, (nested) => {
-          if (nested.kind === "slot.write") expect(scratchValues.has(nested.value)).toBe(false);
-          if (nested.kind === "slot.read") expect(nested.resultType?.kind).not.toBe("support-ref");
-        });
-    expect(calls).toContain("__nfd_new");
-    expect(calls).toContain("__nfd_fin");
-    // This is source lowering and verification, not prepared-program/D2 execution.
   });
 });

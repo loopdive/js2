@@ -1,0 +1,75 @@
+built-ins/Array/isArray/15.4.3.2-1-10.js	ir/from-ast: unknown class "RegExp" in <module-init>
+built-ins/Object/create/15.2.3.5-4-119.js	ir/from-ast: unknown class "RegExp" in <module-init>
+built-ins/Object/create/15.2.3.5-4-172.js	ir/from-ast: unknown class "RegExp" in <module-init>
+built-ins/Object/create/15.2.3.5-4-198.js	ir/from-ast: unknown class "RegExp" in <module-init>
+built-ins/Object/create/15.2.3.5-4-250.js	ir/from-ast: unknown class "RegExp" in <module-init>
+built-ins/Object/create/15.2.3.5-4-286.js	ir/from-ast: unknown class "RegExp" in <module-init>
+built-ins/Object/create/15.2.3.5-4-35.js	ir/from-ast: unknown class "RegExp" in <module-init>
+built-ins/Object/defineProperties/15.2.3.7-5-b-246.js	ir/from-ast: unknown class "RegExp" in <module-init>
+built-ins/Object/freeze/15.2.3.9-2-d-7.js	ir/from-ast: unknown class "RegExp" in <module-init>
+built-ins/Object/getPrototypeOf/15.2.3.2-2-26.js	ir/from-ast: unknown class "RegExp" in <module-init>
+built-ins/RegExp/15.10.4.1-1.js	ir/from-ast: unknown class "RegExp" in <module-init>
+built-ins/RegExp/15.10.4.1-4.js	ir/from-ast: unknown class "RegExp" in <module-init>
+built-ins/RegExp/S15.10.2.10_A5.1_T1.js	ir/from-ast: unknown class "RegExp" in <module-init>
+built-ins/RegExp/S15.10.2.8_A3_T16.js	ir/from-ast: unknown class "RegExp" in <module-init>
+built-ins/RegExp/S15.10.3.1_A1_T2.js	ir/from-ast: unknown class "RegExp" in <module-init>
+built-ins/RegExp/S15.10.3.1_A1_T3.js	ir/from-ast: unknown class "RegExp" in <module-init>
+built-ins/RegExp/S15.10.3.1_A1_T4.js	ir/from-ast: direct call to "RegExp" has no exact AST-site plan in <module-init>
+built-ins/RegExp/S15.10.3.1_A3_T1.js	ir/from-ast: direct call to "RegExp" has no exact AST-site plan in <module-init>
+built-ins/RegExp/S15.10.3.1_A3_T2.js	ir/from-ast: direct call to "RegExp" has no exact AST-site plan in <module-init>
+built-ins/RegExp/S15.10.4.1_A1_T4.js	ir/from-ast: unknown class "RegExp" in <module-init>
+built-ins/RegExp/S15.10.4.1_A1_T5.js	ir/from-ast: direct call to "RegExp" has no exact AST-site plan in <module-init>
+built-ins/RegExp/S15.10.4.1_A2_T1.js	ir/from-ast: unknown class "RegExp" in <module-init>
+built-ins/RegExp/S15.10.4.1_A3_T1.js	ir/from-ast: unknown class "RegExp" in <module-init>
+built-ins/RegExp/S15.10.4.1_A3_T2.js	ir/from-ast: unknown class "RegExp" in <module-init>
+built-ins/RegExp/S15.10.4.1_A3_T3.js	ir/from-ast: unknown class "RegExp" in <module-init>
+built-ins/RegExp/S15.10.4.1_A3_T4.js	ir/from-ast: unknown class "RegExp" in <module-init>
+built-ins/RegExp/S15.10.4.1_A3_T5.js	ir/from-ast: unknown class "RegExp" in <module-init>
+built-ins/RegExp/S15.10.4.1_A4_T1.js	ir/from-ast: unknown class "RegExp" in <module-init>
+built-ins/RegExp/S15.10.4.1_A4_T2.js	ir/from-ast: unknown class "RegExp" in <module-init>
+built-ins/RegExp/S15.10.4.1_A4_T3.js	ir/from-ast: unknown class "RegExp" in <module-init>
+built-ins/RegExp/S15.10.4.1_A4_T4.js	ir/from-ast: unknown class "RegExp" in <module-init>
+built-ins/RegExp/S15.10.4.1_A4_T5.js	ir/from-ast: unknown class "RegExp" in <module-init>
+built-ins/RegExp/S15.10.4.1_A6_T1.js	ir/from-ast: unknown class "RegExp" in <module-init>
+built-ins/RegExp/S15.10.4.1_A7_T1.js	ir/from-ast: unknown class "RegExp" in <module-init>
+built-ins/RegExp/S15.10.4.1_A7_T2.js	ir/from-ast: unknown class "RegExp" in <module-init>
+built-ins/RegExp/S15.10.4.1_A8_T1.js	ir/from-ast: unknown class "RegExp" in <module-init>
+built-ins/RegExp/S15.10.4.1_A8_T10.js	ir/from-ast: unknown class "RegExp" in <module-init>
+built-ins/RegExp/S15.10.4.1_A8_T11.js	ir/from-ast: unknown class "RegExp" in <module-init>
+built-ins/RegExp/S15.10.4.1_A8_T2.js	ir/from-ast: unknown class "RegExp" in <module-init>
+built-ins/RegExp/S15.10.4.1_A8_T3.js	ir/from-ast: unknown class "RegExp" in <module-init>
+built-ins/RegExp/S15.10.4.1_A8_T4.js	ir/from-ast: unknown class "RegExp" in <module-init>
+built-ins/RegExp/S15.10.4.1_A8_T5.js	ir/from-ast: unknown class "RegExp" in <module-init>
+built-ins/RegExp/S15.10.4.1_A8_T9.js	ir/from-ast: unknown class "RegExp" in <module-init>
+built-ins/RegExp/S15.10.5_A1.js	ir/from-ast: identifier "RegExp" is not in scope in <module-init>
+built-ins/RegExp/S15.10.7_A3_T2.js	ir/from-ast: unknown class "RegExp" in <module-init>
+built-ins/RegExp/prototype/15.10.6.js	ir/from-ast: identifier "RegExp" is not in scope in <module-init>
+built-ins/RegExp/prototype/S15.10.5.1_A1.js	ir/from-ast: identifier "RegExp" is not in scope in <module-init>
+built-ins/RegExp/prototype/S15.10.6.1_A1_T1.js	ir/from-ast: identifier "RegExp" is not in scope in <module-init>
+built-ins/RegExp/prototype/S15.10.6.1_A1_T2.js	ir/from-ast: identifier "RegExp" is not in scope in <module-init>
+built-ins/RegExp/prototype/exec/15.10.6.2-9-e-1.js	ir/from-ast: unknown class "RegExp" in <module-init>
+built-ins/RegExp/prototype/exec/S15.10.6.2_A11.js	ir/from-ast: identifier "RegExp" is not in scope in <module-init>
+built-ins/RegExp/prototype/exec/S15.10.6.2_A6.js	ir/from-ast: identifier "RegExp" is not in scope in <module-init>
+built-ins/RegExp/prototype/exec/S15.10.6.2_A9.js	ir/from-ast: identifier "RegExp" is not in scope in <module-init>
+built-ins/RegExp/prototype/global/S15.10.7.2_A9.js	ir/from-ast: identifier "RegExp" is not in scope in <module-init>
+built-ins/RegExp/prototype/ignoreCase/S15.10.7.3_A9.js	ir/from-ast: identifier "RegExp" is not in scope in <module-init>
+built-ins/RegExp/prototype/multiline/S15.10.7.4_A9.js	ir/from-ast: identifier "RegExp" is not in scope in <module-init>
+built-ins/RegExp/prototype/test/S15.10.6.3_A11.js	ir/from-ast: identifier "RegExp" is not in scope in <module-init>
+built-ins/RegExp/prototype/test/S15.10.6.3_A6.js	ir/from-ast: identifier "RegExp" is not in scope in <module-init>
+built-ins/RegExp/prototype/test/S15.10.6.3_A9.js	ir/from-ast: identifier "RegExp" is not in scope in <module-init>
+built-ins/RegExp/prototype/toString/S15.10.6.4_A11.js	ir/from-ast: identifier "RegExp" is not in scope in <module-init>
+built-ins/RegExp/prototype/toString/S15.10.6.4_A9.js	ir/from-ast: identifier "RegExp" is not in scope in <module-init>
+built-ins/String/prototype/match/S15.5.4.10_A1_T14.js	ir/from-ast: unknown class "RegExp" in <module-init>
+built-ins/String/prototype/replace/S15.5.4.11_A1_T14.js	ir/from-ast: unknown class "RegExp" in <module-init>
+built-ins/String/prototype/replace/S15.5.4.11_A1_T17.js	ir/from-ast: unknown class "RegExp" in <module-init>
+built-ins/String/prototype/search/S15.5.4.12_A1_T14.js	ir/from-ast: unknown class "RegExp" in <module-init>
+built-ins/String/prototype/split/separator-regexp-limit-string-via-eval.js	ir/from-ast: unknown class "RegExp" in <module-init>
+built-ins/String/prototype/toLocaleLowerCase/S15.5.4.17_A1_T14.js	ir/from-ast: unknown class "RegExp" in <module-init>
+built-ins/String/prototype/toLocaleUpperCase/S15.5.4.19_A1_T14.js	ir/from-ast: unknown class "RegExp" in <module-init>
+built-ins/String/prototype/toLowerCase/S15.5.4.16_A1_T14.js	ir/from-ast: unknown class "RegExp" in <module-init>
+built-ins/String/prototype/toUpperCase/S15.5.4.18_A1_T14.js	ir/from-ast: unknown class "RegExp" in <module-init>
+built-ins/String/prototype/trim/15.5.4.20-2-49.js	ir/from-ast: unknown class "RegExp" in <module-init>
+intl402/NumberFormat/prototype/format/format-non-finite-numbers.js	ir/from-ast: unknown class "RegExp" in <module-init>
+language/literals/null/S7.8.1_A1_T2.js	ir/from-ast: direct call to "RegExp" has no exact AST-site plan in <module-init>
+language/literals/regexp/7.8.5-2gs.js	ir/from-ast: unknown class "RegExp" in <module-init>
+language/literals/regexp/S7.8.5_A4.1.js	ir/from-ast: instanceof RHS class "RegExp" has no projected shape (<module-init>)

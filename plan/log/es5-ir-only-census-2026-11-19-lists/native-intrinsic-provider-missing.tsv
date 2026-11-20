@@ -1,0 +1,75 @@
+built-ins/Math/acos/S15.8.2.2_A1.js	wasmgc:standalone physical setup cannot be materialized (1 gap): body <module-init> intrinsic math.acos needs callable p
+built-ins/Math/acos/S15.8.2.2_A2.js	wasmgc:standalone physical setup cannot be materialized (3 gaps): body <module-init> intrinsic math.acos needs callable 
+built-ins/Math/acos/S15.8.2.2_A3.js	wasmgc:standalone physical setup cannot be materialized (3 gaps): body <module-init> intrinsic math.acos needs callable 
+built-ins/Math/acos/S15.8.2.2_A4.js	wasmgc:standalone physical setup cannot be materialized (1 gap): body <module-init> intrinsic math.acos needs callable p
+built-ins/Math/asin/S15.8.2.3_A1.js	wasmgc:standalone physical setup cannot be materialized (1 gap): body <module-init> intrinsic math.asin needs callable p
+built-ins/Math/asin/S15.8.2.3_A2.js	wasmgc:standalone physical setup cannot be materialized (3 gaps): body <module-init> intrinsic math.asin needs callable 
+built-ins/Math/asin/S15.8.2.3_A3.js	wasmgc:standalone physical setup cannot be materialized (3 gaps): body <module-init> intrinsic math.asin needs callable 
+built-ins/Math/asin/S15.8.2.3_A4.js	wasmgc:standalone physical setup cannot be materialized (1 gap): body <module-init> intrinsic math.asin needs callable p
+built-ins/Math/asin/S15.8.2.3_A5.js	wasmgc:standalone physical setup cannot be materialized (1 gap): body <module-init> intrinsic math.asin needs callable p
+built-ins/Math/atan/S15.8.2.4_A1.js	wasmgc:standalone physical setup cannot be materialized (1 gap): body <module-init> intrinsic math.atan needs callable p
+built-ins/Math/atan/S15.8.2.4_A2.js	wasmgc:standalone physical setup cannot be materialized (1 gap): body <module-init> intrinsic math.atan needs callable p
+built-ins/Math/atan/S15.8.2.4_A3.js	wasmgc:standalone physical setup cannot be materialized (1 gap): body <module-init> intrinsic math.atan needs callable p
+built-ins/Math/atan2/S15.8.2.5_A5.js	wasmgc:standalone physical setup cannot be materialized (1 gap): body <module-init> intrinsic math.atan2 needs callable 
+built-ins/Math/atan2/S15.8.2.5_A9.js	wasmgc:standalone physical setup cannot be materialized (1 gap): body <module-init> intrinsic math.atan2 needs callable 
+built-ins/Math/cos/S15.8.2.7_A1.js	wasmgc:standalone physical setup cannot be materialized (1 gap): body <module-init> intrinsic math.cos needs callable pr
+built-ins/Math/cos/S15.8.2.7_A2.js	wasmgc:standalone physical setup cannot be materialized (1 gap): body <module-init> intrinsic math.cos needs callable pr
+built-ins/Math/cos/S15.8.2.7_A3.js	wasmgc:standalone physical setup cannot be materialized (1 gap): body <module-init> intrinsic math.cos needs callable pr
+built-ins/Math/cos/S15.8.2.7_A4.js	wasmgc:standalone physical setup cannot be materialized (1 gap): body <module-init> intrinsic math.cos needs callable pr
+built-ins/Math/cos/S15.8.2.7_A5.js	wasmgc:standalone physical setup cannot be materialized (1 gap): body <module-init> intrinsic math.cos needs callable pr
+built-ins/Math/exp/S15.8.2.8_A1.js	wasmgc:standalone physical setup cannot be materialized (1 gap): body <module-init> intrinsic math.exp needs callable pr
+built-ins/Math/exp/S15.8.2.8_A2.js	wasmgc:standalone physical setup cannot be materialized (1 gap): body <module-init> intrinsic math.exp needs callable pr
+built-ins/Math/exp/S15.8.2.8_A3.js	wasmgc:standalone physical setup cannot be materialized (1 gap): body <module-init> intrinsic math.exp needs callable pr
+built-ins/Math/exp/S15.8.2.8_A4.js	wasmgc:standalone physical setup cannot be materialized (1 gap): body <module-init> intrinsic math.exp needs callable pr
+built-ins/Math/exp/S15.8.2.8_A5.js	wasmgc:standalone physical setup cannot be materialized (1 gap): body <module-init> intrinsic math.exp needs callable pr
+built-ins/Math/log/S15.8.2.10_A1.js	wasmgc:standalone physical setup cannot be materialized (1 gap): body <module-init> intrinsic math.log needs callable pr
+built-ins/Math/log/S15.8.2.10_A2.js	wasmgc:standalone physical setup cannot be materialized (3 gaps): body <module-init> intrinsic math.log needs callable p
+built-ins/Math/log/S15.8.2.10_A4.js	wasmgc:standalone physical setup cannot be materialized (1 gap): body <module-init> intrinsic math.log needs callable pr
+built-ins/Math/log/S15.8.2.10_A5.js	wasmgc:standalone physical setup cannot be materialized (1 gap): body <module-init> intrinsic math.log needs callable pr
+built-ins/Math/round/S15.8.2.15_A1.js	wasmgc:standalone physical setup cannot be materialized (1 gap): body <module-init> intrinsic math.round needs callable 
+built-ins/Math/round/S15.8.2.15_A2.js	wasmgc:standalone physical setup cannot be materialized (1 gap): body <module-init> intrinsic math.round needs callable 
+built-ins/Math/round/S15.8.2.15_A3.js	wasmgc:standalone physical setup cannot be materialized (1 gap): body <module-init> intrinsic math.round needs callable 
+built-ins/Math/round/S15.8.2.15_A4.js	wasmgc:standalone physical setup cannot be materialized (1 gap): body <module-init> intrinsic math.round needs callable 
+built-ins/Math/round/S15.8.2.15_A5.js	wasmgc:standalone physical setup cannot be materialized (1 gap): body <module-init> intrinsic math.round needs callable 
+built-ins/Math/sin/S15.8.2.16_A1.js	wasmgc:standalone physical setup cannot be materialized (1 gap): body <module-init> intrinsic math.sin needs callable pr
+built-ins/Math/sin/S15.8.2.16_A4.js	wasmgc:standalone physical setup cannot be materialized (1 gap): body <module-init> intrinsic math.sin needs callable pr
+built-ins/Math/sin/S15.8.2.16_A5.js	wasmgc:standalone physical setup cannot be materialized (1 gap): body <module-init> intrinsic math.sin needs callable pr
+built-ins/Math/sin/zero.js	wasmgc:standalone physical setup cannot be materialized (2 gaps): body <module-init> intrinsic math.sin needs callable p
+built-ins/Math/tan/S15.8.2.18_A1.js	wasmgc:standalone physical setup cannot be materialized (1 gap): body <module-init> intrinsic math.tan needs callable pr
+built-ins/Math/tan/S15.8.2.18_A2.js	wasmgc:standalone physical setup cannot be materialized (1 gap): body <module-init> intrinsic math.tan needs callable pr
+built-ins/Math/tan/S15.8.2.18_A3.js	wasmgc:standalone physical setup cannot be materialized (1 gap): body <module-init> intrinsic math.tan needs callable pr
+built-ins/Math/tan/S15.8.2.18_A4.js	wasmgc:standalone physical setup cannot be materialized (1 gap): body <module-init> intrinsic math.tan needs callable pr
+built-ins/Math/tan/S15.8.2.18_A5.js	wasmgc:standalone physical setup cannot be materialized (1 gap): body <module-init> intrinsic math.tan needs callable pr
+built-ins/Number/S9.3.1_A1.js	wasmgc:standalone physical setup cannot be materialized (2 gaps): intrinsic callable js.number.from-value needs runtime 
+built-ins/Number/S9.3.1_A11.js	wasmgc:standalone physical setup cannot be materialized (2 gaps): intrinsic callable js.number.from-value needs runtime 
+built-ins/Number/S9.3.1_A12.js	wasmgc:standalone physical setup cannot be materialized (3 gaps): intrinsic callable js.number.from-value needs runtime 
+built-ins/Number/S9.3.1_A13.js	wasmgc:standalone physical setup cannot be materialized (3 gaps): intrinsic callable js.number.from-value needs runtime 
+built-ins/Number/S9.3.1_A14.js	wasmgc:standalone physical setup cannot be materialized (2 gaps): intrinsic callable js.number.from-value needs runtime 
+built-ins/Number/S9.3.1_A16.js	wasmgc:standalone physical setup cannot be materialized (3 gaps): intrinsic callable js.number.from-value needs runtime 
+built-ins/Number/S9.3.1_A17.js	wasmgc:standalone physical setup cannot be materialized (3 gaps): intrinsic callable js.number.from-value needs runtime 
+built-ins/Number/S9.3.1_A18.js	wasmgc:standalone physical setup cannot be materialized (3 gaps): intrinsic callable js.number.from-value needs runtime 
+built-ins/Number/S9.3.1_A19.js	wasmgc:standalone physical setup cannot be materialized (3 gaps): intrinsic callable js.number.from-value needs runtime 
+built-ins/Number/S9.3.1_A2.js	wasmgc:standalone physical setup cannot be materialized (31 gaps): intrinsic callable js.number.from-value needs runtime
+built-ins/Number/S9.3.1_A20.js	wasmgc:standalone physical setup cannot be materialized (3 gaps): intrinsic callable js.number.from-value needs runtime 
+built-ins/Number/S9.3.1_A21.js	wasmgc:standalone physical setup cannot be materialized (3 gaps): intrinsic callable js.number.from-value needs runtime 
+built-ins/Number/S9.3.1_A22.js	wasmgc:standalone physical setup cannot be materialized (3 gaps): intrinsic callable js.number.from-value needs runtime 
+built-ins/Number/S9.3.1_A23.js	wasmgc:standalone physical setup cannot be materialized (3 gaps): intrinsic callable js.number.from-value needs runtime 
+built-ins/Number/S9.3.1_A24.js	wasmgc:standalone physical setup cannot be materialized (3 gaps): intrinsic callable js.number.from-value needs runtime 
+built-ins/Number/S9.3.1_A25.js	wasmgc:standalone physical setup cannot be materialized (3 gaps): intrinsic callable js.number.from-value needs runtime 
+built-ins/Number/S9.3.1_A26.js	wasmgc:standalone physical setup cannot be materialized (4 gaps): intrinsic callable js.number.from-value needs runtime 
+built-ins/Number/S9.3.1_A27.js	wasmgc:standalone physical setup cannot be materialized (4 gaps): intrinsic callable js.number.from-value needs runtime 
+built-ins/Number/S9.3.1_A28.js	wasmgc:standalone physical setup cannot be materialized (4 gaps): intrinsic callable js.number.from-value needs runtime 
+built-ins/Number/S9.3.1_A29.js	wasmgc:standalone physical setup cannot be materialized (4 gaps): intrinsic callable js.number.from-value needs runtime 
+built-ins/Number/S9.3.1_A30.js	wasmgc:standalone physical setup cannot be materialized (4 gaps): intrinsic callable js.number.from-value needs runtime 
+built-ins/Number/S9.3.1_A31.js	wasmgc:standalone physical setup cannot be materialized (4 gaps): intrinsic callable js.number.from-value needs runtime 
+built-ins/Number/S9.3.1_A32.js	wasmgc:standalone physical setup cannot be materialized (5 gaps): intrinsic callable js.number.from-value needs runtime 
+built-ins/Number/S9.3.1_A3_T1.js	wasmgc:standalone physical setup cannot be materialized (4 gaps): intrinsic callable js.number.from-value needs runtime 
+built-ins/Number/S9.3.1_A4_T1.js	wasmgc:standalone physical setup cannot be materialized (9 gaps): intrinsic callable js.number.from-value needs runtime 
+built-ins/Number/S9.3.1_A5_T2.js	wasmgc:standalone physical setup cannot be materialized (28 gaps): intrinsic callable js.number.from-value needs runtime
+built-ins/Number/S9.3.1_A7.js	wasmgc:standalone physical setup cannot be materialized (2 gaps): intrinsic callable js.number.from-value needs runtime 
+built-ins/Number/S9.3.1_A8.js	wasmgc:standalone physical setup cannot be materialized (3 gaps): intrinsic callable js.number.from-value needs runtime 
+built-ins/Number/S9.3.1_A9.js	wasmgc:standalone physical setup cannot be materialized (5 gaps): intrinsic callable js.number.from-value needs runtime 
+built-ins/Number/S9.3_A2_T1.js	wasmgc:standalone physical setup cannot be materialized (2 gaps): intrinsic callable js.number.from-value needs runtime 
+built-ins/Object/create/15.2.3.5-1-2.js	wasmgc:standalone physical setup cannot be materialized (2 gaps): intrinsic callable js.object.create-null needs runtime
+language/expressions/object/prop-dup-get-data.js	wasmgc:standalone physical setup cannot be materialized (7 gaps): body <module-init> has no accepted host async dynamic 
+language/expressions/object/prop-dup-get-get.js	wasmgc:standalone physical setup cannot be materialized (5 gaps): intrinsic callable js.object.create-default needs runt

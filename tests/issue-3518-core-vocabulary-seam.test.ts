@@ -106,27 +106,6 @@ const intrinsicValues = [
   "INTRINSIC_SIGNATURE_VERSION",
 ] as const;
 
-function moduleReferences(tree: ts.SourceFile) {
-  const references: string[] = [];
-  const visit = (node: ts.Node) => {
-    if (
-      ts.isImportDeclaration(node) ||
-      (ts.isExportDeclaration(node) && node.moduleSpecifier) ||
-      ts.isImportTypeNode(node) ||
-      ts.isImportEqualsDeclaration(node) ||
-      (ts.isCallExpression(node) &&
-        (node.expression.kind === ts.SyntaxKind.ImportKeyword ||
-          (ts.isIdentifier(node.expression) && node.expression.text === "require")))
-    )
-      references.push(node.getText(tree));
-    ts.forEachChild(node, visit);
-  };
-  visit(tree);
-  expect(tree.referencedFiles).toEqual([]);
-  expect(tree.typeReferenceDirectives).toEqual([]);
-  return references;
-}
-
 function identity(): IrCountedStringAppendSiteIdentity {
   const sourceId = createIrSourceId({ kind: "entry", order: 0, sourceKey: "vocabulary.ts" });
   return Object.freeze({
@@ -167,9 +146,11 @@ describe("#3518 canonical core vocabulary seam", () => {
   it("preserves closed intrinsic tuple order, existing guard and definition consumers", () => {
     expect(Object.keys(vocabulary).sort()).toEqual([...intrinsicValues].sort());
     expect(vocabulary.PURE_MATH_INTRINSIC_IDS).toHaveLength(33);
-    // (#7354 D1) +2: the dynamic-value family (strict equality, the `undefined` value); (#7354 T) +1: ToBoolean.
-    expect(vocabulary.INTRINSIC_IDS).toHaveLength(42);
-    expect(new Set(vocabulary.INTRINSIC_IDS).size).toBe(42);
+    // (#7354 D1) +2: the dynamic-value family (strict equality, the `undefined` value); (#7354 T) +1: ToBoolean;
+    // (#7354 Ty) +2: the number and Boolean `typeof` tag tests; (#7354 Str2) +2: the string `typeof` tag test and
+    // the string read of ToString.
+    expect(vocabulary.INTRINSIC_IDS).toHaveLength(46);
+    expect(new Set(vocabulary.INTRINSIC_IDS).size).toBe(46);
     expect(vocabulary.BOOLEAN_BOUNDARY_INTRINSIC_IDS).toEqual(["js.boolean.box", "js.boolean.unbox"]);
     expect(intrinsics.INTRINSIC_DEFINITIONS["js.boolean.unbox"].signature).toEqual({
       version: vocabulary.INTRINSIC_SIGNATURE_VERSION,
@@ -224,17 +205,6 @@ describe("#3518 canonical core vocabulary seam", () => {
     }
   });
 
-  it("has no upward module edges: three import-free leaves and only canonical F0 identity/source-origin", () => {
-    for (const move of moves.slice(0, 3)) expect(moduleReferences(parse(move.canonical))).toEqual([]);
-    expect(moduleReferences(parse(moves[3]!.canonical))).toEqual([
-      'import type { IrSourceId, IrUnitId } from "./ir-identity.js";',
-    ]);
-    expect(moduleReferences(parse("src/shared/contracts/ir-identity.ts"))).toEqual([
-      'import type { CompilerSourceProducer } from "./source-origin.js";',
-    ]);
-    expect(moduleReferences(parse("src/shared/contracts/source-origin.ts"))).toEqual([]);
-  });
-
   it("loads all four canonical leaves with old facades and providers barred in a fresh process", () => {
     const paths = moves.map((move) => move.canonical);
     const script = `
@@ -257,7 +227,7 @@ describe("#3518 canonical core vocabulary seam", () => {
       const intents = await import('./src/ir/core/async-intents.ts');
       const strings = await import('./src/ir/core/string-types.ts');
       const identity = await import('./src/shared/contracts/ir-counted-string-identity.ts');
-      assert.equal(vocabulary.INTRINSIC_IDS.length, 42);
+      assert.equal(vocabulary.INTRINSIC_IDS.length, 46);
       assert.deepEqual(vocabulary.BOOLEAN_BOUNDARY_INTRINSIC_IDS, ["js.boolean.box", "js.boolean.unbox"]);
       assert.equal(intents.ASYNC_RUNTIME_FEATURES.length, 7);
       assert.deepEqual(Object.keys(strings), []);

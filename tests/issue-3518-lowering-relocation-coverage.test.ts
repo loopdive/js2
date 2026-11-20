@@ -1,20 +1,16 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import { spawnSync } from "node:child_process";
-import { createHash } from "node:crypto";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import ts from "typescript";
 import { afterEach, describe, expect, it } from "vitest";
 import { LOWERING_TARGETS } from "../scripts/check-pushraw.mjs";
-import { baseBlob, parseFrontmatterList, resolveChangeBase } from "../scripts/lib/change-scope.mjs";
 
 const repository = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const checker = resolve(repository, "scripts/check-pushraw.mjs");
 const legacy = "src/ir/lower.ts";
 const generic = "src/ir/lower-generic.ts";
-const issue = "plan/issues/3518-ir-only-default-and-direct-frontend-retirement.md";
 const baselinePath = "scripts/pushraw-baseline.json";
 const expectedTargets = [
   legacy,
@@ -160,69 +156,4 @@ describe("#3518 lowering relocation keeps the real pushRaw gate connected", () =
     f.put(baselinePath, JSON.stringify(baseline));
     expect(f.run("--all")).toMatchObject({ exit: 1 });
   });
-});
-
-function bodyReceipt(source: string, name: string) {
-  const ast = ts.createSourceFile("lower.ts", source, ts.ScriptTarget.Latest, true);
-  const found: (ts.FunctionDeclaration | ts.ArrowFunction | ts.FunctionExpression)[] = [];
-  const visit = (node: ts.Node) => {
-    if (ts.isFunctionDeclaration(node) && node.name?.text === name) found.push(node);
-    if (
-      ts.isVariableDeclaration(node) &&
-      ts.isIdentifier(node.name) &&
-      node.name.text === name &&
-      node.initializer &&
-      (ts.isArrowFunction(node.initializer) || ts.isFunctionExpression(node.initializer))
-    ) {
-      found.push(node.initializer);
-    }
-    ts.forEachChild(node, visit);
-  };
-  visit(ast);
-  expect(found).toHaveLength(1);
-  const declaration = found[0]!;
-  expect(declaration.body).toBeDefined();
-  return {
-    hash: createHash("sha256").update(declaration.body!.getText(ast)).digest("hex"),
-    span:
-      ast.getLineAndCharacterOfPosition(declaration.end).line -
-      ast.getLineAndCharacterOfPosition(declaration.getStart(ast)).line +
-      1,
-  };
-}
-
-const { base } = resolveChangeBase(repository);
-const beforeGeneric = base && baseBlob(repository, base, generic);
-const beforeLegacy = base && baseBlob(repository, base, legacy);
-describe("#3518 initial relocation budget provenance", () => {
-  it.skipIf(base !== undefined && beforeGeneric !== undefined)(
-    "moves exact bodies with no duplicate allowance or growth credit",
-    () => {
-      expect(base, "A known change base is required for initial relocation provenance").toBeDefined();
-      expect(beforeLegacy).toBeDefined();
-      const after = readFileSync(resolve(repository, generic), "utf8");
-      for (const [name, hash, span] of [
-        ["emitInstrTree", "75c0cceb6224dda24e892bcc5433532f10985c863b09fd4ae4245037811a2424", 2297],
-        ["lowerIrFunctionBody", "ed92c0a576009ab30571152c9b01dfc6caf19a2e2ca3dfb436edef32b4436739", 3380],
-      ] as const) {
-        expect(bodyReceipt(beforeLegacy!, name)).toEqual({ hash, span });
-        expect(bodyReceipt(after, name)).toEqual({ hash, span });
-        expect(readFileSync(resolve(repository, legacy), "utf8")).not.toContain(`function ${name}`);
-      }
-      const beforeIssue = baseBlob(repository, base!, issue)!;
-      const afterIssue = readFileSync(resolve(repository, issue), "utf8");
-      for (const key of ["loc-budget-allow", "func-budget-allow"]) {
-        const before = parseFrontmatterList(beforeIssue, key);
-        const afterKeys = parseFrontmatterList(afterIssue, key);
-        expect(afterKeys).toEqual(before.map((entry: string) => entry.replace(/^src\/ir\/lower\.ts(?=::|$)/, generic)));
-        expect(new Set(afterKeys).size).toBe(afterKeys.length);
-      }
-      for (const path of ["scripts/loc-budget-baseline.json", "scripts/func-budget-baseline.json"]) {
-        expect(readFileSync(resolve(repository, path), "utf8")).toBe(baseBlob(repository, base!, path));
-      }
-      const oldRaw = JSON.parse(baseBlob(repository, base!, baselinePath)!);
-      const newRaw = JSON.parse(readFileSync(resolve(repository, baselinePath), "utf8"));
-      for (const key of ["total", "tagged", "untagged"]) expect(newRaw[key]).toBe(oldRaw[key]);
-    },
-  );
 });

@@ -44,6 +44,10 @@ export function nullishJoinCarrier(ctx: CodegenContext, lhs: ValType, rhs: ValTy
     return { kind: "externref" };
   }
 
+  // (#7360) A number left arm (an f64 that may hold `undefined`) against any other right arm: boxing it is the only
+  // lossless join. Taking the right arm's type would coerce the number into a string/object/BigInt/boolean slot.
+  if (lhs.kind === "f64") return isAnyValue(rhs, ctx) ? rhs : { kind: "externref" };
+
   if (isInternalRef(lhs) && isInternalRef(rhs)) {
     // `$AnyValue` on exactly one side is a box/unbox, not a downcast; leave
     // that pairing to the existing coercion so the tagged representation is

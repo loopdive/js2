@@ -529,17 +529,8 @@ describe("#3525 internal genuine prepared-pipeline presentation", () => {
         expect(prepared.artifacts.dts).toBe(legacy.dts);
         expect(prepared.artifacts.imports).toEqual(legacy.imports);
         expect(prepared.artifacts.stringPool).toEqual([]);
-        if (backend === "wasmgc") {
-          const legacyPools: Record<string, string[]> = {
-            scalar: ["calculate", ""],
-            "counted loop and mutable branch": ["accumulate", ""],
-            "two-source 42": ["double", "", "./math", "main"],
-            "nonconstant cross-source": ["double", "", "./math", "calculate"],
-          };
-          expect(legacy.stringPool).toEqual(legacyPools[fixture.name]);
-        } else {
-          expect(prepared.artifacts.stringPool).toEqual(legacy.stringPool);
-        }
+        // #6979: native strings are always on for the JS target, so the legacy gc compile imports no string constants either.
+        expect(legacy.stringPool).toEqual(prepared.artifacts.stringPool);
         expect(prepared.artifacts.exportSignatures).toEqual(legacy.exportSignatures);
         expect(prepared.artifacts.exportBoundaryPolicies).toEqual(legacy.exportBoundaryPolicies);
         const actualManifest = prepared.artifacts.adapterManifest;
@@ -556,12 +547,8 @@ describe("#3525 internal genuine prepared-pipeline presentation", () => {
         expect(originalHelper.manifest).toEqual(legacy.adapterManifest);
         expect(actualHelper.prefix).toBe(originalHelper.prefix);
         expect(actualHelper.suffix).toBe(originalHelper.suffix);
-        if (backend === "wasmgc") {
-          // Preserve the real field difference; this is not byte/artifact parity.
-          expect(prepared.artifacts.importsHelper).not.toBe(legacy.importsHelper);
-        } else {
-          expect(prepared.artifacts.importsHelper).toBe(legacy.importsHelper);
-        }
+        // #6979: the gc helpers differed only in the legacy string pool, which native strings removed.
+        expect(prepared.artifacts.importsHelper).toBe(legacy.importsHelper);
         const values = fixture.calls.map((call) => call.value);
         expect(await generatedHelperCalls(prepared.artifacts, fixture.calls)).toEqual(values);
         expect(await generatedHelperCalls(legacy, fixture.calls)).toEqual(values);
@@ -916,12 +903,12 @@ describe("#3525 internal genuine prepared-pipeline presentation", () => {
     expect(result).not.toHaveProperty("artifacts");
   });
 
-  it("executes genuine async work through the original helper without a legacy generator", () => {
+  it("refuses host-Promise async work by name after a genuine Prepared emission, without a legacy generator", () => {
     const prepare = vi.spyOn(preparation, "prepareWholeIrProgram");
     const accept = vi.spyOn(consumer, "acceptPreparedIrProgram");
     const emit = vi.spyOn(consumer, "emitAcceptedIrProgram");
     const poisons = poisonGenerators();
-    const result = artifacts(
+    const result = runPreparedIrPipelinePresentation(
       input(
         {
           "./entry.ts":
@@ -934,33 +921,23 @@ describe("#3525 internal genuine prepared-pipeline presentation", () => {
     expect(accept).toHaveBeenCalledOnce();
     expect(emit).toHaveBeenCalledOnce();
     for (const poison of poisons) expect(poison).not.toHaveBeenCalled();
-    expect(result).toHaveProperty("finalization.phase", "after-reference-widening");
-    expect(result).toHaveProperty("finalization.originalEmissionUnchanged", true);
-    expect(consumer.emittedPhysicalSetupPlan(result.emission).functions.length).toBeGreaterThan(0);
-    expect(result.emission.module.asyncFunctions).toEqual(new Set(["calculate"]));
-    const dir = mkdtempSync(join(tmpdir(), "ir-prepared-presentation-async-"));
-    try {
-      const runtime = pathToFileURL(join(import.meta.dirname, "../src/index.ts")).href;
-      const helper = result.artifacts.importsHelper.replace('from "js2wasm"', `from ${JSON.stringify(runtime)}`);
-      expect(helper).not.toBe(result.artifacts.importsHelper);
-      writeFileSync(join(dir, "module.imports.mjs"), helper);
-      writeFileSync(join(dir, "module.wasm"), result.artifacts.binary);
-      writeFileSync(
-        join(dir, "run.mjs"),
-        `import { readFileSync } from "node:fs";\nimport { types } from "node:util";\nimport { instantiateBytes } from "./module.imports.mjs";\nconst result = await instantiateBytes(readFileSync(new URL("./module.wasm", import.meta.url)));\nconst values = [];\nfor (const seed of [5, -3, 0.5]) { const promise = result.exports.calculate(seed); if (!types.isPromise(promise)) throw Error("expected real Promise"); values.push(await promise); }\nconsole.log(JSON.stringify(values));\n`,
-      );
-      const child = spawnSync(process.execPath, ["--import", "tsx", join(dir, "run.mjs")], {
-        cwd: join(import.meta.dirname, ".."),
-        encoding: "utf8",
-      });
-      expect(child.error).toBeUndefined();
-      expect(child.signal).toBeNull();
-      expect(child.status, `${child.stdout}\n${child.stderr}`).toBe(0);
-      expect(child.stderr).toBe("");
-      expect(JSON.parse(child.stdout.trim())).toEqual([17, -7, 3.5]);
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
+    // #6979 removed the host Promise semantics this module would import; the native lowering gap is #5385.
+    const retired = [
+      "Promise_new_pending",
+      "Promise_then2",
+      "Promise_resolve",
+      "Promise_settle_resolve",
+      "Promise_settle_reject",
+    ];
+    expect(result.kind).toBe("output-failed");
+    if (result.kind !== "output-failed") throw new Error("expected the retired-host-import refusal");
+    expect(result.errors.map((error) => error.message)).toEqual([
+      `The host-semantic implementation was removed (#6979); this module would need retired host imports: ${retired
+        .map(
+          (name) => `env::${name} (env builtin '${name}' is not an adapter, capability, lifecycle hook or accelerator)`,
+        )
+        .join(", ")}. The construct has no native lowering yet — a native regime gap belongs to #5385.`,
+    ]);
   });
 
   it("preserves a real located acceptance refusal from the consumer", () => {
@@ -1055,8 +1032,9 @@ describe("#3525 internal genuine prepared-pipeline presentation", () => {
       exported.desc.index = emitted.module.functions.length + 10;
       return emitted;
     });
+    // #7380: the stage 4 validator sees the out-of-range index before the presentation reads the module.
     expect(() => runPreparedIrPipelinePresentation(input(SCALAR, "wasmgc"))).toThrow(
-      /^physical module reservations: altered publication descriptor$/,
+      /^prepared validator \(physical module\): unresolved function index \d+$/,
     );
   });
   it("refuses an extra global export absent from the authentic prepared ABI census", () => {
@@ -1090,8 +1068,9 @@ describe("#3525 internal genuine prepared-pipeline presentation", () => {
       emitted.module.exports.push({ name: global.name, desc: { ...global.desc } });
       return emitted;
     });
+    // #7380: the stage 4 validator sees the duplicate export name before the presentation reads the module.
     expect(() => runPreparedIrPipelinePresentation(input(VISITS, "wasmgc"))).toThrow(
-      /^physical module reservations: unregistered, substituted or reordered exports population$/,
+      /^prepared validator \(physical module\): duplicate export name visits$/,
     );
   });
 });

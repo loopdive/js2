@@ -26,6 +26,7 @@ import { isBigIntType, isBooleanType, isNumberType, isStringType } from "../chec
 import { ts } from "../ts-api.js";
 import type { Instr, ValType } from "../ir/types.js";
 import { HOLE_F64_BITS, UNDEF_F64_BITS } from "../shared/contracts/f64-value-markers.js";
+import { skipTransparentExpressions } from "../shared/transparent-expressions.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 
 /**
@@ -99,6 +100,23 @@ export function emitIsUndefF64(body: Instr[]): void {
   body.push({ op: "i64.reinterpret_f64" });
   body.push({ op: "i64.const", value: UNDEF_F64_BITS });
   body.push({ op: "i64.eq" });
+}
+
+/**
+ * (#7360) Can the f64 `expr` (of Wasm type `type`) hold `undefined`? A `number | undefined` slot carries it as the
+ * {@link UNDEF_F64_BITS} sentinel, so a nullish test (`??`, `??=`) must compare those bits instead of folding to
+ * "never nullish". A plain `number` f64 cannot. An ordinary NaN (`0 / 0`, a canonical quiet NaN) does not match the
+ * exact bits, but data can produce them: a DataView / Float64Array read of those bits reads as `undefined` (#7367).
+ */
+export function f64MayHoldUndefined(ctx: CodegenContext, expr: ts.Expression, type: ValType): boolean {
+  if (type.kind !== "f64") return false;
+  // A type-only wrapper (`x!`, `x as number`) narrows the static type, not the slot: ask the wrapped operand too.
+  const operand = skipTransparentExpressions(expr);
+  return (
+    type.undefSentinel === true ||
+    ctx.oracle.nullabilityOf(expr).undefinable ||
+    (operand !== expr && ctx.oracle.nullabilityOf(operand).undefinable)
+  );
 }
 
 /**

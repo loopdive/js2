@@ -1,10 +1,11 @@
 ---
 id: 7358
 title: "#3518 receipt/pin tests red on main: re-express as living structural invariants or retire with a reason"
-status: ready
+status: done
 sprint: current
 created: 2026-11-17
-updated: 2026-11-19
+updated: 2026-11-20
+completed: 2026-11-20
 priority: high
 horizon: m
 feasibility: medium
@@ -17,6 +18,10 @@ related: [3518, 7354, 7356, 7357]
 ---
 
 # #3518 receipt/pin tests red on main
+
+**Done 2026-11-20 by #7380 PR 2a** (retired with the reason recorded there): see "## PR 2a result" in
+`plan/issues/7380-prepared-validator-instead-of-self-authentication.md`. One realm test stays red for a real reason, and
+the "also seen red" list below is part of the 90 red files that #7380 PR 2b classifies.
 
 ## Problem
 

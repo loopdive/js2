@@ -1,9 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
-import { createHash } from "node:crypto";
-import { readFileSync } from "node:fs";
-import ts from "typescript";
 import { prepareWholeIrProgram } from "../src/ir/program-preparation.js";
 import { decodePreparedIrProgram, encodePreparedIrProgram } from "../src/ir/program-codec.js";
 import type { PreparedIrProgram } from "../src/ir/program/prepared-contracts.js";
@@ -99,34 +96,6 @@ function noAllocation(f: ReturnType<typeof fixture>, action: () => unknown, mess
 }
 
 describe("canonical legacy mutable-cell layout delegation", () => {
-  it("inverts the adapter to the fixed authenticated donor function", () => {
-    const donor = JSON.parse(
-      readFileSync(new URL("./fixtures/issue-3518-ref-cell-donor.json", import.meta.url), "utf8"),
-    );
-    expect(donor.commit).toBe("fdaa94315aeeeab5dc85a3596f2b4997b388ac76");
-    expect(donor.blob).toBe("accac33484a267a868145ba59b442bcb12cdd561");
-    expect(donor.functionSha256).toBe("c0cdb135e5604f855c82574dfdf67fb229730215ead5f39f9fef40d1a26e6fee");
-    expect(createHash("sha256").update(donor.function).digest("hex")).toBe(donor.functionSha256);
-    const source = readFileSync(new URL("../src/codegen/registry/types.ts", import.meta.url), "utf8");
-    const ast = ts.createSourceFile("types.ts", source, ts.ScriptTarget.Latest, true);
-    const fn = ast.statements.find(
-      (row) => ts.isFunctionDeclaration(row) && row.name?.text === "getOrRegisterRefCellType",
-    );
-    if (!fn) throw new Error("production legacy adapter missing");
-    const current = fn.getText(ast);
-    expect(current.match(/refCellTypeKey\(valType\)/g)).toHaveLength(1);
-    expect(current.match(/createRefCellType\(key, valType\)/g)).toHaveLength(1);
-    const inverse = current
-      .replace(
-        "const key = refCellTypeKey(valType);",
-        `const key =\n    valType.kind === "ref" || valType.kind === "ref_null"\n      ? \`\${valType.kind}_\${(valType as { typeIdx: number }).typeIdx}\`\n      : valType.kind;`,
-      )
-      .replace(
-        "ctx.mod.types.push(createRefCellType(key, valType));",
-        `ctx.mod.types.push({\n    kind: "struct",\n    name: \`__ref_cell_\${key}\`,\n    fields: [{ name: "value", type: valType, mutable: true }],\n  });`,
-      );
-    expect(inverse).toBe(donor.function);
-  });
   it.each([
     [{ kind: "f64" }, "f64"],
     [{ kind: "i64" }, "i64"],

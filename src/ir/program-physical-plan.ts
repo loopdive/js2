@@ -17,6 +17,9 @@ import { forEachPreparedIrInstruction } from "./runtime/prepared-instructions.js
 import {
   planNativeInvocationInput,
   nativeInvocationSetup,
+  planNativeSourceObjectSetup,
+  type NativeCallAbiBinding,
+  type NativeSourceObjectPhysicalSetup,
   type NativeInvocationPhysicalSetup,
 } from "../backend/wasmgc/program/native-invocation-abi.js";
 import { nativeStringOutputAbiBindings } from "../backend/wasmgc/program/native-string-output-abi.js";
@@ -68,8 +71,7 @@ import {
 } from "../backend/wasmgc/program/native-number-format.js";
 import { nativeStringTypeKeys } from "../backend/wasmgc/resources/native-string-literals.js";
 import { collectNativeStringValueDemands } from "./program/native-string-value-demands.js";
-import { numberFormatRadixSupportDeclarations } from "./program/formatter-support.js";
-import { NATIVE_ASYNC_CALLABLE_DECLARATIONS } from "./runtime/native-async-callables.js";
+import { numberFormatRadixSupportDeclarations, numberFormatSetupAssociations } from "./program/formatter-support.js";
 import type { IrBindingId, IrUnitId } from "./identity.js";
 import type { IrFunction, IrType, IrInstrIntrinsic } from "./nodes.js";
 import type { IrPreparationFailure } from "./outcomes.js";
@@ -246,6 +248,19 @@ function planNumberRemainders(
   return resources;
 }
 
+/** The source closure requirements as the plan describes them: every field but the borrowed demand census. */
+function sourceClosureDescription(
+  sourceClosures: NativeSourceClosureRequirements,
+): NonNullable<PhysicalSetupPlan["sourceClosures"]> {
+  const { key, signatures, shapes, units, allocations, refCells, refCellAllocations, gaps } = sourceClosures;
+  return { key, signatures, shapes, units, allocations, refCells, refCellAllocations, gaps };
+}
+
+/** The plan's native call rows: invocation and (#7354 O1) source objects. */
+export function plannedNativeCallBindings(plan: PhysicalSetupPlan): readonly NativeCallAbiBinding[] {
+  return [...(plan.nativeInvocation?.bindings ?? []), ...(plan.nativeSourceObjects?.bindings ?? [])];
+}
+
 /** Everything emission will reserve, in the order it will reserve it. Deep-frozen. */
 export interface PhysicalSetupPlan {
   readonly backend: PreparedIrBackendOptions["backend"];
@@ -255,6 +270,8 @@ export interface PhysicalSetupPlan {
   readonly numberRemainders: readonly PhysicalNumberRemainder[];
   readonly sourceClosures?: Omit<NativeSourceClosureRequirements, "demands">;
   readonly nativeInvocation?: NativeInvocationPhysicalSetup;
+  /** (#7354 O1) The realm functions serving the program's `js.object.*` calls. */
+  readonly nativeSourceObjects?: NativeSourceObjectPhysicalSetup;
   readonly nativeRealm?: NativeRealmDescription;
   readonly asyncFrames?: AsyncFrameSetup;
   /** Descriptive only: the issued reservation input stays in the consumer's private record. */
@@ -280,7 +297,6 @@ export function planNativeVectorResources(
   options: PreparedIrBackendOptions,
   projection: PreparedIrProgramRuntimeProjection,
 ): NativeVectorResourcePlan {
-  assertPreparedIrProgram(program);
   if (
     !program.runtime.includes(projection) ||
     projection.backend !== options.backend ||
@@ -323,6 +339,7 @@ export function planNativeValueResources(
   projection: PreparedIrProgramRuntimeProjection,
   strings: NativeValueStringRepresentation,
 ): NativeValueResourcePlan {
+  // No compile path calls this entry; its callers hand it programs built in tests, so it validates them itself.
   assertPreparedIrProgram(program);
   if (
     !program.runtime.includes(projection) ||
@@ -433,7 +450,8 @@ function declarationForRole(resources: NativeResourceRecipe, role: readonly stri
   return rows[0]!;
 }
 
-function internalNativeBinding(
+/** The binding a native setup declaration derives under the runtime ABI anchor (no canonical callable binds it). */
+export function internalNativeBinding(
   program: PreparedIrProgram,
   declaration: NativeStringValueDeclaration,
   declarationOrder: number,
@@ -768,7 +786,8 @@ function sealNativeBindingPlan(program: PreparedIrProgram, bindings: readonly Na
   abi.sealPlan();
 }
 
-function nativeSupplementalOrder(program: PreparedIrProgram): number {
+/** The first declaration order after the runtime ABI anchor's own entries: where the native setups' entries begin. */
+export function nativeSupplementalOrder(program: PreparedIrProgram): number {
   const anchor = preparedIrRuntimeAbiAnchor(program.inventory);
   let order = 0;
   for (const entry of program.abi.entries)
@@ -851,22 +870,11 @@ function nativeFormatterSetup(
     strings.resources,
   );
   const canonical = numberFormatRadixSupportDeclarations(anchor.id);
-  const adapters = NATIVE_ASYNC_CALLABLE_DECLARATIONS.filter((row) => row.feature === "async.native.number-to-string");
-  if (adapters.length !== 1) nativeInvalid("formatter native adapter contract is not unique");
-  const associations = [
-    ...canonical.kernels.map((row) => ({ ...row, origin: "support" as const })),
-    { ...canonical.implementation, role: "radix-body", origin: "support" as const },
-    { ...adapters[0]!, role: "native-to-string", origin: "intrinsic" as const },
-  ];
   const bindings: NativeStringValueAbiBinding[] = [];
-  for (const association of associations) {
-    const declaration = declarationForRole(resources, ["number-format", association.role]);
+  for (const association of numberFormatSetupAssociations(program.inventory)) {
+    const declaration = declarationForRole(resources, association.role);
     if (declaration.space !== "function") nativeInvalid("formatter callable role does not name a function");
-    const id =
-      association.ref.binding.kind === "support"
-        ? association.ref.binding.bindingId
-        : preparedIrRuntimeCallableBindingId(program.inventory, association.ref);
-    const candidates = program.abi.entries.filter((row) => row.plan.id === id);
+    const candidates = program.abi.entries.filter((row) => row.plan.id === association.bindingId);
     if (candidates.length !== 1) nativeInvalid("formatter callable is missing its unique existing ABI entry");
     const { plan, contract } = candidates[0]!;
     if (
@@ -1265,7 +1273,16 @@ export function planPhysicalSetup(
     ...priorBindings.map((row) => row.entry.order.declarationOrder + 1),
   );
   const nativeInvocation = nativeInvocationSetup(invocation.requirements, invocationOrder);
-  const nativeBindings = [...priorBindings, ...(nativeInvocation?.bindings ?? [])];
+  const sourceObjects = planNativeSourceObjectSetup(
+    native?.realmRequirements,
+    invocationOrder + (nativeInvocation?.bindings.length ?? 0),
+  );
+  for (const gap of sourceObjects.gaps) gaps.add(gap.detail, gap.unitId);
+  const nativeBindings = [
+    ...priorBindings,
+    ...(nativeInvocation?.bindings ?? []),
+    ...(sourceObjects.setup?.bindings ?? []),
+  ];
   if (nativeBindings.length) sealNativeBindingPlan(program, nativeBindings);
   const hostNumberOutcome = planHostNumberBoundary(
     program,
@@ -1422,9 +1439,9 @@ export function planPhysicalSetup(
           );
         }
       } else if (instruction.kind === "intrinsic") {
-        const provider = instruction.provider;
-        if (!provider) gaps.add(`body ${fn.name} intrinsic ${instruction.id} has no physical provider`, diagnosticUnit);
-        else if (
+        // Provider attachment (`attachProvidersToBuffer`) throws on an intrinsic without one before the program freezes.
+        const provider = instruction.provider!;
+        if (
           missingIntrinsicMaterialization(
             instruction,
             provider,
@@ -1487,21 +1504,9 @@ export function planPhysicalSetup(
     exceptionTag: { required: exceptionRequired || options.sharedExceptionTag, shared: options.sharedExceptionTag },
     vectors,
     numberRemainders,
-    ...(sourceClosures
-      ? {
-          sourceClosures: {
-            key: sourceClosures.key,
-            signatures: sourceClosures.signatures,
-            shapes: sourceClosures.shapes,
-            units: sourceClosures.units,
-            allocations: sourceClosures.allocations,
-            refCells: sourceClosures.refCells,
-            refCellAllocations: sourceClosures.refCellAllocations,
-            gaps: sourceClosures.gaps,
-          },
-        }
-      : {}),
+    ...(sourceClosures ? { sourceClosures: sourceClosureDescription(sourceClosures) } : {}),
     ...(nativeInvocation ? { nativeInvocation } : {}),
+    ...(sourceObjects.setup ? { nativeSourceObjects: sourceObjects.setup } : {}),
     ...(native?.realmRequirements ? { nativeRealm: native.realmRequirements.description } : {}),
     ...(asyncFrames?.frames.length ? { asyncFrames } : {}),
     ...(hostNumberBoundary?.imports.length ? { hostNumberBoundary } : {}),
