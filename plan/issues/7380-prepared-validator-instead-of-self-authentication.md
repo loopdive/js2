@@ -703,6 +703,309 @@ Also recorded:
 - **Not verified:** Deno and browser bundles, where the switch is read eagerly from `globalThis.process?.env` at
   module load. Also not verified: an ESM + CJS double load of the leaf, which would give two independent switches.
 
+## PR 3 result
+
+Implemented 2026-11-20 on `claude/7380-validator-3` (base `claude/7380-validator` `d24132a05c` = PR 1).
+
+### The validator, per stage
+
+A stage check runs through `validatePreparedStage(stage, check)` (`src/ir/program/prepared-validator.ts`): only when
+`preparedValidationEnabled()` is true (vitest, CI, `JS2WASM_VALIDATE_PREPARED=1`), never in a production compile. A
+violation throws `PreparedValidatorError` "prepared validator (<stage>): <invariant>: <detail>", a subclass of
+`PreparedIrProgramInvariantError`: an internal error, never a refusal.
+
+| stage | module, entry, caller | invariants (new ones in bold) | reuses |
+| --- | --- | --- | --- |
+| 1 lowered IR | `src/ir/runtime/verify.ts` `verifyIrFunction`; always on, unchanged | defs dominate uses, operand/result types, block terminators, branch arguments, call signatures | itself |
+| 2 prepared program | `src/ir/program/validation.ts` `assertPreparedIrProgram`; `program-prepare-ir.ts` (flagged), `program-codec.ts` (always) | the existing ones, plus **2**: (a) no `dyn.*` operation and no `dynamic` type in a `wasmgc:standalone` projection body (the host async lane keeps an annotated `any` as `dynamic` on purpose); (b) every intrinsic in a projection body carries its provider, and the manifest selects exactly one provider for its feature | stage 1; `containsDynamic` of the legalization (now exported); `forEachPreparedIrInstruction` |
+| 3 physical plan | deleted in review round 2 (it had 8, then 3): the planner, the ledger and emission enforce every one on every compile | — |
+| 4 physical module | **new** `src/wasm/physical/validate-module.ts` `assertPhysicalModule(module)`; `runIrProgramDriver` after emission | **7**: types, imports, functions, globals, tags, ordinals, limits and data resolve (moved); local types resolve; instruction indices resolve with the right resource kind (moved); every `ref.func` is declared (moved); final parents (moved, used at reservation); export names are unique; each export index is inside its kind's index space; the start function is `() -> ()` | the ledger's `#validate*` methods, moved verbatim; the ledger calls the same functions at reserve, fill and seal |
+| 5 binary | `gateEmittedModule`, unchanged | — | — |
+
+### Seeded invalid inputs
+
+`tests/issue-7380-prepared-validator.test.ts`, 21 tests. One program
+(`var x = 7; function f() { return x % 3; } x = f() + 1; if (x !== 2) throw 1;`) reaches every stage input: a call,
+a source global, `__fmod`, a boxed throw, native string declarations. Each row changes one field of a copy of the
+real stage input and has a twin (the same copy, unchanged) that passes.
+
+| # | stage | seed | rejected with |
+| --- | --- | --- | --- |
+| 1 | 1 | an `i32.and` operand replaced by an f64 value | the verifier's type error |
+| 2 | 1 | a use of value id 99, which nothing defines | the verifier's undefined-value error |
+| 3 | 1 | a terminator branching to block 7, which does not exist | "nonexistent block 7" |
+| 4 | 2 | a `call` to a unit no ABI entry declares | "references missing body" (population check) |
+| 5 | 2 | an ABI entry twice | "program ABI duplicates a binding" |
+| 6 | 2 | `f` returns i32 against its f64 ABI | "lacks its exact declared ABI" |
+| 7 | 2 | the `js.number.box` provider removed from the manifest | new (b), "missing provider" |
+| 8 | 2 | a `dyn.member_get` left in a projection body | new (a) |
+| 9 | 3 | the source global's slot listed twice (replaces the two reference seeds, see "Review round 1") | "duplicate slot: binding … has two slots" |
+| 10 | 3 | a native string declaration twice | "duplicate slot: resource key" |
+| 11 | 3 | a declaration whose `typeKey` names no declared type | "unresolved type key" |
+| 12 | 4 | `call` with `funcIdx` equal to the function count | "unresolved function index" |
+| 13 | 4 | `global.get` past the last global | "unresolved global index" |
+| 14 | 4 | two exports named `a` | "duplicate export name a" |
+| 15 | 4 | the start function given `(f64, f64) -> f64` | "start function must have signature () -> ()" |
+| 16 | 5 | 12 and 13 emitted with the validator off; 15 emitted | 12, 13: the binary emitter throws "index out of range" (`compile()` reports "Binary emit error"); 15: `gateEmittedModule` reports `invalid-module` |
+
+One more test asserts the error class and the stage name. No hash, receipt, count pin, module mock or capability.
+
+Mutation check. Every new invariant was violated on a real program, either by a scratch compiler edit (validator on,
+strict entry) or by a seed.
+
+- 12 scratch edits, 12 caught, each by its own invariant:
+  - legalization skipped (2a); provider attachment skipped (2b);
+  - plan target wrong; a function slot twice; `definedGlobals` emptied; exports doubled; an export target renamed;
+    a startup unit added;
+  - after emission: a global of an undeclared type, a local of an undeclared type, an undeclared `ref.func`, a global
+    export out of range.
+- Seeds cover the dyn-op arm (8), the manifest arm (7), the call and provider arms (9, 9b), resource keys (10, 11),
+  and 12 to 15.
+- Removed as untriggerable: the clause "the prepared provider map lacks the id" of 2b (the map and the attachment are
+  built together).
+- The `wasmgc:standalone` guard of 2a was deleted in review round 1: no program distinguishes it.
+
+### Corpus measurements (the condition for "off by default")
+
+- **804 proving programs** (`npm run -s check:prepared-bytes`): base (stage 2 always on), head with the switch off and
+  head with it on give the same outcome line for every row: 670 binaries, 132 refusals, the same 2 throws as PR 1
+  (rows 533, 787). No program trips a validator.
+- **411-row ES5 sample** (`l420.txt`, real runner, IR path, standalone, QuickJS): on and off are identical per row
+  except pids and timings: 397 `compile_error`, 14 `pass`. As in PR 1 it discriminates weakly (the shared prelude
+  refuses first).
+- **Third corpus** (the plan's "ES5 census list" and the 69 + 14 probe programs): not run. The probe programs are in
+  the architect's scratch, which this lane does not have; every ES5 row stops at the same prelude, so the sample
+  stands for them.
+- **Tests, validator on**: 85 files that call a changed entry point or compile Prepared programs. One program tripped
+  the validator: `issue-3525-prepared-pipeline-presentation` "executes genuine async work" (host target) hit stage 3
+  "unresolved export: `__cb_0`" before its existing refusal (#6979 retired host imports). Class: validator too strict
+  (an async frame's settlement callbacks are exported support functions the frame setup declares). Fixed; the test
+  now fails exactly as on base and main. No other trip.
+
+### The nine repeat `assertPreparedIrProgram` calls
+
+Eight are deleted. Each received the program stage 2 checked where it was produced (`program-prepare-ir.ts`, flagged)
+or decoded (`program-codec.ts`, always). The program is deep-frozen there, so the data cannot differ.
+
+| call site | deleted? |
+| --- | --- |
+| `program-consumer.ts`: `acceptPreparedIrProgram`, the emit-time formatter branch, the emit-time native strings branch | yes ×3 |
+| `program-native-invocation.ts`: `requireOwner`, `prepareNativeSourceClosureInput`, `beginNativeSourceClosureEmission` | yes ×3 |
+| `program-physical-plan.ts` `planNativeVectorResources` | yes |
+| `program.ts` `preparedIrProgramAbiLookup` | yes (no `src` caller) |
+| `program-physical-plan.ts` `planNativeValueResources` | **kept**: no compile path calls it. Its only callers are `issue-3518-native-value-boundary` tests that hand it mutated programs (3 turn red without it), and this lane may not edit `issue-3518-*` |
+
+Forged-program tests that attacked the deleted calls now hand the forgery to the stage that owns the invariant:
+
+- `issue-3521-runtime-callable-abi` and `-whole-program-validation`: 10 expectations → `assertPreparedIrProgram`;
+- `issue-3525-prepared-number-remainder` (5 mutants) and `issue-3527-prepared-numeric-throw` (2 mutants): stage 2,
+  then acceptance;
+- `issue-3525-prepared-pipeline-presentation`: 2 module forgeries now meet stage 4 first; regex updated.
+
+Failing sets, validator on, head against base (85 files, chunks, single fork): no new failure.
+
+- Red on both: 5 in `issue-3525-prepared-pipeline-presentation` (also red on current main; since fixed as (S), see
+  the triage below); 3
+  `issue-3518-native-mixed-object-access`; 4 `-native-vector-resources`; 1 `-native-realm-requirements`; 1
+  `-ordinary-getter-source`; 11 `-program-ownership-runtime-seam`; 1 `-public-retirement-gate`; 2
+  `-typed-program-preparation`.
+- Timeouts under load on both: `-ordinary-object-runtime-providers` (2), `-program-abi-seam` (1),
+  `-native-realm-wrapper-storage` (a 10 s hook).
+- `-native-number-format-requirements` fails 2 on head and 16 on the archived base tree (pins that read the checkout).
+
+### Timings and bytes
+
+Strict entry, standalone, second compile in the process, single runs, load about 3:
+
+| program | base, off | head, off | base, on | head, on |
+| --- | ---: | ---: | ---: | ---: |
+| numeric `var x = 1; x = x + 1; if (x !== 2) throw 1;` | 0.10 s | 0.09 s | 0.55 s | 0.45 s |
+| 1 string line in a function | 0.12 s | 0.11 s | 0.67 s | 0.67 s |
+| 50 string lines | 1.38 s | 1.21 s | 8.18 s | 8.07 s |
+| 200 string lines | 6.52 s | 5.98 s | 40.59 s | 40.11 s |
+
+Same binary in every cell (`6f62adfb4514`, `b162552dc288`, `e55c4750f907`, `8d57bdde1604`).
+
+### Differences from the plan
+
+- Stage 3 lives in `src/ir/validate-physical-plan.ts`, beside `program-physical-plan.ts`, not in `src/ir/program/`.
+  That directory is an active clean layer, and the plan's type lives in a `mixed-needs-split` module, so the
+  inventory refuses the edge. It is classified like its type's module (destination `backend-wasmgc`).
+- Stage 4 is a move, but the ledger still calls the moved checks at reserve, fill and seal. Dropping them changes the
+  shared ledger in production (fill-time refusals, the mixed lane) and the `issue-3518` ledger tests; that is 5c. So
+  `validate-module.ts` exports, besides the entry, the seven helpers the ledger calls. `module-reservations.ts`:
+  1,270 → 1,055 lines.
+- The strict entry does not turn a validator error into a compile error (M14). It propagates, because a refusal probe
+  that only checks `success === false` would otherwise absorb a compiler bug. The general invariant catch is left
+  for later.
+- Stage 4 has no M17 expectations (startup order, export joins) and no M7 nullability rule. The presentation still
+  checks the first (one copy, not two). Finalization runs after the driver, so the rule belongs where the finalizer
+  moves in 5c.
+- Stage 3 has no row-by-row "selected provider ↔ setup row" join: that is the census, still running. Stage 3 checks
+  instead that every provider a body uses has a slot.
+- Seeds:
+  - 3 is a branch to a missing block. A missing terminator is a TypeScript type error, and `verify.ts` crashes on it
+    rather than reporting; that file is over its size ceiling.
+  - 4 is caught by the population check.
+  - 9b is added.
+  - 16 is the binary emitter for 12 and 13, and the engine for 15.
+
+### Gates (each run bare)
+
+- Exit 0: `npm run -s typecheck`, `check-loc-budget`, `check-func-budget` (merge base), `check-coercion-sites`,
+  `check:oracle-ratchet`, `check:dead-exports`, `check:import-cycles`, `check-orphaned-scripts`, the
+  compiler-boundaries inventory with `--base d24132a05c`.
+- Red only against `origin/main`, on files this PR does not touch. The branch is stacked on PR 1 (`d24132a05c`),
+  which predates main's commits that changed those files; main is merged into step 1's branch first, not here:
+  - `LOC_GATE_BASE=origin/main` loc and func budgets: `codegen/binary-ops.ts`, `ir/module-bindings.ts`,
+    `codegen/expressions/operator-assignment.ts`, `ir/select.ts`, `codegen/parse-number-native.ts`;
+  - the boundaries inventory with `--base origin/main`: "activation-demoted: native-runtime".
+- `changed-root-tests` (`JS2WASM_EVAL_ENGINE=interpreter`): exit 0, all 6 changed test files green. It was red on
+  `issue-3525-prepared-pipeline-presentation`, whose 5 failures were red on base and on main. The coordinator's
+  decision (2026-11-20) was to triage them, see below. Main's drift is not merged on this stacked branch; the step 1
+  branch gets it first.
+
+### Triage of the 5 tests red on base and main in `issue-3525-prepared-pipeline-presentation`
+
+All five are (S), stale by design after #6979. Each fix asserts the designed outcome exactly; nothing is skipped or
+deleted. The file is now 50 of 50.
+
+| test | compiles | expected (old) | actual (base, main) | cause | fix |
+| --- | --- | --- | --- | --- | --- |
+| matches genuine legacy counted loop and mutable branch values and presentation on wasmgc/host | `COUNTED_LOOP`, JS target `gc`, legacy generator and Prepared presentation | legacy `stringPool` `["accumulate", ""]`; imports helpers differ | `[]`; helpers identical | #6979: `nativeStrings` is always on for the JS target, so `addStringConstantGlobals` materializes constants inline and imports none | legacy pool equals the Prepared pool (`[]`); the helpers are identical (`toBe`), as on linear |
+| … scalar … on wasmgc/host | `SCALAR`, same | `["calculate", ""]` | `[]` | same | same |
+| … two-source 42 … on wasmgc/host | `TWO_SOURCE`, same | `["double", "", "./math", "main"]` | `[]` | same | same |
+| … nonconstant cross-source … on wasmgc/host | `CROSS_SOURCE`, same | `["double", "", "./math", "calculate"]` | `[]` | same | same |
+| executes genuine async work through the original helper without a legacy generator (now "refuses host-Promise async work by name after a genuine Prepared emission, without a legacy generator") | `export async function calculate(value: number): Promise<number>`, JS target `gc` | artifacts; the generated helper returns `[17, -7, 3.5]` from real host Promises | `output-failed`: "The host-semantic implementation was removed (#6979); this module would need retired host imports: env::Promise_new_pending, …_then2, …_resolve, …_settle_resolve, …_settle_reject … a native regime gap belongs to #5385." | #6979 removed host Promise semantics on purpose; the native gap is #5385 | one genuine prepare/accept/emit and no legacy generator, as before; then the exact refusal text |
+
+The async test is also the program that found the stage 3 "unresolved export: `__cb_0`" over-strictness (above). It
+now pins that the program reaches its designed refusal with the validator on.
+
+### Left for steps 4 to 6
+
+- the admission table (4);
+- census, receipts and capability tokens (5a);
+- currentness and owners (5b);
+- the ledger stops calling the moved checks, the layout audit goes, and the nullability rule joins stage 4 (5c);
+- data hygiene (5d);
+- the `planNativeValueResources` call and its forgery tests (with the 3518 retirement);
+- M14's general catch at the entry.
+
+### Not verified
+
+- The third corpus (above), `--utf8-storage`, `compileMulti` beyond the 16 multi-file fixture programs, and gc-lane
+  bytes beyond the 36 non-standalone fixture rows.
+- The remaining 75 test files that only import the ledger or `validation.js` without compiling a Prepared program.
+- Whether the boundaries `--base origin/main` failure also occurs on the base branch.
+
+### Review round 1 (2026-11-20)
+
+The adversarial review found correctness met and quality not met. Each finding and what changed:
+
+| finding | change |
+| --- | --- |
+| 1. Stage 3 repeats the planner (references, duplicate exports) and the producer imports from its validator | Every planner check stage 3 repeated ends in a named gap ("… that the plan cannot reserve", "… needs callable provider materialization", "export X is declared twice" with `__stdout_prepare`/`__stdout_char`, "export X does not resolve to a required binding", "startup source X has no physical initializer body"): that is admission a source program can reach, so it stays in the planner and stage 3 no longer repeats it. The request check went too: the planner copies backend and target from the request. `physicalPlanReferenceKeys` is gone; the planner builds its sets inline as on base, and imports nothing from the validator. No planner check was an internal assertion, so nothing moved into stage 3. |
+| 2. Four mutation survivors | (a) unique slots: seed 9 (a slot listed twice). (b) export and startup checks and the request check: deleted (finding 1). (c) local types: seed "a local of a type index past the last type". (d) the `provider === undefined` arm: seed "an intrinsic stripped of its provider". Also new: the provider count arm (a provider selected twice), the 2a dynamic-type arm, stage 4 resources, `ref.func` declaration and export index. The 2a guard `wasmgc:standalone` had no producible input (the presentation refuses `any` before preparation; the host async bodies it admits carry no `dynamic`, probed with four sources), so it is deleted and 2a applies to every projection. |
+| 3. What stages 2–4 miss | Stage 5 exists as a stage already: `gateEmittedModule` (`src/compiler/validation.ts`), called by `finalizePipelineModule` in `src/compiler.ts` (step 8), which `runPreparedIrPipelinePresentation` calls on every compile unless `validate: false`. Not duplicated. Three seeds apply the reviewer's bugs to the captured module; each passes stage 4 and is `invalid-module` at stage 5. |
+| 4. 3525 remainder and 3527 numeric-throw lost their teeth | Each forgery now asserts stage 2's exact message, and separately what acceptance alone does. Acceptance alone throws for five of seven; it REFUSES two by name as ordinary gaps: the 3525 "missing `__fmod` ABI entry" ("body remainder references intrinsic callable __fmod that the plan cannot reserve") and the 3527 "removed `js.number.box` provider" ("number boxing does not have its exact canonical selected provider …"). That is the gap stage 2 covers: without it a forged program reads as a refusal, not a compiler bug. |
+| 5. Minor | Stage 2b counts providers per feature once per projection and reports the real count ("has 2 selected providers for js.number.box, not 1"); a stripped provider has its own message. `preparedIrProgramAbiLookup` stays: two 3521 tests use it inside larger tests, and the `issue-3518` export-list and relocation pins name it; those pins retire in 2a/2b, and the function with them. |
+
+Stage 4 today is a pure repeat of the ledger's reserve, fill and seal checks (`module-reservations.ts` calls the same
+functions): it cannot fail on compiler output until 5c removes the ledger's copies, so it adds no protection yet.
+
+Invariants per stage after the cleanup (new ones of this PR only):
+
+| stage | invariants |
+| --- | --- |
+| 2 (`validation.ts`) | 4: no `dyn.*` operation in a projection body; no `dynamic` type in one; every intrinsic carries a provider; the manifest selects exactly one provider for its feature |
+| 3 (`validate-physical-plan.ts`) | 3: no binding id has two slots (slots come from seven producers); no resource key is declared twice; every declared `typeKey` resolves |
+| 4 (`validate-module.ts`) | 7: resources resolve (moved); local types resolve; instruction indices resolve (moved); every `ref.func` is declared (moved); export names unique; export index in its space; start is `() -> ()` |
+
+Mutation table: each arm disabled alone, `tests/issue-7380-prepared-validator.test.ts` run (30 tests).
+
+| arm | killed by |
+| --- | --- |
+| 2a `dyn.*` operation | "a dyn.member_get left in a body" |
+| 2a `dynamic` type | "a dynamic result type left on a projection body" |
+| 2b provider missing | "an intrinsic stripped of its provider" |
+| 2b provider count | "provider removed from the manifest", "provider the manifest selects twice" |
+| 3 unique slots | "the source global's slot listed twice" |
+| 3 duplicate resource key | "two declarations with one resource key" |
+| 3 unresolved type key | "a declaration whose type key names no declared type" |
+| 4 resources | "a global of a type index past the last type" |
+| 4 local types | "a local of a type index past the last type" |
+| 4 instructions and `ref.func` | seeds 12, 13, "a ref.func of a function nothing declares" (4 tests) |
+| 4 duplicate export name | "two exports with one name" |
+| 4 export index | "a global export past the last global" |
+| 4 start signature | "a start function with a parameter" |
+
+0 survivors. Deleted instead of seeded: 2a's lane guard; stage 3's request, reference, provider-slot, export and
+startup checks.
+
+Defect class → the stage that catches it:
+
+| defect class | caught by |
+| --- | --- |
+| wrong operand type, undefined value, missing block in lowered IR | stage 1 (always on) |
+| `dyn.*` or `dynamic` left after legalization; intrinsic with no provider or not exactly one | stage 2 |
+| forged program: ABI entry or selected provider removed | stage 2; acceptance alone refuses it by name (finding 4) |
+| a body names a function, global or provider the plan has no slot for | the planner, a named refusal (admission) |
+| a binding with two slots | the ledger's key check, "empty or duplicate resource key" (always on; round 2) |
+| a resource key declared twice; an undeclared `typeKey` | emission, "native physical resources contradict the accepted reservation input" (always on; round 2) |
+| an index out of range (call, global, type, local, export), an undeclared `ref.func`, a bad start signature | the ledger at fill/seal (always on); stage 4 repeats it; with both bypassed the binary emitter throws "index out of range" |
+| an intrinsic without a provider, or a host box manifest with two selected providers | stage 2 only (round 2: the planner's copies were deleted) |
+| a call with the wrong argument types | stage 5 only |
+| f64 locals retyped to i32 | stage 5 only |
+| `global.get` of a global of the wrong type | stage 5 only |
+| a string literal's global slot left unfilled (scratch edit skipping `fillGlobal`) | the ledger's seal, "missing global fill native-string-values:…", validator on and off: an invariant error out of `compile()` |
+| an unfilled data segment or string-pool slot | not representable: `reserveDataSegment` / `reserveString` take their content at reservation |
+| a wrong answer | stage 6 (behaviour tests, differential lanes) |
+
+Proofs, head `64f96a88e8` + this section:
+
+- 804 fixture rows (`check:prepared-bytes`, chunks): base off = head off = base on = head on, every row (670 bytes, 132
+  refusals, 2 throws).
+- 411-row sample (real runner, IR path, standalone, QuickJS): base off = head off = base on = head on per row (file,
+  status, error): 397 `compile_error`, 14 `pass`.
+- Tests, validator on: the three `issue-7380-*`, all 12 `issue-7354-*`, `test262-prepared-entry`/`-runtime`, #7188,
+  `issue-3521-runtime-callable-abi`, `-whole-program-validation`, `issue-3525-prepared-number-remainder`,
+  `-pipeline-presentation`, `issue-3527-prepared-numeric-throw`: all pass. Three runs logged vitest's
+  "Timeout calling onTaskUpdate" RPC error under load with every test green.
+- Gates, each bare, exit 0: typecheck, loc, func, coercion-sites, oracle-ratchet, dead-exports, import-cycles,
+  orphaned-scripts, compiler-boundaries inventory `--base d24132a05c`, `changed-root-tests` (interpreter engine).
+
+### Review round 2 (2026-11-20)
+
+| finding | change |
+| --- | --- |
+| 1. Stage 3 has no invariant of its own | Verified at runtime with the validator off: a scratch planner edit put each stage 3 seed into the real plan of the seed program. A slot listed twice is refused by the ledger ("empty or duplicate resource key"). A resource key declared twice and an undeclared `typeKey` are refused at emission ("native physical resources contradict the accepted reservation input"). All three are caught downstream on every compile, so stage 3 is deleted: `src/ir/validate-physical-plan.ts`, its driver call, its boundaries entry and its three seeds. The defect-class table above names the real catchers. |
+| 2. Stage 4 copies the ledger's export-name and start checks | One implementation each: `claimExportName` and `assertStartSignature` in `validate-module.ts`; the ledger's `defineExport` / `defineStart` call them through `#check`, like the other moved checks (same message after the ledger's prefix). |
+| 3. Stage 2b against the planner's provider refusals | Neither planner refusal is reachable from a source program: with the "intrinsic has no physical provider" arm (`program-physical-plan.ts`) and the `selected.length !== 1` clause (`host-number-boundary-setup.ts`) deleted, the 804 programs give the same outcome on every row. They were internal assertions, so the single implementation is stage 2b and the planner's copies are deleted. The host box join still refuses a missing provider through its canonical-provider equality (the 3527 forgery). |
+| 4. The deleted 2a guard rests on a lane that looks dead | Follow-up [#7443](./7443-prepared-host-async-dynamic-carrier-unreachable.md) records the evidence: prove `host-async-dynamic.ts` and the planner's `dynamicUnits` lane dead and delete them, or seed the program that reaches them. |
+| 5. One error type; the wiring was untested | `PreparedIrProgramInvariantError` moved to the foundation leaf `src/shared/contracts/prepared-ir-program-errors.ts` (`ir/program/errors.ts` re-exports it), so stage 4 throws it as stage 2 does. Two tests compile through the strict entry with a spy seeding the real input of stage 2 (in the producer) and of stage 4 (in the driver); each throws `PreparedValidatorError` naming its stage. |
+| 6. Stage 5 | Stage 5 is the engine gate `gateEmittedModule`, called by `finalizePipelineModule` in `src/compiler.ts` on every compile. It is off only under `validate: false` (runtime-eval). The stage 5 seeds call it directly. |
+
+Invariants per stage after round 2 (new ones of this PR):
+
+| stage | invariants |
+| --- | --- |
+| 2 | 4: no `dyn.*` operation in a projection body; no `dynamic` type in one; every intrinsic carries a provider; the manifest selects exactly one provider for its feature |
+| 3 | none; deleted |
+| 4 | 7, unchanged: resources, local types, instruction indices, `ref.func` declared, export names unique (shared with the ledger), export index, start `() -> ()` (shared with the ledger) |
+
+Mutation table (each disabled alone, `tests/issue-7380-prepared-validator.test.ts`, 29 tests): 2a dynamic type,
+2a `dyn.*`, 2b provider missing, 2b provider count, 4 resources, 4 local types, 4 instructions and `ref.func`,
+4 duplicate export, 4 export index, 4 start signature, the stage 2 wiring in `program-prepare-ir.ts` and the
+stage 4 wiring in the driver: 12 killed, 0 survivors.
+
+Proofs at `49a0b29ad1`:
+
+- The 804 fixture rows match base on every row, switch off and switch on.
+- The 411-row sample matches base per row, off and on.
+- The `issue-7380-*` files and the 3525/3527 files pass.
+- `issue-3520-date-host-bridge-export-provenance` fails the same 5 tests on base and head.
+- Gates as in round 1, re-run.
+
 ## PR 2a result
 
 Implemented 2026-11-20 on `claude/7380-pins-a` (base `claude/7380-validator` `c0ab3915bb`). No `src/` change, so no

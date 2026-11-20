@@ -14559,6 +14559,11 @@
       "layer": "foundation"
     },
     {
+      "path": "src/shared/contracts/prepared-ir-program-errors.ts",
+      "state": "clean",
+      "layer": "foundation"
+    },
+    {
       "path": "src/shared/contracts/ir-identity.ts",
       "state": "clean",
       "layer": "foundation"
@@ -14724,6 +14729,11 @@
     },
     {
       "path": "src/wasm/physical/owned-function-data.ts",
+      "state": "clean",
+      "layer": "wasm-physical"
+    },
+    {
+      "path": "src/wasm/physical/validate-module.ts",
       "state": "clean",
       "layer": "wasm-physical"
     },
@@ -16970,6 +16980,11 @@
     },
     {
       "path": "src/ir/program/validation.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
+      "path": "src/ir/program/prepared-validator.ts",
       "state": "clean",
       "layer": "ir-program"
     },

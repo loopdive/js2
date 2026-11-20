@@ -277,14 +277,14 @@ describe("canonical runtime callables in the complete program ABI", () => {
   it("rejects missing, duplicate and unused final runtime declarations before reconstructing any lookup", () => {
     const entry = runtimeEntries(prepared.abi.entries)[0]!;
     expect(() =>
-      preparedIrProgramAbiLookup({
+      assertPreparedIrProgram({
         ...prepared,
         abi: { entries: prepared.abi.entries.filter((item) => item !== entry) },
       }),
     ).toThrow("runtime ABI declaration population");
-    expect(() =>
-      preparedIrProgramAbiLookup({ ...prepared, abi: { entries: [...prepared.abi.entries, entry] } }),
-    ).toThrow("duplicates a binding");
+    expect(() => assertPreparedIrProgram({ ...prepared, abi: { entries: [...prepared.abi.entries, entry] } })).toThrow(
+      "duplicates a binding",
+    );
     const unused = {
       ...prepared,
       ir: {
@@ -292,7 +292,7 @@ describe("canonical runtime callables in the complete program ABI", () => {
         functions: prepared.ir.functions.map((fn) => (calls(fn).length ? caller(fn, REF, 0) : fn)),
       },
     };
-    expect(() => preparedIrProgramAbiLookup(unused)).toThrow("runtime ABI declaration population");
+    expect(() => assertPreparedIrProgram(unused)).toThrow("runtime ABI declaration population");
   });
 
   it.each(["params", "results", "binding", "id", "owner", "order", "unit", "slot"] as const)(
@@ -332,7 +332,7 @@ describe("canonical runtime callables in the complete program ABI", () => {
           ),
         },
       };
-      expect(() => preparedIrProgramAbiLookup(changed)).toThrow(/runtime ABI/);
+      expect(() => assertPreparedIrProgram(changed)).toThrow(/runtime ABI/);
     },
   );
 

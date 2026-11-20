@@ -16,7 +16,6 @@ import type {
   TypeDef,
   FieldDef,
   StructTypeDef,
-  FuncTypeDef,
   WasmFunction,
   Import,
   ImportDesc,
@@ -27,7 +26,17 @@ import type {
   WasmExport,
 } from "../model/module-records.js";
 import { appendDefinedFunc, commitDefinedFuncOrdinal, mintDefinedFunc, STABLE_FUNC_BASE } from "./function-handles.js";
-import { indexPhysicalTypes, planPhysicalTypeSection } from "./type-layout.js";
+import { indexPhysicalTypes } from "./type-layout.js";
+import {
+  assertDeclaredFunctionReferences,
+  assertPhysicalFinalParents,
+  assertPhysicalInstructions,
+  assertPhysicalResources,
+  assertPhysicalValue,
+  assertStartSignature,
+  claimExportName,
+  physicalType,
+} from "./validate-module.js";
 import { funcTypeKey, internFunctionType, sameValTypes } from "./function-types.js";
 import { preparedValidationEnabled } from "../../shared/contracts/prepared-validation.js";
 
@@ -313,6 +322,15 @@ export class PhysicalModuleReservations {
     throw new Error(`physical module reservations: ${detail}`);
   }
 
+  /** Run one of the stage-4 module checks; a violation fails the ledger with the check's own text. */
+  #check<T>(check: () => T): T {
+    try {
+      return check();
+    } catch (error) {
+      return this.#fail(error instanceof Error ? error.message : String(error));
+    }
+  }
+
   #snapshot(data: PhysicalData): string {
     try {
       return dataText(data);
@@ -455,7 +473,7 @@ export class PhysicalModuleReservations {
     const key = funcTypeKey([...params], [...results]);
     const cached = this.#cache.get(key);
     if (cached !== undefined) {
-      const type = this.#type(cached);
+      const type = this.#check(() => physicalType(this.#module, cached));
       if (type?.kind !== "func" || !sameValTypes(type.params, params) || !sameValTypes(type.results, results)) {
         this.#fail("cached function signature contradicts exact reference/brand requirements");
       }
@@ -483,7 +501,7 @@ export class PhysicalModuleReservations {
   reserveType(key: PhysicalResourceKey, definition: TypeDef): TypeReservation {
     this.#require("reserving");
     // Inspect the candidate before consuming a key or publishing any type slot.
-    this.#validateFinalParents([...this.#module.types, definition]);
+    this.#check(() => assertPhysicalFinalParents([...this.#module.types, definition]));
     this.#key(key);
     if (this.#typeRecords.has(definition)) this.#fail("same type object reserved twice");
     const typeIndex = this.#flatTypes().length;
@@ -561,7 +579,7 @@ export class PhysicalModuleReservations {
           if (!Number.isSafeInteger(type.typeIdx) || (type.typeIdx as number) < 0 || (type.typeIdx as number) >= next)
             this.#fail("self field has missing/forward existing reference");
           value = { kind: type.kind, typeIdx: type.typeIdx as number };
-          this.#validateValue(value);
+          this.#check(() => assertPhysicalValue(this.#module, value));
         } else {
           if (typeof type.kind !== "string" || "typeIdx" in type || !selfFieldScalarKinds.has(type.kind))
             this.#fail("invalid self field scalar");
@@ -736,7 +754,7 @@ export class PhysicalModuleReservations {
 
   freezeReservations(): void {
     this.#require("reserving");
-    this.#validateResources();
+    this.#check(() => assertPhysicalResources(this.#module));
     this.#state = "filling";
   }
 
@@ -838,8 +856,10 @@ export class PhysicalModuleReservations {
   }
 
   #validateFunctionDefinition(definition: { locals: LocalDef[]; body: Instr[] }): void {
-    for (const local of definition.locals) this.#validateValue(local.type);
-    this.#validateInstructions(definition.body);
+    this.#check(() => {
+      for (const local of definition.locals) assertPhysicalValue(this.#module, local.type);
+      assertPhysicalInstructions(this.#module, definition.body);
+    });
   }
 
   fillFunction(token: FunctionReservation, definition: { locals: LocalDef[]; body: Instr[] }): void {
@@ -890,7 +910,7 @@ export class PhysicalModuleReservations {
     if (token.kind !== "global") this.#fail("global fill requires a defined-global token");
     if (this.#filledGlobals.has(token)) this.#fail(`duplicate global fill ${token.key}`);
     if (initializer.length === 0) this.#fail(`global initializer is empty ${token.key}`);
-    this.#validateInstructions(initializer);
+    this.#check(() => assertPhysicalInstructions(this.#module, initializer));
     token.object.init = initializer;
     this.#filledGlobals.set(token, { init: initializer, text: this.#snapshot(initializer) });
   }
@@ -907,7 +927,7 @@ export class PhysicalModuleReservations {
     if (table.kind !== "table" || table.object.elementType !== "funcref")
       this.#fail("function element requires a funcref table");
     if (offset.length === 0) this.#fail("element offset is empty");
-    this.#validateInstructions(offset);
+    this.#check(() => assertPhysicalInstructions(this.#module, offset));
     for (const fn of functions) this.#callable(fn);
     const element: Element = {
       tableIdx: this.physicalIndex(table),
@@ -924,7 +944,7 @@ export class PhysicalModuleReservations {
     this.#require("filling");
     this.#key(key);
     this.#owned(target);
-    if (this.#exportNames.has(externalName)) this.#fail(`duplicate export name ${externalName}`);
+    this.#check(() => claimExportName(this.#exportNames, externalName));
     let kind: WasmExport["desc"]["kind"];
     switch (target.kind) {
       case "function":
@@ -949,7 +969,6 @@ export class PhysicalModuleReservations {
         return this.#fail("resource kind cannot be exported");
     }
     const exported: WasmExport = { name: externalName, desc: { kind, index: this.physicalIndex(target) } };
-    this.#exportNames.add(externalName);
     this.#module.exports.push(exported);
     this.#expected.exports.push(exported);
     this.#publications.set(exported, this.#snapshot(exported));
@@ -972,8 +991,7 @@ export class PhysicalModuleReservations {
         : target.object.desc.kind === "func"
           ? target.object.desc.typeIdx
           : this.#fail("start import is not a function");
-    const signature = this.#functionType(typeIdx);
-    if (signature.params.length || signature.results.length) this.#fail("start function must have signature () -> ()");
+    this.#check(() => assertStartSignature(this.#module, typeIdx));
     const index = this.physicalIndex(target);
     this.#module.startFuncIdx = index;
     this.#start = index;
@@ -992,13 +1010,13 @@ export class PhysicalModuleReservations {
   /** Only completed, unchanged actual resources contribute to this census. */
   seal(): PhysicalModuleCensus {
     this.#require("filling");
-    this.#validateResources();
+    this.#check(() => assertPhysicalResources(this.#module));
     for (const token of this.#tokens) {
       if (token.kind === "function" && !this.#filledFunctions.has(token))
         this.#fail(`missing function fill ${token.key}`);
       if (token.kind === "global" && !this.#filledGlobals.has(token)) this.#fail(`missing global fill ${token.key}`);
     }
-    this.#validateDeclaredFunctionReferences();
+    this.#check(() => assertDeclaredFunctionReferences(this.#module));
     this.#state = "sealed";
     const m = this.#module;
     return Object.freeze({
@@ -1019,10 +1037,6 @@ export class PhysicalModuleReservations {
     });
   }
 
-  #index(index: number, count: number, kind: string): void {
-    if (!Number.isInteger(index) || index < 0 || index >= count) this.#fail(`unresolved ${kind} index ${index}`);
-  }
-
   /** Retain exact nested type objects alongside the existing content snapshot. */
   #typeMembers(type: TypeDef): TypeDef[] {
     if (type.kind === "rec") return type.types.flatMap((member) => [member, ...this.#typeMembers(member)]);
@@ -1035,236 +1049,6 @@ export class PhysicalModuleReservations {
       return indexPhysicalTypes(this.#module.types).entries.map((entry) => entry.definition);
     } catch (error) {
       this.#fail(error instanceof Error ? error.message : String(error));
-    }
-  }
-
-  #type(index: number): Exclude<TypeDef, { kind: "rec" } | { kind: "sub" }> {
-    const flat = this.#flatTypes();
-    this.#index(index, flat.length, "type");
-    const type = flat[index]!;
-    return type.kind === "sub" ? type.type : type;
-  }
-
-  #functionType(index: number): FuncTypeDef {
-    const type = this.#type(index);
-    if (type.kind !== "func") this.#fail(`type ${index} is not a function signature`);
-    return type;
-  }
-
-  #validateValue(value: ValType): void {
-    if (value.kind === "ref" || value.kind === "ref_null") {
-      this.#type(value.typeIdx);
-    }
-  }
-
-  /** Match emitted finality, including implicit final plain types and rec/sub wrappers. */
-  #validateFinalParents(types: readonly TypeDef[]): void {
-    let entries: ReturnType<typeof indexPhysicalTypes>["entries"];
-    try {
-      entries = indexPhysicalTypes(types).entries;
-    } catch (error) {
-      this.#fail(error instanceof Error ? error.message : String(error));
-    }
-    for (const { definition } of entries) {
-      const parentIndex =
-        definition.kind === "sub"
-          ? definition.superType
-          : definition.kind === "struct"
-            ? definition.superTypeIdx
-            : undefined;
-      if (parentIndex === undefined || parentIndex === null || parentIndex === -1) continue;
-      const parent = entries[parentIndex]?.definition;
-      // Forward coordinates may still be unresolved during reservation. The
-      // existing final resource validation rejects any unresolved coordinate.
-      if (!parent) continue;
-      const final =
-        parent.kind === "sub"
-          ? !!parent.final
-          : parent.kind === "struct"
-            ? parent.superTypeIdx === undefined || !!parent.final
-            : true;
-      if (final) this.#fail(`cannot extend final parent type ${parentIndex}`);
-    }
-  }
-
-  #validateType(type: TypeDef): void {
-    switch (type.kind) {
-      case "func":
-        for (const value of [...type.params, ...type.results]) this.#validateValue(value);
-        break;
-      case "struct":
-        if (
-          type.superTypeIdx !== undefined &&
-          type.superTypeIdx !== -1 &&
-          this.#type(type.superTypeIdx).kind !== "struct"
-        ) {
-          this.#fail("struct parent is not a struct");
-        }
-        for (const field of type.fields) this.#validateValue(field.type);
-        break;
-      case "array":
-        this.#validateValue(type.element);
-        break;
-      case "rec":
-        for (const member of type.types) this.#validateType(member);
-        break;
-      case "sub":
-        if (type.superType !== null) {
-          this.#type(type.superType);
-        }
-        this.#validateType(type.type);
-        break;
-    }
-  }
-
-  #validateCanonicalGroup(): void {
-    const group = this.#module.canonicalRuntimeRecGroup;
-    if (group === undefined) return;
-    const flat = this.#flatTypes();
-    this.#index(group.start, flat.length, "canonical rec-group start");
-    this.#index(group.end, flat.length, "canonical rec-group end");
-    if (group.end < group.start || !Number.isInteger(group.abiVersion) || group.abiVersion < 1) {
-      this.#fail("invalid canonical runtime rec-group descriptor");
-    }
-    this.#planTypes([[group.start, group.end]]);
-  }
-
-  #planTypes(forced: ReadonlyArray<readonly [number, number]> = []): void {
-    try {
-      planPhysicalTypeSection(indexPhysicalTypes(this.#module.types), forced);
-    } catch (error) {
-      this.#fail(error instanceof Error ? error.message : String(error));
-    }
-  }
-
-  #functionIndex(handle: FuncHandle): number {
-    if (handle >= STABLE_FUNC_BASE) {
-      const position = this.#module.funcOrdinalToPosition[handle - STABLE_FUNC_BASE];
-      if (position === undefined) this.#fail(`unresolved function handle ${handle}`);
-      this.#index(position, this.#module.functions.length, "defined function");
-      return this.#importCount("func") + position;
-    }
-    this.#index(handle, this.#importCount("func") + this.#module.functions.length, "function");
-    return handle;
-  }
-
-  #validateDeclaredFunctionReferences(): void {
-    const declared = new Set<number>();
-    for (const handle of this.#module.declaredFuncRefs) declared.add(this.#functionIndex(handle));
-    for (const element of this.#module.elements) {
-      for (const handle of element.funcIndices) declared.add(this.#functionIndex(handle));
-      this.#validateInstructions(element.offset, declared);
-    }
-    for (const global of this.#module.globals) this.#validateInstructions(global.init, declared);
-    for (const exported of this.#module.exports) {
-      if (exported.desc.kind === "func") declared.add(this.#functionIndex(exported.desc.index));
-    }
-    // Publication is complete now. Startup alone and other function bodies
-    // are not declaration routes (the existing #4257/emitter contract).
-    for (const fn of this.#module.functions) {
-      const used = new Set<number>();
-      this.#validateInstructions(fn.body, used);
-      for (const index of used) {
-        if (!declared.has(index)) this.#fail(`undeclared ref.func target ${index} in ${fn.name}`);
-      }
-    }
-  }
-
-  #validateResources(): void {
-    const m = this.#module;
-    this.#validateCanonicalGroup();
-    this.#validateFinalParents(m.types);
-    for (const type of m.types) this.#validateType(type);
-    this.#planTypes();
-    for (const imp of m.imports) {
-      if (imp.desc.kind === "func" || imp.desc.kind === "tag") {
-        const signature = this.#functionType(imp.desc.typeIdx);
-        if (imp.desc.kind === "tag" && signature.results.length) this.#fail("tag import has results");
-      } else if (imp.desc.kind === "global") this.#validateValue(imp.desc.type);
-    }
-    for (const fn of m.functions) this.#functionType(fn.typeIdx);
-    for (const global of m.globals) this.#validateValue(global.type);
-    for (const tag of m.tags) if (this.#functionType(tag.typeIdx).results.length) this.#fail("tag has results");
-    const positions = new Set<number>();
-    for (const position of m.funcOrdinalToPosition) {
-      this.#index(position, m.functions.length, "function ordinal");
-      if (positions.has(position)) this.#fail("duplicate function ordinal position");
-      positions.add(position);
-    }
-    if (positions.size !== m.functions.length) this.#fail("function lacks minted ordinal");
-    if (m.functions.length + this.#importCount("func") >= STABLE_FUNC_BASE)
-      this.#fail("physical function space overlaps stable handles");
-    for (const descriptor of [...m.tables, ...m.memories]) {
-      if (
-        !Number.isInteger(descriptor.min) ||
-        descriptor.min < 0 ||
-        (descriptor.max !== undefined && (!Number.isInteger(descriptor.max) || descriptor.max < descriptor.min))
-      ) {
-        this.#fail("invalid table/memory limits");
-      }
-    }
-    for (const data of m.dataSegments) {
-      if (!data.passive) {
-        this.#index(0, m.memories.length + this.#importCount("memory"), "active data memory");
-        if (!Number.isInteger(data.offset) || data.offset < 0) this.#fail("invalid active data offset");
-      }
-    }
-  }
-
-  #validateInstructions(body: Instr[], refTargets?: Set<number>): void {
-    const m = this.#module;
-    for (const instr of body) {
-      if ("funcIdx" in instr) {
-        const index = this.#functionIndex(instr.funcIdx);
-        if (instr.op === "ref.func") refTargets?.add(index);
-      }
-      if ("typeIdx" in instr) {
-        // Existing abstract heap immediates are not module indices.
-        const abstractHeap =
-          ["ref.cast", "ref.cast_null", "ref.test", "ref.null"].includes(instr.op) &&
-          [-16, -17, -18, -19, -20, -21, -22, -23, -24, -25].includes(instr.typeIdx);
-        if (!abstractHeap) {
-          const type = this.#type(instr.typeIdx);
-          if (
-            (instr.op.startsWith("struct.") && type.kind !== "struct") ||
-            (instr.op.startsWith("array.") && type.kind !== "array")
-          )
-            this.#fail(`wrong resource kind for ${instr.op}`);
-          if (["call_indirect", "call_ref", "return_call_ref"].includes(instr.op)) this.#functionType(instr.typeIdx);
-          if ("fieldIdx" in instr && type.kind === "struct")
-            this.#index(instr.fieldIdx, type.fields.length, "struct field");
-        }
-      }
-      if (instr.op === "array.copy") {
-        if (this.#type(instr.dstTypeIdx).kind !== "array" || this.#type(instr.srcTypeIdx).kind !== "array")
-          this.#fail("array.copy requires array types");
-      }
-      if (instr.op === "global.get" || instr.op === "global.set")
-        this.#index(instr.index, this.#importCount("global") + m.globals.length, "global");
-      if ("tableIdx" in instr) this.#index(instr.tableIdx, this.#importCount("table") + m.tables.length, "table");
-      if ("tagIdx" in instr) this.#index(instr.tagIdx, this.#importCount("tag") + m.tags.length, "tag");
-      if ("dataIdx" in instr) this.#index(instr.dataIdx, m.dataSegments.length, "data segment");
-      if (instr.op.startsWith("memory.") || "align" in instr)
-        this.#index(0, this.#importCount("memory") + m.memories.length, "memory");
-      if ("blockType" in instr) {
-        if (instr.blockType.kind === "val") this.#validateValue(instr.blockType.type);
-        if (instr.blockType.kind === "type") this.#functionType(instr.blockType.typeIdx);
-      }
-      if ("body" in instr) this.#validateInstructions(instr.body, refTargets);
-      if (instr.op === "if") {
-        this.#validateInstructions(instr.then, refTargets);
-        if (instr.else) this.#validateInstructions(instr.else, refTargets);
-      }
-      if (instr.op === "try" || instr.op === "try_table") {
-        for (const clause of instr.catches) {
-          if (clause.tagIdx !== undefined)
-            this.#index(clause.tagIdx, this.#importCount("tag") + m.tags.length, "catch tag");
-          else if ("kind" in clause && (clause.kind === "catch" || clause.kind === "catch_ref"))
-            this.#fail("tagged catch has no tag");
-          if ("body" in clause) this.#validateInstructions(clause.body, refTargets);
-        }
-        if (instr.op === "try" && instr.catchAll) this.#validateInstructions(instr.catchAll, refTargets);
-      }
     }
   }
 }
