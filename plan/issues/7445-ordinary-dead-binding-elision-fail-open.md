@@ -87,3 +87,18 @@ The Prepared path is safe today only because it refuses all of these: `globalThi
   node on the ordinary standalone and default lanes.
 - Ordinary bytes stay identical for programs with neither shape (the F0 byte proof: 50 test262 files × 2 targets
   plus 10 Temporal rows).
+
+## Notes from #7354 F0 review round 2 (2026-11-20)
+
+- **Prepared path, independent of elision (main = PR 7362):** in runner mode (`skipSemanticDiagnostics`,
+  `scriptGoal`), `let undefined = 1;`, `const NaN = 1;` and `const undefined = 1;` compile and return; node throws
+  a SyntaxError at GlobalDeclarationInstantiation.
+  - This is a run-time error of the Script (test262 `decl-lex-restricted-global.js` is `negative: phase:
+    runtime`), so it does not belong in the early-error detector. A detector rule for it regressed that row in
+    round 1 and was removed.
+  - It needs a declaration-instantiation check in the Script's start code.
+- **Accepted on both paths, main and PR alike:** `let {undefined} = {};`, `let [NaN] = [];` and
+  `function NaN() {}` at the Script top level (restricted names through destructuring or a function declaration;
+  the never-elide rule sees only plain identifier declarators).
+- **Dead duplicate:** `IMMUTABLE_GLOBAL_PROPERTY_NAMES` in `src/codegen/expressions/runtime-eval-provider.ts` is an
+  unused copy of `GLOBAL_CONSTANTS` (`src/shared/ambient-intrinsics.ts`); delete it.

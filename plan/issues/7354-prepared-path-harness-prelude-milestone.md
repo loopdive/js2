@@ -3135,3 +3135,49 @@ The verdict was correctness NOT MET: the elision failed open on the Prepared pat
   - 10 Temporal rows: identical, provider included.
   - Prepared fixtures 0-399: the same 4 all-dead rows differ as before, the rest are identical.
 - **Sample:** the first-gap tally is unchanged.
+
+### Review round 2 (2026-11-20)
+
+Quality was met. Correctness was not met, by one test262 regression.
+
+**Finding.** `checkRestrictedGlobalLexicals` (added in round 1) turned
+`language/global-code/decl-lex-restricted-global.js` into a compile error. That test is `let undefined;`,
+`negative: phase: runtime`. CI's runner passes `scriptGoal`, so the row scored `compile_error` where main passes
+on host and standalone. My earlier local sweeps did not pass `scriptGoal`, which is why they missed it.
+
+The rule was wrong in kind: the SyntaxError belongs to GlobalDeclarationInstantiation, a run-time step of the
+Script, not to the early errors. With no stated goal it also made an ordinary `let undefined;` throw at start,
+which is wrong for a Module.
+
+**Fix.**
+
+- The rule is removed. The elision still never drops a declaration of `undefined`/`NaN`/`Infinity`.
+- The pass, the IR script-var home (`src/ir/module-binding-script-var-home.ts`) and the bare-identifier write
+  guard (`src/codegen/builtin-nonwritable-write.ts`) now read one set, `GLOBAL_CONSTANTS`
+  (`src/shared/ambient-intrinsics.ts`, now exported). The fourth copy, `IMMUTABLE_GLOBAL_PROPERTY_NAMES` in
+  `src/codegen/expressions/runtime-eval-provider.ts`, is unused; noted in #7445.
+- `goalsOf` walks the early-error detector once for a stated goal, and only under the Script and Module goals for
+  an unstated one.
+- The labels comment now says why a function body restarts its label set.
+- One more one-line detector fix: `checkDuplicateLabelsInBlock` now checks a function's body inside a class
+  static block. The function/class boundary test both label walks repeated is now one predicate,
+  `isLabelScopeBoundary`.
+
+**Proof.**
+
+- **F0 tests:** 67, green. They include a row pinning `decl-lex-restricted-global`'s shape on the ordinary compile
+  with the Script goal (it compiles, and instantiation throws), and two detector rows for duplicate labels.
+- **Restricted-lexical rows:** `let undefined = 1;`, `const NaN = 1;` and `const undefined = 1;` left the
+  "refuses or throws" list. The Prepared path in runner mode compiles and returns them on main and here alike: a
+  GlobalDeclarationInstantiation error it does not model (#7445). They stay covered by the never-elide unit row.
+  `let Infinity;` refuses, as on main.
+- **Runner sweep with `scriptGoal`:** the reviewer's 779 files (scratch patch of `tests/test262-runner.ts`,
+  reverted), host. Verdicts are identical main vs branch, before and after the static-block fix.
+  `decl-lex-restricted-global.js` passes on both, and on standalone.
+- **Named test files, failures per side (main / branch):** issue-990 2 / 1, issue-3632 3 / 3, issue-2923 9 / 9,
+  test262-prepared-entry 0 / 0.
+- **Bytes:** ordinary 50 × 2 targets and 10 Temporal rows identical to main. Prepared fixtures: the same 4
+  all-dead rows as before.
+
+**Still accepted on main and here alike** (filed in #7445): `let {undefined} = {}`, `let [NaN] = []` and
+`function NaN(){}` at the Script top level.
