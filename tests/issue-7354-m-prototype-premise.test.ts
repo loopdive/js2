@@ -38,12 +38,12 @@ describe("#7354 M1 — no Prepared program obtains a built-in prototype", () => 
     [
       "a dynamic value's __proto__",
       "function f(v){ return v.__proto__; } f(1);",
-      "dynamic operation member read '__proto__' of a string needs its wrapper prototype has no Prepared intrinsic",
+      "dynamic operation member read '__proto__' of a value that may be a string or a number or a boolean needs a built-in prototype's properties has no Prepared intrinsic",
     ],
     [
       "a dynamic value's constructor",
       "function f(v){ return v.constructor; } f(1);",
-      "dynamic operation member read 'constructor' of a string needs its wrapper prototype has no Prepared intrinsic",
+      "dynamic operation member read 'constructor' of a value that may be a string or a number or a boolean needs a built-in prototype's properties has no Prepared intrinsic",
     ],
     [
       "a number literal's constructor",

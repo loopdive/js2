@@ -1,6 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 /**
- * (#7354 D1, Ty, Str2, Str2-c, O2, O2b) The kinds of value the Prepared dynamic value admits, and how each operation
+ * (#7354 D1, Ty, Str2, Str2-c, O2, O2b, M2) The kinds of value the Prepared dynamic value admits, and how each operation
  * of the dynamic-value legalization answers each kind. Every table is a `Record` over `CarrierKind`, so a slice that
  * admits a kind must give it a row in each.
  *
@@ -9,6 +9,7 @@
  * last kind untested (`KIND_ORDER`).
  */
 import type { IntrinsicId } from "../core/intrinsics.js";
+import type { OrdinaryObjectRuntimeFeature } from "../runtime/contracts/manifest.js";
 import type { IrInstr, IrType, IrValueId } from "../core/nodes.js";
 import type { TagId } from "../core/tag-domain.js";
 import { irOrdinaryObjectCallableDeclaration } from "../runtime/ordinary-object-callables.js";
@@ -24,6 +25,7 @@ export const TYPEOF_NAME = {
   string: "string",
   undefined: "undefined",
   null: "object",
+  error: "object",
   object: "object",
 } as const;
 export type CarrierKind = keyof typeof TYPEOF_NAME;
@@ -36,38 +38,48 @@ export const KINDS_OF_TYPEOF: ReadonlyMap<string, readonly CarrierKind[]> = new 
 );
 
 /**
- * How the carrier tests for each kind: a runtime predicate, the null test, or (an ordinary object) none of the other
- * kinds' tests.
+ * How the carrier tests for each kind: a runtime predicate, the null test, (M2) the realm's test of its error layout
+ * (a realm call: the layout is the realm's, not the dynamic-value resources'), or (an ordinary object) none of the
+ * other kinds' tests.
  */
-export const KIND_TEST: Readonly<Record<CarrierKind, IntrinsicId | "ref.is_null" | "complement">> = {
+export const KIND_TEST: Readonly<
+  Record<
+    CarrierKind,
+    IntrinsicId | Extract<OrdinaryObjectRuntimeFeature, "js.object.is-error"> | "ref.is_null" | "complement"
+  >
+> = {
   number: "js.value.is_number",
   boolean: "js.value.is_boolean",
   string: "js.value.is_string",
   undefined: "js.extern.is_undefined",
   null: "ref.is_null",
+  error: "js.object.is-error",
   object: "complement",
 };
 
 /**
  * How ToString (§7.1.17) answers each kind, in the order a chain tests them: the native string it carries, the number
- * formatter, "true"/"false", the kind's own name, or (O2b) an object's OrdinaryToPrimitive
- * (`ordinary-to-primitive.ts`). The last kind is reached untested because the chain is total over this table.
+ * formatter, "true"/"false", the kind's own name, (M2) an error's Error.prototype.toString, or (O2b) an object's
+ * OrdinaryToPrimitive (`ordinary-to-primitive.ts`). The last kind is reached untested because the chain is total over
+ * this table; an object stays last, the complement of the others.
  */
 export const TO_STRING_ARM: Readonly<
-  Record<CarrierKind, "as-string" | "format" | "boolean" | "name" | "to-primitive">
+  Record<CarrierKind, "as-string" | "format" | "boolean" | "name" | "error" | "to-primitive">
 > = {
   string: "as-string",
   number: "format",
   boolean: "boolean",
   undefined: "name",
   null: "name",
+  error: "error",
   object: "to-primitive",
 };
 export const KIND_ORDER = Object.keys(TO_STRING_ARM) as readonly CarrierKind[];
 
 /**
  * How `+` (§13.15.3) takes each kind after ToPrimitive: a string makes the addition a concatenation, any other kind is
- * summed through ToNumber. An object's ToPrimitive is a string or a TypeError (`ordinary-to-primitive.ts`).
+ * summed through ToNumber. An object's ToPrimitive is a string or a TypeError (`ordinary-to-primitive.ts`); (M2) an
+ * error's is its Error.prototype.toString string.
  */
 export const ADD_ROLE: Readonly<Record<CarrierKind, "concat" | "numeric">> = {
   number: "numeric",
@@ -75,19 +87,22 @@ export const ADD_ROLE: Readonly<Record<CarrierKind, "concat" | "numeric">> = {
   string: "concat",
   undefined: "numeric",
   null: "numeric",
+  error: "concat",
   object: "concat",
 };
 
 /**
  * How ToNumber (§7.1.4) answers each kind: the primitive unboxer (a number its payload, a Boolean 0/1, `undefined`
- * NaN, `null` 0), or (O2b) an object's ToPrimitive, a string that reads as NaN.
+ * NaN, `null` 0), (O2b) an object's ToPrimitive, a string that reads as NaN, or (M2) NaN for an error, whose
+ * ToPrimitive is "TypeError: …" and cannot throw.
  */
-export const TO_NUMBER_ARM: Readonly<Record<CarrierKind, "unbox" | "to-primitive">> = {
+export const TO_NUMBER_ARM: Readonly<Record<CarrierKind, "unbox" | "to-primitive" | "nan">> = {
   number: "unbox",
   boolean: "unbox",
   string: "unbox",
   undefined: "unbox",
   null: "unbox",
+  error: "nan",
   object: "to-primitive",
 };
 
@@ -102,6 +117,7 @@ export const OBJECT_TAG: Readonly<Record<CarrierKind, string>> = {
   string: "String",
   undefined: "Undefined",
   null: "Null",
+  error: "Error",
   object: "Object",
 };
 
@@ -109,14 +125,15 @@ export const OBJECT_TAG: Readonly<Record<CarrierKind, string>> = {
  * (#7354 O4, O3) How a member read (GetValue) and a member write (PutValue) take each receiver
  * kind: both ToObject the base, so `undefined` and `null` throw a TypeError; an object is the realm's [[Get]] or
  * [[Set]]; a primitive reaches only built-in prototypes (`builtin-prototype-keys.ts`), which no Prepared program can
- * obtain to change (M1, C1).
+ * obtain to change (M1, C1); (M2) an error is the realm's TypeError, whose `name` and `message` are its fields.
  */
-export const MEMBER_ACCESS_ARM: Readonly<Record<CarrierKind, "type-error" | "object" | "primitive">> = {
+export const MEMBER_ACCESS_ARM: Readonly<Record<CarrierKind, "type-error" | "object" | "primitive" | "error">> = {
   number: "primitive",
   boolean: "primitive",
   string: "primitive",
   undefined: "type-error",
   null: "type-error",
+  error: "error",
   object: "object",
 };
 
@@ -141,9 +158,14 @@ export interface LegalizationProgram {
 /** A program that builds no ordinary object. */
 export const NO_OBJECTS: ProgramObjects = Object.freeze({ present: false, namesSymbol: false });
 
-/** The kinds a value of a program may be: the object kind only where the program builds objects. */
-export function admittedKinds(objects: ProgramObjects): readonly CarrierKind[] {
-  return objects.present ? KIND_ORDER : KIND_ORDER.filter((kind) => kind !== "object");
+/**
+ * The kinds a value of a program may be: the object kind only where the program builds objects, (M2) the error kind
+ * only where it reads a catch binding, the one way a TypeError the legalization raises becomes a value.
+ */
+export function admittedKinds(program: LegalizationProgram): readonly CarrierKind[] {
+  return KIND_ORDER.filter(
+    (kind) => (kind !== "object" || program.objects.present) && (kind !== "error" || program.catches),
+  );
 }
 
 /**

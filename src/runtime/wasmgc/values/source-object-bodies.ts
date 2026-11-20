@@ -140,3 +140,31 @@ export function buildSourceObjectHasDefinition(d: { readonly has: FuncHandle }):
     ],
   };
 }
+
+/** (#7354 M2) `js.object.is-error(value) -> i32`: whether `value` is the realm's error layout (`$Error_struct`). */
+export function buildSourceObjectIsErrorDefinition(d: { readonly errorTypeIdx: number }): SourceObjectDefinition {
+  return {
+    locals: [],
+    body: [{ op: "local.get", index: 0 }, { op: "any.convert_extern" }, { op: "ref.test", typeIdx: d.errorTypeIdx }],
+  };
+}
+
+/**
+ * (#7354 M2) `js.object.error-field(error, selector) -> externref`: the error's `name` (selector 1) or `message`
+ * (selector 0) field. The caller has tested the error kind, so the cast cannot fail.
+ */
+export function buildSourceObjectErrorFieldDefinition(d: { readonly errorTypeIdx: number }): SourceObjectDefinition {
+  const field = (fieldIdx: number): Instr[] => [
+    { op: "local.get", index: 0 },
+    { op: "any.convert_extern" },
+    { op: "ref.cast", typeIdx: d.errorTypeIdx },
+    { op: "struct.get", typeIdx: d.errorTypeIdx, fieldIdx },
+  ];
+  return {
+    locals: [],
+    body: [
+      { op: "local.get", index: 1 },
+      { op: "if", blockType: { kind: "val", type: { kind: "externref" } }, then: field(2), else: field(1) },
+    ],
+  };
+}

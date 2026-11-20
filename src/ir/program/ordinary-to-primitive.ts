@@ -10,12 +10,12 @@
  * step 2) is reachable only by naming `Symbol`, and such a program refuses by name.
  */
 import type { IrInstr, IrValueId } from "../core/nodes.js";
-import type { CarrierKind, ProgramObjects } from "./dynamic-value-kinds.js";
+import type { CarrierKind, LegalizationProgram } from "./dynamic-value-kinds.js";
 import { realmCall, typeError, type TypeErrorBuilders } from "./dynamic-realm-calls.js";
 import { gap } from "./dynamic-value-gap.js";
 
 /** The kinds whose values are not callable: a property value of one of them is skipped as a conversion method. */
-type NonCallableKind = "number" | "boolean" | "string" | "undefined" | "null" | "object";
+type NonCallableKind = "number" | "boolean" | "string" | "undefined" | "null" | "error" | "object";
 /**
  * The skip above is exact only while every admitted kind is one of them. A slice that admits a callable kind (Fa's
  * function values) fails to compile here until this builder Gets and Calls the methods in hint order.
@@ -35,7 +35,7 @@ export interface ToPrimitiveBuilders extends TypeErrorBuilders {
 /** OrdinaryToPrimitive of the once-evaluated ordinary `object`: its string into `result`, or a TypeError. */
 export function ordinaryToPrimitive(
   b: ToPrimitiveBuilders,
-  program: { readonly objects: ProgramObjects; readonly catches: boolean },
+  program: LegalizationProgram,
   object: IrValueId,
   result: IrValueId,
 ): IrInstr[] {
@@ -49,7 +49,7 @@ export function ordinaryToPrimitive(
       held,
       // The TypeError does not complete; the empty string only gives the arm its value.
       (r) => [
-        ...(EVERY_KIND_IS_NON_CALLABLE && typeError(b, "Cannot convert object to primitive value", program.catches)),
+        ...(EVERY_KIND_IS_NON_CALLABLE && typeError(b, "Cannot convert object to primitive value")),
         b.text("", r),
       ],
       (r) => [b.text("[object Object]", r)],

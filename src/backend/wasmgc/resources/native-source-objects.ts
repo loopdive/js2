@@ -18,6 +18,8 @@ import {
   buildSourceObjectGetDefinition,
   buildSourceObjectSetDefinition,
   buildSourceObjectHasDefinition,
+  buildSourceObjectIsErrorDefinition,
+  buildSourceObjectErrorFieldDefinition,
   type SourceObjectDefinition,
 } from "../../../runtime/wasmgc/values/source-object-bodies.js";
 import type { NativeBuiltinFunctionReservations } from "./native-builtin-functions.js";
@@ -71,6 +73,14 @@ const ROWS = {
   "js.object.has": {
     signature: { params: [EXTERNREF, EXTERNREF], results: [I32] },
     body: ({ kernel }) => buildSourceObjectHasDefinition({ has: kernel.functions.has.handle }),
+  },
+  "js.object.is-error": {
+    signature: { params: [EXTERNREF], results: [I32] },
+    body: ({ errors }) => buildSourceObjectIsErrorDefinition({ errorTypeIdx: errors.type.typeIndex }),
+  },
+  "js.object.error-field": {
+    signature: { params: [EXTERNREF, I32], results: [EXTERNREF] },
+    body: ({ errors }) => buildSourceObjectErrorFieldDefinition({ errorTypeIdx: errors.type.typeIndex }),
   },
 } as const satisfies Readonly<Partial<Record<OrdinaryObjectRuntimeFeature, Row>>>;
 /** A contract the realm serves. */

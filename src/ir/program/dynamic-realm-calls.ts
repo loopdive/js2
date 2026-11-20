@@ -8,7 +8,6 @@ import type { IrType } from "../core/types.js";
 import { irIntrinsicFuncRef } from "../core/callable-bindings.js";
 import type { OrdinaryObjectRuntimeFeature } from "../runtime/contracts/manifest.js";
 import { irOrdinaryObjectCallableDeclaration } from "../runtime/ordinary-object-callables.js";
-import { gap } from "./dynamic-value-gap.js";
 
 /** The call of the realm's `feature` on `args`, its result (if the contract has one) into `result`. */
 export function realmCall(
@@ -35,13 +34,10 @@ export interface TypeErrorBuilders {
 
 /**
  * A TypeError with `message`, as statements that do not complete: the one place the legalization raises one. It is
- * thrown under the program's one exception tag, so a source `catch` that only binds or rethrows it catches it, and
- * without a catch it ends the program as JavaScript's uncaught TypeError does. (#7354 M1) In a program that reads a
- * catch binding (`readsCaught`) the read could see it, and no carrier kind holds an error yet (`typeof e`, `e.name`
- * would answer wrong), so such a program refuses by name at compile time instead; M2 makes the error a carrier kind.
+ * the realm's error, thrown under the program's one exception tag: a source `catch` catches it, and (#7354 M2) a
+ * catch that reads it reads the error kind of the dynamic value (`dynamic-value-kinds.ts`).
  */
-export function typeError(b: TypeErrorBuilders, message: string, readsCaught: boolean): IrInstr[] {
-  if (readsCaught) gap(`TypeError "${message}" in a program that reads a caught value`);
+export function typeError(b: TypeErrorBuilders, message: string): IrInstr[] {
   const [text, carried, error] = [b.fresh(), b.fresh(), b.fresh()];
   return [
     b.text(message, text),

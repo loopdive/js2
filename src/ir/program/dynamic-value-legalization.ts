@@ -100,14 +100,23 @@ export function legalizeDynamicValues(
   if (!containsDynamic(fn)) return fn;
   const types = irValueTypes(fn);
   const definitions = valueDefinitions(fn);
-  const admitted = admittedKinds(program.objects);
+  const admitted = admittedKinds(program);
   const kinds = knownKinds(fn, types, definitions, admitted);
   const builders = chainBuilders(fn, allocations, kinds, admitted);
-  const { intrinsic, fresh, kindTest, anyKind, text, kindChain } = builders;
+  const { intrinsic, fresh, kindTest, anyKind, text, errorField, kindChain } = builders;
   const { stringOf, toNumber } = conversionBuilders(builders, program);
   const addition = additionBuilder(builders, stringOf);
   // (#7354 O4, O3) What a member read or write is written with (`dynamic-member-access.ts`).
-  const memberAccess = { carrier: CARRIER, definitions, fresh, text, intrinsic, kindsOf: kinds.kindsOf, kindChain };
+  const memberAccess = {
+    carrier: CARRIER,
+    definitions,
+    fresh,
+    text,
+    intrinsic,
+    errorField,
+    kindsOf: kinds.kindsOf,
+    kindChain,
+  };
   const isDynamic = (value: IrValueId): boolean => types.get(value)?.kind === "dynamic";
   const typeofs = typeofComparisons(fn);
   // `!==`/`!=`: the positive test into a fresh value, then its negation into the comparison's result.
@@ -158,13 +167,7 @@ export function legalizeDynamicValues(
       case "tag.test": {
         if (!isDynamic(instr.value)) return [instr];
         const kind =
-          instr.tagId === JS_TAG_IDS.Undefined
-            ? "undefined"
-            : instr.tagId === JS_TAG_IDS.Null
-              ? "null"
-              : instr.tagId === JS_TAG_IDS.Object && admitted.includes("object")
-                ? "object"
-                : undefined;
+          instr.tagId === JS_TAG_IDS.Undefined ? "undefined" : instr.tagId === JS_TAG_IDS.Null ? "null" : undefined;
         return kind === undefined
           ? gap(`tag.test of tag ${instr.tagId}`)
           : kindTest(instr, kind, instr.value, instr.result!);
@@ -214,17 +217,9 @@ export function legalizeDynamicValues(
       case "dyn.to_number":
         return toNumber(instr, instr.value, instr.result!);
       case "dyn.member_get":
-        return dynamicMemberRead(memberAccess, program, instr, instr.recv, instr.key, instr.result!);
+        return dynamicMemberRead(memberAccess, instr, instr.result!);
       case "dyn.member_set":
-        return dynamicMemberWrite(
-          memberAccess,
-          program,
-          instr,
-          instr.recv,
-          instr.key,
-          instr.value,
-          instr.sloppy === true,
-        );
+        return dynamicMemberWrite(memberAccess, instr);
       case "dyn.eq": {
         if (instr.loose) return gap("dyn.eq (loose)");
         return withSense(instr, instr.negate, (result) => [

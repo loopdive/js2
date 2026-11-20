@@ -3,48 +3,36 @@
 // #7354 M1 — what member access on the Prepared dynamic value refuses by name (plan slice M §10), and the
 // synthesized TypeError with no catch to read it (§8 C).
 //
-// The TypeError rule of M1: the legalization raises a TypeError itself for a nullish member read or write, a strict
-// write to a primitive, and an object whose `toString` is not callable. In a program that READS a catch binding
-// (anything but a rethrow of it), that read could see the error, which no carrier kind holds before M2, so the program
-// refuses by name at compile time. In any other program the TypeError is thrown under the one exception tag: a catch
-// that only binds or rethrows it catches it (tests/issue-7354-m-catch-and-tags.test.ts), and without a catch it ends
-// the program, as node's uncaught TypeError does (below).
+// The TypeError the legalization raises itself (a nullish member read or write, a strict write to a primitive, an
+// object whose `toString` is not callable) is the realm's error, thrown under the one exception tag. (M2) A catch that
+// reads it reads the error kind of the dynamic value (tests/issue-7354-m-catch-and-tags.test.ts); without a catch it
+// ends the program as node's uncaught TypeError does (below). What a program that reads a caught value still refuses:
+// a member write whose receiver may be that error, and reads of an error's Error.prototype keys.
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { OBJECT_PROTOTYPE_KEYS } from "../src/ir/program/builtin-prototype-keys.js";
 import { gapText, refusal, throwsAsNode } from "./helpers/prepared-node-agreement.js";
 
 afterEach(() => vi.restoreAllMocks());
 
-const readCaught = (message: string) => gapText(`TypeError "${message}" in a program that reads a caught value`);
+const mayBe = (operation: string, kinds: string) =>
+  gapText(`${operation} of a value that may be ${kinds} needs a built-in prototype's properties`);
 
-describe("#7354 M1 — the TypeError rule", () => {
+describe("#7354 M1 — the TypeError the legalization raises", () => {
   it.each([
     [
-      "C31: a nullish read whose catch reads the error",
-      "function f(v){ try { return v.a; } catch (e) { return typeof e; } } f(undefined);",
-      readCaught("Cannot read properties of undefined (reading 'a')"),
-    ],
-    [
-      "D32: a thrown object's member read in its catch",
-      "function f(v){ try { throw v; } catch (err) { return err.name; } } f({name:'N'});",
-      readCaught("Cannot read properties of undefined (reading 'name')"),
-    ],
-    [
-      "D33: a thrown number's member read in its catch",
-      "function f(){ try { throw 1; } catch (err) { return err.name; } } f();",
-      readCaught("Cannot read properties of undefined (reading 'name')"),
-    ],
-    [
-      "D35: assert.js's formatSimpleValue (its catch reads err.name)",
-      "function formatSimpleValue(value) {\n  try {\n    return String(value);\n  } catch (err) {\n" +
-        "    if (err.name === 'TypeError') {\n      return Object.prototype.toString.call(value);\n    }\n" +
-        "    throw err;\n  }\n}\nformatSimpleValue(1);",
-      readCaught("Cannot read properties of undefined (reading 'name')"),
-    ],
-    [
-      "a strict write to a primitive whose catch reads the error",
+      "M2: a write whose receiver may be a caught error",
       '"use strict"; function f(v){ try { v.k = 1; } catch (e) { return e; } } f(1);',
-      readCaught("Cannot create property 'k' on string"),
+      gapText("member write 'k' of a value that may be an Error"),
+    ],
+    [
+      "M2: an error's constructor",
+      "function f(v){ try { return v.a; } catch (e) { return e.constructor; } } f(null);",
+      mayBe("member read 'constructor'", "a string or a number or a boolean or an Error"),
+    ],
+    [
+      "M2: an error's toString",
+      "function f(v){ try { return v.a; } catch (e) { return e.toString; } } f(null);",
+      mayBe("member read 'toString'", "a string or a number or a boolean or an Error"),
     ],
   ])("refuses %s", async (_label, source, reason) => {
     expect(await refusal(source)).toContain(reason);
@@ -70,45 +58,54 @@ describe("#7354 M1 — keys a built-in prototype holds", () => {
     );
   });
 
+  // A receiver of one known kind names it; one that may hold several kinds names those whose arm refuses (finding 5 of
+  // the M1 review: `{a:1}.constructor` once refused "of a string").
+  const prim = "a string or a number or a boolean";
   it.each([
     [
-      "A17: a write of toString",
+      "A17: a write of __proto__ to an object",
+      "function g(){ var o = {a:1}; o.__proto__ = null; } g();",
+      gapText("member write '__proto__' needs Object.prototype's properties"),
+    ],
+    [
+      "A17: a write of toString to a value that may be an object",
       "var o = {a:1}; function f(v){ v.toString = 1; } f(o);",
-      "member write 'toString' needs Object.prototype's properties",
+      mayBe("member write 'toString'", "an object"),
     ],
     [
       "B23: a string's length",
       "function f(v){ return v.length; } f('abc');",
-      "member read 'length' of a string needs its wrapper prototype",
+      mayBe("member read 'length'", "a string"),
     ],
-    [
-      "B23: a string's index key",
-      "function f(v){ return v['0']; } f('abc');",
-      "member read '0' of a string needs its wrapper prototype",
-    ],
+    ["B23: a string's index key", "function f(v){ return v['0']; } f('abc');", mayBe("member read '0'", "a string")],
     [
       "B24: Number.prototype.toFixed",
       "function f(v){ return v.toFixed; } f(1);",
-      "member read 'toFixed' of a number needs its wrapper prototype",
+      mayBe("member read 'toFixed'", "a number"),
     ],
     [
       "B24: String.prototype.charAt",
       "function f(v){ return v.charAt; } f('a');",
-      "member read 'charAt' of a string needs its wrapper prototype",
+      mayBe("member read 'charAt'", "a string"),
+    ],
+    [
+      "B24: Object.prototype.valueOf",
+      "function f(v){ return v.valueOf; } f(true);",
+      mayBe("member read 'valueOf'", prim),
     ],
     // C6: the `__proto__` accessor's setter answers for a primitive receiver even in strict code.
     [
       "C6: a sloppy __proto__ write",
       "function f(v){ v.__proto__ = 2; } f(1);",
-      "member write '__proto__' of a string needs Object.prototype's accessor",
+      mayBe("member write '__proto__'", prim),
     ],
     [
       "C6: a strict __proto__ write",
       '"use strict"; function f(v){ v.__proto__ = 2; } f(1);',
-      "member write '__proto__' of a string needs Object.prototype's accessor",
+      mayBe("member write '__proto__'", prim),
     ],
-  ])("refuses %s", async (_label, source, operation) => {
-    expect(await refusal(source)).toContain(gapText(operation));
+  ])("refuses %s", async (_label, source, reason) => {
+    expect(await refusal(source)).toContain(reason);
   });
 });
 

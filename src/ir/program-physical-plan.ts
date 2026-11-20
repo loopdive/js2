@@ -1416,12 +1416,8 @@ export function planPhysicalSetup(
     ...[...importedGlobals, ...definedGlobals].map((global) => global.referenceKey),
     ...nativeBindings.filter((row) => row.reference.kind === "global").map((row) => nativeReferenceKey(row.reference)),
   ]);
-  // The realm kernel throws its errors under the program's one tag, so a source `catch` catches them.
   let exceptionRequired =
-    vectors.exceptionRequired ||
-    Boolean(asyncFrames?.frames.length) ||
-    Boolean(nativeInvocation) ||
-    Boolean(native?.realmRequirements);
+    vectors.exceptionRequired || Boolean(asyncFrames?.frames.length || nativeInvocation || native?.realmRequirements);
   for (const fn of [...physical, ...(formatter ? formatter.support.functions : [])]) {
     const diagnosticUnit =
       formatter && fn === formatter.support.functions[0]
