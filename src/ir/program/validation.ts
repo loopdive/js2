@@ -199,13 +199,13 @@ function validateRuntimeCallables(program: PreparedIrProgram): void {
 }
 
 /**
- * (#7380) The native standalone lane binds dynamic values only as their `externref` carrier: legalization rewrites
- * every `dyn.*` operation into an intrinsic and every `dynamic` type into the carrier, so neither may reach a body
- * of that projection. The host async lane keeps an annotated `any` as `dynamic` on purpose, so other projections
- * are not checked.
+ * (#7380) A projection binds dynamic values only as their `externref` carrier: legalization rewrites every `dyn.*`
+ * operation into an intrinsic and every `dynamic` type into the carrier, so neither may reach a projection body. The
+ * planner's host-async carrier for `dynamic` is not reachable from any source program today (the presentation
+ * refuses an `any` before preparation, and the async bodies it admits carry none); a program that reaches it must
+ * bring a seed here and exempt that lane.
  */
 function assertNoDynamicValues(projection: PreparedIrProgramRuntimeProjection): void {
-  if (projection.backend !== "wasmgc" || projection.target !== "standalone") return;
   for (const fn of projection.prepared.functions) {
     if (containsDynamic(fn)) invalid(`body ${fn.unitId} retains a dynamic type after legalization`);
     forEachPreparedIrInstruction(fn, (instruction) => {

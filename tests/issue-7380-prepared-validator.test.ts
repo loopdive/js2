@@ -107,6 +107,8 @@ const withLeadingInstr = (instr: WasmModule["functions"][number]["body"][number]
   ...module,
   functions: module.functions.map((fn) => (fn.name === "__module_init" ? { ...fn, body: [instr, ...fn.body] } : fn)),
 });
+const fmodIndex = (): number =>
+  funcCount(module) - module.functions.length + module.functions.findIndex((fn) => fn.name === "__fmod");
 const seed12 = (): WasmModule => withLeadingInstr({ op: "call", funcIdx: funcCount(module) });
 const seed13 = (): WasmModule => withLeadingInstr({ op: "global.get", index: module.globals.length });
 /** The startup body given the signature of `__fmod`, `(f64, f64) -> f64`. */
@@ -283,6 +285,21 @@ const SEEDS: readonly Seed[] = [
     expected: /prepared validator \(prepared program\): body .* retains dyn\.member_get after legalization/,
   },
   {
+    stage: "2 prepared program",
+    seed: "a dynamic result type left on a projection body",
+    twin: () => stage2(withProjection((prepared) => ({ ...prepared }))),
+    altered: () =>
+      stage2(
+        withProjection((prepared) => ({
+          ...prepared,
+          functions: prepared.functions.map((fn) =>
+            fn.name === "f" ? { ...fn, resultTypes: [{ kind: "dynamic" } as never] } : fn,
+          ),
+        })),
+      ),
+    expected: /prepared validator \(prepared program\): body .* retains a dynamic type after legalization/,
+  },
+  {
     stage: "3 physical plan",
     seed: "the source global's slot listed twice (duplicate slot)",
     twin: () => stage3({ ...plan, definedGlobals: [...plan.definedGlobals] }),
@@ -327,6 +344,34 @@ const SEEDS: readonly Seed[] = [
     twin: () => stage4({ ...module }),
     altered: () => stage4(seed13()),
     expected: /prepared validator \(physical module\): unresolved global index/,
+  },
+  {
+    stage: "4 physical module",
+    seed: "a global of a type index past the last type",
+    twin: () => stage4({ ...module, globals: [...module.globals] }),
+    altered: () =>
+      stage4({
+        ...module,
+        globals: module.globals.map((global, index) =>
+          index === 0 ? { ...global, type: { kind: "ref_null", typeIdx: 9999 } } : global,
+        ),
+      }),
+    expected: /prepared validator \(physical module\): unresolved type index 9999/,
+  },
+  {
+    stage: "4 physical module",
+    seed: "a ref.func of a function nothing declares",
+    twin: () => stage4({ ...module }),
+    altered: () => stage4(withLeadingInstr({ op: "ref.func", funcIdx: fmodIndex() })),
+    expected: /prepared validator \(physical module\): undeclared ref\.func target/,
+  },
+  {
+    stage: "4 physical module",
+    seed: "a global export past the last global",
+    twin: () => stage4({ ...module, exports: [{ name: "g", desc: { kind: "global", index: 0 } }] }),
+    altered: () =>
+      stage4({ ...module, exports: [{ name: "g", desc: { kind: "global", index: module.globals.length } }] }),
+    expected: /prepared validator \(physical module\): unresolved global export index/,
   },
   {
     stage: "4 physical module",
