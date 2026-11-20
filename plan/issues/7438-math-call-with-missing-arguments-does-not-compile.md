@@ -1,6 +1,6 @@
 ---
 id: 7438
-title: "`Math.atan()` and 31 other Math calls with a missing argument do not compile (`__get_builtin`)"
+title: "`Math.atan()` and 30 other Math calls with a missing argument do not compile (`__get_builtin`)"
 status: ready
 sprint: current
 created: 2026-11-20
@@ -30,7 +30,7 @@ standalone (#1472 Phase B)…". On the JS target the message names the standalon
 
 Sweep (every Math function called with zero arguments, both targets, `claude/7380-pins-a` `e41fd9cc1d`):
 
-- **Fail on both targets (32):** `abs`, `acos`, `acosh`, `asin`, `asinh`, `atan`, `atanh`, `cbrt`, `ceil`,
+- **Fail on both targets (31):** `abs`, `acos`, `acosh`, `asin`, `asinh`, `atan`, `atanh`, `cbrt`, `ceil`,
   `clz32` (node 32), `cos`, `cosh`, `exp`, `expm1`, `floor`, `fround`, `log`, `log10`, `log1p`, `log2`, `round`,
   `sign`, `sin`, `sinh`, `sqrt`, `tan`, `tanh`, `trunc`, `atan2`, `pow`, `imul` (node 0). Node gives NaN except where
   noted.
