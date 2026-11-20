@@ -195,16 +195,17 @@ describe("#7354 H — the dynamic home of a script var", () => {
       NO_HOME,
     ],
     ["of a number given a property by Object.defineProperty", "var o = 1; Object.defineProperty(o, 'p', {});", NO_HOME],
-    // A value kind the carrier cannot hold yet is refused at its store, by the slice that owns it.
+    // A value kind the carrier cannot hold yet is refused at its store, by the slice that owns it. Each binding is
+    // read, so the #3418 dead-binding elision (#7354 F0) keeps it.
     [
       "holding an object literal (slice O)",
-      "var o = { a: 1 };",
+      "var o = { a: 1 }; var r = o;",
       "proven dynamic binding 'o' initializer has no supported carrier",
     ],
-    ["holding an array literal", "var arr = [1];", "resolver cannot register vec for array literal"],
+    ["holding an array literal", "var arr = [1]; var r = arr;", "resolver cannot register vec for array literal"],
     [
       "holding a function expression (slice Fa)",
-      "var f = function () {};",
+      "var f = function () {}; var r = f;",
       "module-level closure binding 'f' not in module-init Slice 2 scope",
     ],
     ["holding a built-in member (slice B)", "var g = Math.max;", 'identifier "Math" is not in scope'],
