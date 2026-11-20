@@ -1,5 +1,5 @@
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+
 import { setImmediate } from "node:timers/promises";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createEmptyModule } from "../src/ir/types.js";
@@ -417,111 +417,6 @@ describe("native value producer completion authority", () => {
       expect(() => requireCompletedNativeValues(state.tx, state.pack, state.plan, state.dependencies)).toThrow();
     });
 });
-function replaceOnce(text: string, before: string, after: string): string {
-  const start = text.indexOf(before);
-  if (start < 0 || text.indexOf(before, start + before.length) >= 0)
-    throw Error("missing/duplicate mapped edit: " + before);
-  return text.slice(0, start) + after + text.slice(start + before.length);
-}
-
-const followupImportsForwardText = readFileSync(
-  resolve(import.meta.dirname, "fixtures/issue-3518-native-value-main-followup-forward.json"),
-  "utf8",
-);
-
-const mainImportsForwardText = readFileSync(
-  resolve(import.meta.dirname, "fixtures/issue-3518-native-value-delivered-main-import-forward.json"),
-  "utf8",
-);
-
-describe("BigInt extraction outer inverse", () => {});
-
-describe("Boolean extraction precedes historical native-value inverses", () => {
-  const donorHash = "143a0f5cdc03fa58704b467ea180576913a104080d064011d7caed60f14f378c";
-  const bodies = () =>
-    readFileSync(resolve(import.meta.dirname, "../src/runtime/wasmgc/values/boolean-bodies.ts"), "utf8");
-});
-
-describe("authenticated intervening main native-value changes", () => {
-  const fixture = JSON.parse(followupImportsForwardText) as { spans: { id: string; before: string; after: string }[] };
-});
-
-describe("independently authenticated delivered-main native-value import update", () => {
-  const fixture = JSON.parse(mainImportsForwardText) as { spans: { before: string; after: string }[] };
-  if (fixture.spans.length !== 1) throw Error("native-value main-forward span population");
-  const span = fixture.spans[0]!;
-
-  const mutations: readonly [string, (source: string) => string][] = [
-    ["M1 removed exported tag span", (source) => replaceOnce(source, span.after, "")],
-    ["M2 duplicated exported tag span", (source) => replaceOnce(source, span.after, span.after + span.after)],
-    [
-      "M3 altered imported-tag condition",
-      (source) =>
-        replaceOnce(
-          source,
-          span.after,
-          replaceOnce(span.after, "ctx.sharedExnTag || ctx.exnTagImported", "ctx.sharedExnTag && ctx.exnTagImported"),
-        ),
-    ],
-    [
-      "M4 changed import-space documentation",
-      (source) => replaceOnce(source, span.after, replaceOnce(span.after, "IMPORT space", "DEFINED space")),
-    ],
-  ];
-});
-
-describe("independently authenticated prepared native-value import additions", () => {
-  const sidecar =
-    "  shiftMap(ctx.classStaticSidecarGlobals); // (#5195 Step 2 / #5383 S2i) — ditto for the static sidecar\n";
-  const callable = '  registerNative("__is_callable", externrefToI32, [{ op: "i32.const", value: 0 }]);\n';
-  const mutations: readonly [string, (source: string) => string][] = [
-    ["S1 missing sidecar shift", (source) => replaceOnce(source, sidecar, "")],
-    ["S2 duplicate sidecar shift", (source) => replaceOnce(source, sidecar, sidecar + sidecar)],
-    [
-      "S3 wrong shifted map",
-      (source) => replaceOnce(source, sidecar, sidecar.replace("classStaticSidecarGlobals", "protoGlobals")),
-    ],
-    ["S4 wrong shift operation", (source) => replaceOnce(source, sidecar, sidecar.replace("shiftMap(", "shiftArray("))],
-    [
-      "S5 changed sidecar documentation",
-      (source) => replaceOnce(source, sidecar, sidecar.replace("static sidecar", "unrelated map")),
-    ],
-    [
-      "S6 reordered sidecar shift",
-      (source) => {
-        const following = "  shiftMap(ctx.methodClosureGlobals); // (#1394) — cached per-method closure globals\n";
-        return replaceOnce(replaceOnce(source, sidecar, ""), following, following + sidecar);
-      },
-    ],
-    ["C1 missing callable registration", (source) => replaceOnce(source, callable, "")],
-    ["C2 duplicate callable registration", (source) => replaceOnce(source, callable, callable + callable)],
-    [
-      "C3 changed callable name",
-      (source) => replaceOnce(source, callable, callable.replace("__is_callable", "__typeof_function")),
-    ],
-    [
-      "C4 changed callable signature",
-      (source) => replaceOnce(source, callable, callable.replace("externrefToI32", "f64ToExternref")),
-    ],
-    [
-      "C5 changed callable placeholder",
-      (source) => replaceOnce(source, callable, callable.replace("value: 0", "value: 1")),
-    ],
-    [
-      "C6 reordered callable registration",
-      (source) => {
-        const preceding = '  registerNative("__typeof_function", externrefToI32, [{ op: "i32.const", value: 0 }]);\n';
-        return replaceOnce(replaceOnce(source, callable, ""), preceding, callable + preceding);
-      },
-    ],
-    [
-      "C7 changed callable documentation",
-      (source) => replaceOnce(source, "  // only class-object singletons.\n", "  // also class-object singletons.\n"),
-    ],
-  ];
-});
-
-describe("mandatory live native-value donor reconstruction", () => {});
 
 describe("legacy source callers of the same canonical native number bodies", () => {
   it.each([

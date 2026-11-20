@@ -403,7 +403,6 @@ describe("C1 initial object-get fixed donor preservation", () => {
     }
   });
 });
-describe("C1 getter acquisition and registration against original donor", () => {});
 
 function observed(r: ReturnType<typeof executable>, name: string) {
   return r.observations.filter((row) => row[0] === name);

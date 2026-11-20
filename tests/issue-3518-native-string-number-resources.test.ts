@@ -245,8 +245,6 @@ describe("scanner complete historical donor receipts", () => {
     ).toHaveLength(19);
   });
 });
-
-describe("exact approved missing-exponent source extension", () => {});
 function prepare() {
   const { packet } = sourcePacket({ "./entry.ts": "export function main(value: number): number { return value; }" });
   const program = requireProgram(prepareTypedIrProgram(packet, typedOptions));

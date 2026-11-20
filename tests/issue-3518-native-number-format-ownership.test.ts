@@ -185,8 +185,6 @@ function returnedField(source: string, name: string): string {
   return ts.isPropertyAssignment(field) ? field.initializer.getText(file) : field.getText(file);
 }
 
-describe("whole native formatter inverse", () => {});
-
 function inverseSelfhost(adapter: string, runtime: string): string {
   authenticateEnvelope(runtime, "radix");
   const imports =

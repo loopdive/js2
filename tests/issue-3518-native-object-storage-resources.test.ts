@@ -1,3 +1,4 @@
+// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import { afterEach, describe, expect, it } from "vitest";
 import type { Instr } from "../src/wasm/model/instructions.js";
 import { createEmptyModule } from "../src/ir/types.js";
@@ -25,7 +26,6 @@ import {
   fillStorageDependencies,
   objectWriteRuntime,
 } from "./helpers/native-object-write-fixture.js";
-import { originalWriteDonors } from "./helpers/native-object-write-donor.js";
 
 afterEach(() => new Promise<void>((resolve) => setImmediate(resolve)));
 const complete = (f: ReturnType<typeof objectStorageFixture>) => {
@@ -417,8 +417,4 @@ describe("executed issued storage with controlled descriptor dependencies", () =
     const mutant = run(true);
     expect(Object.is(mutant.value, mutant.undefinedValue)).toBe(true);
   });
-});
-
-describe("fixed donor and whole-source preservation", () => {
-  const donors = originalWriteDonors();
 });
