@@ -9834,6 +9834,17 @@ function isSelectableNumberCompound(
   if (carrierHome && !compoundWriteAdmissible(expr.operatorToken.kind, "dynamic", rhsFamily)) {
     return shapeNo("compound-dynamic-module-operand", expr.right);
   }
+  // (#7330) `+=` into a string slot concatenates, so only a string value has a lowering.
+  if (
+    holdsString(expr.left, scope, localClasses) &&
+    !compoundWriteAdmissible(
+      expr.operatorToken.kind,
+      "string",
+      holdsString(expr.right, scope, localClasses) ? "string" : rhsFamily,
+    )
+  ) {
+    return shapeNo("compound-string-operand", expr.right);
+  }
   // (#7338) Any other target takes no table carrier: the numeric compound needs a number.
   if (!carrierHome && lowersToCarrier(expr.right)) return shapeNo("compound-carrier-operand", expr.right);
   if (expr.operatorToken.kind === ts.SyntaxKind.AsteriskAsteriskEqualsToken) {
@@ -9842,6 +9853,13 @@ function isSelectableNumberCompound(
   if (!isNumberCompoundAssignOperator(expr.operatorToken.kind)) return false;
   // (#7106 S5) A carrier leaf's read is no number, whatever the checker says.
   return carrierLeafReads(expr.right, moduleBinding).length === 0 || shapeNo("compound-carrier-leaf", expr.right);
+}
+
+/** A script var in its string home, or a checker- or literal-proven string. */
+function holdsString(target: ts.Expression, scope: ReadonlySet<string>, localClasses: ReadonlySet<string>): boolean {
+  const binding = moduleBinding(target);
+  if (binding) return binding.valueKind.kind === "string";
+  return expressionIsClassifiedString(target) || binaryOperandFamily(target, scope, localClasses) === "string";
 }
 
 /** `void e` beside the carrier where from-ast has no lowering (`voidCompareUnlowered`). */
@@ -13798,6 +13816,10 @@ function isPhase1ObjectLiteral(
       if (name === null) return shapeNo("objectlit-computed-key", prop.name);
       if (seen.has(name)) return shapeNo("objectlit-duplicate-key", prop.name); // duplicate key — defer
       seen.add(name);
+      // (#7332) from-ast lowers a field's value under an f64 hint, where `null` has no value
+      // (`nullValueAdmissible`); a conditional or comma may yield it too.
+      if (!everyYieldedValue(prop.initializer, (value) => value.kind !== ts.SyntaxKind.NullKeyword))
+        return shapeNo("objectlit-null-field", prop.initializer);
       if (!isPhase1Expr(prop.initializer, scope, localClasses))
         return shapeNo("objectlit-property-init", prop.initializer);
       continue;

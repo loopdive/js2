@@ -14275,7 +14275,12 @@ function lowerPrefixUnary(expr: ts.PrefixUnaryExpression, cx: LowerCtx): IrValue
     `prefix operator '${ts.tokenToString(expr.operator) ?? expr.operator}'`,
     cx.funcName,
   );
-  const rand = lowerExpr(expr.operand, cx, irVal({ kind: "f64" }));
+  // (#7332) `null` has no f64 value, but `-`, `+` and `~` read ToNumber(null), +0, and `!` reads a
+  // falsy value either way.
+  const rand =
+    skipOuterExpressions(expr.operand).kind === ts.SyntaxKind.NullKeyword
+      ? cx.builder.emitConst({ kind: "f64", value: 0 }, irVal({ kind: "f64" }))
+      : lowerExpr(expr.operand, cx, irVal({ kind: "f64" }));
   switch (expr.operator) {
     case ts.SyntaxKind.MinusToken: {
       const randType = typeOfValue(rand, cx);
