@@ -51,8 +51,7 @@
  */
 import { forEachChild, ts } from "./ts-api.js";
 import { PositionMap } from "./position-map.js";
-import { subtreeHasEarlyError } from "./compiler/early-errors/index.js"; // (#4464)
-import { RESTRICTED_GLOBAL_NAMES } from "./compiler/early-errors/predicates.js";
+import { RESTRICTED_GLOBAL_NAMES, subtreeHasEarlyError } from "./compiler/early-errors/index.js"; // (#4464)
 import { isInertFunctionMention } from "./shared/function-mention.js";
 import type { CompileTargetProfile } from "./target-profile.js";
 

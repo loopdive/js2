@@ -27,6 +27,8 @@ import {
   checkReservedIdentifiers,
 } from "./module-rules.js";
 
+export { RESTRICTED_GLOBAL_NAMES } from "./predicates.js";
+
 /**
  * Detect ECMA-262 early errors (SyntaxErrors that TypeScript's parser misses)
  * in a parsed source file. Returns a list of errors/warnings; an empty list
