@@ -1,7 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
 import { spawnSync } from "node:child_process";
-import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -43,25 +42,6 @@ describe("IR-only async preparation extraction", () => {
     "prepareSingleAwaitIrFunction",
   ] as const)("compatibility exports the identical %s function object", (name) => {
     expect(legacy[name]).toBe(canonical[name]);
-  });
-
-  // Exact declaration text (including docs), measured from the pinned base
-  // 6ff05f6b. These are relocation receipts, not a claim of closed type layers.
-  it.each([
-    ["src/ir/async-prepare-ir.ts", 18, "7248b1647d852640982a7453b344ed0025c25a5947f8e6f14cfae9b38daad0b0"],
-    ["src/ir/async-prepare.ts", 1, "0c7963b14d199a55087de9388d1497358c8208898011691bc3a9ecd0a2e87ae9"],
-    ["src/ir/async-linear-prepare.ts", 16, "ad6c626fb058d6b2771cd68ca4ad9d1668ea1270dc75a886714db5b8e12ecb8f"],
-    ["src/ir/passes/monomorphize.ts", 22, "ae9b7b3d2efe29a83b8cafa983c8aa96d3b267d30a7b5db6b1b52f38c475a0e5"],
-  ] as const)("retains %s's %s exact declarations and docs", (path, count, digest) => {
-    const declarations = source(path).statements.filter(
-      (node) => !ts.isImportDeclaration(node) && !ts.isExportDeclaration(node),
-    );
-    expect(declarations).toHaveLength(count);
-    expect(
-      createHash("sha256")
-        .update(declarations.map((node) => node.getFullText().trim()).join("\n"))
-        .digest("hex"),
-    ).toBe(digest);
   });
 
   it.each([

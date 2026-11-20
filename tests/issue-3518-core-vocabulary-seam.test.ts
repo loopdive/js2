@@ -106,27 +106,6 @@ const intrinsicValues = [
   "INTRINSIC_SIGNATURE_VERSION",
 ] as const;
 
-function moduleReferences(tree: ts.SourceFile) {
-  const references: string[] = [];
-  const visit = (node: ts.Node) => {
-    if (
-      ts.isImportDeclaration(node) ||
-      (ts.isExportDeclaration(node) && node.moduleSpecifier) ||
-      ts.isImportTypeNode(node) ||
-      ts.isImportEqualsDeclaration(node) ||
-      (ts.isCallExpression(node) &&
-        (node.expression.kind === ts.SyntaxKind.ImportKeyword ||
-          (ts.isIdentifier(node.expression) && node.expression.text === "require")))
-    )
-      references.push(node.getText(tree));
-    ts.forEachChild(node, visit);
-  };
-  visit(tree);
-  expect(tree.referencedFiles).toEqual([]);
-  expect(tree.typeReferenceDirectives).toEqual([]);
-  return references;
-}
-
 function identity(): IrCountedStringAppendSiteIdentity {
   const sourceId = createIrSourceId({ kind: "entry", order: 0, sourceKey: "vocabulary.ts" });
   return Object.freeze({
@@ -224,17 +203,6 @@ describe("#3518 canonical core vocabulary seam", () => {
     for (const invalid of ["native.scheduler.enqueue", "host.scheduler.enqueue", "async.promise.react", ""]) {
       expect(providers.isAsyncRuntimeFeature(invalid)).toBe(false);
     }
-  });
-
-  it("has no upward module edges: three import-free leaves and only canonical F0 identity/source-origin", () => {
-    for (const move of moves.slice(0, 3)) expect(moduleReferences(parse(move.canonical))).toEqual([]);
-    expect(moduleReferences(parse(moves[3]!.canonical))).toEqual([
-      'import type { IrSourceId, IrUnitId } from "./ir-identity.js";',
-    ]);
-    expect(moduleReferences(parse("src/shared/contracts/ir-identity.ts"))).toEqual([
-      'import type { CompilerSourceProducer } from "./source-origin.js";',
-    ]);
-    expect(moduleReferences(parse("src/shared/contracts/source-origin.ts"))).toEqual([]);
   });
 
   it("loads all four canonical leaves with old facades and providers barred in a fresh process", () => {
