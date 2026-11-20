@@ -96,3 +96,15 @@ prototyped on this branch and then reverted:
   3 failures as base.
 - Not finished: a 1,480-row test262 slice of member-read and parenthesized typeof operands, run branch against base.
   Member reads are the widest part of the change, so that slice is the check to run before landing.
+
+## Suspended Work (lane S1, 2026-11-20)
+
+- Branch `claude/7362-legacy-typeof-effects` (stacked on #7304's branch, which has since merged to main), head = this
+  commit, branch only, no PR. Claimed for `ttraenkler/c-lead`.
+- Done: repro on both targets, cause, Implementation Plan (above). A prototype fix and its test were measured and
+  reverted; saved in the S1 session scratchpad (`bytes7362/prototype-fix.diff`,
+  `issue-7362-legacy-typeof-operand-effects.test.ts`) — they do not survive the session, so re-derive from the plan.
+- Next: merge `origin/main` (contains #7361 now); implement the plan's `emitFoldedTypeofOperand` in
+  `src/codegen/typeof-static-folds.ts`; the test file; the byte-identity run, which per the lead must include the
+  1,480-row test262 run over member-read and parenthesized `typeof` operands (JS-environment bytes may change only for
+  operands that may run user code); gates; PR with `hold`.
