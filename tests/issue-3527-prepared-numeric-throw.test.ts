@@ -7,6 +7,7 @@ import { emitBinary } from "../src/emit/binary.js";
 import { decodePreparedIrProgram, encodePreparedIrProgram } from "../src/ir/program-codec.js";
 import { acceptPreparedIrProgram, emitAcceptedIrProgram } from "../src/ir/program-consumer.js";
 import { subscribePreparedIrProgram } from "../src/ir/program-observation.js";
+import { assertPreparedIrProgram } from "../src/ir/program/validation.js";
 import { prepareWholeIrProgram } from "../src/ir/program-preparation.js";
 import type { PreparedIrProgram } from "../src/ir/program.js";
 import type { NumberBoundaryPolicy } from "../src/runtime/contracts/provider-policy.js";
@@ -193,8 +194,12 @@ describe("#3527 numeric throw consumes an explicit independently materialized bo
       phases.push(event.phase);
     });
     try {
+      // #7380: stage 2 checks a program once, where it is produced; acceptance no longer re-runs it.
       for (const malformed of [missingProvider, badSignature])
-        expect(() => acceptPreparedIrProgram(malformed, replayOptions("wasmgc"))).toThrow();
+        expect(() => {
+          assertPreparedIrProgram(malformed);
+          acceptPreparedIrProgram(malformed, replayOptions("wasmgc"));
+        }).toThrow();
       expect(phases).not.toContain("emission-started");
       expect(phases).not.toContain("emitted");
     } finally {
