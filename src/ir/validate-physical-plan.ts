@@ -1,8 +1,9 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 //
 // Stage 3 of the Prepared validator (#7380): the invariants of a physical setup plan, read as plain data. The plan
-// belongs to the requested backend and target; no binding has two slots; every function, global and provider a
-// physical body names has a slot; every export and startup unit resolves to one. The planner refuses a program by
+// belongs to the requested backend and target; no binding and no resource key has two slots; every type key a
+// resource declaration names is declared; every function, global and provider a physical body names has a slot;
+// every export and startup unit resolves to one. The planner refuses a program by
 // name before it builds a plan that would break these, so a violation here is a compiler bug.
 
 import { irCallableBindingKey } from "./core/callable-bindings.js";
@@ -67,6 +68,34 @@ function assertUniqueSlots(plan: PhysicalSetupPlan): void {
   }
 }
 
+/** Every `typeKey` a resource declaration names, wherever in its shape, field, signature or name it sits. */
+function collectTypeKeys(value: unknown, out: string[]): void {
+  if (value === null || typeof value !== "object") return;
+  for (const [key, field] of Object.entries(value)) {
+    if (key === "typeKey" && typeof field === "string") out.push(field);
+    else collectTypeKeys(field, out);
+  }
+}
+
+function assertResourceDeclarations(plan: PhysicalSetupPlan): void {
+  const declarations = [
+    ...(plan.nativeStrings?.resources.declarations ?? []),
+    ...(plan.nativeNumberFormat?.resources.declarations ?? []),
+  ];
+  const keys = new Set<string>();
+  for (const { key } of declarations) {
+    if (keys.has(key)) invalid("duplicate slot", `resource key ${key} is declared twice`);
+    keys.add(key);
+  }
+  const types = new Set(declarations.filter((row) => row.space === "type").map((row) => row.key));
+  for (const declaration of declarations) {
+    const named: string[] = [];
+    collectTypeKeys(declaration, named);
+    for (const typeKey of named)
+      if (!types.has(typeKey)) invalid("unresolved type key", `${declaration.key} names undeclared type ${typeKey}`);
+  }
+}
+
 function assertReferencesResolve(plan: PhysicalSetupPlan, projection: PreparedIrProgramRuntimeProjection): void {
   const { callables, globals } = physicalPlanReferenceKeys(plan, nativeBindings(plan));
   for (const fn of projection.prepared.functions)
@@ -115,6 +144,7 @@ export function assertPhysicalSetupPlan(
   if (!projection || plan.target !== options.target)
     invalid("request", `plan is for ${plan.backend}:${plan.target}, not ${options.backend}:${options.target}`);
   assertUniqueSlots(plan);
+  assertResourceDeclarations(plan);
   assertReferencesResolve(plan, projection);
   assertExportsAndStartup(plan);
 }
