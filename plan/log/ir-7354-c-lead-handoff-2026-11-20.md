@@ -186,6 +186,23 @@ each lane):
 - **S7:** the #7335 fix (f21936ecc1: #7164 pre-scans see through wrappers;
   shard 7 has 0 failures locally) is pushed with hold. RV7335 confirms the
   delta.
+- **S14b:**
+  - #7431 fix is on `claude/7431-canary-promise-try` 22f3de0a3c, no PR yet.
+    On Node 22 over 600 ES5 standalone files: 1,623 s with 612 recycles before,
+    802 s with 0 recycles after; 600/600 pass in both.
+  - RV7346's two nits are moot while #7346 stays reverted; redo them when
+    #7376 is re-landed.
+  - The second 3426 finding ("compiled delete no longer reaches the host
+    realm") is in #7431, without its own id.
+- **S5:**
+  - #7343 at b512e509bb carries the RV7343 round (lib aliases keep "values" /
+    "entries"; `oracle.declarationsOf`, grant gone). RV7343 confirms.
+  - #7427: `claude/7427-symbol-keyed-member-keys` f906757a58, no PR yet,
+    0 verdict changes. 30 of 681 byte rows differ, not yet explained (Date
+    Symbol.toPrimitive, String Symbol.iterator). Explain them before the PR.
+  - B2b: unverified WIP on `claude/7350-b2b` 23d952425f.
+  - #7263, #7315 and #7330 conflict with main. #7315 was dequeued with
+    MERGE_CONFLICT.
 - **#7340** was approved on af0efa4e02 and released at wind-down.
 
 ## Decisions still open for the project lead
