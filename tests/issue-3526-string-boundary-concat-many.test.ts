@@ -9,9 +9,11 @@ import {
   RuntimeManifestBuilder,
   RuntimeManifestInvariantError,
   RUNTIME_PROVIDERS,
+  STRING_CONCAT_MANY_NATIVE_ARITY,
   STRING_CONCAT_MANY_POLICY_DISABLED,
   STRING_CONCAT_MANY_RUNTIME_FEATURES,
   STRING_CONCAT_MANY_RUNTIME_PROVIDER_IDS,
+  stringConcatManyArityCap,
   type RuntimeManifestPolicy,
   type RuntimeProviderDefinition,
   type StringConcatManyPolicy,
@@ -213,6 +215,19 @@ describe("#3526 F2-S6 batched many-arity concat contract", () => {
       (row) => row.feature === FEATURE && row.signature !== undefined,
     );
     expect(intrinsicCarriers).toEqual([]);
+  });
+  it("keeps the native arity range in ONE place, read by the pass cap", () => {
+    const native = rowOf("native.js.string.concat.many");
+    expect(native.implementation).toEqual({
+      kind: "runtime-callable-family",
+      symbolPrefix: "__str_concat_",
+      arity: { min: 3, max: 8 },
+    });
+    expect(native.hostCapabilities).toEqual([]);
+    expect(STRING_CONCAT_MANY_NATIVE_ARITY).toEqual({ min: 3, max: 8 });
+    // The pass ceiling is DERIVED from the rows, not copied beside them.
+    expect(stringConcatManyArityCap("native")).toBe(8);
+    expect(stringConcatManyArityCap("host")).toBe(Number.POSITIVE_INFINITY);
   });
 });
 
