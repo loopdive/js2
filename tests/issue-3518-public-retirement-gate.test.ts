@@ -20,7 +20,6 @@ import {
 import { analyzeMultiSource } from "../src/checker/index.js";
 import { prepareWholeIrProgram } from "../src/ir/program-preparation.js";
 import { subscribePreparedIrProgram, type PreparedIrProgramObservation } from "../src/ir/program-observation.js";
-import { acceptPreparedIrProgram } from "../src/ir/program-consumer.js";
 import { decodePreparedIrProgram, encodePreparedIrProgram } from "../src/ir/program-codec.js";
 import { replayOptions, replayProgram } from "./helpers/ir-whole-program-replay.js";
 
@@ -221,21 +220,28 @@ describe("recovered A/C dependency controls — never public-route credit", () =
   // This program was refused at acceptance when the test was written; the wasmgc host lane has since admitted
   // typed async functions. The test now checks the accepted program's answer against JavaScript's (#7380 PR 2b).
   it("accepts typed async on the wasmgc host lane, runs it, and keeps its denominator", async () => {
-    const result = prepare(
-      "export async function run(x: number): Promise<number> { const y = await (x + 1); return await (y + 2); }",
-      false,
-    );
-    expect(result.kind).toBe("prepared");
-    if (result.kind !== "prepared") throw new Error(result.detail);
-    const count = result.program.inventory.terminalUnits.length;
-    expect(count).toBe(1);
-    expect(acceptPreparedIrProgram(result.program, replayOptions("wasmgc")).kind).toBe("accepted");
-    const run = await replayProgram(result.program, replayOptions("wasmgc"));
-    if (run.kind !== "ran") throw new Error(JSON.stringify(run));
-    const asyncRun = run.run.exports.run as (x: number) => Promise<number>;
-    await expect(asyncRun(5)).resolves.toBe(8);
-    await expect(asyncRun(-3)).resolves.toBe(0);
-    expect(result.program.inventory.terminalUnits).toHaveLength(count);
+    const events: PreparedIrProgramObservation[] = [];
+    const unsubscribe = subscribePreparedIrProgram((e) => events.push(e));
+    try {
+      const result = prepare(
+        "export async function run(x: number): Promise<number> { const y = await (x + 1); return await (y + 2); }",
+        false,
+      );
+      expect(result.kind).toBe("prepared");
+      if (result.kind !== "prepared") throw new Error(result.detail);
+      const count = result.program.inventory.terminalUnits.length;
+      expect(count).toBe(1);
+      const run = await replayProgram(result.program, replayOptions("wasmgc"));
+      if (run.kind !== "ran") throw new Error(JSON.stringify(run));
+      expect(events.map((e) => e.phase)).toEqual(["prepared", "accepted", "emission-started", "emitted"]);
+      expect(phaseProblems(events)).toEqual([]);
+      const asyncRun = run.run.exports.run as (x: number) => Promise<number>;
+      await expect(asyncRun(5)).resolves.toBe(8);
+      await expect(asyncRun(-3)).resolves.toBe(0);
+      expect(result.program.inventory.terminalUnits).toHaveLength(count);
+    } finally {
+      unsubscribe();
+    }
   });
 
   it("real codec rejects removing a runtime provider and replaying a donor projection", () => {
