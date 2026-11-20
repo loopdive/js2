@@ -144,6 +144,21 @@ describe.each(["gc", "standalone"] as const)("#7394 — a wrapped assignment tar
     expect(result.success).toBe(false);
   });
 
+  // An array `length` store grows the array whatever wraps it: the #7164 share-group and hole pre-scans see through
+  // the wrapper, as the store does. `main` reads `g[8]` (a hole) and the new length back.
+  it.each([
+    "g.length = 9",
+    "(g.length as any) = 9",
+    "g.length! = 9",
+    "((g.length)) = 9",
+    "(g.length satisfies number) = 9",
+  ])("`%s` grows the array", async (write) => {
+    const source =
+      "export function main(): number { const g: any[] = []; g.push('a'); " +
+      `${write}; return (g[8] === undefined ? 1 : 0) + g.length * 10; }`;
+    expect(await runMain(source, runTarget)).toBe(91);
+  });
+
   // A call target is not a reference: like `f() += 1` (Annex B), a wrapped one evaluates `f()` and then throws a
   // ReferenceError instead of compiling to nothing.
   it.each(["(f() as number) += 1", "(f()!)++", "++(f()!)", "(f()) += 1"])(

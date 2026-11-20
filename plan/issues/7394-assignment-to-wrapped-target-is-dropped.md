@@ -128,3 +128,26 @@ unsupported target would be silent the same way.
 | --- | --- |
 | MUST-FIX: once `isCallExpressionTarget` looked through `as`/`!`, `(f() as number) += 1`, `(f()!)++` and `++(f()!)` reached the sloppy call-target path, but `emitWebCompatCallAssignmentTarget` still unwrapped parentheses only, so they compiled to nothing | **Fixed.** The codegen helper now unwraps with `skipTransparentExpressions`, the same wrappers the early-error check looks through. That was the last parenthesis-only unwrap on an assignment path. All three forms now call `f()` and then throw a ReferenceError, like `f() += 1`. Pinned on gc and standalone (`try`/`catch` reaches the catch, `f` ran once). |
 
+
+## Equivalence-gate fix (2026-11-20, on 7514d463e2)
+
+`equivalence-gate` (shard 7) failed on every head since the first push, which went unnoticed while the local gate
+run kept hitting the 30-minute limit. The failing rows were `issue-7164-externref-vec-length-growth` "assignment-target
+sweep", `asLength` and `nonNullLength` × gc/standalone/wasi: `(g.length as any) = 9` and `g.length! = 9` trapped
+(array out of bounds) on the next `g[8]` read.
+
+- **Cause.** This PR lowers a wrapped `length` store as the bare one. The #7164 share-group and hole pre-scans still
+  recognised only the bare `g.length = n`, so the binding kept a vec that does not grow. `((g.length)) = 9` traps
+  the same way on main.
+- **Fix** (`src/codegen/statements/array-share-group.ts`): `elementUse`, `isGrowingLengthStore` and
+  `isLengthUpdate` see through wrappers (`skipValueWrappers` / `outermostTransparent`). The pre-scan's `=` predicate
+  moves out of `array-holes.ts` into `isPossibleLengthStore`, beside its sibling `armForLengthUpdate`, and peels
+  wrappers too.
+- **Measured.**
+  - `SHARD=7/8 node scripts/equivalence-gate.mjs`: 0 failing, 1,712 passing (6 failing before).
+  - The #7164 file and this issue's test: 2,125/2,125.
+  - 4 new "grows the array" pins × gc/standalone: the 8 rows fail without the fix.
+  - 200/200 test262 sample binaries identical.
+  - All gates exit 0, including loc/func at origin/main.
+- **Left open, pre-existing on main.** `g.length += 7` on a vec is a compile error ("Cannot compound-assign 'length'"),
+  and the wrapped form now shares that answer. On main, `(g.length) += 7` silently did nothing.
