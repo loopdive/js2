@@ -179,8 +179,7 @@ describe("#7354 H — the dynamic home of a script var", () => {
       "var e = f(); var x = 1; function f() { return x; } function h(n: number) { return n; } h(x);",
       "a dynamic value flows into number without a conversion (CallExpression)",
     ],
-    // An operation on the dynamic value the legalization has no intrinsic for (slices Str and T).
-    ["added to", `${HOISTED_X}var y = 1; y = x + 1;`, "dynamic operation __ir_dyn_add has no Prepared intrinsic"],
+    // (#7354 Str2-c) `x + 1` on the dynamic home runs now (below).
     // (#7354 T) `x || 0` runs now (below).
     // A member write on the binding is no second declaration: the binding keeps its home and the write refuses.
     [
@@ -292,6 +291,12 @@ describe("#7354 H — the dynamic home of a script var", () => {
     ["a function read as a value", "function k() { return k2; } function k2() { return 1; } k();", 'identifier "k2"'],
   ])("refuses the value of %s returned from an unannotated function", async (_, program, message) => {
     expect(await refusal(program)).toContain(message);
+  });
+
+  // (#7354 Str2-c) The dynamic home added to a number: the legalization's dynamic `+`.
+  it("runs the dynamic home added to a number", async () => {
+    expect(await run(`${HOISTED_X}var y = 1; y = x + 1;\nif (y !== 2 || e !== undefined) throw 1;`)).toBe("returned");
+    expect(await run(`${HOISTED_X}var y = 1; y = x + 1;\nif (y !== 3) throw 1;`)).toBe("threw");
   });
 
   // `void 0` is not modelled: the result is dynamic and still compares like JavaScript.

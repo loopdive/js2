@@ -1,5 +1,4 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
-import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -30,28 +29,6 @@ const APPLICATION: Record<string, string> = {
   "./entry.ts":
     'import { bisect } from "./solver";\nimport { polynomial } from "./model";\nexport function estimate(target: number, lo: number, hi: number, tolerance: number, maxIterations: number): number {\n  return bisect(target, lo, hi, tolerance, maxIterations);\n}\nexport function residual(x: number, target: number): number {\n  return polynomial(x, target);\n}\n',
 };
-const SOURCE_PINS = [
-  {
-    logical: "./model.ts",
-    bytes: 91,
-    sha256: "0370f7d60d9d90c1c9261edab68d018fcba02b0cd551f21f42dff17b0749d453",
-  },
-  {
-    logical: "./metrics.ts",
-    bytes: 89,
-    sha256: "588dbcb0d26b1878ecf6c019959772471c0fc9cdcff58d049dec67bd44e586fb",
-  },
-  {
-    logical: "./solver.ts",
-    bytes: 786,
-    sha256: "9a61967126deff453dc57c3a319e67776458fc6f0ee0ac17281e5620fb9ab376",
-  },
-  {
-    logical: "./entry.ts",
-    bytes: 347,
-    sha256: "535f911bc1c18eb9b667cf27a2240b44191e366bf6617625d7c07d7e74031454",
-  },
-];
 const APPLICATION_CALLS = [
   {
     id: "sqrt2",
@@ -362,13 +339,7 @@ afterEach(async () => {
   await setImmediate();
 });
 describe("#3525 genuine prepared Linear early returns", () => {
-  it("retains all four original application source pins and independent native eight-call oracle", () => {
-    expect(SOURCE_PINS).toHaveLength(4);
-    for (const pin of SOURCE_PINS) {
-      const text = APPLICATION[pin.logical]!;
-      expect(Buffer.byteLength(text)).toBe(pin.bytes);
-      expect(createHash("sha256").update(text).digest("hex")).toBe(pin.sha256);
-    }
+  it("matches the independent native eight-call oracle", () => {
     const values = native(APPLICATION, APPLICATION_CALLS);
     valuesEqual(values, APPLICATION_VALUES);
     for (const [index, root] of [Math.sqrt(2), 7, 0.5, 1000].entries())

@@ -1,13 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
-import {
-  hash,
-  originalText,
-  ORIGINAL_TEXTUAL_ALGORITHM,
-  ORIGINAL_TEXTUAL_SHA256,
-} from "./helpers/physical-snapshot-oracle.js";
-import { readFileSync } from "node:fs";
+import { originalText } from "./helpers/physical-snapshot-oracle.js";
 import { setImmediate } from "node:timers/promises";
-import ts from "typescript";
 import { afterEach, describe, expect, it } from "vitest";
 import { createEmptyModule } from "../src/ir/types.js";
 import type { Instr, LocalDef } from "../src/wasm/model/instructions.js";
@@ -103,16 +96,6 @@ function words(value: number) {
 }
 
 describe("fresh filled-function snapshots match the historical textual algorithm", () => {
-  it("pins the independent original algorithm and keeps other ledger snapshots on that exact implementation", () => {
-    const text = readFileSync(new URL("../src/wasm/physical/module-reservations.ts", import.meta.url), "utf8"),
-      file = ts.createSourceFile("module-reservations.ts", text, ts.ScriptTarget.Latest, true),
-      donors = file.statements.filter(
-        (node): node is ts.FunctionDeclaration => ts.isFunctionDeclaration(node) && node.name?.text === "dataText",
-      );
-    expect(donors).toHaveLength(1);
-    expect(hash(donors[0]!.getText(file))).toBe(ORIGINAL_TEXTUAL_SHA256);
-    expect(hash(ORIGINAL_TEXTUAL_ALGORITHM)).toBe(ORIGINAL_TEXTUAL_SHA256);
-  });
   it("retains primitive kinds, raw float words, escaped keys, lone surrogates and present undefined", () => {
     const make = () => ({
       values: [

@@ -131,7 +131,7 @@
     {
       "name": "typeof / instanceof",
       "testCategories": ["language/expressions/typeof", "language/expressions/instanceof"],
-      "passCount": 57,
+      "passCount": 58,
       "totalCount": 59,
       "editionSpread": [
         {
@@ -151,7 +151,7 @@
         },
         {
           "edition": "Unclassified (untagged)",
-          "pass": 10,
+          "pass": 11,
           "total": 12
         }
       ]
@@ -1098,7 +1098,7 @@
     {
       "name": "Modules (import / export)",
       "testCategories": ["language/module-code", "language/import", "language/export"],
-      "passCount": 435,
+      "passCount": 436,
       "totalCount": 731,
       "editionSpread": [
         {
@@ -1108,7 +1108,7 @@
         },
         {
           "edition": "ES2020",
-          "pass": 16,
+          "pass": 17,
           "total": 31
         },
         {
@@ -1234,7 +1234,7 @@
     {
       "name": "globalThis",
       "testCategories": ["built-ins/global", "built-ins/globalThis"],
-      "passCount": 120,
+      "passCount": 121,
       "totalCount": 122
     },
     {
@@ -1564,12 +1564,12 @@
     {
       "name": "Temporal",
       "testCategories": ["built-ins/Temporal"],
-      "passCount": 4236,
+      "passCount": 4484,
       "totalCount": 4603,
       "editionSpread": [
         {
           "edition": "ES2026",
-          "pass": 4236,
+          "pass": 4484,
           "total": 4603
         }
       ]

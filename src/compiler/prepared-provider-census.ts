@@ -17,8 +17,16 @@ import type { EmittedNativeRealmSlots } from "../backend/wasmgc/program/native-r
 import {
   nativeRole,
   type NativeStringValueAbiBinding,
+  type PhysicalNativeNumberFormatSetup,
   type PhysicalNativeStringSetup,
 } from "../ir/program-physical-plan.js";
+import {
+  formatterSetupJoins,
+  formatterJoins,
+  formatterKernelScratch,
+  formatterScratchBinding,
+  isFormatterScratch,
+} from "./prepared-formatter-census.js";
 import { preparedIrRuntimeAbiAnchor } from "../ir/program-runtime-abi.js";
 import { createIrBindingId } from "../shared/contracts/identity-values.js";
 import { preparedIrDataMismatch } from "../ir/program/data.js";
@@ -31,6 +39,7 @@ import {
   irStringLenDemand,
 } from "../ir/program/runtime-demands.js";
 import type { IrFunction } from "../ir/core/nodes.js";
+import type { IrType } from "../ir/core/types.js";
 import type { RuntimeFeature } from "../ir/runtime/contracts/manifest.js";
 import {
   STRING_CONCAT_RUNTIME_FEATURES,
@@ -54,6 +63,7 @@ import type {
 } from "../runtime/wasmgc/values/native-resource-declaration-types.js";
 import type { IrBindingId } from "../shared/contracts/ir-identity.js";
 import { completedFunctionSlot } from "./prepared-physical-signature.js";
+import { numberToStringIntegerBeforeScratch } from "../runtime/wasmgc/values/number-format-bodies.js";
 
 /**
  * (#7354) The runtime policy a Prepared presentation selects. On wasmgc standalone the number boundary is the
@@ -82,6 +92,20 @@ export function preparedPresentationPolicy(
     : { backend, target };
 }
 
+/**
+ * (#7354 Str2) The number formatter's physical policy, which the backend requires once the program formats a
+ * number (the support batch exists only on wasmgc standalone): the ordinary pipeline's reading, so both pipelines
+ * fill the same `number_toString` body.
+ */
+export function preparedNumberFormatOptions(
+  backend: PreparedIrBackendOptions["backend"],
+  target: PreparedIrBackendOptions["target"],
+): Pick<PreparedIrBackendOptions, "numberFormat"> {
+  return backend === "wasmgc" && target === "standalone"
+    ? { numberFormat: { integerBeforeScratch: numberToStringIntegerBeforeScratch() } }
+    : {};
+}
+
 /** A completed support function: the row's key and its slot's index name exactly one receipt, and the slot
  * carries the row's signature. */
 interface SupportCallableRow {
@@ -103,7 +127,7 @@ function samePopulation(left: readonly unknown[], right: readonly unknown[]): bo
       .map(([, row]) => row);
   return preparedIrDataMismatch(sorted(left), sorted(right)) === undefined;
 }
-const runtimeCallable = (symbol: string) => ({ kind: "runtime-callable", symbol });
+const runtimeCallable = (symbol: string) => ({ kind: "runtime-callable" as const, symbol });
 /**
  * The one join of the support population, for remainders, natives and (#7354 O1) the realm alike: every row's
  * completed slot carries its signature, and the rows' (slot index, key) pairs, with the realm's completed functions,
@@ -206,16 +230,24 @@ export interface NativeSetupSlots {
 }
 /** The binding domain each setup space is reserved in (`irSupportFuncRef`, `irSupportGlobalRef`, `irSourceTypeRef`). */
 const SETUP_BINDING_DOMAINS = { function: "support", global: "global", type: "type" } as const;
+/** An accepted native setup plan: the string setup, or (#7354 Str2-c) the formatter setup beside it. */
+type NativeSetup = Pick<PhysicalNativeStringSetup, "bindings" | "formatterScratch"> & {
+  readonly resources: { readonly declarations: readonly NativeStringValueDeclaration[] };
+};
 /**
  * Declarations and published bindings of the accepted native setup plan join one to one by key, and the completed
  * emission resolves each binding to a slot of its declaration's space. (#7354 Str) A binding the setup derives
  * itself (not a runtime or intrinsic callable's) is the one its declaration's space and role derive under the
- * runtime ABI anchor, so every role the census reads is the one the completed slot was reserved under.
+ * runtime ABI anchor, so every role the census reads is the one the completed slot was reserved under. (#7354
+ * Str2) A `canonical` setup (the formatter's) had every binding joined to its canonical declaration already
+ * (`formatterSetupJoins`), which also covers its callables bound under canonical ids. A setup that carries the
+ * formatter scratch binds the string data type twice (`formatterScratchBinding`).
  */
 function nativeSlots(
   program: PreparedIrProgram,
   emission: EmittedPreparedIrProgram,
-  setup: PhysicalNativeStringSetup,
+  setup: NativeSetup,
+  canonical: boolean,
 ): NativeSlot[] | undefined {
   const { declarations } = setup.resources;
   if (!setup.bindings.every((binding) => declarations.filter((row) => row.key === binding.resourceKey).length === 1))
@@ -224,16 +256,21 @@ function nativeSlots(
   const slots: NativeSlot[] = [];
   for (const declaration of declarations) {
     const bindings = setup.bindings.filter((row) => row.resourceKey === declaration.key);
-    const slot = bindings.length === 1 ? emittedProgramBindingIndex(emission, bindings[0]!.entry.id) : undefined;
-    if (slot?.space !== declaration.space) return undefined;
-    const binding = bindings[0]!;
-    const callable = binding.reference.binding.kind === "runtime" || binding.reference.binding.kind === "intrinsic";
     const owned = createIrBindingId({
       ownerId: anchor,
       domain: SETUP_BINDING_DOMAINS[declaration.space],
       role: nativeRole(declaration),
     });
-    if (!callable && binding.entry.id !== owned) return undefined;
+    const scratch = setup.formatterScratch !== undefined && isFormatterScratch(program, declaration);
+    const binding = scratch
+      ? formatterScratchBinding(program, setup.formatterScratch, owned, bindings)
+      : bindings.length === 1
+        ? bindings[0]
+        : undefined;
+    const slot = binding && emittedProgramBindingIndex(emission, binding.entry.id);
+    if (!binding || slot?.space !== declaration.space) return undefined;
+    const callable = binding.reference.binding.kind === "runtime" || binding.reference.binding.kind === "intrinsic";
+    if (!canonical && !scratch && !callable && binding.entry.id !== owned) return undefined;
     slots.push({ declaration, binding, index: slot.index });
   }
   return slots;
@@ -373,20 +410,31 @@ function nativeRows(
   program: PreparedIrProgram,
   emission: EmittedPreparedIrProgram,
   setup: PhysicalNativeStringSetup,
+  formatter: PhysicalNativeNumberFormatSetup | undefined,
   providers: readonly RuntimeProviderDefinition[],
   realmCallables: readonly ReturnType<typeof runtimeCallable>[],
-  utf8Storage: boolean,
+  backend: PreparedIrBackendOptions,
 ):
   | {
       readonly rows: readonly SupportCallableRow[];
       readonly slots: NativeSetupSlots;
     }
   | undefined {
-  const slots = nativeSlots(program, emission, setup);
-  if (!slots?.every((slot) => nativeGlobalMatches(emission, slots, slot))) return undefined;
+  const owned = nativeSlots(program, emission, setup, false);
+  const joined = formatter && formatterSetupJoins(program, formatter, setup.resources, backend.numberFormat);
+  const formatted = !formatter ? [] : joined ? nativeSlots(program, emission, formatter, true) : undefined;
+  const slots = owned && formatted && [...owned, ...formatted];
+  // (#7354 Str2-c) One declaration per completed slot, across both setups: no row is a second name for another's.
+  if (
+    !slots ||
+    new Set(slots.map((slot) => `${slot.declaration.space}:${slot.index}`)).size !== slots.length ||
+    !slots.every((slot) => nativeGlobalMatches(emission, slots, slot))
+  )
+    return undefined;
   const strings = providers.filter((row) => STRING_FEATURES.has(row.feature));
   const callables = providers.filter((row) => !strings.includes(row) && row.implementation.kind === "runtime-callable");
-  const answered = [...realmCallables];
+  const formatterCallables = formatterJoins(program, emission, formatted!);
+  const answered: RuntimeProviderDefinition["implementation"][] = [...realmCallables, ...(formatterCallables ?? [])];
   const rows: SupportCallableRow[] = [];
   for (const { declaration, binding } of slots) {
     if (declaration.space !== "function") continue;
@@ -403,13 +451,14 @@ function nativeRows(
     });
   }
   if (
+    !formatterCallables ||
     !providers.every((row) => canonicalProvider(RUNTIME_PROVIDERS, row)) ||
     !samePopulation(
       answered,
       callables.map((row) => row.implementation),
     ) ||
     providers.some((row) => !strings.includes(row) && !callables.includes(row)) ||
-    !stringProvidersJoin(projection, program, setup, slots, strings, utf8Storage)
+    !stringProvidersJoin(projection, program, setup, owned!, strings, backend.utf8Storage)
   )
     return undefined;
   const indices = (space: "type" | "global") =>
@@ -436,14 +485,15 @@ export function runtimeCensus(
     NUMBER_REMAINDER_RUNTIME_PROVIDERS.some((canonical) => canonical.id === row.id);
   const natives = providers.filter((row) => !isRemainder(row));
   const remainders = remainderRows(program, emission, providers.filter(isRemainder));
-  const setup = emittedPhysicalSetupPlan(emission).nativeStrings;
+  const plan = emittedPhysicalSetupPlan(emission);
+  const setup = plan.nativeStrings;
   const projection = program.runtime.find((row) => row.backend === backend.backend && row.target === backend.target);
   const realm = emittedNativeRealmSlots(emission);
   const realmCallables = sourceObjectCallables(emission, realm);
   if (!realmCallables) return undefined;
   const native =
     setup && projection && backend.target === "standalone"
-      ? nativeRows(projection, program, emission, setup, natives, realmCallables, backend.utf8Storage)
+      ? nativeRows(projection, program, emission, setup, plan.nativeNumberFormat, natives, realmCallables, backend)
       : undefined;
   if (!remainders || (!native && natives.length)) return undefined;
   if (!supportPopulationJoins(emission, [...remainders, ...(native?.rows ?? [])], realm)) return undefined;
@@ -454,4 +504,26 @@ export function runtimeCensus(
   return {
     native: { types: union(native.slots.types, realm?.types), globals: union(native.slots.globals, realm?.globals) },
   };
+}
+/**
+ * (#7354 Str2-c) Whether the program carries a runtime-support batch no census joined. The census answers native
+ * setup slots only after joining the program's batches to its formatter demand (`formatterJoins`), so a batch is
+ * admitted exactly beside those slots.
+ */
+export function unjoinedSupport(program: PreparedIrProgram, native: NativeSetupSlots | undefined): boolean {
+  return Boolean(program.runtimeSupport?.batches.length) && !native;
+}
+type CallableContract = Extract<PreparedIrProgram["abi"]["entries"][number]["contract"], { kind: "callable" }>;
+/**
+ * Whether every parameter and result of a callable ABI contract is a value the presentation carries (`carried`), or
+ * (#7354 Str2-c) the formatter scratch on a canonical kernel (`formatterKernelScratch`), whose slot the census joins.
+ */
+export function callableCarried(
+  program: PreparedIrProgram,
+  contract: CallableContract,
+  carried: (type: IrType) => boolean,
+): boolean {
+  return [...contract.params, ...contract.results].every(
+    (type) => carried(type) || formatterKernelScratch(program, contract.ref, type),
+  );
 }

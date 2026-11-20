@@ -218,7 +218,11 @@ describe("native vector physical resource planning from the complete source fami
         const refusal = planPhysicalSetup(program, options, program.runtime[0]!);
         expect(refusal.kind).toBe("unsupported");
         if (refusal.kind === "planned") throw new Error("whole-family physical execution unexpectedly admitted");
-        expect(refusal.detail).toContain("scheduler/promise runtime materialization");
+        // 999a6a4235 replaced the "scheduler/promise runtime materialization" refusal with the located gap
+        // report of the source-free physical setup; the family's first gap is its async frames.
+        expect(refusal.detail).toMatch(
+          /^wasmgc:standalone physical setup cannot be materialized \(\d+ gaps\): async frames do not support wasmgc:standalone;/,
+        );
         expect(refusal.location.sourceId).toBeDefined();
         expect(program.allocations.size).toBeGreaterThan(0);
       });

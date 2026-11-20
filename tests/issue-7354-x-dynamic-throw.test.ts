@@ -157,6 +157,8 @@ describe("#7354 X — throw and catch with the Prepared dynamic value", () => {
     ["`=== 'x'`", "try { throw 'x'; } catch (e) { if ((e === 'x') !== @A) throw 1; }", "true", "false"],
     ["ToBoolean of 'x'", "try { throw 'x'; } catch (e) { if (!e !== @A) throw 1; }", "false", "true"],
     ["ToBoolean of ''", "try { throw ''; } catch (e) { if (!e !== @A) throw 1; }", "true", "false"],
+    // (#7354 Str2 merge) TYPEOF_KIND lists the string kind.
+    ["typeof 'x'", "try { throw 'x'; } catch (e) { if ((typeof e === 'string') !== @A) throw 1; }", "true", "false"],
     [
       "a string through `||`",
       "function g(v) { throw v; } try { g(''); } catch (e) { if ((e || 7) !== @A) throw 1; }",
@@ -170,7 +172,8 @@ describe("#7354 X — throw and catch with the Prepared dynamic value", () => {
   // The catch binding is the dynamic value, which is exact only for numbers, booleans, `undefined`, `null` and
   // native strings (and for Error objects, under every operation the carrier has). Each other payload that could
   // reach a catch refuses before it does; the slice that makes one reachable must give the dynamic operations its
-  // arm and update this list.
+  // arm and update this list. (#7354 Ty) The catch binding enters the carrier without the box arm's `boxedKind`, so
+  // this list is also what keeps `TYPEOF_KIND` (the `typeof` answers of the admitted kinds) complete.
   it.each([
     ["a typed Boolean throw", "try { throw true; } catch (e) { if (!e) throw 1; }", "throw val not in slice 9"],
     [
@@ -197,7 +200,11 @@ describe("#7354 X — throw and catch with the Prepared dynamic value", () => {
     ],
   ])("refuses %s before it reaches a catch", async (_label, source, expected) => {
     const result = await compile(source, options());
-    expect(result.success).toBe(false);
+    expect(
+      result.success,
+      "a new payload kind reaches a catch: add its kind to TYPEOF_KIND (src/ir/program/dynamic-value-legalization.ts) " +
+        "so `typeof e` answers it, and give the dynamic operations its arm",
+    ).toBe(false);
     expect(messages(result).join("\n")).toContain(expected);
   });
 
