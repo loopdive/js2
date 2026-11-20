@@ -2373,3 +2373,19 @@ through `src/test262/test262-prepared-entry.ts` (options `wholeProgram: prepared
     intrinsic"); a gap could carry its own sentence.
   - `nativeRealmReservationInventory` records `owner.inventory` as a side effect of a query; a separate record step
     would be clearer.
+
+## Suspended Work (S4, Fa / Fb / Fa × Ty / declaration as value — 2026-11-20)
+
+The budget window ended. No hold was removed and nothing was enqueued.
+
+| line | branch @ head | PR | state | next step |
+| --- | --- | --- | --- | --- |
+| Fa | `claude/7354-fa` @ d5fccf637d3 | #7309 (hold) | RV7309 round 3 APPROVED on e22cb7c872. Its one should-fix (`intoCarrier` lists every kind, `satisfies never`) is d5fccf637d3, not yet re-looked. | Send RV7309 the delta d5fccf637d3 for confirmation. On e22cb7c872, `quality` was red in `tests/issue-4513.test.ts` (3 tests: "expected 42 to be NaN", "expected [Function] to throw", "type incompatibility when transforming from/to JS"). That file was last changed by #7312's O1 commit ca71f37c62, and Fa does not touch it, so the failure is most likely #7312's. Not yet verified on #7312's own CI. Fa merges after #7312 and carries #7312's head at that time. |
+| Fb | `claude/7354-fb` @ 5770d7dedd | #7326 (hold) | Built on the old Fa (1474338c53). Its red `quality` is the #3518 "empty void closure bodies" 35 s timeout (S3 raises it to 90 s in #7312), plus the EH mix, which #7312 already fixes. Reviewer RV7326 has started. | Merge Fa d5fccf637d3 into fb. Expect conflicts in dynamic-value-legalization.ts: Fb's `TESTED_AT_RUN_TIME` admission of a native call result must become one `carrierKind` row ("dynamic" for an externref `__ir_dyn_call_box` operand), not a second admission path. Then send RV7326 the new head. |
+| Fa × Ty | `claude/7354-fa-ty` @ 77243fd74e0 | #7345 (hold), base `claude/7354-ty-r2` | CI suite green on 77243fd74e0. Reviewer RV7345 has started. | Merge Fa d5fccf637d3 into it and send RV7345 the new head. The integration run's stale pins (`ProgramKinds`) belong to the branch that brings in `ProgramKinds`. |
+| Declaration as value | `claude/7354-fa-decl` @ c8640244ef8 | none | WIP: the subagent stopped on a rate limit. It contains S1's plan (a) on Fa e22cb7c872 + S10's registry 4792b8f2ef: the new `program-source-function-values.ts`, edits in program-source(-globals), from-ast and source-dynamic-contracts, and the acceptance file `tests/issue-7354-fa-decl-function-values.test.ts`. **Not tested; slow gates not run.** | Review the WIP diff against the plan (S1's section "Function value with own properties", with the two agreed amendments: the shared three-conjunct predicate, and the startup closure emitted before legalization so it enters only through `admit`). Finish it, run the acceptance file, the Fa/Fb/H/H2/P suites, the byte-diff and the gates, then open a PR stacked on #7329 and Fa. |
+| realm EH | `claude/7354-realm-eh` @ 52ac2f56ab | merged into #7312 (0bb1eb4e22) | done | none |
+
+Queued after these: dynamic method calls (`__ir_dyn_method_call_N`, e.g. `failures.push`, `.forEach(cb)`): a member get plus a call through a value, on the Fb line. Then R7 (direct calls inside lifted closures) and R5's home-call row.
+
+To reproduce CI's Node 25 check locally: `/opt/node24/bin/node --no-experimental-wasm-legacy-eh node_modules/vitest/vitest.mjs run <file> --pool=threads`. The corpus byte-diff script must `await compile`.
