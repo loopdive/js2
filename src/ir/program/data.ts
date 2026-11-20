@@ -2,6 +2,7 @@
 
 import { IR_CLASS_SHAPE_CELL } from "../core/types.js";
 import { PreparedIrProgramInvariantError } from "./errors.js";
+import { preparedValidationEnabled } from "../../shared/contracts/prepared-validation.js";
 
 class FrozenMap<K, V> implements ReadonlyMap<K, V> {
   readonly #map: Map<K, V>;
@@ -256,6 +257,10 @@ const nativeCollectionBrand = Object.freeze({
 });
 
 function hasNativeCollectionState(value: object): boolean {
+  // Both callers also refuse a non-array whose prototype is neither Object's nor null, which covers every genuine
+  // collection (an array has no collection slot). The thrown probes add only a collection whose prototype was
+  // replaced or erased: a forged input, so they run only with the self-checks on (#7380).
+  if (!preparedValidationEnabled()) return false;
   const { cache, get, set, apply, probes } = nativeCollectionBrand;
   const cached = apply(get, cache, [value]) as boolean | undefined;
   if (cached !== undefined) return cached;

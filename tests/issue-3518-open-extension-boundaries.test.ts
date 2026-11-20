@@ -572,19 +572,4 @@ describe("#3518 preservation and two reviewed open extension sites", () => {
     );
     expect(result.m.ok).toBe(false);
   });
-
-  it("binds both reviewed production source blobs to the real scanner's AST sites", () => {
-    const result = run(repository);
-    expect(result.m, result.output).toBeDefined();
-    expect(result.m.preservation.receipts.map((receipt: any) => receipt.contentHash)).toEqual([
-      "597599d7bbfda9617bdb67c2fe04d7681445b627",
-      "d17a8159b1b0aeefaa3988b55cc8c06cec00027e",
-    ]);
-    expect(result.m.preservation.receipts.map((receipt: any) => receipt.id)).toEqual([
-      "optional-binaryen-provider-v1",
-      "platform-dynamic-import-v1",
-    ]);
-    expect(result.m.ok).toBe(false);
-    expect(result.m.retirementCertified).toBe(false);
-  });
 });

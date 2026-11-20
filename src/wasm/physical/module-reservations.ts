@@ -29,6 +29,7 @@ import type {
 import { appendDefinedFunc, commitDefinedFuncOrdinal, mintDefinedFunc, STABLE_FUNC_BASE } from "./function-handles.js";
 import { indexPhysicalTypes, planPhysicalTypeSection } from "./type-layout.js";
 import { funcTypeKey, internFunctionType, sameValTypes } from "./function-types.js";
+import { preparedValidationEnabled } from "../../shared/contracts/prepared-validation.js";
 
 /** The physical fields of the SAME module ultimately passed to the emitter. */
 export interface PhysicalModuleStorage {
@@ -377,7 +378,8 @@ export class PhysicalModuleReservations {
   }
 
   #verifyLayout(): void {
-    if (this.#auditing) return;
+    // O(module) per ledger call; it guards against another compiler module rewriting storage, not user input (#7380).
+    if (this.#auditing || !preparedValidationEnabled()) return;
     for (const key of populationKeys) {
       const actual = this.#module[key];
       const expected = this.#expected[key];

@@ -16,9 +16,10 @@ afterEach(async () => {
 for (const displaced of [false, true])
   describe("stateful wrapper storage, displaced=" + displaced, () => {
     let r: ReturnType<typeof realmWrapperRuntime>;
+    // Builds and instantiates the realm runtime: over 10 s under load; the whole file takes 58 s alone (2026-11-20).
     beforeAll(() => {
       r = realmWrapperRuntime(displaced);
-    });
+    }, 180_000);
     it("composes real zero-import owners while retaining each narrow completion scope", () => {
       expect(WebAssembly.Module.imports(r.wasm)).toEqual([]);
       expect(r.r.state.completionScope).toBe("realm-carrier-state-only");
