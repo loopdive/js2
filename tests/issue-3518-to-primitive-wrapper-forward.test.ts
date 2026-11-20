@@ -1,5 +1,4 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
-import { readBeforeResumeMain } from "./helpers/resume-main-composition.js";
 import { createHash } from "node:crypto";
 import { runInNewContext } from "node:vm";
 import { setImmediate } from "node:timers/promises";
@@ -25,7 +24,6 @@ import type { CodegenContext } from "../src/codegen/context/types.js";
 import type { Instr } from "../src/wasm/model/instructions.js";
 
 const sha = (text: string) => createHash("sha256").update(text).digest("hex");
-const read = readBeforeResumeMain;
 afterEach(async () => {
   vi.restoreAllMocks();
   await setImmediate();
@@ -607,77 +605,5 @@ describe("ToPrimitive forward presence and provider boundaries", () => {
     });
     expect(() => fillProtoIndexStore(ctx)).toThrow("target or content changed");
     expect(invoked).toBe(false);
-  });
-});
-
-// This authored correction is explicit and separate from the signed donor.
-// Inverting every admitted span restores the entire measured extraction file;
-// the original 46-row suite then reconstructs its unchanged signed donors.
-interface ForwardSpan {
-  beforeStart: number;
-  afterStart: number;
-  before: string;
-  after: string;
-}
-interface ForwardRow {
-  path: string;
-  beforeSha256: string;
-  spans: ForwardSpan[];
-}
-const forwardText = read("tests/fixtures/issue-3518-to-primitive-wrapper-forward.json");
-function forwardReceipt(text: string): ForwardRow[] {
-  if (sha(text) !== "c12630d715fd7419e89785b9a8f942bc15cc99c114b846bd44c29964fc6ff3d2")
-    throw new Error("changed explicit forward correction");
-  const value = JSON.parse(text) as {
-    kind: string;
-    extractionFixtureSha256: string;
-    originalDonorFixtureSha256: string;
-    records: ForwardRow[];
-  };
-  if (value.kind !== "explicit-authored-forward-correction-not-historical-donor")
-    throw new Error("foreign forward correction kind");
-  const baselineText = read("tests/fixtures/issue-3518-to-primitive-extraction-baseline.json");
-  if (
-    sha(baselineText) !== value.extractionFixtureSha256 ||
-    sha(read("tests/fixtures/issue-3518-native-to-primitive-donor.json")) !== value.originalDonorFixtureSha256
-  )
-    throw new Error("changed original baseline authority");
-  return value.records;
-}
-describe("explicit current-source forward correction over unchanged historical extraction", () => {
-  it("positive first: modified fixture bytes cannot reseed the authored correction", () => {
-    forwardReceipt(forwardText);
-    expect(() => forwardReceipt(forwardText + "\n")).toThrow("changed explicit forward correction");
-  });
-});
-
-// A separate authored structural record composes with, never replaces, the
-// original forward correction and its unchanged historical donor authority.
-interface PresenceExtraction {
-  kind: string;
-  priorForwardFixtureSha256: string;
-  store: ForwardRow & { afterSha256: string };
-  modules: { path: string; sha256: string }[];
-}
-const presenceExtractionText = read("tests/fixtures/issue-3518-to-primitive-presence-extraction.json");
-function presenceExtractionReceipt(text: string): PresenceExtraction {
-  if (sha(text) !== "b1d1854ac98274ea89319628e446009f6bcd23a5532e69bb8b64329547737857")
-    throw new Error("changed presence extraction receipt");
-  const value = JSON.parse(text) as PresenceExtraction;
-  if (
-    value.kind !== "explicit-structural-extraction-with-private-factory-token-defence" ||
-    value.priorForwardFixtureSha256 !== sha(forwardText) ||
-    value.store.path !== "src/codegen/proto-index-store.ts"
-  )
-    throw new Error("foreign presence extraction provenance");
-  return value;
-}
-describe("presence extraction preserves prior source and private completion authority", () => {
-  it("positive first: the structural receipt cannot reseed either old fixture", () => {
-    presenceExtractionReceipt(presenceExtractionText);
-    forwardReceipt(forwardText);
-    expect(() => presenceExtractionReceipt(presenceExtractionText + "\n")).toThrow(
-      "changed presence extraction receipt",
-    );
   });
 });

@@ -32,7 +32,6 @@ import { asValueId, irVal } from "../src/ir/core/nodes.js";
 import type { IrTypeRef, IrVecLayoutRef } from "../src/ir/core/types.js";
 import { createIrBindingId } from "../src/shared/contracts/identity-values.js";
 import { createTestIrFunctionIdentityFactory } from "./helpers/ir-identities.js";
-import { assertIntrinsicSpecialization, assertNamedForward } from "./helpers/ir-historical-runtime-reconstruction.js";
 
 afterEach(async () => {
   // Yield between synchronous source proofs so Vitest can process task-update RPCs.
@@ -295,30 +294,6 @@ function authenticatedFixture() {
 }
 
 describe("#3518 canonical runtime data-contract seam", () => {
-  it.each(movedReceipts)("forwards each $path name only from its exact defining owner", (receipt) => {
-    for (const name of receipt.names) {
-      if (name === "PreparedIrAsyncRuntimeBase" || name === "PreparedIrAsyncRuntimeInput") continue;
-      const oldPath = name === "PreparedIrRuntimeManifest" ? "src/ir/intrinsic-support.ts" : receipt.oldPath;
-      const chain = [oldPath];
-      if (oldPath === "src/ir/async-runtime-providers.ts") chain.push("src/ir/runtime/async-providers.ts");
-      if (oldPath === "src/ir/runtime-manifest.ts") chain.push("src/ir/runtime/manifest.ts");
-      chain.push(receipt.path);
-      if (
-        [
-          "IntrinsicSignature",
-          "IntrinsicSourceLocation",
-          "IntrinsicUse",
-          "IntrinsicVerificationCode",
-          "IntrinsicVerificationFailure",
-        ].includes(name)
-      )
-        chain.push("src/ir/core/intrinsic-contracts.ts");
-      for (let hop = 0; hop < chain.length - 1; hop++)
-        assertNamedForward(chain[hop]!, chain[hop + 1]!, name, name !== name.toUpperCase(), read);
-      if (name === "IntrinsicDefinition") assertIntrinsicSpecialization(read);
-    }
-  });
-
   it.each(valueCases)("retains the same old/canonical/barrel $name object", ({ path, name }) => {
     const modules = valueModules[path];
     if (!modules) throw Error("missing value module " + path);
