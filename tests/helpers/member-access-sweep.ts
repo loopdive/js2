@@ -56,26 +56,41 @@ const HALVES = [
   ["undefined, null and the objects", RECEIVERS.slice(7)],
 ] as const;
 
-/** [name, program] for every operation over each half of the receivers, then a script var at top level. */
+/** [name, program] for every operation over each half of the receivers. */
 export const SWEEP_CASES: readonly (readonly [string, string])[] = [
   ...OPERATIONS.flatMap(([name, operation]) =>
     HALVES.map(
       ([half, receivers]) => [`in a function: ${name} over ${half}`, overReceivers(operation, receivers)] as const,
     ),
   ),
-  ...HALVES.map(
-    ([half, receivers]) => [`at top level: a script var holding ${half} in turn`, topLevel(receivers)] as const,
-  ),
 ];
+
+/** A script var at top level holding each receiver in turn, a quarter of the receivers per program. */
+export const TOP_LEVEL_CASES: readonly (readonly [string, string])[] = [0, 4, 8, 11].map(
+  (from, index, starts) =>
+    [
+      `at top level: a script var holding ${RECEIVERS.slice(from, starts[index + 1]).join(", ")} in turn`,
+      topLevel(RECEIVERS.slice(from, starts[index + 1])),
+    ] as const,
+);
 
 // T (ToBoolean), Ty (`typeof` comparisons), Str2-c (`+`) and D1 (`===`) with an object operand on either side.
 const OPERANDS = ["1", "NaN", "-0", "true", '""', '"a"', "undefined", "null", "{}"];
-export const WITH_OBJECTS = [
-  'var out = "";',
-  "function add(a, b){ return String(a + b); }",
-  'function eq(a, b){ return a === b ? "1" : "0"; }',
-  'function t(a){ return (!a ? "1" : "0") + (typeof a === "object" ? "o" : "-"); }',
-  "var o = {};",
-]
-  .concat(OPERANDS.map((x) => `out = out + add(${x}, {}) + add({}, ${x}) + eq(${x}, o) + eq(o, ${x}) + t(${x}) + ",";`))
-  .join("\n");
+const withObjects = (operands: readonly string[]) =>
+  [
+    'var out = "";',
+    "function add(a, b){ return String(a + b); }",
+    'function eq(a, b){ return a === b ? "1" : "0"; }',
+    'function t(a){ return (!a ? "1" : "0") + (typeof a === "object" ? "o" : "-"); }',
+    "var o = {};",
+  ]
+    .concat(
+      operands.map((x) => `out = out + add(${x}, {}) + add({}, ${x}) + eq(${x}, o) + eq(o, ${x}) + t(${x}) + ",";`),
+    )
+    .join("\n");
+
+/** T (ToBoolean), Ty (`typeof`), Str2-c (`+`) and D1 (`===`) with an object operand on either side, in two programs. */
+export const WITH_OBJECTS_CASES: readonly (readonly [string, string])[] = [OPERANDS.slice(0, 5), OPERANDS.slice(5)].map(
+  (operands) =>
+    [`ToBoolean, typeof, + and === of ${operands.join(", ")} beside an object`, withObjects(operands)] as const,
+);

@@ -31,10 +31,11 @@ const errors = (result: { errors: readonly { message: string; severity?: string 
   result.errors.filter((error) => error.severity !== "warning").map((error) => error.message);
 
 /**
- * A realm compile blocks the vitest worker for tens of seconds. Let pending I/O (vitest's RPC replies) run first: back
- * to back, two such compiles leave a reply unread past the RPC deadline ("Timeout calling onTaskUpdate", exit 1).
+ * A realm compile blocks the vitest worker for tens of seconds. Give vitest's pending RPC reply a moment to arrive and
+ * be read first: a reply left unread across a compile past the RPC deadline fails the run ("Timeout calling
+ * onTaskUpdate", exit 1). Each program is also kept to well under a minute of compile.
  */
-export const yieldToRpc = (): Promise<void> => new Promise((resolve) => setImmediate(resolve));
+export const yieldToRpc = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 25));
 
 /** Compile and run `source` through the strict Prepared entry; it must compile and validate. */
 export async function runPrepared(source: string): Promise<"returned" | "threw"> {

@@ -8,11 +8,10 @@
 // operands. Programs are kept small: compile time grows steeply with the number of try blocks.
 import { afterEach, describe, it, vi } from "vitest";
 import { agreesWithNode } from "./helpers/prepared-node-agreement.js";
-import { SWEEP_CASES, WITH_OBJECTS } from "./helpers/member-access-sweep.js";
+import { SWEEP_CASES } from "./helpers/member-access-sweep.js";
 
 afterEach(() => vi.restoreAllMocks());
 
 describe("#7354 M1 — the member-access sweep against node, part 3", () => {
   it.each(SWEEP_CASES.slice(14))("%s", (_name, program) => agreesWithNode(program, false));
-  it("re-sweeps ToBoolean, typeof, + and === with an object operand", () => agreesWithNode(WITH_OBJECTS, false));
 }, 300_000);
