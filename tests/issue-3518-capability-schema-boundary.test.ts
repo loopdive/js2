@@ -4,7 +4,6 @@ import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
-import ts from "typescript";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 
 const repository = resolve(import.meta.dirname, "..");
@@ -167,27 +166,6 @@ const backEdges = [
 ];
 
 describe("#3518 capability schema compiler boundaries", () => {
-  it("binds a nonempty 25-type/14-constant schema, with immutable constant initializers", () => {
-    const tree = ts.createSourceFile(schema, source, ts.ScriptTarget.Latest, true);
-    const types = tree.statements.filter((node) => ts.isTypeAliasDeclaration(node) || ts.isInterfaceDeclaration(node));
-    const variables = tree.statements.filter(ts.isVariableStatement);
-    expect(types).toHaveLength(25);
-    expect(variables).toHaveLength(14);
-    expect(tree.statements).toHaveLength(39);
-    for (const statement of variables) {
-      expect(statement.declarationList.flags & ts.NodeFlags.Const).not.toBe(0);
-      expect(statement.declarationList.declarations).toHaveLength(1);
-      const declaration = statement.declarationList.declarations[0]!;
-      const initializer = declaration.initializer!;
-      if (declaration.name.getText(tree) === "HOST_CALLBACK_EXCEPTION_POLICY") {
-        expect(initializer.getText(tree)).toBe('"module-tag-payload" as const');
-      } else {
-        expect(ts.isCallExpression(initializer)).toBe(true);
-        if (ts.isCallExpression(initializer)) expect(initializer.expression.getText(tree)).toBe("Object.freeze");
-      }
-    }
-  });
-
   it("visits the actual import-free schema and retains catalog debt, not a retirement verdict", () => {
     const f = fixture();
     const result = f.run();

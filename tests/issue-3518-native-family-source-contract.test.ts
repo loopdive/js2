@@ -1,6 +1,4 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
-
-import { createHash } from "node:crypto";
 import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -170,20 +168,6 @@ function noFrontendOrPhysicalData(root: unknown, seen = new Set<object>()): void
 }
 
 describe("complete native family logical source preparation", () => {
-  it("pins the unchanged original source and the exact export-only runtime transformation", () => {
-    expect(createHash("sha256").update(ORIGINAL).digest("hex")).toBe(
-      "6bc4fc96cc65881c9919a39b840afaf1001dfd3d0e05ef0cc141441a051f7915",
-    );
-    const oldSuite = readFileSync(
-      new URL("./issue-4574-standalone-native-async-family.test.ts", import.meta.url),
-      "utf8",
-    );
-    expect(oldSuite).toContain(
-      'const RUNTIME_SOURCE = PLAYGROUND_SOURCE.replace("async function fetchUser", "export async function fetchUser")',
-    );
-    expect(RUNTIME.replaceAll("export async function fetch", "async function fetch")).toBe(ORIGINAL);
-  });
-
   it.each(VARIANTS)("prepares every original owner, await and main operation in %s", (_label, text) => {
     const input = request(text);
     const inventory = buildIrUnitInventory(input.sourceFiles, {

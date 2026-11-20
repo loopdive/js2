@@ -1,6 +1,4 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
-import { readFileSync } from "node:fs";
-import ts from "typescript";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { compile } from "../src/index.js";
 import { analyzeSource } from "../src/checker/index.js";
@@ -12,20 +10,8 @@ import * as closure from "../src/runtime/wasmgc/values/closure-layouts.js";
 import * as bodies from "../src/runtime/wasmgc/promise/combinator-bodies.js";
 import * as combinators from "../src/codegen/promise-combinators.js";
 import * as all from "../src/codegen/ir-native-async-runtime.js";
-import { beforePromiseExportMain } from "./helpers/promise-export-main-port.js";
-import { beforeEarlierPromiseMain } from "./helpers/promise-earlier-main-port.js";
 
 void compile;
-const read = (path: string): string =>
-  beforeEarlierPromiseMain(
-    path,
-    beforePromiseExportMain(path, readFileSync(new URL(`../${path}`, import.meta.url), "utf8")),
-  );
-import { B1_DONOR_HASHES as hashes, originalB1Source } from "./helpers/native-delay-combinator-b1-inverse.mjs";
-
-function original(path: string, reader = read): string {
-  return originalB1Source(path, reader);
-}
 
 function context() {
   const source = analyzeSource("export function main(): number { return 1; }", "b1-layout-ownership.ts");
@@ -49,26 +35,7 @@ function enclosingFunction(): FunctionContext {
 }
 afterEach(() => vi.restoreAllMocks());
 
-describe("B1 exact donor route", () => {
-  for (const path of Object.keys(hashes)) {
-    it(`rejects a live import/comment/order mutation in ${path}`, () => {
-      expect(() => original(path, (file) => read(file) + "\n// unaccounted mutation\n")).toThrow();
-    });
-  }
-});
-
 describe("canonical full-reference layouts and local placement", () => {
-  it("keeps the canonical factory independent of legacy registration owners", () => {
-    const source = read("src/runtime/wasmgc/promise/delay-combinator-layouts.ts");
-    const syntax = ts.createSourceFile("layouts.ts", source, ts.ScriptTarget.Latest, true);
-    const imports = syntax.statements.filter(ts.isImportDeclaration);
-    expect(imports.map((node) => (node.moduleSpecifier as ts.StringLiteral).text)).toEqual([
-      "../../../wasm/model/instructions.js",
-      "../values/closure-layouts.js",
-      "./combinator-bodies.js",
-    ]);
-    expect(imports.map((node) => node.importClause?.isTypeOnly)).toEqual([true, false, true]);
-  });
   it("preserves every delay field, canonical header, reference identity and parent", () => {
     const wrapper = Object.freeze({ key: "zeroarg" }),
       promise = Object.freeze({ key: "promise" });

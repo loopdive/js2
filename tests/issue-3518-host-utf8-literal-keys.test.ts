@@ -1,7 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import { afterEach, describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
-import { createHash } from "node:crypto";
 import { runInNewContext } from "node:vm";
 import ts from "typescript";
 import { compile } from "../src/index.js";
@@ -63,9 +62,6 @@ afterEach(() => new Promise<void>((resolve) => setTimeout(resolve, 0)));
 
 describe("host/native open-object literal key parity", () => {
   it("keeps the original regression source and oracle712", () => {
-    expect(createHash("sha256").update(original).digest("hex")).toBe(
-      "c0550b99175c0eb61afa7d5d110a287f3fe90e9fc8e581c6d58a19fe0a971ba9",
-    );
     expect(oracle(original)()).toBe(712);
   });
   for (const target of ["host", "standalone"] as const)

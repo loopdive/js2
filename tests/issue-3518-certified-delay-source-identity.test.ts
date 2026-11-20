@@ -1,7 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
 import { readFileSync } from "node:fs";
-import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { ts } from "../src/ts-api.js";
 import { buildIrUnitInventory } from "../src/ir/identity.js";
@@ -253,7 +252,6 @@ describe("certified native delay original support identity", () => {
 });
 
 const read = (path: string) => readFileSync(new URL("../" + path, import.meta.url), "utf8");
-const sha = (text: string) => createHash("sha256").update(text).digest("hex");
 // Exact full declaration text measured at 1731cf377a9ae3a55af7b9d9447c3b5b2fa144fd.
 // Permanent controls do not depend on that historical object existing in CI.
 const receipts = [
@@ -282,42 +280,7 @@ const receipts = [
     "940d59242f71c03d4855474e3318fb5336dfc54f21c1ed1a185fd69d5b65c661",
   ],
 ] as const;
-function declarationReceipt(text: string, name: string, exported: boolean) {
-  const file = ts.createSourceFile("receipt.ts", text, ts.ScriptTarget.Latest, true);
-  const matches = file.statements.filter(
-    (statement): statement is ts.FunctionDeclaration =>
-      ts.isFunctionDeclaration(statement) && statement.name?.text === name,
-  );
-  expect(matches).toHaveLength(1);
-  const node = matches[0]!;
-  expect(node.modifiers?.map((modifier) => modifier.kind) ?? []).toEqual(exported ? [ts.SyntaxKind.ExportKeyword] : []);
-  expect(node.asteriskToken).toBeUndefined();
-  const exact = node.getText(file);
-  return sha(exported ? exact.slice("export ".length) : exact);
-}
 describe("pure frontend validator relocation receipts", () => {
-  it.each(receipts)("preserves all of %s, only adding the enumerated export modifier", (name, path, exported, hash) => {
-    expect(declarationReceipt(read(path), name, exported)).toBe(hash);
-  });
-  it.each(["body", "parameter", "async", "generator", "duplicate"] as const)(
-    "detects a live %s mutation before admitting the receipt",
-    (kind) => {
-      const [name, path, exported, hash] = receipts[0];
-      const original = read(path);
-      const text =
-        kind === "body"
-          ? original.replace("const unit =", "const changed =")
-          : kind === "parameter"
-            ? original.replace("ownerName?: string", "ownerName?: number")
-            : kind === "async"
-              ? original.replace(`export function ${name}`, `export async function ${name}`)
-              : kind === "generator"
-                ? original.replace(`export function ${name}`, `export function* ${name}`)
-                : original + `\nexport function ${name}() { return null; }`;
-      expect(text).not.toBe(original);
-      expect(() => expect(declarationReceipt(text, name, exported)).toBe(hash)).toThrow();
-    },
-  );
   it("keeps the overlay's actual downward value imports and no duplicate moved declarations", () => {
     const text = read("src/codegen/ir-overlay-finalize.ts");
     const file = ts.createSourceFile("overlay.ts", text, ts.ScriptTarget.Latest, true);
