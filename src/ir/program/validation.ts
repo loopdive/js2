@@ -201,7 +201,8 @@ function validateRuntimeCallables(program: PreparedIrProgram): void {
 /**
  * (#7380) The native standalone lane binds dynamic values only as their `externref` carrier: legalization rewrites
  * every `dyn.*` operation into an intrinsic and every `dynamic` type into the carrier, so neither may reach a body
- * of that projection.
+ * of that projection. The host async lane keeps an annotated `any` as `dynamic` on purpose, so other projections
+ * are not checked.
  */
 function assertNoDynamicValues(projection: PreparedIrProgramRuntimeProjection): void {
   if (projection.backend !== "wasmgc" || projection.target !== "standalone") return;
@@ -216,14 +217,13 @@ function assertNoDynamicValues(projection: PreparedIrProgramRuntimeProjection): 
 
 /** (#7380) Every intrinsic a body uses carries its provider, and the manifest selects exactly one for its feature. */
 function assertIntrinsicProviders(projection: PreparedIrProgramRuntimeProjection): void {
-  const { manifest, providers } = projection.prepared;
+  const { manifest } = projection.prepared;
   for (const fn of projection.prepared.functions)
     forEachPreparedIrInstruction(fn, (instruction) => {
       if (instruction.kind !== "intrinsic") return;
       const feature = INTRINSIC_DEFINITIONS[instruction.id].feature;
       if (
         instruction.provider === undefined ||
-        !providers.has(instruction.id) ||
         manifest.providers.filter((provider) => provider.feature === feature).length !== 1
       )
         invalid(

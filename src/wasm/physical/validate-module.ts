@@ -7,7 +7,7 @@
 // The functions are stateless and read only the storage they are given.
 
 import type { FuncHandle, Instr, ValType } from "../model/instructions.js";
-import type { TypeDef, FuncTypeDef, ImportDesc } from "../model/module-records.js";
+import type { TypeDef, FuncTypeDef, ImportDesc, WasmExport } from "../model/module-records.js";
 import type { PhysicalModuleStorage } from "./module-reservations.js";
 import { STABLE_FUNC_BASE } from "./function-handles.js";
 import { indexPhysicalTypes, planPhysicalTypeSection } from "./type-layout.js";
@@ -244,17 +244,18 @@ export function assertDeclaredFunctionReferences(module: PhysicalModuleStorage):
 }
 
 function assertExports(module: PhysicalModuleStorage): void {
+  const spaces: Record<WasmExport["desc"]["kind"], number> = {
+    func: importCount(module, "func") + module.functions.length,
+    global: importCount(module, "global") + module.globals.length,
+    tag: importCount(module, "tag") + module.tags.length,
+    table: importCount(module, "table") + module.tables.length,
+    memory: importCount(module, "memory") + module.memories.length,
+  };
   const names = new Set<string>();
-  for (const exported of module.exports) {
-    if (names.has(exported.name)) fail(`duplicate export name ${exported.name}`);
-    names.add(exported.name);
-    const { kind, index } = exported.desc;
-    if (kind === "func") functionIndex(module, index);
-    else if (kind === "global")
-      checkIndex(index, importCount(module, "global") + module.globals.length, "global export");
-    else if (kind === "tag") checkIndex(index, importCount(module, "tag") + module.tags.length, "tag export");
-    else if (kind === "table") checkIndex(index, importCount(module, "table") + module.tables.length, "table export");
-    else checkIndex(index, importCount(module, "memory") + module.memories.length, "memory export");
+  for (const { name, desc } of module.exports) {
+    if (names.has(name)) fail(`duplicate export name ${name}`);
+    names.add(name);
+    checkIndex(desc.index, spaces[desc.kind], `${desc.kind} export`);
   }
 }
 
