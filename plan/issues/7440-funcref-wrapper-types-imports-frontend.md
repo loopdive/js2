@@ -22,7 +22,11 @@ related: [7380, 5334]
 ABI planning leaves that must load without the frontend. Loading it under the frontend barrier fails with
 "blocked frontend module: src/ts-api.ts".
 
-`scripts/compiler-boundaries.json` does not catch it: the inventory has no rule for this leaf.
+`scripts/compiler-boundaries.json` lists the file (`state: unmigrated`, `layer: mixed-needs-split`, next boundary
+"Separate AST/context-driven generation, physical resources and generated native runtime"), so the inventory
+allows a frontend import here. The test is stricter: it requires the physical planning leaves to load without the
+frontend, and it passed until #5334 added the import. The inventory entry is the recorded debt, not the designed end
+state, so the red test is a real regression, not a stale expectation.
 
 ## Evidence
 
@@ -33,5 +37,6 @@ leaves without the frontend".
 
 1. `funcref-wrapper-types.ts` has no value import from the frontend (the `ts` use moves to the caller or becomes a
    type-only import).
-2. The rule is in the compiler-boundaries inventory, so the next such import fails `quality`.
+2. The file is split as its inventory entry says, and the entry moves out of `mixed-needs-split`, so the inventory
+   rejects the next frontend import into it.
 3. The red test passes unchanged.
