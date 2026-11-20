@@ -14,6 +14,7 @@ import { assertIrRuntimeSupport, irNumberFormatDemandOwners } from "./program/ru
 import { analyzeIrRuntimeSupportAllocations } from "./program-allocations.js";
 import { freezePreparedIrValue, freezePreparedIrRuntimeValue, preparedIrReadonlyMap } from "./program/data.js";
 import { PreparedIrProgramInvariantError } from "./program/errors.js";
+import { validatePreparedStage } from "./program/prepared-validator.js";
 import type {
   IrProgramPreparationResult,
   PreparedIrProgram,
@@ -140,6 +141,8 @@ export function prepareTypedIrProgram(
     reconciliation: "complete",
     sealed: true,
   });
-  assertPreparedIrProgram(program, { verifyDominanceNaive: resolved.controls.verifyDominanceNaive });
+  validatePreparedStage("prepared program", () =>
+    assertPreparedIrProgram(program, { verifyDominanceNaive: resolved.controls.verifyDominanceNaive }),
+  );
   return { kind: "prepared", program };
 }
