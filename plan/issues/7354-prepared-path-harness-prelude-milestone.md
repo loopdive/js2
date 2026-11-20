@@ -3858,3 +3858,33 @@ own test code, mostly at built-in globals (B).
   same site as `this.a = v`, assigned to S3's O3 (`claude/7354-o3`: Prepared `functionCodeStrict` +
   `dyn.member_set` / `js.object.set`). Lane (b) adds only the `function` row of O3's set chain (`js.object.set` on
   the closure) once O3 lands.
+
+## Suspended Work (lane S1, 2026-11-20)
+
+State at the end of the 2026-11-20 budget window. Nothing is mid-push.
+
+- **Ty, PR #7327** (`claude/7354-ty-r2`, head `4b8cb983d0`, `hold`): APPROVE by RV7327 on that head; CI green on it.
+  GitHub now reports it `dirty`: #7304 (#7361, `typeof void 0`) merged to main, #7315 (B2a) still open.
+  - Next: merge `origin/main` into `claude/7354-ty-r2`; expected conflicts in `src/ir/from-ast.ts` `lowerTypeOf` /
+    `lowerConditional` (keep #7361's split and `foldedAmbientConditionArm`, add Ty's `globalTypeofTag` beside it).
+    Then pin the six `typeof void 0` probes of the Ty delta review on the Prepared path (and the top-level
+    `if (typeof (void 0) !== "undefined") throw 1;` J found), re-run gates + Ty/neighbour suites, push once, ask
+    RV7327 for a delta review. Release after #7315 lands (lead removes `hold`).
+  - Open: lane S4 fixes the "carrier admits only known kinds" describe on `claude/7354-fa-ty` once Fa's kind table
+    lands (function-tagged box → runtime `function` test).
+- **J, `dyn.json_stringify`** (`claude/7354-json`, head = this commit; branch only, no PR): primitives done
+  (`3a5b290f89`, see "J result"). The `object` row is blocked on S3's Fa × O merge on `claude/7354-o` (decisions
+  sent by the lead: run-time `is_function` → abort until Fb, one program record, one member table with function rows).
+  - Next: merge S3's resulting `claude/7354-o` head into `claude/7354-json`, then build the object row per "J object
+    row" (one new realm key-walk row over the kernel's `ownKeys` + `ownDescriptor`, name to agree with S12 for
+    `Object.keys`; per-key `js.object.get`; SerializeJSONProperty as one recursive runtime function with a cycle
+    check through `typeError`). Then open J's PR with `hold` (the lead asked for a primitives-only PR earlier; not
+    opened because the window closed).
+  - Note: the 45 broad-run failures recorded in "J result" reproduce on the integration merge commit, not J.
+- **Function value with own properties** (plan above, amended): dispatched by the lead to S4 (a) and S11 (b); S3 owns
+  R3 through O3. No code from S1.
+- **#7362** (legacy `typeof` drops operand effects): plan only, `claude/7362-legacy-typeof-effects` `27b79113b9`
+  (branch only); see its own `## Suspended Work`.
+- **#7405** filed (ordinary `JSON.stringify(undefined)` → `"null"`), on this branch.
+- Research branch `claude/7354-fn-standin-research` (`23c7f9ec0c`, never merge): the full-prelude stand-in program
+  given to S6 for the perf stack (776 s per program on integration `94abeb8347`).
