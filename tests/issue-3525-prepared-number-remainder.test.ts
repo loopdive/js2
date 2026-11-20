@@ -18,6 +18,7 @@ import { buildNumberRemainderBody } from "../src/wasm/physical/number-remainder.
 import { PhysicalModuleReservations } from "../src/wasm/physical/module-reservations.js";
 import { emitBinary } from "../src/emit/binary.js";
 import * as consumer from "../src/ir/program-consumer.js";
+import { assertPreparedIrProgram } from "../src/ir/program/validation.js";
 
 const SOURCE = {
   "./entry.ts": `export function remainder(left: number, right: number): number { return left % right; }
@@ -252,8 +253,12 @@ export function combine(left: number, right: number): number { return __fmod(lef
       })),
     };
     const emit = vi.spyOn(consumer, "emitAcceptedIrProgram");
+    // #7380: stage 2 checks a program once, where it is produced; acceptance no longer re-runs it.
     for (const mutant of [missing, foreign, signature, provider, missingProvider])
-      expect(() => acceptPreparedIrProgram(mutant, options("wasmgc"))).toThrow(PreparedIrProgramInvariantError);
+      expect(() => {
+        assertPreparedIrProgram(mutant);
+        acceptPreparedIrProgram(mutant, options("wasmgc"));
+      }).toThrow(PreparedIrProgramInvariantError);
     expect(emit).not.toHaveBeenCalled();
     emit.mockRestore();
     execute(source, "wasmgc");

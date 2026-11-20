@@ -1055,8 +1055,9 @@ describe("#3525 internal genuine prepared-pipeline presentation", () => {
       exported.desc.index = emitted.module.functions.length + 10;
       return emitted;
     });
+    // #7380: the stage 4 validator sees the out-of-range index before the presentation reads the module.
     expect(() => runPreparedIrPipelinePresentation(input(SCALAR, "wasmgc"))).toThrow(
-      /^physical module reservations: altered publication descriptor$/,
+      /^prepared validator \(physical module\): unresolved function index \d+$/,
     );
   });
   it("refuses an extra global export absent from the authentic prepared ABI census", () => {
@@ -1090,8 +1091,9 @@ describe("#3525 internal genuine prepared-pipeline presentation", () => {
       emitted.module.exports.push({ name: global.name, desc: { ...global.desc } });
       return emitted;
     });
+    // #7380: the stage 4 validator sees the duplicate export name before the presentation reads the module.
     expect(() => runPreparedIrPipelinePresentation(input(VISITS, "wasmgc"))).toThrow(
-      /^physical module reservations: unregistered, substituted or reordered exports population$/,
+      /^prepared validator \(physical module\): duplicate export name visits$/,
     );
   });
 });
