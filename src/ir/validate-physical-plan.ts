@@ -115,9 +115,11 @@ function assertReferencesResolve(plan: PhysicalSetupPlan, projection: PreparedIr
 }
 
 function assertExportsAndStartup(plan: PhysicalSetupPlan): void {
+  // An async frame's settlement callbacks are exported support functions the frame setup declares.
   const functions = new Set<IrBindingId>([
     ...plan.functions.map((slot) => slot.bindingId),
     ...plan.importedFunctions.map((row) => row.bindingId),
+    ...(plan.asyncFrames?.entries ?? []).filter((entry) => entry.slotSpace === "function").map((entry) => entry.id),
   ]);
   const globals = new Set<IrBindingId>([...plan.importedGlobals, ...plan.definedGlobals].map((row) => row.bindingId));
   const names = new Set<string>();
