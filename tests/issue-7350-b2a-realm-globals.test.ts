@@ -1,6 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 //
-// #7350 B2a — the global object's population (`native-realm-globals.ts`). Every row the running node has is
+// #7350 B2a — the global object's population (`shared/contracts/native-realm-globals.ts`). Every row the running node has is
 // compared with node's `globalThis` descriptor; a row from a later edition than node's engine is compared with
 // its spec values, written out below. Completeness is checked against a fresh V8 context, which holds only the
 // engine's own globals (no node or web-platform host globals).
@@ -10,13 +10,13 @@ import { runInNewContext } from "node:vm";
 import { describe, expect, it } from "vitest";
 import { CURRENT_DRAFT_EDITION } from "../scripts/generate-editions.ts";
 import { classifyTestScope, parseMeta } from "./test262-runner.js";
-import { NATIVE_REALM_CATALOG, NATIVE_REALM_EDITION } from "../src/runtime/contracts/native-realm-catalog.js";
+import { NATIVE_REALM_CATALOG, nativeRealmGlobalSurface } from "../src/runtime/contracts/native-realm-catalog.js";
 import {
+  NATIVE_REALM_EDITION,
   NATIVE_REALM_GLOBALS,
   type NativeRealmGlobal,
-  nativeRealmGlobalSurface,
   nativeRealmGlobalTypeof,
-} from "../src/runtime/contracts/native-realm-globals.js";
+} from "../src/shared/contracts/native-realm-globals.js";
 
 const DRAFT = NATIVE_REALM_EDITION + 1;
 const callable = (

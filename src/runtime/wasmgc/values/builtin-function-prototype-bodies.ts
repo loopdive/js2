@@ -1,11 +1,16 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import type { Instr, FuncHandle } from "../../../wasm/model/instructions.js";
-import { builtinUndefined, builtinFailure, type BuiltinFunctionDefinition } from "./builtin-function-bodies.js";
+import {
+  builtinUndefined,
+  builtinFailure,
+  isIdentityOnly,
+  type BuiltinFunctionDefinition,
+} from "./builtin-function-bodies.js";
 import {
   buildBuiltinFunctionEntryGet,
   type BuiltinFunctionPropertyOperands,
 } from "./builtin-function-property-bodies.js";
-import { BUILTIN_FUNCTION_PROTOTYPE_FIELD, BUILTIN_IDENTITY_ONLY_FLAG } from "./builtin-function-layouts.js";
+import { BUILTIN_FUNCTION_PROTOTYPE_FIELD } from "./builtin-function-layouts.js";
 
 export interface BuiltinFunctionPrototypeOperands extends BuiltinFunctionPropertyOperands {
   readonly getPrototypeOf: FuncHandle;
@@ -51,20 +56,13 @@ function ordinaryParent(d: BuiltinFunctionPrototypeOperands, cursor: number, nex
 }
 /** (#7350 B2b) `missing` when the externref `object` carries the identity mark: its own miss is unknown. */
 function identityOnlyMiss(d: BuiltinFunctionPrototypeOperands, object: Instr[], missing: Instr[]): Instr[] {
-  return [
-    ...object,
-    { op: "any.convert_extern" },
-    { op: "ref.cast", typeIdx: d.objectTypeIdx },
-    { op: "struct.get", typeIdx: d.objectTypeIdx, fieldIdx: 4 },
-    n(BUILTIN_IDENTITY_ONLY_FLAG),
-    { op: "i32.and" },
-    { op: "if", blockType: empty, then: missing },
-  ];
+  return [...isIdentityOnly(d.objectTypeIdx, () => object), { op: "if", blockType: empty, then: missing }];
 }
 /**
  * Native bounded lookup: 0 absent, 1 present, 2 missing realm parent/population,
- * 3 unknown carrier, (#7350 B2b) 4 a miss among an identity-only object's own properties. The owner admits only an effectively final ordinary type;
- * extensible roots need an authenticated heterogeneous own-property dispatcher.
+ * 3 unknown carrier, (#7350 B2b) 4 a miss among an identity-only object's own properties. The owner admits
+ * only an effectively final ordinary type; extensible roots need an authenticated heterogeneous own-property
+ * dispatcher.
  */
 export function buildBuiltinFunctionLookup(d: BuiltinFunctionPrototypeOperands): BuiltinFunctionDefinition {
   const missing = (status: number): Instr[] => [

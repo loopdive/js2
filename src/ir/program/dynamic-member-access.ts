@@ -12,7 +12,7 @@ import { irIntrinsicFuncRef } from "../core/callable-bindings.js";
 import { BUILTIN_REACHABLE_KEYS, isArrayIndexKey } from "./builtin-prototype-keys.js";
 import { MEMBER_ACCESS_ARM, plainObjectRefusal, type CarrierKind, type ProgramObjects } from "./dynamic-value-kinds.js";
 import { gap } from "./dynamic-value-gap.js";
-import { nativeRealmGlobalReadRefusal } from "../../runtime/contracts/native-realm-globals.js";
+import { nativeRealmGlobalReadRefusal } from "../../shared/contracts/native-realm-globals.js";
 
 /** The legalization builders a member access is written with. */
 export interface MemberAccessBuilders {

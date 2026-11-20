@@ -11,6 +11,8 @@ export const BUILTIN_FUNCTION_INITIAL_NAME_FIELD = 7;
  * bits below it are the object runtime's (`OBJ_FLAG_*`, codegen/object-runtime.ts).
  */
 export const BUILTIN_IDENTITY_ONLY_FLAG = 0x100;
+/** The index of `$Object.flags` in the open-object layout (`createOpenObjectDeclaration`). */
+export const OPEN_OBJECT_FLAGS_FIELD = 4;
 
 /** Identity is the allocation, not an integer brand or a canonicalized type. */
 export function createBuiltinFunctionRealmType(name: string): StructTypeDef {

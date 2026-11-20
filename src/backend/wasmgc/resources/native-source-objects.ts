@@ -25,15 +25,15 @@ import {
   type SourceObjectDefinition,
   type SourceObjectGlobalProperty,
 } from "../../../runtime/wasmgc/values/source-object-bodies.js";
-import { ORDINARY_OBJECT_DESCRIPTOR_ENCODING } from "../../../runtime/wasmgc/values/ordinary-object-descriptor-common.js";
-import { nativeRealmGlobal, type NativeRealmGlobal } from "../../../runtime/contracts/native-realm-globals.js";
+import { dataPropertyDescriptor } from "../../../runtime/wasmgc/values/builtin-function-bodies.js";
+import { nativeRealmGlobal, type NativeRealmGlobal } from "../../../shared/contracts/native-realm-globals.js";
 import type { NativeRealmDescription } from "../../../ir/program/native-realm-requirements.js";
 import {
   nativeBuiltinFunctionSingletonBinding,
   type NativeBuiltinFunctionReservations,
 } from "./native-builtin-functions.js";
 import { nativeBuiltinFunctionRequestDependencies } from "./native-builtin-function-requests.js";
-import { requireNativeStringLiteral } from "./native-string-literals.js";
+import { nativeStringLiteralInstrs } from "./native-string-literals.js";
 import type { NativeErrorReservations } from "./native-errors.js";
 import type { NativeObjectDescriptorReservations } from "./native-object-descriptors.js";
 import type { NativeObjectLayoutReservations } from "./native-object-layouts.js";
@@ -229,15 +229,8 @@ export function requireCompletedNativeSourceObjects(
  */
 function globalProperty(context: AdapterContext, row: NativeRealmGlobal): SourceObjectGlobalProperty {
   const { strings } = nativeBuiltinFunctionRequestDependencies(context.tx, context.kernel.requests);
-  const token = requireNativeStringLiteral(context.tx, strings, row.name);
-  const flags = ORDINARY_OBJECT_DESCRIPTOR_ENCODING;
   return {
-    key: [
-      token.kind === "global"
-        ? { op: "global.get", index: context.tx.physicalIndex(token.global) }
-        : { op: "call", funcIdx: token.function.handle },
-      { op: "extern.convert_any" },
-    ],
+    key: nativeStringLiteralInstrs(context.tx, strings, row.name),
     value:
       row.value.kind === "function"
         ? {
@@ -245,12 +238,9 @@ function globalProperty(context: AdapterContext, row: NativeRealmGlobal): Source
             getter: nativeBuiltinFunctionSingletonBinding(context.tx, context.kernel, row.value.id).getter.handle,
           }
         : { kind: "namespace" },
-    descriptor:
-      (row.writable ? flags.writable : 0) |
-      (row.configurable ? flags.configurable : 0) |
-      flags.writableSpecified |
-      flags.enumerableSpecified |
-      flags.configurableSpecified |
-      flags.hasValue,
+    descriptor: dataPropertyDescriptor(
+      ...(row.writable ? (["writable"] as const) : []),
+      ...(row.configurable ? (["configurable"] as const) : []),
+    ),
   };
 }

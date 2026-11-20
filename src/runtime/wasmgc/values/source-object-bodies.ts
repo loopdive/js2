@@ -4,7 +4,7 @@
  * of the realm kernel's own algorithm, so no object algorithm is written twice.
  */
 import type { FuncHandle, Instr, LocalDef, TypeHandle } from "../../../wasm/model/instructions.js";
-import { markIdentityOnly } from "./builtin-function-bodies.js";
+import { dataPropertyDescriptor, markIdentityOnly } from "./builtin-function-bodies.js";
 import { ORDINARY_OBJECT_DESCRIPTOR_ENCODING as flags } from "./ordinary-object-descriptor-common.js";
 
 export interface SourceObjectDefinition {
@@ -125,14 +125,7 @@ export function buildSourceObjectGlobalDefinition(d: {
 }
 
 /** A data property's whole descriptor, every attribute present and true, with its value: CreateDataProperty's. */
-const CREATE_DATA_PROPERTY =
-  flags.writable |
-  flags.enumerable |
-  flags.configurable |
-  flags.writableSpecified |
-  flags.enumerableSpecified |
-  flags.configurableSpecified |
-  flags.hasValue;
+const CREATE_DATA_PROPERTY = dataPropertyDescriptor("writable", "enumerable", "configurable");
 
 /**
  * (#7354 O3) `js.object.set(object, key, value, receiver)`: OrdinarySet (§10.1.9.2) over the kernel's lookup, the walk

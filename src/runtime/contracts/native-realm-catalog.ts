@@ -4,6 +4,8 @@
  * ECMA-262 2026 §§9.3.2, 10.2.4, 18, 20.1, 20.2:
  * https://tc39.es/ecma262/2026/multipage/fundamental-objects.html
  */
+import { NATIVE_REALM_EDITION, NATIVE_REALM_GLOBALS } from "../../shared/contracts/native-realm-globals.js";
+
 export type NativeRealmPropertyKey =
   | { readonly kind: "string"; readonly value: string }
   | { readonly kind: "symbol"; readonly value: "Symbol.hasInstance" };
@@ -274,8 +276,6 @@ function catalog(): readonly NativeRealmIntrinsic[] {
     ],
   }));
 }
-/** The ECMA-262 edition the realm models (the newest ratified one); the global table shares it. */
-export const NATIVE_REALM_EDITION = 2026;
 /** Complete retained Object/Function population, including Normative Optional legacy members. */
 export const NATIVE_REALM_CATALOG = freeze({
   version: `ecma262-${NATIVE_REALM_EDITION}:Object+Function:v1` as const,
@@ -293,3 +293,19 @@ export const NATIVE_REALM_CATALOG = freeze({
     "other ECMAScript intrinsic families",
   ],
 });
+
+const CATALOG_IDS: ReadonlySet<string> = new Set(NATIVE_REALM_CATALOG.intrinsics.map((row) => row.id));
+const GLOBAL_IDS: ReadonlySet<string> = new Set(
+  NATIVE_REALM_GLOBALS.flatMap((row) => ("id" in row.value ? [row.value.id] : [])),
+);
+
+/**
+ * (#7350 B2a) For an intrinsic the global table names: `"complete"` when this catalog has its row, with its full
+ * property population; `"identity"` when only its identity, typeof tag, `length` and construct behaviour are known.
+ * A member of an identity intrinsic is never answered as `undefined` nor by a catchable error: a static read refuses
+ * by name at compile time, a dynamic one aborts uncatchably.
+ */
+export function nativeRealmGlobalSurface(id: string): "complete" | "identity" {
+  if (!GLOBAL_IDS.has(id)) throw new Error(`native realm globals: ${id} is not a global intrinsic`);
+  return CATALOG_IDS.has(id) ? "complete" : "identity";
+}

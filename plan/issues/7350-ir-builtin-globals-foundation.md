@@ -384,3 +384,76 @@ lists into this table once their lanes allow — `GLOBAL_VALUE_NAMES` / `NAMESPA
 (`src/codegen/expressions/builtin-class-names.ts`), `ES5_INTRINSIC_OBJECTS` (`src/ir/object-integrity.ts`) —
 and the literal-interning `flatMap` duplicated in `native-realm-literals.ts` and
 `native-builtin-function-requests.ts`.
+
+## Slice B2b result (2026-11-19, branch `claude/7350-b2b`)
+
+The realm's global object is a dynamic value on the Prepared standalone path. The Prepared resolver answers G1's lane
+questions (`preparedBuiltinGlobalLane`), `dyn.global_object` legalizes to the realm contract `js.object.global` (one
+cached ADAPTERS row), and the object's own properties are the constant keys the program reads off it
+(`description.globalKeys`, from S3's access census). Callables are kernel identity rows (behavior `"unavailable"`:
+name, length, [[Prototype]], `prototype` with its `constructor` link; a call, construct or own-member miss traps);
+namespaces are identity-only ordinary objects. Proving programs (`var E = TypeError; if (E !== TypeError) throw 1;`,
+`typeof Object`, `typeof JSON`) run end to end. B2a's table moved to `src/shared/contracts/native-realm-globals.ts`
+(with `NATIVE_REALM_EDITION`), so the IR's name queries add no `ir -> runtime` edge; `nativeRealmGlobalSurface` lives
+beside the catalog it reads.
+
+The identity surface (`TypeError.name`, `.prototype.constructor`) is not reachable from source on this branch: G1's
+admission refuses every member read and call of a built-in. Only the Wasm fixture tests in
+`tests/issue-7350-b2b-global-object.test.ts` exercise it.
+
+### B2b follow-ups (review RV-B2b, 2026-11-19)
+
+- **Latent (RV-B2b):** identity-marking `%Function.prototype%` (done once a program reads `Function`) makes a user
+  function's own-property miss that walks to Function.prototype abort instead of answering `undefined`. An abort is
+  no wrong value, but the slice that admits member reads on closures inherits it.
+- **%Object% / %Function%** keep the identity treatment (their `prototype` is the realm's own Object.prototype /
+  Function.prototype) for now. Filling them from the catalog's public builtin population is S3's realm follow-up (lead
+  decision): `native-object-realm.ts` only declares, it fills no algorithm.
+- **`constructor` exemption:** O4's refusal of Object.prototype keys refuses `constructor` on every object read,
+  including an identity prototype object's own `constructor`. The exemption is an S3 follow-up, as a refinement of the
+  one check in `dynamic-member-access.ts`.
+- **ToPrimitive half of the `callable` guard** (`callableObjectRefusal` in `plainObjectToPrimitive`) can go once S3's
+  toprim branch lands, if OrdinaryToPrimitive's has/get trap on status ≥ 3.
+- **Function kind (waits for S4's fa-ty PR, agreed with S4):** fa-ty keeps a single `closureRoot`; B2b adds
+  `?? <the realm's native closures root>` at `src/ir/program-consumer.ts:1423`; B2b's callable rows enter through
+  `admit("function")`; the `callable` guard is deleted; a test checks `var E = TypeError; typeof E === "function"` in a
+  program without a closure.
+
+## Suspended Work (2026-11-20, budget window closed, lane S5)
+
+The status of each branch at the close:
+
+| branch / PR | head | state | next step |
+| --- | --- | --- | --- |
+| #7263 G1 (`claude/7350-g1`) | `ae49e98908` | approved; **merge conflict with main** | merge main in, re-run gates, ask the reviewer about the delta |
+| #7315 B2a (`claude/7350-b2a`) | `5b1cc3c696` | **dequeued: MERGE_CONFLICT** (2026-11-20 04:25) | merge main in and push; the queue picks it up again |
+| #7323 B2c-1 | — | merged | — |
+| #7330 B2c-2 (`claude/7350-b2c-error-json`) | `113000e82a` | RV7330 follow-up pushed; `hold`; **merge conflict** (#7323 appends to this issue file) | merge main in, keeping both appended sections |
+| `claude/7350-b2b` (no PR) | the WIP commit after `3a2803183e` | RV-B2b fixes applied, **not verified** (the subagent stopped at the weekly limit) | see below |
+| `claude/7350-b1` (no PR) | `04fbce56de` | B1a + #7399/#7410 plan notes; its PR opens after #7263 | rebase not allowed: merge main in once #7263 is in |
+| `claude/7350-string-call` (no PR) | `b05ac39870` | String-call plan; its PR opens after #7312 and #7263 | — |
+
+**B2b, next steps.**
+
+1. Verify the WIP commit:
+   - gates, unpiped: loc/func (also with `LOC_GATE_BASE`), coercion, oracle, dead-exports, import-cycles,
+     boundaries;
+   - the B2b, B2a and G1 test files;
+   - the 103-file byte check against the merge base.
+
+   Known at the stop: import-cycles is green (the `ir -> runtime` edges went with the move to
+   `src/shared/contracts/native-realm-globals.ts`); typecheck shows only container noise in files B2b does
+   not touch.
+2. Confirm that each RV-B2b item is done:
+   - (a) one string-literal helper;
+   - (b) the existing descriptor encoding;
+   - (c) the shared flags constant;
+   - (d) a total `nativeRealmGlobalCallables`.
+3. Merge PR #7345 (S4, Fa × Ty, `claude/7354-fa-ty`). Then:
+   - add `?? <the realm's native closures root>` at the `fillNativeStringValueResources` call in
+     `src/ir/program-consumer.ts`;
+   - let callable rows enter through `admit("function")`;
+   - delete the `callable` guard;
+   - test `var E = TypeError; typeof E === "function"` in a program without a closure.
+4. Make one announced push, then message RV-B2b (`session_016FRcLyPzsTZCW6Afp57CrT`) with the delta from
+   `dbc0b2343e`.

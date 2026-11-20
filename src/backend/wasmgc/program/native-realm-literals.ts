@@ -6,7 +6,7 @@ import {
 import type { IrStringEncoding } from "../../../ir/core/string-types.js";
 import { NATIVE_BUILTIN_FUNCTION_LITERALS } from "../resources/native-builtin-function-requests.js";
 import { NATIVE_OBJECT_DESCRIPTOR_LITERALS } from "../resources/native-object-descriptors.js";
-import { nativeRealmGlobalCallables } from "../../../runtime/contracts/native-realm-globals.js";
+import { nativeRealmGlobalCallables } from "../../../shared/contracts/native-realm-globals.js";
 
 export interface NativeRealmLiteralPlan {
   readonly requirements: NativeRealmRequirements;

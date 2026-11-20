@@ -62,7 +62,7 @@ import {
   type NativeBuiltinFunctionRequirement,
   type NativeBuiltinFunctionRequests,
 } from "../resources/native-builtin-function-requests.js";
-import { nativeRealmGlobalCallables } from "../../../runtime/contracts/native-realm-globals.js";
+import { nativeRealmGlobalCallables } from "../../../shared/contracts/native-realm-globals.js";
 import {
   declareNativeClosureResources,
   instantiateNativeClosureRequirements,

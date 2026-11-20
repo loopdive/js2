@@ -3,16 +3,19 @@
 /**
  * (#7350 B2a) The own-property population of the global object: every global the test262 runner's classifier
  * counts as a language global. That is ECMA-262 §19.1–19.4 plus Annex B.2.1 `escape` / `unescape` in the realm's
- * edition (`NATIVE_REALM_EDITION` in the catalog), and the globals of the draft after it, which the runner
+ * edition (`NATIVE_REALM_EDITION`), and the globals of the draft after it, which the runner
  * scores as standard although no edition has ratified them. Semantic data only, like the realm catalog it
  * references by intrinsic id; it is the one table that says which globals exist and what `typeof` answers for
  * them.
  *
  * It is a sibling of `NATIVE_REALM_CATALOG` and not rows of it: the realm's literal plan interns every catalog
  * row's names into every realm binary. An intrinsic the catalog has a row for has its complete property
- * population there; any other intrinsic named here is identity only (see {@link nativeRealmGlobalSurface}).
+ * population there; any other intrinsic named here is identity only (`nativeRealmGlobalSurface` in the catalog).
+ * (#7350 B2b) Pure data under `shared/contracts`, so the IR's name queries and the realm's backend ask one table.
  */
-import { NATIVE_REALM_CATALOG, NATIVE_REALM_EDITION } from "./native-realm-catalog.js";
+
+/** The ECMA-262 edition the realm models (the newest ratified one); the realm catalog shares it. */
+export const NATIVE_REALM_EDITION = 2026;
 
 /**
  * How a callable answers `new`. `"none"`: no [[Construct]] (the §19.2 functions). `"ordinary"`: a constructor.
@@ -224,22 +227,6 @@ export function nativeRealmGlobalTypeof(
   }
 }
 
-const CATALOG_IDS: ReadonlySet<string> = new Set(NATIVE_REALM_CATALOG.intrinsics.map((row) => row.id));
-const TABLE_IDS: ReadonlySet<string> = new Set(
-  NATIVE_REALM_GLOBALS.flatMap((row) => ("id" in row.value ? [row.value.id] : [])),
-);
-
-/**
- * For an intrinsic the table names: `"complete"` when the realm catalog has its row, with its full property
- * population; `"identity"` when only its identity, typeof tag, `length` and construct behaviour are known. A
- * member of an identity intrinsic is never answered as `undefined` nor by a catchable error: a static read
- * refuses by name at compile time, a dynamic one aborts uncatchably.
- */
-export function nativeRealmGlobalSurface(id: string): "complete" | "identity" {
-  if (!TABLE_IDS.has(id)) throw new Error(`native realm globals: ${id} is not a global intrinsic`);
-  return CATALOG_IDS.has(id) ? "complete" : "identity";
-}
-
 /** The global's row, or `undefined` for a name that is no language global. */
 export function nativeRealmGlobal(name: string): NativeRealmGlobal | undefined {
   return BY_NAME.get(name);
@@ -272,11 +259,14 @@ export function nativeRealmGlobalReadRefusal(name: string): string | undefined {
 
 /**
  * (#7350 B2b) The callables a realm holding the globals `names` builds, each after the callables its [[Prototype]] and
- * its `prototype` object link to (a NativeError after %Error%), in that order.
+ * its `prototype` object link to (a NativeError after %Error%), in that order. A name the realm cannot answer
+ * (`nativeRealmGlobalReadRefusal`) throws its refusal.
  */
 export function nativeRealmGlobalCallables(names: readonly string[]): readonly NativeRealmGlobalCallable[] {
   const ordered: NativeRealmGlobalCallable[] = [];
   const add = (name: string): void => {
+    const refusal = nativeRealmGlobalReadRefusal(name);
+    if (refusal !== undefined) throw new Error(`native realm globals: ${refusal}`);
     const row = BY_NAME.get(name)!;
     if (row.value.kind !== "function" || ordered.includes(row as NativeRealmGlobalCallable)) return;
     if (row.value.prototype !== "%Function.prototype%") add(row.value.prototype.slice(1, -1));

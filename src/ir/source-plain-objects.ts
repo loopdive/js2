@@ -11,7 +11,7 @@ import { ts } from "../ts-api.js";
 import { objectLiteralDataPropertyName } from "../shared/property-key-fold.js";
 import type { ProgramObjects } from "./program/dynamic-value-kinds.js";
 import { builtinGlobalValueAdmitted, preparedBuiltinGlobalLane } from "./builtin-globals.js";
-import { nativeRealmGlobalTypeof } from "../runtime/contracts/native-realm-globals.js";
+import { nativeRealmGlobalTypeof } from "../shared/contracts/native-realm-globals.js";
 
 /** Own keys whose definition changes what OrdinaryToPrimitive or a prototype lookup answers. */
 const CONVERSION_KEYS: ReadonlySet<string> = new Set(["toString", "valueOf", "__proto__"]);

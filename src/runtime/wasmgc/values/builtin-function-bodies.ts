@@ -6,11 +6,13 @@ import {
   CLOSURE_BAG_FIELD_IDX,
   CLOSURE_FUNC_FIELD_IDX,
 } from "./closure-layouts.js";
+import { ORDINARY_OBJECT_DESCRIPTOR_ENCODING } from "./ordinary-object-descriptor-common.js";
 import {
   BUILTIN_FUNCTION_REALM_FIELD,
   BUILTIN_FUNCTION_PROTOTYPE_FIELD,
   BUILTIN_FUNCTION_INITIAL_NAME_FIELD,
   BUILTIN_IDENTITY_ONLY_FLAG,
+  OPEN_OBJECT_FLAGS_FIELD,
 } from "./builtin-function-layouts.js";
 
 export interface BuiltinFunctionEntryOperands {
@@ -126,16 +128,28 @@ const singleton = (entry: BuiltinFunctionEntryOperands): Instr[] => [
   global(entry.singleton),
   { op: "extern.convert_any" },
 ];
-/** (#7350 B2b) `object.flags |= identityOnly`, for the externref `object` produces (`BUILTIN_IDENTITY_ONLY_FLAG`). */
-export function markIdentityOnly(objectTypeIdx: number, object: () => Instr[]): Instr[] {
-  const cast = (): Instr[] => [...object(), { op: "any.convert_extern" }, { op: "ref.cast", typeIdx: objectTypeIdx }];
+/** The `$Object` the externref `object` produces, cast from its carrier. */
+function openObject(objectTypeIdx: number, object: () => Instr[]): Instr[] {
+  return [...object(), { op: "any.convert_extern" }, { op: "ref.cast", typeIdx: objectTypeIdx }];
+}
+/** (#7350 B2b) Whether `object` carries the identity-only mark (`BUILTIN_IDENTITY_ONLY_FLAG`): a non-zero i32. */
+export function isIdentityOnly(objectTypeIdx: number, object: () => Instr[]): Instr[] {
   return [
-    ...cast(),
-    ...cast(),
-    { op: "struct.get", typeIdx: objectTypeIdx, fieldIdx: 4 },
+    ...openObject(objectTypeIdx, object),
+    { op: "struct.get", typeIdx: objectTypeIdx, fieldIdx: OPEN_OBJECT_FLAGS_FIELD },
+    { op: "i32.const", value: BUILTIN_IDENTITY_ONLY_FLAG },
+    { op: "i32.and" },
+  ];
+}
+/** (#7350 B2b) Set the identity-only mark on `object`. */
+export function markIdentityOnly(objectTypeIdx: number, object: () => Instr[]): Instr[] {
+  return [
+    ...openObject(objectTypeIdx, object),
+    ...openObject(objectTypeIdx, object),
+    { op: "struct.get", typeIdx: objectTypeIdx, fieldIdx: OPEN_OBJECT_FLAGS_FIELD },
     { op: "i32.const", value: BUILTIN_IDENTITY_ONLY_FLAG },
     { op: "i32.or" },
-    { op: "struct.set", typeIdx: objectTypeIdx, fieldIdx: 4 },
+    { op: "struct.set", typeIdx: objectTypeIdx, fieldIdx: OPEN_OBJECT_FLAGS_FIELD },
   ];
 }
 /** DefinePropertyOrThrow of a data property with the descriptor word `flags`; the answer is dropped. */
@@ -155,10 +169,21 @@ function defineData(
     { op: "drop" },
   ] as Instr[];
 }
-/** Descriptor words: `length`/`name` (configurable), a constructor's `prototype` (none), `constructor` (W, C). */
-const FUNCTION_METADATA = 0xbc,
-  CONSTRUCTOR_PROTOTYPE = 0xb8,
-  PROTOTYPE_CONSTRUCTOR = 0xbd;
+/**
+ * A data property's whole descriptor word (`ORDINARY_OBJECT_DESCRIPTOR_ENCODING`): every attribute and the value
+ * present, the attributes `attributes` names true, the others false.
+ */
+export function dataPropertyDescriptor(...attributes: readonly ("writable" | "enumerable" | "configurable")[]): number {
+  const encoding = ORDINARY_OBJECT_DESCRIPTOR_ENCODING;
+  return attributes.reduce(
+    (word, attribute) => word | encoding[attribute],
+    encoding.writableSpecified | encoding.enumerableSpecified | encoding.configurableSpecified | encoding.hasValue,
+  );
+}
+/** A built-in function's `length` and `name`, a constructor's `prototype`, and that object's `constructor`. */
+const FUNCTION_METADATA = dataPropertyDescriptor("configurable"),
+  CONSTRUCTOR_PROTOTYPE = dataPropertyDescriptor(),
+  PROTOTYPE_CONSTRUCTOR = dataPropertyDescriptor("writable", "configurable");
 /**
  * (#7350 B2b) An identity entry's seed after its `length` and `name`: the identity mark on its own properties, and its
  * own `prototype` object — a realm anchor, or a fresh object (kept in `locals`) whose `constructor` links back.

@@ -397,6 +397,25 @@ export function requireNativeStringLiteral(
   return binding;
 }
 
+/**
+ * The instructions that push the literal `text` (its global, or its creating function's answer), converted to the
+ * externref a JavaScript value travels in unless `external` is false.
+ */
+export function nativeStringLiteralInstrs(
+  tx: PhysicalModuleReservations,
+  pack: NativeStringLiteralReservations,
+  text: string,
+  external = true,
+): Instr[] {
+  const token = requireNativeStringLiteral(tx, pack, text);
+  return [
+    token.kind === "global"
+      ? { op: "global.get", index: tx.physicalIndex(token.global) }
+      : { op: "call", funcIdx: token.function.handle },
+    ...(external ? [{ op: "extern.convert_any" } as Instr] : []),
+  ];
+}
+
 /** Attest actual canonical fills through this owner's existing ledger, not a body-name heuristic. */
 export function requireCompletedNativeStringLiterals(
   tx: PhysicalModuleReservations,

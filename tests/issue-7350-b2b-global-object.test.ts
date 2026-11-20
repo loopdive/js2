@@ -23,11 +23,11 @@ import { prepareTypedIrProgram } from "../src/ir/program-prepare-ir.js";
 import { coerceIrValueToExternref } from "../src/ir/value-coercion.js";
 import { nativeRealmReservationInventory } from "../src/backend/wasmgc/program/native-realm.js";
 import { nativeBuiltinFunctionSingletonBinding } from "../src/backend/wasmgc/resources/native-builtin-functions.js";
-import { requireNativeStringLiteral } from "../src/backend/wasmgc/resources/native-string-literals.js";
+import { nativeStringLiteralInstrs } from "../src/backend/wasmgc/resources/native-string-literals.js";
 import { emitBinary } from "../src/emit/binary.js";
 import type { FunctionReservation } from "../src/wasm/physical/module-reservations.js";
 import { sourcePacket, typedOptions, requireProgram } from "./helpers/typed-program-fixtures.js";
-import { NATIVE_REALM_GLOBALS, nativeRealmGlobalReadRefusal } from "../src/runtime/contracts/native-realm-globals.js";
+import { NATIVE_REALM_GLOBALS, nativeRealmGlobalReadRefusal } from "../src/shared/contracts/native-realm-globals.js";
 import { builtinGlobalLanes } from "../src/shared/ambient-intrinsics.js";
 import { fillRealmFixture, realmFixture } from "./helpers/native-realm-source-integration.js";
 
@@ -222,18 +222,9 @@ function globalRealm() {
     )!;
   const [globalObject, adapterGet] = [adapter("js.object.global"), adapter("js.object.get")];
   fillRealmFixture(f);
-  TEXTS.forEach((text, index) => {
-    const literal = requireNativeStringLiteral(tx, f.strings.strings, text);
-    tx.fillFunction(keys[index]!, {
-      locals: [],
-      body: [
-        literal.kind === "global"
-          ? { op: "global.get", index: tx.physicalIndex(literal.global) }
-          : { op: "call", funcIdx: literal.function.handle },
-        { op: "extern.convert_any" },
-      ],
-    });
-  });
+  TEXTS.forEach((text, index) =>
+    tx.fillFunction(keys[index]!, { locals: [], body: nativeStringLiteralInstrs(tx, f.strings.strings, text) }),
+  );
   tx.fillFunction(unbox, {
     locals: [],
     body: [

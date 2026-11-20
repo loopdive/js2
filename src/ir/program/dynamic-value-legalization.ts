@@ -42,7 +42,7 @@ import { IR_DYN_ADD_FN } from "../../shared/contracts/dynamic-add-helper.js";
 import { gap } from "./dynamic-value-gap.js";
 import { dynamicMemberRead, dynamicMemberWrite, globalObjectRead } from "./dynamic-member-access.js";
 import { irIntrinsicFuncRef } from "../core/callable-bindings.js";
-import { nativeRealmGlobalTypeof } from "../../runtime/contracts/native-realm-globals.js";
+import { nativeRealmGlobalTypeof } from "../../shared/contracts/native-realm-globals.js";
 import {
   ADD_ROLE,
   KIND_TEST,

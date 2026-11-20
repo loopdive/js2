@@ -30,7 +30,8 @@
         "src/shared/contracts/ir-counted-string-site-id.ts",
         "src/shared/contracts/string-surrogate.ts",
         "src/shared/contracts/linear-memory-layout.ts",
-        "src/shared/contracts/f64-value-markers.ts"
+        "src/shared/contracts/f64-value-markers.ts",
+        "src/shared/contracts/native-realm-globals.ts"
       ],
       "minModules": 11
     },
@@ -278,7 +279,6 @@
         "src/runtime/contracts/collection-kind.ts",
         "src/runtime/contracts/js-value-tags.ts",
         "src/runtime/contracts/native-realm-catalog.ts",
-        "src/runtime/contracts/native-realm-globals.ts",
         "src/runtime/contracts/well-known-symbols.ts"
       ],
       "minModules": 10
@@ -16736,9 +16736,9 @@
       "layer": "runtime-contracts"
     },
     {
-      "path": "src/runtime/contracts/native-realm-globals.ts",
+      "path": "src/shared/contracts/native-realm-globals.ts",
       "state": "clean",
-      "layer": "runtime-contracts"
+      "layer": "foundation"
     },
     {
       "path": "src/ir/program/native-realm-requirements.ts",

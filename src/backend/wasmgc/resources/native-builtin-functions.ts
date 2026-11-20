@@ -69,7 +69,7 @@ import {
   type NativeObjectDescriptorReservations,
   type NativeObjectDescriptorDependencies,
 } from "./native-object-descriptors.js";
-import { requireNativeStringLiteral } from "./native-string-literals.js";
+import { nativeStringLiteralInstrs } from "./native-string-literals.js";
 
 export { declareNativeBuiltinFunctionRequests as declareNativeBuiltinFunctionResources };
 export interface NativeBuiltinFunctionDependencies {
@@ -437,15 +437,8 @@ function operands(
     dd = owner.dependencies.descriptorDependencies;
   const lookup = dd.storageDependencies.lookupDependencies,
     values = dd.sameValueDependencies.values;
-  const literal = (text: string, external = true): Instr[] => {
-    const token = requireNativeStringLiteral(tx, input.strings, text);
-    return [
-      token.kind === "global"
-        ? { op: "global.get", index: tx.physicalIndex(token.global) }
-        : { op: "call", funcIdx: token.function.handle },
-      ...(external ? [{ op: "extern.convert_any" } as Instr] : []),
-    ];
-  };
+  const literal = (text: string, external = true): Instr[] =>
+    nativeStringLiteralInstrs(tx, input.strings, text, external);
   return {
     rootTypeIdx: owner.dependencies.closures.root.typeIndex,
     realmTypeIdx: pack.realmType.typeIndex,
