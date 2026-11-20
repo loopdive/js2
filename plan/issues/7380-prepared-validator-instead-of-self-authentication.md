@@ -4,7 +4,7 @@ title: "Prepared path: replace self-authentication (receipts, census, forgery pi
 status: in-progress
 sprint: current
 created: 2026-11-19
-updated: 2026-11-19
+updated: 2026-11-20
 priority: critical
 horizon: l
 feasibility: medium
@@ -1268,3 +1268,178 @@ counts the file's suite plus each failed `describe`; a row with 0 tests and a fa
 | `issue-6866-source-map-position-inventory-successor` | 23 | 22 | 2 |
 
 <!-- before-table:end -->
+
+## PR 2b result
+
+Branch `claude/7380-pins-b`, base `claude/7380-pins-a` `e41fd9cc1d`. Status: **pass 1 (triage) done; passes 2 and 3
+not started**, because the triage found 50 red tests that are not pins (the brief's stop line was about 15). The lead
+decides before any deletion.
+
+### Triage
+
+Method: each of the 90 red files from the 2a table, one vitest run per file (`VITEST_MAX_FORKS=1`,
+`VITEST_FORK_MAX_OLD_SPACE_SIZE=3072`, JSON reporter), on `e41fd9cc1d`. The per-file failing sets equal the 2a
+before-table in every file (1,567 red tests). Every red test outside an obvious pin message was read; the (R) rows
+were reproduced outside vitest with a small program, and the (T) rows re-run alone with a larger limit.
+
+Classes:
+
+- **P**: fails at a source hash, length, reconstructed historical file, receipt, closed list or count, or is a
+  control of that machinery. Files marked "(load)" fail before any test runs; all their tests are pin-gated.
+- **R bug**: a program or compiler function gives a wrong answer. Stays red.
+- **R stale**: the compiler behaves correctly (or a deliberate later change made the old expectation false); the
+  test expects the old state. Stays red unless the right answer is obvious.
+- **T**: timeout under the 35 s / 10 s defaults on this box; passes alone with a larger limit.
+- **F**: a forged-plan or verifier-plumbing test of a mechanism. Not a source pin, so not 2b's; it leaves with its
+  mechanism (PR 3 / 5b).
+
+Totals: **1,567 red = 1,507 P + 14 R bug + 36 R stale + 6 T + 4 F**, plus one suite-level T
+(`native-realm-wrapper-storage`, 16 tests skipped behind a slow `beforeAll`).
+
+#### R bug: wrong answers (14 tests, 4 defects)
+
+| test file, tests | reproduction (expected = node) | where it belongs |
+| --- | --- | --- |
+| `host-coercion-get-abrupt`, all 10 red (`propagates … from the original getter`, `keeps ordinary fallback …`, utf8 off/on) | `export function run(o:any):number{return Number(o);}`, `target: "host"`, called from JS. `run({ valueOf(){ return 5; } })` gives NaN (node 5); `run({ toString(){ return "6"; } })` NaN (6); a throwing `valueOf` getter is never read (node throws 99); null-prototype object with `valueOf: undefined` and a `toString` getter gives NaN (node 7). | JS-environment value adapter: ToPrimitive of a host object reached through `__boundary_object_*` (#6708 / #6979 native-first core). |
+| `ir-math-switch-retirement` "keeps all 42 exact-arity misses pre-claim and legacy-owned" | `export function f(value: number): number { return Math.atan(); }` (with `@ts-expect-error`), default JS target, IR on or off: compile error "`__get_builtin` (dynamic-shape object/property operation) is not yet supported in --target standalone" (on the JS target). node: `NaN`. Same for every one-argument method of the 21 and `imul()`; too-many-argument calls compile. | Math builtin call lowering for missing arguments (legacy codegen; the error text is #1472 Phase B's). |
+| `native-family-source-identity` "does not certify a shadowed undefined read … `const undefined = 42; …`" and "retains the unsupported undefined read when the lowerer has no checker" | `lowerFunctionAstToIr` on `const undefined = 42; export function f(): void { return undefined; }` with a checker and no module-binding resolver lowers the read to `dyn.undefined` instead of refusing. End to end, `const undefined = 42; export function f(): number { return (undefined as any) + 1; }` returns NaN on the default and the standalone target; node (module code) returns 43. | `src/ir/from-ast.ts` identifier arm for `undefined` (around line 5232, #7104 / #7106) and `isUnshadowedGlobalExpression`: both treat "no module binding found" as "the global", which is false when there is no resolver. The ordinary pipeline gives the same wrong answer. |
+| `runtime-producers-import-boundaries` "loads the physical type, closure, and ABI planning leaves without the frontend" | Loading `src/codegen/closures/funcref-wrapper-types.ts` under the frontend barrier fails: "blocked frontend module: src/ts-api.ts". The file has `import { ts } from "../../ts-api.js"` since `708382dc7c` (#5334). | A layering rule broken by #5334; codegen closures owner. Not a pin: the rule reads the current tree. |
+
+#### R stale: correct behaviour, old expectation (36 tests)
+
+| test file, tests | evidence | proposed right answer |
+| --- | --- | --- |
+| `host-utf8-literal-keys`, 16 (every `target=host` row) | `run()` equals the node oracle twice per row (the assertions before line 118 pass). Red only at `owners.length > 0`: the test wraps host imports `__defineProperty_accessor` / `__extern_set`, and the native-first module imports neither, so the spy never fires. | Drop the host-import spy block; keep the oracle comparison. Owner decides. |
+| `ordinary-object-callable-contracts` "cannot materialize js.object.* merely because its semantic declaration exists", 8 | `RuntimeManifestBuilder({target:"standalone",backend:"wasmgc"}).requestFeature(name).freeze()` now selects `native.<name>` (`runtime-callable`) for all eight; the providers were added on purpose by `85750eeee0` ("join native invocation with ordinary object preparation"). The doc comment "no physical provider is granted by this catalogue" in `manifest.ts` is stale too. | Either assert the selected provider, or delete the case (its premise is gone). Owner decides. |
+| `ordinary-getter-source` "does not mistake the full Number contract for unboxing or a physical provider", 1 | Same for `js.number.from-value` (provider `native.js.number.from-value`, #7354 D1). | As above. |
+| `native-realm-requirements` "retains the original genuine Number/object frontend preparation refusal", 1 | As recorded in 2a: `js.number.from-value` gained a provider. | Realm owner. |
+| `string-repeat-ir` "registers the exact host ABI …", "executes host repeat through the compiled adapter manifest", 2 | The JS target no longer imports `env.string_repeat` (imports are `__str_from_mem`, `__str_to_mem`, `__str_extern_len`); calling the raw export with a JS string throws "type incompatibility when transforming from/to JS", as for any `string` parameter without `jsFacingExports`. In-module, `s.repeat(n)` gives node's answer for all 8 cases of the test (−0.5, NaN, 1.9, 3, −1, Infinity, `""`×−1, `""`×2^53−1), default and standalone target. | Rewrite against the native provider and the JS-facing exports, or delete as host-lane history. |
+| `bench-array-prepared-cutover`, 1; `bench-string-prepared-cutover`, 2 | Artifact identity between the Prepared and the direct lane. Differences: closure body names in the route audit (`__closure_0` vs `__closure_2`), and the Prepared string pool lacks `"Object"` and the `Object.prototype` key-list string. The runtime-value assertions come later and are not reached. | Owner of the bench cutovers: compare answers, not closure numbering. Not verified whether the runtime values still match. |
+| `native-vector-resources` "retains the complete population and located physical gaps", 4 | The whole-family physical setup is still refused (`kind: "unsupported"`), but the detail lists 35 other gaps ("async frames do not support wasmgc:standalone; …") instead of "scheduler/promise runtime materialization". | Update the expected gap text, or assert the refusal kind only. |
+| `public-retirement-gate` "keeps typed async refusal before acceptance/emission …", 1 | `async function run(x){ const y = await (x+1); return await (y+2); }` is accepted on the wasmgc host lane and `run(5)` resolves to 8 (node 8). | **Done** in `00832dc282`: the test now asserts acceptance and the answers 8 and 0. 16/16 green. |
+
+#### T and F
+
+- T: `ordinary-object-runtime-providers` (2 empty-closure codec tests, 41–43 s each), `program-abi-seam` (1, 200 s;
+  it type-checks a generated file, which also trips vitest's RPC timeout), `native-mixed-object-access` (3, 38–55 s;
+  whole file 456 s), `native-realm-wrapper-storage` (`beforeAll` over 10 s). All pass alone with larger limits.
+  `program-abi-seam`'s slow test is the type-level negative control of program ABI brands: not a pin, keep it.
+- F: `typed-program-preparation` (2: the "omitted explicit verification options" error no longer fires, and the
+  final-only verifier call count is 0), `native-object-descriptor-resources` "rejects a foreign exception token" and
+  `native-prototype-seeder-bindings` "refuses foreign-ledger descriptor token 0" (both forged tokens now crash with
+  `TypeError: Cannot read properties of undefined (reading 'name')` instead of a named refusal).
+
+#### Found on the way, not a red test here
+
+The native `Math.atan/asin/acos/tan/cosh/tanh/expm1/asinh/atanh/cbrt` differ from node by 1 ulp (`cbrt`) up to about 4e-10 (`atan`) on
+both the JS and the standalone target: `Math.atan(0.5)` gives `0.4636476094151571` (node `0.4636476090008061`),
+`Math.cosh(0.5)` gives `1.1276259651766543` (node `1.1276259652063807`). The exact-arity tests do not compare digits.
+Not filed.
+
+#### Per-file triage (the 90 red files)
+
+| file (`issue-3518-…`) | red | P | R bug | R stale | T | F | classification |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| `any-to-string-source-composition` | 6 | 6 | 0 | 0 | 0 | 0 | P |
+| `argument-vector-source-composition` | 59 | 59 | 0 | 0 | 0 | 0 | P |
+| `array-main-refresh-port` | 0 (load) | 0 | 0 | 0 | 0 | 0 | P: fails at load on a source pin; every test in the file is pin-gated |
+| `async-frame-body-source-preservation` | 19 | 19 | 0 | 0 | 0 | 0 | P |
+| `bench-array-prepared-cutover` | 1 | 0 | 0 | 1 | 0 | 0 | R-stale: Prepared vs direct legacy-entry audit differ only in closure numbering (`__closure_0` vs `__closure_2`) |
+| `bench-string-prepared-cutover` | 2 | 0 | 0 | 2 | 0 | 0 | R-stale: string pool and closure numbering differ between lanes; runtime value not reached |
+| `bigint-carrier-port` | 26 | 26 | 0 | 0 | 0 | 0 | P |
+| `builtin-metadata-main-port` | 26 | 26 | 0 | 0 | 0 | 0 | P |
+| `capability-schema-boundary` | 1 | 1 | 0 | 0 | 0 | 0 | P |
+| `class-to-primitive-presence` | 2 | 2 | 0 | 0 | 0 | 0 | P |
+| `closure-source-composition` | 0 (load) | 0 | 0 | 0 | 0 | 0 | P: fails at load on a source pin; every test in the file is pin-gated |
+| `conversion-source-composition` | 16 | 16 | 0 | 0 | 0 | 0 | P |
+| `core-kind-neutrality` | 2 | 2 | 0 | 0 | 0 | 0 | P |
+| `core-nodes-boundary` | 29 | 29 | 0 | 0 | 0 | 0 | P |
+| `core-nodes-seam` | 6 | 6 | 0 | 0 | 0 | 0 | P |
+| `core-type-boundary` | 15 | 15 | 0 | 0 | 0 | 0 | P |
+| `core-type-seam` | 5 | 5 | 0 | 0 | 0 | 0 | P |
+| `delay-combinator-layout-ownership` | 12 | 12 | 0 | 0 | 0 | 0 | P |
+| `delivery-main-refresh-port` | 0 (load) | 0 | 0 | 0 | 0 | 0 | P: fails at load on a source pin; every test in the file is pin-gated |
+| `descriptor-adapter-relocation` | 0 (load) | 0 | 0 | 0 | 0 | 0 | P: fails at load on a source pin; every test in the file is pin-gated |
+| `descriptor-undefined-correction` | 9 | 9 | 0 | 0 | 0 | 0 | P |
+| `historical-runtime-reconstruction` | 631 | 631 | 0 | 0 | 0 | 0 | P |
+| `host-coercion-get-abrupt` | 10 | 0 | 10 | 0 | 0 | 0 | R-bug: JS-target `Number(o)` on a JS object: no `valueOf`/`toString` call, returns NaN |
+| `host-utf8-literal-keys` | 16 | 0 | 0 | 16 | 0 | 0 | R-stale: answers equal node; spies on host imports `__defineProperty_accessor`/`__extern_set` that native-first no longer emits |
+| `ir-math-switch-retirement` | 1 | 0 | 1 | 0 | 0 | 0 | R-bug: `Math.atan()` (0 args) does not compile on the JS target |
+| `later-main-preservation-port` | 0 (load) | 0 | 0 | 0 | 0 | 0 | P: fails at load on a source pin; every test in the file is pin-gated |
+| `lowering-cycle` | 1 | 1 | 0 | 0 | 0 | 0 | P |
+| `native-accessor-call-bodies` | 1 | 1 | 0 | 0 | 0 | 0 | P |
+| `native-any-to-string-donor` | 0 (load) | 0 | 0 | 0 | 0 | 0 | P: fails at load on a source pin; every test in the file is pin-gated |
+| `native-argument-vector-resources` | 0 (load) | 0 | 0 | 0 | 0 | 0 | P: fails at load on a source pin; every test in the file is pin-gated |
+| `native-carrier-bag-read-bodies` | 0 (load) | 0 | 0 | 0 | 0 | 0 | P: fails at load on a source pin; every test in the file is pin-gated |
+| `native-closure-resources` | 0 (load) | 0 | 0 | 0 | 0 | 0 | P: fails at load on a source pin; every test in the file is pin-gated |
+| `native-delay-combinator-body-ownership` | 8 | 8 | 0 | 0 | 0 | 0 | P |
+| `native-delay-combinator-source-preservation` | 89 | 89 | 0 | 0 | 0 | 0 | P |
+| `native-family-source-contract` | 8 | 8 | 0 | 0 | 0 | 0 | P |
+| `native-family-source-identity` | 2 | 0 | 2 | 0 | 0 | 0 | R-bug: module-scope `const undefined = 42` read lowers to `dyn.undefined` |
+| `native-mixed-object-access` | 3 | 0 | 0 | 0 | 3 | 0 | T: three structural-owner tests take 38–55 s; pass alone with a larger limit (whole file 456 s) |
+| `native-number-format-ownership` | 2 | 2 | 0 | 0 | 0 | 0 | P |
+| `native-object-descriptor-resources` | 1 | 0 | 0 | 0 | 0 | 1 | F: foreign exception token forgery crashes with a TypeError (M3); leaves with PR 5b |
+| `native-object-get-bodies` | 55 | 55 | 0 | 0 | 0 | 0 | P |
+| `native-object-key-foundation` | 1 | 1 | 0 | 0 | 0 | 0 | P |
+| `native-object-layouts` | 2 | 2 | 0 | 0 | 0 | 0 | P |
+| `native-object-storage-resources` | 14 | 14 | 0 | 0 | 0 | 0 | P |
+| `native-object-write-composition` | 0 (load) | 0 | 0 | 0 | 0 | 0 | P: fails at load on a source pin; every test in the file is pin-gated |
+| `native-prototype-seeder-bindings` | 1 | 0 | 0 | 0 | 0 | 1 | F: foreign-ledger token forgery crashes with a TypeError (M3); leaves with PR 5b |
+| `native-realm-requirements` | 1 | 0 | 0 | 1 | 0 | 0 | R-stale: 2a class (ii): `js.number.from-value` gained a provider |
+| `native-realm-wrapper-storage` | 0 | 0 | 0 | 0 | 0 | 0 | T (suite): beforeAll takes >10 s, 16 tests skipped; 24/24 pass with a larger hook limit |
+| `native-string-no-demand-emitter-forward` | 8 | 8 | 0 | 0 | 0 | 0 | P |
+| `native-string-number-resources` | 35 | 35 | 0 | 0 | 0 | 0 | P |
+| `native-string-output-preservation` | 24 | 24 | 0 | 0 | 0 | 0 | P |
+| `native-symbol-carrier-resources` | 0 (load) | 0 | 0 | 0 | 0 | 0 | P: fails at load on a source pin; every test in the file is pin-gated |
+| `native-value-resources` | 61 | 61 | 0 | 0 | 0 | 0 | P |
+| `native-vector-resources` | 4 | 0 | 0 | 4 | 0 | 0 | R-stale: whole-family physical setup still refused, with a different gap text |
+| `number-format-source-support` | 1 | 1 | 0 | 0 | 0 | 0 | P |
+| `object-runtime-main-composition` | 0 (load) | 0 | 0 | 0 | 0 | 0 | P: fails at load on a source pin; every test in the file is pin-gated |
+| `open-extension-boundaries` | 1 | 1 | 0 | 0 | 0 | 0 | P |
+| `ordinary-getter-source` | 1 | 0 | 0 | 1 | 0 | 0 | R-stale: same for `js.number.from-value` (provider added by #7354 D1) |
+| `ordinary-object-callable-contracts` | 8 | 0 | 0 | 8 | 0 | 0 | R-stale: expects `missing-runtime-provider`; `native.js.object.*` providers were added on purpose (85750eeee0) |
+| `ordinary-object-runtime-providers` | 2 | 0 | 0 | 0 | 2 | 0 | T: two empty-closure codec runs take 41–43 s against the 35 s limit; pass alone with a larger limit |
+| `own-property-bodies` | 0 (load) | 0 | 0 | 0 | 0 | 0 | P: fails at load on a source pin; every test in the file is pin-gated |
+| `program-abi-seam` | 1 | 0 | 0 | 0 | 1 | 0 | T: type-checks a generated file for 200 s; passes alone with a larger limit |
+| `promise-earlier-main-port` | 0 (load) | 0 | 0 | 0 | 0 | 0 | P: fails at load on a source pin; every test in the file is pin-gated |
+| `promise-export-main-port` | 0 (load) | 0 | 0 | 0 | 0 | 0 | P: fails at load on a source pin; every test in the file is pin-gated |
+| `promise-resolution-preservation` | 3 | 3 | 0 | 0 | 0 | 0 | P |
+| `promise-settlement-body-ownership` | 9 | 9 | 0 | 0 | 0 | 0 | P |
+| `prototype-chain-preservation` | 0 (load) | 0 | 0 | 0 | 0 | 0 | P: fails at load on a source pin; every test in the file is pin-gated |
+| `prototype-companion-body` | 0 (load) | 0 | 0 | 0 | 0 | 0 | P: fails at load on a source pin; every test in the file is pin-gated |
+| `prototype-read-recipes` | 0 (load) | 0 | 0 | 0 | 0 | 0 | P: fails at load on a source pin; every test in the file is pin-gated |
+| `prototype-receiver-bodies` | 0 (load) | 0 | 0 | 0 | 0 | 0 | P: fails at load on a source pin; every test in the file is pin-gated |
+| `prototype-seeder-bodies` | 2 | 2 | 0 | 0 | 0 | 0 | P |
+| `prototype-seeder-extraction` | 0 (load) | 0 | 0 | 0 | 0 | 0 | P: fails at load on a source pin; every test in the file is pin-gated |
+| `prototype-singleton-bodies` | 0 (load) | 0 | 0 | 0 | 0 | 0 | P: fails at load on a source pin; every test in the file is pin-gated |
+| `provider-verification-ownership` | 25 | 25 | 0 | 0 | 0 | 0 | P |
+| `public-retirement-gate` | 1 | 0 | 0 | 1 | 0 | 0 | R-stale, fixed: typed async now accepted and correct; expectation updated in 00832dc282 |
+| `reference-error-runtime-producers` | 1 | 1 | 0 | 0 | 0 | 0 | P |
+| `resume-main-composition` | 131 | 131 | 0 | 0 | 0 | 0 | P |
+| `runtime-contract-evolution` | 0 (380 skipped) | 0 | 0 | 0 | 0 | 0 | P: `beforeAll` fails on a source SHA pin, all 380 tests skipped |
+| `runtime-preparation-relocation` | 3 | 3 | 0 | 0 | 0 | 0 | P |
+| `runtime-producers-import-boundaries` | 1 | 0 | 1 | 0 | 0 | 0 | R-bug: `funcref-wrapper-types.ts` value-imports the frontend (`ts-api`) |
+| `semantic-provider-source-acceptance` | 1 | 1 | 0 | 0 | 0 | 0 | P |
+| `source-contract-relocation` | 53 | 53 | 0 | 0 | 0 | 0 | P |
+| `startup-contract` | 1 | 1 | 0 | 0 | 0 | 0 | P |
+| `string-repeat-ir` | 2 | 0 | 0 | 2 | 0 | 0 | R-stale: expects host import `env.string_repeat` and a raw JS-string export call; repeat semantics are correct in-module |
+| `symbolic-support-ref` | 6 | 6 | 0 | 0 | 0 | 0 | P |
+| `to-primitive-wrapper-forward` | 11 | 11 | 0 | 0 | 0 | 0 | P |
+| `typed-async-preparation` | 3 | 3 | 0 | 0 | 0 | 0 | P |
+| `typed-program-preparation` | 2 | 0 | 0 | 0 | 0 | 2 | F: verifier-option threading and call counts (M10); leaves with PR 3 |
+| `typedarray-main-preservation-port` | 0 (load) | 0 | 0 | 0 | 0 | 0 | P: fails at load on a source pin; every test in the file is pin-gated |
+| `validation-analysis-relocation` | 80 | 80 | 0 | 0 | 0 | 0 | P |
+| `vector-grow-store-donor` | 3 | 3 | 0 | 0 | 0 | 0 | P |
+| **90 files** | **1567** | **1507** | **14** | **36** | **6** | **4** | |
+
+#### What passes 2 and 3 would do once the lead decides
+
+- Pass 2: retire the 1,507 P tests (whole files where nothing else is left, pin lines cut inside behaviour tests,
+  e.g. the `scans.length >= 4` count in `native-family-source-contract`), with their helpers and receipts. R, T and F
+  stay. Rule C candidates already seen: the import-cycle claim of `lowering-cycle` (covered by `check:import-cycles`),
+  the `ir-core` layer of `core-nodes-boundary` / `core-type-boundary` (present in `scripts/compiler-boundaries.json`),
+  the frontend barrier of `runtime-producers-import-boundaries` (kept: it is an R row).
+- Pass 3: the green pin families of section 3.
+
+Not verified in pass 1: whether the bench cutovers' runtime values still match; the `native-realm-requirements`
+program's behaviour; whether `typed-program-preparation`'s verifier change was deliberate (PR 1 or earlier).
