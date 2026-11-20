@@ -19,10 +19,6 @@ import {
 import { buildStringUtf8ToFlatDefinition } from "../src/runtime/wasmgc/values/string-utf8-decode-bodies.js";
 import { emitBinary } from "../src/emit/binary.js";
 import { emitWat } from "../src/emit/wat.js";
-
-// The complete repaired canonical source, not a substitute decoder or a runtime Git dependency.
-const DECODER_SHA256 = "119976d2b5c593dc05b22ed82df454537d3b0bed9395e9ae47ef7dbac64bb748";
-const decoderURL = new URL("../src/runtime/wasmgc/values/string-utf8-decode-bodies.ts", import.meta.url);
 const payloads = [
   { name: "empty", text: "", units: [] },
   { name: "ascii", text: "AZ09", units: [65, 90, 48, 57] },
@@ -187,7 +183,6 @@ function persist(label: string, receipt: Execution) {
     JSON.stringify(
       {
         label,
-        source: { url: decoderURL.href, sha256: DECODER_SHA256 },
         runtime: { node: process.version, versions: process.versions, execArgv: process.execArgv },
         windows,
         ...receipt,

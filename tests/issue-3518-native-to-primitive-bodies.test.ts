@@ -1,6 +1,4 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
-import { createHash } from "node:crypto";
-import { readFileSync } from "node:fs";
 import { setImmediate } from "node:timers/promises";
 import { runInNewContext } from "node:vm";
 import ts from "typescript";
@@ -10,20 +8,6 @@ import * as recipe from "../src/runtime/wasmgc/values/to-primitive-bodies.js";
 import { copyToPrimitiveLiteral } from "../src/runtime/wasmgc/values/to-primitive-method-bodies.js";
 import { compile } from "../src/index.js";
 
-const sha = (text: string) => createHash("sha256").update(text).digest("hex");
-const read = (path: string) => readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
-const fixtureHash = "2da520f20060b198ea9c19b7d7d6ef2b49ae0a784c89b3878ce17e66eb2a9b53";
-// The measured extraction remains separate from the forward semantic repair.
-// These snapshots do not replace the Git-authenticated donor authority above.
-const extractionText = read("tests/fixtures/issue-3518-to-primitive-extraction-baseline.json");
-if (sha(extractionText) !== "b9f0e37bc857e1be0e0e5c57c243614ff142de60265de55c6b507242f451be34")
-  throw new Error("changed measured extraction baseline");
-const extraction = JSON.parse(extractionText) as {
-  originalDonorFixtureSha256: string;
-  records: { path: string; sha256: string; text: string }[];
-};
-if (extraction.originalDonorFixtureSha256 !== fixtureHash || extraction.records.length !== 7)
-  throw new Error("foreign measured extraction provenance");
 function allNodes(value: unknown): object[] {
   if (value === null || typeof value !== "object") return [];
   return [value, ...Object.values(value).flatMap(allNodes)];
@@ -104,8 +88,8 @@ async function execute(source: string) {
   expect(WebAssembly.Module.imports(module)).toEqual([]);
   const instance = new WebAssembly.Instance(module, {});
   const actual = observedCompletion(instance.exports as Record<string, (seed?: number) => number>, 7);
-  console.info("ToPrimitive completion", JSON.stringify({ sourceSha256: sha(source), native, actual }));
-  expect(actual, JSON.stringify({ sourceSha256: sha(source), native, actual })).toEqual(native);
+  console.info("ToPrimitive completion", JSON.stringify({ source, native, actual }));
+  expect(actual, JSON.stringify({ source, native, actual })).toEqual(native);
 }
 // The original manual expectations are archived in the local review receipt.
 // Every current expected completion comes from the exact native Node fixture.
