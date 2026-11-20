@@ -64,7 +64,7 @@ async function run(source: string): Promise<"returned" | "threw" | "trapped"> {
 /** `@A` is node's answer in the right program and the other one in the wrong program. */
 const PROGRAMS: readonly { name: string; source: string; answers: [string, string] }[] = [
   {
-    // `typeof Object` made this program unplain under the old static rule, so it refused.
+    // `typeof Object` made this program refuse under O's old static plainness rule (removed by M1, C1).
     name: "ToString, `+` and ToNumber of a plain object in a program that names 'Object'",
     source:
       "function f(a) { return 1 / a; } var o = { a: 1 }; var t = typeof Object;" +

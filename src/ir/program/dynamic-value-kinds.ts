@@ -94,8 +94,8 @@ export const TO_NUMBER_ARM: Readonly<Record<CarrierKind, "unbox" | "to-primitive
 /**
  * (#7354 O4, O3) How a member read (GetValue) and a member write (PutValue) take each receiver
  * kind: both ToObject the base, so `undefined` and `null` throw a TypeError; an object is the realm's [[Get]] or
- * [[Set]]; a primitive reaches only built-in prototypes (`builtin-prototype-keys.ts`), and (O2b) only while no code
- * can reach them to change them.
+ * [[Set]]; a primitive reaches only built-in prototypes (`builtin-prototype-keys.ts`), which no Prepared program can
+ * obtain to change (M1, C1).
  */
 export const MEMBER_ACCESS_ARM: Readonly<Record<CarrierKind, "type-error" | "object" | "primitive">> = {
   number: "primitive",
@@ -108,14 +108,12 @@ export const MEMBER_ACCESS_ARM: Readonly<Record<CarrierKind, "type-error" | "obj
 
 /**
  * What the dynamic-value legalization asks of a program's source (`src/ir/source-plain-objects.ts` answers it in one
- * walk): whether it builds ordinary objects, so the object kind is admitted; (O2b) whether it names `Symbol`, the only
- * way to `@@toPrimitive`; and (O4) `unplain`, the first way its code can reach a built-in prototype to change it,
- * which a member read of a primitive must exclude.
+ * walk): whether it builds ordinary objects, so the object kind is admitted, and (O2b) whether it names `Symbol`, the
+ * only way to `@@toPrimitive` and `@@toStringTag`.
  */
 export interface ProgramObjects {
   readonly present: boolean;
   readonly namesSymbol: boolean;
-  readonly unplain: string | undefined;
 }
 
 /** (#7354 O2, O4) What the legalization of every function of one program asks of the whole program. */
@@ -127,11 +125,7 @@ export interface LegalizationProgram {
 }
 
 /** A program that builds no ordinary object. */
-export const NO_OBJECTS: ProgramObjects = Object.freeze({
-  present: false,
-  namesSymbol: false,
-  unplain: undefined,
-});
+export const NO_OBJECTS: ProgramObjects = Object.freeze({ present: false, namesSymbol: false });
 
 /** The kinds a value of a program may be: the object kind only where the program builds objects. */
 export function admittedKinds(objects: ProgramObjects): readonly CarrierKind[] {

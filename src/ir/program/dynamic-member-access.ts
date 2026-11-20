@@ -82,13 +82,10 @@ function memberAccess(
         if (BUILTIN_REACHABLE_KEYS.object.has(access.name))
           gap(`${access.operation} needs Object.prototype's properties`);
         return [access.object(r)];
-      case "primitive": {
-        // (#7354 O2b) Only this arm assumes the built-in prototypes are the specification's; the object arm is the
-        // realm's own [[Get]] / [[Set]].
-        const reached = program.objects.unplain;
-        if (reached !== undefined) gap(`${access.operation} (${reached})`);
+      // Only this arm assumes the built-in prototypes are the specification's (the object arm is the realm's own
+      // [[Get]] / [[Set]]): no Prepared program can obtain one to change it (M1, C1; the premise test pins it).
+      case "primitive":
         return access.primitive(kind, r, throwTypeError);
-      }
     }
   };
   return b.kindChain(instr, receiver, result, arm, b.kindsOf(receiver), access.resultType);

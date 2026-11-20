@@ -140,36 +140,18 @@ describe("#7354 O2 — what a program's source allows its objects", () => {
     return programObjects(ast.sourceFiles);
   };
 
-  it("answers no objects, and objects no code can change a built-in prototype through", () => {
-    expect(objects("export const n = 1;")).toEqual({ present: false, namesSymbol: false, unplain: undefined });
+  it("answers no objects, and objects", () => {
+    expect(objects("export const n = 1;")).toEqual({ present: false, namesSymbol: false });
     expect(objects("export const o = { a: 1, toString: 1 }; export const v = o.a;")).toEqual({
       present: true,
       namesSymbol: false,
-      unplain: undefined,
     });
   });
 
-  // (#7354 O2b) The ToPrimitive-only reasons (literal members, function values, member writes, `toString` /
-  // `valueOf` keys) are gone with the rule that read them; these remain for O4's member read of a primitive.
-  it.each([
-    ["a prototype read", "function F() {} export const p = F.prototype;", "the program reads 'prototype'"],
-    ["a __proto__ read", "export const o: any = {}; export const p = o.__proto__;", "the program reads '__proto__'"],
-    ["the Object global", "export const t = typeof Object;", "the program names 'Object'"],
-    ["the String global", "export const s = String(1);", "the program names 'String'"],
-    ["globalThis", "export const g = globalThis;", "the program names 'globalThis'"],
-  ])("reaches a built-in prototype with %s", (_label, source, reason) => {
-    expect(objects(source).unplain).toBe(reason);
-  });
-
+  // (#7354 M1, C1) The program-wide plainness answer (`unplain`) is gone: no Prepared program can obtain a built-in
+  // prototype as a value (tests/issue-7354-m-prototype-premise.test.ts).
   it("answers whether the program names Symbol, the way to @@toPrimitive", () => {
-    expect(objects("export const s = typeof Symbol;")).toMatchObject({
-      namesSymbol: true,
-      unplain: "the program names 'Symbol'",
-    });
+    expect(objects("export const s = typeof Symbol;").namesSymbol).toBe(true);
     expect(objects("export const o = { Symbol: 1 }; export const v = o.Symbol;").namesSymbol).toBe(false);
-  });
-
-  it("does not take a member or key name for a global", () => {
-    expect(objects("export const o = { Object: 1, String: 2 }; export const v = o.Object;").unplain).toBeUndefined();
   });
 });

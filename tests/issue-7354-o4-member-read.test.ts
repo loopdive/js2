@@ -72,6 +72,11 @@ const PROGRAMS: readonly [string, string][] = [
   ["a member read through an unannotated parameter", "function g(v) { return v.a; } if (g({ a: 3 }) !== 3) throw 1;"],
   ["a primitive's absent member", 'function g(v) { return v.q; } if (g("a") !== undefined) throw 1;'],
   ["a number's absent member", "function g(v) { return v.q; } if (g(1) !== undefined) throw 1;"],
+  // (#7354 M1, C1) This program refused under O's plainness rule ("the program names 'Object'").
+  [
+    "a member read in a program that names a prototype global",
+    "var o = { a: 1 }; var t = typeof Object; function g(v) { return v.q; } if (o.a !== 1 || g(1) !== undefined) throw 1;",
+  ],
 ];
 
 describe("#7354 O4 — a member read of the dynamic value", () => {
@@ -111,11 +116,6 @@ describe("#7354 O4 — a member read of the dynamic value", () => {
     ],
     ["an Object.prototype method", "var o = { a: 1 }; var t = o.toString;", "member read 'toString'"],
     ["a computed key", 'var o = { a: 1 }; var k = "a"; var v = o[k];', "dyn.member_get with a computed key"],
-    [
-      "a program that names a prototype global",
-      "var o = { a: 1 }; var t = typeof Object; if (o.a !== 1) throw 1;",
-      "member read 'a' (the program names 'Object')",
-    ],
   ])("refuses %s by name", async (_label, source, reason) => {
     expect(await refusal(source)).toContain(reason);
   });
