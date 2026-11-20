@@ -230,6 +230,26 @@ describe("#3418 — elideDeadTopLevelBindings unit behavior", () => {
     expect(out.elided).toEqual([]);
   });
 
+  // (#7354 F0) ToNumeric of an object runs its valueOf/toString; `!` and `void` never run code.
+  it("treats `-`/`+`/`~` as pure only on a primitive operand", () => {
+    for (const init of ["-{ valueOf: function () { throw 1; } }", "+[]", "~(function () {})", "+globalThis", "-/a/"])
+      expect(elide(`var x = ${init};\n`).elided).toEqual([]);
+    for (const init of ['+"3"', "-(1)", "~~2", "-undefined", "!{ a: function () {} }", "void {}"])
+      expect(elide(`var x = ${init};\n`).elided).toEqual(["x"]);
+  });
+
+  // (#7354 F0) A duplicate lexical declaration is a SyntaxError that dropping both statements would hide.
+  it("keeps a name declared twice at top level when either declaration is let/const", () => {
+    for (const src of [
+      "let a = 1; let a = 2;\n",
+      "var a = 1; let a = 2;\n",
+      "const a = 1; var a = 2;\n",
+      "let a, a;\n",
+    ])
+      expect(elide(src).elided).toEqual([]);
+    expect(elide("var a = 1; var a = 2;\n").elided).toEqual(["a", "a"]);
+  });
+
   it("retains all bindings when eval can name them through computed source", () => {
     const src =
       'var hidden = 40;\nvar helper = function (x) { return x + 2; };\n(0, eval)(prefix + "helper(hidden)");\n';

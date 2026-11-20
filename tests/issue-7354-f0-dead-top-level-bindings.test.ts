@@ -188,6 +188,17 @@ describe("#7354 F0 — dead top-level bindings are dropped before the Prepared p
     expect(requiredPreparedFrontendFailure(result)?.sources.map((entry) => entry.text)).toEqual([source]);
   });
 
+  // Both declarations are dead and pure; dropping the pair would compile a program node rejects.
+  it.each([["let a = 1; let a = 2;"], ["var a = 1; let a = 2;"], ["let a = 1, a = 2;"]])(
+    "keeps the early error of a duplicate lexical declaration: %s",
+    async (source) => {
+      expect(() => new Function(source)).toThrow(SyntaxError);
+      const result = await compile(source, options());
+      expect(result.success).toBe(false);
+      expect(requiredPreparedFrontendFailure(result)?.phase).toBe("early");
+    },
+  );
+
   it("keeps every binding of a graph of several sources (a Script var of one is visible to another)", async () => {
     const result = await compileMulti(
       { "a.js": DEAD, "test.js": "var r = 1; if (r !== 1) throw 1;" },

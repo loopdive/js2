@@ -238,6 +238,14 @@ export function elideDeadTopLevelBindings(
       list.push(cand);
     }
   }
+  // A name declared twice at top level where either declaration is `let`/`const` is an early error
+  // (§16.1.1 Script): `let a = 1; let a = 2;`. Only the other declaration mentions the name, and a mention
+  // inside a dropped statement revives nothing, so the pair would vanish with its SyntaxError.
+  for (const list of byName.values()) {
+    if (list.length > 1 && list.some((cand) => cand.stmt.declarationList.flags & ts.NodeFlags.BlockScoped)) {
+      for (const cand of list) cand.dropped = false;
+    }
+  }
 
   // ── Mention scan (single walk; fixpoint re-evaluates ownership only) ──
   // A mention is (name, position). Ownership by a candidate statement is
