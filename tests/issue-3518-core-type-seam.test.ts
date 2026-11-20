@@ -1,3 +1,4 @@
+// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import { dirname, resolve } from "node:path";
 import ts from "typescript";
 import { describe, expect, it, vi } from "vitest";

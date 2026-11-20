@@ -1,3 +1,4 @@
+// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import ts from "typescript";
 import { describe, expect, it } from "vitest";
 import { irSupportRef, irTypeEquals, asVal, irVal } from "../src/ir/core/types.js";

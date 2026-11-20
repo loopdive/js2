@@ -1,3 +1,4 @@
+// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { buildSelfHostedIrBody } from "../src/frontend/builtins/build-ir.js";

@@ -1,3 +1,4 @@
+// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";

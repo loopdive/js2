@@ -1,3 +1,4 @@
+// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import * as oldHost from "../src/ir/runtime-host-capabilities.js";

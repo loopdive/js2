@@ -1,3 +1,4 @@
+// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import { beforeRemainderRuntimePreparationRelocation as beforeRuntimePreparationRelocation } from "./helpers/ir-remainder-runtime-preparation-relocation.js";
 import { beforeSourceMapProgramValidatorRelocation } from "./helpers/ir-program-validator-relocation.js";
 import { createHash } from "node:crypto";
