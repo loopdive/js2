@@ -156,10 +156,15 @@ describe("#7354 H — the dynamic home of a script var", () => {
         "y !== 2",
       ],
     ].map(([name, program, holds, fails]) => [name, program.replace("%s", HOISTED_X), holds, fails]),
-  )("runs a script var %s", async (_, program, holds, fails) => {
-    expect(await run(`${program} if (${holds}) throw 1;`)).toBe("returned");
-    expect(await run(`${program} if (${fails}) throw 1;`)).toBe("threw");
-  });
+  )(
+    "runs a script var %s",
+    async (_, program, holds, fails) => {
+      expect(await run(`${program} if (${holds}) throw 1;`)).toBe("returned");
+      expect(await run(`${program} if (${fails}) throw 1;`)).toBe("threw");
+    },
+    // (#7354 M1) a member write selects the realm: ~20 s per compile on this base
+    180_000,
+  );
 
   it.each([
     // Each script's module-init stores `undefined` into its own globals; a script that runs first would read null.
@@ -265,10 +270,21 @@ describe("#7354 H — the dynamic home of a script var", () => {
       "r !== null",
       "r === null",
     ],
-  ])("runs %s holding a dynamic home's value", async (_, program, holds, fails) => {
-    expect(await run(`${program} if (${holds}) throw 1;`)).toBe("returned");
-    expect(await run(`${program} if (${fails}) throw 1;`)).toBe("threw");
-  });
+    // (#7354 M1) The object kind (O2): this refused ("concrete return needs a dynamic box") before the port.
+    [
+      "an object literal returned from an unannotated function",
+      "function k() { return { a: 1 }; } var r = k();",
+      "r.a !== 1",
+      "r.a !== 2",
+    ],
+  ])(
+    "runs %s holding a dynamic home's value",
+    async (_, program, holds, fails) => {
+      expect(await run(`${program} if (${holds}) throw 1;`)).toBe("returned");
+      expect(await run(`${program} if (${fails}) throw 1;`)).toBe("threw");
+    },
+    180_000,
+  );
 
   // Review round 1: every binding and expression kind the provenance does not model answers "may be dynamic", so
   // its value meets a named refusal, never a typed slot it does not fit.
@@ -285,7 +301,6 @@ describe("#7354 H — the dynamic home of a script var", () => {
     ],
     // (#7364) the Prepared path has no RegExp provider, so the literal itself refuses first
     ["a regular expression", "function k() { return /a/; } k();", "RegExp literal has no provider"],
-    ["an object literal", "function k() { return { a: 1 }; } k();", "concrete return needs a dynamic box"],
     ["a function read as a value", "function k() { return k2; } function k2() { return 1; } k();", 'identifier "k2"'],
   ])("refuses the value of %s returned from an unannotated function", async (_, program, message) => {
     expect(await refusal(program)).toContain(message);

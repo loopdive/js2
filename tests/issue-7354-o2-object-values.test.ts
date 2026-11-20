@@ -108,9 +108,9 @@ const PROGRAMS: readonly {
   },
   {
     name: "an object thrown from a callee and caught",
-    setup: 'function f() { throw { a: 1 }; } var t; try { f(); } catch (e) { t = typeof e + ("" + e); }',
+    setup: "function f() { throw { a: 1 }; } var t; try { f(); } catch (e) { t = typeof e; }",
     check: (answer) => `if (t !== ${answer}) throw 1;`,
-    answers: ['"object[object Object]"', '"object"'],
+    answers: ['"object"', '"number"'],
   },
 ];
 
@@ -128,6 +128,20 @@ describe("#7354 O2 — an ordinary object is a kind of the dynamic value", () =>
       180_000,
     );
   }
+
+  // (#7354 M1) ToString of an object may throw its own TypeError (a non-callable `toString`), and in a program that
+  // reads a caught value that error could reach the catch, which cannot hold it before M2: the program refuses by
+  // name (O2b answered it at run time, trapping on the error).
+  it("refuses ToString of a caught object in a program that reads a caught value", async () => {
+    const result = await compile(
+      'function f() { throw { a: 1 }; } var t; try { f(); } catch (e) { t = "" + e; }',
+      options(),
+    );
+    expect(result.success).toBe(false);
+    expect(messages(result).join("\n")).toContain(
+      'TypeError "Cannot convert object to primitive value" in a program that reads a caught value',
+    );
+  });
 
   // (#7354 O2b) The table "refuses ToPrimitive of an object with …" is gone: a literal `toString` or `valueOf` and a
   // prototype global no longer refuse. OrdinaryToPrimitive reads the object at run time, so the static plainness
