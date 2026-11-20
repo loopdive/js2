@@ -58,11 +58,16 @@ interface Access {
   readonly primitive: (kind: CarrierKind, result: IrValueId, throwTypeError: ThrowTypeError) => IrInstr[];
 }
 
-/** The string a once-boxed constant key holds; any other key refuses by name. */
+/** The string a once-boxed constant key holds, or `undefined` for any other key. */
+export function constantKeyOf(definitions: ReadonlyMap<IrValueId, IrInstr>, key: IrValueId): string | undefined {
+  const box = definitions.get(key);
+  const text = box?.kind === "box" ? definitions.get(box.value) : undefined;
+  return text?.kind === "string.const" ? text.value : undefined;
+}
+
+/** {@link constantKeyOf}; any other key refuses by name. */
 function constantKey(b: MemberAccessBuilders, instr: IrInstr, key: IrValueId): string {
-  const box = b.definitions.get(key);
-  const text = box?.kind === "box" ? b.definitions.get(box.value) : undefined;
-  return text?.kind === "string.const" ? text.value : gap(`${instr.kind} with a computed key`);
+  return constantKeyOf(b.definitions, key) ?? gap(`${instr.kind} with a computed key`);
 }
 
 const call = (

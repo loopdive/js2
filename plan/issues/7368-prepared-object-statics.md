@@ -184,3 +184,24 @@ function-budget grant is needed.
 
 No file passes yet. 23 of the 26 no longer stop at a define. The other 3 still stop there, now with the table's
 reason (`descriptor`). The 20 stand-in stops are the next gap, and that gap belongs to S3's ToPrimitive of an object.
+
+## Suspended Work (2026-11-20, lane S12)
+
+- **Branch** `claude/7368-object-statics` @ `1f27adbe` (pushed, no PR; the PR opens only after lane S3's O PRs land).
+  It merges `claude/7354-crashes` f0a23832 and `claude/7354-o` 0c7109594b.
+- **Extension WIP**: branch `claude/7368-object-statics-dyn-wip` (no PR). It merges `claude/7354-o` 14345199fe (O3,
+  `js.object.set`), adds `src/ir/program/own-property-lookup.ts`, and edits dynamic-member-access.ts,
+  dynamic-value-legalization.ts, source-object-bodies.ts and the #7368 tests. An Opus agent stopped mid-task on the
+  rate limit. **Not validated.**
+- **Next steps, in order**:
+  1. The string receiver of has-own / property-is-enumerable / get-own-property becomes a named refusal at compile
+     time, with a pin. Today `nonObjectArm` (source-object-bodies.ts) traps. Lead decision 2026-11-19.
+  2. Defines on a dynamic home: `Object.defineProperty` / `defineProperties` whose target is a script var on the
+     dynamic carrier ("module binding <x> has no exact typed storage: not-direct"). The lead measured 252 of S13's 455
+     array-list files stopping there (arrObj 141, arr 81, obj 27). Measure the yield before and after with S9's
+     prepared-census.
+  3. When S3's ONE synthesized-TypeError helper lands on `claude/7354-o` (from `claude/7354-o-toprim`), fold
+     REALM_REJECTING's catch rule and the `__new_TypeError → js.object.create-type-error` mapping into it, and move the
+     Function `tag.test` constant-false arm into the kind table (`dynamic-value-kinds.ts`).
+  4. Then gates, byte identity (fresh process per file, #7410), and the PR with `hold`.
+- **Open threads**: S3 owns the legalization arms' final home (kept in #7368 for now, per S3 2026-11-19).

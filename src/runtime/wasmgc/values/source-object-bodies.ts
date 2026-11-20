@@ -89,8 +89,10 @@ export interface SourceObjectOwnOperands {
 
 /**
  * The arm an own-property body takes for a receiver that is no ordinary object: `nullish` first (for `undefined` /
- * `null`), then a Number or Boolean answers `ownless` and returns. Any other carrier (a string, whose exotic object
- * owns `length` and its indices) has no served lookup yet: a trap, never a wrong answer.
+ * `null`), then a Number or Boolean answers `ownless` and returns. Any other carrier traps, as an unreachable
+ * invariant: the only other kind is a String, whose exotic object owns `length` and its indices, and the dynamic-value
+ * legalization answers or refuses every lookup whose receiver may be one before it reaches here
+ * (`ir/program/own-property-lookup.ts`).
  */
 function nonObjectArm(d: SourceObjectOwnOperands, ownless: Instr[], nullish: Instr[] = []): Instr {
   return {

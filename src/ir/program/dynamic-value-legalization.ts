@@ -42,6 +42,7 @@ import { PREPARED_NUMBER_TO_STRING } from "./number-to-string-target.js";
 import { IR_DYN_ADD_FN } from "../../shared/contracts/dynamic-add-helper.js";
 import { gap } from "./dynamic-value-gap.js";
 import { dynamicMemberRead, dynamicMemberWrite } from "./dynamic-member-access.js";
+import { isOwnPropertyLookup, ownPropertyLookup, type OwnPropertyLookup } from "./own-property-lookup.js";
 import {
   ADD_ROLE,
   KIND_TEST,
@@ -378,6 +379,12 @@ function legalizationBuilders(
     addition,
     definitions,
     admitted,
+    // (#7368) Its arms sit in nested buffers, which the result-type sweep does not reach: the call is typed as the carrier.
+    ownPropertyLookup: (instr: Extract<IrInstr, { kind: "call" }>, lookup: OwnPropertyLookup) =>
+      ownPropertyLookup({ definitions, fresh, kindsOf, anyKind, intrinsic, branch }, lookup, {
+        ...instr,
+        resultType: instr.resultType && carrierOf(instr.resultType),
+      }),
     valueCount: () => valueCount,
   };
 }
@@ -526,6 +533,9 @@ export function legalizeDynamicValues(
       case "call":
         if (instr.target.binding.kind === "runtime" && instr.target.binding.symbol === IR_DYN_ADD_FN)
           return builders.addition(instr, instr.args, instr.result!);
+        // (#7368) An own-property lookup splits on a receiver that may be a String (`own-property-lookup.ts`).
+        if (instr.target.binding.kind === "intrinsic" && isOwnPropertyLookup(instr.target.binding.symbol))
+          return builders.ownPropertyLookup(instr, instr.target.binding.symbol);
         // (#7368) `throw new TypeError(message)` (`throw-type-error.ts`) builds the realm's TypeError.
         if (instr.target.binding.kind === "runtime" && instr.target.binding.symbol === "__new_TypeError")
           return [{ ...instr, target: irIntrinsicFuncRef("js.object.create-type-error"), resultType: CARRIER }];
