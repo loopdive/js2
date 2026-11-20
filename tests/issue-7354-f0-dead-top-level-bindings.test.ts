@@ -1,0 +1,200 @@
+// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+//
+// #7354 F0 — the strict Prepared front door applies the ordinary compile's #3418 dead-binding elision
+// (`elideDeadTopLevelBindings`) to a one-source graph. A top-level `var` whose initializer has no effect and whose
+// name is mentioned nowhere else no longer has to lower: the test262 runtime shim (`var print = …`,
+// `var $262 = {…}`) stops refusing every row. A binding that is named anywhere, an initializer that can run code,
+// and a graph of several sources keep every statement, so the program refuses exactly as before or runs as node.
+import { readFileSync } from "node:fs";
+import { describe, expect, it } from "vitest";
+import { instantiatePreparedArtifact } from "../src/test262/test262-prepared-runtime.js";
+import {
+  compile,
+  compileMulti,
+  requiredPreparedEmission,
+  requiredPreparedFrontendFailure,
+  type Test262CompileOptions,
+} from "../src/test262/test262-prepared-entry.js";
+
+const options = (target: "standalone" | "gc" = "standalone"): Test262CompileOptions =>
+  ({
+    wholeProgram: Object.freeze({ kind: "prepared-program-required" as const, version: 1 as const }),
+    backend: "wasmgc",
+    target,
+    sourceMap: false,
+    optimize: false,
+    emitWat: false,
+    fileName: "test.js",
+    allowJs: true,
+  }) as Test262CompileOptions;
+
+const messages = (result: { errors: readonly { message: string }[] }) => result.errors.map((error) => error.message);
+
+/** Compile through the strict Prepared entry, run the top-level code and report whether it threw. */
+async function run(source: string): Promise<"returned" | "threw"> {
+  const result = await compile(source, options());
+  expect(messages(result)).toEqual([]);
+  expect(requiredPreparedEmission(result)).toBeDefined();
+  try {
+    (instantiatePreparedArtifact(result).instance.exports.__module_init as (() => void) | undefined)?.();
+    return "returned";
+  } catch (error) {
+    expect((error as object).constructor.name).toBe("Exception");
+    return "threw";
+  }
+}
+
+/** What node does with the same script body. */
+function node(source: string): "returned" | "threw" {
+  try {
+    new Function(source)();
+    return "returned";
+  } catch {
+    return "threw";
+  }
+}
+
+async function refusal(source: string, target: "standalone" | "gc" = "standalone"): Promise<string> {
+  const result = await compile(source, options(target));
+  expect(result.success).toBe(false);
+  return messages(result).join("\n");
+}
+
+// A dead binding whose initializer refuses on this base: the module-init closure has no return annotation.
+const DEAD = "var o = { m: function () { return 1; } };";
+const CLOSURE = "closure must have a return type annotation (<module-init>)";
+const SHIM = readFileSync(new URL("../scripts/test262-fyi-runtime.js", import.meta.url), "utf8");
+
+describe("#7354 F0 — dead top-level bindings are dropped before the Prepared path lowers", () => {
+  // `@` is the asserted value: 1 is the right answer (returns), 2 the wrong one (throws), both as node.
+  it.each([
+    ["an unused object with a function-valued property", `${DEAD} var r = 1; if (r !== @) throw 1;`],
+    ["an unused function expression", "var g = function (v) { return v; }; var r = 1; if (r !== @) throw 1;"],
+    ["the test262 runtime shim", `${SHIM}var r = 1; if (r !== @) throw 1;`],
+    [
+      "two unused bindings that name each other",
+      "var a = { f: function () { return b; } }; var b = { g: function () { return a; } }; var r = 1; if (r !== @) throw 1;",
+    ],
+    [
+      "a statement whose declarators are all unused",
+      `var o = { m: function () { return 1; } }, k = 2; var r = 1; if (r !== @) throw 1;`,
+    ],
+    ["a hoisted function used before its declaration", `if (f() !== @) throw 1; function f() { return 1; } ${DEAD}`],
+    ["a unary operator on a primitive literal", `var x = +"3"; ${DEAD} var r = 1; if (r !== @) throw 1;`],
+    [
+      "`!` of an object (ToBoolean runs no code)",
+      `var x = !{ m: function () { return 1; } }; var r = 1; if (r !== @) throw 1;`,
+    ],
+    [
+      "a later effectful initializer (its call still runs, once, before the read)",
+      `${DEAD} var n = 0; function f() { n = n + 1; return 1; } var x = f(); if (n !== @) throw 1;`,
+    ],
+  ] as const)("runs a program beside %s", async (_name, template) => {
+    for (const [value, expected] of [
+      ["1", "returned"],
+      ["2", "threw"],
+    ] as const) {
+      const source = template.replace("@", value);
+      expect(node(source)).toBe(expected);
+      expect(await run(source)).toBe(expected);
+    }
+  });
+
+  it("keeps an effectful initializer's throw after a dropped binding", async () => {
+    const boom = "function boom(v) { if (v) throw 7; return 0; }";
+    for (const [arg, expected] of [
+      ["0", "returned"],
+      ["1", "threw"],
+    ] as const) {
+      const source = `${DEAD} ${boom} var x = boom(${arg});`;
+      expect(node(source)).toBe(expected);
+      expect(await run(source)).toBe(expected);
+    }
+  });
+
+  // The gc target stops later, at its number boundary, not at the dropped closure.
+  it("drops the binding on the gc target too (the same gate as the ordinary compile)", async () => {
+    const message = await refusal(`${DEAD} var r = 1; if (r !== 1) throw 1;`, "gc");
+    expect(message).toContain("js.number.box is unavailable");
+    expect(message).not.toContain(CLOSURE);
+  });
+
+  // Each row keeps the dead-looking binding, so it still reaches the refusal its initializer causes.
+  it.each([
+    ["it is used", `${DEAD} if (o.m() !== 1) throw 1;`, CLOSURE],
+    ["it is read by `typeof`", `${DEAD} if (typeof o !== "object") throw 1;`, CLOSURE],
+    ["a parameter of the same name shadows it", `${DEAD} function f(o) { return o; } var r = f(1);`, CLOSURE],
+    ["a local of the same name shadows it", `${DEAD} function f() { var o = 1; return o; } var r = f();`, CLOSURE],
+    ["only a nested closure names it", `${DEAD} function f() { return function () { return o; }; } var r = 1;`, "(f)"],
+    [
+      "only an unused function names it",
+      `${DEAD} function unused() { return o.m(); } var r = 1;`,
+      "dynamic operation __ir_dyn_method_call_0 has no Prepared intrinsic",
+    ],
+    [
+      "a sibling declarator has an effect (`var a = …, b = f();`)",
+      "function boom(v) { if (v) throw 7; return 0; } var a = { m: function () { return 1; } }, b = boom(1);",
+      CLOSURE,
+    ],
+    // `-{ valueOf }` calls valueOf (node throws): dropping it would return.
+    ["its `-` runs a user valueOf", "var x = -({ valueOf: function () { throw 1; } });", CLOSURE],
+    ["its `+` converts an array", `var x = +[]; var r = 1;`, "empty array literal needs a vec-typed hint"],
+    ["its `-` converts a function", "var x = -function () { return 1; }; var r = 1;", CLOSURE],
+    ["its `+` converts an arrow function", "var x = +(() => 1); var r = 1;", CLOSURE],
+    ["its `+` converts a RegExp", "var x = +/a/; var r = 1;", "RegExp literal has no provider"],
+    // A script `var valueOf = …` would make it a call.
+    ["its `+` converts the global object", "var x = +globalThis; var r = 1;", 'identifier "globalThis"'],
+    ["literal eval source names it", `${DEAD} eval("o");`, CLOSURE],
+    ['a string literal spells it (`globalThis["o"]`)', `${DEAD} var s = "o"; if (s !== "o") throw 1;`, CLOSURE],
+    [
+      "a property name spells it",
+      "var m = { f: function () { return 1; } }; var p = { m: 1 }; if (p.m !== 1) throw 1;",
+      CLOSURE,
+    ],
+    ["the test262 shim's `print` is called", `${SHIM}print("x");`, "module-level closure binding 'print'"],
+  ] as const)("keeps a binding when %s", async (_name, source, message) => {
+    expect(await refusal(source)).toContain(message);
+  });
+
+  // The pass sees names, not computed lookups on the global object: these programs could observe a dropped `var`
+  // through enumeration or a computed key. The Prepared path refuses each of them, so no answer is wrong today.
+  it.each([
+    ["a computed global key", `${DEAD} var k = "p" + "q"; var v = globalThis[k];`, 'identifier "globalThis"'],
+    [
+      "for-in over the global object",
+      `${DEAD} var c = 0; for (var k in this) { c = c + 1; }`,
+      "nested var declaration",
+    ],
+    ["Object.keys of the global object", `${DEAD} var c = Object.keys(globalThis).length;`, 'identifier "Object"'],
+  ] as const)("refuses %s", async (_name, source, message) => {
+    expect(await refusal(source)).toContain(message);
+  });
+
+  // The linear backend's JavaScript environment is outside the ordinary compile's elision gate, and so here.
+  it("keeps the binding on the linear target", async () => {
+    const result = await compile(`${DEAD} var r = 1; if (r !== 1) throw 1;`, {
+      ...options(),
+      backend: "linear",
+      target: "linear",
+    } as Test262CompileOptions);
+    expect(messages(result).join("\n")).toContain("module binding o has no exact typed storage");
+  });
+
+  // The runner matches the observed frontend sources against the job's text, so they are the supplied text.
+  it("reports the supplied text, not the elided one, in a frontend failure", async () => {
+    const source = `${DEAD} var r = 1; function f(a, a) { "use strict"; }`;
+    const result = await compile(source, options());
+    expect(messages(result).join("\n")).toContain("Duplicate parameter name 'a' not allowed");
+    expect(requiredPreparedFrontendFailure(result)?.sources.map((entry) => entry.text)).toEqual([source]);
+  });
+
+  it("keeps every binding of a graph of several sources (a Script var of one is visible to another)", async () => {
+    const result = await compileMulti(
+      { "a.js": DEAD, "test.js": "var r = 1; if (r !== 1) throw 1;" },
+      "test.js",
+      options(),
+    );
+    expect(result.success).toBe(false);
+    expect(messages(result).join("\n")).toContain("module binding o has no exact typed storage");
+  });
+});
