@@ -63,3 +63,37 @@ the codebase has three spellings for it:
 - `obj[Symbol.match] = v` uses the real boxed symbol (`i32.const 7`, then `__box_symbol`).
 
 Making materialization use the real symbol changes that representation, so it needs its own design.
+
+## Measured (2026-11-19, base = #7410 head `805df5008c`)
+
+Standalone test262 before and after, 349 files: every `X.prototype[Symbol.y].call/apply` file, plus every
+`prototype/Symbol.*` directory.
+
+| | pass | fail | skip |
+| --- | ---: | ---: | ---: |
+| base | 281 | 51 | 17 |
+| this branch | 281 | 51 | 17 |
+
+- 0 verdict changes.
+- 7 failures are infrastructure on both sides: the QuickJS eval provider is not built in the container.
+- `String.prototype[Symbol.iterator].call("ab")` now reaches the native `@@1` body: its refusal string is gone
+  from the binary. It still throws later, in that body (separate, not investigated).
+
+**Open: bytes.** On the same 349 files, default + standalone, 30 of 681 rows differ between base and branch,
+among them the `built-ins/Date/prototype/Symbol.toPrimitive` rows. Not yet explained. Before the PR opens:
+diff one of those binaries (WAT) base vs branch, and decide whether it is site 1 (a member now resolving to
+`@@3`) or the id-table fold.
+
+## Suspended Work (2026-11-20, budget window closed)
+
+- Branch `claude/7427-symbol-keyed-member-keys`, stacked on `claude/7410-well-known-symbol-names` at
+  `805df5008c`, pushed; **no PR yet**. Before opening it, merge #7343's current head into this branch: RV7343
+  changed `functionNameForKey` to take a `TypeOracle`, so `memberKeyForProperty` must follow, and the
+  `calls.ts` oracle grant can then go too.
+- Next steps, in order:
+  1. Merge #7343's head and switch `memberKeyForProperty` to the oracle.
+  2. Explain the 30 differing byte rows above.
+  3. Open the PR with `hold`, base `claude/7410-well-known-symbol-names`, with the table above in the body.
+  4. Message the lead.
+- Scratch data (session scratchpad, not durable): the base and branch hash rows `bb.jsonl` / `bh.jsonl`; the
+  file list is the 349-file set described above.
