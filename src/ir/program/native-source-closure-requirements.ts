@@ -3,7 +3,7 @@
 import type { IrClosureSignature, IrFunction, IrType } from "../core/nodes.js";
 import type { IrUnitId } from "../../shared/contracts/ir-identity.js";
 import { preparedIrTypeKey } from "./abi-signatures.js";
-import { AllocSiteRegistry } from "../analysis/alloc-registry.js";
+import { preparedAllocationSites } from "./prepared-allocations.js";
 import type { AllocSiteId, IrValueId } from "../core/nodes.js";
 import { preparedIrDataMismatch, freezePreparedIrValue } from "./data.js";
 import { PreparedIrProgramInvariantError } from "./errors.js";
@@ -69,7 +69,7 @@ function calculate(demands: NativeStringValueDemands): Omit<NativeSourceClosureR
   const gaps: NativeSourceClosureRequirements["gaps"][number][] = [...cells.gaps];
   const signatureIds = new Map<string, string>(),
     shapeIds = new Map<string, string>();
-  const registry = AllocSiteRegistry.fromSnapshot(demands.allocations);
+  const registry = preparedAllocationSites(demands.allocations);
   const executableSites = new Set<string>();
   const allocationOwners = new Map<AllocSiteId, IrUnitId>();
   const logicalSites = new Map<

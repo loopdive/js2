@@ -58,7 +58,6 @@ export function planHostNumberBoundary(
     !provider?.signature ||
     provider.implementation.kind !== "host-callable" ||
     provider.implementation.capability !== "number.box" ||
-    selected.length !== 1 ||
     preparedIrDataMismatch(selected[0], provider) !== undefined ||
     preparedIrDataMismatch(providers.get("js.number.box"), provider) !== undefined ||
     preparedIrDataMismatch(provider.signature, INTRINSIC_DEFINITIONS["js.number.box"].signature) !== undefined

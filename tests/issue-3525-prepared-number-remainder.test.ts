@@ -9,15 +9,12 @@ import {
   emittedSupportFunctionReceipts,
   emittedProgramBindingIndex,
 } from "../src/ir/program-consumer.js";
-import {
-  PreparedIrProgramInvariantError,
-  type PreparedIrProgram,
-  type PreparedIrBackendOptions,
-} from "../src/ir/program.js";
+import { type PreparedIrProgram, type PreparedIrBackendOptions } from "../src/ir/program.js";
 import { buildNumberRemainderBody } from "../src/wasm/physical/number-remainder.js";
 import { PhysicalModuleReservations } from "../src/wasm/physical/module-reservations.js";
 import { emitBinary } from "../src/emit/binary.js";
 import * as consumer from "../src/ir/program-consumer.js";
+import { assertPreparedIrProgram } from "../src/ir/program/validation.js";
 
 const SOURCE = {
   "./entry.ts": `export function remainder(left: number, right: number): number { return left % right; }
@@ -252,8 +249,36 @@ export function combine(left: number, right: number): number { return __fmod(lef
       })),
     };
     const emit = vi.spyOn(consumer, "emitAcceptedIrProgram");
-    for (const mutant of [missing, foreign, signature, provider, missingProvider])
-      expect(() => acceptPreparedIrProgram(mutant, options("wasmgc"))).toThrow(PreparedIrProgramInvariantError);
+    // #7380: stage 2 checks a program once, where it is produced; acceptance no longer re-runs it. Each forgery is
+    // rejected by stage 2 with its own invariant. Acceptance alone throws the remainder join's invariant for four of
+    // them, but REFUSES the missing ABI entry by name as an ordinary gap: that forgery is the one only stage 2 sees
+    // as a compiler bug.
+    const join = /number remainder has a contradictory ABI\/provider resource join/;
+    for (const [mutant, stage2, accepted] of [
+      [missing, /runtime ABI declaration population differs from final semantic demand/, undefined],
+      [foreign, /runtime ABI lacks one exact declaration for intrinsic\|\d+:__fmod_early_magnitude/, join],
+      [
+        signature,
+        /runtime ABI intrinsic\|\d+:__fmod contradicts its canonical declaration at \$root\.contract\.params/,
+        join,
+      ],
+      [
+        provider,
+        /contradicts complete semantic\/provider data at \$root\.manifest\.providers\.0\.implementation/,
+        join,
+      ],
+      [missingProvider, /contradicts complete semantic\/provider data at \$root\.manifest\.providers \(field/, join],
+    ] as const) {
+      expect(() => assertPreparedIrProgram(mutant)).toThrow(stage2);
+      if (accepted) expect(() => acceptPreparedIrProgram(mutant, options("wasmgc"))).toThrow(accepted);
+      else
+        expect(acceptPreparedIrProgram(mutant, options("wasmgc"))).toMatchObject({
+          kind: "unsupported",
+          detail: expect.stringMatching(
+            /body remainder references intrinsic callable __fmod that the plan cannot reserve/,
+          ),
+        });
+    }
     expect(emit).not.toHaveBeenCalled();
     emit.mockRestore();
     execute(source, "wasmgc");

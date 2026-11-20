@@ -298,13 +298,13 @@ describe("genuine bounded Object.create(null) source admission", () => {
     expect(result.kind).toBe("unsupported");
   });
 
-  it("preserves the ordinary plain-literal path and lowerer omission", () => {
+  // (#7354 O1) A plain literal on the Prepared path is an ordinary object (`js.object.create-default`), not a closed
+  // `object.new` struct, which this backend cannot lower.
+  it("lowers a plain literal as an ordinary object and keeps the lowerer omission", () => {
     const { source } = sourcePacket({ "./entry.ts": "export function run(){const x={value:7};return 7;}" });
     const rows = instructions(source.ir.functions);
-    expect(rows.filter((row) => row.kind === "object.new")).toHaveLength(1);
-    expect(rows.filter((row) => row.kind === "call" && row.target.name.startsWith("js.object.create-"))).toHaveLength(
-      0,
-    );
+    expect(rows.filter((row) => row.kind === "object.new")).toHaveLength(0);
+    expect(rows.filter((row) => row.kind === "call" && row.target.name === "js.object.create-default")).toHaveLength(1);
     const p = plan();
     expect(() =>
       lowerFunctionAstToIr(p.root, {

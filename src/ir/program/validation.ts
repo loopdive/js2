@@ -28,7 +28,14 @@ import {
 import { assertPreparedIrProgramPopulation } from "./population.js";
 import { preparedIrDataMismatch } from "./data.js";
 import { PreparedIrProgramInvariantError } from "./errors.js";
-import type { PreparedIrAbiEntry, PreparedIrProgram } from "./prepared-contracts.js";
+import type {
+  PreparedIrAbiEntry,
+  PreparedIrProgram,
+  PreparedIrProgramRuntimeProjection,
+} from "./prepared-contracts.js";
+import { INTRINSIC_DEFINITIONS } from "../core/intrinsics.js";
+import { forEachPreparedIrInstruction } from "../runtime/prepared-instructions.js";
+import { containsDynamic } from "./dynamic-value-legalization.js";
 import {
   prepareIrProgramRuntimeCallables,
   preparedIrRuntimeAbiAnchor,
@@ -189,6 +196,39 @@ function validateRuntimeCallables(program: PreparedIrProgram): void {
     const mismatch = preparedIrDataMismatch(expected, matches[0]);
     if (mismatch !== undefined) invalid(`runtime ABI ${key} contradicts its canonical declaration at ${mismatch}`);
   }
+}
+
+/**
+ * (#7380) A projection binds dynamic values only as their `externref` carrier: legalization rewrites every `dyn.*`
+ * operation into an intrinsic and every `dynamic` type into the carrier, so neither may reach a projection body. The
+ * planner's host-async carrier for `dynamic` is not reachable from any source program today (the presentation
+ * refuses an `any` before preparation, and the async bodies it admits carry none); a program that reaches it must
+ * bring a seed here and exempt that lane.
+ */
+function assertNoDynamicValues(projection: PreparedIrProgramRuntimeProjection): void {
+  for (const fn of projection.prepared.functions) {
+    if (containsDynamic(fn)) invalid(`body ${fn.unitId} retains a dynamic type after legalization`);
+    forEachPreparedIrInstruction(fn, (instruction) => {
+      if (instruction.kind.startsWith("dyn."))
+        invalid(`body ${fn.unitId} retains ${instruction.kind} after legalization`);
+    });
+  }
+}
+
+/** (#7380) Every intrinsic a body uses carries its provider, and the manifest selects exactly one for its feature. */
+function assertIntrinsicProviders(projection: PreparedIrProgramRuntimeProjection): void {
+  const selected = new Map<string, number>();
+  for (const { feature } of projection.prepared.manifest.providers)
+    selected.set(feature, (selected.get(feature) ?? 0) + 1);
+  for (const fn of projection.prepared.functions)
+    forEachPreparedIrInstruction(fn, (instruction) => {
+      if (instruction.kind !== "intrinsic") return;
+      if (instruction.provider === undefined) invalid(`body ${fn.unitId}: intrinsic ${instruction.id} has no provider`);
+      const feature = INTRINSIC_DEFINITIONS[instruction.id].feature;
+      const count = selected.get(feature) ?? 0;
+      if (count !== 1)
+        invalid(`body ${fn.unitId}: intrinsic ${instruction.id} has ${count} selected providers for ${feature}, not 1`);
+    });
 }
 
 /** Complete source-free validation precedes lookup reconstruction, backend acceptance and replay. */
@@ -366,8 +406,9 @@ export function assertPreparedIrProgram(program: PreparedIrProgram, options?: Ir
     );
     if (plan.executable && (original.length !== 1 || plan.unitId !== original[0]!.id || !functions.has(plan.unitId)))
       invalid(`startup source ${source.id} lacks its one exact typed body`);
-    if (!plan.executable && (plan.unitId !== null || original.length !== 0))
-      invalid(`empty startup source ${source.id} claims an executable body`);
+    // A source of declarations only (`var x;`) owns one module-init unit that the startup never invokes.
+    if (!plan.executable && (original.length > 1 || plan.unitId !== (original[0]?.id ?? null)))
+      invalid(`non-executable startup source ${source.id} names other than its one module-init unit`);
     if (plan.gaps.length) invalid(`startup source ${source.id} retains unresolved binding/export gaps`);
     for (const binding of plan.bindings)
       for (const id of [binding.globalBindingId, binding.tdzBindingId])
@@ -390,6 +431,8 @@ export function assertPreparedIrProgram(program: PreparedIrProgram, options?: Ir
       derivedUnits: program.derivedUnits,
       ir: { functions: runtime.functions },
     });
+    assertNoDynamicValues(projection);
+    assertIntrinsicProviders(projection);
     assertPreparedIrRuntimeProjection(program, projection);
   }
 }

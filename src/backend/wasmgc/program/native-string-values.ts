@@ -35,6 +35,7 @@ import {
   preparedIrDataMismatch,
   preparedIrFrozenCollectionMembers,
 } from "../../../ir/program/data.js";
+import { preparedIrSettledVerdicts, type PreparedIrSettlement } from "../../../shared/contracts/settled-verdict.js";
 import { PreparedIrProgramInvariantError } from "../../../ir/program/errors.js";
 import type { Instr } from "../../../wasm/model/instructions.js";
 import type {
@@ -298,9 +299,10 @@ export function planNativeStringValuePhysical(
   const invocationRequirements = nativeStringInvocationRequirements(demands, options.utf8Storage, expectedInvocation);
   const boolean = selectNativeBooleans(demands, invocationRequirements);
   if (boolean.gap) return located(demands, boolean.gap.occurrence, boolean.gap.detail);
-  const outputRequirements = deriveNativeStringOutputRequirements(demands, {
-    emptyIdentity: options.stringConcatEmptyIdentity ?? true,
-  });
+  const outputRequirements = deriveNativeStringOutputRequirements(
+    demands,
+    Object.freeze({ emptyIdentity: options.stringConcatEmptyIdentity ?? true }),
+  );
   if ("kind" in outputRequirements) return outputRequirements;
   const invocation =
     !!invocationRequirements ||
@@ -327,6 +329,8 @@ export function planNativeStringValuePhysical(
       (row) =>
         executable(row.occurrence) &&
         (row.instruction.id === "js.number.unbox" ||
+          // (#7354 Ty) the number `typeof` test is the value resources' own predicate.
+          row.instruction.id === "js.value.is_number" ||
           (row.instruction.id === "js.number.box" &&
             row.instruction.provider?.kind === "callable" &&
             row.instruction.provider.target.binding.kind === "runtime" &&
@@ -407,7 +411,7 @@ export function planNativeStringValuePhysical(
     ...(boolean.selection && booleanType
       ? [declareNativeBooleanResources(key + ":booleans", booleanType.key, boolean.selection)]
       : []),
-    ...(dynamicValues ? [declareNativeDynamicValueResources(key + ":dynamic", dynamicValues)] : []),
+    ...(dynamicValues ? [declareNativeDynamicValueResources(key + ":dynamic", dynamicValues, key)] : []),
     ...(output ? [output] : []),
   ];
   return {
@@ -429,53 +433,6 @@ export function planNativeStringValuePhysical(
   };
 }
 
-/**
- * Whether no own part of `value` can ever change: frozen arrays and plain records of data properties, and genuine
- * frozen collections of prepared data. Freezing cannot be undone, so the answer is permanent. What a record or array
- * lacks still resolves through `Object.prototype`/`Array.prototype`; `sharedPrototypeState` covers that. Internal
- * slots are not inspected: a check reads a collection's entries only through its prototype, and the only collections
- * admitted are branded frozen ones with their own frozen prototype.
- */
-export function isImmutablePreparedIrValue(value: unknown): boolean {
-  const visited = new Set<object>();
-  const immutable = (item: unknown): boolean => {
-    if (typeof item === "function") return false;
-    if (item === null || typeof item !== "object" || visited.has(item)) return true;
-    visited.add(item);
-    const members = preparedIrFrozenCollectionMembers(item);
-    if (members) return members.every(immutable);
-    const prototype = Object.getPrototypeOf(item);
-    if (
-      !Object.isFrozen(item) ||
-      (prototype !== (Array.isArray(item) ? Array.prototype : Object.prototype) && prototype !== null)
-    )
-      return false;
-    return Reflect.ownKeys(item).every((key) => {
-      const descriptor = Object.getOwnPropertyDescriptor(item, key)!;
-      return "value" in descriptor && immutable(descriptor.value);
-    });
-  };
-  return immutable(value);
-}
-
-/**
- * The own properties (key, value, getter, setter) of `Object.prototype` and `Array.prototype`, the two shared
- * prototypes an immutable record or array reads a field it lacks through. A settled verdict holds only while this is
- * unchanged; a change sends the owner back to full authentication. Nothing else is tracked: the Map/Set/iterator
- * built-ins and `Function.prototype.call` that the frozen collections and the checks read through are TRUSTED. The
- * same gap exists without settling: patching `Map.prototype[Symbol.iterator]` after a check is accepted by the
- * per-use re-check too, because that re-check reads through the same patched built-ins.
- */
-function sharedPrototypeState(): readonly unknown[] {
-  const state: unknown[] = [];
-  for (const prototype of [Object.prototype, Array.prototype])
-    for (const key of Reflect.ownKeys(prototype)) {
-      const descriptor = Object.getOwnPropertyDescriptor(prototype, key)!;
-      state.push(key, descriptor.value, descriptor.get, descriptor.set);
-    }
-  return state;
-}
-
 interface Owner {
   readonly tx: PhysicalModuleReservations;
   readonly sourceInput: NativeStringValueReservationInput;
@@ -483,14 +440,19 @@ interface Owner {
   readonly snapshot: unknown;
   readonly rows: readonly NativeStringValueResourceRow[];
   filled: boolean;
-  /**
-   * Set when the retained input passed its checks while it could no longer change: the shared prototype state they
-   * ran under. The verdict holds for every later use that observes the same state.
-   */
-  settled: readonly unknown[] | undefined;
+  /** The retained input's checks, settled once it can no longer change (`checkUnlessSettled`). */
+  readonly authentication: PreparedIrSettlement;
 }
 const owners = new WeakMap<NativeStringValueReservations, Owner>();
+// Bound here rather than imported from the IR's binding: the backend reads the IR's frozen collections only through
+// program data, which it already imports.
+const { checkUnlessSettled, settledChecks } = preparedIrSettledVerdicts(preparedIrFrozenCollectionMembers);
+/** A re-plan of the whole program: settled per input object, so the foundation and the reservation share it. */
+const currentInputs = settledChecks<NativeStringValueReservationInput>();
 export function assertNativeStringValueReservationInput(input: NativeStringValueReservationInput): void {
+  currentInputs.check(input, () => checkReservationInput(input));
+}
+function checkReservationInput(input: NativeStringValueReservationInput): void {
   const realm = readNativeRealmLiteralInput(input, input.plan.literalRequirements.utf8Storage);
   const outcome = planNativeStringValuePhysical(
     input.demands,
@@ -526,23 +488,16 @@ export function assertNativeStringValueReservationInput(input: NativeStringValue
 function ownerFor(tx: PhysicalModuleReservations, pack: NativeStringValueReservations) {
   const owner = owners.get(pack);
   if (!owner || owner.tx !== tx) fail("foreign or copied string value pack");
-  // Decided before the checks below run, so their verdict is over the state that every later call observes.
-  const prototypes = sharedPrototypeState();
-  const settled =
-    owner.settled?.length === prototypes.length &&
-    owner.settled.every((entry, index) => Object.is(entry, prototypes[index]));
-  const settles = !settled && isImmutablePreparedIrValue(owner.input);
-  if (!settled) same(owner.input.demands, owner.snapshot, "changed retained string demands");
+  checkUnlessSettled(owner.authentication, owner.input, () => {
+    same(owner.input.demands, owner.snapshot, "changed retained string demands");
+    assertNativeStringValueReservationInput(owner.input);
+  });
   const currentRealm = readNativeRealmLiteralInput(owner.sourceInput, owner.input.plan.literalRequirements.utf8Storage);
   if (
     currentRealm?.realmRequirements !== owner.input.realmRequirements ||
     currentRealm?.realmLiterals !== owner.input.realmLiterals
   )
     fail("changed retained realm literal identities");
-  if (!settled) {
-    assertNativeStringValueReservationInput(owner.input);
-    owner.settled = settles ? prototypes : undefined;
-  }
   nativeStringLiteralReservationInventory(tx, pack.strings);
   if (pack.output) nativeStringOutputReservationInventory(tx, pack.output, owner.input.plan.output!);
   if (pack.number)
@@ -692,7 +647,7 @@ export function reserveNativeStringValueResources(
     snapshot: freezePreparedIrValue(input.demands),
     rows: Object.freeze(orderedRows),
     filled: false,
-    settled: undefined,
+    authentication: { settled: undefined },
   });
   return pack;
 }
@@ -784,16 +739,19 @@ export function emitPreparedNativeStringLiteral(
   storage?: IrGlobalRef,
   materializer?: IrFuncRef,
 ): readonly Instr[] {
-  const owner = completedOwner(tx, pack);
-  const requested = tuple(ownerUnitId, value, alloc, storage, materializer);
-  const index = owner.input.plan.literalUses.findIndex((row) =>
-    sameDemandTuple(owner.input.demands, row.demandIndex, requested),
-  );
-  if (index < 0) fail("literal tuple is outside the closed projection plan");
-  const binding = nativeStringLiteralReservationInventory(tx, pack.strings).requests[index]!.binding;
-  return binding.kind === "global"
-    ? [{ op: "global.get", index: tx.physicalIndex(binding.global) }]
-    : [{ op: "call", funcIdx: binding.function.handle }];
+  // The literal's inventory and index queries share the completion check's one trailing layout audit.
+  return tx.audited((): readonly Instr[] => {
+    const owner = checkCompletedOwner(tx, pack);
+    const requested = tuple(ownerUnitId, value, alloc, storage, materializer);
+    const index = owner.input.plan.literalUses.findIndex((row) =>
+      sameDemandTuple(owner.input.demands, row.demandIndex, requested),
+    );
+    if (index < 0) fail("literal tuple is outside the closed projection plan");
+    const binding = nativeStringLiteralReservationInventory(tx, pack.strings).requests[index]!.binding;
+    return binding.kind === "global"
+      ? [{ op: "global.get", index: tx.physicalIndex(binding.global) }]
+      : [{ op: "call", funcIdx: binding.function.handle }];
+  });
 }
 
 /**

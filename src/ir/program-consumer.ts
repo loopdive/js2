@@ -43,8 +43,10 @@ import {
   reserveNativeRealmKernel,
   nativeRealmReservationInventory,
   fillNativeRealmResources,
-  requireCompletedNativeRealmBootstrap,
+  requireCompletedNativeRealmSlots,
+  type EmittedNativeRealmSlots,
 } from "../backend/wasmgc/program/native-realm.js";
+import type { NativeSourceObjectFunction } from "../backend/wasmgc/resources/native-source-objects.js";
 import {
   reserveNativeInvocationResources,
   nativeInvocationFunctions,
@@ -145,8 +147,12 @@ import type { IrFuncRef, IrFunction, IrGlobalRef } from "./nodes.js";
 import type { IrPreparationFailure } from "./outcomes.js";
 import { ProgramAbiMap, type ProgramAbiFinalIndex } from "./program-abi.js";
 import { observePreparedIrProgram } from "./program-observation.js";
-import { planPhysicalSetup, type PhysicalSetupPlan, type PhysicalSignatureType } from "./program-physical-plan.js";
-import { assertPreparedIrProgram } from "./program-validation.js";
+import {
+  planPhysicalSetup,
+  plannedNativeCallBindings,
+  type PhysicalSetupPlan,
+  type PhysicalSignatureType,
+} from "./program-physical-plan.js";
 import {
   preparedIrProgramOwner,
   PreparedIrProgramInvariantError,
@@ -190,6 +196,7 @@ export interface EmittedSupportFunctionReceipt {
 }
 interface EmissionObservation {
   readonly physical: PhysicalSetupPlan;
+  readonly realm?: EmittedNativeRealmSlots;
   readonly reservations: PhysicalModuleReservations;
   readonly functions: readonly FunctionReservation[];
   readonly support: readonly EmittedSupportFunctionReceipt[];
@@ -291,7 +298,6 @@ export function acceptPreparedIrProgram(
   program: PreparedIrProgram,
   options: PreparedIrBackendOptions,
 ): PreparedIrBackendAcceptance {
-  assertPreparedIrProgram(program);
   if (
     options.stringConcatEmptyIdentity !== undefined &&
     (typeof options.stringConcatEmptyIdentity !== "boolean" ||
@@ -429,7 +435,7 @@ export function emittedSupportFunctionReceipts(
 ): readonly EmittedSupportFunctionReceipt[] {
   const record = startupAdapters.get(emitted);
   if (!record) programInvariant("invalid-transaction-capability", "emission was not produced by this consumer");
-  for (const token of record.functions) record.reservations.assertCompletedReservation(token);
+  record.reservations.audited(() => record.functions.forEach((t) => record.reservations.assertCompletedReservation(t)));
   if (record.functions.length !== emitted.module.functions.length)
     emissionFailed("completed emission function census changed");
   return record.support;
@@ -441,6 +447,13 @@ export function emittedPhysicalSetupPlan(emitted: EmittedPreparedIrProgram): Phy
   if (!record) programInvariant("invalid-transaction-capability", "emission was not produced by this consumer");
   emittedSupportFunctionReceipts(emitted);
   return record.physical;
+}
+
+/** (#7354 O1) The completed realm slots of an authenticated emission, or `undefined` when it has no realm. */
+export function emittedNativeRealmSlots(emitted: EmittedPreparedIrProgram): EmittedNativeRealmSlots | undefined {
+  const record = startupAdapters.get(emitted);
+  if (!record) programInvariant("invalid-transaction-capability", "emission was not produced by this consumer");
+  return record.realm;
 }
 
 /** Final binding index observed at emission; does not authenticate later module mutations. */
@@ -553,7 +566,6 @@ function prepareNativeEmission(accepted: AcceptedPreparedIrProgram, plan: Physic
   if (Boolean(record.nativeNumberFormat) !== Boolean(plan.nativeNumberFormat))
     emissionFailed("formatter acceptance/physical plan mismatch");
   if (record.nativeNumberFormat) {
-    assertPreparedIrProgram(program);
     const formatter = record.nativeNumberFormat;
     assertNativeNumberFormatRequirementsCurrent(formatter.requirements, formatter.requirements);
     const fresh = prepareNativeNumberFormat(program, accepted.options, runtime);
@@ -569,7 +581,6 @@ function prepareNativeEmission(accepted: AcceptedPreparedIrProgram, plan: Physic
       emissionFailed("formatter physical plan is no longer current");
   }
   if (record.nativeStrings) {
-    assertPreparedIrProgram(program);
     if (record.nativeStrings.demands.program !== program || record.nativeStrings.demands.projection !== runtime)
       emissionFailed("native demands belong to another program/projection");
     if (preparedIrDataMismatch(record.nativeStrings.demands, record.nativeSnapshot) !== undefined)
@@ -632,7 +643,7 @@ function prepareNativeEmission(accepted: AcceptedPreparedIrProgram, plan: Physic
     for (const row of [
       ...(native?.bindings ?? []).map((binding) => binding.entry),
       ...(plan.nativeNumberFormat?.bindings ?? []).map((binding) => binding.entry),
-      ...(plan.nativeInvocation?.bindings ?? []).map((binding) => binding.entry),
+      ...plannedNativeCallBindings(plan).map((binding) => binding.entry),
       ...(plan.hostNumberBoundary?.entries ?? []),
       ...(plan.asyncFrames?.entries ?? []),
     ]) {
@@ -767,6 +778,7 @@ function recordEmissionObservation(
   startAdapter: FunctionReservation | undefined,
   sourceFunctions: readonly FunctionReservation[],
   supportFunctions: readonly FunctionReservation[],
+  realm: EmittedNativeRealmSlots | undefined,
 ): void {
   const bindings: (readonly [IrBindingId, ProgramAbiFinalIndex])[] = [];
   for (const entry of abi.entries()) {
@@ -792,6 +804,7 @@ function recordEmissionObservation(
       reservations,
       functions: Object.freeze(functions),
       support: Object.freeze(support),
+      ...(realm ? { realm } : {}),
     }),
   );
 }
@@ -1039,11 +1052,7 @@ function bindPhysicalAbi(
   }
   if (native) {
     const bound = new Set<IrBindingId>();
-    for (const binding of [
-      ...native.bindings,
-      ...(formatter?.bindings ?? []),
-      ...(plan.nativeInvocation?.bindings ?? []),
-    ]) {
+    for (const binding of [...native.bindings, ...(formatter?.bindings ?? []), ...plannedNativeCallBindings(plan)]) {
       if (bound.has(binding.entry.id)) continue;
       const resource = resourcesByBinding.get(binding.entry.id);
       if (!resource || binding.entry.slotPolicy !== "required") emissionFailed("native ABI resource vanished");
@@ -1193,23 +1202,32 @@ function fillPhysicalScalarResources(plan: PhysicalSetupPlan, context: NativeRec
   }
 }
 
-/** Bind selected invocation entry points to their exact, uniquely owned resources. */
-function reconcileInvocationBindings(
+/**
+ * Bind each native call row to the one reserved function its key names: invocation rows to the invocation pack's
+ * functions, (#7354 O1) source-object rows to the functions the realm serves its contracts with.
+ */
+function reconcileNativeCallBindings(
   plan: PhysicalSetupPlan,
-  functions: readonly FunctionReservation[],
+  invocation: readonly FunctionReservation[],
+  sourceObjects: readonly NativeSourceObjectFunction[],
   { functionsByKey, resourcesByBinding }: NativeReconciliationContext,
 ): void {
-  for (const binding of plan.nativeInvocation?.bindings ?? []) {
-    const token = functions.find((row) => row.key === binding.resourceKey);
-    if (
-      !token ||
-      functionsByKey.has(irCallableBindingKey(binding.reference.binding)) ||
-      resourcesByBinding.has(binding.entry.id)
-    )
-      emissionFailed("invocation semantic binding lacks its unique actual resource");
-    functionsByKey.set(irCallableBindingKey(binding.reference.binding), token);
-    resourcesByBinding.set(binding.entry.id, token);
-  }
+  const families = [
+    [plan.nativeInvocation?.bindings ?? [], new Map(invocation.map((token) => [token.key, token]))],
+    [plan.nativeSourceObjects?.bindings ?? [], new Map(sourceObjects.map((row) => [row.key, row.token]))],
+  ] as const;
+  for (const [bindings, functions] of families)
+    for (const binding of bindings) {
+      const token = functions.get(binding.resourceKey);
+      if (
+        !token ||
+        functionsByKey.has(irCallableBindingKey(binding.reference.binding)) ||
+        resourcesByBinding.has(binding.entry.id)
+      )
+        emissionFailed("native call binding lacks its unique actual resource");
+      functionsByKey.set(irCallableBindingKey(binding.reference.binding), token);
+      resourcesByBinding.set(binding.entry.id, token);
+    }
 }
 
 function materializePhysicalProgram(
@@ -1350,12 +1368,13 @@ function materializePhysicalProgram(
     emissionFailed("native invocation prerequisites were not reserved");
   const invocationFunctions = invocationPack ? nativeInvocationFunctions(reservations, invocationPack) : [];
   if (realm) reserveNativeRealmKernel(reservations, realm, sourceClosures?.types);
-  const realmFunctions = realm ? nativeRealmReservationInventory(reservations, realm).functions : [];
+  const realmInventory = realm ? nativeRealmReservationInventory(reservations, realm) : undefined;
+  const realmFunctions = realmInventory?.functions ?? [];
   for (const token of [...invocationFunctions, ...realmFunctions]) {
     if (nativeFunctions.has(token.object)) emissionFailed("invocation function has competing native owners");
     nativeFunctions.add(token.object);
   }
-  reconcileInvocationBindings(plan, invocationFunctions, reconciliation);
+  reconcileNativeCallBindings(plan, invocationFunctions, realmInventory?.sourceObjects ?? [], reconciliation);
   const asyncReservations = new Map<IrUnitId, PreparedAsyncFrameReservations>();
   const supportFunctions = indexSupportFunctions([...nativeRows, ...formatterRows]);
   for (const token of [...invocationFunctions, ...realmFunctions]) supportFunctions.set(token.object, token);
@@ -1468,7 +1487,7 @@ function materializePhysicalProgram(
   if (nativePack?.output) publishNativeStringValueOutput(reservations, nativePack);
   reservations.seal();
   if (sourceClosures) requireCompletedNativeSourceClosures(reservations, sourceClosures);
-  if (realm) requireCompletedNativeRealmBootstrap(reservations, realm);
+  const realmSlots = realm ? requireCompletedNativeRealmSlots(reservations, realm) : undefined;
   if (invocationPack) requireCompletedNativeInvocation(reservations, invocationPack);
   if (nativePack) requireCompletedNativeStringValues(reservations, nativePack);
   else if (strings) requireCompletedNativeStringLiterals(reservations, strings);
@@ -1507,6 +1526,7 @@ function materializePhysicalProgram(
     startAdapter,
     [...slots.values()],
     [...supportFunctions.values()],
+    realmSlots,
   );
   return result;
 }
