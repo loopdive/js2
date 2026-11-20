@@ -3418,3 +3418,108 @@ Results on the integrated head:
   gates coercions and throws; `boxedKind` / `knownKinds` answer a `box` to the dynamic value (tag or operand) and a
   learned concatenation, to prune ToString / `typeof` / `+` chains. They read different stages of the same function
   (`box` before legalization, its intrinsics after), so one function needs a design pass, not a merge edit.
+
+
+## M1 result (2026-11-20, branch `claude/7354-m1`)
+
+Member read and write on the Prepared dynamic value for every carrier kind (number, boolean, string, undefined, null,
+ordinary object), ToPrimitive of the object kind, `dyn.object_tag`, one exception tag. Base: PR 7349 (e0f173cfd0),
+then `origin/main` 052569d335 (7349 + the #7380 validator and self-check switch) merged in.
+
+### Ported (merge commits name the source; authored on the other lane's branches, unreviewed there)
+
+| from | commits | content |
+|---|---|---|
+| `origin/claude/7354-o` @ e587829733 | O2 8ff5416556, O4 53357b3b9f, O3 14345199fe, O2b 9c052e9f40 / 8e8d651c30 | object kind, member read, member write (OrdinarySet), runtime-guarded OrdinaryToPrimitive, realm rows `set` / `has` / `create-type-error` |
+| `origin/claude/7354-shared-exn` @ 048fdd1df7 | S13 667ecb196d | the realm kernel throws under the program's `__exn`; `catches` = "the program reads a catch binding" (`readsCatchPayload`) |
+
+### Corrections
+
+- **C1** `unplain` / `PROTOTYPE_GLOBALS` / `prototypeReach` deleted; `ProgramObjects` = `{present, namesSymbol}`. The
+  premise (no Prepared program obtains a built-in prototype as a value) is `tests/issue-7354-m-prototype-premise.test.ts`
+  (12 routes, exact texts); the slice that makes one compile must bring a gate back.
+- **C2** one kind answer: `carrierKindOf(value, types, definitions, boxTag?)` in `dynamic-value-kinds.ts` (Boolean,
+  null, dynamic, string, number, create-default object, through a coercion). `boxedKind` and `carrierKind` are gone;
+  the box arm, `knownKinds`, the coercion rule and `refuseUnadmittedThrows` all call it.
+- **C3** Object.prototype's keys are the catalog's: the catalog key reads (`realmStringKeys`, `OBJECT_PROTOTYPE_KEYS`,
+  the accessor keys) moved from `src/ir/realm-keys.ts` (classified mixed-needs-split, which a clean ir-program module
+  may not import) into the clean `builtin-prototype-keys.ts`; `realm-keys.ts` re-exports the two names its importers
+  use. Wrapper-prototype lists stay as spec lists.
+- **C4** 7349's `chainBuilders` / `knownKinds` / `additionBuilder` kept; O's or-chain `disjunction` replaces the
+  addition's hand-written fold (same left fold, so object-free bytes are unchanged); ToString / ToNumber are
+  `conversionBuilders`. The builders moved to `dynamic-value-chains.ts`: `dynamic-value-legalization.ts` is 355 lines
+  (7349: 627).
+- **C5** computed keys keep refusing (`dyn.member_get with a computed key`, `… member_set …`), pinned for `o[k]`,
+  `o[k] = 1`, `v[0]`.
+- **C6** every catalog accessor key of `%Object.prototype%` (`__proto__`) refuses in the primitive write arm, strict
+  and sloppy: `member write '__proto__' of a <kind> needs Object.prototype's accessor`.
+- **B-tag** `OBJECT_TAG: Record<CarrierKind, string>`; `dyn.object_tag` is a `kindChain` of `"[object X]"` texts over
+  the kinds the value may hold; the object row refuses in a program that names `Symbol`.
+
+### The TypeError rule (lead decision; replaces O2b's `js.object.uncatchable-type-error` trap, now deleted everywhere)
+
+The legalization raises a TypeError itself for a nullish member read / write, a strict write to a primitive, and an
+object whose `toString` is not callable (`typeError` in `dynamic-realm-calls.ts`, the one helper). In a program that
+**reads a catch binding** (S13's `readsCatchPayload`: any use of the binding but as a rethrow operand, or a
+destructuring pattern), that TypeError refuses at compile time:
+`TypeError "<V8 message>" in a program that reads a caught value`. In every other program it is thrown under the one
+exception tag: a catch that only binds or rethrows it catches it, and with no catch it ends the program as node's
+uncaught TypeError does. Both sides are tested (`issue-7354-m-refusals`, `issue-7354-m-catch-and-tags`).
+
+### Semantics as implemented (constant keys; §6 of the plan)
+
+| receiver | read `v.k` | write `v.k = x` |
+|---|---|---|
+| undefined, null | TypeError (rule above) | TypeError (rule above) |
+| object | realm [[Get]] (own value or `undefined`) | realm OrdinarySet |
+| object, catalog key | refuse `member read 'k' needs Object.prototype's properties` | refuse `member write 'k' needs …` |
+| number / boolean / string, wrapper or catalog key (string: also `length`, array index) | refuse `member read 'k' of a <kind> needs its wrapper prototype` | — |
+| number / boolean / string, other key | `undefined` | sloppy: ignored; strict: TypeError; `__proto__`: refuse (C6) |
+| any, computed key | refuse `dyn.member_get with a computed key` | refuse `dyn.member_set with a computed key` |
+
+ToString / `+` / ToNumber of an object: `HasProperty(o, "toString")` ? TypeError : `"[object Object]"` (NaN for
+ToNumber); `Symbol` named → refuse. `Object.prototype.toString.call(v)`: `[object Number|Boolean|String|Undefined|Null|Object]`.
+
+### Proof
+
+- Tests: `issue-7354-m-member-access` (5 batched programs, groups A, B), `-m-catch-and-tags` (6: C, D34, D35, E37 + C1,
+  F40, F42-43), `-m-refusals` (40), `-m-prototype-premise` (12), `-m-sweep` (12: ten operations × 14 receiver kinds,
+  a top-level script var, T/Ty/Str2-c/D1 with `{}`), helper `tests/helpers/prepared-node-agreement.ts`. Each §8
+  program asserts node's `out` (returns) and a wrong one (throws). All pass, plus every O-lane test (o, o2, o2b, o3,
+  o4, shared-exception-tag) and d1, h, h2, h3, x, t, ty, str, str-emitter, p.
+- Pins moved (own commits): O4/O3/O2b/X trap pins → refusal pins (TypeError rule); O2 `"" + e` on a caught object →
+  refusal pin; H "an object literal returned from an unannotated function" refused → runs (node-checked); O4 "a
+  program that names a prototype global" refused (unplain) → runs; 3518 contracts pin drops the uncatchable row.
+- Mutations (each deleted alone, tsx probe; all killed): carrierKindOf's object rule; each `MEMBER_ACCESS_ARM` row
+  (6); the catalog-key refusal; the wrapper-key refusal; the computed-key refusal; C6; the `sloppy` bit (both
+  directions); `namesSymbol` in B-tag and in ToPrimitive; each `OBJECT_TAG` row (6); the TypeError rule; the
+  `complement` kind test. Survivors: none.
+- Bytes (vs `origin/main` 052569d335): ordinary pipeline, 60 test262 files (Object.prototype.toString.call, catch
+  bindings, member writes on any, `+`) × default + standalone: 120/120 identical. Prepared path: 250 programs without a
+  member op or object literal extracted from the d1/t/ty/str*/x/p/h*/vg tests, 115 accepted, all identical.
+- Gates (bare, exit 0): typecheck, loc and func budget (also with `LOC_GATE_BASE=origin/main`), coercion-sites,
+  oracle-ratchet, dead-exports, import-cycles, compiler-boundaries inventory (the O merge had listed
+  `settled-verdict.ts` twice). Ported growth granted by this file's frontmatter: from-ast +16 (O1-O3), program-source
+  +14 (O3 strictness input), program-physical-plan +5 (S13), compiler.ts +2.
+
+### Sample (411 ES5 rows, Prepared path, real prelude, after the main merge)
+
+Before (`m1120/all-7349.jsonl`, the lead's run on e0f173cfd0): 293 `dyn.member_get`, 73 `not-direct`, 26 `assert` not
+in scope in verifyProperty, 14 pass (negatives), 5 other. After: **293 `TypeError "Cannot convert object to primitive
+value" in a program that reads a caught value`** (formatSimpleValue's `String(value)` on a value that may be an object
+— PR 7355's `$262 = {…}` literal makes every row build objects — in a program whose catch reads `err`), 73
+`not-direct`, 26 verifyProperty, 14 pass, the 5 others unchanged (2 of them now name the TypeError rule after their
+parse note). Compile time per row: median 32 ms, max 861 ms (every row refuses before emission). On a 40-row subset
+before the main merge the 24 member_get rows stopped at `… (reading 'name') in a program that reads a caught value`
+instead. Step-past probe (prelude with the catch reading nothing): `identifier "assert" is not in scope in assert`, as
+the plan predicted. Realm program compile: ~19 s on 7349, ~1.4 s after the main merge (~20 s with the validator on,
+as under vitest).
+
+### Not done / known
+
+- **M2 must follow at once**: every row stops at the TypeError rule. M2 (error as a carrier kind, `js.object.is-error`,
+  name/message reads, its ToString / typeof / object_tag) lifts the refusal; no tally change expected until Fa part 2.
+- Pre-existing on 7349 (not M1): `function f(v){ v.a += 1; }` throws out of `compile()` ("internal capability
+  violation — binary operator '+=' is capability-deferred …"); `v.a++`, `switch (v.k)`, a return inside try refuse in
+  from-ast.
+- No adversarial review run yet; plan §5 corrections done as listed.
