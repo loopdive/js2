@@ -147,6 +147,26 @@ each lane):
   - #7347 at 32afe752 has `quality` red: the new
     src/codegen/helpers/required-helper.ts is not classified in
     compiler-boundaries.json.
+- **S4:**
+  - #7309 Fa is at a9600261783. It adds RV7309's exhaustive `intoCarrier` fix
+    (d5fccf637d3), whose delta RV7309 has not confirmed yet.
+  - `quality` on e22cb7c872 was red in tests/issue-4513.test.ts, probably from
+    #7312's O1 commit ca71f37c62; not verified.
+  - #7326 and #7345: merge Fa first. Declaration-as-value is unvalidated WIP
+    on `claude/7354-fa-decl` c8640244ef8.
+- **S12:**
+  - #7337 rework is unvalidated WIP on
+    `claude/7369-regexp-vm-bodies-rework-wip` 40f1256c.
+  - #7368 extension is unvalidated WIP on `claude/7368-object-statics-dyn-wip`
+    e91fd017.
+  - Next steps are in each issue file.
+  - Carry-overs: the comment in tests/issue-7364-prepared-empty-program.test.ts
+    should name the population consistency check (src/ir/program/population.ts:104);
+    `function f(){} var f;` gives a TS "Duplicate identifier" error instead of
+    a named refusal (belongs in #7364's issue file).
+- **S6:** the full-prelude table and Suspended Work are in #7365's issue file
+  on `claude/7354-perf3-reservations`. #7436's fix experiment result was not
+  reported before the window closed.
 - **#7340** was approved on af0efa4e02 and released at wind-down.
 
 ## Decisions still open for the project lead
