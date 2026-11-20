@@ -7,12 +7,7 @@
 // threading an EarlyErrorContext and importing the shared predicate helpers.
 import { ts, forEachChild } from "../../ts-api.js";
 import type { EarlyErrorContext } from "./context.js";
-import {
-  RESTRICTED_GLOBAL_NAMES,
-  findInnermostNodeAtPosition,
-  isInYieldParamContext,
-  isStrictMode,
-} from "./predicates.js";
+import { findInnermostNodeAtPosition, isInYieldParamContext, isStrictMode } from "./predicates.js";
 
 /**
  * `export default const/var/let` — always a SyntaxError.
@@ -237,24 +232,6 @@ export function checkScriptGoalModuleItems(ctx: EarlyErrorContext): void {
     forEachChild(node, walk);
   };
   walk(sourceFile);
-}
-
-/**
- * A Script's top-level `let`/`const`/`class` of a restricted global (`let undefined`, `const NaN`) fails before any
- * code runs (`language/global-code/decl-lex-restricted-global.js`). Gated on `ctx.scriptGoal` like
- * {@link checkScriptGoalModuleItems}: in a Module the name is a module binding and legal.
- */
-export function checkRestrictedGlobalLexicals(ctx: EarlyErrorContext): void {
-  if (!ctx.scriptGoal) return;
-  for (const stmt of ctx.sourceFile.statements) {
-    const names: ts.Node[] = [];
-    if (ts.isVariableStatement(stmt) && stmt.declarationList.flags & ts.NodeFlags.BlockScoped)
-      names.push(...stmt.declarationList.declarations.map((decl) => decl.name));
-    else if (ts.isClassDeclaration(stmt) && stmt.name) names.push(stmt.name);
-    for (const name of names)
-      if (ts.isIdentifier(name) && RESTRICTED_GLOBAL_NAMES.has(name.text))
-        ctx.addError(name, `'${name.text}' is a restricted global property and cannot be declared lexically`);
-  }
 }
 
 /**

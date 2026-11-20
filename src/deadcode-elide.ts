@@ -51,7 +51,8 @@
  */
 import { forEachChild, ts } from "./ts-api.js";
 import { PositionMap } from "./position-map.js";
-import { RESTRICTED_GLOBAL_NAMES, subtreeHasEarlyError } from "./compiler/early-errors/index.js"; // (#4464)
+import { subtreeHasEarlyError } from "./compiler/early-errors/index.js"; // (#4464)
+import { GLOBAL_CONSTANTS } from "./shared/ambient-intrinsics.js";
 import { isInertFunctionMention } from "./shared/function-mention.js";
 import type { CompileTargetProfile } from "./target-profile.js";
 
@@ -202,8 +203,9 @@ export function elideDeadTopLevelBindings(
         // the checker's syntactic pass, not parseDiagnostics, so the
         // parse-error bail above does NOT cover them.
         EARLY_ERROR_BINDING_NAMES.has(decl.name.text) ||
-        // Declaring a non-configurable global fails even when nothing reads it (`let undefined`).
-        RESTRICTED_GLOBAL_NAMES.has(decl.name.text) ||
+        // Declaring a non-configurable global value fails when the Script starts, even when nothing reads it:
+        // `let undefined` is a SyntaxError of GlobalDeclarationInstantiation, a strict `var NaN = 1` a TypeError.
+        GLOBAL_CONSTANTS.has(decl.name.text) ||
         (decl.initializer !== undefined && !isPureInitializer(decl.initializer))
       ) {
         ok = false;

@@ -19,15 +19,12 @@ import {
   checkHtmlCloseComment,
   checkModuleItemPosition,
   checkScriptGoalModuleItems,
-  checkRestrictedGlobalLexicals,
   checkClassStaticBlockReservedNames,
   checkExportedBindingsDeclared,
   checkForInLetReference,
   checkGeneratorExpressionName,
   checkReservedIdentifiers,
 } from "./module-rules.js";
-
-export { RESTRICTED_GLOBAL_NAMES } from "./predicates.js";
 
 /**
  * Detect ECMA-262 early errors (SyntaxErrors that TypeScript's parser misses)
@@ -55,7 +52,6 @@ export function detectEarlyErrors(
   checkDuplicateImportedBindings(ctx);
   checkModuleItemPosition(ctx);
   checkScriptGoalModuleItems(ctx);
-  checkRestrictedGlobalLexicals(ctx);
   checkClassStaticBlockReservedNames(ctx);
   checkExportedBindingsDeclared(ctx);
   checkForInLetReference(ctx);

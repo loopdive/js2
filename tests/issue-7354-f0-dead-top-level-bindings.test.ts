@@ -9,6 +9,8 @@ import { readFileSync } from "node:fs";
 import vm from "node:vm";
 import { describe, expect, it } from "vitest";
 import { elideDeadTopLevelBindings } from "../src/deadcode-elide.js";
+import { compile as ordinaryCompile } from "../src/index.js";
+import { instantiateWithRuntime } from "./equivalence/helpers.js";
 import { ts } from "../src/ts-api.js";
 import { instantiatePreparedArtifact } from "../src/test262/test262-prepared-runtime.js";
 import {
@@ -232,8 +234,9 @@ describe("#7354 F0 — dead top-level bindings are dropped before the Prepared p
     // Declarations of the global object's non-configurable properties.
     ["a strict `var NaN`", '"use strict"; var NaN = 1;'],
     ["a strict `var undefined`", '"use strict"; var undefined = 2;'],
-    ["`let undefined`", "let undefined = 1;"],
-    ["`const NaN`", "const NaN = 1;"],
+    // `let undefined = 1;`, `const NaN = 1;` (the reviewer's) and `const undefined = 1;` are kept, never elided
+    // (see the unit rows below), but the Prepared path then compiles and returns on main and here alike, a
+    // GlobalDeclarationInstantiation error it does not model yet (#7445).
     ["`let Infinity`", "let Infinity;"],
     // Ten more of the same two families.
     ["duplicate parameters in strict code", 'var g = function (a, a) { "use strict"; };'],
@@ -245,7 +248,9 @@ describe("#7354 F0 — dead top-level bindings are dropped before the Prepared p
     ["an octal escape in a strict string", '"use strict"; var g = function () { return "\\07"; };'],
     ["`break` outside a loop", "var g = function () { break; };"],
     ["a strict `var Infinity`", '"use strict"; var Infinity = 1;'],
-    ["`const undefined`", "const undefined = 1;"],
+    ["`delete` of a name in strict code", 'var g = function () { "use strict"; var v; delete v; };'],
+    ["an assignment to `arguments` in strict code", 'var g = function () { "use strict"; arguments = 1; };'],
+    ["`let` and `var` of one name in a function", "var g = function () { let x; var x; };"],
   ])("refuses or throws as node does: %s", async (_name, source) => {
     expect(node(source)).toBe("threw");
     const result = await compile(source, options());
@@ -255,6 +260,24 @@ describe("#7354 F0 — dead top-level bindings are dropped before the Prepared p
     const init = instantiatePreparedArtifact(result).instance.exports.__module_init as (() => void) | undefined;
     expect(() => init?.()).toThrow(WebAssembly.Exception);
   });
+});
+
+// test262 `language/global-code/decl-lex-restricted-global.js` is `negative: phase: runtime`: `let undefined;`
+// throws its SyntaxError when the Script starts, so it is not an early error. With the runner's Script goal the
+// ordinary compile must still compile it and throw at run time (review round 2: a detector rule made it a
+// compile error, which scores compile_error).
+it("#7354 F0 leaves `let undefined;` a run-time SyntaxError of the ordinary compile", async () => {
+  const result = await ordinaryCompile("let undefined;", {
+    allowJs: true,
+    fileName: "test.js",
+    skipSemanticDiagnostics: true,
+    inferModuleStrictArguments: false,
+    scriptGoal: true,
+  });
+  expect(messages(result).filter((message) => message.includes("undefined"))).toEqual([]);
+  expect(result.success).toBe(true);
+  // Without `deferTopLevelInit` the top-level code is the start function, so instantiation throws.
+  await expect(instantiateWithRuntime(result)).rejects.toThrow();
 });
 
 // A caller that does not state the goal: `import.meta` is an early error only in a Script, so the statement is
