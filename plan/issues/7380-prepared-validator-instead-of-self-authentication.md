@@ -645,3 +645,109 @@ Not verified:
 - the rest of `tests/` outside the 101 files;
 - that the `quality` job's full vitest run stays within its time budget. The switch is on there exactly as before,
   so nothing should change.
+
+## PR 2a result
+
+In progress on `claude/7380-pins-a` (base `claude/7380-validator`).
+
+### Before: every `tests/issue-3518-*.test.ts` on the base
+
+Measured 2026-11-20 on `c0ab3915bb` (`1002538b5f` for the first 68 files; the two commits between touch only
+`package.json` and `tests/issue-7380-audit-flag.test.ts`). One file per vitest run, `VITEST_MAX_FORKS=1`,
+`VITEST_FORK_MAX_OLD_SPACE_SIZE=3072`, `JS2WASM_VALIDATE_PREPARED=1` as `vitest.config.ts` sets it. "failed suites"
+counts the file's suite plus each failed `describe`; a row with 0 tests and a failed suite failed at load time.
+
+<!-- before-table:begin -->
+
+| file (`tests/<name>.test.ts`) | tests | failed | failed suites |
+| --- | ---: | ---: | ---: |
+| `issue-3518-allocation-runtime-seam` | 18 | 0 | 0 |
+| `issue-3518-any-to-string-source-composition` | 15 | 6 | 2 |
+| `issue-3518-argument-vector-source-composition` | 61 | 59 | 2 |
+| `issue-3518-array-main-refresh-port` | 0 | 0 | 1 |
+| `issue-3518-async-frame-body-ownership` | 25 | 0 | 0 |
+| `issue-3518-async-frame-body-source-preservation` | 47 | 19 | 3 |
+| `issue-3518-bench-array-prepared-cutover` | 5 | 1 | 2 |
+| `issue-3518-bench-string-prepared-cutover` | 3 | 2 | 2 |
+| `issue-3518-bench-string-runtime-driver` | 6 | 0 | 0 |
+| `issue-3518-bigint-carrier-port` | 35 | 26 | 3 |
+| `issue-3518-bigint-finalized-layout` | 10 | 0 | 0 |
+| `issue-3518-bigint-to-number-body` | 201 | 0 | 0 |
+| `issue-3518-boolean-return-boundary` | 30 | 0 | 0 |
+| `issue-3518-builtin-metadata-main-port` | 28 | 26 | 2 |
+| `issue-3518-builtin-request-literal-authentication` | 24 | 0 | 0 |
+| `issue-3518-c1-current-source` | 355 | 270 | 10 |
+| `issue-3518-canonical-3c6-inventory-successor` | 235 | 175 | 2 |
+| `issue-3518-canonical-489d-inventory-successor` | 65 | 62 | 3 |
+| `issue-3518-canonical-instruction-walk` | 32 | 0 | 0 |
+| `issue-3518-capability-schema-boundary` | 49 | 1 | 2 |
+| `issue-3518-capability-schema-seam` | 27 | 0 | 0 |
+| `issue-3518-certified-delay-source-admission` | 41 | 0 | 0 |
+| `issue-3518-certified-delay-source-identity` | 45 | 0 | 0 |
+| `issue-3518-checked-delay-combinator-reservations` | 6 | 0 | 0 |
+| `issue-3518-class-to-primitive-presence` | 24 | 2 | 1 |
+| `issue-3518-closure-coordinate-audits` | 7 | 0 | 0 |
+| `issue-3518-closure-parameter-projections` | 7 | 0 | 0 |
+| `issue-3518-closure-source-composition` | 0 | 0 | 1 |
+| `issue-3518-closure-state-preservation-port` | 71 | 0 | 0 |
+| `issue-3518-compiler-boundaries` | 125 | 0 | 0 |
+| `issue-3518-conversion-source-composition` | 16 | 16 | 2 |
+| `issue-3518-core-kind-neutrality` | 53 | 2 | 2 |
+| `issue-3518-core-node-execution-child-admission` | 11 | 0 | 0 |
+| `issue-3518-core-node-execution-gate` | 28 | 0 | 0 |
+| `issue-3518-core-node-execution` | 43 | 0 | 0 |
+| `issue-3518-core-nodes-boundary` | 29 | 29 | 2 |
+| `issue-3518-core-nodes-dialect` | 24 | 0 | 0 |
+| `issue-3518-core-nodes-seam` | 33 | 6 | 2 |
+| `issue-3518-core-type-boundary` | 15 | 15 | 2 |
+| `issue-3518-core-type-reachability` | 29 | 0 | 0 |
+| `issue-3518-core-type-seam` | 25 | 5 | 2 |
+| `issue-3518-core-vocabulary-evolution` | 132 | 117 | 2 |
+| `issue-3518-core-vocabulary-seam` | 21 | 0 | 0 |
+| `issue-3518-counted-string-cutover` | 6 | 0 | 0 |
+| `issue-3518-current-main-inventory-successor` | 142 | 86 | 3 |
+| `issue-3518-delay-combinator-layout-ownership` | 31 | 12 | 3 |
+| `issue-3518-delivery-main-refresh-port` | 0 | 0 | 1 |
+| `issue-3518-descriptor-adapter-relocation` | 0 | 0 | 1 |
+| `issue-3518-descriptor-undefined-correction` | 10 | 9 | 2 |
+| `issue-3518-descriptor-wide-bigint` | 11 | 0 | 0 |
+| `issue-3518-explicit-rec-emission` | 29 | 0 | 0 |
+| `issue-3518-extensible-self-root` | 81 | 0 | 0 |
+| `issue-3518-final-parent-reservations` | 42 | 0 | 0 |
+| `issue-3518-function-prototype-invoker-bodies` | 245 | 0 | 0 |
+| `issue-3518-historical-runtime-reconstruction` | 631 | 631 | 4 |
+| `issue-3518-host-async-imports` | 27 | 0 | 0 |
+| `issue-3518-host-coercion-get-abrupt` | 14 | 10 | 3 |
+| `issue-3518-host-utf8-literal-keys` | 33 | 16 | 2 |
+| `issue-3518-identity-foundation-boundary` | 5 | 0 | 0 |
+| `issue-3518-inline-call-allocation` | 2 | 0 | 0 |
+| `issue-3518-ir-adoption-contract` | 5 | 0 | 0 |
+| `issue-3518-ir-math-switch-retirement` | 7 | 1 | 2 |
+| `issue-3518-js-value-tag-contract` | 9 | 0 | 0 |
+| `issue-3518-later-main-preservation-port` | 0 | 0 | 1 |
+| `issue-3518-linear-counted-string-reservation` | 6 | 0 | 0 |
+| `issue-3518-logical-vector-lowering` | 25 | 0 | 0 |
+| `issue-3518-lowering-analysis-owner` | 28 | 0 | 0 |
+| `issue-3518-lowering-analysis-preservation` | 57 | 55 | 4 |
+| `issue-3518-lowering-contract-owner` | 27 | 0 | 0 |
+| `issue-3518-lowering-cycle` | 25 | 1 | 2 |
+| `issue-3518-lowering-relocation-coverage` | 28 | 0 | 0 |
+| `issue-3518-module-reservations` | 149 | 0 | 0 |
+| `issue-3518-moved-runtime-reachability` | 39 | 0 | 0 |
+| `issue-3518-multi-prepared-string-leaf-planner` | 71 | 0 | 0 |
+| `issue-3518-native-accessor-call-bodies` | 40 | 1 | 2 |
+| `issue-3518-native-add-default-hint` | 43 | 0 | 0 |
+| `issue-3518-native-any-to-string-donor` | 0 | 0 | 1 |
+| `issue-3518-native-any-to-string` | 15 | 0 | 0 |
+| `issue-3518-native-argument-vector-resources` | 0 | 0 | 1 |
+| `issue-3518-native-async-resource-declarations` | 29 | 0 | 0 |
+| `issue-3518-native-authentication-performance` | 50 | 0 | 0 |
+| `issue-3518-native-number-format-requirements` | 29 | 2 | 2 |
+| `issue-3518-native-realm-requirements` | 26 | 1 | 2 |
+| `issue-3518-program-ownership-runtime-seam` | 22 | 11 | 2 |
+| `issue-3518-runtime-program-relocation` | 298 | 298 | 4 |
+| `issue-3518-semantic-provider-boundary` | 354 | 349 | 2 |
+| `issue-3518-semantic-verification-ownership` | 35 | 0 | 0 |
+| `issue-3518-wasmgc-helper-policy-evolution` | 135 | 134 | 2 |
+
+<!-- before-table:end -->
