@@ -418,3 +418,28 @@ Findings:
   The 51 listed regression files fail the same 48 tests as A2 (`7883f81a`). Ordinary-pipeline bytes identical on the
   100-file sample × default and standalone; Prepared output identical to base on the sample's 92 files with no
   qualifying site.
+
+## Suspended Work (2026-11-20, end of budget window)
+
+- **Slice 1:** PR #7310, merged into main on 2026-11-20 (head `9554f3c6`, review RV7310 APPROVE).
+- **Eval-A (A0 + A1 + A2 + A3):** branch `claude/prepared-eval-a5`, head = the commit that adds this section (A3 is
+  `6c4d022c`). Its parent chain is `7883f81a` (A2), then `4e7d2921` (merges of slice 1 final and of the
+  `src/frontend/eval/` move `0cf01923`), then A0/A1 `6e182f9e`, `0b6bbd79`, `43f3b37d`. No PR yet; it was held
+  until #7310 merged, which has now happened.
+  - **Next step:** merge `origin/main` into the branch (it contains #7310 and #7319, which fixes the `''` /
+    `var x;` crashes); rerun the gates, the byte check, the fail sets and the 118-file census in both harnesses;
+    then open ONE PR (base main, `hold`) with A0 to A3. The adversarial review is still to be run.
+  - **Accepted by the lead:** A3 meets the acceptance bar. On the 118 A0 files no first gap moves earlier than on
+    base `4e7d2921`, in either harness.
+- **Next slices:**
+  - **A4 (the statement-position call):** needs the run-time %eval% identity test. Lane S5's B2b is on
+    `claude/7350-b2b` @ `dbc0b2343e`. Read the global through contract `js.object.global` (`dyn.global_object`
+    legalizes to it); `eval` is an identity row compared with `js.value.strict_eq`.
+  - **A5 (completion value):** follows A4.
+  - **A6 (eval texts that declare names):** uses S10's globals registry (`claude/7372-globals-registry` @
+    `4792b8f2`, `src/ir/program-source-globals.ts`), with a new `initialization` kind `on-first-run`.
+- **Parked, not for review:**
+  - `claude/prepared-eval-s2` / `claude/prepared-eval-s2b`: an old stack that holds the move commit `0cf01923`,
+    already merged into the eval-A branch.
+  - The slice-B design (splicing closed literal texts, a run-time SyntaxError throw) is replaced by slices A and 2.
+- **Open review threads:** none.
