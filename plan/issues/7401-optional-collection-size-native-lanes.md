@@ -116,3 +116,19 @@ lanes:
 
 The non-optional `s!.add(5)` works. This is the optional-call arm in
 `calls-optional.ts`, and was reported to the lead for S7's lane.
+
+## Suspended Work
+
+Suspended 2026-11-20 at the end of the budget window.
+
+- **Branch and head:** `claude/7401-optional-size-invalid-wasm` @ `24a7e513`.
+  PR #7338 has label `hold`, and CI on that head finished with no failing
+  check.
+- **Review:** RV7338 approved `c265dec8` with two should-fix items. Both are
+  done in `24a7e513` and the delta was sent to RV7338. No re-check verdict was
+  posted before suspension.
+- **Next step:** wait for RV7338's re-check on `24a7e513`. The lead releases
+  the hold; never enqueue from a lane.
+- **Open follow-ups, filed:**
+  - #7435: `?.byteLength` and the wasi `Uint8Array?.length` gap.
+  - Optional method calls are covered by #7336.
