@@ -39,6 +39,7 @@ import { buildIrUnitTypeMap, lowerTypeToIrType } from "./propagate.js";
 import { buildIrModuleInitPlan } from "./module-init-plan.js";
 import type { IrModuleInitPlan } from "./program/startup.js";
 import { makeModuleInitSynthetic } from "./module-init.js";
+import { isModuleInitGlobalDeclaration, moduleInitBindings } from "./module-init-vars.js";
 import { makeIrIdentityModuleBindingResolver, type IrModuleBindingIdentity } from "./module-bindings.js";
 import type { IrDirectCallLoweringPlan, ModuleBindingGlobal } from "./ast-lowering-plans.js";
 import type { PreparedIrFunction as IrFunction, PreparedIrModule as IrModule } from "./runtime/contracts/prepared.js";
@@ -1572,7 +1573,7 @@ export function prepareIrProgramSources(
   const allocations = new AllocSiteRegistry();
   const functions: IrFunction[] = [];
   const derivedUnits: ProgramAbiDerivedUnitRecord[] = [];
-  const globals: IrProgramSourcePreparation["globals"][number][] = [];
+  const globalById = new Map<string, IrProgramSourcePreparation["globals"][number]>();
   const globalByDeclaration = new Map<ts.Declaration, IrProgramSourcePreparation["globals"][number]>();
   const signatures = new Map<IrUnitId, { params: readonly IrType[]; returnType: IrType | null }>();
   const bodyResults = new Map<IrUnitId, IrType | null>();
@@ -1657,32 +1658,32 @@ export function prepareIrProgramSources(
       diagnostic,
     );
     for (const source of sourceFiles) {
-      for (const statement of source.statements) {
-        if (!ts.isVariableStatement(statement)) continue;
-        for (const declaration of statement.declarationList.declarations) {
-          diagnostic.active = requireIrPlanningOwnerUnitId(identity, declaration);
-          if (!ts.isIdentifier(declaration.name))
-            unsupported("whole-program binding pattern requires the existing destructuring producer");
-          const inspected = moduleResolver.inspectDirectBinding(declaration.name);
-          if (inspected.kind !== "supported")
-            unsupported(`module binding ${declaration.name.text} has no exact typed storage: ${inspected.kind}`);
-          const global = inspected.identity;
-          diagnostic.active = global.storageOwnerUnitId;
-          const lexical = (statement.declarationList.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const)) !== 0;
-          const binding: ModuleBindingGlobal = {
-            ownerUnitId: global.ownerUnitId,
-            globalRef: irSourceGlobalRef(global.globalBindingId, declaration.name.text),
-            tdzGlobalRef: lexical ? irSourceGlobalRef(global.tdzBindingId, `${declaration.name.text}$tdz`) : null,
-            globalName: declaration.name.text,
-            tdzGlobalName: lexical ? `${declaration.name.text}$tdz` : null,
-            type: storageType(global),
-          };
-          const entry = { binding, identity: global };
-          globals.push(entry);
-          globalByDeclaration.set(declaration, entry);
-        }
+      for (const bound of source.statements.flatMap(moduleInitBindings)) {
+        const declaration = "unmapped" in bound ? bound.unmapped : bound.declaration;
+        diagnostic.active = requireIrPlanningOwnerUnitId(identity, declaration);
+        if (!ts.isVariableDeclaration(declaration) || !ts.isIdentifier(declaration.name))
+          unsupported("whole-program binding pattern requires the existing destructuring producer");
+        if (!isModuleInitGlobalDeclaration(declaration)) continue; // (#7372) a nested `var` is a global in a script
+        const inspected = moduleResolver.inspectDirectBinding(declaration.name);
+        if (inspected.kind !== "supported")
+          unsupported(`module binding ${declaration.name.text} has no exact typed storage: ${inspected.kind}`);
+        const global = inspected.identity;
+        diagnostic.active = global.storageOwnerUnitId;
+        const lexical = (declaration.parent.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const)) !== 0;
+        const binding: ModuleBindingGlobal = {
+          ownerUnitId: global.ownerUnitId,
+          globalRef: irSourceGlobalRef(global.globalBindingId, declaration.name.text),
+          tdzGlobalRef: lexical ? irSourceGlobalRef(global.tdzBindingId, `${declaration.name.text}$tdz`) : null,
+          globalName: declaration.name.text,
+          tdzGlobalName: lexical ? `${declaration.name.text}$tdz` : null,
+          type: storageType(global),
+        };
+        const entry = globalById.get(global.globalBindingId) ?? { binding, identity: global };
+        globalById.set(global.globalBindingId, entry);
+        globalByDeclaration.set(declaration, entry);
       }
     }
+    const globals = [...globalById.values()];
     const closureInvocations = prepareSourceClosureInvocations(input.checker, sourceFiles);
     const closureCallableParameters = new Set(
       [...closureInvocations.values()].flatMap((plan) => plan.callbacks.map((row) => row.parameter.type)),
@@ -1774,6 +1775,7 @@ export function prepareIrProgramSources(
             : resolver,
         ...(nativeStringValues ? { stringNumericCoercion: "number-boundary" as const } : {}),
         numericThrow: "number-boundary",
+        unselected: true,
         ...(nativeDelay ? { promiseDelays: promiseDelaysBySource.get(source) } : {}),
         ...(family ? { logicalVectorTypes: family.logicalVectorTypes } : {}),
         ...(moduleInit

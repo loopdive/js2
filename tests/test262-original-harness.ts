@@ -176,22 +176,86 @@ function dedupeTopLevelFunctionDeclarations(prefix: string): string {
  * byte-identical to deduping includes alone since the directive line contains no
  * function declaration).
  */
-export function harnessSourceParts(meta: HarnessMeta, async: boolean): HarnessSourcePart[] {
+export function harnessSourceParts(meta: HarnessMeta, async: boolean, body?: string): HarnessSourcePart[] {
   const parts: HarnessSourcePart[] = [];
   if (async) parts.push({ name: "doneprintHandle.js", source: harnessSource("doneprintHandle.js") });
   for (const include of meta.includes ?? []) {
     parts.push({ name: include, source: harnessSource(include) });
   }
-  parts.push({ name: "__js2wasm_test262_runtime__.js", source: cachedSource(RUNTIME_PATH) });
+  const runtime: HarnessSourcePart = { name: RUNTIME_PART_NAME, source: cachedSource(RUNTIME_PATH) };
+  parts.push(runtime);
   parts.push({ name: "assert.js", source: harnessSource("assert.js") });
   parts.push({ name: "sta.js", source: harnessSource("sta.js") });
+  if (body !== undefined) {
+    const rest = parts.filter((part) => part !== runtime).map((part) => part.source);
+    runtime.source = elideUnreferencedShimBindings(runtime.source, [...rest, body].join("\n"));
+  }
   return parts;
 }
 
+const RUNTIME_PART_NAME = "__js2wasm_test262_runtime__.js";
+
+interface ShimBinding {
+  name: string;
+  start: number;
+  end: number;
+}
+
+const shimBindingsCache = new Map<string, readonly ShimBinding[]>();
+/** Each top-level single-declarator `var NAME = …;` statement of the shim. */
+function shimBindings(shim: string): readonly ShimBinding[] {
+  let bindings = shimBindingsCache.get(shim);
+  if (!bindings) {
+    const sf = parseScript(shim);
+    bindings = sf.statements.flatMap((stmt) => {
+      if (!ts.isVariableStatement(stmt)) return [];
+      const [decl, ...more] = stmt.declarationList.declarations;
+      if (!decl || more.length > 0 || !ts.isIdentifier(decl.name)) return [];
+      return [{ name: decl.name.text, start: stmt.getStart(sf), end: stmt.end }];
+    });
+    shimBindingsCache.set(shim, bindings);
+  }
+  return bindings;
+}
+
+function namesToken(text: string, name: string): boolean {
+  return new RegExp(`(?<![\\w$])${escapeRegExp(name)}(?![\\w$])`).test(text);
+}
+
+/**
+ * (#7376) Keep only the shim bindings the unit names. The test is textual — a
+ * name inside a string, an `eval` text or a member name counts — so the kept
+ * set is a superset of the real references, closed over bindings that name
+ * each other. An elided statement leaves its newlines behind, so every later
+ * line number and `bodyLineOffset` are unchanged.
+ */
+function elideUnreferencedShimBindings(shim: string, rest: string): string {
+  const bindings = shimBindings(shim);
+  const kept = new Set<ShimBinding>();
+  for (let grew = true; grew; ) {
+    grew = false;
+    const emitted = [rest, ...[...kept].map((b) => shim.slice(b.start, b.end))].join("\n");
+    for (const binding of bindings) {
+      if (kept.has(binding) || !namesToken(emitted, binding.name)) continue;
+      kept.add(binding);
+      grew = true;
+    }
+  }
+  let out = shim;
+  for (const binding of [...bindings].reverse()) {
+    if (kept.has(binding)) continue;
+    const newlines = shim.slice(binding.start, binding.end).replace(/[^\n]/g, "");
+    out = out.slice(0, binding.start) + newlines + out.slice(binding.end);
+  }
+  return out;
+}
+
+function joinParts(parts: readonly HarnessSourcePart[]): string {
+  return parts.map((part) => part.source).join("");
+}
+
 function assemblePrefixIncludes(meta: HarnessMeta, async: boolean): string {
-  return harnessSourceParts(meta, async)
-    .map((part) => part.source)
-    .join("");
+  return joinParts(harnessSourceParts(meta, async));
 }
 
 function assembleVariant(
@@ -208,14 +272,8 @@ function assembleVariant(
   // Keep this order byte-for-byte equivalent to test262.fyi/data/runner/read.js:
   // strict directive, async helper, metadata includes, runtime shim, assert.js,
   // sta.js, any feature-gated local binding, and finally the untouched upstream
-  // test body.
-  // (#3427) Our TS front-end rejects the upstream harness's duplicate top-level
-  // helper declarations (e.g. `isPrimitive` in both testTypedArray.js + assert.js)
-  // that a JS engine tolerates last-wins. Rename all-but-last in place (line-count
-  // preserving) so bodyLineOffset below stays exact.
-  let prefix = dedupeTopLevelFunctionDeclarations(
-    (strict ? '"use strict";\n' : "") + assemblePrefixIncludes(meta, async) + iteratorBinding,
-  );
+  // test body. (#7376) The shim keeps only the bindings the unit names.
+  const parts = harnessSourceParts(meta, async, source + iteratorBinding);
   // (#4626) A test that DECLARES its own top-level `$262` (harness
   // detachArrayBuffer-host-detachArrayBuffer.js: `var $262 = {
   // detachArrayBuffer() { throw ... } }`) collides with the runtime shim's
@@ -227,13 +285,16 @@ function assembleVariant(
   // the single remaining `$262` — the test's own, matching a real host where
   // the test shadows the host object.
   if (/\b(?:var|let|const)\s+\$262\b/.test(source)) {
-    const shim = cachedSource(RUNTIME_PATH);
-    const idx = prefix.indexOf(shim);
-    if (idx >= 0) {
-      const renamed = shim.replace(/\$262\b/g, () => "$26_");
-      prefix = prefix.slice(0, idx) + renamed + prefix.slice(idx + shim.length);
-    }
+    const runtime = parts.find((part) => part.name === RUNTIME_PART_NAME)!;
+    runtime.source = runtime.source.replace(/\$262\b/g, () => "$26_");
   }
+  // (#3427) Our TS front-end rejects the upstream harness's duplicate top-level
+  // helper declarations (e.g. `isPrimitive` in both testTypedArray.js + assert.js)
+  // that a JS engine tolerates last-wins. Rename all-but-last in place (line-count
+  // preserving) so bodyLineOffset below stays exact.
+  const prefix = dedupeTopLevelFunctionDeclarations(
+    (strict ? '"use strict";\n' : "") + joinParts(parts) + iteratorBinding,
+  );
   return {
     source: prefix + source,
     bodyLineOffset: lineCount(prefix),

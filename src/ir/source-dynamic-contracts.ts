@@ -31,7 +31,11 @@ import { ts } from "../ts-api.js";
 import type { IrType } from "./core/types.js";
 import { forEachInstrDeep, type IrFunction } from "./core/nodes.js";
 import { IrUnsupportedError } from "./outcomes.js";
-import { DynamicValueGap, legalizeDynamicValues } from "./program/dynamic-value-legalization.js";
+import {
+  DynamicValueGap,
+  legalizeDynamicValues,
+  refuseUnadmittedThrows,
+} from "./program/dynamic-value-legalization.js";
 import { retargetNumberToString } from "./program/number-to-string-target.js";
 import type { AllocSiteRegistry } from "./analysis/alloc-registry.js";
 import type { RuntimeManifestPolicy } from "../runtime/contracts/provider-policy.js";
@@ -361,7 +365,10 @@ function storedIntoCarrier(value: ts.Expression, carries: Carries): boolean {
  * (`issue-3518-native-string-number-source-admission`). A function without a
  * dynamic value is returned unchanged. The flow rule runs only where a dynamic
  * value was lowered: in a function without one, no value can leave the dynamic
- * domain.
+ * domain. (#7354 O1) In a program that binds a catch, every function's throws
+ * are checked either way: that catch, in whichever group, reads the payload as
+ * the dynamic value. Without one, no source code reads a payload, so a throw the
+ * compiler synthesizes (a TDZ `ReferenceError`) keeps its own.
  */
 function legalizeSourceDynamicValues(
   checker: ts.TypeChecker,
@@ -387,10 +394,12 @@ function legalizeSourceDynamicValues(
   // (#7354 Str2) Number::toString has one binding on this lane, typed or dynamic (number-to-string-target.ts).
   const retargeted = functions.map(retargetNumberToString);
   const legalizes = contracted ? () => true : convertsDynamicToString;
-  if (!retargeted.some(legalizes)) return retargeted;
+  const catches = sourceFiles.some(bindsCatch);
+  if (!catches && !retargeted.some(legalizes)) return retargeted;
   let legalized: readonly IrFunction[];
   try {
     legalized = retargeted.map((fn) => (legalizes(fn) ? legalizeDynamicValues(fn, allocations) : fn));
+    if (catches) retargeted.forEach(refuseUnadmittedThrows);
   } catch (error) {
     if (!(error instanceof DynamicValueGap)) throw error;
     throw new IrUnsupportedError("type-resolution-unsupported", "build", error.message);

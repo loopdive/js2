@@ -36,6 +36,7 @@ import type { TagId } from "../core/tag-domain.js";
 import type { IrType } from "../core/types.js";
 import type { IrUnitId } from "../../shared/contracts/ir-identity.js";
 import { irRuntimeCallableDeclaration } from "../runtime/callable-declarations.js";
+import { irOrdinaryObjectCallableDeclaration } from "../runtime/ordinary-object-callables.js";
 import { JS_TAG_IDS } from "../runtime/js-tag-domain.js";
 import { typeofComparisons } from "./typeof-comparisons.js";
 import { PREPARED_NUMBER_TO_STRING } from "./number-to-string-target.js";
@@ -151,6 +152,54 @@ function knownKinds(fn: IrFunction, types: ReturnType<typeof irValueTypes>) {
   };
 }
 type KnownKinds = ReturnType<typeof knownKinds>;
+
+/** Each value's defining instruction, nested buffers included. */
+function valueDefinitions(fn: IrFunction): Map<IrValueId, IrInstr> {
+  const definitions = new Map<IrValueId, IrInstr>();
+  for (const block of fn.blocks)
+    for (const root of block.instrs)
+      forEachInstrDeep(root, (i) => {
+        if (i.result !== null && i.result !== undefined) definitions.set(i.result, i);
+      });
+  return definitions;
+}
+
+/**
+ * (#7354 X, O1) The kind the carrier holds `value` as, from its type and defining instruction: the dynamic value
+ * itself, a native string (its own payload), a boundary box's number or Boolean, the null constant's null reference,
+ * or, through a coercion, its operand's kind. Any other value has none: an ordinary object until #7354 O2 gives the
+ * carrier its kind, a callable until slice Fa gives it its tag.
+ */
+export function carrierKind(
+  value: IrValueId,
+  types: ReadonlyMap<IrValueId, IrType>,
+  definitions: ReadonlyMap<IrValueId, IrInstr>,
+): "dynamic" | Exclude<CarrierKind, "undefined"> | undefined {
+  const type = types.get(value);
+  if (type?.kind === "dynamic" || type?.kind === "string") return type.kind;
+  const definition = definitions.get(value);
+  if (definition?.kind === "intrinsic" && definition.id === "js.number.box") return "number";
+  if (definition?.kind === "intrinsic" && definition.id === "js.boolean.box") return "boolean";
+  if (definition?.kind === "const" && definition.value.kind === "null") return "null";
+  return definition?.kind === "coerce.to_externref" ? carrierKind(definition.value, types, definitions) : undefined;
+}
+
+/** A value {@link carrierKind} has no kind for (through its coercions), as a refusal names it. */
+function unadmittedValue(
+  value: IrValueId,
+  types: ReadonlyMap<IrValueId, IrType>,
+  definitions: ReadonlyMap<IrValueId, IrInstr>,
+): string {
+  const definition = definitions.get(value);
+  if (definition?.kind === "coerce.to_externref") return unadmittedValue(definition.value, types, definitions);
+  if (
+    definition?.kind === "call" &&
+    irOrdinaryObjectCallableDeclaration(definition.target)?.feature === "js.object.create-default"
+  )
+    return "an ordinary object";
+  const type = types.get(value);
+  return `a value of type ${type?.kind === "val" ? type.val.kind : type?.kind}`;
+}
 
 /**
  * The instruction builders of one function's legalization: fresh values after the function's own, intrinsic calls,
@@ -356,14 +405,12 @@ function additionBuilder(builders: ChainBuilders) {
 export function legalizeDynamicValues(fn: IrFunction, allocations: AllocSiteRegistry): IrFunction {
   if (!containsDynamic(fn)) return fn;
   const types = irValueTypes(fn);
+  const definitions = valueDefinitions(fn);
   const kinds = knownKinds(fn, types);
   const builders = chainBuilders(fn, allocations, kinds);
   const { intrinsic, fresh, kindTest, text, kindChain, stringOf, valueCount } = builders;
   const addition = additionBuilder(builders);
   const isDynamic = (value: IrValueId): boolean => types.get(value)?.kind === "dynamic";
-  const thrown = new Set<IrValueId>();
-  for (const block of fn.blocks)
-    for (const instr of block.instrs) forEachInstrDeep(instr, (i) => i.kind === "throw" && thrown.add(i.value));
   const typeofs = typeofComparisons(fn);
   // `!==`/`!=`: the positive test into a fresh value, then its negation into the comparison's result.
   const withSense = (instr: IrInstr, negate: boolean, positive: (result: IrValueId) => IrInstr): IrInstr[] => {
@@ -466,13 +513,17 @@ export function legalizeDynamicValues(fn: IrFunction, allocations: AllocSiteRegi
           [instr.resultType, ...instr.args.map((arg) => types.get(arg))].some((type) => type?.kind === "dynamic")
           ? gap(instr.target.name)
           : [instr];
-      // (#7354 X) The carrier already is the externref exception payload, so a
-      // thrown dynamic value keeps the coercion, which lowers to nothing over
-      // the legalized operand. The catch binding reads the payload back as the
-      // dynamic value: every value an accepted program can throw (a dynamic
-      // value, a boxed number, `null`) is in the admitted set.
-      case "coerce.to_externref":
-        return isDynamic(instr.value) && !thrown.has(instr.result!) ? gap("coerce.to_externref") : [instr];
+      // (#7354 X, O1) The carrier already is the native externref value: the exception payload a thrown dynamic
+      // value carries and the value an ordinary object's property stores. A coercion to it keeps, and lowers to
+      // nothing over the legalized operand, only for an operand of a kind the carrier holds. (A callable pack is
+      // a coercion to the callable type, not to the carrier.)
+      case "coerce.to_externref": {
+        const target = instr.resultType;
+        const toCarrier = target?.kind === "dynamic" || (target?.kind === "val" && target.val.kind === "externref");
+        return !toCarrier || carrierKind(instr.value, types, definitions) !== undefined
+          ? [instr]
+          : gap(`coerce.to_externref of ${unadmittedValue(instr.value, types, definitions)}`);
+      }
       default:
         return instr.kind.startsWith("dyn.") ? gap(instr.kind) : [instr];
     }
@@ -499,6 +550,25 @@ export function legalizeDynamicValues(fn: IrFunction, allocations: AllocSiteRegi
   // signature) has no carrier on this projection.
   if (containsDynamic(legalized)) gap("on a value of composite type");
   return legalized;
+}
+
+/**
+ * (#7354 X, O1) A catch binding reads the thrown payload back as the dynamic value, so in a program that binds one,
+ * every throw, in whichever function, must be a value of a {@link carrierKind}. Any other value refuses by name.
+ */
+export function refuseUnadmittedThrows(fn: IrFunction): void {
+  const throws: IrValueId[] = [];
+  for (const block of fn.blocks)
+    for (const root of block.instrs)
+      forEachInstrDeep(root, (i) => {
+        if (i.kind === "throw") throws.push(i.value);
+      });
+  if (throws.length === 0) return;
+  const types = irValueTypes(fn);
+  const definitions = valueDefinitions(fn);
+  for (const value of throws)
+    if (carrierKind(value, types, definitions) === undefined)
+      gap(`throw of a value outside the dynamic carrier's kinds (${unadmittedValue(value, types, definitions)})`);
 }
 
 /** A source global as the producer hands it over: its storage, and the unit that initialises it. */

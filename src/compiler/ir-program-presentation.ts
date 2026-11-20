@@ -872,8 +872,8 @@ export function prepareIrProgramPresentation(request: IrProgramPresentationReque
   if (mixed) checkMixedDemand(program, emission, capture.backend, captures, gap);
   const detached = mixed || checkResourceDemand(program, emission, capture.backend, gap);
   const startup = joinStartup(program, emission, capture.input, gap);
-  if (!mod.functions.length || !program.inventory.terminalUnits.length)
-    gap("emission", "empty-population", "presentation requires genuine nonempty emitted and terminal populations");
+  if (!mod.functions.length !== !program.inventory.terminalUnits.length)
+    gap("emission", "empty-population", "presentation requires an empty module exactly for an empty script");
   if (mixed)
     for (const row of emittedPhysicalSetupPlan(emission).asyncFrames?.frames ?? [])
       for (const callback of row.callbacks) joinedExports.add(callback.externalName);
