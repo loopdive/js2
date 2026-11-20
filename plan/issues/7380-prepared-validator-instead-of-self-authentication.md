@@ -806,7 +806,8 @@ Forged-program tests that attacked the deleted calls now hand the forgery to the
 
 Failing sets, validator on, head against base (85 files, chunks, single fork): no new failure.
 
-- Red on both: 5 in `issue-3525-prepared-pipeline-presentation` (also red on current main); 3
+- Red on both: 5 in `issue-3525-prepared-pipeline-presentation` (also red on current main; since fixed as (S), see
+  the triage below); 3
   `issue-3518-native-mixed-object-access`; 4 `-native-vector-resources`; 1 `-native-realm-requirements`; 1
   `-ordinary-getter-source`; 11 `-program-ownership-runtime-seam`; 1 `-public-retirement-gate`; 2
   `-typed-program-preparation`.
@@ -856,14 +857,31 @@ Same binary in every cell (`6f62adfb4514`, `b162552dc288`, `e55c4750f907`, `8d57
 - Exit 0: `npm run -s typecheck`, `check-loc-budget`, `check-func-budget` (merge base), `check-coercion-sites`,
   `check:oracle-ratchet`, `check:dead-exports`, `check:import-cycles`, `check-orphaned-scripts`, the
   compiler-boundaries inventory with `--base d24132a05c`.
-- Red only from main's drift, on files this PR does not touch:
+- Red only against `origin/main`, on files this PR does not touch. The branch is stacked on PR 1 (`d24132a05c`),
+  which predates main's commits that changed those files; main is merged into step 1's branch first, not here:
   - `LOC_GATE_BASE=origin/main` loc and func budgets: `codegen/binary-ops.ts`, `ir/module-bindings.ts`,
     `codegen/expressions/operator-assignment.ts`, `ir/select.ts`, `codegen/parse-number-native.ts`;
   - the boundaries inventory with `--base origin/main`: "activation-demoted: native-runtime".
-- **`changed-root-tests` is red**, on `issue-3525-prepared-pipeline-presentation`. Its 5 failures are red on base and
-  on current main (wasmgc/host legacy matches and async work, after #6979). The other changed test files pass. This
-  needs a decision: the PR must edit that file (2 forgeries now meet stage 4), and the gate requires an edited file
-  to pass in full.
+- `changed-root-tests` (`JS2WASM_EVAL_ENGINE=interpreter`): exit 0, all 6 changed test files green. It was red on
+  `issue-3525-prepared-pipeline-presentation`, whose 5 failures were red on base and on main. The coordinator's
+  decision (2026-11-20) was to triage them, see below. Main's drift is not merged on this stacked branch; the step 1
+  branch gets it first.
+
+### Triage of the 5 tests red on base and main in `issue-3525-prepared-pipeline-presentation`
+
+All five are (S), stale by design after #6979. Each fix asserts the designed outcome exactly; nothing is skipped or
+deleted. The file is now 50 of 50.
+
+| test | compiles | expected (old) | actual (base, main) | cause | fix |
+| --- | --- | --- | --- | --- | --- |
+| matches genuine legacy counted loop and mutable branch values and presentation on wasmgc/host | `COUNTED_LOOP`, JS target `gc`, legacy generator and Prepared presentation | legacy `stringPool` `["accumulate", ""]`; imports helpers differ | `[]`; helpers identical | #6979: `nativeStrings` is always on for the JS target, so `addStringConstantGlobals` materializes constants inline and imports none | legacy pool equals the Prepared pool (`[]`); the helpers are identical (`toBe`), as on linear |
+| … scalar … on wasmgc/host | `SCALAR`, same | `["calculate", ""]` | `[]` | same | same |
+| … two-source 42 … on wasmgc/host | `TWO_SOURCE`, same | `["double", "", "./math", "main"]` | `[]` | same | same |
+| … nonconstant cross-source … on wasmgc/host | `CROSS_SOURCE`, same | `["double", "", "./math", "calculate"]` | `[]` | same | same |
+| executes genuine async work through the original helper without a legacy generator (now "refuses host-Promise async work by name after a genuine Prepared emission, without a legacy generator") | `export async function calculate(value: number): Promise<number>`, JS target `gc` | artifacts; the generated helper returns `[17, -7, 3.5]` from real host Promises | `output-failed`: "The host-semantic implementation was removed (#6979); this module would need retired host imports: env::Promise_new_pending, …_then2, …_resolve, …_settle_resolve, …_settle_reject … a native regime gap belongs to #5385." | #6979 removed host Promise semantics on purpose; the native gap is #5385 | one genuine prepare/accept/emit and no legacy generator, as before; then the exact refusal text |
+
+The async test is also the program that found the stage 3 "unresolved export: `__cb_0`" over-strictness (above). It
+now pins that the program reaches its designed refusal with the validator on.
 
 ### Left for steps 4 to 6
 
