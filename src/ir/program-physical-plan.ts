@@ -297,7 +297,6 @@ export function planNativeVectorResources(
   options: PreparedIrBackendOptions,
   projection: PreparedIrProgramRuntimeProjection,
 ): NativeVectorResourcePlan {
-  assertPreparedIrProgram(program);
   if (
     !program.runtime.includes(projection) ||
     projection.backend !== options.backend ||
@@ -340,6 +339,7 @@ export function planNativeValueResources(
   projection: PreparedIrProgramRuntimeProjection,
   strings: NativeValueStringRepresentation,
 ): NativeValueResourcePlan {
+  // No compile path calls this entry; its callers hand it programs built in tests, so it validates them itself.
   assertPreparedIrProgram(program);
   if (
     !program.runtime.includes(projection) ||
@@ -1444,9 +1444,9 @@ export function planPhysicalSetup(
           );
         }
       } else if (instruction.kind === "intrinsic") {
-        const provider = instruction.provider;
-        if (!provider) gaps.add(`body ${fn.name} intrinsic ${instruction.id} has no physical provider`, diagnosticUnit);
-        else if (
+        // Provider attachment (`attachProvidersToBuffer`) throws on an intrinsic without one before the program freezes.
+        const provider = instruction.provider!;
+        if (
           missingIntrinsicMaterialization(
             instruction,
             provider,

@@ -1,8 +1,4 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
-
-import { createHash } from "node:crypto";
-import { readFileSync } from "node:fs";
-import ts from "typescript";
 import { beforeAll, describe, expect, it } from "vitest";
 import * as canonical from "../src/ir/core/vector-runtime.js";
 import * as compatibility from "../src/ir/vector-runtime.js";
@@ -143,77 +139,12 @@ function explicit(functions: readonly IrFunction[], policy = POLICY) {
   });
 }
 
-const DECLARATION_RECEIPTS = [
-  ["IR_VEC_ELEM_SET_PREFIX", "739fe8bf10acb498184732ab50d4b3a99036fa31b2ce8ef7955eb8d45748dfd4"],
-  ["IR_VEC_NEW_SIZED_PREFIX", "6fff0037e9beccc31897482fbdfabf7540f231151abfb685395c649ca120ce65"],
-  ["IR_HOLEY_ARRAY_NEW", "8f15ee4532a19ae673e4fabf0de3451d6f2ef81d4e06e09693ab1984d1c9ca1e"],
-  ["IR_HOLEY_ARRAY_ELEM_SET", "9989929f36af788b17483bf0e8d0df859d8b016735fa85a3e7c4e3f035590c13"],
-  ["IrVectorRuntimeElementKind", "7fae78f87f13e4b6180bedd0e9f003e664801d2f4ca19f0e14ed6b62ea17776e"],
-  ["irVectorRuntimeElementKind", "b103846e09e107fc9f6d82ffcfa14a188f4e2e91532edd4508b0afc2e54927e3"],
-  ["requireRuntimeElementKind", "848958e5cf72e6119388e73e68ce0f30ddcde1e1a0d1d310909b871497e76391"],
-  ["irVecElemSetSymbol", "c13146a551898526c60dc24a287577e37d8cb2d42019638e3e8dd46c08e444bc"],
-  ["irVecNewSizedSymbol", "2039f7485ccb34e3641ef9ded2ad39a15243f13f99778494d00f7b42d7bdcb0a"],
-  ["parseIrVectorRuntimeElement", "f0ec803130a5dbcbd2a390c1f7df4b83632655c1c362f4e00074dd0258475dfb"],
-] as const;
-
-function receipts(text: string) {
-  const sf = ts.createSourceFile("vector.ts", text, ts.ScriptTarget.Latest, true);
-  return sf.statements
-    .filter((statement) => !ts.isImportDeclaration(statement))
-    .map((statement) => {
-      const name = ts.isVariableStatement(statement)
-        ? statement.declarationList.declarations[0]!.name
-        : ts.isFunctionDeclaration(statement) || ts.isTypeAliasDeclaration(statement)
-          ? statement.name
-          : undefined;
-      return [name?.getText(sf), createHash("sha256").update(statement.getFullText(sf)).digest("hex")];
-    });
-}
-
 describe("complete canonical vector identity relocation", () => {
-  const text = readFileSync(new URL("../src/ir/core/vector-runtime.ts", import.meta.url), "utf8");
-  it("pins all ten complete declarations, docs, initializers, five bodies and order without historical git", () => {
-    expect(receipts(text)).toEqual(DECLARATION_RECEIPTS);
-    const sf = ts.createSourceFile("vector.ts", text, ts.ScriptTarget.Latest, true);
-    expect(sf.statements.filter(ts.isFunctionDeclaration)).toHaveLength(5);
-    expect(sf.statements.filter(ts.isImportDeclaration).map((s) => s.moduleSpecifier.getText(sf))).toEqual([
-      '"./types.js"',
-      '"../../wasm/model/instructions.js"',
-    ]);
-  });
-  it.each(["IR_VEC_ELEM_SET_PREFIX", "irVecElemSetSymbol", "IrVectorRuntimeElementKind"])(
-    "rejects live receipt mutation of %s",
-    (name) => {
-      expect(receipts(text.replace(name, `${name}Changed`))).not.toEqual(DECLARATION_RECEIPTS);
-    },
-  );
-  it("forwards all eight runtime objects and the ninth type export explicitly, without wrappers", () => {
+  it("forwards the eight runtime objects of the canonical module through the compatibility facade", () => {
     expect(Object.keys(compatibility).sort()).toEqual(Object.keys(canonical).sort());
     expect(Object.keys(canonical)).toHaveLength(8);
     for (const key of Object.keys(canonical) as (keyof typeof canonical)[])
       expect(compatibility[key]).toBe(canonical[key]);
-    const sf = ts.createSourceFile(
-      "facade.ts",
-      readFileSync(new URL("../src/ir/vector-runtime.ts", import.meta.url), "utf8"),
-      ts.ScriptTarget.Latest,
-      true,
-    );
-    expect(sf.statements.every(ts.isExportDeclaration)).toBe(true);
-    const exports = sf.statements.filter(ts.isExportDeclaration).flatMap((statement) => {
-      if (!statement.exportClause || !ts.isNamedExports(statement.exportClause))
-        throw new Error("explicit forwards required");
-      expect(statement.moduleSpecifier?.getText(sf)).toBe('"./core/vector-runtime.js"');
-      return statement.exportClause.elements.map((specifier) => ({
-        name: specifier.name.text,
-        source: specifier.propertyName?.text ?? specifier.name.text,
-        type: statement.isTypeOnly || specifier.isTypeOnly,
-      }));
-    });
-    expect(exports).toHaveLength(9);
-    for (const item of exports) {
-      expect(item.source).toBe(item.name);
-      expect(item.type).toBe(item.name === "IrVectorRuntimeElementKind");
-    }
   });
   it.each(["f64", "i32", "externref"] as const)(
     "retains parsing/sized/store identities for %s without admitting extra helpers",

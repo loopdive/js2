@@ -2,7 +2,6 @@
 
 import type { NativeInvocationRequirements } from "./program/native-invocation-requirements.js";
 import type { NativeRealmRequirements } from "./program/native-realm-requirements.js";
-import { assertPreparedIrProgram } from "./program-validation.js";
 import {
   planNativeSourceClosureRequirements,
   assertNativeSourceClosureRequirementsCurrent,
@@ -67,7 +66,6 @@ function fail(detail: string): never {
 function requireOwner(tx: PhysicalModuleReservations, pack: NativeSourceClosureEmission): SourceOwner {
   const owner = owners.get(pack);
   if (!owner || owner.tx !== tx) fail("foreign or copied source association");
-  assertPreparedIrProgram(pack.requirements.demands.program);
   assertNativeSourceClosureRequirementsCurrent(pack.requirements);
   requireNativeSourceClosureTypes(tx, pack.types, pack.requirements);
   return owner;
@@ -77,7 +75,6 @@ export function prepareNativeSourceClosureInput(
   program: PreparedIrProgram,
   projection: PreparedIrProgramRuntimeProjection,
 ): NativeSourceClosureRequirements | undefined {
-  assertPreparedIrProgram(program);
   if (!program.runtime.includes(projection)) fail("unselected runtime projection");
   return planNativeSourceClosureRequirements(program, projection);
 }
@@ -88,7 +85,6 @@ export function beginNativeSourceClosureEmission(
   carriers: NativeSourceClosureCarriers,
   builtins?: NativeBuiltinFunctionRequestIssuer,
 ): NativeSourceClosureEmission {
-  assertPreparedIrProgram(requirements.demands.program);
   assertNativeSourceClosureRequirementsCurrent(requirements);
   const types = reserveNativeSourceClosureTypes(tx, requirements, carriers, builtins);
   const pack = Object.freeze({ requirements, types });

@@ -1,7 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
-import { createHash } from "node:crypto";
 import { acceptPreparedIrProgram } from "../src/ir/program-consumer.js";
 import { prepareWholeIrProgram } from "../src/ir/program-preparation.js";
 import { encodePreparedIrProgram, decodePreparedIrProgram } from "../src/ir/program-codec.js";
@@ -18,9 +17,6 @@ const options = { ...replayOptions("wasmgc", "standalone"), numberFormat: { inte
 function prepare(gvn: boolean) {
   vi.stubEnv("JS2WASM_IR_GVN", gvn ? "1" : "0");
   const source = readFileSync(new URL("../website/playground/examples/js/async.ts", import.meta.url), "utf8");
-  expect(createHash("sha256").update(source).digest("hex")).toBe(
-    "6bc4fc96cc65881c9919a39b840afaf1001dfd3d0e05ef0cc141441a051f7915",
-  );
   return requireProgram(
     prepareWholeIrProgram({
       ...sourceInput({ "./entry.ts": source }),

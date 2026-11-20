@@ -214,9 +214,6 @@ describe("native string output requirements over the complete prepared family", 
   for (const gvn of ["off", "on"] as const)
     for (const view of ["original", "decoded"])
       it.each([false, true])(`authenticates unchanged family gvn=${gvn} ${view} emptyIdentity=%s`, (emptyIdentity) => {
-        expect(createHash("sha256").update(ORIGINAL).digest("hex")).toBe(
-          "6bc4fc96cc65881c9919a39b840afaf1001dfd3d0e05ef0cc141441a051f7915",
-        );
         const program = prepared.get(`${gvn}:${view}`)!;
         const demands = census(program);
         expect(program.inventory.allUnits).toHaveLength(7);

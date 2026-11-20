@@ -55,7 +55,7 @@ import {
 export { DynamicValueGap } from "./dynamic-value-gap.js";
 
 /** Walk the data structurally: IR constants may hold bigints, which JSON cannot. */
-function containsDynamic(value: unknown): boolean {
+export function containsDynamic(value: unknown): boolean {
   if (value === null || typeof value !== "object") return false;
   if ((value as { kind?: unknown }).kind === "dynamic") return true;
   return Object.values(value).some(containsDynamic);

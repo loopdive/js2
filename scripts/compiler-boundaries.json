@@ -30,9 +30,10 @@
         "src/shared/contracts/ir-counted-string-site-id.ts",
         "src/shared/contracts/string-surrogate.ts",
         "src/shared/contracts/linear-memory-layout.ts",
-        "src/shared/contracts/f64-value-markers.ts"
+        "src/shared/contracts/f64-value-markers.ts",
+        "src/shared/contracts/prepared-validation.ts"
       ],
-      "minModules": 11
+      "minModules": 12
     },
     {
       "id": "wasm-model",
@@ -14589,6 +14590,16 @@
       "layer": "foundation"
     },
     {
+      "path": "src/shared/contracts/prepared-validation.ts",
+      "state": "clean",
+      "layer": "foundation"
+    },
+    {
+      "path": "src/shared/contracts/prepared-ir-program-errors.ts",
+      "state": "clean",
+      "layer": "foundation"
+    },
+    {
       "path": "src/shared/contracts/ir-identity.ts",
       "state": "clean",
       "layer": "foundation"
@@ -14754,6 +14765,11 @@
     },
     {
       "path": "src/wasm/physical/owned-function-data.ts",
+      "state": "clean",
+      "layer": "wasm-physical"
+    },
+    {
+      "path": "src/wasm/physical/validate-module.ts",
       "state": "clean",
       "layer": "wasm-physical"
     },
@@ -17000,6 +17016,11 @@
     },
     {
       "path": "src/ir/program/validation.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
+      "path": "src/ir/program/prepared-validator.ts",
       "state": "clean",
       "layer": "ir-program"
     },

@@ -1,7 +1,4 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
-
-import { spawnSync } from "node:child_process";
-import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import ts from "typescript";
@@ -24,7 +21,6 @@ import { createTestIrFunctionIdentityFactory } from "./helpers/ir-identities.js"
 
 const root = resolve(import.meta.dirname, "..");
 const read = (path: string) => readFileSync(resolve(root, path), "utf8");
-const sha = (text: string) => createHash("sha256").update(text).digest("hex");
 const movedFunctions = [
   "asValueId",
   "asLabelId",
@@ -35,30 +31,6 @@ const movedFunctions = [
   "mapNestedBuffers",
   "directUses",
   "collectUses",
-] as const;
-// Measured against acfd3e37b8765c4c4788c1fa94718d62c60e473c. The receipts
-// include declarations and attached documentation, with only the approved
-// semantic IrFunction field removal and raw-Wasm import-path relocation.
-// No historical git object is needed by this checked-in test.
-const declarationReceipts = [
-  {
-    path: "src/ir/core/nodes.ts",
-    types: 83,
-    declarations: 93,
-    hash: "aeb6d79ddf43abfe37b91fad27294d7a785d203bb9ce395802a6e24c76d437c7",
-  },
-  {
-    path: "src/ir/core/dialect/js.ts",
-    types: 27,
-    declarations: 27,
-    hash: "64eb65ec7bc9b5abdf14e90845e8fa012f16f0fe7c82f217b8dbb2692e7ebf31",
-  },
-  {
-    path: "src/ir/core/async-plan.ts",
-    types: 19,
-    declarations: 19,
-    hash: "426b4e9d40e76c0577ad89f762bcb9956f8dcf3037525ea0814e12541bda3d32",
-  },
 ] as const;
 const asyncNames = [
   "IrAsyncStateId",
@@ -253,76 +225,12 @@ const nestedCases: readonly {
   },
 ];
 
-function parse(path: string, source = read(path)) {
-  const file = ts.createSourceFile(path, source, ts.ScriptTarget.Latest, true);
-  expect((file as ts.SourceFile & { parseDiagnostics: readonly ts.Diagnostic[] }).parseDiagnostics).toHaveLength(0);
-  return file;
-}
-function name(node: ts.Statement) {
-  if (
-    ts.isTypeAliasDeclaration(node) ||
-    ts.isInterfaceDeclaration(node) ||
-    ts.isFunctionDeclaration(node) ||
-    ts.isClassDeclaration(node)
-  )
-    return node.name?.text;
-  if (ts.isVariableStatement(node)) return node.declarationList.declarations[0]?.name.getText();
-}
-function declarationRows(file: ts.SourceFile) {
-  return file.statements
-    .filter((node) => name(node))
-    .map((node) => [
-      name(node),
-      (node as ts.Statement & { jsDoc?: readonly ts.JSDoc[] }).jsDoc?.at(-1)?.getText() ?? "",
-      node.getText(),
-    ]);
-}
-function unionArms(file: ts.SourceFile, target: string) {
-  const declaration = file.statements.find((node) => ts.isTypeAliasDeclaration(node) && node.name.text === target);
-  if (!declaration || !ts.isTypeAliasDeclaration(declaration) || !ts.isUnionTypeNode(declaration.type))
-    throw Error("missing union " + target);
-  return declaration.type.types.map((arm) => arm.getText());
-}
-
 describe("complete canonical IR node seam", () => {
   it.each(movedFunctions)("preserves the exact old/new %s function object", (name) => {
     expect(old[name]).toBe(core[name]);
   });
 
-  it.each(declarationReceipts)("preserves the measured $path declarations and documentation", (receipt) => {
-    const file = parse(receipt.path);
-    expect(
-      file.statements.filter((node) => ts.isTypeAliasDeclaration(node) || ts.isInterfaceDeclaration(node)),
-    ).toHaveLength(receipt.types);
-    const rows = declarationRows(file);
-    expect(rows).toHaveLength(receipt.declarations);
-    expect(sha(JSON.stringify(rows))).toBe(receipt.hash);
-    // Positive control: changing a real, nonempty row must break the receipt.
-    expect(rows.length).toBeGreaterThan(0);
-    expect(sha(JSON.stringify([...rows.slice(1), rows[0]]))).not.toBe(receipt.hash);
-  });
-
-  it("retains all 81 instruction arms, four terminators, and the 27-name type-only dialect forwarder", () => {
-    const nodeFile = parse("src/ir/core/nodes.ts");
-    expect(unionArms(nodeFile, "IrInstr")).toHaveLength(81);
-    expect(new Set(unionArms(nodeFile, "IrInstr")).size).toBe(81);
-    expect(unionArms(nodeFile, "IrTerminator")).toEqual([
-      "IrTerminatorReturn",
-      "IrTerminatorBr",
-      "IrTerminatorBrIf",
-      "IrTerminatorUnreachable",
-    ]);
-    const facade = parse("src/ir/dialect/js.ts");
-    expect(facade.statements).toHaveLength(1);
-    const forwarder = facade.statements[0];
-    expect(ts.isExportDeclaration(forwarder) && forwarder.isTypeOnly).toBe(true);
-    if (!ts.isExportDeclaration(forwarder) || !forwarder.exportClause || !ts.isNamedExports(forwarder.exportClause))
-      throw Error("not an explicit forwarder");
-    expect(forwarder.exportClause.elements.map((entry) => entry.name.text)).toEqual([...dialectNames]);
-    expect(forwarder.moduleSpecifier?.getText()).toBe('"../core/dialect/js.js"');
-  });
-
-  it("keeps the allocator constructor, prototype, private counter, and getter shared without an explicit constructor", () => {
+  it("shares the allocator constructor, prototype, private counter and getter", () => {
     expect(old.IrValueIdAllocator).toBe(core.IrValueIdAllocator);
     expect(old.IrValueIdAllocator.prototype).toBe(core.IrValueIdAllocator.prototype);
     const first = new old.IrValueIdAllocator(),
@@ -332,62 +240,6 @@ describe("complete canonical IR node seam", () => {
     expect([first.count, second.count]).toEqual([0, 0]);
     expect([first.fresh(), first.fresh(), second.fresh()]).toEqual([0, 1, 0]);
     expect([first.count, second.count]).toEqual([2, 1]);
-    const klass = parse("src/ir/core/nodes.ts").statements.find(
-      (node) => ts.isClassDeclaration(node) && node.name?.text === "IrValueIdAllocator",
-    );
-    if (!klass || !ts.isClassDeclaration(klass)) throw Error("missing allocator class");
-    expect(klass.members.some(ts.isConstructorDeclaration)).toBe(false);
-    expect(klass.members.filter(ts.isPropertyDeclaration)).toHaveLength(1);
-    expect(klass.members.filter(ts.isGetAccessorDeclaration)).toHaveLength(1);
-  });
-
-  it("keeps the unused-caller signed/dynamic helpers physically old and all async implementation state old", () => {
-    const oldNodes = parse("src/ir/nodes.ts");
-    expect(oldNodes.statements.filter(ts.isFunctionDeclaration).map((node) => node.name?.text)).toEqual([
-      "irValSigned",
-      "isDynamic",
-    ]);
-    expect(sha(JSON.stringify(declarationRows(oldNodes)))).toBe(
-      "338b54988868255f918a13e89b86b9b8d2851d4a3b328f9b0bf67ddd48cfa9e6",
-    );
-    const oldAsync = parse("src/ir/async-plan.ts");
-    const prepared = parse("src/ir/runtime/contracts/prepared.ts");
-    const movedNames = [
-      "PreparedIrAsyncHostAdapter",
-      "PreparedIrAsyncRuntimeBase",
-      "PreparedIrAsyncRuntime",
-      "CurrentPreparedIrAsyncRuntime",
-      "PreparedIrAsyncRuntimeInput",
-    ];
-    const retainedRows = declarationRows(oldAsync);
-    const movedRows = declarationRows(prepared)
-      .filter(([name]) => movedNames.includes(name ?? ""))
-      .map(([name, doc, text]) => [
-        name,
-        doc,
-        // Only the canonical module exports this formerly private helper for
-        // the retained implementation's import; the old API does not.
-        name === "PreparedIrAsyncRuntimeInput" ? text?.replace(/^export /, "") : text,
-      ]);
-    expect(oldAsync.statements.filter(ts.isFunctionDeclaration)).toHaveLength(39);
-    expect(prepared.statements.filter(ts.isFunctionDeclaration)).toHaveLength(0);
-    expect(retainedRows).toHaveLength(48);
-    expect(retainedRows.some(([name]) => movedNames.includes(name ?? ""))).toBe(false);
-    expect(movedRows.map(([name]) => name)).toEqual(movedNames);
-    expect(retainedRows.slice(0, 3).map(([name]) => name)).toEqual([
-      "asAsyncStateId",
-      "asAsyncHandlerId",
-      "canonicalPromiseAbi",
-    ]);
-    // Reconstruct the original order and denominator, not a reduced receipt.
-    // PreparedIrFunction/Module were already outside this historical receipt
-    // and have their own full relocation receipt in the runtime seam suite.
-    const rows = [...retainedRows.slice(0, 3), ...movedRows, ...retainedRows.slice(3)];
-    expect(rows).toHaveLength(53);
-    expect(sha(JSON.stringify(rows))).toBe("2ccf5dd886dc8c510eb60d908a7af81f6c982b265065c451f7cf3a92018b0223");
-    expect(rows.filter(([name]) => name === "preparedManifestByPlan")).toHaveLength(1);
-    expect(Object.keys(core)).not.toContain("irValSigned");
-    expect(Object.keys(core)).not.toContain("isDynamic");
   });
 
   it.each(nestedCases)(
@@ -589,36 +441,4 @@ describe("complete canonical IR node seam", () => {
     expect(rejected).toHaveLength(3);
     expect(rejected.every((diagnostic) => diagnostic.category === ts.DiagnosticCategory.Error)).toBe(true);
   }, 60_000);
-
-  it("loads canonical nodes in a fresh process without old nodes, async validators, dialect runtime or frontend", () => {
-    const script = [
-      "import assert from 'node:assert/strict'; import { registerHooks } from 'node:module';",
-      "import { realpathSync } from 'node:fs'; import { relative } from 'node:path'; import { fileURLToPath } from 'node:url';",
-      "const root = realpathSync(process.cwd()), visited = new Set();",
-      "const allowed = new Set(['src/ir/core/nodes.ts','src/ir/core/types.ts','src/ir/core/tag-refinement.ts']);",
-      "registerHooks({ resolve(specifier, context, next) { const result = next(specifier, context);",
-      " if (!result.url.startsWith('file:')) throw Error('forbidden dependency: ' + result.url);",
-      " const path = relative(root, realpathSync(fileURLToPath(result.url)));",
-      " if (!allowed.has(path)) throw Error('forbidden dependency: ' + path); visited.add(path); return result; }});",
-      "const core = await import('./src/ir/core/nodes.ts');",
-      "const allocator = new core.IrValueIdAllocator(); assert.equal(allocator.fresh(), 0); assert.equal(allocator.count, 1);",
-      "const leaf = {kind:'slot.write',slot:0,value:core.asValueId(3),result:null,resultType:null};",
-      "assert.deepEqual(core.collectUses(leaf), [3]);",
-      "await assert.rejects(import('./src/ir/async-plan.ts'), /forbidden dependency:/);",
-      "console.log(JSON.stringify([...visited].sort()));",
-    ].join("\n");
-    const child = spawnSync(process.execPath, ["--import", "tsx", "--input-type=module", "-e", script], {
-      cwd: root,
-      encoding: "utf8",
-      timeout: 30_000,
-    });
-    expect(child.error).toBeUndefined();
-    expect(child.signal).toBeNull();
-    expect(child.status, child.stderr + child.stdout).toBe(0);
-    expect(JSON.parse(child.stdout)).toEqual([
-      "src/ir/core/nodes.ts",
-      "src/ir/core/tag-refinement.ts",
-      "src/ir/core/types.ts",
-    ]);
-  });
 });

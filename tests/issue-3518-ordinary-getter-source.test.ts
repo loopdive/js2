@@ -71,7 +71,7 @@ describe("ordinary getter source production", () => {
     expect(number).toBeGreaterThan(mark);
   });
 
-  it("does not mistake the full Number contract for unboxing or a physical provider", () => {
+  it("keeps the full Number contract distinct from unboxing and selects its native provider", () => {
     const declaration = irRuntimeCallableDeclaration(irIntrinsicFuncRef("js.number.from-value"));
     expect(declaration).toMatchObject({
       feature: "js.number.from-value",
@@ -79,9 +79,12 @@ describe("ordinary getter source production", () => {
       results: [{ kind: "val", val: { kind: "f64" } }],
     });
     expect(irRuntimeCallableDeclaration(irRuntimeFuncRef("js.number.from-value"))).toBeUndefined();
+    // 69e6b7f3ef (#7106 lever B) gave the feature its host-free standalone provider.
     const builder = new RuntimeManifestBuilder({ target: "standalone", backend: "wasmgc" });
     builder.requestFeature("js.number.from-value");
-    expect(() => builder.freeze()).toThrow(expect.objectContaining({ code: "missing-runtime-provider" }));
+    expect(builder.freeze().providers.map((provider) => [provider.id, provider.implementation.kind])).toEqual([
+      ["native.js.number.from-value", "runtime-callable"],
+    ]);
   });
 
   it.each([
