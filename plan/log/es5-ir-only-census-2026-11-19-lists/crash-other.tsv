@@ -1,0 +1,14 @@
+language/asi/S7.9_A7_T4.js	empty startup source ir-source:v1:0000000000000000:entry:test.js claims an executable body
+language/asi/S7.9_A7_T6.js	empty startup source ir-source:v1:0000000000000000:entry:test.js claims an executable body
+language/asi/S7.9_A7_T8.js	empty startup source ir-source:v1:0000000000000000:entry:test.js claims an executable body
+language/asi/S7.9_A8_T1.js	native string/value demands: missing complete owner population
+language/asi/S7.9_A8_T2.js	native string/value demands: missing complete owner population
+language/asi/S7.9_A8_T3.js	native string/value demands: missing complete owner population
+language/comments/S7.4_A1_T2.js	native string/value demands: missing complete owner population
+language/comments/S7.4_A4_T2.js	native string/value demands: missing complete owner population
+language/comments/S7.4_A4_T3.js	native string/value demands: missing complete owner population
+language/comments/S7.4_A4_T5.js	native string/value demands: missing complete owner population
+language/comments/S7.4_A4_T6.js	native string/value demands: missing complete owner population
+language/comments/S7.4_A4_T7.js	native string/value demands: missing complete owner population
+language/statements/empty/S12.3_A1.js	native string/value demands: missing complete owner population
+language/statements/variable/arguments-non-strict.js	empty startup source ir-source:v1:0000000000000000:entry:test.js claims an executable body

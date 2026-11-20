@@ -994,6 +994,89 @@ finish the prelude are about 85 % of the first per-test work.
 inside a function throws an emission invariant error on this path, and 13
 rows with `eval` throw "certified global eval lost an owning predicate".
 
+### Prepared gap: the `arguments` object (28 files, census 2026-11-19)
+
+Belongs with slice C. Owner: the slice-C lane (S11), after C1. No separate
+issue.
+
+**What refuses.** The Prepared path has no `arguments` object. Only
+`arguments.length` is built, as the entry-time count (#7106 S1e).
+
+- `arguments` in any other position: `lowerExprUnchecked`,
+  `src/ir/from-ast.ts`, identifier arm, refuses
+  `ir/from-ast: identifier "arguments" is not in scope in <function>`
+  (`body-shape-rejected`).
+- `arguments.length`: admitted by `lowerPropertyAccess` (`from-ast.ts`), then
+  refused by `legalizeDynamicValues`
+  (`src/ir/program/dynamic-value-legalization.ts`):
+  `dynamic operation dyn.arguments_length has no Prepared intrinsic`.
+- A direct call with more arguments than formals:
+  `ir/from-ast: call to f has 2 args, expected 0` (`call-arity-unsupported`,
+  `lowerCall`, `from-ast.ts`); the extra arguments are what `arguments[i]`
+  reads.
+
+Already there: the closure-call path publishes the count and the extra
+arguments (`__argc`, `__extras_argv`; `buildClosureMethodArgumentState`,
+`src/runtime/wasmgc/values/closure-invocation-bodies.ts`), and an under-arity
+direct call publishes `__argc` when the callee reads `arguments`
+(`planUnderArityDirectCall`, `directCallPublishesArgc`).
+
+**Measured** on main `ee3fcdd610`, 2026-11-19, stand-in harness, first gap per
+file (`plan/log/es5-ir-only-census-2026-11-19.md`, section 1.2 row 28; list
+`plan/log/es5-ir-only-census-2026-11-19-lists/arguments-object.tsv`):
+
+- **28 files** stop first at `identifier "arguments" is not in scope`:
+  `language/arguments-object` 18, `language/expressions` 6 (`call` 2, the four
+  update operators 1 each), `language/statements/function` 3,
+  `built-ins/Object/getPrototypeOf` 1.
+- By the first use in the refusing function:
+
+  | first use | files |
+  | --- | ---: |
+  | index write `arguments[i] = v` (4 of them then `++` / `--` on the element) | 8 |
+  | index read `arguments[i]` (2 then write a property of the element, 1 then `delete arguments[1]`) | 5 |
+  | `arguments` as a value (`return arguments`) | 5 |
+  | `arguments.callee` (read 2, `.callee.caller` 2, write 1) | 5 |
+  | another member: `.hasOwnProperty("callee" / "length")` 2, `.constructor.prototype` 1, `.length = v` 1 | 4 |
+  | a script `var arguments` read inside a function | 1 |
+
+- Samples:
+
+  | file | function | first use |
+  | --- | --- | --- |
+  | `language/arguments-object/10.6-10-c-ii-1.js` | `foo` | `arguments[0] === 1 && arguments[1] === 'str'` (mapped to the formals) |
+  | `language/arguments-object/10.5-7-b-2-s.js` | `_10_5_7_b_2_fun` | `arguments[7] = 12` (an index past the supplied arguments) |
+  | `language/arguments-object/S10.6_A1.js` | `f1` | `return arguments` |
+  | `language/arguments-object/S10.6_A4.js` | `f1` | `return arguments.callee` |
+  | `language/arguments-object/S10.6_A3_T1.js` | `f1` | `arguments.hasOwnProperty("callee")` |
+  | `language/expressions/call/S11.2.4_A1.1_T2.js` | `f_arg` | `return arguments`, then `f_arg().length`, `f_arg()[0]` |
+  | `language/expressions/postfix-increment/11.3.1-2-3.js` | `testcase` | `arguments[1] = 7; arguments[1]++` |
+  | `language/statements/function/S13_A15_T5.js` | `__func` | `var arguments = THE_ANSWER;` at script level, `return arguments` in the function |
+
+- **The same mechanism in the "other" list** (`other.tsv`, not in the 28):
+  `dyn.arguments_length` 9 files (`language/arguments-object` 3,
+  `language/statements/function` 4, `language/types/list` 2) and an over-arity
+  direct call 2 (`language/expressions/call/S11.2.4_A1.4_T1.js`, `_T2.js`).
+- **Behind another first gap:** 327 of the 8,717 positive files name
+  `arguments` in their own code (comments and strings removed). Largest
+  groups: built-in call or method 90, script `var` from an IIFE result 39, call
+  through a value 36, object literal 34, function expression as a value 29;
+  the 19 `built-ins/Object/defineProperties` files of the no-initialiser list
+  are `var arg; (function fun() { arg = arguments; }());`. 2 pass.
+- Probes through the strict Prepared entry (same tree):
+  `function f() { return arguments[0]; }`, `typeof arguments` and
+  `var a = arguments` refuse with the identifier message;
+  `function f() { return arguments.length; }` with `dyn.arguments_length`;
+  `function f() { return 1; } f(1, 2)` with the arity message.
+
+**Done when:** each sample compiles through the strict Prepared entry,
+validates and runs with node's answer (as reduced programs while the files
+need other slices); the 28 files and the 11 of the "other" list, re-measured
+with `scripts/ir-census/prepared-census.mts --harness stand-in`, move past
+these gaps; no file of the census moves to an earlier gap; one `arguments`
+representation serves the direct-call and the closure-call path (no second
+count / extras protocol, no arm specific to the Prepared path).
+
 ## H result
 
 Status 2026-11-17. Branch `claude/7354-h` on `claude/7354-p` (merged up to `1995dd6ef2`).

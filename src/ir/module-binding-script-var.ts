@@ -17,7 +17,7 @@ import {
   sourceMayWriteGlobalObject,
   sourceRunsDynamicCode,
 } from "../shared/intrinsic-prototype-writes.js";
-import { isTopLevelStatementDeclaration } from "../shared/var-declaration-lists.js";
+import { isTopLevelStatementDeclaration, isTopLevelVarList } from "../shared/var-declaration-lists.js";
 
 const scriptVarWritesCache = new WeakMap<ts.VariableDeclaration, readonly IdentifierWrite[] | null>();
 
@@ -92,8 +92,9 @@ export type NamedVariableDeclaration = ts.VariableDeclaration & { readonly name:
 /**
  * (#7354 V) True when no read of the script var `declaration` can run before its initializer: a typed slot has
  * no `undefined`, so a read of the hoisted binding would answer the slot's zero. The declaration is a top-level
- * statement's, initialized, and every read either is placed after the statement outside every hoisted function,
- * or sits in a hoisted function nothing before the statement can call (`callableBefore`). Name-based, like
+ * statement's or (#7372) a top-level `for (;;)` head's, initialized, and every read either is placed after its
+ * list outside every hoisted function, or sits in a hoisted function nothing before the list can call
+ * (`callableBefore`). Name-based, like
  * `isAlwaysUndefinedVar`: every reference spelled with the name is a read unless the checker binds it to another
  * symbol, a plain `=` target only writes, and code the walk cannot see (`eval`, `Function`) declines. Only the
  * declaration's own file is walked: the caller answers for the program's other scripts, which share its global.
@@ -103,10 +104,10 @@ export function scriptVarReadsFollowInitializer(
   declaration: NamedVariableDeclaration,
 ): boolean {
   const { name, initializer } = declaration;
-  if (!initializer || !isTopLevelStatementDeclaration(declaration)) return false;
+  if (!initializer || !runsBeforeLaterTopLevelCode(declaration)) return false;
   const sourceFile = declaration.getSourceFile();
   if (sourceRunsDynamicCode(sourceFile)) return false;
-  const statementEnd = declaration.parent.parent.end;
+  const statementEnd = declaration.parent.end;
   const binding = checker.getSymbolAtLocation(name);
   const isRead = (node: ts.Identifier): boolean => {
     if (!isValueReference(node)) return false;
@@ -124,6 +125,16 @@ export function scriptVarReadsFollowInitializer(
     const fn = ts.findAncestor(node.parent, isHoistedFunction);
     return fn ? !callableBefore(fn, statementEnd) : node.pos >= statementEnd;
   });
+}
+
+/**
+ * (#7372) Whether the declarator's list is a top-level statement's or a top-level `for (;;)` head's: either runs
+ * once, before every later top-level statement and, for a head, before the loop's test, body and update.
+ */
+function runsBeforeLaterTopLevelCode(declaration: ts.VariableDeclaration): boolean {
+  if (isTopLevelStatementDeclaration(declaration)) return true;
+  const list = declaration.parent;
+  return ts.isVariableDeclarationList(list) && ts.isForStatement(list.parent) && isTopLevelVarList(list);
 }
 
 /**

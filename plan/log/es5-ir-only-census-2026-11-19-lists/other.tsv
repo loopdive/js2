@@ -1,0 +1,167 @@
+annexB/language/function-code/block-decl-nested-blocks-with-fun-decl.js	ir/from-ast: unexpected statement before tail (got Block in g)
+annexB/language/global-code/if-stmt-else-decl-global-block-scoping.js	ir/from-ast: unsupported body statement EmptyStatement in <module-init>
+annexB/language/global-code/if-stmt-else-decl-global-existing-fn-update.js	ir/from-ast: unsupported body statement EmptyStatement in <module-init>
+annexB/language/global-code/if-stmt-else-decl-global-existing-var-no-init.js	ir/from-ast: unsupported body statement EmptyStatement in <module-init>
+annexB/language/global-code/if-stmt-else-decl-global-existing-var-update.js	ir/from-ast: unsupported body statement EmptyStatement in <module-init>
+annexB/language/global-code/if-stmt-else-decl-global-skip-early-err.js	ir/from-ast: unsupported body statement EmptyStatement in <module-init>
+annexB/language/global-code/if-stmt-else-decl-global-update.js	ir/from-ast: unsupported body statement EmptyStatement in <module-init>
+built-ins/Array/isArray/15.4.3.2-0-7.js	ir/from-ast: static predicate operand lowered as reference (<module-init>)
+built-ins/Array/isArray/15.4.3.2-2-3.js	ir/from-ast: static predicate operand lowered as reference (<module-init>)
+built-ins/Array/prototype/filter/15.4.4.20-9-4.js	ir/from-ast: property assignment on dynamic is not in slice 4 (callbackfn)
+built-ins/Array/prototype/filter/15.4.4.20-9-b-1.js	ir/from-ast: increment/decrement of undeclared "callCnt" in callbackfn
+built-ins/Number/S9.3_A1_T1.js	dynamic operation coerce.to_externref has no Prepared intrinsic
+built-ins/Number/prototype/toString/S15.7.4.2_A3_T01.js	ir/from-ast: redeclaration of 'n' in <module-init>
+built-ins/Number/prototype/toString/S15.7.4.2_A3_T02.js	ir/from-ast: redeclaration of 'n' in <module-init>
+built-ins/Number/prototype/toString/S15.7.4.2_A3_T03.js	ir/from-ast: redeclaration of 'n' in <module-init>
+built-ins/Number/prototype/toString/S15.7.4.2_A3_T04.js	ir/from-ast: redeclaration of 'n' in <module-init>
+built-ins/Number/prototype/toString/S15.7.4.2_A4_T05.js	ir/from-ast: object has no field "toString" (shape: object{x:f64}) in <module-init>
+built-ins/Number/prototype/valueOf/S15.7.4.4_A2_T05.js	ir/from-ast: object has no field "valueOf" (shape: object{x:f64}) in <module-init>
+built-ins/Object/prototype/hasOwnProperty/8.12.1-1_21.js	ambiguous or unsupported value type
+built-ins/Object/prototype/hasOwnProperty/8.12.1-1_24.js	ambiguous or unsupported value type
+built-ins/RegExp/S15.10.2.8_A3_T15.js	ir/from-ast: redeclaration of 'i' in <module-init>
+built-ins/String/prototype/match/S15.5.4.10_A2_T6.js	ir/from-ast: dynamic method argument cannot be boxed (<module-init>)
+harness/assert-notsamevalue-objects.js	ir/from-ast: arg 0 of call to __assert_notSameValue is object{}, expected dynamic in <module-init>
+harness/assert-obj.js	ir/from-ast: arg 0 of call to __assert is object{}, expected dynamic in <module-init>
+harness/assert-samevalue-objects.js	ir/from-ast: arg 0 of call to __assert_sameValue is object{}, expected dynamic in <module-init>
+harness/assert-samevalue-same.js	ir/from-ast: assignment to module binding "obj" (dynamic) got object{} in <module-init>
+harness/decimalToHexString.js	ir/from-ast: mutable binding 's' (string) has no slot representation in decimalToHexString
+harness/proxytrapshelper-default.js	ir/from-ast: ternary branches have different types (dynamic vs string) in allowProxyTraps
+harness/proxytrapshelper-overrides.js	ir/from-ast: ternary branches have different types (dynamic vs string) in allowProxyTraps
+intl402/Collator/prototype/compare/canonically-equivalent-strings.js	ir/from-ast: mutable binding 'result' (string) has no slot representation in toU
+intl402/Collator/unicode-ext-value-collation.js	ir/from-ast: ternary branches have different types (dynamic vs string) in checkCollation
+language/arguments-object/10.6-6-3-s.js	dynamic operation dyn.arguments_length has no Prepared intrinsic
+language/arguments-object/10.6-6-4-s.js	dynamic operation dyn.arguments_length has no Prepared intrinsic
+language/arguments-object/S10.6_A3_T2.js	ir/from-ast: dynamic for-in runtime is unavailable in f1
+language/arguments-object/S10.6_A5_T2.js	ir/from-ast: dynamic for-in runtime is unavailable in f1
+language/arguments-object/S10.6_A6.js	dynamic operation dyn.arguments_length has no Prepared intrinsic
+language/asi/S7.9.2_A1_T4.js	ir/from-ast: unexpected statement before tail (got ReturnStatement in test)
+language/asi/S7.9_A1.js	ir/from-ast: redeclaration of 'i' in <module-init>
+language/asi/S7.9_A11_T11.js	ir/from-ast: unsupported body statement EmptyStatement in <module-init>
+language/asi/S7.9_A11_T3.js	ir/from-ast: unsupported body statement EmptyStatement in <module-init>
+language/asi/S7.9_A2.js	ir/from-ast: redeclaration of 'i' in <module-init>
+language/asi/S7.9_A3.js	ir/from-ast: unexpected statement before tail (got ReturnStatement in f2)
+language/asi/S7.9_A9_T2.js	ir/from-ast: unsupported body statement EmptyStatement in <module-init>
+language/asi/S7.9_A9_T5.js	ir/from-ast: unsupported body statement EmptyStatement in <module-init>
+language/comments/S7.4_A6.js	ir/from-ast: mutable binding 's' (string) has no slot representation in decimalToHexString
+language/directive-prologue/14.1-16-s.js	ir/from-ast: unexpected statement before tail (got EmptyStatement in foo)
+language/eval-code/direct/global-env-rec-catch.js	ir/from-ast: redeclaration of '__10_4_2_1_3' in testcase
+language/expressions/assignment/target-cover-id.js	ir/from-ast: unsupported body ExpressionStatement shape in <module-init>
+language/expressions/bitwise-not/S11.4.8_A3_T1.js	ir/from-ast: unary '~' expects a proven number in <module-init>
+language/expressions/bitwise-not/S11.4.8_A3_T3.js	ir/from-ast: unary '~' expects a proven number in <module-init>
+language/expressions/bitwise-not/S11.4.8_A3_T5.js	ir/from-ast: unary '~' expects a proven number in <module-init>
+language/expressions/call/S11.2.4_A1.4_T1.js	ir/from-ast: call to f_arg has 2 args, expected 0 in <module-init>
+language/expressions/call/S11.2.4_A1.4_T2.js	ir/from-ast: call to f_arg has 2 args, expected 0 in <module-init>
+language/expressions/compound-assignment/S11.13.2_A4.10_T1.1.js	ir/from-ast: compound assign RHS has no numeric carrier (got i32) in <module-init>
+language/expressions/compound-assignment/S11.13.2_A4.10_T1.3.js	ir/from-ast: compound assign RHS has no numeric carrier (got string) in <module-init>
+language/expressions/compound-assignment/S11.13.2_A4.10_T2.5.js	ir/from-ast: compound assign RHS has no numeric carrier (got string) in <module-init>
+language/expressions/compound-assignment/S11.13.2_A4.11_T1.1.js	ir/from-ast: compound assign RHS has no numeric carrier (got i32) in <module-init>
+language/expressions/compound-assignment/S11.13.2_A4.11_T1.3.js	ir/from-ast: compound assign RHS has no numeric carrier (got string) in <module-init>
+language/expressions/compound-assignment/S11.13.2_A4.11_T2.5.js	ir/from-ast: compound assign RHS has no numeric carrier (got string) in <module-init>
+language/expressions/compound-assignment/S11.13.2_A4.1_T1.1.js	ir/from-ast: compound assign RHS has no numeric carrier (got i32) in <module-init>
+language/expressions/compound-assignment/S11.13.2_A4.1_T1.3.js	ir/from-ast: compound assign RHS has no numeric carrier (got string) in <module-init>
+language/expressions/compound-assignment/S11.13.2_A4.1_T2.5.js	ir/from-ast: compound assign RHS has no numeric carrier (got string) in <module-init>
+language/expressions/compound-assignment/S11.13.2_A4.2_T1.1.js	ir/from-ast: compound assign RHS has no numeric carrier (got i32) in <module-init>
+language/expressions/compound-assignment/S11.13.2_A4.2_T1.3.js	ir/from-ast: compound assign RHS has no numeric carrier (got string) in <module-init>
+language/expressions/compound-assignment/S11.13.2_A4.2_T2.5.js	ir/from-ast: compound assign RHS has no numeric carrier (got string) in <module-init>
+language/expressions/compound-assignment/S11.13.2_A4.3_T1.1.js	ir/from-ast: compound assign RHS has no numeric carrier (got i32) in <module-init>
+language/expressions/compound-assignment/S11.13.2_A4.3_T1.3.js	ir/from-ast: compound assign RHS has no numeric carrier (got string) in <module-init>
+language/expressions/compound-assignment/S11.13.2_A4.3_T2.5.js	ir/from-ast: compound assign RHS has no numeric carrier (got string) in <module-init>
+language/expressions/compound-assignment/S11.13.2_A4.5_T1.1.js	ir/from-ast: compound assign RHS has no numeric carrier (got i32) in <module-init>
+language/expressions/compound-assignment/S11.13.2_A4.5_T1.3.js	ir/from-ast: compound assign RHS has no numeric carrier (got string) in <module-init>
+language/expressions/compound-assignment/S11.13.2_A4.5_T2.5.js	ir/from-ast: compound assign RHS has no numeric carrier (got string) in <module-init>
+language/expressions/compound-assignment/S11.13.2_A4.6_T1.1.js	ir/from-ast: compound assign RHS has no numeric carrier (got i32) in <module-init>
+language/expressions/compound-assignment/S11.13.2_A4.6_T1.3.js	ir/from-ast: compound assign RHS has no numeric carrier (got string) in <module-init>
+language/expressions/compound-assignment/S11.13.2_A4.6_T2.5.js	ir/from-ast: compound assign RHS has no numeric carrier (got string) in <module-init>
+language/expressions/compound-assignment/S11.13.2_A4.7_T1.1.js	ir/from-ast: compound assign RHS has no numeric carrier (got i32) in <module-init>
+language/expressions/compound-assignment/S11.13.2_A4.7_T1.3.js	ir/from-ast: compound assign RHS has no numeric carrier (got string) in <module-init>
+language/expressions/compound-assignment/S11.13.2_A4.7_T2.5.js	ir/from-ast: compound assign RHS has no numeric carrier (got string) in <module-init>
+language/expressions/compound-assignment/S11.13.2_A4.8_T1.1.js	ir/from-ast: compound assign RHS has no numeric carrier (got i32) in <module-init>
+language/expressions/compound-assignment/S11.13.2_A4.8_T1.3.js	ir/from-ast: compound assign RHS has no numeric carrier (got string) in <module-init>
+language/expressions/compound-assignment/S11.13.2_A4.8_T2.5.js	ir/from-ast: compound assign RHS has no numeric carrier (got string) in <module-init>
+language/expressions/compound-assignment/S11.13.2_A4.9_T1.1.js	ir/from-ast: compound assign RHS has no numeric carrier (got i32) in <module-init>
+language/expressions/compound-assignment/S11.13.2_A4.9_T1.3.js	ir/from-ast: compound assign RHS has no numeric carrier (got string) in <module-init>
+language/expressions/compound-assignment/S11.13.2_A4.9_T2.5.js	ir/from-ast: compound assign RHS has no numeric carrier (got string) in <module-init>
+language/expressions/conditional/S11.12_A3_T4.js	ir/from-ast: ternary branches have different types (i32 vs dynamic<tag:1>) in <module-init>
+language/expressions/conditional/S11.12_A4_T4.js	ir/from-ast: ternary branches have different types (dynamic<tag:1> vs i32) in <module-init>
+language/expressions/does-not-equals/S11.9.2_A5.2.js	ir/from-ast: mixed string/non-string operand for '!=' is not in slice 1 (<module-init>)
+language/expressions/does-not-equals/S11.9.2_A5.3.js	ir/from-ast: mixed string/non-string operand for '!=' is not in slice 1 (<module-init>)
+language/expressions/equals/S11.9.1_A5.2.js	ir/from-ast: mixed string/non-string operand for '==' is not in slice 1 (<module-init>)
+language/expressions/equals/S11.9.1_A5.3.js	ir/from-ast: mixed string/non-string operand for '==' is not in slice 1 (<module-init>)
+language/expressions/in/S11.8.7_A3.js	ir/from-ast: `in` receiver lost its dynamic carrier in <module-init>
+language/expressions/logical-and/S11.11.1_A3_T2.js	ir/from-ast: operator '&&' requires bool operands in <module-init>
+language/expressions/logical-and/S11.11.1_A3_T3.js	ir/from-ast: operator '&&' requires bool operands in <module-init>
+language/expressions/logical-not/S9.2_A2_T2.js	ir/from-ast: bare 'null' in non-reference context (f64) is not supported in IR (<module-init>)
+language/expressions/logical-or/S11.11.2_A3_T3.js	ir/from-ast: operator '||' requires bool operands in <module-init>
+language/expressions/modulus/S11.5.3_A4_T7.js	ir/from-ast: Math.floor arg must be f64, got dynamic (truncate)
+language/expressions/object/11.1.5-2gs.js	ir/from-ast: duplicate object literal key "_11_1_5_2_gs" not in slice 2 (<module-init>)
+language/expressions/object/prop-dup-data-data.js	ir/from-ast: duplicate object literal key "foo" not in slice 2 (<module-init>)
+language/expressions/object/prop-dup-data-set.js	ambiguous or unsupported value type
+language/expressions/object/prop-dup-set-data.js	ambiguous or unsupported value type
+language/expressions/object/prop-dup-set-set.js	ambiguous or unsupported value type
+language/expressions/postfix-decrement/S11.3.2_A2.1_T2.js	ir/from-ast: increment/decrement of undeclared "x" in <module-init>
+language/expressions/postfix-decrement/target-cover-id.js	ir/from-ast: unsupported body ExpressionStatement shape in <module-init>
+language/expressions/postfix-increment/S11.3.1_A2.1_T2.js	ir/from-ast: increment/decrement of undeclared "x" in <module-init>
+language/expressions/postfix-increment/target-cover-id.js	ir/from-ast: unsupported body ExpressionStatement shape in <module-init>
+language/expressions/prefix-decrement/S11.4.5_A2.1_T2.js	ir/from-ast: increment/decrement of undeclared "x" in <module-init>
+language/expressions/prefix-decrement/target-cover-id.js	ir/from-ast: unsupported body ExpressionStatement shape in <module-init>
+language/expressions/prefix-increment/S11.4.4_A2.1_T2.js	ir/from-ast: increment/decrement of undeclared "x" in <module-init>
+language/expressions/prefix-increment/target-cover-id.js	ir/from-ast: unsupported body ExpressionStatement shape in <module-init>
+language/expressions/property-accessors/S11.2.1_A3_T5.js	ir/from-ast: bare 'null' in non-reference context (f64) is not supported in IR (<module-init>)
+language/expressions/strict-does-not-equals/S11.9.5_A6.2.js	ir/from-ast: bare 'null' in non-reference context (f64) is not supported in IR (<module-init>)
+language/expressions/strict-does-not-equals/S11.9.5_A8_T4.js	ir/from-ast: null/undefined comparison has no first-class undefined representation (<module-init>)
+language/expressions/strict-equals/S11.9.4_A6.2.js	ir/from-ast: bare 'null' in non-reference context (f64) is not supported in IR (<module-init>)
+language/expressions/strict-equals/S11.9.4_A8_T4.js	ir/from-ast: null/undefined comparison has no first-class undefined representation (<module-init>)
+language/expressions/unary-plus/S9.3_A2_T2.js	ir/from-ast: bare 'null' in non-reference context (f64) is not supported in IR (<module-init>)
+language/function-code/10.4.3-1-56-s.js	ambiguous or unsupported value type
+language/function-code/10.4.3-1-56gs.js	ambiguous or unsupported value type
+language/function-code/10.4.3-1-57-s.js	ambiguous or unsupported value type
+language/function-code/10.4.3-1-57gs.js	ambiguous or unsupported value type
+language/function-code/S10.2.1_A4_T1.js	ir/from-ast: unexpected statement before tail (got ReturnStatement in f1)
+language/function-code/S10.2.1_A4_T2.js	ir/from-ast: redeclaration of 'x' in f1
+language/function-code/S10.2.1_A5.1_T2.js	ir/from-ast: redeclaration of 'x' in f1
+language/function-code/S10.2.1_A5.2_T1.js	ir/from-ast: redeclaration of 'x' in f1
+language/literals/null/S7.8.1_A1_T1.js	ir/from-ast: bare 'null' in non-reference context (f64) is not supported in IR (<module-init>)
+language/statements/break/S12.8_A3.js	ir/from-ast: redeclaration of 'y' in <module-init>
+language/statements/break/line-terminators.js	ir/from-ast: redeclaration of 'i' in <module-init>
+language/statements/continue/line-terminators.js	ir/from-ast: redeclaration of 'i' in <module-init>
+language/statements/for-in/S12.6.4_A1.js	ir/from-ast: dynamic for-in runtime is unavailable in <module-init>
+language/statements/for-in/S12.6.4_A14_T2.js	ir/from-ast: dynamic for-in runtime is unavailable in <module-init>
+language/statements/for-in/S12.6.4_A2.js	ir/from-ast: dynamic for-in runtime is unavailable in <module-init>
+language/statements/for-in/S12.6.4_A5.js	ir/from-ast: assignment to module binding "__hash__map" (dynamic) got object{a:object{aa:f64,ab:f64,ac:f64,ad:f64},b:obj
+language/statements/for-in/S12.6.4_A7_T1.js	ir/from-ast: unsupported tail statement ForInStatement in erasator_T_1000
+language/statements/for-in/S12.6.4_A7_T2.js	ir/from-ast: unsupported tail statement ForInStatement in erasator_T_1000
+language/statements/for/12.6.3_2-3-a-ii-12.js	ir/from-ast: bare 'null' in non-reference context (i32) is not supported in IR (<module-init>)
+language/statements/for/S12.6.3_A11.1_T2.js	ir/from-ast: redeclaration of 'index' in <module-init>
+language/statements/for/S12.6.3_A12.1_T2.js	ir/from-ast: redeclaration of 'index' in <module-init>
+language/statements/for/S12.6.3_A15.js	ir/from-ast: redeclaration of 'i' in <module-init>
+language/statements/function/13.2-24-s.js	ir/from-ast: unsupported tail statement ForInStatement in foo
+language/statements/function/13.2-28-s.js	ir/from-ast: unsupported tail statement ForInStatement in foo
+language/statements/function/S13.2.1_A4_T1.js	ir/from-ast: property assignment on dynamic is not in slice 4 (__func)
+language/statements/function/S13.2.1_A4_T2.js	ir/from-ast: property assignment on dynamic is not in slice 4 (__func)
+language/statements/function/S13.2.1_A7_T1.js	ir/from-ast: bare 'null' in non-reference context (f64) is not supported in IR (__func)
+language/statements/function/S13.2.1_A9.1_T1.js	ir/from-ast: call to __func returned void used as expression in <module-init>
+language/statements/function/S13.2.1_A9_T1.js	ir/from-ast: call to __func returned void used as expression in <module-init>
+language/statements/function/S13_A15_T1.js	dynamic operation dyn.arguments_length has no Prepared intrinsic
+language/statements/function/S13_A15_T3.js	dynamic operation dyn.arguments_length has no Prepared intrinsic
+language/statements/function/S13_A15_T4.js	ir/from-ast: unexpected statement before tail (got ReturnStatement in __func)
+language/statements/function/S13_A8_T1.js	dynamic operation dyn.arguments_length has no Prepared intrinsic
+language/statements/function/S13_A8_T2.js	dynamic operation dyn.arguments_length has no Prepared intrinsic
+language/statements/if/empty-statement.js	ir/from-ast: unsupported body statement EmptyStatement in <module-init>
+language/statements/return/S12.9_A5.js	ir/from-ast: increment/decrement of undeclared "x1" in myfunc1
+language/statements/switch/S12.11_A1_T1.js	ir/from-ast: switch disc must lower to i32/f64 in SwitchTest
+language/statements/switch/S12.11_A1_T2.js	ir/from-ast: string-tested switch disc lowered to dynamic, not string, in SwitchTest
+language/statements/switch/S12.11_A1_T3.js	ir/from-ast: switch disc must lower to i32/f64 in SwitchTest
+language/statements/switch/S12.11_A1_T4.js	ir/from-ast: switch disc must lower to i32/f64 in SwitchTest
+language/statements/switch/S12.11_A4_T1.js	ir/from-ast: switch disc must lower to i32/f64 in SwitchTest
+language/statements/try/S12.14_A11_T4.js	ir/from-ast: redeclaration of 'i' in <module-init>
+language/statements/try/S12.14_A13_T2.js	ir/from-ast: early return inside try/for-of-iter not in IR scope (myFunction1)
+language/statements/try/S12.14_A13_T3.js	ir/from-ast: early return inside try/for-of-iter not in IR scope (myFunction1)
+language/statements/try/S12.14_A15.js	ir/from-ast: switch disc must lower to i32/f64 in SwitchTest1
+language/statements/try/S12.14_A5.js	ir/from-ast: switch disc must lower to i32/f64 in SwitchTest1
+language/statements/variable/arguments-fn-non-strict.js	ir/from-ast: unsupported tail statement FirstStatement in f
+language/types/list/S8.8_A2_T1.js	dynamic operation dyn.arguments_length has no Prepared intrinsic
+language/types/list/S8.8_A2_T2.js	dynamic operation dyn.arguments_length has no Prepared intrinsic
+language/types/list/S8.8_A2_T3.js	ir/from-ast: mutable binding '__accum' (string) has no slot representation in __mFunc
+language/types/null/S8.2_A3.js	ir/from-ast: bare 'null' in non-reference context (f64) is not supported in IR (<module-init>)
+language/types/object/S8.6.1_A2.js	ir/from-ast: dynamic for-in runtime is unavailable in <module-init>
+language/types/reference/S8.7_A7.js	ir/from-ast: property assignment on dynamic is not in slice 4 (populateAge)
