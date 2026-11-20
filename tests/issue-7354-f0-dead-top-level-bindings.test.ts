@@ -257,6 +257,14 @@ describe("#7354 F0 — dead top-level bindings are dropped before the Prepared p
   });
 });
 
+// A caller that does not state the goal: `import.meta` is an early error only in a Script, so the statement is
+// kept rather than bet on the Module reading (it then refuses where the binding lowers).
+it("#7354 F0 keeps a goal-dependent early error when the goal is unstated", async () => {
+  const { inferModuleStrictArguments: _m, scriptGoal: _s, ...unstated } = options() as Record<string, unknown>;
+  const result = await compile("var g = function () { return import.meta; };", unstated as Test262CompileOptions);
+  expect(messages(result).join("\n")).toContain("module binding g has no exact typed storage");
+});
+
 // The shared pass's own rules (both callers), moved here from tests/issue-3418.test.ts.
 describe("#7354 F0 — elideDeadTopLevelBindings purity and declaration rules", () => {
   const elide = (src: string) => elideDeadTopLevelBindings(src, ts.ScriptKind.JS).elided;
