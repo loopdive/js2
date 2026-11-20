@@ -903,12 +903,12 @@ describe("#3525 internal genuine prepared-pipeline presentation", () => {
     expect(result).not.toHaveProperty("artifacts");
   });
 
-  it("executes genuine async work through the original helper without a legacy generator", () => {
+  it("refuses host-Promise async work by name after a genuine Prepared emission, without a legacy generator", () => {
     const prepare = vi.spyOn(preparation, "prepareWholeIrProgram");
     const accept = vi.spyOn(consumer, "acceptPreparedIrProgram");
     const emit = vi.spyOn(consumer, "emitAcceptedIrProgram");
     const poisons = poisonGenerators();
-    const result = artifacts(
+    const result = runPreparedIrPipelinePresentation(
       input(
         {
           "./entry.ts":
@@ -921,33 +921,23 @@ describe("#3525 internal genuine prepared-pipeline presentation", () => {
     expect(accept).toHaveBeenCalledOnce();
     expect(emit).toHaveBeenCalledOnce();
     for (const poison of poisons) expect(poison).not.toHaveBeenCalled();
-    expect(result).toHaveProperty("finalization.phase", "after-reference-widening");
-    expect(result).toHaveProperty("finalization.originalEmissionUnchanged", true);
-    expect(consumer.emittedPhysicalSetupPlan(result.emission).functions.length).toBeGreaterThan(0);
-    expect(result.emission.module.asyncFunctions).toEqual(new Set(["calculate"]));
-    const dir = mkdtempSync(join(tmpdir(), "ir-prepared-presentation-async-"));
-    try {
-      const runtime = pathToFileURL(join(import.meta.dirname, "../src/index.ts")).href;
-      const helper = result.artifacts.importsHelper.replace('from "js2wasm"', `from ${JSON.stringify(runtime)}`);
-      expect(helper).not.toBe(result.artifacts.importsHelper);
-      writeFileSync(join(dir, "module.imports.mjs"), helper);
-      writeFileSync(join(dir, "module.wasm"), result.artifacts.binary);
-      writeFileSync(
-        join(dir, "run.mjs"),
-        `import { readFileSync } from "node:fs";\nimport { types } from "node:util";\nimport { instantiateBytes } from "./module.imports.mjs";\nconst result = await instantiateBytes(readFileSync(new URL("./module.wasm", import.meta.url)));\nconst values = [];\nfor (const seed of [5, -3, 0.5]) { const promise = result.exports.calculate(seed); if (!types.isPromise(promise)) throw Error("expected real Promise"); values.push(await promise); }\nconsole.log(JSON.stringify(values));\n`,
-      );
-      const child = spawnSync(process.execPath, ["--import", "tsx", join(dir, "run.mjs")], {
-        cwd: join(import.meta.dirname, ".."),
-        encoding: "utf8",
-      });
-      expect(child.error).toBeUndefined();
-      expect(child.signal).toBeNull();
-      expect(child.status, `${child.stdout}\n${child.stderr}`).toBe(0);
-      expect(child.stderr).toBe("");
-      expect(JSON.parse(child.stdout.trim())).toEqual([17, -7, 3.5]);
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
+    // #6979 removed the host Promise semantics this module would import; the native lowering gap is #5385.
+    const retired = [
+      "Promise_new_pending",
+      "Promise_then2",
+      "Promise_resolve",
+      "Promise_settle_resolve",
+      "Promise_settle_reject",
+    ];
+    expect(result.kind).toBe("output-failed");
+    if (result.kind !== "output-failed") throw new Error("expected the retired-host-import refusal");
+    expect(result.errors.map((error) => error.message)).toEqual([
+      `The host-semantic implementation was removed (#6979); this module would need retired host imports: ${retired
+        .map(
+          (name) => `env::${name} (env builtin '${name}' is not an adapter, capability, lifecycle hook or accelerator)`,
+        )
+        .join(", ")}. The construct has no native lowering yet — a native regime gap belongs to #5385.`,
+    ]);
   });
 
   it("preserves a real located acceptance refusal from the consumer", () => {
