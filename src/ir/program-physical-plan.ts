@@ -1422,9 +1422,9 @@ export function planPhysicalSetup(
           );
         }
       } else if (instruction.kind === "intrinsic") {
-        const provider = instruction.provider;
-        if (!provider) gaps.add(`body ${fn.name} intrinsic ${instruction.id} has no physical provider`, diagnosticUnit);
-        else if (
+        // Stage 2 of the validator (#7380) owns "every intrinsic carries its provider".
+        const provider = instruction.provider!;
+        if (
           missingIntrinsicMaterialization(
             instruction,
             provider,
