@@ -85,7 +85,7 @@ exact head and no check failed.
 | #7309 | Fa | approved e22cb7c872; DIRTY | S4 is replacing `intoCarrier`'s `default:` with an exhaustive `never` check (a required change). RV7309 confirms the delta. Then merge main. |
 | #7338 | #7401 | approved c265dec8; head 24a7e51310 carries both should-fixes | RV7338 confirms 24a7e513, then release |
 | #7337 | #7369 (RegExp VM R0) | approved 79fc2e37b4; `quality` red | `check:orphaned-scripts`: scripts/check-regexp-byte-identity.mjs. RV7337's rework (fold into byte-diff-corpus.mts) removes it. S12. |
-| #7340 | #7355 refactor | BLOCKER on aad4c563; fix af0efa4e02 | RV7340 verdict on af0efa4e02 |
+| #7340 | #7355 refactor | approved af0efa4e02, released | none |
 | #7343 | #7410 | BLOCKER on 805df500 | (1) fold `.name` only for user-source declarations: lib aliases are "values"/"entries"; (2) drop the oracle-ratchet grant and use `ctx.oracle.declarationsOf`. S5. |
 | #7330 | B2c-2 | approved 698e094e; head 113000e82a; DIRTY | RV7330 delta confirmation, then merge main |
 | #7329 | #7372 R1 | BLOCKER | S10 move-only rework |
@@ -116,6 +116,21 @@ Unpushed work on branches, not PRs yet:
   1923c40270 (S13).
 - B2b (S5), declaration-as-value (S4), eval A0–A3 (S2), C1/C3 (S11): see
   their issue files.
+
+Suspended-work pointers the lanes reported at wind-down (ls-remote verified by
+each lane):
+- **S3:** `claude/7354-o` c6c1b4e8c8 holds `## Suspended Work`. Not started:
+  the Fa × O merge (decisions above), S13's shared-exn merge, the error-object
+  kind, and the O7 harness homes (`claude/7354-o-homes` was never pushed).
+- **S11:** `claude/7354-c` a80249cf. `claude/7354-c-int` 38400188 is
+  unverified. Step 1 is to diagnose why #7344 was dequeued with CI_FAILURE on
+  2026-11-20 09:32Z; it is probably the #7346 collateral, but that is not
+  confirmed.
+- **S2:** `claude/prepared-eval-a5` 765ef1e5 (eval A0–A3, no PR). Next: merge
+  main, re-measure, and open one held PR.
+- **S9:** `claude/es5-census-integ-rounds` c6b4d85484 (no PR). Next: merge
+  main and open it as the rounds docs PR.
+- **#7340** was approved on af0efa4e02 and released at wind-down.
 
 ## Decisions still open for the project lead
 
