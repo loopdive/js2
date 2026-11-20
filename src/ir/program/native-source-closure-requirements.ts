@@ -201,6 +201,7 @@ function calculate(demands: NativeStringValueDemands): Omit<NativeSourceClosureR
 }
 
 /** Descriptive derived requirements; the coordinator additionally authenticates the entire program. */
+import { PreparedIrSettledChecks } from "./settled-verdict.js";
 export function planNativeSourceClosureRequirements(
   program: PreparedIrProgram,
   projection: PreparedIrProgramRuntimeProjection,
@@ -209,12 +210,16 @@ export function planNativeSourceClosureRequirements(
   const data = calculate(demands);
   if (!data.signatures.length && !data.refCells.length && !data.refCellAllocations.length) return undefined;
   const snapshot = freezePreparedIrValue(data);
-  const result = Object.freeze({ ...data, demands });
+  const result = Object.freeze({ ...(snapshot as typeof data), demands });
   sources.set(result, { demands, snapshot, sourceSnapshot: freezePreparedIrValue(demands) });
   return result;
 }
 
 export function assertNativeSourceClosureRequirementsCurrent(requirements: NativeSourceClosureRequirements): void {
+  settledSourceClosures.check(requirements, () => checkNativeSourceClosureRequirements(requirements));
+}
+const settledSourceClosures = new PreparedIrSettledChecks<NativeSourceClosureRequirements>();
+function checkNativeSourceClosureRequirements(requirements: NativeSourceClosureRequirements): void {
   const source = sources.get(requirements);
   if (!source || source.demands !== requirements.demands) invalid("unissued or detached requirements");
   const { demands, ...data } = requirements;

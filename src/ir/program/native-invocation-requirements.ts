@@ -346,7 +346,12 @@ function needsObjectResultProof(source: NativeSourceClosureRequirements): boolea
   return false;
 }
 
+import { PreparedIrSettledChecks } from "./settled-verdict.js";
 export function assertNativeInvocationRequirementsCurrent(pack: NativeInvocationRequirements): void {
+  settledInvocations.check(pack, () => checkNativeInvocationRequirements(pack));
+}
+const settledInvocations = new PreparedIrSettledChecks<NativeInvocationRequirements>();
+function checkNativeInvocationRequirements(pack: NativeInvocationRequirements): void {
   const snapshot = owners.get(pack);
   if (!snapshot) fail("unissued or copied invocation requirements");
   assertNativePromiseSourceCensusCurrent(pack.runtimeCreated);
