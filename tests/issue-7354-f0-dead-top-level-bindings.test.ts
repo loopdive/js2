@@ -8,6 +8,7 @@
 import { readFileSync } from "node:fs";
 import vm from "node:vm";
 import { describe, expect, it } from "vitest";
+import { detectEarlyErrors } from "../src/compiler/early-errors/index.js";
 import { elideDeadTopLevelBindings } from "../src/deadcode-elide.js";
 import { compile as ordinaryCompile } from "../src/index.js";
 import { instantiateWithRuntime } from "./equivalence/helpers.js";
@@ -316,6 +317,16 @@ describe("#7354 F0 — elideDeadTopLevelBindings purity and declaration rules", 
   it("never drops a declaration of a non-configurable global", () => {
     for (const src of ["var undefined = 1;\n", "var NaN;\n", "let Infinity;\n", "const undefined = 1;\n"])
       expect(elide(src)).toEqual([]);
+  });
+
+  // The elision's pins come from this detector in runner mode: a function body, also one inside a class static
+  // block, is a StatementList whose labels restart.
+  it.each([
+    ["a function", "var g = function () { l: l: ; };"],
+    ["a function in a class static block", "var c = class { static { function f() { l: l: ; } } };"],
+  ])("reports a duplicate label inside %s as an early error", (_name, source) => {
+    const sf = ts.createSourceFile("test.js", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
+    expect(detectEarlyErrors(sf).map((error) => error.message)).toContain("Duplicate label 'l'");
   });
 
   it("never drops a statement holding a pinned offset", () => {
