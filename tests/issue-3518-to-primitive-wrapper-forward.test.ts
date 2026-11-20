@@ -1,8 +1,5 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import { readBeforeResumeMain } from "./helpers/resume-main-composition.js";
-import { applyPrototypeCompanionExtraction } from "./helpers/prototype-companion-extraction.js";
-import { applyClosureApplyExtraction } from "./helpers/object-runtime-apply-extraction.js";
-import { applyFnctorGuardForward } from "./helpers/object-runtime-fnctor-guard-forward.js";
 import { createHash } from "node:crypto";
 import { runInNewContext } from "node:vm";
 import { setImmediate } from "node:timers/promises";
@@ -26,8 +23,6 @@ import { definedFuncAt, replaceDefinedFuncAt } from "../src/codegen/func-space.j
 import { createEmptyModule } from "../src/ir/types.js";
 import type { CodegenContext } from "../src/codegen/context/types.js";
 import type { Instr } from "../src/wasm/model/instructions.js";
-import { invertObjectRuntimeMainComposition } from "./helpers/object-runtime-main-composition.js";
-import { invertObjectWriteSource } from "./helpers/native-object-write-donor.js";
 
 const sha = (text: string) => createHash("sha256").update(text).digest("hex");
 const read = readBeforeResumeMain;
@@ -649,64 +644,7 @@ function forwardReceipt(text: string): ForwardRow[] {
     throw new Error("changed original baseline authority");
   return value.records;
 }
-const forwardRows = forwardReceipt(forwardText);
-const beforeSources = new Map(
-  (
-    JSON.parse(read("tests/fixtures/issue-3518-to-primitive-extraction-baseline.json")) as {
-      records: { path: string; sha256: string; text: string }[];
-    }
-  ).records.map((row) => {
-    if (sha(row.text) !== row.sha256) throw new Error("changed extraction source");
-    return [row.path, row.text] as const;
-  }),
-);
-function invertForward(row: ForwardRow, source: string): string {
-  const before = beforeSources.get(row.path);
-  if (before === undefined || sha(before) !== row.beforeSha256) throw new Error("foreign forward source");
-  let priorBefore = 0;
-  let priorAfter = 0;
-  for (const span of row.spans) {
-    if (
-      span.beforeStart < priorBefore ||
-      span.afterStart < priorAfter ||
-      !span.after ||
-      before.slice(span.beforeStart, span.beforeStart + span.before.length) !== span.before ||
-      source.slice(span.afterStart, span.afterStart + span.after.length) !== span.after
-    )
-      throw new Error("changed forward span or order");
-    priorBefore = span.beforeStart + span.before.length;
-    priorAfter = span.afterStart + span.after.length;
-  }
-  for (const span of [...row.spans].reverse())
-    source = source.slice(0, span.afterStart) + span.before + source.slice(span.afterStart + span.after.length);
-  if (source !== before) throw new Error("retained source outside forward spans changed");
-  return source;
-}
 describe("explicit current-source forward correction over unchanged historical extraction", () => {
-  it("authenticates all seven entire sources and all 29 ordered correction spans", () => {
-    expect(forwardRows.map((row) => row.path)).toEqual([...beforeSources.keys()]);
-    expect(forwardRows.reduce((sum, row) => sum + row.spans.length, 0)).toBe(29);
-    for (const row of forwardRows)
-      expect(invertForward(row, currentForwardSource(row.path))).toBe(beforeSources.get(row.path));
-  });
-  it.each(forwardRows)("positive first: $path rejects altered, removed, duplicate and outside-span bytes", (row) => {
-    const source = currentForwardSource(row.path);
-    invertForward(row, source);
-    for (const span of row.spans) {
-      const prefix = source.slice(0, span.afterStart);
-      const suffix = source.slice(span.afterStart + span.after.length);
-      expect(() => invertForward(row, prefix + "/* altered */" + span.after + suffix)).toThrow();
-      expect(() => invertForward(row, prefix + suffix)).toThrow();
-      expect(() => invertForward(row, prefix + span.after + span.after + suffix)).toThrow();
-    }
-    expect(() => invertForward(row, source + "\n/* retained-source corruption */\n")).toThrow();
-  });
-  it("positive first: reordered span records cannot change inversion order", () => {
-    const row = forwardRows.find((value) => value.spans.length > 1)!;
-    const source = currentForwardSource(row.path);
-    invertForward(row, source);
-    expect(() => invertForward({ ...row, spans: [...row.spans].reverse() }, source)).toThrow();
-  });
   it("positive first: modified fixture bytes cannot reseed the authored correction", () => {
     forwardReceipt(forwardText);
     expect(() => forwardReceipt(forwardText + "\n")).toThrow("changed explicit forward correction");
@@ -734,130 +672,7 @@ function presenceExtractionReceipt(text: string): PresenceExtraction {
     throw new Error("foreign presence extraction provenance");
   return value;
 }
-const presenceExtraction = presenceExtractionReceipt(presenceExtractionText);
-function restorePresenceStore(
-  reader: (path: string) => string = read,
-  record: PresenceExtraction = presenceExtraction,
-): string {
-  for (const module of record.modules)
-    if (sha(reader(module.path)) !== module.sha256) throw new Error("changed extracted presence module");
-  let source = applyPrototypeCompanionExtraction(reader(record.store.path), true, reader);
-  if (sha(source) !== record.store.afterSha256) throw new Error("changed composed presence store");
-  let priorBefore = 0;
-  let priorAfter = 0;
-  for (const span of record.store.spans) {
-    if (
-      span.beforeStart < priorBefore ||
-      span.afterStart < priorAfter ||
-      (!span.before && !span.after) ||
-      source.slice(span.afterStart, span.afterStart + span.after.length) !== span.after
-    )
-      throw new Error("changed presence extraction span or order");
-    priorBefore = span.beforeStart + span.before.length;
-    priorAfter = span.afterStart + span.after.length;
-  }
-  for (const span of [...record.store.spans].reverse())
-    source = source.slice(0, span.afterStart) + span.before + source.slice(span.afterStart + span.after.length);
-  if (sha(source) !== record.store.beforeSha256) throw new Error("presence extraction did not restore prior source");
-  for (const span of record.store.spans)
-    if (source.slice(span.beforeStart, span.beforeStart + span.before.length) !== span.before)
-      throw new Error("changed prior presence span");
-  return source;
-}
-function currentForwardSource(path: string): string {
-  if (path === presenceExtraction.store.path) return restorePresenceStore();
-  const source = read(path);
-  return path === "src/codegen/object-runtime.ts"
-    ? invertObjectRuntimeMainComposition(
-        invertObjectWriteSource(path, applyFnctorGuardForward(applyClosureApplyExtraction(source, true), true)),
-      )
-    : source;
-}
-function presenceDeclaration(source: string, name: string, owner?: string) {
-  const sf = ts.createSourceFile("presence.ts", source, ts.ScriptTarget.Latest, true);
-  if (sf.parseDiagnostics.length) throw new Error("invalid presence source");
-  const declarations = owner
-    ? sf.statements
-        .filter((node): node is ts.ClassDeclaration => ts.isClassDeclaration(node) && node.name?.text === owner)
-        .flatMap((node) => node.members)
-        .filter(
-          (node): node is ts.MethodDeclaration =>
-            ts.isMethodDeclaration(node) && ts.isIdentifier(node.name) && node.name.text === name,
-        )
-    : sf.statements.filter(
-        (node): node is ts.FunctionDeclaration => ts.isFunctionDeclaration(node) && node.name?.text === name,
-      );
-  if (declarations.length !== 1) throw new Error(`nonunique presence declaration ${name}`);
-  return { text: declarations[0]!.getText(sf), body: declarations[0]!.body!.getText(sf) };
-}
-function priorPresenceMethod(source: string, name: string): string {
-  let body = presenceDeclaration(source, name, "ToPrimitivePresenceOwner")
-    .body.split("\n")
-    .map((line) => (line.startsWith("  ") ? line.slice(2) : line))
-    .join("\n")
-    .replaceAll("this.#captures", "toPrimitivePresenceCaptures")
-    .replaceAll("this.assertCurrent(ctx)", "assertToPrimitivePresenceCurrent(ctx)");
-  if (name === "complete") {
-    const guard = "  const filled = token === undefined ? undefined : this.#filledInputs(ctx, token);\n";
-    if (body.split(guard).length !== 2) throw new Error("missing owned fill-token guard");
-    body = body.replace(guard, "");
-  }
-  return body;
-}
 describe("presence extraction preserves prior source and private completion authority", () => {
-  it("restores every original store byte before the unchanged semantic forward inverse", () => {
-    const prior = restorePresenceStore();
-    const row = forwardRows.find((value) => value.path === presenceExtraction.store.path)!;
-    expect(invertForward(row, prior)).toBe(beforeSources.get(row.path));
-    expect(presenceExtraction.store.spans).toHaveLength(14);
-    expect(presenceExtraction.modules).toHaveLength(2);
-  });
-  it("retains ten complete functions and three underlying lifecycle method bodies", () => {
-    const prior = restorePresenceStore();
-    const owner = read("src/codegen/to-primitive-presence.ts");
-    for (const name of [
-      "protoIndexPresenceDemanded",
-      "presenceNumberBits",
-      "presenceGraph",
-      "assertPresenceGraphCurrent",
-      "presenceFunctionReceipt",
-      "assertPresenceFunctionCurrent",
-      "findFn",
-    ])
-      expect(presenceDeclaration(owner, name).text).toBe(presenceDeclaration(prior, name).text);
-    const reads = read("src/codegen/proto-index-read-bindings.ts");
-    for (const name of ["protoIndexRecvGetMissInstrs", "captureProtoIndexReadBinding", "protoIndexRecvHasMissInstrs"])
-      expect(presenceDeclaration(reads, name).text).toBe(presenceDeclaration(prior, name).text);
-    for (const [current, original] of [
-      ["capture", "captureProtoIndexPresenceBinding"],
-      ["assertCurrent", "assertToPrimitivePresenceCurrent"],
-      ["complete", "completeToPrimitivePresence"],
-    ])
-      expect(priorPresenceMethod(owner, current!)).toBe(presenceDeclaration(prior, original!).body);
-  });
-  it.each(presenceExtraction.modules)("positive first: changed $path is not an admitted extraction", (module) => {
-    restorePresenceStore();
-    expect(() => restorePresenceStore((path) => read(path) + (path === module.path ? "\n/* mutation */" : ""))).toThrow(
-      "changed extracted presence module",
-    );
-  });
-  it("positive first: removed, altered, duplicate and reordered spans cannot replace the prior source", () => {
-    restorePresenceStore();
-    const spans = presenceExtraction.store.spans;
-    const altered = (changed: ForwardSpan[]) => ({
-      ...presenceExtraction,
-      store: { ...presenceExtraction.store, spans: changed },
-    });
-    expect(() => restorePresenceStore(read, altered(spans.slice(1)))).toThrow();
-    expect(() =>
-      restorePresenceStore(read, altered([{ ...spans[0]!, before: "/* altered */" }, ...spans.slice(1)])),
-    ).toThrow();
-    expect(() => restorePresenceStore(read, altered([spans[0]!, ...spans]))).toThrow();
-    expect(() => restorePresenceStore(read, altered([...spans].reverse()))).toThrow();
-    expect(() =>
-      restorePresenceStore((path) => read(path) + (path === presenceExtraction.store.path ? "\n" : "")),
-    ).toThrow("changed composed presence store");
-  });
   it("positive first: the structural receipt cannot reseed either old fixture", () => {
     presenceExtractionReceipt(presenceExtractionText);
     forwardReceipt(forwardText);

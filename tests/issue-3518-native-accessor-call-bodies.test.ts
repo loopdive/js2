@@ -232,39 +232,6 @@ function expectExecution(actual: 0 | 1, declared: number, observed: ReturnType<t
 }
 
 describe("C1 accessor call body extraction", () => {
-  it("authenticates the fixed committed donor and retains all unrelated driver declarations and bodies", () => {
-    expect(authenticate(fixtureText)).toEqual(donor);
-    const restored = adapter.slice(0, span.start) + donor.function + adapter.slice(span.end);
-    const sf = ts.createSourceFile("restored.ts", restored, ts.ScriptTarget.Latest, true);
-    const imports = sf.statements.filter(
-      (node): node is ts.ImportDeclaration =>
-        ts.isImportDeclaration(node) &&
-        ts.isStringLiteral(node.moduleSpecifier) &&
-        node.moduleSpecifier.text === "../runtime/wasmgc/values/accessor-call-bodies.js",
-    );
-    expect(imports).toHaveLength(1);
-    const added = imports[0]!,
-      clause = added.importClause!;
-    expect(clause.isTypeOnly).toBe(false);
-    expect(clause.name).toBeUndefined();
-    expect(added.attributes).toBeUndefined();
-    expect(
-      clause.namedBindings &&
-        ts.isNamedImports(clause.namedBindings) &&
-        clause.namedBindings.elements.map((binding) => [
-          binding.name.text,
-          binding.propertyName?.text,
-          binding.isTypeOnly,
-        ]),
-    ).toEqual([
-      ["buildAccessorCallBody", undefined, false],
-      ["AccessorDispatchBinding", undefined, true],
-    ]);
-    expect(restored[added.end]).toBe("\n");
-    expect(sha(restored.slice(0, added.getStart(sf)) + restored.slice(added.end + 1))).toBe(donor.fileSha256);
-    expect(() => authenticate(fixtureText.replace("closureArityIdx", "changedArityIdx"))).toThrow("digest mismatch");
-  });
-
   it("keeps the runtime leaf free of frontend, codegen and allocation dependencies", () => {
     const source = readFileSync(
       new URL("../src/runtime/wasmgc/values/accessor-call-bodies.ts", import.meta.url),

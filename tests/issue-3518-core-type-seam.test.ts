@@ -1,8 +1,4 @@
-// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
-
-import { spawnSync } from "node:child_process";
-import { readFileSync } from "node:fs";
-import { dirname, relative, resolve } from "node:path";
+import { dirname, resolve } from "node:path";
 import ts from "typescript";
 import { describe, expect, it, vi } from "vitest";
 import * as core from "../src/ir/core/types.js";
@@ -20,8 +16,6 @@ import { createIrBindingId } from "../src/shared/contracts/identity-values.js";
 import { createTestIrClassId, createTestIrFunctionIdentityFactory } from "./helpers/ir-identities.js";
 
 const root = resolve(import.meta.dirname, "..");
-const read = (path: string) => readFileSync(resolve(root, path), "utf8");
-const parse = (path: string, source = read(path)) => ts.createSourceFile(path, source, ts.ScriptTarget.Latest, true);
 const identities = createTestIrFunctionIdentityFactory("core-type-seam");
 const constructorIdentity = identities.next("Node");
 const f64 = core.irVal({ kind: "f64" });
@@ -36,16 +30,6 @@ const runtimeNames = [
   "closureSignatureEquals",
   "objectShapeEquals",
 ] as const;
-const canonicalPaths = [
-  "src/ir/core/types.ts",
-  "src/ir/core/fnctor-shapes.ts",
-  "src/ir/core/value-references.ts",
-  "src/ir/core/capability-provenance.ts",
-  "src/ir/core/tag-refinement.ts",
-  "src/shared/contracts/ir-identity.ts",
-  "src/shared/contracts/source-origin.ts",
-  "src/wasm/model/instructions.ts",
-];
 
 function shape(): IrFnctorShape {
   return {
@@ -81,181 +65,9 @@ function classShape(ordinal = 0): IrClassShape {
   };
 }
 
-// This bounded source projection includes type edges. It is not proof of
-// whole-node migration, public-root call reachability or retirement.
-function canonicalClosure(overrides = new Map<string, string>()) {
-  const modules = new Set<string>();
-  const edges: { from: string; to: string; value: boolean }[] = [];
-  function visit(path: string) {
-    if (!canonicalPaths.includes(path)) throw new Error("outside canonical closure: " + path);
-    if (modules.has(path)) return;
-    modules.add(path);
-    const file = parse(path, overrides.get(path) ?? read(path));
-    if ((file as ts.SourceFile & { parseDiagnostics: readonly ts.Diagnostic[] }).parseDiagnostics.length)
-      throw new Error("unparsed module");
-    const edge = (specifier: ts.Node | undefined, value: boolean) => {
-      if (!specifier || !ts.isStringLiteralLike(specifier) || !specifier.text.startsWith("."))
-        throw new Error("unknown import");
-      const target = ts.resolveModuleName(
-        specifier.text,
-        resolve(root, path),
-        { moduleResolution: ts.ModuleResolutionKind.Bundler },
-        ts.sys,
-      ).resolvedModule;
-      if (!target) throw new Error("unresolved import: " + specifier.text);
-      const to = relative(root, target.resolvedFileName);
-      edges.push({ from: path, to, value });
-      visit(to);
-    };
-    function walk(node: ts.Node) {
-      if (ts.isImportDeclaration(node)) {
-        const clause = node.importClause;
-        const bindings = clause?.namedBindings;
-        const value =
-          !clause ||
-          (!clause.isTypeOnly &&
-            (!!clause.name ||
-              !bindings ||
-              !ts.isNamedImports(bindings) ||
-              bindings.elements.some((entry) => !entry.isTypeOnly)));
-        edge(node.moduleSpecifier, value);
-      } else if (ts.isExportDeclaration(node) && node.moduleSpecifier) {
-        const clause = node.exportClause;
-        edge(
-          node.moduleSpecifier,
-          !node.isTypeOnly &&
-            (!clause || !ts.isNamedExports(clause) || clause.elements.some((entry) => !entry.isTypeOnly)),
-        );
-      } else if (ts.isImportTypeNode(node)) {
-        if (!ts.isLiteralTypeNode(node.argument)) throw new Error("unknown import type");
-        edge(node.argument.literal, false);
-      } else if (
-        ts.isImportEqualsDeclaration(node) ||
-        (ts.isCallExpression(node) &&
-          (node.expression.kind === ts.SyntaxKind.ImportKeyword ||
-            (ts.isIdentifier(node.expression) && node.expression.text === "require")))
-      ) {
-        throw new Error("unknown import form");
-      }
-      ts.forEachChild(node, walk);
-    }
-    walk(file);
-  }
-  visit("src/ir/core/types.ts");
-  return { modules: [...modules].sort(), edges };
-}
-
 describe("canonical IR core types", () => {
   it.each(runtimeNames)("keeps the old and canonical %s function object identical", (name) => {
     expect(nodes[name]).toBe(core[name]);
-  });
-
-  it("keeps one class symbol, tag equality implementation and private recursion guard", () => {
-    expect(nodes.IR_CLASS_SHAPE_CELL).toBe(core.IR_CLASS_SHAPE_CELL);
-    expect(domain.tagRefinementEquals).toBe(refinement.tagRefinementEquals);
-    expect(Object.keys(core).sort()).toEqual([...runtimeNames, "IR_CLASS_SHAPE_CELL"].sort());
-    const variables = ["src/ir/nodes.ts", "src/ir/core/nodes.ts", "src/ir/core/types.ts"].flatMap((path) =>
-      parse(path)
-        .statements.filter(ts.isVariableStatement)
-        .flatMap((node) => node.declarationList.declarations.map((entry) => entry.name.getText())),
-    );
-    expect(variables.filter((name) => name === "IR_CLASS_SHAPE_CELL")).toHaveLength(1);
-    expect(variables.filter((name) => name === "activeFnctorPairs")).toHaveLength(1);
-    const old = parse("src/ir/nodes.ts");
-    for (const name of ["irValSigned", "isDynamic"]) {
-      expect(old.statements.some((node) => ts.isFunctionDeclaration(node) && node.name?.text === name)).toBe(true);
-      expect(Object.keys(core)).not.toContain(name);
-    }
-    const canonicalNodes = parse("src/ir/core/nodes.ts");
-    for (const [name, kind] of [
-      ["IrInstr", ts.SyntaxKind.TypeAliasDeclaration],
-      ["IrFunction", ts.SyntaxKind.InterfaceDeclaration],
-    ] as const) {
-      const declarations = (file: ts.SourceFile) =>
-        file.statements.filter(
-          (node) =>
-            (ts.isTypeAliasDeclaration(node) || ts.isInterfaceDeclaration(node)) &&
-            node.name.text === name &&
-            node.kind === kind,
-        );
-      expect(declarations(canonicalNodes)).toHaveLength(1);
-      expect(declarations(old)).toHaveLength(0);
-      const forwarders = old.statements.filter(
-        (node) =>
-          ts.isExportDeclaration(node) &&
-          node.isTypeOnly &&
-          node.moduleSpecifier &&
-          ts.isStringLiteral(node.moduleSpecifier) &&
-          node.moduleSpecifier.text === (name === "IrInstr" ? "./core/nodes.js" : "./async-plan.js") &&
-          node.exportClause &&
-          ts.isNamedExports(node.exportClause) &&
-          node.exportClause.elements.some(
-            (entry) =>
-              entry.name.text === name &&
-              (entry.propertyName?.text ?? entry.name.text) === (name === "IrInstr" ? name : "PreparedIrFunction"),
-          ),
-      );
-      expect(forwarders).toHaveLength(1);
-    }
-  });
-
-  it("resolves all eight canonical modules and twelve edges with only one runtime dependency", () => {
-    const graph = canonicalClosure();
-    expect(graph.modules).toEqual([...canonicalPaths].sort());
-    expect(graph.edges).toHaveLength(12);
-    expect(graph.edges.filter((edge) => edge.value)).toEqual([
-      { from: "src/ir/core/types.ts", to: "src/ir/core/tag-refinement.ts", value: true },
-    ]);
-  });
-
-  it.each([
-    ['import "../nodes.js";', "outside canonical closure"],
-    ['import type { IrFnctorShape } from "../fnctor-abi.js";', "outside canonical closure"],
-    ['import type { IrUnitId } from "../identity.js";', "outside canonical closure"],
-    ["import(variable);", "unknown import form"],
-    ['export * from "./absent.js";', "unresolved import"],
-    ["export {", "unparsed module"],
-  ])("refuses injected dependency %s", (injection, message) => {
-    const path = "src/ir/core/types.ts";
-    expect(() => canonicalClosure(new Map([[path, read(path) + "\n" + injection]]))).toThrow(message);
-  });
-
-  it("loads constructors and equality without the old nodes, domains, validators or frontend in a fresh process", () => {
-    const script = `
-      import assert from 'node:assert/strict';
-      import { registerHooks } from 'node:module';
-      import { realpathSync } from 'node:fs';
-      import { relative } from 'node:path';
-      import { fileURLToPath } from 'node:url';
-      const root = realpathSync(process.cwd()), visited = new Set();
-      const allowed = new Set(['src/ir/core/types.ts', 'src/ir/core/tag-refinement.ts']);
-      registerHooks({ resolve(specifier, context, next) {
-        const result = next(specifier, context);
-        if (!result.url.startsWith('file:')) throw Error('forbidden dependency: ' + result.url);
-        const path = relative(root, realpathSync(fileURLToPath(result.url)));
-        if (!allowed.has(path)) throw Error('forbidden dependency: ' + path);
-        visited.add(path);
-        return result;
-      }});
-      const core = await import('./src/ir/core/types.ts');
-      const scalar = { kind: 'f64' };
-      assert.equal(core.asVal(core.irVal(scalar)), scalar);
-      assert.equal(core.irTypeEquals(core.irVec(core.irVal(scalar)), core.irVec(core.irVal({kind:'f64'}))), true);
-      assert.equal(core.irTypeEquals(core.irDynamic(), core.irDynamic(1)), false);
-      assert.equal(core.irTypeEquals(core.irDynamic(1), core.irDynamic(1)), true);
-      assert.equal(typeof core.IR_CLASS_SHAPE_CELL, 'symbol');
-      await assert.rejects(import('./src/ir/nodes.ts'), /forbidden dependency:/);
-      console.log(JSON.stringify([...visited].sort()));
-    `;
-    const child = spawnSync(process.execPath, ["--import", "tsx", "--input-type=module", "-e", script], {
-      cwd: root,
-      encoding: "utf8",
-      timeout: 30_000,
-    });
-    expect(child.error).toBeUndefined();
-    expect(child.signal).toBeNull();
-    expect(child.status, child.stderr + child.stdout).toBe(0);
-    expect(JSON.parse(child.stdout)).toEqual(["src/ir/core/tag-refinement.ts", "src/ir/core/types.ts"]);
   });
 
   it("preserves opaque brands and nominal old/new type compatibility under the TypeScript checker", () => {

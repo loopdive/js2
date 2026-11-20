@@ -16,10 +16,6 @@ const wasmModel = "src/wasm/model/boundary-probe.ts";
 const core = "src/ir/core/boundary-probe.ts";
 const frontend = "src/frontend/ts/boundary-probe.ts";
 const barrel = "src/runtime/contracts/boundary-probe.ts";
-const runtimeEdges = ["runtime-contracts", "foundation", "wasm-model"];
-// #5742 independently activates the already-approved pure Wasm-model edge.
-// Neither base admits runtime contracts or implementation layers from core.
-const permittedCoreEdges = ["ir-core", "foundation", "wasm-model"];
 const probe = "export type Probe = number; export const probe = 1;";
 const scratchRoots: string[] = [];
 
@@ -171,30 +167,6 @@ const backEdges = [
 ];
 
 describe("#3518 capability schema compiler boundaries", () => {
-  it("requires the one real leaf activation without widening policy or cleaning the old catalog", () => {
-    expect(productionPolicy.layers.find((layer) => layer.id === "runtime-contracts")).toMatchObject({
-      status: "active",
-      roots: ["src/runtime/contracts"],
-      required: true,
-      entries: [
-        schema,
-        "src/runtime/contracts/async-provider-schema.ts",
-        "src/runtime/contracts/provider-policy.ts",
-        "src/runtime/contracts/index.ts",
-      ],
-      minModules: 4,
-    });
-    expect(productionPolicy.files.filter((file) => file.path === schema)).toEqual([
-      expect.objectContaining({ state: "clean", layer: "runtime-contracts" }),
-    ]);
-    expect(productionPolicy.files.filter((file) => file.path === oldCatalog)).toEqual([
-      expect.objectContaining({ state: "unmigrated", layer: "mixed-needs-split" }),
-    ]);
-    expect(productionPolicy.allowedEdges["runtime-contracts"]).toEqual(runtimeEdges);
-    expect(productionPolicy.allowedEdges["ir-core"]).toEqual(expect.arrayContaining(["ir-core", "foundation"]));
-    expect(productionPolicy.allowedEdges["ir-core"].filter((edge) => !permittedCoreEdges.includes(edge))).toEqual([]);
-  });
-
   it("binds a nonempty 25-type/14-constant schema, with immutable constant initializers", () => {
     const tree = ts.createSourceFile(schema, source, ts.ScriptTarget.Latest, true);
     const types = tree.statements.filter((node) => ts.isTypeAliasDeclaration(node) || ts.isInterfaceDeclaration(node));

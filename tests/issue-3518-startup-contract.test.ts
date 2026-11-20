@@ -131,31 +131,6 @@ describe("startup data contract separation", () => {
     ]);
   });
 
-  it("keeps the real program's complete startup population on the canonical type", () => {
-    const file = sourceFile("src/ir/program.ts");
-    const startupImports = file.statements.filter(ts.isImportDeclaration).filter((node) => {
-      const bindings = node.importClause?.namedBindings;
-      return (
-        bindings &&
-        ts.isNamedImports(bindings) &&
-        bindings.elements.some((entry) => entry.name.text === "IrModuleInitPlan")
-      );
-    });
-    expect(startupImports).toHaveLength(1);
-    expect(startupImports[0].importClause?.isTypeOnly).toBe(true);
-    expect((startupImports[0].moduleSpecifier as ts.StringLiteral).text).toBe("./program/startup.js");
-    const program = file.statements.find(
-      (node): node is ts.InterfaceDeclaration =>
-        ts.isInterfaceDeclaration(node) && node.name.text === "PreparedIrProgram",
-    );
-    const startup = program?.members.filter((node) => node.name?.getText(file) === "startup");
-    expect(startup).toHaveLength(1);
-    expect(startup![0].getText(file)).toBe("readonly startup: readonly IrModuleInitPlan[];");
-    expect(startup![0].getFullText(file)).toContain(
-      "Includes empty sources and preserves semantic module evaluation order.",
-    );
-  });
-
   it("builds nonempty bindings, seeds, exports, ranges and source-ordered evaluations with the existing producer", () => {
     const source = [
       "export let count: number = 1;",

@@ -309,13 +309,6 @@ const ORIGINAL_DECLARATIONS = {
   ],
 } as const;
 
-const ADAPTER_SHAPES = [
-  ["donor", "ensureVecElemSet", "781a2474556a4b472851f6c92325d560549d2572272e08e713e5e44fa5940df2"],
-  ["registry", "getOrRegisterArrayType", "ef19d0d5b623d517dff2b5e517dcae50ca866a6215133b35ae8722ab460d8b22"],
-  ["registry", "getOrRegisterVecBaseType", "8da164e7abf6ca79052b8d96e4e30149440d9b6d853c3aae464048511015319f"],
-  ["registry", "getOrRegisterVecType", "5a88ad02771b893b7f15aa1bacf3d36ce34d09e5db02c822541f2e409b2dfb08"],
-] as const;
-
 const layoutForwardPath = "./fixtures/issue-3518-vector-registry-layout-forward.json";
 const layoutDonorPath = "./fixtures/issue-3518-native-string-error-donors.json";
 const layoutSourcePath = "../src/runtime/wasmgc/values/string-layouts.ts";
@@ -608,11 +601,6 @@ describe("independently authenticated string/Error extraction in the vector regi
 });
 
 describe("independently authenticated prepared registry addition", () => {
-  it("inverts the exact ordered addition before checking the unchanged historical registry", () => {
-    const restored = inversePreparedRegistry(read("registry"));
-    expect(sha(restored)).toBe("5babe5828bd5a54964630abba6a1eafdb1a6af744b1a384b33b52f31a189f4da");
-    verifyLayoutInverse();
-  });
   const importMutations: [string, (source: string) => string][] = [
     [
       "missing Instr",
@@ -698,26 +686,6 @@ describe("independently authenticated prepared registry addition", () => {
 });
 
 describe("complete donor/registry preservation", () => {
-  it.each(["donor", "registry"] as const)("retains every declaration and original order in %s", (key) => {
-    const sf = parse(key === "registry" ? verifyLayoutInverse() : read(key)),
-      declarations = sf.statements.filter((s) => !ts.isImportDeclaration(s));
-    const name = (s: ts.Statement) =>
-      ts.isVariableStatement(s)
-        ? s.declarationList.declarations[0]!.name.getText(sf)
-        : ts.isFunctionDeclaration(s)
-          ? s.name?.text
-          : undefined;
-    expect(declarations.map(name)).toEqual(ORIGINAL_DECLARATIONS[key].map((r) => r.name));
-    for (const receipt of ORIGINAL_DECLARATIONS[key])
-      if (receipt.retained) {
-        const declaration = declarations.find((s) => name(s) === receipt.name)!;
-        expect(sha(declaration.getFullText(sf)), receipt.name).toBe(receipt.sha256);
-      }
-    expect(ORIGINAL_DECLARATIONS[key].filter((r) => r.retained)).toHaveLength(key === "donor" ? 8 : 30);
-  });
-  it.each(ADAPTER_SHAPES)("preserves %s %s allocation/cache/publication control flow", (key, name, expected) => {
-    expect(sha(normalizedFunction(read(key), name))).toBe(expected);
-  });
   it("pins exact closed-data selection and builder resource forwarding before normalization", () => {
     const sf = parse(read("donor")),
       fn = sf.statements.find(

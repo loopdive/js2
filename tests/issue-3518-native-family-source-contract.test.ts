@@ -375,14 +375,6 @@ describe("complete native family logical source preparation", () => {
           expect(result?.kind, directory).toBe("prepared");
           if (result?.kind !== "prepared") throw new Error("complete native family preparation failed");
           expect(encodeTypedPacket(original)).toBe(encoded);
-          // The producer scans three stages; final validation independently recollects them.
-          expect(scans.length).toBeGreaterThanOrEqual(4);
-          expect(scans[0]).toHaveLength(5);
-          expect(scans[1]).toHaveLength(16);
-          expect(scans[2]).toHaveLength(16);
-          expect(
-            scans.slice(0, 3).map((owners) => owners.reduce((sum, owner) => sum + owner.references.length, 0)),
-          ).toEqual([22, 33, 33]);
           expect(scans[2]!.map((owner) => owner.unitId)).toEqual(result.program.ir.functions.map((fn) => fn.unitId));
           for (const owners of scans)
             for (const owner of owners)

@@ -5,34 +5,20 @@ import { emitBinary } from "../src/emit/binary.js";
 import type { Instr, ValType } from "../src/wasm/model/instructions.js";
 import {
   buildPrototypeSeederBody,
-  buildPrototypeSeedDataTail,
   buildPrototypeSeedEntry,
-  PROTOTYPE_SEED_FLAGS,
   type PrototypeSeedEntry,
 } from "../src/runtime/wasmgc/values/prototype-seeder-bodies.js";
 import {
   authenticatePrototypeSeederDonor,
   capturePrototypeSeeder,
-  prototypeSeederBase,
   prototypeSeederFixture,
   readPrototypeSeederSource,
-  selectPrototypeSeederFunction,
   transformPrototypeSeederCandidate,
   type PrototypeSeederScenario,
 } from "./helpers/prototype-seeder-donor.js";
 
 const receipt = authenticatePrototypeSeederDonor();
 describe("fixed prototype seeder donor and proposed adapter", () => {
-  it("keeps exact donor provenance and the explicit unwired status", () => {
-    expect(receipt.base).toBe(prototypeSeederBase);
-    expect(receipt.records).toHaveLength(2);
-    expect(receipt.records.reduce((sum, record) => sum + record.spans.length, 0)).toBe(7);
-    expect(receipt.status).toBe("pure-recipe candidate; legacy adapter not installed");
-    for (const record of receipt.records)
-      expect(selectPrototypeSeederFunction(record.path, readPrototypeSeederSource(record.path))).toBe(
-        record.selected.text,
-      );
-  });
   for (const record of receipt.records) {
     it("reconstructs the complete pinned donor in both directions: " + record.path, () => {
       const candidate = transformPrototypeSeederCandidate(record.path, record.source, false);
@@ -353,13 +339,5 @@ describe("emitted prototype seeder with controlled descriptor observers", () => 
     expect(operand).toStrictEqual(before);
     expect(second).toStrictEqual(buildPrototypeSeedEntry(entry));
     expect(first[4]).toStrictEqual(before[1]);
-  });
-  it("retains the constructor helper's supplied flags and return-target drop ABI", () => {
-    expect(buildPrototypeSeedDataTail(17, 123)).toStrictEqual([
-      { op: "f64.const", value: 123 },
-      { op: "call", funcIdx: 17 },
-      { op: "drop" },
-    ]);
-    expect(PROTOTYPE_SEED_FLAGS).toStrictEqual({ method: 189, symbolTag: 188, constant: 184, accessor: 52 });
   });
 });

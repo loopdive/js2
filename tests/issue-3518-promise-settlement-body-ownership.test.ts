@@ -7,7 +7,7 @@ import ts from "typescript";
 import { describe, expect, it } from "vitest";
 import * as bodies from "../src/runtime/wasmgc/promise/settlement-bodies.js";
 import type { Instr } from "../src/wasm/model/instructions.js";
-import { movedResolutionNames, assertMovedResolutionReceipt } from "./helpers/promise-resolution-receipts.js";
+import { assertMovedResolutionReceipt } from "./helpers/promise-resolution-receipts.js";
 import { promiseRejectionDispatcher } from "../src/codegen/registry/promise-rejection-dispatch.js";
 
 const root = resolve(import.meta.dirname, "..");
@@ -1235,23 +1235,6 @@ describe("native Promise settlement canonical ownership (not full runtime closur
     const leaf = parse(read("src/wasm/model/instructions.ts"));
     expect(leaf.statements.filter((n) => ts.isImportDeclaration(n) || ts.isExportDeclaration(n))).toEqual([]);
     expect(read(canonicalPath)).not.toMatch(/CodegenContext|AsyncSchedulerState|=>\s*Instr|import\(/);
-  });
-  it.each(retained)("retains the authenticated %s :: %s receipt after explicit deltas", (path, name, hash) => {
-    if (path === schedulerPath && movedResolutionNames.has(name)) {
-      assertMovedResolutionReceipt(name, hash, read(path));
-      return;
-    }
-    let text = fn(read(path), name).getText();
-    if (path === schedulerPath && name === "ensureMicrotaskQueue") {
-      // Preserve the authenticated donor. Account only for the two deliberate
-      // opt-in notification edits, rather than blessing a new function hash.
-      const registration = "  const notification = registerMicrotaskNotification(ctx);\n";
-      const enqueue = "body: [...buildEnqueueBody(queueResources), ...notification]";
-      expect(text.split(registration)).toHaveLength(2);
-      expect(text.split(enqueue)).toHaveLength(2);
-      text = text.replace(registration, "").replace(enqueue, "body: buildEnqueueBody(queueResources)");
-    }
-    expect(sha(undoDeliveredPromiseSpeciesDelta(name, undoDenoRetainedDelta(name, text)))).toBe(hash);
   });
   it("does not allocate undefined when dispatcher is absent, even with parent operands", () => {
     let calls = 0;

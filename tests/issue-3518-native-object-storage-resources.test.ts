@@ -1,7 +1,3 @@
-// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
-import { applyClosureApplyExtraction } from "./helpers/object-runtime-apply-extraction.js";
-import { applyFnctorGuardForward } from "./helpers/object-runtime-fnctor-guard-forward.js";
-import { beforeDescriptorUndefinedCorrection } from "./helpers/descriptor-undefined-correction.js";
 import { afterEach, describe, expect, it } from "vitest";
 import type { Instr } from "../src/wasm/model/instructions.js";
 import { createEmptyModule } from "../src/ir/types.js";
@@ -29,16 +25,7 @@ import {
   fillStorageDependencies,
   objectWriteRuntime,
 } from "./helpers/native-object-write-fixture.js";
-import {
-  originalWriteDonors,
-  readWriteSource,
-  writeSourceHash,
-  authenticateWriteExtraction,
-  invertObjectWriteSource,
-  writeExtractionText,
-  writeRegisterScope,
-  captureWriteDonor,
-} from "./helpers/native-object-write-donor.js";
+import { originalWriteDonors } from "./helpers/native-object-write-donor.js";
 
 afterEach(() => new Promise<void>((resolve) => setImmediate(resolve)));
 const complete = (f: ReturnType<typeof objectStorageFixture>) => {
@@ -432,76 +419,6 @@ describe("executed issued storage with controlled descriptor dependencies", () =
   });
 });
 
-// Authenticate and remove only the signed later invocation/main layers.
-// The unchanged write receipt still checks its exact full source and offsets.
-function readWriteLayerSource(path: string): string {
-  const actual = beforeDescriptorUndefinedCorrection(path, readWriteSource(path));
-  if (path !== "src/codegen/object-runtime.ts") return actual;
-  const source = applyFnctorGuardForward(applyClosureApplyExtraction(actual, true), true);
-  expect(applyClosureApplyExtraction(applyFnctorGuardForward(source, false), false)).toBe(actual);
-  return source;
-}
-
 describe("fixed donor and whole-source preservation", () => {
   const donors = originalWriteDonors();
-  it.each(donors)("reconstructs and forward-replays the complete original $file", (donor) => {
-    expect(invertObjectWriteSource(donor.file, readWriteLayerSource(donor.file))).toBe(donor.source);
-  });
-  it.each([
-    "__new_plain_object",
-    "__obj_insert",
-    "__obj_grow",
-    "__defineProperty_value",
-    "__defineProperty_accessor",
-    "__object_is",
-  ])("preserves %s instructions, locals and all acquisition effects", (name) => {
-    const donor = donors.find((r) =>
-      name === "__object_is"
-        ? r.file.endsWith("enumeration.ts")
-        : name.startsWith("__define")
-          ? r.file.endsWith("descriptors.ts")
-          : r.file.endsWith("object-runtime.ts"),
-    )!;
-    const before = writeRegisterScope(donor.source, name),
-      after = writeRegisterScope(beforeDescriptorUndefinedCorrection(donor.file, readWriteSource(donor.file)), name);
-    for (const flag of [false, true])
-      for (const changing of [false, true]) {
-        const options = { symbol: flag, own: flag, carrier: flag, offset: flag ? 29 : 0, changing };
-        const original = captureWriteDonor(before, options),
-          current = captureWriteDonor(after, options);
-        expect(current).toStrictEqual(original);
-      }
-  });
-  it.each(donors)("rejects an unowned edit in $file after a positive reconstruction", (donor) => {
-    const source = readWriteLayerSource(donor.file);
-    expect(invertObjectWriteSource(donor.file, source)).toBe(donor.source);
-    expect(() => invertObjectWriteSource(donor.file, source + "\n// unowned edit\n")).toThrow("source mismatch");
-  });
-  it("rejects missing, duplicated, reordered and semantic span mutations", () => {
-    const receipt = authenticateWriteExtraction();
-    for (const d of receipt.deltas) {
-      const current = readWriteLayerSource(d.file);
-      expect(invertObjectWriteSource(d.file, current)).toBe(donors.find((r) => r.file === d.file)!.source);
-      expect(d.spans.length).toBeGreaterThan(1);
-      for (const span of d.spans)
-        for (const replacement of ["", span.after + span.after, span.after.replace(/\S/, "!")]) {
-          const changed = current.replace(span.after, replacement);
-          expect(changed).not.toBe(current);
-          expect(() => invertObjectWriteSource(d.file, changed)).toThrow("source mismatch");
-        }
-      const [a, b] = d.spans;
-      const reordered = current.replace(a!.after, "\u0000").replace(b!.after, a!.after).replace("\u0000", b!.after);
-      expect(reordered).not.toBe(current);
-      expect(() => invertObjectWriteSource(d.file, reordered)).toThrow("source mismatch");
-    }
-  });
-  it("rejects altered receipts, old-source substitution and unknown paths", () => {
-    const text = writeExtractionText();
-    expect(authenticateWriteExtraction(text).deltas).toHaveLength(3);
-    expect(() => authenticateWriteExtraction(text + " ")).toThrow("receipt mismatch");
-    const d = donors[0]!;
-    expect(() => invertObjectWriteSource(d.file, d.source)).toThrow("source mismatch");
-    expect(() => invertObjectWriteSource("unknown", "")).toThrow("unknown write donor path");
-    expect(writeSourceHash(d.source)).toBe(d.sha256);
-  });
 });

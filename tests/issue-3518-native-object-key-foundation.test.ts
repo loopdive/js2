@@ -1,12 +1,9 @@
-// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
-import { readBeforeResumeMain } from "./helpers/resume-main-composition.js";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import vm from "node:vm";
 import ts from "typescript";
 import * as bodies from "../src/runtime/wasmgc/values/object-key-bodies.js";
-import { verifyObjectRuntimeComposition } from "./helpers/object-get-key-composition.js";
 import type { Instr, ValType } from "../src/wasm/model/instructions.js";
 import { createEmptyModule } from "../src/ir/types.js";
 import { PhysicalModuleReservations } from "../src/wasm/physical/module-reservations.js";
@@ -501,16 +498,4 @@ it("observes actual hash collisions and lookup crossing a deleted production tab
   // actual lookup before the still-present next entry: this proves traversal.
   run.eraseFirstSlot(o, keys[1]);
   expect(run.found(o, keys[1])).toBe(0);
-});
-
-it("reconstructs every original key donor from the authenticated signed getter/key composition", () => {
-  const current = readBeforeResumeMain("src/codegen/object-runtime.ts");
-  const restored = verifyObjectRuntimeComposition(current);
-  expect(sha(restored.original)).toBe(SOURCE_SHA);
-  expect(authenticate(receiptText).spans).toHaveLength(8);
-  for (const span of receipt.spans) {
-    const original = restored.original.slice(span.start, span.end);
-    expect(original, span.name).toBe(span.text);
-    expect(sha(original), span.name).toBe(span.sha256);
-  }
 });

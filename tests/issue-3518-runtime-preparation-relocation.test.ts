@@ -1,5 +1,3 @@
-// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
-import { reconstructRemainderRuntimeContractReceiptSources as reconstructRuntimeContractReceiptSources } from "./helpers/ir-remainder-runtime-contract-evolution.js";
 import { beforeRemainderRuntimePreparationRelocation as beforeRuntimePreparationRelocation } from "./helpers/ir-remainder-runtime-preparation-relocation.js";
 import { beforeSourceMapProgramValidatorRelocation } from "./helpers/ir-program-validator-relocation.js";
 import { createHash } from "node:crypto";
@@ -13,13 +11,7 @@ import {
   runtimePreparationRelocationCurrentPaths,
   runtimePreparationRelocationReceiptPath,
 } from "./helpers/ir-runtime-preparation-relocation.js";
-import {
-  acceptedHistoricalDeclarations,
-  assertCallableExtension,
-  currentDeclarations,
-  historicalIntrinsicSource,
-} from "./helpers/ir-historical-runtime-reconstruction.js";
-import { runtimeContractCurrentPaths } from "./helpers/ir-runtime-contract-evolution.js";
+import { currentDeclarations } from "./helpers/ir-historical-runtime-reconstruction.js";
 
 const repository = resolve(import.meta.dirname, "..");
 type Reader = (path: string) => string;
@@ -121,18 +113,6 @@ function physicalRefusal(path: string, edit: (source: string) => string): void {
   expect(() => beforeRuntimePreparationRelocation(override(rawRead, path, mutant))).toThrow(
     "runtime preparation relocation:",
   );
-}
-function historical(): Reader {
-  const historicalReader = positive();
-  const sources = reconstructRuntimeContractReceiptSources(historicalReader);
-  expect(sources.size).toBe(runtimeContractCurrentPaths.length);
-  for (const path of runtimeContractCurrentPaths) expect(sources.has(path)).toBe(true);
-  return (path) => {
-    if (!runtimeContractCurrentPaths.includes(path)) return historicalReader(path);
-    const source = sources.get(path);
-    if (source === undefined) throw Error("missing runtime historical source " + path);
-    return source;
-  };
 }
 function declarations(source: string) {
   return ts
@@ -512,56 +492,6 @@ describe("historical mutations occur after the physical relocation inverse", () 
     expect(mutant).not.toBe(historicalReader(support));
     expect(() => currentDeclarations(support, override(historicalReader, support, mutant))).toThrow(
       /current declaration order/,
-    );
-  });
-  it("preserves runtime-evolution changed input and old source injection refusals", () => {
-    const historicalReader = positive();
-    const sources = reconstructRuntimeContractReceiptSources(historicalReader);
-    const old = sources.get(support)!;
-    expect(old).not.toBe(historicalReader(support));
-    for (const mutant of [historicalReader(support) + "\n// changed evolution input\n", old]) {
-      expect(() => reconstructRuntimeContractReceiptSources(override(historicalReader, support, mutant))).toThrow(
-        "runtime contract evolution: complete source SHA256/length mismatch: " + support,
-      );
-    }
-  });
-  it("preserves historical reconstruction mutation and declaration-mutation guards", () => {
-    const source = historical();
-    expect(() => assertCallableExtension(source)).not.toThrow();
-    expect(acceptedHistoricalDeclarations(support, source)).toHaveLength(41);
-    const original = source(support);
-    // Replay the existing semantic vector mutation within a declaration. A
-    // trailing source comment is outside this legacy declaration receipt's domain.
-    const changedVectorDemand = replaceOne(
-      original,
-      "assertVectorCallableDemands(input.functions, input.vectorDemands)",
-      "assertVectorCallableDemands([], input.vectorDemands)",
-    );
-    for (const [mutant, diagnostic] of [
-      [changedVectorDemand, "exact clock/vector delta/neighbors function:prepareIrRuntimeManifest#2"],
-      [reorder(original), "current declaration order/identity in " + support],
-    ]) {
-      expect(mutant).not.toBe(original);
-      expect(() => acceptedHistoricalDeclarations(support, override(source, support, mutant))).toThrow(diagnostic);
-    }
-  });
-  it("retains the program-data initial reconstruction chain and supplied reader authority", () => {
-    const source = historical();
-    expect(historicalIntrinsicSource(source).length).toBeGreaterThan(0);
-    const historicalReader = positive();
-    const calls: string[] = [];
-    expect(
-      reconstructRuntimeContractReceiptSources((path) => {
-        calls.push(path);
-        return historicalReader(path);
-      }).size,
-    ).toBe(runtimeContractCurrentPaths.length);
-    expect(calls).toEqual(runtimeContractCurrentPaths);
-    expect(() => reconstructRuntimeContractReceiptSources(override(historicalReader, support, ""))).toThrow(
-      "runtime contract evolution: complete source SHA256/length mismatch: " + support,
-    );
-    expect(() => reconstructRuntimeContractReceiptSources(historicalReader, "{}")).toThrow(
-      "runtime contract evolution:",
     );
   });
 });

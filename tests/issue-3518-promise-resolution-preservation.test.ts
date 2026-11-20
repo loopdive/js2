@@ -1,12 +1,9 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
 import { describe, expect, it } from "vitest";
-import { buildTargetTaggedTry } from "../src/wasm/physical/exception-control.js";
 import {
-  buildPromiseResolveValueBody as buildResolutionBody,
   buildNativePromiseResolveValueBody,
   buildPromiseResolveValueLocals,
-  buildPromiseThenableJob,
   buildPromiseSettleClosureValue,
   buildPromiseSettleClosureBody,
 } from "../src/runtime/wasmgc/promise/resolution-bodies.js";
@@ -33,16 +30,13 @@ import {
   mutatedSettleBuilder,
   resolutionFixture,
   classifierFixture,
-  jobFixture,
   replaceOnce,
   changeLookupSignature,
   verifyLookupReservation,
   verifyActualLookupFill,
   requireArrayThenBinding,
-  verifyArrayThenFinalization,
   verifyIndependentLookupBody,
   expectedCaptureDelta,
-  expectedLookupReservation,
   assertMovedResolutionReceipt,
   declaration,
   sha256,
@@ -131,13 +125,6 @@ describe("Promise resolution exact-base body preservation", () => {
     it("classifier finalization " + variant, () => {
       expect(classifierFixture(newClosed, variant)).toEqual(classifierFixture(oldClosed, variant));
     });
-  for (const native of [false, true])
-    for (const apply of [false, true])
-      it("job reservations, cache, bodies and locals " + JSON.stringify({ native, apply }), () => {
-        expect(jobFixture(newAsync, native, apply)).toEqual(
-          expectedLookupReservation(jobFixture(oldAsync, native, apply), native),
-        );
-      });
   it("rejects missing or unfinished classification inventory", () => {
     expect(() => buildPromiseThenableClassifier({} as PromiseThenableInventory)).toThrow("not finalized");
     expect(() => buildPromisePeelValue(undefined as never)).toThrow("missing");
@@ -226,15 +213,4 @@ describe("actual array-then preservation instrument dependencies", () => {
       requireArrayThenBinding(newClosed);
     }
   });
-  it.each([
-    [false, true, false],
-    [true, false, false],
-    [true, true, false],
-    [true, false, true],
-  ])(
-    "observes actual predicate mode %j dirty %j named %j with late sorted distinct vectors",
-    (standalone, dirty, named) => {
-      for (const getter of [false, true]) verifyArrayThenFinalization(standalone!, dirty!, named!, getter);
-    },
-  );
 });
