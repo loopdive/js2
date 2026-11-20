@@ -936,6 +936,28 @@ Per touched file, before and after (tests / red; `after` measured on this branch
 | **total (34 files)** | **4023 / 3610** | **110 / 0** |
 
 
+### Review (2026-11-20): MET, and what the deletion dropped that was not a pin
+
+A fresh-context reviewer classified all 30 deleted test files and the 58 helpers, receipts and fixtures: no deleted test
+calls the compiler or runs a program, the four trimmed files lost only pin code, and nothing outside `plan/` names a
+deleted file. Three things went with the pins that were not pins. All were red at the base and could not be kept as
+written, because their fixtures are built from the pinned predecessor chain. They are owed again, as ordinary tests:
+
+- Type-level negative controls (`issue-3518-program-data-contract-seam`, "actually compiles old/new identities"): a raw
+  string or an `IrSourceId` is not assignable to `IrUnitId`, `TypedIrProgramGlobal.binding` is readonly, `IrGvnMode`
+  rejects "auto", the failure-stage union, `Core.IrFunction` has no `asyncRuntime`. Re-home as a small
+  `@ts-expect-error` file; `typecheck` alone does not notice a brand that gets loosened. Step 6 of this plan.
+- Layer-specific boundary mutations (`semantic-provider-boundary`, `program-data-contract-boundary`): "rejects an upward
+  runtime dependency from the native string/value aggregate", "rejects a backend implementation dependency from the
+  frontend formatter contract". The generic import-syntax cases remain in `issue-3518-compiler-boundaries.test.ts`; the
+  layer-specific ones belong in the compiler-boundaries inventory (`scripts/compiler-boundaries.json`) as rules. Step 6.
+- Two negative checks of the ownership-seam test: `src/ir/program/data.ts` contains neither
+  `EMISSION_TRANSACTION_CAPABILITY` nor `assertPreparedIrProgram`, and the moved files do not read `process.env`. The
+  first becomes moot when step 5 deletes both names; the second is a boundaries rule. Step 6.
+
+The before-table below was measured on `c0ab3915bb`; the base moved to `d24132a05c` afterwards without touching any of
+those files.
+
 ### Before: every `tests/issue-3518-*.test.ts` on the base (287 files, 14,349 tests, 4,480 red, 114 red files), plus the ten `issue-3525` / `4376` / `6866` receipt readers
 
 Measured 2026-11-20 on `c0ab3915bb` (`1002538b5f` for the first 68 files; the two commits between touch only
