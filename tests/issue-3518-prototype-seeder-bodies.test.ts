@@ -134,6 +134,9 @@ async function executableSeeder(offset: boolean, poison?: "flags" | "remove" | "
 }
 
 describe("emitted prototype seeder with controlled descriptor observers", () => {
+  it("builds an empty body for an empty seed list", () => {
+    expect(buildPrototypeSeederBody([])).toEqual([]);
+  });
   it.each([false, true])(
     "executes all nine ordered installations with exact identities/attributes, offset=%s",
     async (offset) => {

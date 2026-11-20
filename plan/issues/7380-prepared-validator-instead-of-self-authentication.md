@@ -1634,8 +1634,8 @@ Gist:
 
 - 89 files of the 35xx families reviewed: 5 deleted whole (P), 61 trimmed (T), 11 kept as they are (K), 12 left
   untouched because they are red at base (K*).
-- 253 pin test sites removed, 1,175 kept (sites are `it`/`test` calls in the source; generated instances are more).
-- 81 files deleted: the 5 test files plus 76 receipts, donor fixtures and port/extraction helpers that no test reads
+- 249 pin test sites removed, 1,179 kept (sites are `it`/`test` calls in the source; generated instances are more).
+- 82 files deleted: the 5 test files plus 77 receipts, donor fixtures and port/extraction helpers that no test reads
   any more. 20,901 lines removed, 127 added.
 - Every modified file passes (16 batches, table below). Gates pass.
 
@@ -1714,14 +1714,14 @@ Gist:
 | `issue-3518-native-string-output-consumer` | T | 0 | 7 | input-hash line dropped |
 | `issue-3518-native-string-output-requirements` | T | 0 | 25 | input-hash line dropped |
 | `issue-3518-native-string-utf8-rope` | T | 1 | 5 | projected-source equality; two hash lines (src and input) dropped |
-| `issue-3518-native-to-primitive-bodies` | T | 7 | 3 | donor fixture, donor-trace equality, layer rule (Owed) |
+| `issue-3518-native-to-primitive-bodies` | T | 7 | 3 | donor fixture, donor-trace equality, layer rule (Owed); the module-level extraction-baseline hash check and its fixture removed in review round 2 |
 | `issue-3518-native-utf8-window-decoder` | T | 0 | 6 | src hash line dropped from the shared fixture |
 | `issue-3518-native-wasm-foundation` | T | 3 | 3 | layer rule (Owed), its dependency-detector control, consumer import-name pin |
 | `issue-3518-physical-snapshot-comparison` | T | 1 | 28 | src function-text hash |
-| `issue-3518-promise-resolution-preservation` | T | 8 | 5 | donor receipts, donor equality, source-text mutants; three tests keep their assertions on the current builders (lookup body restored in review round 1) |
+| `issue-3518-promise-resolution-preservation` | T | 7 | 6 | donor receipts, donor equality, source-text mutants; four tests keep their assertions on the current builders (lookup body restored in round 1, capture-layout refusal in round 2) |
 | `issue-3518-promise-settlement-body-ownership` | T | 13 | 6 | moved-body receipts, declaration receipts, mutation controls, layer rule (Owed) |
 | `issue-3518-promise-settlement-source-preservation` | T | 3 | 3 | receipt-validator tamper controls |
-| `issue-3518-prototype-seeder-bodies` | T | 8 | 4 | donor receipt and donor-trace tests |
+| `issue-3518-prototype-seeder-bodies` | T | 7 | 5 | donor receipt and donor-trace tests; the empty-seed-list assertion restored in review round 2 |
 | `issue-3518-runtime-data-contract-seam` | T | 1 | 8 | re-export chain read from source |
 | `issue-3518-semantic-verification-ownership` | T | 5 | 13 | declaration receipts, signature-prefix hash, historical-hash replay, class-member pin; count assertions left for step 6 |
 | `issue-3518-startup-contract` | T | 3 | 5 | declaration hashes, declaration count/forward structure, layer rule (Owed) |
@@ -1730,14 +1730,14 @@ Gist:
 | `issue-3518-typed-middleend-controls` | T | 1 | 19 | call-count pin on src/ir/integration.ts |
 | `issue-3518-vector-grow-store-body` | T | 5 | 4 | donor receipts and layer rule (Owed); the freshness test compares with a second build instead of the donor |
 | `issue-3518-vector-grow-store-donor` | T | 18 | 6 | layout-inverse receipts, registry inverses, adapter-text pins |
-| `issue-3518-vector-runtime-callable-admission` | T | 3 | 21 | declaration receipts and facade export structure |
+| `issue-3518-vector-runtime-callable-admission` | T | 2 | 22 | declaration receipts and facade source structure; the live facade/canonical identity check restored in review round 2 |
 | `issue-3521-r2-withdrawal-telemetry` | T | 5 | 7 | selector/codegen source-order pins; source literal count dropped from the vocabulary test |
 | `issue-3521-runtime-callable-abi` | T | 0 | 11 | input-hash line dropped |
 | `issue-3525-emitted-physical-plan-observation` | T | 0 | 13 | input-hash line dropped |
 | `issue-3525-prepared-linear-early-return` | T | 0 | 7 | four source byte/hash pins dropped from the oracle test |
 | `issue-3525-prepared-source-map-data` | T | 0 | 32 | codec byte size and hash dropped |
 | `issue-3526-callable-boundary-callback` | T | 6 | 33 | source-text pins on from-ast, overlay and integration |
-| `issue-3526-string-boundary-concat-many` | T | 6 | 23 | source-text pins on integration and pass selection |
+| `issue-3526-string-boundary-concat-many` | T | 5 | 24 | source-text pins on integration and pass selection; the arity contract on current code restored in review round 2 |
 | `issue-3526-string-boundary-const` | T | 7 | 32 | provider/lane source-text pins |
 | `issue-3527-async-replay-oracle` | T | 0 | 5 | input-hash line dropped |
 | `issue-3518-certified-delay-source-admission` | K* | 0 | 23 | red at base (F-class test 'rejects a source-produced global binding…'); one input-hash line left, file not touched |
@@ -1764,7 +1764,7 @@ Gist:
 | `issue-3523-module-init-discovery-static` | K | 0 | 13 | runs test262 fixtures; no src read |
 | `issue-3525-source-map-safe-passes` | K | 0 | 10 | sha only in a log line |
 
-Totals over these 89 files: P 5, T 61, K 11, K* (red at base, untouched) 12; 253 test sites removed, 1175 kept.
+Totals over these 89 files: P 5, T 61, K 11, K* (red at base, untouched) 12; 249 test sites removed, 1179 kept.
 
 K* files are red at base and were not modified, because `quality` requires every modified test file to pass. Their
 remaining pins are small (input-hash lines, or source-text tests next to red host-lane tests); they go with the fix of
@@ -1773,7 +1773,7 @@ the red tests or with PR 6. The red tests themselves, measured on base by a file
 (3), `3525-prepared-wit-presentation` (2), `3525-prepared-zero-suspension-rejection` (6), and seven `3526` files whose
 host-lane end-to-end tests fail (`f3s3` 4, `charcodeat` 4, `compare` 2, `concat` 3, `eq` 3, `len` 3, `schema` 3).
 
-Deleted helpers and fixtures (76; the last nine in review round 1): `fixtures/issue-3518-array-main-refresh-port.json`, `fixtures/issue-3518-async-frame-forward-main.json`, `fixtures/issue-3518-bigint-carrier-port.json`, `fixtures/issue-3518-boolean-box-donor.ts.txt`, `fixtures/issue-3518-conversion-source-composition.json`, `fixtures/issue-3518-delivery-main-refresh-port.json`, `fixtures/issue-3518-descriptor-adapter-relocation.json`, `fixtures/issue-3518-descriptor-undefined-correction.json`, `fixtures/issue-3518-native-accessor-call-donor.json`, `fixtures/issue-3518-native-number-format-donor.json`, `fixtures/issue-3518-native-object-get-donor.json`, `fixtures/issue-3518-native-object-write-donor.json`, `fixtures/issue-3518-native-object-write-extraction.json`, `fixtures/issue-3518-native-ryu-donor.json`, `fixtures/issue-3518-native-string-equality-donor.json`, `fixtures/issue-3518-native-string-error-donors.json`, `fixtures/issue-3518-native-string-flatten-donor.ts`, `fixtures/issue-3518-native-to-primitive-donor.json`, `fixtures/issue-3518-object-get-key-composition.json`, `fixtures/issue-3518-object-key-donors.json`, `fixtures/issue-3518-object-runtime-apply-extraction.json`, `fixtures/issue-3518-object-runtime-fnctor-guard-forward.json`, `fixtures/issue-3518-object-runtime-main-composition.json`, `fixtures/issue-3518-own-property-extraction.json`, `fixtures/issue-3518-prepared-registry-types-forward.json`, `fixtures/issue-3518-promise-earlier-main-port.json`, `fixtures/issue-3518-promise-export-main-port.json`, `fixtures/issue-3518-promise-resolution-donors.json`, `fixtures/issue-3518-prototype-companion-extraction.json`, `fixtures/issue-3518-prototype-read-extraction.json`, `fixtures/issue-3518-prototype-receiver-extraction.json`, `fixtures/issue-3518-ref-cell-donor.json`, `fixtures/issue-3518-resume-main-composition.json`, `fixtures/issue-3518-string-equality-source-composition.json`, `fixtures/issue-3518-string-layout-shape-forward.json`, `fixtures/issue-3518-timer-publication-donor.json`, `fixtures/issue-3518-to-primitive-presence-extraction.json`, `fixtures/issue-3518-to-primitive-wrapper-forward.json`, `fixtures/issue-3518-vector-registry-layout-forward.json`, `helpers/array-main-refresh-port.ts`, `helpers/bigint-carrier-port.ts`, `helpers/closure-state-preservation-port.ts`, `helpers/conversion-source-composition.ts`, `helpers/delivery-main-refresh-port.ts`, `helpers/descriptor-adapter-relocation.ts`, `helpers/descriptor-undefined-correction.ts`, `helpers/ir-historical-runtime-reconstruction.ts`, `helpers/ir-remainder-runtime-preparation-relocation.ts`, `helpers/ir-runtime-preparation-relocation.json`, `helpers/ir-runtime-preparation-relocation.ts`, `helpers/later-main-preservation-port.ts`, `helpers/native-object-write-donor.ts`, `helpers/object-get-key-composition.ts`, `helpers/object-runtime-apply-extraction.ts`, `helpers/object-runtime-fnctor-guard-forward.ts`, `helpers/object-runtime-main-composition.ts`, `helpers/own-property-extraction.ts`, `helpers/prepared-source-forward-receipts.ts`, `helpers/promise-earlier-main-port.ts`, `helpers/promise-export-main-port.ts`, `helpers/promise-resolution-receipts.ts`, `helpers/prototype-companion-extraction.ts`, `helpers/prototype-read-extraction.ts`, `helpers/prototype-receiver-extraction.ts`, `helpers/resume-main-composition.ts`, `helpers/string-equality-source-composition.ts`, `helpers/typedarray-main-preservation-port.ts`, `fixtures/issue-3518-prototype-seeder-donor.json`, `fixtures/issue-3518-prototype-seeder-extraction.json`, `fixtures/issue-3518-prototype-singleton-extraction.json`, `helpers/prototype-seeder-donor.ts`, `helpers/prototype-seeder-extraction.ts`, `helpers/prototype-singleton-extraction.ts`, `helpers/ir-program-validator-relocation.ts`, `helpers/ir-program-validator-relocation.json`, `helpers/ir-source-map-schema-source-epoch.json`.
+Deleted helpers and fixtures (77; nine in review round 1, one in round 2): `fixtures/issue-3518-array-main-refresh-port.json`, `fixtures/issue-3518-async-frame-forward-main.json`, `fixtures/issue-3518-bigint-carrier-port.json`, `fixtures/issue-3518-boolean-box-donor.ts.txt`, `fixtures/issue-3518-conversion-source-composition.json`, `fixtures/issue-3518-delivery-main-refresh-port.json`, `fixtures/issue-3518-descriptor-adapter-relocation.json`, `fixtures/issue-3518-descriptor-undefined-correction.json`, `fixtures/issue-3518-native-accessor-call-donor.json`, `fixtures/issue-3518-native-number-format-donor.json`, `fixtures/issue-3518-native-object-get-donor.json`, `fixtures/issue-3518-native-object-write-donor.json`, `fixtures/issue-3518-native-object-write-extraction.json`, `fixtures/issue-3518-native-ryu-donor.json`, `fixtures/issue-3518-native-string-equality-donor.json`, `fixtures/issue-3518-native-string-error-donors.json`, `fixtures/issue-3518-native-string-flatten-donor.ts`, `fixtures/issue-3518-native-to-primitive-donor.json`, `fixtures/issue-3518-object-get-key-composition.json`, `fixtures/issue-3518-object-key-donors.json`, `fixtures/issue-3518-object-runtime-apply-extraction.json`, `fixtures/issue-3518-object-runtime-fnctor-guard-forward.json`, `fixtures/issue-3518-object-runtime-main-composition.json`, `fixtures/issue-3518-own-property-extraction.json`, `fixtures/issue-3518-prepared-registry-types-forward.json`, `fixtures/issue-3518-promise-earlier-main-port.json`, `fixtures/issue-3518-promise-export-main-port.json`, `fixtures/issue-3518-promise-resolution-donors.json`, `fixtures/issue-3518-prototype-companion-extraction.json`, `fixtures/issue-3518-prototype-read-extraction.json`, `fixtures/issue-3518-prototype-receiver-extraction.json`, `fixtures/issue-3518-ref-cell-donor.json`, `fixtures/issue-3518-resume-main-composition.json`, `fixtures/issue-3518-string-equality-source-composition.json`, `fixtures/issue-3518-string-layout-shape-forward.json`, `fixtures/issue-3518-timer-publication-donor.json`, `fixtures/issue-3518-to-primitive-presence-extraction.json`, `fixtures/issue-3518-to-primitive-wrapper-forward.json`, `fixtures/issue-3518-vector-registry-layout-forward.json`, `helpers/array-main-refresh-port.ts`, `helpers/bigint-carrier-port.ts`, `helpers/closure-state-preservation-port.ts`, `helpers/conversion-source-composition.ts`, `helpers/delivery-main-refresh-port.ts`, `helpers/descriptor-adapter-relocation.ts`, `helpers/descriptor-undefined-correction.ts`, `helpers/ir-historical-runtime-reconstruction.ts`, `helpers/ir-remainder-runtime-preparation-relocation.ts`, `helpers/ir-runtime-preparation-relocation.json`, `helpers/ir-runtime-preparation-relocation.ts`, `helpers/later-main-preservation-port.ts`, `helpers/native-object-write-donor.ts`, `helpers/object-get-key-composition.ts`, `helpers/object-runtime-apply-extraction.ts`, `helpers/object-runtime-fnctor-guard-forward.ts`, `helpers/object-runtime-main-composition.ts`, `helpers/own-property-extraction.ts`, `helpers/prepared-source-forward-receipts.ts`, `helpers/promise-earlier-main-port.ts`, `helpers/promise-export-main-port.ts`, `helpers/promise-resolution-receipts.ts`, `helpers/prototype-companion-extraction.ts`, `helpers/prototype-read-extraction.ts`, `helpers/prototype-receiver-extraction.ts`, `helpers/resume-main-composition.ts`, `helpers/string-equality-source-composition.ts`, `helpers/typedarray-main-preservation-port.ts`, `fixtures/issue-3518-prototype-seeder-donor.json`, `fixtures/issue-3518-prototype-seeder-extraction.json`, `fixtures/issue-3518-prototype-singleton-extraction.json`, `helpers/prototype-seeder-donor.ts`, `helpers/prototype-seeder-extraction.ts`, `helpers/prototype-singleton-extraction.ts`, `helpers/ir-program-validator-relocation.ts`, `helpers/ir-program-validator-relocation.json`, `helpers/ir-source-map-schema-source-epoch.json`, `fixtures/issue-3518-to-primitive-extraction-baseline.json`.
 
 ### Covered elsewhere
 
@@ -1912,3 +1912,19 @@ Re-check of every removed test in the PR (base titles absent now, 266): each was
 - tests of pin machinery only (`native-string-number-resources` recording adapter, `3525-source-map-validator-proof` operand capture, `lowering-cycle` test-local walker).
 
 Proof after the round: all 61 modified test files, 11 batches of at most six (`VITEST_MAX_FORKS=1`, `VITEST_FORK_MAX_OLD_SPACE_SIZE=3072`): every batch exit 0, 130 + 115 + 274 + 133 + 102 + 254 + 101 + 191 + 133 + 203 + 5 = 1,641 tests, 0 failed. Gates bare, exit 0: `typecheck`, `check:dead-exports`, LOC and function budgets.
+
+### Review round 2 (2026-11-20): NOT MET, fixed
+
+| finding | what changed |
+| --- | --- |
+| The settle-closure capture-layout refusal was asserted only inside the deleted receipt helper | Restored as a plain `toThrow("metadata/capture layout")` test on the current `buildPromiseSettleClosureValue`, capture slot 1 and 17 (`43b6bc8bc7`). |
+| `vector-runtime-callable-admission` lost the live facade/canonical identity check that `lowering-cycle` kept | Restored without the source-text half (`ebae3a5c11`). |
+| `native-to-primitive-bodies` still hash-checked the extraction baseline at module level | Removed, with the fixture; the completion messages now print the program instead of its hash. A stale src hash in the UTF-8 window decoder's diagnostic record went too (`95a7521a22`). |
+| `concat-many` lost `stringConcatManyArityCap("host") === Infinity` | The whole arity test is back without its source-text half: native row, shared arity constant, both pass caps (`7dbbbd759e`). |
+
+Own pass over calls into `src/` (finding 5):
+
+- Every removed test (base title absent now) and every deleted helper module: each `expect(...)` statement that calls an identifier imported from `src/` was listed (28 statements). Besides the four above, one more current-code assertion was lost: `buildPrototypeSeederBody([])` returns `[]`, restored as its own test. The rest compare with a donor, read source structure, or are already back (number-format, closure layout, concat-many).
+- Every `toThrow` message in the base versions of the changed test files and deleted helpers (160) that `src/` produces: each is still asserted by some test under `tests/` at head. No refusal assertion is lost.
+
+Proof: the files touched in this round exit 0 (`promise-resolution-preservation` 6, `vector-runtime-callable-admission` 57, `native-to-primitive-bodies` + `native-utf8-window-decoder` 41, `concat-many` 24, `prototype-seeder-bodies` 7). `npm run -s typecheck` and `npm run -s check:dead-exports` exit 0.
