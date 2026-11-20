@@ -10,15 +10,22 @@ import { ts } from "../ts-api.js";
 type Analysis = ReturnType<typeof analyzeMultiSource>;
 
 /**
- * The options' own goal, and each goal stated explicitly: a caller that leaves the goal unstated gets the
- * goal-dependent errors of both (`import.meta` in a Script, duplicate top-level functions in a Module) pinned.
+ * The goals whose early errors to pin: a stated goal alone; for an unstated one both, so the goal-dependent errors
+ * (`import.meta` in a Script, duplicate top-level functions in a Module) are pinned whichever goal runs. Each rule
+ * of the unstated walk also runs under the Script goal, so that walk adds nothing.
  */
-const GOALS: readonly Partial<CompileOptions>[] = [{}, { scriptGoal: true }, { inferModuleStrictArguments: true }];
+function goalsOf(options: CompileOptions): readonly CompileOptions[] {
+  if (options.scriptGoal === true || options.inferModuleStrictArguments !== undefined) return [options];
+  return [
+    { ...options, scriptGoal: true },
+    { ...options, inferModuleStrictArguments: true },
+  ];
+}
 
 /**
  * Where the unelided source carries a frontend error: its TypeScript diagnostics (syntactic and, unless skipped,
- * semantic) and its ES early errors under every goal (`GOALS`). Pinning more than the gate rejects only keeps a
- * dead binding. Undefined when an error in the source has no position, so no statement can be shown free of one.
+ * semantic) and its ES early errors (`goalsOf`). Pinning more than the gate rejects only keeps a dead binding.
+ * Undefined when an error in the source has no position, so no statement can be shown free of one.
  */
 function frontendErrorOffsets(source: ts.SourceFile, analysis: Analysis, options: CompileOptions): number[] | undefined {
   const offsets: number[] = [];
@@ -27,8 +34,8 @@ function frontendErrorOffsets(source: ts.SourceFile, analysis: Analysis, options
     if (diagnostic.start === undefined) return undefined;
     offsets.push(diagnostic.start);
   }
-  for (const goal of GOALS)
-    for (const error of sourceEarlyErrors(source, { ...options, ...goal }))
+  for (const goal of goalsOf(options))
+    for (const error of sourceEarlyErrors(source, goal))
       offsets.push(source.getPositionOfLineAndCharacter(error.line - 1, error.column - 1));
   return offsets;
 }

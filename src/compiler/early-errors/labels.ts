@@ -50,8 +50,8 @@ export function checkDuplicateLabelsInBlock(ctx: EarlyErrorContext, block: ts.Bl
 export function checkDuplicateLabels(ctx: EarlyErrorContext, node: ts.Node, activeLabels: Set<string>): void {
   // A class static block is checkDuplicateLabelsInBlock's (its own message).
   if (ts.isClassStaticBlockDeclaration(node)) return;
-  // Labels do not cross a function or class boundary, but each body is a StatementList of its own
-  // (`var g = function () { l: l: ; };` — #7354 F0 review: these were never checked).
+  // A label's scope ends at a function or class boundary, but the body behind it is a StatementList of its own
+  // that ContainsDuplicateLabels covers too (`var g = function () { l: l: ; };`), so it restarts with no label.
   if (
     ts.isFunctionDeclaration(node) ||
     ts.isFunctionExpression(node) ||
