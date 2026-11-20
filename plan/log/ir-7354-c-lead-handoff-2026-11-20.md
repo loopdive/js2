@@ -183,9 +183,19 @@ each lane):
     - #7365 B′: `claude/7354-perf3-reservations` e67111af. Its blocker is now
       17 silent pins (the reviewer's 16, plus issue-3518-native-invocation-substrate
       "post-completion carrier mutation").
-- **S7:** the #7335 fix (f21936ecc1: #7164 pre-scans see through wrappers;
-  shard 7 has 0 failures locally) is pushed with hold. RV7335 confirms the
-  delta.
+- **S7:** its issue files sit on reviewed heads, so its state is recorded
+  only here:
+  - #7335 at f21936ecc1, with hold: the #7164 pre-scans now see through
+    wrappers, and shard 7 has 0 failures locally. RV7335 confirms; re-check
+    CI shard 7.
+  - #7339 at 2efc3caa82, with hold: main merged in, plus a budget fit
+    (`compileBinaryExpression` was +4 over its ceiling after #7331). RV7339
+    confirms.
+  - #7325: approved; an optional nit is to export `nullableJoin`.
+  - #7320 at ab51454950: hold, CLEAN; RV7320 re-review pending.
+  - #7334 and #7336: approved; bot holds are the #7346 collateral.
+  - #7340: approved and released.
+  - S7's worktrees are under `.claude/worktrees/claude/`.
 - **S14b:**
   - #7431 fix is on `claude/7431-canary-promise-try` 22f3de0a3c, no PR yet.
     On Node 22 over 600 ES5 standalone files: 1,623 s with 612 recycles before,
