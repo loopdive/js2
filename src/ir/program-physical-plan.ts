@@ -92,7 +92,7 @@ import {
   NUMBER_REMAINDER_RUNTIME_PROVIDERS,
 } from "./runtime/number-remainder-callables.js";
 import { deriveNativeVectorResourcePlan, type NativeVectorResourcePlan } from "./program/native-vector-resources.js";
-import { assertPreparedIrProgram } from "./program-validation.js";
+import { assertSettledPreparedIrProgram } from "./program/settled-validation.js";
 import {
   deriveNativeValueResourcePlan,
   assertNativeValueResourcePlanFor,
@@ -298,7 +298,7 @@ export function planNativeVectorResources(
   options: PreparedIrBackendOptions,
   projection: PreparedIrProgramRuntimeProjection,
 ): NativeVectorResourcePlan {
-  assertPreparedIrProgram(program);
+  assertSettledPreparedIrProgram(program);
   if (
     !program.runtime.includes(projection) ||
     projection.backend !== options.backend ||
@@ -341,7 +341,7 @@ export function planNativeValueResources(
   projection: PreparedIrProgramRuntimeProjection,
   strings: NativeValueStringRepresentation,
 ): NativeValueResourcePlan {
-  assertPreparedIrProgram(program);
+  assertSettledPreparedIrProgram(program);
   if (
     !program.runtime.includes(projection) ||
     projection.backend !== options.backend ||
