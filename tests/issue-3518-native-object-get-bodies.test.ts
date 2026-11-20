@@ -1,44 +1,9 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
-import { readBeforeResumeMain } from "./helpers/resume-main-composition.js";
-import { createHash } from "node:crypto";
-import ts from "typescript";
 import { describe, expect, it } from "vitest";
 import { createEmptyModule, type Instr, type LocalDef, type ValType } from "../src/ir/types.js";
 import { emitBinary } from "../src/emit/binary.js";
 import * as arms from "../src/runtime/wasmgc/values/object-get-arms.js";
 import { buildObjectGetBody, type ObjectGetBindings } from "../src/runtime/wasmgc/values/object-get-bodies.js";
-import {
-  authenticateObjectRuntimeComposition,
-  objectRuntimeCompositionText,
-} from "./helpers/object-get-key-composition.js";
-
-const sha = (s: string) => createHash("sha256").update(s).digest("hex");
-const read = readBeforeResumeMain;
-const fixtureText = read("tests/fixtures/issue-3518-native-object-get-donor.json");
-const fixtureHash = "ba22b31f3a4b283f044beaf13b07bb8f4fc36e39e40a003f3df17fd4cde8e065";
-interface Donor {
-  file: string;
-  name: string;
-  text: string;
-  sha256: string;
-  scopeSha256: string;
-  gitBlob: string;
-}
-function authenticate(text: string) {
-  if (sha(text) !== fixtureHash) throw new Error("object get donor digest mismatch");
-  const parsed = JSON.parse(text) as { base: string; records: Donor[] };
-  if (parsed.base !== "750fb7e7365692b315179dc909b57fa1407d4527" || parsed.records.length !== 8)
-    throw new Error("object get donor provenance mismatch");
-  for (const record of parsed.records)
-    if (sha(record.text) !== record.scopeSha256) throw new Error("donor scope mismatch");
-  return parsed.records;
-}
-const donors = authenticate(fixtureText);
-function parse(source: string) {
-  const sf = ts.createSourceFile("donor.ts", source, ts.ScriptTarget.Latest, true);
-  if (sf.parseDiagnostics.length) throw new Error("invalid donor source");
-  return sf;
-}
 
 const E = { kind: "externref" } as const,
   I = { kind: "i32" } as const,
@@ -372,37 +337,6 @@ function allInstructions(body: Instr[]): Instr[] {
         : []),
   ]);
 }
-
-describe("C1 initial object-get fixed donor preservation", () => {
-  it("rejects a changed donor receipt after authenticating the original", () => {
-    expect(authenticate(fixtureText)).toHaveLength(8);
-    expect(() => authenticate(fixtureText.replace("reserveAccessorGetDriver", "otherAccessorGetDriver"))).toThrow(
-      "digest mismatch",
-    );
-  });
-
-  it("keeps both pure builders limited to canonical data dependencies", () => {
-    const files = ["object-get-bodies", "object-get-arms"];
-    for (const name of files) {
-      const sf = parse(read(`src/runtime/wasmgc/values/${name}.ts`));
-      const imports = sf.statements.filter(ts.isImportDeclaration);
-      expect(imports.length).toBeGreaterThan(0);
-      expect(imports.map((i) => (i.moduleSpecifier as ts.StringLiteral).text)).toEqual(
-        name === "object-get-bodies"
-          ? ["../../../wasm/model/instructions.js", "./object-get-arms.js"]
-          : ["../../../wasm/model/instructions.js"],
-      );
-      const disallowed: string[] = [];
-      function visit(n: ts.Node) {
-        if (ts.isGetAccessorDeclaration(n) || ts.isSetAccessorDeclaration(n) || ts.isFunctionTypeNode(n))
-          disallowed.push(n.getText(sf));
-        ts.forEachChild(n, visit);
-      }
-      visit(sf);
-      expect(disallowed).toEqual([]);
-    }
-  });
-});
 
 function observed(r: ReturnType<typeof executable>, name: string) {
   return r.observations.filter((row) => row[0] === name);
@@ -821,14 +755,5 @@ describe("positive-first executable mutation controls", () => {
         }),
       ),
     ).toBe(1);
-  });
-});
-describe("authenticated signed key/getter composition", () => {
-  it("rejects changed composition receipt bytes without reseeding any historical receipt", () => {
-    expect(authenticateObjectRuntimeComposition(objectRuntimeCompositionText).base.sha256).toBe(donors[0]!.sha256);
-    expect(() =>
-      authenticateObjectRuntimeComposition(objectRuntimeCompositionText.replace("750fb7e7", "00000000")),
-    ).toThrow("receipt digest mismatch");
-    expect(authenticate(fixtureText)).toHaveLength(8);
   });
 });

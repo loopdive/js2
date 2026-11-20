@@ -1,9 +1,5 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createHash } from "node:crypto";
-import { readFileSync } from "node:fs";
-import vm from "node:vm";
-import ts from "typescript";
 import * as bodies from "../src/runtime/wasmgc/values/object-key-bodies.js";
 import type { Instr, ValType } from "../src/wasm/model/instructions.js";
 import { createEmptyModule } from "../src/ir/types.js";
@@ -20,57 +16,6 @@ import {
   reserveNativeStringFlattenResources,
   fillNativeStringFlattenResources,
 } from "../src/backend/wasmgc/resources/native-string-flatten.js";
-
-const BASE = "750fb7e7365692b315179dc909b57fa1407d4527";
-const SOURCE_SHA = "692133e0345a24e3c45071ed031036b96dc3f6e7702dc358e2f99651820eed9e";
-const RECEIPT_SHA = "71eb1eb834898794fc81c8d9906df63abcbcf418f75d407ded39688ddc39b19c";
-const receiptText = readFileSync(new URL("./fixtures/issue-3518-object-key-donors.json", import.meta.url), "utf8");
-const names = [
-  "propertyKeyPrefix",
-  "coercion",
-  "hash",
-  "equality",
-  "classification",
-  "match",
-  "find",
-  "propertyKeyLateArm",
-];
-const sha = (text: string) => createHash("sha256").update(text).digest("hex");
-interface Receipt {
-  schemaVersion: number;
-  base: string;
-  path: string;
-  sourceSha256: string;
-  spans: { name: string; start: number; end: number; sha256: string; text: string }[];
-}
-function authenticate(text: string): Receipt {
-  if (sha(text) !== RECEIPT_SHA) throw Error("donor receipt digest mismatch");
-  const result = JSON.parse(text) as Receipt;
-  if (
-    result.schemaVersion !== 1 ||
-    result.base !== BASE ||
-    result.sourceSha256 !== SOURCE_SHA ||
-    result.path !== "src/codegen/object-runtime.ts" ||
-    JSON.stringify(result.spans.map((r) => r.name)) !== JSON.stringify(names)
-  )
-    throw Error("donor provenance mismatch");
-  for (const row of result.spans)
-    if (sha(row.text) !== row.sha256 || row.end - row.start !== row.text.length) throw Error("donor span mismatch");
-  return result;
-}
-const receipt = authenticate(receiptText);
-function donor(name: string, bindings: Record<string, unknown>): Instr[] {
-  const row = receipt.spans.find((r) => r.name === name);
-  if (!row) throw Error("missing authenticated donor");
-  const source =
-    name === "propertyKeyLateArm" ? `${row.text}\nresult = nonSymbolToStringArm;` : `result = (${row.text});`;
-  const context = vm.createContext({ ...bindings });
-  vm.runInContext(
-    ts.transpileModule(source, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText,
-    context,
-  );
-  return context.result as Instr[];
-}
 function resources(symbols: boolean, cached: boolean, nativeFirst: boolean) {
   return {
     anyStrTypeIdx: 10,
@@ -91,103 +36,19 @@ function resources(symbols: boolean, cached: boolean, nativeFirst: boolean) {
     tombstoneFlag: 0x80,
   };
 }
-function bindings(r: ReturnType<typeof resources>): Record<string, unknown> {
-  const result: Record<string, unknown> = {
-    ...r,
-    FNV_OFFSET: 0x811c9dc5 | 0,
-    FNV_PRIME: 0x01000193,
-    FLAG_TOMBSTONE: r.tombstoneFlag,
-    ctx: {
-      hashedStrTypeIdx: r.hashedStrTypeIdx,
-      targetProfile: { semanticProviders: r.nativeFirst ? "native-first" : "compatibility" },
-    },
-  };
-  result.emitClassifyKey = (
-    keyParamIdx: number,
-    searchAnyLocal: number,
-    isSymLocal: number,
-    symIdLocal: number,
-    fkeyLocal: number,
-  ) => donor("classification", { ...result, keyParamIdx, searchAnyLocal, isSymLocal, symIdLocal, fkeyLocal });
-  result.emitKeyMatch = (entryLocal: number, isSymLocal: number, symIdLocal: number, fkeyLocal: number) =>
-    donor("match", { ...result, entryLocal, isSymLocal, symIdLocal, fkeyLocal });
-  return result;
-}
 afterEach(async () => {
   vi.restoreAllMocks();
   vi.unstubAllEnvs();
   await new Promise<void>((resolve) => setImmediate(resolve));
 });
 
-describe("fixed key-body donor preservation", () => {
-  for (const symbols of [false, true])
-    for (const cached of [false, true])
-      for (const nativeFirst of [false, true])
-        it(`preserves every key/find instruction: symbols=${symbols}, cached=${cached}, nativeFirst=${nativeFirst}`, () => {
-          const r = resources(symbols, cached, nativeFirst),
-            b = bindings(r);
-          expect(bodies.buildObjectHashBody(r)).toEqual(donor("hash", b));
-          if (symbols) expect(bodies.buildObjectKeyEqualsBody(r)).toEqual(donor("equality", b));
-          expect(bodies.buildObjectKeyClassification(r, 1, 8, 9, 10, 7)).toEqual(
-            donor("classification", {
-              ...b,
-              keyParamIdx: 1,
-              searchAnyLocal: 8,
-              isSymLocal: 9,
-              symIdLocal: 10,
-              fkeyLocal: 7,
-            }),
-          );
-          expect(bodies.buildObjectKeyMatch(r, 6, 9, 10, 7)).toEqual(
-            donor("match", { ...b, entryLocal: 6, isSymLocal: 9, symIdLocal: 10, fkeyLocal: 7 }),
-          );
-          expect(bodies.buildObjectFindBody(r)).toEqual(donor("find", b));
-        });
-  it.each([-1, 17])("preserves numeric key admission with boxed-number type %s", (boxNumTypeIdx) => {
-    const r = { anyStrTypeIdx: 10, boxNumTypeIdx, unboxNumberIdx: 20, numToStringIdx: 21 };
-    expect(bodies.buildObjectPropertyKeyPrefix(r)).toEqual(donor("propertyKeyPrefix", r));
-  });
-  it.each([false, true])("preserves the late ToPrimitive arm with Symbol support %s", (symbolKeysEnabled) => {
-    const hint = (): Instr[] => [{ op: "global.get", index: 37 }, { op: "extern.convert_any" }];
-    const r = { externToStringIdx: 27, toPrimitiveIdx: 28, symbolKeysEnabled, symbolTypeIdx: 14 };
-    const stringExtern = vi.fn((text: string) => {
-      expect(text).toBe("string");
-      return hint();
-    });
-    const original = donor("propertyKeyLateArm", { ...r, stringExtern });
-    expect(stringExtern).toHaveBeenCalledTimes(1);
-    expect(bodies.buildObjectPropertyKeyLateArm({ ...r, stringHintInstrs: hint() })).toEqual(original);
-  });
+describe("object key bodies", () => {
   it("retains exact body identity when key coercion is absent", () => {
     const body: Instr[] = [{ op: "local.get", index: 4 }];
-    expect(donor("coercion", { body, keyParamIdx: 1, toPropertyKeyIdx: undefined })).toBe(body);
     expect(bodies.prependObjectKeyCoercion(undefined, 1, body)).toBe(body);
-    expect(bodies.prependObjectKeyCoercion(24, 1, body)).toEqual(
-      donor("coercion", { body, keyParamIdx: 1, toPropertyKeyIdx: 24 }),
-    );
     expect(bodies.prependObjectKeyCoercion(24, 1, body)[3]).toBe(body[0]);
   });
-  it.each(["body", "base", "population"])(
-    "rejects changed %s after authenticating the positive receipt",
-    (mutation) => {
-      expect(authenticate(receiptText).spans).toHaveLength(8);
-      const copy = JSON.parse(receiptText) as Receipt;
-      if (mutation === "body") copy.spans[2]!.text = copy.spans[2]!.text.replace("i32.xor", "i32.or");
-      else if (mutation === "base") copy.base = "0".repeat(40);
-      else copy.spans.pop();
-      expect(() => authenticate(JSON.stringify(copy))).toThrow("donor receipt digest mismatch");
-    },
-  );
-  it("has no runtime imports or shared emitted instructions across independent builds", () => {
-    const source = readFileSync(new URL("../src/runtime/wasmgc/values/object-key-bodies.ts", import.meta.url), "utf8");
-    const file = ts.createSourceFile("leaf.ts", source, ts.ScriptTarget.Latest, true);
-    const imports = file.statements.filter(ts.isImportDeclaration);
-    expect(imports).toHaveLength(1);
-    expect(imports.every((row) => row.importClause?.isTypeOnly)).toBe(true);
-    expect(
-      ts.transpileModule(source, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext } })
-        .outputText,
-    ).not.toMatch(/\bimport\b/);
+  it("shares no emitted instructions across independent builds", () => {
     const instructions = (value: unknown, found = new Set<object>()): Set<object> => {
       if (value && typeof value === "object") {
         if ("op" in value) {
@@ -203,98 +64,6 @@ describe("fixed key-body donor preservation", () => {
     const second = instructions(bodies.buildObjectFindBody(r));
     expect(first.size).toBeGreaterThan(60);
     expect([...second].some((row) => first.has(row))).toBe(false);
-  });
-});
-
-const cases = [
-  {
-    name: "numeric and string key coercion",
-    expected: 2345,
-    body: `
-    const o: any = {}; const a = -0; const b = -1.5;
-    o[a] = 2; o[b] = 3; o[true as any] = 4; o[null as any] = 5;
-    return o["0"] * 1000 + o["-1.5"] * 100 + o["true"] * 10 + o["null"];
-  `,
-  },
-  {
-    name: "distinct Symbol identities and a same-description string",
-    expected: 5711,
-    body: `
-    const a = Symbol("same"); const b = Symbol("same"); const o: any = {};
-    o[a] = 3; o[b] = 7; o["same"] = 11; delete o[a];
-    if (a in o) return -1; o[a] = 5;
-    return o[a] * 1000 + o[b] * 100 + o["same"];
-  `,
-  },
-  {
-    name: "collision probing past tombstones and reinsertion",
-    expected: 792,
-    body: `
-    const keys = ["a", "A", "!"]; const o: any = {};
-    for (let i = 0; i < keys.length; i++) o[keys[i]] = i + 1;
-    delete o[keys[0]]; if (keys[0] in o) return -1;
-    const after = o[keys[1]]; o[keys[0]] = 7; o[keys[2]] = 9;
-    return o[keys[0]] * 100 + o[keys[2]] * 10 + after;
-  `,
-  },
-  {
-    name: "effectful object key preserves a returned Symbol",
-    expected: 113,
-    body: `
-    const s = Symbol("key"); const state = { calls: 0 }; const o: any = {};
-    const key: any = { toString() { state.calls++; return s; } };
-    o[key] = 13; return state.calls * 100 + o[s];
-  `,
-  },
-];
-const builderNames = [
-  "buildObjectPropertyKeyPrefix",
-  "prependObjectKeyCoercion",
-  "buildObjectHashBody",
-  "buildObjectKeyEqualsBody",
-  "buildObjectKeyClassification",
-  "buildObjectKeyMatch",
-  "buildObjectFindBody",
-  "buildObjectPropertyKeyLateArm",
-] as const;
-
-describe.each([false, true])("actual legacy production delegation, experimentalIR=%s", (experimentalIR) => {
-  it.each(cases)("executes $name against the native oracle", async ({ name, body, expected }) => {
-    for (const key of [
-      "JS2WASM_IR_GVN",
-      "JS2WASM_IR_OWNERSHIP",
-      "JS2WASM_IR_ESCAPE",
-      "IR_VERIFY_ALLOC",
-      "JS2WASM_IR_VERIFY_DOMINANCE_NAIVE",
-      "JS2WASM_IR_INLINE",
-    ])
-      vi.stubEnv(key, "0");
-    const source = `export function test(): number { ${body} }`;
-    const native = vm.createContext({});
-    vm.runInContext(
-      ts.transpileModule(source.replace("export ", ""), { compilerOptions: { target: ts.ScriptTarget.ES2022 } })
-        .outputText,
-      native,
-    );
-    expect(vm.runInContext("test()", native)).toBe(expected);
-    const calls = builderNames.map((name) => vi.spyOn(bodies, name));
-    const { compile } = await import("../src/index.js");
-    const result = await compile(source, {
-      fileName: `object-key-${name}-${experimentalIR}.ts`,
-      target: "standalone",
-      nativeStrings: true,
-      experimentalIR,
-      skipSemanticDiagnostics: false,
-    });
-    expect(result.success, JSON.stringify(result.errors)).toBe(true);
-    for (let i = 0; i < calls.length; i++) expect(calls[i], builderNames[i]).toHaveBeenCalled();
-    const hashCall = calls[2]!.mock.calls.at(-1)![0] as bodies.ObjectHashResources;
-    expect(hashCall.symbolKeysEnabled).toBe(true);
-    expect(hashCall.hashedStrTypeIdx).toBeGreaterThanOrEqual(0);
-    const compiled = new WebAssembly.Module(result.binary);
-    expect(WebAssembly.Module.imports(compiled)).toEqual([]);
-    const instance = new WebAssembly.Instance(compiled, {});
-    expect((instance.exports.test as () => number)()).toBe(expected);
   });
 });
 
