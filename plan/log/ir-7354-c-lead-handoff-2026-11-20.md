@@ -130,6 +130,23 @@ each lane):
   main, re-measure, and open one held PR.
 - **S9:** `claude/es5-census-integ-rounds` c6b4d85484 (no PR). Next: merge
   main and open it as the rounds docs PR.
+- **S8:** integration stays at e24d01e175. Round 8 (the O2b merge) was aborted
+  at the weekly limit. Next steps are in `plan/agent-context/s8-c8-integration.md`
+  on #7328 (2771b10115, main merged in).
+- **S13:** `claude/7354-arrays` 9d3a111d11. Its Suspended Work is in the #7352
+  issue file. `…-arrays-strprops` 1923c40270 and `claude/7354-shared-exn`
+  048fdd1df7 are done. The o3merge and the shared-exn re-merge were cut off
+  locally; redo both from the pushed branches.
+- **S10:** #7329 at 75a590b7 carries the RV7329 fix, not yet re-reviewed.
+  `claude/7375-compound-rhs` 18bc06b2 carries #7375 and #7408; it has no PR yet.
+- **S1:** `claude/7354-json` 760ceb3f18 (J, no PR) and
+  `claude/7362-legacy-typeof-effects` 6d399abc69. #7327 next: merge main, pin
+  the `typeof void 0` probes, then a delta review.
+- **S15b:**
+  - #7338 at 4061d667 waits on RV7338.
+  - #7347 at 32afe752 has `quality` red: the new
+    src/codegen/helpers/required-helper.ts is not classified in
+    compiler-boundaries.json.
 - **#7340** was approved on af0efa4e02 and released at wind-down.
 
 ## Decisions still open for the project lead
