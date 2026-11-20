@@ -648,9 +648,238 @@ Not verified:
 
 ## PR 2a result
 
-In progress on `claude/7380-pins-a` (base `claude/7380-validator`).
+Implemented 2026-11-20 on `claude/7380-pins-a` (base `claude/7380-validator` `c0ab3915bb`). No `src/` change, so no
+byte question: the Prepared and ordinary outputs are untouched by construction.
 
-### Before: every `tests/issue-3518-*.test.ts` on the base
+Gist:
+
+- The base has far more red pin tests than #7358 and section 3 listed: **114 of the 287 `tests/issue-3518-*` files
+  are red, 4,480 failing tests** (table at the end of this section). Section 3's counts were file-level greps.
+- This PR retires the families section 4 assigns to 2a, and with them the whole web that reads the six receipts
+  pinning `src/ir/program/data.ts`. That web reaches into `issue-3525`, `issue-4376` and `issue-6866` files; all ten
+  of those were red too (measured, below).
+- **Retired: 34 test files touched, 3,610 red tests gone.** 30 files deleted, 4 cut down to their behaviour tests,
+  which all pass (110 tests, 0 red).
+- Deleted: 37,221 lines of test files, 19,447 lines of 20 `.ts` helpers, 31 JSON receipts (54,063 lines,
+  2,341,617 bytes), and the 7 historical-source fixtures of `tests/fixtures/issue-3518-c1-historical-authority/`
+  (11,301 lines).
+- **Exports removed: none.** `check:dead-exports` (with `preservation-v1`) passes unchanged; none of the deleted
+  helpers was the only reader of a `src/` export.
+
+How each failing test was classified (brief classes):
+
+- **(i) pin, deleted.** Every red test in the files below failed at a source hash, a length or SHA-256 of a whole
+  file, a reconstructed historical file, or a receipt comparison, before asserting any behaviour. Its green
+  siblings were the same machinery (forged-receipt and forged-span controls of the pin helpers), so a file with
+  nothing else left was deleted whole.
+- **(i) inside a behaviour test, assertion cut.** Three red tests mixed a pin into a real check. Only the pin line
+  went; the behaviour assertions stay and pass:
+  - `issue-3518-program-ownership-runtime-seam` "forwards both admission functions …": the exact export-name lists of
+    `program/data.ts`, `program/input.ts` and `program/errors.ts` (closed lists that grow with every export).
+  - `issue-3518-native-number-format-requirements` "borrows both primary views … fast path false/true":
+    `supportBuffers.toHaveLength(31)`, the instruction-buffer count of the formatter support body (43 today). The
+    literal rows, owner and identity checks after it are unchanged and pass.
+- **(ii) red for a real reason, kept and untouched:** `issue-3518-native-realm-requirements` "retains the original
+  genuine Number/object frontend preparation refusal". It expects preparing `REALM_NO_SOURCE` to throw "runtime
+  feature js.number.from-value has no provider", and preparation now succeeds, because that feature gained a
+  provider (#7354 D1). It is not a pin: it asserts a refusal that a later slice removed on purpose. Whoever owns the
+  realm requirements must decide whether the program is now meant to prepare (then the test changes to assert what
+  it prepares) or not. It stays red here and is the only red test left in a #7358 family.
+- **(iii) behaviour sharing setup with a pin:** none needed separating beyond the two cuts above. In
+  `issue-3518-runtime-data-contract-seam` the 64 passing tests (live old/canonical/barrel identity, the compiled
+  type joins, authentication and rollback) did not depend on the receipts; the receipt arrays lost their dead `hash`
+  and `types` fields and the file lost the receipt checks and both fixture-capture suites.
+- One deleted test was red without being a pin failure: `issue-3518-program-data-contract-seam` "actually compiles
+  old/new identities …" timed out (180 s, type-checks a generated file under load). Its name list is the 40-entry
+  receipt of the move, so it went with the file. Whether `src/ir/program.ts` still re-exports those types is checked
+  by `typecheck` for every real importer.
+
+What each family was:
+
+| family | files | red before | fate |
+| --- | --- | ---: | --- |
+| runtime-program relocation (`length/SHA256: src/ir/prepared-component-dependencies.ts`) | `runtime-program-relocation` (298/298), `c1-current-source` | 568 | deleted with `ir-runtime-program-relocation.{ts,json}`, `ir-c1-*` |
+| core-vocabulary evolution (`complete source SHA256/length mismatch: src/ir/ast-lowering-plans.ts`) | `core-vocabulary-evolution` | 117 | deleted with `ir-core-vocabulary-evolution.{ts,json}` |
+| Deno post-position successor profile (`complete raw source profile mismatch`), the policy-evolution chain | `wasmgc-helper-policy-evolution`, `semantic-provider-boundary`, `canonical-3c6/489d-inventory-successor`, `current-main-inventory-successor`, `nested-stackification-`, `number-prerequisite-`, `program-validator-`, `validation-`, `well-known-symbol-policy-evolution`, `program-data-contract-boundary`, `runtime-program-policy-evolution`, the `issue-3525` / `4376` / `6866` successors | 2,476 | deleted; `semantic-provider-boundary` keeps its 5 live "declaration contract is model-only" tests |
+| C1 historical authority (`full-file pin changed: tests/issue-3518-program-ownership-runtime-seam.test.ts`) | `program-pre-a-evolution`, `program-data-contract-seam`, `program-initial-graph-evolution`, `program-validator-relocation`, `program-core-type-evolution`, `lowering-analysis-preservation` | 353 | deleted with `ir-c1-historical-authority.ts`, `ir-ownership-evolution.ts`, the `ir-program-*-evolution` helpers and the fixture directory |
+| ownership seam | `program-ownership-runtime-seam` | 11 | 9 SHA tests and the import-list test deleted, one test cut; 12 live tests stay |
+| runtime data-contract receipts | `runtime-data-contract-seam` | 83 | receipt and fixture-capture tests deleted; 64 live tests stay |
+| formatter count, realm refusal | `native-number-format-requirements`, `native-realm-requirements` | 2 + 1 | count line cut (2 tests green again); realm test kept red, class (ii) |
+
+Helpers were deleted by reachability, not by reference count: a helper is dead when no file outside `tests/helpers/`
+reaches it. That matters because `ir-runtime-program-policy-evolution.ts`, `ir-c1-historical-authority.ts` and
+`ir-c1-current-source.ts` name each other in a cycle. Every deleted name was grepped in `scripts/`, `.github/`,
+`package.json`, `vitest.config.ts` and `docs/`: no reader. Only historical logs under `plan/log/` mention them.
+`tests/helpers/ir-runtime-contract-evolution.json` records a hash of `tests/issue-3518-runtime-data-contract-seam.test.ts`
+as authoring provenance; its test asserts that the file is never read, so the edit cannot turn it red.
+
+Gates, each run bare, all exit 0: `npm run -s typecheck`; `node scripts/check-loc-budget.mjs`,
+`node scripts/check-func-budget.mjs`; `npm run -s check:dead-exports`; `npm run -s check:import-cycles`;
+`node scripts/check-compiler-boundaries.mjs --mode inventory --base origin/main`;
+`JS2WASM_EVAL_ENGINE=interpreter sh scripts/hooks/changed-root-tests.sh` (6 changed root files, all pass).
+With `LOC_GATE_BASE=origin/main` (`7fe105289d`) both budget gates fail, on `src/ir/module-bindings.ts` (+2) and
+`emitNativeParseNumber` (358). This branch does not touch either file: main changed them after this stack's base, so
+the diff against main's tip sees main's own change in reverse. They clear when the stack merges main.
+
+What is left for 2b (and why it was not done here):
+
+- **90 `issue-3518-*` files are still red, 1,567 tests** (table below). They are other pin families, not readers of
+  the six receipts: the "main port" receipts (`later-main`, `resume-main`, `delivery-main`, `array-main`,
+  `typedarray-main`, `promise-export` dependency mismatches; 21 files fail at load), `runtime contract evolution`
+  (`historical-runtime-reconstruction` 631/631, `provider-verification-ownership`, `runtime-preparation-relocation`),
+  `source-contract-relocation`, `validation-analysis-relocation`, `descriptor adapter`, inline SHA-256 pins of body
+  text (`native-string-no-demand-emitter-forward`, `native-object-layouts`, `symbolic-support-ref`, …), and counted
+  lists. A minority look like real failures and need a look before deletion, e.g. `ir-math-switch-retirement`
+  (standalone `__get_builtin` codegen error), `host-coercion-get-abrupt`, `host-utf8-literal-keys`,
+  `ordinary-object-callable-contracts` ("expected function to throw"), `public-retirement-gate`, `string-repeat-ir`,
+  and five `STACK_TRACE_ERROR` timeouts under load. Classifying those 1,567 tests one by one is the 2b job; the
+  "also seen red" list of #7358 is in it.
+- The green pin families of section 3 (M15), as planned.
+- `issue-3518-native-realm-requirements` (class ii above).
+
+Not verified:
+
+- The non-`issue-3518` test files outside the ten receipt readers were not run; none of them names a deleted file.
+- The `quality` job's full vitest run; the four edited files pass alone.
+
+Remaining red `issue-3518-*` files after this PR (base measurement; none of them was touched):
+
+| file | red / tests | most frequent failure |
+| --- | ---: | --- |
+| `issue-3518-any-to-string-source-composition` | 6 / 15 | AssertionError: expected [Function] to throw error matching /builder/ but got 'resume-main span missing or dup |
+| `issue-3518-argument-vector-source-composition` | 59 / 61 | AssertionError: expected [Function] to throw error matching /span/ but got 'later-main dependency mismatch: sr |
+| `issue-3518-array-main-refresh-port` | 0 / 0 | load: array-main dependency missing: src/codegen/apply-closure-variadic-builtin.ts |
+| `issue-3518-async-frame-body-source-preservation` | 19 / 47 | AssertionError [ERR_ASSERTION]: exact mapped edit: import { |
+| `issue-3518-bench-array-prepared-cutover` | 1 / 5 | AssertionError: expected [ …(13) ] to deeply equal [ …(13) ] |
+| `issue-3518-bench-string-prepared-cutover` | 2 / 3 | AssertionError: expected Set{ …(105) } to deeply equal Set{ 'TypeError', …(106) } |
+| `issue-3518-bigint-carrier-port` | 26 / 35 | Error: BigInt carrier span order or offset mismatch |
+| `issue-3518-builtin-metadata-main-port` | 26 / 28 | Error: builtin-metadata span offset mismatch |
+| `issue-3518-capability-schema-boundary` | 1 / 49 | AssertionError: expected { id: 'runtime-contracts', …(5) } to match object { status: 'active', …(4) } |
+| `issue-3518-class-to-primitive-presence` | 2 / 24 | Error: resume-main span missing or duplicated: src/codegen/type-coercion.ts:0 |
+| `issue-3518-closure-source-composition` | 0 / 0 | load: typedarray-main dependency src/codegen/ta-static-from-of-spec.ts source mismatch |
+| `issue-3518-conversion-source-composition` | 16 / 16 | Error: later-main dependency mismatch: src/codegen/builtin-ctor-value-invoke.ts |
+| `issue-3518-core-kind-neutrality` | 2 / 53 | AssertionError: expected 83 to be 55 // Object.is equality |
+| `issue-3518-core-nodes-boundary` | 29 / 29 | AssertionError: [{"code":"unresolved-module","detail":"src/ir/core/nodes.ts: ../../shared/contracts/ir-unit-in |
+| `issue-3518-core-nodes-seam` | 6 / 33 | AssertionError: expected [ …(84) ] to have a length of 83 but got 84 |
+| `issue-3518-core-type-boundary` | 15 / 15 | AssertionError: [{"code":"unresolved-module","detail":"src/ir/core/types.ts: ./binding-key-primitives.js"},{"c |
+| `issue-3518-core-type-seam` | 5 / 25 | AssertionError: expected [ 'IR_CLASS_SHAPE_CELL', …(10) ] to deeply equal [ Array(10) ] |
+| `issue-3518-delay-combinator-layout-ownership` | 12 / 31 | Error: promise-export dependency mismatch: src/codegen/promise-class-receiver-drive.ts |
+| `issue-3518-delivery-main-refresh-port` | 0 / 0 | load: delivery-main dependency mismatch: src/codegen/object-proto-has-own-property.ts |
+| `issue-3518-descriptor-adapter-relocation` | 0 / 0 | load: descriptor adapter actual helper mismatch |
+| `issue-3518-descriptor-undefined-correction` | 9 / 10 | Error: descriptor adapter actual helper mismatch |
+| `issue-3518-historical-runtime-reconstruction` | 631 / 631 | Error: runtime contract evolution: complete source SHA256/length mismatch: src/runtime/contracts/provider-poli |
+| `issue-3518-host-coercion-get-abrupt` | 10 / 14 | AssertionError: expected undefined to be 99 // Object.is equality |
+| `issue-3518-host-utf8-literal-keys` | 16 / 33 | AssertionError: expected 0 to be greater than 0 |
+| `issue-3518-ir-math-switch-retirement` | 1 / 7 | AssertionError: Codegen error: '__get_builtin' (dynamic-shape object/property operation) is not yet supported  |
+| `issue-3518-later-main-preservation-port` | 0 / 0 | load: later-main dependency mismatch: src/codegen/builtin-ctor-value-invoke.ts |
+| `issue-3518-lowering-cycle` | 1 / 25 | AssertionError: expected [ …(34) ] to deeply equal [ …(33) ] |
+| `issue-3518-native-accessor-call-bodies` | 1 / 40 | AssertionError: expected '34b92c047582bf8987d68df6dd59faf8871b9…' to be '9b618d740d61571e3fb0d69712ca79e54d31d |
+| `issue-3518-native-any-to-string-donor` | 0 / 0 | load: resume-main span missing or duplicated: src/codegen/native-strings.ts:0 |
+| `issue-3518-native-argument-vector-resources` | 0 / 0 | load: later-main dependency mismatch: src/codegen/builtin-ctor-value-invoke.ts |
+| `issue-3518-native-carrier-bag-read-bodies` | 0 / 0 | load: resume-main span offset mismatch: src/codegen/carrier-bag-visibility.ts:0 |
+| `issue-3518-native-closure-resources` | 0 / 0 | load: typedarray-main dependency src/codegen/ta-static-from-of-spec.ts source mismatch |
+| `issue-3518-native-delay-combinator-body-ownership` | 8 / 33 | AssertionError: expected [ …(11) ] to deeply equal [ …(10) ] |
+| `issue-3518-native-delay-combinator-source-preservation` | 89 / 145 | Error: promise-export dependency mismatch: src/codegen/promise-class-receiver-drive.ts |
+| `issue-3518-native-family-source-contract` | 8 / 45 | AssertionError: expected 3 to be greater than or equal to 4 |
+| `issue-3518-native-family-source-identity` | 2 / 55 | AssertionError: expected [Function lower] to throw an error |
+| `issue-3518-native-mixed-object-access` | 3 / 37 | Error: STACK_TRACE_ERROR |
+| `issue-3518-native-number-format-ownership` | 2 / 13 | AssertionError: expected '// Copyright (c) 2026 Loopdive GmbH. …' to be '// Copyright (c) 2026 Loopdive GmbH.  |
+| `issue-3518-native-object-descriptor-resources` | 1 / 75 |  |
+| `issue-3518-native-object-get-bodies` | 55 / 91 | Error: resume-main span offset mismatch: src/codegen/instance-props.ts:0 |
+| `issue-3518-native-object-key-foundation` | 1 / 28 | Error: later-main dependency mismatch: src/codegen/builtin-ctor-value-invoke.ts |
+| `issue-3518-native-object-layouts` | 2 / 52 | AssertionError: expected 'b7944c4cbf8407f2b73458e4d694fbbf1038d…' to be 'e4d546ab2007a44fe45d5bcda8453e190aaaa |
+| `issue-3518-native-object-storage-resources` | 14 / 51 | Error: descriptor adapter actual helper mismatch |
+| `issue-3518-native-object-write-composition` | 0 / 0 | load: later-main dependency mismatch: src/codegen/builtin-ctor-value-invoke.ts |
+| `issue-3518-native-prototype-seeder-bindings` | 1 / 49 |  |
+| `issue-3518-native-realm-requirements` | 1 / 26 | AssertionError: expected [Function] to throw an error |
+| `issue-3518-native-realm-wrapper-storage` | 0 / 24 | suite hook failure |
+| `issue-3518-native-string-no-demand-emitter-forward` | 8 / 8 | AssertionError: expected '4c95384bd705460f7208b040a84a9146d3022…' to be 'a23bbcb037bf8bb0fd2b22bc4c85a86d43e87 |
+| `issue-3518-native-string-number-resources` | 35 / 123 | Error: missing/duplicate mapped source: /** |
+| `issue-3518-native-string-output-preservation` | 24 / 24 | Error: resume-main span missing or duplicated: src/codegen/native-strings.ts:0 |
+| `issue-3518-native-symbol-carrier-resources` | 0 / 0 | load: resume-main span offset mismatch: src/codegen/symbol-native.ts:1 |
+| `issue-3518-native-value-resources` | 61 / 118 | Error: resume-main span missing or duplicated: src/codegen/any-helpers.ts:0 |
+| `issue-3518-native-vector-resources` | 4 / 31 | AssertionError: expected 'wasmgc:standalone physical setup cann…' to contain 'scheduler/promise runtime materi |
+| `issue-3518-number-format-source-support` | 1 / 10 | AssertionError: expected 2226 to be 1618 // Object.is equality |
+| `issue-3518-object-runtime-main-composition` | 0 / 0 | load: later-main dependency mismatch: src/codegen/builtin-ctor-value-invoke.ts |
+| `issue-3518-open-extension-boundaries` | 1 / 66 | AssertionError: expected [ …(2) ] to deeply equal [ …(2) ] |
+| `issue-3518-ordinary-getter-source` | 1 / 8 | AssertionError: expected function to throw an error, but it didn't |
+| `issue-3518-ordinary-object-callable-contracts` | 8 / 23 | AssertionError: expected function to throw an error, but it didn't |
+| `issue-3518-ordinary-object-runtime-providers` | 2 / 117 | Error: STACK_TRACE_ERROR |
+| `issue-3518-own-property-bodies` | 0 / 0 | load: array-main dependency missing: src/codegen/apply-closure-variadic-builtin.ts |
+| `issue-3518-program-abi-seam` | 1 / 9 | Error: STACK_TRACE_ERROR |
+| `issue-3518-promise-earlier-main-port` | 0 / 0 | load: earlier-promise dependency mismatch: src/codegen/builtin-static-globals.ts |
+| `issue-3518-promise-export-main-port` | 0 / 0 | load: promise-export dependency mismatch: src/codegen/promise-class-receiver-drive.ts |
+| `issue-3518-promise-resolution-preservation` | 3 / 58 | AssertionError: expected { …(4) } to deeply equal { funcs: [], calls: [], …(2) } |
+| `issue-3518-promise-settlement-body-ownership` | 9 / 149 | AssertionError: expected { …(4) } to deeply equal { funcs: [], calls: [], …(2) } |
+| `issue-3518-prototype-chain-preservation` | 0 / 0 | load: prototype chain builder mismatch |
+| `issue-3518-prototype-companion-body` | 0 / 0 | load: prototype receiver builder mismatch |
+| `issue-3518-prototype-read-recipes` | 0 / 0 | load: prototype receiver builder mismatch |
+| `issue-3518-prototype-receiver-bodies` | 0 / 0 | load: prototype receiver builder mismatch |
+| `issue-3518-prototype-seeder-bodies` | 2 / 53 | Error: prototype seeder extraction dependency mismatch: src/runtime/wasmgc/values/prototype-seeder-bodies.ts |
+| `issue-3518-prototype-seeder-extraction` | 0 / 0 | load: prototype seeder extraction dependency mismatch: src/runtime/wasmgc/values/prototype-seeder-bodies.ts |
+| `issue-3518-prototype-singleton-bodies` | 0 / 0 | load: prototype seeder extraction dependency mismatch: src/runtime/wasmgc/values/prototype-seeder-bodies.ts |
+| `issue-3518-provider-verification-ownership` | 25 / 57 | Error: runtime contract evolution: complete source SHA256/length mismatch: src/runtime/contracts/provider-poli |
+| `issue-3518-public-retirement-gate` | 1 / 16 | AssertionError: expected 'accepted' to be 'unsupported' // Object.is equality |
+| `issue-3518-reference-error-runtime-producers` | 1 / 28 | AssertionError: expected [ …(25) ] to include 'file:///home/user/js2/.claude/worktre…' |
+| `issue-3518-resume-main-composition` | 131 / 143 | Error: typedarray-main dependency src/codegen/ta-static-from-of-spec.ts source mismatch |
+| `issue-3518-runtime-contract-evolution` | 0 / 380 | suite hook failure |
+| `issue-3518-runtime-preparation-relocation` | 3 / 121 | Error: runtime contract evolution: complete source SHA256/length mismatch: src/runtime/contracts/provider-poli |
+| `issue-3518-runtime-producers-import-boundaries` | 1 / 3 | AssertionError:  |
+| `issue-3518-semantic-provider-source-acceptance` | 1 / 87 | AssertionError: expected 1 to be +0 // Object.is equality |
+| `issue-3518-source-contract-relocation` | 53 / 65 | Error: source contract relocation: complete source SHA256/length mismatch: src/ir/ast-lowering-plans.ts |
+| `issue-3518-startup-contract` | 1 / 25 | AssertionError: expected [] to have a length of 1 but got +0 |
+| `issue-3518-string-repeat-ir` | 2 / 12 | Error: prepared string.repeat has no exact env.string_repeat import |
+| `issue-3518-symbolic-support-ref` | 6 / 20 | AssertionError: expected '32421c36a56ab3483c3838e7465524cd767ae…' to be '9324caf316c596019beab1007c7e602263ae2 |
+| `issue-3518-to-primitive-wrapper-forward` | 11 / 87 | Error: changed extracted presence module |
+| `issue-3518-typed-async-preparation` | 3 / 26 | AssertionError: expected [ …(20) ] to have a length of 18 but got 20 |
+| `issue-3518-typed-program-preparation` | 2 / 30 | AssertionError: expected undefined to be Error: omitted explicit verification opti… // Object.is equality |
+| `issue-3518-typedarray-main-preservation-port` | 0 / 0 | load: typedarray-main dependency src/codegen/ta-static-from-of-spec.ts source mismatch |
+| `issue-3518-validation-analysis-relocation` | 80 / 116 | Error: allocation rule sharing successor: complete source pin current src/ir/analysis/encoding.ts |
+| `issue-3518-vector-grow-store-donor` | 3 / 67 | AssertionError: expected '655dac953ce3a5088564a78e124a2bf2a2264…' to be '5babe5828bd5a54964630abba6a1eafdb1a6a |
+| **90 files** | **1567** | |
+
+Per touched file, before and after (tests / red; `after` measured on this branch):
+
+| file | before: tests / red | after: tests / red |
+| --- | ---: | ---: |
+| `issue-3518-c1-current-source` | 355 / 270 | deleted |
+| `issue-3518-canonical-3c6-inventory-successor` | 235 / 175 | deleted |
+| `issue-3518-canonical-489d-inventory-successor` | 65 / 62 | deleted |
+| `issue-3518-core-vocabulary-evolution` | 132 / 117 | deleted |
+| `issue-3518-current-main-inventory-successor` | 142 / 86 | deleted |
+| `issue-3518-lowering-analysis-preservation` | 57 / 55 | deleted |
+| `issue-3518-native-number-format-requirements` | 29 / 2 | 29 / 0 |
+| `issue-3518-nested-stackification-policy-evolution` | 53 / 53 | deleted |
+| `issue-3518-number-prerequisite-policy-evolution` | 456 / 456 | deleted |
+| `issue-3518-program-core-type-evolution` | 49 / 46 | deleted |
+| `issue-3518-program-data-contract-boundary` | 105 / 104 | deleted |
+| `issue-3518-program-data-contract-seam` | 47 / 46 | deleted |
+| `issue-3518-program-initial-graph-evolution` | 129 / 123 | deleted |
+| `issue-3518-program-ownership-runtime-seam` | 22 / 11 | 12 / 0 |
+| `issue-3518-program-pre-a-evolution` | 76 / 74 | deleted |
+| `issue-3518-program-validator-policy-evolution` | 143 / 143 | deleted |
+| `issue-3518-program-validator-relocation` | 62 / 9 | deleted |
+| `issue-3518-runtime-data-contract-seam` | 147 / 83 | 64 / 0 |
+| `issue-3518-runtime-program-policy-evolution` | 0 / 0 (load error) | deleted |
+| `issue-3518-runtime-program-relocation` | 298 / 298 | deleted |
+| `issue-3518-semantic-provider-boundary` | 354 / 349 | 5 / 0 |
+| `issue-3518-validation-policy-evolution` | 63 / 63 | deleted |
+| `issue-3518-wasmgc-helper-policy-evolution` | 135 / 134 | deleted |
+| `issue-3518-well-known-symbol-policy-evolution` | 154 / 154 | deleted |
+| `issue-3525-arraybuffer-isview-main-policy` | 56 / 56 | deleted |
+| `issue-3525-initial-graph-optional-fields-source` | 20 / 5 | deleted |
+| `issue-3525-main-inventory-source-successor` | 21 / 21 | deleted |
+| `issue-3525-presentation-classification-policy` | 45 / 45 | deleted |
+| `issue-4376-class-fields-main-inventory-successor` | 32 / 32 | deleted |
+| `issue-4376-deno-callback-inventory-successor` | 32 / 32 | deleted |
+| `issue-4376-post-position-main-inventory-successor` | 416 / 416 | deleted |
+| `issue-6866-class-fields-main-inventory-successor` | 31 / 30 | deleted |
+| `issue-6866-finally-main-inventory-successor` | 39 / 38 | deleted |
+| `issue-6866-source-map-position-inventory-successor` | 23 / 22 | deleted |
+| **total (34 files)** | **4023 / 3610** | **110 / 0** |
+
+
+### Before: every `tests/issue-3518-*.test.ts` on the base (287 files, 14,349 tests, 4,480 red, 114 red files), plus the ten `issue-3525` / `4376` / `6866` receipt readers
 
 Measured 2026-11-20 on `c0ab3915bb` (`1002538b5f` for the first 68 files; the two commits between touch only
 `package.json` and `tests/issue-7380-audit-flag.test.ts`). One file per vitest run, `VITEST_MAX_FORKS=1`,
@@ -948,5 +1177,15 @@ counts the file's suite plus each failed `describe`; a row with 0 tests and a fa
 | `issue-3518-wat-type-index-preservation` | 1 | 0 | 0 |
 | `issue-3518-well-known-symbol-policy-evolution` | 154 | 154 | 2 |
 | `issue-3518-whole-program-route-audit` | 9 | 0 | 0 |
+| `issue-3525-arraybuffer-isview-main-policy` | 56 | 56 | 2 |
+| `issue-3525-initial-graph-optional-fields-source` | 20 | 5 | 2 |
+| `issue-3525-main-inventory-source-successor` | 21 | 21 | 3 |
+| `issue-3525-presentation-classification-policy` | 45 | 45 | 2 |
+| `issue-4376-class-fields-main-inventory-successor` | 32 | 32 | 3 |
+| `issue-4376-deno-callback-inventory-successor` | 32 | 32 | 3 |
+| `issue-4376-post-position-main-inventory-successor` | 416 | 416 | 2 |
+| `issue-6866-class-fields-main-inventory-successor` | 31 | 30 | 2 |
+| `issue-6866-finally-main-inventory-successor` | 39 | 38 | 2 |
+| `issue-6866-source-map-position-inventory-successor` | 23 | 22 | 2 |
 
 <!-- before-table:end -->
