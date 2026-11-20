@@ -61,7 +61,7 @@ import {
 import { IR_ASYNC_CONSOLE_LOG_STRING_FN, IR_ASYNC_NUMBER_TO_STRING_FN } from "./async-semantic-runtime.js";
 import { ts, forEachChild } from "../ts-api.js";
 import { isPlannedScriptVarClosure } from "./function-member-closure-plan.js";
-import { isLexicalBindingWrite, skipOuterExpressions } from "../shared/binding-writes.js";
+import { isCommaExpression, isLexicalBindingWrite, skipOuterExpressions } from "../shared/binding-writes.js";
 import { isLogicalAssignmentFunctionTarget } from "./logical-assignment-name-targets.js";
 import {
   additiveOperandsProvable,
@@ -198,7 +198,7 @@ import {
   isCapturedByOrdinaryDescriptor,
 } from "./closure-captures.js";
 import { planArrayLiteralSpread } from "./array-spread-shape.js";
-import { objectLiteralDataPropertyName, phase1PropertyName } from "./property-key-fold.js";
+import { objectLiteralDataPropertyName, phase1PropertyName } from "../shared/property-key-fold.js";
 import { collectDynamicStringLocalWidening } from "./dynamic-local-widening.js";
 import { coercibleStandaloneDomArgumentBoundary } from "./dom-boundary.js";
 import { fmodRefFor } from "./fmod-selection.js";
@@ -960,6 +960,8 @@ export interface IrFromAstResolver extends PreparedAsyncFromAstResolver {
   preparedOrdinaryPropertyRead?(
     expression: ts.PropertyAccessExpression,
   ): { readonly key: string; readonly resultType: IrType } | undefined;
+  /** (#7354 O1) The literal is an ordinary object on the Prepared path. */
+  preparedOrdinaryObjectLiteral?(literal: ts.ObjectLiteralExpression): boolean;
   /**
    * #3787 checker identity for the global String constructor. JavaScript
    * inputs compiled without lib declarations may leave the identifier
@@ -2663,7 +2665,7 @@ function lowerDiscardedExpression(expr: ts.Expression, cx: LowerCtx): void {
     for (const element of expr.elements) lowerDiscardedExpression(element, cx);
     return;
   }
-  if (ts.isBinaryExpression(expr) && expr.operatorToken.kind === ts.SyntaxKind.CommaToken) {
+  if (isCommaExpression(expr)) {
     lowerDiscardedExpression(expr.left, cx);
     lowerDiscardedExpression(expr.right, cx);
     return;
@@ -5946,21 +5948,6 @@ function templateSubstitutionToString(value: IrValueId, source: ts.Expression, c
   return asString;
 }
 
-/** Strip the type-erased assertion wrappers `lowerExpr` already lowers through. */
-function unwrapMixedPrimitiveProjection(expr: ts.Expression): ts.Expression {
-  let current = expr;
-  while (
-    ts.isParenthesizedExpression(current) ||
-    ts.isAsExpression(current) ||
-    ts.isTypeAssertionExpression(current) ||
-    ts.isSatisfiesExpression(current) ||
-    ts.isNonNullExpression(current)
-  ) {
-    current = current.expression;
-  }
-  return current;
-}
-
 /**
  * #5092 — the two arm families `typeof`'s runtime tag dispatch may test.
  *
@@ -5984,7 +5971,7 @@ function exactDynamicPrimitiveTypeofFamilies(
 ): readonly [IrPrimitiveExpressionFamily, IrPrimitiveExpressionFamily] | null {
   if (!cx.checker) return null;
   try {
-    const candidate = unwrapMixedPrimitiveProjection(expression);
+    const candidate = skipOuterExpressions(expression);
     if (ts.isConditionalExpression(candidate)) {
       const proof = proveMixedPrimitiveConditional(candidate, cx);
       return proof === null ? null : [proof.whenTrue, proof.whenFalse];
@@ -6018,25 +6005,53 @@ function lowerExactDynamicPrimitiveTypeof(
   );
 }
 
-/**
- * Lower `typeof <expr>` by static fold (slice 1), plus #5092's exact runtime
- * tag dispatch for a two-family primitive dynamic carrier.
- */
+/** Lower `typeof <expr>`; a `void x` leaf is its f64 NaN sentinel under the value's hint, so it is split (#7361). */
 function lowerTypeOf(expr: ts.TypeOfExpression, cx: LowerCtx): IrValueId {
   if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== expr)
     return withNodeSourceSite(cx, expr, () => lowerTypeOf(expr, cx));
-  // (#7106 S1b) `typeof <unshadowed ambient global>` is a constant tag — the
-  // same proof the selector's `ambientTypeofTag` demanded.
-  if (ts.isIdentifier(expr.expression)) {
-    const ambientTag = ambientTypeofIdentifierTagFromAst(expr.expression, cx);
+  return (hasTypeofVoidLeaf(expr.expression) ? lowerTypeOfVoidLeaves : lowerTypeOfValue)(expr.expression, cx);
+}
+
+/** (#7361) Whether {@link lowerTypeOfVoidLeaves} reaches a `void x` leaf: its peel, its comma and `?:` steps. */
+function hasTypeofVoidLeaf(operand: ts.Expression): boolean {
+  const e = skipOuterExpressions(operand);
+  if (ts.isConditionalExpression(e)) return hasTypeofVoidLeaf(e.whenTrue) || hasTypeofVoidLeaf(e.whenFalse);
+  return isCommaExpression(e) ? hasTypeofVoidLeaf(e.right) : ts.isVoidExpression(e);
+}
+
+/**
+ * (#7361) `typeof` split at its operand's leaves (`typeof (a, b)` is `a` then `typeof b`; `typeof (c ? a : b)` is
+ * `c ? typeof a : typeof b`): a `void x` leaf runs `x` and is "undefined", every other leaf answers itself.
+ */
+function lowerTypeOfVoidLeaves(operand: ts.Expression, cx: LowerCtx): IrValueId {
+  const e = skipOuterExpressions(operand);
+  if (ts.isVoidExpression(e)) {
+    lowerDiscardedExpression(e.expression, cx);
+    return cx.builder.emitStringConst("undefined");
+  }
+  if (isCommaExpression(e)) {
+    lowerDiscardedExpression(e.left, cx);
+    return lowerTypeOfVoidLeaves(e.right, cx);
+  }
+  if (!ts.isConditionalExpression(e)) return lowerTypeOfValue(operand, cx);
+  const liveArm = foldedAmbientConditionArm(e, cx);
+  if (liveArm !== undefined) return lowerTypeOfVoidLeaves(liveArm, cx);
+  return lowerConditionalBranches(e, cx, lowerTypeOfVoidLeaves, () => ({ kind: "string" }));
+}
+
+/** `typeof <operand>` by static fold (slice 1), or #5092's exact tag dispatch for a two-family dynamic carrier. */
+function lowerTypeOfValue(operand: ts.Expression, cx: LowerCtx): IrValueId {
+  // (#7106 S1b) `typeof <unshadowed ambient global>` is a constant tag: the selector's `ambientTypeofTag` proof.
+  if (ts.isIdentifier(operand)) {
+    const ambientTag = ambientTypeofIdentifierTagFromAst(operand, cx);
     if (ambientTag !== undefined) return cx.builder.emitStringConst(ambientTag);
   }
-  const inner = lowerExpr(expr.expression, cx, irVal({ kind: "f64" }));
+  const inner = lowerExpr(operand, cx, irVal({ kind: "f64" }));
   const innerType = cx.builder.typeOf(inner);
   const tag = staticTypeOfFor(innerType);
   if (tag === null) {
     if (innerType.kind === "dynamic") {
-      const families = exactDynamicPrimitiveTypeofFamilies(expr.expression, cx);
+      const families = exactDynamicPrimitiveTypeofFamilies(operand, cx);
       if (families !== null) return lowerExactDynamicPrimitiveTypeof(inner, families, cx);
       // #7104 — the general case: every partition through the lane's `__typeof`.
       return cx.builder.emitDynTypeof(inner);
@@ -6049,12 +6064,7 @@ function lowerTypeOf(expr: ts.TypeOfExpression, cx: LowerCtx): IrValueId {
   return cx.builder.emitStringConst(tag);
 }
 
-/**
- * Map an IR type to the JS `typeof` tag string that any value of that type
- * would produce at runtime. Returns `null` for types whose runtime tag
- * varies (unions, boxed, references) — those need a runtime dispatch and
- * are out of slice 1's scope.
- */
+/** The `typeof` tag every value of an IR type has, or `null` when it varies (unions, boxed, references). */
 function staticTypeOfFor(t: IrType): string | null {
   if (t.kind === "string") return "string";
   if (t.kind === "vec") return "object";
@@ -6623,10 +6633,12 @@ function lowerObjectLiteral(expr: ts.ObjectLiteralExpression, cx: LowerCtx, hint
   // the carrier: a property of the slot, not of the admitting arm (#7280 S1).
   const openCarrierHome = admittedOpenCarrierHome(expr);
   if (openCarrierHome !== undefined) return emitOpenCarrierObject(cx.builder, openCarrierHome);
+  // (#7354 O1) The Prepared backend has no closed object struct: a literal it owns is an ordinary object.
   if (
+    cx.resolver?.preparedOrdinaryObjectLiteral?.(expr) === true ||
     expr.properties.some((property) => ts.isGetAccessorDeclaration(property) || ts.isSetAccessorDeclaration(property))
   ) {
-    return lowerOrdinaryDescriptorLiteral(expr, cx);
+    return lowerOrdinaryObjectLiteral(expr, cx);
   }
   const ordinaryToPrimitive = lowerOrdinaryToPrimitiveObjectLiteral(expr, cx);
   if (ordinaryToPrimitive !== null) return ordinaryToPrimitive;
@@ -6725,9 +6737,9 @@ function lowerObjectLiteral(expr: ts.ObjectLiteralExpression, cx: LowerCtx, hint
 }
 
 /** Install descriptors in source order; creating a getter never invokes it. */
-function lowerOrdinaryDescriptorLiteral(expr: ts.ObjectLiteralExpression, cx: LowerCtx): IrValueId {
+function lowerOrdinaryObjectLiteral(expr: ts.ObjectLiteralExpression, cx: LowerCtx): IrValueId {
   if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== expr)
-    return withNodeSourceSite(cx, expr, () => lowerOrdinaryDescriptorLiteral(expr, cx));
+    return withNodeSourceSite(cx, expr, () => lowerOrdinaryObjectLiteral(expr, cx));
   const external = irVal({ kind: "externref" });
   const object = cx.builder.emitCall(irIntrinsicFuncRef("js.object.create-default"), [], external);
   if (object === null) throw new Error("ordinary object constructor returned no value");
@@ -6763,7 +6775,9 @@ function lowerOrdinaryDescriptorLiteral(expr: ts.ObjectLiteralExpression, cx: Lo
     else if (ts.isShorthandPropertyAssignment(property)) value = lowerExpr(property.name, cx, IR_F64);
     else demoteToLegacy("body-shape-rejected", "unsupported ordinary descriptor member");
     const type = cx.builder.typeOf(value);
+    const boxed = boundaryBox(value, type, cx, true);
     if (type.kind === "closure") value = cx.builder.emitCallablePack(value, type.signature);
+    else if (boxed !== null) value = boxed;
     else if (asVal(type)?.kind === "f64") value = cx.builder.emitBox(value, irDynamic(JS_TAG_IDS.NumberF64));
     else if (type.kind === "val" && type.val.kind === "i32" && type.val.boolean === true)
       value = cx.builder.emitBox(value, irDynamic(JS_TAG_IDS.Boolean));
@@ -12269,7 +12283,7 @@ function lowerForUpdateExpr(expr: ts.Expression, cx: LowerCtx): void {
   // dispatcher so both keep the mutation lowerings (`lowerIncrementDecrement`,
   // `lowerIdentifierAssignment`, `lowerCompoundAssignment`) rather than the
   // value-expression fallback.
-  if (ts.isBinaryExpression(expr) && expr.operatorToken.kind === ts.SyntaxKind.CommaToken) {
+  if (isCommaExpression(expr)) {
     lowerForUpdateExpr(expr.left, cx);
     lowerForUpdateExpr(expr.right, cx);
     return;
@@ -13682,7 +13696,7 @@ function proveExactMixedPrimitiveWrapperCall(
       ? cx.resolver?.isAmbientStringBinding?.(expr.expression) === true
       : cx.resolver?.isAmbientBinding?.(expr.expression) === true;
   if (!ambient) return null;
-  const argument = unwrapMixedPrimitiveProjection(expr.arguments[0]!);
+  const argument = skipOuterExpressions(expr.arguments[0]!);
   if (!ts.isConditionalExpression(argument)) return null;
   // (2026-08-28 review repair) Same fail-closed treatment as `lowerConditional`:
   // an ambient `String`/`Number` over a CLAIMED mixed conditional whose proof
@@ -13963,6 +13977,12 @@ function ambientTypeofIdentifierTagFromAst(id: ts.Identifier, cx: LowerCtx): "ob
   return tag;
 }
 
+/** (#7106 S1b) The constant verdict of a `?:` test on `typeof <ambient>`: the selector admitted only the live arm. */
+function foldedAmbientConditionArm(expr: ts.ConditionalExpression, cx: LowerCtx): ts.Expression | undefined {
+  const folded = foldAmbientTypeofComparison(expr.condition, (id) => ambientTypeofIdentifierTagFromAst(id, cx));
+  return folded === undefined ? undefined : folded ? expr.whenTrue : expr.whenFalse;
+}
+
 /**
  * (#7106 Stage 4, #7113) The selector's `dynamicConditionalValueArms` shape:
  * one arm is bound to the dynamic carrier (or is a nested conditional of this
@@ -14066,12 +14086,8 @@ function lowerConditionalBranches(
 function lowerConditional(expr: ts.ConditionalExpression, cx: LowerCtx, hint?: IrType): IrValueId {
   if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== expr)
     return withNodeSourceSite(cx, expr, () => lowerConditional(expr, cx, hint));
-  // (#7106 S1b) A constant `typeof <ambient>` condition selects its live arm
-  // at build time — the selector admitted exactly that arm.
-  const folded = foldAmbientTypeofComparison(expr.condition, (id) => ambientTypeofIdentifierTagFromAst(id, cx));
-  if (folded !== undefined) {
-    return lowerExpr(folded ? expr.whenTrue : expr.whenFalse, cx, hint ?? irVal({ kind: "f64" }));
-  }
+  const liveArm = foldedAmbientConditionArm(expr, cx);
+  if (liveArm !== undefined) return lowerExpr(liveArm, cx, hint ?? irVal({ kind: "f64" }));
   const dynamicJoin = tryLowerDynamicConditionalValue(expr, cx);
   if (dynamicJoin !== null) return dynamicJoin;
   const mixedProof = requireMixedPrimitiveConditionalProof(expr, "mixed conditional", cx);
@@ -15416,7 +15432,7 @@ function lowerBinaryOperands(
     }
     // (#7066) Beside a proven string, a mixed-primitive conditional is its `String(c ? a : b)`:
     // ToPrimitive is the identity on primitive arms, so the `+` stays an unboxed string.
-    const conditional = unwrapMixedPrimitiveProjection(operand);
+    const conditional = skipOuterExpressions(operand);
     if (otherProof === "string" && ts.isConditionalExpression(conditional)) {
       const mixed = requireMixedPrimitiveConditionalProof(conditional, "string `+` operand", cx);
       if (mixed !== null) return lowerConvertedMixedConditional({ kind: "String", conditional, mixed }, cx);
@@ -16137,9 +16153,7 @@ function irOperandFamily(t: IrType, operand: ts.Expression): OperandFamily {
 /** A value `void x` (through parens and a comma's right side): the f64 NaN sentinel for `undefined`. */
 function isValueVoid(operand: ts.Expression): boolean {
   let candidate = peelParensExpr(operand);
-  while (ts.isBinaryExpression(candidate) && candidate.operatorToken.kind === ts.SyntaxKind.CommaToken) {
-    candidate = peelParensExpr(candidate.right);
-  }
+  while (isCommaExpression(candidate)) candidate = peelParensExpr(candidate.right);
   return ts.isVoidExpression(candidate);
 }
 
@@ -17280,6 +17294,19 @@ function analyseCaptures(
 // ---------------------------------------------------------------------------
 
 /**
+ * A number or, where the position admits one (#7354 O1: an ordinary object's member, not a throw), a Boolean crossing
+ * into an externref position under the number-boundary projection (the `numericThrow` option): its boundary box, never
+ * a dynamic value, so a program without one stays free of them. `null` everywhere else.
+ */
+function boundaryBox(value: IrValueId, type: IrType, cx: LowerCtx, admitsBoolean: boolean): IrValueId | null {
+  if (cx.numericThrow !== "number-boundary" || type.kind !== "val") return null;
+  if (type.val.kind === "f64" && (type.signed ?? true)) return cx.builder.emitIntrinsic("js.number.box", [value]);
+  if (admitsBoolean && type.val.kind === "i32" && type.val.boolean === true)
+    return cx.builder.emitIntrinsic("js.boolean.box", [value]);
+  return null;
+}
+
+/**
  * Slice 9 (#1169h): lower a `throw <expr>;` statement. The thrown value
  * is coerced to externref (the `__exn` tag's signature is
  * `(externref)`) before the IR `throw` instr.
@@ -17313,14 +17340,8 @@ function lowerThrowStatement(stmt: ts.ThrowStatement, cx: LowerCtx): void {
   }
   const value = lowerExpr(stmt.expression, cx, irVal({ kind: "externref" }));
   const valueType = cx.builder.typeOf(value);
-  const valTy = asVal(valueType);
-  if (
-    cx.numericThrow === "number-boundary" &&
-    valueType.kind === "val" &&
-    valTy?.kind === "f64" &&
-    (valueType.signed ?? true)
-  ) {
-    const boxed = cx.builder.emitIntrinsic("js.number.box", [value]);
+  const boxed = boundaryBox(value, valueType, cx, false);
+  if (boxed !== null) {
     cx.builder.emitThrow(boxed);
     return;
   }

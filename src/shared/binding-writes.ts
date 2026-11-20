@@ -152,6 +152,11 @@ export function isBindingSiteName(node: ts.Identifier): boolean {
   );
 }
 
+/** A comma expression `a, b`: its value is its right side's. */
+export function isCommaExpression(expr: ts.Expression): expr is ts.BinaryExpression {
+  return ts.isBinaryExpression(expr) && expr.operatorToken.kind === ts.SyntaxKind.CommaToken;
+}
+
 /** Parentheses and TS type wrappers (`as`, `!`, `satisfies`, `<T>x`) — transparent around a target or a source. */
 export function skipOuterExpressions(expr: ts.Expression): ts.Expression {
   while (

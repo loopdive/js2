@@ -101,7 +101,7 @@ describe("ordinary getter source symbolic preparation", () => {
     { label: "getter", members: "get value() {return 7;}", setters: 0 },
     { label: "getter and setter", members: "get value() {return 7;}, set value(value: number) {}", setters: 1 },
   ])(
-    "transports genuine $label obligations through the codec while refusing physical materialization",
+    "transports genuine $label obligations through the codec while refusing the accessor's physical materialization",
     ({ members, setters }) => {
       const files = {
         "./entry.ts": `export function run() {const object = {${members}}; return object.value;}`,
@@ -160,11 +160,12 @@ describe("ordinary getter source symbolic preparation", () => {
         expect(manifest.hostCapabilities).toEqual([]);
         const result = acceptPreparedIrProgram(program, replayOptions("wasmgc", "standalone"));
         expect(result.kind, JSON.stringify(result)).toBe("unsupported");
-        if (result.kind !== "unsupported")
-          throw new Error("symbolic ordinary providers must not grant physical execution");
+        if (result.kind !== "unsupported") throw new Error("an accessor definition has no native source provider yet");
         expect(result.code).toBe("body-shape-rejected");
-        for (const feature of expectedFeatures)
-          expect(result.detail).toContain(`intrinsic callable ${feature} needs runtime function materialization`);
+        // (#7354 O1) create-default and get have realm providers now; define-accessor is still a named gap.
+        expect(result.detail).toContain("js.object.define-accessor has no native source provider");
+        for (const feature of ["js.object.create-default", "js.object.get"])
+          expect(result.detail).not.toContain(`intrinsic callable ${feature} needs runtime function materialization`);
       }
     },
   );
@@ -189,5 +190,9 @@ describe("empty void closure bodies", () => {
         expect(outcome.run.emitted.module.imports).toEqual([]);
       }
     },
+    // 2026-11-19 (#7354 O1, lead decision): each case compiles a realm program twice (before and after codec
+    // transport); that costs ≈36 s locally and ≈39.5 s on CI, at the global 35 s limit. Restore the default when the
+    // compile-time work lands (#7397, #7398, #7365).
+    90_000,
   );
 });
