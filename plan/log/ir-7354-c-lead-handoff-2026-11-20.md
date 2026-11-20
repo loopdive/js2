@@ -185,9 +185,13 @@ each lane):
       "post-completion carrier mutation").
 - **S7:** its issue files sit on reviewed heads, so its state is recorded
   only here:
-  - #7335 at f21936ecc1, with hold: the #7164 pre-scans now see through
-    wrappers, and shard 7 has 0 failures locally. RV7335 confirms; re-check
-    CI shard 7.
+  - #7335 at f21936ecc1: APPROVED by RV7335 (320 probes: 0 regressions,
+    12 fixed; shard 7 green) and released.
+    - Follow-up (a), should-fix: `skipValueWrappers` (array-share-group.ts:35)
+      duplicates `skipTransparentExpressions`. Fold it.
+    - Follow-up (b), pre-existing: `const g: any[] = ['a','b']; g.length = 9;
+      g[8]` traps even in the bare form. Check whether #7164 covers it;
+      otherwise file it.
   - #7339 at 2efc3caa82, with hold: main merged in, plus a budget fit
     (`compileBinaryExpression` was +4 over its ceiling after #7331). RV7339
     confirms.
