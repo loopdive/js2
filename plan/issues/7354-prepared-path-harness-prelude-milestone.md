@@ -2976,3 +2976,91 @@ Results on the integrated head:
   gates coercions and throws; `boxedKind` / `knownKinds` answer a `box` to the dynamic value (tag or operand) and a
   learned concatenation, to prune ToString / `typeof` / `+` chains. They read different stages of the same function
   (`box` before legalization, its intrinsics after), so one function needs a design pass, not a merge edit.
+
+## F0 result (2026-11-20, branch `claude/7354-f0`, merged with main 052569d335)
+
+**Built.** The strict Prepared front door drops unused top-level bindings before analysis by calling the existing
+#3418 pass `elideDeadTopLevelBindings`. There is no second liveness walk.
+
+- **Where:** `elideDeadBindings` in `src/test262/test262-prepared-entry.ts`, called by `present()` before
+  `analyzeMultiSource`.
+- **Same CI path:** the CI runner reaches this same `present()`. `scripts/compiler-bundle-entry.ts` re-exports
+  `compile`/`compileMulti`/`createIncrementalCompiler` from this module, and `selected(options)` sends every
+  `wholeProgram` request to `present()`. This settles §14's open point.
+- **Gate:** the one shared predicate `deadBindingElisionApplies` (moved out of `compileSourceSync`; the ordinary
+  compile now calls it too). It covers host-free targets, the native regime, and excludes
+  `standaloneScriptVarBindings`.
+- **One source only:** a graph of several sources keeps every binding, because a Script `var` of one source is
+  visible to another.
+- **Positions:** blanking is same-length, so positions are unchanged. The frontend-failure observation still
+  reports the supplied text, because the runner hash-matches it against the job's source.
+- **Ordinary pipeline:** it never reaches `present()`; `compileMulti`, including Temporal, goes through
+  `src/index.ts`. It sees only the two soundness fixes below.
+
+**Soundness of the pass (both callers).**
+
+- **Droppable:** a top-level `var`/`let`/`const` statement where every declarator is a plain name and:
+  - every initializer is function/arrow, a literal, `undefined`/`NaN`/`Infinity`/`globalThis`, an object or array
+    literal of such values (no spread, shorthand or computed key; methods/accessors allowed), or `!`/`void`/parens
+    of any of these;
+  - and the name is never mentioned again outside a dropped statement (as an identifier, property name, string
+    literal or literal eval text).
+- **Keeps everything** when computed `eval`/`Function` source survives.
+- **Never drops** function or class declarations.
+
+Two wrong answers in the existing pass, fixed for both callers:
+
+1. **`-`/`+`/`~` of a non-primitive.** These were treated as pure, but they run ToPrimitive.
+   `var x = -{ valueOf() { throw 1; } }` was dropped; node throws. They are now pure only on a pure primitive
+   operand (`isPurePrimitive`).
+2. **Duplicate lexical declarations.** `let a = 1; let a = 2;` (and `var a; let a`, `let a, a`) is an early
+   SyntaxError, but the pass dropped the pair because each statement is the other's only mention. The ordinary
+   standalone and default compiles both accepted it on main. Now a name declared twice with a `let`/`const` among
+   them keeps every declaration. `tests/test262-prepared-entry.test.ts` caught this.
+
+**Known residual, shared with the ordinary compile.** The pass sees names, not reflection on the global object.
+`globalThis[k]` with a computed key, `for (k in this)`, and `Object.keys(globalThis)` could observe a dropped
+global `var`. The Prepared path refuses all three today (tested), so no answer is wrong yet. A slice that admits
+global-object reflection must revisit this.
+
+**Tests:** `tests/issue-7354-f0-dead-top-level-bindings.test.ts`, 38 tests against node:
+
+- 9 accepted programs, each with a right and a wrong answer;
+- 1 effect-throw pair;
+- 17 kept-binding refusals;
+- 3 global-reflection refusals;
+- 3 duplicate-lexical early errors;
+- the gc, linear, multi-source and frontend-text cases.
+
+`tests/issue-3418.test.ts` gains 2 unit rows (purity and redeclaration). 13 of 14 mutations are killed. The
+survivor is the JS/TS `ScriptKind` choice: a grammar difference produces a parse diagnostic, and the pass then
+returns the source unchanged.
+
+**Pins updated** (each probe's whole program was a dead binding, so it now compiles; each now reads its binding):
+
+- H `var o = { a: 1 }` / `var arr = [1]` / `var f = function () {}`;
+- Str2 `var g = globalThis`;
+- #7364 `var r = /a/`, `preparedProgram("var x;")` and `("var x = 1;")`.
+
+**Bytes (base main 052569d335, file-copy A/B):**
+
+- Ordinary pipeline, 50 test262 files × {default, standalone} (100 rows, 14 CE): identical.
+- 10 Temporal files through `compileWithTemporalGlobal`, standalone provider rebuilt by each compiler: identical,
+  provider binary included.
+- Prepared fixtures (`check:prepared-bytes` rows 0-399): 396 identical. The 4 that differ (rows 38, 49, 50, 51:
+  `var x = 1; var x = 2;`, `var o = { a: 1 };`, `var arr = [1];`, `var f = function () {};`) contain only dead
+  bindings and now emit the empty-program module.
+
+**Sample (411 rows, real runner, standalone, base main vs branch):** the first-gap tally is identical. 14
+negatives pass. 293 `dyn.member_get`, 73 `not-direct`, 26 `assert` in verifyProperty, 2 switch `f`, 1
+`Test262Error`, 1 `print` (the runner's print hook names `print`, so the shim is kept there), 1 parse.
+
+The shim was never a first gap in the runner (its TS diagnostics are skipped there). On the runner-assembled source
+through the strict entry, base reports `Duplicate identifier 'print'` and
+`Cannot find name '__js2wasm_global_script_eval'`. The branch no longer reports them, and a body that calls
+`print` still refuses at `print`.
+
+**Validator:** `#7354 O … refuses what the later steps build` trips the #7380 validator (`retains a dynamic type
+after legalization`) on main without this change. That is a finding for slice O, not F0.
+
+**Not verified:** a step-past (FD) census of the gaps after the first.
