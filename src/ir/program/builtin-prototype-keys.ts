@@ -5,21 +5,12 @@
  * primitive's wrapper prototype. A read of a key outside these, off a value whose prototypes no program code can
  * change, answers the object's own property or `undefined`. The realm's prototypes do not hold these properties yet,
  * so a read of one of them refuses by name.
+ *
+ * (#7354 M1, C3) Object.prototype's keys are the realm catalog's (`OBJECT_PROTOTYPE_KEYS`); the wrapper prototypes
+ * are not in the catalog yet, so their keys are listed here from the specification.
  */
-const OBJECT_PROTOTYPE = [
-  "constructor",
-  "hasOwnProperty",
-  "isPrototypeOf",
-  "propertyIsEnumerable",
-  "toLocaleString",
-  "toString",
-  "valueOf",
-  "__proto__",
-  "__defineGetter__",
-  "__defineSetter__",
-  "__lookupGetter__",
-  "__lookupSetter__",
-];
+import { OBJECT_PROTOTYPE_KEYS } from "../realm-keys.js";
+
 const NUMBER_PROTOTYPE = ["toExponential", "toFixed", "toPrecision"];
 const STRING_PROTOTYPE = [
   "at",
@@ -74,10 +65,10 @@ const STRING_PROTOTYPE = [
 
 /** The keys a read of each value reaches through built-in prototypes (or, for a string, its own exotic keys). */
 export const BUILTIN_REACHABLE_KEYS = {
-  object: new Set(OBJECT_PROTOTYPE),
-  number: new Set([...OBJECT_PROTOTYPE, ...NUMBER_PROTOTYPE]),
-  boolean: new Set(OBJECT_PROTOTYPE),
-  string: new Set([...OBJECT_PROTOTYPE, ...STRING_PROTOTYPE, "length"]),
+  object: OBJECT_PROTOTYPE_KEYS,
+  number: new Set([...OBJECT_PROTOTYPE_KEYS, ...NUMBER_PROTOTYPE]),
+  boolean: OBJECT_PROTOTYPE_KEYS,
+  string: new Set([...OBJECT_PROTOTYPE_KEYS, ...STRING_PROTOTYPE, "length"]),
 } as const satisfies Readonly<Record<string, ReadonlySet<string>>>;
 
 /** A canonical array index (§6.1.7): a string's own indexed character. */
