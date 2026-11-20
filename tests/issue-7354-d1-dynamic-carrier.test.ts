@@ -191,7 +191,8 @@ describe("#7354 D1 — the dynamic value on the Prepared standalone path", () =>
       "a typed literal property",
       "",
       "const o: { a: number } = { a: id(1) }; return o.a;",
-      "dynamic operation on a value of composite type",
+      // (#7354 O1) The literal is an ordinary object now; the annotated binding is a typed position.
+      flow("{ a: number; }", "VariableDeclaration"),
     ],
     ["a typed array element", "", "const a: number[] = [id(1)]; return a[0];", "resolver cannot register vec"],
   ])("refuses a dynamic value flowing into %s", async (_label, helper, body, expected) => {
@@ -214,10 +215,12 @@ describe("#7354 D1 — the dynamic value on the Prepared standalone path", () =>
     ["`**` on the right", "return 2 ** id(3);", "'**' on a dynamic operand"],
     ["a value-position prefix update", "let x: any = id(1); return ++x;", "value-position prefix update"],
     // (#7354 X) A thrown dynamic value is expressed now (tests/issue-7354-x-dynamic-throw.test.ts).
+    // (#7354 O1) The literal is an ordinary object holding the dynamic value; reading the field back as one is
+    // slice O's member read of a dynamic value (tests/issue-7354-o-objects.test.ts).
     [
       "a dynamic object field",
       "const o = { a: id(1) }; return o.a === 1 ? 1 : 0;",
-      "dynamic operation on a value of composite type has no Prepared intrinsic",
+      "dynamic operation box of a non-primitive value has no Prepared intrinsic",
     ],
   ])("refuses %s by name", async (_label, body, expected) => {
     const add = body.includes("add(") ? "function add(a: any, b: any): any {\n  return a + b;\n}\n" : "";
@@ -288,14 +291,15 @@ describe("#7354 D1 — the legalization pass", () => {
       { kind: "tag.test", value: 0, tagId: JS_TAG_IDS.NumberF64, result: 1, resultType: i32 },
       "tag",
     ],
-    [
-      "a dynamic externref coercion",
-      { kind: "coerce.to_externref", value: 0, result: 1, resultType: dynamic },
-      "coerce",
-    ],
   ])("refuses %s, which has no source producer here", (_label, instr, name) => {
     expect(() => one(instr)).toThrow(DynamicValueGap);
     expect(() => one(instr)).toThrow(name);
+  });
+
+  // (#7354 O1) The carrier is the native value an ordinary object's property stores, so the coercion keeps.
+  it("keeps a dynamic externref coercion", () => {
+    const coerce = { kind: "coerce.to_externref", value: 0, result: 1, resultType: dynamic };
+    expect(one(coerce)).toEqual({ ...coerce, resultType: { kind: "val", val: { kind: "externref" } } });
   });
 
   // Operations on non-dynamic values inside a function that has a dynamic one stay exactly as they were.

@@ -2,7 +2,9 @@
 /**
  * (#4513) The single syntactic fold for object-literal COMPUTED property keys
  * (`{ [expr]: v }`), shared by the selector (`select.ts`) and the lowerer
- * (`from-ast.ts`).
+ * (`from-ast.ts`), and by the Prepared resolver's ordinary-object plan
+ * (`frontend/builtins/prepare-ordinary-object-access.ts`, #7354 O1). It sits
+ * under `shared/`, below the IR and the front end, so both ask one copy.
  *
  * It lives in its own leaf module for one reason: **selector claim ⇔ lowering
  * parity**. `select.ts` and `from-ast.ts` cannot import each other (circular),

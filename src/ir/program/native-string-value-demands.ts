@@ -144,7 +144,9 @@ export function collectNativeStringValueDemands(
     fail("selected projection is not consistently standalone WasmGC");
   const original = dense(program.ir.functions, "program owners"),
     selected = dense(projection.prepared.functions, "projection owners");
-  if (!original.length || original.length !== selected.length) fail("missing complete owner population");
+  // An empty population is complete only for a program without executable units (an empty script).
+  if ((!original.length && program.inventory.terminalUnits.length) || original.length !== selected.length)
+    fail("missing complete owner population");
   const seen = new Set<IrUnitId>();
   const owners = original.map((fn, index) => {
     const projectedFunction = selected[index];
