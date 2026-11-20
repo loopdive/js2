@@ -3,7 +3,7 @@
  * (#7354 O1) The public source-object functions on the realm. A source program reaches an ordinary object only
  * through the `js.object.*` contracts (`ordinary-object-callables.ts`); each contract it calls binds one function
  * here, whose signature is the contract's and whose algorithm is the realm's own. A row either
- *   - adapts the realm (`create-default`, `get`, (#7354 O3) `set`, (#7354 O2b) `has`, `uncatchable-type-error`): a
+ *   - adapts the realm (`create-default`, `get`, (#7354 O3) `set`, (#7354 O2b) `has`): a
  *     function this module reserves, with the contract's signature and a body (`source-object-bodies.ts`) over the
  *     realm's storage, kernel and descriptor packs; or
  *   - binds a realm function as it is (`define-data`: the descriptor pack's public define; (#7354 O4)
@@ -14,7 +14,6 @@ import type { FunctionReservation, PhysicalModuleReservations } from "../../../w
 import type { ValType } from "../../../wasm/model/instructions.js";
 import type { OrdinaryObjectRuntimeFeature } from "../../../ir/runtime/contracts/manifest.js";
 import {
-  buildSourceObjectUncatchableTypeErrorDefinition,
   buildSourceObjectCreateDefinition,
   buildSourceObjectGetDefinition,
   buildSourceObjectSetDefinition,
@@ -72,10 +71,6 @@ const ROWS = {
   "js.object.has": {
     signature: { params: [EXTERNREF, EXTERNREF], results: [I32] },
     body: ({ kernel }) => buildSourceObjectHasDefinition({ has: kernel.functions.has.handle }),
-  },
-  "js.object.uncatchable-type-error": {
-    signature: { params: [], results: [] },
-    body: buildSourceObjectUncatchableTypeErrorDefinition,
   },
 } as const satisfies Readonly<Partial<Record<OrdinaryObjectRuntimeFeature, Row>>>;
 /** A contract the realm serves. */

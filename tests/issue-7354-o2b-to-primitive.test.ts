@@ -4,8 +4,8 @@
 // (src/ir/program/ordinary-to-primitive.ts). No admitted kind is callable, so the answer for every hint is
 // "[object Object]" when the object has no `toString` up to the realm's Object.prototype, and a TypeError when it
 // holds one. ToNumber of that string is NaN, and `+` concatenates it. A program that names `Symbol` refuses by name.
-// A catch that does not read the synthesized TypeError catches it; in a program that reads a caught value it aborts
-// uncatchably. Every answer program runs twice: node's answer (returns) and a wrong one (throws).
+// A catch that does not read the synthesized TypeError catches it; (#7354 M1) a program that reads a caught value
+// refuses it by name. Every answer program runs twice: node's answer (returns) and a wrong one (throws).
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as gc from "../src/codegen/index.js";
 import * as linear from "../src/codegen-linear/index.js";
@@ -37,7 +37,7 @@ afterEach(() => vi.restoreAllMocks());
 const messages = (result: { errors: readonly { message: string }[] }) => result.errors.map((error) => error.message);
 
 /** How the strict Prepared program ends: it returns, throws a Wasm exception, or traps. */
-async function run(source: string): Promise<"returned" | "threw" | "trapped"> {
+async function run(source: string): Promise<"returned" | "threw"> {
   for (const spy of [
     vi.spyOn(gc, "generateModule"),
     vi.spyOn(gc, "generateMultiModule"),
@@ -55,7 +55,6 @@ async function run(source: string): Promise<"returned" | "threw" | "trapped"> {
     (exports.__module_init as (() => void) | undefined)?.();
     return "returned";
   } catch (error) {
-    if (error instanceof WebAssembly.RuntimeError) return "trapped";
     expect((error as object).constructor.name).toBe("Exception");
     return "threw";
   }
@@ -127,14 +126,17 @@ describe("#7354 O2b — OrdinaryToPrimitive of an ordinary object", () => {
     expect(await run(wrong)).toBe("threw");
   }, 180_000);
 
-  // Node's catch reads the TypeError. Here the TypeError is the realm's, which no carrier kind holds, so a catch must
-  // not read it: the program traps instead (`js.object.uncatchable-type-error`). That is a failure, not node's answer,
-  // and never a wrong one.
-  it("traps instead of throwing the TypeError in a program that reads a caught value", async () => {
+  // (#7354 M1) Node's catch reads the TypeError. Here it is the realm's, which no carrier kind holds yet (M2), so the
+  // program refuses by name at compile time (O2b trapped at run time, `js.object.uncatchable-type-error`).
+  it("refuses the TypeError in a program that reads a caught value", async () => {
     const source = "var o = { toString: undefined }; var r; try { var s = '' + o; } catch (e) { r = e; }";
     expect(new Function(`${source} return r;`)()).toBeInstanceOf(TypeError);
-    expect(await run(source)).toBe("trapped");
-  }, 180_000);
+    const result = await compile(source, options());
+    expect(result.success).toBe(false);
+    expect(messages(result).join("\n")).toContain(
+      `TypeError "Cannot convert object to primitive value" in a program that reads a caught value`,
+    );
+  });
 
   it("refuses by name in a program that names 'Symbol'", async () => {
     const result = await compile("var o = { a: 1 }; var s = typeof Symbol; var t = '' + o;", options());

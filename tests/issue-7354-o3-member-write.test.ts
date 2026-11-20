@@ -126,30 +126,23 @@ describe("#7354 O3 — a member write of the dynamic value", () => {
     expect(await refusal(source)).toContain(reason);
   });
 
-  // (#7354 O2b) These writes used to refuse by name ("… in a program that catches"). The legalization's TypeError now
-  // comes from one helper (`typeError`, dynamic-realm-calls.ts): in a program that catches, the realm's TypeError is
-  // not yet catchable from source code, so the program fails loudly (`js.object.uncatchable-type-error`) where node's
-  // catch answers 0. That is a failure, not node's answer, and never a wrong one. A write that does not throw still
-  // runs: the object write answers 1, as node does.
+  // (#7354 M1) A write whose TypeError a catch would read refuses by name: no carrier kind holds the error yet (M2).
+  // (O2b had the program trap here, `js.object.uncatchable-type-error`, where node's catch answers 0.)
   it.each([
-    ["a nullish write", "function f(v) { try { v.x = 1; } catch (e) { return 0; } return 1; } var r = f(null);", 0],
+    [
+      "a nullish write",
+      "function f(v) { try { v.x = 1; } catch (e) { return e; } return 1; } var r = f(null);",
+      `TypeError "Cannot set properties of undefined (setting 'x')" in a program that reads a caught value`,
+    ],
     [
       "a strict write to a primitive",
-      '"use strict"; function f(v) { try { v.x = 1; } catch (e) { return 0; } return 1; } var r = f(1);',
-      0,
+      '"use strict"; function f(v) { try { v.x = 1; } catch (e) { return e; } return 1; } var r = f(1);',
+      `TypeError "Cannot create property 'x' on string" in a program that reads a caught value`,
     ],
-  ])(
-    "traps for %s in a program that catches",
-    async (_label, source, answer) => {
-      expect(new Function(`${source} return r;`)()).toBe(answer);
-      const result = await compile(source, options());
-      expect(requiredPreparedEmission(result)).toBeDefined();
-      expect(() => (instantiatePreparedArtifact(result).instance.exports.__module_init as () => void)()).toThrow(
-        WebAssembly.RuntimeError,
-      );
-    },
-    180_000,
-  );
+  ])("refuses %s in a program that reads a caught value", async (_label, source, reason) => {
+    expect(new Function(`${source} return r;`)()).toBeInstanceOf(TypeError);
+    expect(await refusal(source)).toContain(reason);
+  });
 });
 
 // The kernel's lookup answers (status, entry): 0 absent, 1 found, 2 a miss at the realm's Object.prototype, 3 not an

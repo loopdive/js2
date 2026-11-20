@@ -8,6 +8,7 @@ import type { IrType } from "../core/types.js";
 import { irIntrinsicFuncRef } from "../core/callable-bindings.js";
 import type { OrdinaryObjectRuntimeFeature } from "../runtime/contracts/manifest.js";
 import { irOrdinaryObjectCallableDeclaration } from "../runtime/ordinary-object-callables.js";
+import { gap } from "./dynamic-value-gap.js";
 
 /** The call of the realm's `feature` on `args`, its result (if the contract has one) into `result`. */
 export function realmCall(
@@ -34,12 +35,13 @@ export interface TypeErrorBuilders {
 
 /**
  * A TypeError with `message`, as statements that do not complete: the one place the legalization raises one. It is
- * thrown under the program's one exception tag, so a source `catch` catches it, unless `readsCaught`: a catch in this
- * program reads its binding, and no carrier kind holds an error (`typeof e` would answer wrong), so the program fails
- * loudly instead: a failure, never a wrong answer.
+ * thrown under the program's one exception tag, so a source `catch` that only binds or rethrows it catches it, and
+ * without a catch it ends the program as JavaScript's uncaught TypeError does. (#7354 M1) In a program that reads a
+ * catch binding (`readsCaught`) the read could see it, and no carrier kind holds an error yet (`typeof e`, `e.name`
+ * would answer wrong), so such a program refuses by name at compile time instead; M2 makes the error a carrier kind.
  */
 export function typeError(b: TypeErrorBuilders, message: string, readsCaught: boolean): IrInstr[] {
-  if (readsCaught) return [realmCall("js.object.uncatchable-type-error", [])];
+  if (readsCaught) gap(`TypeError "${message}" in a program that reads a caught value`);
   const [text, carried, error] = [b.fresh(), b.fresh(), b.fresh()];
   return [
     b.text(message, text),

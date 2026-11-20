@@ -3,8 +3,8 @@
 // #7354 slice O, step O4 — a member read of a dynamic value with a constant key (`MEMBER_ACCESS_ARM` in
 // src/ir/program/dynamic-value-kinds.ts): `undefined` / `null` throw a TypeError, an object reads through the realm's
 // [[Get]], a primitive reads `undefined` for a key no built-in prototype holds. A key a built-in prototype holds, a
-// computed key, or a primitive receiver in a program whose prototypes code can reach refuses by name; (#7354 O2b) a
-// nullish read in a program that reads a caught value traps. Every program runs twice: node's answer (returns) and a wrong one
+// computed key, or a primitive receiver in a program whose prototypes code can reach refuses by name; (#7354 M1) a
+// nullish read in a program that reads a caught value refuses by name. Every program runs twice: node's answer (returns) and a wrong one
 // (throws).
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as gc from "../src/codegen/index.js";
@@ -120,17 +120,15 @@ describe("#7354 O4 — a member read of the dynamic value", () => {
     expect(await refusal(source)).toContain(reason);
   });
 
-  // (#7354 O2b) This read used to refuse by name ("… of a possibly nullish value in a program that catches"). Node's
-  // catch reads the TypeError and returns it. Here the TypeError is the realm's, which no carrier kind holds, so a
-  // catch must not read it: the program traps instead (`js.object.uncatchable-type-error`). That is a failure, not node's
-  // answer, and never a wrong one. A catch that does not read it catches it (issue-7354-shared-exception-tag.test.ts).
-  it("traps reading a member of null in a program that reads a caught value", async () => {
+  // (#7354 M1) Node's catch reads the TypeError and returns it. Here the TypeError is the realm's, which no carrier
+  // kind holds yet (M2), so the program refuses by name at compile time (O2b trapped at run time instead,
+  // `js.object.uncatchable-type-error`). A catch that does not read it catches it
+  // (issue-7354-shared-exception-tag.test.ts).
+  it("refuses reading a member of null in a program that reads a caught value", async () => {
     const source = "function f(v) { try { return v.x; } catch (e) { return e; } } var r = f(null);";
     expect(new Function(`${source} return r;`)()).toBeInstanceOf(TypeError);
-    const result = await compile(source, options());
-    expect(requiredPreparedEmission(result)).toBeDefined();
-    expect(() => (instantiatePreparedArtifact(result).instance.exports.__module_init as () => void)()).toThrow(
-      WebAssembly.RuntimeError,
+    expect(await refusal(source)).toContain(
+      `TypeError "Cannot read properties of undefined (reading 'x')" in a program that reads a caught value`,
     );
-  }, 180_000);
+  });
 });
