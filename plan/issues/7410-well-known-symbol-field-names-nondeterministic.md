@@ -14,11 +14,6 @@ task_type: bugfix
 area: codegen
 goal: ir-full-coverage
 related: [7350, 7427]
-# (2026-11-19) `foldableTypeSymbolName` needs the checker to resolve `Symbol` in `[Symbol.replace]` to the
-# compiler library's binding: it takes a `ts.Symbol` (the type symbol), which the node-keyed oracle cannot
-# express. One `ctx.checker` at the fold site, replacing no other query.
-oracle-ratchet-allow:
-  - src/codegen/property-access-dispatch.ts
 ---
 
 # #7410 — TypeScript's escaped well-known-symbol names leak into Wasm names and runtime strings
@@ -206,3 +201,20 @@ hash run above.
 
 **Found on the way, not fixed:** reading `.name` of an object-literal method keyed by `Symbol.iterator`,
 `Symbol.toStringTag` or `Symbol.split` throws on default and standalone, on main as well.
+
+## Review round RV7343 (2026-11-20)
+
+- A symbol-keyed member of the compiler library declines the fold (`functionNameForKey`): a built-in's name is
+  its own, so `Array.prototype[Symbol.iterator].name` is `"values"` and `Map.prototype[Symbol.iterator].name`
+  is `"entries"`; the runtime read answers them. Rows for Array, Map, Set, `Uint8Array` and String are pinned
+  against node on default and standalone.
+- The `Symbol` binding check uses `ctx.oracle.declarationsOf`, so the oracle-ratchet grant is gone.
+- The fold is computed only when the read has a function signature; the dead `?? ""` is gone.
+
+## Suspended Work (2026-11-20, budget window closed)
+
+- Branch `claude/7410-well-known-symbol-names`, PR #7343 (`hold`). Head: the RV7343 round above.
+- Next step: RV7343 (session `session_016FRcLxKwW4sLrG6pxxHZSj`) re-reviews the delta from `805df5008c`. Then
+  the lead releases the hold.
+- Follow-ups: #7427 (stacked on this branch, pushed, no PR yet; see its own Suspended Work), #7432 and #7429
+  (filed on docs PR #7328).

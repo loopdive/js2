@@ -8,6 +8,11 @@ import { compile } from "../src/index.js";
 
 const NAME_ROWS: readonly (readonly [string, string])[] = [
   ["a built-in method keyed by a well-known symbol", "RegExp.prototype[Symbol.replace].name"],
+  ["String's [Symbol.iterator], named by its key", "String.prototype[Symbol.iterator].name"],
+  ["Array's [Symbol.iterator], an alias of values", "Array.prototype[Symbol.iterator].name"],
+  ["Map's [Symbol.iterator], an alias of entries", "Map.prototype[Symbol.iterator].name"],
+  ["Set's [Symbol.iterator], an alias of values", "Set.prototype[Symbol.iterator].name"],
+  ["a typed array's [Symbol.iterator], an alias of values", "Uint8Array.prototype[Symbol.iterator].name"],
   [
     "an object-literal method keyed by a well-known symbol",
     "({ [Symbol.toPrimitive]() {} } as any)[Symbol.toPrimitive].name",
