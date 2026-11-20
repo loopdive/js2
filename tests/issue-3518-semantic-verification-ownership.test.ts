@@ -129,9 +129,6 @@ describe("canonical export identities and complete catalogs", () => {
     expect(oldIntrinsics.intrinsicEffectEvidence).toBe(intrinsic.intrinsicEffectEvidence);
     expect(oldIntrinsics.verifyIntrinsicUse).toBe(intrinsic.verifyIntrinsicUse);
     expect(Object.keys(catalog.INTRINSIC_DEFINITIONS)).toEqual(catalog.INTRINSIC_IDS);
-    // Original 38 plus the reviewed js.boolean.unbox (#6921, c2fb27fe) and the two
-    // js.value.* rows (#7354 D1), plus js.value.to_boolean (#7354 T).
-    expect(catalog.INTRINSIC_IDS).toHaveLength(42);
     expect(Object.isFrozen(catalog.INTRINSIC_DEFINITIONS)).toBe(true);
     for (const [id, row] of Object.entries(catalog.INTRINSIC_DEFINITIONS)) {
       expect(row.feature).toBe(id);

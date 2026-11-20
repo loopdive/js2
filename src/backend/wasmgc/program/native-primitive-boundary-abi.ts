@@ -25,6 +25,7 @@ import {
 } from "../../../ir/program/native-invocation-requirements.js";
 import { objectResultIsBoolean } from "../../../ir/program/native-object-result-values.js";
 import type { NativeStringValueReservationInput } from "./native-string-values.js";
+import { nativeStringTypeKeys } from "../resources/native-string-literals.js";
 
 export interface NativeBooleanSelection {
   /** A resolved consumer recipe, independent of permission to use native boxing. */
@@ -91,18 +92,26 @@ export function selectNativeBooleans(
     (demands.projection.prepared.manifest.policy.booleanBoundary.box === "native" &&
       intrinsicDemands(demands, "js.boolean.box").length > 0);
   // (#7354 D1) Dynamic strict equality calls the same predicate and payload
-  // reader a proven extraction does.
-  const readers = unboxes.length > 0 || intrinsicDemands(demands, "js.value.strict_eq").length > 0;
+  // reader a proven extraction does; (#7354 Ty) the Boolean `typeof` test is
+  // that predicate.
+  const readers =
+    unboxes.length > 0 ||
+    intrinsicDemands(demands, "js.value.strict_eq").length > 0 ||
+    intrinsicDemands(demands, "js.value.is_boolean").length > 0;
   return box || readers
     ? { selection: Object.freeze({ ...(box ? { boxMode: "interned" as const } : {}), unbox: readers }) }
     : {};
 }
 
-/** Called only after exact canonical signature authentication; a Boolean param is plain i32. */
-function physicalCarrier(type: IrType) {
+/**
+ * Called only after exact canonical signature authentication; a Boolean param is plain i32, and (#7354 Str2) a
+ * string is the native string owner's AnyString, named by its type key.
+ */
+function physicalCarrier(type: IrType, stringKey: string) {
   if (type.kind === "val" && !Object.hasOwn(type, "typeRef") && type.val.kind === "i32")
     return { kind: "i32" as const };
   if (type.kind === "val" && !Object.hasOwn(type, "typeRef") && type.val.kind === "externref") return type.val;
+  if (type.kind === "string") return { kind: "ref" as const, typeKey: nativeStringTypeKeys(stringKey).any };
   return fail("canonical intrinsic contract has an unexpected carrier");
 }
 
@@ -131,6 +140,10 @@ function nativeIntrinsicRows(input: NativeStringValueReservationInput): readonly
       canonicalRow(`js.boolean.${direction}`, direction + "-boolean", policy.booleanBoundary[direction] === "native"),
     ),
     canonicalRow("js.extern.is_undefined", "is-undefined", policy.externIsUndefined.probe === "native"),
+    canonicalRow("js.value.as_string", "as-string", true),
+    canonicalRow("js.value.is_boolean", "typeof-boolean", true),
+    canonicalRow("js.value.is_number", "typeof-number", true),
+    canonicalRow("js.value.is_string", "typeof-string", true),
     canonicalRow("js.value.strict_eq", "strict-eq", true),
     canonicalRow("js.value.to_boolean", "to-boolean", true),
     canonicalRow("js.value.undefined", "undefined-value", true),
@@ -167,8 +180,8 @@ export function nativeIntrinsicAbiBindings(input: NativeStringValueReservationIn
     same(
       declaration.signature,
       {
-        params: provider.signature.params.map(physicalCarrier),
-        results: [physicalCarrier(provider.signature.result)],
+        params: provider.signature.params.map((type) => physicalCarrier(type, input.plan.key)),
+        results: [physicalCarrier(provider.signature.result, input.plan.key)],
       },
       "recipe differs from canonical physical carriers",
     );

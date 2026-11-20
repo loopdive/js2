@@ -56,7 +56,7 @@ import { postStartupCallableUnits } from "./program-startup-proof.js";
 import { makeIrIdentityImportedFunctionResolver } from "./imported-functions.js";
 import { makeIrPromiseDelayResolver } from "./promise-delay.js";
 import { prepareOrdinaryObjectAccessResolver } from "../frontend/builtins/prepare-ordinary-object-access.js";
-import { prepareNumberConversionResolver } from "../frontend/builtins/prepare-number-conversion.js";
+import { prepareConversionResolvers } from "../frontend/builtins/prepare-number-conversion.js";
 import { prepareObjectCreateResolver } from "../frontend/builtins/prepare-object-create.js";
 import { prepareNativeStringOutputResolver } from "../frontend/builtins/prepare-string-output.js";
 import { prepareNativeAsyncSourceFamilies, type NativeAsyncSourceFamilies } from "./program-native-async-source.js";
@@ -1427,7 +1427,7 @@ function prepareSourceBuiltinResolvers(
   roots: ts.FunctionDeclaration | readonly ts.Statement[],
 ) {
   return {
-    ...prepareNumberConversionResolver(input.checker, input.sourceFiles, roots),
+    ...prepareConversionResolvers(input.checker, input.sourceFiles, roots),
     ...prepareOrdinaryObjectAccessResolver(input.checker, input.sourceFiles, roots),
     ...(input.policy.target === "standalone" && input.policy.backend === "wasmgc"
       ? prepareObjectCreateResolver(input.checker, input.sourceFiles, roots)
@@ -1592,7 +1592,7 @@ export function prepareIrProgramSources(
       sourceFiles,
       identityContext: identity,
     });
-    const dynamicContracts = programDynamicContracts(input.checker, input.policy, sourceFiles);
+    const dynamicContracts = programDynamicContracts(input.checker, input.policy, sourceFiles, allocations);
     const moduleResolver = makeIrIdentityModuleBindingResolver(
       input.checker,
       {

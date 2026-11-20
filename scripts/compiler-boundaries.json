@@ -1998,6 +1998,22 @@
   ],
   "files": [
     {
+      "path": "src/ir/switch-case-tests.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "7354-prepared-path",
+      "nextBoundary": "Frontend switch case-test admission shared by the selector and from-ast; moves with from-ast's frontend half."
+    },
+    {
+      "path": "src/ir/identifier-read.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "7354-prepared-path",
+      "nextBoundary": "Frontend identifier-read resolution order (scope, module binding, global constants, host and ambient globals), shared by from-ast's read and its typeof fold; moves with from-ast's frontend half."
+    },
+    {
       "path": "src/ir/function-object-lowering.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
@@ -2205,6 +2221,16 @@
       "layer": "ir-program"
     },
     {
+      "path": "src/ir/program/settled-verdict.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
+      "path": "src/ir/program/prepared-allocations.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
       "path": "src/ir/program/native-value-definitions.ts",
       "state": "clean",
       "layer": "ir-program"
@@ -2321,6 +2347,16 @@
     },
     {
       "path": "src/shared/contracts/in-operator-helper.ts",
+      "state": "clean",
+      "layer": "foundation"
+    },
+    {
+      "path": "src/shared/contracts/dynamic-add-helper.ts",
+      "state": "clean",
+      "layer": "foundation"
+    },
+    {
+      "path": "src/shared/contracts/settled-verdict.ts",
       "state": "clean",
       "layer": "foundation"
     },
@@ -17059,6 +17095,14 @@
       "nextBoundary": "Prepared presentation runtime census (#7354 R): the presentation's runtime policy and the authentication of each selected provider against the completed physical plan; moves with ir-program-presentation.ts at compiler-layer activation."
     },
     {
+      "path": "src/compiler/prepared-formatter-census.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "compiler",
+      "owner": "7354",
+      "nextBoundary": "The number formatter's part of the Prepared provider census (#7354 Str2-c): joins the formatter setup, scratch, adapter provider and runtime-support batch to their canonical declarations; moves with prepared-provider-census.ts at compiler-layer activation."
+    },
+    {
       "path": "src/ir/source-dynamic-contracts.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
@@ -17084,6 +17128,16 @@
     },
     {
       "path": "src/ir/program/dynamic-value-legalization.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
+      "path": "src/ir/program/number-to-string-target.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
+      "path": "src/ir/program/typeof-comparisons.ts",
       "state": "clean",
       "layer": "ir-program"
     },

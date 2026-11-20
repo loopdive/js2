@@ -208,15 +208,13 @@ describe("#7361 — typeof on the Prepared path", () => {
     expect(await run(program.replace("@A", wrong))).toBe("threw");
   });
 
-  // A leaf beside `void` that has no static answer keeps its own refusal, by name.
-  it("refuses a dynamic leaf beside a `void` leaf by name", async () => {
-    const result = await compilePrepared(
-      'var c = 1;\nfunction g(x) { return typeof (c ? void 0 : x); }\nif (g(1) !== "undefined") throw 1;',
-      preparedOptions,
-    );
-    expect(result.success).toBe(false);
-    expect(result.errors.map((error) => error.message).join("\n")).toContain(
-      "dynamic operation dyn.typeof has no Prepared intrinsic",
-    );
+  // A leaf beside `void` that has no static answer is tested at run time (#7354 Ty/Str2: `typeof` of a dynamic value).
+  it.each([
+    ["its `void` arm", "1", '"undefined"', '"number"'],
+    ["its dynamic arm", "0", '"number"', '"undefined"'],
+  ])("answers a dynamic leaf beside a `void` leaf: %s", async (_, c, right, wrong) => {
+    const program = `var c = ${c};\nfunction g(x) { return typeof (c ? void 0 : x); }\nif (g(1) !== @A) throw 1;`;
+    expect(await run(program.replace("@A", right))).toBe("returned");
+    expect(await run(program.replace("@A", wrong))).toBe("threw");
   });
 });

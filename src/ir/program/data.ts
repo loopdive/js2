@@ -253,6 +253,7 @@ const nativeCollectionBrand = Object.freeze({
   get: WeakMap.prototype.get,
   set: WeakMap.prototype.set,
   apply: Reflect.apply,
+  isArray: Array.isArray,
   probes: Object.freeze([Map.prototype.has, Set.prototype.has, WeakMap.prototype.has, WeakSet.prototype.has]),
 });
 
@@ -261,7 +262,10 @@ function hasNativeCollectionState(value: object): boolean {
   // collection (an array has no collection slot). The thrown probes add only a collection whose prototype was
   // replaced or erased: a forged input, so they run only with the self-checks on (#7380).
   if (!preparedValidationEnabled()) return false;
-  const { cache, get, set, apply, probes } = nativeCollectionBrand;
+  const { cache, get, set, apply, isArray, probes } = nativeCollectionBrand;
+  // An Array exotic object (or a proxy for one) is created without collection slots, and slots never appear later;
+  // this answers without a probe that throws on every array.
+  if (isArray(value)) return false;
   const cached = apply(get, cache, [value]) as boolean | undefined;
   if (cached !== undefined) return cached;
   let hasSlots = false;
