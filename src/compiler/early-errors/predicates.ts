@@ -6,6 +6,13 @@
 // pure functions of the AST.
 import { ts, forEachChild } from "../../ts-api.js";
 
+/**
+ * The global object's non-configurable properties (§19.1): a Script's top-level lexical declaration of one is a
+ * SyntaxError in GlobalDeclarationInstantiation (§16.1.7, HasRestrictedGlobalProperty), and a strict `var` of one
+ * a TypeError (the property is not writable).
+ */
+export const RESTRICTED_GLOBAL_NAMES: ReadonlySet<string> = new Set(["undefined", "NaN", "Infinity"]);
+
 export function findInnermostNodeAtPosition(node: ts.Node, position: number): ts.Node {
   let best: ts.Node = node;
   function visit(current: ts.Node): void {

@@ -19,6 +19,7 @@ import {
   checkHtmlCloseComment,
   checkModuleItemPosition,
   checkScriptGoalModuleItems,
+  checkRestrictedGlobalLexicals,
   checkClassStaticBlockReservedNames,
   checkExportedBindingsDeclared,
   checkForInLetReference,
@@ -52,6 +53,7 @@ export function detectEarlyErrors(
   checkDuplicateImportedBindings(ctx);
   checkModuleItemPosition(ctx);
   checkScriptGoalModuleItems(ctx);
+  checkRestrictedGlobalLexicals(ctx);
   checkClassStaticBlockReservedNames(ctx);
   checkExportedBindingsDeclared(ctx);
   checkForInLetReference(ctx);

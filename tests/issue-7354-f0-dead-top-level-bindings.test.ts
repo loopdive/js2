@@ -251,7 +251,9 @@ describe("#7354 F0 — dead top-level bindings are dropped before the Prepared p
     const result = await compile(source, options());
     if (!result.success) return;
     expect(requiredPreparedEmission(result)).toBeDefined();
-    expect(() => (instantiatePreparedArtifact(result).instance.exports.__module_init as () => void)()).toThrow();
+    // An empty program has no `__module_init`: it returns, which is the wrong answer.
+    const init = instantiatePreparedArtifact(result).instance.exports.__module_init as (() => void) | undefined;
+    expect(() => init?.()).toThrow(WebAssembly.Exception);
   });
 });
 

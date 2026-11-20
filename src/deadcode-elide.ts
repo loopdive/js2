@@ -52,6 +52,7 @@
 import { forEachChild, ts } from "./ts-api.js";
 import { PositionMap } from "./position-map.js";
 import { subtreeHasEarlyError } from "./compiler/early-errors/index.js"; // (#4464)
+import { RESTRICTED_GLOBAL_NAMES } from "./compiler/early-errors/predicates.js";
 import { isInertFunctionMention } from "./shared/function-mention.js";
 import type { CompileTargetProfile } from "./target-profile.js";
 
@@ -202,6 +203,7 @@ export function elideDeadTopLevelBindings(
         // the checker's syntactic pass, not parseDiagnostics, so the
         // parse-error bail above does NOT cover them.
         EARLY_ERROR_BINDING_NAMES.has(decl.name.text) ||
+        // Declaring a non-configurable global fails even when nothing reads it (`let undefined`).
         RESTRICTED_GLOBAL_NAMES.has(decl.name.text) ||
         (decl.initializer !== undefined && !isPureInitializer(decl.initializer))
       ) {
@@ -437,13 +439,6 @@ const EARLY_ERROR_BINDING_NAMES = new Set([
   "protected",
   "public",
 ]);
-
-/**
- * The global object's non-configurable properties (§19.1). Declaring one fails at declaration time even when
- * the binding is never read: `let undefined` is a SyntaxError in GlobalDeclarationInstantiation (§16.1.7),
- * `"use strict"; var NaN = 1` a TypeError (the property is not writable).
- */
-const RESTRICTED_GLOBAL_NAMES = new Set(["undefined", "NaN", "Infinity"]);
 
 /** Whitelisted global identifier reads that can never throw or observe. */
 const PURE_IDENTIFIER_READS = new Set(["undefined", "globalThis", "NaN", "Infinity"]);
