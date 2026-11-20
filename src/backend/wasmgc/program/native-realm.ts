@@ -26,6 +26,8 @@ import type {
   FunctionReservation,
   TypeReservation,
   GlobalReservation,
+  TagReservation,
+  TagImportReservation,
 } from "../../../wasm/physical/module-reservations.js";
 import {
   assertNativeStringValueReservationInput,
@@ -360,7 +362,12 @@ export function reserveNativeProgramFoundation(
   return { vectorTypes, stringTypes, earlyStrings, realm };
 }
 
-function reserveKernelResources(tx: PhysicalModuleReservations, pack: NativeRealmReservations, owner: Owner) {
+function reserveKernelResources(
+  tx: PhysicalModuleReservations,
+  pack: NativeRealmReservations,
+  owner: Owner,
+  exception: TagReservation | TagImportReservation,
+) {
   const number = pack.strings.number,
     valuePlan = owner.input.valueRequirements,
     population = owner.population;
@@ -436,6 +443,7 @@ function reserveKernelResources(tx: PhysicalModuleReservations, pack: NativeReal
     closurePlan: population.closurePlan,
     descriptors,
     descriptorDependencies,
+    exception,
   };
   const kernel = reserveNativeBuiltinFunctionResources(tx, kernelDependencies);
   const sourceObjects = reserveNativeSourceObjectResources(
@@ -464,14 +472,19 @@ function reserveKernelResources(tx: PhysicalModuleReservations, pack: NativeReal
     sourceObjects,
   };
 }
-/** Consumer retains genuine source binding/lowering authority; no callback can attest its completion. */
+/**
+ * Consumer retains genuine source binding/lowering authority; no callback can attest its completion. The kernel
+ * throws under `exception`, the program's one tag, so a source `catch` catches a realm error.
+ */
 export function reserveNativeRealmKernel(
   tx: PhysicalModuleReservations,
   pack: NativeRealmReservations,
+  exception: TagReservation | TagImportReservation | undefined,
   sourceTypes?: NativeSourceClosureTypes,
 ) {
   const owner = current(tx, pack);
   if (tx.state !== "reserving" || owner.phase !== "foundation") fail("invalid or duplicate kernel reservation phase");
+  if (!exception) fail("kernel requires the program's exception tag");
   if (pack.requirements.source) {
     if (!sourceTypes) fail("missing actual source type issuer");
     requireNativeSourceClosureTypes(tx, sourceTypes, pack.requirements.source, pack.requests, sharedCarriers(owner));
@@ -483,7 +496,7 @@ export function reserveNativeRealmKernel(
   } else if (sourceTypes !== undefined) fail("unexpected source owner for no-source realm");
   owner.phase = "reserving-kernel";
   try {
-    owner.kernel = reserveKernelResources(tx, pack, owner);
+    owner.kernel = reserveKernelResources(tx, pack, owner, exception);
     owner.phase = "reserved";
     return owner.kernel.kernel;
   } catch (error) {
@@ -545,7 +558,6 @@ export function nativeRealmReservationInventory(tx: PhysicalModuleReservations, 
     ...population,
     kernel: k.kernel,
     sourceObjects: k.sourceObjects.served,
-    tags: Object.freeze([k.kernel.exception]),
     completionScope: pack.completionScope,
     unavailable: pack.requirements.description.unavailable,
   });

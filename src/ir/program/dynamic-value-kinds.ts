@@ -122,7 +122,7 @@ export interface ProgramObjects {
 export interface LegalizationProgram {
   /** What the program's source allows its objects (`source-plain-objects.ts`). */
   readonly objects: ProgramObjects;
-  /** Whether the program binds a catch: a value thrown here may then be read back as a dynamic value. */
+  /** Whether the program reads a catch binding (not only rethrows it): a value thrown here is read back as dynamic. */
   readonly catches: boolean;
 }
 

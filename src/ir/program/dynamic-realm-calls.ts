@@ -33,14 +33,13 @@ export interface TypeErrorBuilders {
 }
 
 /**
- * A TypeError with `message`, as statements that do not complete: the one place the legalization raises one. A
- * program without a catch throws the realm's TypeError. In a program that catches, the realm's TypeError is not yet
- * catchable from source code (a catch would read it as a dynamic value, and no carrier kind holds an error), so the
- * program fails loudly instead: a failure, never a wrong answer. (Interim: once realm and source throws share one
- * exception tag, this throws in both cases.)
+ * A TypeError with `message`, as statements that do not complete: the one place the legalization raises one. It is
+ * thrown under the program's one exception tag, so a source `catch` catches it, unless `readsCaught`: a catch in this
+ * program reads its binding, and no carrier kind holds an error (`typeof e` would answer wrong), so the program fails
+ * loudly instead: a failure, never a wrong answer.
  */
-export function typeError(b: TypeErrorBuilders, message: string, catches: boolean): IrInstr[] {
-  if (catches) return [realmCall("js.object.uncatchable-type-error", [])];
+export function typeError(b: TypeErrorBuilders, message: string, readsCaught: boolean): IrInstr[] {
+  if (readsCaught) return [realmCall("js.object.uncatchable-type-error", [])];
   const [text, carried, error] = [b.fresh(), b.fresh(), b.fresh()];
   return [
     b.text(message, text),

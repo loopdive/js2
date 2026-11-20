@@ -286,12 +286,19 @@ export function builtinFunctionFixture(
   };
   const plan = declareNativeObjectDescriptorResources("descriptors");
   const pack = reserveNativeObjectDescriptorResources(tx, "descriptors", dependencies, plan);
+  // The program's one exception tag: the kernel throws under it, as the consumer's realm does.
+  const exception = tx.reserveTag(
+    "physical:exception-tag",
+    { params: [ext], results: [] },
+    { kind: "defined", name: "__exn" },
+  );
   const kernelDependencies = {
     requests,
     closures,
     closurePlan,
     descriptors: pack,
     descriptorDependencies: dependencies,
+    exception,
   };
   const kernel = reserveKernel ? reserveNativeBuiltinFunctionResources(tx, kernelDependencies) : undefined;
   return {

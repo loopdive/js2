@@ -604,7 +604,7 @@ export function legalizeDynamicValues(
 }
 
 /**
- * (#7354 X, O1) A catch binding reads the thrown payload back as the dynamic value, so in a program that binds one,
+ * (#7354 X, O1) A catch binding reads the thrown payload back as the dynamic value, so in a program that reads one,
  * every throw, in whichever function, must be a value of a {@link carrierKind}. Any other value refuses by name.
  */
 export function refuseUnadmittedThrows(fn: IrFunction): void {

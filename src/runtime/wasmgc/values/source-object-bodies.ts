@@ -143,7 +143,8 @@ export function buildSourceObjectHasDefinition(d: { readonly has: FuncHandle }):
 
 /**
  * (#7354 O2b, interim) `js.object.uncatchable-type-error()`: fail loudly where a TypeError would reach a source catch
- * that cannot read it yet (`ordinary-object-callables.ts` says why this is a call and not an intrinsic).
+ * that reads it, which no carrier kind can hold yet (`ordinary-object-callables.ts` says why this is a call and not an
+ * intrinsic).
  */
 export function buildSourceObjectUncatchableTypeErrorDefinition(): SourceObjectDefinition {
   return { locals: [], body: [{ op: "unreachable" }] };

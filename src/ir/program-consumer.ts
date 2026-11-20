@@ -1371,7 +1371,7 @@ function materializePhysicalProgram(
   if (Boolean(invocationPack) !== Boolean(plan.nativeInvocation))
     emissionFailed("native invocation prerequisites were not reserved");
   const invocationFunctions = invocationPack ? nativeInvocationFunctions(reservations, invocationPack) : [];
-  if (realm) reserveNativeRealmKernel(reservations, realm, sourceClosures?.types);
+  if (realm) reserveNativeRealmKernel(reservations, realm, exceptionTag, sourceClosures?.types);
   const realmInventory = realm ? nativeRealmReservationInventory(reservations, realm) : undefined;
   const realmFunctions = realmInventory?.functions ?? [];
   for (const token of [...invocationFunctions, ...realmFunctions]) {

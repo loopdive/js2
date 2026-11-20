@@ -370,11 +370,12 @@ function storedIntoCarrier(value: ts.Expression, carries: Carries): boolean {
  * (`issue-3518-native-string-number-source-admission`). A function without a
  * dynamic value is returned unchanged. The flow rule runs only where a dynamic
  * value was lowered: in a function without one, no value can leave the dynamic
- * domain. (#7354 O1, O4) In a program that binds a catch, every function's throws
- * are checked either way: that catch, in whichever group, reads the payload as
- * the dynamic value. Without one, no source code reads a payload, so a throw the
+ * domain. (#7354 O1, O4) In a program that reads a catch binding, every function's
+ * throws are checked either way: that catch, in whichever group, reads the payload
+ * as the dynamic value. Without one, no source code reads a payload, so a throw the
  * compiler synthesizes (a TDZ `ReferenceError`, an O4 member-read TypeError)
- * keeps its own.
+ * keeps its own, and a catch that only binds or rethrows it still catches it: the
+ * realm and the source throw under one tag.
  */
 function legalizeSourceDynamicValues(
   checker: ts.TypeChecker,
@@ -401,7 +402,7 @@ function legalizeSourceDynamicValues(
   // (#7354 Str2) Number::toString has one binding on this lane, typed or dynamic (number-to-string-target.ts).
   const retargeted = functions.map(retargetNumberToString);
   const legalizes = contracted ? () => true : convertsDynamicToString;
-  const catches = sourceFiles.some(bindsCatch);
+  const catches = sourceFiles.some(readsCatchPayload);
   if (!catches && !retargeted.some(legalizes)) return retargeted;
   let legalized: readonly IrFunction[];
   try {
@@ -442,6 +443,24 @@ function readsTypeofOfAbsentGlobal(
     if (ts.isIdentifier(operand) && absentGlobal(checker, sourceFiles, operand)) return true;
   }
   return ts.forEachChild(node, (child) => readsTypeofOfAbsentGlobal(checker, sourceFiles, child)) === true;
+}
+
+/**
+ * `node` holds a `catch` clause whose binding reads the payload: a destructuring pattern, or the bound name anywhere
+ * in the clause's block but as the operand of a rethrow (`throw e;` passes the payload on unread).
+ */
+function readsCatchPayload(node: ts.Node): boolean {
+  if (ts.isCatchClause(node) && node.variableDeclaration && readsBinding(node.variableDeclaration.name, node.block))
+    return true;
+  return ts.forEachChild(node, readsCatchPayload) === true;
+}
+
+function readsBinding(name: ts.BindingName, block: ts.Block): boolean {
+  if (!ts.isIdentifier(name)) return true;
+  const named = (node: ts.Node): boolean => ts.isIdentifier(node) && node.text === name.text;
+  const reads = (node: ts.Node): boolean =>
+    !(ts.isThrowStatement(node) && named(node.expression)) && (named(node) || ts.forEachChild(node, reads) === true);
+  return reads(block);
 }
 
 /** `node` holds a `catch` clause with a binding (nested functions included: they are lowered from the same roots). */

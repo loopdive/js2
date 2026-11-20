@@ -4,7 +4,7 @@
 // src/ir/program/dynamic-value-kinds.ts): `undefined` / `null` throw a TypeError, an object reads through the realm's
 // [[Get]], a primitive reads `undefined` for a key no built-in prototype holds. A key a built-in prototype holds, a
 // computed key, or a primitive receiver in a program whose prototypes code can reach refuses by name; (#7354 O2b) a
-// nullish read in a program that catches traps. Every program runs twice: node's answer (returns) and a wrong one
+// nullish read in a program that reads a caught value traps. Every program runs twice: node's answer (returns) and a wrong one
 // (throws).
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as gc from "../src/codegen/index.js";
@@ -121,12 +121,12 @@ describe("#7354 O4 — a member read of the dynamic value", () => {
   });
 
   // (#7354 O2b) This read used to refuse by name ("… of a possibly nullish value in a program that catches"). Node's
-  // catch reads the TypeError and answers 0. Here the TypeError is the realm's, which no carrier kind holds, so a
+  // catch reads the TypeError and returns it. Here the TypeError is the realm's, which no carrier kind holds, so a
   // catch must not read it: the program traps instead (`js.object.uncatchable-type-error`). That is a failure, not node's
-  // answer, and never a wrong one.
-  it("traps reading a member of null in a program that catches", async () => {
-    const source = "function f(v) { try { return v.x; } catch (e) { return 0; } } var r = f(null);";
-    expect(new Function(`${source} return r;`)()).toBe(0);
+  // answer, and never a wrong one. A catch that does not read it catches it (issue-7354-shared-exception-tag.test.ts).
+  it("traps reading a member of null in a program that reads a caught value", async () => {
+    const source = "function f(v) { try { return v.x; } catch (e) { return e; } } var r = f(null);";
+    expect(new Function(`${source} return r;`)()).toBeInstanceOf(TypeError);
     const result = await compile(source, options());
     expect(requiredPreparedEmission(result)).toBeDefined();
     expect(() => (instantiatePreparedArtifact(result).instance.exports.__module_init as () => void)()).toThrow(

@@ -4,8 +4,8 @@
 // (src/ir/program/ordinary-to-primitive.ts). No admitted kind is callable, so the answer for every hint is
 // "[object Object]" when the object has no `toString` up to the realm's Object.prototype, and a TypeError when it
 // holds one. ToNumber of that string is NaN, and `+` concatenates it. A program that names `Symbol` refuses by name.
-// The synthesized TypeError fails loudly (a trap) in a program that catches. Every answer program runs twice: node's
-// answer (returns) and a wrong one (throws).
+// A catch that does not read the synthesized TypeError catches it; in a program that reads a caught value it aborts
+// uncatchably. Every answer program runs twice: node's answer (returns) and a wrong one (throws).
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as gc from "../src/codegen/index.js";
 import * as linear from "../src/codegen-linear/index.js";
@@ -117,12 +117,22 @@ describe("#7354 O2b — OrdinaryToPrimitive of an ordinary object", () => {
     180_000,
   );
 
-  // Node's catch reads the TypeError and answers 1. Here the TypeError is the realm's, which no carrier kind holds,
-  // so a catch must not read it: the program traps instead (`js.object.uncatchable-type-error`). That is a failure, not
-  // node's answer, and never a wrong one.
-  it("traps instead of throwing the TypeError in a program that catches", async () => {
-    const source = "var o = { toString: undefined }; var r = 0; try { var s = '' + o; } catch (e) { r = 1; }";
-    expect(new Function(`${source} return r;`)()).toBe(1);
+  it("catches the TypeError in a catch that does not read it, as node does", async () => {
+    const source =
+      "var o = { toString: undefined }; var r = 0; try { var s = '' + o; } catch (e) { r = 1; } if (r !== 1) throw 1;";
+    const wrong = source.replace("!==", "===");
+    expect(() => new Function(source)()).not.toThrow();
+    expect(() => new Function(wrong)()).toThrow();
+    expect(await run(source)).toBe("returned");
+    expect(await run(wrong)).toBe("threw");
+  }, 180_000);
+
+  // Node's catch reads the TypeError. Here the TypeError is the realm's, which no carrier kind holds, so a catch must
+  // not read it: the program traps instead (`js.object.uncatchable-type-error`). That is a failure, not node's answer,
+  // and never a wrong one.
+  it("traps instead of throwing the TypeError in a program that reads a caught value", async () => {
+    const source = "var o = { toString: undefined }; var r; try { var s = '' + o; } catch (e) { r = e; }";
+    expect(new Function(`${source} return r;`)()).toBeInstanceOf(TypeError);
     expect(await run(source)).toBe("trapped");
   }, 180_000);
 
