@@ -30,6 +30,12 @@ export const preparedOptions = (): Test262CompileOptions =>
 const errors = (result: { errors: readonly { message: string; severity?: string }[] }) =>
   result.errors.filter((error) => error.severity !== "warning").map((error) => error.message);
 
+/**
+ * A realm compile blocks the vitest worker for tens of seconds. Let pending I/O (vitest's RPC replies) run first: back
+ * to back, two such compiles leave a reply unread past the RPC deadline ("Timeout calling onTaskUpdate", exit 1).
+ */
+export const yieldToRpc = (): Promise<void> => new Promise((resolve) => setImmediate(resolve));
+
 /** Compile and run `source` through the strict Prepared entry; it must compile and validate. */
 export async function runPrepared(source: string): Promise<"returned" | "threw"> {
   for (const spy of [
@@ -41,6 +47,7 @@ export async function runPrepared(source: string): Promise<"returned" | "threw">
     spy.mockImplementation(() => {
       throw new Error("strict request entered a direct generator");
     });
+  await yieldToRpc();
   const result = await compile(source, preparedOptions());
   expect(errors(result)).toEqual([]);
   expect(requiredPreparedEmission(result)).toBeDefined();

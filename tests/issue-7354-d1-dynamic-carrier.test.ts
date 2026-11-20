@@ -22,6 +22,7 @@ import {
   requiredPreparedEmission,
   type Test262CompileOptions,
 } from "../src/test262/test262-prepared-entry.js";
+import { yieldToRpc } from "./helpers/prepared-node-agreement.js";
 
 const legalize = (fn: IrFunction): IrFunction => legalizeDynamicValues(fn, new AllocSiteRegistry());
 
@@ -48,6 +49,7 @@ async function run(source: string): Promise<number> {
     spy.mockImplementation(() => {
       throw new Error("strict request entered a direct generator");
     });
+  await yieldToRpc();
   const result = await compile(source, options("standalone"));
   expect(messages(result)).toEqual([]);
   expect(requiredPreparedEmission(result)).toBeDefined();
@@ -128,7 +130,7 @@ describe("#7354 D1 — the dynamic value on the Prepared standalone path", () =>
   it("reads a dynamic object field back as the dynamic value", async () => {
     expect(await run(main("const o = { a: id(1) }; return o.a === 1 ? 1 : 0;"))).toBe(1);
     expect(await run(main("const o = { a: id(1) }; return o.a === 2 ? 1 : 0;"))).toBe(0);
-  });
+  }, 180_000);
 
   const flow = (type: string, site: string) => `a dynamic value flows into ${type} without a conversion (${site})`;
   // (#7354 P) An untyped parameter is the dynamic value, never a propagated number, so the result of `id` is

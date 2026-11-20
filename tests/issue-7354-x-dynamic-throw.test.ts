@@ -16,6 +16,7 @@ import {
   requiredPreparedEmission,
   type Test262CompileOptions,
 } from "../src/test262/test262-prepared-entry.js";
+import { yieldToRpc } from "./helpers/prepared-node-agreement.js";
 
 const options = (target: "standalone" | "gc" = "standalone"): Test262CompileOptions =>
   ({
@@ -39,6 +40,7 @@ async function run(source: string): Promise<"returned" | "threw"> {
     spy.mockImplementation(() => {
       throw new Error("strict request entered a direct generator");
     });
+  await yieldToRpc();
   const result = await compile(source, options());
   expect(messages(result)).toEqual([]);
   expect(requiredPreparedEmission(result)).toBeDefined();

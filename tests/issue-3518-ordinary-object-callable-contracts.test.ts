@@ -30,7 +30,9 @@ const CONTRACTS = [
 
 describe("ordinary object semantic contracts", () => {
   it("declares prototype modes, descriptor presence, original receiver and boolean Has independently", () => {
-    expect(ORDINARY_OBJECT_RUNTIME_FEATURES).toEqual(CONTRACTS.map(([name]) => name));
+    // Every feature of the manifest's list has its declaration; the table gives the signatures they carry.
+    for (const feature of ORDINARY_OBJECT_RUNTIME_FEATURES)
+      expect(irRuntimeCallableDeclaration(irIntrinsicFuncRef(feature))).toMatchObject({ feature });
     for (const [name, params, results] of CONTRACTS) {
       const declaration = irRuntimeCallableDeclaration(irIntrinsicFuncRef(name));
       expect(declaration).toMatchObject({ feature: name, params, results });

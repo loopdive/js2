@@ -19,6 +19,7 @@ import {
 } from "../src/test262/test262-prepared-entry.js";
 import type { IrSourceId, IrUnitId } from "../src/shared/contracts/ir-identity.js";
 import { irModuleGlobalBindingId, irSourceGlobalRef } from "../src/ir/abi-bindings.js";
+import { yieldToRpc } from "./helpers/prepared-node-agreement.js";
 
 const options = (fileName = "test.js", target: "standalone" | "gc" = "standalone"): Test262CompileOptions =>
   ({
@@ -51,6 +52,7 @@ async function run(source: string, fileName = "test.js"): Promise<"returned" | "
     spy.mockImplementation(() => {
       throw new Error("strict request entered a direct generator");
     });
+  await yieldToRpc();
   const result = await compile(source, options(fileName));
   expect(
     messages(result).filter((message) => !/^Variable '\w+' is used before being assigned\.$/.test(message)),
