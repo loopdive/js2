@@ -529,17 +529,8 @@ describe("#3525 internal genuine prepared-pipeline presentation", () => {
         expect(prepared.artifacts.dts).toBe(legacy.dts);
         expect(prepared.artifacts.imports).toEqual(legacy.imports);
         expect(prepared.artifacts.stringPool).toEqual([]);
-        if (backend === "wasmgc") {
-          const legacyPools: Record<string, string[]> = {
-            scalar: ["calculate", ""],
-            "counted loop and mutable branch": ["accumulate", ""],
-            "two-source 42": ["double", "", "./math", "main"],
-            "nonconstant cross-source": ["double", "", "./math", "calculate"],
-          };
-          expect(legacy.stringPool).toEqual(legacyPools[fixture.name]);
-        } else {
-          expect(prepared.artifacts.stringPool).toEqual(legacy.stringPool);
-        }
+        // #6979: native strings are always on for the JS target, so the legacy gc compile imports no string constants either.
+        expect(legacy.stringPool).toEqual(prepared.artifacts.stringPool);
         expect(prepared.artifacts.exportSignatures).toEqual(legacy.exportSignatures);
         expect(prepared.artifacts.exportBoundaryPolicies).toEqual(legacy.exportBoundaryPolicies);
         const actualManifest = prepared.artifacts.adapterManifest;
@@ -556,12 +547,8 @@ describe("#3525 internal genuine prepared-pipeline presentation", () => {
         expect(originalHelper.manifest).toEqual(legacy.adapterManifest);
         expect(actualHelper.prefix).toBe(originalHelper.prefix);
         expect(actualHelper.suffix).toBe(originalHelper.suffix);
-        if (backend === "wasmgc") {
-          // Preserve the real field difference; this is not byte/artifact parity.
-          expect(prepared.artifacts.importsHelper).not.toBe(legacy.importsHelper);
-        } else {
-          expect(prepared.artifacts.importsHelper).toBe(legacy.importsHelper);
-        }
+        // #6979: the gc helpers differed only in the legacy string pool, which native strings removed.
+        expect(prepared.artifacts.importsHelper).toBe(legacy.importsHelper);
         const values = fixture.calls.map((call) => call.value);
         expect(await generatedHelperCalls(prepared.artifacts, fixture.calls)).toEqual(values);
         expect(await generatedHelperCalls(legacy, fixture.calls)).toEqual(values);
