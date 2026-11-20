@@ -2820,3 +2820,26 @@ covers it, and the realm's fill and owner checks call `physicalIndex` thousands 
 square of the reserved resources. Reproducer: `.tmp/prof.mts` pattern, i.e. compile the proving program above twice
 through `src/test262/test262-prepared-entry.ts` (options `wholeProgram: prepared-program-required`, `wasmgc`,
 `standalone`, `allowJs`) and profile the second.
+
+## Suspended Work (slice O lane S3, 2026-11-20)
+
+The budget window ended (lead's wind-down, 2026-11-20 evening). Nothing is half-pushed.
+
+- **Landed:** #7312 (realm join plus review rounds; final head 2efccd886f) merged to main on 2026-11-20.
+- **`claude/7354-o`** (not a PR branch) is at e587829733 plus this commit. It holds O1–O4, O3 (member writes, 14345199fe) and O2b (runtime-guarded ToPrimitive, from `claude/7354-o-toprim` f385ce7f64). The slice O suites passed 184/184 across 7 files on e587829733, and the gates were green.
+  - Next step 1: merge `origin/main`, which now contains #7312, into `claude/7354-o`, then open the slice O PR (base main, `hold`, a reviewer with fresh context).
+- **Not started: the Fa × O merge (lead's order, Fa #7309 lands first).** Merge `claude/7354-fa` into `claude/7354-o` with the lead's four decisions:
+  1. ToPrimitive of an object whose `toString`/`valueOf` holds a callable becomes a run-time `is_function` arm that gives the named uncatchable abort, until Fb (#7326) supplies Call; then it does Get+Call in hint order. This replaces the compile-time `EVERY_KIND_IS_NON_CALLABLE` pin.
+  2. `TO_NUMBER_ARM.function` is NaN. Justify it from the spec: ToPrimitive of a function gives its source string, and ToNumber of that string is NaN.
+  3. One program record `{objects, functions, catches}`, merging LegalizationProgram and ProgramKinds; `admittedKinds` takes it.
+  4. One member table: `MEMBER_ACCESS_ARM` gets `function` rows, and a read refuses by name until C (S11) supplies function-object properties. Fa's `MEMBER_READ_ARM` goes away.
+  After the merge, tell S1, S11, S8 and the lead the head.
+- **Pending merge into o: S13's shared exception tag**, `claude/7354-shared-exn` 048fdd1df7, built on an older toprim. S13 must first re-merge o e587829733. Its finding: the tag was not the blocker; the error struct is not a carrier kind. `typeError` therefore keeps the trap only where a program reads the caught value.
+- **Next owner fix (mine): admit the realm's error object as the carrier's object kind** (OBJECT_PRODUCERS + `js.object.create-type-error`, `typeof` "object"). The read-the-caught-value trap then goes.
+- **Not started: O7, the harness module-binding homes** (lead's assignment). Its brief is in `.tmp/brief-homes.md` of the coordinator's checkout (not committed); it covers:
+  - the 65 "module binding … has no exact typed storage: not-direct" rows (obj 41, arrObj 7, descObj 5, …);
+  - the 25 "identifier `assert` is not in scope in verifyProperty" rows.
+  The subagent stopped on the usage limit before changing anything, and `claude/7354-o-homes` was never pushed. Measure the cause per row first.
+- **Measured (411-row ES5 sample, integration 9426e5e1c2):** 20 pass before and after O2b. The 301 rows that stopped at ToPrimitive now stop at assert.js:27, `JSON.stringify`. That is J, owned by S1 on `claude/7354-json`: one realm row for the own enumerable string keys over kernel `ownKeys`/`ownDescriptor`, plus `js.object.get`, with JSON_ARM next to the kind tables. Its name is to be agreed with S12 for `Object.keys`.
+- **Filed:** #7407 (an IR-side source-object planner) and #7419 (a JS string into an exported `string` parameter, filed on docs PR #7328; fix or record is the user's decision).
+- **Open review threads:** none on my PRs.
