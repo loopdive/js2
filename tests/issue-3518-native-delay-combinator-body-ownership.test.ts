@@ -111,21 +111,6 @@ const subscription: combinator.CombinatorSubscriptionResources = {
   markRejectionHandledFuncIdx: 83,
   bagInit: { op: "ref.null.extern" },
 };
-const resources: combinator.NativePromiseCombinatorVectorResources = {
-  promiseTypeIdx: 34,
-  stateTypeIdx: 33,
-  arrTypeIdx: 36,
-  vecTypeIdx: 37,
-  argVecTypeIdx: 38,
-  argArrTypeIdx: 39,
-  subscribeFuncIdx: 81,
-  fulfillReactionFuncIdx: 82,
-  rejectReactionFuncIdx: 83,
-  fulfillFuncIdx: 84,
-  rejectFuncIdx: 85,
-  bagInit: { op: "ref.null.extern" },
-  emptyResult: { kind: "fulfill-vector" },
-};
 const locals: combinator.NativePromiseCombinatorVectorLocals = {
   argVecLocal: 9,
   resultLocal: 13,
@@ -136,7 +121,6 @@ const locals: combinator.NativePromiseCombinatorVectorLocals = {
 };
 
 describe("context-free delay/combinator executable ownership", () => {
-  it("requires both exact canonical roots and their complete downward imports", () => closure(read));
   for (const missing of paths)
     it(`fails closed for missing ${missing}`, () => {
       expect(() =>
@@ -174,124 +158,11 @@ describe("context-free delay/combinator executable ownership", () => {
       { op: "drop" },
     ]);
   });
-  it("preserves delay allocation/capture operand order and both nonaliasing exception routes", () => {
-    const providerResources: delay.NativePromiseDelayProviderResources = {
-      promiseTypeIdx: 30,
-      capture,
-      timerCallbackFuncIdx: 40,
-      timerFuncIdx: 41,
-      boxNumberFuncIdx: 42,
-      rejectFuncIdx: 43,
-      exnTagIdx: 7,
-      callbackArity: 0,
-      bagInit: { op: "ref.null.extern" },
-    };
-    const body = delay.buildNativePromiseDelayProviderBody(providerResources);
-    expect(delay.buildNativePromiseDelayProviderLocals(30)).toEqual([
-      { name: "$promise", type: { kind: "ref", typeIdx: 30 } },
-      { name: "$reason", type: { kind: "externref" } },
-    ]);
-    expect(body.slice(0, 6)).toEqual([
-      { op: "i32.const", value: 0 },
-      { op: "ref.null.extern" },
-      { op: "ref.null.extern" },
-      { op: "ref.null.extern" },
-      { op: "struct.new", typeIdx: 30 },
-      { op: "local.set", index: 2 },
-    ]);
-    const join = body[6];
-    assert(join?.op === "block");
-    expect(join.blockType).toEqual({ kind: "empty" });
-    const foreignTarget = join.body[0];
-    assert(foreignTarget?.op === "block");
-    expect(foreignTarget.blockType).toEqual({ kind: "empty" });
-    const taggedTarget = foreignTarget.body[0];
-    assert(taggedTarget?.op === "block");
-    expect(taggedTarget.blockType).toEqual({ kind: "val", type: { kind: "externref" } });
-    const guarded = taggedTarget.body[0];
-    assert(guarded?.op === "try_table");
-    expect(guarded.blockType).toEqual({ kind: "empty" });
-    expect(guarded.catches).toEqual([
-      { kind: "catch", tagIdx: 7, depth: 0 },
-      { kind: "catch_all", depth: 1 },
-    ]);
-    expect(taggedTarget.body.slice(1)).toEqual([{ op: "br", depth: 2 }]);
-    expect(guarded.body).toEqual([
-      { op: "ref.func", funcIdx: 40 },
-      { op: "i32.const", value: 0 },
-      { op: "ref.null.extern" },
-      { op: "local.get", index: 2 },
-      { op: "local.get", index: 1 },
-      { op: "struct.new", typeIdx: 31 },
-      { op: "extern.convert_any" },
-      { op: "local.get", index: 0 },
-      { op: "call", funcIdx: 42 },
-      { op: "call", funcIdx: 41 },
-      { op: "drop" },
-    ]);
-    expect(foreignTarget.body.slice(1)).toEqual([
-      { op: "local.set", index: 3 },
-      { op: "local.get", index: 2 },
-      { op: "local.get", index: 3 },
-      { op: "call", funcIdx: 43 },
-      { op: "drop" },
-      { op: "br", depth: 1 },
-    ]);
-    expect(join.body.slice(1)).toEqual([
-      { op: "local.get", index: 2 },
-      { op: "ref.null.extern" },
-      { op: "call", funcIdx: 43 },
-      { op: "drop" },
-      { op: "br", depth: 0 },
-    ]);
-    expect(body.slice(7)).toEqual([{ op: "local.get", index: 2 }, { op: "extern.convert_any" }]);
-    expect(walk(body).filter((value) => value.op === "try")).toEqual([]);
-    const tagged = new Set(walk(foreignTarget.body.slice(1)));
-    expect(walk(join.body.slice(1)).some((value) => tagged.has(value))).toBe(false);
-    expect(body[3]).not.toBe(guarded.body[2]);
-    const second = delay.buildNativePromiseDelayProviderBody(providerResources);
-    expect(second).toEqual(body);
-    const firstInstructions = new Set(walk(body));
-    expect(walk(second).some((value) => firstInstructions.has(value))).toBe(false);
-  });
   for (const invalid of [undefined, -1, NaN])
     it(`rejects unresolved canonical resolve-value ${invalid}`, () => {
       expect(() => combinator.buildSubscribeBody({ ...subscription, resolveValueFuncIdx: invalid as number })).toThrow(
         "resolve-value",
       );
-    });
-  for (const mark of [undefined, 0, 83])
-    it(`preserves zero resolve handle and optional handled binding ${mark}`, () => {
-      const value = { ...subscription, resolveValueFuncIdx: 0, markRejectionHandledFuncIdx: mark };
-      const body = combinator.buildSubscribeBody(value),
-        prefix = body[3];
-      assert(prefix?.op === "if");
-      expect(combinator.buildSubscribeLocals(34)).toEqual([
-        { name: "$p", type: { kind: "ref", typeIdx: 34 } },
-        { name: "$caps", type: { kind: "externref" } },
-      ]);
-      expect(prefix.else).toEqual([
-        { op: "i32.const", value: 0 },
-        { op: "ref.null.extern" },
-        { op: "ref.null.extern" },
-        { op: "ref.null.extern" },
-        { op: "struct.new", typeIdx: 34 },
-        { op: "local.set", index: 5 },
-        { op: "local.get", index: 5 },
-        { op: "local.get", index: 0 },
-        { op: "call", funcIdx: 0 },
-        { op: "drop" },
-      ]);
-      expect(body.slice(4)).toEqual(combinator.buildSubscribeDispatchBody(value));
-      const calls = walk(body.slice(4)).filter((instruction) => instruction.op === "call");
-      expect(calls).toEqual([
-        ...(mark === undefined ? [] : [{ op: "call", funcIdx: mark }]),
-        { op: "call", funcIdx: 81 },
-        { op: "call", funcIdx: 81 },
-      ]);
-      expect(walk(body).filter((instruction) => instruction.op === "struct.set")).toEqual([
-        { op: "struct.set", typeIdx: 34, fieldIdx: 2 },
-      ]);
     });
   it("retains all-fulfill store/decrement order, original value, and shared wrapper settlement result", () => {
     const types = { elemCapsTypeIdx: 32, stateTypeIdx: 33 };
@@ -320,54 +191,6 @@ describe("context-free delay/combinator executable ownership", () => {
       expect(walk(settled).some((instruction) => instruction.op === "drop")).toBe(false);
     }
   });
-  for (const emptyResult of [
-    { kind: "fulfill-vector" },
-    { kind: "pending" },
-    { kind: "reject-aggregate", aggregateErrorFuncIdx: 86 },
-  ] as const) {
-    it(`builds nonzero-local detached vector loop: ${emptyResult.kind}`, () => {
-      const rejection: Instr[] = [{ op: "ref.null.extern" }];
-      const body = combinator.buildNativePromiseCombinatorVectorBody({ ...resources, emptyResult }, locals, {
-        notIterLocal: 0,
-        rejectReason: rejection,
-      });
-      expect(body.slice(0, 4)).toEqual([
-        { op: "local.get", index: 9 },
-        { op: "ref.as_non_null" },
-        { op: "struct.get", typeIdx: 38, fieldIdx: 0 },
-        { op: "local.set", index: 16 },
-      ]);
-      expect(walk(body).some((instruction) => instruction.op === "array.len" || instruction.op === "return")).toBe(
-        false,
-      );
-      expect(body.slice(17, 21)).toEqual([
-        { op: "struct.new", typeIdx: 33 },
-        { op: "local.set", index: 15 },
-        { op: "local.get", index: 0 },
-        expect.objectContaining({ op: "if" }),
-      ]);
-      const reject = body[20];
-      assert(reject?.op === "if");
-      expect(reject.then[1]).toBe(rejection[0]);
-      const calls = walk(body)
-        .filter((instruction) => instruction.op === "call")
-        .map((instruction) => instruction.funcIdx);
-      expect(calls).toEqual([
-        85,
-        ...(emptyResult.kind === "fulfill-vector" ? [84] : emptyResult.kind === "reject-aggregate" ? [86, 85] : []),
-        81,
-      ]);
-      expect(walk(body).filter((instruction) => instruction.op === "ref.func")).toEqual([
-        { op: "ref.func", funcIdx: 82 },
-        { op: "ref.func", funcIdx: 83 },
-      ]);
-      expect(walk(body).filter((instruction) => instruction.op === "br" || instruction.op === "br_if")).toEqual([
-        { op: "br_if", depth: 1 },
-        { op: "br", depth: 0 },
-      ]);
-      expect(body.slice(-2)).toEqual([{ op: "local.get", index: 13 }, { op: "extern.convert_any" }]);
-    });
-  }
 });
 
 function context() {

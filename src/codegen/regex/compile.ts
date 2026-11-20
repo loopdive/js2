@@ -470,7 +470,8 @@ class Emitter {
   /** Expand `{min,max}` into mandatory copies + optional/star tail. */
   private compileRepeat(node: ReNode & { kind: "repeat" }): void {
     const { min, max, greedy } = node;
-    if (max !== -1 && (max > MAX_REPEAT_EXPANSION || min > MAX_REPEAT_EXPANSION)) {
+    // (#7409) `min` mandatory copies are expanded for `{min,}` too, so the cap reads `min` whatever `max` is.
+    if (min > MAX_REPEAT_EXPANSION || (max !== -1 && max > MAX_REPEAT_EXPANSION)) {
       throw new RepeatTooLargeError(`{${min},${max === -1 ? "" : max}} exceeds expansion cap`);
     }
     // Mandatory copies: node repeated `min` times.

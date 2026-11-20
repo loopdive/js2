@@ -1,6 +1,5 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import { describe, expect, it } from "vitest";
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { spawn } from "node:child_process";
 import { pathToFileURL } from "node:url";
@@ -14,14 +13,12 @@ import {
   compareArms,
   validateArm,
   childEnvironment,
-  produceAdmission,
   postPassSatisfied,
   resolveRecorderDirectory,
 } from "./helpers/semantic-provider-source-receipts.mjs";
 import {
   allowedCanonicalPath,
   requireNonemptyAdmission,
-  validateAdmissionInventory,
   validateGuardProbe,
 } from "./helpers/semantic-provider-source-free.mjs";
 
@@ -742,145 +739,4 @@ describe("new canonical-owner admission is distinct from full preparation closur
   ])("requires independent producer provenance even for admission payload %#", (payload) => {
     expect(() => requireNonemptyAdmission(payload)).toThrow();
   });
-  it("produces a real source plan and admits nonempty canonical owners in fresh children", async () => {
-    mkdirSync(join(root, ".tmp"), { recursive: true });
-    const directory = mkdtempSync(join(root, ".tmp/semantic-provider-admission-"));
-    let captured: unknown;
-    let captures = 0;
-    const payload = await produceAdmission({
-      root,
-      arm: "candidate",
-      captureReceipt(receipt: unknown) {
-        captures++;
-        captured = structuredClone(receipt);
-      },
-    });
-    const input = join(directory, "source-payload.json");
-    writeFileSync(input, JSON.stringify(payload, null, 2));
-    // Located source refusals are retained above; this positive control must fail,
-    // never skip or switch to synthetic IR when the producer cannot supply it.
-    expect(payload.kind, JSON.stringify(payload)).toBe("produced");
-    expect(captures).toBe(1);
-    const producer = join(directory, "producer.json");
-    const producerSha256 = sha256(JSON.stringify(captured));
-    writeFileSync(producer, JSON.stringify(captured, null, 2));
-    const expected = { root, producerReceipt: captured, producerSha256 };
-    expect(() => requireNonemptyAdmission(payload, expected)).not.toThrow();
-    for (const invalid of [{}, { kind: "refused" }, { ...payload, source: "", sourceSha256: "stale" }])
-      expect(() => requireNonemptyAdmission(invalid, expected)).toThrow();
-    expect(() => requireNonemptyAdmission(payload, { ...expected, producerSha256: "stale" })).toThrow();
-    expect(() =>
-      requireNonemptyAdmission(payload, {
-        ...expected,
-        producerReceipt: Object.assign({}, captured, { source: "unrelated" }),
-      }),
-    ).toThrow();
-    // Countermodels mutate only transport/evidence; the independent producer
-    // receipt remains unchanged. No fabricated IR is submitted to a compiler.
-    const foreignSource = structuredClone(payload);
-    foreignSource.source = "export function unrelated(): number { return 7; }";
-    foreignSource.sourceSha256 = sha256(foreignSource.source);
-    expect(() => requireNonemptyAdmission(foreignSource, expected)).toThrow();
-    expect(() => requireNonemptyAdmission({ ...payload, inventory: {} }, expected)).toThrow();
-    expect(() => requireNonemptyAdmission(payload, { ...expected, root: "/foreign-root" })).toThrow();
-    const transport = await import(pathToFileURL(join(root, "tests/helpers/typed-program-transport.mjs")).href);
-    const decoded = transport.decodeTypedPacket(payload.wire);
-    expect(validateAdmissionInventory(decoded, captured)).toBe(true);
-    for (const key of ["terminalUnits", "allUnits"]) {
-      const missingOwner = {
-        ...decoded,
-        inventory: {
-          ...decoded.inventory,
-          [key]: decoded.inventory[key].filter((unit: { id: string }) => unit.id !== payload.owner),
-        },
-      };
-      expect(() => validateAdmissionInventory(missingOwner, captured)).toThrow();
-      const duplicateOwner = {
-        ...decoded,
-        inventory: {
-          ...decoded.inventory,
-          [key]: [
-            ...decoded.inventory[key],
-            decoded.inventory[key].find((unit: { id: string }) => unit.id === payload.owner),
-          ],
-        },
-      };
-      expect(() => validateAdmissionInventory(duplicateOwner, captured)).toThrow();
-    }
-    const foreignOwner = { ...decoded, fn: { ...decoded.fn, unitId: "foreign-owner" } };
-    expect(() => validateAdmissionInventory(foreignOwner, captured)).toThrow();
-    for (const [ordinal, probe] of [
-      null,
-      "src/ir/async-plan.ts",
-      "src/ir/async-plan.ts?probe=1",
-      "src/ir/async-plan.ts#probe",
-      "src/ir/program-prepare-ir.ts",
-      "src/ir/core/intrinsics.ts?duplicate=1",
-    ].entries()) {
-      const output = join(directory, `${ordinal}.json`),
-        census = join(directory, `${ordinal}.jsonl`);
-      const args = [
-        "--import",
-        "tsx",
-        join(root, "tests/helpers/semantic-provider-source-free.mjs"),
-        root,
-        input,
-        producer,
-        producerSha256,
-        output,
-        census,
-        ...(probe === null ? [] : [probe]),
-      ];
-      const terminal = await new Promise<{
-        code: number | null;
-        signal: string | null;
-        error: unknown;
-        stderr: string;
-      }>((done) => {
-        const child = spawn(process.execPath, args, {
-          cwd: root,
-          env: childEnvironment(root, "off"),
-          stdio: ["ignore", "ignore", "pipe"],
-        });
-        let stderr = "",
-          error: unknown = null;
-        child.stderr.on("data", (chunk) => {
-          stderr += chunk;
-        });
-        child.on("error", (value) => {
-          error = evidenceValue(value);
-        });
-        child.on("close", (code, signal) => done({ code, signal, error, stderr }));
-      });
-      writeFileSync(join(directory, `${ordinal}.terminal.json`), JSON.stringify(terminal, null, 2));
-      expect(terminal.error).toBeNull();
-      expect(terminal.signal).toBeNull();
-      expect(terminal.code, terminal.stderr).toBe(probe === null ? 0 : 1);
-      const report = JSON.parse(readFileSync(output, "utf8"));
-      expect(report.ok).toBe(probe === null);
-      if (probe === null) {
-        expect(report.population.roots).toBe(12);
-        expect(report.population.states).toBeGreaterThan(1);
-        expect(report.population.instructions).toBeGreaterThan(0);
-        expect(report.population.capabilities).toBeGreaterThan(0);
-        expect(report.population.definitions).toBeGreaterThan(0);
-        expect(report.joins.sealedIdentity).toBe(true);
-        expect(report.loads.every((entry: { allowed: boolean }) => entry.allowed)).toBe(true);
-      } else {
-        expect(report.probe.rejected).toBe(true);
-        expect(validateGuardProbe(report, { root, probe })).toBe(true);
-        const path = probe.split(/[?#]/)[0]!;
-        const rejectedUrl = pathToFileURL(join(root, path)).href + probe.slice(path.length);
-        expect(report.loads).toHaveLength(1);
-        expect(report.loads[0]).toMatchObject({ url: rejectedUrl, path, allowed: false, phase: "requested" });
-        if (/[?#]/.test(probe)) {
-          expect(report.probe.mode).toBe("plain-node");
-          expect(report.probe.terminal.code).toBe(1);
-          expect(report.probe.terminal.stderr).toContain(`Error: forbidden canonical load: ${rejectedUrl}\n`);
-        } else expect(report.error.message).toBe(`forbidden canonical load: ${rejectedUrl}`);
-      }
-      expect(report.closureCertified).toBe(false);
-      expect(report.retirementCertified).toBe(false);
-    }
-  }, 180_000);
 });

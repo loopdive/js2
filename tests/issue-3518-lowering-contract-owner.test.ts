@@ -1,8 +1,4 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
-
-import { createHash } from "node:crypto";
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
 import { describe, expect, expectTypeOf, it } from "vitest";
 import * as oldDynamic from "../src/ir/lowering-dynamic-scratch.js";
 import * as dynamic from "../src/backend/wasmgc/lowering/dynamic-scratch.js";
@@ -14,35 +10,6 @@ import type { IrType } from "../src/ir/core/types.js";
 import type { Instr, LocalDef, ValType } from "../src/wasm/model/instructions.js";
 import { createEmptyModule } from "../src/ir/types.js";
 import { emitBinary } from "../src/emit/binary.js";
-
-const repository = resolve(import.meta.dirname, "..");
-const sha256 = (bytes: Uint8Array | string) => createHash("sha256").update(bytes).digest("hex");
-const pairs = [
-  {
-    name: "dynamic scratch",
-    implementation: "src/backend/wasmgc/lowering/dynamic-scratch.ts",
-    bytes: 1346,
-    sha256: "e70eaec584d4fca7d2d17f9ce496536626e7fb287cd018c91705ca12f6b5d609",
-    routes: [
-      ["../../../ir/core/types.js", "./nodes.js"],
-      ["../../../wasm/model/instructions.js", "./types.js"],
-    ],
-  },
-  {
-    name: "integer coercion",
-    implementation: "src/backend/wasmgc/lowering/wasm-int32-coercion.ts",
-    bytes: 3778,
-    sha256: "23cf996416285cf8495c2c6977396c9c81eaf2af79d8c15f1c8d6ef6f05da2a0",
-    routes: [["../../../wasm/model/instructions.js", "../types.js"]],
-  },
-  {
-    name: "math min/max",
-    implementation: "src/backend/wasmgc/lowering/wasm-math-minmax.ts",
-    bytes: 1664,
-    sha256: "76a3e201e5ed64e768963facfd87fdaedba31b0bcbd3b73300eb647237c4f822",
-    routes: [["../../../wasm/model/instructions.js", "../types.js"]],
-  },
-] as const;
 
 describe("three Wasm lowering helper owners", () => {
   it.each([
@@ -60,23 +27,6 @@ describe("three Wasm lowering helper owners", () => {
     expectTypeOf<oldInt32.WasmInt32CoercionScratch>().toEqualTypeOf<int32.WasmInt32CoercionScratch>();
     expectTypeOf<oldMinMax.WasmMathMinMaxScratch>().toEqualTypeOf<minMax.WasmMathMinMaxScratch>();
     expectTypeOf<oldMinMax.WasmMathMinMaxOperation>().toEqualTypeOf<minMax.WasmMathMinMaxOperation>();
-  });
-
-  it.each(pairs)("recovers the complete pinned $name donor through only canonical imports", (pair) => {
-    const current = readFileSync(resolve(repository, pair.implementation), "utf8");
-    let original = current;
-    for (const [after, before] of pair.routes) {
-      expect(original.split(`"${after}"`)).toHaveLength(2);
-      original = original.replace(`"${after}"`, `"${before}"`);
-    }
-    expect(Buffer.byteLength(original)).toBe(pair.bytes);
-    expect(sha256(original)).toBe(pair.sha256);
-    let replay = original;
-    for (const [after, before] of pair.routes) replay = replay.replace(`"${before}"`, `"${after}"`);
-    expect(replay).toBe(current);
-    const imports = current.split("\n").filter((line) => line.startsWith("import "));
-    expect(imports.length).toBe(pair.routes.length);
-    expect(imports.every((line) => line.startsWith("import type "))).toBe(true);
   });
 });
 

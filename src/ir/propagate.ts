@@ -93,7 +93,7 @@ import {
   type IrPlanningIdentityContext,
 } from "./planning-identity.js";
 import { readEnv } from "../env.js";
-import { phase1PropertyName } from "./property-key-fold.js";
+import { phase1PropertyName } from "../shared/property-key-fold.js";
 import { functionBodyAlwaysTerminates, irFunctionBodyReturnsValue } from "./select.js";
 
 // ---------------------------------------------------------------------------

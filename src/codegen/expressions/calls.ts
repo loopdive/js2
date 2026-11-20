@@ -4121,11 +4121,11 @@ export function tryEmitInlineDynamicCall(
   )
     return null;
 
-  // Compile callee (externref) → anyref → temp local.
   const calleeType = compileExpression(ctx, fctx, expr.expression);
   if (calleeType === null) return null;
-  // If already a ref type, skip the extern→any convert; otherwise expect externref.
-  if (calleeType.kind === "externref") {
+  // Callee → anyref → temp local. A ref skips extern→any; a primitive (#7396, `g = 3; g()`) is boxed for IsCallable.
+  if (calleeType.kind === "externref" || calleeType.kind === "f64" || calleeType.kind === "i32") {
+    coerceType(ctx, fctx, calleeType, { kind: "externref" });
     fctx.body.push({ op: "any.convert_extern" });
   } else if (calleeType.kind !== "ref" && calleeType.kind !== "ref_null") {
     // Unexpected stack type — bail, the existing fallback will run.

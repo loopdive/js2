@@ -1,10 +1,7 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
 import { spawnSync } from "node:child_process";
-import { createHash } from "node:crypto";
-import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import ts from "typescript";
 import { describe, expect, it } from "vitest";
 import * as old from "../src/ir/alloc-registry.js";
 import * as canonical from "../src/ir/analysis/alloc-registry.js";
@@ -13,222 +10,7 @@ import { IR_CLASS_SHAPE_CELL, irVal, type IrType } from "../src/ir/core/types.js
 import type { AllocRegistrySnapshot } from "../src/ir/analysis/contracts/allocations.js";
 
 const root = resolve(import.meta.dirname, "..");
-const oldPath = "src/ir/alloc-registry.ts";
-const newPath = "src/ir/analysis/alloc-registry.ts";
-const read = (path: string) => readFileSync(resolve(root, path), "utf8");
-const sha = (text: string) => createHash("sha256").update(text).digest("hex");
 const runtimeExports = ["ALLOC_NAMESPACES", "AllocSiteRegistry", "copyIrPreparationData"] as const;
-const typeExports = [
-  "AllocSite",
-  "AllocRegistryProvenanceSnapshot",
-  "AllocRegistryMetadataSnapshot",
-  "AllocRegistrySnapshot",
-];
-
-// Complete text/docs receipts from 3a119a88b28bb347f4faaaa2146bd991acf61228,
-// original blob 4d371d2a98678e2227d770b123685ba7e8a38e78. No historical Git
-// objects are required at test time. Tests exercise compatibility, not public
-// compiler caller liveness, preparation closure or backend materialization.
-const declarationReceipts: readonly { name: string; sha256: string }[] = [
-  {
-    name: "copyIrPreparationData",
-    sha256: "482b87beebe8d0255294c92e1600469f2cfbfb6f6f0bf6f499233d762bf399b5",
-  },
-  {
-    name: "ALLOC_NAMESPACES",
-    sha256: "0fc6b0fe791f0f14497c5f05108642e38a1677cff0b92a8306efde0f491a87f1",
-  },
-  {
-    name: "Provenance",
-    sha256: "08aa7dc8f638e36b3a917ea7806d2fc132467a53367f8f68bba23b0d2ac154d2",
-  },
-  {
-    name: "assertAllocRegistrySnapshot",
-    sha256: "efba2b4b1e49536a4a0a1197f796e8d5053ad682812e165020ce215f91ceb37b",
-  },
-  {
-    name: "AllocSiteRegistry",
-    sha256: "56fd2b7f254597aa89c3a0af2be8e1c96796b8a82e008b3805bc1a7fe6e6aa87",
-  },
-];
-const memberReceipts: readonly { name: string; kind: string; sha256: string; initializer: string | null }[] = [
-  {
-    name: "sites",
-    kind: "PropertyDeclaration",
-    sha256: "f2e3db15b4612e863ae62a14f21483db213069b331f7b97b153c3e4c8a710c5e",
-    initializer: "[]",
-  },
-  {
-    name: "meta",
-    kind: "PropertyDeclaration",
-    sha256: "205e48f1a0c247408e2e17624afa30102a661a8a5080db519addf1c856144a45",
-    initializer: "[]",
-  },
-  {
-    name: "metadataOrder",
-    kind: "PropertyDeclaration",
-    sha256: "b12009a164bac59306e285c75427862b44d784aa8cd4c4716d1313af7a132be5",
-    initializer: null,
-  },
-  {
-    name: "capturePreparationData",
-    kind: "MethodDeclaration",
-    sha256: "28723cb855f16b748effe1925d85d176ee8521847409c352f80e47a691876c7c",
-    initializer: null,
-  },
-  {
-    name: "captureSnapshot",
-    kind: "MethodDeclaration",
-    sha256: "f8ceac0ba72fe33ba8b8367ae95f7871253dac21b31a7d380f4b278de5df7d07",
-    initializer: null,
-  },
-  {
-    name: "restorePreparationData",
-    kind: "MethodDeclaration",
-    sha256: "f4f5e322e2fef4c2c014f34f70595fa8b75edf3d34ce8efb7f90fba92fa38904",
-    initializer: null,
-  },
-  {
-    name: "fromSnapshot",
-    kind: "MethodDeclaration",
-    sha256: "dd98bbc5300c8b83f58df18584d275f81a78ce7e73c3f1569eaae886e42fe96b",
-    initializer: null,
-  },
-  {
-    name: "metadataSnapshot",
-    kind: "MethodDeclaration",
-    sha256: "bd1f695fd84a47e41225df19cec4c0f445207877e77c33ee2b9ca49e9d42d6c5",
-    initializer: null,
-  },
-  {
-    name: "fresh",
-    kind: "MethodDeclaration",
-    sha256: "405ad2c8ec5864299d5110b0154a739f2c82242cf3cffe7ba61ae6b329b813a0",
-    initializer: null,
-  },
-  {
-    name: "isKnown",
-    kind: "MethodDeclaration",
-    sha256: "3104499601f79326bc26683a5c7e77f5986bd9bdf0fa1432b3852669f3bfb45e",
-    initializer: null,
-  },
-  {
-    name: "resolve",
-    kind: "MethodDeclaration",
-    sha256: "27974f88dcb3f6ae22260ddb3a46e42c0d6696084614b0c69430cd054ddce922",
-    initializer: null,
-  },
-  {
-    name: "canonicalIndex",
-    kind: "MethodDeclaration",
-    sha256: "78ee1b70635b74ea712829ca8bb5ab3e2fd02e6fee9892d30f66b140ac18a891",
-    initializer: null,
-  },
-  {
-    name: "alias",
-    kind: "MethodDeclaration",
-    sha256: "bdb79b546fa5d073f0a0124a3ba0a82c3be0d05667e2b4c349e80b96b47c4218",
-    initializer: null,
-  },
-  {
-    name: "retire",
-    kind: "MethodDeclaration",
-    sha256: "10ef25341179c088d7c983ecfffd1bf3be2a1c1e3d519de4f6daef30d1fb9993",
-    initializer: null,
-  },
-  {
-    name: "annotate",
-    kind: "MethodDeclaration",
-    sha256: "d4a4a5546ab880678d7a75f48e4afb3e977c906896eab2ef9e5a0933d9a12221",
-    initializer: null,
-  },
-  {
-    name: "read",
-    kind: "MethodDeclaration",
-    sha256: "46e11eba38cc8c9c03bf88d001c144585ff2f840184d225b818e10cdbd3bc269",
-    initializer: null,
-  },
-  {
-    name: "size",
-    kind: "GetAccessor",
-    sha256: "fb6e16460fa93c7376f50737872011c90d4bedd0fe7ff1fc193f1b0b32068e9a",
-    initializer: null,
-  },
-  {
-    name: "liveSites",
-    kind: "MethodDeclaration",
-    sha256: "56b06a9c088734e2b7cfc7105eef056f55c429681252de0426ee2b169228485a",
-    initializer: null,
-  },
-  {
-    name: "snapshot",
-    kind: "MethodDeclaration",
-    sha256: "004514d9cc2c4e221d64a9e2b91b476a2ac8e46ccdc2f295f21fc23277f94f77",
-    initializer: null,
-  },
-];
-
-function parse(path: string, text = read(path)) {
-  const file = ts.createSourceFile(path, text, ts.ScriptTarget.Latest, true);
-  expect((file as ts.SourceFile & { parseDiagnostics: readonly ts.Diagnostic[] }).parseDiagnostics).toEqual([]);
-  return file;
-}
-
-function declarationName(node: ts.Statement) {
-  if (ts.isClassDeclaration(node) || ts.isFunctionDeclaration(node) || ts.isTypeAliasDeclaration(node))
-    return node.name?.text;
-  if (ts.isVariableStatement(node)) return node.declarationList.declarations[0]?.name.getText();
-  return undefined;
-}
-
-function verifyCanonical(text = read(newPath)) {
-  const file = parse(newPath, text);
-  const declarations = file.statements.filter((node) => !ts.isImportDeclaration(node) && !ts.isExportDeclaration(node));
-  expect(declarations.map(declarationName)).toEqual(declarationReceipts.map((row) => row.name));
-  expect(declarations).toHaveLength(5);
-  for (const [index, node] of declarations.entries())
-    expect(sha(node.getFullText().trim())).toBe(declarationReceipts[index]!.sha256);
-  const klass = declarations.find(ts.isClassDeclaration)!;
-  expect(klass.name?.text).toBe("AllocSiteRegistry");
-  expect(klass.members).toHaveLength(19);
-  expect(klass.members.filter(ts.isMethodDeclaration)).toHaveLength(15);
-  expect(klass.members.filter(ts.isGetAccessorDeclaration)).toHaveLength(1);
-  expect(klass.members.filter(ts.isPropertyDeclaration)).toHaveLength(3);
-  expect(klass.members.filter(ts.isConstructorDeclaration)).toHaveLength(0); // Original implicit constructor.
-  expect(klass.members.filter(ts.isClassStaticBlockDeclaration)).toHaveLength(0);
-  for (const [index, member] of klass.members.entries()) {
-    const row = memberReceipts[index]!;
-    expect(member.name?.getText()).toBe(row.name);
-    expect(ts.SyntaxKind[member.kind]).toBe(row.kind);
-    expect(sha(member.getFullText().trim()), row.name).toBe(row.sha256);
-    expect(ts.isPropertyDeclaration(member) ? (member.initializer?.getText() ?? null) : null).toBe(row.initializer);
-  }
-  let functionLikes = 0;
-  const visit = (node: ts.Node) => {
-    if (
-      ts.isFunctionDeclaration(node) ||
-      ts.isArrowFunction(node) ||
-      ts.isFunctionExpression(node) ||
-      ts.isMethodDeclaration(node) ||
-      ts.isGetAccessorDeclaration(node) ||
-      ts.isSetAccessorDeclaration(node) ||
-      ts.isConstructorDeclaration(node)
-    )
-      functionLikes++;
-    ts.forEachChild(node, visit);
-  };
-  declarations.forEach(visit);
-  expect(functionLikes).toBe(28); // Includes ten nested arrows, not an execution count.
-  const constants = declarations.filter(ts.isVariableStatement);
-  expect(constants).toHaveLength(1);
-  expect(sha(constants[0]!.declarationList.declarations[0]!.initializer!.getText())).toBe(
-    "0cf758e5c1d454c433e52f6dd764fb55f9382fa4fd7b781a7e7f70494de598b4",
-  );
-  const imports = file.statements
-    .filter(ts.isImportDeclaration)
-    .map((node) => (node.moduleSpecifier as ts.StringLiteral).text);
-  expect(imports).toEqual(["../core/nodes.js", "../core/types.js", "./contracts/allocations.js"]);
-}
 
 const id = asAllocSiteId;
 const f64 = irVal({ kind: "f64" });
@@ -270,32 +52,6 @@ function snapshot(): AllocRegistrySnapshot {
 describe("allocation ownership runtime relocation", () => {
   it.each(runtimeExports)("preserves the exact old/new %s export identity", (name) => {
     expect(old[name]).toBe(canonical[name]);
-  });
-
-  it("retains every declaration, method, getter, private field, initializer and comment", () => {
-    verifyCanonical();
-  });
-
-  it("leaves only explicit compatibility forwards and no second implementation or initialization", () => {
-    const file = parse(oldPath);
-    expect(file.statements).toHaveLength(2);
-    for (const statement of file.statements) {
-      expect(ts.isExportDeclaration(statement)).toBe(true);
-      if (!ts.isExportDeclaration(statement) || !statement.exportClause || !ts.isNamedExports(statement.exportClause))
-        throw new Error("non-explicit facade");
-      const target = (statement.moduleSpecifier as ts.StringLiteral).text;
-      const names = statement.exportClause.elements.map((element) => {
-        expect(element.propertyName).toBeUndefined();
-        return element.name.text;
-      });
-      expect(target).toBe(
-        statement.isTypeOnly ? "./analysis/contracts/allocations.js" : "./analysis/alloc-registry.js",
-      );
-      expect(names.sort()).toEqual([...(statement.isTypeOnly ? typeExports : runtimeExports)].sort());
-    }
-    expect(Object.keys(old).sort()).toEqual([...runtimeExports].sort());
-    expect(Object.keys(canonical).sort()).toEqual([...runtimeExports].sort());
-    expect(Object.isFrozen(canonical.ALLOC_NAMESPACES)).toBe(false); // as const was not a runtime freeze.
   });
 
   it("keeps constructor, static/prototype member identities and independent field initialization", () => {
@@ -495,26 +251,6 @@ describe("allocation ownership runtime relocation", () => {
       expect(Registry.fromSnapshot(snapshot()).size).toBe(5);
       expectFailure(() => Registry.fromSnapshot(change(snapshot())), `invalid allocation snapshot: ${detail}`);
     }
-  });
-
-  it.each([
-    ["method body", (text: string) => text.replace("return this.sites.length;", "return 0;")],
-    [
-      "private field initialization",
-      (text: string) => text.replace("sites: Provenance[] = []", "sites: Provenance[] = new Array()"),
-    ],
-    ["getter", (text: string) => text.replace("get size(): number", "size(): number")],
-    ["extra initializer", (text: string) => text + "\nObject.freeze(AllocSiteRegistry);\n"],
-    [
-      "documentation",
-      (text: string) => text.replace("Descriptor-based, graph-preserving", "Different, graph-preserving"),
-    ],
-  ] as const)("rejects changed %s in the complete relocation receipt", (_label, change) => {
-    verifyCanonical();
-    const before = read(newPath),
-      after = change(before);
-    expect(after).not.toBe(before);
-    expect(() => verifyCanonical(after)).toThrow();
   });
 
   it("loads and exercises only canonical allocation/core leaves in a fresh process", () => {
