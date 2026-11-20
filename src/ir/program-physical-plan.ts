@@ -15,6 +15,7 @@
 
 import { forEachPreparedIrInstruction } from "./runtime/prepared-instructions.js";
 import { physicalPlanReferenceKeys } from "./validate-physical-plan.js";
+import { assertPreparedIrProgram } from "./program-validation.js";
 import {
   planNativeInvocationInput,
   nativeInvocationSetup,
@@ -322,6 +323,8 @@ export function planNativeValueResources(
   projection: PreparedIrProgramRuntimeProjection,
   strings: NativeValueStringRepresentation,
 ): NativeValueResourcePlan {
+  // No compile path calls this entry; its callers hand it programs built in tests, so it validates them itself.
+  assertPreparedIrProgram(program);
   if (
     !program.runtime.includes(projection) ||
     projection.backend !== options.backend ||
