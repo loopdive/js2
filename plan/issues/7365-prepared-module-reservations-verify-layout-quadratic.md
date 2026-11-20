@@ -298,3 +298,58 @@ built.
   - one new mutation test per folded check;
   - the realm compile from S3's `claude/7354-realm` before and after, once
     that branch exists.
+
+## Full-prelude measurement (2026-11-19)
+
+S1's full-prelude stand-in (`claude/7354-fn-standin-research` 23c7f9ec0c):
+`t3.mts` on assert.js + sta.js + `S7.9_A6.1_T2.js`. One compile per process,
+4-core box, output sha1 e185e243 identical in every row.
+
+| tree | compile |
+|---|---|
+| base 23c7f9ec | 1,002 s |
+| base + B′ + #7397 + #7415 | 967 s |
+| + #7436 (experiment) | 475 s |
+
+On this program B′ is not the lever. The dominant cost is the per-literal
+re-derivation that #7436 settles. The #7436 issue file has the profile and
+the reproduction notes:
+
+- `CENSUS_STUBS=s0,s1,toprim,tostr-fn,mcall,dyn.json_stringify,dyn.member_get,dyn.object_tag`;
+- `FN_STANDIN_C1=1`;
+- run `t3.mts` from `.tmp/`.
+
+## Suspended Work (2026-11-20, budget window closed)
+
+- **Branches:**
+  - B′ is `claude/7354-perf3-reservations` c0433660ba;
+  - A is `claude/7354-perf3-readers` aba5c035.
+
+  Neither has a PR. B′ is blocked by review RV7365Bb
+  (loopdive/js2#7312, comment 7017721630) and also needs the project lead's
+  OK.
+- **Blocker evidence, partial.** A (aba5c035) vs B′ (c0433660), each of the
+  333 test files that touch the reservation API run in its own process. 315
+  files were compared; 18 `issue-7354-*` files did not finish on A. 17 tests
+  newly fail on B′, all `expected [Function] to throw`:
+  - `issue-3518-closure-coordinate-audits`: 5;
+  - `issue-3518-native-string-number-resources`: 9;
+  - `issue-3518-native-string-types-split`: 2;
+  - `issue-3518-native-invocation-substrate`: 1 ("canonical substrate
+    completion detects post-completion carrier mutation"). This one is new;
+    the reviewer's subset did not include it.
+- **Next steps:**
+  1. Finish the 18 remaining files on A.
+  2. Re-point each newly silent pin to `completionCheck` / `sealed` plus
+     `expectUnemittable`, the same as the other 65.
+  3. Correct the contract sentence to: "an index query during filling does
+     not audit; `assertCompletedReservation` / `assertTypeReservation`,
+     `audited` blocks, freeze and seal do". A `require*` check that reads
+     only indices is therefore caught at seal.
+  4. State in `check-pinned-refusals.mjs` that it guards re-pointing edits
+     only, and attach the per-file run as the evidence for untouched files.
+  5. Write option (c), the incremental `#verifyLayout` (7.5 s, 25 % on the
+     synthetic f), as a proposal next to B′, per the lead.
+- **Open review threads:** RV7365Bb blocker (above), and its two nits: the
+  read-parity test in `issue-7365-filling-query-private-state`, and the
+  double phase check in `physicalIndices`.
