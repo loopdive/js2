@@ -718,7 +718,7 @@ violation throws `PreparedValidatorError` "prepared validator (<stage>): <invari
 | --- | --- | --- | --- |
 | 1 lowered IR | `src/ir/runtime/verify.ts` `verifyIrFunction`; always on, unchanged | defs dominate uses, operand/result types, block terminators, branch arguments, call signatures | itself |
 | 2 prepared program | `src/ir/program/validation.ts` `assertPreparedIrProgram`; `program-prepare-ir.ts` (flagged), `program-codec.ts` (always) | the existing ones, plus **2**: (a) no `dyn.*` operation and no `dynamic` type in a `wasmgc:standalone` projection body (the host async lane keeps an annotated `any` as `dynamic` on purpose); (b) every intrinsic in a projection body carries its provider, and the manifest selects exactly one provider for its feature | stage 1; `containsDynamic` of the legalization (now exported); `forEachPreparedIrInstruction` |
-| 3 physical plan | **new** `src/ir/validate-physical-plan.ts` `assertPhysicalSetupPlan(program, plan, options)`; `runIrProgramDriver` after acceptance | **8**: the plan is for the requested backend and target; no binding id has two slots; no resource key is declared twice; every `typeKey` a native resource declaration names is declared; every call, closure and global a body names has a slot; every callable intrinsic provider has a slot; export names are unique and each export resolves (async frame callbacks included); every startup unit has a function slot | `physicalPlanReferenceKeys` is now the one place the planner and the validator build the reserved reference sets (the planner's inline copy is gone) |
+| 3 physical plan | **new** `src/ir/validate-physical-plan.ts` `assertPhysicalSetupPlan(plan)`; `runIrProgramDriver` after acceptance | **3** (after review round 1; it had 8): no binding id has two slots; no resource key is declared twice; every `typeKey` a native resource declaration names is declared | nothing; the five removed invariants were the planner's own admission, see "Review round 1" |
 | 4 physical module | **new** `src/wasm/physical/validate-module.ts` `assertPhysicalModule(module)`; `runIrProgramDriver` after emission | **7**: types, imports, functions, globals, tags, ordinals, limits and data resolve (moved); local types resolve; instruction indices resolve with the right resource kind (moved); every `ref.func` is declared (moved); final parents (moved, used at reservation); export names are unique; each export index is inside its kind's index space; the start function is `() -> ()` | the ledger's `#validate*` methods, moved verbatim; the ledger calls the same functions at reserve, fill and seal |
 | 5 binary | `gateEmittedModule`, unchanged | — | — |
 
@@ -739,8 +739,7 @@ real stage input and has a twin (the same copy, unchanged) that passes.
 | 6 | 2 | `f` returns i32 against its f64 ABI | "lacks its exact declared ABI" |
 | 7 | 2 | the `js.number.box` provider removed from the manifest | new (b), "missing provider" |
 | 8 | 2 | a `dyn.member_get` left in a projection body | new (a) |
-| 9 | 3 | the `__fmod` slot removed while `f` calls it | "unresolved reference" |
-| 9b | 3 | the native function behind the box provider removed | "missing provider" |
+| 9 | 3 | the source global's slot listed twice (replaces the two reference seeds, see "Review round 1") | "duplicate slot: binding … has two slots" |
 | 10 | 3 | a native string declaration twice | "duplicate slot: resource key" |
 | 11 | 3 | a declaration whose `typeKey` names no declared type | "unresolved type key" |
 | 12 | 4 | `call` with `funcIdx` equal to the function count | "unresolved function index" |
@@ -764,8 +763,7 @@ strict entry) or by a seed.
   and 12 to 15.
 - Removed as untriggerable: the clause "the prepared provider map lacks the id" of 2b (the map and the attachment are
   built together).
-- The `wasmgc:standalone` guard of 2a stays: without it the check would apply to the host async lane, where
-  `dynamic` is legitimate.
+- The `wasmgc:standalone` guard of 2a was deleted in review round 1: no program distinguishes it.
 
 ### Corpus measurements (the condition for "off by default")
 
@@ -899,3 +897,77 @@ now pins that the program reaches its designed refusal with the validator on.
   bytes beyond the 36 non-standalone fixture rows.
 - The remaining 75 test files that only import the ledger or `validation.js` without compiling a Prepared program.
 - Whether the boundaries `--base origin/main` failure also occurs on the base branch.
+
+### Review round 1 (2026-11-20)
+
+The adversarial review found correctness met and quality not met. Each finding and what changed:
+
+| finding | change |
+| --- | --- |
+| 1. Stage 3 repeats the planner (references, duplicate exports) and the producer imports from its validator | Every planner check stage 3 repeated ends in a named gap ("… that the plan cannot reserve", "… needs callable provider materialization", "export X is declared twice" with `__stdout_prepare`/`__stdout_char`, "export X does not resolve to a required binding", "startup source X has no physical initializer body"): that is admission a source program can reach, so it stays in the planner and stage 3 no longer repeats it. The request check went too: the planner copies backend and target from the request. `physicalPlanReferenceKeys` is gone; the planner builds its sets inline as on base, and imports nothing from the validator. No planner check was an internal assertion, so nothing moved into stage 3. |
+| 2. Four mutation survivors | (a) unique slots: seed 9 (a slot listed twice). (b) export and startup checks and the request check: deleted (finding 1). (c) local types: seed "a local of a type index past the last type". (d) the `provider === undefined` arm: seed "an intrinsic stripped of its provider". Also new: the provider count arm (a provider selected twice), the 2a dynamic-type arm, stage 4 resources, `ref.func` declaration and export index. The 2a guard `wasmgc:standalone` had no producible input (the presentation refuses `any` before preparation; the host async bodies it admits carry no `dynamic`, probed with four sources), so it is deleted and 2a applies to every projection. |
+| 3. What stages 2–4 miss | Stage 5 exists as a stage already: `gateEmittedModule` (`src/compiler/validation.ts`), called by `finalizePipelineModule` in `src/compiler.ts` (step 8), which `runPreparedIrPipelinePresentation` calls on every compile unless `validate: false`. Not duplicated. Three seeds apply the reviewer's bugs to the captured module; each passes stage 4 and is `invalid-module` at stage 5. |
+| 4. 3525 remainder and 3527 numeric-throw lost their teeth | Each forgery now asserts stage 2's exact message, and separately what acceptance alone does. Acceptance alone throws for five of seven; it REFUSES two by name as ordinary gaps: the 3525 "missing `__fmod` ABI entry" ("body remainder references intrinsic callable __fmod that the plan cannot reserve") and the 3527 "removed `js.number.box` provider" ("number boxing does not have its exact canonical selected provider …"). That is the gap stage 2 covers: without it a forged program reads as a refusal, not a compiler bug. |
+| 5. Minor | Stage 2b counts providers per feature once per projection and reports the real count ("has 2 selected providers for js.number.box, not 1"); a stripped provider has its own message. `preparedIrProgramAbiLookup` stays: two 3521 tests use it inside larger tests, and the `issue-3518` export-list and relocation pins name it; those pins retire in 2a/2b, and the function with them. |
+
+Stage 4 today is a pure repeat of the ledger's reserve, fill and seal checks (`module-reservations.ts` calls the same
+functions): it cannot fail on compiler output until 5c removes the ledger's copies, so it adds no protection yet.
+
+Invariants per stage after the cleanup (new ones of this PR only):
+
+| stage | invariants |
+| --- | --- |
+| 2 (`validation.ts`) | 4: no `dyn.*` operation in a projection body; no `dynamic` type in one; every intrinsic carries a provider; the manifest selects exactly one provider for its feature |
+| 3 (`validate-physical-plan.ts`) | 3: no binding id has two slots (slots come from seven producers); no resource key is declared twice; every declared `typeKey` resolves |
+| 4 (`validate-module.ts`) | 7: resources resolve (moved); local types resolve; instruction indices resolve (moved); every `ref.func` is declared (moved); export names unique; export index in its space; start is `() -> ()` |
+
+Mutation table: each arm disabled alone, `tests/issue-7380-prepared-validator.test.ts` run (30 tests).
+
+| arm | killed by |
+| --- | --- |
+| 2a `dyn.*` operation | "a dyn.member_get left in a body" |
+| 2a `dynamic` type | "a dynamic result type left on a projection body" |
+| 2b provider missing | "an intrinsic stripped of its provider" |
+| 2b provider count | "provider removed from the manifest", "provider the manifest selects twice" |
+| 3 unique slots | "the source global's slot listed twice" |
+| 3 duplicate resource key | "two declarations with one resource key" |
+| 3 unresolved type key | "a declaration whose type key names no declared type" |
+| 4 resources | "a global of a type index past the last type" |
+| 4 local types | "a local of a type index past the last type" |
+| 4 instructions and `ref.func` | seeds 12, 13, "a ref.func of a function nothing declares" (4 tests) |
+| 4 duplicate export name | "two exports with one name" |
+| 4 export index | "a global export past the last global" |
+| 4 start signature | "a start function with a parameter" |
+
+0 survivors. Deleted instead of seeded: 2a's lane guard; stage 3's request, reference, provider-slot, export and
+startup checks.
+
+Defect class → the stage that catches it:
+
+| defect class | caught by |
+| --- | --- |
+| wrong operand type, undefined value, missing block in lowered IR | stage 1 (always on) |
+| `dyn.*` or `dynamic` left after legalization; intrinsic with no provider or not exactly one | stage 2 |
+| forged program: ABI entry or selected provider removed | stage 2; acceptance alone refuses it by name (finding 4) |
+| a body names a function, global or provider the plan has no slot for | the planner, a named refusal (admission) |
+| a binding or resource key with two slots; an undeclared `typeKey` | stage 3 |
+| an index out of range (call, global, type, local, export), an undeclared `ref.func`, a bad start signature | the ledger at fill/seal (always on); stage 4 repeats it; with both bypassed the binary emitter throws "index out of range" |
+| a call with the wrong argument types | stage 5 only |
+| f64 locals retyped to i32 | stage 5 only |
+| `global.get` of a global of the wrong type | stage 5 only |
+| a string literal's global slot left unfilled (scratch edit skipping `fillGlobal`) | the ledger's seal, "missing global fill native-string-values:…", validator on and off: an invariant error out of `compile()` |
+| an unfilled data segment or string-pool slot | not representable: `reserveDataSegment` / `reserveString` take their content at reservation |
+| a wrong answer | stage 6 (behaviour tests, differential lanes) |
+
+Proofs, head `64f96a88e8` + this section:
+
+- 804 fixture rows (`check:prepared-bytes`, chunks): base off = head off = base on = head on, every row (670 bytes, 132
+  refusals, 2 throws).
+- 411-row sample (real runner, IR path, standalone, QuickJS): base off = head off = base on = head on per row (file,
+  status, error): 397 `compile_error`, 14 `pass`.
+- Tests, validator on: the three `issue-7380-*`, all 12 `issue-7354-*`, `test262-prepared-entry`/`-runtime`, #7188,
+  `issue-3521-runtime-callable-abi`, `-whole-program-validation`, `issue-3525-prepared-number-remainder`,
+  `-pipeline-presentation`, `issue-3527-prepared-numeric-throw`: all pass. Three runs logged vitest's
+  "Timeout calling onTaskUpdate" RPC error under load with every test green.
+- Gates, each bare, exit 0: typecheck, loc, func, coercion-sites, oracle-ratchet, dead-exports, import-cycles,
+  orphaned-scripts, compiler-boundaries inventory `--base d24132a05c`, `changed-root-tests` (interpreter engine).
