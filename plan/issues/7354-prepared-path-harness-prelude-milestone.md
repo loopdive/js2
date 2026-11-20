@@ -2904,3 +2904,31 @@ Named gaps: a dynamic call in a program with no source closure (no dispatcher: `
 function materialization`), spread arguments, `new`, method calls and `fn.call` / `fn.apply` on a dynamic value
 (slice C), a receiver other than `undefined` (`this`, slice C).
 
+
+## Suspended Work (slice C, lane S11, 2026-11-20)
+
+Wind-down at the end of the agreed budget window. Nothing below is on a PR except #7344 and #7348.
+
+**Branches (all on origin; heads verified with ls-remote):**
+
+| branch | head | content | state |
+| --- | --- | --- | --- |
+| `claude/7354-c` | `abc2e618` | the slice base: Fa ab4040fc + Fb 628189d8 + O be567b01 merged; C's `this` binding at entry (compiler-supplied `functionThisStrictness`, no ir->codegen edge); the `function` carrier kind rows; this plan | green (7354 suite 1047/1047, gates) |
+| `claude/7354-c-fn` | `7846804e` | js.function.{is-callable, init, construct:N, has-instance, this}: contracts, pure bodies, the kernel's source-closure arm, 8 unit tests | green, mutation-checked; rows in an older ADAPTERS shape |
+| `claude/7354-c-calls` | `19dd132e` | one realm `sourceCalls` collection over per-family tables (`REALM_SOURCE_CALL_FAMILIES`), O4 + O 0c710959 merged | green, byte-identical on 35 programs |
+| `claude/7354-c-tests` | `1dbacfa3` | 13 C1-C4 programs with node answers, each pinned to its first refusal | green |
+| `claude/7354-c-strict` | `b3f68b03` | superseded by PR #7344 (do not merge) | — |
+| `claude/7354-c-int` | `38400188` | integration of c-calls + c-fn + c-tests and the family wiring (subagent stopped at the weekly limit) | NOT verified by the coordinator |
+| `claude/prepared-ts-diagnostics` | `72a42c28` | PR #7344 (#7428): approved by RV7344, released; dequeued from the merge queue on 2026-11-20 09:32Z with CI_FAILURE (not yet diagnosed) | hold re-applied by the lead? check |
+| `claude/7434-prepared-const-write` | `664c5ae6` | PR #7348 (#7434): reviewer RV7348 assigned; CI suite completed green on that head | hold |
+
+**Unpushed local state** (worktree `.claude/worktrees/agent-aaf4a540714dbd4f9`, branch `claude/7354-c-int`): a merge commit `2679612a` of O3 (14345199) on top of 38400188, and a half-done merge of O `e5878297` with conflicts in native-source-objects.ts, dynamic-member-access.ts, dynamic-value-kinds.ts, dynamic-value-legalization.ts, source-dynamic-contracts.ts, source-plain-objects.ts (new files from O: dynamic-realm-calls.ts, ordinary-to-primitive.ts). Discard it and redo the merge from 38400188.
+
+**Next steps, in order:**
+1. Diagnose #7344's merge-queue CI failure (dequeued, reason CI_FAILURE): read the failing check of the group, decide whether it is this PR's; fix on the branch or report. Never re-enqueue.
+2. Verify `claude/7354-c-int` 38400188 (typecheck, gates, tests/issue-7354-*, the kernel tests), then merge O at its current head (O3 OrdinarySet + one read/write receiver chain). In that merge: the `function` row goes into the one receiver chain (js.object.get / js.object.set on the closure); ONE strictness computation (prepared-this-binding.ts takes its strictness from O3's `codeStrictness` / prepared-code-strictness.ts, keeping only "reads own this"; pin a module-goal case); js.function.is-callable and fa-ty's `js.value.is_function` answer from one predicate body (fa-ty f4ae23a7b6).
+3. Init through one helper, called from Fa's `lowerClosureExpression` and later from S4's prologue (before legalization), per S1's plan ("Function value with own properties: plan", branch claude/7354-json).
+4. (b) of S1's plan: R2 method-call routing to `lowerFunctionObjectMemberCall`, R5's method-call row; R3 is S3's.
+5. Then C1's sta.js wall (`this instanceof Test262Error`, "instanceof RHS class has no projected shape"), flip the pins in tests/issue-7354-c-programs.test.ts, re-run S9's census on the new/this lists, open the slice PR with hold.
+
+**Open coordination:** fa-ty lands the function kind test (flip "objects and function values … the object kind's test" to "compiles and matches node" in whichever of c / fa-ty lands second); S5's realm global object is `js.object.global` (#7350 B2b) for the sloppy-`this` arm; the `arguments` object (S9: 28 + 11 + 19 files) follows C1.
