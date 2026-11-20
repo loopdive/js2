@@ -92,6 +92,20 @@ export const TO_NUMBER_ARM: Readonly<Record<CarrierKind, "unbox" | "to-primitive
 };
 
 /**
+ * (#7354 M1, B-tag) `Object.prototype.toString`'s tag for each kind (§20.1.3.6): `undefined` and `null` are named
+ * before ToObject (steps 1-2), a primitive answers its wrapper's builtinTag, and an ordinary object "Object", its
+ * `@@toStringTag` reachable only by naming `Symbol`.
+ */
+export const OBJECT_TAG: Readonly<Record<CarrierKind, string>> = {
+  number: "Number",
+  boolean: "Boolean",
+  string: "String",
+  undefined: "Undefined",
+  null: "Null",
+  object: "Object",
+};
+
+/**
  * (#7354 O4, O3) How a member read (GetValue) and a member write (PutValue) take each receiver
  * kind: both ToObject the base, so `undefined` and `null` throw a TypeError; an object is the realm's [[Get]] or
  * [[Set]]; a primitive reaches only built-in prototypes (`builtin-prototype-keys.ts`), which no Prepared program can

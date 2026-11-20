@@ -47,6 +47,7 @@ import {
   KIND_TEST,
   NO_OBJECTS,
   KINDS_OF_TYPEOF,
+  OBJECT_TAG,
   TO_NUMBER_ARM,
   TO_STRING_ARM,
   TYPEOF_NAME,
@@ -503,6 +504,19 @@ export function legalizeDynamicValues(
       case "dyn.typeof":
         if (typeofs.consumed.has(instr.result!)) return [];
         return kindChain(instr, instr.value, instr.result!, (kind, result) => [text(TYPEOF_NAME[kind], result)]);
+      // (#7354 M1, B-tag) `Object.prototype.toString.call(v)`, which from-ast intercepts: a tag per kind `v` may hold.
+      case "dyn.object_tag":
+        return kindChain(
+          instr,
+          instr.value,
+          instr.result!,
+          (kind, result) => {
+            if (kind === "object" && program.objects.namesSymbol)
+              gap("Object.prototype.toString of an object in a program that names 'Symbol'");
+            return [text(`[object ${OBJECT_TAG[kind]}]`, result)];
+          },
+          kinds.kindsOf(instr.value),
+        );
       case "string.const":
         return typeofs.consumed.has(instr.result!) ? [] : [instr];
       case "dyn.undefined":
