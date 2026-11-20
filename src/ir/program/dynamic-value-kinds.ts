@@ -4,12 +4,12 @@
  * of the dynamic-value legalization answers each kind. Every table is a `Record` over `CarrierKind`, so a slice that
  * admits a kind must give it a row in each.
  *
- * Soundness rests on the admitted set: the box arm admits a value only as one of these kinds (`boxedKind`), so a
+ * Soundness rests on the admitted set: the box arm admits a value only as one of these kinds (`carrierKindOf`), so a
  * test that rules out every other kind proves the last one (`complement`), and a chain over all kinds may leave the
  * last kind untested (`KIND_ORDER`).
  */
 import type { IntrinsicId } from "../core/intrinsics.js";
-import type { IrInstr, IrType } from "../core/nodes.js";
+import type { IrInstr, IrType, IrValueId } from "../core/nodes.js";
 import type { TagId } from "../core/tag-domain.js";
 import { irOrdinaryObjectCallableDeclaration } from "../runtime/ordinary-object-callables.js";
 import { JS_TAG_IDS } from "../runtime/js-tag-domain.js";
@@ -139,22 +139,32 @@ export function admittedKinds(objects: ProgramObjects): readonly CarrierKind[] {
 }
 
 /**
- * The kind a box to the dynamic value admits, from its tag refinement and its operand; `undefined` refuses. An object
- * box is admitted only over the value `js.object.create-default` answered (`definition`), (#7354 O3) whatever its tag:
- * a function-local object's member access boxes the externref it holds without one.
+ * (#7354 M1, C2) The one answer to "which kind does the carrier hold `value` as". Without `boxTag`, `value` is in
+ * carrier form (the coercion and throw rules); with it, `value` is the operand of a box to the dynamic value with that
+ * tag refinement (the box arm, and the kind a box proves to the chains). The rules, in order: a Boolean (its tag or
+ * `js.boolean.box`), `null` (its tag or the null constant, the carrier's null reference), the dynamic value itself, a
+ * native string (its own payload), a number (an f64 or `js.number.box`), (#7354 O2) the ordinary object
+ * `js.object.create-default` answered (whatever its tag: a function-local object's member access boxes the externref
+ * it holds without one), or, through a coercion, its operand's kind. Any other value has none: a callable until slice
+ * Fa gives it its tag.
  */
-export function boxedKind(
-  tag: TagId | undefined,
-  source: IrType | undefined,
-  definition: IrInstr | undefined,
-): CarrierKind | undefined {
+export function carrierKindOf(
+  value: IrValueId,
+  types: ReadonlyMap<IrValueId, IrType>,
+  definitions: ReadonlyMap<IrValueId, IrInstr>,
+  boxTag?: TagId,
+): "dynamic" | CarrierKind | undefined {
+  const type = types.get(value);
+  const definition = definitions.get(value);
+  const produced = (id: IntrinsicId) => definition?.kind === "intrinsic" && definition.id === id;
+  if (boxTag === JS_TAG_IDS.Boolean || produced("js.boolean.box")) return "boolean";
+  if (boxTag === JS_TAG_IDS.Null || (definition?.kind === "const" && definition.value.kind === "null")) return "null";
+  if (type?.kind === "dynamic" || type?.kind === "string") return type.kind;
+  if ((type?.kind === "val" && type.val.kind === "f64") || produced("js.number.box")) return "number";
   if (
     definition?.kind === "call" &&
     irOrdinaryObjectCallableDeclaration(definition.target)?.feature === "js.object.create-default"
   )
     return "object";
-  if (tag === JS_TAG_IDS.Boolean) return "boolean";
-  if (tag === JS_TAG_IDS.Null) return "null";
-  if (source?.kind === "string") return "string";
-  return source?.kind === "val" && source.val.kind === "f64" ? "number" : undefined;
+  return definition?.kind === "coerce.to_externref" ? carrierKindOf(definition.value, types, definitions) : undefined;
 }

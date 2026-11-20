@@ -51,7 +51,7 @@ import {
   TO_STRING_ARM,
   TYPEOF_NAME,
   admittedKinds,
-  boxedKind,
+  carrierKindOf,
   type CarrierKind,
   type LegalizationProgram,
 } from "./dynamic-value-kinds.js";
@@ -90,11 +90,9 @@ function knownKinds(
   for (const block of fn.blocks)
     for (const root of block.instrs)
       forEachInstrDeep(root, (i) => {
-        const kind =
-          i.kind === "box" &&
-          i.toType.kind === "dynamic" &&
-          boxedKind(i.toType.tag, types.get(i.value), definitions.get(i.value));
-        if (kind) known.set(i.result!, kind);
+        if (i.kind !== "box" || i.toType.kind !== "dynamic") return;
+        const kind = carrierKindOf(i.value, types, definitions, i.toType.tag);
+        if (kind && kind !== "dynamic") known.set(i.result!, kind);
       });
   return {
     kindsOf: (value: IrValueId): readonly CarrierKind[] => {
@@ -117,28 +115,7 @@ function valueDefinitions(fn: IrFunction): Map<IrValueId, IrInstr> {
   return definitions;
 }
 
-/**
- * (#7354 X, O1, O2) The kind the carrier holds `value` as, from its type and defining instruction: the dynamic value
- * itself, a native string (its own payload), a boundary box's number or Boolean, the null constant's null reference,
- * an ordinary object `boxedKind` admits, or, through a coercion, its operand's kind. Any other value has none: a
- * callable until slice Fa gives it its tag.
- */
-export function carrierKind(
-  value: IrValueId,
-  types: ReadonlyMap<IrValueId, IrType>,
-  definitions: ReadonlyMap<IrValueId, IrInstr>,
-): "dynamic" | Exclude<CarrierKind, "undefined"> | undefined {
-  const type = types.get(value);
-  if (type?.kind === "dynamic" || type?.kind === "string") return type.kind;
-  const definition = definitions.get(value);
-  if (definition?.kind === "intrinsic" && definition.id === "js.number.box") return "number";
-  if (definition?.kind === "intrinsic" && definition.id === "js.boolean.box") return "boolean";
-  if (definition?.kind === "const" && definition.value.kind === "null") return "null";
-  if (boxedKind(JS_TAG_IDS.Object, undefined, definition) === "object") return "object";
-  return definition?.kind === "coerce.to_externref" ? carrierKind(definition.value, types, definitions) : undefined;
-}
-
-/** A value {@link carrierKind} has no kind for (through its coercions), as a refusal names it. */
+/** A value {@link carrierKindOf} has no kind for (through its coercions), as a refusal names it. */
 function unadmittedValue(
   value: IrValueId,
   types: ReadonlyMap<IrValueId, IrType>,
@@ -460,7 +437,7 @@ export function legalizeDynamicValues(
     switch (instr.kind) {
       case "box": {
         if (instr.toType.kind !== "dynamic") return [instr];
-        switch (boxedKind(instr.toType.tag, types.get(instr.value), definitions.get(instr.value))) {
+        switch (carrierKindOf(instr.value, types, definitions, instr.toType.tag)) {
           case "boolean":
             return [intrinsic(instr, "js.boolean.box", [instr.value])];
           // The Null partition has one value, the carrier's null reference.
@@ -571,7 +548,7 @@ export function legalizeDynamicValues(
       case "coerce.to_externref": {
         const target = instr.resultType;
         const toCarrier = target?.kind === "dynamic" || (target?.kind === "val" && target.val.kind === "externref");
-        return !toCarrier || carrierKind(instr.value, types, definitions) !== undefined
+        return !toCarrier || carrierKindOf(instr.value, types, definitions) !== undefined
           ? [instr]
           : gap(`coerce.to_externref of ${unadmittedValue(instr.value, types, definitions)}`);
       }
@@ -605,7 +582,7 @@ export function legalizeDynamicValues(
 
 /**
  * (#7354 X, O1) A catch binding reads the thrown payload back as the dynamic value, so in a program that reads one,
- * every throw, in whichever function, must be a value of a {@link carrierKind}. Any other value refuses by name.
+ * every throw, in whichever function, must be a value of a {@link carrierKindOf}. Any other value refuses by name.
  */
 export function refuseUnadmittedThrows(fn: IrFunction): void {
   const throws: IrValueId[] = [];
@@ -618,7 +595,7 @@ export function refuseUnadmittedThrows(fn: IrFunction): void {
   const types = irValueTypes(fn);
   const definitions = valueDefinitions(fn);
   for (const value of throws)
-    if (carrierKind(value, types, definitions) === undefined)
+    if (carrierKindOf(value, types, definitions) === undefined)
       gap(`throw of a value outside the dynamic carrier's kinds (${unadmittedValue(value, types, definitions)})`);
 }
 

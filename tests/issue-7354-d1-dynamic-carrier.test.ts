@@ -124,7 +124,7 @@ describe("#7354 D1 — the dynamic value on the Prepared standalone path", () =>
   });
 
   // (#7354 O1, O3) The literal is an ordinary object holding the dynamic value; the read boxes the object it holds
-  // onto the carrier, admitted by its producer (`boxedKind`), and takes slice O's member read.
+  // onto the carrier, admitted by its producer (`carrierKindOf`), and takes slice O's member read.
   it("reads a dynamic object field back as the dynamic value", async () => {
     expect(await run(main("const o = { a: id(1) }; return o.a === 1 ? 1 : 0;"))).toBe(1);
     expect(await run(main("const o = { a: id(1) }; return o.a === 2 ? 1 : 0;"))).toBe(0);

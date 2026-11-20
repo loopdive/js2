@@ -172,7 +172,7 @@ describe("#7354 X — throw and catch with the Prepared dynamic value", () => {
   // The catch binding is the dynamic value, which is exact only for numbers, booleans, `undefined`, `null` and
   // native strings (and for Error objects, under every operation the carrier has). Each other payload that could
   // reach a catch refuses before it does; the slice that makes one reachable must give the dynamic operations its
-  // arm and update this list. (#7354 Ty) The catch binding enters the carrier without the box arm's `boxedKind`, so
+  // arm and update this list. (#7354 Ty) The catch binding enters the carrier without the box arm's `carrierKindOf`, so
   // this list is also what keeps `TYPEOF_KIND` (the `typeof` answers of the admitted kinds) complete.
   it.each([
     ["a typed Boolean throw", "try { throw true; } catch (e) { if (!e) throw 1; }", "throw val not in slice 9"],
@@ -285,7 +285,7 @@ describe("#7354 X — the legalization arm", () => {
     expect(legalizeDynamicValues(fn([coerce])).blocks[0]!.instrs[0]).toEqual(coerce);
   });
 
-  // (#7354 O1) Both carrier rules ask one predicate (`carrierKind`): a coercion to the carrier keeps, and a throw of
+  // (#7354 O1) Both carrier rules ask one predicate (`carrierKindOf`): a coercion to the carrier keeps, and a throw of
   // it is admitted, only over an operand of a kind the carrier holds. Value 1 is the operand: a parameter of `type`,
   // or the result of `definition`.
   const operand = (type: object | undefined, definition?: object) => {
