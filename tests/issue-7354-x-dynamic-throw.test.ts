@@ -192,12 +192,8 @@ describe("#7354 X — throw and catch with the Prepared dynamic value", () => {
       "function f(v) { try { v(); } catch (e) { return e; } }\nf(1);",
       "dynamic operation __ir_dyn_call_value has no Prepared intrinsic",
     ],
-    [
-      "a member read of a dynamic value (a TypeError on null)",
-      "function f(v) { try { return v.x; } catch (e) { return e; } }\nf(null);",
-      // (#7354 M1) the legalization's own TypeError, in a program that reads a caught value (O2b trapped instead)
-      `TypeError "Cannot read properties of undefined (reading 'x')" in a program that reads a caught value`,
-    ],
+    // (#7354 M2) "a member read of a dynamic value (a TypeError on null)" left this table: the realm's TypeError is a
+    // kind of the dynamic value (tests/issue-7354-m2-caught-errors.test.ts).
   ])("refuses %s before it reaches a catch", async (_label, source, expected) => {
     const result = await compile(source, options());
     expect(

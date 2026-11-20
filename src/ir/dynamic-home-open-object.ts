@@ -32,7 +32,7 @@ import { isServedUse, type ServedUsePolicy } from "./dynamic-home-uses.js";
 import type { IrLegacyModuleBindingIdentity } from "./module-bindings.js";
 import type { OwnPropertyTest } from "./nodes.js";
 import { isOwnPropertyTest, OWN_PROPERTY_TESTS } from "./object-statics.js";
-import { OBJECT_PROTOTYPE_KEYS } from "./realm-keys.js";
+import { OBJECT_PROTOTYPE_KEYS } from "./program/builtin-prototype-keys.js";
 
 /** What the selector answers about a binding. */
 export interface DynamicHomeQuery {

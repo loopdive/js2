@@ -6,7 +6,7 @@ import { skipTransparentExpressions } from "../shared/transparent-expressions.js
 import { literalFieldName } from "./fnctor-field-writes.js";
 import type { IrImportedFunctionResolver, IrResolvedFunctionTarget } from "./imported-functions.js";
 import type { IrSelectionOptions } from "./select.js";
-import { realmStringKeys } from "./realm-keys.js";
+import { realmStringKeys } from "./program/builtin-prototype-keys.js";
 
 /**
  * (#7106) An Array element key the vec lane leaves to legacy because it names

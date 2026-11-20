@@ -126,22 +126,17 @@ describe("#7354 O3 — a member write of the dynamic value", () => {
     expect(await refusal(source)).toContain(reason);
   });
 
-  // (#7354 M1) A write whose TypeError a catch would read refuses by name: no carrier kind holds the error yet (M2).
-  // (O2b had the program trap here, `js.object.uncatchable-type-error`, where node's catch answers 0.)
+  // (#7354 M2) In a program that reads a caught value the error kind is admitted, and a write whose receiver may be
+  // that error refuses by name: the realm's error has no property storage for it.
   it.each([
-    [
-      "a nullish write",
-      "function f(v) { try { v.x = 1; } catch (e) { return e; } return 1; } var r = f(null);",
-      `TypeError "Cannot set properties of undefined (setting 'x')" in a program that reads a caught value`,
-    ],
+    ["a nullish write", "function f(v) { try { v.x = 1; } catch (e) { return e; } return 1; } var r = f(null);"],
     [
       "a strict write to a primitive",
       '"use strict"; function f(v) { try { v.x = 1; } catch (e) { return e; } return 1; } var r = f(1);',
-      `TypeError "Cannot create property 'x' on string" in a program that reads a caught value`,
     ],
-  ])("refuses %s in a program that reads a caught value", async (_label, source, reason) => {
+  ])("refuses %s in a program that reads a caught value", async (_label, source) => {
     expect(new Function(`${source} return r;`)()).toBeInstanceOf(TypeError);
-    expect(await refusal(source)).toContain(reason);
+    expect(await refusal(source)).toContain("member write 'x' of a value that may be an Error");
   });
 });
 

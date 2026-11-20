@@ -126,17 +126,15 @@ describe("#7354 O2b — OrdinaryToPrimitive of an ordinary object", () => {
     expect(await run(wrong)).toBe("threw");
   }, 180_000);
 
-  // (#7354 M1) Node's catch reads the TypeError. Here it is the realm's, which no carrier kind holds yet (M2), so the
-  // program refuses by name at compile time (O2b trapped at run time, `js.object.uncatchable-type-error`).
-  it("refuses the TypeError in a program that reads a caught value", async () => {
-    const source = "var o = { toString: undefined }; var r; try { var s = '' + o; } catch (e) { r = e; }";
-    expect(new Function(`${source} return r;`)()).toBeInstanceOf(TypeError);
-    const result = await compile(source, options());
-    expect(result.success).toBe(false);
-    expect(messages(result).join("\n")).toContain(
-      `TypeError "Cannot convert object to primitive value" in a program that reads a caught value`,
-    );
-  });
+  // (#7354 M2) Node's catch reads the TypeError; here it is the realm's error, a kind of the dynamic value.
+  it("catches the TypeError in a catch that reads it, as node does", async () => {
+    const source =
+      "var o = { toString: undefined }; var r; try { var s = '' + o; } catch (e) { r = String(e); }" +
+      " if (r !== 'TypeError: Cannot convert object to primitive value') throw 1;";
+    expect(() => new Function(source)()).not.toThrow();
+    expect(await run(source)).toBe("returned");
+    expect(await run(source.replace("r !==", "r ==="))).toBe("threw");
+  }, 180_000);
 
   it("refuses by name in a program that names 'Symbol'", async () => {
     const result = await compile("var o = { a: 1 }; var s = typeof Symbol; var t = '' + o;", options());

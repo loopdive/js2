@@ -31,6 +31,29 @@ afterEach(() => vi.restoreAllMocks());
 
 const messages = (result: { errors: readonly { message: string }[] }) => result.errors.map((error) => error.message);
 
+/** The number of entries in the module's tag section (id 13), from the binary. */
+function tagCount(bytes: Uint8Array): number {
+  const leb = (at: number): [number, number] => {
+    let value = 0;
+    let shift = 0;
+    let next = at;
+    for (;;) {
+      const byte = bytes[next++]!;
+      value |= (byte & 0x7f) << shift;
+      shift += 7;
+      if (!(byte & 0x80)) return [value, next];
+    }
+  };
+  let at = 8;
+  while (at < bytes.length) {
+    const id = bytes[at]!;
+    const [size, body] = leb(at + 1);
+    if (id === 13) return leb(body)[0];
+    at = body + size;
+  }
+  return 0;
+}
+
 async function run(source: string): Promise<"returned" | "threw"> {
   for (const spy of [
     vi.spyOn(gc, "generateModule"),
@@ -90,11 +113,16 @@ describe("#7354 — the realm and the source throw under one exception tag", () 
     expect(await run(source)).toBe("threw");
   }, 180_000);
 
-  it("gives a realm program one tag, `__exn`, and throws every error under it", async () => {
-    const result = await compile("var o = { a: 1 }; if (o.a !== 1) throw 1;", options(true));
-    expect(messages(result)).toEqual([]);
-    const wat = result.wat ?? "";
-    expect(wat.match(/\(tag [^\n]*/g)).toEqual(["(tag $__exn (type 0))"]);
-    expect(new Set(wat.match(/\bthrow \S+/g))).toEqual(new Set(["throw 0"]));
+  // The realm's TypeError, thrown in one unit, is caught in another; and the module declares exactly one tag (its tag
+  // section, read off the binary, holds one entry).
+  it("gives a realm program one tag, and a realm error thrown in one unit is caught in another", async () => {
+    const source =
+      "function f(v) { return v.a; } function g() { try { f(null); return 1; } catch (e) { return 2; } }" +
+      " var o = { a: 1 }; if (g() !== 2 || o.a !== 1) throw 1;";
+    expect(() => new Function(source)()).not.toThrow();
+    expect(await run(source)).toBe("returned");
+    expect(await run(source.replace("g() !== 2", "g() === 2"))).toBe("threw");
+    const result = await compile(source, options());
+    expect(tagCount(result.binary!)).toBe(1);
   }, 180_000);
 });

@@ -120,15 +120,12 @@ describe("#7354 O4 — a member read of the dynamic value", () => {
     expect(await refusal(source)).toContain(reason);
   });
 
-  // (#7354 M1) Node's catch reads the TypeError and returns it. Here the TypeError is the realm's, which no carrier
-  // kind holds yet (M2), so the program refuses by name at compile time (O2b trapped at run time instead,
-  // `js.object.uncatchable-type-error`). A catch that does not read it catches it
-  // (issue-7354-shared-exception-tag.test.ts).
-  it("refuses reading a member of null in a program that reads a caught value", async () => {
-    const source = "function f(v) { try { return v.x; } catch (e) { return e; } } var r = f(null);";
-    expect(new Function(`${source} return r;`)()).toBeInstanceOf(TypeError);
-    expect(await refusal(source)).toContain(
-      `TypeError "Cannot read properties of undefined (reading 'x')" in a program that reads a caught value`,
-    );
-  });
+  // (#7354 M2) Node's catch reads the TypeError; here it is the realm's error, a kind of the dynamic value.
+  it("catches reading a member of null in a program that reads a caught value", async () => {
+    const source =
+      "function f(v) { try { return v.x; } catch (e) { return e.message; } }" +
+      " if (f(null) !== \"Cannot read properties of null (reading 'x')\") throw 1;";
+    expect(await run(source)).toBe("returned");
+    expect(await run(source.replace("!==", "==="))).toBe("threw");
+  }, 180_000);
 });
