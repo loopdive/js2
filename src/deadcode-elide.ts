@@ -38,7 +38,8 @@
  *  - initializers restricted to a small pure grammar (function/arrow
  *    expressions, literals, `undefined`/`globalThis`/`NaN`/`Infinity`,
  *    object/array literals of pure values without spread/shorthand/computed
- *    keys, `!`/`-`/`+`/`~`/`void` of pure, parens/type casts of pure);
+ *    keys, `!`/`void` of pure, `-`/`+`/`~` of a pure primitive, parens/type
+ *    casts of pure);
  *  - a "mention" is ANY identifier occurrence of the exact name (this
  *    includes property accesses `a.print` — the member name is an
  *    Identifier node — and shadowing declarations), plus any string literal
@@ -52,6 +53,7 @@ import { forEachChild, ts } from "./ts-api.js";
 import { PositionMap } from "./position-map.js";
 import { subtreeHasEarlyError } from "./compiler/early-errors/index.js"; // (#4464)
 import { isInertFunctionMention } from "./shared/function-mention.js";
+import type { CompileTargetProfile } from "./target-profile.js";
 
 export interface DeadBindingElisionResult {
   source: string;
@@ -117,6 +119,24 @@ function isNonReferenceEvalMention(identifier: ts.Identifier): boolean {
   // `var { eval: x } = o` — the SOURCE key, never the bound name.
   if (ts.isBindingElement(parent)) return parent.propertyName === identifier;
   return false;
+}
+
+/**
+ * The compiles that run this pass, shared by the ordinary compile and the Prepared front door. Host-free
+ * targets elide so unreachable bodies do not register host imports (#3418). (#6898) The native regime in a
+ * JS environment elides too: which bindings are dead is a question of the implementation, not of the
+ * embedder; without it the unused test262 `$262.evalScript` shim kept a live direct `eval` and put every
+ * regime row into runtime-eval mode. Context-owned Script vars (`standaloneScriptVarBindings`) stay
+ * observable from later Scripts even when this source never reads them, so their programs keep every binding.
+ */
+export function deadBindingElisionApplies(
+  profile: Pick<CompileTargetProfile, "environment" | "nativeRegime">,
+  standaloneScriptVarBindings: boolean | undefined,
+): boolean {
+  return (
+    !standaloneScriptVarBindings &&
+    (profile.environment === "none" || profile.environment === "wasi" || profile.nativeRegime)
+  );
 }
 
 const identityResult = (source: string): DeadBindingElisionResult => ({
@@ -439,12 +459,15 @@ function isPureInitializer(expr: ts.Expression): boolean {
       return isPureInitializer((expr as ts.VoidExpression).expression);
     case ts.SyntaxKind.PrefixUnaryExpression: {
       const un = expr as ts.PrefixUnaryExpression;
+      if (un.operator === ts.SyntaxKind.ExclamationToken) return isPureInitializer(un.operand);
+      // `-`/`+`/`~` run ToNumeric, and ToPrimitive of an object calls its `valueOf`/`toString`
+      // (`-{ valueOf() { throw 1; } }`, `+[]` through a patched `Array.prototype.join`, `+globalThis`
+      // through a script `var valueOf`): only a primitive operand keeps them effect-free.
       return (
-        (un.operator === ts.SyntaxKind.ExclamationToken ||
-          un.operator === ts.SyntaxKind.MinusToken ||
+        (un.operator === ts.SyntaxKind.MinusToken ||
           un.operator === ts.SyntaxKind.PlusToken ||
           un.operator === ts.SyntaxKind.TildeToken) &&
-        isPureInitializer(un.operand)
+        isPurePrimitive(un.operand)
       );
     }
     case ts.SyntaxKind.ArrayLiteralExpression:
@@ -464,5 +487,29 @@ function isPureInitializer(expr: ts.Expression): boolean {
       });
     default:
       return false;
+  }
+}
+
+/** A pure initializer whose value is a primitive, so ToNumeric of it runs no code. */
+function isPurePrimitive(expr: ts.Expression): boolean {
+  switch (expr.kind) {
+    case ts.SyntaxKind.FunctionExpression:
+    case ts.SyntaxKind.ArrowFunction:
+    case ts.SyntaxKind.RegularExpressionLiteral:
+    case ts.SyntaxKind.ArrayLiteralExpression:
+    case ts.SyntaxKind.ObjectLiteralExpression:
+      return false;
+    case ts.SyntaxKind.Identifier:
+      return (expr as ts.Identifier).text !== "globalThis" && isPureInitializer(expr);
+    case ts.SyntaxKind.ParenthesizedExpression:
+    case ts.SyntaxKind.AsExpression:
+    case ts.SyntaxKind.TypeAssertionExpression:
+    case ts.SyntaxKind.SatisfiesExpression:
+    case ts.SyntaxKind.NonNullExpression:
+      return isPurePrimitive(
+        (expr as ts.ParenthesizedExpression | ts.AssertionExpression | ts.NonNullExpression).expression,
+      );
+    default:
+      return isPureInitializer(expr);
   }
 }
