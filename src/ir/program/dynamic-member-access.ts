@@ -9,11 +9,10 @@
 import type { IntrinsicId } from "../core/intrinsics.js";
 import type { IrInstr, IrValueId } from "../core/nodes.js";
 import type { IrType } from "../core/types.js";
-import { BUILTIN_REACHABLE_KEYS, isArrayIndexKey } from "./builtin-prototype-keys.js";
+import { BUILTIN_REACHABLE_KEYS, OBJECT_PROTOTYPE_ACCESSOR_KEYS, isArrayIndexKey } from "./builtin-prototype-keys.js";
 import { MEMBER_ACCESS_ARM, type CarrierKind, type ProgramObjects } from "./dynamic-value-kinds.js";
 import { realmCall, typeError, type TypeErrorBuilders } from "./dynamic-realm-calls.js";
 import { gap } from "./dynamic-value-gap.js";
-import { OBJECT_PROTOTYPE_ACCESSOR_KEYS } from "../realm-keys.js";
 
 /** The legalization builders a member access is written with. */
 export interface MemberAccessBuilders extends TypeErrorBuilders {

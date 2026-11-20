@@ -5,32 +5,11 @@
 // whether the prototype chain would answer it instead, and whether the
 // program may have patched that chain.
 
-import { NATIVE_REALM_CATALOG } from "../runtime/contracts/native-realm-catalog.js";
 import { sourceMayPatchPrototype } from "../shared/intrinsic-prototype-writes.js";
 import type { ts } from "../ts-api.js";
 
-/** The string keys the catalog gives the named intrinsics (Annex B members included). */
-export function realmStringKeys(...intrinsicIds: readonly string[]): ReadonlySet<string> {
-  return new Set(
-    NATIVE_REALM_CATALOG.intrinsics
-      .filter(({ id }) => intrinsicIds.includes(id))
-      .flatMap(({ properties }) => properties.flatMap(({ key }) => (key.kind === "string" ? [key.value] : []))),
-  );
-}
-
-/** The string keys `Object.prototype` owns (§20.1.3, Annex B.2.2 included). */
-export const OBJECT_PROTOTYPE_KEYS = realmStringKeys("%Object.prototype%");
-
-/** (#7354 M1, C6) The string keys `Object.prototype` holds as accessor properties (Annex B.2.2.1 `__proto__`). */
-export const OBJECT_PROTOTYPE_ACCESSOR_KEYS: ReadonlySet<string> = new Set(
-  NATIVE_REALM_CATALOG.intrinsics
-    .filter(({ id }) => id === "%Object.prototype%")
-    .flatMap(({ properties }) =>
-      properties.flatMap((property) =>
-        property.kind === "accessor" && property.key.kind === "string" ? [property.key.value] : [],
-      ),
-    ),
-);
+// (#7354 M1) The catalog reads live in the clean ir-program module the dynamic-value legalization shares.
+export { OBJECT_PROTOTYPE_KEYS, realmStringKeys } from "./program/builtin-prototype-keys.js";
 
 /**
  * Whether the program may patch what destructuring reads beyond a source's own

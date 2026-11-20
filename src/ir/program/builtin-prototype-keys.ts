@@ -6,10 +6,29 @@
  * change, answers the object's own property or `undefined`. The realm's prototypes do not hold these properties yet,
  * so a read of one of them refuses by name.
  *
- * (#7354 M1, C3) Object.prototype's keys are the realm catalog's (`OBJECT_PROTOTYPE_KEYS`); the wrapper prototypes
- * are not in the catalog yet, so their keys are listed here from the specification.
+ * (#7354 M1, C3) Object.prototype's keys are the realm catalog's (`OBJECT_PROTOTYPE_KEYS`, read here for every IR
+ * reader, `src/ir/realm-keys.ts` re-exports them); the wrapper prototypes are not in the catalog yet, so their keys
+ * are listed here from the specification.
  */
-import { OBJECT_PROTOTYPE_KEYS } from "../realm-keys.js";
+import { NATIVE_REALM_CATALOG, type NativeRealmProperty } from "../../runtime/contracts/native-realm-catalog.js";
+
+const propertiesOf = (intrinsicIds: readonly string[]): readonly NativeRealmProperty[] =>
+  NATIVE_REALM_CATALOG.intrinsics.filter(({ id }) => intrinsicIds.includes(id)).flatMap(({ properties }) => properties);
+const stringKeys = (properties: readonly NativeRealmProperty[]): ReadonlySet<string> =>
+  new Set(properties.flatMap(({ key }) => (key.kind === "string" ? [key.value] : [])));
+
+/** The string keys the catalog gives the named intrinsics (Annex B members included). */
+export function realmStringKeys(...intrinsicIds: readonly string[]): ReadonlySet<string> {
+  return stringKeys(propertiesOf(intrinsicIds));
+}
+
+/** The string keys `Object.prototype` owns (§20.1.3, Annex B.2.2 included). */
+export const OBJECT_PROTOTYPE_KEYS = realmStringKeys("%Object.prototype%");
+
+/** (#7354 M1, C6) The string keys `Object.prototype` holds as accessor properties (Annex B.2.2.1 `__proto__`). */
+export const OBJECT_PROTOTYPE_ACCESSOR_KEYS = stringKeys(
+  propertiesOf(["%Object.prototype%"]).filter((property) => property.kind === "accessor"),
+);
 
 const NUMBER_PROTOTYPE = ["toExponential", "toFixed", "toPrecision"];
 const STRING_PROTOTYPE = [
