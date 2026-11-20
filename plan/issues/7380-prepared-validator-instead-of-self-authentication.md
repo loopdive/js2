@@ -646,6 +646,63 @@ Not verified:
 - that the `quality` job's full vitest run stays within its time budget. The switch is on there exactly as before,
   so nothing should change.
 
+### Review round 1 (2026-11-20)
+
+Verdict: NOT MET, for the orphaned script and two test gaps. The output claim held on everything the reviewer tried:
+
+- 15 programs with the switch toggled in one process, × 2 targets;
+- fresh processes;
+- cross-realm, subclassed and Proxy collections in the options;
+- 45 ordinary-pipeline files.
+
+Fixed:
+
+- **Orphaned script.** The reviewer added `check:prepared-bytes` to `package.json` (`355b5730f6`). The script and the
+  new test now share one reader of the fixture, `tests/helpers/prepared-proving-programs.ts`. The script's output
+  is unchanged on all 804 rows.
+- **S1, mutation survivors.** `tests/issue-7380-audit-flag.test.ts` now observes each guarded site through what
+  it does, on and off:
+  - the altered completed function for the layout audit;
+  - the erased-prototype `Map` for `hasNativeCollectionState`;
+  - an erased-prototype `Date` and `WeakSet` for the two `copyIrPreparationData` probes. A genuine `Date` /
+    `WeakSet` keeps its refusal text either way.
+
+  The byte-identity tests now assert `preparedValidationEnabled()` in each leg. Five mutations, each applied alone,
+  each fails the file:
+  - each of the four guards ignoring the switch (1 test fails each);
+  - a no-op `setPreparedValidation` (7 tests fail).
+- **S2, the shipped setting.** New `tests/issue-7380-prepared-production-setting.test.ts`:
+  - every 2nd program of the fixture (402) with the switch off: no exception, and either a module that
+    `WebAssembly.validate` accepts or a refusal;
+  - every 67th program (12): the same outcome line with the switch on as off.
+  - 21 tests. The test phase takes 69 s: 57 s for the 402, 13 s for the 12. Wall time is 124 s including a cold
+    transform.
+  - Each program ends with a `setImmediate` turn. A run of strict compiles awaits only settled promises, and
+    without the turn vitest's task-update RPC timed out (an "Unhandled Error", exit 1, with every test green).
+
+Not changed, with reasons. All four functions are deleted by later steps of this plan, so reshaping them now is
+churn:
+
+- **S3, the name `hasNativeCollectionState`.** Deleted in 5d (data hygiene, M8).
+- **S4, the three sites behave differently when off.**
+  - The layout audit returns at once, `hasNativeCollectionState` answers `false`, and the two preparation probes
+    answer by `instanceof`.
+  - The reason is in each comment: each answer is the cheapest one that keeps the site's refusal texts for genuine
+    objects.
+  - The audit goes in 5c (M1); the other two in 5d.
+- **S5, `hasCollectionSlot` duplicates the probe loop of `nativeCollectionBrand`.** The duplication predates this
+  PR; PR 1 only named the inline loop. Both go in 5d.
+- **S6, brand-cache writes in `immutableCopy` while off.** The cache and `immutableCopy`'s per-hand-off copies go
+  in 5d.
+
+Also recorded:
+
+- **Reviewer's finding:** no user program reaches the layout audit's refusals. Every test that expects one forges
+  the module, or alters it behind the ledger. This is consistent with section 5, where the "real loss" row is a
+  type-correct late rewrite by a compiler module, never a source program.
+- **Not verified:** Deno and browser bundles, where the switch is read eagerly from `globalThis.process?.env` at
+  module load. Also not verified: an ESM + CJS double load of the leaf, which would give two independent switches.
+
 ## PR 2a result
 
 Implemented 2026-11-20 on `claude/7380-pins-a` (base `claude/7380-validator` `c0ab3915bb`). No `src/` change, so no
