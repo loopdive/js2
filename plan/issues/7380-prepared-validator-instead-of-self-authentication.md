@@ -1271,9 +1271,10 @@ counts the file's suite plus each failed `describe`; a row with 0 tests and a fa
 
 ## PR 2b result
 
-Branch `claude/7380-pins-b`, base `claude/7380-pins-a` `e41fd9cc1d`. Status: **pass 1 (triage) done; passes 2 and 3
-not started**, because the triage found 50 red tests that are not pins (the brief's stop line was about 15). The lead
-decides before any deletion.
+Branch `claude/7380-pins-b`, base `claude/7380-pins-a` `e41fd9cc1d`. Status: **pass 1 (triage) and pass 2 (every red
+pin retired) done; pass 3 (green pin families) not done.** The triage found 50 red tests that are not pins, so it
+stopped for a decision; the lead's decisions (file the defects, fix the stale expectations, keep T and F) are applied
+below.
 
 ### Triage
 
@@ -1432,14 +1433,126 @@ Not filed.
 | `vector-grow-store-donor` | 3 | 3 | 0 | 0 | 0 | 0 | P |
 | **90 files** | **1567** | **1507** | **14** | **36** | **6** | **4** | |
 
-#### What passes 2 and 3 would do once the lead decides
+### After the triage: lead's decisions applied (2026-11-20)
 
-- Pass 2: retire the 1,507 P tests (whole files where nothing else is left, pin lines cut inside behaviour tests,
-  e.g. the `scans.length >= 4` count in `native-family-source-contract`), with their helpers and receipts. R, T and F
-  stay. Rule C candidates already seen: the import-cycle claim of `lowering-cycle` (covered by `check:import-cycles`),
-  the `ir-core` layer of `core-nodes-boundary` / `core-type-boundary` (present in `scripts/compiler-boundaries.json`),
-  the frontend barrier of `runtime-producers-import-boundaries` (kept: it is an R row).
-- Pass 3: the green pin families of section 3.
+**A. Defects filed** (`ba36767817`). The red tests stay red and unedited: a comment would modify a red file, and
+`quality` requires every modified test file to pass.
 
-Not verified in pass 1: whether the bench cutovers' runtime values still match; the `native-realm-requirements`
-program's behaviour; whether `typed-program-preparation`'s verifier change was deliberate (PR 1 or earlier).
+| issue | red tests |
+| --- | --- |
+| #7437 `Number(o)` on a JS object skips ToPrimitive | `issue-3518-host-coercion-get-abrupt`, the 10 red tests |
+| #7438 Math calls with a missing argument do not compile (32 functions, swept) | `issue-3518-ir-math-switch-retirement` "keeps all 42 exact-arity misses …" |
+| #7439 module-scope `const undefined` read as the global | `issue-3518-native-family-source-identity`, the 2 red tests |
+| #7440 `funcref-wrapper-types.ts` imports `ts-api` | `issue-3518-runtime-producers-import-boundaries` "loads the physical type, closure, and ABI planning leaves …" |
+| #7441 native Math differs from node (200-input sweep in the issue) | none; found by probe |
+
+**B. Stale expectations fixed** (one commit each, the evidence in the message; each file passes in full): 31 of 36.
+
+- `public-retirement-gate` (1, `00832dc282`).
+- `host-utf8-literal-keys` (16, `b07bb95818`): compares answers with node; the retired host-import spy is gone.
+- `ordinary-object-callable-contracts` (8, `9a6921f7e7`) and `ordinary-getter-source` (1, `41abb84319`): assert the
+  exact selected provider, which `85750eeee0` and `69e6b7f3ef` (#7106) added on purpose.
+- `native-vector-resources` (4, `cf1b1f6ada`): asserts the located gap report that `999a6a4235` introduced.
+- `string-repeat-ir` (1 of 2, `311c9a7cbe`): repeat through the JS exports adapter.
+
+  That rewrite exposed a real wrong answer, kept as its own red test: `"a".repeat(Number.MAX_SAFE_INTEGER)` throws a
+  Wasm `RuntimeError` ("requested new array is too large"), node throws `RangeError`. **No issue id yet** (only the
+  five reserved ids were to be used).
+
+**Still red, needs the owner** (5): `bench-array-prepared-cutover` (1) and `bench-string-prepared-cutover` (2), whose
+runtime values are not reached; `native-realm-requirements` (1); and `string-repeat-ir` "registers the exact host ABI
+and refuses signature tampering" (1). Whether the host registrar should still work on a default context is not known.
+
+**C. Timeouts.**
+
+- Fixed with a measured per-test limit:
+  - `ordinary-object-runtime-providers`: 180 s, `630a2a2a7b`; 117/117.
+  - `native-realm-wrapper-storage`: 180 s hook limit, `f30accec07`; 24/24.
+- Left, because a limit alone does not make the file deterministic: `program-abi-seam` (1, 200 s) and
+  `native-mixed-object-access` (3, 38 to 55 s). With a larger limit both pass, but vitest then reports "Timeout
+  calling onTaskUpdate" (the worker's event loop is blocked) and the file still exits 1.
+
+**D. F, untouched:**
+
+- `typed-program-preparation` (2), for PR 3.
+- `native-object-descriptor-resources` (1) and `native-prototype-seeder-bindings` (1), for PR 5b.
+
+### Pass 2: every red pin retired
+
+| part | commit | what | lines | bytes |
+| --- | --- | --- | ---: | ---: |
+| 1 | `05ef799232` | 37 files whose tests are all pins or controls of the pin machinery (21 of them failed at load) | 12,234 test lines | |
+| 1 | `05ef799232` | 17 helpers and fixtures reachable only from them | 14,271 | 784,860 |
+| 2 | `e51637f49b` | red pin tests cut out of 33 mixed files, which now pass in full | 4,505 test lines (−4,505 / +11) | |
+| 2 | `e51637f49b` | 5 helpers and receipts left unreferenced | 31,588 | 1,219,513 |
+
+How the cuts were chosen:
+
+- Red tests were located by vitest's task location, per generated instance.
+- A test was removed whole when every instance was red.
+- A generated test with red and green instances was removed whole only where every instance was a mutation control
+  of the same receipt or donor (7 sites).
+- Three pin lines inside behaviour tests were cut instead of the test:
+  - the scan counts in `native-family-source-contract`;
+  - one closed-list entry in `reference-error-runtime-producers`;
+  - the provider-list length in `provider-verification-ownership`.
+- Helpers were deleted by reachability (imports and path strings), then checked again by name;
+  `prototype-singleton-extraction.ts` stays because a kept receipt names it.
+
+Red tests left in the 90 files (all other red tests are gone):
+
+- 14 R bug (A above), plus the new repeat row;
+- 5 still red, needing the owner (B);
+- 4 T (`program-abi-seam` 1, `native-mixed-object-access` 3);
+- 4 F (D).
+
+### Owed, not pins (rule C)
+
+- **Covered elsewhere, fine to drop:**
+  - the `ir-core` layer rule of `core-nodes-boundary` / `core-type-boundary`, which is in
+    `scripts/compiler-boundaries.json`;
+  - `lowering-cycle`'s no-cycle claim, which `check:import-cycles` enforces.
+- **Owed:**
+  - `native-value-resources` "rejects a forbidden upward edge" (the native value layouts must not import
+    `codegen/context`, `codegen/registry`, `codegen/index`): a boundaries-inventory rule.
+  - The four resource files that failed at load and executed canonical runtime bodies against reconstructed donors:
+    `native-argument-vector-resources`, `native-carrier-bag-read-bodies`, `native-closure-resources`,
+    `native-symbol-carrier-resources`. A donor-free execution test of those bodies is owed.
+  - `symbolic-support-ref` "lowers the unchanged original radix through the genuine frontend kernel": its assertions
+    were source-structure counts after the byte pin. A behaviour test of the radix kernel is owed if none exists.
+- **Stays:** `program-abi-seam`'s type-brand control (a T row).
+
+### Pass 3: not done
+
+`git grep -l "createHash\|sha256\|completeSource\|relocation receipt" -- tests` still matches 295 files:
+
+- 157 top-level test files;
+- 19 under `tests/dogfood`;
+- 52 helpers;
+- 67 fixtures.
+
+Retiring the green pin families of section 3 file by file is the next step. Not every match is a pin: dogfood,
+`issue-6450/named-crypto` and the linear-link fixtures hash their own outputs.
+
+### Gates and verification
+
+- Gates, each run bare, exit 0 at `e51637f49b`'s content:
+  - `npm run -s typecheck`;
+  - `npm run -s check:dead-exports` (no export orphaned; `preservation-v1` unaffected);
+  - `npm run -s check:import-cycles`;
+  - `node scripts/check-orphaned-scripts.mjs` (49 of 305, baseline 49);
+  - `node scripts/check-compiler-boundaries.mjs --mode inventory --base e41fd9cc1d`;
+  - LOC and function budgets (commit hook).
+- No file in `scripts/`, workflows, `package.json` or `docs/` named a deleted file.
+- Every modified test file was run alone, one vitest run each, and passes in full, except `string-repeat-ir`: it is
+  red by design (the repeat row and the host-ABI row above).
+- `scripts/hooks/changed-root-tests.sh` was not run as one command: its 40 files take over the 9-minute limit on this
+  box.
+
+Not verified:
+
+- The bench cutovers' runtime values.
+- The behaviour of the `native-realm-requirements` program.
+- Whether the verifier change behind `typed-program-preparation` was deliberate.
+- The `quality` job's full vitest run.
+- `LOC_GATE_BASE` against the upstream tip.
