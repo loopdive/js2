@@ -21,6 +21,17 @@ export function realmStringKeys(...intrinsicIds: readonly string[]): ReadonlySet
 /** The string keys `Object.prototype` owns (§20.1.3, Annex B.2.2 included). */
 export const OBJECT_PROTOTYPE_KEYS = realmStringKeys("%Object.prototype%");
 
+/** (#7354 M1, C6) The string keys `Object.prototype` holds as accessor properties (Annex B.2.2.1 `__proto__`). */
+export const OBJECT_PROTOTYPE_ACCESSOR_KEYS: ReadonlySet<string> = new Set(
+  NATIVE_REALM_CATALOG.intrinsics
+    .filter(({ id }) => id === "%Object.prototype%")
+    .flatMap(({ properties }) =>
+      properties.flatMap((property) =>
+        property.kind === "accessor" && property.key.kind === "string" ? [property.key.value] : [],
+      ),
+    ),
+);
+
 /**
  * Whether the program may patch what destructuring reads beyond a source's own
  * elements and keys: the array iterator and holes (`Array.prototype`), or a

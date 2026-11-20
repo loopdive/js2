@@ -13,6 +13,7 @@ import { BUILTIN_REACHABLE_KEYS, isArrayIndexKey } from "./builtin-prototype-key
 import { MEMBER_ACCESS_ARM, type CarrierKind, type ProgramObjects } from "./dynamic-value-kinds.js";
 import { realmCall, typeError, type TypeErrorBuilders } from "./dynamic-realm-calls.js";
 import { gap } from "./dynamic-value-gap.js";
+import { OBJECT_PROTOTYPE_ACCESSOR_KEYS } from "../realm-keys.js";
 
 /** The legalization builders a member access is written with. */
 export interface MemberAccessBuilders extends TypeErrorBuilders {
@@ -121,10 +122,11 @@ export function dynamicMemberRead(
 
 /**
  * (#7354 O3) The write of `value` to `key` on the once-evaluated `receiver`, its OrdinarySet answer into a value no
- * code reads. A primitive's wrapper answers `false` for every key a plain program can write: the pristine prototypes
- * hold no setter but `__proto__`'s, which makes a program unplain, and its other properties are data properties, read
- * only or set on the receiver, which is no object. PutValue ignores that failure in sloppy code (`sloppy`) and throws
- * a TypeError in strict code.
+ * code reads. A primitive's wrapper answers `false` for every key but an accessor's: the pristine prototypes' other
+ * properties are data properties, read only or set on the receiver, which is no object. PutValue ignores that failure
+ * in sloppy code (`sloppy`) and throws a TypeError in strict code. (#7354 M1, C6) An accessor key (`__proto__`) calls
+ * its setter instead, which answers `undefined` for a primitive `this` in strict code too (§10.1.9.2, §B.2.2.1.2), so
+ * it refuses by name until the realm holds the accessor.
  */
 export function dynamicMemberWrite(
   b: MemberAccessBuilders,
@@ -149,8 +151,11 @@ export function dynamicMemberWrite(
     nullishMessage: (kind) => `Cannot set properties of ${kind} (setting '${name}')`,
     unread,
     object: (r) => realmCall("js.object.set", [receiver, key, value, receiver], r),
-    primitive: (kind, r, throwTypeError) =>
-      sloppy ? [unread(r)] : throwTypeError(`Cannot create property '${name}' on ${kind}`, r),
+    primitive: (kind, r, throwTypeError) => {
+      if (OBJECT_PROTOTYPE_ACCESSOR_KEYS.has(name))
+        gap(`member write '${name}' of a ${kind} needs Object.prototype's accessor`);
+      return sloppy ? [unread(r)] : throwTypeError(`Cannot create property '${name}' on ${kind}`, r);
+    },
   };
   return memberAccess(b, program, instr, access, receiver, b.fresh());
 }
