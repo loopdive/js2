@@ -218,29 +218,24 @@ describe("recovered A/C dependency controls — never public-route credit", () =
     }
   });
 
-  it("keeps typed async refusal before acceptance/emission with its original denominator", () => {
-    const events: PreparedIrProgramObservation[] = [];
-    const unsubscribe = subscribePreparedIrProgram((e) => events.push(e));
-    try {
-      const result = prepare(
-        "export async function run(x: number): Promise<number> { const y = await (x + 1); return await (y + 2); }",
-        false,
-      );
-      expect(result.kind).toBe("prepared");
-      if (result.kind !== "prepared") throw new Error(result.detail);
-      const count = result.program.inventory.terminalUnits.length;
-      expect(count).toBe(1);
-      const refused = acceptPreparedIrProgram(result.program, replayOptions("wasmgc"));
-      expect(refused.kind).toBe("unsupported");
-      if (refused.kind !== "unsupported") throw new Error("expected located async capability refusal");
-      expect(refused.sourceFile).toBe("entry.ts");
-      expect(refused.unitId).toBe(result.program.inventory.terminalUnits[0]!.id);
-      expect(refused.detail).toMatch(/async|physical/);
-      expect(events.map((e) => e.phase)).toEqual(["prepared"]);
-      expect(result.program.inventory.terminalUnits).toHaveLength(count);
-    } finally {
-      unsubscribe();
-    }
+  // This program was refused at acceptance when the test was written; the wasmgc host lane has since admitted
+  // typed async functions. The test now checks the accepted program's answer against JavaScript's (#7380 PR 2b).
+  it("accepts typed async on the wasmgc host lane, runs it, and keeps its denominator", async () => {
+    const result = prepare(
+      "export async function run(x: number): Promise<number> { const y = await (x + 1); return await (y + 2); }",
+      false,
+    );
+    expect(result.kind).toBe("prepared");
+    if (result.kind !== "prepared") throw new Error(result.detail);
+    const count = result.program.inventory.terminalUnits.length;
+    expect(count).toBe(1);
+    expect(acceptPreparedIrProgram(result.program, replayOptions("wasmgc")).kind).toBe("accepted");
+    const run = await replayProgram(result.program, replayOptions("wasmgc"));
+    if (run.kind !== "ran") throw new Error(JSON.stringify(run));
+    const asyncRun = run.run.exports.run as (x: number) => Promise<number>;
+    await expect(asyncRun(5)).resolves.toBe(8);
+    await expect(asyncRun(-3)).resolves.toBe(0);
+    expect(result.program.inventory.terminalUnits).toHaveLength(count);
   });
 
   it("real codec rejects removing a runtime provider and replaying a donor projection", () => {
