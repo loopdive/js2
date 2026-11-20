@@ -23,17 +23,18 @@ A wrong answer on the JS target (`target: "host"`, ordinary pipeline, `experimen
 export function run(o: any): number { return Number(o); }
 ```
 
-Called from JavaScript:
+Called from JavaScript, on the raw export (as the red tests do) and through the compiled exports adapter
+(`wrapCompiledExports`):
 
-| argument | js2wasm | node |
-| --- | --- | --- |
-| `{ valueOf() { return 5; } }` | NaN | 5 |
-| `{ toString() { return "6"; } }` | NaN | 6 |
-| `{ get valueOf() { throw 99; } }` | NaN, getter never read | throws 99 |
-| null prototype, `valueOf: undefined`, `toString` getter returning `() => 7` | NaN (the getter is read) | 7 |
+| argument | raw export | exports adapter | node |
+| --- | --- | --- | --- |
+| `{ valueOf() { return 5; } }` | NaN | NaN | 5 |
+| `{ toString() { return "6"; } }` | NaN | NaN | 6 |
+| `{ get valueOf() { throw 99; } }` | NaN, getter never read | throws 99 (getter read) | throws 99 |
+| null prototype, `valueOf: undefined`, `toString` getter returning `() => 7` | NaN | NaN | 7 |
 
-The object reaches the module through the `__boundary_object_*` imports; ToPrimitive on it neither calls `valueOf`
-nor `toString`. Measured on `claude/7380-pins-a` `e41fd9cc1d` (#7380 PR 2b triage).
+So the adapter reads `valueOf` (an abrupt getter propagates) but never calls the method it read, and never falls
+back to `toString`; the raw export does neither. Re-measured 2026-11-20 on `claude/7380-pins-b` (#7380 PR 2b review).
 
 ## Evidence
 
@@ -43,6 +44,6 @@ noncallable and object-returning valueOf".
 
 ## Acceptance criteria
 
-1. The four rows above give node's answer, with and without `utf8Storage`.
+1. The four rows above give node's answer in both columns, with and without `utf8Storage`.
 2. The 10 tests of `issue-3518-host-coercion-get-abrupt` pass unchanged.
 3. Standalone output unchanged.
