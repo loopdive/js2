@@ -190,9 +190,9 @@ describe("empty void closure bodies", () => {
         expect(outcome.run.emitted.module.imports).toEqual([]);
       }
     },
-    // 2026-11-19 (#7354 O1, lead decision): each case compiles a realm program twice (before and after codec
-    // transport); that costs ≈36 s locally and ≈39.5 s on CI, at the global 35 s limit. Restore the default when the
-    // compile-time work lands (#7397, #7398, #7365).
-    90_000,
+    // Each case compiles a realm program twice (before and after codec transport): 41 to 43 s alone on a 4-core box
+    // with the validator on (2026-11-20), ≈39.5 s on CI (#7354 O1). Restore the default when the compile-time work
+    // lands (#7397, #7398, #7365).
+    180_000,
   );
 });

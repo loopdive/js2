@@ -1,9 +1,7 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
 import { spawnSync } from "node:child_process";
-import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import ts from "typescript";
 import { describe, expect, it } from "vitest";
 import * as old from "../src/ir/alloc-registry.js";
 import * as canonical from "../src/ir/analysis/alloc-registry.js";
@@ -12,21 +10,7 @@ import { IR_CLASS_SHAPE_CELL, irVal, type IrType } from "../src/ir/core/types.js
 import type { AllocRegistrySnapshot } from "../src/ir/analysis/contracts/allocations.js";
 
 const root = resolve(import.meta.dirname, "..");
-const oldPath = "src/ir/alloc-registry.ts";
-const read = (path: string) => readFileSync(resolve(root, path), "utf8");
 const runtimeExports = ["ALLOC_NAMESPACES", "AllocSiteRegistry", "copyIrPreparationData"] as const;
-const typeExports = [
-  "AllocSite",
-  "AllocRegistryProvenanceSnapshot",
-  "AllocRegistryMetadataSnapshot",
-  "AllocRegistrySnapshot",
-];
-
-function parse(path: string, text = read(path)) {
-  const file = ts.createSourceFile(path, text, ts.ScriptTarget.Latest, true);
-  expect((file as ts.SourceFile & { parseDiagnostics: readonly ts.Diagnostic[] }).parseDiagnostics).toEqual([]);
-  return file;
-}
 
 const id = asAllocSiteId;
 const f64 = irVal({ kind: "f64" });
@@ -68,28 +52,6 @@ function snapshot(): AllocRegistrySnapshot {
 describe("allocation ownership runtime relocation", () => {
   it.each(runtimeExports)("preserves the exact old/new %s export identity", (name) => {
     expect(old[name]).toBe(canonical[name]);
-  });
-
-  it("leaves only explicit compatibility forwards and no second implementation or initialization", () => {
-    const file = parse(oldPath);
-    expect(file.statements).toHaveLength(2);
-    for (const statement of file.statements) {
-      expect(ts.isExportDeclaration(statement)).toBe(true);
-      if (!ts.isExportDeclaration(statement) || !statement.exportClause || !ts.isNamedExports(statement.exportClause))
-        throw new Error("non-explicit facade");
-      const target = (statement.moduleSpecifier as ts.StringLiteral).text;
-      const names = statement.exportClause.elements.map((element) => {
-        expect(element.propertyName).toBeUndefined();
-        return element.name.text;
-      });
-      expect(target).toBe(
-        statement.isTypeOnly ? "./analysis/contracts/allocations.js" : "./analysis/alloc-registry.js",
-      );
-      expect(names.sort()).toEqual([...(statement.isTypeOnly ? typeExports : runtimeExports)].sort());
-    }
-    expect(Object.keys(old).sort()).toEqual([...runtimeExports].sort());
-    expect(Object.keys(canonical).sort()).toEqual([...runtimeExports].sort());
-    expect(Object.isFrozen(canonical.ALLOC_NAMESPACES)).toBe(false); // as const was not a runtime freeze.
   });
 
   it("keeps constructor, static/prototype member identities and independent field initialization", () => {

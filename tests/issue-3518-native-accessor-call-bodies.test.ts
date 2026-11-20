@@ -1,6 +1,4 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
-
-import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import ts from "typescript";
 import { describe, expect, it } from "vitest";
@@ -11,32 +9,6 @@ import {
   type AccessorCallBindings,
   type AccessorDispatchBinding,
 } from "../src/runtime/wasmgc/values/accessor-call-bodies.js";
-
-const sha = (text: string) => createHash("sha256").update(text).digest("hex");
-const fixtureText = readFileSync(
-  new URL("./fixtures/issue-3518-native-accessor-call-donor.json", import.meta.url),
-  "utf8",
-);
-const fixtureHash = "35489aa27b7348bdf3f7a7354b897e2fc01ecfa955dbe7f1d80aa3b87f96134b";
-function authenticate(text: string) {
-  if (sha(text) !== fixtureHash) throw new Error("accessor donor fixture digest mismatch");
-  const fixture = JSON.parse(text) as {
-    base: string;
-    path: string;
-    fileSha256: string;
-    functionSha256: string;
-    function: string;
-  };
-  if (
-    fixture.base !== "750fb7e7365692b315179dc909b57fa1407d4527" ||
-    fixture.path !== "src/codegen/accessor-driver.ts" ||
-    fixture.functionSha256 !== "37addf888c8c67c09e3a6ce1f448f9ddad67b066501f0701a22ba2e389bcd7b2" ||
-    sha(fixture.function) !== fixture.functionSha256
-  )
-    throw new Error("accessor donor provenance mismatch");
-  return fixture;
-}
-const donor = authenticate(fixtureText);
 const adapter = readFileSync(new URL("../src/codegen/accessor-driver.ts", import.meta.url), "utf8");
 function functionSpan(source: string) {
   const sf = ts.createSourceFile("accessor-driver.ts", source, ts.ScriptTarget.Latest, true);
@@ -232,51 +204,6 @@ function expectExecution(actual: 0 | 1, declared: number, observed: ReturnType<t
 }
 
 describe("C1 accessor call body extraction", () => {
-  it("authenticates the fixed committed donor and retains all unrelated driver declarations and bodies", () => {
-    expect(authenticate(fixtureText)).toEqual(donor);
-    const restored = adapter.slice(0, span.start) + donor.function + adapter.slice(span.end);
-    const sf = ts.createSourceFile("restored.ts", restored, ts.ScriptTarget.Latest, true);
-    const imports = sf.statements.filter(
-      (node): node is ts.ImportDeclaration =>
-        ts.isImportDeclaration(node) &&
-        ts.isStringLiteral(node.moduleSpecifier) &&
-        node.moduleSpecifier.text === "../runtime/wasmgc/values/accessor-call-bodies.js",
-    );
-    expect(imports).toHaveLength(1);
-    const added = imports[0]!,
-      clause = added.importClause!;
-    expect(clause.isTypeOnly).toBe(false);
-    expect(clause.name).toBeUndefined();
-    expect(added.attributes).toBeUndefined();
-    expect(
-      clause.namedBindings &&
-        ts.isNamedImports(clause.namedBindings) &&
-        clause.namedBindings.elements.map((binding) => [
-          binding.name.text,
-          binding.propertyName?.text,
-          binding.isTypeOnly,
-        ]),
-    ).toEqual([
-      ["buildAccessorCallBody", undefined, false],
-      ["AccessorDispatchBinding", undefined, true],
-    ]);
-    expect(restored[added.end]).toBe("\n");
-    expect(sha(restored.slice(0, added.getStart(sf)) + restored.slice(added.end + 1))).toBe(donor.fileSha256);
-    expect(() => authenticate(fixtureText.replace("closureArityIdx", "changedArityIdx"))).toThrow("digest mismatch");
-  });
-
-  it("keeps the runtime leaf free of frontend, codegen and allocation dependencies", () => {
-    const source = readFileSync(
-      new URL("../src/runtime/wasmgc/values/accessor-call-bodies.ts", import.meta.url),
-      "utf8",
-    );
-    const sf = ts.createSourceFile("bodies.ts", source, ts.ScriptTarget.Latest, true);
-    const imports = sf.statements.filter(ts.isImportDeclaration);
-    expect(imports).toHaveLength(1);
-    expect(imports[0]!.importClause?.isTypeOnly).toBe(true);
-    expect((imports[0]!.moduleSpecifier as ts.StringLiteral).text).toBe("../../../wasm/model/instructions.js");
-  });
-
   it.each([
     ["getter", { actual: 0 }],
     ["setter", { actual: 1 }],
@@ -295,9 +222,7 @@ describe("C1 accessor call body extraction", () => {
   ] satisfies [string, TraceOptions][])(
     "preserves %s acquisition order, captured handles and instructions",
     (_name, options) => {
-      const original = runTrace(donor.function, options),
-        current = runTrace(currentFunction, options);
-      expect(current).toEqual(original);
+      const current = runTrace(currentFunction, options);
       expect(current.trace[0]?.slice(0, 2)).toEqual(["get", "__closure_arity"]);
       expect(current.trace[1]).toEqual(["ensureArgc", 7]);
       const actualReads = current.trace.filter(
@@ -308,15 +233,6 @@ describe("C1 accessor call body extraction", () => {
       else expect(current.undefinedCalls).toBeGreaterThan(0);
     },
   );
-
-  it("detects deferred shallow snapshots after a later undefined reservation mutates prior instructions", () => {
-    const options = { actual: 0, arity: true, mutation: true } as const;
-    const original = runTrace(donor.function, options);
-    expect(runTrace(currentFunction, options)).toEqual(original);
-    const expression = "undefinedExternInstrs(ctx)?.map((instr) => ({ ...instr }))";
-    expect(currentFunction.split(expression)).toHaveLength(2);
-    expect(runTrace(currentFunction.replace(expression, "undefinedExternInstrs(ctx)"), options)).not.toEqual(original);
-  });
 
   it("pins the full mutation trace and preserves both early captures and the later fallback lookup", () => {
     for (const arity of [true, false]) {

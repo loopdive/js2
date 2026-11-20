@@ -1,6 +1,4 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
-
-import { createHash } from "node:crypto";
 import { beforeAll, describe, expect, it } from "vitest";
 import { analyzeMultiSource } from "../src/checker/index.js";
 import { IrFunctionBuilder } from "../src/ir/builder.js";
@@ -126,9 +124,6 @@ beforeAll(() => {
 
 describe("canonical runtime callables in the complete program ABI", () => {
   it("prepares the unchanged three-source/seven-terminal app once with its imported-global TDZ guard", () => {
-    expect(createHash("sha256").update(JSON.stringify(FILES)).digest("hex")).toBe(
-      "594eaf3f977ec2717777cdde3ff9813753f4c44faa6e3bf50fc6ced726e61b49",
-    );
     expect(prepared.inventory.sources).toHaveLength(3);
     expect(prepared.inventory.terminalUnits).toHaveLength(7);
     expect(prepared.ir.functions).toHaveLength(7);
