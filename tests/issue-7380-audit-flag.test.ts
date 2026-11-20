@@ -4,6 +4,7 @@
 // only with JS2WASM_VALIDATE_PREPARED=1. Production compiles skip them; vitest.config.ts turns them on. The switch
 // changes compile time only: the same program gives the same bytes either way.
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { copyIrPreparationData } from "../src/ir/analysis/alloc-registry.js";
 import { createEmptyModule } from "../src/ir/types.js";
 import { preparedIrDataMismatch } from "../src/ir/program/data.js";
 import { preparedValidationEnabled, setPreparedValidation } from "../src/shared/contracts/prepared-validation.js";
@@ -72,6 +73,20 @@ describe("#7380 — what the checks still refuse when on", () => {
     // A genuine collection is still told apart by the prototype check beside the probe.
     expect(preparedIrDataMismatch(new WeakMap(), new WeakMap())).toBe("$root (non-data object)");
   });
+
+  // copyIrPreparationData's two probes, each seen through the slot it finds behind an erased prototype.
+  it.each([
+    ["Date", () => new Date(0), "unsupported Date instance"],
+    ["collection", () => new WeakSet(), "unsupported collection prototype"],
+  ] as const)("the preparation-data %s probe runs when on and is skipped when off", (_kind, make, refusal) => {
+    const forged = (): object => ({ value: Object.setPrototypeOf(make(), null) as object });
+    setPreparedValidation(true);
+    expect(() => copyIrPreparationData(forged())).toThrow(refusal);
+    setPreparedValidation(false);
+    expect(Object.getPrototypeOf(copyIrPreparationData(forged()).value)).toBeNull();
+    // A genuine one keeps the same refusal text either way.
+    expect(() => copyIrPreparationData({ value: make() })).toThrow(refusal);
+  });
 });
 
 describe("#7380 — the switch does not change the output", () => {
@@ -100,6 +115,7 @@ describe("#7380 — the switch does not change the output", () => {
     const bytes: Uint8Array[] = [];
     for (const on of [true, false]) {
       setPreparedValidation(on);
+      expect(preparedValidationEnabled()).toBe(on);
       const result = await compile(source, options(fileName));
       expect(result.errors.map((error) => error.message)).toEqual([]);
       bytes.push(result.binary);
