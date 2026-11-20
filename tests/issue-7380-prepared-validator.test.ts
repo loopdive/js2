@@ -120,6 +120,44 @@ const seed15 = (): WasmModule => {
   };
 };
 
+type ModuleFunction = WasmModule["functions"][number];
+const withFunction = (name: string, rewrite: (fn: ModuleFunction) => ModuleFunction): WasmModule => ({
+  ...module,
+  functions: module.functions.map((fn) => (fn.name === name ? rewrite(fn) : fn)),
+});
+const seedRetypedLocals = (): WasmModule =>
+  withFunction("f", (fn) => ({
+    ...fn,
+    locals: fn.locals.map((local) => (local.type.kind === "f64" ? { ...local, type: { kind: "i32" } } : local)),
+  }));
+const seedWrongGlobal = (): WasmModule => {
+  const x = module.globals.findIndex((global) => global.type.kind === "f64");
+  const text = module.globals.findIndex((global) => global.type.kind === "ref");
+  return withFunction("f", (fn) => ({
+    ...fn,
+    body: fn.body.map((instr) => (instr.op === "global.get" && instr.index === x ? { ...instr, index: text } : instr)),
+  }));
+};
+const seedWrongArguments = (): WasmModule =>
+  withFunction("<module-init>", (fn) => ({
+    ...fn,
+    body: fn.body.flatMap((instr) =>
+      instr.op === "call"
+        ? [
+            { op: "i32.const", value: 0 } as const,
+            { op: "i32.const", value: 0 } as const,
+            { op: "call", funcIdx: fmodIndex() } as const,
+          ]
+        : [instr],
+    ),
+  }));
+/** The error codes the engine gate (stage 5) reports for the module's bytes. */
+const engineGate = (value: WasmModule): string[] => {
+  const errors: CompileError[] = [];
+  gateEmittedModule(emitBinary(value), {}, errors, ts.createSourceFile("test.js", SOURCE, ts.ScriptTarget.Latest));
+  return errors.map((error) => error.code ?? "");
+};
+
 /** Stage 1 reports errors instead of throwing; the stage 2 caller turns them into one invariant error. */
 function stage1(fn: IrFunction): void {
   const errors = verifyIrFunction(fn);
@@ -446,10 +484,18 @@ describe("#7380 — the Prepared validator rejects one seeded defect per row and
   });
 
   it("stage 5: seed 15 emitted to bytes is an invalid-module error", () => {
-    const errors: CompileError[] = [];
-    const anchor = ts.createSourceFile("test.js", SOURCE, ts.ScriptTarget.Latest);
-    expect(gateEmittedModule(emitBinary(module), {}, errors, anchor)).toBe(true);
-    expect(gateEmittedModule(emitBinary(seed15()), {}, errors, anchor)).toBe(false);
-    expect(errors.map((error) => error.code)).toEqual(["invalid-module"]);
+    expect(engineGate(module)).toEqual([]);
+    expect(engineGate(seed15())).toEqual(["invalid-module"]);
+  });
+
+  // Defects every index still resolves under: stages 2 to 4 accept them, and only the engine gate stage 5
+  // (`gateEmittedModule`, run by `finalizePipelineModule` on every compile, validator on or off) rejects them.
+  it.each([
+    ["f's f64 locals retyped to i32", seedRetypedLocals],
+    ["f reads the string global where it read the f64 global x", seedWrongGlobal],
+    ["startup passes two i32 values to __fmod (f64, f64)", seedWrongArguments],
+  ])("stage 5: %s passes stage 4 and is an invalid-module error", (_name, seeded) => {
+    expect(stage4(seeded())).not.toThrow();
+    expect(engineGate(seeded())).toEqual(["invalid-module"]);
   });
 });
