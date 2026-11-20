@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import { beforeAll, describe, expect, it } from "vitest";
 import * as canonical from "../src/ir/core/vector-runtime.js";
+import * as compatibility from "../src/ir/vector-runtime.js";
 import { asBlockId, asValueId, type IrFunction, type IrInstrCall } from "../src/ir/core/nodes.js";
 import type { IrType } from "../src/ir/core/types.js";
 import { irCallableBindingKey, irIntrinsicFuncRef, irRuntimeFuncRef } from "../src/ir/core/callable-bindings.js";
@@ -139,6 +140,12 @@ function explicit(functions: readonly IrFunction[], policy = POLICY) {
 }
 
 describe("complete canonical vector identity relocation", () => {
+  it("forwards the eight runtime objects of the canonical module through the compatibility facade", () => {
+    expect(Object.keys(compatibility).sort()).toEqual(Object.keys(canonical).sort());
+    expect(Object.keys(canonical)).toHaveLength(8);
+    for (const key of Object.keys(canonical) as (keyof typeof canonical)[])
+      expect(compatibility[key]).toBe(canonical[key]);
+  });
   it.each(["f64", "i32", "externref"] as const)(
     "retains parsing/sized/store identities for %s without admitting extra helpers",
     (kind) => {
