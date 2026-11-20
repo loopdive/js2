@@ -17,7 +17,7 @@ related: [7380, 3518]
 
 ## Problem
 
-On `--target standalone` (and the JS target, which uses the same native core), the transcendental `Math` functions
+On `--target standalone` and the JS target (identical results; both use the same native core), the transcendental `Math` functions
 give answers that differ from node's. Example: `Math.atan(0.5)` gives `0.4636476094151571`, node
 `0.4636476090008061`; `Math.log(0.5)` gives `-0.6931471702560121`, node `-0.6931471805599453`. Some are not
 precision issues but wrong results: `Math.sin(1e300)` is `-Infinity`, `Math.cbrt(1e300)` is `1.95e148`,
@@ -69,6 +69,19 @@ identities such as `sinh(x) === x`), so this costs standalone conformance.
 | `hypot` | 0/200 | 0 |  |
 | `max` | 0/200 | 0 |  |
 | `min` | 0/200 | 0 |  |
+
+Spot checks, confirmed by the #7380 PR 2b review. The default JS target and `--target standalone` give identical
+results for every row, because both use the same native core:
+
+| call | js2wasm (JS and standalone) | node |
+| --- | --- | --- |
+| `Math.cbrt(1e300)` | 1.9509221155311695e+148 | 1e+100 |
+| `Math.cos(1e300)` | Infinity | -0.5753861119575491 |
+| `Math.sinh(5e-324)` | 0 | 5e-324 |
+| `Math.log2(0.5)` | -0.9999999851345667 | -1 |
+| `Math.exp(Math.PI)` | 23.140692539431114 | 23.140692632779267 |
+| `Math.atan(0.5)` | 0.4636476094151571 | 0.4636476090008061 |
+| `Math.log(0.5)` | -0.6931471702560121 | -0.6931471805599453 |
 
 "∞ (special value)" means a finite node result became ±Infinity or NaN (or the reverse). Exact on all 200 inputs:
 `abs`, `ceil`, `clz32`, `floor`, `fround`, `round`, `sign`, `sqrt`, `trunc`, `imul`, `hypot`, `max`, `min`.

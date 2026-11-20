@@ -1332,10 +1332,8 @@ Totals: **1,567 red = 1,507 P + 14 R bug + 36 R stale + 6 T + 4 F**, plus one su
 
 #### Found on the way, not a red test here
 
-The native `Math.atan/asin/acos/tan/cosh/tanh/expm1/asinh/atanh/cbrt` differ from node by 1 ulp (`cbrt`) up to about 4e-10 (`atan`) on
-both the JS and the standalone target: `Math.atan(0.5)` gives `0.4636476094151571` (node `0.4636476090008061`),
-`Math.cosh(0.5)` gives `1.1276259651766543` (node `1.1276259652063807`). The exact-arity tests do not compare digits.
-Not filed.
+Native `Math` functions differ from node, some badly for large or tiny arguments: filed as #7441 with a 200-input
+sweep.
 
 #### Per-file triage (the 90 red files)
 
