@@ -239,9 +239,14 @@ export function legalizeDynamicValues(fn: IrFunction): IrFunction {
           return [{ kind: "const", value: { kind: "null", ty: CARRIER }, result: instr.result, resultType: CARRIER }];
         case "number":
           return [intrinsic(instr, "js.number.box", [value])];
-        // (#7354 Str) A native string, and (#7354 Fa) a function value's closure, are their own payload: the
-        // externref that wraps it.
-        default:
+        // The undefined singleton enters only as `dyn.undefined`, never as an entry's raw operand.
+        case "undefined":
+          return gap(`${instr.kind} of the undefined kind into the carrier`);
+        // (#7354 Str) A native string, (#7354 Fa) a function value's closure, and an already carried value are their
+        // own payload: the externref that wraps it.
+        case "string":
+        case "function":
+        case "dynamic":
           return [
             {
               kind: "coerce.to_externref",
@@ -251,6 +256,8 @@ export function legalizeDynamicValues(fn: IrFunction): IrFunction {
               ...(instr.site === undefined ? {} : { site: instr.site }),
             },
           ];
+        default:
+          return kind satisfies never;
       }
     };
   /** An instruction kept as it is: one with a dynamic result (a carrying one) is admitted. */
