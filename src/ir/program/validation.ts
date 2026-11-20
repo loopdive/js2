@@ -28,7 +28,14 @@ import {
 import { assertPreparedIrProgramPopulation } from "./population.js";
 import { preparedIrDataMismatch } from "./data.js";
 import { PreparedIrProgramInvariantError } from "./errors.js";
-import type { PreparedIrAbiEntry, PreparedIrProgram } from "./prepared-contracts.js";
+import type {
+  PreparedIrAbiEntry,
+  PreparedIrProgram,
+  PreparedIrProgramRuntimeProjection,
+} from "./prepared-contracts.js";
+import { INTRINSIC_DEFINITIONS } from "../core/intrinsics.js";
+import { forEachPreparedIrInstruction } from "../runtime/prepared-instructions.js";
+import { containsDynamic } from "./dynamic-value-legalization.js";
 import {
   prepareIrProgramRuntimeCallables,
   preparedIrRuntimeAbiAnchor,
@@ -189,6 +196,40 @@ function validateRuntimeCallables(program: PreparedIrProgram): void {
     const mismatch = preparedIrDataMismatch(expected, matches[0]);
     if (mismatch !== undefined) invalid(`runtime ABI ${key} contradicts its canonical declaration at ${mismatch}`);
   }
+}
+
+/**
+ * (#7380) The native standalone lane binds dynamic values only as their `externref` carrier: legalization rewrites
+ * every `dyn.*` operation into an intrinsic and every `dynamic` type into the carrier, so neither may reach a body
+ * of that projection.
+ */
+function assertNoDynamicValues(projection: PreparedIrProgramRuntimeProjection): void {
+  if (projection.backend !== "wasmgc" || projection.target !== "standalone") return;
+  for (const fn of projection.prepared.functions) {
+    if (containsDynamic(fn)) invalid(`body ${fn.unitId} retains a dynamic type after legalization`);
+    forEachPreparedIrInstruction(fn, (instruction) => {
+      if (instruction.kind.startsWith("dyn."))
+        invalid(`body ${fn.unitId} retains ${instruction.kind} after legalization`);
+    });
+  }
+}
+
+/** (#7380) Every intrinsic a body uses carries its provider, and the manifest selects exactly one for its feature. */
+function assertIntrinsicProviders(projection: PreparedIrProgramRuntimeProjection): void {
+  const { manifest, providers } = projection.prepared;
+  for (const fn of projection.prepared.functions)
+    forEachPreparedIrInstruction(fn, (instruction) => {
+      if (instruction.kind !== "intrinsic") return;
+      const feature = INTRINSIC_DEFINITIONS[instruction.id].feature;
+      if (
+        instruction.provider === undefined ||
+        !providers.has(instruction.id) ||
+        manifest.providers.filter((provider) => provider.feature === feature).length !== 1
+      )
+        invalid(
+          `body ${fn.unitId}: intrinsic ${instruction.id} lacks exactly one selected provider (missing provider)`,
+        );
+    });
 }
 
 /** Complete source-free validation precedes lookup reconstruction, backend acceptance and replay. */
@@ -390,6 +431,8 @@ export function assertPreparedIrProgram(program: PreparedIrProgram, options?: Ir
       derivedUnits: program.derivedUnits,
       ir: { functions: runtime.functions },
     });
+    assertNoDynamicValues(projection);
+    assertIntrinsicProviders(projection);
     assertPreparedIrRuntimeProjection(program, projection);
   }
 }

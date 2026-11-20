@@ -146,7 +146,6 @@ import type { IrPreparationFailure } from "./outcomes.js";
 import { ProgramAbiMap, type ProgramAbiFinalIndex } from "./program-abi.js";
 import { observePreparedIrProgram } from "./program-observation.js";
 import { planPhysicalSetup, type PhysicalSetupPlan, type PhysicalSignatureType } from "./program-physical-plan.js";
-import { assertPreparedIrProgram } from "./program-validation.js";
 import {
   preparedIrProgramOwner,
   PreparedIrProgramInvariantError,
@@ -291,7 +290,6 @@ export function acceptPreparedIrProgram(
   program: PreparedIrProgram,
   options: PreparedIrBackendOptions,
 ): PreparedIrBackendAcceptance {
-  assertPreparedIrProgram(program);
   if (
     options.stringConcatEmptyIdentity !== undefined &&
     (typeof options.stringConcatEmptyIdentity !== "boolean" ||
@@ -553,7 +551,6 @@ function prepareNativeEmission(accepted: AcceptedPreparedIrProgram, plan: Physic
   if (Boolean(record.nativeNumberFormat) !== Boolean(plan.nativeNumberFormat))
     emissionFailed("formatter acceptance/physical plan mismatch");
   if (record.nativeNumberFormat) {
-    assertPreparedIrProgram(program);
     const formatter = record.nativeNumberFormat;
     assertNativeNumberFormatRequirementsCurrent(formatter.requirements, formatter.requirements);
     const fresh = prepareNativeNumberFormat(program, accepted.options, runtime);
@@ -569,7 +566,6 @@ function prepareNativeEmission(accepted: AcceptedPreparedIrProgram, plan: Physic
       emissionFailed("formatter physical plan is no longer current");
   }
   if (record.nativeStrings) {
-    assertPreparedIrProgram(program);
     if (record.nativeStrings.demands.program !== program || record.nativeStrings.demands.projection !== runtime)
       emissionFailed("native demands belong to another program/projection");
     if (preparedIrDataMismatch(record.nativeStrings.demands, record.nativeSnapshot) !== undefined)

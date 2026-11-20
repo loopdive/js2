@@ -1,7 +1,10 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
-import { acceptPreparedIrProgram, emitAcceptedIrProgram } from "../ir/program-consumer.js";
+import { acceptedPhysicalSetupPlan, acceptPreparedIrProgram, emitAcceptedIrProgram } from "../ir/program-consumer.js";
 import { prepareWholeIrProgram, type IrWholeProgramPreparationInput } from "../ir/program-preparation.js";
 import { freezePreparedIrValue, type PreparedIrBackendOptions } from "../ir/program.js";
+import { validatePreparedStage } from "../ir/program/prepared-validator.js";
+import { assertPhysicalSetupPlan } from "../ir/validate-physical-plan.js";
+import { assertPhysicalModule } from "../wasm/physical/validate-module.js";
 import { IrProgramDriverInvariantError, type IrProgramDriverResult } from "./ir-program-result.js";
 
 /**
@@ -29,7 +32,11 @@ export function runIrProgramDriver(
   if (accepted.kind === "unsupported") {
     return Object.freeze({ kind: "unsupported", phase: "acceptance", failure: accepted });
   }
+  validatePreparedStage("physical plan", () =>
+    assertPhysicalSetupPlan(prepared.program, acceptedPhysicalSetupPlan(accepted), backendOptions),
+  );
   // C authenticates and consumes this exact token once. Exceptions stay fatal.
   const emission = emitAcceptedIrProgram(accepted);
+  validatePreparedStage("physical module", () => assertPhysicalModule(emission.module));
   return Object.freeze({ kind: "emitted", program: prepared.program, emission });
 }

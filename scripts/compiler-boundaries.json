@@ -16945,6 +16945,19 @@
       "layer": "ir-program"
     },
     {
+      "path": "src/ir/program/prepared-validator.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
+      "path": "src/ir/validate-physical-plan.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "The stage 3 validator of #7380 reads PhysicalSetupPlan; it moves with that type when src/ir/program-physical-plan.ts splits into the backend/wasmgc boundary."
+    },
+    {
       "path": "src/backend/wasmgc/lowering/dynamic-scratch.ts",
       "state": "clean",
       "layer": "backend-wasmgc"
