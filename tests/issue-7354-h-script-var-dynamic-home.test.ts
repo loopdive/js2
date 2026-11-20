@@ -108,6 +108,13 @@ describe("#7354 H — the dynamic home of a script var", () => {
         "a",
       ],
       ["written in a function and read at top level", "var x; function w() { x = 2; } w();", "x !== 2", "x !== 3"],
+      // (#7354 O3) A member write is no second declaration: the binding keeps its home, and the write lands.
+      [
+        "given a property by a member write",
+        "var o; o = { a: 1 }; function p() { o.a = 2; } p();",
+        "o.a !== 2",
+        "o.a !== 1",
+      ],
       [
         "written at top level and read in a function",
         "var x; function r() { return x; } x = true;",
@@ -181,12 +188,7 @@ describe("#7354 H — the dynamic home of a script var", () => {
     ],
     // (#7354 Str2-c) `x + 1` on the dynamic home runs now (below).
     // (#7354 T) `x || 0` runs now (below).
-    // A member write on the binding is no second declaration: the binding keeps its home and the write refuses.
-    [
-      "given a property by a member write (slice O)",
-      "var o; o = 1; function p() { o.q = 2; }",
-      "property assignment on dynamic is not in slice 4",
-    ],
+    // (#7354 O3) A member write on the binding runs now (below).
     // `Object.defineProperty(o, …)` still counts as a declaration: the Prepared path admits no `Object` static yet,
     // so the binding has no home and refuses by name instead of reaching from-ast's drift invariant.
     [
@@ -196,11 +198,7 @@ describe("#7354 H — the dynamic home of a script var", () => {
     ],
     ["of a number given a property by Object.defineProperty", "var o = 1; Object.defineProperty(o, 'p', {});", NO_HOME],
     // A value kind the carrier cannot hold yet is refused at its store, by the slice that owns it.
-    [
-      "holding an object literal (slice O)",
-      "var o = { a: 1 };",
-      "proven dynamic binding 'o' initializer has no supported carrier",
-    ],
+    // (#7354 O2) An object literal is the object kind of the dynamic value now (tests/issue-7354-o2-object-values.test.ts).
     ["holding an array literal", "var arr = [1];", "resolver cannot register vec for array literal"],
     [
       "holding a function expression (slice Fa)",

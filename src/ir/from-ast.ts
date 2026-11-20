@@ -6561,7 +6561,7 @@ function lowerPropertyAccess(expr: ts.PropertyAccessExpression, cx: LowerCtx): I
   // into the canonical dynamic carrier (identity on the host strategy,
   // `__any_from_extern` on gc) and take the same unified reader. Admitted by
   // the selector for catch bindings and open carriers only.
-  if (asVal(recvType)?.kind === "externref" && cx.resolver?.stringIsExternref?.() !== true) {
+  if (isRawExternrefReceiver(recvType, cx)) {
     return dynamicNamedPropertyRead(cx.builder.emitBox(recv, irDynamic()), propName, cx);
   }
 
@@ -6869,6 +6869,11 @@ interface ElementSlot {
   readonly proven: boolean;
   /** The key is an array index spelled as a literal or held by a `const`, so `index` is non-negative. */
   readonly staticIndex: boolean;
+}
+
+/** (#7106 S1c, #7354 O3) A raw externref receiver, which a member read or write boxes onto the dynamic carrier. */
+function isRawExternrefReceiver(recvType: IrType, cx: LowerCtx): boolean {
+  return asVal(recvType)?.kind === "externref" && cx.resolver?.stringIsExternref?.() !== true;
 }
 
 /** `recv.<propName>` through the dynamic reader, the name boxed as a string key. */
@@ -10675,10 +10680,17 @@ function lowerPropertyAssignment(expr: ts.BinaryExpression, cx: LowerCtx, receiv
   // (#7292) A script-var vec's expando (`a.index = 2`) is the same write on the
   // boxed vec, through legacy's sloppy `__extern_set`: the native strict store
   // keeps no expando for a vec, and `vecUseSupported` keeps the array private.
+  // (#7354 O3) A raw externref receiver (a Prepared function-local object) is boxed onto the carrier, as the read's.
   const moduleVec = recvType.kind === "vec" && isScriptVarVec(lhs.expression, cx);
-  const dynamicNamedWrite = (recvType.kind === "dynamic" && cx.functionCodeStrict !== undefined) || moduleVec;
+  const externReceiver = isRawExternrefReceiver(recvType, cx);
+  const dynamicNamedWrite =
+    ((recvType.kind === "dynamic" || externReceiver) && cx.functionCodeStrict !== undefined) || moduleVec;
   if (dynamicNamedWrite && ts.isPropertyAccessExpression(lhs) && ts.isIdentifier(lhs.name)) {
-    const target = moduleVec ? boxVecToDynamic(recv, cx) : recv;
+    const target = moduleVec
+      ? boxVecToDynamic(recv, cx)
+      : externReceiver
+        ? cx.builder.emitBox(recv, irDynamic())
+        : recv;
     const key = cx.builder.emitBox(cx.builder.emitStringConst(fieldName), irDynamic(JS_TAG_IDS.String));
     const result = lowerExpr(expr.right, cx, irDynamic());
     const value = boxDynamicStoreOperand(result, expr.right, cx);
@@ -16132,6 +16144,10 @@ function boxConcreteToDynamic(v: IrValueId, t: IrType, operand: ts.Expression, c
   if (family === "number" || (asVal(t) !== null && ts.isNumericLiteral(operand))) {
     return cx.builder.emitBox(v, irDynamic(JS_TAG_IDS.NumberF64));
   }
+  // (#7354 O2) An object literal the Prepared path builds as an ordinary object.
+  const literal = peelParensExpr(operand);
+  if (ts.isObjectLiteralExpression(literal) && cx.resolver?.preparedOrdinaryObjectLiteral?.(literal) === true)
+    return cx.builder.emitBox(v, irDynamic(JS_TAG_IDS.Object));
   return null;
 }
 

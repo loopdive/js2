@@ -442,7 +442,7 @@ function reserveKernelResources(tx: PhysicalModuleReservations, pack: NativeReal
     tx,
     key,
     pack.requirements.description.objectUses.map((use) => use.feature),
-    { layouts, storage, descriptors, kernel },
+    { layouts, storage, descriptors, kernel, errors: pack.substrate.errors },
   );
   return {
     equality,

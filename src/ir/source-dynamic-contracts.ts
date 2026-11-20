@@ -37,6 +37,8 @@ import {
   refuseUnadmittedThrows,
 } from "./program/dynamic-value-legalization.js";
 import { retargetNumberToString } from "./program/number-to-string-target.js";
+import { programObjects } from "./source-plain-objects.js";
+import type { ProgramObjects } from "./program/dynamic-value-kinds.js";
 import type { AllocSiteRegistry } from "./analysis/alloc-registry.js";
 import type { RuntimeManifestPolicy } from "../runtime/contracts/provider-policy.js";
 import type { ValType } from "../wasm/model/instructions.js";
@@ -219,6 +221,8 @@ export function programDynamicContracts(
   sourceFiles: readonly ts.SourceFile[],
   allocations: AllocSiteRegistry,
 ): ProgramDynamicContracts {
+  // (#7354 O2, O2b) What the source allows its objects: one answer every group asks.
+  const objects = programObjects(sourceFiles);
   const provenance = sourceDynamicProvenance(
     checker,
     sourceFiles,
@@ -260,6 +264,7 @@ export function programDynamicContracts(
         provenance.carries,
         sourceFiles,
         allocations,
+        objects,
       ),
   };
 }
@@ -365,10 +370,11 @@ function storedIntoCarrier(value: ts.Expression, carries: Carries): boolean {
  * (`issue-3518-native-string-number-source-admission`). A function without a
  * dynamic value is returned unchanged. The flow rule runs only where a dynamic
  * value was lowered: in a function without one, no value can leave the dynamic
- * domain. (#7354 O1) In a program that binds a catch, every function's throws
+ * domain. (#7354 O1, O4) In a program that binds a catch, every function's throws
  * are checked either way: that catch, in whichever group, reads the payload as
  * the dynamic value. Without one, no source code reads a payload, so a throw the
- * compiler synthesizes (a TDZ `ReferenceError`) keeps its own.
+ * compiler synthesizes (a TDZ `ReferenceError`, an O4 member-read TypeError)
+ * keeps its own.
  */
 function legalizeSourceDynamicValues(
   checker: ts.TypeChecker,
@@ -380,6 +386,7 @@ function legalizeSourceDynamicValues(
   carries: Carries,
   sourceFiles: readonly ts.SourceFile[],
   allocations: AllocSiteRegistry,
+  objects: ProgramObjects,
 ): readonly IrFunction[] {
   const roots = "kind" in declaration ? [declaration] : declaration;
   const contracted =
@@ -398,7 +405,9 @@ function legalizeSourceDynamicValues(
   if (!catches && !retargeted.some(legalizes)) return retargeted;
   let legalized: readonly IrFunction[];
   try {
-    legalized = retargeted.map((fn) => (legalizes(fn) ? legalizeDynamicValues(fn, allocations) : fn));
+    legalized = retargeted.map((fn) =>
+      legalizes(fn) ? legalizeDynamicValues(fn, allocations, { objects, catches }) : fn,
+    );
     if (catches) retargeted.forEach(refuseUnadmittedThrows);
   } catch (error) {
     if (!(error instanceof DynamicValueGap)) throw error;

@@ -192,12 +192,9 @@ describe("#7354 X — throw and catch with the Prepared dynamic value", () => {
       "function f(v) { try { v(); } catch (e) { return e; } }\nf(1);",
       "dynamic operation __ir_dyn_call_value has no Prepared intrinsic",
     ],
-    [
-      "a member read of a dynamic value (a TypeError on null)",
-      "function f(v) { try { return v.x; } catch (e) { return 0; } }\nf(null);",
-      // (after the merge with Str) the read itself now refuses first
-      "dynamic operation dyn.member_get has no Prepared intrinsic",
-    ],
+    // (#7354 O2b) "a member read of a dynamic value (a TypeError on null)" left this table: in a program that catches,
+    // the legalization's own TypeError aborts uncatchably instead of refusing, so no catch reads it
+    // (tests/issue-7354-o4-member-read.test.ts pins the trap).
   ])("refuses %s before it reaches a catch", async (_label, source, expected) => {
     const result = await compile(source, options());
     expect(
@@ -218,25 +215,28 @@ describe("#7354 X — throw and catch with the Prepared dynamic value", () => {
     );
   });
 
-  // Pre-existing on the base: an object throw passes the producer and fails in emission (an invariant, not a
-  // named refusal). Pinned so that the slice which makes it compile meets the catch-binding rule above.
-  // (#7354 O1) An object literal is an ordinary object now; until the carrier admits objects, throwing one refuses.
-  const OBJECT_THROW = "throw of a value outside the dynamic carrier's kinds";
-  it("does not compile an object throw", async () => {
-    const result = await compile("try { throw {}; } catch (e) { if (!e) throw 1; }", options());
-    expect(result.success).toBe(false);
-    expect(result.errors.map((error) => error.message).join("\n")).toContain(OBJECT_THROW);
-  });
-
-  // The same rule for a literal thrown from a callee whose declaration group has no catch of its own.
-  it("does not compile an object-literal throw tested with typeof", async () => {
-    const result = await compile(
+  // (#7354 O2) An ordinary object is a kind of the dynamic value, so a thrown object reaches the catch binding as
+  // one: `typeof` answers it and its plain ToString is "[object Object]" (tests/issue-7354-o2-object-values.test.ts).
+  it.each([
+    [
+      "an object throw",
+      "try { throw {}; } catch (e) { if (!e) throw 1; }",
+      "try { throw {}; } catch (e) { if (e) throw 1; }",
+    ],
+    [
+      "an object-literal throw from a callee, tested with typeof",
       'function f() { throw { a: 1 }; }\ntry { f(); } catch (e) { if (typeof e !== "object") throw 1; }',
-      options(),
-    );
-    expect(result.success).toBe(false);
-    expect(result.errors.map((error) => error.message).join("\n")).toContain(OBJECT_THROW);
-  });
+      'function f() { throw { a: 1 }; }\ntry { f(); } catch (e) { if (typeof e === "object") throw 1; }',
+    ],
+  ])(
+    "catches %s as the object kind",
+    async (_label, right, wrong) => {
+      expect([node(right), node(wrong)]).toEqual(["returned", "threw"]);
+      expect(await run(right)).toBe("returned");
+      expect(await run(wrong)).toBe("threw");
+    },
+    180_000,
+  );
 });
 
 describe("#7354 X — the legalization arm", () => {
@@ -299,6 +299,12 @@ describe("#7354 X — the legalization arm", () => {
     ["a boundary-boxed number", undefined, { kind: "intrinsic", id: "js.number.box", version: 1, args: [0] }],
     ["a boundary-boxed Boolean", undefined, { kind: "intrinsic", id: "js.boolean.box", version: 1, args: [0] }],
     ["the null constant", undefined, { kind: "const", value: { kind: "null", ty: externref } }],
+    // (#7354 O2) the object kind
+    [
+      "an ordinary object",
+      undefined,
+      { kind: "call", target: irIntrinsicFuncRef("js.object.create-default"), args: [] },
+    ],
   ])("admits %s in both rules", (_label, type, definition?: object) => {
     const { coerced, program } = operand(type, definition);
     expect(legalizeDynamicValues(program).blocks[0]!.instrs).toContainEqual(coerced);
@@ -310,12 +316,6 @@ describe("#7354 X — the legalization arm", () => {
       { kind: "callable", signature: { params: [], returnType: null } },
       undefined,
       "a value of type callable",
-    ],
-    [
-      "an ordinary object",
-      undefined,
-      { kind: "call", target: irIntrinsicFuncRef("js.object.create-default"), args: [] },
-      "an ordinary object",
     ],
     ["an externref of unknown kind", externref, undefined, "a value of type externref"],
   ])("refuses %s by name in both rules", (_label, type, definition, name) => {
