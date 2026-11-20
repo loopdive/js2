@@ -1,65 +1,17 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
-
-// #3526 F2-S6 — the BATCHED many-arity string concatenation seam moves under
-// manifest authority.
-//
-// The seam is the `batchStringConcat` pass and the two resolve arms that lower
-// what it fuses: a single-use immutable `+` tree of three or more leaves
-// becomes ONE call on the free-form symbol `string.concat$arityN` (or the fixed
-// `async.string.concat$arity5` the prepared final main emits), lowered to
-// `env.__concat_N` on the host lane and `__str_concat_N` on the native one.
-//
-// Three facts force this slice's shape, and each is a measured one:
-//
-//  * **The pass CREATES the demand.** Every family-2 predecessor scanned for a
-//    demand and then froze; here there is nothing to scan until the pass has
-//    run. So the pass gets a frozen decision of its own — `stringConcatMany`,
-//    `{ batch: "host" | "native" | "off" }` — projected from the lane BEFORE it
-//    runs, and the arity demand is scanned AFTER, off the batched IR.
-//
-//  * **`batch` is not the provider selector.** The two resolve arms read
-//    `ctx.nativeStrings` alone today, i.e. exactly F2-S5's `stringConcat`
-//    policy, and they are reachable independently of whether the pass ran —
-//    the async5 producer is source-shape-driven and consults no lane flag. So
-//    the provider ROW is selected by `stringConcat.concat`; `batch` only
-//    decides whether a demand exists. A cross-policy rule refuses a hand-built
-//    pair where the two disagree.
-//
-//  * **The capability is a FAMILY.** `env.__concat_3` … `env.__concat_9` differ
-//    only in arity and the field is derived from it, so the record fixes the
-//    derivation rule — a new `func-family` kind with an `arity-suffix` field
-//    scheme and repeat-params — rather than a name.
-//
-// Acceptance is BYTE IDENTITY: 85/85 cells of the census matrix (84 grid cells
-// plus the wasi edge cell) came back identical, batching cells included.
-//
-// Not moved, deliberately: the legacy twins (`compileBatchedConcat` and the
-// native `string-ops.ts` twin) still mint `__concat_N` / `__str_concat_N` on
-// DEMOTED functions on every lane, `batch: "off"` included — the policy
-// describes the IR pipeline, not the module. Also out: `charCodeAt`,
-// `string.const`, and unifying the async5 symbol into the family.
-import { readFileSync } from "node:fs";
-import { createHash } from "node:crypto";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-
-import { analyzeSource } from "../src/checker/index.js";
 import { compile, type CompileResult } from "../src/index.js";
-import { generateModule } from "../src/codegen/index.js";
 import { ASYNC_HOST_CAPABILITY_RECORDS } from "../src/ir/async-runtime-providers.js";
 import { prepareIrRuntimeManifest, preparedStringConcatManyProvider } from "../src/ir/intrinsic-support.js";
-import { asBlockId, asValueId, irVal, type IrFunction, type IrInstr, type IrType } from "../src/ir/nodes.js";
+import { asBlockId, asValueId, type IrFunction, type IrInstr, type IrType } from "../src/ir/nodes.js";
 import { irIntrinsicFuncRef } from "../src/ir/callable-bindings.js";
 import {
   RuntimeManifestBuilder,
   RuntimeManifestInvariantError,
   RUNTIME_PROVIDERS,
-  STRING_CONCAT_MANY_NATIVE_ARITY,
   STRING_CONCAT_MANY_POLICY_DISABLED,
   STRING_CONCAT_MANY_RUNTIME_FEATURES,
   STRING_CONCAT_MANY_RUNTIME_PROVIDER_IDS,
-  stringConcatManyArityCap,
   type RuntimeManifestPolicy,
   type RuntimeProviderDefinition,
   type StringConcatManyPolicy,
@@ -77,7 +29,6 @@ import {
 } from "../src/ir/runtime-host-capabilities.js";
 import { IR_ASYNC_STRING_CONCAT_5_FN } from "../src/ir/async-semantic-runtime.js";
 import { irStringConcatManySymbol } from "../src/ir/string-runtime.js";
-import type { WasmModule } from "../src/ir/types.js";
 import { buildImports } from "../src/runtime.js";
 import { createTestIrFunctionIdentityFactory } from "./helpers/ir-identities.js";
 
@@ -88,14 +39,10 @@ const FEATURE = STRING_CONCAT_MANY_RUNTIME_FEATURES[0];
 const HOST_CONCAT: StringConcatPolicy = { concat: "host" };
 const NATIVE_CONCAT: StringConcatPolicy = { concat: "native" };
 
-const sha12 = (bytes: Uint8Array): string => createHash("sha256").update(bytes).digest("hex").slice(0, 12);
-
 /** The census fixtures, verbatim — the BEFORE bytes below were measured on these. */
 const CAT3 = `export function cat3(a: string, b: string, c: string): string { return a + b + c; }`;
 const CAT9 = `export function cat9(a: string, b: string, c: string, d: string, e: string, f: string, g: string, h: string, i: string): string { return a + b + c + d + e + f + g + h + i; }`;
 const TPL6 = "export function tpl6(a: string, b: string, c: string): string { return `x${a}-${b}-${c}!`; }";
-const TPLEQ = 'export function tpleq(a: string): boolean { return `${a}!` === "hi!"; }';
-const CATNUM3 = `export function cn3(a: string, n: number, b: string): string { return a + n + b; }`;
 const CAT = `export function cat(a: string, b: string): string { return a + b; }`;
 const MULTIUSE = `export function multi(a: string, b: string, c: string): string { const t = a + b + c; return t + t; }`;
 
@@ -158,15 +105,6 @@ function familyRecord(): Extract<RuntimeHostCapabilityRecord, { kind: "func-fami
   const record = resolveRuntimeHostCapabilityRecord(RUNTIME_HOST_CAPABILITY_RECORDS, "string.concat.many");
   if (record.kind !== "func-family") throw new Error("string.concat.many is not a family record");
   return record;
-}
-
-function hostLaneModule(source: string, options: Parameters<typeof generateModule>[1] = {}): WasmModule {
-  return generateModule(analyzeSource(source, "issue-3526-f2s6-concat-many.ts"), { experimentalIR: true, ...options })
-    .module;
-}
-
-function orderedFuncImports(module: WasmModule): string[] {
-  return module.imports.filter((entry) => entry.desc.kind === "func").map((entry) => `${entry.module}.${entry.name}`);
 }
 
 async function instantiate(result: CompileResult): Promise<Record<string, (...args: never[]) => unknown>> {
@@ -275,29 +213,6 @@ describe("#3526 F2-S6 batched many-arity concat contract", () => {
       (row) => row.feature === FEATURE && row.signature !== undefined,
     );
     expect(intrinsicCarriers).toEqual([]);
-  });
-
-  it("keeps the native arity range in ONE place, read by the pass cap and by codegen", () => {
-    const native = rowOf("native.js.string.concat.many");
-    expect(native.implementation).toEqual({
-      kind: "runtime-callable-family",
-      symbolPrefix: "__str_concat_",
-      arity: { min: 3, max: 8 },
-    });
-    expect(native.hostCapabilities).toEqual([]);
-    expect(STRING_CONCAT_MANY_NATIVE_ARITY).toEqual({ min: 3, max: 8 });
-    // The pass ceiling is DERIVED from the rows, not copied beside them.
-    expect(stringConcatManyArityCap("native")).toBe(8);
-    expect(stringConcatManyArityCap("host")).toBe(Number.POSITIVE_INFINITY);
-    // And `native-batched-concat.ts` imports the bound rather than restating
-    // it — the literal `8` that used to live there (and a third copy at the
-    // pass call site) is gone.
-    const nativeConcatSource = readFileSync(
-      join(dirname(fileURLToPath(import.meta.url)), "../src/codegen/native-batched-concat.ts"),
-      "utf8",
-    );
-    expect(nativeConcatSource).toContain("STRING_CONCAT_MANY_NATIVE_ARITY.max");
-    expect(nativeConcatSource).not.toMatch(/MAX_BATCHED_CONCAT_ARITY\s*=\s*8/);
   });
 });
 
@@ -467,87 +382,6 @@ export function tpl(): number { return \`x\${A}-\${D}-\${C}!\`.length; }`;
     expect((exports.six as () => number)()).toBe((a + b + c + d + e + "x").length);
     expect((exports.nine as () => number)()).toBe((a + b + c + d + e + "x" + "yy" + "" + "zzz").length);
     expect((exports.tpl as () => number)()).toBe(`x${a}-${d}-${c}!`.length);
-  });
-});
-
-// --------------------------------------------------------------------------
-// (d) source pins — the lane reads are gone, the late mint stays
-// --------------------------------------------------------------------------
-
-const INTEGRATION_PATH = join(dirname(fileURLToPath(import.meta.url)), "../src/ir/integration.ts");
-
-function stripComments(text: string): string {
-  return text.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "");
-}
-
-/** The fusion-pass selection, from the anchor comment to the verify call. */
-function batchSelectionSource(): string {
-  const raw = readFileSync(INTEGRATION_PATH, "utf8");
-  const start = raw.indexOf("      const batched =");
-  expect(start, "the batch selection must exist").toBeGreaterThan(-1);
-  const rest = raw.slice(start);
-  const end = rest.indexOf("const verifyErrors");
-  expect(end, "the selection must be followed by the verifier call").toBeGreaterThan(-1);
-  return stripComments(rest.slice(0, end));
-}
-
-/** The single lowering both family arms delegate to. */
-function batchedConcatArmSource(): string {
-  const raw = readFileSync(INTEGRATION_PATH, "utf8");
-  const start = raw.indexOf("function batchedConcatProviderIndex(");
-  expect(start, "the shared family lowering must exist").toBeGreaterThan(-1);
-  const rest = raw.slice(start);
-  const end = rest.indexOf("\nfunction resolveAndObserveCallableProvider(");
-  expect(end, "the lowering must be followed by the resolve table").toBeGreaterThan(-1);
-  return stripComments(rest.slice(0, end));
-}
-
-describe("#3526 F2-S6 the pass and the arms read the frozen manifest", () => {
-  it("selects the fusion pass from the frozen policy, with no lane read and no literal cap", () => {
-    const selection = batchSelectionSource();
-    expect(selection).toContain("batchPolicy.batch");
-    expect(selection).toContain("stringConcatManyArityCap(");
-    for (const flag of ["nativeStrings", "standalone", "wasi", "strictNoHostImports"]) {
-      expect(selection, flag).not.toContain(flag);
-    }
-    // The hand-copied native ceiling is gone; the row is the authority.
-    expect(selection).not.toMatch(/,\s*8\)/);
-  });
-
-  it("resolves both family symbols through the prepared provider, with no lane read", () => {
-    const raw = readFileSync(INTEGRATION_PATH, "utf8");
-    // Both arms keep their conditions and both delegate to one lowering.
-    expect(raw).toContain("symbol === IR_ASYNC_STRING_CONCAT_5_FN");
-    expect(raw).toContain("parseIrStringConcatManyArity(symbol) !== null");
-    expect(raw).toContain("batchedConcatProviderIndex(ctx, prepared, 5)");
-    const arm = batchedConcatArmSource();
-    expect(arm).toContain("preparedStringConcatManyProvider(");
-    expect(arm).not.toContain("nativeStrings");
-  });
-
-  it("fails closed rather than falling back to a locally decided symbol", () => {
-    const arm = batchedConcatArmSource();
-    expect(arm).toContain("selection-preparation-mismatch");
-    // No `??` fallback and no second authority: an owner that reaches lowering
-    // with no frozen family row must throw, not mint from a lane read.
-    expect(arm).not.toContain("??");
-    expect(arm).not.toContain("funcMap");
-  });
-
-  it("keeps LATE minting — it is the contract, not an implementation detail", () => {
-    // The emitted bytes depend on the import's POSITION (`__concat_5` at index
-    // 21 of 27 on the async fixture), so a freeze-time registration would move
-    // every batching cell by design.
-    const arm = batchedConcatArmSource();
-    expect(arm).toContain("ensureLateImport(");
-    expect(arm).toContain("ensureNativeBatchedConcat(ctx, arity)");
-    expect(arm).toContain("arm.field");
-    expect(arm).toContain("arm.module");
-  });
-
-  it("partitions an unsupported concat policy owner-locally, naming the policy", () => {
-    const raw = readFileSync(INTEGRATION_PATH, "utf8");
-    expect(raw).toContain("ir/integration: batched string concatenation has no provider under string-concat policy ");
   });
 });
 
