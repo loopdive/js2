@@ -1457,9 +1457,9 @@ sweep.
   Wasm `RuntimeError` ("requested new array is too large"), node throws `RangeError`. **No issue id yet** (only the
   five reserved ids were to be used).
 
-**Still red, needs the owner** (5): `bench-array-prepared-cutover` (1) and `bench-string-prepared-cutover` (2), whose
-runtime values are not reached; `native-realm-requirements` (1); and `string-repeat-ir` "registers the exact host ABI
-and refuses signature tampering" (1). Whether the host registrar should still work on a default context is not known.
+**Still red, needs the owner** (4): `bench-array-prepared-cutover` (1) and `bench-string-prepared-cutover` (2), whose
+runtime values are not reached; `native-realm-requirements` (1). (The `string-repeat-ir` host-ABI test was resolved in
+review round 1.)
 
 **C. Timeouts.**
 
@@ -1481,7 +1481,7 @@ and refuses signature tampering" (1). Whether the host registrar should still wo
 | --- | --- | --- | ---: | ---: |
 | 1 | `05ef799232` | 37 files whose tests are all pins or controls of the pin machinery (21 of them failed at load) | 12,234 test lines | |
 | 1 | `05ef799232` | 17 helpers and fixtures reachable only from them | 14,271 | 784,860 |
-| 2 | `e51637f49b` | red pin tests cut out of 33 mixed files, which now pass in full | 4,505 test lines (−4,505 / +11) | |
+| 2 | `e51637f49b` | red pin tests cut out of 33 mixed files (their tests pass; six files still failed at file level until review round 1) | 4,505 test lines (−4,505 / +11) | |
 | 2 | `e51637f49b` | 5 helpers and receipts left unreferenced | 31,588 | 1,219,513 |
 
 How the cuts were chosen:
@@ -1499,8 +1499,8 @@ How the cuts were chosen:
 
 Red tests left in the 90 files (all other red tests are gone):
 
-- 14 R bug (A above), plus the new repeat row;
-- 5 still red, needing the owner (B);
+- 14 R bug (A above); the repeat defect #7442 is pinned green in its modified file;
+- 4 still red, needing the owner (B);
 - 4 T (`program-abi-seam` 1, `native-mixed-object-access` 3);
 - 4 F (D).
 
@@ -1532,6 +1532,77 @@ Red tests left in the 90 files (all other red tests are gone):
 Retiring the green pin families of section 3 file by file is the next step. Not every match is a pin: dogfood,
 `issue-6450/named-crypto` and the linear-link fixtures hash their own outputs.
 
+
+### Review round 1 (2026-11-20): NOT MET, fixed
+
+| finding | what changed |
+| --- | --- |
+| 6 mixed files failed at file level: 12 `describe` blocks left with no test | Blocks deleted (`dd9b22c7ca`). An AST scan of all modified test files finds no empty `describe`. |
+| `closure-state-preservation-port` went red: a hash pin read two deleted test files | That test cut, 70/70 (`9fa8cc15fc`). A grep of `tests/`, `scripts/` and `src/` for all 59 deleted files' names finds no other reader. Seven helpers and receipts left unreferenced were deleted with it (771 lines, 91,862 bytes): `closure-source-composition`, `builtin-metadata-main-port` (each .ts + fixture), `native-closure-donors.json`, two native-value forward receipts. |
+| `string-repeat-ir` modified and left red (2 tests) | File kept modified and made green (`09a9a2b663`). The host-ABI test now asserts the two exact refusals: `nativeStrings: false` throws the #6979 error, and the host provider refuses on the native-string context. The repeat defect is filed as **#7442** (in-module `"a".repeat(2^53-1).length` is 2147483647 on both targets; through the adapter it traps). Its test pins the current trap under a comment naming the issue, the repo's convention for an open defect (cf. `issue-3912-fast-number-stringify`); no `skip`. |
+| 10 files lost their license header | The cut tool removed the first import's leading comment. Base line 1 restored in all ten (`10070a241f`; two of them in `dd9b22c7ca`). |
+| #7440 said the inventory has no entry | Corrected (`00e29ad59b`): the file is listed as `mixed-needs-split`. That entry is recorded debt; the stricter test passed until #5334, so the red test stays as a real regression. |
+| #7438 count | 31 functions (`e9aa9dbfb5`). |
+| #7437 throwing-getter row | Re-measured (`c776abdebd`): through the exports adapter the getter is read and 99 propagates; on the raw export nothing throws. The other three rows are NaN either way. |
+| #7441 rows | Added seven spot-check rows (`f86f4a232c`), identical on the JS and the standalone target; dropped the stale "not filed" note here. |
+| `public-retirement-gate` dropped the phase assertion | Restored (`6c7ef18b03`): the accepted program is observed as `prepared`, `accepted`, `emission-started`, `emitted`, and `phaseProblems` is empty. |
+
+Correction: the pass 2 sentence "33 mixed files, which now pass in full" was false at `e51637f49b`. Their tests
+passed, but six of the files failed at file level ("No test found in suite"). The criterion is now the file's exit
+status.
+
+Every modified test file, one vitest run each (`VITEST_MAX_FORKS=1`, `VITEST_FORK_MAX_OLD_SPACE_SIZE=3072`), at
+`f86f4a232c`. There are 42 files; the review counted 41 before `closure-state-preservation-port` was edited:
+
+| file (`issue-3518-…`) | tests | failed | exit |
+| --- | ---: | ---: | ---: |
+| `async-frame-body-source-preservation` | 22 | 0 | 0 |
+| `capability-schema-boundary` | 48 | 0 | 0 |
+| `class-to-primitive-presence` | 22 | 0 | 0 |
+| `closure-state-preservation-port` | 70 | 0 | 0 |
+| `core-kind-neutrality` | 51 | 0 | 0 |
+| `core-nodes-seam` | 27 | 0 | 0 |
+| `core-type-seam` | 16 | 0 | 0 |
+| `delay-combinator-layout-ownership` | 14 | 0 | 0 |
+| `host-utf8-literal-keys` | 33 | 0 | 0 |
+| `lowering-cycle` | 24 | 0 | 0 |
+| `native-accessor-call-bodies` | 39 | 0 | 0 |
+| `native-delay-combinator-body-ownership` | 25 | 0 | 0 |
+| `native-delay-combinator-source-preservation` | 17 | 0 | 0 |
+| `native-family-source-contract` | 45 | 0 | 0 |
+| `native-number-format-ownership` | 11 | 0 | 0 |
+| `native-object-get-bodies` | 35 | 0 | 0 |
+| `native-object-key-foundation` | 27 | 0 | 0 |
+| `native-object-layouts` | 50 | 0 | 0 |
+| `native-object-storage-resources` | 37 | 0 | 0 |
+| `native-realm-wrapper-storage` | 24 | 0 | 0 |
+| `native-string-number-resources` | 88 | 0 | 0 |
+| `native-value-resources` | 57 | 0 | 0 |
+| `native-vector-resources` | 31 | 0 | 0 |
+| `number-format-source-support` | 9 | 0 | 0 |
+| `open-extension-boundaries` | 65 | 0 | 0 |
+| `ordinary-getter-source` | 8 | 0 | 0 |
+| `ordinary-object-callable-contracts` | 23 | 0 | 0 |
+| `ordinary-object-runtime-providers` | 117 | 0 | 0 |
+| `promise-resolution-preservation` | 50 | 0 | 0 |
+| `promise-settlement-body-ownership` | 83 | 0 | 0 |
+| `prototype-seeder-bodies` | 51 | 0 | 0 |
+| `provider-verification-ownership` | 33 | 0 | 0 |
+| `public-retirement-gate` | 16 | 0 | 0 |
+| `reference-error-runtime-producers` | 28 | 0 | 0 |
+| `runtime-preparation-relocation` | 118 | 0 | 0 |
+| `semantic-provider-source-acceptance` | 86 | 0 | 0 |
+| `startup-contract` | 24 | 0 | 0 |
+| `string-repeat-ir` | 13 | 0 | 0 |
+| `symbolic-support-ref` | 14 | 0 | 0 |
+| `to-primitive-wrapper-forward` | 73 | 0 | 0 |
+| `typed-async-preparation` | 22 | 0 | 0 |
+| `vector-grow-store-donor` | 60 | 0 | 0 |
+
+
+Gates at `f86f4a232c`, each run bare, all exit 0: typecheck, dead-exports, import-cycles, orphaned-scripts
+(49/305), LOC budget, function budget.
+
 ### Gates and verification
 
 - Gates, each run bare, exit 0 at `e51637f49b`'s content:
@@ -1542,8 +1613,7 @@ Retiring the green pin families of section 3 file by file is the next step. Not 
   - `node scripts/check-compiler-boundaries.mjs --mode inventory --base e41fd9cc1d`;
   - LOC and function budgets (commit hook).
 - No file in `scripts/`, workflows, `package.json` or `docs/` named a deleted file.
-- Every modified test file was run alone, one vitest run each, and passes in full, except `string-repeat-ir`: it is
-  red by design (the repeat row and the host-ABI row above).
+- Every modified test file was run alone: see the per-file table in review round 1 (all 42 exit 0).
 - `scripts/hooks/changed-root-tests.sh` was not run as one command: its 40 files take over the 9-minute limit on this
   box.
 
