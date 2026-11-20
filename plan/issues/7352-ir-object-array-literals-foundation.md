@@ -439,3 +439,56 @@ Code quality:
 6. The vec home is one module for all element kinds.
 7. A fresh-context adversarial review per slice records its verdict in the
    PR body.
+
+## Suspended Work
+
+Suspended 2026-11-20 (budget window end, lead's wind-down). Lane S13, arrays half of this issue on the Prepared
+path. Nothing is on a PR; no hold to release.
+
+**Pushed branches**
+
+| branch | head | content | state |
+| --- | --- | --- | --- |
+| `claude/7354-arrays` | `a477e3c920` | A1, A2 runtime (on S3's ROWS model), A2 dynamic (programs 1-3; script-var kind fact), A3 `Array.isArray`, plan + census docs | integration line; tests and gates green at this head |
+| `claude/7354-arrays-strprops` | `1923c40270` | String own `length` / index reads on a dynamic receiver (`js.value.char_at`); base `5c00016ed2` | done, NOT merged; needs porting onto S3's O3 chain (below) |
+| `claude/7354-shared-exn` | `048fdd1df7` | one exception tag (`__exn`) for realm-kernel and source throws; narrowed "reads a catch binding" refusal; on o `0c7109594b` + toprim `9c052e9f40` | done; S3 asked for a re-merge onto o `e587829733` before S3 merges it into `claude/7354-o` |
+
+**Interrupted (weekly model limit, 2026-11-19 ~20:00Z), local only, NOT pushed**
+
+- `claude/7354-arrays-o3merge`, worktree `.claude/worktrees/agent-a201802d7b14a8a63`: committed `001449b1ea`
+  (merge of o `14345199fe`, O3) and `32b9f3e428` (merge of arrays `a477e3c920`); a merge of o `e587829733`
+  (toprim) is in progress with conflicts in `native-source-objects.ts` and `dynamic-member-access.ts`. Not pushed:
+  re-doing it from the pushed branches is safer than resuming the half-resolved tree.
+- `claude/7354-shared-exn` re-merge onto o `e587829733`, worktree `.claude/worktrees/agent-a54b6d70553e44c80`:
+  merge in progress, uncommitted. The pushed head `048fdd1df7` is intact.
+
+**Next steps, in order**
+
+1. Merge S3's `claude/7354-o` (`e587829733` or later: O3 member writes in one `MEMBER_ACCESS_ARM` chain in
+   `dynamic-member-access.ts`, toprim's OrdinaryToPrimitive, `typeError` in `dynamic-realm-calls.ts`) into
+   `claude/7354-arrays`. Fold A2's write arms (`dynamic-member-write.ts`: number key → `set-index`, `length` →
+   `set-length`) and A2's key classification into S3's single chain; every other object key goes to S3's
+   `js.object.set`, so A2's "needs OrdinarySet" refusal disappears. Keep `create-array` in `OBJECT_PRODUCERS`.
+2. Merge `claude/7354-arrays-strprops` and port its `string-own` arm into `MEMBER_ACCESS_ARM` (read →
+   `stringOwnRead`, falling back to the primitive arm; write unchanged).
+3. Re-merge `claude/7354-shared-exn` onto o `e587829733`, push, hand the head to S3 (S3 merges it into o).
+4. Array ToPrimitive (lead-approved, highest yield: 97 census files plus the real prelude's `sameValue`):
+   `%Array.prototype%.join` / `.toString` as realm builtin function objects, and toprim's "present and callable"
+   arm becomes one call through the kernel's builtin-call path (agreed with S3). This unblocks compareArray over
+   arrays and A2 program 4.
+5. Re-run S9's stand-in census on `.tmp/ir-census/array-files.txt` (scripts kept untracked in
+   `.tmp/ir-census-scripts`), then open the PR (base `main`, after the realm / O PRs merge, `hold` label,
+   adversarial review). The PR body lists the 3 object-only realm programs whose bytes change through the
+   script-var kind fact (O2 `"" + o`, O2 `o + "!"`, `var o = {a:1}; o.a`) with node's answers.
+
+**Open findings**
+
+- Non-index number keys (`a[1.5]`, `a[-1]`, `a[NaN]`, `a[2**32-1]`): a constant key refuses by name; a run-time
+  one aborts uncatchably. Follow-up "expose the one number formatter (`native-number-format.ts`) to the realm"
+  has no id yet.
+- A caught realm error cannot be read (`typeof e`, `e instanceof TypeError`) until the realm's error object is a
+  carrier kind (S3's owner fix); such programs refuse by name.
+- 252 census files stop at `Object.defineProperty` on a script var's dynamic home (lane S12, numbers sent).
+- Typed `s[1]` / `s.charAt(1)` inside a function crashes from-ast ("charAt delegation produced no value"),
+  pre-existing, unowned (in the lead's hand-over log).
+- No adversarial review has been run on any A slice yet.
