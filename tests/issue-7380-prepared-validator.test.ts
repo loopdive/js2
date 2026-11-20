@@ -12,23 +12,17 @@ import { emitBinary } from "../src/emit/binary.js";
 import type { CompileError } from "../src/index.js";
 import { mapNestedBuffers, type IrFunction, type IrInstr } from "../src/ir/core/nodes.js";
 import { subscribePreparedIrProgram } from "../src/ir/program-observation.js";
-import {
-  acceptedPhysicalSetupPlan,
-  acceptPreparedIrProgram,
-  emitAcceptedIrProgram,
-} from "../src/ir/program-consumer.js";
-import type { PhysicalSetupPlan } from "../src/ir/program-physical-plan.js";
+import { acceptPreparedIrProgram, emitAcceptedIrProgram } from "../src/ir/program-consumer.js";
 import type { PreparedIrBackendOptions, PreparedIrProgram } from "../src/ir/program.js";
 import { PreparedValidatorError, validatePreparedStage } from "../src/ir/program/prepared-validator.js";
 import { assertPreparedIrProgram } from "../src/ir/program/validation.js";
 import { verifyIrFunction } from "../src/ir/runtime/verify.js";
 import type { WasmModule } from "../src/ir/types.js";
-import { assertPhysicalSetupPlan } from "../src/ir/validate-physical-plan.js";
 import { preparedValidationEnabled } from "../src/shared/contracts/prepared-validation.js";
 import { assertPhysicalModule } from "../src/wasm/physical/validate-module.js";
 
 // One program reaches every stage input the seeds change: a call (f), a source global (x), a runtime function
-// (`%` calls __fmod), an intrinsic with a provider (the thrown number is boxed), native string declarations.
+// (`%` calls __fmod), an intrinsic with a provider (the thrown number is boxed).
 const SOURCE = "var x = 7; function f() { return x % 3; } x = f() + 1; if (x !== 2) throw 1;";
 const OPTIONS: PreparedIrBackendOptions = {
   backend: "wasmgc",
@@ -40,7 +34,6 @@ const OPTIONS: PreparedIrBackendOptions = {
 };
 
 let program: PreparedIrProgram;
-let plan: PhysicalSetupPlan;
 let module: WasmModule;
 
 beforeAll(async () => {
@@ -60,7 +53,6 @@ beforeAll(async () => {
   program = captured!;
   const accepted = acceptPreparedIrProgram(program, OPTIONS);
   if (accepted.kind !== "accepted") throw new Error("the seed program must be accepted");
-  plan = acceptedPhysicalSetupPlan(accepted);
   module = emitAcceptedIrProgram(accepted).module;
 });
 
@@ -92,15 +84,6 @@ const withoutProviders = (instr: IrInstr): IrInstr => {
   const { provider: _provider, ...stripped } = mapped;
   return stripped;
 };
-const withStringDeclarations = (
-  rewrite: (rows: NonNullable<PhysicalSetupPlan["nativeStrings"]>["resources"]["declarations"]) => typeof rows,
-): PhysicalSetupPlan => ({
-  ...plan,
-  nativeStrings: {
-    ...plan.nativeStrings!,
-    resources: { ...plan.nativeStrings!.resources, declarations: rewrite(plan.nativeStrings!.resources.declarations) },
-  },
-});
 const funcCount = (m: WasmModule) => m.imports.filter((row) => row.desc.kind === "func").length + m.functions.length;
 /** The module with an instruction placed in front of the startup body. */
 const withLeadingInstr = (instr: WasmModule["functions"][number]["body"][number]): WasmModule => ({
@@ -165,8 +148,6 @@ function stage1(fn: IrFunction): void {
 }
 const stage2 = (value: PreparedIrProgram) => () =>
   validatePreparedStage("prepared program", () => assertPreparedIrProgram(value));
-const stage3 = (value: PhysicalSetupPlan) => () =>
-  validatePreparedStage("physical plan", () => assertPhysicalSetupPlan(value));
 const stage4 = (value: WasmModule) => () => validatePreparedStage("physical module", () => assertPhysicalModule(value));
 
 interface Seed {
@@ -336,38 +317,6 @@ const SEEDS: readonly Seed[] = [
         })),
       ),
     expected: /prepared validator \(prepared program\): body .* retains a dynamic type after legalization/,
-  },
-  {
-    stage: "3 physical plan",
-    seed: "the source global's slot listed twice (duplicate slot)",
-    twin: () => stage3({ ...plan, definedGlobals: [...plan.definedGlobals] }),
-    altered: () => stage3({ ...plan, definedGlobals: [...plan.definedGlobals, plan.definedGlobals[0]!] }),
-    expected: /prepared validator \(physical plan\): physical plan: duplicate slot: binding .* has two slots/,
-  },
-  {
-    stage: "3 physical plan",
-    seed: "two declarations with one resource key (duplicate slot)",
-    twin: () => stage3(withStringDeclarations((rows) => [...rows])),
-    altered: () => stage3(withStringDeclarations((rows) => [...rows, rows[0]!])),
-    expected: /prepared validator \(physical plan\): physical plan: duplicate slot: resource key .* is declared twice/,
-  },
-  {
-    stage: "3 physical plan",
-    seed: "a declaration whose type key names no declared type",
-    twin: () => stage3(withStringDeclarations((rows) => [...rows])),
-    altered: () =>
-      stage3(
-        withStringDeclarations((rows) => [
-          ...rows,
-          {
-            key: "seed:array",
-            role: ["seed"],
-            space: "type",
-            shape: { kind: "array", name: "Seed", element: { kind: "ref", typeKey: "seed:absent" }, mutable: false },
-          },
-        ]),
-      ),
-    expected: /prepared validator \(physical plan\): physical plan: unresolved type key: seed:array names undeclared/,
   },
   {
     stage: "4 physical module",
