@@ -39,9 +39,9 @@ describe("ordinary object symbolic provider obligations", () => {
     expect(irOrdinaryObjectCallableDeclaration(irRuntimeFuncRef(feature))).toBeUndefined();
     expect(Object.isFrozen(ORDINARY_OBJECT_RUNTIME_PROVIDERS.find((p) => p.feature === feature))).toBe(true);
   });
-  it("pins all eleven identifiers without duplicates (#7354 O4 create-type-error, O3 set, O2b uncatchable)", () => {
+  it("pins all ten identifiers without duplicates (#7354 O4 create-type-error, O3 set; M1 dropped O2b uncatchable)", () => {
     expect(ORDINARY_OBJECT_RUNTIME_PROVIDER_IDS).toEqual(ORDINARY_OBJECT_RUNTIME_FEATURES.map((f) => `native.${f}`));
-    expect(new Set(ORDINARY_OBJECT_RUNTIME_PROVIDER_IDS).size).toBe(11);
+    expect(new Set(ORDINARY_OBJECT_RUNTIME_PROVIDER_IDS).size).toBe(10);
   });
   for (const feature of ORDINARY_OBJECT_RUNTIME_FEATURES) {
     it.each([
