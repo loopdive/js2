@@ -2,9 +2,9 @@
 import * as legacy from "../index.js";
 import type { CompileError, CompileOptions, CompileResult } from "../index.js";
 import { analyzeMultiSource } from "../checker/index.js";
-import { multiFileScriptKind, normalizeMultiFileName } from "../checker/multi-file-paths.js";
-import { deadBindingElisionApplies, elideDeadTopLevelBindings } from "../deadcode-elide.js";
-import { ts } from "../ts-api.js";
+import { normalizeMultiFileName } from "../checker/multi-file-paths.js";
+import type { ts } from "../ts-api.js";
+import { elideDeadBindings } from "./prepared-dead-bindings.js";
 import { runPreparedIrPipelinePresentation, preparedFrontendRejectionObservation } from "../compiler.js";
 import type { PreparedIrPipelinePresentationResult } from "../compiler/ir-program-presentation.js";
 import type { JavaScriptAdapterManifestV1 } from "../adapter-manifest.js";
@@ -347,25 +347,6 @@ function failed(
   results.set(result, { rows: observeResult(result), outcome: diagnostic, frontendFailure });
   return result;
 }
-/**
- * #7354 F0 — the ordinary compile's #3418 dead-binding elision, so a test262 runtime-shim binding a test never
- * names (`print`, `$262`) does not have to lower. Only a one-source graph: a Script `var` of one source can be
- * read by another, which this per-text pass cannot see. Blanking is same-length, so every position, origin and
- * diagnostic is the supplied source's; the frontend-failure observation still reports the supplied text, which
- * the runner matches against the job's source.
- */
-function elideDeadBindings(
-  files: Record<string, string>,
-  profile: ReturnType<typeof resolveCompileTargetProfile>,
-  options: Test262CompileOptions,
-): Record<string, string> {
-  const names = Object.keys(files);
-  if (names.length !== 1 || !deadBindingElisionApplies(profile, options.standaloneScriptVarBindings)) return files;
-  const file = names[0]!;
-  const kind = multiFileScriptKind(normalizeMultiFileName(file));
-  const elided = elideDeadTopLevelBindings(files[file]!, kind === ts.ScriptKind.JS ? kind : ts.ScriptKind.TS);
-  return elided.elided.length === 0 ? files : { [file]: elided.source };
-}
 function present(
   files: Record<string, string>,
   entryFile: string,
@@ -413,12 +394,16 @@ function present(
         },
       ],
     );
-  const analyzedFiles = elideDeadBindings(exactFiles, profile, options);
-  const ast = analyzeMultiSource(analyzedFiles, entryFile, undefined, {
-    allowJs: options.allowJs,
-    skipSemanticDiagnostics: options.skipSemanticDiagnostics,
-    ...(options.platform ? { platform: options.platform } : {}),
-  });
+  const analyze = (graph: Record<string, string>) =>
+    analyzeMultiSource(graph, entryFile, undefined, {
+      allowJs: options.allowJs,
+      skipSemanticDiagnostics: options.skipSemanticDiagnostics,
+      ...(options.platform ? { platform: options.platform } : {}),
+    });
+  // #7354 F0 decides on the unelided graph's diagnostics; a graph it changes is analyzed again.
+  const suppliedAst = analyze(exactFiles);
+  const analyzedFiles = elideDeadBindings(exactFiles, suppliedAst, profile, options);
+  const ast = analyzedFiles === exactFiles ? suppliedAst : analyze(analyzedFiles);
   if (!completeAnalyzedGraph(analyzedFiles, entryFile, ast))
     return failed(
       { kind: "adapter-unsupported", detail: "frontend did not retain the complete supplied name/text graph" },

@@ -149,11 +149,13 @@ const identityResult = (source: string): DeadBindingElisionResult => ({
  * Elide provably-dead top-level pure bindings (see module doc). Same-length
  * whitespace blanking ⇒ identity PositionMap. `scriptKind` must match the
  * grammar the main pipeline will parse with (JS vs TS), so statement extents
- * agree between this analysis parse and the real parse.
+ * agree between this analysis parse and the real parse. A statement holding one of `pinnedOffsets` (positions
+ * of the unelided program's frontend diagnostics, when the caller has them) is never dropped.
  */
 export function elideDeadTopLevelBindings(
   source: string,
   scriptKind: ts.ScriptKind = ts.ScriptKind.TS,
+  pinnedOffsets: readonly number[] = [],
 ): DeadBindingElisionResult {
   // Cheap pre-check before paying for a parse: no var/let/const, nothing to do.
   if (!/\b(?:var|let|const)\b/.test(source)) return identityResult(source);
@@ -200,6 +202,7 @@ export function elideDeadTopLevelBindings(
         // the checker's syntactic pass, not parseDiagnostics, so the
         // parse-error bail above does NOT cover them.
         EARLY_ERROR_BINDING_NAMES.has(decl.name.text) ||
+        RESTRICTED_GLOBAL_NAMES.has(decl.name.text) ||
         (decl.initializer !== undefined && !isPureInitializer(decl.initializer))
       ) {
         ok = false;
@@ -225,7 +228,10 @@ export function elideDeadTopLevelBindings(
     // bounded to candidate statements, i.e. exactly the code about to be
     // deleted, and a false positive costs one un-elided dead binding.
     if (subtreeHasEarlyError(sf, stmt)) continue;
-    candidates.push({ stmt, names, start: stmt.getStart(sf), end: stmt.end, dropped: true });
+    const start = stmt.getStart(sf);
+    // A frontend diagnostic of the unelided program inside the statement is evidence the caller must not lose.
+    if (pinnedOffsets.some((offset) => offset >= start && offset < stmt.end)) continue;
+    candidates.push({ stmt, names, start, end: stmt.end, dropped: true });
   }
   if (candidates.length === 0) return identityResult(source);
 
@@ -432,6 +438,13 @@ const EARLY_ERROR_BINDING_NAMES = new Set([
   "public",
 ]);
 
+/**
+ * The global object's non-configurable properties (§19.1). Declaring one fails at declaration time even when
+ * the binding is never read: `let undefined` is a SyntaxError in GlobalDeclarationInstantiation (§16.1.7),
+ * `"use strict"; var NaN = 1` a TypeError (the property is not writable).
+ */
+const RESTRICTED_GLOBAL_NAMES = new Set(["undefined", "NaN", "Infinity"]);
+
 /** Whitelisted global identifier reads that can never throw or observe. */
 const PURE_IDENTIFIER_READS = new Set(["undefined", "globalThis", "NaN", "Infinity"]);
 
@@ -465,19 +478,8 @@ function isPureInitializer(expr: ts.Expression): boolean {
       return isPureInitializer((expr as ts.AssertionExpression | ts.NonNullExpression).expression);
     case ts.SyntaxKind.VoidExpression:
       return isPureInitializer((expr as ts.VoidExpression).expression);
-    case ts.SyntaxKind.PrefixUnaryExpression: {
-      const un = expr as ts.PrefixUnaryExpression;
-      if (un.operator === ts.SyntaxKind.ExclamationToken) return isPureInitializer(un.operand);
-      // `-`/`+`/`~` run ToNumeric, and ToPrimitive of an object calls its `valueOf`/`toString`
-      // (`-{ valueOf() { throw 1; } }`, `+[]` through a patched `Array.prototype.join`, `+globalThis`
-      // through a script `var valueOf`): only a primitive operand keeps them effect-free.
-      return (
-        (un.operator === ts.SyntaxKind.MinusToken ||
-          un.operator === ts.SyntaxKind.PlusToken ||
-          un.operator === ts.SyntaxKind.TildeToken) &&
-        isPurePrimitive(un.operand)
-      );
-    }
+    case ts.SyntaxKind.PrefixUnaryExpression:
+      return pureUnaryKind(expr as ts.PrefixUnaryExpression) !== undefined;
     case ts.SyntaxKind.ArrayLiteralExpression:
       return (expr as ts.ArrayLiteralExpression).elements.every(
         (el) => el.kind === ts.SyntaxKind.OmittedExpression || (!ts.isSpreadElement(el) && isPureInitializer(el)),
@@ -498,26 +500,54 @@ function isPureInitializer(expr: ts.Expression): boolean {
   }
 }
 
-/** A pure initializer whose value is a primitive, so ToNumeric of it runs no code. */
-function isPurePrimitive(expr: ts.Expression): boolean {
+/** Whether a pure primitive may be a BigInt: unary `+` throws a TypeError on one (ToNumber of a BigInt). */
+type PurePrimitiveKind = "bigint" | "not-bigint";
+
+/**
+ * `!` runs no code on any pure operand. `-`/`+`/`~` run ToNumeric, and ToPrimitive of an object calls its
+ * `valueOf`/`toString` (`-{ valueOf() { throw 1; } }`, `+[]` through a patched `Array.prototype.join`,
+ * `+globalThis` through a script `var valueOf`), so their operand must be a pure primitive — and for `+` not a
+ * BigInt (`+1n` throws). The result kind feeds nested operators (`+(-1n)`).
+ */
+function pureUnaryKind(un: ts.PrefixUnaryExpression): PurePrimitiveKind | undefined {
+  if (un.operator === ts.SyntaxKind.ExclamationToken) return isPureInitializer(un.operand) ? "not-bigint" : undefined;
+  if (
+    un.operator !== ts.SyntaxKind.MinusToken &&
+    un.operator !== ts.SyntaxKind.PlusToken &&
+    un.operator !== ts.SyntaxKind.TildeToken
+  )
+    return undefined;
+  const operand = purePrimitiveKind(un.operand);
+  return un.operator === ts.SyntaxKind.PlusToken && operand === "bigint" ? undefined : operand;
+}
+
+/** The kind of a pure initializer whose value is a primitive; undefined for anything else. */
+function purePrimitiveKind(expr: ts.Expression): PurePrimitiveKind | undefined {
   switch (expr.kind) {
-    case ts.SyntaxKind.FunctionExpression:
-    case ts.SyntaxKind.ArrowFunction:
-    case ts.SyntaxKind.RegularExpressionLiteral:
-    case ts.SyntaxKind.ArrayLiteralExpression:
-    case ts.SyntaxKind.ObjectLiteralExpression:
-      return false;
+    case ts.SyntaxKind.BigIntLiteral:
+      return "bigint";
+    case ts.SyntaxKind.StringLiteral:
+    case ts.SyntaxKind.NoSubstitutionTemplateLiteral:
+    case ts.SyntaxKind.NumericLiteral:
+    case ts.SyntaxKind.TrueKeyword:
+    case ts.SyntaxKind.FalseKeyword:
+    case ts.SyntaxKind.NullKeyword:
+      return "not-bigint";
     case ts.SyntaxKind.Identifier:
-      return (expr as ts.Identifier).text !== "globalThis" && isPureInitializer(expr);
+      return (expr as ts.Identifier).text !== "globalThis" && isPureInitializer(expr) ? "not-bigint" : undefined;
+    case ts.SyntaxKind.VoidExpression:
+      return isPureInitializer(expr) ? "not-bigint" : undefined;
+    case ts.SyntaxKind.PrefixUnaryExpression:
+      return pureUnaryKind(expr as ts.PrefixUnaryExpression);
     case ts.SyntaxKind.ParenthesizedExpression:
     case ts.SyntaxKind.AsExpression:
     case ts.SyntaxKind.TypeAssertionExpression:
     case ts.SyntaxKind.SatisfiesExpression:
     case ts.SyntaxKind.NonNullExpression:
-      return isPurePrimitive(
+      return purePrimitiveKind(
         (expr as ts.ParenthesizedExpression | ts.AssertionExpression | ts.NonNullExpression).expression,
       );
     default:
-      return isPureInitializer(expr);
+      return undefined;
   }
 }

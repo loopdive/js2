@@ -6,7 +6,10 @@
 // `var $262 = {…}`) stops refusing every row. A binding that is named anywhere, an initializer that can run code,
 // and a graph of several sources keep every statement, so the program refuses exactly as before or runs as node.
 import { readFileSync } from "node:fs";
+import vm from "node:vm";
 import { describe, expect, it } from "vitest";
+import { elideDeadTopLevelBindings } from "../src/deadcode-elide.js";
+import { ts } from "../src/ts-api.js";
 import { instantiatePreparedArtifact } from "../src/test262/test262-prepared-runtime.js";
 import {
   compile,
@@ -16,6 +19,7 @@ import {
   type Test262CompileOptions,
 } from "../src/test262/test262-prepared-entry.js";
 
+// The runner's options for a Script test (scripts/test262-worker.mjs): semantic diagnostics skipped, goal stated.
 const options = (target: "standalone" | "gc" = "standalone"): Test262CompileOptions =>
   ({
     wholeProgram: Object.freeze({ kind: "prepared-program-required" as const, version: 1 as const }),
@@ -26,6 +30,9 @@ const options = (target: "standalone" | "gc" = "standalone"): Test262CompileOpti
     emitWat: false,
     fileName: "test.js",
     allowJs: true,
+    skipSemanticDiagnostics: true,
+    inferModuleStrictArguments: false,
+    scriptGoal: true,
   }) as Test262CompileOptions;
 
 const messages = (result: { errors: readonly { message: string }[] }) => result.errors.map((error) => error.message);
@@ -44,10 +51,10 @@ async function run(source: string): Promise<"returned" | "threw"> {
   }
 }
 
-/** What node does with the same script body. */
+/** What node does with the same Script in a fresh realm. */
 function node(source: string): "returned" | "threw" {
   try {
-    new Function(source)();
+    vm.runInNewContext(source, {});
     return "returned";
   } catch {
     return "threw";
@@ -207,5 +214,79 @@ describe("#7354 F0 — dead top-level bindings are dropped before the Prepared p
     );
     expect(result.success).toBe(false);
     expect(messages(result).join("\n")).toContain("module binding o has no exact typed storage");
+  });
+
+  // Review round 1: dropping a statement must not drop the only evidence of an error. Each program's dead
+  // statement carries an early error, a declaration-time error or a ToNumber TypeError; node throws, and the
+  // Prepared path refuses or throws too. The first twelve are the reviewer's.
+  it.each([
+    // Early errors inside the dropped statement (pinned by the unelided program's frontend errors).
+    ["a duplicate label", "var g = function () { l: l: ; };"],
+    ["a nested duplicate label", "var g = function () { l: { l: ; } };"],
+    ["a duplicate constructor", "var g = function () { class C { constructor() {} constructor() {} } };"],
+    ["import.meta in a Script", "var g = function () { return import.meta; };"],
+    // `+` on a BigInt throws a TypeError (ToNumber).
+    ["`+` on a BigInt", "var x = +1n;"],
+    ["`+` on a negated BigInt", "var x = +(-1n);"],
+    ["`+` on a parenthesized BigInt", "var x = +((1n));"],
+    // Declarations of the global object's non-configurable properties.
+    ["a strict `var NaN`", '"use strict"; var NaN = 1;'],
+    ["a strict `var undefined`", '"use strict"; var undefined = 2;'],
+    ["`let undefined`", "let undefined = 1;"],
+    ["`const NaN`", "const NaN = 1;"],
+    ["`let Infinity`", "let Infinity;"],
+    // Ten more of the same two families.
+    ["duplicate parameters in strict code", 'var g = function (a, a) { "use strict"; };'],
+    ["`yield` as a binding in a generator", "var g = function* () { var yield; };"],
+    ["`await` as a binding in an async function", "var g = async function () { var await; };"],
+    ["an invalid assignment target", "var g = function () { 1 = 2; };"],
+    ["`super` outside a method", "var g = function () { super.x; };"],
+    ["`new.target` outside a function", "var g = () => new.target;"],
+    ["an octal escape in a strict string", '"use strict"; var g = function () { return "\\07"; };'],
+    ["`break` outside a loop", "var g = function () { break; };"],
+    ["a strict `var Infinity`", '"use strict"; var Infinity = 1;'],
+    ["`const undefined`", "const undefined = 1;"],
+  ])("refuses or throws as node does: %s", async (_name, source) => {
+    expect(node(source)).toBe("threw");
+    const result = await compile(source, options());
+    if (!result.success) return;
+    expect(requiredPreparedEmission(result)).toBeDefined();
+    expect(() => (instantiatePreparedArtifact(result).instance.exports.__module_init as () => void)()).toThrow();
+  });
+});
+
+// The shared pass's own rules (both callers), moved here from tests/issue-3418.test.ts.
+describe("#7354 F0 — elideDeadTopLevelBindings purity and declaration rules", () => {
+  const elide = (src: string) => elideDeadTopLevelBindings(src, ts.ScriptKind.JS).elided;
+
+  // ToNumeric of an object runs its valueOf/toString and `+` of a BigInt throws; `!` and `void` never run code.
+  it("treats `-`/`+`/`~` as pure only on a primitive operand, and `+` not on a BigInt", () => {
+    for (const init of ["-{ valueOf: function () { throw 1; } }", "+[]", "~(function () {})", "+globalThis", "-/a/"])
+      expect(elide(`var x = ${init};\n`)).toEqual([]);
+    for (const init of ["+1n", "+(-1n)", "+((1n))", "+~1n"]) expect(elide(`var x = ${init};\n`)).toEqual([]);
+    for (const init of ['+"3"', "-(1)", "~~2", "-undefined", "-1n", "~1n", "+-1", "!{ a: function () {} }", "void {}"])
+      expect(elide(`var x = ${init};\n`)).toEqual(["x"]);
+  });
+
+  // A duplicate lexical declaration is a SyntaxError that dropping both statements would hide.
+  it("keeps a name declared twice at top level when either declaration is let/const", () => {
+    for (const src of [
+      "let a = 1; let a = 2;\n",
+      "var a = 1; let a = 2;\n",
+      "const a = 1; var a = 2;\n",
+      "let a, a;\n",
+    ])
+      expect(elide(src)).toEqual([]);
+    expect(elide("var a = 1; var a = 2;\n")).toEqual(["a", "a"]);
+  });
+
+  it("never drops a declaration of a non-configurable global", () => {
+    for (const src of ["var undefined = 1;\n", "var NaN;\n", "let Infinity;\n", "const undefined = 1;\n"])
+      expect(elide(src)).toEqual([]);
+  });
+
+  it("never drops a statement holding a pinned offset", () => {
+    const src = "var a = 1;\nvar b = 2;\n";
+    expect(elideDeadTopLevelBindings(src, ts.ScriptKind.JS, [src.indexOf("b")]).elided).toEqual(["a"]);
   });
 });
