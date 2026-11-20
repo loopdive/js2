@@ -58,3 +58,9 @@ following (or without updating this sweep's expectation).
 Per row, which side is right: the selector (claim and run) or the predicate/expectation. Both directions are
 checked by the sweep's own runtime comparison against node, so the fix is whichever makes claim, predicate and
 node agree. Out of scope for #7375, which leaves these four exactly as on main.
+
+## Suspended Work
+
+Filed 2026-11-20 at the budget window's end; not started. It rides on branch `claude/7375-compound-rhs` until that
+PR opens (docs only). Next step: per row, decide whether the selector or the predicate is right, by the sweep's own
+comparison against node.

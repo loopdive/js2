@@ -206,3 +206,20 @@ Measured:
   capability read in `lowerCompoundAssignment` (+1), and the doc lines.
 - Red on main, found while measuring: four tests of `tests/issue-7144-operand-admissibility.test.ts` also fail on
   `origin/main`. Filed as #7408 with the bisected merges; this change leaves them exactly as on main.
+
+## Suspended Work
+
+Suspended 2026-11-20 (budget window end, C lead's wind-down).
+
+- Branch `claude/7375-compound-rhs`, pushed with this note, **no PR yet**. It is built on `origin/main` `89e47482`
+  (before #7321).
+- Done and verified: the "Result" section above. Commits `cd697e49` (the change) and `6902a8a12` (#7408 + the
+  from-ast justification). The `598a77f6` WIP commit is superseded by `cd697e49`.
+- **Next steps:**
+  1. Merge `origin/main`, which now has #7321. `tests/helpers/prepared-script-run.ts` is add/add with #7321's
+     copy: keep this branch's version, a superset that adds the arithmetic/comparison tolerated diagnostics.
+  2. Re-run gates, the #7375 test file, `tests/es5-dynamic-compound.test.ts` and the #7144 sweep (expect only
+     #7408's 4 rows red).
+  3. Open the PR with `hold`. In the body: the capability is the first one the Prepared resolver asks, plus the
+     from-ast grant justification.
+- **Open:** no review yet.
