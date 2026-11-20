@@ -10,7 +10,7 @@ import { compile } from "../src/test262/test262-prepared-entry.js";
 import { gateEmittedModule } from "../src/compiler/validation.js";
 import { emitBinary } from "../src/emit/binary.js";
 import type { CompileError } from "../src/index.js";
-import type { IrFunction, IrInstr } from "../src/ir/core/nodes.js";
+import { mapNestedBuffers, type IrFunction, type IrInstr } from "../src/ir/core/nodes.js";
 import { subscribePreparedIrProgram } from "../src/ir/program-observation.js";
 import {
   acceptedPhysicalSetupPlan,
@@ -85,6 +85,13 @@ const withProjection = (
   ...program,
   runtime: program.runtime.map((projection) => ({ ...projection, prepared: rewrite(projection.prepared) })),
 });
+/** `instr` and every instruction nested in it, with each intrinsic's provider removed. */
+const withoutProviders = (instr: IrInstr): IrInstr => {
+  const mapped = mapNestedBuffers(instr, (buffer) => buffer.map(withoutProviders));
+  if (mapped.kind !== "intrinsic") return mapped;
+  const { provider: _provider, ...stripped } = mapped;
+  return stripped;
+};
 const withStringDeclarations = (
   rewrite: (rows: NonNullable<PhysicalSetupPlan["nativeStrings"]>["resources"]["declarations"]) => typeof rows,
 ): PhysicalSetupPlan => ({
@@ -119,7 +126,7 @@ function stage1(fn: IrFunction): void {
 const stage2 = (value: PreparedIrProgram) => () =>
   validatePreparedStage("prepared program", () => assertPreparedIrProgram(value));
 const stage3 = (value: PhysicalSetupPlan) => () =>
-  validatePreparedStage("physical plan", () => assertPhysicalSetupPlan(program, value, OPTIONS));
+  validatePreparedStage("physical plan", () => assertPhysicalSetupPlan(value));
 const stage4 = (value: WasmModule) => () => validatePreparedStage("physical module", () => assertPhysicalModule(value));
 
 interface Seed {
@@ -215,8 +222,45 @@ const SEEDS: readonly Seed[] = [
           },
         })),
       ),
-    expected:
-      /prepared validator \(prepared program\): .*intrinsic js\.number\.box lacks exactly one selected provider/,
+    expected: /prepared validator \(prepared program\): .*intrinsic js\.number\.box has 0 selected providers/,
+  },
+  {
+    stage: "2 prepared program",
+    seed: "an intrinsic whose provider the manifest selects twice",
+    twin: () => stage2(withProjection((prepared) => ({ ...prepared }))),
+    altered: () =>
+      stage2(
+        withProjection((prepared) => ({
+          ...prepared,
+          manifest: {
+            ...prepared.manifest,
+            providers: [
+              ...prepared.manifest.providers,
+              prepared.manifest.providers.find((row) => row.feature === "js.number.box")!,
+            ],
+          },
+        })),
+      ),
+    expected: /prepared validator \(prepared program\): .*intrinsic js\.number\.box has 2 selected providers/,
+  },
+  {
+    stage: "2 prepared program",
+    seed: "an intrinsic stripped of the provider legalization attached",
+    twin: () => stage2(withProjection((prepared) => ({ ...prepared }))),
+    altered: () =>
+      stage2(
+        withProjection((prepared) => ({
+          ...prepared,
+          functions: prepared.functions.map((fn) => ({
+            ...fn,
+            blocks: fn.blocks.map((block) => ({
+              ...block,
+              instrs: block.instrs.map(withoutProviders),
+            })),
+          })),
+        })),
+      ),
+    expected: /prepared validator \(prepared program\): .*intrinsic js\.number\.box has no provider/,
   },
   {
     stage: "2 prepared program",
@@ -240,26 +284,10 @@ const SEEDS: readonly Seed[] = [
   },
   {
     stage: "3 physical plan",
-    seed: "a runtime function's slot removed while a body still calls it (missing provider)",
-    twin: () => stage3({ ...plan }),
-    altered: () => stage3({ ...plan, numberRemainders: [] }),
-    expected: /prepared validator \(physical plan\): physical plan: unresolved reference: body f calls __fmod/,
-  },
-  {
-    stage: "3 physical plan",
-    seed: "the native function behind a selected intrinsic provider removed (missing provider)",
-    twin: () =>
-      stage3({ ...plan, nativeStrings: { ...plan.nativeStrings!, bindings: [...plan.nativeStrings!.bindings] } }),
-    altered: () =>
-      stage3({
-        ...plan,
-        nativeStrings: {
-          ...plan.nativeStrings!,
-          bindings: plan.nativeStrings!.bindings.filter((row) => row.reference.kind !== "func"),
-        },
-      }),
-    expected:
-      /prepared validator \(physical plan\): physical plan: missing provider: body <module-init> intrinsic js\.number\.box/,
+    seed: "the source global's slot listed twice (duplicate slot)",
+    twin: () => stage3({ ...plan, definedGlobals: [...plan.definedGlobals] }),
+    altered: () => stage3({ ...plan, definedGlobals: [...plan.definedGlobals, plan.definedGlobals[0]!] }),
+    expected: /prepared validator \(physical plan\): physical plan: duplicate slot: binding .* has two slots/,
   },
   {
     stage: "3 physical plan",
@@ -299,6 +327,21 @@ const SEEDS: readonly Seed[] = [
     twin: () => stage4({ ...module }),
     altered: () => stage4(seed13()),
     expected: /prepared validator \(physical module\): unresolved global index/,
+  },
+  {
+    stage: "4 physical module",
+    seed: "a local of a type index past the last type",
+    twin: () => stage4({ ...module }),
+    altered: () =>
+      stage4({
+        ...module,
+        functions: module.functions.map((fn) =>
+          fn.name === "__module_init"
+            ? { ...fn, locals: [...fn.locals, { name: "seed", type: { kind: "ref_null", typeIdx: 9999 } }] }
+            : fn,
+        ),
+      }),
+    expected: /prepared validator \(physical module\): unresolved type index 9999/,
   },
   {
     stage: "4 physical module",

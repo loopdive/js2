@@ -14,8 +14,6 @@
 // no resource allocation, codegen context or frontend code enters this plan.
 
 import { forEachPreparedIrInstruction } from "./runtime/prepared-instructions.js";
-import { physicalPlanReferenceKeys } from "./validate-physical-plan.js";
-import { assertPreparedIrProgram } from "./program-validation.js";
 import {
   planNativeInvocationInput,
   nativeInvocationSetup,
@@ -91,6 +89,7 @@ import {
   NUMBER_REMAINDER_RUNTIME_PROVIDERS,
 } from "./runtime/number-remainder-callables.js";
 import { deriveNativeVectorResourcePlan, type NativeVectorResourcePlan } from "./program/native-vector-resources.js";
+import { assertPreparedIrProgram } from "./program-validation.js";
 import {
   deriveNativeValueResourcePlan,
   assertNativeValueResourcePlanFor,
@@ -1389,10 +1388,17 @@ export function planPhysicalSetup(
   }
 
   // 3. Bodies may only reference what the plan reserves; exception use is a reserved resource too.
-  const { callables: reserved, globals: reservedGlobals } = physicalPlanReferenceKeys(
-    { functions, importedFunctions, importedGlobals, definedGlobals, numberRemainders, vectors },
-    nativeBindings,
-  );
+  const reserved = new Set<string>([
+    ...functions.map((slot) => irCallableBindingKey({ kind: "unit", unitId: slot.unitId })),
+    ...importedFunctions.map((fn) => fn.referenceKey),
+    ...(vectors.helper ? [vectors.helper.referenceKey] : []),
+    ...numberRemainders.map((resource) => resource.referenceKey),
+    ...nativeBindings.filter((row) => row.reference.kind === "func").map((row) => nativeReferenceKey(row.reference)),
+  ]);
+  const reservedGlobals = new Set<string>([
+    ...[...importedGlobals, ...definedGlobals].map((global) => global.referenceKey),
+    ...nativeBindings.filter((row) => row.reference.kind === "global").map((row) => nativeReferenceKey(row.reference)),
+  ]);
   let exceptionRequired = vectors.exceptionRequired || Boolean(asyncFrames?.frames.length) || Boolean(nativeInvocation);
   for (const fn of [...physical, ...(formatter ? formatter.support.functions : [])]) {
     const diagnosticUnit =

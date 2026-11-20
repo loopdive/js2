@@ -32,9 +32,7 @@ export function runIrProgramDriver(
   if (accepted.kind === "unsupported") {
     return Object.freeze({ kind: "unsupported", phase: "acceptance", failure: accepted });
   }
-  validatePreparedStage("physical plan", () =>
-    assertPhysicalSetupPlan(prepared.program, acceptedPhysicalSetupPlan(accepted), backendOptions),
-  );
+  validatePreparedStage("physical plan", () => assertPhysicalSetupPlan(acceptedPhysicalSetupPlan(accepted)));
   // C authenticates and consumes this exact token once. Exceptions stay fatal.
   const emission = emitAcceptedIrProgram(accepted);
   validatePreparedStage("physical module", () => assertPhysicalModule(emission.module));

@@ -217,18 +217,17 @@ function assertNoDynamicValues(projection: PreparedIrProgramRuntimeProjection): 
 
 /** (#7380) Every intrinsic a body uses carries its provider, and the manifest selects exactly one for its feature. */
 function assertIntrinsicProviders(projection: PreparedIrProgramRuntimeProjection): void {
-  const { manifest } = projection.prepared;
+  const selected = new Map<string, number>();
+  for (const { feature } of projection.prepared.manifest.providers)
+    selected.set(feature, (selected.get(feature) ?? 0) + 1);
   for (const fn of projection.prepared.functions)
     forEachPreparedIrInstruction(fn, (instruction) => {
       if (instruction.kind !== "intrinsic") return;
+      if (instruction.provider === undefined) invalid(`body ${fn.unitId}: intrinsic ${instruction.id} has no provider`);
       const feature = INTRINSIC_DEFINITIONS[instruction.id].feature;
-      if (
-        instruction.provider === undefined ||
-        manifest.providers.filter((provider) => provider.feature === feature).length !== 1
-      )
-        invalid(
-          `body ${fn.unitId}: intrinsic ${instruction.id} lacks exactly one selected provider (missing provider)`,
-        );
+      const count = selected.get(feature) ?? 0;
+      if (count !== 1)
+        invalid(`body ${fn.unitId}: intrinsic ${instruction.id} has ${count} selected providers for ${feature}, not 1`);
     });
 }
 
