@@ -3,6 +3,8 @@
 import { describe, expect, it } from "vitest";
 import { createEmptyModule, type Instr, type ValType } from "../src/ir/types.js";
 import { emitBinary } from "../src/emit/binary.js";
+import { emitWat } from "../src/emit/wat.js";
+import { emitWasiErrorConstructor } from "../src/codegen/registry/error-types.js";
 import { PhysicalModuleReservations } from "../src/wasm/physical/module-reservations.js";
 import {
   reserveNativeStringLiteralResources,
@@ -63,6 +65,48 @@ function legacy(utf8Storage = false) {
 }
 
 describe("native literal and TypeError resources (literal-only family)", () => {
+  it.each([false, true])("matches live legacy descriptors, initializer order, bytes and WAT (UTF8=%s)", (utf8) => {
+    const values = [...required, "", "\ud800", "😀", "x".repeat(9999) + "😀" + "end", "z".repeat(20001), "then"];
+    const { module, tx, strings } = reserve(values, utf8);
+    const ctx = legacy(utf8);
+    for (const value of values) nativeStringLiteralMaterialization(ctx, value);
+    tx.freezeReservations();
+    fillNativeStringLiteralResources(tx, strings);
+    tx.seal();
+    expect(module.types).toEqual(ctx.mod.types);
+    expect(module.globals).toEqual(ctx.mod.globals);
+    expect(module.functions).toEqual(ctx.mod.functions);
+    expect(emitBinary(module)).toEqual(emitBinary(ctx.mod));
+    expect(emitWat(module)).toEqual(emitWat(ctx.mod));
+    expect(strings.literals[0]).toBe(strings.literals.at(-1));
+  });
+
+  it("matches the live cached TypeError constructor after name registration", () => {
+    const { module, tx, strings } = reserve();
+    const errors = reserveNativeErrorResources(
+      tx,
+      { key: "errors" },
+      { strings, typeErrorTag: BUILTIN_TYPE_TAGS.TypeError },
+    );
+    const ctx = legacy();
+    required.forEach((value) => nativeStringLiteralMaterialization(ctx, value));
+    emitWasiErrorConstructor(ctx, "TypeError", 1);
+    const count = ctx.mod.functions.length;
+    emitWasiErrorConstructor(ctx, "TypeError", 1);
+    expect(ctx.mod.functions).toHaveLength(count);
+    expect(ctx.stringGlobalMap.get("TypeError")).toBe(-1);
+    expect(ctx.mod.stringPool).toEqual(["TypeError"]);
+    tx.freezeReservations();
+    fillNativeStringLiteralResources(tx, strings);
+    fillNativeErrorResources(tx, errors);
+    tx.seal();
+    expect(errors.type.object).toEqual(ctx.mod.types[ctx.errorStructTypeIdx]);
+    expect(errors.newTypeError.object.body).toEqual(ctx.mod.functions.at(-1)!.body);
+    expect(errors.newTypeError.object.locals).toEqual([]);
+    expect(emitBinary(module)).toEqual(emitBinary(ctx.mod));
+    expect(emitWat(module)).toEqual(emitWat(ctx.mod));
+  });
+
   it("executes exact UTF16 strings and all six TypeError fields", () => {
     const { module, tx, strings } = reserve();
     const errors = reserveNativeErrorResources(

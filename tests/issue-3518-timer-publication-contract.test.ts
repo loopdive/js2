@@ -81,6 +81,31 @@ describe("canonical standalone timer publication contract", () => {
     expect(occupied).toEqual([families[0][1], "$t0$", "$t0$$$", "$t0not-a-suffix"]);
   });
 
+  it.each(Array.from({ length: 16 }, (_, mask) => mask))(
+    "publishes one table, element and marker global, idempotently, for occupancy %i",
+    (mask) => {
+      const names = families.flatMap(([, logical, physical], index) =>
+        mask & (1 << index) ? [logical, physical, physical + "$$", physical + "invalid"] : [],
+      );
+      const newContext = context(names);
+      const newPublish = publisher(currentFunction, true, 17);
+      newPublish(newContext);
+      expect(newContext.mod.tables).toHaveLength(3);
+      expect(newContext.mod.elements).toEqual([
+        { tableIdx: 3, offset: [{ op: "i32.const", value: 0 }], funcIndices: [17] },
+      ]);
+      expect(newContext.mod.globals[1]).toEqual({
+        name: families[1][1],
+        type: { kind: "i32" },
+        mutable: false,
+        init: [{ op: "i32.const", value: 0x5a400001 }],
+      });
+      const published = structuredClone(newContext);
+      newPublish(newContext);
+      expect(newContext).toEqual(published);
+    },
+  );
+
   it.each(["disabled", "missing dispatcher", "missing handle"] as const)(
     "refuses or skips publication when %s",
     (control) => {
