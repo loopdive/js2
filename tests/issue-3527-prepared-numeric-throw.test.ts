@@ -194,12 +194,23 @@ describe("#3527 numeric throw consumes an explicit independently materialized bo
       phases.push(event.phase);
     });
     try {
-      // #7380: stage 2 checks a program once, where it is produced; acceptance no longer re-runs it.
-      for (const malformed of [missingProvider, badSignature])
-        expect(() => {
-          assertPreparedIrProgram(malformed);
-          acceptPreparedIrProgram(malformed, replayOptions("wasmgc"));
-        }).toThrow();
+      // #7380: stage 2 checks a program once, where it is produced; acceptance no longer re-runs it. Stage 2 rejects
+      // each forgery with its own invariant. Acceptance alone REFUSES the removed provider by name as an ordinary
+      // gap (that forgery is the one only stage 2 sees as a compiler bug) and throws the host capability's
+      // signature mismatch for the altered signature.
+      expect(() => assertPreparedIrProgram(missingProvider)).toThrow(
+        /intrinsic js\.number\.box has 0 selected providers for js\.number\.box, not 1/,
+      );
+      expect(acceptPreparedIrProgram(missingProvider, replayOptions("wasmgc"))).toMatchObject({
+        kind: "unsupported",
+        detail: expect.stringMatching(/number boxing does not have its exact canonical selected provider/),
+      });
+      expect(() => assertPreparedIrProgram(badSignature)).toThrow(
+        /contradicts complete semantic\/provider data at \$root\.manifest\.hostCapabilityRecords\.\d+\.params\.0/,
+      );
+      expect(() => acceptPreparedIrProgram(badSignature, replayOptions("wasmgc"))).toThrow(
+        /host capability number\.box params \["i32"\] do not match \["f64"\]/,
+      );
       expect(phases).not.toContain("emission-started");
       expect(phases).not.toContain("emitted");
     } finally {
