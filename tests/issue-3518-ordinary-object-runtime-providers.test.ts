@@ -189,5 +189,7 @@ describe("empty void closure bodies", () => {
         expect(outcome.run.emitted.module.imports).toEqual([]);
       }
     },
+    // Two prepare + replay rounds with the validator on: 41 to 43 s each alone on a 4-core box (2026-11-20).
+    180_000,
   );
 });
