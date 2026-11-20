@@ -1507,8 +1507,8 @@
   },
   {
     "edition": "ES2020",
-    "pass": 1226,
-    "fail": 697,
+    "pass": 1228,
+    "fail": 695,
     "ce": 94,
     "skip": 18,
     "total": 2035,
@@ -1552,12 +1552,12 @@
       },
       {
         "name": "globalThis",
-        "pass": 120,
-        "fail": 2,
+        "pass": 121,
+        "fail": 1,
         "ce": 0,
         "skip": 0,
         "total": 122,
-        "pct": 98
+        "pct": 99
       },
       {
         "name": "Promise.allSettled",
@@ -1732,12 +1732,12 @@
       },
       {
         "name": "arbitrary-module-namespace-names",
-        "pass": 4,
-        "fail": 8,
+        "pass": 5,
+        "fail": 7,
         "ce": 4,
         "skip": 0,
         "total": 16,
-        "pct": 25
+        "pct": 31
       },
       {
         "name": "String.prototype.matchAll",
@@ -1924,8 +1924,8 @@
   {
     "edition": "ES2021",
     "pass": 348,
-    "fail": 97,
-    "ce": 27,
+    "fail": 100,
+    "ce": 24,
     "skip": 0,
     "total": 472,
     "pct": 74,
@@ -1942,8 +1942,8 @@
       {
         "name": "Promise.any",
         "pass": 49,
-        "fail": 22,
-        "ce": 21,
+        "fail": 25,
+        "ce": 18,
         "skip": 0,
         "total": 92,
         "pct": 53
@@ -1978,8 +1978,8 @@
       {
         "name": "arrow-function",
         "pass": 20,
-        "fail": 12,
-        "ce": 8,
+        "fail": 15,
+        "ce": 5,
         "skip": 0,
         "total": 40,
         "pct": 50
@@ -1996,8 +1996,8 @@
       {
         "name": "Symbol",
         "pass": 14,
-        "fail": 20,
-        "ce": 5,
+        "fail": 23,
+        "ce": 2,
         "skip": 0,
         "total": 39,
         "pct": 36
@@ -2023,8 +2023,8 @@
       {
         "name": "Symbol.iterator",
         "pass": 10,
-        "fail": 16,
-        "ce": 4,
+        "fail": 19,
+        "ce": 1,
         "skip": 0,
         "total": 30,
         "pct": 33
@@ -2032,8 +2032,8 @@
       {
         "name": "computed-property-names",
         "pass": 22,
-        "fail": 2,
-        "ce": 3,
+        "fail": 5,
+        "ce": 0,
         "skip": 0,
         "total": 27,
         "pct": 81
@@ -2186,8 +2186,8 @@
   },
   {
     "edition": "ES2022",
-    "pass": 4349,
-    "fail": 1244,
+    "pass": 4348,
+    "fail": 1245,
     "ce": 199,
     "skip": 0,
     "total": 5792,
@@ -2276,8 +2276,8 @@
       },
       {
         "name": "resizable-arraybuffer",
-        "pass": 160,
-        "fail": 270,
+        "pass": 159,
+        "fail": 271,
         "ce": 2,
         "skip": 0,
         "total": 432,
@@ -3571,21 +3571,21 @@
   },
   {
     "edition": "ES2026",
-    "pass": 4335,
-    "fail": 451,
-    "ce": 135,
+    "pass": 4585,
+    "fail": 197,
+    "ce": 139,
     "skip": 0,
     "total": 4921,
-    "pct": 88,
+    "pct": 93,
     "features": [
       {
         "name": "Temporal",
-        "pass": 4236,
-        "fail": 360,
-        "ce": 15,
+        "pass": 4486,
+        "fail": 106,
+        "ce": 19,
         "skip": 0,
         "total": 4611,
-        "pct": 92
+        "pct": 97
       },
       {
         "name": "Symbol",
@@ -3733,12 +3733,12 @@
       },
       {
         "name": "Symbol.toStringTag",
-        "pass": 0,
-        "fail": 4,
+        "pass": 2,
+        "fail": 2,
         "ce": 0,
         "skip": 0,
         "total": 4,
-        "pct": 0
+        "pct": 50
       },
       {
         "name": "Map",
@@ -4304,8 +4304,8 @@
   },
   {
     "edition": "Unclassified (untagged)",
-    "pass": 4725,
-    "fail": 656,
+    "pass": 4726,
+    "fail": 655,
     "ce": 64,
     "skip": 0,
     "total": 5445,
