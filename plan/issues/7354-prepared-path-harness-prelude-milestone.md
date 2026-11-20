@@ -3064,3 +3064,74 @@ through the strict entry, base reports `Duplicate identifier 'print'` and
 after legalization`) on main without this change. That is a finding for slice O, not F0.
 
 **Not verified:** a step-past (FD) census of the gaps after the first.
+
+### Review round 1 (2026-11-20)
+
+The verdict was correctness NOT MET: the elision failed open on the Prepared path. Each finding and what changed:
+
+1. **Dropping a statement dropped the only evidence of its error.** Main refused the reviewer's 12 programs;
+   F0 compiled them and returned while node throws (early errors inside function bodies, `+1n`, declarations of
+   `undefined`/`NaN`/`Infinity`).
+   - (a) **Fail closed (Prepared caller).** `elideDeadBindings` (`src/test262/prepared-dead-bindings.ts`) now
+     runs on the analysis of the UNELIDED graph. It pins every statement holding a frontend error:
+     - the TypeScript diagnostics (syntactic, and semantic unless skipped);
+     - the ES early errors under the given, Script and Module goals (`sourceEarlyErrors`, now shared with
+       `validatePipelineSource` in `src/compiler/prepared-pipeline-boundary.ts`).
+
+     The pass takes the pins as `pinnedOffsets`. A graph the elision changes is analyzed a second time.
+     Cost on the 411-row sample's `compile_ms`: median 44 → 52 ms, p90 74 → 90 ms (main vs branch, same runner).
+   - **The runner skips semantic diagnostics,** so in runner mode the pins come from the ES early-error detector.
+     It missed two of the reviewer's families on every pipeline; both are fixed in the detector:
+     - duplicate labels inside a function or class body were never checked (`checkDuplicateLabels` stopped at
+       the boundary);
+     - a Script's top-level `let`/`const`/`class` of a restricted global is a SyntaxError in
+       GlobalDeclarationInstantiation: new `checkRestrictedGlobalLexicals`, gated on the stated Script goal.
+
+     `let undefined`, `const NaN` and `const undefined` were wrong on main's Prepared path in runner mode too,
+     without elision.
+   - (b) **Restricted globals, both callers:** a declaration of `undefined`/`NaN`/`Infinity` is never dropped
+     (`RESTRICTED_GLOBAL_NAMES`, `src/compiler/early-errors/predicates.ts`).
+   - (c) **BigInt, both callers:** `-`/`+`/`~` are pure only on an allow-list of primitive literals
+     (`purePrimitiveKind`), and `+` not on a BigInt (`+1n`, `+(-1n)` throw). The old comment "ToNumeric runs no
+     code" is gone.
+   - **Ordinary caller:** it has the same hole, because it elides before its only analysis. Taking the
+     diagnostics-aware rule needs a second parse plus detector walk on every standalone compile and its own
+     byte proof, so it is filed as **#7445** with the programs.
+2. **CI `changed-root-tests`.** The two unit rows moved into the F0 test file, and `tests/issue-3418.test.ts`
+   is main's again.
+3. **Script-kind duplication.** The Prepared caller now passes `multiFileScriptKind` straight through instead of
+   re-mapping it.
+4. **Standing hazard (confirmed by the reviewer):** programs that read the global object by computed name are
+   wrong on the ordinary path on main and on this PR. The cases are `globalThis[k]`, `Object.keys(globalThis)`,
+   for-in over `this`, `globalThis.eval(computed)`, `(function(){}).constructor(...)`, `toJSON`/`name`/`value` read
+   through the global object. The Prepared path is safe only because it refuses them today. The programs are in
+   #7445.
+5. **CI `quality` (boundaries and import cycles).** The new file is classified in
+   `scripts/compiler-boundaries.json` like its sibling. The pass reads `RESTRICTED_GLOBAL_NAMES` through
+   `early-errors/index.ts`, so it adds no second edge into `src/compiler`.
+
+**Proof.**
+
+- **Tests:** `tests/issue-7354-f0-dead-top-level-bindings.test.ts` has 64 tests, all green, in the runner's
+  options (semantic diagnostics skipped, Script goal stated):
+  - 22 "refuses or throws as node does" rows (the reviewer's 12 plus 10);
+  - 1 unstated-goal row.
+- **Mutations:**
+
+  | mutation | rows that fail |
+  |---|---|
+  | diagnostics pin removed | 5 |
+  | restricted-name rule | 4 |
+  | BigInt rule | 4 |
+  | goal union | 1 |
+  | label descent | 2 |
+  | restricted-lexical rule | 3 |
+
+- **Reviewer tables:** 77 + 37 programs on 4 lanes (Prepared standalone and gc, ordinary standalone and
+  default). No Prepared lane is wrong, and there is no new wrong answer anywhere. The ordinary lanes lose 7 of
+  main's wrong answers: `+` on a BigInt ×4, `-(-{valueOf})`, and two duplicate-lexical programs.
+- **Bytes against main:**
+  - Ordinary pipeline, 50 files × 2 targets: identical.
+  - 10 Temporal rows: identical, provider included.
+  - Prepared fixtures 0-399: the same 4 all-dead rows differ as before, the rest are identical.
+- **Sample:** the first-gap tally is unchanged.
