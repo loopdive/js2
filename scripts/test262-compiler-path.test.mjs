@@ -387,7 +387,7 @@ test("actual worker startup host primes remain legacy-only without mutating glob
       promiseCalls = 0;
     const env = { env: { TEST262_COMPILER_PATH: path } };
     iterator(env, { Iterator: function Iterator() {} }, () => iteratorCalls++);
-    promise(env, { _installPromiseKeyedCombinators: () => promiseCalls++ }, function FakePromise() {});
+    promise(env, { _installSelectedPromiseCompatibility: () => promiseCalls++ }, function FakePromise() {});
     assert.equal(iteratorCalls, path === "ir" ? 0 : 1);
     assert.equal(promiseCalls, path === "ir" ? 0 : 1);
   }

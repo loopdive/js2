@@ -3552,10 +3552,13 @@ function diffRealmSurface(snap) {
 // threw `nextPromise.then is not a function` no matter what `buildImports`
 // passed later. Optional-chained on both arguments: an older bundle without
 // the export simply primes as before.
+// (#7431) Prime through the same installer `installAmbientCompatibility`
+// uses: below Node 23 it also adds the #6440 `Promise.try` polyfill, which
+// otherwise reads as `Promise.try:added` drift after the first instantiate.
 // Explicit IR must not prime unrelated legacy host products after the native
 // compiler has captured Promise. Later actual constructor effects stay intact.
 if (process.env.TEST262_COMPILER_PATH !== "ir") {
-  runtimeBundle._installPromiseKeyedCombinators?.(Promise, runtimeBundle._mirrorPolyfillThenable);
+  runtimeBundle._installSelectedPromiseCompatibility?.(Promise, runtimeBundle._mirrorPolyfillThenable);
 }
 let realmCanarySnapshot = REALM_CANARY_MODE ? snapshotRealmSurface() : null;
 let realmCanaryChecks = 0;
