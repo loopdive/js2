@@ -23,14 +23,13 @@ import {
   REGEX_STEP_CAP,
   REGEX_STEP_CAP_LEN_SATURATION,
   REGEX_STEP_CAP_PER_UNIT,
+  ReOp,
 } from "../../runtime/contracts/regexp-bytecode.js";
-import { ReOp } from "./bytecode.js";
 import { isLinearSafe, searchLinear } from "./linear.js";
 import { asciiFold, assertionHolds, classMatch, forwardCodePoint, unitMatches } from "./match-units.js";
 
 // The budget numbers are part of the bytecode contract (the Wasm VM bodies sit
 // below this file); this VM is where the formula is specified and tested.
-export { REGEX_STEP_CAP, REGEX_STEP_CAP_LEN_SATURATION, REGEX_STEP_CAP_PER_UNIT };
 
 /** The shared budget formula — used by BOTH this mirror VM and the Wasm VM. */
 export function regexStepBudget(len: number): number {

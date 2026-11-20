@@ -95,12 +95,8 @@ import { buildThrowJsErrorInstrs } from "./js-errors.js";
 import { nativeStringLiteralInstrs } from "./native-strings.js";
 import { ensureObjectRuntime } from "./object-runtime.js";
 import { registerRegExpGetterOnlySet } from "./regexp-accessor-set-guard.js";
-import {
-  REGEXP_FLAG_BOOL_PROPS,
-  RE_FIELD_FLAGS,
-  RE_FIELD_SOURCE,
-  standaloneRegExpStructTypeIdx,
-} from "./regexp-standalone.js";
+import { RE_FIELD_FLAGS, RE_FIELD_SOURCE } from "../runtime/wasmgc/values/regexp-carrier-layouts.js";
+import { REGEXP_FLAG_BOOL_PROPS, standaloneRegExpStructTypeIdx } from "./regexp-standalone.js";
 import { addFuncType } from "./registry/types.js";
 
 const EXTERNREF: ValType = { kind: "externref" };

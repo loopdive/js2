@@ -58,7 +58,6 @@ import { buildIndexedAnchoredLiteralAltProgram } from "./regex-anchored-alt-inde
 import {
   type CompiledRegex,
   parseFlags,
-  ReOp,
   RegexUnsupportedError,
   RE_FLAG_D,
   RE_FLAG_G,
@@ -97,7 +96,7 @@ import { emitRegExpProtoToStringBody } from "./regexp-proto-to-string.js";
 import { emitBuiltinConstructorIdentity } from "./builtin-static-globals.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { addFuncType, registerStructType } from "./registry/types.js";
-import { REGEX_ANCHORED_LITERAL_ALTS_MARKER } from "../runtime/contracts/regexp-bytecode.js";
+import { REGEX_ANCHORED_LITERAL_ALTS_MARKER, ReOp } from "../runtime/contracts/regexp-bytecode.js";
 import {
   buildNativeRegExpType,
   NATIVE_REGEXP_STRUCT_NAME,
@@ -1039,21 +1038,6 @@ export function staticRegExpGroupNames(ctx: CodegenContext, expr: ts.Expression)
     return null;
   }
 }
-
-// The `$NativeRegExp` layout and its field order are owned by
-// `regexp-carrier-layouts.ts`; the indices stay importable from here.
-export {
-  RE_FIELD_CLASS_TABLE,
-  RE_FIELD_FLAGS,
-  RE_FIELD_LASTINDEX,
-  RE_FIELD_LASTINDEX_NONWRITABLE,
-  RE_FIELD_LASTINDEX_RAW,
-  RE_FIELD_LASTINDEX_RAW_PRESENT,
-  RE_FIELD_NGROUPS,
-  RE_FIELD_NSCRATCH,
-  RE_FIELD_PROG,
-  RE_FIELD_SOURCE,
-};
 
 /**
  * Push `2 * nGroups + nScratch` (the VM caps-array length) onto the stack,

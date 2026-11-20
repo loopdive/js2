@@ -87,9 +87,12 @@ No behaviour change: the compiled output is byte-identical.
      lived in `src/codegen/regex/bytecode.ts`; the `native-runtime` layer may
      not import `src/codegen`. The numbering is a contract between the compiler
      and the VM, so it now lives in `src/runtime/contracts/regexp-bytecode.ts`.
-     `bytecode.ts` and `vm.ts` re-export the moved names, so no importer
-     changed. The alternative, passing the opcode table in as an operand, would
-     leave R1's binder unable to reach it for the same layering reason.
+     Every importer of `ReOp`, `INSTR_WIDTH` and the step-budget numbers
+     imports them from there; `bytecode.ts` and `vm.ts` keep no re-export
+     (review RV7337). The alternative, passing the opcode table in as an
+     operand, would leave R1's binder unable to reach it for the same layering
+     reason. Likewise the `RE_FIELD_*` indices are imported from
+     `regexp-carrier-layouts.ts`, not re-exported by `regexp-standalone.ts`.
   2. *Three body files instead of one.* The function budget is 300 lines and
      the file budget 1,500. `__regex_run` alone is about 1,300 lines, so its
      arms are module-level functions in their own file, and the search loop has
@@ -105,9 +108,11 @@ No behaviour change: the compiled output is byte-identical.
   1,500 in the new modules; `native-regex.ts` and `regexp-standalone.ts`
   shrink; no instruction literal exists in two places; the boundaries check
   accepts the new modules as `clean`; no budget grant.
-- **Correctness criterion.** `scripts/check-regexp-byte-identity.mjs` reports
-  0 differences between `origin/main` and the branch over every test262 file
-  that mentions a RegExp, for the default, `standalone` and `linear` targets.
+- **Correctness criterion.** `scripts/byte-diff-corpus.mts --corpus regexp`,
+  run on `origin/main` and on the branch and then `--compare`d, reports 0
+  differing rows over every test262 file that mentions a RegExp, for the
+  default, `standalone` and `wasi` targets. (`linear` never emits the WasmGC
+  engine, so it proves nothing here; review RV7337.)
 
 ### R1 — `js.regexp.create` and `js.regexp.test`
 
@@ -221,3 +226,21 @@ the same 12 fail on both sides. The failure-set diff is empty.
 The largest new function is `rawLiteralAltSearch` at 172 lines, and no new file
 exceeds 1,500 lines. The LOC and function budgets pass with no grant, against
 both the merge base and `LOC_GATE_BASE=origin/main`.
+
+## Suspended Work (2026-11-20, lane S12)
+
+- **PR #7337** (R0), head `79fc2e37` on `claude/7369-regexp-vm-bodies`, `hold`. RV7337 APPROVED on that head, with
+  one rework push required before release. `quality` is red there only at `check:orphaned-scripts`
+  (`scripts/check-regexp-byte-identity.mjs`), which the rework clears.
+- **Rework WIP**: branch `claude/7369-regexp-vm-bodies-rework-wip` (no PR). An Opus agent stopped mid-task on the rate
+  limit. It deletes `check-regexp-byte-identity.mjs`, folds the regexp corpus and the `wasi` target into
+  `scripts/byte-diff-corpus.mts`, drops re-export shims, and touches tests. **Not validated**: no byte run, tests or
+  gates since the agent stopped.
+- **Next step**: review the WIP diff against RV7337's items (wasi instead of linear; one byte-diff tool; "both failed"
+  counted separately; no shims; byte-diff must re-verify a diff in a fresh process or keep file order equal — #7410
+  makes same-process compile order change bytes). Run byte-diff-corpus (regexp corpus × default/standalone/wasi,
+  `--jobs 1`), the regexp tests (same 12 failures as main), and the full gate chain incl. `check:orphaned-scripts`.
+  Then ONE push to `claude/7369-regexp-vm-bodies`, announce it, and send RV7337 (session_016FRcLzQDYNuMcMSuuMEfuz)
+  the delta.
+- **Open review threads**: none beyond RV7337's rework items. R1 (create/test contracts) and R2 (exec, needs S13's
+  arrays) are not started.

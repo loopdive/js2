@@ -14,10 +14,9 @@
  * and lets the whole program live in one WasmGC `array i32`.
  */
 
-// The opcode numbering is a contract with the Wasm VM bodies, which sit below
-// this compiler in the layering, so it is defined there and re-exported here
-// for the compile-time half.
-export { INSTR_WIDTH, ReOp } from "../../runtime/contracts/regexp-bytecode.js";
+// The opcodes (`ReOp`) and `INSTR_WIDTH` are a contract with the Wasm VM bodies,
+// which sit below this compiler in the layering, so they are defined in
+// `src/runtime/contracts/regexp-bytecode.ts`.
 
 /** A fully compiled regex program ready to embed in a `$NativeRegExp`. */
 export interface CompiledRegex {
