@@ -1422,7 +1422,7 @@ export function planPhysicalSetup(
           );
         }
       } else if (instruction.kind === "intrinsic") {
-        // Stage 2 of the validator (#7380) owns "every intrinsic carries its provider".
+        // Provider attachment (`attachProvidersToBuffer`) throws on an intrinsic without one before the program freezes.
         const provider = instruction.provider!;
         if (
           missingIntrinsicMaterialization(

@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 //
 // How a Prepared stage validator runs (#7380). The validators check the invariants of the data at a stage boundary
-// (prepared program, physical plan, physical module). They run in tests and CI and under
+// (prepared program, physical module). They run in tests and CI and under
 // `JS2WASM_VALIDATE_PREPARED=1`, never in a production compile, so no program may depend on one for its refusal.
 
 import { preparedValidationEnabled } from "../../shared/contracts/prepared-validation.js";
