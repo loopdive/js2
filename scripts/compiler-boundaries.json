@@ -327,6 +327,7 @@
         "src/backend/wasmgc/resources/native-prototype-layouts.ts",
         "src/backend/wasmgc/resources/native-prototype-seeder-bindings.ts",
         "src/backend/wasmgc/resources/native-object-get.ts",
+        "src/backend/wasmgc/resources/native-source-objects.ts",
         "src/backend/wasmgc/program/native-primitive-boundary-abi.ts",
         "src/backend/wasmgc/resources/native-primitive-wrapper-layouts.ts",
         "src/backend/wasmgc/resources/native-primitive-wrapper-storage.ts",
@@ -369,6 +370,7 @@
         "src/runtime/wasmgc/values/number-bodies.ts",
         "src/runtime/wasmgc/values/string-number-grammar.ts",
         "src/runtime/wasmgc/values/decimal-scale-bodies.ts",
+        "src/runtime/wasmgc/values/parse-number-bodies.ts",
         "src/runtime/wasmgc/values/string-number-bodies.ts",
         "src/runtime/wasmgc/values/string-to-bigint-body.ts",
         "src/runtime/wasmgc/values/string-flatten-bodies.ts",
@@ -418,6 +420,7 @@
         "src/runtime/wasmgc/values/closure-vector-apply-body.ts",
         "src/runtime/wasmgc/values/object-same-value-body.ts",
         "src/runtime/wasmgc/values/ordinary-object-access-bodies.ts",
+        "src/runtime/wasmgc/values/source-object-bodies.ts",
         "src/runtime/wasmgc/values/ordinary-object-descriptor-accessor.ts",
         "src/runtime/wasmgc/values/ordinary-object-descriptor-common.ts",
         "src/runtime/wasmgc/values/ordinary-object-descriptor-data.ts",
@@ -2158,6 +2161,11 @@
     },
     {
       "path": "src/runtime/wasmgc/values/decimal-scale-bodies.ts",
+      "state": "clean",
+      "layer": "native-runtime"
+    },
+    {
+      "path": "src/runtime/wasmgc/values/parse-number-bodies.ts",
       "state": "clean",
       "layer": "native-runtime"
     },
@@ -5492,6 +5500,14 @@
       "destination": "backend-wasmgc",
       "owner": "3518-coordinator",
       "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+    },
+    {
+      "path": "src/codegen/expressions/var-non-closure-writes.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Scan of a var's writes for a value other than a closure or nullish, steering legacy's identifier-call routes (#7334); move into a frontend analysis module once it no longer needs CodegenContext."
     },
     {
       "path": "src/codegen/expressions/call-namespace-static.ts",
@@ -13172,6 +13188,14 @@
       "nextBoundary": "TypeScript-AST plan plus builder lowering of the JS environment's `Object.create({}, { <literal data descriptors> })`, shared by the selector and from-ast (#7276); folds into the #7338 statics table when that environment adopts it."
     },
     {
+      "path": "src/ir/regexp-literal-admission.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "7364",
+      "nextBoundary": "TypeScript-AST rule for which static RegExp constructions a lane builds, shared by the selector and from-ast (#7364); moves with the frontend inventory split."
+    },
+    {
       "path": "src/ir/object-statics.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
@@ -13732,7 +13756,7 @@
       "nextBoundary": "Separate pure IR contracts from frontend inventory and physical/backend dependencies."
     },
     {
-      "path": "src/ir/property-key-fold.ts",
+      "path": "src/shared/property-key-fold.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
       "destination": "ir-core",
@@ -15225,6 +15249,11 @@
       "layer": "native-runtime"
     },
     {
+      "path": "src/runtime/wasmgc/values/source-object-bodies.ts",
+      "state": "clean",
+      "layer": "native-runtime"
+    },
+    {
       "path": "src/runtime/wasmgc/values/ordinary-object-descriptor-accessor.ts",
       "state": "clean",
       "layer": "native-runtime"
@@ -16611,6 +16640,11 @@
     },
     {
       "path": "src/backend/wasmgc/resources/native-object-get.ts",
+      "state": "clean",
+      "layer": "backend-wasmgc"
+    },
+    {
+      "path": "src/backend/wasmgc/resources/native-source-objects.ts",
       "state": "clean",
       "layer": "backend-wasmgc"
     },

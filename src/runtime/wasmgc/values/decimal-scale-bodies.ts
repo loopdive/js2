@@ -183,7 +183,7 @@ export function buildApplyDecimalExp(
 /**
  * Incremental `result *= 10` / `result /= 10`, `count` (in `L_COUNT`) times.
  * Direction is taken from the sign of `L_TEXP` (the signed total exponent).
- * (#4234) Now used by `emitApplyDecimalExp` only for the residue BEYOND
+ * (#4234) Now used by `buildApplyDecimalExp` only for the residue BEYOND
  * `10^308`, i.e. exponents that necessarily land in subnormal or saturated
  * territory. Stepping there is deliberate: it reaches subnormals and saturates
  * to ±Infinity gracefully, which a single overflowing power cannot.

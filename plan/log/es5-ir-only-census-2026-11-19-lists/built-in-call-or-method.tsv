@@ -1,0 +1,763 @@
+annexB/built-ins/Date/prototype/getYear/B.2.4.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+annexB/built-ins/Date/prototype/setYear/B.2.5.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+annexB/built-ins/Date/prototype/toGMTString/prop-desc.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+annexB/built-ins/Function/createdynfn-html-close-comment-body.js	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+annexB/built-ins/Function/createdynfn-html-close-comment-params.js	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+annexB/built-ins/Function/createdynfn-html-open-comment-body.js	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+annexB/built-ins/Function/createdynfn-html-open-comment-params.js	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+annexB/built-ins/Function/createdynfn-no-line-terminator-html-close-comment-body.js	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+annexB/built-ins/RegExp/RegExp-leading-escape-BMP.js	ir/from-ast: String.fromCharCode provider unavailable (<module-init>)
+annexB/built-ins/RegExp/RegExp-trailing-escape-BMP.js	ir/from-ast: String.fromCharCode provider unavailable (<module-init>)
+annexB/built-ins/String/prototype/substr/B.2.3.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+annexB/built-ins/escape/argument_types.js	ir/from-ast: direct call to "escape" has no exact AST-site plan in <module-init>
+annexB/built-ins/escape/prop-desc.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+annexB/built-ins/unescape/argument_types.js	ir/from-ast: direct call to "unescape" has no exact AST-site plan in <module-init>
+annexB/built-ins/unescape/prop-desc.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+annexB/language/eval-code/direct/global-block-decl-eval-global-existing-global-init.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+annexB/language/eval-code/direct/global-block-decl-eval-global-existing-non-enumerable-global-init.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+annexB/language/eval-code/direct/global-block-decl-eval-global-init.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+annexB/language/eval-code/direct/global-if-decl-else-decl-a-eval-global-existing-global-init.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+annexB/language/eval-code/direct/global-if-decl-else-decl-a-eval-global-existing-non-enumerable-global-init.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+annexB/language/eval-code/direct/global-if-decl-else-decl-a-eval-global-init.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+annexB/language/eval-code/direct/global-if-decl-else-decl-b-eval-global-existing-global-init.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+annexB/language/eval-code/direct/global-if-decl-else-decl-b-eval-global-existing-non-enumerable-global-init.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+annexB/language/eval-code/direct/global-if-decl-else-decl-b-eval-global-init.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+annexB/language/eval-code/direct/global-if-decl-else-stmt-eval-global-existing-global-init.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+annexB/language/eval-code/direct/global-if-decl-else-stmt-eval-global-existing-non-enumerable-global-init.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+annexB/language/eval-code/direct/global-if-decl-else-stmt-eval-global-init.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+annexB/language/eval-code/direct/global-if-decl-no-else-eval-global-existing-global-init.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+annexB/language/eval-code/direct/global-if-decl-no-else-eval-global-existing-non-enumerable-global-init.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+annexB/language/eval-code/direct/global-if-decl-no-else-eval-global-init.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+annexB/language/eval-code/direct/global-if-stmt-else-decl-eval-global-existing-global-init.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+annexB/language/eval-code/direct/global-if-stmt-else-decl-eval-global-existing-non-enumerable-global-init.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+annexB/language/eval-code/direct/global-if-stmt-else-decl-eval-global-init.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+annexB/language/eval-code/direct/global-switch-case-eval-global-existing-global-init.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+annexB/language/eval-code/direct/global-switch-case-eval-global-existing-non-enumerable-global-init.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+annexB/language/eval-code/direct/global-switch-case-eval-global-init.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+annexB/language/eval-code/direct/global-switch-dflt-eval-global-existing-global-init.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+annexB/language/eval-code/direct/global-switch-dflt-eval-global-existing-non-enumerable-global-init.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+annexB/language/eval-code/direct/global-switch-dflt-eval-global-init.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+annexB/language/eval-code/indirect/global-block-decl-eval-global-existing-global-init.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+annexB/language/eval-code/indirect/global-block-decl-eval-global-existing-non-enumerable-global-init.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+annexB/language/eval-code/indirect/global-block-decl-eval-global-init.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+annexB/language/eval-code/indirect/global-if-decl-else-decl-a-eval-global-existing-global-init.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+annexB/language/eval-code/indirect/global-if-decl-else-decl-a-eval-global-existing-non-enumerable-global-init.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+annexB/language/eval-code/indirect/global-if-decl-else-decl-a-eval-global-init.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+annexB/language/eval-code/indirect/global-if-decl-else-decl-b-eval-global-existing-global-init.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+annexB/language/eval-code/indirect/global-if-decl-else-decl-b-eval-global-existing-non-enumerable-global-init.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+annexB/language/eval-code/indirect/global-if-decl-else-decl-b-eval-global-init.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+annexB/language/eval-code/indirect/global-if-decl-else-stmt-eval-global-existing-global-init.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+annexB/language/eval-code/indirect/global-if-decl-else-stmt-eval-global-existing-non-enumerable-global-init.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+annexB/language/eval-code/indirect/global-if-decl-else-stmt-eval-global-init.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+annexB/language/eval-code/indirect/global-if-decl-no-else-eval-global-existing-global-init.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+annexB/language/eval-code/indirect/global-if-decl-no-else-eval-global-existing-non-enumerable-global-init.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+annexB/language/eval-code/indirect/global-if-decl-no-else-eval-global-init.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+annexB/language/eval-code/indirect/global-if-stmt-else-decl-eval-global-existing-global-init.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+annexB/language/eval-code/indirect/global-if-stmt-else-decl-eval-global-existing-non-enumerable-global-init.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+annexB/language/eval-code/indirect/global-if-stmt-else-decl-eval-global-init.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+annexB/language/eval-code/indirect/global-switch-case-eval-global-existing-global-init.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+annexB/language/eval-code/indirect/global-switch-case-eval-global-existing-non-enumerable-global-init.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+annexB/language/eval-code/indirect/global-switch-case-eval-global-init.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+annexB/language/eval-code/indirect/global-switch-dflt-eval-global-existing-global-init.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+annexB/language/eval-code/indirect/global-switch-dflt-eval-global-existing-non-enumerable-global-init.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+annexB/language/eval-code/indirect/global-switch-dflt-eval-global-init.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+annexB/language/global-code/block-decl-global-init.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+annexB/language/global-code/if-decl-else-decl-a-global-init.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+annexB/language/global-code/if-decl-else-decl-b-global-init.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+annexB/language/global-code/if-decl-else-stmt-global-init.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+annexB/language/global-code/if-decl-no-else-global-init.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+annexB/language/global-code/if-stmt-else-decl-global-init.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+annexB/language/global-code/switch-case-global-init.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+annexB/language/global-code/switch-dflt-global-init.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Array/S15.4.1_A1.3_T1.js	ir/from-ast: direct call to "Array" has no exact AST-site plan in <module-init>
+built-ins/Array/S15.4.1_A2.1_T1.js	ir/from-ast: direct call to "Array" has no exact AST-site plan in <module-init>
+built-ins/Array/S15.4.1_A2.2_T1.js	ir/from-ast: direct call to "Array" has no exact AST-site plan in <module-init>
+built-ins/Array/S15.4.1_A3.1_T1.js	ir/from-ast: direct call to "Array" has no exact AST-site plan in <module-init>
+built-ins/Array/S15.4.5.1_A2.2_T1.js	ir/from-ast: direct call to "Array" has no exact AST-site plan in <module-init>
+built-ins/Array/S15.4.5.1_A2.3_T1.js	ir/from-ast: direct call to "Array" has no exact AST-site plan in <module-init>
+built-ins/Date/S15.9.2.1_A1.js	ir/from-ast: direct call to "Date" has no exact AST-site plan in <module-init>
+built-ins/Error/length.js	ir/from-ast: direct call to "Error" has no exact AST-site plan in <module-init>
+built-ins/Error/prototype/S15.11.3.1_A1_T1.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Error/prototype/S15.11.3.1_A3_T1.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Function/15.3.2.1-11-1.js	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+built-ins/Function/15.3.2.1-11-2-s.js	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+built-ins/Function/15.3.2.1-11-3.js	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+built-ins/Function/15.3.2.1-11-4-s.js	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+built-ins/Function/15.3.2.1-11-5.js	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+built-ins/Function/15.3.2.1-11-6-s.js	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+built-ins/Function/15.3.2.1-11-7-s.js	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+built-ins/Function/S15.3.1_A1_T1.js	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+built-ins/Function/S15.3.2.1_A1_T5.js	ir/from-ast: direct call to "Object" has no exact AST-site plan in <module-init>
+built-ins/Function/S15.3.2.1_A2_T1.js	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+built-ins/Function/S15.3.2.1_A2_T2.js	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+built-ins/Function/S15.3.2.1_A2_T3.js	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+built-ins/Function/S15.3.2.1_A3_T7.js	ir/from-ast: direct call to "Object" has no exact AST-site plan in <module-init>
+built-ins/Function/S15.3.5_A1_T2.js	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+built-ins/Function/S15.3.5_A3_T1.js	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+built-ins/Function/length/S15.3.5.1_A1_T2.js	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+built-ins/Function/length/S15.3.5.1_A2_T2.js	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+built-ins/Function/length/S15.3.5.1_A3_T1.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Function/length/S15.3.5.1_A3_T2.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Function/length/S15.3.5.1_A3_T3.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Function/prototype/S15.3.3.1_A1.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Function/prototype/S15.3.3.1_A3.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Function/prototype/S15.3.4_A2_T1.js	ir/from-ast: Function.prototype call provider unavailable (<module-init>)
+built-ins/Function/prototype/S15.3.4_A2_T2.js	ir/from-ast: Function.prototype call provider unavailable (<module-init>)
+built-ins/Function/prototype/S15.3.4_A2_T3.js	ir/from-ast: Function.prototype call provider unavailable (<module-init>)
+built-ins/Function/prototype/S15.3.5.2_A1_T1.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Function/prototype/S15.3.5.2_A1_T2.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Function/prototype/apply/S15.3.4.3_A1_T1.js	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+built-ins/Function/prototype/apply/S15.3.4.3_A3_T1.js	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+built-ins/Function/prototype/apply/S15.3.4.3_A3_T2.js	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+built-ins/Function/prototype/apply/S15.3.4.3_A3_T3.js	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+built-ins/Function/prototype/apply/S15.3.4.3_A3_T4.js	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+built-ins/Function/prototype/apply/S15.3.4.3_A3_T5.js	ir/from-ast: direct call to "Function" has no exact AST-site plan in FACTORY
+built-ins/Function/prototype/apply/S15.3.4.3_A5_T1.js	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+built-ins/Function/prototype/apply/S15.3.4.3_A5_T8.js	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+built-ins/Function/prototype/apply/S15.3.4.3_A7_T1.js	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+built-ins/Function/prototype/apply/S15.3.4.3_A7_T5.js	ir/from-ast: direct call to "Function" has no exact AST-site plan in FACTORY
+built-ins/Function/prototype/apply/S15.3.4.3_A7_T6.js	ir/from-ast: direct call to "Function" has no exact AST-site plan in FACTORY
+built-ins/Function/prototype/apply/S15.3.4.3_A7_T9.js	ir/from-ast: direct call to "Function" has no exact AST-site plan in FACTORY
+built-ins/Function/prototype/apply/S15.3.4.3_A8_T5.js	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+built-ins/Function/prototype/call/S15.3.4.4_A10.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Function/prototype/call/S15.3.4.4_A1_T1.js	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+built-ins/Function/prototype/call/S15.3.4.4_A3_T1.js	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+built-ins/Function/prototype/call/S15.3.4.4_A3_T2.js	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+built-ins/Function/prototype/call/S15.3.4.4_A3_T3.js	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+built-ins/Function/prototype/call/S15.3.4.4_A3_T4.js	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+built-ins/Function/prototype/call/S15.3.4.4_A3_T5.js	ir/from-ast: direct call to "Function" has no exact AST-site plan in FACTORY
+built-ins/Function/prototype/call/S15.3.4.4_A5_T1.js	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+built-ins/Function/prototype/call/S15.3.4.4_A5_T8.js	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+built-ins/Function/prototype/call/S15.3.4.4_A6_T1.js	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+built-ins/Function/prototype/call/S15.3.4.4_A6_T5.js	ir/from-ast: direct call to "Function" has no exact AST-site plan in FACTORY
+built-ins/Function/prototype/call/S15.3.4.4_A6_T6.js	ir/from-ast: direct call to "Function" has no exact AST-site plan in FACTORY
+built-ins/Function/prototype/call/S15.3.4.4_A6_T9.js	ir/from-ast: direct call to "Function" has no exact AST-site plan in FACTORY
+built-ins/Function/prototype/call/S15.3.4.4_A7_T5.js	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+built-ins/Function/prototype/toString/S15.3.4.2_A10.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Infinity/S15.1.1.2_A1.js	ir/from-ast: direct call to "isFinite" has no exact AST-site plan in <module-init>
+built-ins/Math/max/15.8.2.11-1.js	ir/from-ast: Math.max not in IR whitelist (<module-init>)
+built-ins/Math/max/S15.8.2.11_A1.js	ir/from-ast: Math.max not in IR whitelist (<module-init>)
+built-ins/Math/max/S15.8.2.11_A2.js	ir/from-ast: Math.max not in IR whitelist (<module-init>)
+built-ins/Math/min/15.8.2.12-1.js	ir/from-ast: Math.min not in IR whitelist (<module-init>)
+built-ins/Math/min/S15.8.2.12_A1.js	ir/from-ast: Math.min not in IR whitelist (<module-init>)
+built-ins/Math/min/S15.8.2.12_A2.js	ir/from-ast: Math.min not in IR whitelist (<module-init>)
+built-ins/Math/random/S15.8.2.14_A1.js	ir/from-ast: Math.random not in IR whitelist (<module-init>)
+built-ins/Number/MAX_VALUE/S15.7.3.2_A2.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Number/MAX_VALUE/S15.7.3.2_A3.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Number/MIN_VALUE/S15.7.3.3_A2.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Number/MIN_VALUE/S15.7.3.3_A3.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Number/NEGATIVE_INFINITY/S15.7.3.5_A1.js	ir/from-ast: direct call to "isFinite" has no exact AST-site plan in <module-init>
+built-ins/Number/NEGATIVE_INFINITY/S15.7.3.5_A2.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Number/POSITIVE_INFINITY/S15.7.3.6_A1.js	ir/from-ast: direct call to "isFinite" has no exact AST-site plan in <module-init>
+built-ins/Number/POSITIVE_INFINITY/S15.7.3.6_A2.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Number/S9.3.1_A3_T2.js	ir/from-ast: direct call to "String" has no exact AST-site plan in dynaString
+built-ins/Number/S9.3.1_A4_T2.js	ir/from-ast: direct call to "String" has no exact AST-site plan in dynaString
+built-ins/Number/S9.3.1_A5_T3.js	ir/from-ast: direct call to "String" has no exact AST-site plan in dynaString
+built-ins/Number/S9.3.1_A6_T2.js	ir/from-ast: direct call to "String" has no exact AST-site plan in dynaString
+built-ins/Object/S15.2.1.1_A1_T1.js	ir/from-ast: direct call to "Object" has no exact AST-site plan in <module-init>
+built-ins/Object/S15.2.1.1_A1_T2.js	ir/from-ast: direct call to "Object" has no exact AST-site plan in <module-init>
+built-ins/Object/S15.2.1.1_A1_T3.js	ir/from-ast: direct call to "Object" has no exact AST-site plan in <module-init>
+built-ins/Object/S15.2.1.1_A1_T4.js	ir/from-ast: direct call to "Object" has no exact AST-site plan in <module-init>
+built-ins/Object/S15.2.1.1_A1_T5.js	ir/from-ast: direct call to "Object" has no exact AST-site plan in <module-init>
+built-ins/Object/S15.2.1.1_A2_T1.js	ir/from-ast: direct call to "Object" has no exact AST-site plan in <module-init>
+built-ins/Object/S15.2.1.1_A2_T12.js	ir/from-ast: direct call to "Object" has no exact AST-site plan in <module-init>
+built-ins/Object/S15.2.1.1_A2_T13.js	ir/from-ast: direct call to "Object" has no exact AST-site plan in <module-init>
+built-ins/Object/S15.2.1.1_A2_T14.js	ir/from-ast: direct call to "Object" has no exact AST-site plan in <module-init>
+built-ins/Object/S15.2.1.1_A2_T2.js	ir/from-ast: direct call to "Object" has no exact AST-site plan in <module-init>
+built-ins/Object/S15.2.1.1_A2_T3.js	ir/from-ast: direct call to "Object" has no exact AST-site plan in <module-init>
+built-ins/Object/S15.2.1.1_A2_T5.js	ir/from-ast: direct call to "Object" has no exact AST-site plan in <module-init>
+built-ins/Object/S15.2.1.1_A2_T6.js	ir/from-ast: direct call to "Object" has no exact AST-site plan in <module-init>
+built-ins/Object/S15.2.1.1_A2_T7.js	ir/from-ast: direct call to "Object" has no exact AST-site plan in <module-init>
+built-ins/Object/S15.2.1.1_A3_T1.js	ir/from-ast: direct call to "Object" has no exact AST-site plan in <module-init>
+built-ins/Object/S15.2.1.1_A3_T2.js	ir/from-ast: direct call to "Object" has no exact AST-site plan in <module-init>
+built-ins/Object/S15.2.1.1_A3_T3.js	ir/from-ast: direct call to "Object" has no exact AST-site plan in <module-init>
+built-ins/Object/S9.9_A3.js	ir/from-ast: direct call to "Object" has no exact AST-site plan in <module-init>
+built-ins/Object/S9.9_A4.js	ir/from-ast: direct call to "Object" has no exact AST-site plan in <module-init>
+built-ins/Object/S9.9_A5.js	ir/from-ast: direct call to "Object" has no exact AST-site plan in <module-init>
+built-ins/Object/create/15.2.3.5-4-100.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/create/15.2.3.5-4-101.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/create/15.2.3.5-4-125.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/create/15.2.3.5-4-126.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/create/15.2.3.5-4-128.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/create/15.2.3.5-4-129.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/create/15.2.3.5-4-130.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/create/15.2.3.5-4-131.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/create/15.2.3.5-4-132.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/create/15.2.3.5-4-135.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/create/15.2.3.5-4-179.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/create/15.2.3.5-4-204.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/create/15.2.3.5-4-205.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/create/15.2.3.5-4-207.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/create/15.2.3.5-4-208.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/create/15.2.3.5-4-209.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/create/15.2.3.5-4-210.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/create/15.2.3.5-4-211.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/create/15.2.3.5-4-214.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/create/15.2.3.5-4-267.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/create/15.2.3.5-4-292.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/create/15.2.3.5-4-307.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/create/15.2.3.5-4-309.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/create/15.2.3.5-4-311.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/create/15.2.3.5-4-313.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/create/15.2.3.5-4-315.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperties/15.2.3.7-5-b-138.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperties/15.2.3.7-5-b-139.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperties/15.2.3.7-5-b-140.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperties/15.2.3.7-5-b-141.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperties/15.2.3.7-5-b-142.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperties/15.2.3.7-5-b-151.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperties/15.2.3.7-5-b-152.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperties/15.2.3.7-5-b-153.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperties/15.2.3.7-5-b-154.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperties/15.2.3.7-5-b-155.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperties/15.2.3.7-5-b-156.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperties/15.2.3.7-5-b-157.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperties/15.2.3.7-5-b-158.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperties/15.2.3.7-5-b-159.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperties/15.2.3.7-5-b-160.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperties/15.2.3.7-5-b-161.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperties/15.2.3.7-5-b-163.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperties/15.2.3.7-5-b-164.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperties/15.2.3.7-5-b-165.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperties/15.2.3.7-5-b-167.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperties/15.2.3.7-5-b-168.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperties/15.2.3.7-5-b-169.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperties/15.2.3.7-5-b-170.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperties/15.2.3.7-5-b-171.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperties/15.2.3.7-5-b-174.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperties/15.2.3.7-5-b-227.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperties/15.2.3.7-5-b-60.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperties/15.2.3.7-5-b-85.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperties/15.2.3.7-5-b-86.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperties/15.2.3.7-5-b-88.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperties/15.2.3.7-5-b-89.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperties/15.2.3.7-5-b-90.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperties/15.2.3.7-5-b-91.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperties/15.2.3.7-5-b-92.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperties/15.2.3.7-5-b-95.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperties/15.2.3.7-6-a-110.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperties/15.2.3.7-6-a-114-b.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperties/15.2.3.7-6-a-114.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperties/15.2.3.7-6-a-115.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperties/15.2.3.7-6-a-120.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperties/15.2.3.7-6-a-163.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperties/15.2.3.7-6-a-164.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperties/15.2.3.7-6-a-176.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperties/15.2.3.7-6-a-177.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperties/15.2.3.7-6-a-195.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperties/15.2.3.7-6-a-197.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperties/15.2.3.7-6-a-199.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperties/15.2.3.7-6-a-200.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperties/15.2.3.7-6-a-202.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperties/15.2.3.7-6-a-204.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperties/15.2.3.7-6-a-205.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperties/15.2.3.7-6-a-206.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperties/15.2.3.7-6-a-208.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperties/15.2.3.7-6-a-231.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperties/15.2.3.7-6-a-24.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperties/15.2.3.7-6-a-247.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperties/15.2.3.7-6-a-248.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperties/15.2.3.7-6-a-249.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperties/15.2.3.7-6-a-250.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperties/15.2.3.7-6-a-251.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperties/15.2.3.7-6-a-252.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperties/15.2.3.7-6-a-253.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperties/15.2.3.7-6-a-266.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperties/15.2.3.7-6-a-267.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperties/15.2.3.7-6-a-269.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperties/15.2.3.7-6-a-278.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperties/15.2.3.7-6-a-279.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperties/15.2.3.7-6-a-28.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperties/15.2.3.7-6-a-281.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperties/15.2.3.7-6-a-290.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperties/15.2.3.7-6-a-291.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperties/15.2.3.7-6-a-293.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperties/15.2.3.7-6-a-30.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperties/15.2.3.7-6-a-302.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperties/15.2.3.7-6-a-303.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperties/15.2.3.7-6-a-31.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperties/15.2.3.7-6-a-33.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperties/15.2.3.7-6-a-35.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperties/15.2.3.7-6-a-36.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperties/15.2.3.7-6-a-37.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperties/15.2.3.7-6-a-38-1.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperties/15.2.3.7-6-a-38.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperties/15.2.3.7-6-a-39.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperties/15.2.3.7-6-a-41.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperties/15.2.3.7-6-a-48.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperties/15.2.3.7-6-a-50.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperties/15.2.3.7-6-a-52.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperties/15.2.3.7-6-a-54.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperties/15.2.3.7-6-a-94.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperty/15.2.3.6-3-171-1.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperty/15.2.3.6-4-195.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperty/15.2.3.6-4-289-1.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperty/15.2.3.6-4-289.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperty/15.2.3.6-4-290-1.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperty/15.2.3.6-4-290.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperty/15.2.3.6-4-291-1.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperty/15.2.3.6-4-291.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperty/15.2.3.6-4-292-1.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperty/15.2.3.6-4-292-2.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperty/15.2.3.6-4-292.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperty/15.2.3.6-4-293-1.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperty/15.2.3.6-4-293-2.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperty/15.2.3.6-4-293-3.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperty/15.2.3.6-4-293-4.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperty/15.2.3.6-4-293.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperty/15.2.3.6-4-294-1.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperty/15.2.3.6-4-294.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperty/15.2.3.6-4-295-1.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperty/15.2.3.6-4-295.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperty/15.2.3.6-4-296-1.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperty/15.2.3.6-4-296.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperty/15.2.3.6-4-297-1.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperty/15.2.3.6-4-297.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperty/15.2.3.6-4-298-1.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperty/15.2.3.6-4-298.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperty/15.2.3.6-4-299-1.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperty/15.2.3.6-4-299.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperty/15.2.3.6-4-300-1.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperty/15.2.3.6-4-300.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperty/15.2.3.6-4-301-1.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperty/15.2.3.6-4-301.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperty/15.2.3.6-4-302-1.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperty/15.2.3.6-4-302.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperty/15.2.3.6-4-303.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperty/15.2.3.6-4-304.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperty/15.2.3.6-4-305.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperty/15.2.3.6-4-306.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperty/15.2.3.6-4-307.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperty/15.2.3.6-4-308.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperty/15.2.3.6-4-309.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperty/15.2.3.6-4-310.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperty/15.2.3.6-4-311.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperty/15.2.3.6-4-312.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperty/15.2.3.6-4-313-1.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperty/15.2.3.6-4-313.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperty/15.2.3.6-4-314-1.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperty/15.2.3.6-4-314.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperty/15.2.3.6-4-315-1.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperty/15.2.3.6-4-315.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperty/15.2.3.6-4-316-1.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperty/15.2.3.6-4-316.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperty/15.2.3.6-4-317-1.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperty/15.2.3.6-4-317.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperty/15.2.3.6-4-318-1.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperty/15.2.3.6-4-318.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperty/15.2.3.6-4-319-1.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperty/15.2.3.6-4-319.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperty/15.2.3.6-4-320-1.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperty/15.2.3.6-4-320.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperty/15.2.3.6-4-321-1.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperty/15.2.3.6-4-321.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperty/15.2.3.6-4-322-1.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperty/15.2.3.6-4-322.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperty/15.2.3.6-4-323-1.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperty/15.2.3.6-4-323.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperty/15.2.3.6-4-324-1.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperty/15.2.3.6-4-324.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperty/15.2.3.6-4-38.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperty/15.2.3.6-4-405.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperty/15.2.3.6-4-41.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperty/15.2.3.6-4-410.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperty/15.2.3.6-4-420.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperty/15.2.3.6-4-45.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperty/15.2.3.6-4-581.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperty/15.2.3.6-4-586.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperty/15.2.3.6-4-596.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperty/15.2.3.6-4-598.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperty/15.2.3.6-4-599.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperty/15.2.3.6-4-600.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperty/15.2.3.6-4-601.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperty/15.2.3.6-4-602.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperty/15.2.3.6-4-603.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperty/15.2.3.6-4-604.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperty/15.2.3.6-4-605.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperty/15.2.3.6-4-606.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperty/15.2.3.6-4-607.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperty/15.2.3.6-4-608.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperty/15.2.3.6-4-609.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperty/15.2.3.6-4-610.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperty/15.2.3.6-4-611.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperty/15.2.3.6-4-612.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperty/15.2.3.6-4-613.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperty/15.2.3.6-4-614.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperty/15.2.3.6-4-615.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperty/15.2.3.6-4-616.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperty/15.2.3.6-4-617.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperty/15.2.3.6-4-618.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperty/15.2.3.6-4-619.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperty/15.2.3.6-4-620.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperty/15.2.3.6-4-621.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperty/15.2.3.6-4-622.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperty/15.2.3.6-4-623.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/defineProperty/15.2.3.6-4-624.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/freeze/15.2.3.9-2-a-1.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/freeze/15.2.3.9-2-a-10.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/freeze/15.2.3.9-2-a-11.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/freeze/15.2.3.9-2-a-12.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/freeze/15.2.3.9-2-a-13.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/freeze/15.2.3.9-2-a-14.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/freeze/15.2.3.9-2-a-2.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/freeze/15.2.3.9-2-a-7.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/freeze/15.2.3.9-2-a-8.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/freeze/15.2.3.9-2-a-9.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-4-187.js	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-4-188.js	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+built-ins/Object/preventExtensions/15.2.3.10-3-10.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/preventExtensions/15.2.3.10-3-11.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/preventExtensions/15.2.3.10-3-12.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/preventExtensions/15.2.3.10-3-13.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/preventExtensions/15.2.3.10-3-14.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/preventExtensions/15.2.3.10-3-15.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/preventExtensions/15.2.3.10-3-16.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/preventExtensions/15.2.3.10-3-17.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/preventExtensions/15.2.3.10-3-18.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/preventExtensions/15.2.3.10-3-19.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/preventExtensions/15.2.3.10-3-2.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/preventExtensions/15.2.3.10-3-20.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/preventExtensions/15.2.3.10-3-21.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/preventExtensions/15.2.3.10-3-3.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/preventExtensions/15.2.3.10-3-4.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/preventExtensions/15.2.3.10-3-5-1.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/preventExtensions/15.2.3.10-3-6.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/preventExtensions/15.2.3.10-3-7.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/preventExtensions/15.2.3.10-3-8.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/preventExtensions/15.2.3.10-3-9.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/prototype/S15.2.3.1_A1.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/prototype/S15.2.3.1_A3.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/prototype/propertyIsEnumerable/S15.2.4.7_A10.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/prototype/toLocaleString/S15.2.4.3_A10.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/Object/prototype/valueOf/S15.2.4.4_A10.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/RegExp/S15.10.2.10_A2.1_T1.js	ir/from-ast: String.fromCharCode provider unavailable (<module-init>)
+built-ins/RegExp/S15.10.2.10_A2.1_T2.js	ir/from-ast: String.fromCharCode provider unavailable (<module-init>)
+built-ins/RegExp/S15.10.2.8_A3_T18.js	ir/from-ast: method call .replace(...) on string not in slice 4 (<module-init>)
+built-ins/RegExp/prototype/S15.10.5.1_A3.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/RegExp/prototype/S15.10.5.1_A4.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/RegExp/prototype/exec/S15.10.6.2_A10.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/RegExp/prototype/global/S15.10.7.2_A10.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/RegExp/prototype/ignoreCase/S15.10.7.3_A10.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/RegExp/prototype/multiline/S15.10.7.4_A10.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/RegExp/prototype/test/S15.10.6.3_A10.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/RegExp/prototype/toString/S15.10.6.4_A10.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/String/15.5.5.5.2-1-2.js	ir/from-ast: direct call to "String" has no exact AST-site plan in <module-init>
+built-ins/String/15.5.5.5.2-3-2.js	ir/from-ast: direct call to "String" has no exact AST-site plan in <module-init>
+built-ins/String/15.5.5.5.2-3-6.js	ir/from-ast: direct call to "String" has no exact AST-site plan in <module-init>
+built-ins/String/15.5.5.5.2-3-7.js	ir/from-ast: direct call to "String" has no exact AST-site plan in <module-init>
+built-ins/String/15.5.5.5.2-3-8.js	ir/from-ast: direct call to "String" has no exact AST-site plan in <module-init>
+built-ins/String/15.5.5.5.2-7-2.js	ir/from-ast: direct call to "String" has no exact AST-site plan in <module-init>
+built-ins/String/15.5.5.5.2-7-4.js	ir/from-ast: direct call to "String" has no exact AST-site plan in <module-init>
+built-ins/String/S15.5.1.1_A1_T1.js	ir/from-ast: direct call to "String" has no exact AST-site plan in <module-init>
+built-ins/String/S15.5.1.1_A1_T10.js	ir/from-ast: direct call to "String" has no exact AST-site plan in <module-init>
+built-ins/String/S15.5.1.1_A1_T11.js	ir/from-ast: direct call to "String" has no exact AST-site plan in <module-init>
+built-ins/String/S15.5.1.1_A1_T12.js	ir/from-ast: direct call to "String" has no exact AST-site plan in <module-init>
+built-ins/String/S15.5.1.1_A1_T13.js	ir/from-ast: direct call to "String" has no exact AST-site plan in <module-init>
+built-ins/String/S15.5.1.1_A1_T14.js	ir/from-ast: direct call to "String" has no exact AST-site plan in <module-init>
+built-ins/String/S15.5.1.1_A1_T15.js	ir/from-ast: direct call to "String" has no exact AST-site plan in <module-init>
+built-ins/String/S15.5.1.1_A1_T16.js	ir/from-ast: direct call to "String" has no exact AST-site plan in <module-init>
+built-ins/String/S15.5.1.1_A1_T17.js	ir/from-ast: direct call to "String" has no exact AST-site plan in <module-init>
+built-ins/String/S15.5.1.1_A1_T18.js	ir/from-ast: direct call to "String" has no exact AST-site plan in <module-init>
+built-ins/String/S15.5.1.1_A1_T19.js	ir/from-ast: direct call to "String" has no exact AST-site plan in <module-init>
+built-ins/String/S15.5.1.1_A1_T2.js	ir/from-ast: direct call to "String" has no exact AST-site plan in <module-init>
+built-ins/String/S15.5.1.1_A1_T3.js	ir/from-ast: direct call to "String" has no exact AST-site plan in <module-init>
+built-ins/String/S15.5.1.1_A1_T4.js	ir/from-ast: direct call to "String" has no exact AST-site plan in <module-init>
+built-ins/String/S15.5.1.1_A1_T5.js	ir/from-ast: direct call to "String" has no exact AST-site plan in <module-init>
+built-ins/String/S15.5.1.1_A1_T6.js	ir/from-ast: direct call to "String" has no exact AST-site plan in <module-init>
+built-ins/String/S15.5.1.1_A1_T7.js	ir/from-ast: direct call to "String" has no exact AST-site plan in <module-init>
+built-ins/String/S15.5.1.1_A2_T1.js	ir/from-ast: direct call to "String" has no exact AST-site plan in <module-init>
+built-ins/String/S15.5.5.1_A3.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/String/S15.5.5.1_A4_T2.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/String/S9.8.1_A1.js	ir/from-ast: direct call to "String" has no exact AST-site plan in <module-init>
+built-ins/String/S9.8.1_A10.js	ir/from-ast: direct call to "String" has no exact AST-site plan in <module-init>
+built-ins/String/S9.8.1_A2.js	ir/from-ast: direct call to "String" has no exact AST-site plan in <module-init>
+built-ins/String/S9.8.1_A3.js	ir/from-ast: direct call to "String" has no exact AST-site plan in <module-init>
+built-ins/String/S9.8.1_A4.js	ir/from-ast: direct call to "String" has no exact AST-site plan in <module-init>
+built-ins/String/S9.8.1_A6.js	ir/from-ast: direct call to "String" has no exact AST-site plan in <module-init>
+built-ins/String/S9.8.1_A7.js	ir/from-ast: direct call to "String" has no exact AST-site plan in <module-init>
+built-ins/String/S9.8.1_A8.js	ir/from-ast: direct call to "String" has no exact AST-site plan in <module-init>
+built-ins/String/S9.8.1_A9_T1.js	ir/from-ast: direct call to "String" has no exact AST-site plan in <module-init>
+built-ins/String/S9.8.1_A9_T2.js	ir/from-ast: direct call to "String" has no exact AST-site plan in <module-init>
+built-ins/String/S9.8_A1_T1.js	ir/from-ast: direct call to "String" has no exact AST-site plan in <module-init>
+built-ins/String/S9.8_A2_T1.js	ir/from-ast: direct call to "String" has no exact AST-site plan in <module-init>
+built-ins/String/S9.8_A3_T1.js	ir/from-ast: direct call to "String" has no exact AST-site plan in <module-init>
+built-ins/String/S9.8_A4_T1.js	ir/from-ast: direct call to "String" has no exact AST-site plan in <module-init>
+built-ins/String/S9.8_A5_T1.js	ir/from-ast: direct call to "String" has no exact AST-site plan in <module-init>
+built-ins/String/fromCharCode/S15.5.3.2_A2.js	ir/from-ast: String.fromCharCode provider unavailable (<module-init>)
+built-ins/String/fromCharCode/S15.5.3.2_A3_T1.js	ir/from-ast: String.fromCharCode provider unavailable (<module-init>)
+built-ins/String/fromCharCode/S9.7_A1.js	ir/from-ast: String.fromCharCode provider unavailable (<module-init>)
+built-ins/String/fromCharCode/S9.7_A2.1.js	ir/from-ast: String.fromCharCode provider unavailable (<module-init>)
+built-ins/String/fromCharCode/S9.7_A2.2.js	ir/from-ast: String.fromCharCode provider unavailable (<module-init>)
+built-ins/String/fromCharCode/S9.7_A3.1_T1.js	ir/from-ast: String.fromCharCode provider unavailable (<module-init>)
+built-ins/String/fromCharCode/S9.7_A3.1_T2.js	ir/from-ast: String.fromCharCode provider unavailable (<module-init>)
+built-ins/String/fromCharCode/S9.7_A3.1_T3.js	ir/from-ast: String.fromCharCode provider unavailable (<module-init>)
+built-ins/String/fromCharCode/S9.7_A3.2_T1.js	ir/from-ast: String.fromCharCode provider unavailable (<module-init>)
+built-ins/String/prototype/S15.5.3.1_A3.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/String/prototype/S15.5.3.1_A4.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/String/prototype/charAt/S15.5.4.4_A10.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/String/prototype/charAt/S15.5.4.4_A1_T4.js	ir/from-ast: method call .charAt(...) on string not in slice 4 (<module-init>)
+built-ins/String/prototype/charAt/S15.5.4.4_A1_T7.js	ir/from-ast: direct call to "String" has no exact AST-site plan in <module-init>
+built-ins/String/prototype/charAt/S15.5.4.4_A1_T8.js	ir/from-ast: direct call to "String" has no exact AST-site plan in <module-init>
+built-ins/String/prototype/charAt/S15.5.4.4_A4_T1.js	ir/from-ast: method call .charAt(...) on string not in slice 4 (<module-init>)
+built-ins/String/prototype/charAt/S15.5.4.4_A4_T2.js	ir/from-ast: method call .charAt(...) on string not in slice 4 (<module-init>)
+built-ins/String/prototype/charAt/S15.5.4.4_A4_T3.js	ir/from-ast: method call .charAt(...) on string not in slice 4 (<module-init>)
+built-ins/String/prototype/charAt/S9.4_A1.js	ir/from-ast: method call .charAt(...) on string not in slice 4 (<module-init>)
+built-ins/String/prototype/charAt/S9.4_A2.js	ir/from-ast: method call .charAt(...) on string not in slice 4 (<module-init>)
+built-ins/String/prototype/charCodeAt/S15.5.4.5_A10.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/String/prototype/charCodeAt/S15.5.4.5_A1_T4.js	ir/from-ast: method call .charCodeAt(...) on string not in slice 4 (<module-init>)
+built-ins/String/prototype/charCodeAt/S15.5.4.5_A1_T7.js	ir/from-ast: direct call to "String" has no exact AST-site plan in <module-init>
+built-ins/String/prototype/charCodeAt/S15.5.4.5_A1_T8.js	ir/from-ast: direct call to "String" has no exact AST-site plan in <module-init>
+built-ins/String/prototype/concat/S15.5.4.6_A10.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/String/prototype/concat/S15.5.4.6_A1_T4.js	ir/from-ast: method call .concat(...) on string not in slice 4 (<module-init>)
+built-ins/String/prototype/concat/S15.5.4.6_A1_T7.js	ir/from-ast: direct call to "String" has no exact AST-site plan in <module-init>
+built-ins/String/prototype/concat/S15.5.4.6_A1_T8.js	ir/from-ast: direct call to "String" has no exact AST-site plan in <module-init>
+built-ins/String/prototype/indexOf/S15.5.4.7_A10.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/String/prototype/indexOf/S15.5.4.7_A1_T4.js	ir/from-ast: method call .indexOf(...) on string not in slice 4 (<module-init>)
+built-ins/String/prototype/indexOf/S15.5.4.7_A1_T7.js	ir/from-ast: direct call to "String" has no exact AST-site plan in <module-init>
+built-ins/String/prototype/indexOf/S15.5.4.7_A2_T1.js	ir/from-ast: method call .indexOf(...) on string not in slice 4 (<module-init>)
+built-ins/String/prototype/indexOf/S15.5.4.7_A2_T2.js	ir/from-ast: method call .indexOf(...) on string not in slice 4 (<module-init>)
+built-ins/String/prototype/indexOf/S15.5.4.7_A2_T3.js	ir/from-ast: method call .indexOf(...) on string not in slice 4 (<module-init>)
+built-ins/String/prototype/indexOf/S15.5.4.7_A2_T4.js	ir/from-ast: method call .indexOf(...) on string not in slice 4 (<module-init>)
+built-ins/String/prototype/indexOf/S15.5.4.7_A3_T1.js	ir/from-ast: method call .indexOf(...) on string not in slice 4 (<module-init>)
+built-ins/String/prototype/indexOf/S15.5.4.7_A3_T2.js	ir/from-ast: method call .indexOf(...) on string not in slice 4 (<module-init>)
+built-ins/String/prototype/indexOf/S15.5.4.7_A3_T3.js	ir/from-ast: method call .indexOf(...) on string not in slice 4 (<module-init>)
+built-ins/String/prototype/lastIndexOf/S15.5.4.8_A10.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/String/prototype/lastIndexOf/S15.5.4.8_A1_T4.js	ir/from-ast: method call .lastIndexOf(...) on string not in slice 4 (<module-init>)
+built-ins/String/prototype/lastIndexOf/S15.5.4.8_A1_T7.js	ir/from-ast: direct call to "String" has no exact AST-site plan in <module-init>
+built-ins/String/prototype/localeCompare/S15.5.4.9_A10.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/String/prototype/match/S15.5.4.10_A1_T4.js	ir/from-ast: method call .match(...) on string not in slice 4 (<module-init>)
+built-ins/String/prototype/match/S15.5.4.10_A1_T7.js	ir/from-ast: direct call to "String" has no exact AST-site plan in <module-init>
+built-ins/String/prototype/match/length.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/String/prototype/replace/S15.5.4.11_A1_T7.js	ir/from-ast: direct call to "String" has no exact AST-site plan in <module-init>
+built-ins/String/prototype/search/S15.5.4.12_A1.1_T1.js	ir/from-ast: method call .search(...) on string not in slice 4 (<module-init>)
+built-ins/String/prototype/search/S15.5.4.12_A10.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/String/prototype/search/S15.5.4.12_A1_T4.js	ir/from-ast: method call .search(...) on string not in slice 4 (<module-init>)
+built-ins/String/prototype/search/S15.5.4.12_A1_T7.js	ir/from-ast: direct call to "String" has no exact AST-site plan in <module-init>
+built-ins/String/prototype/slice/S15.5.4.13_A10.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/String/prototype/slice/S15.5.4.13_A1_T14.js	ir/from-ast: method call .slice(...) on string not in slice 4 (<module-init>)
+built-ins/String/prototype/slice/S15.5.4.13_A1_T7.js	ir/from-ast: direct call to "String" has no exact AST-site plan in <module-init>
+built-ins/String/prototype/split/argument-is-undefined-and-instance-is-string.js	ir/from-ast: direct call to "String" has no exact AST-site plan in <module-init>
+built-ins/String/prototype/split/call-split-without-arguments-and-instance-is-empty-string.js	ir/from-ast: method call .split(...) on string not in slice 4 (<module-init>)
+built-ins/String/prototype/split/checking-if-varying-the-string-prototype-split-length-property-fails.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/String/prototype/substring/S15.5.4.15_A10.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/String/prototype/substring/S15.5.4.15_A1_T14.js	ir/from-ast: method call .substring(...) on string not in slice 4 (<module-init>)
+built-ins/String/prototype/substring/S15.5.4.15_A1_T7.js	ir/from-ast: direct call to "String" has no exact AST-site plan in <module-init>
+built-ins/String/prototype/toLocaleLowerCase/S15.5.4.17_A10.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/String/prototype/toLocaleLowerCase/S15.5.4.17_A1_T4.js	ir/from-ast: method call .toLocaleLowerCase(...) on string not in slice 4 (<module-init>)
+built-ins/String/prototype/toLocaleLowerCase/S15.5.4.17_A2_T1.js	ir/from-ast: method call .toLocaleLowerCase(...) on string not in slice 4 (<module-init>)
+built-ins/String/prototype/toLocaleLowerCase/special_casing.js	ir/from-ast: method call .toLocaleLowerCase(...) on string not in slice 4 (<module-init>)
+built-ins/String/prototype/toLocaleLowerCase/special_casing_conditional.js	ir/from-ast: method call .toLocaleLowerCase(...) on string not in slice 4 (<module-init>)
+built-ins/String/prototype/toLocaleUpperCase/S15.5.4.19_A10.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/String/prototype/toLocaleUpperCase/S15.5.4.19_A1_T4.js	ir/from-ast: method call .toLocaleUpperCase(...) on string not in slice 4 (<module-init>)
+built-ins/String/prototype/toLocaleUpperCase/S15.5.4.19_A2_T1.js	ir/from-ast: method call .toLocaleUpperCase(...) on string not in slice 4 (<module-init>)
+built-ins/String/prototype/toLocaleUpperCase/special_casing.js	ir/from-ast: method call .toLocaleUpperCase(...) on string not in slice 4 (<module-init>)
+built-ins/String/prototype/toLowerCase/S15.5.4.16_A10.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/String/prototype/toLowerCase/S15.5.4.16_A1_T4.js	ir/from-ast: method call .toLowerCase(...) on string not in slice 4 (<module-init>)
+built-ins/String/prototype/toLowerCase/S15.5.4.16_A2_T1.js	ir/from-ast: method call .toLowerCase(...) on string not in slice 4 (<module-init>)
+built-ins/String/prototype/toLowerCase/special_casing.js	ir/from-ast: method call .toLowerCase(...) on string not in slice 4 (<module-init>)
+built-ins/String/prototype/toLowerCase/special_casing_conditional.js	ir/from-ast: method call .toLowerCase(...) on string not in slice 4 (<module-init>)
+built-ins/String/prototype/toUpperCase/S15.5.4.18_A10.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+built-ins/String/prototype/toUpperCase/S15.5.4.18_A1_T4.js	ir/from-ast: method call .toUpperCase(...) on string not in slice 4 (<module-init>)
+built-ins/String/prototype/toUpperCase/S15.5.4.18_A2_T1.js	ir/from-ast: method call .toUpperCase(...) on string not in slice 4 (<module-init>)
+built-ins/String/prototype/toUpperCase/special_casing.js	ir/from-ast: method call .toUpperCase(...) on string not in slice 4 (<module-init>)
+built-ins/String/prototype/trim/15.5.4.20-1-8.js	ir/from-ast: direct call to "String" has no exact AST-site plan in <module-init>
+built-ins/String/prototype/trim/15.5.4.20-3-10.js	ir/from-ast: method call .trim(...) on string not in slice 4 (<module-init>)
+built-ins/String/prototype/trim/15.5.4.20-3-11.js	ir/from-ast: method call .trim(...) on string not in slice 4 (<module-init>)
+built-ins/String/prototype/trim/15.5.4.20-3-12.js	ir/from-ast: method call .trim(...) on string not in slice 4 (<module-init>)
+built-ins/String/prototype/trim/15.5.4.20-3-13.js	ir/from-ast: method call .trim(...) on string not in slice 4 (<module-init>)
+built-ins/String/prototype/trim/15.5.4.20-3-14.js	ir/from-ast: method call .trim(...) on string not in slice 4 (<module-init>)
+built-ins/String/prototype/trim/15.5.4.20-3-8.js	ir/from-ast: method call .trim(...) on string not in slice 4 (<module-init>)
+built-ins/String/prototype/trim/15.5.4.20-3-9.js	ir/from-ast: method call .trim(...) on string not in slice 4 (<module-init>)
+built-ins/String/prototype/trim/15.5.4.20-4-10.js	ir/from-ast: method call .trim(...) on string not in slice 4 (<module-init>)
+built-ins/String/prototype/trim/15.5.4.20-4-11.js	ir/from-ast: method call .trim(...) on string not in slice 4 (<module-init>)
+built-ins/String/prototype/trim/15.5.4.20-4-12.js	ir/from-ast: method call .trim(...) on string not in slice 4 (<module-init>)
+built-ins/String/prototype/trim/15.5.4.20-4-13.js	ir/from-ast: method call .trim(...) on string not in slice 4 (<module-init>)
+built-ins/String/prototype/trim/15.5.4.20-4-14.js	ir/from-ast: method call .trim(...) on string not in slice 4 (<module-init>)
+built-ins/String/prototype/trim/15.5.4.20-4-16.js	ir/from-ast: method call .trim(...) on string not in slice 4 (<module-init>)
+built-ins/String/prototype/trim/15.5.4.20-4-18.js	ir/from-ast: method call .trim(...) on string not in slice 4 (<module-init>)
+built-ins/String/prototype/trim/15.5.4.20-4-19.js	ir/from-ast: method call .trim(...) on string not in slice 4 (<module-init>)
+built-ins/String/prototype/trim/15.5.4.20-4-2.js	ir/from-ast: method call .trim(...) on string not in slice 4 (<module-init>)
+built-ins/String/prototype/trim/15.5.4.20-4-20.js	ir/from-ast: method call .trim(...) on string not in slice 4 (<module-init>)
+built-ins/String/prototype/trim/15.5.4.20-4-21.js	ir/from-ast: method call .trim(...) on string not in slice 4 (<module-init>)
+built-ins/String/prototype/trim/15.5.4.20-4-22.js	ir/from-ast: method call .trim(...) on string not in slice 4 (<module-init>)
+built-ins/String/prototype/trim/15.5.4.20-4-24.js	ir/from-ast: method call .trim(...) on string not in slice 4 (<module-init>)
+built-ins/String/prototype/trim/15.5.4.20-4-27.js	ir/from-ast: method call .trim(...) on string not in slice 4 (<module-init>)
+built-ins/String/prototype/trim/15.5.4.20-4-28.js	ir/from-ast: method call .trim(...) on string not in slice 4 (<module-init>)
+built-ins/String/prototype/trim/15.5.4.20-4-29.js	ir/from-ast: method call .trim(...) on string not in slice 4 (<module-init>)
+built-ins/String/prototype/trim/15.5.4.20-4-3.js	ir/from-ast: method call .trim(...) on string not in slice 4 (<module-init>)
+built-ins/String/prototype/trim/15.5.4.20-4-30.js	ir/from-ast: method call .trim(...) on string not in slice 4 (<module-init>)
+built-ins/String/prototype/trim/15.5.4.20-4-32.js	ir/from-ast: method call .trim(...) on string not in slice 4 (<module-init>)
+built-ins/String/prototype/trim/15.5.4.20-4-34.js	ir/from-ast: method call .trim(...) on string not in slice 4 (<module-init>)
+built-ins/String/prototype/trim/15.5.4.20-4-35.js	ir/from-ast: method call .trim(...) on string not in slice 4 (<module-init>)
+built-ins/String/prototype/trim/15.5.4.20-4-36.js	ir/from-ast: method call .trim(...) on string not in slice 4 (<module-init>)
+built-ins/String/prototype/trim/15.5.4.20-4-37.js	ir/from-ast: method call .trim(...) on string not in slice 4 (<module-init>)
+built-ins/String/prototype/trim/15.5.4.20-4-38.js	ir/from-ast: method call .trim(...) on string not in slice 4 (<module-init>)
+built-ins/String/prototype/trim/15.5.4.20-4-39.js	ir/from-ast: method call .trim(...) on string not in slice 4 (<module-init>)
+built-ins/String/prototype/trim/15.5.4.20-4-4.js	ir/from-ast: method call .trim(...) on string not in slice 4 (<module-init>)
+built-ins/String/prototype/trim/15.5.4.20-4-40.js	ir/from-ast: method call .trim(...) on string not in slice 4 (<module-init>)
+built-ins/String/prototype/trim/15.5.4.20-4-41.js	ir/from-ast: method call .trim(...) on string not in slice 4 (<module-init>)
+built-ins/String/prototype/trim/15.5.4.20-4-42.js	ir/from-ast: method call .trim(...) on string not in slice 4 (<module-init>)
+built-ins/String/prototype/trim/15.5.4.20-4-43.js	ir/from-ast: method call .trim(...) on string not in slice 4 (<module-init>)
+built-ins/String/prototype/trim/15.5.4.20-4-44.js	ir/from-ast: method call .trim(...) on string not in slice 4 (<module-init>)
+built-ins/String/prototype/trim/15.5.4.20-4-45.js	ir/from-ast: method call .trim(...) on string not in slice 4 (<module-init>)
+built-ins/String/prototype/trim/15.5.4.20-4-46.js	ir/from-ast: method call .trim(...) on string not in slice 4 (<module-init>)
+built-ins/String/prototype/trim/15.5.4.20-4-47.js	ir/from-ast: method call .trim(...) on string not in slice 4 (<module-init>)
+built-ins/String/prototype/trim/15.5.4.20-4-48.js	ir/from-ast: method call .trim(...) on string not in slice 4 (<module-init>)
+built-ins/String/prototype/trim/15.5.4.20-4-49.js	ir/from-ast: method call .trim(...) on string not in slice 4 (<module-init>)
+built-ins/String/prototype/trim/15.5.4.20-4-5.js	ir/from-ast: method call .trim(...) on string not in slice 4 (<module-init>)
+built-ins/String/prototype/trim/15.5.4.20-4-50.js	ir/from-ast: method call .trim(...) on string not in slice 4 (<module-init>)
+built-ins/String/prototype/trim/15.5.4.20-4-51.js	ir/from-ast: method call .trim(...) on string not in slice 4 (<module-init>)
+built-ins/String/prototype/trim/15.5.4.20-4-52.js	ir/from-ast: method call .trim(...) on string not in slice 4 (<module-init>)
+built-ins/String/prototype/trim/15.5.4.20-4-53.js	ir/from-ast: method call .trim(...) on string not in slice 4 (<module-init>)
+built-ins/String/prototype/trim/15.5.4.20-4-54.js	ir/from-ast: method call .trim(...) on string not in slice 4 (<module-init>)
+built-ins/String/prototype/trim/15.5.4.20-4-55.js	ir/from-ast: method call .trim(...) on string not in slice 4 (<module-init>)
+built-ins/String/prototype/trim/15.5.4.20-4-56.js	ir/from-ast: method call .trim(...) on string not in slice 4 (<module-init>)
+built-ins/String/prototype/trim/15.5.4.20-4-57.js	ir/from-ast: method call .trim(...) on string not in slice 4 (<module-init>)
+built-ins/String/prototype/trim/15.5.4.20-4-58.js	ir/from-ast: method call .trim(...) on string not in slice 4 (<module-init>)
+built-ins/String/prototype/trim/15.5.4.20-4-6.js	ir/from-ast: method call .trim(...) on string not in slice 4 (<module-init>)
+built-ins/String/prototype/trim/15.5.4.20-4-60.js	ir/from-ast: method call .trim(...) on string not in slice 4 (<module-init>)
+built-ins/String/prototype/trim/15.5.4.20-4-8.js	ir/from-ast: method call .trim(...) on string not in slice 4 (<module-init>)
+built-ins/parseInt/S15.1.2.2_A3.1_T6.js	ir/from-ast: direct call to "parseInt" has no exact AST-site plan in <module-init>
+harness/propertyhelper-verifyconfigurable-configurable-object.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+harness/propertyhelper-verifywritable-array-length.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+harness/verifyProperty-arguments.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+harness/verifyProperty-configurable-object.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+harness/verifyProperty-noproperty.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+harness/verifyProperty-restore-accessor.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+harness/verifyProperty-restore.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+harness/verifyProperty-same-value.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+harness/verifyProperty-string-prop.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+harness/verifyProperty-undefined-desc.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+harness/verifyProperty-value-error.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+harness/verifyProperty-value.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+intl402/Collator/prototype/prop-desc.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+intl402/DateTimeFormat/prototype/prop-desc.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+intl402/NumberFormat/prototype/prop-desc.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+intl402/String/prototype/toLocaleLowerCase/capital_I_with_dot.js	ir/from-ast: method call .toLocaleLowerCase(...) on string not in slice 4 (<module-init>)
+intl402/String/prototype/toLocaleLowerCase/special_casing_Azeri.js	ir/from-ast: method call .toLocaleLowerCase(...) on string not in slice 4 (<module-init>)
+intl402/String/prototype/toLocaleLowerCase/special_casing_Lithuanian.js	ir/from-ast: method call .toLocaleLowerCase(...) on string not in slice 4 (<module-init>)
+intl402/String/prototype/toLocaleLowerCase/special_casing_Turkish.js	ir/from-ast: method call .toLocaleLowerCase(...) on string not in slice 4 (<module-init>)
+intl402/String/prototype/toLocaleUpperCase/special_casing_Azeri.js	ir/from-ast: method call .toLocaleUpperCase(...) on string not in slice 4 (<module-init>)
+intl402/String/prototype/toLocaleUpperCase/special_casing_Turkish.js	ir/from-ast: method call .toLocaleUpperCase(...) on string not in slice 4 (<module-init>)
+language/arguments-object/10.6-11-b-1.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+language/arguments-object/10.6-13-a-1.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+language/arguments-object/10.6-14-c-1-s.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+language/arguments-object/10.6-6-2.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+language/arguments-object/10.6-7-1.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+language/expressions/addition/S11.6.1_A3.1_T1.3.js	ir/from-ast: direct call to "isNaN" has no exact AST-site plan in <module-init>
+language/expressions/addition/S11.6.1_A3.1_T2.3.js	ir/from-ast: direct call to "isNaN" has no exact AST-site plan in <module-init>
+language/expressions/addition/S11.6.1_A3.1_T2.4.js	ir/from-ast: direct call to "isNaN" has no exact AST-site plan in <module-init>
+language/expressions/addition/S11.6.1_A4_T1.js	ir/from-ast: direct call to "isNaN" has no exact AST-site plan in <module-init>
+language/expressions/addition/S11.6.1_A4_T2.js	ir/from-ast: direct call to "isNaN" has no exact AST-site plan in <module-init>
+language/expressions/call/S11.2.3_A3_T4.js	ir/from-ast: direct call to "undefined" has no exact AST-site plan in <module-init>
+language/expressions/call/S11.2.3_A4_T5.js	ir/from-ast: direct call to "Math" has no exact AST-site plan in <module-init>
+language/expressions/compound-assignment/S11.13.2_A4.1_T1.4.js	ir/from-ast: direct call to "isNaN" has no exact AST-site plan in <module-init>
+language/expressions/compound-assignment/S11.13.2_A4.1_T2.4.js	ir/from-ast: direct call to "isNaN" has no exact AST-site plan in <module-init>
+language/expressions/compound-assignment/S11.13.2_A4.1_T2.6.js	ir/from-ast: direct call to "isNaN" has no exact AST-site plan in <module-init>
+language/expressions/compound-assignment/S11.13.2_A4.1_T2.8.js	ir/from-ast: direct call to "isNaN" has no exact AST-site plan in <module-init>
+language/expressions/compound-assignment/S11.13.2_A4.2_T1.4.js	ir/from-ast: direct call to "isNaN" has no exact AST-site plan in <module-init>
+language/expressions/compound-assignment/S11.13.2_A4.2_T2.4.js	ir/from-ast: direct call to "isNaN" has no exact AST-site plan in <module-init>
+language/expressions/compound-assignment/S11.13.2_A4.2_T2.6.js	ir/from-ast: direct call to "isNaN" has no exact AST-site plan in <module-init>
+language/expressions/compound-assignment/S11.13.2_A4.2_T2.8.js	ir/from-ast: direct call to "isNaN" has no exact AST-site plan in <module-init>
+language/expressions/compound-assignment/S11.13.2_A4.3_T1.4.js	ir/from-ast: direct call to "isNaN" has no exact AST-site plan in <module-init>
+language/expressions/compound-assignment/S11.13.2_A4.3_T2.3.js	ir/from-ast: direct call to "isNaN" has no exact AST-site plan in <module-init>
+language/expressions/compound-assignment/S11.13.2_A4.3_T2.4.js	ir/from-ast: direct call to "isNaN" has no exact AST-site plan in <module-init>
+language/expressions/compound-assignment/S11.13.2_A4.3_T2.6.js	ir/from-ast: direct call to "isNaN" has no exact AST-site plan in <module-init>
+language/expressions/compound-assignment/S11.13.2_A4.3_T2.7.js	ir/from-ast: direct call to "isNaN" has no exact AST-site plan in <module-init>
+language/expressions/compound-assignment/S11.13.2_A4.3_T2.8.js	ir/from-ast: direct call to "isNaN" has no exact AST-site plan in <module-init>
+language/expressions/compound-assignment/S11.13.2_A4.3_T2.9.js	ir/from-ast: direct call to "isNaN" has no exact AST-site plan in <module-init>
+language/expressions/compound-assignment/S11.13.2_A4.4_T1.3.js	ir/from-ast: direct call to "isNaN" has no exact AST-site plan in <module-init>
+language/expressions/compound-assignment/S11.13.2_A4.4_T2.3.js	ir/from-ast: direct call to "isNaN" has no exact AST-site plan in <module-init>
+language/expressions/compound-assignment/S11.13.2_A4.4_T2.4.js	ir/from-ast: direct call to "isNaN" has no exact AST-site plan in <module-init>
+language/expressions/compound-assignment/S11.13.2_A4.5_T1.4.js	ir/from-ast: direct call to "isNaN" has no exact AST-site plan in <module-init>
+language/expressions/compound-assignment/S11.13.2_A4.5_T2.4.js	ir/from-ast: direct call to "isNaN" has no exact AST-site plan in <module-init>
+language/expressions/compound-assignment/S11.13.2_A4.5_T2.6.js	ir/from-ast: direct call to "isNaN" has no exact AST-site plan in <module-init>
+language/expressions/compound-assignment/S11.13.2_A4.5_T2.8.js	ir/from-ast: direct call to "isNaN" has no exact AST-site plan in <module-init>
+language/expressions/division/S11.5.2_A3_T1.4.js	ir/from-ast: direct call to "isNaN" has no exact AST-site plan in <module-init>
+language/expressions/division/S11.5.2_A3_T1.5.js	ir/from-ast: direct call to "isNaN" has no exact AST-site plan in <module-init>
+language/expressions/division/S11.5.2_A3_T2.4.js	ir/from-ast: direct call to "isNaN" has no exact AST-site plan in <module-init>
+language/expressions/division/S11.5.2_A3_T2.6.js	ir/from-ast: direct call to "isNaN" has no exact AST-site plan in <module-init>
+language/expressions/division/S11.5.2_A3_T2.8.js	ir/from-ast: direct call to "isNaN" has no exact AST-site plan in <module-init>
+language/expressions/division/S11.5.2_A4_T1.1.js	ir/from-ast: direct call to "isNaN" has no exact AST-site plan in <module-init>
+language/expressions/division/S11.5.2_A4_T1.2.js	ir/from-ast: direct call to "isNaN" has no exact AST-site plan in <module-init>
+language/expressions/division/S11.5.2_A4_T4.js	ir/from-ast: direct call to "isNaN" has no exact AST-site plan in <module-init>
+language/expressions/division/S11.5.2_A4_T7.js	ir/from-ast: direct call to "isNaN" has no exact AST-site plan in <module-init>
+language/expressions/instanceof/S15.3.5.3_A1_T1.js	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+language/expressions/instanceof/S15.3.5.3_A1_T2.js	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+language/expressions/instanceof/S15.3.5.3_A1_T3.js	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+language/expressions/instanceof/S15.3.5.3_A1_T4.js	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+language/expressions/instanceof/S15.3.5.3_A1_T5.js	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+language/expressions/instanceof/S15.3.5.3_A1_T6.js	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+language/expressions/instanceof/S15.3.5.3_A1_T7.js	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+language/expressions/instanceof/S15.3.5.3_A1_T8.js	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+language/expressions/instanceof/S15.3.5.3_A2_T5.js	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+language/expressions/instanceof/S15.3.5.3_A3_T1.js	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+language/expressions/instanceof/S15.3.5.3_A3_T2.js	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+language/expressions/modulus/S11.5.3_A3_T1.4.js	ir/from-ast: direct call to "isNaN" has no exact AST-site plan in <module-init>
+language/expressions/modulus/S11.5.3_A3_T1.5.js	ir/from-ast: direct call to "isNaN" has no exact AST-site plan in <module-init>
+language/expressions/modulus/S11.5.3_A3_T2.3.js	ir/from-ast: direct call to "isNaN" has no exact AST-site plan in <module-init>
+language/expressions/modulus/S11.5.3_A3_T2.4.js	ir/from-ast: direct call to "isNaN" has no exact AST-site plan in <module-init>
+language/expressions/modulus/S11.5.3_A3_T2.6.js	ir/from-ast: direct call to "isNaN" has no exact AST-site plan in <module-init>
+language/expressions/modulus/S11.5.3_A3_T2.7.js	ir/from-ast: direct call to "isNaN" has no exact AST-site plan in <module-init>
+language/expressions/modulus/S11.5.3_A3_T2.8.js	ir/from-ast: direct call to "isNaN" has no exact AST-site plan in <module-init>
+language/expressions/modulus/S11.5.3_A3_T2.9.js	ir/from-ast: direct call to "isNaN" has no exact AST-site plan in <module-init>
+language/expressions/modulus/S11.5.3_A4_T1.1.js	ir/from-ast: direct call to "isNaN" has no exact AST-site plan in <module-init>
+language/expressions/modulus/S11.5.3_A4_T1.2.js	ir/from-ast: direct call to "isNaN" has no exact AST-site plan in <module-init>
+language/expressions/modulus/S11.5.3_A4_T3.js	ir/from-ast: direct call to "isNaN" has no exact AST-site plan in <module-init>
+language/expressions/modulus/S11.5.3_A4_T4.js	ir/from-ast: direct call to "isNaN" has no exact AST-site plan in <module-init>
+language/expressions/multiplication/S11.5.1_A3_T1.4.js	ir/from-ast: direct call to "isNaN" has no exact AST-site plan in <module-init>
+language/expressions/multiplication/S11.5.1_A3_T1.5.js	ir/from-ast: direct call to "isNaN" has no exact AST-site plan in <module-init>
+language/expressions/multiplication/S11.5.1_A3_T2.4.js	ir/from-ast: direct call to "isNaN" has no exact AST-site plan in <module-init>
+language/expressions/multiplication/S11.5.1_A3_T2.6.js	ir/from-ast: direct call to "isNaN" has no exact AST-site plan in <module-init>
+language/expressions/multiplication/S11.5.1_A3_T2.8.js	ir/from-ast: direct call to "isNaN" has no exact AST-site plan in <module-init>
+language/expressions/multiplication/S11.5.1_A4_T1.1.js	ir/from-ast: direct call to "isNaN" has no exact AST-site plan in <module-init>
+language/expressions/multiplication/S11.5.1_A4_T1.2.js	ir/from-ast: direct call to "isNaN" has no exact AST-site plan in <module-init>
+language/expressions/multiplication/S11.5.1_A4_T3.js	ir/from-ast: direct call to "isNaN" has no exact AST-site plan in <module-init>
+language/expressions/property-accessors/S11.2.1_A3_T1.js	ir/from-ast: method call .toString(...) on i32 not in slice 4 (<module-init>)
+language/expressions/property-accessors/S11.2.1_A3_T2.js	ir/from-ast: method call .toString(...) on f64 not in slice 4 (<module-init>)
+language/expressions/property-accessors/S11.2.1_A3_T3.js	ir/from-ast: method call .charAt(...) on string not in slice 4 (<module-init>)
+language/expressions/subtraction/S11.6.2_A3_T1.4.js	ir/from-ast: direct call to "isNaN" has no exact AST-site plan in <module-init>
+language/expressions/subtraction/S11.6.2_A3_T1.5.js	ir/from-ast: direct call to "isNaN" has no exact AST-site plan in <module-init>
+language/expressions/subtraction/S11.6.2_A3_T2.4.js	ir/from-ast: direct call to "isNaN" has no exact AST-site plan in <module-init>
+language/expressions/subtraction/S11.6.2_A3_T2.6.js	ir/from-ast: direct call to "isNaN" has no exact AST-site plan in <module-init>
+language/expressions/subtraction/S11.6.2_A3_T2.8.js	ir/from-ast: direct call to "isNaN" has no exact AST-site plan in <module-init>
+language/expressions/subtraction/S11.6.2_A4_T1.js	ir/from-ast: direct call to "isNaN" has no exact AST-site plan in <module-init>
+language/expressions/subtraction/S11.6.2_A4_T3.js	ir/from-ast: direct call to "isNaN" has no exact AST-site plan in <module-init>
+language/expressions/unary-minus/S11.4.7_A3_T4.js	ir/from-ast: direct call to "isNaN" has no exact AST-site plan in <module-init>
+language/expressions/unary-minus/S11.4.7_A3_T5.js	ir/from-ast: direct call to "isNaN" has no exact AST-site plan in <module-init>
+language/expressions/unary-minus/S11.4.7_A4.1.js	ir/from-ast: direct call to "isNaN" has no exact AST-site plan in <module-init>
+language/expressions/unary-plus/S11.4.6_A3_T4.js	ir/from-ast: direct call to "isNaN" has no exact AST-site plan in <module-init>
+language/expressions/unary-plus/S11.4.6_A3_T5.js	ir/from-ast: direct call to "isNaN" has no exact AST-site plan in <module-init>
+language/expressions/unary-plus/S9.3_A1_T2.js	ir/from-ast: direct call to "isNaN" has no exact AST-site plan in <module-init>
+language/expressions/unary-plus/S9.3_A4.2_T2.js	ir/from-ast: direct call to "isNaN" has no exact AST-site plan in <module-init>
+language/function-code/10.4.3-1-102-s.js	ir/from-ast: method call .replace(...) on string not in slice 4 (<module-init>)
+language/function-code/10.4.3-1-102gs.js	ir/from-ast: method call .replace(...) on string not in slice 4 (<module-init>)
+language/function-code/10.4.3-1-13-s.js	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+language/function-code/10.4.3-1-13gs.js	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+language/function-code/10.4.3-1-14-s.js	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+language/function-code/10.4.3-1-14gs.js	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+language/literals/boolean/S7.8.2_A1_T1.js	ir/from-ast: direct call to "Boolean" has no exact AST-site plan in <module-init>
+language/literals/boolean/S7.8.2_A1_T2.js	ir/from-ast: direct call to "Boolean" has no exact AST-site plan in <module-init>
+language/literals/regexp/S7.8.5_A1.1_T2.js	ir/from-ast: String.fromCharCode provider unavailable (<module-init>)
+language/literals/regexp/S7.8.5_A1.4_T2.js	ir/from-ast: String.fromCharCode provider unavailable (<module-init>)
+language/literals/regexp/S7.8.5_A2.1_T2.js	ir/from-ast: String.fromCharCode provider unavailable (<module-init>)
+language/literals/regexp/S7.8.5_A2.4_T2.js	ir/from-ast: String.fromCharCode provider unavailable (<module-init>)
+language/literals/string/S7.8.4_A4.1_T1.js	ir/from-ast: String.fromCharCode provider unavailable (<module-init>)
+language/literals/string/S7.8.4_A4.1_T2.js	ir/from-ast: String.fromCharCode provider unavailable (<module-init>)
+language/literals/string/S7.8.4_A5.1_T1.js	ir/from-ast: String.fromCharCode provider unavailable (<module-init>)
+language/literals/string/S7.8.4_A6.1_T1.js	ir/from-ast: String.fromCharCode provider unavailable (<module-init>)
+language/literals/string/S7.8.4_A6.3_T1.js	ir/from-ast: String.fromCharCode provider unavailable (<module-init>)
+language/literals/string/S7.8.4_A7.1_T1.js	ir/from-ast: String.fromCharCode provider unavailable (<module-init>)
+language/literals/string/S7.8.4_A7.3_T1.js	ir/from-ast: String.fromCharCode provider unavailable (<module-init>)
+language/statements/function/13.2-12-s.js	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+language/statements/function/13.2-15-1.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+language/statements/function/13.2-17-1.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+language/statements/function/13.2-18-1.js	ir/from-ast: direct call to "String" has no exact AST-site plan in verifyProperty
+language/statements/function/13.2-20-s.js	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+language/statements/try/S12.14_A19_T1.js	ir/from-ast: direct call to "Error" has no exact AST-site plan in <module-init>
+language/statements/try/S12.14_A19_T2.js	ir/from-ast: direct call to "Error" has no exact AST-site plan in <module-init>
+language/statements/variable/12.2.1-16-s.js	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+language/statements/variable/12.2.1-17-s.js	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+language/statements/variable/12.2.1-5-s.js	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+language/statements/variable/12.2.1-6-s.js	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>
+language/statements/with/12.10.1-5-s.js	ir/from-ast: direct call to "Function" has no exact AST-site plan in <module-init>

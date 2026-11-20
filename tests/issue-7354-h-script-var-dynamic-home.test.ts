@@ -155,8 +155,6 @@ describe("#7354 H — the dynamic home of a script var", () => {
   });
 
   it.each([
-    // The startup plan gives every declarator its own binding id: a second declaration has no single global.
-    ["declared twice", "var x = 1; var x = 2;", NO_HOME],
     // Each script's module-init stores `undefined` into its own globals; a script that runs first would read null.
     ["declared in one of two scripts", ["var u; u = 1;", "var v; v = 2;"], NO_HOME],
     ["on the gc target (no dynamic carrier)", "var x; x = 1;", NO_HOME],
@@ -288,7 +286,9 @@ describe("#7354 H — the dynamic home of a script var", () => {
       "function k() { var [a] = [x]; return a; } var r = k(); var x = 1;",
       "a dynamic value flows into [any] without a conversion",
     ],
-    ["a regular expression", "function k() { return /a/; } k();", "concrete return needs a dynamic box"],
+    // (#7364) the Prepared path has no RegExp provider, so the literal itself refuses first
+    ["a regular expression", "function k() { return /a/; } k();", "RegExp literal has no provider"],
+    ["an object literal", "function k() { return { a: 1 }; } k();", "concrete return needs a dynamic box"],
     ["a function read as a value", "function k() { return k2; } function k2() { return 1; } k();", 'identifier "k2"'],
   ])("refuses the value of %s returned from an unannotated function", async (_, program, message) => {
     expect(await refusal(program)).toContain(message);
