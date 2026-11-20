@@ -1624,3 +1624,274 @@ Not verified:
 - Whether the verifier change behind `typed-program-preparation` was deliberate.
 - The `quality` job's full vitest run.
 - `LOC_GATE_BASE` against the upstream tip.
+
+## PR 2c result
+
+Branch `claude/7380-pins-c`, base `claude/7380-pins-b` `1c83c44d3b`. Status: **the `issue-3518` … `issue-3527` families
+are done; every other family is inventoried but not reviewed or cut** (list at the end). No `src/` change.
+
+Gist:
+
+- 89 files of the 35xx families reviewed: 5 deleted whole (P), 61 trimmed (T), 11 kept as they are (K), 12 left
+  untouched because they are red at base (K*).
+- 259 pin test sites removed, 1,169 kept (sites are `it`/`test` calls in the source; generated instances are more).
+- 72 files deleted: the 5 test files plus 67 receipts, donor fixtures and port/extraction helpers that no test reads
+  any more. 20,901 lines removed, 127 added.
+- Every modified file passes (16 batches, table below). Gates pass.
+
+### Method
+
+- **Inventory.** An AST pass over every test file (`.tmp/classify.mjs` in the worktree, not committed) marks a value
+  as source-derived when it comes from `readFileSync` / `readFile` / `readdirSync` / `createSourceFile` /
+  `createProgram` of a `src/` path (also through local reader functions), from a receipt or donor JSON under
+  `tests/helpers` / `tests/fixtures`, or from a helper module that hashes text. A test that uses such a value is a pin
+  candidate; one that also compiles or runs a program is "mixed" and was read by hand. Every candidate in the 35xx
+  families was read before it was cut. False positives of the pass (a script tested on a copied tree, `sha` in a log
+  line, a hash comparing two compiled binaries, test programs that mention `src`) are the K rows.
+- **What counts as a pin here.** A test asserting the text, hash, byte size, line or declaration count, import list or
+  re-export chain of a source file; a reconstruction of a historical source ("donor") and any equality against it;
+  a receipt or fixture-authentication control; a mutation control of that machinery; a hash or byte size of a test's
+  own input program or of a codec encoding.
+- **What stayed.** Tests that compile and run programs, call compiler functions and check results or named refusals,
+  type-level compile checks, and tests of scripts. Where a behaviour test also compared with a donor, the donor
+  comparison went and the assertion on the current code stayed: canonical walker traversal, accessor-call traces,
+  Boolean box globals, object key coercion, rope execution (now against the live legacy materializer), Promise
+  resolution locals and settle-closure independence, timer publication refusals, vector body freshness, the core
+  allocator identity. Input-hash lines inside behaviour tests were dropped.
+- **Not in this step.** Closed-list count assertions on exported tables (`INTRINSIC_IDS` length and similar) are
+  section 3 / PR 6 material and stay. Forged-plan and receipt-comparison tests that read no source (for example
+  `semantic-provider-source-acceptance`, the `core-node-execution` witness script) stay for PR 3 / 5.
+- **Cuts** were made by AST (statement removal, then pruning of describes and declarations left without a user,
+  resolved by symbol, and unused imports), never by line deletion. Every modified file was then checked for: no empty
+  `describe`, no unused import or variable (biome), no module- or describe-level setup statement lost against base
+  (one was, in `native-string-utf8-rope`, and was restored before its commit), license header intact.
+- Helpers and fixtures were deleted by reachability: a file under `tests/helpers` or `tests/fixtures` whose name no
+  tracked file in `tests/`, `scripts/`, `src/`, `package.json`, `.github/` or a config mentions, repeated until
+  nothing new appeared. The baseline orphans (`ir-closure-probes/*`, `issue-6969-parse-number-tostring-delta.json`,
+  `npm-resolve/lib/explicit-js.d.ts`) were already unreferenced at base and are left.
+
+### Files
+
+| file (`tests/…test.ts`) | class | test sites removed | kept | what went |
+| --- | --- | ---: | ---: | --- |
+| `issue-3518-native-string-equality-donor` | P | 3 | 0 | donor equality |
+| `issue-3518-runtime-preparation-relocation` | P | 18 | 0 | relocation receipt |
+| `issue-3518-semantic-provider-boundary` | P | 2 | 0 | layer rule: Owed |
+| `issue-3518-string-equality-source-composition` | P | 9 | 0 | composition receipt |
+| `issue-3525-source-map-validator-proof` | P | 9 | 0 | byte/sha pins of validator sources |
+| `issue-3518-allocation-runtime-seam` | T | 1 | 12 | facade structure and export list read from source |
+| `issue-3518-async-frame-body-source-preservation` | T | 4 | 1 | historical-body receipts cut; the public-source execution test kept |
+| `issue-3518-canonical-instruction-walk` | T | 8 | 8 | export lists, source receipt, WAT import pins cut; traversal tests now run the canonical walker only (donor dropped) |
+| `issue-3518-capability-schema-boundary` | T | 1 | 16 | declaration-count pin cut |
+| `issue-3518-capability-schema-seam` | T | 3 | 5 | declaration receipt and count pins cut; type-compatibility compile test kept |
+| `issue-3518-certified-delay-source-identity` | T | 3 | 19 | declaration receipts and the overlay import-structure pin |
+| `issue-3518-closure-state-preservation-port` | T | 12 | 1 | receipt/inverse machinery; the closure-layout builder assertion kept |
+| `issue-3518-core-nodes-seam` | T | 0 | 9 | class-member structure lines dropped from the allocator identity test |
+| `issue-3518-core-vocabulary-seam` | T | 1 | 11 | layer rule (Owed); count pins left for step 6 |
+| `issue-3518-delay-combinator-layout-ownership` | T | 2 | 6 | donor-route mutation controls; layer rule (Owed) |
+| `issue-3518-host-utf8-literal-keys` | T | 0 | 2 | input-hash line dropped |
+| `issue-3518-lowering-contract-owner` | T | 1 | 15 | donor reconstruction |
+| `issue-3518-lowering-cycle` | T | 3 | 8 | facade/parameter structure pins and the test-local cycle walker (check:import-cycles covers it); export identity kept |
+| `issue-3518-lowering-relocation-coverage` | T | 1 | 10 | body-hash receipt (it.skipIf) |
+| `issue-3518-module-reservations` | T | 2 | 49 | declaration receipt and export-list pins |
+| `issue-3518-native-accessor-call-bodies` | T | 2 | 9 | layer rule (Owed) and donor-mutation test cut; donor equality dropped from the trace test |
+| `issue-3518-native-bigint-primitive-bodies` | T | 0 | 9 | hash checks of the expected-instruction literals dropped |
+| `issue-3518-native-boolean-boxes` | T | 2 | 16 | historical-donor equality; global-placement assertion kept without the donor |
+| `issue-3518-native-delay-combinator-source-preservation` | T | 4 | 1 | historical-body reconstruction; the execution test kept |
+| `issue-3518-native-family-callable-declarations` | T | 2 | 8 | forward-structure and declaration-hash pins |
+| `issue-3518-native-family-source-contract` | T | 1 | 17 | pin of another test file's text |
+| `issue-3518-native-number-format-ownership` | T | 5 | 1 | donor reconstruction; registration/idempotency behaviour kept without the donor comparison |
+| `issue-3518-native-object-access-resources` | T | 1 | 25 | src text pin of three flag constants; input-hash line dropped |
+| `issue-3518-native-object-get-bodies` | T | 3 | 27 | donor receipts, layer rule (Owed) |
+| `issue-3518-native-object-key-foundation` | T | 5 | 4 | donor-equality and receipt tests; layer-rule half of one test cut (Owed), its instruction-sharing check kept |
+| `issue-3518-native-promise-inventory-planning` | T | 0 | 7 | input-hash line dropped from shared prepare() |
+| `issue-3518-native-ref-cell-resources` | T | 1 | 17 | donor inverse |
+| `issue-3518-native-ryu-ownership` | T | 3 | 3 | donor reconstruction and legacy-vs-donor emission |
+| `issue-3518-native-scanner-source-preservation` | T | 12 | 11 | src projections and their mutation controls; the script-helper tests kept |
+| `issue-3518-native-string-error-resources` | T | 9 | 8 | donor fixture, own-text hash, donor equality; the rope execution test now compares with the live legacy materializer |
+| `issue-3518-native-string-flatten-resources` | T | 12 | 19 | donor reconstruction and live-mutation controls; input-hash line dropped |
+| `issue-3518-native-string-number-resources` | T | 3 | 28 | donor-recording tests and their harness controls |
+| `issue-3518-native-string-output-consumer` | T | 0 | 7 | input-hash line dropped |
+| `issue-3518-native-string-output-requirements` | T | 0 | 25 | input-hash line dropped |
+| `issue-3518-native-string-utf8-rope` | T | 1 | 5 | projected-source equality; two hash lines (src and input) dropped |
+| `issue-3518-native-to-primitive-bodies` | T | 7 | 3 | donor fixture, donor-trace equality, layer rule (Owed) |
+| `issue-3518-native-utf8-window-decoder` | T | 0 | 6 | src hash line dropped from the shared fixture |
+| `issue-3518-native-wasm-foundation` | T | 3 | 3 | layer rule (Owed), its dependency-detector control, consumer import-name pin |
+| `issue-3518-physical-snapshot-comparison` | T | 1 | 28 | src function-text hash |
+| `issue-3518-promise-resolution-preservation` | T | 9 | 4 | donor receipts and donor equality; two tests keep their assertions on the current builders |
+| `issue-3518-promise-settlement-body-ownership` | T | 13 | 6 | moved-body receipts, declaration receipts, mutation controls, layer rule (Owed) |
+| `issue-3518-promise-settlement-source-preservation` | T | 3 | 3 | receipt-validator tamper controls |
+| `issue-3518-prototype-seeder-bodies` | T | 8 | 4 | donor receipt and donor-trace tests |
+| `issue-3518-runtime-data-contract-seam` | T | 1 | 8 | re-export chain read from source |
+| `issue-3518-semantic-verification-ownership` | T | 5 | 13 | declaration receipts, signature-prefix hash, historical-hash replay, class-member pin; count assertions left for step 6 |
+| `issue-3518-startup-contract` | T | 3 | 5 | declaration hashes, declaration count/forward structure, layer rule (Owed) |
+| `issue-3518-timer-publication-contract` | T | 4 | 3 | donor constants/body/traces; the refusal-control test now runs the current publisher only |
+| `issue-3518-to-primitive-wrapper-forward` | T | 2 | 26 | fixture-receipt reseeding controls |
+| `issue-3518-typed-middleend-controls` | T | 1 | 19 | call-count pin on src/ir/integration.ts |
+| `issue-3518-vector-grow-store-body` | T | 5 | 4 | donor receipts and layer rule (Owed); the freshness test compares with a second build instead of the donor |
+| `issue-3518-vector-grow-store-donor` | T | 18 | 6 | layout-inverse receipts, registry inverses, adapter-text pins |
+| `issue-3518-vector-runtime-callable-admission` | T | 3 | 21 | declaration receipts and facade export structure |
+| `issue-3521-r2-withdrawal-telemetry` | T | 5 | 7 | selector/codegen source-order pins; source literal count dropped from the vocabulary test |
+| `issue-3521-runtime-callable-abi` | T | 0 | 11 | input-hash line dropped |
+| `issue-3525-emitted-physical-plan-observation` | T | 0 | 13 | input-hash line dropped |
+| `issue-3525-prepared-linear-early-return` | T | 0 | 7 | four source byte/hash pins dropped from the oracle test |
+| `issue-3525-prepared-source-map-data` | T | 0 | 32 | codec byte size and hash dropped |
+| `issue-3526-callable-boundary-callback` | T | 6 | 33 | source-text pins on from-ast, overlay and integration |
+| `issue-3526-string-boundary-concat-many` | T | 6 | 23 | source-text pins on integration and pass selection |
+| `issue-3526-string-boundary-const` | T | 7 | 32 | provider/lane source-text pins |
+| `issue-3527-async-replay-oracle` | T | 0 | 5 | input-hash line dropped |
+| `issue-3518-certified-delay-source-admission` | K* | 0 | 23 | red at base (F-class test 'rejects a source-produced global binding…'); one input-hash line left, file not touched |
+| `issue-3518-program-codec-replay` | K* | 0 | 27 | red at base (F-class '[defect 2] emission transitions are private'); one input-hash line left, file not touched |
+| `issue-3525-prepared-mixed-presentation` | K* | 0 | 12 | red at base (3 tests); input hash/byte-size lines left, file not touched |
+| `issue-3525-prepared-wit-presentation` | K* | 0 | 17 | red at base (2 tests); input-hash line left, file not touched |
+| `issue-3525-prepared-zero-suspension-rejection` | K* | 0 | 6 | red at base (6 tests); input hash/byte-size lines left, file not touched |
+| `issue-3526-f3s3-function-prototype-call-policy` | K* | 0 | 12 | red at base (4 tests, 2 of them source pins); 4 source pins left, file not touched |
+| `issue-3526-string-boundary-charcodeat` | K* | 0 | 31 | red at base (4 tests, 1 a source pin); 4 source pins left, file not touched |
+| `issue-3526-string-boundary-compare` | K* | 0 | 21 | red at base (2 host-lane tests); 3 source pins left, file not touched |
+| `issue-3526-string-boundary-concat` | K* | 0 | 27 | red at base (3 host-lane tests); 6 source pins left, file not touched |
+| `issue-3526-string-boundary-eq` | K* | 0 | 24 | red at base (3 host-lane tests); 5 source pins left, file not touched |
+| `issue-3526-string-boundary-len` | K* | 0 | 31 | red at base (3 host-lane tests); 7 source pins left, file not touched |
+| `issue-3526-string-boundary-schema` | K* | 0 | 32 | red at base (3 host-lane ABI tests); 2 source pins left, file not touched |
+| `issue-3518-class-to-primitive-presence` | K | 0 | 5 | sha only in a log line |
+| `issue-3518-core-kind-neutrality` | K | 0 | 15 | tests scripts/check-ir-kind-neutrality.mjs on a copied tree |
+| `issue-3518-core-node-execution` | K | 0 | 25 | tests scripts/lib/core-node-execution-witness.mjs |
+| `issue-3518-core-type-reachability` | K | 0 | 13 | tests a script on a fixture |
+| `issue-3518-identity-foundation-boundary` | K | 0 | 5 | runs the boundaries checker on a fixture |
+| `issue-3518-ir-adoption-contract` | K | 0 | 5 | tests gen-ir-adoption.mjs behaviour |
+| `issue-3518-semantic-provider-source-acceptance` | K | 0 | 23 | receipt-comparison harness on synthetic data; reads no source |
+| `issue-3521-prepared-free-function-routing` | K | 0 | 37 | parses inline test programs, not src |
+| `issue-3523-ir-calendar-retirement` | K | 0 | 11 | hash compares two compiled binaries (determinism) |
+| `issue-3523-module-init-discovery-static` | K | 0 | 13 | runs test262 fixtures; no src read |
+| `issue-3525-source-map-safe-passes` | K | 0 | 10 | sha only in a log line |
+
+Totals over these 89 files: P 5, T 61, K 11, K* (red at base, untouched) 12; 259 test sites removed, 1169 kept.
+
+K* files are red at base and were not modified, because `quality` requires every modified test file to pass. Their
+remaining pins are small (input-hash lines, or source-text tests next to red host-lane tests); they go with the fix of
+the red tests or with PR 6. The red tests themselves, measured on base by a file-copy A/B run:
+`certified-delay-source-admission` (1, F-class), `program-codec-replay` (1, F-class), `3525-prepared-mixed-presentation`
+(3), `3525-prepared-wit-presentation` (2), `3525-prepared-zero-suspension-rejection` (6), and seven `3526` files whose
+host-lane end-to-end tests fail (`f3s3` 4, `charcodeat` 4, `compare` 2, `concat` 3, `eq` 3, `len` 3, `schema` 3).
+
+Deleted helpers and fixtures (67): `fixtures/issue-3518-array-main-refresh-port.json`, `fixtures/issue-3518-async-frame-forward-main.json`, `fixtures/issue-3518-bigint-carrier-port.json`, `fixtures/issue-3518-boolean-box-donor.ts.txt`, `fixtures/issue-3518-conversion-source-composition.json`, `fixtures/issue-3518-delivery-main-refresh-port.json`, `fixtures/issue-3518-descriptor-adapter-relocation.json`, `fixtures/issue-3518-descriptor-undefined-correction.json`, `fixtures/issue-3518-native-accessor-call-donor.json`, `fixtures/issue-3518-native-number-format-donor.json`, `fixtures/issue-3518-native-object-get-donor.json`, `fixtures/issue-3518-native-object-write-donor.json`, `fixtures/issue-3518-native-object-write-extraction.json`, `fixtures/issue-3518-native-ryu-donor.json`, `fixtures/issue-3518-native-string-equality-donor.json`, `fixtures/issue-3518-native-string-error-donors.json`, `fixtures/issue-3518-native-string-flatten-donor.ts`, `fixtures/issue-3518-native-to-primitive-donor.json`, `fixtures/issue-3518-object-get-key-composition.json`, `fixtures/issue-3518-object-key-donors.json`, `fixtures/issue-3518-object-runtime-apply-extraction.json`, `fixtures/issue-3518-object-runtime-fnctor-guard-forward.json`, `fixtures/issue-3518-object-runtime-main-composition.json`, `fixtures/issue-3518-own-property-extraction.json`, `fixtures/issue-3518-prepared-registry-types-forward.json`, `fixtures/issue-3518-promise-earlier-main-port.json`, `fixtures/issue-3518-promise-export-main-port.json`, `fixtures/issue-3518-promise-resolution-donors.json`, `fixtures/issue-3518-prototype-companion-extraction.json`, `fixtures/issue-3518-prototype-read-extraction.json`, `fixtures/issue-3518-prototype-receiver-extraction.json`, `fixtures/issue-3518-ref-cell-donor.json`, `fixtures/issue-3518-resume-main-composition.json`, `fixtures/issue-3518-string-equality-source-composition.json`, `fixtures/issue-3518-string-layout-shape-forward.json`, `fixtures/issue-3518-timer-publication-donor.json`, `fixtures/issue-3518-to-primitive-presence-extraction.json`, `fixtures/issue-3518-to-primitive-wrapper-forward.json`, `fixtures/issue-3518-vector-registry-layout-forward.json`, `helpers/array-main-refresh-port.ts`, `helpers/bigint-carrier-port.ts`, `helpers/closure-state-preservation-port.ts`, `helpers/conversion-source-composition.ts`, `helpers/delivery-main-refresh-port.ts`, `helpers/descriptor-adapter-relocation.ts`, `helpers/descriptor-undefined-correction.ts`, `helpers/ir-historical-runtime-reconstruction.ts`, `helpers/ir-remainder-runtime-preparation-relocation.ts`, `helpers/ir-runtime-preparation-relocation.json`, `helpers/ir-runtime-preparation-relocation.ts`, `helpers/later-main-preservation-port.ts`, `helpers/native-object-write-donor.ts`, `helpers/object-get-key-composition.ts`, `helpers/object-runtime-apply-extraction.ts`, `helpers/object-runtime-fnctor-guard-forward.ts`, `helpers/object-runtime-main-composition.ts`, `helpers/own-property-extraction.ts`, `helpers/prepared-source-forward-receipts.ts`, `helpers/promise-earlier-main-port.ts`, `helpers/promise-export-main-port.ts`, `helpers/promise-resolution-receipts.ts`, `helpers/prototype-companion-extraction.ts`, `helpers/prototype-read-extraction.ts`, `helpers/prototype-receiver-extraction.ts`, `helpers/resume-main-composition.ts`, `helpers/string-equality-source-composition.ts`, `helpers/typedarray-main-preservation-port.ts`.
+
+### Covered elsewhere
+
+- `lowering-cycle`'s test-local value-closure walker (reverse edge through a barrel, unsupported graph input):
+  `check:import-cycles` enforces the no-cycle claim on the real graph.
+
+### Owed (step 6: rules for `scripts/compiler-boundaries.json`)
+
+The inventory's layer edges are coarser than each of these file-level import rules, so none is enforced today:
+
+- `semantic-provider-boundary`: src/runtime/wasmgc/values/native-resource-declaration-types.ts has only type imports, from wasm/model/instructions and module-records, and declares only types (inventory gives it layer native-runtime, which allows more)
+- `delay-combinator-layout-ownership`: src/runtime/wasmgc/promise/delay-combinator-layouts.ts imports only wasm/model/instructions (type), values/closure-layouts, promise/combinator-bodies (type)
+- `native-accessor-call-bodies`: src/runtime/wasmgc/values/accessor-call-bodies.ts has one type-only import, wasm/model/instructions
+- `native-object-get-bodies`: src/runtime/wasmgc/values/object-get-bodies.ts imports only wasm/model/instructions and ./object-get-arms; object-get-arms only wasm/model/instructions
+- `native-object-key-foundation`: src/runtime/wasmgc/values/object-key-bodies.ts has one type-only import and no runtime import
+- `native-to-primitive-bodies`: src/runtime/wasmgc/values/to-primitive-{,method-,wrapper-}bodies.ts import only wasm/model/instructions and each other, and declare no function types
+- `promise-settlement-body-ownership`: the canonical settlement body owner imports only wasm/model/instructions (type), ./reaction-order-bodies, ./rejection-event-bodies; rejection-event-bodies only wasm/model/instructions (type); wasm/model/instructions imports nothing; no CodegenContext/AsyncSchedulerState in the owner
+- `startup-contract`: src/ir/program/startup.ts (canonical startup contract) and the two shared contracts it reaches import type-only and emit no runtime code (export {} only)
+- `vector-grow-store-body`: the vector grow/store body module imports type-only from wasm/model/instructions and module-records, and does not mention CodegenContext/currentFunc/process/globalThis
+- `native-wasm-foundation`: src/wasm/model/instructions.ts imports nothing; src/wasm/physical/function-handles.ts imports type-only from model/instructions and model/module-records; src/runtime/wasmgc/async/microtask-queue-bodies.ts imports type-only from wasm/model/instructions
+- `core-vocabulary-seam`: the three moved core vocabulary leaves import nothing; the fourth imports type-only IrSourceId/IrUnitId from shared/contracts/ir-identity; ir-identity imports only source-origin; source-origin imports nothing
+
+### Owed (step 5d)
+
+None. `check:dead-exports` passes unchanged, so no `src/` export lost its last reader with the pins.
+
+### Per-batch runs
+
+`VITEST_MAX_FORKS=1 VITEST_FORK_MAX_OLD_SPACE_SIZE=3072`, at most six files per run, each run on the file's final
+content (the utf8-rope file was re-run alone after its setup loop was restored: 74/74).
+
+| batch | files | result |
+| ---: | --- | --- |
+| 1 | canonical-instruction-walk, closure-state-preservation-port, native-number-format-ownership, capability-schema-boundary, capability-schema-seam (+certified-delay-source-admission: red at base, reverted) | 5 files green; delay-admission red at base |
+| 2 | certified-delay-source-identity, host-utf8-literal-keys, native-family-source-contract, native-object-access-resources, native-promise-inventory-planning, native-string-output-consumer | 6/6, 183 tests, exit 0 |
+| 3 | native-string-output-requirements, 3521-runtime-callable-abi, 3525-prepared-source-map-data (+3 files red at base: mixed-presentation, wit-presentation, zero-suspension-rejection; reverted) | 3 files green; 11 failures identical at base |
+| 4 | async-frame-body-source-preservation, delay-combinator-layout-ownership, 3525-prepared-linear-early-return | 3/3, 28 tests, exit 0 |
+| 5 | lowering-contract-owner, lowering-relocation-coverage, module-reservations, native-accessor-call-bodies, native-bigint-primitive-bodies, native-boolean-boxes | 6/6, 283 tests, exit 0 |
+| 6 | native-family-callable-declarations, native-object-get-bodies, native-object-key-foundation, native-ref-cell-resources, native-ryu-ownership, native-scanner-source-preservation | 6/6, 118 tests, exit 0 |
+| 7 | native-string-error-resources, native-string-flatten-resources | 2/2, 31 tests, exit 0 |
+| 8 | native-string-number-resources, native-string-utf8-rope, native-to-primitive-bodies, native-utf8-window-decoder, physical-snapshot-comparison (+program-codec-replay red at base, reverted) | 5 files green, 272 tests; codec-replay's 1 failure identical at base |
+| 9 | promise-resolution-preservation, promise-settlement-body-ownership, promise-settlement-source-preservation | 3/3, 22 tests, exit 0 |
+| 10 | runtime-data-contract-seam, startup-contract, semantic-verification-ownership, timer-publication-contract, typed-middleend-controls, vector-grow-store-body | 6/6, 142 tests, exit 0 |
+| 11 | vector-grow-store-donor, vector-runtime-callable-admission, to-primitive-wrapper-forward | 3/3, 136 tests, exit 0 |
+| 12 | native-wasm-foundation, core-vocabulary-seam, allocation-runtime-seam, certified-delay-source-identity, core-nodes-seam, lowering-cycle | 6/6, 117 tests, exit 0 |
+| 13 | native-delay-combinator-source-preservation, prototype-seeder-bodies | 2/2, 7 tests, exit 0 |
+| 14 | 3521-r2-withdrawal-telemetry, 3526-callable-boundary-callback, 3526-string-boundary-concat-many (+3 files red at base: f3s3, charcodeat, compare; reverted) | 3 files green; the 7 remaining failures are identical at base |
+| 15 | 3526-string-boundary-const (+4 files red at base: concat, eq, len, schema; reverted) | const green; 12 failures identical at base |
+| 16 | 3525-emitted-physical-plan-observation, 3527-async-replay-oracle | 2/2, 25 tests, exit 0 |
+
+### Gates (each run bare, at the head of this branch)
+
+| gate | exit |
+| --- | ---: |
+| `npm run -s typecheck` | 0 |
+| `npm run -s check:dead-exports` | 0 |
+| `node scripts/check-loc-budget.mjs` | 0 |
+| `node scripts/check-func-budget.mjs` | 0 |
+| `node scripts/check-orphaned-scripts.mjs` (49 of 305, baseline 49) | 0 |
+| `npm run -s check:import-cycles` | 0 |
+| `JS2WASM_EVAL_ENGINE=interpreter sh scripts/hooks/changed-root-tests.sh` | 0 |
+
+The hook diffs against the `origin/main` merge base, so it sees 85 changed root files (this branch plus 2a and 2b) and
+runs the first 20 (all pass). The other 2c files are covered by the batch table; the 2a / 2b files by 2b's table.
+
+### Not done: the other families
+
+The same pass flags 261 files outside the 35xx families. They are **not reviewed**; the class below is the
+classifier's and is provisional: many are false positives of the same kinds as the K rows above (dogfood and
+linker tests that compile `src/` files, tests that read `src` paths into a compile, tests of scripts). Sites are
+pin / mixed / behaviour as the pass counts them.
+
+| family | files (provisional class, pin/mixed/behaviour sites) |
+| --- | --- |
+| (unnumbered) (42) | `es5-a17-method-call-gate` P 2/0/0; `es5-a17-with-scoped-function` P 2/0/0; `es5-a19-redeclared-with-function` P 1/0/0; `es5-computed-harness-method-regression` P 3/0/0; `es5-date-accessor-carrier` P 1/0/0; `es5-function-constructor-residuals` P 1/0/0; `es5-live-baseline-regressions` P 1/0/0; `es5-standalone-annexb-global-script-eval` P 2/0/0; `es5-standalone-assignment-eval-scope` P 1/0/0; `es5-standalone-error-date-residual` P 1/0/0; `es5-standalone-object-valueof-detached` P 1/0/0; `es5-standalone-regexp-nested-groups` P 1/0/0; `es5-standalone-regressions-2026-09-rows` P 1/0/0; `es5-standalone-static-eval-class` P 2/0/0; `es5-standalone-string-concat-variadic` P 1/0/0; `es5-standalone-string-tag-residual` P 2/0/0; `es5-standalone-vector-expando-descriptors` P 1/0/0; `es5-string-coercion-residuals` P 2/0/0; `es5-this-binding-quad` P 3/0/0; `exhausted-parameter-rest` P 1/0/0; `host-destructuring-regressions` P 4/0/0; `host-proxy-promise-class-regressions` P 3/0/0; `standalone-transition-residuals` P 3/0/0; `test262-errors` P 1/0/0; `test262` P 1/0/0; `linker-e2e` P? 0/3/0; `linker-self-host` P? 0/2/0; `test262-vitest` P? 0/1/0; `es5-function-call-apply-null` T 1/0/3; `es5-function-callee-with` T 1/0/2; `es5-standalone-array-filter` T 2/0/11; `es5-standalone-ctor-identity` T 1/0/9; `es5-standalone-getownpropertydescriptor` T 1/0/2; `es5-standalone-global-gopn` T 1/0/2; `es5-standalone-harness-selftests` T 1/0/1; `es5-standalone-number-format` T 1/0/7; `es5-standalone-regexp-xml-shallow` T 1/0/1; `ir-bytecode-wasmgc-vm` T 0/9/5; `playground-acorn-artifact` T 1/0/4; `playground-ts-erase-types` T 3/0/1; `test262-harness-truth-table` T 0/2/3; `test262-per-lane-gating` T 1/0/22 |
+| dogfood/ (14) | `dogfood/acorn-official-suite` P 1/0/0; `dogfood/dogfood-surface-modules` P 6/0/0; `dogfood/eslint` P 1/0/0; `dogfood/marked` P 1/0/0; `dogfood/prettier` P 1/0/0; `dogfood/react` P 1/0/0; `dogfood/temporal-polyfill` P 2/0/0; `dogfood/acorn` T 1/0/2; `dogfood/clsx` T 1/0/1; `dogfood/cookie` T 1/0/1; `dogfood/lit-upstream-suite` T 0/1/2; `dogfood/npm-compat-catalog` T 2/0/3; `dogfood/react-dom-upstream-suite` T 1/0/17; `dogfood/typescript-harness-verdicts` T 0/1/14 |
+| issue-10xx (2) | `issue-1014` T 1/0/9; `issue-1096-env-adapter` T 5/0/5 |
+| issue-12xx (2) | `issue-1222` T 4/0/2; `issue-1240` T 1/0/4 |
+| issue-13xx (3) | `issue-1318` P 3/0/0; `issue-1363` T 1/0/5; `issue-1378` T 1/0/3 |
+| issue-16xx (3) | `issue-1601` P 1/0/0; `issue-1627` T 3/0/6; `issue-1672-async-gen-method-trampoline` T 1/0/5 |
+| issue-17xx (2) | `issue-1712-reflection-identity` T 3/0/5; `issue-1764` T 2/0/2 |
+| issue-18xx (1) | `issue-1805` T 1/0/2 |
+| issue-19xx (1) | `issue-1933` T 1/0/4 |
+| issue-20xx (1) | `issue-2095-baseline-validator-lanes` T 1/0/1 |
+| issue-21xx (2) | `issue-2180` P 2/0/0; `issue-2183` P 1/0/0 |
+| issue-27xx (6) | `issue-2742-standalone-carveout` P 4/0/0; `issue-2743-pr2` P 1/0/0; `issue-2743` P 1/0/0; `issue-2717` T 1/0/7; `issue-2742-charat-transfer` T 2/0/2; `issue-2742-native-string-equality` T 1/0/2 |
+| issue-28xx (1) | `issue-2818` T 1/0/20 |
+| issue-29xx (5) | `issue-2940` P 2/0/0; `issue-2955-depolymorph-gate` P 1/0/0; `issue-2928` P? 0/1/0; `issue-2934-tostring-dispatch-s3` T 1/0/5; `issue-2970` T 1/0/8 |
+| issue-30xx (7) | `issue-3024-packed-array-dstr-normalize` P 1/0/0; `issue-3024-tostring-closure-funcref` P 1/0/0; `issue-3035` P 1/0/0; `issue-3086` P 6/0/0; `issue-3017-function-poison-pill` T 4/0/6; `issue-3024-iterator-dispatch-arity` T 1/0/2; `issue-3024-module-global-slot-desync` T 2/0/3 |
+| issue-31xx (2) | `issue-3149-map-groupby-group-vec-coercion` P 3/0/0; `issue-3188` T 1/0/3 |
+| issue-33xx (8) | `issue-3368` P 4/0/0; `issue-3369-project-runner` P 1/0/0; `issue-3318` T 2/0/2; `issue-3349` T 1/0/1; `issue-3367` T 1/0/1; `issue-3370` T 2/0/3; `issue-3371-r4-reflect-construct-newtarget` T 4/0/2; `issue-3371` T 3/0/10 |
+| issue-34xx (8) | `issue-3428` P 4/0/0; `issue-3429` P 4/0/0; `issue-3488` P 2/0/0; `issue-3420-species-result-store` T 1/0/1; `issue-3420-standalone-array-own-property` T 1/0/1; `issue-3422` T 1/0/2; `issue-3470` T 3/0/4; `issue-3498-landing-four-lane-backend-benchmark` T 1/0/7 |
+| issue-35xx (2) | `issue-3507` T 1/0/5; `issue-3534-closure-value-representation` T 2/0/4 |
+| issue-36xx (6) | `issue-3669` P 10/0/0; `issue-3673-fast-tokenizer` P 2/0/0; `issue-3613-render-parity` T 2/0/5; `issue-3628-legacy-residue` T 1/0/1; `issue-3666` T 1/0/2; `issue-3683-proto-method-write-once` T 2/0/8 |
+| issue-37xx (9) | `issue-3779-cookie-ground-fold` P? 2/1/0; `issue-3762` T 1/0/1; `issue-3763-string-indexof-undefined-search` T 1/0/2; `issue-3764-reference-array-oob-undefined` T 1/0/2; `issue-3766-string-indexof-receiver-coercion` T 3/0/6; `issue-3770-regexp-boolean-getters` T 1/0/1; `issue-3771-json-rawjson-symbol` T 1/0/2; `issue-3776-es5-isfrozen-intrinsics` T 1/0/3; `issue-3778-ground-call-fold` T 2/3/5 |
+| issue-39xx (2) | `issue-3973` P 2/0/0; `issue-3984` P 2/0/0 |
+| issue-41xx (2) | `issue-4167-test262` P 2/0/0; `issue-4162` T 1/0/7 |
+| issue-42xx (3) | `issue-4252-computed-key-call` T 1/0/5; `issue-4262-error-substrate` T 1/0/4; `issue-4276-instanceof-object-family` T 2/0/17 |
+| issue-43xx (3) | `issue-4393-annexb-if-switch-lifecycle` P 3/0/0; `issue-4376-eval-alias-regression` T 1/0/1; `issue-4390-global-function-descriptors` T 1/0/2 |
+| issue-44xx (5) | `issue-4447-mg-regressions` P 3/0/0; `issue-4428` T 1/0/7; `issue-4453-tdz-shadowed-block` T 2/0/14; `issue-4485` T 2/0/6; `issue-4491-wave4` T 1/0/17 |
+| issue-45xx (5) | `issue-4525-moment-closure-validation` P? 0/1/0; `issue-4516-es5-residuals` T 3/0/6; `issue-4520-abi-carrier-differential` T 2/0/3; `issue-4521-legacy-caller-policy` T 1/0/2; `issue-4556-builtin-proto-member-override` T 1/0/5 |
+| issue-46xx (20) | `issue-4639` P 5/0/0; `issue-4640` P 1/0/0; `issue-4641` P 3/0/0; `issue-4643` P 1/0/0; `issue-4655-concat-carrier` P 2/0/0; `issue-4675` P 2/0/0; `issue-4679` P 1/0/0; `issue-4685` P 2/0/0; `issue-4690` P 1/0/0; `issue-4693` P 2/0/0; `issue-4694` P 1/0/0; `issue-4621` T 2/0/1; `issue-4622` T 1/0/18; `issue-4624` T 4/0/11; `issue-4653` T 3/0/25; `issue-4655` T 2/0/1; `issue-4656` T 2/0/35; `issue-4688` T 2/0/1; `issue-4689` T 1/0/1; `issue-4691` T 2/0/2 |
+| issue-47xx (39) | `issue-4701` P 1/0/0; `issue-4705` P 3/0/0; `issue-4708` P 1/0/0; `issue-4710` P 2/0/0; `issue-4711` P 3/0/0; `issue-4712` P 2/0/0; `issue-4713` P 4/0/0; `issue-4714` P 1/0/0; `issue-4715` P 1/0/0; `issue-4716` P 2/0/0; `issue-4718` P 1/0/0; `issue-4719` P 1/0/0; `issue-4720` P 1/0/0; `issue-4723` P 1/0/0; `issue-4731` P 1/0/0; `issue-4736` P 2/0/0; `issue-4738` P 2/0/0; `issue-4749` P 2/0/0; `issue-4750` P 2/0/0; `issue-4760` P 3/0/0; `issue-4700` P? 0/2/0; `issue-4745` P? 0/3/0; `issue-4746` P? 0/3/0; `issue-4776-symbol-prototype-valueof` P? 0/4/0; `issue-4779-bigint-tostring-symbol-radix` P? 0/4/0; `issue-4781-weakmap-constructor-prototype` P? 0/2/0; `issue-4785-weak-collection-primitive-keys` P? 0/4/0; `issue-4709` T 2/0/1; `issue-4737` T 2/0/1; `issue-4741` T 2/0/1; `issue-4742` T 2/0/1; `issue-4743` T 2/0/1; `issue-4744` T 2/0/1; `issue-4747` T 2/0/2; `issue-4748` T 2/0/1; `issue-4759-module-namespace` T 1/0/4; `issue-4777` T 2/0/2; `issue-4778-arraybuffer-isview-no-arg` T 2/0/1; `issue-4783-number-formatter-symbol` T 2/0/1 |
+| issue-49xx (4) | `issue-4922-generator-arguments` P 1/0/0; `issue-4922-object-global-call` P 2/0/0; `issue-4922-runtime-eval-object-callable` P 1/0/0; `issue-4922-s13-function-binding` P 1/0/0 |
+| issue-50xx (1) | `issue-5091-set-foreach-symbol-callback` T 2/0/2 |
+| issue-51xx (12) | `issue-5100-set-newtarget` T 4/0/2; `issue-5102-isnan-toprimitive` T 1/0/1; `issue-5117-dataview-byteoffset-symbol` T 2/0/5; `issue-5118-es2015-error-symbol-coercion` T 2/0/17; `issue-5119-es2015-reflect-symbol-target` T 1/0/10; `issue-5120-es2015-array-find-symbol-length` T 1/0/10; `issue-5123-es2015-escape-symbol-tostring` T 2/0/5; `issue-5137-es2015-dataview-setter-undefined-carrier` T 3/0/7; `issue-5150-es2015-buffers` T 1/0/10; `issue-5195-es2015-class-r2` T 1/0/59; `issue-5195-r3-heritage-check` T 1/0/5; `issue-5195-r3-restricted-properties` T 1/0/7 |
+| issue-52xx (5) | `issue-5213-es2015-class-prototype-accessor` T 1/0/1; `issue-5253` T 1/0/4; `issue-5254` T 1/0/4; `issue-5272-runner-standalone-leak` T 3/0/2; `issue-5298-kind-neutrality-stable-evidence` T 2/0/3 |
+| issue-53xx (4) | `issue-5318-r4-computed-accessor-keys` T 1/0/28; `issue-5318-r5-objlit-computed-accessor-keys` T 1/0/13; `issue-5380-length-bounded-push-loop` T 0/1/2; `issue-5383-class-value-dynamic-call` T 1/0/1 |
+| issue-57xx (1) | `issue-5738-destructuring-iterator-order` T 1/0/1 |
+| issue-64xx (1) | `issue-6492-r28-trycatch-planner-checker` P 6/0/0 |
+| issue-66xx (1) | `issue-6661-npm-compat-opaque-lane-diagnostic` T 1/0/2 |
+| issue-67xx (1) | `issue-6794-cli` T 1/0/11 |
+| issue-68xx (2) | `issue-6865-linear-layout-contract` T 2/0/22; `issue-6892-linear-repeat-bulk-copy` T 0/1/6 |
+| issue-69xx (4) | `issue-6920-allocation-provenance-preservation` P 16/0/0; `issue-6920-allocation-rule-sharing-preservation` P 12/0/0; `issue-6976-original-call-apply-controls` P 1/0/0; `issue-6915-linear-owned-ascii-append-copy-kernel` T 1/0/4 |
+| issue-6xx (1) | `issue-671-with-w1` T 1/0/8 |
+| issue-70xx (1) | `issue-7012-regime-temporal-string-field` T 2/0/1 |
+| issue-71xx (3) | `issue-7106-eval-void-call-splice` T 1/0/1; `issue-7143-legacy-reach-blockers` T 1/0/2; `issue-7190-prophelper-not-and-logical` T 2/0/4 |
+| issue-72xx (6) | `issue-7281-throw-scalar-concat` P 1/0/0; `issue-7260-ir-move-only-dynamic-key-store` T 4/0/1; `issue-7265-ir-move-only-bool-call-into-dynamic` T 1/0/1; `issue-7274-ir-native-arraybuffer` T 9/0/4; `issue-7277-ir-param-legacy-refined-slot` T 0/1/2; `issue-7283-ir-verify-property-chain` T 2/0/1 |
+| issue-73xx (6) | `issue-7380-prepared-production-setting` P? 1/1/0; `issue-7305-dynamic-function-value-call` T 1/0/2; `issue-7330-string-compound-operand` T 1/0/2; `issue-7331-carrier-return-into-number` T 1/0/3; `issue-7332-null-into-number` T 1/0/2; `issue-7334-reassigned-callable-module-var` T 1/0/2 |
+| issue-7xx (1) | `issue-779c` P 5/0/0 |
+| issue-8xx (1) | `issue-833-html-like-comments` T 1/0/5 |
