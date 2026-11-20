@@ -1751,15 +1751,11 @@ export function compileBinaryExpression(
         op === ts.SyntaxKind.LessThanEqualsToken ||
         op === ts.SyntaxKind.GreaterThanToken ||
         op === ts.SyntaxKind.GreaterThanEqualsToken;
-      if ((isLooseEq || isLooseNeq) && typeMayBeBigInt(nonBigIntTsType)) {
-        const dynamic = emitMaybeBigIntLooseEquality(ctx, fctx, expr, leftIsBigInt, isLooseNeq);
-        if (dynamic !== undefined) return dynamic;
-      }
+      const maybeBigIntLooseEq = emitMaybeBigIntLooseEquality(ctx, fctx, expr, leftIsBigInt, nonBigIntTsType);
+      if (maybeBigIntLooseEq !== undefined) return maybeBigIntLooseEq;
 
-      // The i64 comparison below cannot represent arbitrary-width host BigInts
-      // and its f64 conversion also loses integer precision. Let JavaScript
-      // perform the exact abstract equality / relational algorithm whenever a
-      // host is available.
+      // The i64 comparison below cannot represent arbitrary-width host BigInts and its f64 conversion also loses
+      // integer precision. Let JavaScript perform the exact abstract equality / relational algorithm with a host.
 
       // #1827 — BigInt × Number loose (in)equality must use EXACT
       // mathematical-value equality, not an f64 collapse. `f64.convert_i64_s`

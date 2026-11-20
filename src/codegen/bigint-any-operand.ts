@@ -28,6 +28,7 @@
  * BigInt.
  */
 import { ts } from "../ts-api.js";
+import { typeMayBeBigInt } from "../checker/type-mapper.js";
 import type { Instr, ValType } from "../ir/types.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { allocTempLocal, releaseTempLocal } from "./context/locals.js";
@@ -95,18 +96,22 @@ export function emitStandaloneAnyBigIntBinary(
 
 /**
  * (#7373) `==` / `!=` when exactly one side is statically BigInt and the other may hold a BigInt at run time
- * (`typeMayBeBigInt`). A BigInt there is compared as a BigInt (§7.2.15 step 1). `null` (a null externref) is loosely
- * equal only to `null` / `undefined` (steps 2–3), so it answers `false` before ToNumber would turn it into 0.
- * Anything else, `undefined` included (ToNumber gives NaN), keeps the static mixed arm's ToNumber comparison.
- * Returns `undefined` having emitted nothing when a helper is unavailable.
+ * (`typeMayBeBigInt(otherTsType)`). A BigInt there is compared as a BigInt (§7.2.15 step 1). `null` (a null
+ * externref) is loosely equal only to `null` / `undefined` (steps 2–3), so it answers `false` before ToNumber would
+ * turn it into 0. Anything else, `undefined` included (ToNumber gives NaN), keeps the static mixed arm's ToNumber
+ * comparison. Returns `undefined` having emitted nothing for any other operator or operand, or when a helper is
+ * unavailable.
  */
 export function emitMaybeBigIntLooseEquality(
   ctx: CodegenContext,
   fctx: FunctionContext,
   expr: ts.BinaryExpression,
   bigintOnLeft: boolean,
-  negate: boolean,
+  otherTsType: ts.Type,
 ): ValType | null | undefined {
+  const op = expr.operatorToken.kind;
+  const negate = op === ts.SyntaxKind.ExclamationEqualsToken;
+  if ((!negate && op !== ts.SyntaxKind.EqualsEqualsToken) || !typeMayBeBigInt(otherTsType)) return undefined;
   addUnionImports(ctx);
   if (!ctx.funcMap.has("__typeof_bigint") || !ctx.funcMap.has("__to_bigint")) return undefined;
 
