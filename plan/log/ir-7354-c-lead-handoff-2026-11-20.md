@@ -164,16 +164,35 @@ each lane):
     should name the population consistency check (src/ir/program/population.ts:104);
     `function f(){} var f;` gives a TS "Duplicate identifier" error instead of
     a named refusal (belongs in #7364's issue file).
-- **S6:** the full-prelude table and Suspended Work are in #7365's issue file
-  on `claude/7354-perf3-reservations`. #7436's fix experiment result was not
-  reported before the window closed.
+- **S6: #7436 halves the full-prelude compile time.** Output sha1 e185e243 is
+  identical in every row:
+
+  | tree | compile |
+  | --- | --- |
+  | base | 1,002 s |
+  | base + B′ + #7397 + #7415 | 967 s |
+  | the same + #7436 experiment | 475 s (−51 %) |
+
+  - Still far from the 60 s budget.
+  - Not yet measured: the share left in data.ts (needs a second profile) and
+    the plan-strings-once-per-program variant.
+  - Branches:
+    - #7436: `claude/7436-source-closure-settle` ad81d428, WIP on o e5878297.
+    - #7415: `claude/7415-settled-program-validation` dd36f9d1, suspended.
+    - #7397: f000c051, done, waiting for o.
+    - #7365 B′: `claude/7354-perf3-reservations` e67111af. Its blocker is now
+      17 silent pins (the reviewer's 16, plus issue-3518-native-invocation-substrate
+      "post-completion carrier mutation").
+- **S7:** the #7335 fix (f21936ecc1: #7164 pre-scans see through wrappers;
+  shard 7 has 0 failures locally) is pushed with hold. RV7335 confirms the
+  delta.
 - **#7340** was approved on af0efa4e02 and released at wind-down.
 
 ## Decisions still open for the project lead
 
 1. **Cancelling stale CI runs.** 260+ were queued on 2026-11-19; the
    permission classifier refused it from this session.
-2. **#7365 B′.** Wait for #7436's number (see above).
+2. **#7365 B′.** #7436 alone gives −51 % (1,002 s → 475 s); B′ adds −3.5 % and still has 17 silent pins. Recommendation: land #7436 first; B′ only after its pins are fixed.
 3. **#7419.** JS-environment string boundary: the default/node/web targets
    throw "type incompatibility". Fix or record?
 4. Also open: #7322 (strategy proposals), #7393, #7324 (does a
