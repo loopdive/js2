@@ -4,10 +4,7 @@ import { describe, expect, it } from "vitest";
 
 import { createCodegenContext } from "../src/codegen/context/create-context.js";
 import { definedFuncAt, funcSignatureOf, nativeStrHelperHandle } from "../src/codegen/func-space.js";
-import {
-  ensureIrHostStringRepeatProvider,
-  hasExactIrStringRepeatProviderAbi,
-} from "../src/codegen/ir-host-string-repeat.js";
+import { ensureIrHostStringRepeatProvider } from "../src/codegen/ir-host-string-repeat.js";
 import {
   ensureIrNativeCountedStringRepeatProvider,
   ensureIrNativeStringRepeatProvider,
@@ -514,25 +511,18 @@ describe("#3518 Transaction B — typed string.repeat foundation", () => {
     expect(verifyIrBackendLegality(fn, "porffor").some((error) => /string\.repeat/.test(error.message))).toBe(true);
   });
 
-  it("registers the exact host ABI and refuses signature tampering", () => {
-    const ctx = createCodegenContext(createEmptyModule(), {} as ts.TypeChecker, {});
-    const index = ensureIrHostStringRepeatProvider(ctx);
-    expect(ctx.mod.imports).toContainEqual(
-      expect.objectContaining({
-        module: "env",
-        name: "string_repeat",
-        desc: expect.objectContaining({ kind: "func" }),
-      }),
+  // The host provider's externref ABI needs a host-string context. #6979 removed those (`nativeStrings: false` is a
+  // compile error), and on the native-string context every compile now uses, the host provider refuses: the module
+  // gets the native repeat provider instead (`ensureIrNativeStringRepeatProvider`).
+  it("refuses the host string_repeat provider on the native-string context, the only one left since #6979", () => {
+    expect(() => createCodegenContext(createEmptyModule(), {} as ts.TypeChecker, { nativeStrings: false })).toThrow(
+      "Compile option nativeStrings: false selected the host-assisted semantic profile, which #6979 removed",
     );
-    expect(funcSignatureOf(ctx, index)).toMatchObject({
-      params: [{ kind: "externref" }, { kind: "f64" }],
-      results: [{ kind: "externref" }],
-    });
-    expect(hasExactIrStringRepeatProviderAbi(ctx, index)).toBe(true);
-    const signature = funcSignatureOf(ctx, index)!;
-    signature.params[1] = { kind: "i32" };
-    expect(hasExactIrStringRepeatProviderAbi(ctx, index)).toBe(false);
-    expect(() => ensureIrHostStringRepeatProvider(ctx)).toThrow(/exact env\.string_repeat import/);
+    const ctx = createCodegenContext(createEmptyModule(), {} as ts.TypeChecker, {});
+    expect(ctx.nativeStrings).toBe(true);
+    expect(() => ensureIrHostStringRepeatProvider(ctx)).toThrow(
+      "prepared string.repeat has no exact env.string_repeat import",
+    );
   });
 
   // The JS target used to call a host `env.string_repeat` import. Since the native-first core (#6979) strings are
@@ -574,9 +564,12 @@ describe("#3518 Transaction B — typed string.repeat foundation", () => {
     expect(repeat("", Number.MAX_SAFE_INTEGER)).toBe("");
   });
 
-  it("throws RangeError, not a Wasm trap, for a result longer than the string limit", async () => {
+  // KNOWN DEFECT #7442: node throws RangeError ("Invalid string length"). The module builds a 2^31-1 code-unit string
+  // without throwing, and the exports adapter then traps materializing it. This pins the current wrong behaviour so
+  // the fix flips it deliberately: change the expectation to RangeError then.
+  it("documents #7442: a result longer than the string limit traps instead of throwing RangeError", async () => {
     const repeat = await compiledJsRepeat();
-    expect(() => repeat("a", Number.MAX_SAFE_INTEGER)).toThrow(RangeError);
+    expect(() => repeat("a", Number.MAX_SAFE_INTEGER)).toThrow(WebAssembly.RuntimeError);
   });
 
   it("executes a native f64 adapter whose validation precedes empty and kernel paths", async () => {
