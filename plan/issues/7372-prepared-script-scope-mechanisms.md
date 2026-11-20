@@ -249,3 +249,22 @@ Measured:
   `let` programs, each as `.js` and `.ts`, are identical. The reviewer's `dd8e3628` hashes reproduce (`let x =
   "a"; x++;` → `eb4d8edaddca`). The 872-program sample had missed the class because no test program has a
   `++`/`--` on a non-number `let`.
+
+## Suspended Work
+
+Suspended 2026-11-20 (budget window end, C lead's wind-down).
+
+- **Slices 1 + 1b:** PR #7321, merged 2026-11-20.
+- **Registry R1:** PR #7329, branch `claude/7372-globals-registry`, `hold`.
+  - Reviewed head `4792b8f2`: RV7329 BLOCKER (not move-only).
+  - Fix commit `1133fabb` (store into every dynamic global again; `ProgramSourceGlobal` used once; named invariant
+    for a missing startup binding; nits) is pushed with this note. Prepared bytes identical to `dd8e3628` on 886
+    programs.
+  - Next step: merge `origin/main` (now containing #7321), re-run gates, then message RV7329
+    (`session_016FRcLx9j6bRJfcwz4WZ7Zi`) with the delta `4792b8f2..<new head>`.
+  - Open review thread: RV7329's BLOCKER comment, answered by `1133fabb`, not yet re-reviewed.
+- **Slice 2** (block FunctionDeclaration): not started. It uses S4's function-value home (Fa, not landed).
+- **Slice 3** (undeclared globals, incl. reads that throw ReferenceError, 162 files) and **slice 4** (`delete` of
+  an identifier, about 9 files): waiting for (B), S5's realm global object (`claude/7350-b2b` @ `dbc0b2343e`,
+  contract `js.object.global`). The quick design (A) was measured at 0 files through the real prelude.
+- **#7375 and #7408:** on `claude/7375-compound-rhs`, see those issue files.
