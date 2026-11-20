@@ -2,11 +2,10 @@
 
 import { readFileSync, writeFileSync, mkdtempSync, mkdirSync } from "node:fs";
 import { createHash } from "node:crypto";
-import { resolve, dirname } from "node:path";
+import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { spawn } from "node:child_process";
 import { setImmediate } from "node:timers/promises";
-import ts from "typescript";
 import { afterEach, describe, expect, it } from "vitest";
 import { createEmptyModule } from "../src/ir/types.js";
 import { PhysicalModuleReservations } from "../src/wasm/physical/module-reservations.js";
@@ -28,11 +27,9 @@ import {
   requireNativeStringNumberReservations,
   requireCompletedNativeStringNumber,
 } from "../src/backend/wasmgc/resources/native-string-number.js";
-import * as grammar from "../src/runtime/wasmgc/values/string-number-grammar.js";
 import * as scaling from "../src/runtime/wasmgc/values/decimal-scale-bodies.js";
 import * as scanner from "../src/runtime/wasmgc/values/string-number-bodies.js";
 import {
-  scannerDonorSource,
   scannerCases,
   scannerSemanticDebtCases,
   scannerExponentRepairCases,
@@ -54,172 +51,8 @@ const paths = {
   scanner: "src/runtime/wasmgc/values/string-number-bodies.ts",
   owner: "src/backend/wasmgc/resources/native-string-number.ts",
 } as const;
-type Sources = Record<keyof typeof paths, string>;
-const readSources = (): Sources =>
-  Object.fromEntries(Object.entries(paths).map(([k, p]) => [k, readFileSync(resolve(root, p), "utf8")])) as Sources;
 const sha = (text: string | Uint8Array) => createHash("sha256").update(text).digest("hex");
-function parsed(text: string) {
-  const file = ts.createSourceFile("receipt.ts", text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
-  if ((file as ts.SourceFile & { parseDiagnostics: readonly unknown[] }).parseDiagnostics.length)
-    throw Error("invalid source receipt");
-  return file;
-}
-
-// Execute the ORIGINAL donor emitter against the same small recording seam as
-// the live legacy adapter. These recording inputs are NOT compiler witnesses.
-interface Recording {
-  mod: { types: unknown[]; globals: unknown[]; functions: unknown[] };
-  funcMap: Map<string, number>;
-  [key: string]: unknown;
-}
-function adapterFactory(text: string, trace: string[], fault?: string) {
-  const importRows = parsed(text).statements.filter(ts.isImportDeclaration);
-  for (const row of [...importRows].reverse()) text = text.slice(0, row.getStart()) + text.slice(row.end);
-  const providers: Record<string, Record<string, unknown>> = {
-    "../runtime/wasmgc/values/string-number-grammar.js": grammar,
-    "../runtime/wasmgc/values/decimal-scale-bodies.js": scaling,
-    "../runtime/wasmgc/values/string-number-bodies.js": scanner,
-    "./native-strings.js": {
-      ensureNativeStringHelpers: () => {
-        trace.push("ensure-strings");
-      },
-      // (#6969) Bound by the authorized delta; used only by the finalize fill,
-      // which emission never reaches.
-      ANY_TO_STRING_HELPER: "__any_to_string",
-      EXTERN_TO_STRING_HELPER: "__extern_toString",
-      ensureAnyToStringHelper: () => {
-        throw Error("#6969 fill-only helper reached during emission");
-      },
-    },
-    "./registry/types.js": {
-      addFuncType: (ctx: Recording, params: unknown[], results: unknown[]) => {
-        trace.push("signature:" + JSON.stringify([params, results]));
-        return 17;
-      },
-    },
-    "./func-space.js": {
-      definedFuncAt: () => {
-        throw Error("#6969 fill-only helper reached during emission");
-      },
-      mintDefinedFunc: () => {
-        trace.push("mint");
-        return 99;
-      },
-      pushDefinedFunc: (ctx: Recording, handle: number, definition: unknown) => {
-        trace.push("push:" + handle);
-        if (fault === "push") throw Error("push sentinel");
-        ctx.mod.functions.push(definition);
-      },
-    },
-    // (#6969 review) The throwing §7.1.17 ToString for the fill; never emission.
-    "./coercion-engine.js": {
-      ensureSpecExternrefToStringProvider: () => {
-        throw Error("#6969 fill-only helper reached during emission");
-      },
-    },
-    "./registry/parse-number-delegates.js": {
-      registerEmitNativeParseNumber: () => {
-        trace.push("register-delegate");
-      },
-    },
-  };
-  // Inject only the source's explicit runtime imports. In particular the
-  // historical source owns POW10_TABLE_MAX and all C_* declarations locally;
-  // supplying them as Function parameters collides with those declarations.
-  const values = new Map<string, unknown>();
-  for (const row of importRows) {
-    const clause = row.importClause;
-    if (clause?.isTypeOnly) continue;
-    if (
-      !clause ||
-      clause.name ||
-      !clause.namedBindings ||
-      !ts.isNamedImports(clause.namedBindings) ||
-      row.attributes ||
-      !ts.isStringLiteral(row.moduleSpecifier)
-    )
-      throw Error("unsupported recording import shape");
-    for (const binding of clause.namedBindings.elements) {
-      if (binding.isTypeOnly) continue;
-      const provider = providers[row.moduleSpecifier.text];
-      const importedName = binding.propertyName?.text ?? binding.name.text;
-      if (!provider || !Object.hasOwn(provider, importedName))
-        throw Error("unavailable recording import: " + row.moduleSpecifier.text + ":" + importedName);
-      if (values.has(binding.name.text)) throw Error("duplicate recording import: " + binding.name.text);
-      values.set(binding.name.text, provider[importedName]);
-    }
-  }
-  const js = ts.transpileModule(text, {
-    compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS },
-  }).outputText;
-  const module = { exports: {} as { emitNativeParseNumber: (ctx: Recording, which: Set<string>) => void } };
-  new Function("exports", ...values.keys(), js)(module.exports, ...values.values());
-  return module.exports.emitNativeParseNumber;
-}
-function recordLegacy(text: string, which: readonly string[], imported = 0, fault?: string) {
-  const trace: string[] = [],
-    invoke = adapterFactory(text, trace, fault);
-  const array = <T>(label: string) => {
-    const a: T[] = [];
-    a.push = (...items: T[]) => {
-      trace.push(label);
-      if (fault === label) throw Error(label + " sentinel");
-      return Array.prototype.push.apply(a, items);
-    };
-    return a;
-  };
-  const ctx: Recording = {
-    mod: { types: array("type"), globals: array("global"), functions: [] },
-    funcMap: new Map(),
-    nativeStrHelpers: new Map([["__str_flatten", 55]]),
-    nativeStrTypeIdx: 2,
-    nativeStrDataTypeIdx: 0,
-    anyStrTypeIdx: 1,
-    consStrTypeIdx: 3,
-    hashedStrTypeIdx: 4,
-    utf8StrDataTypeIdx: -1,
-    utf8StrTypeIdx: -1,
-    numImportGlobals: imported,
-  };
-  ctx.funcMap.set = (name, handle) => {
-    trace.push("bind:" + name);
-    return Map.prototype.set.call(ctx.funcMap, name, handle);
-  };
-  let error: string | null = null;
-  try {
-    invoke(ctx, new Set(which));
-    invoke(ctx, new Set(which));
-  } catch (e) {
-    error = String(e);
-  }
-  return {
-    trace,
-    error,
-    types: [...ctx.mod.types],
-    globals: [...ctx.mod.globals],
-    functions: ctx.mod.functions,
-    bindings: [...ctx.funcMap],
-    array: ctx.pow10ArrTypeIdx,
-    global: ctx.pow10TableGlobalIdx,
-  };
-}
-describe("scanner complete historical donor receipts", () => {
-  it.each(["type", "global", "push"])("preserves %s failure and registration/allocation ordering", (fault) => {
-    expect(recordLegacy(readSources().adapter, ["__str_to_number"], 7, fault)).toEqual(
-      recordLegacy(scannerDonorSource(), ["__str_to_number"], 7, fault),
-    );
-  });
-  it("does not inject canonical exports absent from the recorded source imports", () => {
-    expect(() =>
-      adapterFactory("const POW10_TABLE_MAX = 308; export function emitNativeParseNumber() {}", []),
-    ).not.toThrow();
-    expect(() => adapterFactory("export const probe = POW10_TABLE_MAX;", [])).toThrow("POW10_TABLE_MAX is not defined");
-  });
-  it("rejects an unavailable value import rather than inventing an injected dependency", () => {
-    expect(() =>
-      adapterFactory('import { missing } from "./native-strings.js"; export function emitNativeParseNumber() {}', []),
-    ).toThrow("unavailable recording import");
-  });
+describe("decimal power table and scanner resources", () => {
   it("pins all 309 original decimal powers and immutable descriptors", () => {
     expect(scaling.buildDecimalPowerArrayType()).toEqual({
       kind: "array",

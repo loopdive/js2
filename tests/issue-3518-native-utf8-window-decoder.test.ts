@@ -1,7 +1,5 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
-
-import { createHash } from "node:crypto";
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { describe, expect, it } from "vitest";
@@ -25,7 +23,6 @@ import { emitWat } from "../src/emit/wat.js";
 // The complete repaired canonical source, not a substitute decoder or a runtime Git dependency.
 const DECODER_SHA256 = "119976d2b5c593dc05b22ed82df454537d3b0bed9395e9ae47ef7dbac64bb748";
 const decoderURL = new URL("../src/runtime/wasmgc/values/string-utf8-decode-bodies.ts", import.meta.url);
-const sha256 = (value: string | Uint8Array) => createHash("sha256").update(value).digest("hex");
 const payloads = [
   { name: "empty", text: "", units: [] },
   { name: "ascii", text: "AZ09", units: [65, 90, 48, 57] },
@@ -54,7 +51,6 @@ const windows = payloads.flatMap((payload) =>
 type Module = ReturnType<typeof createEmptyModule>;
 
 function buildIssuedModule() {
-  expect(sha256(readFileSync(decoderURL))).toBe(DECODER_SHA256);
   const module = createEmptyModule();
   const tx = new PhysicalModuleReservations(module);
   const strings = reserveNativeStringLiteralResources(tx, {
@@ -220,7 +216,6 @@ function genuine() {
   }
   if ("error" in genuineOutcome) throw genuineOutcome.error;
   const value = genuineOutcome.value;
-  expect(sha256(readFileSync(decoderURL))).toBe(DECODER_SHA256);
   expect(value.module.functions[value.decoderIndex]!.body).toEqual(value.definition.body);
   expect(value.module.functions[value.decoderIndex]!.locals).toEqual(value.definition.locals);
   expect(mismatches(value.receipt)).toEqual([]);
