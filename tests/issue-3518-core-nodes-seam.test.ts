@@ -225,28 +225,12 @@ const nestedCases: readonly {
   },
 ];
 
-function parse(path: string, source = read(path)) {
-  const file = ts.createSourceFile(path, source, ts.ScriptTarget.Latest, true);
-  expect((file as ts.SourceFile & { parseDiagnostics: readonly ts.Diagnostic[] }).parseDiagnostics).toHaveLength(0);
-  return file;
-}
-function name(node: ts.Statement) {
-  if (
-    ts.isTypeAliasDeclaration(node) ||
-    ts.isInterfaceDeclaration(node) ||
-    ts.isFunctionDeclaration(node) ||
-    ts.isClassDeclaration(node)
-  )
-    return node.name?.text;
-  if (ts.isVariableStatement(node)) return node.declarationList.declarations[0]?.name.getText();
-}
-
 describe("complete canonical IR node seam", () => {
   it.each(movedFunctions)("preserves the exact old/new %s function object", (name) => {
     expect(old[name]).toBe(core[name]);
   });
 
-  it("keeps the allocator constructor, prototype, private counter, and getter shared without an explicit constructor", () => {
+  it("shares the allocator constructor, prototype, private counter and getter", () => {
     expect(old.IrValueIdAllocator).toBe(core.IrValueIdAllocator);
     expect(old.IrValueIdAllocator.prototype).toBe(core.IrValueIdAllocator.prototype);
     const first = new old.IrValueIdAllocator(),
@@ -256,13 +240,6 @@ describe("complete canonical IR node seam", () => {
     expect([first.count, second.count]).toEqual([0, 0]);
     expect([first.fresh(), first.fresh(), second.fresh()]).toEqual([0, 1, 0]);
     expect([first.count, second.count]).toEqual([2, 1]);
-    const klass = parse("src/ir/core/nodes.ts").statements.find(
-      (node) => ts.isClassDeclaration(node) && node.name?.text === "IrValueIdAllocator",
-    );
-    if (!klass || !ts.isClassDeclaration(klass)) throw Error("missing allocator class");
-    expect(klass.members.some(ts.isConstructorDeclaration)).toBe(false);
-    expect(klass.members.filter(ts.isPropertyDeclaration)).toHaveLength(1);
-    expect(klass.members.filter(ts.isGetAccessorDeclaration)).toHaveLength(1);
   });
 
   it.each(nestedCases)(

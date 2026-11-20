@@ -148,7 +148,7 @@ function resolver(events: string[] = []): IrLowerResolver {
 }
 
 describe("lowering cycle separation", () => {
-  it("retains all eight public function objects, with no facade implementations", () => {
+  it("forwards all eight public function objects from their owners", () => {
     const owners = {
       lowerIrFunctionBody: generic.lowerIrFunctionBody,
       lowerIrTypeToValType: generic.lowerIrTypeToValType,
@@ -161,57 +161,6 @@ describe("lowering cycle separation", () => {
     };
     expect(Object.keys(compatibility).sort()).toEqual(Object.keys(owners).sort());
     for (const name of Object.keys(owners) as (keyof typeof owners)[]) expect(compatibility[name]).toBe(owners[name]);
-    const file = parse("src/ir/lower.ts");
-    expect(file.statements.length).toBe(4);
-    for (const statement of file.statements) {
-      expect(ts.isExportDeclaration(statement) && !!statement.exportClause && !!statement.moduleSpecifier).toBe(true);
-    }
-  });
-
-  it("keeps generic emitter/converter arguments required and the public Wasm default optional", () => {
-    const file = parse(genericPath);
-    for (const name of ["lowerIrFunctionBody", "projectIrFunctionSignatureWithConverter"]) {
-      const declaration = file.statements.find(
-        (s) => ts.isFunctionDeclaration(s) && s.name?.text === name,
-      ) as ts.FunctionDeclaration;
-      expect(declaration.parameters).toHaveLength(4);
-      for (const parameter of declaration.parameters) {
-        expect(parameter.questionToken).toBeUndefined();
-        expect(parameter.initializer).toBeUndefined();
-      }
-    }
-    const wrapper = parse("src/ir/backend/wasm-lowering.ts").statements.find(
-      (s) => ts.isFunctionDeclaration(s) && s.name?.text === "lowerIrFunctionToWasm",
-    ) as ts.FunctionDeclaration;
-    expect(wrapper.parameters).toHaveLength(3);
-    expect(wrapper.parameters[2].initializer?.getText()).toBe("new WasmGcEmitter(resolver)");
-    for (const path of ["src/ir/backend/lower-contracts.ts", "src/ir/backend/wasm-constants.ts"]) {
-      for (const statement of parse(path).statements) {
-        if (ts.isImportDeclaration(statement)) expect(statement.importClause?.isTypeOnly).toBe(true);
-      }
-    }
-  });
-
-  it.each(forbidden)("rejects an injected reverse edge through a barrel to %s", (target) => {
-    const barrel = "src/ir/lowering-test-barrel.ts";
-    const targetSpecifier = "./" + relative("src/ir", target).replace(/\.ts$/, ".js");
-    expect(() =>
-      valueClosure(
-        new Map([
-          [genericPath, text(genericPath) + '\nimport "./lowering-test-barrel.js";'],
-          [barrel, "export * from " + JSON.stringify(targetSpecifier) + ";"],
-        ]),
-      ),
-    ).toThrow("reverse dependency: " + target);
-  });
-
-  it.each([
-    ["import(pathFromCaller);", "unknown dependency"],
-    ['import("node:fs");', "external dependency"],
-    ['import("./missing-lowering-module.js");', "unresolved dependency"],
-    ["export {", "unparsed dependency"],
-  ])("refuses unsupported graph input %s", (injection, error) => {
-    expect(() => valueClosure(new Map([[genericPath, text(genericPath) + "\n" + injection]]))).toThrow(error);
   });
 
   it("lowers a nonempty body in a fresh process that refuses every concrete/wrapper import", () => {

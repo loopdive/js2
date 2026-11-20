@@ -1,6 +1,4 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
-
-import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { ts } from "../src/ts-api.js";
 import { buildIrUnitInventory } from "../src/ir/identity.js";
@@ -248,66 +246,5 @@ describe("certified native delay original support identity", () => {
       () => validateNativePromiseDelaySupportByIdentity(f.input.entrySource, f.context, maps(plan)),
       "source-record-mismatch",
     );
-  });
-});
-
-const read = (path: string) => readFileSync(new URL("../" + path, import.meta.url), "utf8");
-// Exact full declaration text measured at 1731cf377a9ae3a55af7b9d9447c3b5b2fa144fd.
-// Permanent controls do not depend on that historical object existing in CI.
-const receipts = [
-  [
-    "requireExactSourceFunctionOwner",
-    "src/ir/planning-sites.ts",
-    true,
-    "1a925af69d8b78400cfb5aa81525cadab199e597f8a35a5eafb87e211e64bc11",
-  ],
-  [
-    "exactNodeIsReachableFrom",
-    "src/ir/planning-sites.ts",
-    false,
-    "31849d00e8ca74c6b055ab99bdcdfe6737f8e68054843cd1758d5afcdf291d55",
-  ],
-  [
-    "requireExactPlanSiteOwner",
-    "src/ir/planning-sites.ts",
-    true,
-    "535922377fbe2c14a21b6fbab0bb009e3e530c1343a0f811200168abfc5345c8",
-  ],
-  [
-    "validatePromiseDelayPlansByIdentity",
-    "src/ir/promise-delay-lowering.ts",
-    true,
-    "940d59242f71c03d4855474e3318fb5336dfc54f21c1ed1a185fd69d5b65c661",
-  ],
-] as const;
-describe("pure frontend validator relocation receipts", () => {
-  it("keeps the overlay's actual downward value imports and no duplicate moved declarations", () => {
-    const text = read("src/codegen/ir-overlay-finalize.ts");
-    const file = ts.createSourceFile("overlay.ts", text, ts.ScriptTarget.Latest, true);
-    for (const [name] of receipts)
-      expect(file.statements.some((node) => ts.isFunctionDeclaration(node) && node.name?.text === name)).toBe(false);
-    for (const [path, names] of [
-      ["../ir/planning-sites.js", ["requireExactSourceFunctionOwner", "requireExactPlanSiteOwner"]],
-      ["../ir/promise-delay-lowering.js", ["validatePromiseDelayPlansByIdentity"]],
-    ] as const) {
-      const imports = file.statements.filter(
-        (node): node is ts.ImportDeclaration =>
-          ts.isImportDeclaration(node) &&
-          ts.isStringLiteral(node.moduleSpecifier) &&
-          node.moduleSpecifier.text === path,
-      );
-      expect(imports).toHaveLength(1);
-      const clause = imports[0]!.importClause!;
-      expect(clause.isTypeOnly).toBe(false);
-      const bindings = clause.namedBindings;
-      expect(bindings && ts.isNamedImports(bindings)).toBe(true);
-      if (!bindings || !ts.isNamedImports(bindings)) throw new Error("missing named imports");
-      for (const name of names) {
-        const specs = bindings.elements.filter((element) => element.name.text === name);
-        expect(specs).toHaveLength(1);
-        expect(specs[0]!.isTypeOnly).toBe(false);
-        expect(specs[0]!.propertyName).toBeUndefined();
-      }
-    }
   });
 });

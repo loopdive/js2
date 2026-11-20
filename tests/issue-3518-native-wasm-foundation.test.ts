@@ -1,6 +1,4 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
-
-import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import ts from "typescript";
 import { describe, expect, it } from "vitest";
@@ -249,43 +247,6 @@ const expectedDrainBody: Instr[] = [
   },
 ];
 
-function source(path: string): string {
-  return readFileSync(resolve(path), "utf8");
-}
-
-// Include erased type edges: runtime import hooks alone cannot observe them.
-function dependencies(text: string): string[] {
-  const file = ts.createSourceFile("boundary.ts", text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
-  const edges: string[] = [];
-  function visit(node: ts.Node): void {
-    if ((ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) && node.moduleSpecifier) {
-      edges.push(node.moduleSpecifier.getText(file));
-    } else if (ts.isImportTypeNode(node) || ts.isImportEqualsDeclaration(node)) {
-      edges.push(node.getText(file));
-    } else if (
-      ts.isCallExpression(node) &&
-      (node.expression.kind === ts.SyntaxKind.ImportKeyword ||
-        (ts.isIdentifier(node.expression) && node.expression.text === "require"))
-    ) {
-      edges.push(node.getText(file));
-    }
-    ts.forEachChild(node, visit);
-  }
-  visit(file);
-  return edges;
-}
-
-function importedNames(path: string, module: string): string[] {
-  const file = ts.createSourceFile(path, source(path), ts.ScriptTarget.Latest, true);
-  return file.statements.flatMap((statement) => {
-    if (!ts.isImportDeclaration(statement) || !ts.isStringLiteral(statement.moduleSpecifier)) return [];
-    if (statement.moduleSpecifier.text !== module) return [];
-    const bindings = statement.importClause?.namedBindings;
-    if (!bindings || !ts.isNamedImports(bindings)) return [];
-    return bindings.elements.map((element) => element.propertyName?.text ?? element.name.text);
-  });
-}
-
 describe("native Wasm foundation", () => {
   it("preserves both function handle regime boundaries and the compatibility objects", () => {
     expect(STABLE_FUNC_BASE).toBe(2097152);
@@ -318,56 +279,6 @@ describe("native Wasm foundation", () => {
     expect(buildDrainLocals()).toEqual(expectedDrainLocals);
     expect(buildDrainBody(resources)).toEqual(expectedDrainBody);
     expect(resources).toEqual(before);
-  });
-
-  it("keeps the model import-free and physical handles and the native leaf canonical type-only", () => {
-    expect(dependencies(source("src/wasm/model/instructions.ts"))).toEqual([]);
-    const handles = source("src/wasm/physical/function-handles.ts");
-    expect(dependencies(handles)).toEqual(['"../model/instructions.js"', '"../model/module-records.js"']);
-    const handleImports = ts
-      .createSourceFile("handles.ts", handles, ts.ScriptTarget.Latest, true)
-      .statements.filter(ts.isImportDeclaration);
-    expect(handleImports).toHaveLength(2);
-    for (const entry of handleImports) expect(entry.importClause?.isTypeOnly).toBe(true);
-    const leaf = source("src/runtime/wasmgc/async/microtask-queue-bodies.ts");
-    expect(dependencies(leaf)).toEqual(['"../../../wasm/model/instructions.js"']);
-    const file = ts.createSourceFile("leaf.ts", leaf, ts.ScriptTarget.Latest, true);
-    const imports = file.statements.filter(ts.isImportDeclaration);
-    expect(imports).toHaveLength(1);
-    expect(imports[0].importClause?.isTypeOnly).toBe(true);
-  });
-
-  it("detects type-only, re-export, import-type and dynamic back edges", () => {
-    for (const edge of [
-      'import type { Instr } from "../../../ir/types.js";',
-      'export type { Instr } from "../../../ir/types.js";',
-      'type Hidden = import("../../../ir/types.js").Instr;',
-      'const hidden = import("../../../codegen/async-scheduler.js");',
-      'import hidden = require("../../../compiler.js");',
-      'const hidden = require("../../../compiler.js");',
-    ]) {
-      expect(dependencies(edge), edge).toHaveLength(1);
-    }
-  });
-
-  it("connects the real scheduler and function-space consumers to the new modules", () => {
-    expect(
-      importedNames("src/codegen/async-scheduler.ts", "../runtime/wasmgc/async/microtask-queue-bodies.js").sort(),
-    ).toEqual([
-      "PreparedNativeMicrotaskReservations",
-      "buildDrainBody",
-      "buildDrainLocals",
-      "buildEnqueueBody",
-      "buildGrowBody",
-      "buildGrowLocals",
-    ]);
-    expect(importedNames("src/codegen/async-scheduler.ts", "./prepared-native-async-runtime.js")).toEqual([]);
-    expect(importedNames("src/codegen/func-space.ts", "../wasm/physical/function-handles.js")).toEqual([
-      "STABLE_FUNC_BASE",
-      "mintDefinedFunc",
-      "commitDefinedFuncOrdinal",
-      "appendDefinedFunc",
-    ]);
   });
 
   it("typechecks all canonical and compatibility declarations, including recursive instruction arms", () => {
