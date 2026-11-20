@@ -122,7 +122,7 @@ describe("#7354 O3 — a member write of the dynamic value", () => {
     [
       "an Object.prototype key",
       "function s(v){ v.isPrototypeOf = 1; } s({});",
-      "member write 'isPrototypeOf' needs Object.prototype's properties",
+      "member write 'isPrototypeOf' of a value that may be an object needs Object.prototype's properties",
     ],
   ])("refuses %s by name", async (_label, source, reason) => {
     expect(await refusal(source)).toContain(reason);
@@ -138,7 +138,9 @@ describe("#7354 O3 — a member write of the dynamic value", () => {
     ],
   ])("refuses %s in a program that reads a caught value", async (_label, source) => {
     expect(new Function(`${source} return r;`)()).toBeInstanceOf(TypeError);
-    expect(await refusal(source)).toContain("member write 'x' of a value that may be an Error");
+    expect(await refusal(source)).toContain(
+      "member write 'x' of a value that may be an Error needs property storage on the realm's error",
+    );
   });
 });
 

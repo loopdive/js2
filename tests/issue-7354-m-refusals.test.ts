@@ -14,25 +14,36 @@ import { gapText, refusal, throwsAsNode } from "./helpers/prepared-node-agreemen
 
 afterEach(() => vi.restoreAllMocks());
 
-const mayBe = (operation: string, kinds: string) =>
-  gapText(`${operation} of a value that may be ${kinds} needs a built-in prototype's properties`);
+/** The one form of a member-access refusal: the access, the receiver, and what the realm lacks to answer it. */
+const refused = (operation: string, receiver: string, missing: string) =>
+  gapText(`${operation} of ${receiver} needs ${missing}`);
+const mayBe = (kinds: string) => `a value that may be ${kinds}`;
+const WRAPPERS = "String.prototype's properties and Number.prototype's properties and Boolean.prototype's properties";
 
 describe("#7354 M1 — the TypeError the legalization raises", () => {
   it.each([
     [
       "M2: a write whose receiver may be a caught error",
       '"use strict"; function f(v){ try { v.k = 1; } catch (e) { return e; } } f(1);',
-      gapText("member write 'k' of a value that may be an Error"),
+      refused("member write 'k'", mayBe("an Error"), "property storage on the realm's error"),
     ],
     [
       "M2: an error's constructor",
       "function f(v){ try { return v.a; } catch (e) { return e.constructor; } } f(null);",
-      mayBe("member read 'constructor'", "a string or a number or a boolean or an Error"),
+      refused(
+        "member read 'constructor'",
+        mayBe("a string or a number or a boolean or an Error"),
+        `${WRAPPERS} and Error.prototype's properties`,
+      ),
     ],
     [
       "M2: an error's toString",
       "function f(v){ try { return v.a; } catch (e) { return e.toString; } } f(null);",
-      mayBe("member read 'toString'", "a string or a number or a boolean or an Error"),
+      refused(
+        "member read 'toString'",
+        mayBe("a string or a number or a boolean or an Error"),
+        `${WRAPPERS} and Error.prototype's properties`,
+      ),
     ],
   ])("refuses %s", async (_label, source, reason) => {
     expect(await refusal(source)).toContain(reason);
@@ -54,7 +65,7 @@ describe("#7354 M1 — keys a built-in prototype holds", () => {
   // C3: the catalog's Object.prototype keys are the one list; each refuses on an object receiver.
   it.each([...OBJECT_PROTOTYPE_KEYS])("refuses a read of Object.prototype's %s off an object", async (key) => {
     expect(await refusal(`function g(){ var o = {a:1}; return o.${key}; } g();`)).toContain(
-      gapText(`member read '${key}' needs Object.prototype's properties`),
+      refused(`member read '${key}'`, "an object", "Object.prototype's properties"),
     );
   });
 
@@ -65,44 +76,48 @@ describe("#7354 M1 — keys a built-in prototype holds", () => {
     [
       "A17: a write of __proto__ to an object",
       "function g(){ var o = {a:1}; o.__proto__ = null; } g();",
-      gapText("member write '__proto__' needs Object.prototype's properties"),
+      refused("member write '__proto__'", "an object", "Object.prototype's properties"),
     ],
     [
       "A17: a write of toString to a value that may be an object",
       "var o = {a:1}; function f(v){ v.toString = 1; } f(o);",
-      mayBe("member write 'toString'", "an object"),
+      refused("member write 'toString'", mayBe("an object"), "Object.prototype's properties"),
     ],
     [
       "B23: a string's length",
       "function f(v){ return v.length; } f('abc');",
-      mayBe("member read 'length'", "a string"),
+      refused("member read 'length'", mayBe("a string"), "its own length and index properties"),
     ],
-    ["B23: a string's index key", "function f(v){ return v['0']; } f('abc');", mayBe("member read '0'", "a string")],
+    [
+      "B23: a string's index key",
+      "function f(v){ return v['0']; } f('abc');",
+      refused("member read '0'", mayBe("a string"), "its own length and index properties"),
+    ],
     [
       "B24: Number.prototype.toFixed",
       "function f(v){ return v.toFixed; } f(1);",
-      mayBe("member read 'toFixed'", "a number"),
+      refused("member read 'toFixed'", mayBe("a number"), "Number.prototype's properties"),
     ],
     [
       "B24: String.prototype.charAt",
       "function f(v){ return v.charAt; } f('a');",
-      mayBe("member read 'charAt'", "a string"),
+      refused("member read 'charAt'", mayBe("a string"), "String.prototype's properties"),
     ],
     [
       "B24: Object.prototype.valueOf",
       "function f(v){ return v.valueOf; } f(true);",
-      mayBe("member read 'valueOf'", prim),
+      refused("member read 'valueOf'", mayBe(prim), WRAPPERS),
     ],
     // C6: the `__proto__` accessor's setter answers for a primitive receiver even in strict code.
     [
       "C6: a sloppy __proto__ write",
       "function f(v){ v.__proto__ = 2; } f(1);",
-      mayBe("member write '__proto__'", prim),
+      refused("member write '__proto__'", mayBe(prim), "Object.prototype's accessor"),
     ],
     [
       "C6: a strict __proto__ write",
       '"use strict"; function f(v){ v.__proto__ = 2; } f(1);',
-      mayBe("member write '__proto__'", prim),
+      refused("member write '__proto__'", mayBe(prim), "Object.prototype's accessor"),
     ],
   ])("refuses %s", async (_label, source, reason) => {
     expect(await refusal(source)).toContain(reason);

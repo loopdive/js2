@@ -114,7 +114,7 @@ describe("#7354 O4 — a member read of the dynamic value", () => {
     [
       "a string's length",
       'var s = "a"; var n = s.length;',
-      "member read 'length' of a string needs its wrapper prototype",
+      "member read 'length' of a string needs its own length and index properties",
     ],
     ["an Object.prototype method", "var o = { a: 1 }; var t = o.toString;", "member read 'toString'"],
     ["a computed key", 'var o = { a: 1 }; var k = "a"; var v = o[k];', "dyn.member_get with a computed key"],
