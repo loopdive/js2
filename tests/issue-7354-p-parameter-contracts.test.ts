@@ -154,10 +154,10 @@ describe("#7354 P — an untyped parameter is the dynamic value", () => {
     ],
     ["an extra argument", `${ID}if (id(1, 2) !== 1) throw 1;`, "call to id has 2 args, expected 1"],
     [
-      // (#7354 H) `g` has the dynamic home; a declaration read as a value is slice Fa's.
+      // (#7354 H) `g` has the dynamic home and (S4) holds the declaration's value; a call through it is slice Fb's.
       "a call through a value",
       `${ID}var g = id;\nif (g(1) !== 1) throw 1;`,
-      'identifier "id" is not in scope',
+      'direct call to "g" has no exact AST-site plan in <module-init>',
     ],
     [
       // JSDoc is not checked at runtime: the contract stays dynamic, and from-ast refuses it against a primitive tag.

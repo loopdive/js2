@@ -38,8 +38,13 @@ import { buildIrUnitTypeMap, lowerTypeToIrType } from "./propagate.js";
 import { buildIrModuleInitPlan } from "./module-init-plan.js";
 import type { IrModuleInitPlan } from "./program/startup.js";
 import { makeModuleInitSynthetic } from "./module-init.js";
-import { collectProgramSourceGlobals, instantiateProgramSourceGlobals } from "./program-source-globals.js";
-import { makeIrIdentityModuleBindingResolver, type IrModuleBindingIdentity } from "./module-bindings.js";
+import {
+  collectProgramSourceGlobals,
+  instantiateFunctionValueGlobals,
+  instantiateProgramSourceGlobals,
+  type ProgramSourceGlobal,
+} from "./program-source-globals.js";
+import { makeIrIdentityModuleBindingResolver } from "./module-bindings.js";
 import type { IrDirectCallLoweringPlan, ModuleBindingGlobal } from "./ast-lowering-plans.js";
 import type { PreparedIrFunction as IrFunction, PreparedIrModule as IrModule } from "./runtime/contracts/prepared.js";
 import type { IrType } from "./core/types.js";
@@ -872,7 +877,7 @@ export interface IrProgramSourcePreparation {
   readonly derivedUnits: readonly ProgramAbiDerivedUnitRecord[];
   readonly startup: readonly IrModuleInitPlan[];
   readonly callables: readonly IrProgramCallableBindingRecord[];
-  readonly globals: readonly { readonly binding: ModuleBindingGlobal; readonly identity: IrModuleBindingIdentity }[];
+  readonly globals: readonly ProgramSourceGlobal[];
   readonly allocations: AllocSiteRegistry;
 }
 
@@ -1712,50 +1717,55 @@ export function prepareIrProgramSources(
       const sourceRoots = moduleInit ? (identity.moduleInitPopulationBySourceFile.get(source) ?? []) : declaration;
       Object.assign(resolver, prepareSourceBuiltinResolvers(input, sourceRoots));
       const signature = signatures.get(unit.id);
-      const lowered = lowerFunctionAstToIr(declaration, {
-        booleanReturnBoundary: sourceBooleanAnyResult(input.checker, declaration) ? declaration : undefined,
-        ownerUnitId: unit.id,
-        ...(sourceMapProjector === undefined
-          ? {}
-          : {
-              sourceMap: Object.freeze<IrFunctionSourceMapContext>({
-                source: sourceMapSources!.get(unit.sourceId)!,
-                donorUnitId: unit.id,
-                project: sourceMapProjector.project,
+      const lowered = instantiateFunctionValueGlobals(
+        lowerFunctionAstToIr(declaration, {
+          booleanReturnBoundary: sourceBooleanAnyResult(input.checker, declaration) ? declaration : undefined,
+          ownerUnitId: unit.id,
+          ...(sourceMapProjector === undefined
+            ? {}
+            : {
+                sourceMap: Object.freeze<IrFunctionSourceMapContext>({
+                  source: sourceMapSources!.get(unit.sourceId)!,
+                  donorUnitId: unit.id,
+                  project: sourceMapProjector.project,
+                }),
               }),
-            }),
-        funcName: unit.displayName,
-        exported: exportedUnits.has(unit.id),
-        identityContext: identity,
-        checker: input.checker,
-        oracle: input.oracle,
-        allocRegistry: allocations,
-        directCalls,
-        resolver:
-          nativeStringOutput && !family
-            ? { ...resolver, ...prepareNativeStringOutputResolver(input.checker, declaration) }
-            : resolver,
-        ...(nativeStringValues ? { stringNumericCoercion: "number-boundary" as const } : {}),
-        numericThrow: "number-boundary",
-        ...(nativeDelay ? { promiseDelays: promiseDelaysBySource.get(source) } : {}),
-        ...(family ? { logicalVectorTypes: family.logicalVectorTypes } : {}),
-        ...(moduleInit
-          ? {
-              moduleInitUnit: true,
-              returnTypeOverride: null,
-              moduleBindings: new Map(
-                globals
-                  .filter((global) => global.identity.sourceId === unit.sourceId)
-                  .map((global) => [global.binding.globalName, { ...global.binding, ownerUnitId: unit.id }]),
-              ),
-            }
-          : { paramTypeOverrides: signature!.params, returnTypeOverride: bodyResults.get(unit.id)! }),
-        numericLocalScalarForDecl: (declaration) =>
-          checkerScalar(input.checker, declaration)?.kind === "val" &&
-          (input.checker.getTypeAtLocation(declaration).flags & ts.TypeFlags.NumberLike) !== 0
-            ? "number"
-            : undefined,
-      });
+          funcName: unit.displayName,
+          exported: exportedUnits.has(unit.id),
+          identityContext: identity,
+          checker: input.checker,
+          oracle: input.oracle,
+          allocRegistry: allocations,
+          directCalls,
+          resolver:
+            nativeStringOutput && !family
+              ? { ...resolver, ...prepareNativeStringOutputResolver(input.checker, declaration) }
+              : resolver,
+          ...(nativeStringValues ? { stringNumericCoercion: "number-boundary" as const } : {}),
+          numericThrow: "number-boundary",
+          ...(nativeDelay ? { promiseDelays: promiseDelaysBySource.get(source) } : {}),
+          ...(family ? { logicalVectorTypes: family.logicalVectorTypes } : {}),
+          ...(moduleInit
+            ? {
+                moduleInitUnit: true,
+                returnTypeOverride: null,
+                moduleBindings: new Map(
+                  globals
+                    .filter((global) => global.identity.sourceId === unit.sourceId)
+                    .map((global) => [global.binding.globalName, { ...global.binding, ownerUnitId: unit.id }]),
+                ),
+              }
+            : { paramTypeOverrides: signature!.params, returnTypeOverride: bodyResults.get(unit.id)! }),
+          numericLocalScalarForDecl: (declaration) =>
+            checkerScalar(input.checker, declaration)?.kind === "val" &&
+            (input.checker.getTypeAtLocation(declaration).flags & ts.TypeFlags.NumberLike) !== 0
+              ? "number"
+              : undefined,
+        }),
+        sourceGlobals,
+        signatures,
+        allocations,
+      );
       assertSourceBooleanAnyReturns(input.checker, declaration, lowered.main);
       if (certifiedDelays.has(unit.id) && (lowered.lifted.length !== 0 || lowered.liftedUnitProvenance.length !== 0))
         throw new PreparedIrProgramInvariantError(

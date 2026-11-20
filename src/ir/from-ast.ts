@@ -7906,9 +7906,12 @@ function lowerCall(expr: ts.CallExpression, cx: LowerCtx, statementPosition = fa
   // script `var`s in a dynamic module home too, but keep legacy's provider.
   const bindingLogicalType =
     binding?.kind === "slot" ? (binding.asType ?? binding.type) : binding?.kind === "local" ? binding.type : undefined;
-  // (#7287) …or a script `var` in its dynamic module home (the prelude's `print`).
+  // (#7287) …or a script `var` in its dynamic module home (the prelude's `print`). (#7354 S4) A declaration's
+  // value home answers too, but a call of the declaration's name is its direct call.
+  const direct = cx.directCalls?.get(expr);
   const dynamicModuleCallee =
     binding === undefined &&
+    direct === undefined &&
     isStatementDynamicModuleCall(
       expr,
       (callee) => cx.resolver?.resolveModuleBinding?.(callee)?.type.kind === "dynamic",
@@ -7928,7 +7931,6 @@ function lowerCall(expr: ts.CallExpression, cx: LowerCtx, statementPosition = fa
   const imported = cx.importedCalls?.get(expr);
   if (imported) return lowerImportedCall(expr, imported, cx, statementPosition);
 
-  const direct = cx.directCalls?.get(expr);
   if (!direct) {
     demoteToLegacy(
       "call-graph-closure",

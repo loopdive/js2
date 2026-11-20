@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
 import { AllocSiteRegistry, copyIrPreparationData } from "../analysis/alloc-registry.js";
+import { irFunctionValueGlobalBindingId } from "../core/callable-bindings.js";
 import { preparedIrDataMismatch } from "./data.js";
 import { PreparedIrProgramInvariantError } from "./errors.js";
 import type { TypedIrProgramInput, TypedIrProgramOptions } from "./input-contracts.js";
@@ -61,7 +62,19 @@ function assertGlobalStorage(input: TypedIrProgramInput): void {
     const plan = startup[0]!;
     dense(plan.bindings);
     const declarations = plan.bindings.filter((entry) => entry.globalBindingId === value.binding.bindingId);
-    if (declarations.length !== 1 || declarations[0]!.tdzBindingId !== (tdz?.binding.bindingId ?? null))
+    // (#7354 S4) A function declaration's value home has no startup binding: its id derives from the declaration's unit.
+    const functionValue =
+      tdz === null &&
+      input.inventory.terminalUnits.some(
+        (unit) =>
+          unit.sourceId === identity.sourceId &&
+          unit.kind === "top-level-function" &&
+          irFunctionValueGlobalBindingId(unit.id) === value.binding.bindingId,
+      );
+    if (
+      !functionValue &&
+      (declarations.length !== 1 || declarations[0]!.tdzBindingId !== (tdz?.binding.bindingId ?? null))
+    )
       invalid("typed global value/TDZ pair contradicts its same-source startup binding");
     for (const ref of [value, tdz]) {
       if (ref === null) continue;

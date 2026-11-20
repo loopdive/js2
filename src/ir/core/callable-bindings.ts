@@ -39,6 +39,14 @@ export function irUnitCallableBindingId(unitId: IrUnitId): IrBindingId {
   });
 }
 
+/**
+ * (#7354 S4) The global that holds a top-level function declaration's value on the Prepared path, derived from its
+ * unit as the startup plan derives a live seed's global.
+ */
+export function irFunctionValueGlobalBindingId(unitId: IrUnitId): IrBindingId {
+  return createIrBindingId({ ownerId: unitId, domain: "global", role: "function-value" });
+}
+
 /** Reference one exact source or compiler-created function artifact. */
 export function irUnitFuncRef(identity: IrFunctionIdentity): IrFuncRef {
   if (typeof identity !== "object" || identity === null) {

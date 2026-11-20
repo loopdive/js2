@@ -2180,6 +2180,40 @@ per presentation) are most of the rest. This is the realm's `#verifyLayout` cost
 the closure owners add no authentication pass.
 
 
+### (a) declaration as value — implementation plan (S4, 2026-11-19, branch `claude/7354-fa-decl`)
+
+Part (a) of "Function value with own properties: plan" (branch `claude/7354-json`, §3), with the lead's two
+amendments: the soundness predicate keeps all three conjuncts (A1), and the startup prologue is logical IR emitted
+before legalization (A2).
+
+- **Module.** `src/ir/program-source-function-values.ts` (new, beside `program-source-globals.ts`): one concern, the
+  value of a top-level function declaration. `functionDeclarationsReadAsValues(sourceFile)` (one walker: a
+  reference by `isValueReference` that is not a call's or a `new`'s callee) and `createStartupFunctionValues`, which
+  adds to a lowered module-init its prologue (`closure.new` of each trampoline, the callable pack and
+  `__ir_dyn_call_box` from-ast's `var f = function …` store uses, then `global.set` of the home; S11's
+  `js.function.init` slot between `closure.new` and the store) and its trampolines (`(__self, a0…aN-1) → dynamic`,
+  a direct call of the declaration's unit, the result put into the carrier: dynamic as is, number and Boolean
+  boxed, void `undefined`; a parameter that is not dynamic refuses by name). A trampoline is a lifted closure of
+  module-init (derived unit, `lifted-closure`, the ordinal after module-init's own).
+- **Registry.** `collectProgramSourceGlobals` adds one `function-at-startup` row per such declaration whose binding
+  holds it: an immutable dynamic home, binding id `irFunctionValueGlobalBindingId(unitId)` (core/callable-bindings.ts,
+  the live-seed derivation with role `function-value`), `byDeclaration` keyed by the `FunctionDeclaration`, so
+  `resolveBinding` answers with no new hook and a write refuses as an immutable binding. The startup plan
+  (`liveSeeds`, `bindings`) is not extended. `instantiateFunctionValueGlobals` runs on each lowered unit before its
+  legalization (A2); the legalization admits the value as `function` through `admit` and re-types the closure site
+  through `retypeClosure`, as for Fa's expressions. The typed-input check (`assertGlobalStorage`) accepts a global
+  with no startup binding only as such a home: no TDZ, id derived from a top-level function unit of its source.
+- **Calls stay direct.** from-ast's call lowering reads the direct-call plan before it takes a dynamic module home
+  as the callee.
+- **Reused, duplicate removed.** The three-conjunct proof moves into one predicate,
+  `bindingHoldsItsDeclaration` (shared/intrinsic-prototype-writes.ts); Fa's `staticFunctionValue` and the new row
+  both call it. Reads reuse the module-binding read; the carrier entry reuses Fa's projection and admission;
+  `fixedClosureParameters` gives the trampoline its arity.
+- **Out of scope:** R7 (direct calls inside lifted closures) and R5's home-call row (S4's next walls).
+- **Code-quality acceptance.** No second soundness conjunction, no second carrier-entry path (no post-legalization
+  emitter, no hand-registered carrier allocation), no new from-ast arm; the new module and every function within
+  budget without a grant.
+
 ## Slice O: Implementation Plan (2026-11-19)
 
 Branch `claude/7354-o` on `claude/7354-perf2` (`503ff2cb4d`). Lead decision of 2026-11-19: option A, in four steps

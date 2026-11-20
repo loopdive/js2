@@ -275,14 +275,9 @@ describe("#7354 Fa — function values on the Prepared path", () => {
       "dynamic operation __ir_dyn_add has no Prepared intrinsic",
     ],
     ["`String(f)`", "var f = function () {}; var s = String(f);", 'direct call to "String" has no exact AST-site plan'],
-    // `typeof` is a string producer (slice Str2; its kind table must answer "function"); a declaration read as a
-    // value is not built yet.
+    // `typeof` is a string producer (slice Str2; its kind table must answer "function"). A declaration read as a
+    // value: tests/issue-7354-fa-decl-function-values.test.ts.
     ["`typeof`", "var f = function () {}; var t = typeof f;", "dynamic operation dyn.typeof has no Prepared intrinsic"],
-    [
-      "a function declaration read as a value",
-      "function id(v) { return v; } var g = id;",
-      'identifier "id" is not in scope',
-    ],
   ])("refuses %s by name", async (_, program, message) => {
     expect(await refusal(program)).toContain(message);
   });

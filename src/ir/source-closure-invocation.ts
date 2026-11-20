@@ -34,6 +34,7 @@ function unsupported(detail: string): never {
 /** A source fact, never inferred from an absent rest field after transport. */
 export function fixedClosureParameters(
   node:
+    | ts.FunctionDeclaration
     | ts.FunctionExpression
     | ts.ArrowFunction
     | ts.MethodDeclaration

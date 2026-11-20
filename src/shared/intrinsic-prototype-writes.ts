@@ -43,7 +43,12 @@
  */
 import { forEachChild, ts } from "../ts-api.js";
 import { isUnshadowedGlobalConstant } from "./ambient-intrinsics.js";
-import { isBindingSiteName, isStoreTarget, skipOuterExpressions } from "./binding-writes.js";
+import {
+  bindingIsUniqueAndNeverWritten,
+  isBindingSiteName,
+  isStoreTarget,
+  skipOuterExpressions,
+} from "./binding-writes.js";
 
 export type PatchableIntrinsic = "Array" | "Boolean" | "Function" | "Number" | "Object" | "RegExp" | "String";
 
@@ -134,6 +139,21 @@ export function sourceRunsDynamicCode(sourceFile: ts.SourceFile): boolean {
 export function sourceMayWriteBindingUnseen(sourceFile: ts.SourceFile, name: string): boolean {
   const use = prototypeUse(sourceFile);
   return use.dynamicCode || use.reflective || use.writtenNames.has(name);
+}
+
+/**
+ * (#7354) Whether the script binding `name` holds what `declaration` binds for the whole run: the declaration is its
+ * only binding site and no identifier writes it ({@link bindingIsUniqueAndNeverWritten}), no other route writes it
+ * ({@link sourceMayWriteBindingUnseen}), and the global object does not escape, which could write it under a computed
+ * name ({@link sourceMayWriteGlobalObject}).
+ */
+export function bindingHoldsItsDeclaration(name: ts.Identifier, declaration: ts.Declaration): boolean {
+  const source = name.getSourceFile();
+  return (
+    bindingIsUniqueAndNeverWritten(name, declaration) &&
+    !sourceMayWriteBindingUnseen(source, name.text) &&
+    !sourceMayWriteGlobalObject(source)
+  );
 }
 
 /** Whether a member may be installed under a name the source does not spell ({@link installsUnspelledMember}). */

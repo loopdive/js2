@@ -8,32 +8,48 @@
  * The instantiation is the startup plan's (`IrModuleInitBindingIntent.initialization`), so the plan and the
  * prologue cannot disagree: a script `var` is `undefined` from instantiation, a lexical binding is in its TDZ
  * until its declaration runs. A repeated script `var` is one row: every declarator resolves to the first one's
- * binding id.
+ * binding id. (#7354 S4) A top-level function declaration read as a value is a row too: an immutable dynamic home
+ * that module-init fills with the declaration's function value before its first statement (`function-at-startup`,
+ * program-source-function-values.ts), while the binding holds its declaration for the whole run.
  */
 import { ts } from "../ts-api.js";
 import { irSourceGlobalRef } from "./abi-bindings.js";
 import type { ModuleBindingGlobal } from "./ast-lowering-plans.js";
+import type { AllocSiteRegistry } from "./analysis/alloc-registry.js";
+import { irFunctionValueGlobalBindingId } from "./core/callable-bindings.js";
 import type { IrUnitId } from "../shared/contracts/ir-identity.js";
-import type { IrType } from "./core/types.js";
+import { bindingHoldsItsDeclaration } from "../shared/intrinsic-prototype-writes.js";
+import type { IrClosureSignature, IrType } from "./core/types.js";
 import type { IrModuleBindingIdentity, IrModuleBindingResolver } from "./module-bindings.js";
 import { isModuleInitGlobalDeclaration, moduleInitBindings } from "./module-init-vars.js";
 import { IrUnsupportedError } from "./outcomes.js";
 import { moduleDeclares } from "./select-planned-closure-operands.js";
 import { requireIrPlanningOwnerUnitId, type IrPlanningIdentityContext } from "./planning-identity.js";
 import { legalizeDynamicGlobals } from "./program/dynamic-value-legalization.js";
+import {
+  createStartupFunctionValues,
+  functionDeclarationsReadAsValues,
+  type LoweredUnit,
+  type StartupFunctionValue,
+} from "./program-source-function-values.js";
 import type { IrModuleInitBindingIntent, IrModuleInitPlan } from "./program/startup.js";
 import type { PreparedIrFunction as IrFunction } from "./runtime/contracts/prepared.js";
 
 /** A global as the program input carries it. */
 export interface ProgramSourceGlobal {
   readonly binding: ModuleBindingGlobal;
-  readonly identity: IrModuleBindingIdentity;
+  readonly identity: Pick<IrModuleBindingIdentity, "ownerUnitId" | "storageOwnerUnitId" | "sourceId" | "mutable">;
 }
 
 /** One registry row: the global and how the program instantiates it. */
-interface ProgramSourceGlobalRow {
+type ProgramSourceGlobalRow =
+  | { readonly global: ProgramSourceGlobal; readonly instantiation: IrModuleInitBindingIntent["initialization"] }
+  | FunctionValueRow;
+
+interface FunctionValueRow {
   readonly global: ProgramSourceGlobal;
-  readonly instantiation: IrModuleInitBindingIntent["initialization"];
+  readonly instantiation: "function-at-startup";
+  readonly value: StartupFunctionValue;
 }
 
 export interface ProgramSourceGlobals {
@@ -83,8 +99,57 @@ export function collectProgramSourceGlobals(input: ProgramSourceGlobalsInput): P
       byDeclaration.set(declaration, row.global);
     }
   }
-  const rows = [...rowById.values()];
+  const functionValues = input.sourceFiles.flatMap((source) => functionValueRows(source, identity));
+  for (const row of functionValues) byDeclaration.set(row.value.declaration, row.global);
+  const rows = [...rowById.values(), ...functionValues];
   return { globals: rows.map((row) => row.global), byDeclaration, rows };
+}
+
+/** The `function-at-startup` rows of `source`: each declaration read as a value whose binding holds it. */
+function functionValueRows(source: ts.SourceFile, identity: IrPlanningIdentityContext): FunctionValueRow[] {
+  const storageOwnerUnitId = identity.moduleInitUnitIdBySourceFile.get(source)!;
+  return functionDeclarationsReadAsValues(source)
+    .filter((declaration) => bindingHoldsItsDeclaration(declaration.name!, declaration))
+    .map((declaration) => {
+      const unitId = identity.unitIdByDeclaration.get(declaration)!;
+      const name = declaration.name!.text;
+      const home = irSourceGlobalRef(irFunctionValueGlobalBindingId(unitId), name);
+      return {
+        global: {
+          binding: {
+            ownerUnitId: storageOwnerUnitId,
+            globalRef: home,
+            tdzGlobalRef: null,
+            globalName: name,
+            tdzGlobalName: null,
+            type: { kind: "dynamic" },
+          },
+          identity: {
+            ownerUnitId: storageOwnerUnitId,
+            storageOwnerUnitId,
+            sourceId: identity.sourceIdBySourceFile.get(source)!,
+            mutable: false,
+          },
+        },
+        instantiation: "function-at-startup",
+        value: { declaration, target: { unitId, name: identity.terminalByUnitId.get(unitId)!.displayName }, home },
+      };
+    });
+}
+
+/** `lowered` with the function values its unit owns created first ({@link createStartupFunctionValues}). */
+export function instantiateFunctionValueGlobals<Unit extends LoweredUnit>(
+  lowered: Unit,
+  registry: ProgramSourceGlobals,
+  signatures: ReadonlyMap<IrUnitId, IrClosureSignature>,
+  allocations: AllocSiteRegistry,
+): Unit {
+  const values = registry.rows.flatMap((row) =>
+    row.instantiation === "function-at-startup" && row.global.identity.storageOwnerUnitId === lowered.main.unitId
+      ? [row.value]
+      : [],
+  );
+  return createStartupFunctionValues(lowered, values, signatures, allocations);
 }
 
 /**
