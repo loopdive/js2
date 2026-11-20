@@ -4873,7 +4873,7 @@ function lowerResolvedModuleBindingTdzCheck(name: string, binding: ModuleBinding
     assertNotDeferred(
       domSurfaceCapability(false, binding.capability === "dom"),
       `module-scope extern binding "${name}"`,
-      cx.funcName,
+      cx,
     );
   }
   if (binding.tdzGlobalRef && binding.omitTdzReadCheck !== true) {
@@ -5239,7 +5239,7 @@ function lowerExprUnchecked(expr: ts.Expression, cx: LowerCtx, hint: IrType): Ir
         assertNotDeferred(
           domSurfaceCapability(platformExternAdmits(cx, global.className), read.certifiedDom),
           `host global "${expr.text}"`,
-          cx.funcName,
+          cx,
         );
         const r = cx.builder.emitCall(irImportFuncRef("env", global.importName), [], {
           kind: "extern",
@@ -6463,7 +6463,7 @@ function lowerPropertyAccess(expr: ts.PropertyAccessExpression, cx: LowerCtx): I
     assertNotDeferred(
       domSurfaceCapability(platformExternAdmits(cx, className), exactStandaloneDomRead),
       `extern property read .${propName}`,
-      cx.funcName,
+      cx,
     );
     const resolved = cx.resolver?.resolveExternMember?.(className, propName, "property", expr);
     if (resolved?.property) {
@@ -8926,7 +8926,7 @@ function tryLowerConsoleMethodCall(
     cx.resolver?.nativeConsoleOutputAvailable !== undefined
   ) {
     const hostFreeSink = cx.resolver.nativeConsoleOutputAvailable();
-    assertNotDeferred(consoleSurfaceCapability(hostFreeSink), `console.${methodName}`, cx.funcName);
+    assertNotDeferred(consoleSurfaceCapability(hostFreeSink), `console.${methodName}`, cx);
     if (!statementPosition) {
       demoteToLegacy(
         "method-call-unsupported",
@@ -10124,7 +10124,7 @@ function lowerMethodCall(expr: ts.CallExpression, cx: LowerCtx, statementPositio
     assertNotDeferred(
       domSurfaceCapability(platformExternAdmits(cx, recvType.className), exactStandaloneDomCall),
       `extern method call .${methodName}`,
-      cx.funcName,
+      cx,
     );
     const className = recvType.className;
     const chained = cx.resolver?.resolveExternMember?.(className, methodName, "method", expr);
@@ -10777,7 +10777,7 @@ function lowerPropertyAssignment(expr: ts.BinaryExpression, cx: LowerCtx, receiv
     assertNotDeferred(
       domSurfaceCapability(platformExternAdmits(cx, recvType.className), exactStandaloneDomSet),
       `extern property write .${fieldName}`,
-      cx.funcName,
+      cx,
     );
     const resolved = cx.resolver?.resolveExternMember?.(recvType.className, fieldName, "property", lhs);
     if (!resolved?.property) {
@@ -14253,7 +14253,7 @@ function lowerPrefixUnary(expr: ts.PrefixUnaryExpression, cx: LowerCtx): IrValue
   assertNotDeferred(
     prefixOpCapability(expr.operator),
     `prefix operator '${ts.tokenToString(expr.operator) ?? expr.operator}'`,
-    cx.funcName,
+    cx,
   );
   // (#7332) `null` has no f64 value, but `-`, `+` and `~` read ToNumber(null), +0, and `!` reads a
   // falsy value either way.
@@ -15091,7 +15091,7 @@ function lowerBinary(expr: ts.BinaryExpression, cx: LowerCtx, hint: IrType): IrV
 
   // #2135 — a deferred operator reaching a claimed body is a selector/build
   // contradiction. Check before operands so the original failure stays visible.
-  assertNotDeferred(binaryOpCapability(op), `binary operator '${ts.tokenToString(op) ?? op}'`, cx.funcName);
+  assertNotDeferred(binaryOpCapability(op), `binary operator '${ts.tokenToString(op) ?? op}'`, cx);
 
   // #4787 — the exact numeric exponentiation checkpoint. Once selection has
   // published this claim, a missing checker proof, a non-f64 operand, or any

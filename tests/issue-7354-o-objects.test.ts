@@ -125,11 +125,8 @@ describe("#7354 O — object literals are ordinary objects of the realm", () => 
       "concrete return needs a dynamic box in f",
     );
     // O3 writes members, a function-local object's too (tests/issue-7354-o3-member-write.test.ts).
-    // O4: a member read with no typed plan (here of a key the literal lacks) is a dynamic member read, and this
-    // program has no dynamic contract to legalize it.
-    expect(await refusal("function f(){ var o = {}; return o.a === undefined ? 1 : 0; } f();")).toContain(
-      "body f keeps dynamic operation dyn.member_get that no dynamic contract legalized",
-    );
+    // O4: a member read with no typed plan (here of a key the literal lacks) is a dynamic member read; (#7354 M1) it
+    // is legalized without a dynamic contract too and runs (tests/issue-7354-m-member-access.test.ts).
     // A Boolean member read needs a Boolean unbox, which this presentation's policy does not offer.
     expect(await refusal("function f(){ const o = { b: true }; return o.b ? 1 : 0; } f();")).toContain(
       "semantic intrinsic js.boolean.unbox is unavailable",

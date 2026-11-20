@@ -132,6 +132,8 @@ describe("#7354 M1 — refusals that stay", () => {
       gapText("Object.prototype.toString of an object in a program that names 'Symbol'"),
     ],
     ["G45: a method call", "function f(v){ return v.m(); } f({});", gapText("__ir_dyn_method_call_0")],
+    // (#7354 M1) This threw out of compile() ("internal capability violation"): the Prepared path has no selector.
+    ["G45: v.a += 1", "function f(v){ v.a += 1; } f({a:1});", "binary operator '+=' is capability-deferred in f"],
     [
       "G45: v.a++",
       "function f(v){ v.a++; } f({a:1});",
