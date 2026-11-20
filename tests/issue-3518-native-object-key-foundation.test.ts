@@ -1,5 +1,7 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import { afterEach, describe, expect, it, vi } from "vitest";
+import vm from "node:vm";
+import ts from "typescript";
 import * as bodies from "../src/runtime/wasmgc/values/object-key-bodies.js";
 import type { Instr, ValType } from "../src/wasm/model/instructions.js";
 import { createEmptyModule } from "../src/ir/types.js";
@@ -64,6 +66,98 @@ describe("object key bodies", () => {
     const second = instructions(bodies.buildObjectFindBody(r));
     expect(first.size).toBeGreaterThan(60);
     expect([...second].some((row) => first.has(row))).toBe(false);
+  });
+});
+
+const cases = [
+  {
+    name: "numeric and string key coercion",
+    expected: 2345,
+    body: `
+    const o: any = {}; const a = -0; const b = -1.5;
+    o[a] = 2; o[b] = 3; o[true as any] = 4; o[null as any] = 5;
+    return o["0"] * 1000 + o["-1.5"] * 100 + o["true"] * 10 + o["null"];
+  `,
+  },
+  {
+    name: "distinct Symbol identities and a same-description string",
+    expected: 5711,
+    body: `
+    const a = Symbol("same"); const b = Symbol("same"); const o: any = {};
+    o[a] = 3; o[b] = 7; o["same"] = 11; delete o[a];
+    if (a in o) return -1; o[a] = 5;
+    return o[a] * 1000 + o[b] * 100 + o["same"];
+  `,
+  },
+  {
+    name: "collision probing past tombstones and reinsertion",
+    expected: 792,
+    body: `
+    const keys = ["a", "A", "!"]; const o: any = {};
+    for (let i = 0; i < keys.length; i++) o[keys[i]] = i + 1;
+    delete o[keys[0]]; if (keys[0] in o) return -1;
+    const after = o[keys[1]]; o[keys[0]] = 7; o[keys[2]] = 9;
+    return o[keys[0]] * 100 + o[keys[2]] * 10 + after;
+  `,
+  },
+  {
+    name: "effectful object key preserves a returned Symbol",
+    expected: 113,
+    body: `
+    const s = Symbol("key"); const state = { calls: 0 }; const o: any = {};
+    const key: any = { toString() { state.calls++; return s; } };
+    o[key] = 13; return state.calls * 100 + o[s];
+  `,
+  },
+];
+const builderNames = [
+  "buildObjectPropertyKeyPrefix",
+  "prependObjectKeyCoercion",
+  "buildObjectHashBody",
+  "buildObjectKeyEqualsBody",
+  "buildObjectKeyClassification",
+  "buildObjectKeyMatch",
+  "buildObjectFindBody",
+  "buildObjectPropertyKeyLateArm",
+] as const;
+
+describe.each([false, true])("actual legacy production delegation, experimentalIR=%s", (experimentalIR) => {
+  it.each(cases)("executes $name against the native oracle", async ({ name, body, expected }) => {
+    for (const key of [
+      "JS2WASM_IR_GVN",
+      "JS2WASM_IR_OWNERSHIP",
+      "JS2WASM_IR_ESCAPE",
+      "IR_VERIFY_ALLOC",
+      "JS2WASM_IR_VERIFY_DOMINANCE_NAIVE",
+      "JS2WASM_IR_INLINE",
+    ])
+      vi.stubEnv(key, "0");
+    const source = `export function test(): number { ${body} }`;
+    const native = vm.createContext({});
+    vm.runInContext(
+      ts.transpileModule(source.replace("export ", ""), { compilerOptions: { target: ts.ScriptTarget.ES2022 } })
+        .outputText,
+      native,
+    );
+    expect(vm.runInContext("test()", native)).toBe(expected);
+    const calls = builderNames.map((name) => vi.spyOn(bodies, name));
+    const { compile } = await import("../src/index.js");
+    const result = await compile(source, {
+      fileName: `object-key-${name}-${experimentalIR}.ts`,
+      target: "standalone",
+      nativeStrings: true,
+      experimentalIR,
+      skipSemanticDiagnostics: false,
+    });
+    expect(result.success, JSON.stringify(result.errors)).toBe(true);
+    for (let i = 0; i < calls.length; i++) expect(calls[i], builderNames[i]).toHaveBeenCalled();
+    const hashCall = calls[2]!.mock.calls.at(-1)![0] as bodies.ObjectHashResources;
+    expect(hashCall.symbolKeysEnabled).toBe(true);
+    expect(hashCall.hashedStrTypeIdx).toBeGreaterThanOrEqual(0);
+    const compiled = new WebAssembly.Module(result.binary);
+    expect(WebAssembly.Module.imports(compiled)).toEqual([]);
+    const instance = new WebAssembly.Instance(compiled, {});
+    expect((instance.exports.test as () => number)()).toBe(expected);
   });
 });
 
