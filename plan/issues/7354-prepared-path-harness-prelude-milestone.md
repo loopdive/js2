@@ -34,7 +34,30 @@ related: [7188, 2949, 3526, 3527, 3518, 7106, 7349, 7350, 7352]
 # 2026-11-17 (slice Str, merge onto H): src/compiler/ir-program-presentation.ts +1,
 # `inCall`, the ABI join's admission of a native string in an internal callable
 # contract (string parameters and results), beside H's `carried` it extends.
+# 2026-11-19 (slice Fa): src/ir/from-ast.ts +33, the Prepared function-value arms
+# beside their siblings: the `dynamicClosureSignature` / `staticFunctionValue`
+# resolver hooks, the static closure kept on a script var's `moduleGlobal` scope
+# entry and its call arm, and `argumentIntoDynamic`, which the direct and the
+# closure call now share (the direct call's inline copy is gone). The contracts
+# live in src/ir/source-dynamic-contracts.ts. src/ir/program-consumer.ts +2: the
+# realm-slot record (O1's) also carries the realm's source-closure types and
+# invocation population (`nativeRealmCompletedSlots`, native-realm.ts).
+# ir-program-presentation.ts +1: `native`, the ABI join's admission of a lifted
+# closure body's `__self`.
+# 2026-11-19 (slice Fb): src/ir/from-ast.ts +20 more (+57 with Fa): a call through a
+# script var in any position on the Prepared lane, the function-value box of a
+# module-slot store (`boxForDynamicModuleStorage` reuses `argumentIntoDynamic`), and
+# `preparedFunctionValues`, the one lane predicate the three arms share. The call
+# itself lives in src/ir/function-object-lowering.ts (`applyNativeClosureCall`), the
+# dispatch selection in native-invocation-requirements.ts.
+# 2026-11-19 (realm join, slice O step O1): src/ir/program-consumer.ts, the emission wiring of the realm's
+# source-object family: the second `reconcileNativeCallBindings` call (the reconciler itself is the renamed, shared
+# invocation one), the realm-slot record on the emission observation with its one reader `emittedNativeRealmSlots`
+# (the record lives beside the consumer-private observation map; the slot computation, `nativeRealmCompletedSlots`,
+# lives in native-realm.ts) and the imports. The two native binding lists fold through `plannedNativeCallBindings`
+# (program-physical-plan.ts) instead of growing each.
 loc-budget-allow:
+  - src/ir/program-consumer.ts
   - src/ir/program-physical-plan.ts
   - src/compiler.ts
   - src/ir/program-source.ts
@@ -2143,4 +2166,211 @@ Should-fixes, both recorded under "Known gaps (T and X)" below:
   return e; }` refuses "redeclaration of 'e'". This comes from the hoisted-var fix (#7290): a catch parameter counts
   as a second binding of the `var` name. It belongs to the "one slot per `var` name per function" follow-up (see
   Known gaps (H)) and is left unchanged.
+
+## Fa — function values: creation and storage (2026-11-19)
+
+Lane S4, branch `claude/7354-fa` from `origin/main` `ee3fcdd610` (H, T, X, Str on main).
+
+### Implementation Plan
+
+Measured first (main `ee3fcdd610`, strict Prepared entry, standalone): `var f = function (v) { return v; }` stops in
+from-ast ("module-level closure binding 'f' not in module-init Slice 2 scope", "closure params must have
+annotations"). Even an annotated closure (`const f = (v: number): number => v` in a `.ts`) stops, at presentation,
+with three gaps: the lifted body's callable contract (its `__self` is a closure), the runtime census (a closure pulls
+in the #3518 native realm: function objects, their property storage and the invocation substrate, about 70 support
+functions the census does not know), and reference widening of the realm and closure types. The backend itself
+works: with the three gaps skipped the annotated program validates and answers like node.
+
+Target structure, one concern per module:
+
+| concern | module | reuses | removes |
+| --- | --- | --- | --- |
+| the all-dynamic closure contract, and "this `var` holds its initializer's closure" | `src/ir/source-dynamic-contracts.ts` (beside the parameter and result contracts) | `scriptVarWrites`, `isTopLevelStatementDeclaration`, the source-scope predicates | — |
+| lowering | `src/ir/from-ast.ts`: one resolver hook in `lowerClosureExpression`, the dynamic-home store the planned closure already has, a static-closure call arm beside the local-closure arm | `lowerClosureExpressionWithSignature`, `functionObjectDynamicValue` (the one function-value projection), `lowerClosureCall` | the direct call's inline argument boxing becomes `argumentIntoDynamic`, shared with the closure call |
+| carrier form | `src/ir/program/dynamic-value-legalization.ts`: closure / callable signatures, `closure.new`, `closureSubtype`; the projection's `__ir_dyn_call_box` of a packed callable is the carrier itself; closure allocation sites re-typed | `carrierOf`, `coerce.to_externref` (as the string arm) | — |
+| certified setup | O1's realm-slot join (`nativeRealmCompletedSlots` → `emittedNativeRealmSlots` → `runtimeCensus`): the realm's slots also carry its source-closure types and the closure invocation population | the owners' own inventories (`nativeClosureReservationInventory`, `nativeInvocationFunctions`) | Fa's first cut had its own consumer record and census parameter; merged onto O1's join it is one more owner of the same record |
+| presentation | `ir-program-presentation.ts`: the ABI join admits a closure | the census unchanged from O1 | — |
+
+No new representation: the value is the existing closure struct (`closure.new`), boxed by the existing projection;
+no new intrinsic, provider, host import or census table row.
+
+Quality criterion: no second closure path in from-ast (the contract only supplies a signature to the existing
+lowering); no copy of the argument boxing; the census takes no second join (the closure resources are owners of
+O1's realm-slot record); no second authentication pass.
+
+### Result
+
+Built as planned. Behaviour:
+
+- An unannotated function expression (no default, rest, pattern, generator or async) on the native lane is a
+  closure with the all-dynamic signature; its body runs off its end into `undefined` like a dynamic-result function.
+- Stored into a script `var`'s dynamic home it is the boxed closure (identity kept: `g === f`, `h() === f`,
+  `f(f) === f`); passed to an untyped parameter it boxes the same way; thrown, the catch binding is it.
+- A top-level `var f = function …` written nowhere else, in a single-source program that runs no unspelled code and
+  does not let the global object escape, holds that closure from its declaration on; a module-init call placed
+  after the declaration is the closure's direct `closure.call` (the prelude's `print(…)`).
+- Every other call through a value (from another function, before the declaration, after a second store) still
+  refuses by name: that is slice Fb.
+- Admitted value set (D1's soundness note, updated): a function value under strict equality is compared by identity,
+  ToBoolean true, ToNumber NaN (no own `valueOf` yet), the `undefined` probe false.
+
+Proof: `tests/issue-7354-fa-function-values.test.ts` (acceptance: each program returns with node's answer and throws
+with a wrong one; refusals pinned by name; the legalization arms). Pin updated: H's "holding a function expression"
+refusal (it runs now).
+
+### Named gaps (refused, not built here)
+
+- A function declaration read as a value (`assert`, `compareArray`, `Test262Error` in the prelude) — `identifier
+  "id" is not in scope`. It needs one closure per declaration (identity) created before the first statement: a
+  trampoline lifted body and a home global the module-init prologue fills. Next step of this lane (stacked).
+- A call through a value whose callee is not static (slice Fb); a call with a missing or an extra argument on the
+  static call (`closure call arity mismatch`); a closure returned from a closure (`concrete return needs a dynamic
+  box`); a captured local written after the closure is created; `this` / `arguments` / properties (slice C);
+  `typeof` of a function value (Str2's `typeof` must answer `"function"` for it); an arrow function or a parameter
+  default (no all-dynamic contract).
+
+### Review round 1 (RV7309, BLOCKER on ab4040fced)
+
+Fixes made on Opus (lead's decision) after a Fable subagent stopped on a rate limit; realm head cd03504321 merged
+first.
+
+| finding | answer | proof |
+| --- | --- | --- |
+| M1: writing a parameter inside an all-dynamic function expression was an invariant crash out of `compile()` | Fixed: the body seeds a slot for every written parameter through `lowerMutableParameterStorage`, the helper a declaration's reassigned parameter already uses (`writtenParameterSlots`); the planned member closure's inline copy of that seeding is gone too | runs: `if (a === undefined) a = 3`, `a++`/`b--`/`b -= 2`, a written parameter in a function's local closure; named refusals: `+=` (dynamic `+`), a nested closure reading or writing it, `arguments` aliasing, a closure assigned to it |
+| M2: `staticFunctionValue` answered true for `this.f =`, `globalThis.f =` / `globalThis["f"] =`, Annex B block functions | Fixed with one shared proof: `bindingIsUniqueAndNeverWritten` (the name's only binding site in the file, never assigned, no eval/with) and `sourceMayWriteBindingUnseen` (no unspelled code, no reflective route, no member of that name written on any object), plus "the global object does not escape". `sourceMayWriteBindingUnseen` replaces the identical three-predicate conjunction in `wrapper-construction.ts` and `always-undefined-binding.ts` (one proof, three users) | contract unit tests pin each route: `this.f` (top level and in a function), `globalThis.f`, `globalThis["f"]`, a block-level function, a function in an `if`, `f.constructor("…")()`, a shadowing binding |
+| retype accepted any live site | `retypeClosure`: only a live closure site, typed by the closure type | registry test |
+| `inCall` admitted a closure anywhere | Narrowed: only a closure body's first parameter (`__self`); a closure anywhere else in a contract still refuses | presentation test |
+| `holdsDynamicClosure` duplicated `bindsCatch` | One walker `holds(node, match)` with the two matchers | — |
+| the H2 refusal read "not in scope" | Says what it means: a closure reading a local of its enclosing function declared after the closure is created | H2 pin |
+| kind invariant (b): an object literal's closure member entered the carrier outside `admit` | The legalization's coerce arm admits a packed callable as `function` through `admit` | legalization unit test |
+| (found while checking the #3518 suites) a closure inside a descriptor literal got the all-dynamic signature | `ownedByDescriptorLiteral` (one predicate, used by the contract and by from-ast's descriptor branch): the checker's signature wins | the three issue-3518 getter files pass again; contract unit test |
+| kind invariant (a), (c) | S3's lines in the realm PR (#7312): S3 writes them against an exported kind predicate there; Fa re-points them at `admit` when it merges that head | — |
+
+Verified on the rework head: typecheck, loc, func (also against `origin/main`), coercion, oracle-ratchet,
+dead-exports, import-cycles, compiler-boundaries pass; 420 tests (the Fa file, #7354 H/H2/X/P/D1/O, prepared
+entry/runtime, the three issue-3518 getter files) all pass.
+
+### Compile time
+
+A program with one closure compiles in about 22 s through the strict entry on a 4-core box (one with no closure:
+under 1 s). About 17.5 s of it is the realm emission that main already pays for an annotated closure before it
+refuses at presentation; the census's emission re-authentication passes (`emittedSupportFunctionReceipts`, several
+per presentation) are most of the rest. This is the realm's `#verifyLayout` cost (Perf lane), not this slice's code:
+the closure owners add no authentication pass.
+
+
+## Realm join (2026-11-19, branch `claude/7354-realm` from `origin/main`)
+
+The native realm of #3518 (`src/backend/wasmgc/program/native-realm.ts`) is reserved for any program with a
+`js.object.*` use, a `Number(v)` use or source closures, but nothing let such a program present: the physical plan
+had no arm that binds a source call to a realm function, and the Prepared runtime census joined only the native
+string and formatter setups. This branch builds the shared join, and its first row, the source objects of slice O
+(step O1). Lane S4 (slice Fa) adds the closure/invocation owner as one more row.
+
+### Built
+
+- **Census join.** The consumer records the physical indices of the realm's completed functions, types and globals
+  (`nativeRealmCompletedSlots` in native-realm.ts, read through `emittedNativeRealmSlots` in program-consumer.ts),
+  authenticated by the realm's own `requireCompletedNativeRealmBootstrap`. `runtimeCensus`
+  (`src/compiler/prepared-provider-census.ts`) excludes those functions from the support-receipt join and adds the
+  types and globals to the native setup's slots, so the presentation's widening finalization owns them.
+- **One call-binding builder and reconciler.** `nativeInvocationAbiBindings` became a caller of
+  `nativeCallAbiBindings` (native-invocation-abi.ts); `reconcileInvocationBindings` became
+  `reconcileNativeCallBindings`, used for invocation and source-object rows; the two consumer lists of native binding
+  families read `plannedNativeCallBindings` (program-physical-plan.ts).
+- **Source objects (O1).** `native-source-objects.ts` serves the `js.object.*` contracts on the realm:
+  `define-data` binds the descriptor pack's public define as it is; `create-default`
+  (`createWithPrototype(objectPrototype())`, an explicit Object.prototype link) and `get` (the kernel's [[Get]], its
+  incomplete states unreachable) are adapters in `source-object-bodies.ts`. `native-source-object-abi.ts` builds
+  the plan rows; a contract without a provider is a plan gap by name. The Prepared resolver
+  (`prepare-ordinary-object-access.ts`) makes every literal it owns an ordinary object (the Prepared backend has no
+  closed object struct: this replaces the "resolver cannot lower object<…>" emission crash) and plans typed reads
+  of a data-only literal whose binding is only read as `o.k`. Member values cross into the object through the
+  number-boundary boxes (`boundaryBox` in from-ast, shared with `throw`), so a literal adds no dynamic value.
+- **Carrier rules.** `coerce.to_externref` of a dynamic value keeps (the carrier is the native value an object
+  property stores, as it is the exception payload); every throw of the program must be a carrier-admitted value
+  (`refuseUnadmittedThrows`, run over every function on the native dynamic lane, after legalization so its own gaps
+  keep their names), so an object cannot reach a catch binding before the carrier admits objects.
+
+### Measured
+
+- Proving program `function f(){ var o = { a: 1 }; return o.a; } if (f() !== 1) throw 1;` through the strict entry,
+  standalone: validates and returns; with `!== 2` it throws; node agrees. `tests/issue-7354-o-objects.test.ts`.
+- Pins updated: D1 "a typed literal property" (now D1's flow rule), "a dynamic object field" (now the untyped member
+  read), D1/X "dynamic externref coercion" (now kept); X object throws (now "throw of a value outside the dynamic
+  carrier's kinds").
+
+### Compile time: the reservation audit is quadratic (for the perf lane)
+
+With the realm in the module one compile of the proving program takes about 18 s (33 s on a loaded box). A CPU
+profile (`node --cpu-prof`) of that one compile, after a warm-up compile:
+
+| ms (inclusive) | entry |
+| ---: | --- |
+| 16,006 | `PhysicalModuleReservations#verifyLayout` (`src/wasm/physical/module-reservations.ts`) |
+| 11,588 | `#snapshot` / `dataText` |
+| 8,743 | `physicalIndex` |
+| 6,342 | `fillNativeRealmResources` |
+| 3,842 | `requireOwner` (native-object-descriptors.ts) |
+| 3,799 | `#matchesFunction` / `matchesPhysicalDataSnapshot` |
+
+`#verifyLayout` re-snapshots every reservation record on each `physicalIndex()` call unless an outer `audited(…)`
+covers it, and the realm's fill and owner checks call `physicalIndex` thousands of times, so the cost grows with the
+square of the reserved resources. Reproducer: `.tmp/prof.mts` pattern, i.e. compile the proving program above twice
+through `src/test262/test262-prepared-entry.ts` (options `wholeProgram: prepared-program-required`, `wasmgc`,
+`standalone`, `allowJs`) and profile the second.
+
+## Fb — calls through a dynamic value (2026-11-19)
+
+Branch `claude/7354-fb`, stacked on `claude/7354-fa`.
+
+### Implementation Plan
+
+Measured first (on Fa's head): `function t(fn){ return fn(2); } t(function (x) { return x * 2; })` already reaches
+from-ast's one dynamic-call path (`lowerDynamicValueCall` → `applyDynamicCallee`, function-object-lowering.ts), which
+emits the ordinary pipeline's runtime helpers (`__objvec_new/push`, `__is_callable`, `__new_TypeError`,
+`__apply_closure`); the legalization refuses at `__ir_dyn_call_argument`. The #3518 native dispatcher
+`js.closure.call:N` already does IsCallable and throws the TypeError itself (`buildClosureInvocationFailure`), but
+its planner (`native-invocation-requirements.ts`) admits only a callee that is a packed `closure.new` of the same unit
+(built for `f.call` on a known closure), and the dispatch entries are those callees' units only.
+
+| concern | module | reuses | removes |
+| --- | --- | --- | --- |
+| the call | `function-object-lowering.ts`: on the Prepared lane `applyDynamicCallee` emits one `js.closure.call:N(receiver, callee, …args)` over carrier operands | `functionObjectDynamicValue`, `irClosureMethodReference`, `coerce.to_externref` of a dynamic value (O1) | the runtime-helper sequence on this lane |
+| a dynamic callee | `native-invocation-requirements.ts`: a method use whose callee is no packed allocation is a `dynamicCallee` use; every source closure must be dispatchable (fixed parameters, carrier slots), else a named gap | `calculate`, `external` | — |
+| dispatch | `native-source-closure-callables.ts` `resolveEntries`: a dynamic use selects every source unit; `native-invocation.ts` `entries`: one arm per distinct signature | `resolveSourceEntries` | the per-closure duplicate arms |
+| result | legalization: `__ir_dyn_call_box` of any externref is the carrier (Fa's arm, widened from packed callables) | Fa's arm | — |
+| script vars | from-ast: a call through a dynamic home in any position on the lane; a function value stored by assignment | `isStatementDynamicModuleCall` (ordinary lane only now), `argumentIntoDynamic` | — |
+
+Quality criterion: one call path for a non-static callee on the lane (the same `lowerDynamicValueCall`), no second
+dispatcher, one lane predicate in from-ast.
+
+**Dispatcher or `call_ref` at the call site** (lead's question, measured on this branch, one dynamic call, n
+closures `var cI = function (x) { return x; }`, strict Prepared entry, standalone):
+
+| n | module bytes before dedupe | after | compile |
+| ---: | ---: | ---: | ---: |
+| 1 | 23,588 | 23,588 | 26 s |
+| 10 | 24,628 | 24,097 | 52 s (static calls only: 38 s) |
+| 50 | 29,424 | 26,533 | 277 s |
+
+The `js.closure.call:N` dispatcher already is a `call_ref` through the closure struct's own funcref, behind a
+`ref.test` of the allocation type and the lifted func type; what grew with every closure was one identical arm per
+closure. Its arms are now one per distinct (allocation type, lifted signature): every all-dynamic closure of one
+arity shares one. The remaining growth is the closures' own bodies and allocations. The dispatcher stays the one call
+path because it does what a call site cannot without copying it everywhere: IsCallable and the catchable TypeError,
+the saved/restored `currentThis` / `argc` / extra-argument protocol (`this` and `arguments` of slice C), `undefined`
+for missing arguments by the callee's arity, and it is where the realm's builtin function objects (S5) and construct
+(S11) are added as rows. Compile time is the realm's quadratic reservation audit (S6, #7365), not the dispatch.
+
+### Result
+
+`function t(fn){ return fn(2); } if (t(function (x) { return x * 2; }) !== 4) throw 1;` validates and runs through the
+strict Prepared entry. Missing arguments read `undefined`, extra ones are dropped, a non-callable value (number,
+`undefined`) throws a catchable TypeError, a script var is called from another function and after a second store.
+Proof: `tests/issue-7354-fb-dynamic-calls.test.ts`.
+
+Named gaps: a dynamic call in a program with no source closure (no dispatcher: `js.closure.call:N needs runtime
+function materialization`), spread arguments, `new`, method calls and `fn.call` / `fn.apply` on a dynamic value
+(slice C), a receiver other than `undefined` (`this`, slice C).
 

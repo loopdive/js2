@@ -456,23 +456,27 @@ function checkAbiExports(
   if (entries.size !== program.abi.entries.length)
     gap("abi", "duplicate-binding", "prepared ABI binding identities are not unique");
   const joinedExports = new Set<string>();
-  // (#7354 D1, H, Str) Internal callables and unexported globals may carry the dynamic externref; callables a string.
-  const dynamic = (type: IrType | undefined) =>
-    nativeDynamicLane(capture.backend) && type?.kind === "val" && type.val.kind === "externref";
+  // (#7354 D1, H, Str, Fa) Internal callables and unexported globals may carry the dynamic externref; callables a
+  // string. On the native lane a lifted closure body also takes its own closure as its first parameter (`__self`),
+  // whose type the function-value setup owns; a closure anywhere else in a contract still needs a boundary producer.
+  const native = nativeDynamicLane(capture.backend);
+  const closureBodies = new Set(program.ir.functions.filter((fn) => fn.closureSubtype).map((fn) => fn.unitId));
+  const dynamic = (type: IrType | undefined) => native && type?.kind === "val" && type.val.kind === "externref";
   const carried = (type: IrType) => (type.kind === "val" && numeric(type.val)) || dynamic(type);
   const inCall = (type: IrType) => type.kind === "string" || carried(type);
   for (const entry of program.abi.entries) {
     const { plan, contract } = entry;
     if (contract.kind === "callable") {
-      if (!mixed && (contract.promise || [...contract.params, ...contract.results].some((type) => !inCall(type))))
+      const unitId =
+        plan.intent.kind === "callable" && plan.intent.origin === "source" ? plan.intent.unitId : undefined;
+      const params = native && unitId && closureBodies.has(unitId) ? contract.params.slice(1) : contract.params;
+      if (!mixed && (contract.promise || [...params, ...contract.results].some((type) => !inCall(type))))
         gap(
           "abi.callable",
           "non-numeric-contract",
           "promise/reference callable contracts require an explicit boundary producer",
           { bindingId: plan.id },
         );
-      const unitId =
-        plan.intent.kind === "callable" && plan.intent.origin === "source" ? plan.intent.unitId : undefined;
       const declaration = unitId && captures.get(unitId);
       const joins = (slot: PresentationSlot, type: IrType | undefined) =>
         sourceSlotMatches(slot, type) || dynamic(type);
