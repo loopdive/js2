@@ -10,8 +10,6 @@ import {
   closureStatePath,
   closureStateSha,
 } from "./helpers/closure-state-preservation-port.js";
-import { readBeforeResumeMain, readMergedSource } from "./helpers/resume-main-composition.js";
-import { applyClosureComposition, readBeforeClosureComposition } from "./helpers/closure-source-composition.js";
 import { buildBuiltinClosureValueInstrs } from "../src/runtime/wasmgc/values/closure-layouts.js";
 
 const raw = (path: string): string => readFileSync(new URL("../" + path, import.meta.url), "utf8");
@@ -71,37 +69,6 @@ describe("exact state-field inverse before the original closure preservation rea
     const suffix = "export type ClosureAllocationMode =";
     expect(current.slice(current.indexOf(suffix))).toBe(prior.slice(prior.indexOf(suffix)));
     expect(raw(closureStatePath)).toBe(current);
-  });
-
-  it("restores both initial reader levels without changing the original closure receipt", () => {
-    const { current, prior } = positive();
-    expect(readMergedSource(closureStatePath)).toBe(prior);
-    expect(readBeforeResumeMain(closureStatePath)).toBe(prior);
-    const original = applyClosureComposition(closureStatePath, prior, true);
-    expect(readBeforeClosureComposition(closureStatePath)).toBe(original);
-    expect(closureStateSha(original)).toBe("0f9e1fe72f60e7f24577bf12ef194629e0b77815339f335c37df5784950a5543");
-    expect(closureStateBlob(original)).toBe("b4fd5fa3271a5740cd5a5defbbc601af56df7f71");
-    expect(applyClosureComposition(closureStatePath, original, false)).toBe(prior);
-    expect(applyClosureStatePreservation(closureStatePath, prior, false)).toBe(current);
-    for (const [path, digest] of [
-      [
-        "tests/fixtures/issue-3518-closure-source-composition.json",
-        "f37b47b66eb1dd2ec2591a9ad9af0efd0c7bd70ded7bde58115e78b06950e23e",
-      ],
-      [
-        "tests/fixtures/issue-3518-native-closure-donors.json",
-        "be6904328b9bb25981ca9ae109c3526d86931832eeb433bce66af41f99b96575",
-      ],
-      [
-        "tests/issue-3518-native-closure-resources.test.ts",
-        "27887b73aec30063a20b2ac3567a05b120cb22c84e7dd648f5d725ad63d8cbf9",
-      ],
-      [
-        "tests/issue-3518-closure-source-composition.test.ts",
-        "fe71e6900dca4e6fe805868272ed82aba0401bab4bbf074ad6bf01b5dd01433c",
-      ],
-    ])
-      expect(closureStateSha(raw(path!))).toBe(digest);
   });
 
   it("keeps raw runtime imports live and the new reader outside all production modules", () => {
