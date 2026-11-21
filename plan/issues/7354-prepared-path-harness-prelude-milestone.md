@@ -4293,3 +4293,86 @@ inventory, output ABI join, string define-own, descriptor-wide BigInt, 3525 numb
   (acceptance record, string-value plan, realm currentness `assertNativeRealmRequirementsCurrent`, which still
   re-derives per call, and the output metadata identity walk). These are #7380 step 5b.
 - Next hottest, switch on: the layout audit (#7380 step 5c).
+
+## Slice F1b result (2026-11-21, branch `claude/7354-f1b`; F1 plan steps 4–6)
+
+Base: `claude/7354-f1` d78692b574 + `claude/7354-perf3`, then `main` a7afff3596 merged (both were in it).
+
+### Built
+
+- **Declarations as values (step 4)** — `src/ir/function-declaration-values.ts`. One walk
+  (`functionDeclarationsReadAsValues`, answered once in `programDynamicContracts`) finds the top-level declarations an
+  identifier reads other than as a callee. Each gets a `var`-like startup binding after the script's declarations
+  (`module-init-plan.ts`) and an immutable home of type dynamic under the Function tag; `resolveBinding` finds it by
+  `globalByDeclaration`, so a read is the existing module-binding read. The module-init makes each value before its
+  first statement (`lowerModuleInitStatements` → `emitFunctionDeclarationValues`): a trampoline closure (a derived
+  unit calling the declaration's unit, result boxed), its function object, the home store. A call of the name stays
+  direct: from-ast asks the direct-call plan before the dynamic-home callee. Refusals: `function declaration 'F' read
+  as a value is written` / `has a typed parameter` / `has a result the dynamic value does not carry` / `is in a script
+  that runs no top-level code`. Single script source only (no row otherwise; ES modules excluded).
+- **One "binding holds its declaration" predicate** — `bindingHoldsItsDeclaration` (shared/intrinsic-prototype-writes),
+  used by Fa's `staticFunctionValue` and the declaration values. A member store of the binding's name counts only on
+  `this` or a global-object name (`globalWrittenNames`), beside dynamic code, a reflective route and an escaping global
+  object: `assert.compareArray = …` no longer blocks `compareArray`.
+- **R7 (step 5)** — `src/ir/program-source-direct-calls.ts` (moved out of program-source): calls by name in top-level
+  code and inside every unit's closures are planned under the enclosing terminal unit (the owner from-ast's lifted
+  context keeps). The call graph is untouched (ordinary pipeline bytes).
+- **Function objects (step 6)** — the kernel's source-closure arm (415e014df0, cherry-picked unchanged); a new
+  `js.object.init-function` row of the js.object family (so no second realm call collection, a07d3317ec not needed),
+  body `source-function-object-bodies.ts`: the bag, `length`, `name`, and for a constructor `prototype` with its
+  `constructor`. `emitFunctionObjectInit` (function-object-lowering) has two callers: every closure literal on the
+  native lane with native strings (`createsFunctionObjects`; accessors excluded) and each declaration value. Names:
+  `functionObjectName` (shared/named-evaluation). The set adapter defines in a function's bag and answers `false` for
+  a read-only property (was a trap); strict code throws a TypeError.
+- **Kind rows** — `MEMBER_ACCESS_ARM.function = "function"` (reads refuse `BUILTIN_REACHABLE_KEYS.function`, the
+  catalog's Function.prototype ∪ Object.prototype keys but `length`/`name`); `TO_NUMBER_ARM.function = "to-primitive"`
+  (OrdinaryToPrimitive over the function: an own non-callable `toString` throws, a callable method is the D6 abort,
+  otherwise NaN); `carrierKindOf` answers `function` for the Function tag (declaration homes); a function expression
+  admits the object kind (its prototype). A closure stored as a member is its function value.
+- from-ast −31 lines vs main (describeIrType moved to `describe-ir-type.ts`, a void-closure walk reuses
+  `someReturnedValue`); program-source −10; no grant.
+
+### Differs from the plan
+
+- No `program-source-function-values.ts` beside program-source: the walk/rows/trampoline are one module the source
+  producer, the module-init plan and the chunk lowering call.
+- Plan D2's c-fn/c-int port: only 415e014df0; `js.function.*` became one js.object row; the c-calls refactor and the
+  c-int wiring (in perf4's files) were not needed.
+- Closures other than function expressions (arrows, methods) are function objects too: they become values (`o.m`), and
+  a value without a bag would trap in the kernel.
+- `typeof` and identity of a declaration value were already in F1a's rows; the Function tag makes a home read a known
+  function, so `f.length` does not refuse as "may be a string".
+
+### Proof
+
+Tests (each file in full, exit 0): f1b-declaration-values 7/7, f1b-function-objects 8/8, f1-function-kind 16/16,
+o3-member-write 21/21 (after the main merge); fa-function-values 47/47, f1-to-primitive + m-refusals 44/44,
+f1-function-expressions{,-2} 7/7, 3518-ordinary-object-callable-contracts + x-dynamic-throw 102/102,
+3518-ordinary-object-runtime-providers 187/187, 3518-native-builtin-functions 36/36, o2-object-values 12/12,
+m-member-access 5/5, o4-member-read 16/16 (three `-t` runs), test262-prepared-entry + 7188 50/50,
+m-prototype-premise 12/12 (before the main merge). r-provider-census: 117/117 tests pass but the run ends with
+vitest's "Timeout calling onTaskUpdate" RPC error (exit 1) under load.
+
+Sweep: 4 value forms × 14 operations × 5 positions (560 programs, node's answer and a wrong one): 436 agree, 124
+named refusals, 0 wrong, 0 exceptions, 0 invalid Wasm. Regression set: those 560 + 71 hand programs on base and head:
+no base-correct program changes; 3 head programs end at D6's run-time abort (an own callable `valueOf`/`toString`, F2).
+
+Mutations killed (probe runs): each changed row of TO_NUMBER_ARM / MEMBER_ACCESS_ARM, the Function-tag rule, the
+direct-first order, the prototype's object kind, init's constructor flag and name, the read-only `false`, the strict
+check. Survivors: none found among those.
+
+Bytes: ordinary pipeline 20 test262 files × default + standalone: identical. `check:prepared-bytes` vs base: 10 rows
+differ — 53, 74, 581 now compile (declaration values), 180 refuses at the call through a value (F2) instead of the
+read, 46/239/244/445/532/533 change bytes because the realm's kernel and set adapter changed (`match`'s source arm,
+the bag redirect).
+
+Sample (411 rows): 272 `unknown class "Test262Error" in assert` (C2), 73 `function declaration
+'formatIdentityFreeValue' read as a value is written` (+1 with a parse error; these sources use `this` or a
+reflective name), 41 `dynamic method .sameValue/3 has no brand-dispatch wrapper` (verifyProperty, F2), 6
+`verifyProperty … is written`, 14 pass, 4 other.
+
+### Not verified
+
+- The other m/o/str/ty/t/h/d1/vg/p test files after the main merge (time); the census RPC timeout on base.
+- Source maps with declaration values: the startup binding census check fails as it already does for nested `var`s.
+- Calls through a declaration's value (`var g = f; g()`) — F2.
