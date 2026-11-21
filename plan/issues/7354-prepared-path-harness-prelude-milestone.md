@@ -4632,3 +4632,15 @@ brand dispatch: arrays, #7352), 6 `verifyProperty … is written`, 14 pass, 5 ot
 
 - Node 25 (not installed here); the dispatcher's guard is a standard `try_table`, as every user `try` on this regime.
 - The remaining existing m/o/str/ty/t/h/d1/vg/p test files and r-provider-census after the merges.
+- Restoring `__current_this` (after a return, after a throw, across nested calls) cannot be observed until C2 admits
+  `this` in a function body: C2's tests must cover it.
+- Compile time: 20 closures plus a 20-term `+` chain took 80 s for one compile (68 s under the profiler). Cause: 47 s
+  are `assertNativeInvocationRequirementsCurrent`, which re-collects the whole program's promise census
+  (`assertNativePromiseSourceCensusCurrent` → `collectNativePromiseSourceCensus` + `preparedIrDataMismatch`) at every
+  unsettled call — the invocation owner's `authenticate` / `requireOwner` and `resolveEntries` in
+  `native-invocation.ts` / `native-source-closure-callables.ts` (perf lane).
+- `var g = 1; g()` (a typed number home) refuses with the misleading `direct call to "g" has no exact AST-site plan`,
+  unchanged from the base.
+- Review round 1 (lead): findings 1-5 fixed — explicit dispatcher-arm key; one `packedCallable` helper; the binding
+  call's doc names both lanes; the lane picks the call before any not-callable text is built; one lane predicate
+  (`createsFunctionObjects`, read through the host).
