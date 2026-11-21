@@ -432,7 +432,7 @@ export function emittedSupportFunctionReceipts(
 ): readonly EmittedSupportFunctionReceipt[] {
   const record = startupAdapters.get(emitted);
   if (!record) programInvariant("invalid-transaction-capability", "emission was not produced by this consumer");
-  record.reservations.audited(() => record.functions.forEach((t) => record.reservations.assertCompletedReservation(t)));
+  for (const token of record.functions) record.reservations.assertCompletedReservation(token);
   if (record.functions.length !== emitted.module.functions.length)
     emissionFailed("completed emission function census changed");
   return record.support;
@@ -444,6 +444,13 @@ export function emittedPhysicalSetupPlan(emitted: EmittedPreparedIrProgram): Phy
   if (!record) programInvariant("invalid-transaction-capability", "emission was not produced by this consumer");
   emittedSupportFunctionReceipts(emitted);
   return record.physical;
+}
+
+/** The layout audit of the ledger that built this emission (the physical-module validator stage). */
+export function verifyEmittedLayout(emitted: EmittedPreparedIrProgram): void {
+  const record = startupAdapters.get(emitted);
+  if (!record) programInvariant("invalid-transaction-capability", "emission was not produced by this consumer");
+  record.reservations.verifyLayout();
 }
 
 /** (#7354 O1) The completed realm slots of an authenticated emission, or `undefined` when it has no realm. */

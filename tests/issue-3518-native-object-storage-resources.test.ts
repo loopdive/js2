@@ -107,9 +107,7 @@ describe("canonical TypeError dependency assertions", () => {
     fillNativeErrorResources(f.tx, f.pack);
     requireCompletedNativeErrors(f.tx, f.pack, f.requirements, f.dependencies);
     f.pack.newTypeError.object.body.push({ op: "nop" });
-    expect(() => requireCompletedNativeErrors(f.tx, f.pack, f.requirements, f.dependencies)).toThrow(
-      "altered completed function",
-    );
+    expect(() => f.tx.seal()).toThrow("altered completed function");
   });
 });
 describe("issued ordinary storage prerequisite", () => {
@@ -202,9 +200,7 @@ describe("issued ordinary storage prerequisite", () => {
     const f = objectStorageFixture();
     complete(f);
     f.pack.grow.object.body.push({ op: "nop" });
-    expect(() => requireCompletedNativeObjectStorage(f.tx, f.pack, f.dependencies)).toThrow(
-      "altered completed function",
-    );
+    expect(() => f.tx.seal()).toThrow("altered completed function");
   });
 });
 

@@ -2,6 +2,7 @@
 import { createEmptyModule } from "../../src/ir/types.js";
 import { emitBinary } from "../../src/emit/binary.js";
 import { PhysicalModuleReservations } from "../../src/wasm/physical/module-reservations.js";
+import { buildStandardTryTable } from "../../src/wasm/physical/exception-control.js";
 import type { Instr, ValType } from "../../src/wasm/model/instructions.js";
 import { deriveNativeObjectAccessRequirements } from "../../src/ir/program/native-object-access-requirements.js";
 import { deriveNativeValueResourcePlan } from "../../src/ir/program/native-value-resources.js";
@@ -655,21 +656,20 @@ export function builtinFunctionRuntime(offset = false, withTransportControls = f
     { op: "extern.convert_any" },
   ]);
   fill("sourceCall", [...cast(0, f.closures.root.typeIndex), { op: "call", funcIdx: sourceSlot.handle }]);
+  // A standard try_table like the kernel's own guards: V8 refuses a module that mixes it with a legacy try.
   fill("catchRethrow", [
-    {
-      op: "try",
-      blockType: { kind: "val", type: ext },
-      body: structuredClone(callBody),
-      catches: [
-        {
-          tagIdx: tx.physicalIndex(kernel.exception),
-          body: [
-            { op: "global.set", index: tx.physicalIndex(thrown) },
-            { op: "rethrow", depth: 0 },
-          ],
-        },
-      ],
-    },
+    buildStandardTryTable({ kind: "val", type: ext }, structuredClone(callBody), [
+      {
+        kind: "catch",
+        tagIdx: tx.physicalIndex(kernel.exception),
+        payloadType: ext,
+        body: [
+          { op: "global.set", index: tx.physicalIndex(thrown) },
+          { op: "global.get", index: tx.physicalIndex(thrown) },
+          { op: "throw", tagIdx: tx.physicalIndex(kernel.exception) },
+        ],
+      },
+    ]),
   ]);
   const exports = {
     ...kernel.functions,

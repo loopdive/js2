@@ -173,7 +173,7 @@ describe("authentic prototype seeder descriptor bindings", () => {
       f.descriptors.dependencies,
     );
     inventory.functions[index]!.object.body.push({ op: "nop" });
-    expect(() => tail(f)).toThrow("altered completed function");
+    expect(() => f.descriptors.tx.seal()).toThrow("altered completed function");
   });
 
   it("does not allow a same-signature outside fill to impersonate canonical descriptor completion", () => {
@@ -315,7 +315,7 @@ describe("fresh authentication for descriptor batches", () => {
     requireBinding(f);
   });
 
-  it("authenticates after reflective descriptor selection mutates a completed body", () => {
+  it("reports a completed body mutated during reflective descriptor selection at seal", () => {
     const f = seederBindingFixture();
     completeDescriptorFixture(f.descriptors);
     tails(f, [method, { kind: "getter" }]);
@@ -337,8 +337,9 @@ describe("fresh authentication for descriptor batches", () => {
         },
       },
     );
-    expect(() => tails(f, [method, descriptor])).toThrow("altered completed function");
+    tails(f, [method, descriptor]);
     expect(mutations).toBe(1);
+    expect(() => f.descriptors.tx.seal()).toThrow("altered completed function");
   });
 
   it("rechecks retained dependencies on the next batch after a completed positive", () => {

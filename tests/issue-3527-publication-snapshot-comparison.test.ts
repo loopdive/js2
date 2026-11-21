@@ -31,7 +31,7 @@ function fixture(kind: string, audit: object) {
 }
 for (const kind of ["global", "element", "recgroup"]) {
   it.each(["nan", "zero", "undefined", "nested", "hole", "order", "bytes"])(
-    `${kind} rejects changed %s after repeated successful audits`,
+    `${kind} rejects changed %s at the seal`,
     (change) => {
       const audit = {
         number: change === "zero" ? 0 : nan(1),
@@ -54,7 +54,7 @@ for (const kind of ["global", "element", "recgroup"]) {
         audit.first = 1;
       }
       if (change === "bytes") audit.bytes[0] = 2;
-      expect(() => f.tx.assertCompletedReservation(f.fn)).toThrow(/altered/);
+      expect(() => f.tx.seal()).toThrow(/altered/);
       expect(f.tx.state).toBe("failed");
     },
   );
@@ -78,7 +78,7 @@ for (const kind of ["global", "element", "recgroup"]) {
         return 3;
       },
     });
-    expect(() => f.tx.assertCompletedReservation(f.fn)).toThrow("late sentinel");
+    expect(() => f.tx.seal()).toThrow("late sentinel");
     expect(events).toEqual(["tail", "child"]);
   });
   it(`${kind} preserves cyclic child failure after an earlier mismatch`, () => {
@@ -86,7 +86,7 @@ for (const kind of ["global", "element", "recgroup"]) {
     const f = fixture(kind, audit);
     audit.early = 2;
     audit.child = audit;
-    expect(() => f.tx.assertCompletedReservation(f.fn)).toThrow("cyclic physical descriptor");
+    expect(() => f.tx.seal()).toThrow("cyclic physical descriptor");
   });
 }
 it("detects actual f64 global initializer NaN payload changes", () => {
@@ -95,14 +95,14 @@ it("detects actual f64 global initializer NaN payload changes", () => {
   const instr = f.init[0]!;
   if (instr.op !== "f64.const") throw Error("wrong positive constant");
   instr.value = nan(2);
-  expect(() => f.tx.assertCompletedReservation(f.global)).toThrow("altered completed global g");
+  expect(() => f.tx.seal()).toThrow("altered completed global g");
 });
 
-it("detects a retained export descriptor change after repeated public audits", () => {
+it("detects a retained export descriptor change at the seal", () => {
   const f = fixture("global", {});
   f.tx.assertCompletedReservation(f.fn);
   f.tx.assertCompletedReservation(f.fn);
   f.exported.desc.index++;
-  expect(() => f.tx.assertCompletedReservation(f.fn)).toThrow("altered publication descriptor");
+  expect(() => f.tx.seal()).toThrow("altered publication descriptor");
   expect(f.tx.state).toBe("failed");
 });

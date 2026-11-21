@@ -1028,19 +1028,19 @@ describe("ordinary Get canonical fill and completion", () => {
               ? nativeInvocationGetterDispatch(f.tx, f.invocation, f.access)
               : [...f.slots.values()][0]!;
       token.object.body.push({ op: "nop" });
-      expect(() => requireCompletedNativeObjectGet(f.tx, f.get, f.dependencies)).toThrow("altered completed function");
+      expect(() => f.tx.seal()).toThrow("altered completed function");
     });
   }
   phasedGetTest("rejects replacement with a byte-equal filled Get body array", "before-get", (f) => {
     expect(requireCompletedNativeObjectGet(f.tx, f.get, f.dependencies)).toBe(f.get);
     f.get.get.object.body = structuredClone(f.get.get.object.body);
-    expect(() => requireCompletedNativeObjectGet(f.tx, f.get, f.dependencies)).toThrow("altered completed function");
+    expect(() => f.tx.seal()).toThrow("altered completed function");
   });
   it("rejects an altered lookup carrier declaration", () => {
     const f = fixture();
     expect(requireNativeObjectGetReservations(f.tx, f.get, f.dependencies)).toBe(f.get);
     Object.assign(f.layouts.propEntry.object, { name: "foreign-entry" });
-    expect(() => requireNativeObjectGetReservations(f.tx, f.get, f.dependencies)).toThrow(/altered|changed|layout/);
+    expect(() => f.tx.freezeReservations()).toThrow(/altered|changed|layout/);
   });
 });
 

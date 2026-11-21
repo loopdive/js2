@@ -21,13 +21,14 @@ function definition() {
     payload,
   };
 }
-function fixture(owned: boolean) {
+/** `seal: false` leaves the seal, where the layout audit runs (#7354 Perf4), to the test. */
+function fixture(owned: boolean, seal = true) {
   const f = setup(),
     d = definition();
   if (owned) f.tx.fillOwnedFunction(f.token, d);
   else f.tx.fillFunction(f.token, d);
   f.tx.defineExport("main:export", "main", f.token);
-  f.tx.seal();
+  if (seal) f.tx.seal();
   return { ...f, d };
 }
 function result(bytes: ReturnType<typeof emitBinary>) {
@@ -52,9 +53,9 @@ describe.sequential("owned function admission", () => {
     expect(result(emitBinary(f.module))).toBe(7);
   });
   it("leaves legacy fill live and rejects its later mutation", () => {
-    const f = fixture(false);
+    const f = fixture(false, false);
     (f.d.payload[0] as { value: number }).value = 99;
-    expect(() => f.tx.assertCompletedReservation(f.token)).toThrow(/altered completed function/);
+    expect(() => f.tx.seal()).toThrow(/altered completed function/);
   });
   it("protects own publication fields and nested instruction data", () => {
     const f = fixture(true);
@@ -63,14 +64,14 @@ describe.sequential("owned function admission", () => {
     expect(Object.getPrototypeOf(f.token.object.body[0])).toBe(null);
   });
   it("retains live function-shell checking", () => {
-    const f = fixture(true);
+    const f = fixture(true, false);
     (f.token.object as any).additional = "changed";
-    expect(() => f.tx.assertCompletedReservation(f.token)).toThrow(/altered completed function/);
+    expect(() => f.tx.seal()).toThrow(/altered completed function/);
   });
   it("retains live mutable module population checking", () => {
-    const f = fixture(true);
+    const f = fixture(true, false);
     f.module.functions.push(f.token.object);
-    expect(() => f.tx.assertCompletedReservation(f.token)).toThrow(/population/);
+    expect(() => f.tx.seal()).toThrow(/population/);
   });
   it("resists ArrayIteratorPrototype.next substitution in real binary output", () => {
     const f = fixture(true),
@@ -154,7 +155,7 @@ describe.sequential("owned function admission", () => {
     tx.assertCompletedReservation(a);
     tx.assertCompletedReservation(b);
     body.push({ op: "nop" });
-    expect(() => tx.assertCompletedReservation(a)).toThrow(/altered completed function b/);
+    expect(() => tx.seal()).toThrow(/altered completed function b/);
   });
   it.each([-0, NaN])("preserves floating-point binary and WAT payload %s", (value) => {
     const build = (owned: boolean) => {
@@ -192,7 +193,7 @@ describe.sequential("owned function admission", () => {
     bytes[0] = 99;
     f.tx.assertCompletedReservation(f.token);
     copied[0] = 42;
-    expect(() => f.tx.assertCompletedReservation(f.token)).toThrow(/altered completed function/);
+    expect(() => f.tx.seal()).toThrow(/altered completed function/);
   });
   it("blocks hidden byte callbacks that alter Wasm and restore indexed contents", () => {
     const f = setup();
@@ -349,7 +350,7 @@ describe.sequential("owned function admission", () => {
     expect(() => f.tx.fillOwnedFunction(f.token, d)).toThrow(/owned function data/);
     expect(f.tx.state).toBe("failed");
   });
-  it("reauthenticates after copy proxy callbacks change the function header", () => {
+  it("reports a function header changed by a copy proxy callback at the seal", () => {
     const f = setup(),
       d = definition();
     d.body[0] = new Proxy(d.body[0]!, {
@@ -358,7 +359,8 @@ describe.sequential("owned function admission", () => {
         return Reflect.ownKeys(target);
       },
     });
-    expect(() => f.tx.fillOwnedFunction(f.token, d)).toThrow(/altered function descriptor/);
+    f.tx.fillOwnedFunction(f.token, d);
+    expect(() => f.tx.seal()).toThrow(/altered function descriptor/);
     expect(f.tx.state).toBe("failed");
   });
   it("rejects reentrant fill through copy proxy callbacks", () => {
@@ -394,7 +396,7 @@ describe.sequential("owned function admission", () => {
     expect(() => f.tx.fillOwnedFunction(f.token, d)).toThrow(/requires filling, observed sealed/);
     expect(f.tx.state).toBe("failed");
   });
-  it("closing audit rejects shell corruption after the publication snapshot", () => {
+  it("the seal audit rejects shell corruption after the publication snapshot", () => {
     const module = createEmptyModule(),
       tx = new PhysicalModuleReservations(module);
     const main = tx.reserveFunction("main", "main", { params: [], results: [] });
@@ -412,7 +414,8 @@ describe.sequential("owned function admission", () => {
     });
     tx.freezeReservations();
     tx.fillFunction(prior, { locals: [], body: [] });
-    expect(() => tx.fillOwnedFunction(main, { locals: [], body: [] })).toThrow(/altered completed function main/);
+    tx.fillOwnedFunction(main, { locals: [], body: [] });
+    expect(() => tx.seal()).toThrow(/altered completed function main/);
     expect(changed).toBe(true);
     expect(tx.state).toBe("failed");
   });

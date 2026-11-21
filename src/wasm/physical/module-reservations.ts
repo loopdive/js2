@@ -265,8 +265,6 @@ export class PhysicalModuleReservations {
   #canonicalGroupRegistered = false;
   #importsClosed = false;
   #checkingSelfDefinition = false;
-  /** Inside `audited`: nested layout audits are skipped, ledger mutations are refused, one audit runs on exit. */
-  #auditing = false;
 
   constructor(module: PhysicalModuleStorage) {
     this.#module = module;
@@ -357,9 +355,7 @@ export class PhysicalModuleReservations {
 
   #require(phase: "reserving" | "filling"): void {
     if (this.#checkingSelfDefinition) this.#fail("reentrant self-type definition");
-    if (this.#auditing) this.#fail("mutation inside a read-only audited check");
     if (this.#state !== phase) this.#fail(`operation requires ${phase}, observed ${this.#state}`);
-    this.#verifyLayout();
   }
 
   #key(key: PhysicalResourceKey): void {
@@ -395,9 +391,15 @@ export class PhysicalModuleReservations {
     if (!this.#tokens.has(token)) this.#fail("foreign or forged reservation token");
   }
 
-  #verifyLayout(): void {
-    // O(module) per ledger call; it guards against another compiler module rewriting storage, not user input (#7380).
-    if (this.#auditing || !preparedValidationEnabled()) return;
+  /**
+   * The layout audit: every registered population slot and descriptor is still the one this ledger wrote. It guards
+   * against another compiler module rewriting storage, not user input (#7380), and costs O(module), so it runs once
+   * at each phase boundary (freeze, seal) and once more in the physical-module validator stage, rather than per
+   * query: run per query it was O(queries × module), about 18 s of a realm compile. An alteration that persists to
+   * the next of these points is reported there (#7354 Perf4).
+   */
+  verifyLayout(): void {
+    if (!preparedValidationEnabled()) return;
     for (const key of populationKeys) {
       const actual = this.#module[key];
       const expected = this.#expected[key];
@@ -469,7 +471,6 @@ export class PhysicalModuleReservations {
   internFunctionType(params: readonly ValType[], results: readonly ValType[], name?: string): number {
     if (this.#checkingSelfDefinition) this.#fail("reentrant self-type definition");
     if (this.#state !== "reserving" && this.#state !== "filling") this.#fail(`type lookup in ${this.#state}`);
-    this.#verifyLayout();
     const key = funcTypeKey([...params], [...results]);
     const cached = this.#cache.get(key);
     if (cached !== undefined) {
@@ -480,7 +481,6 @@ export class PhysicalModuleReservations {
       return cached;
     }
     if (this.#state !== "reserving") this.#fail(`function signature was not reserved: ${key}`);
-    if (this.#auditing) this.#fail("mutation inside a read-only audited check");
     const index = this.#flatTypes().length;
     // The shared allocator appends to the actual outer record array. Convert
     // only its index coordinate; no cloned type objects or second allocator.
@@ -753,34 +753,21 @@ export class PhysicalModuleReservations {
   }
 
   freezeReservations(): void {
-    this.#require("reserving");
-    this.#check(() => assertPhysicalResources(this.#module));
+    // Indices are handed out from here on: the populations they count must be the registered ones.
+    this.#closePhase("reserving");
     this.#state = "filling";
   }
 
-  /**
-   * Run a read-only check under one layout audit, taken after it, instead of one per nested query. Every ledger
-   * mutation inside is refused and the check's result is returned only after the audit passes, so whatever the
-   * check read was the audited layout, or the call fails.
-   */
-  audited<T>(check: () => T): T {
-    const outer = this.#auditing;
-    this.#auditing = true;
-    let result: T;
-    try {
-      result = check();
-    } finally {
-      this.#auditing = outer;
-    }
-    // Inside an outer check this is skipped: the outer exit audit covers both.
-    this.#verifyLayout();
-    return result;
+  /** The checks that end a phase: the layout audit, then the stage-4 resource check. */
+  #closePhase(phase: "reserving" | "filling"): void {
+    this.#require(phase);
+    this.verifyLayout();
+    this.#check(() => assertPhysicalResources(this.#module));
   }
 
   /** Final raw index at this frozen layout; never hand .handle to ProgramAbiMap. */
   physicalIndex(token: PhysicalReservation): number {
     if (this.#state !== "filling" && this.#state !== "sealed") this.#fail(`physical index requested in ${this.#state}`);
-    this.#verifyLayout();
     this.#owned(token);
     const position = this.#positions.get(token)!;
     switch (token.kind) {
@@ -799,7 +786,7 @@ export class PhysicalModuleReservations {
     }
   }
 
-  /** One fresh layout audit for a dense own-data list; never invoke its getters or iterator. */
+  /** Indices for a dense own-data list; never invoke its getters or iterator. */
   physicalIndices(tokens: readonly PhysicalReservation[]): readonly number[] {
     if (this.#state !== "filling" && this.#state !== "sealed") this.#fail(`physical index requested in ${this.#state}`);
     if (!Array.isArray(tokens)) this.#fail("physical indices require a dense own-data array");
@@ -812,10 +799,8 @@ export class PhysicalModuleReservations {
       if (!descriptor || !("value" in descriptor)) this.#fail("physical indices require dense own-data entries");
       captured.push(descriptor.value);
     }
-    // A Proxy descriptor trap can run during capture. Audit only after capture,
+    // A Proxy descriptor trap can run during capture. Recheck the phase after it,
     // then use private frozen tokens/positions without reading public arrays.
-    if (this.#state !== "filling" && this.#state !== "sealed") this.#fail(`physical index requested in ${this.#state}`);
-    this.#verifyLayout();
     if (this.#state !== "filling" && this.#state !== "sealed") this.#fail(`physical index requested in ${this.#state}`);
     const offsets = { function: 0, global: 0, tag: 0 };
     for (const token of this.#tokens) {
@@ -838,7 +823,6 @@ export class PhysicalModuleReservations {
   /** Authenticate producer completion without sealing unrelated reservations. */
   assertCompletedReservation(token: FunctionReservation | GlobalReservation): void {
     if (this.#state !== "filling" && this.#state !== "sealed") this.#fail(`completion requested in ${this.#state}`);
-    this.#verifyLayout();
     this.#owned(token);
     if (token.kind === "function") {
       if (!this.#filledFunctions.has(token)) this.#fail(`missing function fill ${token.key}`);
@@ -891,13 +875,9 @@ export class PhysicalModuleReservations {
       const snapshot = this.#captureFunction(token.object);
       const shell = data.immutable ? this.#captureFunction(ownedFunctionShell(token.object)) : undefined;
       if (this.#state !== "filling") this.#fail("owned publication changed ledger phase");
-      this.#verifyLayout();
-      if (this.#state !== "filling" || this.#filledFunctions.has(token)) this.#fail("reentrant owned publication");
+      if (this.#filledFunctions.has(token)) this.#fail("reentrant owned publication");
       this.#filledFunctions.set(token, { locals: data.locals, body: data.body, snapshot });
       if (shell !== undefined) this.#ownedFunctions.set(token, shell);
-      // Registration must participate in the closing audit before returning authority.
-      this.#verifyLayout();
-      if (this.#state !== "filling") this.#fail("owned closing audit changed ledger phase");
     } catch (error) {
       if (this.#state === "failed") throw error; // Already prefixed by #fail.
       this.#fail(error instanceof Error ? error.message : String(error));
@@ -1009,8 +989,7 @@ export class PhysicalModuleReservations {
 
   /** Only completed, unchanged actual resources contribute to this census. */
   seal(): PhysicalModuleCensus {
-    this.#require("filling");
-    this.#check(() => assertPhysicalResources(this.#module));
+    this.#closePhase("filling");
     for (const token of this.#tokens) {
       if (token.kind === "function" && !this.#filledFunctions.has(token))
         this.#fail(`missing function fill ${token.key}`);
