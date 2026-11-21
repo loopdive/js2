@@ -19,12 +19,14 @@ const isMemberName = (node: ts.Identifier): boolean =>
 
 export function programObjects(sourceFiles: readonly ts.SourceFile[]): ProgramObjects {
   let present = false;
+  let functions = false;
   let namesSymbol = false;
   const visit = (node: ts.Node): void => {
     present ||= ts.isObjectLiteralExpression(node);
+    functions ||= ts.isFunctionExpression(node) || ts.isArrowFunction(node);
     namesSymbol ||= ts.isIdentifier(node) && node.text === "Symbol" && !isMemberName(node);
     ts.forEachChild(node, visit);
   };
   sourceFiles.forEach(visit);
-  return { present, namesSymbol };
+  return { present, functions, namesSymbol };
 }

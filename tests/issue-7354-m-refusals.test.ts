@@ -82,13 +82,10 @@ describe("#7354 M1 — keys a built-in prototype holds", () => {
     [
       "A17: a write of __proto__ to an object",
       "function g(){ var o = {a:1}; o.__proto__ = null; } g();",
-      refused("member write '__proto__'", "an object", "Object.prototype's properties"),
+      refused("member write '__proto__'", "an object", "Object.prototype's accessor"),
     ],
-    [
-      "A17: a write of toString to a value that may be an object",
-      "var o = {a:1}; function f(v){ v.toString = 1; } f(o);",
-      refused("member write 'toString'", mayBe("an object"), "Object.prototype's properties"),
-    ],
+    // (#7354 F1, D4) A write of Object.prototype's writable data key `toString` creates an own property
+    // (tests/issue-7354-f1-function-kind.test.ts).
     [
       "B23: a string's length",
       "function f(v){ return v.length; } f('abc');",

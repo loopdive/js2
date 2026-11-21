@@ -1427,7 +1427,7 @@ function materializePhysicalProgram(
     abi.sealPlan();
   }
   bindPhysicalAbi(abi, plan, { ...reconciliation, slots, vectorHelper });
-  if (nativePack) fillNativeStringValueResources(reservations, nativePack);
+  if (nativePack) fillNativeStringValueResources(reservations, nativePack, sourceClosures?.types.closures.root);
   else if (strings) fillNativeStringLiteralResources(reservations, strings);
   if (realm) fillNativeRealmResources(reservations, realm);
   if (formatterPack) fillNativeNumberFormatResources(reservations, formatterPack);
@@ -1490,8 +1490,8 @@ function materializePhysicalProgram(
   if (nativePack?.output) publishNativeStringValueOutput(reservations, nativePack);
   reservations.seal();
   if (sourceClosures) requireCompletedNativeSourceClosures(reservations, sourceClosures);
-  const realmSlots = realm ? requireCompletedNativeRealmSlots(reservations, realm) : undefined;
   if (invocationPack) requireCompletedNativeInvocation(reservations, invocationPack);
+  const realmSlots = realm ? requireCompletedNativeRealmSlots(reservations, realm, invocationPack) : undefined;
   if (nativePack) requireCompletedNativeStringValues(reservations, nativePack);
   else if (strings) requireCompletedNativeStringLiterals(reservations, strings);
   if (formatterPack) requireCompletedNativeNumberFormat(reservations, formatterPack);

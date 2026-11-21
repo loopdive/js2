@@ -3994,6 +3994,91 @@ none of whose quoted texts they assert.)
 Compile time per row: median 45 ms, p90 72 ms, max 907 ms (every row refuses before emission). As the plan
 predicted, the 293 rows move to Fa part 2's "declaration read as a value".
 
+## Slice F1a (steps 1–3) result (2026-11-21, branch `claude/7354-f1`; steps 4–6 are F1b)
+
+Base: `claude/7354-m1` 333a3f2fc7, then `main` 69dbe732c3 merged in (M1, M2 and F0, PR 7362). Stopped before step 4 on
+the plan's own Risk-1 rule (below).
+
+**F1b (not built):** step 4 declarations read as values (`program-source-function-values.ts`, the trampoline unit, the
+direct-plan-first call order), step 5 R7 (direct calls inside module-init closures), step 6 function-object
+properties (kernel source-closure arm, `js.function.init`, `emitFunctionObjectInit`, `BUILTIN_REACHABLE_KEYS.function`).
+Waits for the compile-time fix of closure programs (slice Perf3).
+
+### Built
+
+- **F0**: this branch first built its own (`withoutDeadBindings`, an early-error guard, `earlyErrorGoals`); after
+  main's F0 (PR 7362, `src/test262/prepared-dead-bindings.ts`) landed, the merge dropped all of it for main's. Nothing
+  of the branch's F0 is kept. Main's F0 test is adapted: its dropped closures read `this` (refused, C2), because a
+  plain function expression is a value now and an unelided one would compile (slowly) instead of refusing.
+- **Fa ported as content** (not its commits): the all-dynamic closure signature, `staticFunctionValue`, written
+  parameter slots, N1, the closure-site re-typing. Corrections: (a) the one kind answer is `carrierKindOf` (callable →
+  `function`; the `__ir_dyn_call_box` projection via `functionValueOperand`); the box arm and the projection share one
+  `intoCarrier`; Fa's stricter "dynamic" rule was NOT folded in (every dynamic-typed value is produced by an admitted
+  box or a legalized operation; the rule would refuse M1's member-read results); (b) exhaustive; (c) the carrier-type
+  mapping moved to `src/ir/program/dynamic-carrier-types.ts`: the legalization is 347 lines (M1: 350).
+- **The function kind**: a row in every table of `dynamic-value-kinds.ts` (typeof "function", test
+  `js.value.is_function` from fa-ty, tag "Function", ToString/ToNumber via ToPrimitive, `+` concatenates, member
+  access "object"), admitted only where the source creates a function value (`ProgramObjects.functions`).
+- **D6** (`ordinary-to-primitive.ts`): Get in hint order (string for ToString, number for ToNumber and `+`); a callable
+  method, and a function value's own ToPrimitive, end at the run-time abort `js.value.unsupported` (J's row: body
+  `unreachable`). Without function values only `toString` is consulted, so those programs keep their bytes.
+- **D4**: a member write of Object.prototype's writable data keys creates an own property; only `__proto__` refuses.
+- A returned closure boxes as a function value (`argumentIntoDynamic`, shared with arguments).
+
+### Found and fixed on the way
+
+- An exception out of `compile()`: a module-init of ~20+ statements is chunked, and Fa's static closure value (an SSA
+  value in the shared scope) was called from another chunk's function (`closure.call callee must be closure/callable
+  IrType, got val`). The value is now used only in the body that built it; across chunks the call refuses by name.
+- D6's first cut defined an SSA value twice (an arm reused its parent's result); caught by a probe, fixed.
+
+### Not built (the plan's steps 4-6) and why
+
+- **Risk 1 tripped** (plan §13: "if 30 closures exceed ~10 s, stop and hand the profile to the perf lane before step
+  4"). Measured (tsx, validator off): `var cI = function (x) { return x; }` × 1 / 10 / 30 with one call each: 1.6 s /
+  7.9 s / 43.6 s (the 30-closure run then hit the chunk exception above). Profile of the 10-closure program: 5.3 s of
+  9.3 s in `assertNativeSourceClosureRequirementsCurrent` → `same` → `preparedIrDataMismatch` (structural
+  re-comparison per body fill, `program-native-invocation.ts requireOwner`), i.e. quadratic self-checks, not F code.
+  A program with one closure, one object, a catch and ~6 `+` took 196 s. Under vitest (validator on) one closure
+  program costs 20-40 s.
+- So declarations as values (step 4), R7 (step 5) and function-object properties (step 6) are not built. Until step 6
+  a member read or write whose receiver may be a function value refuses by name: `member read 'k' of a value that may be
+  a function needs the realm's function objects`.
+
+### Proof
+
+Tests (each a program through the strict Prepared entry, node's answer returns and a wrong one throws):
+`issue-7354-f1-function-kind` (7), `-f1-to-primitive` (4), `-f1-function-expressions{,-2,-3}` (4/3/2), Fa's file (53).
+After the main merge every test file this branch adds or modifies (18, incl. main's F0 test) ran in full, exit 0.
+Existing pins changed: m-refusals (`__proto__` text; the `toString` write runs now), o3 (`isPrototypeOf` write runs),
+h and str2 (refusal programs use their binding, F0), d1 (selection rows), o2 (`functions`), x (closure pack admitted;
+Fa's stricter-rule test dropped), 3518 core vocabulary (48 ids), 3526 (two nullary calls).
+
+Mutations (each alone): ToString hint → number, callable method skipped, function kind admitted everywhere, D4's
+`!== "type-error"` (killed by m-refusals: without it the refusal names `undefined`/`null` among the receiver's kinds)
+— all killed by a run. By the tests that pin them: each function row of TYPEOF_NAME / KIND_TEST / OBJECT_TAG, the
+callable and projection rules of `carrierKindOf`, `intoCarrier`'s function case, the interim member refusal, the
+chunk guard, the return box. Survivor, kept on purpose: the `!isCallable → ["toString"]` gating (answers equal; it
+keeps the bytes of programs without function values; the reason is a comment at the line).
+
+Bytes vs main 69dbe732c3: ordinary pipeline, 20 test262 files (Function/Object toString, typeof, function
+expressions, addition) × default + standalone: 40/40 identical. `check:prepared-bytes` (804 rows): only row 149
+differs (a closure reading a later-declared local now refuses by Fa's own name).
+
+### Sample (411 rows, real prelude; at b9d8346b3d and again after the main merge, same tally)
+
+| first gap | M1+M2 | F1 |
+|---|---|---|
+| `identifier "assert" is not in scope in assert` | 293 | 0 |
+| `member read 'name' of a value that may be a function needs the realm's function objects` | 0 | 293 |
+| `not-direct` | 73 | 73 |
+| `assert` not in scope in verifyProperty | 26 | 26 |
+| pass (negatives) | 14 | 14 |
+| other | 5 | 5 |
+
+The plan expected "unchanged" for F1; the prelude's function expressions admit the function kind, so its member reads
+reach the interim refusal before `assert`. Step 6 (the realm's function objects) is what moves them.
+
 ## U0 result (2026-11-21, branch `claude/7354-u0` from `origin/main` 4468443785)
 
 The runner rule of U-D7: on the Prepared lane a Wasm trap is never the expected throw.
@@ -4058,6 +4143,45 @@ Measurements:
 Not verified: that `n` in `var n = 1; Object.defineProperty(n, …)` keeps the typed (not dynamic) home — the program
 refuses at the call before anything observable; the runnable `var Object = {}` proof of the plan refuses on the
 checker's diagnostics (`Property 'defineProperty' is missing in type '{}'…`), not on a binding.
+
+### Review round 1 (PR 7374; 314 probes: 0 wrong, 0 exceptions, 0 invalid Wasm; NOT MET on A1)
+
+The sections above describe the state before this round where they differ; this list is current.
+
+- **A1 (fixed).** ToString of a value that may only be a function refuses at compile time: `ToString of a function
+  needs Function.prototype.toString` (`TO_STRING_ARM.function = "function-source"`, the refusal in `stringOf` when every
+  kind the value may hold has that arm). The run-time abort stays an arm beside kinds that answer (a parameter, a
+  caught value). To make "only a function" knowable, a script var whose home holds its own closure reads as that
+  closure's function value in its module-init (from-ast's `moduleGlobal` read), and the kind proof (`knownKinds`)
+  learns the function-value projection. ToNumber of a function is NaN, exact while a function value has no own
+  `valueOf`/`toString` (`TO_NUMBER_ARM.function = "nan"`); `+` concatenates, so `f + 1` refuses with the ToString text.
+- **A2 (ruling, comment).** An object's callable `toString`/`valueOf` stays the run-time abort: whether a property
+  holds a function is a run-time fact of that object (comment at `skipUnlessCallable`).
+- **B1 (fixed).** `MEMBER_ACCESS_ARM.function = "function-objects"` drives the member refusal; a receiver known to be a
+  function now reads `member read 'k' of a function needs the realm's function objects`.
+- **B2 (fixed).** Behaviour tests in `f1-function-kind` make each function row observable: `op(v){ return v + 1 }`
+  over a number, a string and a function (ADD_ROLE), `str`/`num` over numbers, Booleans and a function (TO_STRING_ARM,
+  TO_NUMBER_ARM), the caught function value, typeof / isPrimitive (TYPEOF_NAME, KIND_TEST), the tag test
+  (OBJECT_TAG), the member refusals (MEMBER_ACCESS_ARM). Survivor: TO_NUMBER_ARM "nan" → "unbox" (the unboxer answers
+  NaN for any reference, the M2 precedent).
+- **B3 (fixed).** `functionValueOperand` lives in `src/ir/program/function-value-projection.ts`, the module that owns
+  the `__ir_dyn_call_box` pattern on the Prepared side; the projection of anything but a packed callable refuses as
+  `__ir_dyn_call_box of <value>, which is not a packed callable`.
+- **B4 (fixed).** The no-closure-root branch of the function test is gone: the test is requested only where the
+  source creates a function value, and such a program lowers a closure or refuses; no probe reached it (an IIFE, an
+  uncalled function returning a closure, a dead closure in `if (false)`), so the case is a named resource failure.
+- **B5 (fixed).** No growth against main in `from-ast.ts`, `program-source.ts`, `ir-program-presentation.ts`, and no
+  grant: `unboundIdentifierDetail` moved to `identifier-read.ts`; Fa's `argumentIntoDynamic` moved to
+  `function-object-lowering.ts` as `concreteIntoDynamic` (offsets the read arm above); the `__self` slice is
+  `callableCarried`'s `closureUnit`; N1 lives in the Prepared script-var home classifier
+  (`module-binding-script-var-home.ts`, same text). `functionValue.in` is an `IrFunctionBuilder`.
+- **B6 (fixed).** The forged-IR legalization tests of the Fa file (and the closure-pack row of x's table) are deleted;
+  every path they covered is reached by the source programs of the Fa and F1 files. The vocabulary count pins are a
+  uniqueness check and "every id has its definition".
+
+After the round (main ab820ab6d6 merged): every test file the branch adds or modifies, 18, ran in full, exit 0;
+gates exit 0 (budgets with `LOC_GATE_BASE` = main: no growth); `check:prepared-bytes` vs main: only row 149 differs;
+ordinary pipeline 20 files × 2 targets: 40/40 identical.
 
 ## Perf3 result (2026-11-21, branch `claude/7354-perf3` from `origin/main`; measured on `claude/7354-perf3-work`)
 

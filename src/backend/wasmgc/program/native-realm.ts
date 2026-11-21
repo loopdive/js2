@@ -72,6 +72,7 @@ import {
   type NativeClosureDeclarationPlan,
 } from "../resources/native-closures.js";
 import { requireNativeSourceClosureTypes, type NativeSourceClosureTypes } from "../resources/native-source-closures.js";
+import { nativeInvocationFunctions, type NativeInvocationReservations } from "../resources/native-invocation.js";
 import {
   reserveNativeStringEqualityResources,
   fillNativeStringEqualityResources,
@@ -620,16 +621,32 @@ export interface EmittedNativeRealmSlots {
 }
 /**
  * Certify the bootstrap, then answer the slots of the tokens the reserved realm enumerated in one index batch
- * (a second enumeration would re-run every pack's ownership checks the certification just ran).
+ * (a second enumeration would re-run every pack's ownership checks the certification just ran). (#7354 Fa) With
+ * source closures, the slots also hold the closure types the realm borrows and the closure invocation population,
+ * which their own `requireCompleted…` checks authenticated.
  */
 export function requireCompletedNativeRealmSlots(
   tx: PhysicalModuleReservations,
   pack: NativeRealmReservations,
+  invocation: NativeInvocationReservations | undefined,
 ): EmittedNativeRealmSlots {
   requireCompletedNativeRealmBootstrap(tx, pack);
   const inventory = owners.get(pack)!.inventory;
   if (!inventory) fail("realm inventory was never enumerated");
-  const { functions, types, globals, sourceObjects } = inventory;
+  const { sourceObjects, sourceTypes } = inventory;
+  const functions = [...inventory.functions, ...(invocation ? nativeInvocationFunctions(tx, invocation) : [])];
+  const types = [
+    ...inventory.types,
+    ...(sourceTypes
+      ? [
+          ...sourceTypes.shapes.map((shape) => shape.type),
+          ...nativeClosureReservationInventory(tx, sourceTypes.closures, sourceTypes.closurePlan).filter(
+            (row): row is TypeReservation => row.kind === "type",
+          ),
+        ]
+      : []),
+  ];
+  const globals = [...inventory.globals, ...(invocation ? Object.values(invocation.globals) : [])];
   const indices = tx.physicalIndices([...functions, ...types, ...globals, ...sourceObjects.map((row) => row.token)]);
   let next = 0;
   const take = (count: number) => indices.slice(next, (next += count));
