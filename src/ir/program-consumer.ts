@@ -83,10 +83,7 @@ import {
   requireCompletedNativeSourceClosures,
   type NativeSourceClosureEmission,
 } from "./program-native-invocation.js";
-import {
-  assertNativeSourceClosureRequirementsCurrent,
-  type NativeSourceClosureRequirements,
-} from "./program/native-source-closure-requirements.js";
+import type { NativeSourceClosureRequirements } from "./program/native-source-closure-requirements.js";
 import { assertNativeValueResourcePlanFor } from "./program/native-value-resources.js";
 import { freezePreparedIrValue, preparedIrDataMismatch } from "./program/data.js";
 import {
@@ -545,7 +542,6 @@ function prepareNativeEmission(accepted: AcceptedPreparedIrProgram, plan: Physic
   if (Boolean(record.sourceClosures) !== Boolean(plan.sourceClosures))
     emissionFailed("source closure acceptance/physical plan mismatch");
   if (record.sourceClosures) {
-    assertNativeSourceClosureRequirementsCurrent(record.sourceClosures);
     const { demands, ...description } = record.sourceClosures;
     if (
       demands.program !== program ||

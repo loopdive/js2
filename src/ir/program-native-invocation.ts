@@ -4,7 +4,6 @@ import type { NativeInvocationRequirements } from "./program/native-invocation-r
 import type { NativeRealmRequirements } from "./program/native-realm-requirements.js";
 import {
   planNativeSourceClosureRequirements,
-  assertNativeSourceClosureRequirementsCurrent,
   type NativeSourceClosureRequirements,
 } from "./program/native-source-closure-requirements.js";
 import type { PreparedIrProgram, PreparedIrProgramRuntimeProjection } from "./program/prepared-contracts.js";
@@ -15,7 +14,6 @@ import { irUnitCallableBindingId } from "./core/callable-bindings.js";
 import { PreparedIrProgramInvariantError } from "./program/errors.js";
 import {
   reserveNativeSourceClosureTypes,
-  requireNativeSourceClosureTypes,
   requireCompletedNativeSourceClosureState,
   resolveNativeSourceClosure,
   resolveNativeSourceClosureShape,
@@ -66,8 +64,6 @@ function fail(detail: string): never {
 function requireOwner(tx: PhysicalModuleReservations, pack: NativeSourceClosureEmission): SourceOwner {
   const owner = owners.get(pack);
   if (!owner || owner.tx !== tx) fail("foreign or copied source association");
-  assertNativeSourceClosureRequirementsCurrent(pack.requirements);
-  requireNativeSourceClosureTypes(tx, pack.types, pack.requirements);
   return owner;
 }
 
@@ -85,7 +81,6 @@ export function beginNativeSourceClosureEmission(
   carriers: NativeSourceClosureCarriers,
   builtins?: NativeBuiltinFunctionRequestIssuer,
 ): NativeSourceClosureEmission {
-  assertNativeSourceClosureRequirementsCurrent(requirements);
   const types = reserveNativeSourceClosureTypes(tx, requirements, carriers, builtins);
   const pack = Object.freeze({ requirements, types });
   owners.set(pack, { tx, units: new Map(), completed: new Set(), bound: false, builtins });

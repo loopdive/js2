@@ -3,10 +3,7 @@
 import type { IrClosureSignature, IrType } from "../../../ir/core/types.js";
 import type { IrClosureLowering } from "../../../runtime/wasmgc/values/closure-layouts.js";
 import { preparedIrTypeKey } from "../../../ir/program/abi-signatures.js";
-import {
-  assertNativeSourceClosureRequirementsCurrent,
-  type NativeSourceClosureRequirements,
-} from "../../../ir/program/native-source-closure-requirements.js";
+import type { NativeSourceClosureRequirements } from "../../../ir/program/native-source-closure-requirements.js";
 import type { NativeVectorResourcePlan } from "../../../ir/program/native-vector-resources.js";
 import type { ValType } from "../../../wasm/model/instructions.js";
 import type { PhysicalModuleReservations, TypeReservation } from "../../../wasm/physical/module-reservations.js";
@@ -115,6 +112,17 @@ function fail(detail: string): never {
 function same(a: unknown, b: unknown, detail: string): void {
   if (preparedIrDataMismatch(a, b) !== undefined) fail(detail);
 }
+/**
+ * The owner of a pack this transaction reserved. Per-use lookups stop here: the pack and its requirements are frozen
+ * and its types live in the ledger, whose storage the layout audit and the module validator check (#7380), so
+ * re-deriving the whole plan at every use (`requireNativeSourceClosureTypes`) only re-proved this compile's own data,
+ * once per closure use.
+ */
+function reservedOwner(tx: PhysicalModuleReservations, pack: NativeSourceClosureTypes): Owner {
+  const owner = owners.get(pack);
+  if (!owner || owner.tx !== tx) fail("foreign or copied source type owner");
+  return owner;
+}
 function realmStateCarrier(tx: PhysicalModuleReservations, carriers: NativeSourceClosureCarriers) {
   const field = Object.getOwnPropertyDescriptor(carriers, "realmState");
   if (!field) {
@@ -216,7 +224,6 @@ export function reserveNativeSourceClosureTypes(
   carriers: NativeSourceClosureCarriers,
   builtins?: NativeBuiltinFunctionRequestIssuer,
 ): NativeSourceClosureTypes {
-  assertNativeSourceClosureRequirementsCurrent(requirements);
   authenticateCarriers(tx, carriers, requirements);
   const realmState = realmStateCarrier(tx, carriers);
   const { closurePlan, references, shapeTypes } = physicalPlan(tx, requirements, carriers, builtins);
@@ -308,7 +315,6 @@ export function requireNativeSourceClosureTypes(
     )
       fail("foreign shared source carriers");
   }
-  assertNativeSourceClosureRequirementsCurrent(expectedRequirements);
   if (realmStateCarrier(tx, owner.carriers) !== owner.realmState) fail("changed realm state carrier identity");
   if (
     owner.carriers.refCells !== owner.refCells ||
@@ -356,7 +362,7 @@ export function resolveNativeSourceClosure(
   pack: NativeSourceClosureTypes,
   signature: IrClosureSignature,
 ): IrClosureLowering | null {
-  requireNativeSourceClosureTypes(tx, pack, pack.requirements);
+  reservedOwner(tx, pack);
   const key = preparedIrTypeKey({ kind: "closure", signature });
   const row = pack.requirements.signatures.find(
     (row) => preparedIrTypeKey({ kind: "closure", signature: row.signature }) === key,
@@ -376,25 +382,16 @@ export function requireCompletedNativeSourceClosureState(
   tx: PhysicalModuleReservations,
   pack: NativeSourceClosureTypes,
 ): void {
-  const owner = owners.get(pack);
-  if (!owner || owner.tx !== tx) fail("foreign or copied source type owner");
-  // No extra currentness walk on the unchanged stateless completion path.
-  // Its caller already authenticates the source owner; there is no initializer to complete.
-  if (owner.realmState) {
-    requireNativeSourceClosureTypes(tx, pack, pack.requirements);
-    requireCompletedNativeRealmObjectLayouts(tx, owner.realmState);
-  }
+  const owner = reservedOwner(tx, pack);
+  if (owner.realmState) requireCompletedNativeRealmObjectLayouts(tx, owner.realmState);
 }
 
-/** Exact retained state owner after full source/carrier authentication, never a structural guess. */
+/** The exact retained state owner, never a structural guess. */
 export function nativeSourceClosureRealmState(
   tx: PhysicalModuleReservations,
   pack: NativeSourceClosureTypes,
 ): NativeRealmObjectLayoutReservations | undefined {
-  const owner = owners.get(pack);
-  if (!owner || owner.tx !== tx) fail("foreign or copied source type owner");
-  requireNativeSourceClosureTypes(tx, pack, pack.requirements);
-  return owner.realmState;
+  return reservedOwner(tx, pack).realmState;
 }
 
 export function resolveNativeSourceClosureShape(
@@ -403,7 +400,7 @@ export function resolveNativeSourceClosureShape(
   signature: IrClosureSignature,
   captures: readonly IrType[],
 ): NativeSourceClosureTypes["shapes"][number] | undefined {
-  requireNativeSourceClosureTypes(tx, pack, pack.requirements);
+  reservedOwner(tx, pack);
   const key = preparedIrTypeKey({ kind: "closure", signature });
   const row = pack.requirements.shapes.find((shape) => {
     const logical = pack.requirements.signatures.find((entry) => entry.id === shape.signatureId);
@@ -423,7 +420,6 @@ export function resolveNativeSourceRefCell(
   inner: ValType,
   allocation?: AllocSiteId,
 ): { readonly typeIdx: number; readonly fieldIdx: 0 } | null {
-  requireNativeSourceClosureTypes(tx, pack, pack.requirements);
-  const cells = owners.get(pack)!.refCells;
+  const cells = reservedOwner(tx, pack).refCells;
   return cells ? resolveNativeRefCell(tx, cells, inner, allocation) : null;
 }
