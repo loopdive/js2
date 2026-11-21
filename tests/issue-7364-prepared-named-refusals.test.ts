@@ -31,7 +31,8 @@ describe("#7364 — Prepared-path refusals instead of invariant crashes", () => 
     ["a literal's .test in a function", 'function f() { return /a/.test("a"); }\nf();'],
     ["a literal's .source", "var s = /a/.source;"],
     ["a discarded literal", "/a/;"],
-    ["a literal bound to a var", "var r = /a/;"],
+    // Read, so the #3418 dead-binding elision (#7354 F0) keeps the statement.
+    ["a literal bound to a var", "var r = /a/; var t = r;"],
   ])("refuses a RegExp literal without a provider: %s", async (_label, source) => {
     const result = await compile(source, options());
     expect(result.success).toBe(false);

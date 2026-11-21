@@ -95,7 +95,8 @@ export function isUnshadowedUndefined(node: ts.Expression): boolean {
   return ts.isIdentifier(node) && node.text === "undefined" && isUnshadowedGlobalConstant(node);
 }
 
-const GLOBAL_CONSTANTS: ReadonlySet<string> = new Set(["undefined", "NaN", "Infinity"]);
+/** The global object's value properties that are neither writable nor configurable (§19.1.1-§19.1.4). */
+export const GLOBAL_CONSTANTS: ReadonlySet<string> = new Set(["undefined", "NaN", "Infinity"]);
 
 /** (#7339) `undefined`, `NaN` or `Infinity` read as the global value: nothing in the file declares the name. */
 export function isUnshadowedGlobalConstant(node: ts.Expression): boolean {

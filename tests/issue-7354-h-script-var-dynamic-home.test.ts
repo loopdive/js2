@@ -208,12 +208,13 @@ describe("#7354 H — the dynamic home of a script var", () => {
       "var o = 1; Object.defineProperty(o, 'p', {});",
       "ir/from-ast: Object.defineProperty is not an admitted Object static (<module-init>)",
     ],
-    // A value kind the carrier cannot hold yet is refused at its store, by the slice that owns it.
+    // A value kind the carrier cannot hold yet is refused at its store, by the slice that owns it. Each binding is
+    // read, so the #3418 dead-binding elision (#7354 F0) keeps it.
     // (#7354 O2) An object literal is the object kind of the dynamic value now (tests/issue-7354-o2-object-values.test.ts).
-    ["holding an array literal", "var arr = [1];", "resolver cannot register vec for array literal"],
+    ["holding an array literal", "var arr = [1]; var r = arr;", "resolver cannot register vec for array literal"],
     [
       "holding a function expression (slice Fa)",
-      "var f = function () {};",
+      "var f = function () {}; var r = f;",
       "module-level closure binding 'f' not in module-init Slice 2 scope",
     ],
     ["holding a built-in member (slice B)", "var g = Math.max;", 'identifier "Math" is not in scope'],

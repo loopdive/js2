@@ -20,13 +20,11 @@
  * allocation chose (including legacy's own zero for an unwritten typed slot),
  * so a common core would either change legacy's answer or inherit its zero.
  */
+import { GLOBAL_CONSTANTS } from "../shared/ambient-intrinsics.js";
 import { isJsPropertyDeclarationTarget } from "../shared/binding-writes.js";
 import { ts } from "../ts-api.js";
 import { type NamedVariableDeclaration, scriptVarReadsFollowInitializer } from "./module-binding-script-var.js";
 import { type IrModuleBindingDeclaration, type IrScriptVarHome, moduleBindingDeclarations } from "./module-bindings.js";
-
-/** The global object's non-writable value properties: a script `var` of one of these names never stores. */
-const NON_WRITABLE_GLOBALS: ReadonlySet<string> = new Set(["undefined", "NaN", "Infinity"]);
 
 /**
  * The `scriptVarHome` resolver option of a pipeline whose IR owns every script `var`'s storage, over the
@@ -49,7 +47,8 @@ export function irOwnedScriptVarHome(
     // top-level variable, and a lexical or ES-module global is typed by the resolver.
     if ((declaration.parent.flags & ts.NodeFlags.BlockScoped) !== 0 || ts.isExternalModule(declaration.getSourceFile()))
       return undefined;
-    if (declaration.getSourceFile() !== soleSource || NON_WRITABLE_GLOBALS.has(declaration.name.text)) return undefined;
+    // A script `var` of a non-writable global value property never stores.
+    if (declaration.getSourceFile() !== soleSource || GLOBAL_CONSTANTS.has(declaration.name.text)) return undefined;
     // (#7372 1b) A repeated `var` is one binding: the home is its first declarator's (the resolver's canonical one),
     // each later one a write. A JS property declaration on the binding (`o.p = v`, `Object.defineProperty(o, …)`)
     // declares no binding; the call itself is refused by name where from-ast meets it (#7364).
