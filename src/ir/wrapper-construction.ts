@@ -19,12 +19,7 @@
 
 import { isUnshadowedLibBinding } from "../shared/ambient-intrinsics.js";
 import { hasDynamicScope, isStoreTarget, outermostParenthesized, stripParens } from "../shared/binding-writes.js";
-import {
-  sourceMayPatchPrototype,
-  sourceNamesReflectiveRoute,
-  sourceRunsDynamicCode,
-  sourceWritesMemberNamed,
-} from "../shared/intrinsic-prototype-writes.js";
+import { sourceMayPatchPrototype, sourceMayWriteBindingUnseen } from "../shared/intrinsic-prototype-writes.js";
 import { ts } from "../ts-api.js";
 import type { OperandFamily } from "./analysis/operand-admissibility.js";
 import type { IrFunctionBuilder } from "./builder.js";
@@ -242,11 +237,9 @@ function realmIsUnpatched(
   const file = callee.getSourceFile();
   return (
     isUnshadowedLibBinding(callee, isLibOnlyBinding) &&
-    !sourceWritesMemberNamed(file, callee.text) &&
+    !sourceMayWriteBindingUnseen(file, callee.text) &&
     (row === undefined || !sourceMayPatchPrototype(file, row.name)) &&
     !sourceMayPatchPrototype(file, "Object") &&
-    !sourceNamesReflectiveRoute(file) &&
-    !sourceRunsDynamicCode(file) &&
     !hasDynamicScope(file)
   );
 }

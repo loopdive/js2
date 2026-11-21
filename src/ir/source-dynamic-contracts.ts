@@ -36,6 +36,7 @@ import {
   legalizeDynamicValues,
   refuseUnadmittedThrows,
 } from "./program/dynamic-value-legalization.js";
+import { legalizeDynamicAllocations } from "./program/dynamic-carrier-types.js";
 import { retargetNumberToString } from "./program/number-to-string-target.js";
 import { programObjects } from "./source-plain-objects.js";
 import type { ProgramObjects } from "./program/dynamic-value-kinds.js";
@@ -46,11 +47,17 @@ import { functionBodyAlwaysTerminates, irFunctionBodyReturnsValue } from "./sele
 import { someReturnedValue } from "./function-returns.js";
 import { sourceDynamicProvenance, type SourceDynamicProvenance } from "./source-dynamic-provenance.js";
 import { isUndeclaredInFile } from "../shared/ambient-intrinsics.js";
+import { ownedByDescriptorLiteral } from "./ordinary-object-closure-signatures.js";
+import { bindingIsUniqueAndNeverWritten } from "../shared/binding-writes.js";
+import { isTopLevelStatementDeclaration } from "../shared/var-declaration-lists.js";
+import { sourceMayWriteBindingUnseen, sourceMayWriteGlobalObject } from "../shared/intrinsic-prototype-writes.js";
 
 type Carries = SourceDynamicProvenance["carries"];
+type Signature = { readonly params: readonly IrType[]; readonly returnType: IrType | null };
 /** A program global as the source producer holds it: only its storage type matters here. */
 type SourcePolicy = Pick<RuntimeManifestPolicy, "backend" | "target">;
 type DynamicLane = "host-async" | "native" | undefined;
+const DYNAMIC: IrType = Object.freeze({ kind: "dynamic" });
 const IR_BOOLEAN_RESULT: IrType = Object.freeze({ kind: "val", val: Object.freeze({ kind: "i32", boolean: true }) });
 
 /** Canonical any identity excludes TypeScript's separate error-any recovery type. */
@@ -169,6 +176,71 @@ function sourceBooleanResult(
     : undefined;
 }
 
+/**
+ * (#7354 Fa) A function expression whose parameters and result carry no TypeScript annotation is a function value
+ * with P's all-dynamic signature on the native lane: every parameter and the result are the dynamic value. Its
+ * callers include calls through values (`js.closure.call:N` passes and returns the carrier), so, as for an
+ * unannotated declaration's parameters, no call site types it. A parameter list with a default, a rest element or
+ * a pattern, and a generator or async literal, have no such contract; neither has a literal inside a descriptor
+ * literal, whose signature is the checker's ({@link ownedByDescriptorLiteral}).
+ */
+function sourceDynamicClosureSignature(
+  policy: SourcePolicy,
+  expression: ts.FunctionExpression,
+): { readonly params: readonly IrType[]; readonly returnType: IrType } | undefined {
+  if (
+    !nativeDynamicLane(policy) ||
+    expression.type !== undefined ||
+    expression.asteriskToken !== undefined ||
+    expression.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword) ||
+    ownedByDescriptorLiteral(expression) ||
+    expression.parameters.some(
+      (parameter) =>
+        parameter.type !== undefined ||
+        parameter.initializer !== undefined ||
+        parameter.dotDotDotToken !== undefined ||
+        parameter.questionToken !== undefined ||
+        !ts.isIdentifier(parameter.name),
+    )
+  )
+    return undefined;
+  return { params: expression.parameters.map(() => DYNAMIC), returnType: DYNAMIC };
+}
+
+/**
+ * (#7354 Fa) A script `var` that holds its function-expression initializer from its declaration on: a top-level
+ * statement's declarator of the program's only source, whose binding nothing else writes. The proof is the shared,
+ * name-based one: the declarator is the name's only binding site in the file and no identifier of that name is
+ * assigned, with no `eval` or `with` (`bindingIsUniqueAndNeverWritten`, so an Annex B block-level function of the
+ * same name declines too); no route that is no identifier write reaches it (`sourceMayWriteBindingUnseen`:
+ * `this.f = v`, `globalThis["f"] = v`, `Function`, a reflective route); and the global object does not escape,
+ * which could write it under a computed name. from-ast keeps the closure on the binding's module-init scope entry
+ * when it lowers the store, so only module-init code after the declaration, outside every function, sees it: there
+ * the slot holds exactly that closure, and a call through the name is the closure's direct call.
+ */
+function staticFunctionValue(
+  policy: SourcePolicy,
+  sourceFiles: readonly ts.SourceFile[],
+  declaration: ts.VariableDeclaration,
+): boolean {
+  const { name, initializer } = declaration;
+  if (
+    sourceFiles.length !== 1 ||
+    !initializer ||
+    !ts.isFunctionExpression(initializer) ||
+    !sourceDynamicClosureSignature(policy, initializer) ||
+    !isTopLevelStatementDeclaration(declaration) ||
+    !ts.isIdentifier(name)
+  )
+    return false;
+  const source = declaration.getSourceFile();
+  return (
+    bindingIsUniqueAndNeverWritten(name, declaration) &&
+    !sourceMayWriteBindingUnseen(source, name.text) &&
+    !sourceMayWriteGlobalObject(source)
+  );
+}
+
 /** The lane has the native dynamic carrier (wasmgc standalone). */
 export function nativeDynamicLane(policy: SourcePolicy): boolean {
   return dynamicLane(policy, undefined) === "native";
@@ -203,6 +275,10 @@ export interface ProgramDynamicContracts extends SourceDynamicProvenance {
     readonly resolveDynamic?: () => ValType;
     readonly dynamicCarrierIsExternref?: () => boolean;
     readonly unresolvedNameIsAbsent?: (node: ts.Identifier) => boolean;
+    /** (#7354 Fa) The all-dynamic signature of an unannotated function expression, if the lane admits one. */
+    readonly dynamicClosureSignature?: (expression: ts.FunctionExpression) => Signature | undefined;
+    /** (#7354 Fa) {@link staticFunctionValue}. */
+    readonly staticFunctionValue?: (declaration: ts.VariableDeclaration) => boolean;
   };
   /** {@link legalizeSourceDynamicValues} for the functions lowered from `roots`. */
   readonly legalize: (
@@ -211,6 +287,7 @@ export interface ProgramDynamicContracts extends SourceDynamicProvenance {
   ) => readonly IrFunction[];
 }
 
+/** `allocations` is the producer's registry: (#7354 Fa) the legalization re-types the closure sites in it. */
 export function programDynamicContracts(
   checker: ts.TypeChecker,
   policy: SourcePolicy,
@@ -233,6 +310,8 @@ export function programDynamicContracts(
           resolveDynamic: () => ({ kind: "externref" }),
           dynamicCarrierIsExternref: () => true,
           unresolvedNameIsAbsent: (node) => absentGlobal(checker, sourceFiles, node),
+          dynamicClosureSignature: (expression) => sourceDynamicClosureSignature(policy, expression),
+          staticFunctionValue: (declaration) => staticFunctionValue(policy, sourceFiles, declaration),
         }
       : {},
     result: (declaration) =>
@@ -388,6 +467,7 @@ function legalizeSourceDynamicValues(
     throw new IrUnsupportedError("type-resolution-unsupported", "build", error.message);
   }
   if (legalized.some((fn, index) => fn !== retargeted[index])) refuseImplicitDynamicFlows(checker, roots, carries);
+  legalizeDynamicAllocations(legalized, allocations);
   return legalized;
 }
 

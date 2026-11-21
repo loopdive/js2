@@ -2356,6 +2356,11 @@
       "layer": "foundation"
     },
     {
+      "path": "src/shared/contracts/dynamic-call-helpers.ts",
+      "state": "clean",
+      "layer": "foundation"
+    },
+    {
       "path": "src/shared/contracts/settled-verdict.ts",
       "state": "clean",
       "layer": "foundation"
@@ -17157,6 +17162,16 @@
     },
     {
       "path": "src/ir/program/dynamic-value-legalization.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
+      "path": "src/ir/program/dynamic-carrier-types.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
+      "path": "src/ir/program/function-value-projection.ts",
       "state": "clean",
       "layer": "ir-program"
     },

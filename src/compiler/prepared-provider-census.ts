@@ -6,6 +6,7 @@
  * join an authenticated row; anything that joins nothing refuses.
  */
 
+import type { IrUnitId } from "../shared/contracts/ir-identity.js";
 import type { EmittedPreparedIrProgram, PreparedIrBackendOptions, PreparedIrProgram } from "../ir/program.js";
 import {
   emittedNativeRealmSlots,
@@ -517,13 +518,18 @@ type CallableContract = Extract<PreparedIrProgram["abi"]["entries"][number]["con
 /**
  * Whether every parameter and result of a callable ABI contract is a value the presentation carries (`carried`), or
  * (#7354 Str2-c) the formatter scratch on a canonical kernel (`formatterKernelScratch`), whose slot the census joins.
+ * (#7354 Fa) On the native lane (`closureUnit`, the contract's source unit) a lifted closure body also takes its own closure as its
+ * first parameter (`__self`), whose type the function-value setup owns; a closure anywhere else in a contract still
+ * needs a boundary producer.
  */
 export function callableCarried(
   program: PreparedIrProgram,
   contract: CallableContract,
   carried: (type: IrType) => boolean,
+  closureUnit?: IrUnitId,
 ): boolean {
-  return [...contract.params, ...contract.results].every(
+  const self = program.ir.functions.some((fn) => fn.unitId === closureUnit && fn.closureSubtype !== undefined);
+  return [...(self ? contract.params.slice(1) : contract.params), ...contract.results].every(
     (type) => carried(type) || formatterKernelScratch(program, contract.ref, type),
   );
 }
