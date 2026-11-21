@@ -1508,8 +1508,8 @@
   {
     "edition": "ES2020",
     "pass": 1228,
-    "fail": 694,
-    "ce": 95,
+    "fail": 695,
+    "ce": 94,
     "skip": 18,
     "total": 2035,
     "pct": 60,
@@ -1715,8 +1715,8 @@
       {
         "name": "import.meta",
         "pass": 17,
-        "fail": 4,
-        "ce": 2,
+        "fail": 5,
+        "ce": 1,
         "skip": 0,
         "total": 23,
         "pct": 74
@@ -3571,18 +3571,18 @@
   },
   {
     "edition": "ES2026",
-    "pass": 4589,
+    "pass": 4587,
     "fail": 197,
-    "ce": 135,
+    "ce": 137,
     "skip": 0,
     "total": 4921,
     "pct": 93,
     "features": [
       {
         "name": "Temporal",
-        "pass": 4490,
+        "pass": 4488,
         "fail": 106,
-        "ce": 15,
+        "ce": 17,
         "skip": 0,
         "total": 4611,
         "pct": 97
