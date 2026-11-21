@@ -47,6 +47,7 @@ import {
   type LegalizationProgram,
 } from "./dynamic-value-kinds.js";
 import { functionValueOperand } from "./function-value-projection.js";
+import { closureMethodArity } from "../core/closure-invocation-callables.js";
 import { carrierClosureSubtype, carrierOf, containsDynamic, inCarrierForm } from "./dynamic-carrier-types.js";
 
 export { DynamicValueGap } from "./dynamic-value-gap.js";
@@ -222,6 +223,9 @@ export function legalizeDynamicValues(
       case "call": {
         if (instr.target.binding.kind === "runtime" && instr.target.binding.symbol === IR_DYN_ADD_FN)
           return addition(instr, instr.args, instr.result!);
+        // (#7354 F2) Without a function value no callee is callable: every call through a value would be the TypeError.
+        if (closureMethodArity(instr.target.name) !== undefined && !admitted.includes("function"))
+          return gap(`${instr.target.name} in a program that creates no function value`);
         const projected = functionValueOperand(instr);
         if (projected !== undefined) return intoCarrier(instr, projected, carrierKindOf(projected, types, definitions));
         return instr.target.binding.kind === "runtime" &&

@@ -191,9 +191,9 @@ describe("#7354 X — throw and catch with the Prepared dynamic value", () => {
       "resolver cannot register vec for array literal",
     ],
     [
-      "a call through a dynamic value (a TypeError)",
+      "a call through a dynamic value in a program without a function value (always a TypeError)",
       "function f(v) { try { v(); } catch (e) { return e; } }\nf(1);",
-      "dynamic operation __ir_dyn_call_value has no Prepared intrinsic",
+      "dynamic operation js.closure.call:0 in a program that creates no function value has no Prepared intrinsic",
     ],
     // (#7354 M2) "a member read of a dynamic value (a TypeError on null)" left this table: the realm's TypeError is a
     // kind of the dynamic value (tests/issue-7354-m2-caught-errors.test.ts).
