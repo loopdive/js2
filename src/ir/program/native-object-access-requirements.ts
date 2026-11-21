@@ -53,7 +53,6 @@ export interface NativeObjectAccessRequirements {
 }
 interface Issued {
   readonly demands: NativeStringValueDemands;
-  readonly sourceSnapshot: unknown;
   readonly dataSnapshot: unknown;
   /** The currentness check below, settled at issue once the requirements can no longer change. */
   readonly authentication: PreparedIrSettlement;
@@ -369,7 +368,6 @@ export function deriveNativeObjectAccessRequirements(
   issued.set(pack, {
     demands,
     dataSnapshot: snapshot,
-    sourceSnapshot: freezePreparedIrValue(demands),
     authentication: settledAtIssue(pack),
   });
   return pack;
@@ -380,7 +378,6 @@ export function assertNativeObjectAccessRequirementsCurrent(pack: NativeObjectAc
   checkUnlessSettled(owner.authentication, pack, () => checkCurrent(pack, owner));
 }
 function checkCurrent(pack: NativeObjectAccessRequirements, owner: Issued): void {
-  same(pack.demands, owner.sourceSnapshot, "borrowed source changed after selection");
   const fresh = collectNativeStringValueDemands(pack.demands.program, pack.demands.projection);
   same(fresh, pack.demands, "complete occurrence census changed");
   if (

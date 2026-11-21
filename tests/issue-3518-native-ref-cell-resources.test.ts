@@ -6,10 +6,7 @@ import { decodePreparedIrProgram, encodePreparedIrProgram } from "../src/ir/prog
 import type { PreparedIrProgram } from "../src/ir/program/prepared-contracts.js";
 import { forEachInstrDeep, type IrInstrRefCellNew } from "../src/ir/core/nodes.js";
 import { AllocSiteRegistry } from "../src/ir/analysis/alloc-registry.js";
-import {
-  planNativeSourceClosureRequirements,
-  assertNativeSourceClosureRequirementsCurrent,
-} from "../src/ir/program/native-source-closure-requirements.js";
+import { planNativeSourceClosureRequirements } from "../src/ir/program/native-source-closure-requirements.js";
 import {
   reserveNativeRefCells,
   requireNativeRefCells,
@@ -50,7 +47,6 @@ afterEach(async () => {
 function requirements(program = original) {
   const plan = planNativeSourceClosureRequirements(program, program.runtime[0]!);
   if (!plan) throw new Error("real mutable source requirements missing");
-  assertNativeSourceClosureRequirementsCurrent(plan);
   return plan;
 }
 function fixture(program = original) {
@@ -245,13 +241,6 @@ describe("issued scalar mutable-cell ownership", () => {
     const late = f.requirements.refCells[1]!;
     f.tx.reserveType(`${f.requirements.key}:ref-cell:${late.id}`, { kind: "struct", name: "existing", fields: [] });
     noAllocation(f, () => reserveNativeRefCells(f.tx, f.requirements), /key/);
-  });
-  it("refuses a stale exact source before any cell reservation", () => {
-    const f = editable(),
-      physical = fixture(f.program);
-    const cell = actualCells(f.program)[0]!.instruction;
-    Object.assign(cell, { value: cell.result });
-    noAllocation(physical, () => reserveNativeRefCells(physical.tx, physical.requirements), /changed after selection/);
   });
   it("resolves only the actual scalar and allocation association", () => {
     const f = fixture(),

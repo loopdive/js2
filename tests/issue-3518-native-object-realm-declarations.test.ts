@@ -45,7 +45,6 @@ import {
 import { createEmptyModule } from "../src/ir/types.js";
 import { PhysicalModuleReservations } from "../src/wasm/physical/module-reservations.js";
 import { indexPhysicalTypes } from "../src/wasm/physical/type-layout.js";
-import { forEachInstrDeep, type IrInstrCall } from "../src/ir/core/nodes.js";
 import { reserveNativeVectorTypes } from "../src/backend/wasmgc/resources/native-vectors.js";
 
 afterEach(async () => {
@@ -156,36 +155,6 @@ describe("authentic full-catalog request issuer", () => {
     expect(() => requireNativePublicBuiltinFunctionRequests(f.tx, f.requests)).toThrow(
       /changed public dependency identities|declaration plan/,
     );
-  });
-  it("rechecks the original mutable projection before reusing public request or tag packets", () => {
-    const f = publicRealmFoundation(false, true, true);
-    const projection = {
-      ...f.projection,
-      prepared: { ...f.projection.prepared, functions: structuredClone(f.projection.prepared.functions) },
-    };
-    const program = {
-      ...f.program,
-      ir: { ...f.program.ir, functions: structuredClone(f.program.ir.functions) },
-      runtime: [projection],
-    };
-    const realm = deriveNativeRealmRequirements(program, projection)!;
-    const requests = declareNativePublicBuiltinFunctionRequests(f.tx, realm, f.requestDependencies);
-    const tagModule = createEmptyModule(),
-      tagTx = new PhysicalModuleReservations(tagModule);
-    const tag = reserveNativeObjectRealmException(tagTx, realm, { required: true, shared: false });
-    let call: IrInstrCall | undefined;
-    for (const fn of projection.prepared.functions)
-      for (const block of fn.blocks)
-        for (const root of block.instrs)
-          forEachInstrDeep(root, (node) => {
-            if (node.kind === "call") call ??= node;
-          });
-    if (!call) throw Error("genuine Object.create call demand disappeared");
-    (call.target as { name: string }).name += "-stale";
-    const before = population(f);
-    expect(() => requireNativePublicBuiltinFunctionRequests(f.tx, requests)).toThrow();
-    expect(() => requireNativeObjectRealmException(tagTx, tag, realm)).toThrow();
-    expect(population(f)).toEqual(before);
   });
 });
 

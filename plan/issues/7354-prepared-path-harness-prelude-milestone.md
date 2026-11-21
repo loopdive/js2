@@ -4058,3 +4058,114 @@ Measurements:
 Not verified: that `n` in `var n = 1; Object.defineProperty(n, …)` keeps the typed (not dynamic) home — the program
 refuses at the call before anything observable; the runnable `var Object = {}` proof of the plan refuses on the
 checker's diagnostics (`Property 'defineProperty' is missing in type '{}'…`), not on a binding.
+
+## Perf3 result (2026-11-21, branch `claude/7354-perf3` from `origin/main`; measured on `claude/7354-perf3-work`)
+
+Compile time of closure programs on the Prepared path is linear again. The work branch is slice F1's head
+(`48c9fce74c`, the first base where function expressions compile) plus the two fix commits; the fix commits touch no
+F1 file and were cherry-picked onto `origin/main` unchanged. The timing table needs F1 (main refuses
+`var c = function …`), so it was measured on the work branch; bytes and tests were checked on both branches.
+
+### Measurements (strict Prepared entry, standalone, tsx, one compile at a time)
+
+Program: `var cI = function (x) { return x; }; if (cI(I) !== I) throw 1;` for I < N. Switch off = production
+(second compile in the process); switch on = `JS2WASM_VALIDATE_PREPARED=1` (first compile, single run).
+
+| N | off, before | off, after | on, before | on, after |
+| -: | ---------: | ---------: | ---------: | --------: |
+|  1 |     0.99 s |     0.41 s |     21.8 s |    19.7 s |
+|  5 |     4.16 s |     0.50 s |     25.8 s |    20.8 s |
+| 10 |    10.13 s |     0.62 s |     37.6 s |    20.5 s |
+| 20 |    32.28 s |     0.87 s |     72.9 s |    22.4 s |
+| 30 |    68.30 s |     1.36 s |    127.5 s |    23.7 s |
+
+The same binary before and after at every N. Off: ~0.03 s per closure, 30 closures = 3.3 × one closure. On: flat;
+what remains there is the switch's layout audit (`#verifyLayout`, ~18 s of a realm compile, #7380 step 5c).
+
+The "one closure, one object, a catch, about six `+`" program (reconstructed: `var o = {a:1}; var f = function (x)
+{ return x + 1; }; … try { s = s + f(1) + "a" + 2 + "b" + 3; } catch (e) { … } var t = "x" + o + "y"; …`): before,
+no compile finished within 280 s (F1 measured 196 s for its program); after the first commit 10.8 s; after both 3.4 s,
+same binary. The real harness prelude (`assert.js` + `sta.js`) refuses at its first gap in 0.12 s (F1's interim
+member-read refusal), so it is not measurable yet.
+
+### Profile
+
+Before (10 closures, 8.8 s compile): `assertNativeSourceClosureRequirementsCurrent` 5.8 s total, nearly all of it
+`preparedIrDataMismatch`; `requireNativeSourceClosureTypes` 3.2 s (per use, from the resolvers and the invocation
+owner check); `immutableCopy` 1.2 s self. The mixed program after the first commit (10.9 s): `immutableCopy`
+7.3 s self, from the whole-program snapshots of `deriveNativeObjectAccessRequirements` (3.4 s, called once per
+invocation-requirements derivation) and `deriveNativeStringOutputRequirements` (1.9 s).
+
+After (30 closures, 3.25 s for two compiles): nothing above 0.6 s. The largest are one-time costs:
+`preparedIrDataMismatch` 0.52 s (the emission's acceptance-record compare, the string-value plan), `immutableCopy`
+0.49 s (the frozen copy in `acceptPreparedIrProgram`, the string reservation), the settled-verdict walk 0.44 s,
+`planNativeStringValuePhysical` 0.43 s.
+
+### Each site
+
+| site | what it did | decision | why it may go |
+| --- | --- | --- | --- |
+| `assertNativeSourceClosureRequirementsCurrent` (13 call sites in 8 files) and its snapshot `WeakMap` | at each body fill and closure use: re-collect the demands, re-run the closure plan and compare both with snapshots | **deleted** | It can never fail. Both producers of a prepared program (`prepareTypedIrProgram`, the codec) freeze it whole, and `planNativeSourceClosureRequirements` now freezes the derived rows in place. So the requirements cannot come to disagree with the program they were derived from. The new test "issues requirements that no later step can change" pins that. A `{...copy}` of requirements is structurally the same plan, so it is equally correct. |
+| `requireNativeSourceClosureTypes` inside `resolveNativeSourceClosure`, `resolveNativeSourceClosureShape`, `resolveNativeSourceRefCell`, `nativeSourceClosureRealmState`, `requireCompletedNativeSourceClosureState`, and the source-invocation `requireOwner` | at each use: a fresh physical plan, fresh capture layouts compared with the reserved types, carrier re-authentication | **reduced to the O(1) owner lookup** (`reservedOwner`) | The pack and its requirements are frozen, and the pack was reserved on this ledger by this compile. The re-check only re-proved that ledger storage was unchanged. That property belongs to the layout audit (behind the switch) and to stage 4 (`validate-module.ts`), and `WebAssembly.validate` still runs. The full function stays for its cross-module callers (realm, invocation, object realm, callables); they no longer show in the profile. |
+| `sourceSnapshot` in `deriveNativeObjectAccessRequirements` | a deep copy of the whole demands (the whole program) per derivation, compared later | **deleted** | Same reason: the borrowed program is frozen. The currentness re-derivation that stays still refuses a mutable input whose requirements changed (perf2's test now expects that refusal's text). |
+| `snapshot` in `deriveNativeStringOutputRequirements` | the same, per output derivation | **deleted** | Same; the metadata identity checks and the re-derivation stay. |
+
+No check was made linear: the hot sites were all self-checks. No cache was added.
+
+### Tests
+
+Removed refusal assertions, each a forged-plan test that edited a `structuredClone`d (unfrozen) program after
+planning. No validator stage covers "the program changed after planning": the property holds by construction
+(frozen), and the new test pins that.
+- `issue-3518-native-source-closure-requirements`: `rejects %s after issuing a current real source plan` (4 cases),
+  replaced by the frozen-whole test.
+- `issue-3518-native-ref-cell-resources`: `refuses a stale exact source before any cell reservation`.
+- `issue-3518-native-prototype-seeder-bindings`: `rejects stale prototype issuer currentness after a genuine
+  cloned-source positive`.
+- `issue-3518-native-string-output-requirements`: `rejects in-place instruction mutation after successful
+  derivation`; `preserves unknown allocation metadata and refuses its later mutation` keeps its preservation half.
+- `issue-3518-native-string-output-resources`: `rejects stale borrowed input before reservation and on all later
+  owner readers`.
+- `issue-3518-native-object-get-owner`: the `capture` and `receiver` cases of `rejects stale actual %s provenance`.
+- `issue-3518-native-object-realm-declarations`: `rechecks the original mutable projection before reusing public
+  request or tag packets`.
+- `issue-3518-native-realm-requirements`: `authenticates demand currentness before a literal cache hit`.
+- `issue-7354-perf2-settled-checks`: the object-access case expects the refusal that now fires first ("missing
+  complete owner population", as its formatter twin does).
+
+Validator switch on (vitest), on this branch: every `tests/issue-7354-*` and `tests/issue-7380-*` file passes. The
+one exception is `ty-typeof-comparisons` › "answers a caught null like JavaScript", which hits its 35 s timeout here
+and also on `origin/main` (37.7 s there; load-dependent; the file is not modified here). Every modified test file
+passes in full. Two tests in them were red on `origin/main` too:
+- `issue-3518-native-prototype-seeder-bindings` › "refuses foreign-ledger descriptor token %s": deleted. It hands
+  another compile's dependencies to the tail builder, a foreign-pack forgery that #7380 retires. It was red because
+  its "module unchanged" `toStrictEqual` against a `structuredClone` saw the owned function data's `locals` with a
+  private prototype instead of `Array` (vitest's pretty-format then crashed on the diff); the data was equal.
+- `issue-3518-native-realm-requirements` › "retains the original genuine Number/object frontend preparation refusal":
+  stale expectation. `js.number.from-value` now has a native provider, so `Number({})` prepares. The test now
+  expects that, and that the realm selects the object's `js.object.create-default`.
+
+Also green (this branch or the work branch, after both commits): invocation consumer, source callable
+contract, closure parameter projections, ref-cell consumer, builtin functions, realm object layouts, realm source
+integration, getter invocation, getter results, getter resource join, prototype requirements, number format, promise
+inventory, output ABI join, string define-own, descriptor-wide BigInt, 3525 number remainder and source-map data,
+7139 async scopes. F1's function-expression tests pass on the work branch.
+
+### Bytes and gates
+
+- `check:prepared-bytes`: identical on all 804 rows (688 binaries, the rest refusals) against `origin/main`, with
+  the switch off and on. Also identical between the work branch and F1's head.
+- Ordinary pipeline: 20 test262 files × (default, standalone) are identical against `origin/main` (38 compiled,
+  2 compile errors on both sides).
+- Gates (each run bare): typecheck, LOC, function budget, coercion sites, oracle ratchet, dead exports, import
+  cycles, compiler boundaries (`--mode inventory --base origin/main`).
+
+### Not verified, left
+
+- Timing on `origin/main` itself: main compiles no multi-closure program yet, so its closure cost is shown only by
+  the unchanged tests and bytes.
+- `--utf8-storage` and `compileMulti` only through the corpus rows that use them.
+- Next hottest, production: no single site. What is left is about ten one-time whole-program compares and copies
+  (acceptance record, string-value plan, realm currentness `assertNativeRealmRequirementsCurrent`, which still
+  re-derives per call, and the output metadata identity walk). These are #7380 step 5b.
+- Next hottest, switch on: the layout audit (#7380 step 5c).
