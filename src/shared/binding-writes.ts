@@ -555,7 +555,7 @@ export function bindingIsUniqueAndNeverWritten(id: ts.Identifier, declaration: t
 }
 
 /** `o` where a JS member write on it (`o.p = v`, `o[k] = v`) declares a property, which the checker counts. */
-export function isMemberWriteDeclaration(candidate: ts.Node): boolean {
+function isMemberWriteDeclaration(candidate: ts.Node): boolean {
   const parent = candidate.parent;
   return (
     ts.isIdentifier(candidate) &&

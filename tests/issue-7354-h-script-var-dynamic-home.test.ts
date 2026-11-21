@@ -196,14 +196,18 @@ describe("#7354 H — the dynamic home of a script var", () => {
     // (#7354 Str2-c) `x + 1` on the dynamic home runs now (below).
     // (#7354 T) `x || 0` runs now (below).
     // (#7354 O3) A member write on the binding runs now (below).
-    // `Object.defineProperty(o, …)` still counts as a declaration: the Prepared path admits no `Object` static yet,
-    // so the binding has no home and refuses by name instead of reaching from-ast's drift invariant.
+    // (#7354 S) `Object.defineProperty(o, …)` is no second declaration: the binding keeps its home, and the call is
+    // refused by name until the Prepared path admits the `Object` statics.
     [
       "given a property by Object.defineProperty (slice O)",
       'var obj = {}; Object.defineProperty(obj, "foo", { value: 1 });',
-      NO_HOME,
+      "ir/from-ast: Object.defineProperty is not an admitted Object static (<module-init>)",
     ],
-    ["of a number given a property by Object.defineProperty", "var o = 1; Object.defineProperty(o, 'p', {});", NO_HOME],
+    [
+      "of a number given a property by Object.defineProperty",
+      "var o = 1; Object.defineProperty(o, 'p', {});",
+      "ir/from-ast: Object.defineProperty is not an admitted Object static (<module-init>)",
+    ],
     // A value kind the carrier cannot hold yet is refused at its store, by the slice that owns it.
     // (#7354 O2) An object literal is the object kind of the dynamic value now (tests/issue-7354-o2-object-values.test.ts).
     ["holding an array literal", "var arr = [1];", "resolver cannot register vec for array literal"],
