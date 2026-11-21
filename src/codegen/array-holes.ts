@@ -50,7 +50,7 @@ import { recordDescriptorArrayReceiver } from "./declarations/descriptor-array-c
 import { armExhaustiveForNonCallableMemberLiteral } from "./class-to-primitive.js"; // (#6771 S2d)
 import { isArrayLengthConstructor } from "./array/array-length-holes.js"; // (#6771 S3)
 import { noteArrayCtorThisCall } from "./array/array-ctor-this.js"; // (#6771 S7)
-import { armForLengthUpdate, noteLengthUpdateRoot } from "./statements/array-share-group.js"; // (#7164)
+import { armForLengthUpdate, isPossibleLengthStore, noteLengthUpdateRoot } from "./statements/array-share-group.js"; // (#7164)
 import { readEnv } from "../env.js";
 import { isBuiltinProtoReparentNode } from "./object-model/native-proto-reparent.js"; // (#6651 V11)
 
@@ -111,19 +111,7 @@ export function scanForArrayHoles(ctx: CodegenContext, root: ts.Node): void {
     // have to be armed by the SAME pre-pass — function compilation order is not
     // source order, so a lazy per-site flag desyncs them (see the header).
     armForLengthUpdate(ctx, node); // (#7164) `x.length++` / `--` / `+=` / `-=` share that store
-    if (
-      !ctx.usesArrayHoles &&
-      ts.isBinaryExpression(node) &&
-      node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
-      ((ts.isPropertyAccessExpression(node.left) && node.left.name.text === "length") ||
-        // A runtime bracket key may be "length". Reserve hole-aware reads
-        // before function emission; finalization must not mint a Hole type.
-        (ts.isElementAccessExpression(node.left) &&
-          (!ts.isStringLiteralLike(node.left.argumentExpression) || node.left.argumentExpression.text === "length") &&
-          !ts.isNumericLiteral(node.left.argumentExpression)))
-    ) {
-      ctx.usesArrayHoles = true;
-    }
+    if (!ctx.usesArrayHoles && isPossibleLengthStore(node)) ctx.usesArrayHoles = true;
     if (!ctx.protoIndexDirty && isProtoIndexWrite(node)) {
       ctx.protoIndexDirty = true;
     }
