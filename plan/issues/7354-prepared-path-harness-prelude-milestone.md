@@ -3181,3 +3181,58 @@ which is wrong for a Module.
 
 **Still accepted on main and here alike** (filed in #7445): `let {undefined} = {}`, `let [NaN] = []` and
 `function NaN(){}` at the Script top level.
+
+### Review round 3 (2026-11-21)
+
+Quality was met and the round-2 blocker is fixed.
+
+**Finding.** `goalsOf` treated `inferModuleStrictArguments: false` with no `scriptGoal` as a stated goal. That
+option set only marks a Script top level, while the Script-only rules (`import.meta`, `export`) key on
+`scriptGoal`. So `var g = function () { return import.meta; };` was elided and compiled on the Prepared path,
+while node throws a SyntaxError and main and round 2 refused it.
+
+**Fix: always walk both goals** (`GOAL_WALKS` in `src/test262/prepared-dead-bindings.ts`), instead of trusting a
+stated goal. Even a stated Script goal is not enough: the Script walk tolerates one function level for the
+runner's synthetic test wrapper, so `var g = function () { await 0; };` with `scriptGoal: true` was dropped too,
+and node rejects it. Pinning an error the real goal lacks only keeps a dead binding.
+
+**Detector fix, same family.** Under an explicit Module goal the detector missed `await` as a binding or label
+inside a plain function (§13.1.1: `function f() { var await; }`). `checkReservedIdentifiers` now reports that in
+binding and label positions only. Expression positions stay as they were, because TypeScript reads some top-level
+AwaitExpressions (`await /x/`) as an identifier. A first, unrestricted version turned ~25 top-level-await rows into
+compile errors and was narrowed.
+
+| test262 module files mentioning `await` (305, runner with the goal patch, host) | main | branch |
+|---|---:|---:|
+| pass | 169 | 176 |
+| compile_error | 38 | 38 |
+| fail | 80 | 73 |
+| skip | 18 | 18 |
+
+The 7 new passes are negative rows: class/label/`var` named `await` in a Module. No row regresses.
+
+**Tests (F0 file, 75 green):**
+
+- the reviewer's program with `inferModuleStrictArguments: false` alone, with and without skipSemanticDiagnostics;
+- a table over {`scriptGoal`: true, absent} × {`inferModuleStrictArguments`: true, false, absent}, whose dead
+  binding is one of four programs:
+  - Script-only (`import.meta`), refused wherever a Script is possible;
+  - Module-only (`var await` in a function), refused wherever a Module is possible;
+  - both-goals (`await 0` in a function), always refused;
+  - legal, compiles everywhere.
+
+**Mutations:**
+
+| mutation | tests that fail |
+|---|---|
+| walk only the given options | 7 |
+| drop the Module `await` rule | 3 |
+
+**Byte difference the reviewer saw.** `language/types/number/S8.5_A4_T1.js` contains `var NaN;`. The pass now
+keeps that declaration (never-elide rule), so its binary differs from main. It passes on both sides.
+
+**Module-goal finding, recorded in #7445.** A dead `let undefined = 1;` on the ordinary compile under a stated
+Module goal now meets the existing trap for a kept restricted declaration and throws at instantiation, where node
+and main are fine. Restricting the never-elide rule to Script or unstated goals needs the goal threaded through
+`elideWithIrIds` and both callers, not a two-line change, so it is in #7445 with the per-goal table. The body of
+#7445 is corrected: `checkRestrictedGlobalLexicals` is gone, and the per-goal behaviour is now stated.

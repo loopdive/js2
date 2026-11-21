@@ -37,23 +37,35 @@ skipSemanticDiagnostics). These compile and return where node throws:
 | `var g = function () { class C { constructor() {} constructor() {} } };` | SyntaxError |
 | `var g = function () { return import.meta; };` (Script) | SyntaxError |
 
-The same rows fail on main. F0's two detector fixes catch the label rows once the detector sees the statement:
-labels in function bodies, and `checkRestrictedGlobalLexicals`. The elision runs first, so the detector never
-sees it.
+The same rows fail on main. F0's detector fix (duplicate labels inside function bodies, also inside a class static
+block) would catch the label rows, but the elision runs first, so the detector never sees the statement.
 
-Rows the shared pass now keeps (F0 (b), (c) and the duplicate-lexical rule) but the ordinary compile still
-compiles wrongly, independent of the elision. They are also wrong on main:
+**Restricted global declarations on the ordinary compile.** F0's never-elide rule keeps a dead declaration of
+`undefined`/`NaN`/`Infinity` (`GLOBAL_CONSTANTS`). Kept, it meets the ordinary compile's existing trap for such
+a declaration. Per goal, for a dead `let undefined = 1;` / `const NaN = 1;` / `let Infinity;`
+(skipSemanticDiagnostics):
+
+| goal | node | main (statement dropped) | PR 7362 (statement kept) |
+|---|---|---|---|
+| Script (`scriptGoal`, the runner) | SyntaxError at start | compiles, returns (wrong) | throws at start (right) |
+| unstated | (Script) SyntaxError | compiles, returns | throws at instantiation |
+| Module (`inferModuleStrictArguments: true`) | ok | ok | throws at instantiation (**wrong**) |
+
+The Module row is a new wrong answer only for a dead declaration; the live form already throws on main.
+Fixing it at the elision means making the never-elide rule apply only where the names are restricted (a Script, or
+an unstated goal). That needs the goal threaded through `elideWithIrIds` and `elideDeadTopLevelBindings` from both
+callers. The better fix is in the trap: a Module's `let undefined` is an ordinary module binding.
+
+Wrong on main and on the PR alike, independent of the elision:
 
 | program | node |
 |---|---|
-| `let undefined = 1;`, `const NaN = 1;`, `let Infinity;`, `const undefined = 1;` | SyntaxError |
 | `"use strict"; var NaN = 1;`, `"use strict"; var undefined = 2;`, `"use strict"; var Infinity = 1;` | TypeError |
 | `var x = -({ valueOf() { throw 7; } });` | throws |
 | `function f(){ throw 7; } var x = true ? f() : 1;` | throws |
 
-Of these, `let`/`const` of a restricted name is caught by the new early-error rule only when the caller states a
-Script goal (`scriptGoal: true`, as the test262 runner does). The strict `var` rows need a run-time TypeError from
-the global-var store. The last two are ordinary codegen bugs, not elision.
+The strict `var` rows need a run-time TypeError from the global-var store. The last two are ordinary codegen
+bugs, not elision.
 
 **2. Global-object reflection sees a dropped `var`.** The pass sees names, not computed lookups on the global
 object. These programs observe a dropped binding and give the wrong answer on the ordinary path, on main and on
