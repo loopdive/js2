@@ -38,6 +38,7 @@ import {
 } from "./runtime-bundle.mjs";
 import { poisonRecycleReason } from "./test262-poison-error.mjs";
 import { negativeCompileErrorMatches, negativeCompileSucceededVerdict } from "./negative-verdict.mjs";
+import { asyncRowVerdict, renderHostError, runtimeNegativeThrowAccepted } from "./test262-runtime-verdict.mjs";
 import { hasPinnedEntryValueSelfImport, hasPinnedNamespaceSelfModuleImport } from "./test262-fixture-graph.mjs";
 // (#3613) ONE renderer, shared with tests/test262-runner.ts. The worker's
 // behaviour is unchanged — these bodies moved here verbatim; it is the LOCAL
@@ -1933,28 +1934,7 @@ function extractWasmExceptionMessage(
   }
   if (err instanceof Error) {
     observation?.("exception-kind", "host-Error");
-    let info = err.message ?? String(err);
-    const stack = err.stack ?? "";
-    if (/illegal cast|null|unreachable|out of bounds/.test(info)) {
-      // (#1316 / #1317) Extract every wasm frame in trap-first order so
-      // the error chain reaches more than the leaf function — for
-      // `illegal cast` and `dereferencing a null pointer` traps the
-      // leaf is often a tiny lifted helper whose name alone is
-      // uninformative without its caller.
-      const frameRe = /at\s+(\S+)\s+\(wasm:\/\//g;
-      const frames = [];
-      let m;
-      while ((m = frameRe.exec(stack)) !== null) frames.push(m[1]);
-      if (frames.length > 0) {
-        info = `${info} [in ${frames[0]}()`;
-        if (frames.length > 1) {
-          // Cap at 3 caller frames so the line stays readable inside the
-          // 300-char `error.substring(0, 300)` truncation downstream.
-          info += ` ← ${frames.slice(1, 4).join(" ← ")}`;
-        }
-        info += "]";
-      }
-    }
+    const info = renderHostError(err);
     observation?.("text-route", "host-Error");
     observation?.("reader-text", info);
     return info;
@@ -2051,21 +2031,6 @@ function standaloneLinkedPeers(target, result, importObj) {
   return (result.linkedModules ?? [])
     .map((artifact) => importObj[artifact.namespace])
     .filter((exports) => exports && typeof exports === "object");
-}
-
-function originalHarnessExceptionMatches(err, instance, expectedErrorType) {
-  if (!expectedErrorType) return true;
-  if (err instanceof WebAssembly.Exception && instance) {
-    try {
-      const tag = instance.exports.__exn_tag ?? instance.exports.__tag;
-      const payload = tag ? err.getArg(tag, 0) : undefined;
-      const name = payload?.name ?? payload?.constructor?.name;
-      if (name === expectedErrorType) return true;
-    } catch {}
-  } else if (err?.name === expectedErrorType || err?.constructor?.name === expectedErrorType) {
-    return true;
-  }
-  return extractWasmExceptionMessage(err, instance).includes(expectedErrorType);
 }
 
 function extractWasmFuncName(err) {
@@ -2284,6 +2249,12 @@ process.on("message", async (msg) => {
   currentLinkedFallback = false;
   currentLinkedFallbackReason = undefined;
   const { id, source, execute, isNegative, isRuntimeNegative, expectedErrorType, originalHarness, asyncTest } = msg;
+  // (#7354 U0) On the Prepared lane a trap never counts as the expected throw.
+  // oracle-version-exempt: the rule is gated on the Prepared request, which only
+  // the TEST262_COMPILER_PATH=ir measurement lane sends; every baselined lane
+  // keeps its verdicts (20-row standalone A/B identical; #7447 extends it).
+  const prepared = preparedRequest !== undefined;
+  const throwRule = { expectedErrorType, originalHarness, prepared, render: (e, i) => extractWasmExceptionMessage(e, i) };
   // (#3461) Fast native-harness oracle (host lane). When set, `source` is the
   // body-only `bindingShim + body` unit (the harness was NOT concatenated into
   // it); `harnessPrefix` is run natively in the per-test sandbox before
@@ -2772,7 +2743,7 @@ process.on("message", async (msg) => {
         return;
       }
 
-      if (isRuntimeNegative && (!originalHarness || originalHarnessExceptionMatches(err, null, expectedErrorType))) {
+      if (isRuntimeNegative && runtimeNegativeThrowAccepted(err, null, throwRule)) {
         sendOwnedResult({ id, status: "pass", compileMs, execMs, runtimeNegativePass: true, ...compileMetadata });
         return;
       }
@@ -2812,10 +2783,7 @@ process.on("message", async (msg) => {
         moduleInit();
       } catch (initErr) {
         const execMs = performance.now() - execStart;
-        if (
-          isRuntimeNegative &&
-          (!originalHarness || originalHarnessExceptionMatches(initErr, instance, expectedErrorType))
-        ) {
+        if (isRuntimeNegative && runtimeNegativeThrowAccepted(initErr, instance, throwRule)) {
           sendOwnedResult({
             id,
             status: "pass",
@@ -2883,30 +2851,31 @@ process.on("message", async (msg) => {
           await new Promise((resolveTurn) => setTimeout(resolveTurn, 10));
         }
         const failure = findMarker("Test262:AsyncTestFailure");
-        if (failure) {
-          sendOwnedResult({
-            id,
-            status: "fail",
-            error: failure,
-            compileMs,
-            execMs: performance.now() - execStart,
-            ...buildResultMetadata(result, true),
-          });
-          return;
-        }
-        if (!findMarker("Test262:AsyncTestComplete")) {
+        const asyncVerdict = asyncRowVerdict({
+          failureMarker: failure,
+          completed: findMarker("Test262:AsyncTestComplete") !== undefined,
+          drainError: standaloneDrainError,
+          prepared,
+        });
+        if (asyncVerdict !== "pass") {
           // (#3469) If the host-free drain itself threw (an async continuation
-          // that escaped uncaught) and produced no marker, surface that error —
-          // it is the test's real async outcome — rather than the generic
-          // "not observed", so it re-buckets as an honest failure.
-          const noMarkerError =
-            standaloneDrainError != null
-              ? `async continuation threw before completion: ${extractWasmExceptionMessage(standaloneDrainError, instance, currentNativeEvalBoundaryObservation?.reader("async-drain"))}`
-              : "async completion marker not observed";
+          // that escaped uncaught), surface that error — it is the test's real
+          // async outcome — rather than the generic "not observed", so it
+          // re-buckets as an honest failure.
+          const drainText = () =>
+            extractWasmExceptionMessage(standaloneDrainError, instance, currentNativeEvalBoundaryObservation?.reader("async-drain"));
+          const error =
+            asyncVerdict === "failure-marker"
+              ? failure
+              : asyncVerdict === "threw-after-completion"
+                ? `async continuation threw after completion: ${drainText()}`
+                : standaloneDrainError != null
+                  ? `async continuation threw before completion: ${drainText()}`
+                  : "async completion marker not observed";
           sendOwnedResult({
             id,
             status: "fail",
-            error: noMarkerError,
+            error,
             compileMs,
             execMs: performance.now() - execStart,
             ...buildResultMetadata(result, true),
@@ -3003,10 +2972,9 @@ process.on("message", async (msg) => {
       }
       const execMs = performance.now() - execStart;
 
-      if (
-        isRuntimeNegative &&
-        (!originalHarness || originalHarnessExceptionMatches(execErr, instance, expectedErrorType))
-      ) {
+      // Rows that reach `test()` never run the original harness: any
+      // runtime-negative row that returns here did not throw.
+      if (isRuntimeNegative) {
         sendOwnedResult({
           id,
           status: "fail",
