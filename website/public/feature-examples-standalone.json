@@ -195,7 +195,7 @@
     {
       "name": "Labeled statements (break / continue)",
       "testCategories": ["language/statements/labeled"],
-      "passCount": 22,
+      "passCount": 24,
       "totalCount": 24,
       "editionSpread": [
         {
@@ -225,7 +225,7 @@
         },
         {
           "edition": "Unclassified (untagged)",
-          "pass": 7,
+          "pass": 9,
           "total": 9
         }
       ]
@@ -1098,12 +1098,12 @@
     {
       "name": "Modules (import / export)",
       "testCategories": ["language/module-code", "language/import", "language/export"],
-      "passCount": 436,
+      "passCount": 437,
       "totalCount": 731,
       "editionSpread": [
         {
           "edition": "ES2015",
-          "pass": 63,
+          "pass": 65,
           "total": 68
         },
         {
@@ -1113,7 +1113,7 @@
         },
         {
           "edition": "ES2022",
-          "pass": 193,
+          "pass": 192,
           "total": 261
         },
         {
@@ -1276,7 +1276,7 @@
     {
       "name": "Top-level await",
       "testCategories": ["language/module-code/top-level-await"],
-      "passCount": 181,
+      "passCount": 180,
       "totalCount": 257
     },
     {
