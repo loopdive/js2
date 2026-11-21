@@ -144,7 +144,7 @@ export function emitFunctionObjectInit(
 /**
  * (#7354 F1b) Whether a closure is a function value with properties on this lane: the Prepared native dynamic lane
  * with native strings (`source-dynamic-contracts.ts`). There every closure literal that can become a value is created
- * as a function object (`initClosureFunctionObject`) and may be stored as a member.
+ * as a function object (`emitFunctionObjectInit`) and may be stored as a member.
  */
 export function createsFunctionObjects(resolver: { createsFunctionObjects?(): boolean } | undefined): boolean {
   return resolver?.createsFunctionObjects?.() === true;

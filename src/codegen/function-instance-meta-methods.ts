@@ -40,9 +40,9 @@
  * ## §10.2.9 SetFunctionName for a method — what is and is NOT resolvable
  * A method's `name` carries a prefix for accessors (`get m` / `set m`) and, for
  * a symbol key, the description in brackets (`[Symbol.iterator]`). Only the
- * syntactic forms that carry a literal key are decidable at the mint site, so
- * this module **declines the whole slot** when the key is computed or private,
- * rather than publishing a guess.
+ * syntactic forms whose key is a compile-time constant are decidable at the
+ * mint site, so this module **declines the whole slot** when the key is a
+ * non-constant computed key, a BigInt or private, rather than publishing a guess.
  *
  * Declining is the safe direction and costs nothing that was already there:
  * with no slot, `length` keeps #4436's `$arity` answer (the property never
@@ -56,7 +56,7 @@ import type { CodegenContext } from "./context/types.js";
 import { ts } from "../ts-api.js";
 import { expectedArgumentCountOfParams } from "../shared/function-expected-argument-count.js";
 import { fnMetaSlotOfMeta, type FnInstanceMeta } from "./function-instance-meta.js";
-import { symbolComputedKeyFunctionName } from "../shared/named-evaluation.js";
+import { propertyKeyFunctionName } from "../shared/named-evaluation.js";
 
 /** A member declaration that can carry `name` / `length` metadata. */
 type MetaBearingMember =
@@ -98,21 +98,17 @@ function isMetaBearingMember(decl: ts.Node): decl is MetaBearingMember {
 
 /**
  * §10.2.9 `name` for a member, or `undefined` when the key is not statically
- * decidable (a computed key is a runtime value; a `#private` name is not an
- * observable property key at all).
+ * decidable here (a non-constant computed key is a runtime value; a `#private`
+ * name is not an observable property key, so its slot is not published).
  *
  * The `get `/`set ` prefixes are part of the spec answer, not decoration:
  * `Object.getOwnPropertyDescriptor({ get m() {} }, "m").get.name` is `"get m"`.
  */
 function memberNameOf(decl: MetaBearingMember): string | undefined {
   const key = decl.name;
-  let base: string | undefined;
-  if (ts.isIdentifier(key) || ts.isStringLiteral(key) || ts.isNumericLiteral(key)) base = key.text;
-  // (#5149 cluster B) A SYMBOL key is decidable when the symbol was built by a
-  // literal `Symbol("desc")` binding: §10.2.9 names the method `"[desc]"`
-  // (`""` for a description-less symbol). Every other computed key still
-  // declines — see the module header on why declining beats guessing.
-  else if (ts.isComputedPropertyName(key)) base = symbolComputedKeyFunctionName(key.expression);
+  // The shared §10.2.9 key rule (`propertyKeyFunctionName`). A `#private` or BigInt key declines here although its
+  // name is decidable: this module publishes no slot for either (module header).
+  const base = ts.isPrivateIdentifier(key) || ts.isBigIntLiteral(key) ? undefined : propertyKeyFunctionName(key);
   if (base === undefined) return undefined;
   if (ts.isGetAccessorDeclaration(decl)) return `get ${base}`;
   if (ts.isSetAccessorDeclaration(decl)) return `set ${base}`;
