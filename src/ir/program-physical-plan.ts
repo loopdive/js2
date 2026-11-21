@@ -188,7 +188,7 @@ export interface PhysicalStartup {
 }
 
 export interface PhysicalExceptionTag {
-  /** Some body throws or catches, so a `__exn` tag must exist. */
+  /** Some body (a source body, a support helper or the realm kernel) throws or catches, so a `__exn` tag must exist. */
   readonly required: boolean;
   /** Requested by the options: import `env.__exn` instead of defining a local tag. */
   readonly shared: boolean;
@@ -1416,7 +1416,8 @@ export function planPhysicalSetup(
     ...[...importedGlobals, ...definedGlobals].map((global) => global.referenceKey),
     ...nativeBindings.filter((row) => row.reference.kind === "global").map((row) => nativeReferenceKey(row.reference)),
   ]);
-  let exceptionRequired = vectors.exceptionRequired || Boolean(asyncFrames?.frames.length) || Boolean(nativeInvocation);
+  let exceptionRequired =
+    vectors.exceptionRequired || Boolean(asyncFrames?.frames.length || nativeInvocation || native?.realmRequirements);
   for (const fn of [...physical, ...(formatter ? formatter.support.functions : [])]) {
     const diagnosticUnit =
       formatter && fn === formatter.support.functions[0]

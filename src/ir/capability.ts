@@ -49,6 +49,7 @@
 // until a row (plus a lowering) claims it.
 
 import { ts, forEachChild } from "../ts-api.js";
+import { demoteToLegacy } from "../shared/contracts/ir-preparation-errors.js";
 
 export type IrOpCapability = "claim" | "claim-partial" | "defer";
 
@@ -236,12 +237,18 @@ export function prefixOpCapability(op: ts.PrefixUnaryOperator): IrOpCapability {
  * `not in slice N` fallback family so the #1923 post-claim meter and the
  * #2138 IR-first hard-error channel surface it as a capability violation.
  */
-export function assertNotDeferred(cap: IrOpCapability, what: string, funcName: string): void {
-  if (cap === "defer") {
-    throw new Error(
-      `ir/from-ast: internal capability violation — ${what} is capability-deferred (see src/ir/capability.ts) yet reached the builder post-claim in ${funcName}. The selector and the capability table disagree; this is a compiler bug, not a fallback.`,
-    );
-  }
+export function assertNotDeferred(
+  cap: IrOpCapability,
+  what: string,
+  cx: { readonly funcName: string; readonly unselected?: true },
+): void {
+  if (cap !== "defer") return;
+  // (#7354 M1) A producer without a selector (the Prepared path, #7364 `unselected`) reaches a deferred construct
+  // legitimately: it is that selector's refusal, by name.
+  if (cx.unselected) demoteToLegacy("body-shape-rejected", `${what} is capability-deferred in ${cx.funcName}`);
+  throw new Error(
+    `ir/from-ast: internal capability violation — ${what} is capability-deferred (see src/ir/capability.ts) yet reached the builder post-claim in ${cx.funcName}. The selector and the capability table disagree; this is a compiler bug, not a fallback.`,
+  );
 }
 
 // ── Element access (`lowerElementAccess` family) — claim-partial ───────────

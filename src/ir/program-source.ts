@@ -851,6 +851,7 @@ export interface IrProgramSourceInput {
   readonly inventoryOptions?: BuildIrUnitInventoryOptions;
   readonly policy: RuntimeManifestPolicy;
   readonly deferTopLevelInit: boolean;
+  readonly codeStrictness?: (node: ts.FunctionLikeDeclaration | ts.SourceFile) => boolean;
   /**
    * Explicit frontend lowering selection; not provider availability or
    * permission to emit. Omission preserves historical source lowering.
@@ -1764,6 +1765,7 @@ export function prepareIrProgramSources(
             }),
         funcName: unit.displayName,
         exported: exportedUnits.has(unit.id),
+        functionCodeStrict: input.codeStrictness?.(moduleInit ? source : declaration),
         identityContext: identity,
         checker: input.checker,
         oracle: input.oracle,
@@ -1801,9 +1803,7 @@ export function prepareIrProgramSources(
           "invalid-prepared-data",
           `certified native Promise-delay ${unit.id} fabricated support bodies or provenance`,
         );
-      functions.push(
-        ...dynamicContracts.legalize(signatures.values(), globals, sourceRoots, [lowered.main, ...lowered.lifted]),
-      );
+      functions.push(...dynamicContracts.legalize(sourceRoots, [lowered.main, ...lowered.lifted]));
       appendLiftedSourceProvenance(lowered.liftedUnitProvenance, inventory, unit, derivedUnits);
       if (derivedSourceRows !== undefined) appendSourceMapDerivedRows(derivedSourceRows, lowered, identity, unit);
     }

@@ -4873,7 +4873,7 @@ function lowerResolvedModuleBindingTdzCheck(name: string, binding: ModuleBinding
     assertNotDeferred(
       domSurfaceCapability(false, binding.capability === "dom"),
       `module-scope extern binding "${name}"`,
-      cx.funcName,
+      cx,
     );
   }
   if (binding.tdzGlobalRef && binding.omitTdzReadCheck !== true) {
@@ -5239,7 +5239,7 @@ function lowerExprUnchecked(expr: ts.Expression, cx: LowerCtx, hint: IrType): Ir
         assertNotDeferred(
           domSurfaceCapability(platformExternAdmits(cx, global.className), read.certifiedDom),
           `host global "${expr.text}"`,
-          cx.funcName,
+          cx,
         );
         const r = cx.builder.emitCall(irImportFuncRef("env", global.importName), [], {
           kind: "extern",
@@ -6463,7 +6463,7 @@ function lowerPropertyAccess(expr: ts.PropertyAccessExpression, cx: LowerCtx): I
     assertNotDeferred(
       domSurfaceCapability(platformExternAdmits(cx, className), exactStandaloneDomRead),
       `extern property read .${propName}`,
-      cx.funcName,
+      cx,
     );
     const resolved = cx.resolver?.resolveExternMember?.(className, propName, "property", expr);
     if (resolved?.property) {
@@ -6569,7 +6569,7 @@ function lowerPropertyAccess(expr: ts.PropertyAccessExpression, cx: LowerCtx): I
   // into the canonical dynamic carrier (identity on the host strategy,
   // `__any_from_extern` on gc) and take the same unified reader. Admitted by
   // the selector for catch bindings and open carriers only.
-  if (asVal(recvType)?.kind === "externref" && cx.resolver?.stringIsExternref?.() !== true) {
+  if (isRawExternrefReceiver(recvType, cx)) {
     return dynamicNamedPropertyRead(cx.builder.emitBox(recv, irDynamic()), propName, cx);
   }
 
@@ -6877,6 +6877,11 @@ interface ElementSlot {
   readonly proven: boolean;
   /** The key is an array index spelled as a literal or held by a `const`, so `index` is non-negative. */
   readonly staticIndex: boolean;
+}
+
+/** (#7106 S1c, #7354 O3) A raw externref receiver, which a member read or write boxes onto the dynamic carrier. */
+function isRawExternrefReceiver(recvType: IrType, cx: LowerCtx): boolean {
+  return asVal(recvType)?.kind === "externref" && cx.resolver?.stringIsExternref?.() !== true;
 }
 
 /** `recv.<propName>` through the dynamic reader, the name boxed as a string key. */
@@ -8921,7 +8926,7 @@ function tryLowerConsoleMethodCall(
     cx.resolver?.nativeConsoleOutputAvailable !== undefined
   ) {
     const hostFreeSink = cx.resolver.nativeConsoleOutputAvailable();
-    assertNotDeferred(consoleSurfaceCapability(hostFreeSink), `console.${methodName}`, cx.funcName);
+    assertNotDeferred(consoleSurfaceCapability(hostFreeSink), `console.${methodName}`, cx);
     if (!statementPosition) {
       demoteToLegacy(
         "method-call-unsupported",
@@ -10119,7 +10124,7 @@ function lowerMethodCall(expr: ts.CallExpression, cx: LowerCtx, statementPositio
     assertNotDeferred(
       domSurfaceCapability(platformExternAdmits(cx, recvType.className), exactStandaloneDomCall),
       `extern method call .${methodName}`,
-      cx.funcName,
+      cx,
     );
     const className = recvType.className;
     const chained = cx.resolver?.resolveExternMember?.(className, methodName, "method", expr);
@@ -10683,10 +10688,17 @@ function lowerPropertyAssignment(expr: ts.BinaryExpression, cx: LowerCtx, receiv
   // (#7292) A script-var vec's expando (`a.index = 2`) is the same write on the
   // boxed vec, through legacy's sloppy `__extern_set`: the native strict store
   // keeps no expando for a vec, and `vecUseSupported` keeps the array private.
+  // (#7354 O3) A raw externref receiver (a Prepared function-local object) is boxed onto the carrier, as the read's.
   const moduleVec = recvType.kind === "vec" && isScriptVarVec(lhs.expression, cx);
-  const dynamicNamedWrite = (recvType.kind === "dynamic" && cx.functionCodeStrict !== undefined) || moduleVec;
+  const externReceiver = isRawExternrefReceiver(recvType, cx);
+  const dynamicNamedWrite =
+    ((recvType.kind === "dynamic" || externReceiver) && cx.functionCodeStrict !== undefined) || moduleVec;
   if (dynamicNamedWrite && ts.isPropertyAccessExpression(lhs) && ts.isIdentifier(lhs.name)) {
-    const target = moduleVec ? boxVecToDynamic(recv, cx) : recv;
+    const target = moduleVec
+      ? boxVecToDynamic(recv, cx)
+      : externReceiver
+        ? cx.builder.emitBox(recv, irDynamic())
+        : recv;
     const key = cx.builder.emitBox(cx.builder.emitStringConst(fieldName), irDynamic(JS_TAG_IDS.String));
     const result = lowerExpr(expr.right, cx, irDynamic());
     const value = boxDynamicStoreOperand(result, expr.right, cx);
@@ -10765,7 +10777,7 @@ function lowerPropertyAssignment(expr: ts.BinaryExpression, cx: LowerCtx, receiv
     assertNotDeferred(
       domSurfaceCapability(platformExternAdmits(cx, recvType.className), exactStandaloneDomSet),
       `extern property write .${fieldName}`,
-      cx.funcName,
+      cx,
     );
     const resolved = cx.resolver?.resolveExternMember?.(recvType.className, fieldName, "property", lhs);
     if (!resolved?.property) {
@@ -14241,7 +14253,7 @@ function lowerPrefixUnary(expr: ts.PrefixUnaryExpression, cx: LowerCtx): IrValue
   assertNotDeferred(
     prefixOpCapability(expr.operator),
     `prefix operator '${ts.tokenToString(expr.operator) ?? expr.operator}'`,
-    cx.funcName,
+    cx,
   );
   // (#7332) `null` has no f64 value, but `-`, `+` and `~` read ToNumber(null), +0, and `!` reads a
   // falsy value either way.
@@ -15079,7 +15091,7 @@ function lowerBinary(expr: ts.BinaryExpression, cx: LowerCtx, hint: IrType): IrV
 
   // #2135 — a deferred operator reaching a claimed body is a selector/build
   // contradiction. Check before operands so the original failure stays visible.
-  assertNotDeferred(binaryOpCapability(op), `binary operator '${ts.tokenToString(op) ?? op}'`, cx.funcName);
+  assertNotDeferred(binaryOpCapability(op), `binary operator '${ts.tokenToString(op) ?? op}'`, cx);
 
   // #4787 — the exact numeric exponentiation checkpoint. Once selection has
   // published this claim, a missing checker proof, a non-f64 operand, or any
@@ -16140,6 +16152,10 @@ function boxConcreteToDynamic(v: IrValueId, t: IrType, operand: ts.Expression, c
   if (family === "number" || (asVal(t) !== null && ts.isNumericLiteral(operand))) {
     return cx.builder.emitBox(v, irDynamic(JS_TAG_IDS.NumberF64));
   }
+  // (#7354 O2) An object literal the Prepared path builds as an ordinary object.
+  const literal = peelParensExpr(operand);
+  if (ts.isObjectLiteralExpression(literal) && cx.resolver?.preparedOrdinaryObjectLiteral?.(literal) === true)
+    return cx.builder.emitBox(v, irDynamic(JS_TAG_IDS.Object));
   return null;
 }
 
