@@ -60,7 +60,8 @@ const DEFINE = (unit: string) => `ir/from-ast: Object.defineProperty is not an a
 const NO_HOME = (name: string) => `module binding ${name} has no exact typed storage: not-direct`;
 
 describe("#7354 S — a script var named by Object.defineProperty", () => {
-  // Each refusal is the call's own, exactly: the binding has its home, so the resolver never names it.
+  // Each refusal is the call's own. Only the top-level, number-var and before-the-declaration rows show the home:
+  // a call inside a function refused at the call before this slice too (its unit fails before module-init asks).
   it.each([
     ["at top level", 'var obj = {}; Object.defineProperty(obj, "p", { value: 1 });', DEFINE("<module-init>")],
     [
@@ -107,7 +108,7 @@ describe("#7354 S — a script var named by Object.defineProperty", () => {
       `var obj = {}; function f() { obj.p = 1; } f(); if (obj.p !== ${expected}) throw 1;`;
     expect(await run(program("1"))).toBe("returned");
     expect(await run(program("2"))).toBe("threw");
-    // (#7354 M1) a member write selects the realm: ~20 s per compile under load
+    // (#7354 M1) a member write selects the realm, whose compile is slow under vitest's self-checks
   }, 180_000);
 
   // The sweep of object operations on such a var found one from-ast arm that threw an invariant out of `compile()`:
