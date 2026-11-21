@@ -45,11 +45,25 @@ describe("#7354 F1b — function objects", () => {
     SLOW,
   );
 
-  const NUMBER = "function f() {} f.valueOf = 1; function h() {}\n";
+  const NUMBER =
+    "function f() {} f.valueOf = 1; function h() {}\n" +
+    "function g() {} g.toString = 1; var c = 0; try { var n = +g; } catch (e) { c = 1; }\n";
   it(
-    "answers ToNumber of a function NaN, also beside an own non-callable valueOf",
+    "answers ToNumber of a function NaN beside an own non-callable valueOf, and a TypeError for a non-callable toString",
     () =>
-      agrees(`${NUMBER}if (+h === +h || +f === +f || h * 1 === h * 1) throw 1;`, `${NUMBER}if (+f !== +f) throw 1;`),
+      agrees(
+        `${NUMBER}if (+h === +h || +f === +f || h * 1 === h * 1 || c !== 1) throw 1;`,
+        `${NUMBER}if (c !== 0) throw 1;`,
+      ),
+    SLOW,
+  );
+
+  // Without a declaration read as a value, the function expression alone admits the object kind its prototype is.
+  const EXPRESSION = "var e = function () {}; var p = e.prototype;\n";
+  it(
+    "gives a function expression a prototype object",
+    () =>
+      agrees(`${EXPRESSION}if (typeof p !== "object") throw 1;`, `${EXPRESSION}if (typeof p !== "function") throw 1;`),
     SLOW,
   );
 

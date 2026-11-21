@@ -21,12 +21,13 @@ describe("#7354 F1b — function declarations as values", () => {
   const IDENTITY =
     "function f() { return 1; } function k() { return 1; } function h() { return f; }\n" +
     "function me() { return me; } var x = early; function early() {}\n" +
-    "var g = f; var n = 0; for (var i = 0; i < 3; i++) { if (h() === f) n++; }\n";
+    "var g = f; var n = 0; for (var i = 0; i < 3; i++) { if (h() === f) n++; }\n" +
+    "var cnt = 0; function bump() { cnt = cnt + 1; } var b = bump; bump();\n";
   it(
-    "is one value per declaration: identity, a read in a function, a self-read, before the declaration, in a loop",
+    "is one value per declaration: identity, a read in a function, a self-read, before the declaration, in a loop; a statement call stays direct",
     () =>
       agrees(
-        `${IDENTITY}if (g !== f || g === k || h() !== f || me() !== me || x !== early || n !== 3 || !f) throw 1;`,
+        `${IDENTITY}if (g !== f || g === k || h() !== f || me() !== me || x !== early || n !== 3 || !f || cnt !== 1 || b !== bump) throw 1;`,
         `${IDENTITY}if (g === f) throw 1;`,
       ),
     SLOW,
