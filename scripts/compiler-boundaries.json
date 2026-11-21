@@ -421,6 +421,7 @@
         "src/runtime/wasmgc/values/object-same-value-body.ts",
         "src/runtime/wasmgc/values/ordinary-object-access-bodies.ts",
         "src/runtime/wasmgc/values/source-object-bodies.ts",
+        "src/runtime/wasmgc/values/source-function-object-bodies.ts",
         "src/runtime/wasmgc/values/ordinary-object-descriptor-accessor.ts",
         "src/runtime/wasmgc/values/ordinary-object-descriptor-common.ts",
         "src/runtime/wasmgc/values/ordinary-object-descriptor-data.ts",
@@ -2012,6 +2013,30 @@
       "destination": "ir-core",
       "owner": "7354-prepared-path",
       "nextBoundary": "Frontend identifier-read resolution order (scope, module binding, global constants, host and ambient globals), shared by from-ast's read and its typeof fold; moves with from-ast's frontend half."
+    },
+    {
+      "path": "src/ir/function-declaration-values.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "7354-prepared-path",
+      "nextBoundary": "Frontend function declarations read as values (the walk, their startup homes and module-init trampolines); moves with from-ast's frontend half."
+    },
+    {
+      "path": "src/ir/program-source-direct-calls.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "7354-prepared-path",
+      "nextBoundary": "Frontend direct-call plans of top-level code and closures for the Prepared source producer; moves with program-source's frontend half."
+    },
+    {
+      "path": "src/ir/describe-ir-type.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "7354-prepared-path",
+      "nextBoundary": "Debug rendering of an IrType for from-ast's and the function-object lowering's refusal texts; moves with from-ast's frontend half."
     },
     {
       "path": "src/ir/function-object-lowering.ts",
@@ -15304,6 +15329,11 @@
     },
     {
       "path": "src/runtime/wasmgc/values/source-object-bodies.ts",
+      "state": "clean",
+      "layer": "native-runtime"
+    },
+    {
+      "path": "src/runtime/wasmgc/values/source-function-object-bodies.ts",
       "state": "clean",
       "layer": "native-runtime"
     },
