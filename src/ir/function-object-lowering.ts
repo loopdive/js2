@@ -260,15 +260,18 @@ export function lowerDynamicMemberCall(
         irDynamic(JS_TAG_IDS.String),
       );
   const callee = cx.builder.emitDynMemberGet(receiver, key);
-  return applyDynamicCallee(callee, receiver, expr.arguments, notCallable("Value is not callable"), cx);
+  return cx.nativeClosureCalls
+    ? nativeClosureCall(callee, receiver, expr.arguments, cx)
+    : applyDynamicCallee(callee, receiver, expr.arguments, notCallable("Value is not callable"), cx);
 }
 
 /**
  * (#7106 Stage 4) `f(…)` through a binding that holds a dynamic value (`func()` in assert.js's `assert.throws`): a
- * dynamic local or parameter, or a script `var`'s dynamic home (`scriptVar`, its declaration, which picks the
- * not-callable text, {@link scriptVarCalleeNotCallableMessages}). No Reference base, so thisArgument is `undefined`
- * (§13.3.6.2). The callee is evaluated first, then the arguments, then IsCallable — legacy's bare dynamic call order
- * and its `called value is not a function` TypeError — and `__apply_closure` installs the undefined receiver as
+ * dynamic local or parameter, or a script `var`'s dynamic home (`scriptVar`, its declaration). No Reference base, so
+ * thisArgument is `undefined` (§13.3.6.2). The callee is evaluated first, then the arguments, then IsCallable.
+ * (#7354 F2) On the Prepared lane that is the native dispatcher's call (`nativeClosureCall`); on the ordinary pipeline
+ * it is legacy's bare dynamic call — its `called value is not a function` TypeError, whose text the declaration picks
+ * ({@link scriptVarCalleeNotCallableMessages}), and `__apply_closure` installing the undefined receiver as
  * `__current_this` for the callee's duration, as legacy's bare-call receiver reset does.
  */
 export function lowerBindingCall(
@@ -281,7 +284,9 @@ export function lowerBindingCall(
     demoteToLegacy("call-resolution-unsupported", `ir/from-ast: dynamic callee lost its carrier in ${cx.funcName}`);
   refuseCallShape(expr, false, "call-resolution-unsupported", "optional/spread dynamic value call is unsupported", cx);
   const receiver = cx.builder.emitDynUndefined();
-  return applyDynamicCallee(callee, receiver, expr.arguments, scriptVarCalleeNotCallableMessages(scriptVar), cx);
+  return cx.nativeClosureCalls
+    ? nativeClosureCall(callee, receiver, expr.arguments, cx)
+    : applyDynamicCallee(callee, receiver, expr.arguments, scriptVarCalleeNotCallableMessages(scriptVar), cx);
 }
 
 /** An optional call, or (#7354 F2: by its own name on the Prepared lane) a spread argument, has no call through a value. */
@@ -337,7 +342,6 @@ function applyDynamicCallee(
   notCallableMessages: NotCallableMessages,
   cx: FunctionObjectLoweringHost,
 ): IrValueId {
-  if (cx.nativeClosureCalls) return nativeClosureCall(callee, receiver, argumentSources, cx);
   const args = cx.builder.emitCall(irRuntimeFuncRef("__objvec_new"), [], irVal({ kind: "externref" }));
   if (args === null) throw new Error("native argument vector returned void");
   for (const argument of argumentSources) {
