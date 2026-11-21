@@ -15,7 +15,7 @@ import {
   requiredPreparedEmission,
   type Test262CompileOptions,
 } from "../src/test262/test262-prepared-entry.js";
-import { yieldToRpc } from "./helpers/prepared-node-agreement.js";
+import { agreesWithNode, yieldToRpc } from "./helpers/prepared-node-agreement.js";
 
 const options = (): Test262CompileOptions =>
   ({
@@ -114,7 +114,7 @@ describe("#7354 O4 — a member read of the dynamic value", () => {
     [
       "a string's length",
       'var s = "a"; var n = s.length;',
-      "member read 'length' of a string needs its own length and index properties",
+      "member read 'length' of a value that may be a string needs its own length and index properties",
     ],
     ["an Object.prototype method", "var o = { a: 1 }; var t = o.toString;", "member read 'toString'"],
     ["a computed key", 'var o = { a: 1 }; var k = "a"; var v = o[k];', "dyn.member_get with a computed key"],
@@ -124,10 +124,10 @@ describe("#7354 O4 — a member read of the dynamic value", () => {
 
   // (#7354 M2) Node's catch reads the TypeError; here it is the realm's error, a kind of the dynamic value.
   it("catches reading a member of null in a program that reads a caught value", async () => {
-    const source =
-      "function f(v) { try { return v.x; } catch (e) { return e.message; } }" +
-      " if (f(null) !== \"Cannot read properties of null (reading 'x')\") throw 1;";
-    expect(await run(source)).toBe("returned");
-    expect(await run(source.replace("!==", "==="))).toBe("threw");
+    // (the catch binding's read gives the checker's harmless `'e' is of type 'unknown'` warning: the shared helper
+    // filters warnings)
+    await agreesWithNode(
+      "function f(v) { try { return v.x; } catch (e) { return e.message; } } var out = String(f(null));",
+    );
   }, 180_000);
 });

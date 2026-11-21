@@ -148,7 +148,7 @@ describe("#7354 Str 1 — typed strings through the presentation", () => {
     [
       "the length of a string held in a script var's dynamic home (a member read of the dynamic value)",
       'var s = "ab";\nif (s.length !== 2) throw 1;',
-      "dynamic operation member read 'length' of a string needs its own length and index properties has no Prepared intrinsic",
+      "dynamic operation member read 'length' of a value that may be a string needs its own length and index properties has no Prepared intrinsic",
     ],
   ])("refuses %s", async (_, source, detail) => {
     expect(await refusal(source)).toContain(detail);
