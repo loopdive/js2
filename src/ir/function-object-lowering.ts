@@ -7,7 +7,8 @@ import type { IrFunctionBuilder } from "./builder.js";
 import type { IrImportedCallLoweringPlan, IrTopLevelFunctionValueLoweringPlan } from "./ast-lowering-plans.js";
 import type { IrFunctionMemberClosures } from "./function-member-closure-plan.js";
 import { irIntrinsicFuncRef, irRuntimeFuncRef } from "./callable-bindings.js";
-import { functionObjectName } from "../shared/named-evaluation.js";
+import { functionInstanceName, propertyKeyFunctionName } from "../shared/named-evaluation.js";
+import { expectedArgumentCountOfParams } from "../shared/function-expected-argument-count.js";
 import type { IrUnitId } from "./identity.js";
 import { JS_TAG_IDS } from "./runtime/js-tag-domain.js";
 import { asVal, irDynamic, irVal, type IrType, type IrValueId } from "./nodes.js";
@@ -96,27 +97,38 @@ export function lowerTopLevelFunctionValue(
 
 /**
  * (#7354 F1b) A Prepared source function is a function object from its creation on: `js.object.init-function` gives
- * the fresh `closure`'s bag its `length` (OrdinaryFunctionCreate), `name` (SetFunctionName) and, for a constructor,
+ * the fresh `closure`'s bag its `length` (OrdinaryFunctionCreate, the §15.1.5 count the legacy metadata uses), `name`
+ * (SetFunctionName, codegen's §10.2.9 answer) and, for a constructor (a function declaration or expression),
  * MakeConstructor's `prototype`. Every site that creates a function value calls this once, right after `closure.new`
  * (a closure literal, a declaration's value), so the bag is filled once however often the closure later becomes a
- * dynamic value, and no function value reaches the kernel without one.
+ * dynamic value, and no function value reaches the kernel without one. An accessor gets none: it is a value only
+ * through a property descriptor, which no Prepared program can obtain (`__lookupGetter__` is an Object.prototype key,
+ * refused); a getter in an object literal reaches this (tests/issue-3518-ordinary-object-runtime-providers.test.ts).
+ * A function whose name is a computed key the compiler cannot evaluate refuses by name.
  */
 export function emitFunctionObjectInit(
   builder: IrFunctionBuilder,
   closure: IrValueId,
-  name: string,
-  length: number,
-  isConstructor: boolean,
+  fn: ts.FunctionDeclaration | ts.FunctionExpression | ts.ArrowFunction | ts.MethodDeclaration | ts.AccessorDeclaration,
 ): void {
+  if (ts.isAccessor(fn)) return;
+  const name = ts.isMethodDeclaration(fn) ? propertyKeyFunctionName(fn.name) : functionInstanceName(fn);
+  if (name === undefined)
+    throw new IrUnsupportedError(
+      "type-resolution-unsupported",
+      "build",
+      "the name of a function under a computed key needs the key's value",
+    );
   const type = builder.typeOf(closure);
   // invariant (producer-promise): callers pass the value `closure.new` just produced — #4502.
   if (type.kind !== "closure") throw new Error("ir/function-object-lowering: function object init needs its closure");
+  const isConstructor = ts.isFunctionDeclaration(fn) || ts.isFunctionExpression(fn);
   builder.emitCall(
     irIntrinsicFuncRef("js.object.init-function"),
     [
       builder.emitCoerceToExternref(builder.emitCallablePack(closure, type.signature)),
       builder.emitCoerceToExternref(builder.emitStringConst(name)),
-      builder.emitConst({ kind: "f64", value: length }, irVal({ kind: "f64" })),
+      builder.emitConst({ kind: "f64", value: expectedArgumentCountOfParams(fn.parameters) }, irVal({ kind: "f64" })),
       builder.emitConst({ kind: "bool", value: isConstructor }, irVal({ kind: "i32", boolean: true })),
     ],
     null,
@@ -130,22 +142,6 @@ export function emitFunctionObjectInit(
  */
 export function createsFunctionObjects(resolver: { createsFunctionObjects?(): boolean } | undefined): boolean {
   return resolver?.createsFunctionObjects?.() === true;
-}
-
-/**
- * A closure literal's function object: `length` counts the parameters before the first default or rest; only a
- * function expression is a constructor. An accessor gets none: it is a value only through a property descriptor,
- * which no Prepared program can obtain (`__lookupGetter__` is an Object.prototype key, refused).
- */
-export function initClosureFunctionObject(
-  builder: IrFunctionBuilder,
-  closure: IrValueId,
-  literal: ts.FunctionExpression | ts.ArrowFunction | ts.MethodDeclaration | ts.AccessorDeclaration,
-): void {
-  if (ts.isAccessor(literal)) return;
-  const optional = literal.parameters.findIndex((parameter) => parameter.initializer || parameter.dotDotDotToken);
-  const length = optional < 0 ? literal.parameters.length : optional;
-  emitFunctionObjectInit(builder, closure, functionObjectName(literal), length, ts.isFunctionExpression(literal));
 }
 
 export function functionObjectDynamicValue(

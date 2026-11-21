@@ -31,6 +31,7 @@ import { emitFunctionObjectInit } from "./function-object-lowering.js";
 import type { IrModuleInitBindingIntent, IrModuleInitPlan } from "./program/startup.js";
 import type { IrPlanningIdentityContext } from "./planning-identity.js";
 import { JS_TAG_IDS } from "./runtime/js-tag-domain.js";
+import { irTypeIsBoolean } from "./boolean-brand.js";
 import { bindingHoldsItsDeclaration } from "../shared/intrinsic-prototype-writes.js";
 
 const DYNAMIC: IrType = Object.freeze({ kind: "dynamic" });
@@ -134,8 +135,6 @@ export function functionDeclarationValues(
     if (!bindingHoldsItsDeclaration(declaration.name!, declaration)) refuse(name, "is written");
     const { params, returnType } = signatures.get(unitId)!;
     if (params.some((type) => type.kind !== "dynamic")) refuse(name, "has a typed parameter");
-    if (returnType !== null && carrierTag(returnType) === undefined)
-      refuse(name, "has a result the dynamic value does not carry");
     const start = declaration.getStart();
     const plan = startup.find((row) => row.bindings.some((binding) => binding.start === start))!;
     const binding = plan.bindings.find((row) => row.names[0] === name && row.start === start)!;
@@ -172,15 +171,6 @@ function refuse(name: string, why: string): never {
   );
 }
 
-/** The tag a typed result is boxed with into the carrier (the source producer's box rule), if it has one. */
-function carrierTag(type: IrType): IrType | undefined {
-  if (type.kind === "dynamic") return type;
-  if (type.kind === "string") return irDynamic(JS_TAG_IDS.String);
-  if (type.kind !== "val") return undefined;
-  if (type.val.kind === "f64") return irDynamic(JS_TAG_IDS.NumberF64);
-  return type.val.kind === "i32" && type.val.boolean === true ? irDynamic(JS_TAG_IDS.Boolean) : undefined;
-}
-
 /** The slice of the module-init lowering context the values are made in. */
 export interface FunctionValueHost {
   readonly builder: IrFunctionBuilder;
@@ -199,8 +189,7 @@ export function emitFunctionDeclarationValues(
   for (const value of values) {
     const signature: IrClosureSignature = { params: value.params, returnType: DYNAMIC };
     const closure = cx.builder.emitClosureNew(liftTrampoline(cx, value, signature), signature, [], []);
-    const { declaration } = value;
-    emitFunctionObjectInit(cx.builder, closure, declaration.name!.text, declaration.parameters.length, true);
+    emitFunctionObjectInit(cx.builder, closure, value.declaration);
     const callable = cx.builder.emitCallablePack(closure, signature);
     const dynamic = cx.builder.emitCall(irRuntimeFuncRef(IR_DYN_CALL_BOX_FN), [callable], irDynamic());
     cx.builder.emitGlobalSet(value.home.globalRef, dynamic!);
@@ -225,8 +214,12 @@ function liftTrampoline(cx: FunctionValueHost, value: FunctionDeclarationValue, 
   return irUnitFuncRef(identity);
 }
 
+/**
+ * The result into the carrier: a void result is `undefined`; any other is boxed, a Boolean under its tag, and the
+ * box arm admits it as the kind `carrierKindOf` gives its type, or refuses it by name.
+ */
 function intoCarrier(builder: IrFunctionBuilder, result: IrValueId | null, type: IrType | null): IrValueId {
   if (result === null || type === null) return builder.emitDynUndefined();
-  const tag = carrierTag(type)!;
-  return tag === type ? result : builder.emitBox(result, tag);
+  if (type.kind === "dynamic") return result;
+  return builder.emitBox(result, irDynamic(irTypeIsBoolean(type) ? JS_TAG_IDS.Boolean : undefined));
 }
