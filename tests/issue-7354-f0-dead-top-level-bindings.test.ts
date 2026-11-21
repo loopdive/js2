@@ -289,6 +289,53 @@ it("#7354 F0 keeps a goal-dependent early error when the goal is unstated", asyn
   expect(messages(result).join("\n")).toContain("module binding g has no exact typed storage");
 });
 
+// Review round 3: the early errors that pin a dead binding are walked under the Script and the Module goal
+// whatever the options state. Each program's only statement is a dead binding: the legal one is dropped and
+// compiles; an illegal one is kept (and refused where it lowers) in every option set whose goal could be the one
+// that rejects it. `await 0` in a plain function is rejected under both goals.
+describe("#7354 F0 — goal-dependent early errors inside a dead binding", () => {
+  const SCRIPT_ONLY = "var g = function () { return import.meta; };";
+  const MODULE_ONLY = "var g = function () { var await; };";
+  const BOTH = "var g = function () { await 0; };";
+  const LEGAL = "var g = function () { return 1; };";
+  const goalOptions = (scriptGoal: boolean | undefined, inferModule: boolean | undefined) => {
+    const { scriptGoal: _s, inferModuleStrictArguments: _m, ...rest } = options() as Record<string, unknown>;
+    return {
+      ...rest,
+      ...(scriptGoal === undefined ? {} : { scriptGoal }),
+      ...(inferModule === undefined ? {} : { inferModuleStrictArguments: inferModule }),
+    } as Test262CompileOptions;
+  };
+  const combinations = [true, undefined].flatMap((scriptGoal) =>
+    [true, false, undefined].map((inferModule) => [scriptGoal, inferModule] as const),
+  );
+
+  it.each(combinations)("scriptGoal=%s inferModuleStrictArguments=%s", async (scriptGoal, inferModule) => {
+    const compileWith = (source: string) => compile(source, goalOptions(scriptGoal, inferModule));
+    // A Script is possible unless only the Module goal is stated; a Module unless the Script goal is.
+    const scriptPossible = !(inferModule === true && scriptGoal !== true);
+    const modulePossible = scriptGoal !== true;
+    expect(node(SCRIPT_ONLY)).toBe("threw");
+    if (scriptPossible) expect((await compileWith(SCRIPT_ONLY)).success).toBe(false);
+    if (modulePossible) expect((await compileWith(MODULE_ONLY)).success).toBe(false);
+    expect((await compileWith(BOTH)).success).toBe(false);
+    expect(messages(await compileWith(LEGAL))).toEqual([]);
+  });
+
+  // The reviewer's program: `inferModuleStrictArguments: false` alone marks only a Script top level, and the
+  // Script-only rules key on `scriptGoal`, so a walk under the given options alone dropped it.
+  it.each([true, false])(
+    "keeps import.meta under inferModuleStrictArguments:false alone (skipSemantic %s)",
+    async (skip) => {
+      const result = await compile(SCRIPT_ONLY, {
+        ...goalOptions(undefined, false),
+        skipSemanticDiagnostics: skip,
+      } as Test262CompileOptions);
+      expect(result.success).toBe(false);
+    },
+  );
+});
+
 // The shared pass's own rules (both callers), moved here from tests/issue-3418.test.ts.
 describe("#7354 F0 — elideDeadTopLevelBindings purity and declaration rules", () => {
   const elide = (src: string) => elideDeadTopLevelBindings(src, ts.ScriptKind.JS).elided;

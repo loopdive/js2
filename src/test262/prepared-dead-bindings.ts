@@ -10,21 +10,20 @@ import { ts } from "../ts-api.js";
 type Analysis = ReturnType<typeof analyzeMultiSource>;
 
 /**
- * The goals whose early errors to pin: a stated goal alone; for an unstated one both, so the goal-dependent errors
- * (`import.meta` in a Script, duplicate top-level functions in a Module) are pinned whichever goal runs. Each rule
- * of the unstated walk also runs under the Script goal, so that walk adds nothing.
+ * The early errors are walked under the Script goal (as the test262 runner states it) and the Module goal, whatever
+ * the options state. Each walk misses errors the other finds: `import.meta` is reported only under the Script goal;
+ * `await 0` in a plain function only under the Module goal, because the Script walk tolerates one function level
+ * for the runner's synthetic test wrapper, yet node rejects it in a Script too. Pinning an error the program's
+ * real goal does not have only keeps a dead binding, so the union is the fail-closed choice.
  */
-function goalsOf(options: CompileOptions): readonly CompileOptions[] {
-  if (options.scriptGoal === true || options.inferModuleStrictArguments !== undefined) return [options];
-  return [
-    { ...options, scriptGoal: true },
-    { ...options, inferModuleStrictArguments: true },
-  ];
-}
+const GOAL_WALKS: readonly Partial<CompileOptions>[] = [
+  { scriptGoal: true, inferModuleStrictArguments: false },
+  { scriptGoal: false, inferModuleStrictArguments: true },
+];
 
 /**
  * Where the unelided source carries a frontend error: its TypeScript diagnostics (syntactic and, unless skipped,
- * semantic) and its ES early errors (`goalsOf`). Pinning more than the gate rejects only keeps a dead binding.
+ * semantic) and its ES early errors (`GOAL_WALKS`). Pinning more than the gate rejects only keeps a dead binding.
  * Undefined when an error in the source has no position, so no statement can be shown free of one.
  */
 function frontendErrorOffsets(source: ts.SourceFile, analysis: Analysis, options: CompileOptions): number[] | undefined {
@@ -34,8 +33,8 @@ function frontendErrorOffsets(source: ts.SourceFile, analysis: Analysis, options
     if (diagnostic.start === undefined) return undefined;
     offsets.push(diagnostic.start);
   }
-  for (const goal of goalsOf(options))
-    for (const error of sourceEarlyErrors(source, goal))
+  for (const goal of GOAL_WALKS)
+    for (const error of sourceEarlyErrors(source, { ...options, ...goal }))
       offsets.push(source.getPositionOfLineAndCharacter(error.line - 1, error.column - 1));
   return offsets;
 }

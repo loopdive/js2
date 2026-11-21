@@ -484,6 +484,22 @@ export function checkModuleItemPosition(ctx: EarlyErrorContext): void {
  * `yield` is reserved in strict-mode code and inside generator bodies;
  * `await` is reserved in module code and inside async function bodies.
  */
+/** A name that declares a binding or a label: never an expression TypeScript may have misread. */
+function isBindingName(node: ts.Identifier): boolean {
+  const parent = node.parent;
+  return (
+    ((ts.isVariableDeclaration(parent) ||
+      ts.isParameter(parent) ||
+      ts.isBindingElement(parent) ||
+      ts.isFunctionDeclaration(parent) ||
+      ts.isFunctionExpression(parent) ||
+      ts.isClassDeclaration(parent) ||
+      ts.isClassExpression(parent)) &&
+      parent.name === node) ||
+    (ts.isLabeledStatement(parent) && parent.label === node)
+  );
+}
+
 export function checkReservedIdentifiers(ctx: EarlyErrorContext): void {
   const { sourceFile } = ctx;
   if (isWrapTestSource(sourceFile)) return;
@@ -561,6 +577,11 @@ export function checkReservedIdentifiers(ctx: EarlyErrorContext): void {
         if (!c && sourceFileIsModule) {
           reserved = true;
         }
+        // §13.1.1: in a Module `await` is no Identifier at all, inside a plain function too
+        // (`function f() { var await; }`). Only an explicit Module goal says so (a syntactic module may be the
+        // runner's synthetic Script wrapper), and only for a binding: TypeScript reads some top-level
+        // AwaitExpressions (`await /x/`) as an identifier reference.
+        if (ctx.moduleGoal && isBindingName(node)) reserved = true;
         if (reserved) {
           ctx.addError(
             node,
