@@ -12,7 +12,6 @@ import {
 } from "./native-object-access-requirements.js";
 import {
   planNativeSourceClosureRequirements,
-  assertNativeSourceClosureRequirementsCurrent,
   type NativeSourceClosureRequirements,
 } from "./native-source-closure-requirements.js";
 
@@ -89,7 +88,6 @@ function calculate(
   if (access.demands.program !== program || access.demands.projection !== projection)
     fail("foreign access program/projection");
   if (source) {
-    assertNativeSourceClosureRequirementsCurrent(source);
     if (source.demands.program !== program || source.demands.projection !== projection)
       fail("foreign source program/projection");
   }
@@ -124,7 +122,6 @@ export function deriveNativeRealmRequirements(
   sourceRequirements?: NativeSourceClosureRequirements,
 ): NativeRealmRequirements | undefined {
   const access = deriveNativeObjectAccessRequirements(program, projection);
-  if (sourceRequirements !== undefined) assertNativeSourceClosureRequirementsCurrent(sourceRequirements);
   const source =
     sourceRequirements === undefined ? planNativeSourceClosureRequirements(program, projection) : sourceRequirements;
   const data = calculate(program, projection, source, access);
