@@ -3523,3 +3523,146 @@ as under vitest).
   violation — binary operator '+=' is capability-deferred …"); `v.a++`, `switch (v.k)`, a return inside try refuse in
   from-ast.
 - No adversarial review run yet; plan §5 corrections done as listed.
+
+### Corrections to the sections above (after the M1 review, 2026-11-21)
+
+The M1 sections above describe the state at c417b11b1c and are wrong in three places:
+
+- **A loss against main (review finding 1).** With M1's TypeError rule, a program with one object literal anywhere
+  and a catch that reads its binding refused every ToString / ToNumber of an untyped value
+  (`TypeError "Cannot convert object to primitive value" in a program that reads a caught value`), where main
+  answered, e.g. `function g(){ var o = {a:1}; return o.a; } function f(v){ return +v; } var out = String(f(3)+g());
+  try{throw 2}catch(e){out += typeof e}`. M1 did not land alone; M2 below is the fix, and the rule is gone.
+- **Two exceptions out of `compile()`** (also on main): `function f(){ var o = {}; return o.a === undefined ? 1 : 0; }
+  f();` (the #7380 validator's "retains a dynamic type after legalization") and `function f(v){ v.a += 1; }`
+  ("internal capability violation"). Both fixed below.
+- **"Every O-lane test passes" was not true**: `tests/issue-7354-o-objects.test.ts` "refuses what the later steps
+  build" failed with the validator on (it fails on `origin/main` 052569d335 too: the test came with PR 7312, the
+  validator after it, so main is red on it and this PR fixes it); the d1 test "reads a dynamic object field back"
+  timed out at 35 s; several long files exited 1 on a vitest RPC timeout.
+
+## M2 result (2026-11-21, same branch)
+
+### Design as built
+
+- **Kind `error`** (`src/ir/program/dynamic-value-kinds.ts`): a row in every `Record<CarrierKind, …>`, before
+  `object` (which stays the complement): `TYPEOF_NAME` "object", `KIND_TEST` `js.object.is-error`, `TO_STRING_ARM`
+  "error", `TO_NUMBER_ARM` "nan", `ADD_ROLE` concat, `OBJECT_TAG` "Error", `MEMBER_ACCESS_ARM` "error".
+  `admittedKinds(program)` admits it where the program reads a catch binding (S13's `readsCatchPayload`), the one way a
+  TypeError the legalization raises becomes a value.
+- **Realm rows** (`native-source-objects.ts` `ROWS`, `source-object-bodies.ts`, `ordinary-object-callables.ts`,
+  manifest): `js.object.is-error(value) -> i32` (`ref.test` of the realm's `$Error_struct`; a call contract, the
+  layout is the realm's) and one parameterised `js.object.error-field(error, selector) -> externref` (name 1,
+  message 0).
+- **Builders** (`dynamic-value-chains.ts`): `kindTest`'s realm test; `errorField`; `concat`, shared with `+`; ToString
+  of an error `name + ": " + message` (Error.prototype.toString, exact here: the realm's TypeError has name
+  "TypeError" and a non-empty message, and no code can write either); `toNumber` over the kinds that convert.
+- **Member access** (`dynamic-member-access.ts`): error arm reads `name` / `message` from the fields, `undefined` for
+  any key Error.prototype and Object.prototype do not hold; `typeError` lost its `readsCaught` parameter.
+- **Producer fixes** (finding 2): `legalizeSourceDynamicValues` (`source-dynamic-contracts.ts`) legalizes every function
+  on the native lane (the "has a dynamic contract" gate, `convertsDynamicToString`, `readsTypeofOfAbsentGlobal`,
+  `bindsCatch` and the dead `signatures` / `globals` parameters are gone); a function without a dynamic value is
+  returned unchanged, so accepted programs keep their bytes. `assertNotDeferred` (`capability.ts`) refuses by name on
+  the selector-less Prepared path (#7364 `unselected`): `binary operator '+=' is capability-deferred in f`.
+- **One refusal form** (finding 5): `<access> of <receiver> needs <what the realm lacks>`, built once in
+  `memberAccess`; the receiver is its kind, or "a value that may be" the kinds whose answer is missing, e.g.
+  `member read 'toFixed' of a value that may be a number needs Number.prototype's properties`.
+
+### What a program that reads a caught value still refuses
+
+- A member **write** whose receiver may be the caught error: `member write 'k' of a value that may be an Error needs
+  property storage on the realm's error`. A caught value may always be the error, so every dynamic member write in
+  such a program refuses (M1 refused them too, by its rule).
+- A read of an error's `constructor`, `toString`, `stack` or another Object.prototype key (`… needs Error.prototype's
+  properties`).
+- `Object.prototype.toString.call(e)` on the catch binding itself: `a dynamic value flows into unknown without a
+  conversion (CallExpression)` (the checker types `e` as `unknown`; through a parameter it answers "[object Error]").
+
+### Review findings
+
+1. Fixed by M2; the review's two programs and six variants are node-checked
+   (`tests/issue-7354-m2-objects-beside-catches.test.ts`).
+2. Fixed (producer, above); `v.a += 1` is a named refusal (test in m-refusals). Test infrastructure: m-sweep is four
+   files over `tests/helpers/member-access-sweep.ts`, each program over part of the receivers; the d1 test has 180 s.
+   The exit 1 of m-catch-and-tags and the long O files was neither a hang nor plain load: a realm compile blocks the
+   vitest worker for tens of seconds and vitest's RPC reply was left unread past its deadline ("Timeout calling
+   onTaskUpdate"); the Prepared run helpers wait 25 ms before each compile (`yieldToRpc`).
+3. program-source.ts: growth over main 0 (`sourceCodeStrictness` became one optional call at its call site; the
+   legalize call shrank). program-physical-plan.ts: +1 (S13's realm condition, one wrapped line). from-ast.ts +16
+   (O1-O3's own lowering arms: `isRawExternrefReceiver`, the member write's externref receiver, the object-literal box
+   in `boxConcreteToDynamic`; they are from-ast's AST lowering and have no other home) and compiler.ts +2 (the
+   import and the one `codeStrictness:` row of the Prepared preparation input, at the only place the compiler
+   options are read) keep their grants. Leftovers done: `LegalizationProgram` is the one program type, `receiver` /
+   `key` parameters dropped, the header rewritten, the unreachable `tag.test` Object arm deleted, realm-keys.ts no
+   longer forwards (its six importers read builtin-prototype-keys.ts).
+4. shared-exception-tag asserts behaviour (a realm TypeError thrown in one unit caught in another) and the tag
+   section's entry count read off the binary; the 3518 provider count line and the contracts closed-list equality are
+   gone (every manifest feature has its declaration; the table checks signatures).
+5. Fixed (one form, above); every test that quoted a text was updated from a grep of the old wordings.
+
+### Proof
+
+Changed root test files (each run alone, `JS2WASM_EVAL_ENGINE=interpreter`, validator on as vitest sets it; the
+`changed-root-tests.sh` list, 23 files, including the 3 it does not run itself):
+
+| file | exit | time | tests |
+|---|---|---|---|
+| issue-3518-native-realm-source-integration | 0 | 286 s | 24 |
+| issue-3518-ordinary-object-callable-contracts | 0 | 1 s | 43 |
+| issue-3518-ordinary-object-runtime-providers | 0 | 102 s | 173 |
+| issue-7354-d1-dynamic-carrier | 0 | 76 s | 44 |
+| issue-7354-h-script-var-dynamic-home | 0 | 144 s | 64 |
+| issue-7354-m-catch-and-tags | 0 | 331 s | 6 |
+| issue-7354-m-member-access | 0 | 418 s | 5 |
+| issue-7354-m-prototype-premise | 0 | 26 s | 12 |
+| issue-7354-m-refusals | 0 | 75 s | 42 |
+| issue-7354-m-sweep-1 | 0 | 279 s | 7 |
+| issue-7354-m-sweep-2 | 0 | 269 s | 7 |
+| issue-7354-m-sweep-3 | 0 | 215 s | 6 |
+| issue-7354-m-sweep-4 | 0 | 230 s | 6 |
+| issue-7354-m2-caught-errors | 0 | 302 s | 5 |
+| issue-7354-m2-objects-beside-catches | 0 | 182 s | 3 |
+| issue-7354-o-objects | 0 | 194 s | 13 |
+| issue-7354-o2-object-values | 0 | 376 s | 11 |
+| issue-7354-o2b-to-primitive | 0 | 295 s | 15 |
+| issue-7354-o3-member-write | 0 | 361 s | 21 |
+| issue-7354-o4-member-read | 0 | 460 s | 16 |
+| issue-7354-shared-exception-tag | 0 | 205 s | 5 |
+| issue-7354-str-strings | 0 | 37 s | 19 |
+| issue-7354-x-dynamic-throw | 0 | 135 s | 60 |
+
+(m-sweep-1/2/3/4, m-member-access, m-catch-and-tags, m2-objects-beside-catches, o-objects and
+native-realm-source-integration ran before the refusal-wording commit 7f90831ddc, which changes no behaviour and
+none of whose quoted texts they assert.)
+
+- The reviewer's 327 probes (`/home/user/js2/.tmp/rv-m1/b1-b7`), re-run at 1f5a8ec0b3: 0 wrong answers, 0 traps,
+  0 invalid modules, 0 exceptions out of compile(); against the reviewer's run at c417b11b1c, 17 refusals now answer
+  as node and the 2 compile() exceptions are named refusals; none that answered refuses now.
+- M2 mutations (each deleted alone, tsx probe; killed unless noted): the is-error test (killed in a program that also
+  builds objects; with no object literal the error kind is the chain's last and untested), each M2 row of
+  `TYPEOF_NAME`, `TO_STRING_ARM`, `ADD_ROLE`, `OBJECT_TAG`, `MEMBER_ACCESS_ARM`, `admittedKinds`' catch condition, the
+  field selectors, `ERROR_OWN_KEYS`, the Error.prototype key refusal (by `e.stack`), the error write refusal.
+  Survivors: `TO_NUMBER_ARM` error "nan" → "unbox" (the unboxer answers NaN for any other reference, so the two are
+  equivalent here); the Object.prototype-key half of the error read refusal (implied: a caught value may always be a
+  primitive, whose arm refuses those keys first).
+- Bytes vs `origin/main` 052569d335: ordinary pipeline, 60 test262 files × default + standalone, 120/120 identical.
+  Prepared: 194 programs without a member operation, object literal, throw or catch from the d1/t/ty/str*/x/p/h*/vg
+  tests, 98 accepted, all identical.
+- Gates (bare, exit 0): typecheck, loc and func budgets (also with `LOC_GATE_BASE=origin/main`), coercion-sites,
+  oracle-ratchet, dead-exports, import-cycles, compiler-boundaries inventory in CI mode
+  (`--mode inventory --base <merge base>`).
+
+### Sample (411 ES5 rows, Prepared path, real prelude, at 1f5a8ec0b3)
+
+| first gap | 7349 (`m1120/all-7349.jsonl`) | M1 (c417b11b1c) | M1 + M2 |
+|---|---|---|---|
+| `dyn.member_get` | 293 | 0 | 0 |
+| M1's TypeError rule | 0 | 293 | 0 |
+| `identifier "assert" is not in scope in assert` | 0 | 0 | 293 |
+| `not-direct` | 73 | 73 | 73 |
+| `assert` not in scope in verifyProperty | 26 | 26 | 26 |
+| pass (negatives) | 14 | 14 | 14 |
+| other | 5 | 5 | 5 |
+
+Compile time per row: median 45 ms, p90 72 ms, max 907 ms (every row refuses before emission). As the plan
+predicted, the 293 rows move to Fa part 2's "declaration read as a value".
