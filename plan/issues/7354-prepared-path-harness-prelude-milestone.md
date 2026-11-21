@@ -4118,3 +4118,42 @@ Measurements:
 Not verified: that `n` in `var n = 1; Object.defineProperty(n, …)` keeps the typed (not dynamic) home — the program
 refuses at the call before anything observable; the runnable `var Object = {}` proof of the plan refuses on the
 checker's diagnostics (`Property 'defineProperty' is missing in type '{}'…`), not on a binding.
+
+### Review round 1 (PR 7374; 314 probes: 0 wrong, 0 exceptions, 0 invalid Wasm; NOT MET on A1)
+
+The sections above describe the state before this round where they differ; this list is current.
+
+- **A1 (fixed).** ToString of a value that may only be a function refuses at compile time: `ToString of a function
+  needs Function.prototype.toString` (`TO_STRING_ARM.function = "function-source"`, the refusal in `stringOf` when every
+  kind the value may hold has that arm). The run-time abort stays an arm beside kinds that answer (a parameter, a
+  caught value). To make "only a function" knowable, a script var whose home holds its own closure reads as that
+  closure's function value in its module-init (from-ast's `moduleGlobal` read), and the kind proof (`knownKinds`)
+  learns the function-value projection. ToNumber of a function is NaN, exact while a function value has no own
+  `valueOf`/`toString` (`TO_NUMBER_ARM.function = "nan"`); `+` concatenates, so `f + 1` refuses with the ToString text.
+- **A2 (ruling, comment).** An object's callable `toString`/`valueOf` stays the run-time abort: whether a property
+  holds a function is a run-time fact of that object (comment at `skipUnlessCallable`).
+- **B1 (fixed).** `MEMBER_ACCESS_ARM.function = "function-objects"` drives the member refusal; a receiver known to be a
+  function now reads `member read 'k' of a function needs the realm's function objects`.
+- **B2 (fixed).** Behaviour tests in `f1-function-kind` make each function row observable: `op(v){ return v + 1 }`
+  over a number, a string and a function (ADD_ROLE), `str`/`num` over numbers, Booleans and a function (TO_STRING_ARM,
+  TO_NUMBER_ARM), the caught function value, typeof / isPrimitive (TYPEOF_NAME, KIND_TEST), the tag test
+  (OBJECT_TAG), the member refusals (MEMBER_ACCESS_ARM). Survivor: TO_NUMBER_ARM "nan" → "unbox" (the unboxer answers
+  NaN for any reference, the M2 precedent).
+- **B3 (fixed).** `functionValueOperand` lives in `src/ir/program/function-value-projection.ts`, the module that owns
+  the `__ir_dyn_call_box` pattern on the Prepared side; the projection of anything but a packed callable refuses as
+  `__ir_dyn_call_box of <value>, which is not a packed callable`.
+- **B4 (fixed).** The no-closure-root branch of the function test is gone: the test is requested only where the
+  source creates a function value, and such a program lowers a closure or refuses; no probe reached it (an IIFE, an
+  uncalled function returning a closure, a dead closure in `if (false)`), so the case is a named resource failure.
+- **B5 (fixed).** No growth against main in `from-ast.ts`, `program-source.ts`, `ir-program-presentation.ts`, and no
+  grant: `unboundIdentifierDetail` moved to `identifier-read.ts`; Fa's `argumentIntoDynamic` moved to
+  `function-object-lowering.ts` as `concreteIntoDynamic` (offsets the read arm above); the `__self` slice is
+  `callableCarried`'s `closureUnit`; N1 lives in the Prepared script-var home classifier
+  (`module-binding-script-var-home.ts`, same text). `functionValue.in` is an `IrFunctionBuilder`.
+- **B6 (fixed).** The forged-IR legalization tests of the Fa file (and the closure-pack row of x's table) are deleted;
+  every path they covered is reached by the source programs of the Fa and F1 files. The vocabulary count pins are a
+  uniqueness check and "every id has its definition".
+
+After the round (main ab820ab6d6 merged): every test file the branch adds or modifies, 18, ran in full, exit 0;
+gates exit 0 (budgets with `LOC_GATE_BASE` = main: no growth); `check:prepared-bytes` vs main: only row 149 differs;
+ordinary pipeline 20 files × 2 targets: 40/40 identical.
