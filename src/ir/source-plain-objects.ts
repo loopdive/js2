@@ -17,9 +17,10 @@ const isMemberName = (node: ts.Identifier): boolean =>
   (ts.isPropertyAccessExpression(node.parent) && node.parent.name === node) ||
   ((ts.isPropertyAssignment(node.parent) || ts.isMethodDeclaration(node.parent)) && node.parent.name === node);
 
-export function programObjects(sourceFiles: readonly ts.SourceFile[]): ProgramObjects {
+/** `readsDeclarationValue`: (#7354 F1b) a function declaration is read as a value (`function-declaration-values.ts`). */
+export function programObjects(sourceFiles: readonly ts.SourceFile[], readsDeclarationValue: boolean): ProgramObjects {
   let present = false;
-  let functions = false;
+  let functions = readsDeclarationValue;
   let namesSymbol = false;
   const visit = (node: ts.Node): void => {
     present ||= ts.isObjectLiteralExpression(node);

@@ -180,6 +180,8 @@ import type {
 import { irFnctorShapeEquals } from "./fnctor-abi.js";
 import { emitNumberRemainder } from "./remainder-fast-path.js";
 import { lowerModuleInitStatements } from "./module-init-chunk-lowering.js";
+import { someReturnedValue } from "./function-returns.js";
+import type { FunctionDeclarationValue } from "./function-declaration-values.js";
 import { sameIrGlobalBinding } from "./abi-bindings.js";
 import { HOST_CALLBACK_WRAP_CAPABILITY_RECORD } from "./runtime-host-capabilities.js";
 import {
@@ -907,6 +909,8 @@ export interface IrFromAstResolver extends PreparedAsyncFromAstResolver {
    * module declarations return undefined.
    */
   resolveModuleBinding?(node: ts.Identifier, writeValue?: ts.Expression): ModuleBindingGlobal | undefined;
+  /** (#7354 F1b) The function declarations a script's module-init makes as values (`function-declaration-values.ts`). */
+  moduleInitFunctionValues?(): readonly FunctionDeclarationValue[];
   /**
    * #3791, #7106 lever R — the host-free `.test` / `.exec` bridge, over the
    * in-module carrier helpers' canonical receiver-first externref ABI.
@@ -7915,6 +7919,7 @@ function lowerCall(expr: ts.CallExpression, cx: LowerCtx, statementPosition = fa
   // (#7287) …or a script `var` in its dynamic module home (the prelude's `print`).
   const dynamicModuleCallee =
     binding === undefined &&
+    !cx.directCalls?.has(expr) &&
     isStatementDynamicModuleCall(
       expr,
       (callee) => cx.resolver?.resolveModuleBinding?.(callee)?.type.kind === "dynamic",
@@ -16460,19 +16465,11 @@ type IrClosureLiteral =
   | ts.SetAccessorDeclaration;
 
 function assertUndefinedOnlyVoidClosure(expr: IrClosureLiteral, cx: LowerCtx): void {
-  const refuse: () => never = () =>
+  if (!expr.body || !ts.isBlock(expr.body) || someReturnedValue(expr.body, () => true))
     demoteToLegacy(
       "body-shape-rejected",
       `ir/from-ast: void closure value-bearing return requires an actual returned-value representation (${cx.funcName})`,
     );
-  if (!expr.body || !ts.isBlock(expr.body)) refuse();
-  const visit = (node: ts.Node): void => {
-    // A nested function's return is not a completion of this function.
-    if (ts.isFunctionLike(node)) return;
-    if (ts.isReturnStatement(node) && node.expression !== undefined) refuse();
-    ts.forEachChild(node, visit);
-  };
-  visit(expr.body);
 }
 
 function lowerClosureExpression(expr: IrClosureLiteral, cx: LowerCtx): IrValueId {
