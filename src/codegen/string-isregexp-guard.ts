@@ -39,9 +39,7 @@ import { ensureAnyToStringHelper } from "./native-strings.js";
 import { emitStringProtoToStringFlat } from "./string-proto-tostring.js";
 import { flatStringType } from "./index.js";
 import { addUnionImports } from "./registry/imports.js";
-
-/** The `$NativeRegExp` struct's registration key (`regexp-standalone.ts`). */
-const STANDALONE_REGEXP_STRUCT_NAME = "__StandaloneRegExp";
+import { NATIVE_REGEXP_STRUCT_NAME } from "../runtime/wasmgc/values/regexp-carrier-layouts.js";
 
 const EXTERNREF: ValType = { kind: "externref" };
 
@@ -142,7 +140,7 @@ export function tryEmitRuntimeIsRegExpSearchArg(
   // type table under every index already baked into emitted instructions
   // (#2901), and a module with no RegExp in it cannot hold one at runtime
   // anyway, so the test is trivially false there.
-  const reTypeIdx = ctx.structMap.get(STANDALONE_REGEXP_STRUCT_NAME);
+  const reTypeIdx = ctx.structMap.get(NATIVE_REGEXP_STRUCT_NAME);
   if (reTypeIdx !== undefined) {
     matcherUndefined.push(
       { op: "local.get", index: argLocal },
