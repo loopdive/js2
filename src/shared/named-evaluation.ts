@@ -166,12 +166,6 @@ export function functionInstanceName(decl: ts.Node): string | undefined {
     return parent.name.text;
   }
   if (ts.isPropertyAssignment(parent) && parent.initializer === node) return propertyKeyFunctionName(parent.name);
-  // (#5146 cluster E) `({ x = function () {} } = {})` — the shorthand
-  // property's assignment initializer is an AssignmentElement default, and
-  // §13.15.5.5 applies NamedEvaluation with the shorthand's own name.
-  if (ts.isShorthandPropertyAssignment(parent) && parent.objectAssignmentInitializer === node) {
-    return parent.name.text;
-  }
   if (ts.isPropertyDeclaration(parent) && parent.initializer === node) return propertyKeyFunctionName(parent.name);
   if (
     ts.isBinaryExpression(parent) &&

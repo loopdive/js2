@@ -4423,8 +4423,12 @@ files (0 pass → fail).
 Review round 2: `memberNameOf` and the class-field arm use `propertyKeyFunctionName`. Name tests run: issue-5157
 default-export names, 4436, 4437, computed-props, issue-computed-props — pass; issue-4617 fails 2 tests on main
 unchanged. Known limits (as on main): `o[1].name` read directly gives `""` in the ordinary pipeline while the same
-function read through a parameter gives `"1"`; getter/setter and class-field names under non-constant computed keys
-are wrong.
+function read through a parameter gives `"1"`; getter/setter, class-field and object-literal method names under
+non-constant computed keys are wrong (`var k = "z"; ({ [k]() {} })` gives `""`, node `"z"`); passing a function read
+under a numeric method key (`g(o[1])` for `{ [1]() {} }`, also `{ 1n() {} }`, `class C { 0x10() {} }`) traps with
+"Cannot access property on null". Review round 3: the comments in `function-instance-meta-methods.ts` say what is
+declined now (non-constant computed, BigInt, private); the second identical shorthand arm in `functionInstanceName`
+is gone. "C2" in `binding-holds-declaration.ts` is the class slice of this issue (constructors, `new`, `.constructor`).
 
 ## Perf4 result (2026-11-21, branch `claude/7354-perf4` from `claude/7354-perf3` `db3c4a256f`)
 

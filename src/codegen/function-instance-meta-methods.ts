@@ -40,9 +40,9 @@
  * ## §10.2.9 SetFunctionName for a method — what is and is NOT resolvable
  * A method's `name` carries a prefix for accessors (`get m` / `set m`) and, for
  * a symbol key, the description in brackets (`[Symbol.iterator]`). Only the
- * syntactic forms that carry a literal key are decidable at the mint site, so
- * this module **declines the whole slot** when the key is computed or private,
- * rather than publishing a guess.
+ * syntactic forms whose key is a compile-time constant are decidable at the
+ * mint site, so this module **declines the whole slot** when the key is a
+ * non-constant computed key, a BigInt or private, rather than publishing a guess.
  *
  * Declining is the safe direction and costs nothing that was already there:
  * with no slot, `length` keeps #4436's `$arity` answer (the property never
@@ -98,16 +98,16 @@ function isMetaBearingMember(decl: ts.Node): decl is MetaBearingMember {
 
 /**
  * §10.2.9 `name` for a member, or `undefined` when the key is not statically
- * decidable (a computed key is a runtime value; a `#private` name is not an
- * observable property key at all).
+ * decidable here (a non-constant computed key is a runtime value; a `#private`
+ * name is not an observable property key, so its slot is not published).
  *
  * The `get `/`set ` prefixes are part of the spec answer, not decoration:
  * `Object.getOwnPropertyDescriptor({ get m() {} }, "m").get.name` is `"get m"`.
  */
 function memberNameOf(decl: MetaBearingMember): string | undefined {
   const key = decl.name;
-  // The shared §10.2.9 key rule (`propertyKeyFunctionName`); a `#private` or BigInt key declines, as an undecidable
-  // computed key does — see the module header on why declining beats guessing.
+  // The shared §10.2.9 key rule (`propertyKeyFunctionName`). A `#private` or BigInt key declines here although its
+  // name is decidable: this module publishes no slot for either (module header).
   const base = ts.isPrivateIdentifier(key) || ts.isBigIntLiteral(key) ? undefined : propertyKeyFunctionName(key);
   if (base === undefined) return undefined;
   if (ts.isGetAccessorDeclaration(decl)) return `get ${base}`;
