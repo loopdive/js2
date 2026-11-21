@@ -42,7 +42,7 @@ describe("#7354 F2 — calls through a value", () => {
     () =>
       agrees(
         `${NOT_CALLABLE}if (tryCall(1) !== 1 || tryCall(undefined) !== 1 || tryCall(null) !== 1 || tryCall({}) !== 1 || tryCall("s") !== 1 || tryCall(function () {}) !== 0 || n !== 6) throw 1;`,
-        `${NOT_CALLABLE}if (tryCall(true) !== 0) throw 1;`,
+        `${NOT_CALLABLE}if (tryCall(function () {}) !== 1) throw 1;`,
       ),
     SLOW,
   );
@@ -121,8 +121,8 @@ describe("#7354 F2 — OrdinaryToPrimitive calls an own conversion method", () =
   // A result of an object kind does not answer (§7.1.1.1 step 2.b.ii): a function or a caught error goes on.
   const OBJECT_RESULTS =
     "var fn = { valueOf: function () { return function () {}; }, toString: function () { return 'u'; } };\n" +
-    "function err() { try { null.x; } catch (e) { return e; } }\n" +
-    "var er = { valueOf: function () { return err(); }, toString: function () { return 'w'; } };\n";
+    "function err(z) { try { return z.x; } catch (e) { return e; } }\n" +
+    "var er = { valueOf: function () { return err(null); }, toString: function () { return 'w'; } };\n";
   it(
     "skips a method whose result is a function or an error",
     () =>
