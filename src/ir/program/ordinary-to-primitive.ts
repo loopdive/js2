@@ -43,6 +43,8 @@ export function ordinaryToPrimitive(
   result: IrValueId,
 ): IrInstr[] {
   if (program.objects.namesSymbol) gap("ToPrimitive of an object in a program that names 'Symbol'");
+  // Without a callable kind `valueOf` is skipped whether held or not, so it is not consulted at all: the answers are
+  // the same, and a program without function values keeps the bytes it had before F1.
   const names = !b.isCallable ? ["toString"] : hint === "string" ? ["toString", "valueOf"] : ["valueOf", "toString"];
   // The method `names[index]` and the ones after it, into `r`.
   const step = (index: number, r: IrValueId): IrInstr[] => {

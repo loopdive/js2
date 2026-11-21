@@ -57,11 +57,9 @@ related: [7188, 2949, 3526, 3527, 3518, 7106, 7349, 7350, 7352]
 # its call, `argumentIntoDynamic` shared by arguments and returns, `unboundIdentifierDetail`); src/ir/program-source.ts
 # +4 (Fa's N1 refusal, a var sharing its name with a function declaration, in the globals loop that owns the var);
 # src/compiler/ir-program-presentation.ts +4 (the ABI join skips a lifted closure body's own `__self`, which the
-# function-value setup owns). All are AST-lowering or ABI-join arms with no subsystem module of their own yet.
+# function-value setup owns). All are AST-lowering or ABI-join arms with no subsystem module of their own yet. These
+# three are this PR's whole growth against main 69dbe732c3 (M1, M2 and F0 are on main).
 loc-budget-allow:
-  - src/ir/program-consumer.ts
-  - src/ir/program-physical-plan.ts
-  - src/compiler.ts
   - src/ir/program-source.ts
   - src/ir/from-ast.ts
   - src/compiler/ir-program-presentation.ts
@@ -4000,16 +3998,22 @@ none of whose quoted texts they assert.)
 Compile time per row: median 45 ms, p90 72 ms, max 907 ms (every row refuses before emission). As the plan
 predicted, the 293 rows move to Fa part 2's "declaration read as a value".
 
-## Slice F1 result (2026-11-21, branch `claude/7354-f1`, partial: plan steps 1-3 + D4/D6; steps 4-6 not built)
+## Slice F1a (steps 1–3) result (2026-11-21, branch `claude/7354-f1`; steps 4–6 are F1b)
 
-Base: `claude/7354-m1` 333a3f2fc7 (M1 + M2 on main). Stopped before step 4 on the plan's own Risk-1 rule (below).
+Base: `claude/7354-m1` 333a3f2fc7, then `main` 69dbe732c3 merged in (M1, M2 and F0, PR 7362). Stopped before step 4 on
+the plan's own Risk-1 rule (below).
+
+**F1b (not built):** step 4 declarations read as values (`program-source-function-values.ts`, the trampoline unit, the
+direct-plan-first call order), step 5 R7 (direct calls inside module-init closures), step 6 function-object
+properties (kernel source-closure arm, `js.function.init`, `emitFunctionObjectInit`, `BUILTIN_REACHABLE_KEYS.function`).
+Waits for the compile-time fix of closure programs (slice Perf3).
 
 ### Built
 
-- **F0** (`src/test262/test262-prepared-entry.ts` `withoutDeadBindings`): a single script is elided as `compileSource`
-  elides it (#3418), on the same targets; a source with an ES early error is left as it is (a blanked declaration would
-  take its early error with it: `let value = 1; let value = 2;` compiled to nothing before this guard).
-  `earlyErrorGoals` (prepared-pipeline-boundary.ts) is now the one options-to-goals mapping, used by both.
+- **F0**: this branch first built its own (`withoutDeadBindings`, an early-error guard, `earlyErrorGoals`); after
+  main's F0 (PR 7362, `src/test262/prepared-dead-bindings.ts`) landed, the merge dropped all of it for main's. Nothing
+  of the branch's F0 is kept. Main's F0 test is adapted: its dropped closures read `this` (refused, C2), because a
+  plain function expression is a value now and an unelided one would compile (slowly) instead of refusing.
 - **Fa ported as content** (not its commits): the all-dynamic closure signature, `staticFunctionValue`, written
   parameter slots, N1, the closure-site re-typing. Corrections: (a) the one kind answer is `carrierKindOf` (callable →
   `function`; the `__ir_dyn_call_box` projection via `functionValueOperand`); the box arm and the projection share one
@@ -4048,24 +4052,24 @@ Base: `claude/7354-m1` 333a3f2fc7 (M1 + M2 on main). Stopped before step 4 on th
 ### Proof
 
 Tests (each a program through the strict Prepared entry, node's answer returns and a wrong one throws):
-`issue-7354-f1-function-kind` (7), `-f1-to-primitive` (5), `-f1-function-expressions{,-2,-3}` (4/3/2), Fa's file (53).
+`issue-7354-f1-function-kind` (7), `-f1-to-primitive` (4), `-f1-function-expressions{,-2,-3}` (4/3/2), Fa's file (53).
+After the main merge every test file this branch adds or modifies (18, incl. main's F0 test) ran in full, exit 0.
 Existing pins changed: m-refusals (`__proto__` text; the `toString` write runs now), o3 (`isPrototypeOf` write runs),
 h and str2 (refusal programs use their binding, F0), d1 (selection rows), o2 (`functions`), x (closure pack admitted;
 Fa's stricter-rule test dropped), 3518 core vocabulary (48 ids), 3526 (two nullary calls).
 
-Mutations (each alone): ToString hint → number, callable method skipped, function kind admitted everywhere — all
-killed by a run. By the tests that pin them: each function row of TYPEOF_NAME / KIND_TEST / OBJECT_TAG, the callable
-and projection rules of `carrierKindOf`, `intoCarrier`'s function case, the interim member refusal, the chunk guard,
-the return box, the F0 early-error guard. Survivors: the `!isCallable → ["toString"]` gating (answers equal; only
-bytes), D4's `!== "type-error"` (a receiver of nullish kinds only is not reachable: `null.__proto__ = 1` refuses in
-from-ast first), F0's single-source guard (no multi-source test with a dead binding).
+Mutations (each alone): ToString hint → number, callable method skipped, function kind admitted everywhere, D4's
+`!== "type-error"` (killed by m-refusals: without it the refusal names `undefined`/`null` among the receiver's kinds)
+— all killed by a run. By the tests that pin them: each function row of TYPEOF_NAME / KIND_TEST / OBJECT_TAG, the
+callable and projection rules of `carrierKindOf`, `intoCarrier`'s function case, the interim member refusal, the
+chunk guard, the return box. Survivor, kept on purpose: the `!isCallable → ["toString"]` gating (answers equal; it
+keeps the bytes of programs without function values; the reason is a comment at the line).
 
-Bytes: ordinary pipeline, 20 test262 files (Function/Object toString, typeof, function expressions, addition) ×
-default + standalone: 40/40 identical. `check:prepared-bytes` (804 rows) vs base: 5 rows differ: 38, 49, 50, 51
-(`var x = 1; var x = 2;`, `var o = {a:1};`, `var arr = [1];`, `var f = function(){};` — F0 elides them to the empty
-program) and 149 (a closure reading a later-declared local now refuses by Fa's own name).
+Bytes vs main 69dbe732c3: ordinary pipeline, 20 test262 files (Function/Object toString, typeof, function
+expressions, addition) × default + standalone: 40/40 identical. `check:prepared-bytes` (804 rows): only row 149
+differs (a closure reading a later-declared local now refuses by Fa's own name).
 
-### Sample (411 rows, real prelude, at b9d8346b3d)
+### Sample (411 rows, real prelude; at b9d8346b3d and again after the main merge, same tally)
 
 | first gap | M1+M2 | F1 |
 |---|---|---|
