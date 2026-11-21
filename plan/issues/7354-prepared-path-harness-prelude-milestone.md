@@ -3993,3 +3993,43 @@ none of whose quoted texts they assert.)
 
 Compile time per row: median 45 ms, p90 72 ms, max 907 ms (every row refuses before emission). As the plan
 predicted, the 293 rows move to Fa part 2's "declaration read as a value".
+
+## S result (2026-11-21, branch `claude/7354-s` from `claude/7354-m1` 333a3f2fc7)
+
+A script `var` named as the first argument of `Object.defineProperty(v, …)` keeps its home on the Prepared path.
+TypeScript's binder records that argument as a declaration of the binding; `irOwnedScriptVarHome` counted it as a
+second declaration and withheld the home, so the program refused as `has no exact typed storage: not-direct`.
+
+What changed:
+
+- `src/shared/binding-writes.ts`: `isJsPropertyDeclarationTarget` (member write or first call argument) moved here
+  from a private copy in `src/ir/module-bindings.ts`; both the resolver and the home classifier import it.
+  `isMemberWriteDeclaration` is now module-private.
+- `src/ir/module-binding-script-var-home.ts`: `own` skips every JS property declaration (the filter is gone); the
+  comment states the current reason (#7364: from-ast refuses the unadmitted call by name).
+- `src/ir/from-ast.ts` `tryLowerObjectStaticCall`: the sweep found `o.hasOwnProperty('p')` on a dynamic script var
+  throwing an `IrInvariantError` out of `compile()` (reachable before S for any `var o = {}`). The throw is now
+  `refuseUnselected`, line-neutral; the ordinary pipeline keeps the invariant.
+- S-D5 (named reasons for the remaining `not-direct`) not done: the reason would have to travel through the
+  `IrScriptVarHome | undefined` contract, `directTopLevelDeclaration` and `inspectDirectBinding`, more than a few lines.
+
+Measurements:
+
+- `tests/issue-7354-s-script-var-define-target.test.ts` (13 tests). Updated expectations: two rows in
+  `tests/issue-7354-h-script-var-dynamic-home.test.ts`, one in `tests/issue-7354-m-refusals.test.ts`.
+- Sweep: 1,296 programs (6 binding forms × 9 positions incl. before the declaration, try/finally, if/else, switch,
+  nested loops × 12 operations × with/without an extra `Object.defineProperty`): 108 run with node's answer, 1,188
+  named refusals; zero `not-direct`, invariant errors, exceptions out of `compile()`, invalid Wasm, traps.
+- Mutation: restoring the filter fails 3 tests (top level, number var, before the declaration). A call inside a
+  function refuses at the call either way, because that unit fails before module-init resolves the binding.
+- `check:prepared-bytes`: rows 47 and 48 (the two `Object.defineProperty` programs) change from `not-direct` to the
+  call's refusal; all other rows identical. Ordinary pipeline: 20 test262 files × default and standalone identical.
+- ES5 sample (411 rows, real runner, base re-run on 333a3f2fc7): base 296 `identifier "assert" is not in scope in
+  assert`, 73 not-direct, 26 verifyProperty, 2 other, 14 pass → head 346 / 1 / 47 / 3 / 14. The 72 rows that left
+  `not-direct`: 50 to `assert`, 21 to `identifier "assert" is not in scope in verifyProperty`, 1
+  (`15.2.3.6-3-41.js`) to `identifier "JSON" is not in scope in formatIdentityFreeValue`. The remaining
+  `not-direct` is `var Infinity` (S8.5_A10_T1.js). Negatives: 14 pass, unchanged.
+
+Not verified: that `n` in `var n = 1; Object.defineProperty(n, …)` keeps the typed (not dynamic) home — the program
+refuses at the call before anything observable; the runnable `var Object = {}` proof of the plan refuses on the
+checker's diagnostics (`Property 'defineProperty' is missing in type '{}'…`), not on a binding.
