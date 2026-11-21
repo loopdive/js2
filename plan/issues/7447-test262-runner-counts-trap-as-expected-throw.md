@@ -88,3 +88,18 @@ Report the counts by lane and edition, and name any ES5 rows. Not attempted in U
 - `isWasmTrap` applies on every lane; the `prepared` field leaves `runtimeNegativeThrowAccepted` and
   `asyncRowVerdict`, and the test's lane loop collapses to one set of cases.
 - `ORACLE_VERSION` bumped in the same PR; the ratchet and regression gates green after the re-baseline.
+
+## Scope found by the review of PR 7371 (2026-11-21)
+
+- **A second copy of the hole.** `tests/test262-shared.ts` (the in-process fixture path, about line 1212) accepts a
+  runtime negative by `extractWasmExceptionMessage(execErr, fixtureInstance).includes(meta.negative!.type)`. It is not
+  reached on the Prepared lane, and dropping the `prepared` guards of `scripts/test262-runtime-verdict.mjs` would not
+  touch it. The fix must cover both, preferably by making that path call the verdict module.
+- **Stack overflow is not a `WebAssembly.RuntimeError`.** Unbounded Wasm recursion surfaces as a host `RangeError`
+  ("Maximum call stack size exceeded"), so the trap rule does not see it, and a runtime negative that expects
+  `RangeError` accepts it on every lane (Prepared included). One corpus row expects `RangeError` at run time
+  (`module-code/top-level-await/module-import-rejection-tick.js`). Decide whether a host stack overflow counts as the
+  program's RangeError (JavaScript does throw one, catchably; compiled code cannot catch the host's).
+- **The oracle-bump gate.** `scripts/test262-runtime-verdict.mjs` is listed in `PURE_VERDICT_FILES` of
+  `scripts/check-verdict-oracle-bump.mjs` since PR 7371, so the rule change of this issue trips the gate and needs the
+  oracle version bump.
