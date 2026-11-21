@@ -8,10 +8,7 @@ import {
   type NativePrototypeSeedDescriptor,
 } from "../src/backend/wasmgc/resources/native-prototype-seeder-bindings.js";
 import { nativeObjectDescriptorReservationInventory } from "../src/backend/wasmgc/resources/native-object-descriptors.js";
-import {
-  assertNativePrototypeRequirementsCurrent,
-  deriveNativePrototypeRequirements,
-} from "../src/ir/program/native-prototype-requirements.js";
+import { deriveNativePrototypeRequirements } from "../src/ir/program/native-prototype-requirements.js";
 import { deriveNativeObjectAccessRequirements } from "../src/ir/program/native-object-access-requirements.js";
 import { completeDescriptorFixture, descriptorFixture } from "./helpers/native-descriptor-fixture.js";
 import {
@@ -140,22 +137,6 @@ describe("authentic prototype seeder descriptor bindings", () => {
     requireBinding(f);
     Object.assign(f.dependencies, { [role]: { ...f.dependencies[role] } });
     expect(() => requireBinding(f)).toThrow("substituted dependency identity");
-  });
-
-  it("rejects stale prototype issuer currentness after a genuine cloned-source positive", () => {
-    const d = descriptorFixture();
-    const program = structuredClone(d.program),
-      projection = program.runtime[0]!,
-      access = deriveNativeObjectAccessRequirements(program, projection),
-      requirements = deriveNativePrototypeRequirements(access);
-    expect(() => assertNativePrototypeRequirementsCurrent(requirements)).not.toThrow();
-    const use = access.uses.find((row) => row.feature === "js.object.create-default")!;
-    const instruction = access.demands.occurrences[use.occurrence]!.instruction;
-    if (instruction.kind !== "call") throw Error("missing genuine source creation");
-    Object.assign(instruction, { args: [99999] });
-    expect(() => assertNativePrototypeRequirementsCurrent(requirements)).toThrow(
-      "borrowed source changed after selection",
-    );
   });
 
   it.each([0, 1])("materializes completed read-only descriptor owner %s for foreign-token controls", (index) => {

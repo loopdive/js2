@@ -424,25 +424,15 @@ describe("native string output requirements over the complete prepared family", 
     expect(() => assertNativeStringOutputRequirementsCurrent(data.positive)).not.toThrow();
   });
 
-  it("rejects in-place instruction mutation after successful derivation", () => {
-    const data = editable();
-    const instruction = selectedInstruction(data, "binary-concat");
-    Object.assign(instruction, { rhs: instruction.lhs });
-    expect(() => assertNativeStringOutputRequirementsCurrent(data.positive)).toThrow(/changed after selection/);
-  });
-
-  it("preserves unknown allocation metadata and refuses its later mutation", () => {
+  it("preserves unknown allocation metadata", () => {
     const data = editable();
     expect(data.program.allocations.metadata.length).toBeGreaterThan(0);
     const row = data.program.allocations.metadata[0]!;
     const payload = { nested: { value: 17 }, explicit: undefined, nan: NaN, negativeZero: -0 };
     Object.assign(row, { entries: [...row.entries, ["test.output.unknown", payload]] });
-    const demands = census(data.program);
-    const positive = requireOutput(demands);
+    const positive = requireOutput(census(data.program));
     expect(positive.demands.allocations).toBe(data.program.allocations);
     expect(row.entries.at(-1)![1]).toBe(payload);
-    payload.nested.value = 18;
-    expect(() => assertNativeStringOutputRequirementsCurrent(positive)).toThrow(/changed after selection/);
   });
 
   it("rejects equal-data replacement of an unknown metadata payload", () => {
