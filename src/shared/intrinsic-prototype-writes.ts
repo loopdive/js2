@@ -144,16 +144,18 @@ export function sourceMayWriteBindingUnseen(sourceFile: ts.SourceFile, name: str
 /**
  * (#7354 Fa, F1b) Whether a script binding holds the value its declaration gives it for the whole program: the
  * declaration is the name's only binding site in its file and no identifier of that name is assigned, with no `eval`
- * or `with` (`bindingIsUniqueAndNeverWritten`); no route that is no identifier write reaches it
- * ({@link sourceMayWriteBindingUnseen}); and the global object does not escape, which could write it under a computed
- * name.
+ * or `with` (`bindingIsUniqueAndNeverWritten`). Any other write of a script binding is a write of a global object
+ * property (`this.f = v`, `globalThis["f"] = v`, `Reflect.set(globalThis, "f", v)`), and only a non-inert `this`, a
+ * global-object name or code the source does not spell reaches the global object (a builtin is strict, so it never
+ * substitutes it for an `undefined` receiver): so the global object must not escape and no such code may run. A
+ * member store of the same name on another object (`assert.f = v`) writes no binding then.
  */
 export function bindingHoldsItsDeclaration(name: ts.Identifier, declaration: ts.Declaration): boolean {
   const source = declaration.getSourceFile();
   return (
     bindingIsUniqueAndNeverWritten(name, declaration) &&
-    !sourceMayWriteBindingUnseen(source, name.text) &&
-    !sourceMayWriteGlobalObject(source)
+    !sourceMayWriteGlobalObject(source) &&
+    !sourceRunsDynamicCode(source)
   );
 }
 
