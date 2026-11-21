@@ -53,6 +53,17 @@ describe("#7354 F1 — the function kind", () => {
     SLOW,
   );
 
+  const NUM = "function num(v) { return +v; }\nvar f = function () {};\n";
+  it(
+    "answers ToNumber of a function value with NaN, known statically and through a parameter",
+    () =>
+      agrees(
+        `${NUM}if (+f === +f || f * 1 === f * 1 || f < 1 || num(f) === num(f) || num(2) !== 2) throw 1;`,
+        `${NUM}if (num(f) !== num(f)) throw 1;`,
+      ),
+    SLOW,
+  );
+
   const TAGS =
     "function tag(v) { return Object.prototype.toString.call(v); }\n" +
     "function nm(v) { return v === null ? 'null' : typeof v; }\n" +
