@@ -994,6 +994,8 @@ export interface IrFromAstResolver extends PreparedAsyncFromAstResolver {
   dynamicClosureSignature?(expression: ts.FunctionExpression): IrClosureSignature | undefined;
   /** (#7354 Fa) The script `var` holds its function-expression initializer from its declaration on. */
   staticFunctionValue?(declaration: ts.VariableDeclaration): boolean;
+  /** (#7354 F1b) Closures are function values with properties (`function-object-lowering.ts`). */
+  createsFunctionObjects?(): boolean;
   /**
    * (#7106 Stage 4) True when this lane lowers `recv.<method>(…arity args)` on
    * a dynamic receiver through the `__ir_dyn_mcall_<m>_<n>` brand-dispatch

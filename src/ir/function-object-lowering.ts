@@ -124,23 +124,25 @@ export function emitFunctionObjectInit(
 }
 
 /**
- * (#7354 F1b) Whether a closure is a function value on this lane: the Prepared native dynamic lane, the one whose
- * resolver gives a function expression its dynamic signature. There every closure literal is created as a function
- * object (`initClosureFunctionObject`) and may be stored as a function value.
+ * (#7354 F1b) Whether a closure is a function value with properties on this lane: the Prepared native dynamic lane
+ * with native strings (`source-dynamic-contracts.ts`). There every closure literal that can become a value is created
+ * as a function object (`initClosureFunctionObject`) and may be stored as a member.
  */
-export function createsFunctionObjects(resolver: { readonly dynamicClosureSignature?: unknown } | undefined): boolean {
-  return resolver?.dynamicClosureSignature !== undefined;
+export function createsFunctionObjects(resolver: { createsFunctionObjects?(): boolean } | undefined): boolean {
+  return resolver?.createsFunctionObjects?.() === true;
 }
 
 /**
  * A closure literal's function object: `length` counts the parameters before the first default or rest; only a
- * function expression is a constructor.
+ * function expression is a constructor. An accessor gets none: it is a value only through a property descriptor,
+ * which no Prepared program can obtain (`__lookupGetter__` is an Object.prototype key, refused).
  */
 export function initClosureFunctionObject(
   builder: IrFunctionBuilder,
   closure: IrValueId,
   literal: ts.FunctionExpression | ts.ArrowFunction | ts.MethodDeclaration | ts.AccessorDeclaration,
 ): void {
+  if (ts.isAccessor(literal)) return;
   const optional = literal.parameters.findIndex((parameter) => parameter.initializer || parameter.dotDotDotToken);
   const length = optional < 0 ? literal.parameters.length : optional;
   emitFunctionObjectInit(builder, closure, functionObjectName(literal), length, ts.isFunctionExpression(literal));
