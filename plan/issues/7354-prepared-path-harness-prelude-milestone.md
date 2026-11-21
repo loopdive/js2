@@ -4400,19 +4400,31 @@ reflective name), 41 `dynamic method .sameValue/3 has no brand-dispatch wrapper`
 - **Q3.** The result-carrier refusal is deleted. The accessor skip stays: an object-literal getter reaches it on the
   real entry (`var o = { get x() { return 1; } };` runs) and the 3518 runtime-providers getter test pins it.
 - **Q4 fixed.** `src/shared/binding-holds-declaration.ts`; the scan exposes `globalObjectWriteRoutes`.
-- **Q5 rebutted, kept.** (i) `reflective`: `x.constructor` reaches `Function`, also as `x[k]` with `k` a string
-  literal elsewhere, so a narrowing needs a key-flow proof; (ii) escape: once the global object is a value,
-  `Object.assign` / `defineProperties` maps write a binding without a spelled member write of its name, which the
-  scan does not track; (iii) another binding of the name is the shared name-based proof (Fa); a symbol-based proof is
-  not cheap. All three stay refusals.
+- **Q5 kept.** (i) The reflective clause guards `x.constructor` reaching `Function`, unreachable on this branch
+  (every `.constructor` read refuses); C2 must re-examine it. (ii) The escape clause guards a write through the
+  global object as a value, unreachable on this branch; the built-ins-as-values and `Object`-statics slices must
+  re-examine it. (iii) Another binding of the name: the shared name-based proof (Fa); a symbol-based proof is not
+  cheap.
 - **Q6 fixed.** Refusal tests kill each predicate clause (`Function(...)`, `f.constructor(...)`, `return this`), the
   callee exclusion (`f()` beside an escaping `this` meets the `this` refusal, not the proof), and `ADD_ROLE.function`
   (an abort test in f1-function-kind).
 - Main merged (cddf65be4d, Perf4's `try_table` helpers). `quality`'s Node-25 failure is main's; Node 25 not run here.
 
 Re-measured on the merged head: every touched test file in full, exit 0; gates 0 (budgets also against main; from-ast
-−32, program-source −10 vs main); prepared bytes vs main: the same 10 rows as above; ordinary 40/40 identical;
-regression set 652 programs: no base-correct program changes, 3 D6 aborts; sample tally unchanged.
+−32, program-source −10 vs main); prepared bytes vs main: the same 10 rows as above; regression set 652 programs:
+no base-correct program changes, 3 D6 aborts; sample tally unchanged.
+
+Ordinary pipeline: the 20-file byte check is identical to main, but B2 changes the ordinary pipeline too: a function
+under a constant computed key (`{ ['k']: function () {} }`, a method `['k']() {}`, a class field `1 = function ()
+{}`) is named by its key (`"k"`, `"1"`; was `""` or no metadata), so those programs' bytes and `.name` results change
+(improvements). The reviewer measured 316 programs × 2 targets (no result that was right changed) and 113 test262
+files (0 pass → fail).
+
+Review round 2: `memberNameOf` and the class-field arm use `propertyKeyFunctionName`. Name tests run: issue-5157
+default-export names, 4436, 4437, computed-props, issue-computed-props — pass; issue-4617 fails 2 tests on main
+unchanged. Known limits (as on main): `o[1].name` read directly gives `""` in the ordinary pipeline while the same
+function read through a parameter gives `"1"`; getter/setter and class-field names under non-constant computed keys
+are wrong.
 
 ## Perf4 result (2026-11-21, branch `claude/7354-perf4` from `claude/7354-perf3` `db3c4a256f`)
 
