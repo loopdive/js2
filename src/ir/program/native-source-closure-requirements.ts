@@ -5,7 +5,7 @@ import type { IrUnitId } from "../../shared/contracts/ir-identity.js";
 import { preparedIrTypeKey } from "./abi-signatures.js";
 import { preparedAllocationSites } from "./prepared-allocations.js";
 import type { AllocSiteId, IrValueId } from "../core/nodes.js";
-import { preparedIrDataMismatch, freezePreparedIrValue } from "./data.js";
+import { preparedIrDataMismatch, freezePreparedIrRuntimeValue } from "./data.js";
 import { PreparedIrProgramInvariantError } from "./errors.js";
 import { collectNativeStringValueDemands, type NativeStringValueDemands } from "./native-string-value-demands.js";
 import type { PreparedIrProgram, PreparedIrProgramRuntimeProjection } from "./prepared-contracts.js";
@@ -42,14 +42,6 @@ export interface NativeSourceClosureRequirements {
   }[];
   readonly gaps: readonly { readonly unitId: IrUnitId; readonly detail: string }[];
 }
-const sources = new WeakMap<
-  NativeSourceClosureRequirements,
-  {
-    readonly demands: NativeStringValueDemands;
-    readonly snapshot: unknown;
-    readonly sourceSnapshot: unknown;
-  }
->();
 function invalid(detail: string): never {
   throw new PreparedIrProgramInvariantError("invalid-prepared-data", "native source closures: " + detail);
 }
@@ -200,7 +192,11 @@ function calculate(demands: NativeStringValueDemands): Omit<NativeSourceClosureR
   };
 }
 
-/** Descriptive derived requirements; the coordinator additionally authenticates the entire program. */
+/**
+ * Derived once from the prepared program and frozen whole: the demands borrow the frozen program, and the derived
+ * rows are frozen in place here, so no later step can make the requirements disagree with the program they came
+ * from. That is why no consumer re-derives them to check currency (#7380).
+ */
 export function planNativeSourceClosureRequirements(
   program: PreparedIrProgram,
   projection: PreparedIrProgramRuntimeProjection,
@@ -208,32 +204,5 @@ export function planNativeSourceClosureRequirements(
   const demands = collectNativeStringValueDemands(program, projection);
   const data = calculate(demands);
   if (!data.signatures.length && !data.refCells.length && !data.refCellAllocations.length) return undefined;
-  const snapshot = freezePreparedIrValue(data);
-  const result = Object.freeze({ ...data, demands });
-  sources.set(result, { demands, snapshot, sourceSnapshot: freezePreparedIrValue(demands) });
-  return result;
-}
-
-export function assertNativeSourceClosureRequirementsCurrent(requirements: NativeSourceClosureRequirements): void {
-  const source = sources.get(requirements);
-  if (!source || source.demands !== requirements.demands) invalid("unissued or detached requirements");
-  const { demands, ...data } = requirements;
-  same(demands, source.sourceSnapshot, "borrowed source changed after selection");
-  const fresh = collectNativeStringValueDemands(demands.program, demands.projection);
-  if (
-    fresh.allocations !== demands.allocations ||
-    fresh.owners.length !== demands.owners.length ||
-    fresh.buffers.length !== demands.buffers.length ||
-    fresh.occurrences.length !== demands.occurrences.length ||
-    fresh.owners.some(
-      (owner, i) =>
-        owner.programFunction !== demands.owners[i]?.programFunction ||
-        owner.projectedFunction !== demands.owners[i]?.projectedFunction,
-    ) ||
-    fresh.buffers.some((buffer, i) => buffer.instructions !== demands.buffers[i]?.instructions) ||
-    fresh.occurrences.some((row, i) => row.instruction !== demands.occurrences[i]?.instruction)
-  )
-    invalid("source identities changed");
-  same(data, source.snapshot, "requirements changed");
-  same(calculate(fresh), source.snapshot, "source closure population changed");
+  return Object.freeze({ ...freezePreparedIrRuntimeValue(data), demands });
 }
