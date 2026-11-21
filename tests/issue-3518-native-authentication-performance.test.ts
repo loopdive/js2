@@ -317,6 +317,20 @@ describe("fresh batch physical-index authentication", () => {
     expect(reads).toBe(0);
   });
 
+  it("refuses a batch whose input trap failed the ledger during capture", () => {
+    const r = ledger();
+    const tokens = new Proxy([r.fn], {
+      getOwnPropertyDescriptor(target, key) {
+        // A swallowed refusal still leaves the ledger failed.
+        try {
+          r.tx.reserveType("forbidden", { kind: "struct", name: "forbidden", fields: [] });
+        } catch {}
+        return Reflect.getOwnPropertyDescriptor(target, key);
+      },
+    });
+    expect(() => r.tx.physicalIndices(tokens)).toThrow("physical index requested in failed");
+  });
+
   // The layout audit runs at the seal (#7354 Perf4), so a mutation made by an input trap is reported there.
   it("reports input reflection-trap mutations at the seal", () => {
     const r = ledger();

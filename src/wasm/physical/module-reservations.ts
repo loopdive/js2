@@ -753,11 +753,16 @@ export class PhysicalModuleReservations {
   }
 
   freezeReservations(): void {
-    this.#require("reserving");
     // Indices are handed out from here on: the populations they count must be the registered ones.
+    this.#closePhase("reserving");
+    this.#state = "filling";
+  }
+
+  /** The checks that end a phase: the layout audit, then the stage-4 resource check. */
+  #closePhase(phase: "reserving" | "filling"): void {
+    this.#require(phase);
     this.verifyLayout();
     this.#check(() => assertPhysicalResources(this.#module));
-    this.#state = "filling";
   }
 
   /** Final raw index at this frozen layout; never hand .handle to ProgramAbiMap. */
@@ -984,9 +989,7 @@ export class PhysicalModuleReservations {
 
   /** Only completed, unchanged actual resources contribute to this census. */
   seal(): PhysicalModuleCensus {
-    this.#require("filling");
-    this.verifyLayout();
-    this.#check(() => assertPhysicalResources(this.#module));
+    this.#closePhase("filling");
     for (const token of this.#tokens) {
       if (token.kind === "function" && !this.#filledFunctions.has(token))
         this.#fail(`missing function fill ${token.key}`);

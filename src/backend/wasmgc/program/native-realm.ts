@@ -619,7 +619,7 @@ export interface EmittedNativeRealmSlots {
   }[];
 }
 /**
- * Certify the bootstrap, then answer the slots of the tokens the reserved realm enumerated, with one layout audit
+ * Certify the bootstrap, then answer the slots of the tokens the reserved realm enumerated in one index batch
  * (a second enumeration would re-run every pack's ownership checks the certification just ran).
  */
 export function requireCompletedNativeRealmSlots(
