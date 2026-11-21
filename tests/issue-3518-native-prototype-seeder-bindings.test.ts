@@ -153,43 +153,6 @@ describe("authentic prototype seeder descriptor bindings", () => {
     expect(Object.isFrozen(inventory.functions)).toBe(true);
   });
 
-  it.each([
-    [0, method],
-    [1, { kind: "getter" }],
-  ] as const)("refuses foreign-ledger descriptor token %s with the same physical signature", (index, descriptor) => {
-    const f = completedReadOnly(0),
-      other = completedReadOnly(1),
-      before = structuredClone(f.descriptors.module),
-      otherBefore = structuredClone(other.descriptors.module);
-    const inventory = nativeObjectDescriptorReservationInventory(
-        f.descriptors.tx,
-        f.descriptors.pack,
-        f.descriptors.dependencies,
-      ),
-      foreign = nativeObjectDescriptorReservationInventory(
-        other.descriptors.tx,
-        other.descriptors.pack,
-        other.descriptors.dependencies,
-      );
-    expect(inventory.plan.declarations[index]).toEqual(foreign.plan.declarations[index]);
-    expect(Object.is(inventory.functions[index], foreign.functions[index])).toBe(false);
-    expect(tail(f, descriptor)[1]).toEqual({ op: "call", funcIdx: inventory.functions[index]!.handle });
-    expect(tail(other, descriptor)[1]).toEqual({ op: "call", funcIdx: foreign.functions[index]!.handle });
-    expect(Reflect.set(inventory.functions, index, foreign.functions[index])).toBe(false);
-    expect(() =>
-      buildNativePrototypeSeedDescriptorTail(
-        f.descriptors.tx,
-        f.binding,
-        f.requirements,
-        other.dependencies,
-        descriptor,
-      ),
-    ).toThrow("foreign expected requirements or dependencies");
-    expect(tail(f, descriptor)[1]).toEqual({ op: "call", funcIdx: inventory.functions[index]!.handle });
-    expect(f.descriptors.module).toStrictEqual(before);
-    expect(other.descriptors.module).toStrictEqual(otherBefore);
-  });
-
   it("refuses a late binding and cannot mutate an issued binding", () => {
     const f = seederBindingFixture();
     requireBinding(f);

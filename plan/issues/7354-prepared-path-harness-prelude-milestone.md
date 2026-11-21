@@ -4110,10 +4110,17 @@ planning. No validator stage covers "the program changed after planning": the pr
 
 Validator switch on (vitest), on this branch: every `tests/issue-7354-*` and `tests/issue-7380-*` file passes. The
 one exception is `ty-typeof-comparisons` › "answers a caught null like JavaScript", which hits its 35 s timeout here
-and also on `origin/main` (37.7 s there; load-dependent). Every modified test file passes except two tests that are
-red on `origin/main` as well: `issue-3518-native-prototype-seeder-bindings` › "refuses foreign-ledger descriptor token
-0" (vitest's pretty-format crashes on the diff) and `issue-3518-native-realm-requirements` › "retains the original
-genuine Number/object frontend preparation refusal". Also green (this branch or the work branch, after both commits): invocation consumer, source callable
+and also on `origin/main` (37.7 s there; load-dependent; the file is not modified here). Every modified test file
+passes in full. Two tests in them were red on `origin/main` too:
+- `issue-3518-native-prototype-seeder-bindings` › "refuses foreign-ledger descriptor token %s": deleted. It hands
+  another compile's dependencies to the tail builder, a foreign-pack forgery that #7380 retires. It was red because
+  its "module unchanged" `toStrictEqual` against a `structuredClone` saw the owned function data's `locals` with a
+  private prototype instead of `Array` (vitest's pretty-format then crashed on the diff); the data was equal.
+- `issue-3518-native-realm-requirements` › "retains the original genuine Number/object frontend preparation refusal":
+  stale expectation. `js.number.from-value` now has a native provider, so `Number({})` prepares. The test now
+  expects that, and that the realm selects the object's `js.object.create-default`.
+
+Also green (this branch or the work branch, after both commits): invocation consumer, source callable
 contract, closure parameter projections, ref-cell consumer, builtin functions, realm object layouts, realm source
 integration, getter invocation, getter results, getter resource join, prototype requirements, number format, promise
 inventory, output ABI join, string define-own, descriptor-wide BigInt, 3525 number remainder and source-map data,

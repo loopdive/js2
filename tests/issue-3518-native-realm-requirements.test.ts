@@ -162,8 +162,11 @@ describe("semantic native realm catalog and real selected demands", () => {
     expect(input.invocationRequirements).toBeUndefined();
     expect(input.plan.mode).toBe("realm-bootstrap");
   });
-  it("retains the original genuine Number/object frontend preparation refusal", () => {
-    expect(() => prepareGetterProgram(REALM_NO_SOURCE)).toThrow("runtime feature js.number.from-value has no provider");
+  it("prepares Number of an object and selects the realm for the object", () => {
+    // js.number.from-value now has a native provider, so this program no longer refuses at preparation.
+    const program = prepareGetterProgram(REALM_NO_SOURCE);
+    const realm = deriveNativeRealmRequirements(program, program.runtime[0]!);
+    expect(realm?.description.objectUses.map((use) => use.feature)).toEqual(["js.object.create-default"]);
   });
   it("does not select a scalar program with no realm use", () => {
     const program = prepareGetterProgram("export function run(): number { return 7; }");
