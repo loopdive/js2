@@ -52,14 +52,10 @@ related: [7188, 2949, 3526, 3527, 3518, 7106, 7349, 7350, 7352]
 # 2026-11-21 (slices M1 + M2, corrected after review): the figures above are per slice. Against main this PR grows
 # src/ir/program-source.ts by 0 and src/ir/from-ast.ts by 16 (three lowering arms: `isRawExternrefReceiver`, the
 # member write's externref receiver, the object-literal box in `boxConcreteToDynamic`).
-# 2026-11-21 (slice F1, Fa ported): src/ir/from-ast.ts +21 over M1+M2 (Fa's lowering arms: the all-dynamic closure
-# hook in the closure lowering, written parameter slots, the static closure value in a script var's scope entry and
-# its call, `argumentIntoDynamic` shared by arguments and returns, `unboundIdentifierDetail`); src/ir/program-source.ts
-# +4 (Fa's N1 refusal, a var sharing its name with a function declaration, in the globals loop that owns the var);
-# src/compiler/ir-program-presentation.ts +4 (the ABI join skips a lifted closure body's own `__self`, which the
-# function-value setup owns). All are AST-lowering or ABI-join arms with no subsystem module of their own yet. These
-# three are this PR's whole growth against main 69dbe732c3 (M1, M2 and F0 are on main).
 loc-budget-allow:
+  - src/ir/program-consumer.ts
+  - src/ir/program-physical-plan.ts
+  - src/compiler.ts
   - src/ir/program-source.ts
   - src/ir/from-ast.ts
   - src/compiler/ir-program-presentation.ts

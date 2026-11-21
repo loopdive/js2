@@ -67,9 +67,25 @@ describe("#7354 F1 — the function kind", () => {
     SLOW,
   );
 
-  // D6: Function.prototype.toString (the source text) and a call of a conversion method are not built yet.
+  // D6: Function.prototype.toString (the source text) and a call of a conversion method are not built yet. Where the
+  // value may only be a function, that refuses at compile time (below); where it may also be a kind that answers (a
+  // parameter, a caught value), that kind answers and the function ends at the run-time abort. A kind that answers
+  // wrongly throws 1 before the abort, so each row of the function kind's conversion tables changed alone fails here.
   it.each([
-    ["ToString of a function value", 'var g = function () {}; var s = "" + g; if (s === "") throw 1;'],
+    [
+      "`+` through a parameter that is also a number and a string",
+      'function op(v) { return v + 1; } var f = function () {}; if (op(1) !== 2 || op("a") !== "a1") throw 1; op(f);',
+    ],
+    [
+      "ToString through a parameter, beside ToNumber of a function (NaN)",
+      'function str(v) { return "" + v; } function num(v) { return +v; } var f = function () {};\n' +
+        'if (str(1) !== "1" || str(true) !== "true" || num(f) === num(f) || num(2) !== 2) throw 1; str(f);',
+    ],
+    [
+      "ToString of a caught function value",
+      'var f = function () {}; var c; try { throw f; } catch (e) { c = e; } if (c !== f) throw 1; var s = "" + c;',
+    ],
+    // (Lead ruling) Whether an object's property holds a function is a run-time fact of that object.
     [
       "ToPrimitive with an own callable toString",
       'var o = { toString: function () { return "x"; } }; var s = "" + o; if (s !== "x") throw 1;',
@@ -77,15 +93,20 @@ describe("#7354 F1 — the function kind", () => {
   ])("ends %s at the run-time abort", (_label, source) => abortsAtRunTime(source), SLOW);
 
   it.each([
+    ...['"" + f', 'f + ""', "f + 1", 'String(f) + ""', 'try { var t = "" + f; } catch (e) {}'].map((use) => [
+      `ToString of a value that is only a function (${use})`,
+      `var f = function () { return 1; }; ${use};`,
+      "ToString of a function needs Function.prototype.toString",
+    ]),
     [
       "a member read of a function value",
       "var g = function () {}; var k = g.k; if (k) throw 1;",
-      "member read 'k' of a value that may be a function needs the realm's function objects",
+      "member read 'k' of a function needs the realm's function objects",
     ],
     [
       "a member write of a function value",
       "var g = function () {}; g.k = 1;",
-      "member write 'k' of a value that may be a function needs the realm's function objects",
+      "member write 'k' of a function needs the realm's function objects",
     ],
     // A chunked module-init lowers later statements in another function: the static closure value stays in its own.
     [

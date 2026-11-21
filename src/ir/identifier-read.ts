@@ -92,3 +92,21 @@ function isTypeofOperand(expr: ts.Identifier): boolean {
   while (ts.isParenthesizedExpression(node.parent)) node = node.parent;
   return ts.isTypeOfExpression(node.parent);
 }
+
+/**
+ * Why a read of `identifier` has no binding. (#7354 Fa) A closure reading a local of its enclosing function that
+ * is declared after the closure is created names that: the hoisted binding exists in JavaScript, but the closure
+ * captures only what is bound where it is created.
+ */
+export function unboundIdentifierDetail(
+  identifier: ts.Identifier,
+  checker: ts.TypeChecker | undefined,
+  funcName: string,
+): string {
+  const declaration = checker?.getSymbolAtLocation(identifier)?.valueDeclaration;
+  const closure = ts.findAncestor(identifier, ts.isFunctionLike);
+  const home = declaration && ts.isVariableDeclaration(declaration) && ts.findAncestor(declaration, ts.isFunctionLike);
+  return closure && home && home !== closure && declaration.pos >= closure.end
+    ? `closure ${funcName} reads "${identifier.text}", a local of its enclosing function declared after the closure is created`
+    : `identifier "${identifier.text}" is not in scope in ${funcName}`;
+}

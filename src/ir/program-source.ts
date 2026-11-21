@@ -60,7 +60,6 @@ import { prepareConversionResolvers } from "../frontend/builtins/prepare-number-
 import { prepareObjectCreateResolver } from "../frontend/builtins/prepare-object-create.js";
 import { prepareNativeStringOutputResolver } from "../frontend/builtins/prepare-string-output.js";
 import { prepareNativeAsyncSourceFamilies, type NativeAsyncSourceFamilies } from "./program-native-async-source.js";
-import { moduleDeclares } from "./select-planned-closure-operands.js";
 import {
   collectIrPromiseDelayOwners,
   buildIrPromiseDelayLoweringPlans,
@@ -1666,9 +1665,6 @@ export function prepareIrProgramSources(
         if (!ts.isVariableDeclaration(declaration) || !ts.isIdentifier(declaration.name))
           unsupported("whole-program binding pattern requires the existing destructuring producer");
         if (!isModuleInitGlobalDeclaration(declaration)) continue; // (#7372) a nested `var` is a global in a script
-        // The var's home does not hold the hoisted function, and a direct call of the name binds the declaration.
-        if (moduleDeclares(source, declaration.name.text, true))
-          unsupported(`script var ${declaration.name.text} shares its binding with a function declaration`);
         const inspected = moduleResolver.inspectDirectBinding(declaration.name);
         if (inspected.kind !== "supported")
           unsupported(`module binding ${declaration.name.text} has no exact typed storage: ${inspected.kind}`);

@@ -276,12 +276,12 @@ export function fillNativeDynamicValueResources(
       body: [{ op: "local.get", index: 0 }, { op: "any.convert_extern" }, { op: "ref.cast", typeIdx: anyStrTypeIdx }],
     });
   // (#7354 Fa) A function value enters the carrier only as a source closure, and every source closure carrier
-  // descends from the wrapper root; a program without a closure has no function value to find.
-  if (pack.isFunction)
-    tx.fillFunction(pack.isFunction, {
-      locals: [],
-      body: closureRoot ? buildClosureRootTest(0, tx.physicalIndex(closureRoot)) : [{ op: "i32.const", value: 0 }],
-    });
+  // descends from the wrapper root. The test is requested only where the source creates a function value, and such a
+  // program either lowers a closure (so the root exists) or refuses before emission.
+  if (pack.isFunction) {
+    if (!closureRoot) fail("the function test needs the source closures' wrapper root");
+    tx.fillFunction(pack.isFunction, { locals: [], body: buildClosureRootTest(0, tx.physicalIndex(closureRoot)) });
+  }
   if (pack.unsupported) tx.fillFunction(pack.unsupported, { locals: [], body: [{ op: "unreachable" }] });
   owner.filled = true;
 }

@@ -44,9 +44,9 @@ import {
   TYPEOF_NAME,
   admittedKinds,
   carrierKindOf,
-  functionValueOperand,
   type LegalizationProgram,
 } from "./dynamic-value-kinds.js";
+import { functionValueOperand } from "./function-value-projection.js";
 import { carrierClosureSubtype, carrierOf, containsDynamic, inCarrierForm } from "./dynamic-carrier-types.js";
 
 export { DynamicValueGap } from "./dynamic-value-gap.js";
@@ -143,7 +143,11 @@ export function legalizeDynamicValues(
           },
         ];
       default:
-        return gap(`${instr.kind === "call" ? instr.target.name : instr.kind} of a non-primitive value`);
+        return gap(
+          instr.kind === "call"
+            ? `${instr.target.name} of ${unadmittedValue(value, types, definitions)}, which is not a packed callable`
+            : "box of a non-primitive value",
+        );
     }
   };
 

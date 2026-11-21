@@ -89,7 +89,8 @@ function memberAccess(
 ): IrInstr[] {
   const kinds = b.kindsOf(instr.recv);
   // (#7354 F1) The realm's kernel does not know a source closure as an object yet.
-  const lacks = (kind: CarrierKind) => (kind === "function" ? "the realm's function objects" : access.missing(kind));
+  const lacks = (kind: CarrierKind) =>
+    MEMBER_ACCESS_ARM[kind] === "function-objects" ? "the realm's function objects" : access.missing(kind);
   const refused = kinds.filter((kind) => lacks(kind) !== undefined);
   if (refused.length > 0) {
     const receiver =
@@ -111,6 +112,9 @@ function memberAccess(
       // [[Get]] / [[Set]]): no Prepared program can obtain one to change it (M1, C1; the premise test pins it).
       case "primitive":
         return access.primitive(kind, r, throwTypeError);
+      // Refused above (`lacks`): no access reaches a function value's arm.
+      case "function-objects":
+        return [];
     }
   };
   return b.kindChain(instr, instr.recv, result, arm, kinds, access.resultType);

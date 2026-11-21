@@ -14,7 +14,7 @@ import type { IrInstr, IrType, IrValueId } from "../core/nodes.js";
 import type { TagId } from "../core/tag-domain.js";
 import { irOrdinaryObjectCallableDeclaration } from "../runtime/ordinary-object-callables.js";
 import { JS_TAG_IDS } from "../runtime/js-tag-domain.js";
-import { IR_DYN_CALL_BOX_FN } from "../../shared/contracts/dynamic-call-helpers.js";
+import { functionValueOperand } from "./function-value-projection.js";
 
 /**
  * `typeof`'s answer for each kind. A `typeof` comparison with a literal no kind answers (a typo) is constant false;
@@ -62,12 +62,13 @@ export const KIND_TEST: Readonly<
 
 /**
  * How ToString (§7.1.17) answers each kind, in the order a chain tests them: the native string it carries, the number
- * formatter, "true"/"false", the kind's own name, (M2) an error's Error.prototype.toString, or (O2b, F1) an object's
- * or a function's OrdinaryToPrimitive (`ordinary-to-primitive.ts`). The last kind is reached untested because the chain is total over
+ * formatter, "true"/"false", the kind's own name, (M2) an error's Error.prototype.toString, (O2b) an object's
+ * OrdinaryToPrimitive (`ordinary-to-primitive.ts`), or (F1) a function's Function.prototype.toString, its source text,
+ * which no closure carries (a compile-time refusal for a value known to be a function, else the run-time abort). The last kind is reached untested because the chain is total over
  * this table; an object stays last, the complement of the others.
  */
 export const TO_STRING_ARM: Readonly<
-  Record<CarrierKind, "as-string" | "format" | "boolean" | "name" | "error" | "to-primitive">
+  Record<CarrierKind, "as-string" | "format" | "boolean" | "name" | "error" | "to-primitive" | "function-source">
 > = {
   string: "as-string",
   number: "format",
@@ -75,7 +76,7 @@ export const TO_STRING_ARM: Readonly<
   undefined: "name",
   null: "name",
   error: "error",
-  function: "to-primitive",
+  function: "function-source",
   object: "to-primitive",
 };
 export const KIND_ORDER = Object.keys(TO_STRING_ARM) as readonly CarrierKind[];
@@ -99,7 +100,8 @@ export const ADD_ROLE: Readonly<Record<CarrierKind, "concat" | "numeric">> = {
 /**
  * How ToNumber (§7.1.4) answers each kind: the primitive unboxer (a number its payload, a Boolean 0/1, `undefined`
  * NaN, `null` 0), (O2b) an object's ToPrimitive, a string that reads as NaN, or (M2) NaN for an error, whose
- * ToPrimitive is "TypeError: …" and cannot throw; (F1) a function's ToPrimitive.
+ * ToPrimitive is "TypeError: …" and cannot throw, and (F1) NaN for a function: its ToPrimitive is its source text (a
+ * function value has no own `valueOf`/`toString` until the realm holds function objects), never a number.
  */
 export const TO_NUMBER_ARM: Readonly<Record<CarrierKind, "unbox" | "to-primitive" | "nan">> = {
   number: "unbox",
@@ -108,7 +110,7 @@ export const TO_NUMBER_ARM: Readonly<Record<CarrierKind, "unbox" | "to-primitive
   undefined: "unbox",
   null: "unbox",
   error: "nan",
-  function: "to-primitive",
+  function: "nan",
   object: "to-primitive",
 };
 
@@ -133,16 +135,18 @@ export const OBJECT_TAG: Readonly<Record<CarrierKind, string>> = {
  * kind: both ToObject the base, so `undefined` and `null` throw a TypeError; an object is the realm's [[Get]] or
  * [[Set]]; a primitive reaches only built-in prototypes (`builtin-prototype-keys.ts`), which no Prepared program can
  * obtain to change (M1, C1); (M2) an error is the realm's TypeError, whose `name` and `message` are its fields; (F1) a
- * function value is an object to the realm.
+ * function value refuses until the realm's kernel knows a source closure as an object.
  */
-export const MEMBER_ACCESS_ARM: Readonly<Record<CarrierKind, "type-error" | "object" | "primitive" | "error">> = {
+export const MEMBER_ACCESS_ARM: Readonly<
+  Record<CarrierKind, "type-error" | "object" | "primitive" | "error" | "function-objects">
+> = {
   number: "primitive",
   boolean: "primitive",
   string: "primitive",
   undefined: "type-error",
   null: "type-error",
   error: "error",
-  function: "object",
+  function: "function-objects",
   object: "object",
 };
 
@@ -180,16 +184,6 @@ export function admittedKinds(program: LegalizationProgram): readonly CarrierKin
       (kind !== "error" || program.catches) &&
       (kind !== "function" || program.objects.functions),
   );
-}
-
-/**
- * (#7354 Fa) The packed callable the function-value projection (`functionObjectDynamicValue`, a call of
- * `__ir_dyn_call_box`) puts into the dynamic value, if `instr` is that projection.
- */
-export function functionValueOperand(instr: IrInstr | undefined): IrValueId | undefined {
-  return instr?.kind === "call" && instr.target.binding.kind === "runtime" && instr.target.name === IR_DYN_CALL_BOX_FN
-    ? instr.args[0]
-    : undefined;
 }
 
 /**

@@ -63,7 +63,11 @@ export function ordinaryToPrimitive(
   return step(0, result);
 }
 
-/** A held method: a callable one ends at the abort (calls through a value are F2's), any other is skipped. */
+/**
+ * A held method: a callable one ends at the abort (calls through a value are F2's), any other is skipped. Whether an
+ * object's property holds a function is a run-time fact of that object (no object-shape analysis), so this stays a
+ * run-time abort even for `{ valueOf: function () {…} } + 1` (lead ruling, review round 1 of F1a).
+ */
 function skipUnlessCallable(
   b: ToPrimitiveBuilders,
   object: IrValueId,

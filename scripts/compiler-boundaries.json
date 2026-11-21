@@ -17171,6 +17171,11 @@
       "layer": "ir-program"
     },
     {
+      "path": "src/ir/program/function-value-projection.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
       "path": "src/ir/program/dynamic-value-chains.ts",
       "state": "clean",
       "layer": "ir-program"

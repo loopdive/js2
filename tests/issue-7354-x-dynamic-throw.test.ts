@@ -307,8 +307,6 @@ describe("#7354 X — the legalization arm", () => {
       undefined,
       { kind: "call", target: irIntrinsicFuncRef("js.object.create-default"), args: [] },
     ],
-    // (#7354 Fa) The function kind.
-    ["a closure pack", { kind: "callable", signature: { params: [], returnType: null } }],
   ])("admits %s in both rules", (_label, type, definition?: object) => {
     const { coerced, program } = operand(type, definition);
     expect(legalizeDynamicValues(program).blocks[0]!.instrs).toContainEqual(coerced);

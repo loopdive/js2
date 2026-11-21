@@ -13,6 +13,8 @@ import type { IrType } from "../core/types.js";
 import { PREPARED_NUMBER_TO_STRING } from "./number-to-string-target.js";
 import { ordinaryToPrimitive, type ToPrimitiveHint } from "./ordinary-to-primitive.js";
 import { realmCall } from "./dynamic-realm-calls.js";
+import { functionValueOperand } from "./function-value-projection.js";
+import { gap } from "./dynamic-value-gap.js";
 import {
   ADD_ROLE,
   KIND_TEST,
@@ -34,7 +36,8 @@ const I32: IrType = Object.freeze({ kind: "val", val: Object.freeze({ kind: "i32
 export const ERROR_FIELD = { message: 0, name: 1 } as const;
 
 /**
- * (#7354 Str2-c) The kind each value of `fn` is proven to hold: a box to the dynamic value proves its operand's, and
+ * (#7354 Str2-c) The kind each value of `fn` is proven to hold: a box to the dynamic value proves its operand's, (F1)
+ * the function-value projection its packed callable's, and
  * the legalization records a concatenation's result as a string (`learn`). Any other value may hold every admitted
  * kind.
  */
@@ -48,8 +51,13 @@ export function knownKinds(
   for (const block of fn.blocks)
     for (const root of block.instrs)
       forEachInstrDeep(root, (i) => {
-        if (i.kind !== "box" || i.toType.kind !== "dynamic") return;
-        const kind = carrierKindOf(i.value, types, definitions, i.toType.tag);
+        const projected = functionValueOperand(i);
+        const kind =
+          i.kind === "box" && i.toType.kind === "dynamic"
+            ? carrierKindOf(i.value, types, definitions, i.toType.tag)
+            : projected !== undefined
+              ? carrierKindOf(projected, types, definitions)
+              : undefined;
         if (kind && kind !== "dynamic") known.set(i.result!, kind);
       });
   return {
@@ -244,20 +252,19 @@ type ChainBuilders = ReturnType<typeof chainBuilders>;
  */
 export function conversionBuilders(builders: ChainBuilders, program: LegalizationProgram) {
   const { kinds, admitted, intrinsic, fresh, anyKind, text, branch, concat, errorField, kindChain } = builders;
-  // (#7354 F1) A function value's ToPrimitive reaches Function.prototype.toString, which the realm lacks: the abort.
-  const toPrimitive = (
-    instr: IrInstr,
-    kind: CarrierKind,
-    value: IrValueId,
-    hint: ToPrimitiveHint,
-    result: IrValueId,
-  ): IrInstr[] => {
-    const unsupported = (r: IrValueId) => intrinsic(instr, "js.value.unsupported", [], r);
-    if (kind === "function") return [unsupported(result)];
+  const unsupported = (instr: IrInstr, r: IrValueId) => intrinsic(instr, "js.value.unsupported", [], r);
+  const toPrimitive = (instr: IrInstr, value: IrValueId, hint: ToPrimitiveHint, result: IrValueId): IrInstr[] => {
     const isCallable = admitted.includes("function")
       ? (method: IrValueId, r: IrValueId) => intrinsic(instr, "js.value.is_function", [method], r)
       : undefined;
-    const b = { carrier: CARRIER, fresh, text, branch, isCallable, unsupported };
+    const b = {
+      carrier: CARRIER,
+      fresh,
+      text,
+      branch,
+      isCallable,
+      unsupported: (r: IrValueId) => unsupported(instr, r),
+    };
     return ordinaryToPrimitive(b, program, value, hint, result);
   };
   const toStringArm = (
@@ -308,12 +315,21 @@ export function conversionBuilders(builders: ChainBuilders, program: Legalizatio
         ];
       }
       case "to-primitive":
-        return toPrimitive(instr, kind, value, hint, result);
+        return toPrimitive(instr, value, hint, result);
+      // (#7354 F1, D6) Function.prototype.toString answers the source text, which the closure does not carry: the
+      // run-time abort, reached only where the value may also be a kind that answers (`stringOf`).
+      case "function-source":
+        return [unsupported(instr, result)];
     }
   };
-  // ToString of the once-evaluated `value` after a ToPrimitive with `hint`: only the arms of the kinds it may hold.
-  const stringOf = (instr: IrInstr, value: IrValueId, hint: ToPrimitiveHint, result: IrValueId): IrInstr[] =>
-    kindChain(instr, value, result, (kind, r) => toStringArm(instr, kind, value, hint, r), kinds.kindsOf(value));
+  // ToString of the once-evaluated `value` after a ToPrimitive with `hint`: only the arms of the kinds it may hold. A
+  // value no arm of which can answer refuses at compile time.
+  const stringOf = (instr: IrInstr, value: IrValueId, hint: ToPrimitiveHint, result: IrValueId): IrInstr[] => {
+    const held = kinds.kindsOf(value);
+    if (held.every((kind) => TO_STRING_ARM[kind] === "function-source"))
+      gap("ToString of a function needs Function.prototype.toString");
+    return kindChain(instr, value, result, (kind, r) => toStringArm(instr, kind, value, hint, r), held);
+  };
   // ToNumber of the once-evaluated `value`: the primitive unboxer, or NaN for an object (ToNumber of
   // "[object Object]"; the string itself is not read, but its ToPrimitive may throw) and (M2) for an error.
   const toNumber = (instr: IrInstr, value: IrValueId, result: IrValueId): IrInstr[] => {
@@ -322,7 +338,7 @@ export function conversionBuilders(builders: ChainBuilders, program: Legalizatio
     const converted = held.filter((kind) => TO_NUMBER_ARM[kind] !== "unbox");
     if (converted.length === 0) return unbox(result);
     const nan = (kind: CarrierKind, r: IrValueId): IrInstr[] => [
-      ...(TO_NUMBER_ARM[kind] === "to-primitive" ? toPrimitive(instr, kind, value, "number", fresh()) : []),
+      ...(TO_NUMBER_ARM[kind] === "to-primitive" ? toPrimitive(instr, value, "number", fresh()) : []),
       { kind: "const", value: { kind: "f64", value: NaN }, result: r, resultType: F64 },
     ];
     const toNan = (r: IrValueId) => kindChain(instr, value, r, nan, converted, F64);

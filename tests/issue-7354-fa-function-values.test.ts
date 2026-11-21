@@ -11,9 +11,6 @@ import { AllocSiteRegistry } from "../src/ir/analysis/alloc-registry.js";
 import { programDynamicContracts } from "../src/ir/source-dynamic-contracts.js";
 import * as gc from "../src/codegen/index.js";
 import * as linear from "../src/codegen-linear/index.js";
-import type { IrFunction, IrInstr } from "../src/ir/core/nodes.js";
-import { legalizeDynamicValues } from "../src/ir/program/dynamic-value-legalization.js";
-import { legalizeDynamicAllocations } from "../src/ir/program/dynamic-carrier-types.js";
 import { instantiatePreparedArtifact } from "../src/test262/test262-prepared-runtime.js";
 import {
   compile,
@@ -21,9 +18,6 @@ import {
   type Test262CompileOptions,
 } from "../src/test262/test262-prepared-entry.js";
 import { yieldToRpc } from "./helpers/prepared-node-agreement.js";
-import { irRuntimeFuncRef, irUnitFuncRef } from "../src/ir/callable-bindings.js";
-import { IR_DYN_CALL_BOX_FN } from "../src/shared/contracts/dynamic-call-helpers.js";
-import type { IrUnitId } from "../src/shared/contracts/ir-identity.js";
 
 const options = (target: "standalone" | "gc" = "standalone"): Test262CompileOptions =>
   ({
@@ -246,99 +240,6 @@ describe("#7354 Fa — function values on the Prepared path", () => {
     expect(await refusal("function g() { var f = function (a) { return a; }; f(1); return 1; } g();", "gc")).toContain(
       "closure params must have annotations",
     );
-  });
-});
-
-describe("#7354 Fa — the legalization arms", () => {
-  const dynamic = { kind: "dynamic" } as const;
-  const externref = { kind: "val", val: { kind: "externref" } } as const;
-  const logical = { params: [dynamic], returnType: dynamic };
-  const carrier = { params: [externref], returnType: externref };
-  const unit = "ir-unit:v1:fa:lifted" as IrUnitId;
-  const fn = (instrs: readonly object[], closureSubtype?: object): IrFunction =>
-    ({
-      unitId: unit,
-      name: "lifted",
-      params: [{ value: 0, type: { kind: "closure", signature: logical }, name: "__self" }],
-      resultTypes: [dynamic],
-      blocks: [{ id: 0, blockArgs: [], blockArgTypes: [], instrs, terminator: { kind: "return", values: [1] } }],
-      exported: false,
-      valueCount: 4,
-      ...(closureSubtype ? { closureSubtype } : {}),
-    }) as unknown as IrFunction;
-  const closureNew = {
-    kind: "closure.new",
-    liftedFunc: irUnitFuncRef({ unitId: unit, name: "lifted" } as never),
-    signature: logical,
-    captureFieldTypes: [dynamic],
-    captures: [1],
-    result: 2,
-    resultType: { kind: "closure", signature: logical },
-    alloc: 7,
-  };
-  const pack = {
-    kind: "coerce.to_externref",
-    value: 2,
-    result: 3,
-    resultType: { kind: "callable", signature: logical },
-  };
-  const box = { kind: "call", target: irRuntimeFuncRef(IR_DYN_CALL_BOX_FN), args: [3], result: 1, resultType: dynamic };
-
-  it("gives a closure, its packed callable and its lifted body the carrier signature", () => {
-    const out = legalizeDynamicValues(fn([closureNew, pack], { signature: logical, captureFieldTypes: [dynamic] }));
-    const [allocated, packed] = out.blocks[0]!.instrs as IrInstr[];
-    expect(allocated).toMatchObject({
-      signature: carrier,
-      captureFieldTypes: [externref],
-      resultType: { kind: "closure", signature: carrier },
-    });
-    expect(packed!.resultType).toEqual({ kind: "callable", signature: carrier });
-    expect(out.params[0]!.type).toEqual({ kind: "closure", signature: carrier });
-    expect(out.resultTypes).toEqual([externref]);
-    expect(out.closureSubtype).toMatchObject({ signature: carrier, captureFieldTypes: [externref] });
-  });
-
-  it("expresses the function-value box of a packed callable as the carrier itself", () => {
-    const [, , boxed] = legalizeDynamicValues(fn([closureNew, pack, box])).blocks[0]!.instrs as IrInstr[];
-    expect(boxed).toEqual({ kind: "coerce.to_externref", value: 3, result: 1, resultType: externref });
-  });
-
-  it("refuses the function-value box of anything but a packed callable by name", () => {
-    const helper = { ...box, args: [0] };
-    expect(() => legalizeDynamicValues(fn([helper]))).toThrow("__ir_dyn_call_box of a non-primitive value");
-  });
-
-  // Without the function kind, the coercion of a packed callable into the carrier refuses (`carrierKind`).
-  it("admits a packed callable coerced into an object's property as the function kind, its own externref", () => {
-    const stored = { kind: "coerce.to_externref", value: 3, result: 1, resultType: externref };
-    const [, , coerced] = legalizeDynamicValues(fn([closureNew, pack, stored])).blocks[0]!.instrs as IrInstr[];
-    expect(coerced).toEqual(stored);
-  });
-
-  it("re-types each closure allocation site, and no other, to its legalized type", () => {
-    const cell = {
-      kind: "refcell.new",
-      value: 1,
-      result: 3,
-      resultType: { kind: "boxed", inner: externref },
-      alloc: 8,
-    };
-    const retyped: [number, unknown][] = [];
-    legalizeDynamicAllocations([legalizeDynamicValues(fn([closureNew, cell]))], {
-      retypeClosure: (id, type) => retyped.push([id, type]),
-    });
-    expect(retyped).toEqual([[7, { kind: "closure", signature: carrier }]]);
-  });
-
-  it("lets the registry re-type only a live closure site", () => {
-    const registry = new AllocSiteRegistry();
-    const closureSite = registry.fresh("closure", { kind: "closure", signature: logical });
-    const cellSite = registry.fresh("refcell", { kind: "boxed", inner: externref });
-    const legalized = { kind: "closure", signature: carrier } as const;
-    registry.retypeClosure(closureSite, legalized);
-    expect(registry.resolve(closureSite)!.type).toEqual(legalized);
-    expect(() => registry.retypeClosure(cellSite, legalized)).toThrow("not a live closure site");
-    expect(registry.resolve(cellSite)!.type).toEqual({ kind: "boxed", inner: externref });
   });
 });
 

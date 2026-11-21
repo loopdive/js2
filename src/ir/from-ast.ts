@@ -437,7 +437,7 @@ import {
   irVecNewSizedSymbol,
 } from "./vector-runtime.js";
 import { readEnv } from "../env.js";
-import { absentGlobalTypeof, classifyIdentifierRead } from "./identifier-read.js";
+import { absentGlobalTypeof, classifyIdentifierRead, unboundIdentifierDetail } from "./identifier-read.js";
 import { numericCaseTestValue, stringCaseTestValue, switchCaseTests } from "./switch-case-tests.js";
 
 interface ResolvedIrVecType {
@@ -3054,7 +3054,11 @@ type ScopeBinding =
        * (`staticFunctionValue`): a call through the name is that closure's direct call. (F1) Only in the body that
        * built it: a chunked module-init lowers later statements in another function.
        */
-      functionValue?: { readonly value: IrValueId; readonly signature: IrClosureSignature; readonly in: object };
+      functionValue?: {
+        readonly value: IrValueId;
+        readonly signature: IrClosureSignature;
+        readonly in: IrFunctionBuilder;
+      };
     }
   | {
       kind: "nestedFunc";
@@ -5283,7 +5287,7 @@ function lowerExprUnchecked(expr: ts.Expression, cx: LowerCtx, hint: IrType): Ir
       case "ambient-intrinsic":
         return lowerAmbientIntrinsicValue(expr, cx);
       case "unresolved":
-        demoteToLegacy("body-shape-rejected", `ir/from-ast: ${unboundIdentifierDetail(expr, cx)}`);
+        demoteToLegacy("body-shape-rejected", `ir/from-ast: ${unboundIdentifierDetail(expr, cx.checker, cx.funcName)}`);
     }
     const p = read.binding;
     // Slice 6 part 2 (#1181): slot-bound identifier (let mutated across
@@ -5312,7 +5316,10 @@ function lowerExprUnchecked(expr: ts.Expression, cx: LowerCtx, hint: IrType): Ir
     }
     // (#3142 Slice 2) Module-scope binding inside the `<module-init>` unit:
     // reads come from the legacy-allocated global (symbolic ref).
+    // (#7354 F1) A home that holds its own closure reads as that closure's function value, of a known kind.
     if (p.kind === "moduleGlobal") {
+      const fn = p.functionValue?.in === cx.builder ? p.functionValue.value : undefined;
+      if (fn !== undefined) return functionObjects.functionObjectDynamicValue(fn, expr, functionObjectLoweringHost(cx));
       return cx.builder.emitGlobalGet(p.globalRef, p.type);
     }
     if (p.kind === "withField") {
@@ -7986,7 +7993,7 @@ function lowerCall(expr: ts.CallExpression, cx: LowerCtx, statementPosition = fa
       argType = cx.builder.typeOf(argVal);
     }
     if (expected.kind === "dynamic") {
-      argVal = argumentIntoDynamic(argVal, argExpr, cx);
+      argVal = functionObjects.concreteIntoDynamic(argVal, argExpr, functionObjectLoweringHost(cx));
       argType = cx.builder.typeOf(argVal);
     }
     // A dynamic value flowing into a proven numeric local ABI observes the
@@ -8185,36 +8192,6 @@ function isUnshadowedGlobalExpression(expr: ts.Expression, name: string, cx: Low
   );
 }
 
-/**
- * Why a read of `identifier` has no binding. (#7354 Fa) A closure reading a local of its enclosing function that
- * is declared after the closure is created names that: the hoisted binding exists in JavaScript, but the closure
- * captures only what is bound where it is created.
- */
-function unboundIdentifierDetail(identifier: ts.Identifier, cx: LowerCtx): string {
-  const declaration = cx.checker?.getSymbolAtLocation(identifier)?.valueDeclaration;
-  const closure = ts.findAncestor(identifier, ts.isFunctionLike);
-  const home = declaration && ts.isVariableDeclaration(declaration) && ts.findAncestor(declaration, ts.isFunctionLike);
-  return closure && home && home !== closure && declaration.pos >= closure.end
-    ? `closure ${cx.funcName} reads "${identifier.text}", a local of its enclosing function declared after the closure is created`
-    : `identifier "${identifier.text}" is not in scope in ${cx.funcName}`;
-}
-
-/**
- * A concrete argument for a dynamic parameter crosses the same explicit carrier boundary as a concrete equality
- * operand (#2949 S5.P): the canonical tag-aware boxer, and (#7320) a closure boxes as a function value, the way a
- * dynamic call's arguments do (`functionObjectDynamicValue`). An argument with no box (an ambiguous ref or i32) is
- * returned as it is, so the caller's assignability check refuses it.
- */
-function argumentIntoDynamic(argVal: IrValueId, argExpr: ts.Expression, cx: LowerCtx): IrValueId {
-  const argType = cx.builder.typeOf(argVal);
-  if (argType.kind === "dynamic") return argVal;
-  const boxed =
-    argType.kind === "closure"
-      ? functionObjects.functionObjectDynamicValue(argVal, argExpr, functionObjectLoweringHost(cx))
-      : boxConcreteToDynamic(argVal, argType, argExpr, cx);
-  return boxed ?? argVal;
-}
-
 function lowerClosureCall(
   callee: IrValueId,
   signature: IrClosureSignature,
@@ -8239,7 +8216,8 @@ function lowerClosureCall(
         ? emitExpressionDefaultMissingF64(expected, cx)
         : lowerExpr(argument!, cx, expected);
     // (#7354 Fa) A parameter of a function value's all-dynamic signature boxes its argument as a direct call's does.
-    if (expected.kind === "dynamic") argVal = argumentIntoDynamic(argVal, argument!, cx);
+    if (expected.kind === "dynamic")
+      argVal = functionObjects.concreteIntoDynamic(argVal, argument!, functionObjectLoweringHost(cx));
     if (!irTypeAssignable(cx.builder.typeOf(argVal), expected)) {
       demoteToLegacy(
         "call-resolution-unsupported",
@@ -11255,7 +11233,8 @@ function coerceReturnValue(value: IrValueId, cx: LowerCtx, sourceExpression?: ts
     const actual = cx.builder.typeOf(value);
     if (actual.kind === "dynamic") return value;
     // (#7354 F1) A returned closure is a function value, boxed as an argument is.
-    const boxed = sourceExpression && argumentIntoDynamic(value, sourceExpression, cx);
+    const boxed =
+      sourceExpression && functionObjects.concreteIntoDynamic(value, sourceExpression, functionObjectLoweringHost(cx));
     if (boxed !== undefined && boxed !== value) return boxed;
     // (#4027) The from-ast half of the #1798 return-value concern that
     // `return-type-legacy-coupling` already covers on the verify side. This is
