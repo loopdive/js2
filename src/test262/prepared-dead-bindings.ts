@@ -26,16 +26,26 @@ const GOAL_WALKS: readonly Partial<CompileOptions>[] = [
  * semantic) and its ES early errors (`GOAL_WALKS`). Pinning more than the gate rejects only keeps a dead binding.
  * Undefined when an error in the source has no position, so no statement can be shown free of one.
  */
-function frontendErrorOffsets(source: ts.SourceFile, analysis: Analysis, options: CompileOptions): number[] | undefined {
+function frontendErrorOffsets(
+  source: ts.SourceFile,
+  scriptKind: ts.ScriptKind,
+  analysis: Analysis,
+  options: CompileOptions,
+): number[] | undefined {
   const offsets: number[] = [];
   for (const diagnostic of [...analysis.syntacticDiagnostics, ...analysis.diagnostics]) {
     if (diagnostic.category !== ts.DiagnosticCategory.Error || diagnostic.file !== source) continue;
     if (diagnostic.start === undefined) return undefined;
     offsets.push(diagnostic.start);
   }
-  for (const goal of GOAL_WALKS)
-    for (const error of sourceEarlyErrors(source, { ...options, ...goal }))
-      offsets.push(source.getPositionOfLineAndCharacter(error.line - 1, error.column - 1));
+  for (const goal of GOAL_WALKS) {
+    // Each walk parses the text afresh and discards the parse. The detector memoizes per node (strict mode, the
+    // Module-goal mark); a walk under another goal than the real gate's, on the real gate's SourceFile, left
+    // answers the gate then read (review round 4: `var l = 010` passed under the Module goal).
+    const parse = ts.createSourceFile(source.fileName, source.text, ts.ScriptTarget.Latest, true, scriptKind);
+    for (const error of sourceEarlyErrors(parse, { ...options, ...goal }))
+      offsets.push(parse.getPositionOfLineAndCharacter(error.line - 1, error.column - 1));
+  }
   return offsets;
 }
 
@@ -57,9 +67,10 @@ export function elideDeadBindings(
   const source = analysis.entryFile;
   if (names.length !== 1 || !source || !deadBindingElisionApplies(profile, options.standaloneScriptVarBindings))
     return files;
-  const pinned = frontendErrorOffsets(source, analysis, options);
-  if (!pinned) return files;
   const file = names[0]!;
-  const elided = elideDeadTopLevelBindings(files[file]!, multiFileScriptKind(normalizeMultiFileName(file)), pinned);
+  const scriptKind = multiFileScriptKind(normalizeMultiFileName(file));
+  const pinned = frontendErrorOffsets(source, scriptKind, analysis, options);
+  if (!pinned) return files;
+  const elided = elideDeadTopLevelBindings(files[file]!, scriptKind, pinned);
   return elided.elided.length === 0 ? files : { [file]: elided.source };
 }

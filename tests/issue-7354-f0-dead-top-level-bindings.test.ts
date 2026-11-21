@@ -75,31 +75,109 @@ const DEAD = "var o = { m: function () { return 1; } };";
 const CLOSURE = "closure must have a return type annotation (<module-init>)";
 const SHIM = readFileSync(new URL("../scripts/test262-fyi-runtime.js", import.meta.url), "utf8");
 
+// Programs beside a dropped binding; `@` is the asserted value (1 right, 2 wrong).
+const RUNS = [
+  ["an unused object with a function-valued property", `${DEAD} var r = 1; if (r !== @) throw 1;`],
+  ["an unused function expression", "var g = function (v) { return v; }; var r = 1; if (r !== @) throw 1;"],
+  ["the test262 runtime shim", `${SHIM}var r = 1; if (r !== @) throw 1;`],
+  [
+    "two unused bindings that name each other",
+    "var a = { f: function () { return b; } }; var b = { g: function () { return a; } }; var r = 1; if (r !== @) throw 1;",
+  ],
+  [
+    "a statement whose declarators are all unused",
+    `var o = { m: function () { return 1; } }, k = 2; var r = 1; if (r !== @) throw 1;`,
+  ],
+  ["a hoisted function used before its declaration", `if (f() !== @) throw 1; function f() { return 1; } ${DEAD}`],
+  ["a unary operator on a primitive literal", `var x = +"3"; ${DEAD} var r = 1; if (r !== @) throw 1;`],
+  [
+    "`!` of an object (ToBoolean runs no code)",
+    `var x = !{ m: function () { return 1; } }; var r = 1; if (r !== @) throw 1;`,
+  ],
+  [
+    "a later effectful initializer (its call still runs, once, before the read)",
+    `${DEAD} var n = 0; function f() { n = n + 1; return 1; } var x = f(); if (n !== @) throw 1;`,
+  ],
+] as const;
+
+// Programs whose dead-looking binding is kept, so it reaches the refusal its initializer causes.
+const KEPT = [
+  ["it is used", `${DEAD} if (o.m() !== 1) throw 1;`, CLOSURE],
+  ["it is read by `typeof`", `${DEAD} if (typeof o !== "object") throw 1;`, CLOSURE],
+  ["a parameter of the same name shadows it", `${DEAD} function f(o) { return o; } var r = f(1);`, CLOSURE],
+  ["a local of the same name shadows it", `${DEAD} function f() { var o = 1; return o; } var r = f();`, CLOSURE],
+  ["only a nested closure names it", `${DEAD} function f() { return function () { return o; }; } var r = 1;`, "(f)"],
+  [
+    "only an unused function names it",
+    `${DEAD} function unused() { return o.m(); } var r = 1;`,
+    "dynamic operation __ir_dyn_method_call_0 has no Prepared intrinsic",
+  ],
+  [
+    "a sibling declarator has an effect (`var a = …, b = f();`)",
+    "function boom(v) { if (v) throw 7; return 0; } var a = { m: function () { return 1; } }, b = boom(1);",
+    CLOSURE,
+  ],
+  // `-{ valueOf }` calls valueOf (node throws): dropping it would return.
+  ["its `-` runs a user valueOf", "var x = -({ valueOf: function () { throw 1; } });", CLOSURE],
+  ["its `+` converts an array", `var x = +[]; var r = 1;`, "empty array literal needs a vec-typed hint"],
+  ["its `-` converts a function", "var x = -function () { return 1; }; var r = 1;", CLOSURE],
+  ["its `+` converts an arrow function", "var x = +(() => 1); var r = 1;", CLOSURE],
+  ["its `+` converts a RegExp", "var x = +/a/; var r = 1;", "RegExp literal has no provider"],
+  // A script `var valueOf = …` would make it a call.
+  ["its `+` converts the global object", "var x = +globalThis; var r = 1;", 'identifier "globalThis"'],
+  ["literal eval source names it", `${DEAD} eval("o");`, CLOSURE],
+  ['a string literal spells it (`globalThis["o"]`)', `${DEAD} var s = "o"; if (s !== "o") throw 1;`, CLOSURE],
+  [
+    "a property name spells it",
+    "var m = { f: function () { return 1; } }; var p = { m: 1 }; if (p.m !== 1) throw 1;",
+    CLOSURE,
+  ],
+  ["the test262 shim's `print` is called", `${SHIM}print("x");`, "module-level closure binding 'print'"],
+] as const;
+
+// Global-object reflection the pass cannot see; the Prepared path refuses each.
+const REFLECTS = [
+  ["a computed global key", `${DEAD} var k = "p" + "q"; var v = globalThis[k];`, 'identifier "globalThis"'],
+  ["for-in over the global object", `${DEAD} var c = 0; for (var k in this) { c = c + 1; }`, "nested var declaration"],
+  ["Object.keys of the global object", `${DEAD} var c = Object.keys(globalThis).length;`, 'identifier "Object"'],
+] as const;
+
+// Programs node rejects whose only evidence is in a dead statement (review rounds 1-2).
+const THROWS = [
+  // Early errors inside the dropped statement (pinned by the unelided program's frontend errors).
+  ["a duplicate label", "var g = function () { l: l: ; };"],
+  ["a nested duplicate label", "var g = function () { l: { l: ; } };"],
+  ["a duplicate constructor", "var g = function () { class C { constructor() {} constructor() {} } };"],
+  ["import.meta in a Script", "var g = function () { return import.meta; };"],
+  // `+` on a BigInt throws a TypeError (ToNumber).
+  ["`+` on a BigInt", "var x = +1n;"],
+  ["`+` on a negated BigInt", "var x = +(-1n);"],
+  ["`+` on a parenthesized BigInt", "var x = +((1n));"],
+  // Declarations of the global object's non-configurable properties.
+  ["a strict `var NaN`", '"use strict"; var NaN = 1;'],
+  ["a strict `var undefined`", '"use strict"; var undefined = 2;'],
+  // `let undefined = 1;`, `const NaN = 1;` (the reviewer's) and `const undefined = 1;` are kept, never elided
+  // (see the unit rows below), but the Prepared path then compiles and returns on main and here alike, a
+  // GlobalDeclarationInstantiation error it does not model yet (#7445).
+  ["`let Infinity`", "let Infinity;"],
+  // Ten more of the same two families.
+  ["duplicate parameters in strict code", 'var g = function (a, a) { "use strict"; };'],
+  ["`yield` as a binding in a generator", "var g = function* () { var yield; };"],
+  ["`await` as a binding in an async function", "var g = async function () { var await; };"],
+  ["an invalid assignment target", "var g = function () { 1 = 2; };"],
+  ["`super` outside a method", "var g = function () { super.x; };"],
+  ["`new.target` outside a function", "var g = () => new.target;"],
+  ["an octal escape in a strict string", '"use strict"; var g = function () { return "\\07"; };'],
+  ["`break` outside a loop", "var g = function () { break; };"],
+  ["a strict `var Infinity`", '"use strict"; var Infinity = 1;'],
+  ["`delete` of a name in strict code", 'var g = function () { "use strict"; var v; delete v; };'],
+  ["an assignment to `arguments` in strict code", 'var g = function () { "use strict"; arguments = 1; };'],
+  ["`let` and `var` of one name in a function", "var g = function () { let x; var x; };"],
+] as const;
+
 describe("#7354 F0 — dead top-level bindings are dropped before the Prepared path lowers", () => {
   // `@` is the asserted value: 1 is the right answer (returns), 2 the wrong one (throws), both as node.
-  it.each([
-    ["an unused object with a function-valued property", `${DEAD} var r = 1; if (r !== @) throw 1;`],
-    ["an unused function expression", "var g = function (v) { return v; }; var r = 1; if (r !== @) throw 1;"],
-    ["the test262 runtime shim", `${SHIM}var r = 1; if (r !== @) throw 1;`],
-    [
-      "two unused bindings that name each other",
-      "var a = { f: function () { return b; } }; var b = { g: function () { return a; } }; var r = 1; if (r !== @) throw 1;",
-    ],
-    [
-      "a statement whose declarators are all unused",
-      `var o = { m: function () { return 1; } }, k = 2; var r = 1; if (r !== @) throw 1;`,
-    ],
-    ["a hoisted function used before its declaration", `if (f() !== @) throw 1; function f() { return 1; } ${DEAD}`],
-    ["a unary operator on a primitive literal", `var x = +"3"; ${DEAD} var r = 1; if (r !== @) throw 1;`],
-    [
-      "`!` of an object (ToBoolean runs no code)",
-      `var x = !{ m: function () { return 1; } }; var r = 1; if (r !== @) throw 1;`,
-    ],
-    [
-      "a later effectful initializer (its call still runs, once, before the read)",
-      `${DEAD} var n = 0; function f() { n = n + 1; return 1; } var x = f(); if (n !== @) throw 1;`,
-    ],
-  ] as const)("runs a program beside %s", async (_name, template) => {
+  it.each(RUNS)("runs a program beside %s", async (_name, template) => {
     for (const [value, expected] of [
       ["1", "returned"],
       ["2", "threw"],
@@ -130,53 +208,13 @@ describe("#7354 F0 — dead top-level bindings are dropped before the Prepared p
   });
 
   // Each row keeps the dead-looking binding, so it still reaches the refusal its initializer causes.
-  it.each([
-    ["it is used", `${DEAD} if (o.m() !== 1) throw 1;`, CLOSURE],
-    ["it is read by `typeof`", `${DEAD} if (typeof o !== "object") throw 1;`, CLOSURE],
-    ["a parameter of the same name shadows it", `${DEAD} function f(o) { return o; } var r = f(1);`, CLOSURE],
-    ["a local of the same name shadows it", `${DEAD} function f() { var o = 1; return o; } var r = f();`, CLOSURE],
-    ["only a nested closure names it", `${DEAD} function f() { return function () { return o; }; } var r = 1;`, "(f)"],
-    [
-      "only an unused function names it",
-      `${DEAD} function unused() { return o.m(); } var r = 1;`,
-      "dynamic operation __ir_dyn_method_call_0 has no Prepared intrinsic",
-    ],
-    [
-      "a sibling declarator has an effect (`var a = …, b = f();`)",
-      "function boom(v) { if (v) throw 7; return 0; } var a = { m: function () { return 1; } }, b = boom(1);",
-      CLOSURE,
-    ],
-    // `-{ valueOf }` calls valueOf (node throws): dropping it would return.
-    ["its `-` runs a user valueOf", "var x = -({ valueOf: function () { throw 1; } });", CLOSURE],
-    ["its `+` converts an array", `var x = +[]; var r = 1;`, "empty array literal needs a vec-typed hint"],
-    ["its `-` converts a function", "var x = -function () { return 1; }; var r = 1;", CLOSURE],
-    ["its `+` converts an arrow function", "var x = +(() => 1); var r = 1;", CLOSURE],
-    ["its `+` converts a RegExp", "var x = +/a/; var r = 1;", "RegExp literal has no provider"],
-    // A script `var valueOf = …` would make it a call.
-    ["its `+` converts the global object", "var x = +globalThis; var r = 1;", 'identifier "globalThis"'],
-    ["literal eval source names it", `${DEAD} eval("o");`, CLOSURE],
-    ['a string literal spells it (`globalThis["o"]`)', `${DEAD} var s = "o"; if (s !== "o") throw 1;`, CLOSURE],
-    [
-      "a property name spells it",
-      "var m = { f: function () { return 1; } }; var p = { m: 1 }; if (p.m !== 1) throw 1;",
-      CLOSURE,
-    ],
-    ["the test262 shim's `print` is called", `${SHIM}print("x");`, "module-level closure binding 'print'"],
-  ] as const)("keeps a binding when %s", async (_name, source, message) => {
+  it.each(KEPT)("keeps a binding when %s", async (_name, source, message) => {
     expect(await refusal(source)).toContain(message);
   });
 
   // The pass sees names, not computed lookups on the global object: these programs could observe a dropped `var`
   // through enumeration or a computed key. The Prepared path refuses each of them, so no answer is wrong today.
-  it.each([
-    ["a computed global key", `${DEAD} var k = "p" + "q"; var v = globalThis[k];`, 'identifier "globalThis"'],
-    [
-      "for-in over the global object",
-      `${DEAD} var c = 0; for (var k in this) { c = c + 1; }`,
-      "nested var declaration",
-    ],
-    ["Object.keys of the global object", `${DEAD} var c = Object.keys(globalThis).length;`, 'identifier "Object"'],
-  ] as const)("refuses %s", async (_name, source, message) => {
+  it.each(REFLECTS)("refuses %s", async (_name, source, message) => {
     expect(await refusal(source)).toContain(message);
   });
 
@@ -222,37 +260,7 @@ describe("#7354 F0 — dead top-level bindings are dropped before the Prepared p
   // Review round 1: dropping a statement must not drop the only evidence of an error. Each program's dead
   // statement carries an early error, a declaration-time error or a ToNumber TypeError; node throws, and the
   // Prepared path refuses or throws too. The first twelve are the reviewer's.
-  it.each([
-    // Early errors inside the dropped statement (pinned by the unelided program's frontend errors).
-    ["a duplicate label", "var g = function () { l: l: ; };"],
-    ["a nested duplicate label", "var g = function () { l: { l: ; } };"],
-    ["a duplicate constructor", "var g = function () { class C { constructor() {} constructor() {} } };"],
-    ["import.meta in a Script", "var g = function () { return import.meta; };"],
-    // `+` on a BigInt throws a TypeError (ToNumber).
-    ["`+` on a BigInt", "var x = +1n;"],
-    ["`+` on a negated BigInt", "var x = +(-1n);"],
-    ["`+` on a parenthesized BigInt", "var x = +((1n));"],
-    // Declarations of the global object's non-configurable properties.
-    ["a strict `var NaN`", '"use strict"; var NaN = 1;'],
-    ["a strict `var undefined`", '"use strict"; var undefined = 2;'],
-    // `let undefined = 1;`, `const NaN = 1;` (the reviewer's) and `const undefined = 1;` are kept, never elided
-    // (see the unit rows below), but the Prepared path then compiles and returns on main and here alike, a
-    // GlobalDeclarationInstantiation error it does not model yet (#7445).
-    ["`let Infinity`", "let Infinity;"],
-    // Ten more of the same two families.
-    ["duplicate parameters in strict code", 'var g = function (a, a) { "use strict"; };'],
-    ["`yield` as a binding in a generator", "var g = function* () { var yield; };"],
-    ["`await` as a binding in an async function", "var g = async function () { var await; };"],
-    ["an invalid assignment target", "var g = function () { 1 = 2; };"],
-    ["`super` outside a method", "var g = function () { super.x; };"],
-    ["`new.target` outside a function", "var g = () => new.target;"],
-    ["an octal escape in a strict string", '"use strict"; var g = function () { return "\\07"; };'],
-    ["`break` outside a loop", "var g = function () { break; };"],
-    ["a strict `var Infinity`", '"use strict"; var Infinity = 1;'],
-    ["`delete` of a name in strict code", 'var g = function () { "use strict"; var v; delete v; };'],
-    ["an assignment to `arguments` in strict code", 'var g = function () { "use strict"; arguments = 1; };'],
-    ["`let` and `var` of one name in a function", "var g = function () { let x; var x; };"],
-  ])("refuses or throws as node does: %s", async (_name, source) => {
+  it.each(THROWS)("refuses or throws as node does: %s", async (_name, source) => {
     expect(node(source)).toBe("threw");
     const result = await compile(source, options());
     if (!result.success) return;
@@ -293,19 +301,21 @@ it("#7354 F0 keeps a goal-dependent early error when the goal is unstated", asyn
 // whatever the options state. Each program's only statement is a dead binding: the legal one is dropped and
 // compiles; an illegal one is kept (and refused where it lowers) in every option set whose goal could be the one
 // that rejects it. `await 0` in a plain function is rejected under both goals.
+const SCRIPT_ONLY = "var g = function () { return import.meta; };";
+const MODULE_ONLY = "var g = function () { var await; };";
+const BOTH = "var g = function () { await 0; };";
+const LEGAL = "var g = function () { return 1; };";
+/** The runner's options with the goal flags replaced (`undefined` leaves one unstated). */
+const goalOptions = (scriptGoal: boolean | undefined, inferModule: boolean | undefined) => {
+  const { scriptGoal: _s, inferModuleStrictArguments: _m, ...rest } = options() as Record<string, unknown>;
+  return {
+    ...rest,
+    ...(scriptGoal === undefined ? {} : { scriptGoal }),
+    ...(inferModule === undefined ? {} : { inferModuleStrictArguments: inferModule }),
+  } as Test262CompileOptions;
+};
+
 describe("#7354 F0 — goal-dependent early errors inside a dead binding", () => {
-  const SCRIPT_ONLY = "var g = function () { return import.meta; };";
-  const MODULE_ONLY = "var g = function () { var await; };";
-  const BOTH = "var g = function () { await 0; };";
-  const LEGAL = "var g = function () { return 1; };";
-  const goalOptions = (scriptGoal: boolean | undefined, inferModule: boolean | undefined) => {
-    const { scriptGoal: _s, inferModuleStrictArguments: _m, ...rest } = options() as Record<string, unknown>;
-    return {
-      ...rest,
-      ...(scriptGoal === undefined ? {} : { scriptGoal }),
-      ...(inferModule === undefined ? {} : { inferModuleStrictArguments: inferModule }),
-    } as Test262CompileOptions;
-  };
   const combinations = [true, undefined].flatMap((scriptGoal) =>
     [true, false, undefined].map((inferModule) => [scriptGoal, inferModule] as const),
   );
@@ -333,6 +343,89 @@ describe("#7354 F0 — goal-dependent early errors inside a dead binding", () =>
       } as Test262CompileOptions);
       expect(result.success).toBe(false);
     },
+  );
+});
+
+// Review round 4: the elision's detector walks once ran on the real gate's SourceFile, and a Script walk left
+// strict-mode answers that the Module-goal gate then read. Under the Module goal (strict) node rejects each.
+const MODULE_STRICT = [
+  "var l = 010; if (l !== 8) throw 1;",
+  "function f(a, a) { return a; } if (f(1, 2) !== 2) throw 1;",
+  "var d = '\\07';",
+  "var d = function (a, a) { return a; };",
+] as const;
+
+describe("#7354 F0 — the elision cannot change the real gate's verdict", () => {
+  it.each(MODULE_STRICT.flatMap((source) => [true, false].map((skip) => [source, skip] as const)))(
+    "refuses %s under the Module goal (skipSemantic %s)",
+    async (source, skip) => {
+      const result = await compile(source, {
+        ...goalOptions(undefined, true),
+        skipSemanticDiagnostics: skip,
+      } as Test262CompileOptions);
+      expect(result.success).toBe(false);
+      expect(requiredPreparedFrontendFailure(result)?.phase).toBeDefined();
+    },
+  );
+
+  // For every program of this file and every option set, the gate's verdict with the elision equals its verdict
+  // without it (the identity in the entry's test seam), except in the intended case: a program the backend refused
+  // only because it lowered a dead binding. A frontend verdict (a syntax or early error, or a TypeScript error the
+  // presentation refuses) and a success must never change.
+  const PROGRAMS = [
+    ...RUNS.map(([, template]) => template.replace("@", "1")),
+    ...KEPT.map(([, source]) => source),
+    ...REFLECTS.map(([, source]) => source),
+    ...THROWS.map(([, source]) => source),
+    "let a = 1; let a = 2;",
+    "var a = 1; let a = 2;",
+    "let a = 1, a = 2;",
+    SCRIPT_ONLY,
+    MODULE_ONLY,
+    BOTH,
+    LEGAL,
+    ...MODULE_STRICT,
+  ];
+  // The third field: node runs the program as a Script under these options (the Module set is not run by node).
+  const OPTION_SETS: readonly (readonly [string, Test262CompileOptions, boolean])[] = [
+    ["runner (Script, semantic skipped)", options(), true],
+    ["unstated goal", goalOptions(undefined, undefined), true],
+    ["inferModuleStrictArguments:false alone", goalOptions(undefined, false), true],
+    ["Module goal", goalOptions(undefined, true), false],
+    ["Script goal, semantic checked", { ...options(), skipSemanticDiagnostics: false } as Test262CompileOptions, true],
+  ];
+  const identity = ((files: Record<string, string>) => files) as Parameters<typeof compile>[2];
+  const frontendRefused = (result: Awaited<ReturnType<typeof compile>>) =>
+    requiredPreparedFrontendFailure(result) !== undefined ||
+    messages(result).some((message) => message.includes("analyzed frontend errors cannot become prepared artifacts"));
+
+  it.each(OPTION_SETS)(
+    "%s",
+    async (_name, set, script) => {
+      for (const source of PROGRAMS) {
+        const elided = await compile(source, set);
+        const bypassed = await compile(source, set, identity);
+        const same =
+          elided.success === bypassed.success && messages(elided).join("\n") === messages(bypassed).join("\n");
+        if (same) continue;
+        const intended = !bypassed.success && !frontendRefused(bypassed) && !frontendRefused(elided);
+        expect({ source, elided: messages(elided), bypassed: messages(bypassed), intended }).toMatchObject({
+          intended: true,
+        });
+        // A program the elision lets compile must then answer as node does (round 3: the gate itself never saw
+        // the Script-only error, so only node can tell).
+        if (!elided.success || !script) continue;
+        const init = instantiatePreparedArtifact(elided).instance.exports.__module_init as (() => void) | undefined;
+        let ran: "returned" | "threw" = "returned";
+        try {
+          init?.();
+        } catch {
+          ran = "threw";
+        }
+        expect({ source, ran }).toEqual({ source, ran: node(source) });
+      }
+    },
+    300_000,
   );
 });
 

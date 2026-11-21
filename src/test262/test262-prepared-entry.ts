@@ -13,6 +13,8 @@ import { freezePreparedIrValue } from "../ir/program.js";
 import { failResult } from "../compiler/output.js";
 import { resolveCompileTargetProfile } from "../target-profile.js";
 
+type DeadBindingElision = typeof elideDeadBindings;
+
 export interface RequiredPreparedRequest {
   readonly kind: "prepared-program-required";
   readonly version: 1;
@@ -352,6 +354,7 @@ function present(
   entryFile: string,
   options: Test262CompileOptions,
   singleSource = false,
+  elide: DeadBindingElision = elideDeadBindings,
 ): CompileResult {
   const exactFiles = sourceGraph(files, entryFile);
   const profile = resolveCompileTargetProfile(options);
@@ -402,7 +405,7 @@ function present(
     });
   // #7354 F0 decides on the unelided graph's diagnostics; a graph it changes is analyzed again.
   const suppliedAst = analyze(exactFiles);
-  const analyzedFiles = elideDeadBindings(exactFiles, suppliedAst, profile, options);
+  const analyzedFiles = elide(exactFiles, suppliedAst, profile, options);
   const ast = analyzedFiles === exactFiles ? suppliedAst : analyze(analyzedFiles);
   if (!completeAnalyzedGraph(analyzedFiles, entryFile, ast))
     return failed(
@@ -526,12 +529,17 @@ function present(
   return result;
 }
 
-export async function compile(source: string, options?: Test262CompileOptions): Promise<CompileResult> {
+/** `elide` is a test seam only: a test passes the identity to compare the gate's verdict without the elision. */
+export async function compile(
+  source: string,
+  options?: Test262CompileOptions,
+  elide: DeadBindingElision = elideDeadBindings,
+): Promise<CompileResult> {
   if (!selected(options)) return legacy.compile(source, options);
   const captured = strictOptions(undefined, options);
   if (captured.fileName !== undefined && typeof captured.fileName !== "string")
     invalidRequest("fileName must be a string");
-  return present({ [captured.fileName ?? "input.ts"]: source }, captured.fileName ?? "input.ts", captured, true);
+  return present({ [captured.fileName ?? "input.ts"]: source }, captured.fileName ?? "input.ts", captured, true, elide);
 }
 export async function compileMulti(
   files: Record<string, string>,
