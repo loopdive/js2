@@ -146,7 +146,8 @@ describe("#7354 O3 — a member write of the dynamic value", () => {
 describe("#7354 O3 — the js.object.set adapter over the kernel's lookup", () => {
   const ext = { kind: "externref" } as const;
   const i32 = { kind: "i32" } as const;
-  function adapter(answer: (object: unknown, key: unknown) => readonly [number, number]) {
+  // (#7354 F1b) `bagOf`: the receiver is a function object (`match`), whose own properties live in that bag.
+  function adapter(answer: (object: unknown, key: unknown) => readonly [number, number], bagOf?: object) {
     const defined: unknown[][] = [];
     const module = createEmptyModule(),
       tx = new PhysicalModuleReservations(module);
@@ -167,6 +168,8 @@ describe("#7354 O3 — the js.object.set adapter over the kernel's lookup", () =
       params: [ext, ext, ext, { kind: "f64" }],
       results: [],
     });
+    const match = tx.reserveFunctionImport("kernel:match", "kernel", "match", { params: [ext], results: [i32] });
+    const bag = tx.reserveFunctionImport("kernel:bag", "kernel", "bag", { params: [ext], results: [ext] });
     const entryRef = { kind: "ref_null", typeIdx: entry.typeIndex } as const;
     const lookup = tx.reserveFunction("kernel:lookup", "lookup", { params: [ext, ext], results: [i32, entryRef] });
     const fn = tx.reserveFunction("adapter:set", "set", { params: [ext, ext, ext, ext], results: [i32] });
@@ -205,13 +208,20 @@ describe("#7354 O3 — the js.object.set adapter over the kernel's lookup", () =
         entryTypeIdx: entry.typeIndex,
         lookup: lookup.handle,
         defineData: define.handle,
+        match: match.handle,
+        bag: bag.handle,
       }),
     );
     tx.defineExport("export:set", "set", fn);
     tx.seal();
     const wasm = new WebAssembly.Module(emitBinary(module) as BufferSource);
     const set = new WebAssembly.Instance(wasm, {
-      kernel: { probe: answer, define: (...args: unknown[]) => void defined.push(args) },
+      kernel: {
+        probe: answer,
+        define: (...args: unknown[]) => void defined.push(args),
+        match: () => (bagOf ? 4 : 0),
+        bag: () => bagOf,
+      },
     }).exports.set as (...args: unknown[]) => unknown;
     return { set, defined };
   }
@@ -241,8 +251,21 @@ describe("#7354 O3 — the js.object.set adapter over the kernel's lookup", () =
     ]);
   });
 
+  it("defines a function object's own property in its bag", () => {
+    const bag = {};
+    const { set, defined } = adapter(() => [0, 0], bag);
+    expect(set(object, key, value, receiver)).toBe(1);
+    expect(defined.map((args) => args[0] === bag)).toEqual([true]);
+  });
+
+  // (#7354 F1b) A function's own `length` and `name`: OrdinarySet answers false and defines nothing.
+  it("answers false for a read-only data property", () => {
+    const { set, defined } = adapter(() => [1, 2 | 4]);
+    expect(set(object, key, value, receiver)).toBe(0);
+    expect(defined).toHaveLength(0);
+  });
+
   it.each([
-    ["a read-only data property", 1, 2 | 4],
     ["an accessor", 1, 8 | 1],
     ["a non-object (status 3)", 3, 0],
     ["an unknown status", 0x7fffffff, 0],
