@@ -3669,3 +3669,28 @@ none of whose quoted texts they assert.)
 
 Compile time per row: median 45 ms, p90 72 ms, max 907 ms (every row refuses before emission). As the plan
 predicted, the 293 rows move to Fa part 2's "declaration read as a value".
+
+## U0 result (2026-11-21, branch `claude/7354-u0` from `origin/main` 4468443785)
+
+The runner rule of U-D7: on the Prepared lane a Wasm trap is never the expected throw.
+
+- `scripts/test262-runtime-verdict.mjs` (new): `isWasmTrap(err)` (`WebAssembly.RuntimeError`; a
+  `WebAssembly.Exception` is a JS throw and stays a throw), `runtimeNegativeThrowAccepted` (the matcher, moved
+  verbatim from the worker, with the renderer passed in), `asyncRowVerdict`, and `renderHostError` (the
+  worker's trap-frame rendering, moved verbatim so the test sees the real text).
+- `scripts/test262-worker.mjs`: the lane is `preparedRequest !== undefined` (the job's `wholeProgram`
+  request, which `tests/test262-shared.ts` sets exactly when `TEST262_COMPILER_PATH=ir`). Both throw arms
+  (instantiate, `__module_init`) and the async drain use the module. The third site the plan named (the
+  `test()` path) is the no-throw arm; it is reached only without the original harness, so its
+  `!originalHarness || …` guard was always true and is now `isRuntimeNegative` alone.
+- Async: with a completion marker and a drain error, a Prepared row fails as
+  `async continuation threw after completion: …`. The Prepared drain is one module's ring and stops at its
+  first throw, so the error came after `$DONE`.
+- Tests: `scripts/test262-prepared-trap-verdict.test.mjs` (`node --test`, in the CI step beside
+  `test262-prepared-frontend-report.test.mjs`), on a hand-encoded module with `$Test262Error` and
+  `$assertThrows` frames. Removing the Prepared trap arm fails the two runtime-negative trap cases; removing
+  the async arm fails the drain case; applying either arm to every lane fails the three non-Prepared pins.
+- Other lanes: 20 standalone rows (10 runtime negatives, 10 positives) through `tests/test262-chunk-dynamic.test.ts`
+  with the base worker and with this one: identical status and error text on all 20.
+- Not measured: how many Prepared rows change (the lane refuses before emission on most rows today). The same
+  hole on the other lanes is #7447.

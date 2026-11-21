@@ -9,6 +9,7 @@ import {
   NATIVE_EVAL_OBSERVATION_SOURCES,
 } from "./native-eval-boundary-observation.mjs";
 import { safeStringifyThrown } from "./wasm-exn-render.mjs";
+import { renderHostError } from "../test262-runtime-verdict.mjs";
 
 // Source-only assembly for observer admission; never compile or execute this
 // original body. A missing/wrong pinned harness must fail, never skip controls.
@@ -41,6 +42,7 @@ const makeReader = (render = () => null, peers = [], boundaryObservation = null)
       WebAssembly,
       Error,
       safeStringifyThrown,
+      renderHostError,
       tryNativeExnRender: render,
       currentLinkedPeers: peers,
       boundaryObservation,
@@ -167,14 +169,9 @@ test("fallback tag is read once and repeated readers keep separate ordinals", ()
   const reader = makeReader(undefined, [], observer);
   assert.equal(reader(row.error, row.instance), "TypeError known");
   assert.equal(reader(row.error, row.instance, observer.reader("deferred-module-init")), "TypeError known");
-  const matcherStart = worker.indexOf("function originalHarnessExceptionMatches(");
-  const matcherEnd = worker.indexOf("function extractWasmFuncName(", matcherStart);
-  assert(matcherStart > 0 && matcherEnd > matcherStart);
-  assert(
-    worker
-      .slice(matcherStart, matcherEnd)
-      .includes("  return extractWasmExceptionMessage(err, instance).includes(expectedErrorType);\n"),
-  );
+  // The negative-type matcher (scripts/test262-runtime-verdict.mjs) renders
+  // through the worker's default "negative-match" reader.
+  assert(worker.includes("render: (e, i) => extractWasmExceptionMessage(e, i) };\n"));
   assert.deepEqual(row.calls, ["__exn_tag", "__tag", "getArg", "__exn_tag", "__tag", "getArg"]);
   const snapshot = observer.snapshot();
   assert.equal(snapshot.invocations, 2);
