@@ -175,7 +175,7 @@ export { isVecOrArrayRefType, isHostCallbackArgument, isDeferredCallbackArgument
 import { emitFuncRefAsClosure, materializeHoistedFunctionValueBinding } from "./closures/funcref-as-closure.js";
 import { emitUndefined } from "./expressions/late-imports.js";
 import { bodyLexicallyBindsArguments, needsImplicitArgumentsObject } from "./helpers/body-uses-arguments.js";
-import { bodyReferencesOwnThis, findOwnThisReference } from "./helpers/body-references-own-this.js";
+import { bodyReferencesOwnThis, findOwnThisReference } from "../shared/body-references-own-this.js";
 // (#4491) §10.2.11 step 22.a — the mapped-vs-unmapped `arguments` split.
 import { isSimpleParameterList, isStrictFunction } from "./helpers/is-strict-function.js";
 import { mappedFormalNeedsExternref } from "./mapped-arguments-formal-widening.js";

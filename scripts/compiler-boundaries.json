@@ -6896,14 +6896,6 @@
       "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
     },
     {
-      "path": "src/codegen/helpers/body-references-own-this.ts",
-      "state": "unmigrated",
-      "layer": "mixed-needs-split",
-      "destination": "backend-wasmgc",
-      "owner": "3518-coordinator",
-      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
-    },
-    {
       "path": "src/codegen/helpers/body-uses-arguments.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
@@ -13337,6 +13329,14 @@
       "destination": "frontend-ts",
       "owner": "7106",
       "nextBoundary": "Pure-AST static RegExp construction reader (a literal, or `new RegExp` over string literals) shared by legacy's `parseRegExpLiteral` and the IR selector and builder (#7106 lever R); becomes clean once src/ts-api.ts leaves migration debt."
+    },
+    {
+      "path": "src/shared/body-references-own-this.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "7354-prepared-path",
+      "nextBoundary": "Pure-AST question whether a function reads its own `this`, shared by codegen's receiver plumbing and the Prepared path's `this` binding (#7354 C2); becomes a frontend fact when the frontend inventory is split from ir-core."
     },
     {
       "path": "src/shared/binding-holds-declaration.ts",
