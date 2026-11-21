@@ -32,7 +32,7 @@ import type { IrModuleInitBindingIntent, IrModuleInitPlan } from "./program/star
 import type { IrPlanningIdentityContext } from "./planning-identity.js";
 import { JS_TAG_IDS } from "./runtime/js-tag-domain.js";
 import { irTypeIsBoolean } from "./boolean-brand.js";
-import { bindingHoldsItsDeclaration } from "../shared/intrinsic-prototype-writes.js";
+import { bindingHoldsItsDeclaration } from "../shared/binding-holds-declaration.js";
 
 const DYNAMIC: IrType = Object.freeze({ kind: "dynamic" });
 

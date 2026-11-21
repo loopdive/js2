@@ -9,8 +9,9 @@
  * callable one ends the program by name at run time (`js.value.unsupported`); in a program that creates no function
  * value no method can be callable, so only `toString` is consulted and the answer is "[object Object]" or a TypeError.
  * (#7354 F1b) A function value's absent `toString` is Function.prototype.toString, the source text the closure does
- * not carry; its one caller here is ToNumber, which reads that text as NaN whatever it is, so the arm's string is a
- * stand-in no code reads (ToString of a function is `TO_STRING_ARM`'s own arm). `@@toPrimitive` (§7.1.1 step 2) is
+ * not carry; a function reaches this builder only from ToNumber, which reads any text that is no number as NaN and
+ * reads no string at all here, so the object's "[object Object]" stands for it (ToString of a function is
+ * `TO_STRING_ARM`'s own arm). `@@toPrimitive` (§7.1.1 step 2) is
  * reachable only by naming `Symbol`, and such a program refuses by name.
  */
 import type { IrInstr, IrValueId } from "../core/nodes.js";
@@ -45,7 +46,6 @@ export function ordinaryToPrimitive(
   object: IrValueId,
   hint: ToPrimitiveHint,
   result: IrValueId,
-  kind: "object" | "function",
 ): IrInstr[] {
   if (program.objects.namesSymbol) gap("ToPrimitive of an object in a program that names 'Symbol'");
   // Without a callable kind `valueOf` is skipped whether held or not, so it is not consulted at all: the answers are
@@ -57,8 +57,7 @@ export function ordinaryToPrimitive(
     // The TypeError does not complete; the empty string only gives the arm its value.
     if (name === undefined) return [...typeError(b, "Cannot convert object to primitive value"), b.text("", r)];
     const [text, key, held] = [b.fresh(), b.fresh(), b.fresh()];
-    const absent = (r: IrValueId) =>
-      name !== "toString" ? step(index + 1, r) : [b.text(kind === "object" ? "[object Object]" : "", r)];
+    const absent = (r: IrValueId) => (name === "toString" ? [b.text("[object Object]", r)] : step(index + 1, r));
     return [
       b.text(name, text),
       { kind: "coerce.to_externref", value: text, result: key, resultType: b.carrier },

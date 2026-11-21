@@ -255,13 +255,7 @@ type ChainBuilders = ReturnType<typeof chainBuilders>;
 export function conversionBuilders(builders: ChainBuilders, program: LegalizationProgram) {
   const { kinds, admitted, intrinsic, fresh, anyKind, text, branch, concat, errorField, kindChain } = builders;
   const unsupported = (instr: IrInstr, r: IrValueId) => intrinsic(instr, "js.value.unsupported", [], r);
-  const toPrimitive = (
-    instr: IrInstr,
-    value: IrValueId,
-    hint: ToPrimitiveHint,
-    result: IrValueId,
-    kind: "object" | "function",
-  ): IrInstr[] => {
+  const toPrimitive = (instr: IrInstr, value: IrValueId, hint: ToPrimitiveHint, result: IrValueId): IrInstr[] => {
     const isCallable = admitted.includes("function")
       ? (method: IrValueId, r: IrValueId) => intrinsic(instr, "js.value.is_function", [method], r)
       : undefined;
@@ -273,7 +267,7 @@ export function conversionBuilders(builders: ChainBuilders, program: Legalizatio
       isCallable,
       unsupported: (r: IrValueId) => unsupported(instr, r),
     };
-    return ordinaryToPrimitive(b, program, value, hint, result, kind);
+    return ordinaryToPrimitive(b, program, value, hint, result);
   };
   const toStringArm = (
     instr: IrInstr,
@@ -323,7 +317,7 @@ export function conversionBuilders(builders: ChainBuilders, program: Legalizatio
         ];
       }
       case "to-primitive":
-        return toPrimitive(instr, value, hint, result, "object");
+        return toPrimitive(instr, value, hint, result);
       // (#7354 F1, D6) Function.prototype.toString answers the source text, which the closure does not carry: the
       // run-time abort, reached only where the value may also be a kind that answers (`stringOf`).
       case "function-source":
@@ -346,9 +340,7 @@ export function conversionBuilders(builders: ChainBuilders, program: Legalizatio
     const converted = held.filter((kind) => TO_NUMBER_ARM[kind] !== "unbox");
     if (converted.length === 0) return unbox(result);
     const nan = (kind: CarrierKind, r: IrValueId): IrInstr[] => [
-      ...(TO_NUMBER_ARM[kind] === "to-primitive"
-        ? toPrimitive(instr, value, "number", fresh(), kind === "function" ? "function" : "object")
-        : []),
+      ...(TO_NUMBER_ARM[kind] === "to-primitive" ? toPrimitive(instr, value, "number", fresh()) : []),
       { kind: "const", value: { kind: "f64", value: NaN }, result: r, resultType: F64 },
     ];
     const toNan = (r: IrValueId) => kindChain(instr, value, r, nan, converted, F64);

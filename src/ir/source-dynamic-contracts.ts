@@ -49,7 +49,7 @@ import { sourceDynamicProvenance, type SourceDynamicProvenance } from "./source-
 import { isUndeclaredInFile } from "../shared/ambient-intrinsics.js";
 import { ownedByDescriptorLiteral } from "./ordinary-object-closure-signatures.js";
 import { isTopLevelStatementDeclaration } from "../shared/var-declaration-lists.js";
-import { bindingHoldsItsDeclaration } from "../shared/intrinsic-prototype-writes.js";
+import { bindingHoldsItsDeclaration } from "../shared/binding-holds-declaration.js";
 import { functionDeclarationsReadAsValues } from "./function-declaration-values.js";
 
 type Carries = SourceDynamicProvenance["carries"];

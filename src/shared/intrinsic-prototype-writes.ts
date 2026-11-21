@@ -43,12 +43,7 @@
  */
 import { forEachChild, ts } from "../ts-api.js";
 import { isUnshadowedGlobalConstant } from "./ambient-intrinsics.js";
-import {
-  bindingIsUniqueAndNeverWritten,
-  isBindingSiteName,
-  isStoreTarget,
-  skipOuterExpressions,
-} from "./binding-writes.js";
+import { isBindingSiteName, isStoreTarget, skipOuterExpressions } from "./binding-writes.js";
 
 export type PatchableIntrinsic = "Array" | "Boolean" | "Function" | "Number" | "Object" | "RegExp" | "String";
 
@@ -144,24 +139,23 @@ export function sourceMayWriteBindingUnseen(sourceFile: ts.SourceFile, name: str
 }
 
 /**
- * (#7354 Fa, F1b) Whether a script binding holds the value its declaration gives it for the whole program: the
- * declaration is the name's only binding site in its file and no identifier of that name is assigned, with no `eval`
- * or `with` (`bindingIsUniqueAndNeverWritten`). Any other write of a script binding is a write of a global-object
- * property, and the global object is reached only through `this`, a global-object name, a reflective route or code
- * the source does not spell (a builtin is strict, so it never substitutes it for an `undefined` receiver). So no such
- * code may run, no reflective route may be named, the global object must not escape (into a value, or under a
- * computed key), and no member of the binding's name may be written on `this` or a global-object name. A member store
- * of the same name on another object (`assert.f = v`) writes no binding then.
+ * (#7354 F1b) The routes this scan sees to the global object's properties, which are the script bindings: code the
+ * source does not spell, a reflective route, the global object escaping, and the names written as members of `this`
+ * or a global-object name (`binding-holds-declaration.ts` asks).
  */
-export function bindingHoldsItsDeclaration(name: ts.Identifier, declaration: ts.Declaration): boolean {
-  const use = prototypeUse(declaration.getSourceFile());
-  return (
-    bindingIsUniqueAndNeverWritten(name, declaration) &&
-    !use.dynamicCode &&
-    !use.reflective &&
-    !use.globalObjectEscapes &&
-    !use.globalWrittenNames.has(name.text)
-  );
+export function globalObjectWriteRoutes(sourceFile: ts.SourceFile): {
+  readonly dynamicCode: boolean;
+  readonly reflective: boolean;
+  readonly escapes: boolean;
+  readonly writtenNames: ReadonlySet<string>;
+} {
+  const use = prototypeUse(sourceFile);
+  return {
+    dynamicCode: use.dynamicCode,
+    reflective: use.reflective,
+    escapes: use.globalObjectEscapes,
+    writtenNames: use.globalWrittenNames,
+  };
 }
 
 /** Whether a member may be installed under a name the source does not spell ({@link installsUnspelledMember}). */
