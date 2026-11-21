@@ -8,6 +8,7 @@
 // instructions or module indices, Porffor representation values, renderer
 // records, concrete runtime symbol names, or artifact fragments.
 
+import { irValueTypes } from "./value-types.js";
 import {
   LINEAR_POINTER_BYTES,
   storageBytes,
@@ -973,7 +974,7 @@ function collectModuleFacts(
 } {
   const allocations = collectModuleAllocationInstructions(module).allocations;
   for (const fn of module.functions) {
-    const valueTypes = collectValueTypes(fn);
+    const valueTypes = irValueTypes(fn);
     for (const param of fn.params) collectLayoutsFromType(param.type, layouts);
     for (const type of fn.resultTypes) collectLayoutsFromType(type, layouts);
     for (const block of fn.blocks) {
@@ -1011,7 +1012,7 @@ function collectModuleAllocationInstructions(module: IrModule): {
 } {
   const allocations: { instr: IrInstr; valueTypes: ReadonlyMap<IrValueId, IrType>; ownerFunction: string }[] = [];
   for (const fn of module.functions) {
-    const valueTypes = collectValueTypes(fn);
+    const valueTypes = irValueTypes(fn);
     for (const block of fn.blocks) {
       for (const instr of block.instrs) {
         forEachInstrDeep(instr, (nested) => {
@@ -1074,24 +1075,6 @@ function collectLayoutsFromType(
     default:
       return;
   }
-}
-
-function collectValueTypes(fn: IrFunction): Map<IrValueId, IrType> {
-  const types = new Map<IrValueId, IrType>();
-  for (const param of fn.params) types.set(param.value, param.type);
-  for (const value of fn.asyncPlan?.values ?? []) types.set(value.value, value.type);
-  for (const block of fn.blocks) {
-    block.blockArgs.forEach((value, index) => {
-      const type = block.blockArgTypes[index];
-      if (type) types.set(value, type);
-    });
-    for (const instr of block.instrs) {
-      forEachInstrDeep(instr, (nested) => {
-        if (nested.result !== null && nested.resultType) types.set(nested.result, nested.resultType);
-      });
-    }
-  }
-  return types;
 }
 
 function collectGlobalStorage(

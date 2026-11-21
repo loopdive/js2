@@ -2806,6 +2806,14 @@
       "nextBoundary": "Separate existing TS-wrapper, module-resolution and mixed identity/type/planning dependencies before frontend closure. This file was already unmigrated before the contracts-only frontend activation; no source behavior changed."
     },
     {
+      "path": "src/checker/well-known-symbol-keys.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "frontend-ts",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Source-key recovery for symbol-keyed properties (#7410); isolate the compiler-library identity dependency (checker/index.ts) with the other library-identity users before certifying the frontend boundary."
+    },
+    {
       "path": "src/cjs-rewrite.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
@@ -11621,6 +11629,11 @@
     },
     {
       "path": "src/emit/canonical-recgroup.ts",
+      "state": "unmigrated",
+      "layer": "wasm-emit"
+    },
+    {
+      "path": "src/emit/debug-names.ts",
       "state": "unmigrated",
       "layer": "wasm-emit"
     },

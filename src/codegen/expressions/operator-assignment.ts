@@ -1850,44 +1850,43 @@ export function compileCompoundAssignment(
   if (emitWebCompatCallAssignmentTarget(ctx, fctx, expr.left)) {
     return { kind: "f64" };
   }
-  // Handle property access compound assignment: obj.prop += value
-  if (ts.isPropertyAccessExpression(expr.left)) {
-    return compilePropertyCompoundAssignment(ctx, fctx, expr.left, expr.right, op);
+  // (#7394) `(x) += v` and `x! += v` update `x`: a wrapper that emits nothing does not change the reference.
+  const target = skipTransparentExpressions(expr.left);
+  if (ts.isPropertyAccessExpression(target)) {
+    return compilePropertyCompoundAssignment(ctx, fctx, target, expr.right, op);
   }
-
-  // Handle element access compound assignment: arr[i] += value
-  if (ts.isElementAccessExpression(expr.left)) {
+  if (ts.isElementAccessExpression(target)) {
     // (#2709) `super[super()] += v` — SuperProperty compound assignment whose key
     // contains super(). §13.3.7.1 resolves the reference (GetThisBinding) BEFORE
     // the key, so this always throws a ReferenceError; emit it and stop, before the
     // inner super() / RHS run. No-op for every other shape.
     if (
-      expr.left.expression.kind === ts.SyntaxKind.SuperKeyword &&
-      emitSuperUninitializedThisGuard(ctx, fctx, expr.left.argumentExpression)
+      target.expression.kind === ts.SyntaxKind.SuperKeyword &&
+      emitSuperUninitializedThisGuard(ctx, fctx, target.argumentExpression)
     ) {
       return { kind: "f64" };
     }
-    return compileElementCompoundAssignment(ctx, fctx, expr.left, expr.right, op);
+    return compileElementCompoundAssignment(ctx, fctx, target, expr.right, op);
   }
 
-  if (!ts.isIdentifier(expr.left)) {
+  if (!ts.isIdentifier(target)) {
     reportError(ctx, expr, "Compound assignment only supported for simple identifiers");
     return null;
   }
 
-  const name = expr.left.text;
+  const name = target.text;
 
   // (#2663 Slice 3) An Object Environment Record pushed by `with` is consulted
   // BEFORE the surrounding function/global environment, so this must precede the
   // const / boxed-capture / local paths below. Declines (returns undefined) when
   // no `with` scope binds the name — then the pre-existing lowering runs.
-  const withCompound = compileWithCompoundAssignment(ctx, fctx, expr.left, expr.right, op);
+  const withCompound = compileWithCompoundAssignment(ctx, fctx, target, expr.right, op);
   if (withCompound !== undefined) return withCompound;
 
   // const bindings — compound assignment throws TypeError at runtime
-  if (tryEmitConstIdentifierCompoundAssignment(ctx, fctx, expr.left, expr.right)) return { kind: "f64" };
+  if (tryEmitConstIdentifierCompoundAssignment(ctx, fctx, target, expr.right)) return { kind: "f64" };
 
-  const implicitGlobal = compileImplicitGlobalCompoundAssignment(ctx, fctx, expr.left, expr.right, op);
+  const implicitGlobal = compileImplicitGlobalCompoundAssignment(ctx, fctx, target, expr.right, op);
   if (implicitGlobal !== undefined) return implicitGlobal;
 
   // (#3039) Boxed captured global compound-assign (`c += 1` in a method-
@@ -1970,7 +1969,7 @@ export function compileCompoundAssignment(
   // pass the `(struct (mut externref))` ref cell straight into js-string concat
   // (→ illegal cast / invalid wasm). #1999.
   const plusEqualsUnboxed = op === ts.SyntaxKind.PlusEqualsToken && !fctx.boxedCaptures?.has(name);
-  const plusLeftTsType = plusEqualsUnboxed ? ctx.checker.getTypeAtLocation(expr.left) : undefined;
+  const plusLeftTsType = plusEqualsUnboxed ? ctx.checker.getTypeAtLocation(target) : undefined;
   const plusRightTsType = plusEqualsUnboxed ? ctx.checker.getTypeAtLocation(expr.right) : undefined;
   if (plusEqualsUnboxed && plusLeftTsType && plusRightTsType) {
     let isStr = isStringType(plusLeftTsType);
@@ -2093,7 +2092,7 @@ export function compileCompoundAssignment(
     // `x += 1` with no `x` in scope) — throw rather than silently
     // auto-allocating a zero local. Names with a symbol (hoisted `var`,
     // outer-scope bindings, builtins) keep the graceful auto-allocate path.
-    const lhsSym = ctx.checker.getSymbolAtLocation(expr.left);
+    const lhsSym = ctx.checker.getSymbolAtLocation(target);
     if (lhsSym === undefined && !ctx.moduleGlobals.has(name) && ctx.capturedGlobals.get(name) === undefined) {
       emitThrowReferenceError(ctx, fctx, `${name} is not defined`);
       // After throw the stack is polymorphic; push a sentinel so callers that
@@ -2104,7 +2103,7 @@ export function compileCompoundAssignment(
     // Graceful fallback: auto-allocate a local for the unknown identifier
     // so compound assignments work correctly (the variable is initialized
     // to the appropriate zero value).
-    const tsType = ctx.checker.getTypeAtLocation(expr.left);
+    const tsType = ctx.checker.getTypeAtLocation(target);
     const wasmType = resolveWasmType(ctx, tsType);
     localIdx = allocLocal(fctx, name, wasmType);
   }
@@ -2134,7 +2133,7 @@ export function compileCompoundAssignment(
       // A statically string-typed LHS (`let acc = ""` / `let acc: string`) must
       // concat even when the RHS is numeric (`acc += x`) — JS coerces x to
       // string. #1999.
-      const lhsIsString = isStringType(ctx.checker.getTypeAtLocation(expr.left));
+      const lhsIsString = isStringType(ctx.checker.getTypeAtLocation(target));
       // Also check if the variable was assigned a string in any enclosing scope
       const varHasStringAssign = hasStringAssignment(name, expr) || hasStringAssignmentInParentScopes(name, expr);
       if (rhsIsString || lhsIsString || varHasStringAssign) {
@@ -2197,7 +2196,7 @@ export function compileCompoundAssignment(
       // StringLiteral; the String wrapper object (`new String("x")`)
       // classifies as builtin "String" — same coverage as isStringType.
       const rhsFactN = ctx.oracle.typeFactOf(expr.right);
-      const lhsFactN = ctx.oracle.typeFactOf(expr.left);
+      const lhsFactN = ctx.oracle.typeFactOf(target);
       const rhsIsStringN = rhsFactN.kind === "string" || (rhsFactN.kind === "builtin" && rhsFactN.name === "String");
       const lhsIsStringN = lhsFactN.kind === "string" || (lhsFactN.kind === "builtin" && lhsFactN.name === "String");
       const varHasStringAssignN = hasStringAssignment(name, expr) || hasStringAssignmentInParentScopes(name, expr);
