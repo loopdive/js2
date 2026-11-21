@@ -68,6 +68,29 @@ describe("#7354 F1b — function declarations as values", () => {
       "function f() {} var g = f; function w() { this.f = 0; }",
       "function declaration 'f' read as a value is written",
     ],
+    // Each route the binding proof refuses (binding-holds-declaration.ts), in a program that reaches no other refusal
+    // first: code the source does not spell, a reflective route to `Function`, the global object escaping.
+    [
+      "written by code the source does not spell",
+      'function f() {} var g = f; Function("f = 1")();',
+      "function declaration 'f' read as a value is written",
+    ],
+    [
+      "written through `constructor`",
+      'function f() {} var g = f; f.constructor("f = 0")();',
+      "function declaration 'f' read as a value is written",
+    ],
+    [
+      "written through an escaping global object",
+      "function f() {} var g = f; function w() { return this; }",
+      "function declaration 'f' read as a value is written",
+    ],
+    // A callee is no value read: with `f` only called, the program meets the `this` refusal, not the binding proof.
+    [
+      "only called beside an escaping global object",
+      "function f() { return 1; } function w() { return this; } f();",
+      "'this' reference outside an instance method body (w)",
+    ],
     [
       "in a script that runs no top-level code",
       "function k() { return k2; } function k2() { return 1; }",

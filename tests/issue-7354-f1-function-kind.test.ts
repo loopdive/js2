@@ -96,6 +96,8 @@ describe("#7354 F1 — the function kind", () => {
       "ToString of a caught function value",
       'var f = function () {}; var c; try { throw f; } catch (e) { c = e; } if (c !== f) throw 1; var s = "" + c;',
     ],
+    // (#7354 F1b) `+` with a function operand concatenates (ADD_ROLE): its ToString is the abort, never a sum.
+    ["`+` of a function value through a parameter", "function op(v) { return v + 1; } var x = op(function () {});"],
     // (Lead ruling) Whether an object's property holds a function is a run-time fact of that object.
     [
       "ToPrimitive with an own callable toString",
