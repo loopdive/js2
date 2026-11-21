@@ -178,12 +178,8 @@ describe("#7354 Fa — function values on the Prepared path", () => {
       "var f = (a) => a; f(1);",
       "module-level closure binding 'f' not in module-init Slice 2 scope",
     ],
-    // A closure returned as a dynamic result, and a mutable capture, have no carrier arm yet.
-    [
-      "a closure returned from a closure",
-      "var f = function (a) { return function () { return a; }; }; f(1);",
-      "concrete return needs a dynamic box",
-    ],
+    // A mutable capture has no carrier arm yet; (#7354 F1) a closure returned as a dynamic result is a function value
+    // (tests/issue-7354-f1-function-expressions.test.ts), called through a value in slice F2.
     [
       "a captured local written after the closure is created",
       "function g() { var x = 1; var f = function () { return x; }; x = 2; return f(); } g();",
@@ -244,7 +240,7 @@ describe("#7354 Fa — function values on the Prepared path", () => {
   );
 
   it("gives the gc target no all-dynamic closure (no carrier, so no dynamic home)", async () => {
-    expect(await refusal("var f = function (a) { return a; };", "gc")).toContain(
+    expect(await refusal("var f = function (a) { return a; }; if (!f) throw 1;", "gc")).toContain(
       "module binding f has no exact typed storage: not-direct",
     );
     expect(await refusal("function g() { var f = function (a) { return a; }; f(1); return 1; } g();", "gc")).toContain(
