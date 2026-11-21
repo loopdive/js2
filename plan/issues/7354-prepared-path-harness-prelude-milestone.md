@@ -4144,3 +4144,118 @@ inventory, output ABI join, string define-own, descriptor-wide BigInt, 3525 numb
   (acceptance record, string-value plan, realm currentness `assertNativeRealmRequirementsCurrent`, which still
   re-derives per call, and the output metadata identity walk). These are #7380 step 5b.
 - Next hottest, switch on: the layout audit (#7380 step 5c).
+
+## Perf4 result (2026-11-21, branch `claude/7354-perf4` from `claude/7354-perf3` `db3c4a256f`)
+
+The layout audit no longer runs per ledger query, and the realm requirements no longer re-derive per call. Two
+commits; the closure timings were measured on `claude/7354-perf3-work` (F1 + Perf3) with both commits
+cherry-picked (they apply unchanged; neither needs F1).
+
+### Measurements (strict Prepared entry, standalone, tsx, one command at a time)
+
+Realm programs: `obj` = `var o = {a: 1}; if (o.a !== 1) throw 1;`, `catch` = a try/catch that reads the caught
+value. First compile in the process, then `obj` again (warm).
+
+| program | on, before | on, after | off, before | off, after |
+| --- | ---: | ---: | ---: | ---: |
+| obj (first) | 23.5 s | 1.85 s | 1.39 s | 1.31 s |
+| catch | 30.3 s | 2.01 s | 0.91 s | 0.78 s |
+| obj (warm) | 20.8 s | 1.10 s | 0.45 s | 0.39 s |
+
+Switch on: the audit itself went from 18.5 s (3,893 audits of 4.7 ms each over 71 types, 191 records, 81 functions)
+to 0.06 s. A first realm compile with the switch on is now 1.4× the same compile off; a warm one 2.8× (the
+remaining difference is the validator stages and settled-verdict walks, see "Left").
+
+Switch off, N closures (`var cI = function (x) { return x; }; if (cI(I) !== I) throw 1;`), warm compile:
+
+| N | before | after |
+| -: | ---: | ---: |
+| 30 | 1.36 s | 1.47 s |
+| 60 | 2.89 s | 2.94 s |
+| 120 | 6.47 s | 5.39 s |
+
+Linear before and after (0.045 s per closure after); same binaries.
+
+Test files, switch on, one file per run: `issue-7354-m-member-access` 417 s → 118 s, `issue-7354-m2-caught-errors`
+355 s → 76 s.
+
+### Each site
+
+| site | what it did | decision | why |
+| --- | --- | --- | --- |
+| `#verifyLayout` in `#require`, `internFunctionType`, `physicalIndex`, `physicalIndices`, `assertCompletedReservation`, `fillOwnedFunction` (×2), `audited` | the whole O(module) layout audit on every ledger query, 3,893 times per realm compile | **once per phase boundary**: `freezeReservations`, `seal`, and the physical-module validator stage (`verifyEmittedLayout` in `ir-program-driver.ts`, after `assertPhysicalModule`) | Accidental repetition: nothing in between depends on the audit having run, and an alteration that persists is reported at the next boundary with the same text. The validator-stage call keeps post-emission alterations (before presentation) refused. |
+| `audited` and its three callers (`program-consumer`, `program-native-invocation`, `native-string-values`) | batched the per-query audits and refused ledger mutation inside a check | **deleted** | Its only purpose was batching audits that no longer run per query; the "no mutation inside" flag guarded read-only code by construction. |
+| `assertNativeRealmRequirementsCurrent` | per call: re-ran the whole realm derivation (`numberUses`, owners × occurrences) and compared it with the stored description | **deleted the re-derivation**; the issue check stays (a `WeakSet` lookup) | Can never fail: the pack is frozen and derived from a frozen program (both producers freeze it, Perf3). |
+| `numberUses` | owners × occurrences scan | **made linear**: one pass groups the Number conversion calls by owner and view | Real logic, called once per derivation; the index is built from the frozen demands. |
+| `ownerFor` (`native-string-values.ts`) | per emit: owner lookup, settled-verdict check, inventories | **left** | After the audit change it costs one settled-verdict authentication per compile (0.5 s at 120 closures, linear); the settled verdicts and their tests are #7380 step 5b. |
+| one-time compares (`prepareNativeEmission`, `planNativeStringValuePhysical`, settled-verdict walk) | whole-program compares/copies once per compile | **left** | Linear and one-time; together about 2 s of the 120-closure warm compile. Step 5b. |
+
+### Mutation proof (switch on, realm program with an object and a caught value, `.tmp/mutate.mts`)
+
+| mutation | point | before | after |
+| --- | --- | --- | --- |
+| M1 flip `mutable` of the 5th reserved struct's field 0 | reserving | refused: `altered type descriptor native-realm…` | refused earlier, by the argument-vector pack check (`noncanonical argument carrier`) |
+| M2 field 0 of the 5th struct → `f64` | reserving | (not run) | refused (`noncanonical argument carrier`) |
+| M3 a filled function's `typeIdx` → another function's | 3rd fill | `altered function descriptor physical:string-number…` | same |
+| M4 push into an earlier completed body | 10th fill | `altered completed function native-string-values…` | same |
+| M5 a filled global's type → a ref to another owner's struct | 2nd global fill | `altered global descriptor ir-binding…` | same |
+| M6 flip `mutable` of a reserved struct field | after seal | `altered type descriptor native-string-values…` (next query) | `prepared validator (physical module): … altered type descriptor native-string-values…` |
+| M7 flip `mutable` of the last reserved struct's last field | 1st fill | `altered type descriptor native-realm…` | same |
+| M8 that field → `f64` | 1st fill | `altered type descriptor native-realm…` | same |
+| M0 no mutation | — | compiles | compiles |
+
+What the audit no longer reports: an alteration that is undone again before the next boundary, and one made after
+the physical-module validator stage (the presentation's later ledger reads used to audit).
+
+### Tests
+
+Assertions that expected the refusal at a query now expect it at the next boundary (`freezeReservations` or
+`seal`), same text: `issue-3518-` builtin-request-literal-authentication, native-bigint-number-owner,
+native-bigint-resources, native-builtin-functions, native-number-primitive-classifier, native-object-descriptor-resources,
+native-object-get-owner, native-object-realm-declarations, native-object-storage-resources,
+native-primitive-wrapper-storage, native-prototype-seeder-bindings, native-realm-object-layouts,
+native-string-completion, native-string-flatten-resources, native-well-known-symbols,
+native-authentication-performance, physical-snapshot-comparison; `issue-3527-` descriptor-snapshots,
+owned-function-data, publication-snapshot-comparison, realm-completion-close; `issue-7354-perf-string-authentication`.
+The snapshot-algorithm files keep every scalar/order/hole/getter case; their "after repeated successful audits"
+step becomes one audit at the seal. "Preflights … without allocating" tests become "refuses by the end of
+reservation" (the allocation-free preflight was the per-query audit). In `issue-3525-prepared-pipeline-presentation`
+the two post-emission alterations are now refused by the validator stage (message prefixed `prepared validator
+(physical module):`).
+
+Deleted (each asserted the per-query or post-seal audit, a removed check):
+- `issue-7354-perf-string-authentication`: `refuses a ledger mutation inside an audited check`, `keeps refusing
+  ledger mutations after a nested audited check returns`, `refuses a new function type interned inside an audited check`.
+- `issue-3518-physical-snapshot-comparison`: `batch indices cannot escape a failed private ledger state` (2 cases;
+  the getter it relied on is read only by the audit).
+- `issue-3525-prepared-number-remainder`: `rejects an unowned helper substitution through authenticated
+  {wasmgc,linear} support receipts` (substitution after the emission and its validator stage).
+- `issue-3525-prepared-wit-presentation`: `{wasmgc,linear}: genuine C failure poisons WIT authority …` (type changed
+  after presentation preparation).
+- `issue-3527-realm-completion-close`: the `sealed=true` attack cases (mutation after seal).
+- `issue-3518-native-authentication-performance`: `audits once per batch …` became `never reads the public ordinal`.
+
+Pre-existing reds fixed in modified files: `issue-3525-prepared-wit-presentation` — the two Promise tests whose
+no-WIT compile is refused since #6979 keep only their WIT-refusal half; the file got the two-macrotask `afterEach`
+yield (it exited 1 with `Timeout calling "onTaskUpdate"` on the base too). `issue-3518-native-object-descriptor-resources`
+› `rejects a foreign exception token…` compared with `toStrictEqual` against a `structuredClone` (red on the base:
+owned function data has a private array prototype) and now uses `toEqual`.
+
+Switch on, every modified file and every `tests/issue-7354-*` / `tests/issue-7380-*` file passes in full (one or
+two files per vitest run), plus `issue-3518-native-realm-requirements` and `issue-3518-module-reservations`.
+
+### Bytes and gates
+
+- `check:prepared-bytes`: all 804 rows identical, base vs head with the switch off, and head switch off vs on.
+- Ordinary pipeline: 19 test262 files × (default, standalone) identical base vs head (the 20th path did not exist).
+- Gates, each bare: typecheck, LOC, function budget, coercion sites, oracle ratchet, dead exports, import cycles,
+  compiler boundaries (`--mode inventory --base db3c4a256f`).
+
+### Not verified, left
+
+- Base with the switch on over all 804 rows (only off; head on = head off, and the switch never changed bytes).
+- M2 on the base.
+- Next hottest, switch on: `preparedIrDataMismatch` in the validator stages and the native-emission compares
+  (~2.5 s over 4 realm compiles). Switch off, 120 closures: `immutableCopy` / `freezePreparedIrValue` (2.2 s over two
+  compiles), the settled-verdict walk (1.8 s, `ownerFor`'s first authentication among it), `prepareNativeEmission`'s
+  compare (0.6 s). All one-time per compile; #7380 step 5b.
