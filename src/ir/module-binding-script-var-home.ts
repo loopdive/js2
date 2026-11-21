@@ -20,13 +20,11 @@
  * allocation chose (including legacy's own zero for an unwritten typed slot),
  * so a common core would either change legacy's answer or inherit its zero.
  */
-import { isMemberWriteDeclaration } from "../shared/binding-writes.js";
+import { GLOBAL_CONSTANTS } from "../shared/ambient-intrinsics.js";
+import { isJsPropertyDeclarationTarget } from "../shared/binding-writes.js";
 import { ts } from "../ts-api.js";
 import { type NamedVariableDeclaration, scriptVarReadsFollowInitializer } from "./module-binding-script-var.js";
 import { type IrModuleBindingDeclaration, type IrScriptVarHome, moduleBindingDeclarations } from "./module-bindings.js";
-
-/** The global object's non-writable value properties: a script `var` of one of these names never stores. */
-const NON_WRITABLE_GLOBALS: ReadonlySet<string> = new Set(["undefined", "NaN", "Infinity"]);
 
 /**
  * The `scriptVarHome` resolver option of a pipeline whose IR owns every script `var`'s storage, over the
@@ -49,15 +47,15 @@ export function irOwnedScriptVarHome(
     // top-level variable, and a lexical or ES-module global is typed by the resolver.
     if ((declaration.parent.flags & ts.NodeFlags.BlockScoped) !== 0 || ts.isExternalModule(declaration.getSourceFile()))
       return undefined;
-    if (declaration.getSourceFile() !== soleSource || NON_WRITABLE_GLOBALS.has(declaration.name.text)) return undefined;
+    // A script `var` of a non-writable global value property never stores.
+    if (declaration.getSourceFile() !== soleSource || GLOBAL_CONSTANTS.has(declaration.name.text)) return undefined;
     // (#7372 1b) A repeated `var` is one binding: the home is its first declarator's (the resolver's canonical one),
-    // each later one a write. A JS member write on the binding (`o.p = v`) declares no binding.
-    // `Object.defineProperty(o, …)` still counts as a second declaration: the Prepared path admits no `Object`
-    // static yet (slice O), and from-ast takes an unadmitted one for selector drift, so the binding must stay
-    // without a home and refuse by name.
+    // each later one a write. A JS property declaration on the binding (`o.p = v`, `Object.defineProperty(o, …)`)
+    // declares no binding; the call itself is refused by name where from-ast meets it (#7364).
     const declarators = moduleBindingDeclarations(declaration.name, checker);
     const declarations = checker.getSymbolAtLocation(declaration.name)?.declarations ?? [];
-    const own = (other: ts.Declaration) => !other.getSourceFile().isDeclarationFile && !isMemberWriteDeclaration(other);
+    const own = (other: ts.Declaration) =>
+      !other.getSourceFile().isDeclarationFile && !isJsPropertyDeclarationTarget(other);
     if (declarators[0] !== declaration || declarations.filter(own).length !== declarators.length) return undefined;
     const type = checker.getTypeAtLocation(declaration.name);
     // A TypeScript annotation other than `any` is the binding's contract: the binding gets the typed home or none,
