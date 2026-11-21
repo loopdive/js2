@@ -467,11 +467,10 @@ import {
   compileStandaloneRegExpConstructor,
   emitStandaloneRegExpToStringFromExpr,
   isGlobalRegExpIdentifier,
-  tryCompileStandaloneRegExpCompile,
   tryCompileStandaloneRegExpExec,
+  tryCompileStandaloneRegExpMethod,
   tryCompileStandaloneRegExpSymbolCall,
   tryCompileStandaloneRegExpTest,
-  tryCompileStandaloneRegExpToString,
   usesNativeRegExpProvider,
 } from "../regexp-standalone.js";
 import {
@@ -7366,20 +7365,8 @@ function compileCallExpression(
       if (openTargetCall !== undefined) return openTargetCall;
     }
 
-    const standaloneRegExpExec = tryCompileStandaloneRegExpExec(ctx, fctx, expr, propAccess);
-    if (standaloneRegExpExec !== undefined) return standaloneRegExpExec;
-
-    const standaloneRegExpTest = tryCompileStandaloneRegExpTest(ctx, fctx, expr, propAccess);
-    if (standaloneRegExpTest !== undefined) return standaloneRegExpTest;
-
-    const standaloneRegExpToString = tryCompileStandaloneRegExpToString(ctx, fctx, expr, propAccess);
-    if (standaloneRegExpToString !== undefined) return standaloneRegExpToString;
-
-    // (#5142) `re.compile(pattern, flags)` — Annex B §B.2.4.1 in-place
-    // re-initialization. Without an arm here the call fell through to a generic
-    // path that silently no-op'd.
-    const standaloneRegExpCompile = tryCompileStandaloneRegExpCompile(ctx, fctx, expr, propAccess);
-    if (standaloneRegExpCompile !== undefined) return standaloneRegExpCompile;
+    const standaloneRegExpMethod = tryCompileStandaloneRegExpMethod(ctx, fctx, expr, propAccess);
+    if (standaloneRegExpMethod !== undefined) return standaloneRegExpMethod;
 
     // Handle Array.prototype.METHOD.call(obj, ...args) — inline as array method on shape-inferred obj
     {

@@ -1067,7 +1067,7 @@ function inferExpressionWasmType(
   allowProbe = true,
 ): ValType | undefined {
   // (#2917) A receiver pre-spilled by array-subclass-receiver.ts reads its local.
-  const spilled = fctx.nativeGeneratorExpressionValueLocals?.get(expr);
+  const spilled = fctx.preEvaluatedExpressionLocals?.get(expr);
   if (spilled !== undefined) return getLocalType(fctx, spilled);
   if (ts.isIdentifier(expr)) {
     const name = expr.text;
@@ -2002,7 +2002,7 @@ export function compileArrayMethodCall(
   if (storageExpr) {
     // Fast path: check the Wasm local/global type directly
     let actualType: ValType | undefined;
-    if (ts.isIdentifier(storageExpr) && !fctx.nativeGeneratorExpressionValueLocals?.has(storageExpr)) {
+    if (ts.isIdentifier(storageExpr) && !fctx.preEvaluatedExpressionLocals?.has(storageExpr)) {
       const name = storageExpr.text;
       const localIdx = fctx.localMap.get(name);
       if (localIdx !== undefined) {
