@@ -49,6 +49,9 @@ related: [7188, 2949, 3526, 3527, 3518, 7106, 7349, 7350, 7352]
 # +2, the import and the one `codeStrictness:` row of the preparation input (the strictness itself lives in
 # src/compiler/prepared-code-strictness.ts); src/ir/from-ast.ts +3, the externref receiver of a member write taking
 # the read's carrier box.
+# 2026-11-21 (slices M1 + M2, corrected after review): the figures above are per slice. Against main this PR grows
+# src/ir/program-source.ts by 0 and src/ir/from-ast.ts by 16 (three lowering arms: `isRawExternrefReceiver`, the
+# member write's externref receiver, the object-literal box in `boxConcreteToDynamic`).
 loc-budget-allow:
   - src/ir/program-consumer.ts
   - src/ir/program-physical-plan.ts

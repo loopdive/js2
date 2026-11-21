@@ -129,6 +129,8 @@ export function dynamicMemberRead(b: MemberAccessBuilders, instr: MemberGet, res
     operation: `member read '${name}'`,
     resultType: b.carrier,
     missing: (kind) => {
+      // The Object.prototype half changes no answer while an error only arrives beside the primitive kinds (a caught
+      // value), whose arms refuse the same keys; a receiver narrowed to errors alone would read `undefined` without it.
       if (kind === "error")
         return ERROR_PROTOTYPE_KEYS.has(name) || BUILTIN_REACHABLE_KEYS.object.has(name)
           ? "Error.prototype's properties"
