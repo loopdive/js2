@@ -205,3 +205,66 @@ Measured:
   `let x; var x;` is an early error the entry refuses first, so the check was removed as unreachable.
 - Ordinary-pipeline bytes, base vs head: 220 files (the 160 above + 60 ES modules flagged `module` that contain
   `var`, compiled as `test.mjs`) × default and standalone: identical (440 compiles).
+
+## Registry extraction R1 (2026-11-19, move-only; stacked on #7321)
+
+Decided by the C lead with S2 (#7363, eval) and S4 (Fa, function values): one registry for the Prepared
+program's source globals, so that the startup-store changes of the three lanes land in one module.
+
+Built (`src/ir/program-source-globals.ts`, new; program-source.ts shrinks by 38 lines):
+
+- `collectProgramSourceGlobals`: the producer's former globals loop, moved. One row per module-init global
+  (`isModuleInitGlobalDeclaration`), a repeated `var` one row keyed by its binding id, each with its storage
+  (`ModuleBindingGlobal`, `storageType` moved here) and its instantiation. The instantiation is read from the
+  startup plan's own `IrModuleInitBindingIntent.initialization` (`undefined-at-instantiation` | `tdz`), not a
+  second vocabulary. The TDZ flag global now follows from it: a row is in its TDZ exactly when the plan says
+  `tdz` (before: the declaration list's `let`/`const` flag, the same set).
+- Not added, by the IR rule (no kind without a user): `function-at-startup`, `on-first-run`,
+  `global-object-property`. Not done: keying the repeated-declaration rule by symbol across sources. Its first
+  user is S2's eval source. The resolver's `moduleBindingDeclarations` is shared with the ordinary pipeline's
+  multi-module compile, so the change belongs in S2's PR, where a test can see it.
+
+Measured:
+
+- Prepared bytes, the #7321 head `dd8e3628` vs this one, 872 programs (every program literal of the #7354 and
+  #7372 tests and of prepared-entry/-runtime, each as `.js` and `.ts`): identical (247 binaries, 625 identical
+  refusals).
+- Gates: typecheck, loc, func (also against `origin/main`), coercion-sites, oracle-ratchet, dead-exports,
+  import-cycles; compiler-boundaries inventory valid (new module classified, `owner: 7372`).
+
+### Review round 1 (RV7329, head `4792b8f2`): BLOCKER, addressed
+
+- **Must-fix: not move-only.** The prologue seam (`legalizeDynamicGlobals` storing `undefined` only into the
+  rows the plan instantiates as `undefined`) dropped the store into a dynamic `let`. Such a `let` exists: the
+  Prepared producer's `numberStorage: "f64"` plus `updateRetypesModuleBinding` gives a `++`/`--` target the
+  carrier, e.g. `let x = "a"; x++;`. The lead's decision: keep this PR move-only. The seam and
+  `instantiateProgramSourceGlobals` are removed. `legalizeDynamicGlobals` is back to `dd8e3628`, storing into
+  every dynamic global it owns. Narrowing that store, if wanted, is a later PR with a pinning test.
+- **Should-fix:** `IrProgramSourcePreparation.globals` uses the registry's `ProgramSourceGlobal` (no second
+  spelling). A global without a startup binding throws a named `PreparedIrProgramInvariantError` instead of
+  `!`.
+- **Nits:** D1's doc names the dynamic `let`; the registry exposes `globals` and `byDeclaration` only (the
+  internal row type is gone; the instantiation decides the TDZ flag global).
+- Prepared bytes vs `dd8e3628`: 886 programs, the 872 above plus the reviewer's four rows and three more dynamic
+  `let` programs, each as `.js` and `.ts`, are identical. The reviewer's `dd8e3628` hashes reproduce (`let x =
+  "a"; x++;` → `eb4d8edaddca`). The 872-program sample had missed the class because no test program has a
+  `++`/`--` on a non-number `let`.
+
+## Suspended Work
+
+Suspended 2026-11-20 (budget window end, C lead's wind-down).
+
+- **Slices 1 + 1b:** PR #7321, merged 2026-11-20.
+- **Registry R1:** PR #7329, branch `claude/7372-globals-registry`, `hold`.
+  - Reviewed head `4792b8f2`: RV7329 BLOCKER (not move-only).
+  - Fix commit `1133fabb` (store into every dynamic global again; `ProgramSourceGlobal` used once; named invariant
+    for a missing startup binding; nits) is pushed with this note. Prepared bytes identical to `dd8e3628` on 886
+    programs.
+  - Next step: merge `origin/main` (now containing #7321), re-run gates, then message RV7329
+    (`session_016FRcLx9j6bRJfcwz4WZ7Zi`) with the delta `4792b8f2..<new head>`.
+  - Open review thread: RV7329's BLOCKER comment, answered by `1133fabb`, not yet re-reviewed.
+- **Slice 2** (block FunctionDeclaration): not started. It uses S4's function-value home (Fa, not landed).
+- **Slice 3** (undeclared globals, incl. reads that throw ReferenceError, 162 files) and **slice 4** (`delete` of
+  an identifier, about 9 files): waiting for (B), S5's realm global object (`claude/7350-b2b` @ `dbc0b2343e`,
+  contract `js.object.global`). The quick design (A) was measured at 0 files through the real prelude.
+- **#7375 and #7408:** on `claude/7375-compound-rhs`, see those issue files.

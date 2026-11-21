@@ -302,7 +302,7 @@ interface SourceGlobal {
 
 /**
  * (#7354 H) The globals arm, over functions already legalized. A dynamic global (a script `var` without a
- * proven typed home) is stored as the carrier. JavaScript hoists such a `var` with the value `undefined`, so
+ * proven typed home, or a lexical binding a `++` / `--` retypes) is stored as the carrier. JavaScript hoists such a `var` with the value `undefined`, so
  * its storage owner, the script's module-init, stores `undefined` before its first statement; nothing runs
  * before that, so the physical global's own default (a null externref, outside the admitted set) is never
  * read.
