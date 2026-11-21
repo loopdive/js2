@@ -90,8 +90,9 @@ export function legalizeDynamicValues(
   const kinds = knownKinds(fn, types, definitions, admitted);
   const builders = chainBuilders(fn, allocations, kinds, admitted);
   const { intrinsic, fresh, kindTest, anyKind, text, errorField, kindChain } = builders;
-  const { stringOf, toNumber } = conversionBuilders(builders, program);
-  const addition = additionBuilder(builders, stringOf);
+  const conversions = conversionBuilders(builders, program);
+  const { stringOf, toNumber } = conversions;
+  const addition = additionBuilder(builders, conversions);
   // (#7354 O4, O3) What a member read or write is written with (`dynamic-member-access.ts`).
   const memberAccess = { ...builders, carrier: CARRIER, definitions, kindsOf: kinds.kindsOf };
   const isDynamic = (value: IrValueId): boolean => types.get(value)?.kind === "dynamic";
@@ -200,7 +201,7 @@ export function legalizeDynamicValues(
       case "dyn.undefined":
         return [intrinsic(instr, "js.value.undefined", [])];
       case "dyn.to_string":
-        return stringOf(instr, instr.value, "string", instr.result!);
+        return stringOf(instr, instr.value, instr.result!);
       case "dyn.truthy":
         return [intrinsic(instr, "js.value.to_boolean", [instr.value])];
       case "dyn.to_number":
