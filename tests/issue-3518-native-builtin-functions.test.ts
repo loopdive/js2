@@ -135,7 +135,15 @@ describe.each([false, true])("native builtin function objects; displaced=%s", (o
     expect(r.method0(fp, null)).toBe(r.undefinedValue());
     expect(r.method3(fp, 7, 1, 2, 3)).toBe(r.undefinedValue());
     expect(r.sourceCall(r.sourceValue())).toBe(7);
-    expect(r.match(r.sourceValue())).toBe(0);
+    // (#7354 C) A source closure is a function object of the realm, one ordinal after the two builtin entries; its
+    // [[Prototype]] is %Function.prototype% and stays fixed (status 3, unknown).
+    expect(r.match(r.sourceValue())).toBe(3);
+    expect(r.getPrototypeOf(r.sourceValue())).toBe(fp);
+    expect(r.setPrototypeOf(r.sourceValue(), null)).toBe(3);
+    // A source getter still needs a mixed callable owner (`callVector` has no source arm): status 3, no TypeError.
+    const value = r.key(keyTexts.indexOf("value"));
+    r.defineAccessor(fp, value, r.sourceValue(), r.undefinedValue(), 822);
+    expect(r.get(fp, value, fp)).toEqual([3, r.undefinedValue()]);
     expect(nativeBuiltinFunctionSingletonBinding(f.tx, kernel, "%Function.prototype%")).toBe(
       nativeBuiltinFunctionSingletonBinding(f.tx, kernel, "functionPrototype"),
     );

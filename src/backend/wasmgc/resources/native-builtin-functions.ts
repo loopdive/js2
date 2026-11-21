@@ -70,7 +70,7 @@ import {
   type NativeObjectDescriptorReservations,
   type NativeObjectDescriptorDependencies,
 } from "./native-object-descriptors.js";
-import { requireNativeStringLiteral } from "./native-string-literals.js";
+import { nativeStringLiteralInstrs } from "./native-string-literals.js";
 
 export { declareNativeBuiltinFunctionRequests as declareNativeBuiltinFunctionResources };
 export interface NativeBuiltinFunctionDependencies {
@@ -436,15 +436,10 @@ function operands(
     dd = owner.dependencies.descriptorDependencies;
   const lookup = dd.storageDependencies.lookupDependencies,
     values = dd.sameValueDependencies.values;
-  const literal = (text: string, external = true): Instr[] => {
-    const token = requireNativeStringLiteral(tx, input.strings, text);
-    return [
-      token.kind === "global"
-        ? { op: "global.get", index: tx.physicalIndex(token.global) }
-        : { op: "call", funcIdx: token.function.handle },
-      ...(external ? [{ op: "extern.convert_any" } as Instr] : []),
-    ];
-  };
+  const literal = (text: string, external = true): Instr[] => [
+    ...nativeStringLiteralInstrs(tx, input.strings, text),
+    ...(external ? [{ op: "extern.convert_any" } as Instr] : []),
+  ];
   return {
     rootTypeIdx: owner.dependencies.closures.root.typeIndex,
     realmTypeIdx: pack.realmType.typeIndex,
@@ -473,6 +468,7 @@ function operands(
     entries: pack.entries.map((entry, index) => ({
       ...pack.requests.requirements.intrinsics[index]!,
       typeIdx: entry.type.typeIndex,
+      metadataTypeIdx: entry.metadata.type.typeIndex,
       metadataId: entry.metadata.metadata.id,
       liftedTypeIdx: entry.metadata.signature.liftedFuncTypeIndex,
       singleton: tx.physicalIndex(entry.singleton),
@@ -493,6 +489,16 @@ function operands(
     isExtensible: pack.functions.isExtensible.handle,
     sameValue: dd.sameValue.sameValue.handle,
   };
+}
+/**
+ * (#7354 C) The kernel's own operand record, for a body that a realm owner builds over the kernel (the source-callable
+ * adapters), so it calls the kernel's functions and types instead of deriving its own. Physical, so fill phase only.
+ */
+export function nativeBuiltinFunctionOperands(
+  tx: PhysicalModuleReservations,
+  pack: NativeBuiltinFunctionReservations,
+): BuiltinFunctionPrototypeOperands {
+  return operands(tx, pack, current(tx, pack));
 }
 export function fillNativeBuiltinFunctionResources(
   tx: PhysicalModuleReservations,
