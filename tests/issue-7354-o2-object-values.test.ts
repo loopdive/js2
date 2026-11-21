@@ -152,11 +152,18 @@ describe("#7354 O2 — what a program's source allows its objects", () => {
   };
 
   it("answers no objects, and objects", () => {
-    expect(objects("export const n = 1;")).toEqual({ present: false, namesSymbol: false });
+    expect(objects("export const n = 1;")).toEqual({ present: false, functions: false, namesSymbol: false });
     expect(objects("export const o = { a: 1, toString: 1 }; export const v = o.a;")).toEqual({
       present: true,
+      functions: false,
       namesSymbol: false,
     });
+  });
+
+  // (#7354 F1) A function expression is the one producer of a function value the source shows here.
+  it("answers whether the program creates function values", () => {
+    expect(objects("export const f = function () {};").functions).toBe(true);
+    expect(objects("export function f() {} export const v = f();").functions).toBe(false);
   });
 
   // (#7354 M1, C1) The program-wide plainness answer (`unplain`) is gone: no Prepared program can obtain a built-in

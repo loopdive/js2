@@ -140,7 +140,11 @@ describe("#7354 Str2 — String(x) on the Prepared path", () => {
       'String = function () { return "x"; };\nvar s = String("a");',
       'undeclared identifier "String"',
     ],
-    ["a read of globalThis", 'var g = globalThis;\nvar s = String("a");', 'identifier "globalThis" is not in scope'],
+    [
+      "a read of globalThis",
+      'var g = globalThis;\nvar s = String("a");\nif (!g) throw 1;',
+      'identifier "globalThis" is not in scope',
+    ],
     [
       "a write through globalThis",
       'globalThis.String = function () { return "x"; };\nvar s = String("a");',
