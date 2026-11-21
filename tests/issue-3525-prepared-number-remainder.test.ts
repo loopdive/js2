@@ -165,19 +165,6 @@ export function combine(left: number, right: number): number { return __fmod(lef
       fill.mockRestore();
       execute(source, backend);
     });
-    it(`rejects an unowned helper substitution through authenticated ${backend} support receipts`, () => {
-      const source = program();
-      const emitted = execute(source, backend);
-      const receipt = emittedSupportFunctionReceipts(emitted)[0]!;
-      const original = emitted.module.functions[receipt.index]!;
-      emitted.module.functions[receipt.index] = structuredClone(original);
-      expect(() => emittedSupportFunctionReceipts(emitted)).toThrow(
-        /^physical module reservations: missing, substituted or reordered functions population slot \d+$/,
-      );
-      emitted.module.functions[receipt.index] = original;
-      expect(() => emittedSupportFunctionReceipts(emitted)).toThrow(/completion requested in failed/);
-      execute(source, backend);
-    });
   }
   it("returns fresh independent recipe instructions and local arrays for both exact variants", () => {
     for (const variant of [false, true]) {

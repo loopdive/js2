@@ -514,8 +514,6 @@ describe("pending full catalog population", () => {
     fillRealmLayoutFixture(g);
     fillNativeObjectRealmDeclarations(g.tx, d.declarations);
     d.declarations.globals.state.object.init[0] = { op: "i32.const", value: 2 };
-    expect(() => requireCompletedNativeObjectRealmDeclarations(g.tx, d.declarations)).toThrow(
-      "altered completed global",
-    );
+    expect(() => g.tx.seal()).toThrow("altered completed global");
   });
 });

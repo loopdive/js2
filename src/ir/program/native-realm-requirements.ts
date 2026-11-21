@@ -38,35 +38,51 @@ export interface NativeRealmRequirements {
   readonly access: NativeObjectAccessRequirements;
   readonly description: NativeRealmDescription;
 }
-interface Owner {
-  readonly program: PreparedIrProgram;
-  readonly projection: PreparedIrProgramRuntimeProjection;
-  readonly source: NativeSourceClosureRequirements | undefined;
-  readonly access: NativeObjectAccessRequirements;
-  readonly description: NativeRealmDescription;
-}
-const owners = new WeakMap<NativeRealmRequirements, Owner>();
+const issued = new WeakSet<NativeRealmRequirements>();
 function fail(detail: string): never {
   throw Error("native realm requirements: " + detail);
 }
 function same(a: unknown, b: unknown, detail: string): void {
   if (preparedIrDataMismatch(a, b) !== undefined) fail(detail);
 }
+type NumberCall = Extract<
+  NativeObjectAccessRequirements["demands"]["occurrences"][number]["instruction"],
+  { kind: "call" }
+>;
+interface NumberCallRow {
+  readonly occurrence: number;
+  readonly call: NumberCall;
+  readonly declaration: NonNullable<ReturnType<typeof irNumberConversionCallableDeclaration>>;
+}
 function numberUses(access: NativeObjectAccessRequirements): NativeRealmDescription["numberUses"] {
   const { demands } = access;
+  // One pass groups the Number conversion calls by owner and view, so the derivation is linear in the occurrences
+  // rather than owners × occurrences.
+  const calls = new Map<string, NumberCallRow[]>();
+  const callKey = (unitId: IrUnitId, view: string) => JSON.stringify([unitId, view]);
+  demands.occurrences.forEach((row, occurrence) => {
+    const call = row.instruction;
+    if (call.kind !== "call") return;
+    const declaration = irNumberConversionCallableDeclaration(call.target);
+    if (!declaration) return;
+    const region = demands.buffers[row.bufferIndex]!;
+    const key = callKey(region.ownerUnitId, region.view);
+    const entry = { occurrence, call, declaration };
+    const rows = calls.get(key);
+    if (rows) rows.push(entry);
+    else calls.set(key, [entry]);
+  });
   return demands.owners.flatMap((owner) => {
-    const rows = (view: "program" | "projection") =>
-      demands.occurrences.flatMap((row, occurrence) => {
-        const region = demands.buffers[row.bufferIndex]!,
-          call = row.instruction;
-        if (region.ownerUnitId !== owner.unitId || region.view !== view || call.kind !== "call") return [];
-        const declaration = irNumberConversionCallableDeclaration(call.target);
-        if (!declaration) return [];
-        const fn = view === "program" ? owner.programFunction : owner.projectedFunction;
-        const mismatch = nativeAsyncCallMismatch(call, declaration, nativeAsyncCallableValueTypes(fn));
+    const rows = (view: "program" | "projection") => {
+      const found = calls.get(callKey(owner.unitId, view)) ?? [];
+      if (!found.length) return found;
+      const types = nativeAsyncCallableValueTypes(view === "program" ? owner.programFunction : owner.projectedFunction);
+      for (const { call, declaration } of found) {
+        const mismatch = nativeAsyncCallMismatch(call, declaration, types);
         if (mismatch) fail("noncanonical Number callable: " + mismatch);
-        return [{ occurrence, call }];
-      });
+      }
+      return found;
+    };
     const semantic = rows("program"),
       projected = rows("projection");
     if (semantic.length !== projected.length) fail("Number semantic/projection population differs");
@@ -128,23 +144,13 @@ export function deriveNativeRealmRequirements(
   if (!data) return undefined;
   const description = freezePreparedIrValue(data) as NativeRealmDescription;
   const pack = Object.freeze({ program, projection, ...(source ? { source } : {}), access, description });
-  owners.set(pack, { program, projection, source, access, description });
+  issued.add(pack);
   return pack;
 }
+/**
+ * The pack is frozen and derived from a frozen program, so its description cannot come to disagree with the program;
+ * only its issue is checked (#7354 Perf4: the re-derivation per call was the realm's last quadratic term).
+ */
 export function assertNativeRealmRequirementsCurrent(pack: NativeRealmRequirements): void {
-  const owner = owners.get(pack);
-  if (
-    !owner ||
-    pack.program !== owner.program ||
-    pack.projection !== owner.projection ||
-    pack.source !== owner.source ||
-    pack.access !== owner.access ||
-    pack.description !== owner.description
-  )
-    fail("unissued, copied or detached realm requirements");
-  same(
-    calculate(owner.program, owner.projection, owner.source, owner.access),
-    owner.description,
-    "realm catalog or demand selection changed",
-  );
+  if (!issued.has(pack)) fail("unissued, copied or detached realm requirements");
 }

@@ -1014,8 +1014,9 @@ describe("#3525 internal genuine prepared-pipeline presentation", () => {
       emitted.module.stringPool.push("introduced unproved string resource");
       return emitted;
     });
+    // #7354 Perf4: the layout audit of the emitting ledger runs in the stage 4 validator.
     expect(() => runPreparedIrPipelinePresentation(input(SCALAR, "wasmgc"))).toThrow(
-      /^physical module reservations: unregistered, substituted or reordered stringPool population$/,
+      /^prepared validator \(physical module\): physical module reservations: unregistered, substituted or reordered stringPool population$/,
     );
   });
 
@@ -1050,8 +1051,9 @@ describe("#3525 internal genuine prepared-pipeline presentation", () => {
       emitted.module.exports.push({ name: "unjoined_visits", desc: { ...global.desc } });
       return emitted;
     });
+    // #7354 Perf4: the layout audit of the emitting ledger runs in the stage 4 validator.
     expect(() => runPreparedIrPipelinePresentation(input(VISITS, "wasmgc"))).toThrow(
-      /^physical module reservations: unregistered, substituted or reordered exports population$/,
+      /^prepared validator \(physical module\): physical module reservations: unregistered, substituted or reordered exports population$/,
     );
   });
 
