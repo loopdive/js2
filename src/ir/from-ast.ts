@@ -7880,12 +7880,11 @@ function lowerCall(expr: ts.CallExpression, cx: LowerCtx, statementPosition = fa
       alias.result === "boolean" ? irBool() : irDynamic(),
     );
   }
-  // (#7106 Stage 4) `func()` where `func` is a dynamic-carrier binding. After
-  // the propertyHelper alias arms, in the selector's order: those aliases are
-  // script `var`s in a dynamic module home too, but keep legacy's provider.
+  // (#7106 Stage 4) `func()` where `func` is a dynamic-carrier binding, after the propertyHelper alias arms (the
+  // selector's order: those aliases are script `var`s in a dynamic module home too, but keep legacy's provider).
   const bindingLogicalType =
     binding?.kind === "slot" ? (binding.asType ?? binding.type) : binding?.kind === "local" ? binding.type : undefined;
-  // (#7287) …or a script `var` in its dynamic module home (the prelude's `print`).
+  // (#7287) …or a script `var` in its dynamic home (`print`); (#7354 F1b) a declaration's value home keeps its call.
   const dynamicModuleCallee =
     binding === undefined &&
     !cx.directCalls?.has(expr) &&
