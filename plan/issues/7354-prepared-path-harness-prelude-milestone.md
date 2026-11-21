@@ -3675,3 +3675,82 @@ none of whose quoted texts they assert.)
 
 Compile time per row: median 45 ms, p90 72 ms, max 907 ms (every row refuses before emission). As the plan
 predicted, the 293 rows move to Fa part 2's "declaration read as a value".
+
+## Slice F1 result (2026-11-21, branch `claude/7354-f1`, partial: plan steps 1-3 + D4/D6; steps 4-6 not built)
+
+Base: `claude/7354-m1` 333a3f2fc7 (M1 + M2 on main). Stopped before step 4 on the plan's own Risk-1 rule (below).
+
+### Built
+
+- **F0** (`src/test262/test262-prepared-entry.ts` `withoutDeadBindings`): a single script is elided as `compileSource`
+  elides it (#3418), on the same targets; a source with an ES early error is left as it is (a blanked declaration would
+  take its early error with it: `let value = 1; let value = 2;` compiled to nothing before this guard).
+  `earlyErrorGoals` (prepared-pipeline-boundary.ts) is now the one options-to-goals mapping, used by both.
+- **Fa ported as content** (not its commits): the all-dynamic closure signature, `staticFunctionValue`, written
+  parameter slots, N1, the closure-site re-typing. Corrections: (a) the one kind answer is `carrierKindOf` (callable →
+  `function`; the `__ir_dyn_call_box` projection via `functionValueOperand`); the box arm and the projection share one
+  `intoCarrier`; Fa's stricter "dynamic" rule was NOT folded in (every dynamic-typed value is produced by an admitted
+  box or a legalized operation; the rule would refuse M1's member-read results); (b) exhaustive; (c) the carrier-type
+  mapping moved to `src/ir/program/dynamic-carrier-types.ts`: the legalization is 347 lines (M1: 350).
+- **The function kind**: a row in every table of `dynamic-value-kinds.ts` (typeof "function", test
+  `js.value.is_function` from fa-ty, tag "Function", ToString/ToNumber via ToPrimitive, `+` concatenates, member
+  access "object"), admitted only where the source creates a function value (`ProgramObjects.functions`).
+- **D6** (`ordinary-to-primitive.ts`): Get in hint order (string for ToString, number for ToNumber and `+`); a callable
+  method, and a function value's own ToPrimitive, end at the run-time abort `js.value.unsupported` (J's row: body
+  `unreachable`). Without function values only `toString` is consulted, so those programs keep their bytes.
+- **D4**: a member write of Object.prototype's writable data keys creates an own property; only `__proto__` refuses.
+- A returned closure boxes as a function value (`argumentIntoDynamic`, shared with arguments).
+
+### Found and fixed on the way
+
+- An exception out of `compile()`: a module-init of ~20+ statements is chunked, and Fa's static closure value (an SSA
+  value in the shared scope) was called from another chunk's function (`closure.call callee must be closure/callable
+  IrType, got val`). The value is now used only in the body that built it; across chunks the call refuses by name.
+- D6's first cut defined an SSA value twice (an arm reused its parent's result); caught by a probe, fixed.
+
+### Not built (the plan's steps 4-6) and why
+
+- **Risk 1 tripped** (plan §13: "if 30 closures exceed ~10 s, stop and hand the profile to the perf lane before step
+  4"). Measured (tsx, validator off): `var cI = function (x) { return x; }` × 1 / 10 / 30 with one call each: 1.6 s /
+  7.9 s / 43.6 s (the 30-closure run then hit the chunk exception above). Profile of the 10-closure program: 5.3 s of
+  9.3 s in `assertNativeSourceClosureRequirementsCurrent` → `same` → `preparedIrDataMismatch` (structural
+  re-comparison per body fill, `program-native-invocation.ts requireOwner`), i.e. quadratic self-checks, not F code.
+  A program with one closure, one object, a catch and ~6 `+` took 196 s. Under vitest (validator on) one closure
+  program costs 20-40 s.
+- So declarations as values (step 4), R7 (step 5) and function-object properties (step 6) are not built. Until step 6
+  a member read or write whose receiver may be a function value refuses by name: `member read 'k' of a value that may be
+  a function needs the realm's function objects`.
+
+### Proof
+
+Tests (each a program through the strict Prepared entry, node's answer returns and a wrong one throws):
+`issue-7354-f1-function-kind` (7), `-f1-to-primitive` (5), `-f1-function-expressions{,-2,-3}` (4/3/2), Fa's file (53).
+Existing pins changed: m-refusals (`__proto__` text; the `toString` write runs now), o3 (`isPrototypeOf` write runs),
+h and str2 (refusal programs use their binding, F0), d1 (selection rows), o2 (`functions`), x (closure pack admitted;
+Fa's stricter-rule test dropped), 3518 core vocabulary (48 ids), 3526 (two nullary calls).
+
+Mutations (each alone): ToString hint → number, callable method skipped, function kind admitted everywhere — all
+killed by a run. By the tests that pin them: each function row of TYPEOF_NAME / KIND_TEST / OBJECT_TAG, the callable
+and projection rules of `carrierKindOf`, `intoCarrier`'s function case, the interim member refusal, the chunk guard,
+the return box, the F0 early-error guard. Survivors: the `!isCallable → ["toString"]` gating (answers equal; only
+bytes), D4's `!== "type-error"` (a receiver of nullish kinds only is not reachable: `null.__proto__ = 1` refuses in
+from-ast first), F0's single-source guard (no multi-source test with a dead binding).
+
+Bytes: ordinary pipeline, 20 test262 files (Function/Object toString, typeof, function expressions, addition) ×
+default + standalone: 40/40 identical. `check:prepared-bytes` (804 rows) vs base: 5 rows differ: 38, 49, 50, 51
+(`var x = 1; var x = 2;`, `var o = {a:1};`, `var arr = [1];`, `var f = function(){};` — F0 elides them to the empty
+program) and 149 (a closure reading a later-declared local now refuses by Fa's own name).
+
+### Sample (411 rows, real prelude, at b9d8346b3d)
+
+| first gap | M1+M2 | F1 |
+|---|---|---|
+| `identifier "assert" is not in scope in assert` | 293 | 0 |
+| `member read 'name' of a value that may be a function needs the realm's function objects` | 0 | 293 |
+| `not-direct` | 73 | 73 |
+| `assert` not in scope in verifyProperty | 26 | 26 |
+| pass (negatives) | 14 | 14 |
+| other | 5 | 5 |
+
+The plan expected "unchanged" for F1; the prelude's function expressions admit the function kind, so its member reads
+reach the interim refusal before `assert`. Step 6 (the realm's function objects) is what moves them.

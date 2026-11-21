@@ -26,6 +26,15 @@ describe("#7354 F1 — ToPrimitive and Object.prototype's keys", () => {
     SLOW,
   );
 
+  // ToString's hint is "string": `toString` first, so the realm's answers "[object Object]" before `valueOf` is
+  // consulted, callable or not (`+` would call it first: the run-time abort, tests/issue-7354-f1-function-kind).
+  const STRING_HINT = "var o = { valueOf: function () { return 2; } }; var s = String(o);\n";
+  it(
+    "converts with the string hint, never reaching a callable valueOf",
+    () => agrees(`${STRING_HINT}if (s !== "[object Object]") throw 1;`, `${STRING_HINT}if (s !== "2") throw 1;`),
+    SLOW,
+  );
+
   // D4: OrdinarySet of a key Object.prototype holds as a writable data property creates an own property, which the
   // conversion then finds (not callable, so a TypeError).
   const DATA_KEYS =
