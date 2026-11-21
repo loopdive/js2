@@ -9,10 +9,7 @@ import {
   closureMethodArity,
 } from "../core/closure-invocation-callables.js";
 import { nativeAsyncCallableValueTypes } from "../runtime/native-async-callables.js";
-import {
-  assertNativeSourceClosureRequirementsCurrent,
-  type NativeSourceClosureRequirements,
-} from "./native-source-closure-requirements.js";
+import type { NativeSourceClosureRequirements } from "./native-source-closure-requirements.js";
 import {
   collectNativePromiseSourceCensus,
   assertNativePromiseSourceCensusCurrent,
@@ -155,7 +152,6 @@ function calculate(
   objectAccess?: NativeObjectAccessRequirements,
   objectResults?: NativeObjectResultRequirements,
 ) {
-  assertNativeSourceClosureRequirementsCurrent(source);
   const uses: NativeInvocationUse[] = [],
     gaps: NativeInvocationRequirements["gaps"][number][] = [];
   if (objectResults) {

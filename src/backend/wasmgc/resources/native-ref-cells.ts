@@ -3,10 +3,7 @@
 import type { AllocSiteId } from "../../../ir/core/nodes.js";
 import type { ValType } from "../../../wasm/model/instructions.js";
 import type { PhysicalModuleReservations, TypeReservation } from "../../../wasm/physical/module-reservations.js";
-import {
-  assertNativeSourceClosureRequirementsCurrent,
-  type NativeSourceClosureRequirements,
-} from "../../../ir/program/native-source-closure-requirements.js";
+import type { NativeSourceClosureRequirements } from "../../../ir/program/native-source-closure-requirements.js";
 import { preparedIrDataMismatch, freezePreparedIrValue } from "../../../ir/program/data.js";
 import { createRefCellType, refCellTypeKey } from "../../../runtime/wasmgc/values/ref-cell-layouts.js";
 
@@ -30,7 +27,6 @@ export function reserveNativeRefCells(
   tx: PhysicalModuleReservations,
   requirements: NativeSourceClosureRequirements,
 ): NativeRefCellReservations {
-  assertNativeSourceClosureRequirementsCurrent(requirements);
   if (tx.state !== "reserving") fail("cell types require the reserving phase");
   if (requirements.gaps.length) fail(requirements.gaps.map((row) => row.detail).join("; "));
   const description = freezePreparedIrValue(requirements.refCells) as NativeSourceClosureRequirements["refCells"];
@@ -59,7 +55,6 @@ export function requireNativeRefCells(
     pack.requirements !== expectedRequirements
   )
     fail("foreign, copied or substituted cell requirements");
-  assertNativeSourceClosureRequirementsCurrent(expectedRequirements);
   if (
     preparedIrDataMismatch(expectedRequirements.refCells, owner.description) !== undefined ||
     pack.types.length !== owner.description.length

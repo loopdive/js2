@@ -282,7 +282,11 @@ describe("#7354 Perf2 — formatter and object-access currentness over a program
     const requirements = deriveNativeObjectAccessRequirements(program, program.runtime[0]!);
     assertNativeObjectAccessRequirementsCurrent(requirements);
     program.ir = { ...program.ir, functions: [] };
-    expect(() => assertNativeObjectAccessRequirementsCurrent(requirements)).toThrow("borrowed source changed");
-    expect(() => assertNativeObjectAccessRequirementsCurrent(requirements)).toThrow("borrowed source changed");
+    expect(() => assertNativeObjectAccessRequirementsCurrent(requirements)).toThrow(
+      "missing complete owner population",
+    );
+    expect(() => assertNativeObjectAccessRequirementsCurrent(requirements)).toThrow(
+      "missing complete owner population",
+    );
   });
 });
