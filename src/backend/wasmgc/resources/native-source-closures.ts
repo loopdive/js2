@@ -113,10 +113,10 @@ function same(a: unknown, b: unknown, detail: string): void {
   if (preparedIrDataMismatch(a, b) !== undefined) fail(detail);
 }
 /**
- * The owner of a pack this transaction reserved. Per-use lookups stop here: the pack and its requirements are frozen
- * and its types live in the ledger, whose storage the layout audit and the module validator check (#7380), so
- * re-deriving the whole plan at every use (`requireNativeSourceClosureTypes`) only re-proved this compile's own data,
- * once per closure use.
+ * The owner of a pack this transaction reserved. Per-use lookups stop here: the pack and its requirements are frozen,
+ * and the full `requireNativeSourceClosureTypes` still runs once at the realm, invocation and callables boundaries,
+ * where a changed capture layout fails the compile. Re-deriving the whole plan at every use only re-proved this
+ * compile's own data, once per closure use.
  */
 function reservedOwner(tx: PhysicalModuleReservations, pack: NativeSourceClosureTypes): Owner {
   const owner = owners.get(pack);
