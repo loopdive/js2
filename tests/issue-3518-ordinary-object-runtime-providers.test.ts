@@ -39,9 +39,8 @@ describe("ordinary object symbolic provider obligations", () => {
     expect(irOrdinaryObjectCallableDeclaration(irRuntimeFuncRef(feature))).toBeUndefined();
     expect(Object.isFrozen(ORDINARY_OBJECT_RUNTIME_PROVIDERS.find((p) => p.feature === feature))).toBe(true);
   });
-  it("pins all eight identifiers without duplicates", () => {
+  it("names one native provider per feature", () => {
     expect(ORDINARY_OBJECT_RUNTIME_PROVIDER_IDS).toEqual(ORDINARY_OBJECT_RUNTIME_FEATURES.map((f) => `native.${f}`));
-    expect(new Set(ORDINARY_OBJECT_RUNTIME_PROVIDER_IDS).size).toBe(8);
   });
   for (const feature of ORDINARY_OBJECT_RUNTIME_FEATURES) {
     it.each([

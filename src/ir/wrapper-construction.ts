@@ -35,7 +35,7 @@ import { IrInvariantError } from "./outcomes.js";
 import { irBool } from "./boolean-brand.js";
 import { irDynamic, irVal, type IrType, type IrValueId } from "./nodes.js";
 import { carrierStringFamily, lowerPrimitiveToString } from "./primitive-to-string.js";
-import { OBJECT_PROTOTYPE_KEYS } from "./realm-keys.js";
+import { OBJECT_PROTOTYPE_KEYS } from "./program/builtin-prototype-keys.js";
 import type { IrSelectionOptions } from "./select.js";
 
 /** One constructor: its name and the primitive family it wraps. */

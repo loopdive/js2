@@ -17,6 +17,7 @@ import type { RuntimeManifestPolicy } from "../../runtime/contracts/provider-pol
 const EXTERNAL: IrType = Object.freeze({ kind: "val", val: Object.freeze({ kind: "externref" }) });
 const FLAGS: IrType = Object.freeze({ kind: "val", val: Object.freeze({ kind: "f64" }) });
 const BOOLEAN: IrType = Object.freeze({ kind: "val", val: Object.freeze({ kind: "i32", boolean: true }) });
+const SELECTOR: IrType = Object.freeze({ kind: "val", val: Object.freeze({ kind: "i32" }) });
 
 function declaration(
   feature: OrdinaryObjectRuntimeFeature,
@@ -56,6 +57,15 @@ const DECLARATIONS: Readonly<Record<OrdinaryObjectRuntimeFeature, IrRuntimeCalla
   "js.object.define-attributes": declaration("js.object.define-attributes", [EXTERNAL, EXTERNAL, FLAGS], []),
   "js.object.get": declaration("js.object.get", [EXTERNAL, EXTERNAL, EXTERNAL], [EXTERNAL]),
   "js.object.has": declaration("js.object.has", [EXTERNAL, EXTERNAL], [BOOLEAN]),
+  // (#7354 O4) A TypeError the realm builds, its message a native string: the dynamic-value legalization's
+  // RequireObjectCoercible.
+  "js.object.create-type-error": declaration("js.object.create-type-error", [EXTERNAL], [EXTERNAL]),
+  // (#7354 O3) OrdinarySet (§10.1.9.2): the original receiver beside the object whose chain it walks, as Get's.
+  "js.object.set": declaration("js.object.set", [EXTERNAL, EXTERNAL, EXTERNAL, EXTERNAL], [BOOLEAN]),
+  // (#7354 M2) Whether a value is the realm's error, the TypeError `create-type-error` builds: the error kind's test.
+  "js.object.is-error": declaration("js.object.is-error", [EXTERNAL], [BOOLEAN]),
+  // (#7354 M2) An error's `name` (selector 1) or `message` (selector 0) field, each a native string.
+  "js.object.error-field": declaration("js.object.error-field", [EXTERNAL, SELECTOR], [EXTERNAL]),
 });
 
 /** Exact semantic binding only; neither display names nor runtime aliases qualify. */

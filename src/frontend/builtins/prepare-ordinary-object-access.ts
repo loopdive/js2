@@ -100,8 +100,8 @@ export function prepareOrdinaryObjectAccessResolver(
   };
   /**
    * The literal behind a receiver whose property values the checker types exactly: an accessor literal bound to a
-   * `const`, or (#7354 O1) a data-only literal whose binding is only ever read as `o.k`, so no property is written
-   * after the literal stored it.
+   * `const`, or (#7354 O1) a function's data-only literal whose binding is only ever read as `o.k`, so no property is
+   * written after the literal stored it.
    */
   const ordinaryLiteral = (expression: ts.Expression): ts.ObjectLiteralExpression | undefined => {
     // The literal itself as the receiver: its members are its own initializers.
@@ -121,7 +121,10 @@ export function prepareOrdinaryObjectAccessResolver(
       return undefined;
     const literal = declaration.initializer;
     if (literal.properties.some(isAccessor)) return declaration.parent.flags & ts.NodeFlags.Const ? literal : undefined;
+    // (#7354 O2) A binding outside any function is a module binding: a script `var` holds its object in the dynamic
+    // home, whose reads are the dynamic member read.
     return isDataOnlyLiteral(literal) &&
+      ts.findAncestor(declaration, ts.isFunctionLike) !== undefined &&
       referencesOf(symbol!).every((reference) => reference === declaration.name || isPlainMemberRead(reference))
       ? literal
       : undefined;

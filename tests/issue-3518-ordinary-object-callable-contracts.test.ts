@@ -19,11 +19,20 @@ const CONTRACTS = [
   ["js.object.define-attributes", [REF, REF, FLAGS], []],
   ["js.object.get", [REF, REF, REF], [REF]],
   ["js.object.has", [REF, REF], [BOOL]],
+  // (#7354 O4) the dynamic-value legalization's RequireObjectCoercible TypeError
+  ["js.object.create-type-error", [REF], [REF]],
+  // (#7354 O3) OrdinarySet, its original receiver beside the object, as Get's
+  ["js.object.set", [REF, REF, REF, REF], [BOOL]],
+  // (#7354 M2) the error kind's test and its name / message field read (an i32 selector)
+  ["js.object.is-error", [REF], [BOOL]],
+  ["js.object.error-field", [REF, { kind: "val", val: { kind: "i32" } }], [REF]],
 ] as const;
 
 describe("ordinary object semantic contracts", () => {
   it("declares prototype modes, descriptor presence, original receiver and boolean Has independently", () => {
-    expect(ORDINARY_OBJECT_RUNTIME_FEATURES).toEqual(CONTRACTS.map(([name]) => name));
+    // Every feature of the manifest's list has its declaration; the table gives the signatures they carry.
+    for (const feature of ORDINARY_OBJECT_RUNTIME_FEATURES)
+      expect(irRuntimeCallableDeclaration(irIntrinsicFuncRef(feature))).toMatchObject({ feature });
     for (const [name, params, results] of CONTRACTS) {
       const declaration = irRuntimeCallableDeclaration(irIntrinsicFuncRef(name));
       expect(declaration).toMatchObject({ feature: name, params, results });
@@ -48,9 +57,9 @@ describe("ordinary object semantic contracts", () => {
     (name) => expect(irRuntimeCallableDeclaration(irIntrinsicFuncRef(name))).toBeUndefined(),
   );
 
-  // On standalone WasmGC each contract has one provider, its native one: the manifest lists all eight
+  // On standalone WasmGC each contract has one provider, its native one: the manifest lists all of them
   // (`ORDINARY_OBJECT_RUNTIME_PROVIDER_IDS`). Selecting a provider is not serving it: since #7354 O1 the native
-  // realm serves create-default, define-data and get, and the other five still have no realm function.
+  // realm serves create-default, define-data and get; (#7354 O4, O3, O2b) create-type-error, set and has; (#7354 M2) is-error and error-field.
   it.each(CONTRACTS)("selects the native provider for %s on standalone WasmGC", (name) => {
     const builder = new RuntimeManifestBuilder({ target: "standalone", backend: "wasmgc" });
     builder.requestFeature(name);

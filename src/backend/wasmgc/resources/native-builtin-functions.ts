@@ -6,6 +6,7 @@ import type {
   GlobalReservation,
   TypeReservation,
   TagReservation,
+  TagImportReservation,
 } from "../../../wasm/physical/module-reservations.js";
 import { preparedIrDataMismatch } from "../../../ir/program/data.js";
 import {
@@ -78,6 +79,8 @@ export interface NativeBuiltinFunctionDependencies {
   readonly closurePlan: NativeClosureDeclarationPlan;
   readonly descriptors: NativeObjectDescriptorReservations;
   readonly descriptorDependencies: NativeObjectDescriptorDependencies;
+  /** The program's one exception tag: a kernel failure is a source-catchable throw. */
+  readonly exception: TagReservation | TagImportReservation;
 }
 const functionRoles = [
   "initialize",
@@ -135,7 +138,7 @@ export interface NativeBuiltinFunctionReservations {
     readonly realmReady: GlobalReservation;
   };
   readonly realmType: TypeReservation;
-  readonly exception: TagReservation;
+  readonly exception: TagReservation | TagImportReservation;
   readonly completionScope: "synchronous-builtin-object-kernel";
 }
 interface Owner {
@@ -161,12 +164,14 @@ function same(a: unknown, b: unknown, detail: string): void {
 function dependencies(tx: PhysicalModuleReservations, d: NativeBuiltinFunctionDependencies) {
   assertBuiltinFunctionDataRecord(d);
   if (
-    Object.keys(d).length !== 5 ||
+    Object.keys(d).length !== 6 ||
     Object.keys(d).some(
-      (key) => !["requests", "closures", "closurePlan", "descriptors", "descriptorDependencies"].includes(key),
+      (key) =>
+        !["requests", "closures", "closurePlan", "descriptors", "descriptorDependencies", "exception"].includes(key),
     )
   )
     fail("unexpected dependency input");
+  if (d.exception.kind !== "tag" && d.exception.kind !== "tag-import") fail("exception is not a tag");
   requireNativeBuiltinFunctionRequests(tx, d.requests);
   const input = nativeBuiltinFunctionRequestDependencies(tx, d.requests),
     dd = d.descriptorDependencies;
@@ -230,7 +235,6 @@ function resourceKeys(requests: NativeBuiltinFunctionRequests): readonly string[
   const key = requests.requirements.key;
   return [
     key + ":realm-type",
-    key + ":exception",
     ...["realm", "object-prototype", "state", "realm-ready"].map((role) => key + ":global:" + role),
     ...functionRoles.map((role) => key + ":function:" + role),
     ...requests.requirements.intrinsics.flatMap((row) =>
@@ -331,11 +335,6 @@ export function reserveNativeBuiltinFunctionResources(
       ]),
     ),
   ) as Readonly<Record<FunctionRole, FunctionReservation>>;
-  const exception = tx.reserveTag(
-    key + ":exception",
-    { params: [ext], results: [] },
-    { kind: "defined", name: key + ":exception" },
-  ) as TagReservation;
   const globals = Object.freeze({ realm, objectPrototype, state, realmReady });
   const pack = Object.freeze({
     requests: d.requests,
@@ -343,7 +342,7 @@ export function reserveNativeBuiltinFunctionResources(
     functions,
     globals,
     realmType,
-    exception,
+    exception: d.exception,
     completionScope: "synchronous-builtin-object-kernel" as const,
   });
   owners.set(pack, {

@@ -22,6 +22,7 @@ import {
   requiredPreparedEmission,
   type Test262CompileOptions,
 } from "../src/test262/test262-prepared-entry.js";
+import { yieldToRpc } from "./helpers/prepared-node-agreement.js";
 
 const legalize = (fn: IrFunction): IrFunction => legalizeDynamicValues(fn, new AllocSiteRegistry());
 
@@ -48,6 +49,7 @@ async function run(source: string): Promise<number> {
     spy.mockImplementation(() => {
       throw new Error("strict request entered a direct generator");
     });
+  await yieldToRpc();
   const result = await compile(source, options("standalone"));
   expect(messages(result)).toEqual([]);
   expect(requiredPreparedEmission(result)).toBeDefined();
@@ -122,6 +124,13 @@ describe("#7354 D1 — the dynamic value on the Prepared standalone path", () =>
       return (x === true ? 1 : 0) + (y === undefined ? 2 : 0);`;
     expect(await run(main(body))).toBe(3);
   });
+
+  // (#7354 O1, O3) The literal is an ordinary object holding the dynamic value; the read boxes the object it holds
+  // onto the carrier, admitted by its producer (`carrierKindOf`), and takes slice O's member read.
+  it("reads a dynamic object field back as the dynamic value", async () => {
+    expect(await run(main("const o = { a: id(1) }; return o.a === 1 ? 1 : 0;"))).toBe(1);
+    expect(await run(main("const o = { a: id(1) }; return o.a === 2 ? 1 : 0;"))).toBe(0);
+  }, 180_000);
 
   const flow = (type: string, site: string) => `a dynamic value flows into ${type} without a conversion (${site})`;
   // (#7354 P) An untyped parameter is the dynamic value, never a propagated number, so the result of `id` is
@@ -207,20 +216,19 @@ describe("#7354 D1 — the dynamic value on the Prepared standalone path", () =>
     // (#7354 T) The null tag test and ToBoolean are expressed now (tests/issue-7354-t-truthiness-null.test.ts).
     // (#7354 Str2-c) Dynamic `+` is expressed now (tests/issue-7354-str2c-dynamic-add.test.ts).
     // (#7354 Str) The property key enters the dynamic value as a string now; the member read itself has no intrinsic.
-    ["a member read", "return id(1).x === 1 ? 1 : 0;", "dynamic operation dyn.member_get has no Prepared intrinsic"],
+    // (#7354 O4) A member read with a constant key is expressed now (tests/issue-7354-o4-member-read.test.ts).
+    [
+      "a computed member read",
+      'return id(1)[id("x")] === 1 ? 1 : 0;',
+      "dynamic operation dyn.member_get with a computed key has no Prepared intrinsic",
+    ],
     // (#7354 Ty, Str2) A typeof comparison and a typeof value are expressed now
     // (tests/issue-7354-ty-typeof-comparisons.test.ts, tests/issue-7354-str2-to-string.test.ts).
     ["`**`", "return id(2) ** 3;", "'**' on a dynamic operand"],
     ["`**` on the right", "return 2 ** id(3);", "'**' on a dynamic operand"],
     ["a value-position prefix update", "let x: any = id(1); return ++x;", "value-position prefix update"],
     // (#7354 X) A thrown dynamic value is expressed now (tests/issue-7354-x-dynamic-throw.test.ts).
-    // (#7354 O1) The literal is an ordinary object holding the dynamic value; reading the field back as one is
-    // slice O's member read of a dynamic value (tests/issue-7354-o-objects.test.ts).
-    [
-      "a dynamic object field",
-      "const o = { a: id(1) }; return o.a === 1 ? 1 : 0;",
-      "dynamic operation box of a non-primitive value has no Prepared intrinsic",
-    ],
+    // (#7354 O1, O3) A dynamic object field is read back as the dynamic value (the test below this table).
   ])("refuses %s by name", async (_label, body, expected) => {
     expect(await refusal(`${ID}export function main(): number {\n  ${body}\n}\n`)).toContain(expected);
   });

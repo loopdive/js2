@@ -265,7 +265,7 @@ describe("realm join ownership and phase completion", () => {
     expect(alternate.requests).toEqual(f.realm.requests.requests);
     const emitted = beginNativeSourceClosureEmission(f.tx, f.requirements.source!, shared(f), alternate),
       before = population(f);
-    expect(() => reserveNativeRealmKernel(f.tx, f.realm, emitted.types)).toThrow(
+    expect(() => reserveNativeRealmKernel(f.tx, f.realm, f.exception, emitted.types)).toThrow(
       /builtin.*issuer|builtin.*identity|builtin.*foreign|builtin.*substitut/,
     );
     expect(population(f)).toEqual(before);
@@ -285,7 +285,7 @@ describe("realm join ownership and phase completion", () => {
       }
       const emitted = beginNativeSourceClosureEmission(f.tx, f.requirements.source!, carriers, f.realm.requests),
         before = population(f);
-      expect(() => reserveNativeRealmKernel(f.tx, f.realm, emitted.types)).toThrow(/shared|carrier/);
+      expect(() => reserveNativeRealmKernel(f.tx, f.realm, f.exception, emitted.types)).toThrow(/shared|carrier/);
       expect(population(f)).toEqual(before);
     },
   );
@@ -314,7 +314,7 @@ describe("realm join ownership and phase completion", () => {
   );
   it("permits one canonical fill and rejects duplicate reservation, fill and post-fill mutation", () => {
     const f = realmFixture(noSource());
-    expect(() => reserveNativeRealmKernel(f.tx, f.realm)).toThrow(/duplicate/);
+    expect(() => reserveNativeRealmKernel(f.tx, f.realm, f.exception)).toThrow(/duplicate/);
     fillRealmFixture(f);
     expect(() => fillNativeRealmResources(f.tx, f.realm)).toThrow(/duplicate/);
     f.realm.substrate.arguments.push.object.body.push({ op: "nop" });
@@ -325,7 +325,7 @@ describe("realm join ownership and phase completion", () => {
       beforeFoundation = population(f);
     f.tx.reserveFunction(f.requirements.description.key + ":equality:equals", "collision", { params: [], results: [] });
     const beforeAttempt = population(f);
-    expect(() => reserveNativeRealmKernel(f.tx, f.realm)).toThrow(/reserved|duplicate|collision/);
+    expect(() => reserveNativeRealmKernel(f.tx, f.realm, f.exception)).toThrow(/reserved|duplicate|collision/);
     expect(population(f)).toEqual(beforeAttempt);
     expect(beforeFoundation[0]).toBeGreaterThan(0);
     expect(() => nativeRealmReservationInventory(f.tx, f.realm)).toThrow(/failed composition/);
@@ -361,7 +361,7 @@ describe("realm join ownership and phase completion", () => {
         beforeKernel = population(f);
       checkKeys(candidateKeys);
     });
-    expect(() => reserveNativeRealmKernel(f.tx, f.realm)).toThrow(/duplicate planned resource key/);
+    expect(() => reserveNativeRealmKernel(f.tx, f.realm, f.exception)).toThrow(/duplicate planned resource key/);
     expect(f.module.functions.length).toBeGreaterThan(before[1]!);
     expect(beforeKernel).toBeDefined();
     expect(population(f)).toEqual(beforeKernel);
