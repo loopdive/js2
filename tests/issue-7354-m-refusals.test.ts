@@ -37,6 +37,12 @@ describe("#7354 M1 — the TypeError the legalization raises", () => {
       ),
     ],
     [
+      // V8 gives an error an own `stack`; the realm's error has none, so the read refuses rather than answer undefined.
+      "M2: an error's stack",
+      "function f(v){ try { return v.a; } catch (e) { return e.stack; } } f(null);",
+      refused("member read 'stack'", mayBe("an Error"), "Error.prototype's properties"),
+    ],
+    [
       "M2: an error's toString",
       "function f(v){ try { return v.a; } catch (e) { return e.toString; } } f(null);",
       refused(

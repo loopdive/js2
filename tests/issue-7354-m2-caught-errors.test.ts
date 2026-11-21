@@ -48,6 +48,13 @@ var out = f() + "," + g({name: "N"}) + "," + g(true);`,
 }
 var out = formatSimpleValue({toString: 1}) + formatSimpleValue({}) + formatSimpleValue(1) + formatSimpleValue(null);`,
   ],
+  [
+    "E39 and the error kind tested beside the object kind: Object.prototype.toString, name, a caught object",
+    `function t(v){ return Object.prototype.toString.call(v); }
+function f(v){ try { return v.a; } catch (err) { return t(err) + String(err.name); } }
+function g(v){ try { throw v; } catch (err) { return t(err) + String(err.name); } }
+var out = String(f(null)) + ";" + String(g({name: "N"}));`,
+  ],
 ];
 
 describe("#7354 M2 — a caught TypeError is a value", () => {
