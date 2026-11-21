@@ -544,6 +544,15 @@ function diagnosticSeverity(diag: ts.Diagnostic, checker: ts.TypeChecker): "warn
     : "error";
 }
 
+/**
+ * The single-source compiler's type gate: a hard TypeScript diagnostic refuses the compile, in allowJs input too, and
+ * every other TypeScript error is reported and tolerated (#1927). The strict Prepared entry asks it for its
+ * single-source requests (#7354).
+ */
+function singleSourceHasHardTypeErrors(ast: Pick<TypedAST, "checker" | "diagnostics">): boolean {
+  return ast.diagnostics.some((d) => isHardTypeScriptDiagnostic(d, ast.checker));
+}
+
 function isHardTypeScriptDiagnostic(diag: ts.Diagnostic, checker?: ts.TypeChecker): boolean {
   if (diag.category !== 1 || !HARD_TS_DIAG_CODES.has(diag.code)) return false;
   if (checker && isBindingPatternFalsePositive(diag, checker)) return false;
@@ -1147,6 +1156,10 @@ export function runPreparedIrPipelinePresentation(input: PipelineInput): Prepare
     preparedFrontendBoundary.early(sourceFailure, rejected);
     return rejected;
   }
+  // The single-source compiler's type gate, asked after the early pass so that a hard diagnostic which is also an
+  // early error (TS1213, `class let {}`) keeps its certified early rejection.
+  if (!multiAst && singleSourceHasHardTypeErrors(entryAst))
+    return { kind: "output-failed", errors, artifacts: preparedPipelineArtifacts(failResult(errors)) };
   const target = options.target === "standalone" ? "standalone" : options.target === "wasi" ? "wasi" : "host";
   const backendOptions: PreparedIrBackendOptions = {
     backend: targetProfile.backend,
@@ -1874,9 +1887,8 @@ export function compileSourceSync(
   const hasSyntaxErrors = ast.syntacticDiagnostics.some(
     (d) => d.category === 1 && d.file === ast.sourceFile && !TOLERATED_SYNTAX_CODES.has(d.code),
   );
-  const hasHardTypeErrors = ast.diagnostics.some((d) => isHardTypeScriptDiagnostic(d, ast.checker));
 
-  if ((hasSyntaxErrors || hasHardTypeErrors) && errors.length > 0) {
+  if ((hasSyntaxErrors || singleSourceHasHardTypeErrors(ast)) && errors.length > 0) {
     return failResult(errors);
   }
 

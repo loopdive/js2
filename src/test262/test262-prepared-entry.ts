@@ -438,7 +438,9 @@ function present(
       diagnostics: ast.diagnostics,
       syntacticDiagnostics: ast.syntacticDiagnostics,
     },
-    multiAst: ast,
+    // Single-source: the public single-source compiler's type gate refuses hard TypeScript diagnostics, allowJs
+    // included; a graph exempts allowJs input from it.
+    multiAst: singleSource ? null : ast,
     errors,
     codegenOptions: { link: options.link ?? [], sourceMap: options.sourceMap === true },
     sourcesContent: new Map(ast.sourceFiles.map((source) => [source.fileName, source.text])),
