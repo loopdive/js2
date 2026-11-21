@@ -479,11 +479,6 @@ export function checkModuleItemPosition(ctx: EarlyErrorContext): void {
   walk(sourceFile);
 }
 
-/**
- * Reserved words `yield` / `await` used as an identifier.
- * `yield` is reserved in strict-mode code and inside generator bodies;
- * `await` is reserved in module code and inside async function bodies.
- */
 /** A name that declares a binding or a label: never an expression TypeScript may have misread. */
 function isBindingName(node: ts.Identifier): boolean {
   const parent = node.parent;
@@ -500,6 +495,11 @@ function isBindingName(node: ts.Identifier): boolean {
   );
 }
 
+/**
+ * Reserved words `yield` / `await` used as an identifier.
+ * `yield` is reserved in strict-mode code and inside generator bodies;
+ * `await` is reserved in module code and inside async function bodies.
+ */
 export function checkReservedIdentifiers(ctx: EarlyErrorContext): void {
   const { sourceFile } = ctx;
   if (isWrapTestSource(sourceFile)) return;

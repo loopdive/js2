@@ -114,3 +114,13 @@ The Prepared path is safe today only because it refuses all of these: `globalThi
   the never-elide rule sees only plain identifier declarators).
 - **Dead duplicate:** `IMMUTABLE_GLOBAL_PROPERTY_NAMES` in `src/codegen/expressions/runtime-eval-provider.ts` is an
   unused copy of `GLOBAL_CONSTANTS` (`src/shared/ambient-intrinsics.ts`); delete it.
+
+## Notes from #7354 F0 review round 4 (2026-11-21)
+
+Still accepted under an explicit Module goal on main and on PR 7362 alike, where node-as-module throws a
+SyntaxError (`await` is no Identifier in Module code, §13.1.1). These are detector gaps; PR 7362 does not touch
+the detector further.
+
+- `({await}) => 0` (shorthand binding pattern in a parameter);
+- `({await} = {})` (shorthand assignment target);
+- `var g = function await(){}` (a function expression named `await`, ordinary lanes).
