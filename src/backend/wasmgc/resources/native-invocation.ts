@@ -77,6 +77,8 @@ export interface NativeInvocationReservations {
     readonly extras: GlobalReservation;
   };
   readonly undefinedValue: FunctionReservation;
+  /** (#7354 C2) `js.closure.receiver`: the `__current_this` the dispatcher installed. */
+  readonly receiver: FunctionReservation;
   readonly isUndefined: FunctionReservation;
   readonly methods: readonly { readonly arity: number; readonly function: FunctionReservation }[];
   readonly applyVector?: FunctionReservation;
@@ -200,7 +202,7 @@ export function reserveNativeInvocationResources(
   // The complete connected owner is preflighted before even its first base type.
   tx.assertReservationKeysAvailable([
     ...(borrowedSubstrate.value === undefined ? substratePlan.reservationKeys : []),
-    ...["this", "argc", "extras", "undefined", "is-undefined"].map(key),
+    ...["this", "argc", "extras", "undefined", "receiver", "is-undefined"].map(key),
     ...requirements.methodArities.map((arity) => key(`method:${arity}`)),
     ...(requirements.applyVector ? [key("apply-vector")] : []),
   ]);
@@ -224,6 +226,10 @@ export function reserveNativeInvocationResources(
     ),
   });
   const undefinedValue = tx.reserveFunction(key("undefined"), "__closure_undefined", {
+    params: [],
+    results: [{ kind: "externref" }],
+  });
+  const receiver = tx.reserveFunction(key("receiver"), "__closure_receiver", {
     params: [],
     results: [{ kind: "externref" }],
   });
@@ -255,6 +261,7 @@ export function reserveNativeInvocationResources(
     errors,
     globals,
     undefinedValue,
+    receiver,
     isUndefined,
     methods,
     ...(applyVector ? { applyVector } : {}),
@@ -272,6 +279,7 @@ export function reserveNativeInvocationResources(
         ? nativeInvocationSubstrateReservationInventory(tx, substrate).functions
         : []),
       undefinedValue,
+      receiver,
       isUndefined,
       ...methods.map((row) => row.function),
       ...(applyVector ? [applyVector] : []),
@@ -435,6 +443,7 @@ export function fillNativeInvocationResources(
     locals: [],
     body: [{ op: "global.get", index: state.undefinedGlobal }, { op: "extern.convert_any" }],
   });
+  tx.fillFunction(pack.receiver, { locals: [], body: [{ op: "global.get", index: state.currentThis }] });
   tx.fillFunction(pack.isUndefined, {
     locals: [],
     body: buildClosureUndefinedTest(0, values.types.anyValue.typeIndex),

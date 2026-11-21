@@ -24,6 +24,8 @@ export interface MemberAccessBuilders extends TypeErrorBuilders {
     result?: IrValueId | null,
   ) => IrInstr;
   readonly errorField: (value: IrValueId, field: keyof typeof ERROR_FIELD, result: IrValueId) => IrInstr[];
+  /** (#7354 C2) The run-time abort, a carrier answer. */
+  readonly abort: (instr: IrInstr, result: IrValueId) => IrInstr[];
   readonly kindsOf: (value: IrValueId) => readonly CarrierKind[];
   readonly branch: (
     cond: IrValueId,
@@ -47,10 +49,7 @@ type MemberSet = Extract<IrInstr, { kind: "dyn.member_set" }>;
 
 /** A thrown TypeError with `message` (`typeError`), the arm's unread answer into `result`. */
 type ThrowTypeError = (message: string, result: IrValueId) => IrInstr[];
-/**
- * The run-time abort `js.value.unsupported` into `result`. Its text is the arm's answer: an intrinsic is pure, so an
- * abort whose result nothing used would be dropped as dead code.
- */
+/** The run-time abort into `result`, a carrier answer. */
 type Abort = (result: IrValueId) => IrInstr[];
 
 /** What sets a read and a write apart past the receiver chain they share. */
@@ -110,13 +109,7 @@ function memberAccess(
   }
   // The TypeError does not complete; the access's unread answer only gives the arm its value.
   const throwTypeError: ThrowTypeError = (message, r) => [...typeError(b, message), access.unread(r)];
-  const abort: Abort = (r) => {
-    const text = b.fresh();
-    return [
-      b.intrinsic(instr, "js.value.unsupported", [], text),
-      { kind: "coerce.to_externref", value: text, result: r, resultType: b.carrier },
-    ];
-  };
+  const abort: Abort = (r) => b.abort(instr, r);
   const arm = (kind: CarrierKind, r: IrValueId): IrInstr[] => {
     if (refused.includes(kind)) return abort(r);
     switch (MEMBER_ACCESS_ARM[kind]) {

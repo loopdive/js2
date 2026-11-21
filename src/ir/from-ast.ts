@@ -997,6 +997,13 @@ export interface IrFromAstResolver extends PreparedAsyncFromAstResolver {
   staticFunctionValue?(declaration: ts.VariableDeclaration): boolean;
   /** (#7354 F1b) Closures are function values with properties (`function-object-lowering.ts`). */
   createsFunctionObjects?(): boolean;
+  /** (#7354 C2) A function expression's code strictness, and the strictness it binds its own `this` with, if any. */
+  closureCodeStrictness?(expression: ts.FunctionLikeDeclaration): {
+    readonly functionCodeStrict?: boolean;
+    readonly ambientThisStrict?: boolean;
+  };
+  /** (#7354 C2) Some closure binds its own `this`: every call of a closure value is the dispatcher's. */
+  closuresBindReceivers?(): boolean;
   /**
    * (#7106 Stage 4) True when this lane lowers `recv.<method>(…arity args)` on
    * a dynamic receiver through the `__ir_dyn_mcall_<m>_<n>` brand-dispatch
@@ -6934,8 +6941,18 @@ function lowerDynamicStoreOperand(expr: ts.Expression, cx: LowerCtx): IrValueId 
 }
 
 function boxDynamicStoreOperand(value: IrValueId, expr: ts.Expression, cx: LowerCtx): IrValueId {
-  const functionValues = functionObjects.createsFunctionObjects(cx.resolver);
-  return functionObjects.dynamicStoreOperand(value, expr, functionObjectLoweringHost(cx), functionValues);
+  return functionObjects.dynamicStoreOperand(value, expr, functionObjectLoweringHost(cx), "member-store");
+}
+
+/** (#7354 C2) `name` holds a dynamic value: a dynamic local, or on the Prepared lane a dynamic module home. */
+function namesDynamicValue(name: ts.Identifier, cx: LowerCtx): boolean {
+  const binding = cx.scope.get(name.text);
+  if (binding?.kind === "local") return binding.type.kind === "dynamic";
+  return (
+    (binding === undefined || binding.kind === "moduleGlobal") &&
+    functionObjects.createsFunctionObjects(cx.resolver) &&
+    cx.resolver?.resolveModuleBinding?.(name)?.type.kind === "dynamic"
+  );
 }
 
 /**
@@ -7859,6 +7876,9 @@ function lowerCall(expr: ts.CallExpression, cx: LowerCtx, statementPosition = fa
   //   - top-level callee in calleeTypes → vanilla `call`
   const binding = cx.scope.get(calleeName);
   if (binding?.kind === "local" && (binding.type.kind === "closure" || binding.type.kind === "callable")) {
+    // (#7354 C2) A direct closure call installs no receiver; where a closure may read one, the dispatcher's call does.
+    if (cx.resolver?.closuresBindReceivers?.() === true)
+      return functionObjects.lowerBindingCall(expr, undefined, functionObjectLoweringHost(cx));
     return lowerClosureCall(binding.value, binding.type.signature, expr.arguments, cx, statementPosition);
   }
   // (#7354 F2) A call of another arity is the dispatcher's (through the home below), which pads and drops arguments.
@@ -8422,48 +8442,12 @@ function lowerNewExpression(expr: ts.NewExpression, cx: LowerCtx): IrValueId {
     );
   }
   const className = expr.expression.text;
-  // (#7106 S3a) `new <dynamic param>(args)` → `dyn.construct`: the selector
-  // admitted only a dynamic-typed parameter callee; every argument becomes a
-  // dynamic carrier (concrete operands box exactly like a member-store value).
-  const calleeBinding = cx.scope.get(className);
-  // (#7106 S3c) …or a self-guarded constructor VALUE (its function-object plan).
+  // (#7106 S3a, S3c, #7354 C2) `new <a value>(args)` → `dyn.construct`: a dynamic local or module home
+  // (`namesDynamicValue`), or a self-guarded constructor's function-object plan.
   const functionValueCallee =
-    calleeBinding === undefined && cx.topLevelFunctionValues?.get(expr.expression) !== undefined;
-  if ((calleeBinding?.kind === "local" && calleeBinding.type.kind === "dynamic") || functionValueCallee) {
-    const callee = lowerExpr(expr.expression, cx, irDynamic());
-    if (cx.builder.typeOf(callee).kind !== "dynamic") {
-      throw new IrUnsupportedError(
-        "constructor-resolution-unsupported",
-        "build",
-        `ir/from-ast: dynamic construct callee "${className}" lost its carrier (${cx.funcName})`,
-      );
-    }
-    const args: IrValueId[] = [];
-    for (const argExpr of expr.arguments ?? []) {
-      if (ts.isSpreadElement(argExpr)) {
-        throw new IrUnsupportedError(
-          "constructor-arity-unsupported",
-          "build",
-          `ir/from-ast: dynamic construct spread argument escaped selection (${cx.funcName})`,
-        );
-      }
-      let value = lowerExpr(argExpr, cx, irDynamic());
-      const valueType = cx.builder.typeOf(value);
-      if (valueType.kind !== "dynamic") {
-        const boxed = boxConcreteToDynamic(value, valueType, argExpr, cx);
-        if (boxed === null) {
-          throw new IrUnsupportedError(
-            "operand-coercion-unsupported",
-            "build",
-            `ir/from-ast: dynamic construct argument of ${describeIrType(valueType)} has no dynamic carrier (${cx.funcName})`,
-          );
-        }
-        value = boxed;
-      }
-      args.push(value);
-    }
-    return cx.builder.emitDynConstruct(callee, args);
-  }
+    cx.scope.get(className) === undefined && cx.topLevelFunctionValues?.get(expr.expression) !== undefined;
+  if (namesDynamicValue(expr.expression, cx) || functionValueCallee)
+    return functionObjects.lowerDynamicConstruct(expr, functionObjectLoweringHost(cx));
   if (cx.resolver?.isDirectModuleBinding?.(expr.expression) === true) {
     demoteToLegacy(
       "unknown-class-construction",
@@ -14758,23 +14742,6 @@ function lowerDynamicLaneIn(expr: ts.BinaryExpression, cx: LowerCtx): IrValueId 
 }
 
 /**
- * (#7106) The generic `instanceof` over two dynamic carriers. The selector admits
- * it only where legacy itself reaches its generic runtime operator
- * (`dynamicInstanceOfUse`), so a non-dynamic operand here is selector drift.
- */
-function lowerDynamicInstanceOf(expr: ts.BinaryExpression, cx: LowerCtx): IrValueId {
-  const value = lowerExpr(expr.left, cx, irDynamic());
-  const target = lowerExpr(expr.right, cx, irDynamic());
-  if (cx.builder.typeOf(value).kind !== "dynamic" || cx.builder.typeOf(target).kind !== "dynamic") {
-    demoteToLegacy(
-      "operand-coercion-unsupported",
-      `ir/from-ast: dynamic instanceof operand lost its dynamic carrier (${cx.funcName})`,
-    );
-  }
-  return cx.builder.emitDynInstanceOf(value, target);
-}
-
-/**
  * (#3144) `value instanceof C` where `C` names a locally-declared class.
  * Class-typed LHS → `class.instanceof` (runtime `__tag` compare against C's
  * tag + descendant tags — exactly legacy `compileInstanceOf`'s non-null-ref
@@ -14797,7 +14764,9 @@ function lowerInstanceOf(expr: ts.BinaryExpression, cx: LowerCtx): IrValueId {
   const className = expr.right.text;
   // (#7106) `<dynamic> instanceof <dynamic parameter>`: both carriers, then
   // legacy's generic runtime operator (`dyn.instanceof`).
-  if (cx.resolver?.dynamicInstanceOfAtLegacyParity?.(expr) === true) return lowerDynamicInstanceOf(expr, cx);
+  // (#7354 C2) …or, on the Prepared lane, `<any> instanceof <a dynamic value>` (`namesDynamicValue`).
+  if (cx.resolver?.dynamicInstanceOfAtLegacyParity?.(expr) === true || namesDynamicValue(expr.right, cx))
+    return functionObjects.lowerDynamicInstanceOf(expr, functionObjectLoweringHost(cx));
   if (cx.scope.get(className) !== undefined) {
     // A local binding shadows the class name — the selector rejects this
     // shape, so reaching here is only possible via drift; demote cleanly.
@@ -16434,11 +16403,16 @@ function lowerClosureExpression(expr: IrClosureLiteral, cx: LowerCtx): IrValueId
       demoteToLegacy("body-shape-rejected", "function-member closure source proof is stale");
     return lowerClosureExpressionWithSignature(expr, memberPlan.signature, new Set(), cx, {
       functionMemberClosure: memberPlan,
+      thisStrict: memberPlan.thisStrict,
     });
   }
   const dynamicSignature = ts.isFunctionExpression(expr) ? cx.resolver?.dynamicClosureSignature?.(expr) : undefined;
   if (dynamicSignature)
-    return lowerClosureExpressionWithSignature(expr, dynamicSignature, undefined, cx, { writtenParameterSlots: true });
+    return lowerClosureExpressionWithSignature(expr, dynamicSignature, undefined, cx, {
+      writtenParameterSlots: true,
+      functionCodeStrict: cx.resolver?.closureCodeStrictness?.(expr).functionCodeStrict,
+      thisStrict: cx.resolver?.closureCodeStrictness?.(expr).ambientThisStrict,
+    });
   // Inference is owned by the actual checker and confined to descriptor
   // literals and their nested closures. Other closure admission is unchanged.
   if (ownedByDescriptorLiteral(expr)) {
@@ -16884,6 +16858,8 @@ function liftClosureBody(
     domCallbackAuthority,
     functionMemberClosure,
     writtenParameterSlots,
+    functionCodeStrict,
+    thisStrict,
   }: ExactClosureLoweringOptions = {},
 ): IrFunction {
   const body = expr.body;
@@ -16955,13 +16931,12 @@ function liftClosureBody(
       if (sourceScope) withGeneratedSourceSite(sourceScope, "binding-scaffold", parameter, bindParameter);
       else bindParameter();
     }
-    // (#7106 Stage 4) The lifted closure binds its own `this` at entry too.
-    const thisStrict = functionMemberClosure.thisStrict;
-    if (thisStrict !== undefined) {
-      const bindThis = (): void => bindEntryThis(scope, builder, thisStrict);
-      if (sourceScope) withGeneratedSourceSite(sourceScope, "binding-scaffold", expr, bindThis);
-      else bindThis();
-    }
+  }
+  // (#7106 Stage 4, #7354 C2) A lifted closure that reads its own `this` binds it at entry too.
+  if (thisStrict !== undefined) {
+    const bindThis = (): void => bindEntryThis(scope, builder, thisStrict);
+    if (sourceScope) withGeneratedSourceSite(sourceScope, "binding-scaffold", expr, bindThis);
+    else bindThis();
   }
   // (#7106 Stage 4, #7354 Fa) A reassigned parameter (`message += ' '` in assert.js's `sameValue`,
   // `if (a === undefined) a = 3` in a function value) reads through mutable storage, seeded from its entry value:
@@ -16996,6 +16971,7 @@ function liftClosureBody(
     ownerUnitId: cx.ownerUnitId,
     returnType: signature.returnType,
     ...producerPolicyOptions(cx),
+    functionCodeStrict,
     calleeTypes: cx.calleeTypes,
     directCalls: cx.directCalls,
     ...functionObjects.projectFunctionValueLoweringPlans(cx),

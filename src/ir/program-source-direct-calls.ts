@@ -1,10 +1,14 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 /**
- * The Prepared source producer's direct-call plans that the program call graph does not hold. The call graph walks
- * each function declaration's own body, so it plans neither a call in top-level code (the module-init) nor (#7354
- * F1b, R7) a call inside a closure a unit creates. from-ast lowers a closure's body in its enclosing terminal unit's
- * context (the lifted body keeps that unit as its plan owner), so every such call is planned under that unit: a call
- * of a top-level function declaration by name is its direct call wherever it appears.
+ * The Prepared source producer's direct-call plans: the program call graph's, and those it does not hold. The call
+ * graph walks each function declaration's own body, so it plans neither a call in top-level code (the module-init) nor
+ * (#7354 F1b, R7) a call inside a closure a unit creates. from-ast lowers a closure's body in its enclosing terminal
+ * unit's context (the lifted body keeps that unit as its plan owner), so every such call is planned under that unit: a
+ * call of a top-level function declaration by name is its direct call wherever it appears.
+ *
+ * (#7354 C2, C2-D2) A function that binds its own `this` reads the receiver the dispatcher installed, so it may be
+ * entered only through the dispatcher (a call through its value, `new`): a direct call installs no receiver and
+ * refuses by name.
  */
 import { ts } from "../ts-api.js";
 import type { IrDirectCallLoweringPlan } from "./ast-lowering-plans.js";
@@ -15,13 +19,19 @@ import { makeIrIdentityImportedFunctionResolver } from "./imported-functions.js"
 import { IrUnsupportedError } from "./outcomes.js";
 import type { buildIrPlanningIdentityContext } from "./planning-identity.js";
 import type { IrModuleInitPlan } from "./program/startup.js";
+import type { buildIrProgramCallableBindingGraph } from "./program-callable-bindings.js";
+import type { ProgramDynamicContracts } from "./source-dynamic-contracts.js";
 
 type Signature = { readonly params: readonly IrType[]; readonly returnType: IrType | null };
 
+function unsupported(detail: string): never {
+  throw new IrUnsupportedError("type-resolution-unsupported", "build", detail);
+}
+
 /**
- * Plan every call of a top-level function by name in top-level code and in the closures of every unit, under the
- * terminal unit that lowers it (`diagnostic.active` names the unit being planned). A call the call graph planned
- * keeps its plan.
+ * Every direct call of the program: the call graph's `uses`, then every call of a top-level function by name in
+ * top-level code and in the closures of every unit, under the terminal unit that lowers it (`diagnostic.active` names
+ * the unit being planned).
  */
 export function prepareSourceDirectCalls(
   checker: ts.TypeChecker,
@@ -29,9 +39,22 @@ export function prepareSourceDirectCalls(
   identity: ReturnType<typeof buildIrPlanningIdentityContext>,
   startup: readonly IrModuleInitPlan[],
   signatures: ReadonlyMap<IrUnitId, Signature>,
-  directCalls: Map<ts.CallExpression, IrDirectCallLoweringPlan>,
+  uses: ReturnType<typeof buildIrProgramCallableBindingGraph>["uses"],
+  codeStrictness: ProgramDynamicContracts["codeStrictness"],
   diagnostic: { active: IrUnitId | undefined },
-): void {
+): ReadonlyMap<ts.CallExpression, IrDirectCallLoweringPlan> {
+  const directCalls = new Map<ts.CallExpression, IrDirectCallLoweringPlan>();
+  for (const use of uses) {
+    diagnostic.active = use.ownerUnitId;
+    const signature = signatures.get(use.targetUnitId);
+    const target = identity.terminalByUnitId.get(use.targetUnitId);
+    if (!signature || !target) unsupported(`direct call ${use.bindingId} has no complete target contract`);
+    directCalls.set(use.node, {
+      ownerUnitId: use.ownerUnitId,
+      target: irUnitFuncRef({ unitId: use.targetUnitId, name: target.displayName }),
+      signature,
+    });
+  }
   const callableResolver = makeIrIdentityImportedFunctionResolver(checker, sourceFiles, identity);
   const plan = (ownerUnitId: IrUnitId, call: ts.CallExpression): void => {
     if (directCalls.has(call) || !ts.isIdentifier(call.expression)) return;
@@ -40,12 +63,7 @@ export function prepareSourceDirectCalls(
       callableResolver.resolveTopLevelFunctionValueTarget(call.expression);
     if (!target) return;
     const signature = signatures.get(target.targetUnitId);
-    if (!signature)
-      throw new IrUnsupportedError(
-        "type-resolution-unsupported",
-        "build",
-        `startup call ${target.targetUnitId} has no complete declared contract`,
-      );
+    if (!signature) unsupported(`startup call ${target.targetUnitId} has no complete declared contract`);
     directCalls.set(call, {
       ownerUnitId,
       target: irUnitFuncRef({ unitId: target.targetUnitId, name: target.targetName }),
@@ -72,4 +90,16 @@ export function prepareSourceDirectCalls(
     diagnostic.active = unit.id;
     ts.forEachChild(declaration, (child) => visit(unit.id, child, false));
   }
+  for (const { ownerUnitId, target } of directCalls.values()) {
+    const declaration =
+      target.binding.kind === "unit" ? identity.declarationByUnitId.get(target.binding.unitId) : undefined;
+    diagnostic.active = ownerUnitId;
+    if (
+      declaration &&
+      ts.isFunctionDeclaration(declaration) &&
+      codeStrictness(declaration).ambientThisStrict !== undefined
+    )
+      unsupported(`a direct call of ${target.name} installs no receiver for its 'this'`);
+  }
+  return directCalls;
 }

@@ -38,6 +38,7 @@ export type RuntimeFeature =
   | "js.closure.method"
   | "js.closure.apply-vector"
   | "js.closure.undefined"
+  | "js.closure.receiver"
   | VectorCallableRuntimeFeature
   | OrdinaryObjectRuntimeFeature
   | NumberRemainderRuntimeFeature
@@ -430,6 +431,8 @@ export const ORDINARY_OBJECT_RUNTIME_FEATURES = Object.freeze([
   "js.object.is-error",
   "js.object.error-field",
   "js.object.init-function",
+  "js.object.is-constructor",
+  "js.object.inherits",
 ] as const);
 export type OrdinaryObjectRuntimeFeature = (typeof ORDINARY_OBJECT_RUNTIME_FEATURES)[number];
 export const ORDINARY_OBJECT_RUNTIME_PROVIDER_IDS = Object.freeze([
@@ -446,6 +449,8 @@ export const ORDINARY_OBJECT_RUNTIME_PROVIDER_IDS = Object.freeze([
   "native.js.object.is-error",
   "native.js.object.error-field",
   "native.js.object.init-function",
+  "native.js.object.is-constructor",
+  "native.js.object.inherits",
 ] as const);
 export type OrdinaryObjectRuntimeProviderId = (typeof ORDINARY_OBJECT_RUNTIME_PROVIDER_IDS)[number];
 

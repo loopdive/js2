@@ -28,6 +28,14 @@ import {
 /** The dynamic value's carrier, the native externref. */
 export const CARRIER: IrType = Object.freeze({ kind: "val", val: Object.freeze({ kind: "externref" }) });
 
+/** The carrier value `value` (a native string or a carrier value) into `result`, unchanged. */
+export const carried = (value: IrValueId, result: IrValueId): IrInstr => ({
+  kind: "coerce.to_externref",
+  value,
+  result,
+  resultType: CARRIER,
+});
+
 const STRING: IrType = Object.freeze({ kind: "string" });
 const F64: IrType = Object.freeze({ kind: "val", val: Object.freeze({ kind: "f64" }) });
 const TEST_RESULT: IrType = INTRINSIC_DEFINITIONS["js.value.is_string"].signature.result;
@@ -193,6 +201,14 @@ export function chainBuilders(
     alloc: allocations.fresh("string", STRING),
     concatMode: "immutable",
   });
+  /**
+   * (#7354 C2) The run-time abort `js.value.unsupported` as a carrier answer into `result`: its text is the answer, as
+   * an intrinsic is pure and an abort whose result nothing used would be dropped as dead code.
+   */
+  const abort = (instr: IrInstr, result: IrValueId): IrInstr[] => {
+    const text = fresh();
+    return [intrinsic(instr, "js.value.unsupported", [], text), carried(text, result)];
+  };
   /** (#7354 M2) The once-evaluated error `value`'s `field`, a native string carrier, into `result`. */
   const errorField = (value: IrValueId, field: keyof typeof ERROR_FIELD, result: IrValueId): IrInstr[] => {
     const selector = fresh();
@@ -237,23 +253,16 @@ export function chainBuilders(
     text,
     branch,
     concat,
+    abort,
     errorField,
     kindChain,
     valueCount: () => valueCount,
   };
 }
-type ChainBuilders = ReturnType<typeof chainBuilders>;
+export type ChainBuilders = ReturnType<typeof chainBuilders>;
 
 /** Which of OrdinaryToPrimitive's two receivers a `to-primitive` kind is. */
 const receiverKind = (kind: CarrierKind): "object" | "function" => (kind === "function" ? "function" : "object");
-
-/** The carrier value `value` (a native string or a carrier value) into `result`, unchanged. */
-const carried = (value: IrValueId, result: IrValueId): IrInstr => ({
-  kind: "coerce.to_externref",
-  value,
-  result,
-  resultType: CARRIER,
-});
 
 /**
  * (#7354 Str2, O2b, F2) The conversions of the dynamic value: ToString (`stringOf`, one arm per kind the value may
