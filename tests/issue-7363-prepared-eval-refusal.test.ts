@@ -28,7 +28,9 @@ const options = {
 const INVARIANT = "certified global eval lost an owning predicate";
 const refusal = (owner: string) => `ir/from-ast: eval statement has no eval provider in ${owner}`;
 const ordinaryCall = (owner: string) => `ir/from-ast: direct call to "eval" has no exact AST-site plan in ${owner}`;
-const DYNAMIC_CALL = "dynamic operation __ir_dyn_call_argument has no Prepared intrinsic";
+// (#7354 F2) A call through the catch binding: no function value in the program, so always the TypeError.
+const DYNAMIC_CALL =
+  "dynamic operation js.closure.call:1 in a program that creates no function value has no Prepared intrinsic";
 const PATTERN = "whole-program binding pattern requires the existing destructuring producer";
 
 /** The compile's refusals. The checker's remarks on a binding named `eval` are warnings and are left out. */
@@ -71,7 +73,7 @@ describe("#7363 slice 1 — an eval statement on the Prepared path refuses by na
     ["a hoisted local var", 'function f() { eval("1"); var eval = 1; }', ordinaryCall("f")],
     ["a block function, for its function", 'function f() { eval("1"); { function eval() {} } }', ordinaryCall("f")],
     ["a block function, for its file", 'function f() { eval("1"); }\n{ function eval() {} }', ordinaryCall("f")],
-    ["a parameter", 'function f(eval) { eval("1"); }\nf(function (v) { return v; });', DYNAMIC_CALL],
+    ["a parameter", 'function f(eval) { eval("1"); }\nf(1);', DYNAMIC_CALL],
     [
       "a destructured parameter",
       'function f({ eval }) { eval("1"); }\nf({ eval: 1 });',
