@@ -588,7 +588,7 @@ describe("native builtin issuer authentication", () => {
       entry.type.object.fields[6]!.mutable = true;
     }
     if (role === "singleton") entry.singleton.object.type = { kind: "externref" };
-    expect(() => requireNativeBuiltinFunctionReservations(f.tx, p, f.kernelDependencies)).toThrow(/altered|changed/);
+    expect(() => f.tx.seal()).toThrow(/altered|changed/);
   });
   it("refuses invalid names, lengths, bodies, aliases and coercion callbacks without allocation", () => {
     const f = builtinFunctionFixture(false, false),
@@ -675,19 +675,19 @@ describe("native builtin issuer authentication", () => {
       expect(() => fillNativeBuiltinFunctionResources(f.tx, p)).toThrow(/duplicate/);
       if (role === "body") {
         p.entries[0]!.algorithm.object.body.push({ op: "nop" });
-        expect(() => requireCompletedNativeBuiltinFunctionKernel(f.tx, p, f.kernelDependencies)).toThrow(
+        expect(() => f.tx.seal()).toThrow(
           "physical module reservations: altered completed function builtins:function-prototype:algorithm",
         );
       } else if (role === "global") {
         p.entries[0]!.singleton.object.init.push({ op: "nop" });
-        expect(() => requireCompletedNativeBuiltinFunctionKernel(f.tx, p, f.kernelDependencies)).toThrow(
+        expect(() => f.tx.seal()).toThrow(
           "physical module reservations: altered completed global builtins:function-prototype:singleton",
         );
       } else {
         const shape = p.entries[0]!.type.object;
         if (shape.kind !== "struct") throw Error("missing authentic builtin layout");
         shape.fields[6]!.mutable = true;
-        expect(() => requireCompletedNativeBuiltinFunctionKernel(f.tx, p, f.kernelDependencies)).toThrow(
+        expect(() => f.tx.seal()).toThrow(
           /physical module reservations: altered (type descriptor builtins:function-prototype:type|reserved type definition\/signature)/,
         );
       }

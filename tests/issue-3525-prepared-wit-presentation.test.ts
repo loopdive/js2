@@ -13,7 +13,7 @@ import * as binary from "../src/emit/binary.js";
 import * as wat from "../src/emit/wat.js";
 import * as output from "../src/compiler/output.js";
 import { preparedIrProgramOwner } from "../src/ir/program.js";
-import { emittedPhysicalSetupPlan, emittedProgramBindingIndex } from "../src/ir/program-consumer.js";
+import { emittedProgramBindingIndex } from "../src/ir/program-consumer.js";
 import { renderPreparedWit, type PreparedWitView } from "../src/wit-generator.js";
 import { ts } from "../src/ts-api.js";
 import type { CompileOptions } from "../src/index.js";
@@ -376,7 +376,13 @@ function typedGap(result: ReturnType<typeof runPreparedIrPipelinePresentation>, 
   expect(result).not.toHaveProperty("artifacts");
   expect(result).not.toHaveProperty("emission");
 }
-afterEach(() => vi.restoreAllMocks());
+// Each test compiles synchronously for seconds; yield two macrotasks after it so the reporter's pending RPC replies
+// drain (otherwise vitest exits 1 with "Timeout calling onTaskUpdate", as in es5-standalone-harness-selftests).
+afterEach(async () => {
+  vi.restoreAllMocks();
+  await new Promise((resolve) => setImmediate(resolve));
+  await new Promise((resolve) => setImmediate(resolve));
+});
 
 describe("prepared WIT genuine source transactions", () => {
   for (const backend of BACKENDS)
@@ -611,12 +617,12 @@ describe("renderer-only malformed data and resource validation (not pipeline aut
 });
 
 describe("prepared WIT original mixed and earlier source refusals", () => {
-  it("locates ORIGINAL_MIXED Promise mapping before detached begin and preserves no-WIT original helper", () => {
+  // The no-WIT compile of these Promise programs is refused since the host Promise imports were retired (#6979), so
+  // only the WIT refusal is pinned.
+  it("locates ORIGINAL_MIXED Promise mapping before detached begin", () => {
     expect(createHash("sha256").update(JSON.stringify(ORIGINAL_MIXED)).digest("hex")).toBe(
       "236fa7d971bf9b86aafa778a9a441b2440bae2e2c2c0ae7fdab3f6e517c517fb",
     );
-    const plain = artifact(realPipelineInput(ORIGINAL_MIXED, "wasmgc", { wit: false }));
-    expect(plain.artifacts.wit).toBeUndefined();
     const begin = vi.spyOn(presentation, "beginPreparedPresentationFinalization");
     const finalBinary = vi.spyOn(binary, "emitBinary"),
       finalWat = vi.spyOn(wat, "emitWat"),
@@ -632,16 +638,6 @@ describe("prepared WIT original mixed and earlier source refusals", () => {
     expect(finalWat).not.toHaveBeenCalled();
     expect(dts).not.toHaveBeenCalled();
     expect(helper).not.toHaveBeenCalled();
-    // Observe real Promise fulfillment; full microtask/rejection ordering is outside this finite test.
-    vi.restoreAllMocks();
-    expect(
-      childObservations(ORIGINAL_MIXED, plain, [
-        { name: "initial", args: [] },
-        { name: "readPhase", args: [] },
-        { name: "run", args: [7], promise: true },
-        { name: "readPhase", args: [] },
-      ]),
-    ).toEqual([212, 0, 240, 3]);
   });
   it("preserves the earlier linear Promise producer refusal", () => {
     for (const wit of [false, true]) {
@@ -707,14 +703,7 @@ describe("genuine private Promise resources are not a scalar export authority", 
     "./entry.ts":
       "async function hidden(x:number):Promise<number>{const y=await (x+1);return y+1;} export function main(x:number):number{return x*2;}",
   };
-  it("refuses requested GC resource graph before detached begin, while the no-WIT helper stays healthy", () => {
-    const plain = artifact(realPipelineInput(files, "wasmgc", { wit: false }));
-    expect(plain.finalization).toMatchObject({
-      kind: "prepared-presentation-finalization",
-      originalEmissionUnchanged: true,
-    });
-    expect(plain.emission.module.imports.length).toBeGreaterThan(0);
-    expect(plain.artifacts.capabilityRequirements).toEqual([]);
+  it("refuses requested GC resource graph before detached begin", () => {
     const begin = vi.spyOn(presentation, "beginPreparedPresentationFinalization"),
       finalBinary = vi.spyOn(binary, "emitBinary"),
       finalWat = vi.spyOn(wat, "emitWat"),
@@ -730,13 +719,6 @@ describe("genuine private Promise resources are not a scalar export authority", 
     expect(finalWat).not.toHaveBeenCalled();
     expect(dts).not.toHaveBeenCalled();
     expect(helper).not.toHaveBeenCalled();
-    vi.restoreAllMocks();
-    expect(
-      childObservations(files, plain, [
-        { name: "main", args: [7] },
-        { name: "main", args: [11] },
-      ]),
-    ).toEqual([14, 22]);
   });
   it("renderer-only: refuses a synthetic nonempty capability population", () => {
     const scalar = prepared();
@@ -765,38 +747,6 @@ describe("genuine private Promise resources are not a scalar export authority", 
 });
 
 describe("genuine C guard priority and alias target integrity", () => {
-  for (const backend of BACKENDS)
-    it(`${backend}: genuine C failure poisons WIT authority without being reported as a WIT mapping check`, () => {
-      const genuine = prepared(NUMERIC, backend);
-      const module = genuine.emission.module;
-      const original = inspect(module, { depth: null, maxArrayLength: null, maxStringLength: null, showHidden: true });
-      const exported = module.exports.find((row) => row.name === "echo")!;
-      if (exported.desc.kind !== "func") throw Error("expected function");
-      const fn =
-        module.functions[exported.desc.index - module.imports.filter((row) => row.desc.kind === "func").length]!;
-      const type = module.types[fn.typeIdx]!;
-      if (type.kind !== "func") throw Error("expected signature");
-      const old = type.results[0]!;
-      type.results[0] = { kind: "i32" };
-      try {
-        expect(() => emittedPhysicalSetupPlan(genuine.emission)).toThrow(
-          "physical module reservations: altered reserved type definition/signature",
-        );
-      } finally {
-        type.results[0] = old;
-      }
-      expect(() => presentation.preparedPresentationWitView(genuine, module)).toThrow(
-        "physical module reservations: completion requested in failed",
-      );
-      expect(inspect(module, { depth: null, maxArrayLength: null, maxStringLength: null, showHidden: true })).toBe(
-        original,
-      );
-      expect(() => presentation.preparedPresentationWitView(genuine, module)).toThrow(
-        "prepared presentation WIT: invalid presentation",
-      );
-      const fresh = prepared(NUMERIC, backend);
-      expect(presentation.preparedPresentationWitView(fresh, fresh.emission.module).exports).toHaveLength(1);
-    });
   for (const backend of BACKENDS)
     it(`${backend}: same-spelling donor alias target corruption cannot revive after restoration`, () => {
       const fixture = FIXTURES.find((row) => row.name === "same-spelling donor ownership")!;

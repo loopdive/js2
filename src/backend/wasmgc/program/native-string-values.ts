@@ -692,11 +692,7 @@ export function requireCompletedNativeStringValues(
   completedOwner(tx, pack);
   return pack;
 }
-/** Every emit runs this; its nested completion queries share the one layout audit taken after them. */
 function completedOwner(tx: PhysicalModuleReservations, pack: NativeStringValueReservations): Owner {
-  return tx.audited(() => checkCompletedOwner(tx, pack));
-}
-function checkCompletedOwner(tx: PhysicalModuleReservations, pack: NativeStringValueReservations): Owner {
   const owner = ownerFor(tx, pack);
   if (!owner.filled) fail("incomplete native string value resources");
   requireCompletedNativeStringLiterals(tx, pack.strings);
@@ -739,19 +735,16 @@ export function emitPreparedNativeStringLiteral(
   storage?: IrGlobalRef,
   materializer?: IrFuncRef,
 ): readonly Instr[] {
-  // The literal's inventory and index queries share the completion check's one trailing layout audit.
-  return tx.audited((): readonly Instr[] => {
-    const owner = checkCompletedOwner(tx, pack);
-    const requested = tuple(ownerUnitId, value, alloc, storage, materializer);
-    const index = owner.input.plan.literalUses.findIndex((row) =>
-      sameDemandTuple(owner.input.demands, row.demandIndex, requested),
-    );
-    if (index < 0) fail("literal tuple is outside the closed projection plan");
-    const binding = nativeStringLiteralReservationInventory(tx, pack.strings).requests[index]!.binding;
-    return binding.kind === "global"
-      ? [{ op: "global.get", index: tx.physicalIndex(binding.global) }]
-      : [{ op: "call", funcIdx: binding.function.handle }];
-  });
+  const owner = completedOwner(tx, pack);
+  const requested = tuple(ownerUnitId, value, alloc, storage, materializer);
+  const index = owner.input.plan.literalUses.findIndex((row) =>
+    sameDemandTuple(owner.input.demands, row.demandIndex, requested),
+  );
+  if (index < 0) fail("literal tuple is outside the closed projection plan");
+  const binding = nativeStringLiteralReservationInventory(tx, pack.strings).requests[index]!.binding;
+  return binding.kind === "global"
+    ? [{ op: "global.get", index: tx.physicalIndex(binding.global) }]
+    : [{ op: "call", funcIdx: binding.function.handle }];
 }
 
 /**

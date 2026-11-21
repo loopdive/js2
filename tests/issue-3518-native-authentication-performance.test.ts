@@ -283,7 +283,7 @@ describe("fresh batch physical-index authentication", () => {
     expect(calls).toBe(0);
   });
 
-  it("never calls a supplied iterator or public imports.filter after auditing", () => {
+  it("never calls a supplied iterator or public imports.filter", () => {
     const r = ledger(true);
     let calls = 0;
     const tokens = [r.fn, r.global, r.fn];
@@ -303,26 +303,22 @@ describe("fresh batch physical-index authentication", () => {
     expect(r.fn.object.body).toHaveLength(1);
   });
 
-  it("audits once per batch and never rereads the public ordinal after that audit", () => {
+  it("never reads the public ordinal", () => {
     const r = ledger();
     let reads = 0;
     Object.defineProperty(r.module.funcOrdinalToPosition, "0", {
       configurable: true,
       get() {
         reads++;
-        if (reads % 2 === 0) r.fn.object.body.length = 0;
         return 0;
       },
     });
     expect(r.tx.physicalIndices(Array.from({ length: 17 }, () => r.fn))).toEqual(Array(17).fill(0));
-    expect(reads).toBe(1);
-    expect(r.fn.object.body).toHaveLength(1);
-    // The next call must perform a fresh audit, whose getter mutation is detected.
-    expect(() => r.tx.physicalIndices([])).toThrow("altered completed function fn");
-    expect(reads).toBe(2);
+    expect(reads).toBe(0);
   });
 
-  it("audits input reflection-trap mutations before computing any coordinates", () => {
+  // The layout audit runs at the seal (#7354 Perf4), so a mutation made by an input trap is reported there.
+  it("reports input reflection-trap mutations at the seal", () => {
     const r = ledger();
     let traps = 0;
     const tokens = new Proxy([r.fn], {
@@ -334,12 +330,13 @@ describe("fresh batch physical-index authentication", () => {
         return Reflect.getOwnPropertyDescriptor(target, key);
       },
     });
-    expect(() => r.tx.physicalIndices(tokens)).toThrow("altered completed function fn");
+    expect(r.tx.physicalIndices(tokens)).toEqual([0]);
     expect(traps).toBe(1);
+    expect(() => r.tx.seal()).toThrow("altered completed function fn");
   });
 
   it.each(["body", "locals", "initializer", "type", "ordinal", "population", "undefined", "hole", "nan-bits"])(
-    "refuses %s mutation on an unrelated resource after a previous successful batch",
+    "refuses %s mutation on an unrelated resource at the seal after a successful batch",
     (change) => {
       const r = ledger();
       if (change === "nan-bits") {
@@ -354,7 +351,7 @@ describe("fresh batch physical-index authentication", () => {
         expect(tx.physicalIndices([fn])).toEqual([0]);
         view.setBigUint64(0, 0x7ff8000000000002n, true);
         Object.assign(fn.object.body[0]!, { value: view.getFloat64(0, true) });
-        expect(() => tx.physicalIndices([])).toThrow("altered completed function nan");
+        expect(() => tx.seal()).toThrow("altered completed function nan");
         return;
       }
       expect(r.tx.physicalIndices([r.table])).toEqual([0]);
@@ -384,7 +381,7 @@ describe("fresh batch physical-index authentication", () => {
           Reflect.deleteProperty(r.fn.object.locals, "0");
           break;
       }
-      expect(() => r.tx.physicalIndices([])).toThrow(/altered|population/);
+      expect(() => r.tx.seal()).toThrow(/altered|population/);
       expect(r.tx.state).toBe("failed");
     },
   );
