@@ -164,7 +164,7 @@ describe("#7354 M1 — refusals that stay", () => {
     [
       "G45: Object.defineProperty",
       "var o = {}; Object.defineProperty(o, 'p', {value:1});",
-      "module binding o has no exact typed storage: not-direct",
+      "ir/from-ast: Object.defineProperty is not an admitted Object static (<module-init>)",
     ],
     [
       "G45: new TypeError",
