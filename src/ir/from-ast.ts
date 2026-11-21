@@ -9261,9 +9261,9 @@ function tryLowerObjectStaticCall(expr: ts.CallExpression, cx: LowerCtx): IrValu
   const plan = objectStaticCallPlan(expr, realm);
   if (plan === undefined) {
     if (!isOwnPropertyTestTerritory(expr, realm)) return null;
-    throw new IrInvariantError(
-      "selection-preparation-mismatch",
-      "build",
+    refuseUnselected(
+      cx.unselected,
+      "call-resolution-unsupported",
       `ir/from-ast: own-property test on a script var planned by neither #7335's arm nor the row (${cx.funcName})`,
     );
   }

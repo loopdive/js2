@@ -107,6 +107,18 @@ describe("#7354 S — a script var named by Object.defineProperty", () => {
       `var obj = {}; function f() { obj.p = 1; } f(); if (obj.p !== ${expected}) throw 1;`;
     expect(await run(program("1"))).toBe("returned");
     expect(await run(program("2"))).toBe("threw");
+    // (#7354 M1) a member write selects the realm: ~20 s per compile under load
+  }, 180_000);
+
+  // The sweep of object operations on such a var found one from-ast arm that threw an invariant out of `compile()`:
+  // the own-property test on a dynamic script var, which only the selector refused. It is the selector's refusal now.
+  it.each([
+    ["at top level", "var o = {p: 1}; if (!o.hasOwnProperty('p')) throw 1;", "<module-init>"],
+    ["in a function", "var o = {p: 1}; function t() { return o.hasOwnProperty('p'); } t();", "t"],
+  ])("refuses an own-property test on the var %s by name", async (_, program, unit) => {
+    expect(await refusals(program)).toEqual([
+      `ir/from-ast: own-property test on a script var planned by neither #7335's arm nor the row (${unit})`,
+    ]);
   });
 
   // What still has no home keeps its reason: a non-writable global name, and a var of one of several scripts (each
