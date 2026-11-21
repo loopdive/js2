@@ -3428,6 +3428,330 @@ Results on the integrated head:
   learned concatenation, to prune ToString / `typeof` / `+` chains. They read different stages of the same function
   (`box` before legalization, its intrinsics after), so one function needs a design pass, not a merge edit.
 
+## F0 result (2026-11-20, branch `claude/7354-f0`, merged with main 052569d335)
+
+**Built.** The strict Prepared front door drops unused top-level bindings before analysis by calling the existing
+#3418 pass `elideDeadTopLevelBindings`. There is no second liveness walk.
+
+- **Where:** `elideDeadBindings` in `src/test262/test262-prepared-entry.ts`, called by `present()` before
+  `analyzeMultiSource`.
+- **Same CI path:** the CI runner reaches this same `present()`. `scripts/compiler-bundle-entry.ts` re-exports
+  `compile`/`compileMulti`/`createIncrementalCompiler` from this module, and `selected(options)` sends every
+  `wholeProgram` request to `present()`. This settles §14's open point.
+- **Gate:** the one shared predicate `deadBindingElisionApplies` (moved out of `compileSourceSync`; the ordinary
+  compile now calls it too). It covers host-free targets, the native regime, and excludes
+  `standaloneScriptVarBindings`.
+- **One source only:** a graph of several sources keeps every binding, because a Script `var` of one source is
+  visible to another.
+- **Positions:** blanking is same-length, so positions are unchanged. The frontend-failure observation still
+  reports the supplied text, because the runner hash-matches it against the job's source.
+- **Ordinary pipeline:** it never reaches `present()`; `compileMulti`, including Temporal, goes through
+  `src/index.ts`. It sees only the two soundness fixes below.
+
+**Soundness of the pass (both callers).**
+
+- **Droppable:** a top-level `var`/`let`/`const` statement where every declarator is a plain name and:
+  - every initializer is function/arrow, a literal, `undefined`/`NaN`/`Infinity`/`globalThis`, an object or array
+    literal of such values (no spread, shorthand or computed key; methods/accessors allowed), or `!`/`void`/parens
+    of any of these;
+  - and the name is never mentioned again outside a dropped statement (as an identifier, property name, string
+    literal or literal eval text).
+- **Keeps everything** when computed `eval`/`Function` source survives.
+- **Never drops** function or class declarations.
+
+Two wrong answers in the existing pass, fixed for both callers:
+
+1. **`-`/`+`/`~` of a non-primitive.** These were treated as pure, but they run ToPrimitive.
+   `var x = -{ valueOf() { throw 1; } }` was dropped; node throws. They are now pure only on a pure primitive
+   operand (`isPurePrimitive`).
+2. **Duplicate lexical declarations.** `let a = 1; let a = 2;` (and `var a; let a`, `let a, a`) is an early
+   SyntaxError, but the pass dropped the pair because each statement is the other's only mention. The ordinary
+   standalone and default compiles both accepted it on main. Now a name declared twice with a `let`/`const` among
+   them keeps every declaration. `tests/test262-prepared-entry.test.ts` caught this.
+
+**Known residual, shared with the ordinary compile.** The pass sees names, not reflection on the global object.
+`globalThis[k]` with a computed key, `for (k in this)`, and `Object.keys(globalThis)` could observe a dropped
+global `var`. The Prepared path refuses all three today (tested), so no answer is wrong yet. A slice that admits
+global-object reflection must revisit this.
+
+**Tests:** `tests/issue-7354-f0-dead-top-level-bindings.test.ts`, 38 tests against node:
+
+- 9 accepted programs, each with a right and a wrong answer;
+- 1 effect-throw pair;
+- 17 kept-binding refusals;
+- 3 global-reflection refusals;
+- 3 duplicate-lexical early errors;
+- the gc, linear, multi-source and frontend-text cases.
+
+`tests/issue-3418.test.ts` gains 2 unit rows (purity and redeclaration). 13 of 14 mutations are killed. The
+survivor is the JS/TS `ScriptKind` choice: a grammar difference produces a parse diagnostic, and the pass then
+returns the source unchanged.
+
+**Pins updated** (each probe's whole program was a dead binding, so it now compiles; each now reads its binding):
+
+- H `var o = { a: 1 }` / `var arr = [1]` / `var f = function () {}`;
+- Str2 `var g = globalThis`;
+- #7364 `var r = /a/`, `preparedProgram("var x;")` and `("var x = 1;")`.
+
+**Bytes (base main 052569d335, file-copy A/B):**
+
+- Ordinary pipeline, 50 test262 files × {default, standalone} (100 rows, 14 CE): identical.
+- 10 Temporal files through `compileWithTemporalGlobal`, standalone provider rebuilt by each compiler: identical,
+  provider binary included.
+- Prepared fixtures (`check:prepared-bytes` rows 0-399): 396 identical. The 4 that differ (rows 38, 49, 50, 51:
+  `var x = 1; var x = 2;`, `var o = { a: 1 };`, `var arr = [1];`, `var f = function () {};`) contain only dead
+  bindings and now emit the empty-program module.
+
+**Sample (411 rows, real runner, standalone, base main vs branch):** the first-gap tally is identical. 14
+negatives pass. 293 `dyn.member_get`, 73 `not-direct`, 26 `assert` in verifyProperty, 2 switch `f`, 1
+`Test262Error`, 1 `print` (the runner's print hook names `print`, so the shim is kept there), 1 parse.
+
+The shim was never a first gap in the runner (its TS diagnostics are skipped there). On the runner-assembled source
+through the strict entry, base reports `Duplicate identifier 'print'` and
+`Cannot find name '__js2wasm_global_script_eval'`. The branch no longer reports them, and a body that calls
+`print` still refuses at `print`.
+
+**Validator:** `#7354 O … refuses what the later steps build` trips the #7380 validator (`retains a dynamic type
+after legalization`) on main without this change. That is a finding for slice O, not F0.
+
+**Not verified:** a step-past (FD) census of the gaps after the first.
+
+### Review round 1 (2026-11-20)
+
+The verdict was correctness NOT MET: the elision failed open on the Prepared path. Each finding and what changed:
+
+1. **Dropping a statement dropped the only evidence of its error.** Main refused the reviewer's 12 programs;
+   F0 compiled them and returned while node throws (early errors inside function bodies, `+1n`, declarations of
+   `undefined`/`NaN`/`Infinity`).
+   - (a) **Fail closed (Prepared caller).** `elideDeadBindings` (`src/test262/prepared-dead-bindings.ts`) now
+     runs on the analysis of the UNELIDED graph. It pins every statement holding a frontend error:
+     - the TypeScript diagnostics (syntactic, and semantic unless skipped);
+     - the ES early errors under the given, Script and Module goals (`sourceEarlyErrors`, now shared with
+       `validatePipelineSource` in `src/compiler/prepared-pipeline-boundary.ts`).
+
+     The pass takes the pins as `pinnedOffsets`. A graph the elision changes is analyzed a second time.
+     Cost on the 411-row sample's `compile_ms`: median 44 → 52 ms, p90 74 → 90 ms (main vs branch, same runner).
+   - **The runner skips semantic diagnostics,** so in runner mode the pins come from the ES early-error detector.
+     It missed two of the reviewer's families on every pipeline; both are fixed in the detector:
+     - duplicate labels inside a function or class body were never checked (`checkDuplicateLabels` stopped at
+       the boundary);
+     - a Script's top-level `let`/`const`/`class` of a restricted global is a SyntaxError in
+       GlobalDeclarationInstantiation: new `checkRestrictedGlobalLexicals`, gated on the stated Script goal.
+
+     `let undefined`, `const NaN` and `const undefined` were wrong on main's Prepared path in runner mode too,
+     without elision.
+   - (b) **Restricted globals, both callers:** a declaration of `undefined`/`NaN`/`Infinity` is never dropped
+     (`RESTRICTED_GLOBAL_NAMES`, `src/compiler/early-errors/predicates.ts`).
+   - (c) **BigInt, both callers:** `-`/`+`/`~` are pure only on an allow-list of primitive literals
+     (`purePrimitiveKind`), and `+` not on a BigInt (`+1n`, `+(-1n)` throw). The old comment "ToNumeric runs no
+     code" is gone.
+   - **Ordinary caller:** it has the same hole, because it elides before its only analysis. Taking the
+     diagnostics-aware rule needs a second parse plus detector walk on every standalone compile and its own
+     byte proof, so it is filed as **#7445** with the programs.
+2. **CI `changed-root-tests`.** The two unit rows moved into the F0 test file, and `tests/issue-3418.test.ts`
+   is main's again.
+3. **Script-kind duplication.** The Prepared caller now passes `multiFileScriptKind` straight through instead of
+   re-mapping it.
+4. **Standing hazard (confirmed by the reviewer):** programs that read the global object by computed name are
+   wrong on the ordinary path on main and on this PR. The cases are `globalThis[k]`, `Object.keys(globalThis)`,
+   for-in over `this`, `globalThis.eval(computed)`, `(function(){}).constructor(...)`, `toJSON`/`name`/`value` read
+   through the global object. The Prepared path is safe only because it refuses them today. The programs are in
+   #7445.
+5. **CI `quality` (boundaries and import cycles).** The new file is classified in
+   `scripts/compiler-boundaries.json` like its sibling. The pass reads `RESTRICTED_GLOBAL_NAMES` through
+   `early-errors/index.ts`, so it adds no second edge into `src/compiler`.
+
+**Proof.**
+
+- **Tests:** `tests/issue-7354-f0-dead-top-level-bindings.test.ts` has 64 tests, all green, in the runner's
+  options (semantic diagnostics skipped, Script goal stated):
+  - 22 "refuses or throws as node does" rows (the reviewer's 12 plus 10);
+  - 1 unstated-goal row.
+- **Mutations:**
+
+  | mutation | rows that fail |
+  |---|---|
+  | diagnostics pin removed | 5 |
+  | restricted-name rule | 4 |
+  | BigInt rule | 4 |
+  | goal union | 1 |
+  | label descent | 2 |
+  | restricted-lexical rule | 3 |
+
+- **Reviewer tables:** 77 + 37 programs on 4 lanes (Prepared standalone and gc, ordinary standalone and
+  default). No Prepared lane is wrong, and there is no new wrong answer anywhere. The ordinary lanes lose 7 of
+  main's wrong answers: `+` on a BigInt ×4, `-(-{valueOf})`, and two duplicate-lexical programs.
+- **Bytes against main:**
+  - Ordinary pipeline, 50 files × 2 targets: identical.
+  - 10 Temporal rows: identical, provider included.
+  - Prepared fixtures 0-399: the same 4 all-dead rows differ as before, the rest are identical.
+- **Sample:** the first-gap tally is unchanged.
+
+### Review round 2 (2026-11-20)
+
+Quality was met. Correctness was not met, by one test262 regression.
+
+**Finding.** `checkRestrictedGlobalLexicals` (added in round 1) turned
+`language/global-code/decl-lex-restricted-global.js` into a compile error. That test is `let undefined;`,
+`negative: phase: runtime`. CI's runner passes `scriptGoal`, so the row scored `compile_error` where main passes
+on host and standalone. My earlier local sweeps did not pass `scriptGoal`, which is why they missed it.
+
+The rule was wrong in kind: the SyntaxError belongs to GlobalDeclarationInstantiation, a run-time step of the
+Script, not to the early errors. With no stated goal it also made an ordinary `let undefined;` throw at start,
+which is wrong for a Module.
+
+**Fix.**
+
+- The rule is removed. The elision still never drops a declaration of `undefined`/`NaN`/`Infinity`.
+- The pass, the IR script-var home (`src/ir/module-binding-script-var-home.ts`) and the bare-identifier write
+  guard (`src/codegen/builtin-nonwritable-write.ts`) now read one set, `GLOBAL_CONSTANTS`
+  (`src/shared/ambient-intrinsics.ts`, now exported). The fourth copy, `IMMUTABLE_GLOBAL_PROPERTY_NAMES` in
+  `src/codegen/expressions/runtime-eval-provider.ts`, is unused; noted in #7445.
+- `goalsOf` walks the early-error detector once for a stated goal, and only under the Script and Module goals for
+  an unstated one.
+- The labels comment now says why a function body restarts its label set.
+- One more one-line detector fix: `checkDuplicateLabelsInBlock` now checks a function's body inside a class
+  static block. The function/class boundary test both label walks repeated is now one predicate,
+  `isLabelScopeBoundary`.
+
+**Proof.**
+
+- **F0 tests:** 67, green. They include a row pinning `decl-lex-restricted-global`'s shape on the ordinary compile
+  with the Script goal (it compiles, and instantiation throws), and two detector rows for duplicate labels.
+- **Restricted-lexical rows:** `let undefined = 1;`, `const NaN = 1;` and `const undefined = 1;` left the
+  "refuses or throws" list. The Prepared path in runner mode compiles and returns them on main and here alike: a
+  GlobalDeclarationInstantiation error it does not model (#7445). They stay covered by the never-elide unit row.
+  `let Infinity;` refuses, as on main.
+- **Runner sweep with `scriptGoal`:** the reviewer's 779 files (scratch patch of `tests/test262-runner.ts`,
+  reverted), host. Verdicts are identical main vs branch, before and after the static-block fix.
+  `decl-lex-restricted-global.js` passes on both, and on standalone.
+- **Named test files, failures per side (main / branch):** issue-990 2 / 1, issue-3632 3 / 3, issue-2923 9 / 9,
+  test262-prepared-entry 0 / 0.
+- **Bytes:** ordinary 50 × 2 targets and 10 Temporal rows identical to main. Prepared fixtures: the same 4
+  all-dead rows as before.
+
+**Still accepted on main and here alike** (filed in #7445): `let {undefined} = {}`, `let [NaN] = []` and
+`function NaN(){}` at the Script top level.
+
+### Review round 3 (2026-11-21)
+
+Quality was met and the round-2 blocker is fixed.
+
+**Finding.** `goalsOf` treated `inferModuleStrictArguments: false` with no `scriptGoal` as a stated goal. That
+option set only marks a Script top level, while the Script-only rules (`import.meta`, `export`) key on
+`scriptGoal`. So `var g = function () { return import.meta; };` was elided and compiled on the Prepared path,
+while node throws a SyntaxError and main and round 2 refused it.
+
+**Fix: always walk both goals** (`GOAL_WALKS` in `src/test262/prepared-dead-bindings.ts`), instead of trusting a
+stated goal. Even a stated Script goal is not enough: the Script walk tolerates one function level for the
+runner's synthetic test wrapper, so `var g = function () { await 0; };` with `scriptGoal: true` was dropped too,
+and node rejects it. Pinning an error the real goal lacks only keeps a dead binding.
+
+**Detector fix, same family.** Under an explicit Module goal the detector missed `await` as a binding or label
+inside a plain function (§13.1.1: `function f() { var await; }`). `checkReservedIdentifiers` now reports that in
+binding and label positions only. Expression positions stay as they were, because TypeScript reads some top-level
+AwaitExpressions (`await /x/`) as an identifier. A first, unrestricted version turned ~25 top-level-await rows into
+compile errors and was narrowed.
+
+| test262 module files mentioning `await` (305, runner with the goal patch, host) | main | branch |
+|---|---:|---:|
+| pass | 169 | 176 |
+| compile_error | 38 | 38 |
+| fail | 80 | 73 |
+| skip | 18 | 18 |
+
+The 7 new passes are negative rows: class/label/`var` named `await` in a Module. No row regresses.
+
+**Tests (F0 file, 75 green):**
+
+- the reviewer's program with `inferModuleStrictArguments: false` alone, with and without skipSemanticDiagnostics;
+- a table over {`scriptGoal`: true, absent} × {`inferModuleStrictArguments`: true, false, absent}, whose dead
+  binding is one of four programs:
+  - Script-only (`import.meta`), refused wherever a Script is possible;
+  - Module-only (`var await` in a function), refused wherever a Module is possible;
+  - both-goals (`await 0` in a function), always refused;
+  - legal, compiles everywhere.
+
+**Mutations:**
+
+| mutation | tests that fail |
+|---|---|
+| walk only the given options | 7 |
+| drop the Module `await` rule | 3 |
+
+**Byte difference the reviewer saw.** `language/types/number/S8.5_A4_T1.js` contains `var NaN;`. The pass now
+keeps that declaration (never-elide rule), so its binary differs from main. It passes on both sides.
+
+**Module-goal finding, recorded in #7445.** A dead `let undefined = 1;` on the ordinary compile under a stated
+Module goal now meets the existing trap for a kept restricted declaration and throws at instantiation, where node
+and main are fine. Restricting the never-elide rule to Script or unstated goals needs the goal threaded through
+`elideWithIrIds` and both callers, not a two-line change, so it is in #7445 with the per-goal table. The body of
+#7445 is corrected: `checkRestrictedGlobalLexicals` is gone, and the per-goal behaviour is now stated.
+
+### Review round 4 (2026-11-21)
+
+**Finding.** Round 3's `GOAL_WALKS` ran the Script walk on the SourceFile the real gate then validates. The
+detector memoizes per node: `strictModeCache` and the Module-goal mark are a `WeakMap`/`WeakSet` keyed by node.
+So the Module-goal gate read the Script walk's "not strict" answers, breaking the rule in `predicates.ts` that no
+cached answer may predate the mark. Under the Module goal, `var l = 010;`, `function f(a, a) {}` and `'\07'`
+compiled, and a dead `var d = function (a, a) {}` was elided. Two test262 module negatives
+(`module-code/early-import-eval.js`, `early-import-as-eval.js`) lost their early-error refusal.
+
+**Fix, structural.** Each walk parses the text afresh (`ts.createSourceFile`, same script kind) and discards the
+parse (`frontendErrorOffsets`, `src/test262/prepared-dead-bindings.ts`). Both caches are keyed by node identity,
+so a separate parse cannot write anything the real gate reads. The comment at the parse says why.
+
+**Test seam and property test.** The strict entry's `compile` takes the elision as a test-only third parameter.
+Five option sets: runner, unstated goal, `inferModuleStrictArguments: false` alone, Module goal, and Script with
+semantic diagnostics. For every program of the F0 test file under each set, the gate's verdict with the elision
+must equal its verdict with the identity, except where the bypassed compile was refused only by the backend. A
+program the elision lets compile must then run as node runs it (Script sets).
+
+| mutation | caught by |
+|---|---|
+| round 4's defect: walks back on the real SourceFile | 9 tests, among them the Module-goal property row |
+| round 3's defect: walk only the given options | 10 tests, among them three property rows |
+
+The four round-4 programs are rows too, refused under the Module goal with and without semantic diagnostics.
+
+**Proof.**
+
+- **F0 tests:** 88, green.
+- **Module negatives,** run the IR-lane way (reviewer's `prepneg.mts`: worker options, assembled harness,
+  standalone), 198 files on main, 873efed6e4 and the head:
+  - `early-import-eval.js` and `early-import-as-eval.js` are `REF-FE:early` on all three;
+  - the only changes are the 7 `await` negatives, from back-end to early refusal.
+- **457-file A/B** (`scriptGoal` patch, standalone, main vs head): exactly 7 fail → pass (`class-name-ident-await*`
+  ×4, `reserved-words/await-module`, `labeled/value-await-module*` ×2), 0 regressions.
+- **Wrong answers:**
+  - round-4 `await` programs, 46 × 14 lanes: no new wrong answer vs main on any lane. The 2 left on the Prepared
+    lanes (M12, an `export` with no stated goal) are identical on main.
+  - round-3 attack programs, 30 × 8 lanes: 0 wrong.
+- **Early-error test files, failing tests per side (main / head):**
+
+  | file | main | head |
+  |---|---:|---:|
+  | issue-990 | 2 | 1 |
+  | issue-3632 | 3 | 3 |
+  | issue-2923-eval-const-broaden | 9 | 9 |
+  | 17 others | 0 | 0 |
+
+  `test262-prepared-entry` is 44/44.
+- **Bytes:** ordinary 50 × 2 targets identical to main; Prepared fixtures as before (the same 4 all-dead rows).
+- **Cost** (30 rows of the 411-row sample, Prepared, Script, semantic skipped, median of 3):
+
+  | tree | median | p90 |
+  |---|---:|---:|
+  | main | 33.1 ms | 66.7 ms |
+  | 873efed6e4 | 35.2 ms | 90.4 ms |
+  | head | 39.6 ms | 75.8 ms |
+
+  The two extra parses cost a few ms per row.
+
+**Quality.** `checkReservedIdentifiers` has its JSDoc back. Three shapes are still accepted under the Module goal,
+as on main: `({await}) => 0`, `({await} = {})`, `var g = function await(){}`. They are in #7445. The detector is
+otherwise untouched this round.
+
 
 ## M1 result (2026-11-20, branch `claude/7354-m1`)
 

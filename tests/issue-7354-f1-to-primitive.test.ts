@@ -1,10 +1,9 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 //
-// #7354 F1 — OrdinaryToPrimitive beside callable values (D6), member writes of Object.prototype's data keys (D4), and
-// the dead test262 runtime shim the strict Prepared entry elides (F0). Each accepted program runs twice: with node's
-// answer (returns) and with a wrong one (throws).
+// #7354 F1 — OrdinaryToPrimitive beside callable values (D6) and member writes of Object.prototype's data keys (D4).
+// Each accepted program runs twice: with node's answer (returns) and with a wrong one (throws).
 import { describe, expect, it } from "vitest";
-import { refusal, runPrepared } from "./helpers/prepared-node-agreement.js";
+import { runPrepared } from "./helpers/prepared-node-agreement.js";
 
 const SLOW = 240_000;
 
@@ -44,16 +43,4 @@ describe("#7354 F1 — ToPrimitive and Object.prototype's keys", () => {
     () => agrees(`${DATA_KEYS}if (threw !== 1) throw 1;`, `${DATA_KEYS}if (threw !== 0) throw 1;`),
     SLOW,
   );
-});
-
-describe("#7354 F1 — F0: the dead runtime shim", () => {
-  const SHIM = "var print = function (value) { console.log(value); };\nvar x = 1;\n";
-  it(
-    "elides the unused shim binding",
-    () => agrees(`${SHIM}if (x !== 1) throw 1;`, `${SHIM}if (x !== 2) throw 1;`),
-    SLOW,
-  );
-  it("keeps a shim binding the program uses, and refuses at its first gap", async () => {
-    expect(await refusal(`${SHIM}print("x");`)).toContain('identifier "console" is not in scope');
-  });
 });

@@ -2,11 +2,9 @@
 import * as legacy from "../index.js";
 import type { CompileError, CompileOptions, CompileResult } from "../index.js";
 import { analyzeMultiSource } from "../checker/index.js";
-import { elideDeadTopLevelBindings } from "../deadcode-elide.js";
-import { detectEarlyErrors } from "../compiler/validation.js";
-import { earlyErrorGoals } from "../compiler/prepared-pipeline-boundary.js";
-import { ts } from "../ts-api.js";
 import { normalizeMultiFileName } from "../checker/multi-file-paths.js";
+import type { ts } from "../ts-api.js";
+import { elideDeadBindings } from "./prepared-dead-bindings.js";
 import { runPreparedIrPipelinePresentation, preparedFrontendRejectionObservation } from "../compiler.js";
 import type { PreparedIrPipelinePresentationResult } from "../compiler/ir-program-presentation.js";
 import type { JavaScriptAdapterManifestV1 } from "../adapter-manifest.js";
@@ -14,6 +12,8 @@ import { emittedPhysicalSetupPlan } from "../ir/program-consumer.js";
 import { freezePreparedIrValue } from "../ir/program.js";
 import { failResult } from "../compiler/output.js";
 import { resolveCompileTargetProfile } from "../target-profile.js";
+
+type DeadBindingElision = typeof elideDeadBindings;
 
 export interface RequiredPreparedRequest {
   readonly kind: "prepared-program-required";
@@ -131,33 +131,6 @@ function sourceGraph(files: Record<string, string>, entryFile: string): Record<s
   }
   if (!names.has(normalizeMultiFileName(entryFile))) invalidRequest("entry absent from source graph");
   return copy;
-}
-
-/**
- * (#7354 F0) One script is compiled as `compileSource` compiles it (#3418): its dead pure top-level bindings (the
- * test262 runtime shim's unused `print` and `$262`) are blanked first, at the same length, so every origin stays, on
- * the targets where it does. In a source graph (`single` is false) a top-level binding is a global another script
- * may read, so nothing is elided there.
- */
-function withoutDeadBindings(
-  files: Record<string, string>,
-  entryFile: string,
-  options: Test262CompileOptions,
-  single: false | ReturnType<typeof resolveCompileTargetProfile>,
-): Record<string, string> {
-  const elides = single && (single.environment === "none" || single.environment === "wasi" || single.nativeRegime);
-  if (!elides || options.standaloneScriptVarBindings) return files;
-  const scriptKind = options.allowJs === true || entryFile.endsWith(".js") ? ts.ScriptKind.JS : ts.ScriptKind.TS;
-  // A blanked declaration takes its early errors (a redeclaration, a strict-mode rule in its initializer) with it,
-  // so a source with one is left as it is and the frontend rejects it.
-  const parsed = ts.createSourceFile(entryFile, files[entryFile]!, ts.ScriptTarget.Latest, true, scriptKind);
-  if (detectEarlyErrors(parsed, earlyErrorGoals(options)).some((error) => error.severity !== "warning")) return files;
-  const elided: Record<string, string> = Object.create(null);
-  Object.defineProperty(elided, entryFile, {
-    value: elideDeadTopLevelBindings(files[entryFile]!, scriptKind).source,
-    enumerable: true,
-  });
-  return elided;
 }
 
 /** The frontend must retain EVERY supplied root, including unreachable fixtures. */
@@ -381,9 +354,10 @@ function present(
   entryFile: string,
   options: Test262CompileOptions,
   singleSource = false,
+  elide: DeadBindingElision = elideDeadBindings,
 ): CompileResult {
+  const exactFiles = sourceGraph(files, entryFile);
   const profile = resolveCompileTargetProfile(options);
-  const exactFiles = withoutDeadBindings(sourceGraph(files, entryFile), entryFile, options, singleSource && profile);
   if (options.backend !== undefined && options.backend !== profile.backend)
     return failed({ kind: "adapter-unsupported", detail: "explicit backend contradicts resolved target" }, [
       {
@@ -423,12 +397,17 @@ function present(
         },
       ],
     );
-  const ast = analyzeMultiSource(exactFiles, entryFile, undefined, {
-    allowJs: options.allowJs,
-    skipSemanticDiagnostics: options.skipSemanticDiagnostics,
-    ...(options.platform ? { platform: options.platform } : {}),
-  });
-  if (!completeAnalyzedGraph(exactFiles, entryFile, ast))
+  const analyze = (graph: Record<string, string>) =>
+    analyzeMultiSource(graph, entryFile, undefined, {
+      allowJs: options.allowJs,
+      skipSemanticDiagnostics: options.skipSemanticDiagnostics,
+      ...(options.platform ? { platform: options.platform } : {}),
+    });
+  // #7354 F0 decides on the unelided graph's diagnostics; a graph it changes is analyzed again.
+  const suppliedAst = analyze(exactFiles);
+  const analyzedFiles = elide(exactFiles, suppliedAst, profile, options);
+  const ast = analyzedFiles === exactFiles ? suppliedAst : analyze(analyzedFiles);
+  if (!completeAnalyzedGraph(analyzedFiles, entryFile, ast))
     return failed(
       { kind: "adapter-unsupported", detail: "frontend did not retain the complete supplied name/text graph" },
       [
@@ -442,6 +421,8 @@ function present(
         },
       ],
     );
+  const supplied = new Map(Object.entries(exactFiles).map(([file, text]) => [normalizeMultiFileName(file), text]));
+  const suppliedText = (source: ts.SourceFile): string => supplied.get(normalizeMultiFileName(source.fileName))!;
   // The public single-source compiler always applies its parser-syntax gate,
   // including allowJs. Multi-source calls retain their captured option policy.
   const pipelineOptions = singleSource
@@ -476,7 +457,7 @@ function present(
           backend: profile.backend,
           target: profile.target,
           diagnostics: observed.diagnostics,
-          sources: ast.sourceFiles.map((source) => ({ file: source.fileName, text: source.text })),
+          sources: ast.sourceFiles.map((source) => ({ file: source.fileName, text: suppliedText(source) })),
         }) as RequiredPreparedFrontendFailure)
       : undefined;
     return failed(outcome, outcome.errors, frontendFailure);
@@ -548,12 +529,17 @@ function present(
   return result;
 }
 
-export async function compile(source: string, options?: Test262CompileOptions): Promise<CompileResult> {
+/** `elide` is a test seam only: a test passes the identity to compare the gate's verdict without the elision. */
+export async function compile(
+  source: string,
+  options?: Test262CompileOptions,
+  elide: DeadBindingElision = elideDeadBindings,
+): Promise<CompileResult> {
   if (!selected(options)) return legacy.compile(source, options);
   const captured = strictOptions(undefined, options);
   if (captured.fileName !== undefined && typeof captured.fileName !== "string")
     invalidRequest("fileName must be a string");
-  return present({ [captured.fileName ?? "input.ts"]: source }, captured.fileName ?? "input.ts", captured, true);
+  return present({ [captured.fileName ?? "input.ts"]: source }, captured.fileName ?? "input.ts", captured, true, elide);
 }
 export async function compileMulti(
   files: Record<string, string>,
