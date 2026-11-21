@@ -35,7 +35,7 @@ import type {
 } from "./prepared-contracts.js";
 import { INTRINSIC_DEFINITIONS } from "../core/intrinsics.js";
 import { forEachPreparedIrInstruction } from "../runtime/prepared-instructions.js";
-import { containsDynamic } from "./dynamic-value-legalization.js";
+import { containsDynamic } from "./dynamic-carrier-types.js";
 import {
   prepareIrProgramRuntimeCallables,
   preparedIrRuntimeAbiAnchor,

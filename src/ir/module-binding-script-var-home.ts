@@ -25,6 +25,8 @@ import { isJsPropertyDeclarationTarget } from "../shared/binding-writes.js";
 import { ts } from "../ts-api.js";
 import { type NamedVariableDeclaration, scriptVarReadsFollowInitializer } from "./module-binding-script-var.js";
 import { type IrModuleBindingDeclaration, type IrScriptVarHome, moduleBindingDeclarations } from "./module-bindings.js";
+import { IrUnsupportedError } from "./outcomes.js";
+import { moduleDeclares } from "./select-planned-closure-operands.js";
 
 /**
  * The `scriptVarHome` resolver option of a pipeline whose IR owns every script `var`'s storage, over the
@@ -47,6 +49,14 @@ export function irOwnedScriptVarHome(
     // top-level variable, and a lexical or ES-module global is typed by the resolver.
     if ((declaration.parent.flags & ts.NodeFlags.BlockScoped) !== 0 || ts.isExternalModule(declaration.getSourceFile()))
       return undefined;
+    // (#7354 Fa, N1) The var's home would not hold the hoisted function, and a direct call of the name binds the
+    // declaration: a script var sharing its name with a function declaration has no sound home.
+    if (moduleDeclares(declaration.getSourceFile(), declaration.name.text, true))
+      throw new IrUnsupportedError(
+        "type-resolution-unsupported",
+        "build",
+        `script var ${declaration.name.text} shares its binding with a function declaration`,
+      );
     // A script `var` of a non-writable global value property never stores.
     if (declaration.getSourceFile() !== soleSource || GLOBAL_CONSTANTS.has(declaration.name.text)) return undefined;
     // (#7372 1b) A repeated `var` is one binding: the home is its first declarator's (the resolver's canonical one),

@@ -24,6 +24,11 @@ import { addFuncType } from "./registry/types.js";
 import { RE_FLAG_G } from "./regex/bytecode.js";
 import { compilePattern } from "./regex/compile.js";
 import { ensureLateImport, flushLateImportShifts } from "./shared.js";
+import {
+  IR_DYN_CALL_ARGUMENT_FN,
+  IR_DYN_CALL_BOX_FN,
+  IR_DYN_CALL_VALUE_FN,
+} from "../shared/contracts/dynamic-call-helpers.js";
 
 export { IR_DYN_ADD_FN };
 export const IR_DYN_LT_FN = "__ir_dyn_lt";
@@ -32,9 +37,7 @@ export const IR_DYN_GT_FN = "__ir_dyn_gt";
 export const IR_DYN_GE_FN = "__ir_dyn_ge";
 export const IR_DYN_METHOD_CALL_0_FN = "__ir_dyn_method_call_0";
 export const IR_DYN_METHOD_CALL_1_FN = "__ir_dyn_method_call_1";
-export const IR_DYN_CALL_BOX_FN = "__ir_dyn_call_box";
-export const IR_DYN_CALL_VALUE_FN = "__ir_dyn_call_value";
-export const IR_DYN_CALL_ARGUMENT_FN = "__ir_dyn_call_argument";
+export { IR_DYN_CALL_BOX_FN, IR_DYN_CALL_VALUE_FN, IR_DYN_CALL_ARGUMENT_FN };
 export const IR_DYN_STRING_REPLACE_FN = "__ir_dyn_string_replace";
 
 export type IrDynamicRuntimeNeed =

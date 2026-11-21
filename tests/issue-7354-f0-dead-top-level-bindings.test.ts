@@ -21,6 +21,7 @@ import {
   requiredPreparedFrontendFailure,
   type Test262CompileOptions,
 } from "../src/test262/test262-prepared-entry.js";
+import { yieldToRpc } from "./helpers/prepared-node-agreement.js";
 
 // The runner's options for a Script test (scripts/test262-worker.mjs): semantic diagnostics skipped, goal stated.
 const options = (target: "standalone" | "gc" = "standalone"): Test262CompileOptions =>
@@ -42,6 +43,7 @@ const messages = (result: { errors: readonly { message: string }[] }) => result.
 
 /** Compile through the strict Prepared entry, run the top-level code and report whether it threw. */
 async function run(source: string): Promise<"returned" | "threw"> {
+  await yieldToRpc();
   const result = await compile(source, options());
   expect(messages(result)).toEqual([]);
   expect(requiredPreparedEmission(result)).toBeDefined();
@@ -65,28 +67,33 @@ function node(source: string): "returned" | "threw" {
 }
 
 async function refusal(source: string, target: "standalone" | "gc" = "standalone"): Promise<string> {
+  await yieldToRpc();
   const result = await compile(source, options(target));
   expect(result.success).toBe(false);
   return messages(result).join("\n");
 }
 
-// A dead binding whose initializer refuses on this base: the module-init closure has no return annotation.
-const DEAD = "var o = { m: function () { return 1; } };";
-const CLOSURE = "closure must have a return type annotation (<module-init>)";
+// A dead binding whose initializer refuses when it is kept: the closure reads `this` (slice C2). (#7354 F1) A function
+// expression is a value now, so the closure's body, not its shape, is what refuses.
+const DEAD = "var o = { m: function () { return this; } };";
+const CLOSURE = "'this' reference outside an instance method body";
+// (#7354 F1) `-` of an object or function value is not lowered yet.
+const MINUS = "unary '-' expects number";
 const SHIM = readFileSync(new URL("../scripts/test262-fyi-runtime.js", import.meta.url), "utf8");
 
-// Programs beside a dropped binding; `@` is the asserted value (1 right, 2 wrong).
+// Programs beside a dropped binding; `@` is the asserted value (1 right, 2 wrong). (#7354 F1) Each dropped closure
+// reads `this`, so the unelided program (the verdict test below) still refuses fast instead of lowering a realm.
 const RUNS = [
   ["an unused object with a function-valued property", `${DEAD} var r = 1; if (r !== @) throw 1;`],
-  ["an unused function expression", "var g = function (v) { return v; }; var r = 1; if (r !== @) throw 1;"],
+  ["an unused function expression", "var g = function (v) { return this; }; var r = 1; if (r !== @) throw 1;"],
   ["the test262 runtime shim", `${SHIM}var r = 1; if (r !== @) throw 1;`],
   [
     "two unused bindings that name each other",
-    "var a = { f: function () { return b; } }; var b = { g: function () { return a; } }; var r = 1; if (r !== @) throw 1;",
+    "var a = { f: function () { return (b, this); } }; var b = { g: function () { return (a, this); } }; var r = 1; if (r !== @) throw 1;",
   ],
   [
     "a statement whose declarators are all unused",
-    `var o = { m: function () { return 1; } }, k = 2; var r = 1; if (r !== @) throw 1;`,
+    `var o = { m: function () { return this; } }, k = 2; var r = 1; if (r !== @) throw 1;`,
   ],
   ["a hoisted function used before its declaration", `if (f() !== @) throw 1; function f() { return 1; } ${DEAD}`],
   ["a unary operator on a primitive literal", `var x = +"3"; ${DEAD} var r = 1; if (r !== @) throw 1;`],
@@ -106,7 +113,7 @@ const KEPT = [
   ["it is read by `typeof`", `${DEAD} if (typeof o !== "object") throw 1;`, CLOSURE],
   ["a parameter of the same name shadows it", `${DEAD} function f(o) { return o; } var r = f(1);`, CLOSURE],
   ["a local of the same name shadows it", `${DEAD} function f() { var o = 1; return o; } var r = f();`, CLOSURE],
-  ["only a nested closure names it", `${DEAD} function f() { return function () { return o; }; } var r = 1;`, "(f)"],
+  ["only a nested closure names it", `${DEAD} function f() { return function () { return o; }; } var r = 1;`, CLOSURE],
   [
     "only an unused function names it",
     `${DEAD} function unused() { return o.m(); } var r = 1;`,
@@ -114,14 +121,18 @@ const KEPT = [
   ],
   [
     "a sibling declarator has an effect (`var a = …, b = f();`)",
-    "function boom(v) { if (v) throw 7; return 0; } var a = { m: function () { return 1; } }, b = boom(1);",
+    "function boom(v) { if (v) throw 7; return 0; } var a = { m: function () { return this; } }, b = boom(1);",
     CLOSURE,
   ],
   // `-{ valueOf }` calls valueOf (node throws): dropping it would return.
-  ["its `-` runs a user valueOf", "var x = -({ valueOf: function () { throw 1; } });", CLOSURE],
+  ["its `-` runs a user valueOf", "var x = -({ valueOf: function () { throw 1; } });", MINUS],
   ["its `+` converts an array", `var x = +[]; var r = 1;`, "empty array literal needs a vec-typed hint"],
-  ["its `-` converts a function", "var x = -function () { return 1; }; var r = 1;", CLOSURE],
-  ["its `+` converts an arrow function", "var x = +(() => 1); var r = 1;", CLOSURE],
+  ["its `-` converts a function", "var x = -function () { return 1; }; var r = 1;", MINUS],
+  [
+    "its `+` converts an arrow function",
+    "var x = +(() => 1); var r = 1;",
+    "closure must have a return type annotation",
+  ],
   ["its `+` converts a RegExp", "var x = +/a/; var r = 1;", "RegExp literal has no provider"],
   // A script `var valueOf = …` would make it a call.
   ["its `+` converts the global object", "var x = +globalThis; var r = 1;", 'identifier "globalThis"'],
@@ -129,10 +140,10 @@ const KEPT = [
   ['a string literal spells it (`globalThis["o"]`)', `${DEAD} var s = "o"; if (s !== "o") throw 1;`, CLOSURE],
   [
     "a property name spells it",
-    "var m = { f: function () { return 1; } }; var p = { m: 1 }; if (p.m !== 1) throw 1;",
+    "var m = { f: function () { return this; } }; var p = { m: 1 }; if (p.m !== 1) throw 1;",
     CLOSURE,
   ],
-  ["the test262 shim's `print` is called", `${SHIM}print("x");`, "module-level closure binding 'print'"],
+  ["the test262 shim's `print` is called", `${SHIM}print("x");`, 'identifier "console" is not in scope'],
 ] as const;
 
 // Global-object reflection the pass cannot see; the Prepared path refuses each.
@@ -304,7 +315,7 @@ it("#7354 F0 keeps a goal-dependent early error when the goal is unstated", asyn
 const SCRIPT_ONLY = "var g = function () { return import.meta; };";
 const MODULE_ONLY = "var g = function () { var await; };";
 const BOTH = "var g = function () { await 0; };";
-const LEGAL = "var g = function () { return 1; };";
+const LEGAL = "var g = function () { return this; };";
 /** The runner's options with the goal flags replaced (`undefined` leaves one unstated). */
 const goalOptions = (scriptGoal: boolean | undefined, inferModule: boolean | undefined) => {
   const { scriptGoal: _s, inferModuleStrictArguments: _m, ...rest } = options() as Record<string, unknown>;
@@ -403,6 +414,7 @@ describe("#7354 F0 — the elision cannot change the real gate's verdict", () =>
     "%s",
     async (_name, set, script) => {
       for (const source of PROGRAMS) {
+        await yieldToRpc();
         const elided = await compile(source, set);
         const bypassed = await compile(source, set, identity);
         const same =

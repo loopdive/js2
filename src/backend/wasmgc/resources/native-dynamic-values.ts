@@ -3,13 +3,19 @@
 /**
  * (#7354 D1) The dynamic value's own runtime functions on the Prepared
  * standalone lane: strict equality, ToBoolean (#7354 T), the `undefined` value,
- * the `undefined` probe and (#7354 Ty) the string `typeof` test. Every body is a shared pure builder; the number and Boolean carrier
- * functions they call are the issued primitive owners', never a lookalike.
+ * the `undefined` probe, (#7354 Ty) the string `typeof` test and (#7354 Fa) the function test. Every body
+ * is a shared pure builder; the number and Boolean carrier functions they call are the issued primitive
+ * owners', never a lookalike.
  */
-import type { PhysicalModuleReservations, FunctionReservation } from "../../../wasm/physical/module-reservations.js";
+import type {
+  PhysicalModuleReservations,
+  FunctionReservation,
+  TypeReservation,
+} from "../../../wasm/physical/module-reservations.js";
 import type { IrInstrIntrinsic } from "../../../ir/core/nodes.js";
 import type { NativeValueResourcePlan } from "../../../ir/program/native-value-resources.js";
 import { buildObjectSameValueBody } from "../../../runtime/wasmgc/values/object-same-value-body.js";
+import { buildClosureRootTest } from "../../../runtime/wasmgc/values/closure-invocation-bodies.js";
 import {
   buildExternRefTestBody,
   buildIsUndefinedBody,
@@ -51,6 +57,9 @@ export interface NativeDynamicValueSelection {
   readonly isString: boolean;
   /** (#7354 Str2) The native string of a string-kinded value (ToString's string arm). */
   readonly asString: boolean;
+  readonly isFunction: boolean;
+  /** (#7354 F1) The run-time abort of a conversion the realm cannot answer yet. */
+  readonly unsupported: boolean;
 }
 
 /**
@@ -76,6 +85,8 @@ export function selectNativeDynamicValues(
     ),
     isString: has("js.value.is_string"),
     asString: has("js.value.as_string"),
+    isFunction: has("js.value.is_function"),
+    unsupported: has("js.value.unsupported"),
   };
   return Object.values(selection).some(Boolean) ? selection : undefined;
 }
@@ -90,6 +101,8 @@ const ROWS = [
   ["isString", "typeof-string", "__typeof_string", { params: [EXTERNREF], results: [I32] }],
   // (#7354 Str2) The result is the string owner's AnyString type, resolved by key.
   ["asString", "as-string", "__js_as_string", { params: [EXTERNREF], results: ["any-string"] }],
+  ["isFunction", "typeof-function", "__typeof_function", { params: [EXTERNREF], results: [I32] }],
+  ["unsupported", "unsupported", "__js_value_unsupported", { params: [], results: ["any-string"] }],
 ] as const;
 
 /** `stringKey` names the native string owner whose AnyString type `as_string` answers. */
@@ -128,6 +141,8 @@ export interface NativeDynamicValueReservations {
   readonly isUndefined?: FunctionReservation;
   readonly isString?: FunctionReservation;
   readonly asString?: FunctionReservation;
+  readonly isFunction?: FunctionReservation;
+  readonly unsupported?: FunctionReservation;
 }
 /** (#7354 Str) The issued string resources strict equality's string arm calls. */
 export interface NativeDynamicValueStrings {
@@ -188,9 +203,11 @@ export function reserveNativeDynamicValueResources(
   return pack;
 }
 
+/** `closureRoot` is the source closures' wrapper root, when the program has a closure. */
 export function fillNativeDynamicValueResources(
   tx: PhysicalModuleReservations,
   pack: NativeDynamicValueReservations,
+  closureRoot: TypeReservation | undefined,
 ): void {
   const owner = owners.get(pack);
   if (!owner || owner.tx !== tx) fail("foreign resource owner");
@@ -258,6 +275,14 @@ export function fillNativeDynamicValueResources(
       locals: [],
       body: [{ op: "local.get", index: 0 }, { op: "any.convert_extern" }, { op: "ref.cast", typeIdx: anyStrTypeIdx }],
     });
+  // (#7354 Fa) A function value enters the carrier only as a source closure, and every source closure carrier
+  // descends from the wrapper root. The test is requested only where the source creates a function value, and such a
+  // program either lowers a closure (so the root exists) or refuses before emission.
+  if (pack.isFunction) {
+    if (!closureRoot) fail("the function test needs the source closures' wrapper root");
+    tx.fillFunction(pack.isFunction, { locals: [], body: buildClosureRootTest(0, tx.physicalIndex(closureRoot)) });
+  }
+  if (pack.unsupported) tx.fillFunction(pack.unsupported, { locals: [], body: [{ op: "unreachable" }] });
   owner.filled = true;
 }
 

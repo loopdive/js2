@@ -125,6 +125,24 @@ export function functionObjectDynamicValue(
   );
 }
 
+/**
+ * A concrete value for a dynamic parameter, return or argument crosses the same explicit carrier boundary as a
+ * concrete equality operand (#2949 S5.P): the canonical tag-aware boxer, and (#7320) a closure boxes as a function
+ * value (`functionObjectDynamicValue`). A value with no box (an ambiguous ref or i32) is returned as it is, so the
+ * caller's assignability check refuses it.
+ */
+export function concreteIntoDynamic(
+  value: IrValueId,
+  source: ts.Expression,
+  cx: FunctionObjectLoweringHost,
+): IrValueId {
+  const type = cx.builder.typeOf(value);
+  if (type.kind === "dynamic") return value;
+  const boxed =
+    type.kind === "closure" ? functionObjectDynamicValue(value, source, cx) : cx.boxConcrete(value, type, source);
+  return boxed ?? value;
+}
+
 export function lowerFunctionObjectMemberCall(
   expr: ts.CallExpression,
   access: ts.PropertyAccessExpression | ts.ElementAccessExpression,
