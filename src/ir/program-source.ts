@@ -1662,12 +1662,12 @@ export function prepareIrProgramSources(
       diagnostic,
     );
     prepareSourceGlobals(sourceFiles, identity, moduleResolver, globalById, globalByDeclaration, diagnostic);
-    diagnostic.active = startup[0]?.unitId ?? undefined;
     const functionValues = functionDeclarationValues(
       dynamicContracts.functionDeclarationValues,
       startup,
       identity,
       signatures,
+      diagnostic,
     );
     for (const value of functionValues) {
       globalById.set(value.home.globalRef.binding.bindingId, value.global);

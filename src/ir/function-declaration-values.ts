@@ -42,8 +42,9 @@ export function functionDeclarationsReadAsValues(
   checker: ts.TypeChecker,
   sourceFiles: readonly ts.SourceFile[],
 ): readonly ts.FunctionDeclaration[] {
-  if (sourceFiles.length !== 1) return [];
   const source = sourceFiles[0]!;
+  // An ES module's declarations are no global bindings; an export names the unit (the export join's question).
+  if (sourceFiles.length !== 1 || ts.isExternalModule(source)) return [];
   const read = new Set<ts.Declaration>();
   const visit = (node: ts.Node): void => {
     if (ts.isIdentifier(node) && readsValue(node)) {
@@ -115,18 +116,21 @@ export interface FunctionValueGlobal {
 
 /**
  * Each declaration's value, with its home on the startup binding its script's plan holds for it. A declaration whose
- * binding may hold another value, or whose unit's contract the trampoline cannot carry, refuses by name.
+ * binding may hold another value, or whose unit's contract the trampoline cannot carry, refuses by name, owned by the
+ * declaration's unit (`diagnostic`).
  */
 export function functionDeclarationValues(
   declarations: readonly ts.FunctionDeclaration[],
   startup: readonly IrModuleInitPlan[],
   identity: Pick<IrPlanningIdentityContext, "unitIdByDeclaration" | "terminalByUnitId">,
   signatures: ReadonlyMap<IrUnitId, { readonly params: readonly IrType[]; readonly returnType: IrType | null }>,
+  diagnostic: { active: IrUnitId | undefined },
 ): readonly (FunctionDeclarationValue & { readonly global: FunctionValueGlobal })[] {
   return declarations.map((declaration) => {
     const name = declaration.name!.text;
-    if (!bindingHoldsItsDeclaration(declaration.name!, declaration)) refuse(name, "is written");
     const unitId = identity.unitIdByDeclaration.get(declaration)!;
+    diagnostic.active = unitId;
+    if (!bindingHoldsItsDeclaration(declaration.name!, declaration)) refuse(name, "is written");
     const { params, returnType } = signatures.get(unitId)!;
     if (params.some((type) => type.kind !== "dynamic")) refuse(name, "has a typed parameter");
     if (returnType !== null && carrierTag(returnType) === undefined)
@@ -134,7 +138,8 @@ export function functionDeclarationValues(
     const start = declaration.getStart();
     const plan = startup.find((row) => row.bindings.some((binding) => binding.start === start))!;
     const binding = plan.bindings.find((row) => row.names[0] === name && row.start === start)!;
-    const moduleInit = plan.unitId!;
+    // A script without top-level code has no module-init to make the value: nothing of it runs.
+    const moduleInit = plan.unitId ?? refuse(name, "is in a script that runs no top-level code");
     const home: ModuleBindingGlobal = {
       ownerUnitId: moduleInit,
       globalRef: irSourceGlobalRef(binding.globalBindingId!, name),
