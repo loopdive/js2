@@ -42,10 +42,10 @@ export interface FunctionObjectLoweringHost {
   readonly funcName: string;
   readonly dynamicCarrierIsExternref: () => boolean;
   /**
-   * (#7354 F2) Where closures are function objects ({@link createsFunctionObjects}), a call through a value is the
-   * native dispatcher `js.closure.call:N`.
+   * (#7354 F2) The resolver's answer, read through {@link createsFunctionObjects} like the resolver's own: where
+   * closures are function objects, a call through a value is the native dispatcher `js.closure.call:N`.
    */
-  readonly nativeClosureCalls: boolean;
+  readonly createsFunctionObjects: () => boolean;
   readonly requireOwner: (ownerUnitId: IrUnitId) => void;
   readonly lowerExpression: (source: ts.Expression) => IrValueId;
   readonly boxConcrete: (value: IrValueId, type: IrType, source: ts.Expression) => IrValueId | null;
@@ -251,7 +251,7 @@ export function lowerDynamicMemberCall(
     cx,
   );
   const value = lowerReceiver();
-  const receiver = cx.nativeClosureCalls ? functionObjectDynamicValue(value, access.expression, cx) : value;
+  const receiver = createsFunctionObjects(cx) ? functionObjectDynamicValue(value, access.expression, cx) : value;
   const keySource = ts.isPropertyAccessExpression(access) ? undefined : access.argumentExpression;
   const key = keySource
     ? functionObjectDynamicValue(cx.lowerExpression(keySource), keySource, cx)
@@ -260,7 +260,7 @@ export function lowerDynamicMemberCall(
         irDynamic(JS_TAG_IDS.String),
       );
   const callee = cx.builder.emitDynMemberGet(receiver, key);
-  return cx.nativeClosureCalls
+  return createsFunctionObjects(cx)
     ? nativeClosureCall(callee, receiver, expr.arguments, cx)
     : applyDynamicCallee(callee, receiver, expr.arguments, notCallable("Value is not callable"), cx);
 }
@@ -284,7 +284,7 @@ export function lowerBindingCall(
     demoteToLegacy("call-resolution-unsupported", `ir/from-ast: dynamic callee lost its carrier in ${cx.funcName}`);
   refuseCallShape(expr, false, "call-resolution-unsupported", "optional/spread dynamic value call is unsupported", cx);
   const receiver = cx.builder.emitDynUndefined();
-  return cx.nativeClosureCalls
+  return createsFunctionObjects(cx)
     ? nativeClosureCall(callee, receiver, expr.arguments, cx)
     : applyDynamicCallee(callee, receiver, expr.arguments, scriptVarCalleeNotCallableMessages(scriptVar), cx);
 }
@@ -301,7 +301,7 @@ function refuseCallShape(
   if (!optionalAccess && !expr.questionDotToken && !spread) return;
   demoteToLegacy(
     reason,
-    cx.nativeClosureCalls && spread
+    createsFunctionObjects(cx) && spread
       ? `ir/from-ast: call through a value with a spread argument (${cx.funcName})`
       : text,
   );

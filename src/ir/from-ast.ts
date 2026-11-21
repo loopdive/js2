@@ -7689,7 +7689,7 @@ function functionObjectLoweringHost(cx: LowerCtx): functionObjects.FunctionObjec
     funcName: cx.funcName,
     dynamicCarrierIsExternref: () =>
       cx.resolver?.dynamicCarrierIsExternref?.() === true && cx.resolver.resolveDynamic?.()?.kind === "externref",
-    nativeClosureCalls: functionObjects.createsFunctionObjects(cx.resolver),
+    createsFunctionObjects: () => functionObjects.createsFunctionObjects(cx.resolver),
     requireOwner: (ownerUnitId) =>
       requireMatchingLoweringPlanOwner("top-level function value", ownerUnitId, cx.ownerUnitId, cx.funcName),
     lowerExpression: (source) => lowerExpr(source, cx, irDynamic()),
