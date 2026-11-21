@@ -4377,6 +4377,43 @@ reflective name), 41 `dynamic method .sameValue/3 has no brand-dispatch wrapper`
 - Source maps with declaration values: the startup binding census check fails as it already does for nested `var`s.
 - Calls through a declaration's value (`var g = f; g()`) — F2.
 
+### Review round 1 (PR 7382, NOT MET at 1dc914867d; fixed on the branch)
+
+- **B1 fixed.** The set adapter finds the property on the receiver's own storage first (the bag for a function,
+  `findOrdinary`) and updates an own writable data property with `{ [[Value]] }` only; inherited/absent keys keep
+  CreateDataProperty. A function's `prototype` (and a prototype's `constructor`) keeps its attributes; strict code no
+  longer throws. Non-extensible receivers and accessors are reached by no source program on this branch (left to O1).
+  Tests: `issue-7354-f1b-function-object-writes` (declaration / expression / named expression / inner closure,
+  sloppy and strict, reads through a parameter; object literal updates). The o3 adapter unit harness (forged kernel
+  answers) is replaced by these source programs.
+- **B2 fixed.** A constant computed key (`['k']`, `[1]`) names its function (shared `propertyKeyFunctionName`); a
+  key the compiler cannot evaluate refuses by name (`the name of a function under a computed key needs the key's
+  value`) — unreachable today, the descriptor plan refuses such a key first. Chosen: refuse, not "unless `.name` is
+  read". Codegen gets the same constant-key answer (was `""`).
+- **Q1 fixed.** One §10.2.9 rule: codegen's `fnInstanceNameOf` delegates to `functionInstanceName`
+  (shared/named-evaluation), keeping only its eval-synthesized `"anonymous"`; one length rule:
+  `expectedArgumentCountOfParams` moved to `src/shared/`, used by both creation sites via one `emitFunctionObjectInit`
+  that takes the function node. Default/rest parameters do not reach the lane (from-ast and the dynamic closure
+  contract refuse them), so no `.length` test with them can run there. `carrierTag` is gone: the trampoline boxes
+  (a Boolean under its tag) and `carrierKindOf` admits.
+- **Q2 fixed.** `ordinaryToPrimitive`'s `kind` parameter removed.
+- **Q3.** The result-carrier refusal is deleted. The accessor skip stays: an object-literal getter reaches it on the
+  real entry (`var o = { get x() { return 1; } };` runs) and the 3518 runtime-providers getter test pins it.
+- **Q4 fixed.** `src/shared/binding-holds-declaration.ts`; the scan exposes `globalObjectWriteRoutes`.
+- **Q5 rebutted, kept.** (i) `reflective`: `x.constructor` reaches `Function`, also as `x[k]` with `k` a string
+  literal elsewhere, so a narrowing needs a key-flow proof; (ii) escape: once the global object is a value,
+  `Object.assign` / `defineProperties` maps write a binding without a spelled member write of its name, which the
+  scan does not track; (iii) another binding of the name is the shared name-based proof (Fa); a symbol-based proof is
+  not cheap. All three stay refusals.
+- **Q6 fixed.** Refusal tests kill each predicate clause (`Function(...)`, `f.constructor(...)`, `return this`), the
+  callee exclusion (`f()` beside an escaping `this` meets the `this` refusal, not the proof), and `ADD_ROLE.function`
+  (an abort test in f1-function-kind).
+- Main merged (cddf65be4d, Perf4's `try_table` helpers). `quality`'s Node-25 failure is main's; Node 25 not run here.
+
+Re-measured on the merged head: every touched test file in full, exit 0; gates 0 (budgets also against main; from-ast
+−32, program-source −10 vs main); prepared bytes vs main: the same 10 rows as above; ordinary 40/40 identical;
+regression set 652 programs: no base-correct program changes, 3 D6 aborts; sample tally unchanged.
+
 ## Perf4 result (2026-11-21, branch `claude/7354-perf4` from `claude/7354-perf3` `db3c4a256f`)
 
 The layout audit no longer runs per ledger query, and the realm requirements no longer re-derive per call. Two

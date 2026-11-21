@@ -6664,7 +6664,7 @@
       "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
     },
     {
-      "path": "src/codegen/function-expected-argument-count.ts",
+      "path": "src/shared/function-expected-argument-count.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
       "destination": "backend-wasmgc",
@@ -13337,6 +13337,14 @@
       "destination": "frontend-ts",
       "owner": "7106",
       "nextBoundary": "Pure-AST static RegExp construction reader (a literal, or `new RegExp` over string literals) shared by legacy's `parseRegExpLiteral` and the IR selector and builder (#7106 lever R); becomes clean once src/ts-api.ts leaves migration debt."
+    },
+    {
+      "path": "src/shared/binding-holds-declaration.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "7354-prepared-path",
+      "nextBoundary": "Pure-AST proof that a script binding keeps its declaration's value, shared by Fa's static function values and F1b's declaration homes; becomes a frontend fact when the frontend inventory is split from ir-core."
     },
     {
       "path": "src/shared/named-evaluation.ts",

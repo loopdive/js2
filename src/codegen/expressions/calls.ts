@@ -47,7 +47,7 @@ import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "../func-space.j
 import { sourceFunctionHandleForDeclaration } from "../program-abi-source-callable-planning.js";
 import { withRuntimeModuleCallableBindings } from "../runtime-module-callable-metadata.js";
 import { initializeFunctionPoisonPillContext } from "../function-poison-pill.js";
-import { expectedArgumentCountOfParams } from "../function-expected-argument-count.js";
+import { expectedArgumentCountOfParams } from "../../shared/function-expected-argument-count.js";
 import { reshapeFunctionCtorReflectiveCall } from "../function-ctor-reflective-call.js"; // (#4483) Function.call/apply → Function(…)
 import { tryEmitApplyArgArrayTypeError } from "../apply-arglist-typeerror.js"; // (#4483) §20.2.3.1 step 4 primitive argArray
 import { mappedFunctionIsForeign } from "./apply-dynamic-arglist.js"; // (#4526)

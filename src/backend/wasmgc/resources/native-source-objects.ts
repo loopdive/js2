@@ -73,9 +73,11 @@ const ROWS = {
   },
   "js.object.set": {
     signature: { params: [EXTERNREF, EXTERNREF, EXTERNREF, EXTERNREF], results: [I32] },
-    body: ({ layouts, kernel, descriptors }) =>
+    body: ({ layouts, kernel, descriptors }, tx) =>
       buildSourceObjectSetDefinition({
         entryTypeIdx: layouts.propEntry.typeIndex,
+        objectTypeIdx: layouts.object.typeIndex,
+        findOwn: nativeBuiltinFunctionOperands(tx, kernel).findOrdinary,
         lookup: kernel.functions.lookup.handle,
         defineData: descriptors.defineData.handle,
         match: kernel.functions.match.handle,

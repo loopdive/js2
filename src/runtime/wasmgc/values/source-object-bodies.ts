@@ -71,23 +71,25 @@ const CREATE_DATA_PROPERTY =
   flags.hasValue;
 
 /**
- * (#7354 O3) `js.object.set(object, key, value, receiver)`: OrdinarySet (§10.1.9.2) over the kernel's lookup, the walk
- * `get` takes. A writable data property it finds, or none (absent, or a miss at the realm's Object.prototype, which
- * every caller's key refusal makes a true miss), is CreateDataProperty on the receiver through the descriptor pack's
- * define. That agrees with OrdinarySet's `{ [[Value]] }` define of an existing own property because every writable
- * own property of a source object is also enumerable and configurable (a literal's define-data, or this set), and a
- * plain program writes no realm prototype; (#7354 F1b) a function's own property is defined in its bag. A read-only data property it finds (a function's own `length`
- * or `name`) answers `false`. A setter call or a setter-less accessor is unreachable from a plain program and traps,
- * as an unknown carrier (status 3) does.
+ * (#7354 O3) `js.object.set(object, key, value, receiver)`: OrdinarySet (§10.1.9.2) over the kernel's own-property find
+ * and lookup, the walk `get` takes. (#7354 F1b) An own writable data property of the receiver is updated with
+ * `{ [[Value]] }` alone, so its attributes stay (a function's non-enumerable `prototype`, a prototype's
+ * `constructor`); an inherited writable data property, or none (absent, or a miss at the realm's Object.prototype,
+ * which every caller's key refusal makes a true miss), is CreateDataProperty on the receiver. A function's own
+ * properties live in its bag, the storage both finds and defines use. A read-only data property (a function's own `length` or `name`) answers `false`. A
+ * setter call or a setter-less accessor is unreachable from a plain program and traps, as an unknown carrier
+ * (status 3) does. A non-extensible receiver is unreachable too: no Prepared program can make one.
  */
 export function buildSourceObjectSetDefinition(d: {
   readonly entryTypeIdx: TypeHandle;
+  readonly objectTypeIdx: TypeHandle;
+  readonly findOwn: FuncHandle;
   readonly lookup: FuncHandle;
   readonly defineData: FuncHandle;
   readonly match: FuncHandle;
   readonly bag: FuncHandle;
 }): SourceObjectDefinition {
-  const [status, entry] = [4, 5];
+  const [status, entry, storage] = [4, 5, 6];
   const entryFlag = (flag: number): Instr[] => [
     { op: "local.get", index: entry },
     { op: "ref.as_non_null" },
@@ -95,37 +97,31 @@ export function buildSourceObjectSetDefinition(d: {
     { op: "i32.const", value: flag },
     { op: "i32.and" },
   ];
+  // A found data property: an accessor traps, a read-only one answers false.
+  const requireWritable: Instr[] = [
+    ...entryFlag(flags.accessor),
+    { op: "if", blockType: { kind: "empty" }, then: [{ op: "unreachable" }] },
+    ...entryFlag(flags.writable),
+    { op: "i32.eqz" },
+    { op: "if", blockType: { kind: "empty" }, then: [{ op: "i32.const", value: 0 }, { op: "return" }] },
+  ];
+  // The define on the receiver's storage with descriptor word `word`, answering true.
+  const define = (word: number): Instr[] => [
+    { op: "local.get", index: storage },
+    { op: "local.get", index: 1 },
+    { op: "local.get", index: 2 },
+    { op: "f64.const", value: word },
+    { op: "call", funcIdx: d.defineData },
+    { op: "i32.const", value: 1 },
+  ];
   return {
     locals: [
       { name: "status", type: { kind: "i32" } },
       { name: "entry", type: { kind: "ref_null", typeIdx: d.entryTypeIdx } },
+      { name: "storage", type: { kind: "externref" } },
     ],
     body: [
-      { op: "local.get", index: 0 },
-      { op: "local.get", index: 1 },
-      { op: "call", funcIdx: d.lookup },
-      { op: "local.set", index: entry },
-      { op: "local.tee", index: status },
-      { op: "i32.const", value: 1 },
-      { op: "i32.eq" },
-      {
-        op: "if",
-        blockType: { kind: "empty" },
-        then: [
-          ...entryFlag(flags.accessor),
-          { op: "if", blockType: { kind: "empty" }, then: [{ op: "unreachable" }] },
-          ...entryFlag(flags.writable),
-          { op: "i32.eqz" },
-          { op: "if", blockType: { kind: "empty" }, then: [{ op: "i32.const", value: 0 }, { op: "return" }] },
-        ],
-        else: [
-          { op: "local.get", index: status },
-          { op: "i32.const", value: 2 },
-          { op: "i32.gt_u" },
-          { op: "if", blockType: { kind: "empty" }, then: [{ op: "unreachable" }] },
-        ],
-      },
-      // (#7354 F1b) A function's own properties live in its bag (`match` admits only function objects).
+      // A function's own properties live in its bag (`match` admits only function objects).
       { op: "local.get", index: 3 },
       { op: "call", funcIdx: d.match },
       {
@@ -137,11 +133,38 @@ export function buildSourceObjectSetDefinition(d: {
         ],
         else: [{ op: "local.get", index: 3 }],
       },
+      { op: "local.tee", index: storage },
+      { op: "any.convert_extern" },
+      { op: "ref.cast", typeIdx: d.objectTypeIdx },
       { op: "local.get", index: 1 },
-      { op: "local.get", index: 2 },
-      { op: "f64.const", value: CREATE_DATA_PROPERTY },
-      { op: "call", funcIdx: d.defineData },
+      { op: "call", funcIdx: d.findOwn },
+      { op: "local.tee", index: entry },
+      { op: "ref.is_null" },
+      { op: "i32.eqz" },
+      {
+        op: "if",
+        blockType: { kind: "empty" },
+        then: [...requireWritable, ...define(flags.hasValue), { op: "return" }],
+      },
+      { op: "local.get", index: 0 },
+      { op: "local.get", index: 1 },
+      { op: "call", funcIdx: d.lookup },
+      { op: "local.set", index: entry },
+      { op: "local.tee", index: status },
       { op: "i32.const", value: 1 },
+      { op: "i32.eq" },
+      {
+        op: "if",
+        blockType: { kind: "empty" },
+        then: requireWritable,
+        else: [
+          { op: "local.get", index: status },
+          { op: "i32.const", value: 2 },
+          { op: "i32.gt_u" },
+          { op: "if", blockType: { kind: "empty" }, then: [{ op: "unreachable" }] },
+        ],
+      },
+      ...define(CREATE_DATA_PROPERTY),
     ],
   };
 }

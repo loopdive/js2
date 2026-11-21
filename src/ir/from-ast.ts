@@ -16703,7 +16703,7 @@ function lowerClosureExpressionWithSignature(
     ...(exact?.domCallbackAuthority ? { domCallbackAuthority: exact.domCallbackAuthority } : {}),
   });
   if (functionObjects.createsFunctionObjects(cx.resolver))
-    functionObjects.initClosureFunctionObject(cx.builder, closure, expr);
+    functionObjects.emitFunctionObjectInit(cx.builder, closure, expr);
   return closure;
 }
 

@@ -40,7 +40,7 @@ import { structGrowsWithMetadata } from "./struct-carrier-growth.js"; // (#5180)
 import { commonScalarFieldType, ensureScalarUnbox, symbolBrand } from "./symbol-field-carrier.js";
 import { dynamicReadCrossesStandaloneLink, isAdmissibleDynamicReadNarrowing } from "./dynamic-read-narrowing.js"; // (#5345) i32 cannot represent `undefined`
 import { widenBooleanDynamicAccess } from "./dyn-read.js";
-import { expectedArgumentCountOfSignature } from "./function-expected-argument-count.js"; // (#4436) §15.1.5
+import { expectedArgumentCountOfSignature } from "../shared/function-expected-argument-count.js"; // (#4436) §15.1.5
 import { arrayLibMethodSpecLength } from "./array-method-value.js"; // (#4765)
 import { functionPrototypeMemberSpecLength } from "./function-prototype-callable.js"; // (§20.2.3)
 import { promiseProtoMemberSpecLength } from "./promise-dynamic-member-read.js"; // (#6651 D5)

@@ -54,8 +54,9 @@
 import type { Instr, FieldDef } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
 import { ts } from "../ts-api.js";
-import { expectedArgumentCountOfParams } from "./function-expected-argument-count.js";
-import { fnMetaSlotOfMeta, symbolComputedKeyFunctionName, type FnInstanceMeta } from "./function-instance-meta.js";
+import { expectedArgumentCountOfParams } from "../shared/function-expected-argument-count.js";
+import { fnMetaSlotOfMeta, type FnInstanceMeta } from "./function-instance-meta.js";
+import { symbolComputedKeyFunctionName } from "../shared/named-evaluation.js";
 
 /** A member declaration that can carry `name` / `length` metadata. */
 type MetaBearingMember =

@@ -101,6 +101,9 @@ describe("#7354 F1 — the function kind", () => {
       `ToString of a value that is only a function (${use})`,
       `var f = function () { return 1; }; ${use};`,
     ]),
+    // (#7354 F1b) `+` with a function operand takes its ToPrimitive: without an own method the source text's abort,
+    // never a sum.
+    ["`+` of a function value through a parameter", "function op(v) { return v + 1; } var x = op(function () {});"],
   ])("ends %s at the run-time abort", (_label, source) => abortsAtRunTime(source), SLOW);
 
   it.each([
