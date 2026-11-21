@@ -7861,10 +7861,15 @@ function lowerCall(expr: ts.CallExpression, cx: LowerCtx, statementPosition = fa
   if (binding?.kind === "local" && (binding.type.kind === "closure" || binding.type.kind === "callable")) {
     return lowerClosureCall(binding.value, binding.type.signature, expr.arguments, cx, statementPosition);
   }
-  if (binding?.kind === "moduleGlobal" && binding.functionValue?.in === cx.builder) {
-    const { value, signature } = binding.functionValue;
-    return lowerClosureCall(value, signature, expr.arguments, cx, statementPosition);
-  }
+  // (#7354 F2) Another arity, or a void result used as a value, is the dispatcher's (through the home below).
+  const staticValue =
+    binding?.kind === "moduleGlobal" && binding.functionValue?.in === cx.builder && binding.functionValue;
+  if (
+    staticValue &&
+    expr.arguments.length === staticValue.signature.params.length &&
+    (statementPosition || staticValue.signature.returnType !== null)
+  )
+    return lowerClosureCall(staticValue.value, staticValue.signature, expr.arguments, cx, statementPosition);
   if (binding?.kind === "nestedFunc") {
     return lowerNestedFuncCall(binding, expr.arguments, cx);
   }
