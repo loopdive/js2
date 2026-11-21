@@ -14,6 +14,23 @@ export interface PreparedFrontendRejectionObservation {
   readonly diagnostics: readonly CompileError[];
 }
 
+/**
+ * The goal the ES early-error rules check a source under, from the compile options. #3419 — module-goal signal for
+ * rules where Script vs Module top level genuinely differ (duplicate top-level function declarations). The test262
+ * runner passes `inferModuleStrictArguments` as an EXPLICIT boolean — `true` exactly for `flags: [module]` tests
+ * (whose sources often carry no syntactic import/export the checker could infer module-ness from), `false` for script
+ * tests. Product compiles leave it undefined and are covered by the real `ts.isExternalModule` indicator inside the
+ * rule. (#6491 r3) Script goal is an EXPLICIT opt-in, never `!moduleGoal` — see the `scriptGoal` doc comment in
+ * index.ts for why the negation is unsafe. (#6988) `scriptTopLevel`: a synthetic-`export` Script.
+ */
+export function earlyErrorGoals(options: CompileOptions) {
+  return {
+    moduleGoal: options.inferModuleStrictArguments === true,
+    scriptGoal: options.scriptGoal === true,
+    scriptTopLevel: options.inferModuleStrictArguments === false,
+  };
+}
+
 /** Each compiler instance keeps its own private issuance maps; other factories cannot issue into it. */
 export function createPreparedFrontendBoundary() {
   const earlySourceRejections = new WeakMap<CompileResult, readonly CompileError[]>();
@@ -55,21 +72,7 @@ export function createPreparedFrontendBoundary() {
     // (always `allowJs: true`) depends on it to reject e.g. `export` in eval code.
     if (!options.allowJs || input.runEarlyErrorsOnAllowJs) {
       const earlyErrors: CompileError[] = [];
-      // #3419 — module-goal signal for rules where Script vs Module top level
-      // genuinely differ (duplicate top-level function declarations). The test262
-      // runner passes `inferModuleStrictArguments` as an EXPLICIT boolean — `true`
-      // exactly for `flags: [module]` tests (whose sources often carry no
-      // syntactic import/export the checker could infer module-ness from), `false`
-      // for script tests. Product compiles leave it undefined and are covered by
-      // the real `ts.isExternalModule` indicator inside the rule.
-      const moduleGoal = options.inferModuleStrictArguments === true;
-      // (#6491 r3) Script goal is an EXPLICIT opt-in, never `!moduleGoal` — see
-      // the `scriptGoal` doc comment in index.ts for why the negation is unsafe.
-      const scriptGoal = options.scriptGoal === true;
-      const scriptTopLevel = options.inferModuleStrictArguments === false; // (#6988) synthetic-`export` Script
-      for (const sf of userSourceFiles) {
-        earlyErrors.push(...detectEarlyErrors(sf, { moduleGoal, scriptGoal, scriptTopLevel }));
-      }
+      for (const sf of userSourceFiles) earlyErrors.push(...detectEarlyErrors(sf, earlyErrorGoals(options)));
       errors.push(...earlyErrors);
       if (hasNewError(earlyErrors)) {
         const rejected = failResult(errors);

@@ -119,11 +119,7 @@ describe("#7354 O3 — a member write of the dynamic value", () => {
 
   it.each([
     ["a computed key", 'var o = { a: 1 }; var k = "a"; o[k] = 2;', "dyn.member_set with a computed key"],
-    [
-      "an Object.prototype key",
-      "function s(v){ v.isPrototypeOf = 1; } s({});",
-      "member write 'isPrototypeOf' of a value that may be an object needs Object.prototype's properties",
-    ],
+    // (#7354 F1, D4) Object.prototype's other keys are writable data properties: a write creates an own property.
   ])("refuses %s by name", async (_label, source, reason) => {
     expect(await refusal(source)).toContain(reason);
   });

@@ -171,8 +171,9 @@ describe("#7354 X — throw and catch with the Prepared dynamic value", () => {
     await twice((answer) => template.replace("@A", answer), right, wrong);
   });
 
-  // The catch binding is the dynamic value, which is exact only for numbers, booleans, `undefined`, `null` and
-  // native strings (and for Error objects, under every operation the carrier has). Each other payload that could
+  // The catch binding is the dynamic value, which is exact only for numbers, booleans, `undefined`, `null`,
+  // native strings and (#7354 Fa, tests/issue-7354-fa-function-values.test.ts) function values (and for Error
+  // objects, under every operation the carrier has). Each other payload that could
   // reach a catch refuses before it does; the slice that makes one reachable must give the dynamic operations its
   // arm and update this list. (#7354 Ty) The catch binding enters the carrier without the box arm's `carrierKindOf`, so
   // this list is also what keeps `TYPEOF_KIND` (the `typeof` answers of the admitted kinds) complete.
@@ -306,22 +307,19 @@ describe("#7354 X — the legalization arm", () => {
       undefined,
       { kind: "call", target: irIntrinsicFuncRef("js.object.create-default"), args: [] },
     ],
+    // (#7354 Fa) The function kind.
+    ["a closure pack", { kind: "callable", signature: { params: [], returnType: null } }],
   ])("admits %s in both rules", (_label, type, definition?: object) => {
     const { coerced, program } = operand(type, definition);
     expect(legalizeDynamicValues(program).blocks[0]!.instrs).toContainEqual(coerced);
     expect(() => refuseUnadmittedThrows(program)).not.toThrow();
   });
-  it.each([
-    [
-      "a closure pack",
-      { kind: "callable", signature: { params: [], returnType: null } },
-      undefined,
-      "a value of type callable",
-    ],
-    ["an externref of unknown kind", externref, undefined, "a value of type externref"],
-  ])("refuses %s by name in both rules", (_label, type, definition, name) => {
-    const { program } = operand(type, definition);
-    expect(() => legalizeDynamicValues(program)).toThrow(`coerce.to_externref of ${name}`);
-    expect(() => refuseUnadmittedThrows(program)).toThrow(`carrier's kinds (${name})`);
-  });
+  it.each([["an externref of unknown kind", externref, undefined, "a value of type externref"]])(
+    "refuses %s by name in both rules",
+    (_label, type, definition, name) => {
+      const { program } = operand(type, definition);
+      expect(() => legalizeDynamicValues(program)).toThrow(`coerce.to_externref of ${name}`);
+      expect(() => refuseUnadmittedThrows(program)).toThrow(`carrier's kinds (${name})`);
+    },
+  );
 });

@@ -88,11 +88,13 @@ function memberAccess(
   result: IrValueId,
 ): IrInstr[] {
   const kinds = b.kindsOf(instr.recv);
-  const refused = kinds.filter((kind) => access.missing(kind) !== undefined);
+  // (#7354 F1) The realm's kernel does not know a source closure as an object yet.
+  const lacks = (kind: CarrierKind) => (kind === "function" ? "the realm's function objects" : access.missing(kind));
+  const refused = kinds.filter((kind) => lacks(kind) !== undefined);
   if (refused.length > 0) {
     const receiver =
       kinds.length === 1 ? article(kinds[0]!) : `a value that may be ${refused.map(article).join(" or ")}`;
-    const missing = [...new Set(refused.map((kind) => access.missing(kind)!))].join(" and ");
+    const missing = [...new Set(refused.map((kind) => lacks(kind)!))].join(" and ");
     gap(`${access.operation} of ${receiver} needs ${missing}`);
   }
   // The TypeError does not complete; the access's unread answer only gives the arm its value.
@@ -176,15 +178,15 @@ export function dynamicMemberWrite(b: MemberAccessBuilders, instr: MemberSet): I
   const access: Access = {
     operation: `member write '${name}'`,
     resultType: BOOLEAN,
-    // The realm's error has no property storage a write could land in.
+    // The realm's error has no property storage a write could land in. (#7354 F1, D4) Every other key Object.prototype
+    // holds is a writable data property, so OrdinarySet creates an own property on the receiver (§10.1.9.2 step 2),
+    // as for an absent key; only its accessor's setter would run code the realm lacks.
     missing: (kind) =>
       kind === "error"
         ? "property storage on the realm's error"
-        : MEMBER_ACCESS_ARM[kind] === "object" && BUILTIN_REACHABLE_KEYS.object.has(name)
-          ? "Object.prototype's properties"
-          : MEMBER_ACCESS_ARM[kind] === "primitive" && OBJECT_PROTOTYPE_ACCESSOR_KEYS.has(name)
-            ? "Object.prototype's accessor"
-            : undefined,
+        : MEMBER_ACCESS_ARM[kind] !== "type-error" && OBJECT_PROTOTYPE_ACCESSOR_KEYS.has(name)
+          ? "Object.prototype's accessor"
+          : undefined,
     nullishMessage: (kind) => `Cannot set properties of ${kind} (setting '${name}')`,
     unread,
     object: (r) => realmCall("js.object.set", [instr.recv, instr.key, instr.value, instr.recv], r),

@@ -1,26 +1,21 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
 /**
- * (#7354 D1) Dynamic-value legalization for the Prepared standalone WasmGC
- * source program.
+ * (#7354 D1) Dynamic-value legalization for the Prepared standalone WasmGC source program.
  *
- * The Prepared backend binds runtime functions only through semantic
- * intrinsics, so the dynamic IR operations from-ast emits (`box` to dynamic,
- * `unbox`, `tag.test`, `dyn.*`) are rewritten into the intrinsics that name
- * the same meaning, and every `dynamic` type becomes its carrier, an
- * `externref`. The source producer runs it on each lowered function, so every
- * later stage (runtime projection, validator replay, physical plan) sees one
- * ordinary externref program. The pass is total: an operation it cannot
- * express throws {@link DynamicValueGap} with a name instead of reaching the
- * backend.
+ * The Prepared backend binds runtime functions only through semantic intrinsics, so the dynamic IR operations from-ast
+ * emits (`box` to dynamic, `unbox`, `tag.test`, `dyn.*`) are rewritten into the intrinsics that name the same meaning,
+ * and every `dynamic` type becomes its carrier, an `externref` (`dynamic-carrier-types.ts`). The source producer runs
+ * it on each lowered function, so every later stage (runtime projection, validator replay, physical plan) sees one
+ * ordinary externref program. The pass is total: an operation it cannot express throws {@link DynamicValueGap} with a
+ * name instead of reaching the backend.
  *
- * Soundness rests on the admitted value set: only numbers, booleans,
- * native strings (#7354 Str), `undefined`, `null` and (#7354 O2) ordinary objects can enter a dynamic
- * value here (every other box refuses, `carrierKindOf`), and the runtime functions behind the intrinsics are exact
- * for that set. The kinds and each operation's answer per kind are `dynamic-value-kinds.ts`; the instruction
- * builders are `dynamic-value-chains.ts`. (#7354 T) `null` is the carrier's null reference, as on the ordinary
- * standalone pipeline; `undefined` is the non-null singleton, so the two stay
- * apart under strict equality and the `undefined` probe.
+ * Soundness rests on the admitted value set: only numbers, booleans, native strings (#7354 Str), `undefined`, `null`,
+ * (#7354 O2) ordinary objects and (Fa) function values can enter a dynamic value here (every other box refuses,
+ * `carrierKindOf`), and the runtime functions behind the intrinsics are exact for that set. The kinds and each
+ * operation's answer per kind are `dynamic-value-kinds.ts`; the instruction builders are `dynamic-value-chains.ts`.
+ * (#7354 T) `null` is the carrier's null reference, as on the ordinary standalone pipeline; `undefined` is the
+ * non-null singleton, so the two stay apart under strict equality and the `undefined` probe.
  */
 import { irValueTypes } from "../analysis/value-types.js";
 import type { AllocSiteRegistry } from "../analysis/alloc-registry.js";
@@ -49,21 +44,12 @@ import {
   TYPEOF_NAME,
   admittedKinds,
   carrierKindOf,
+  functionValueOperand,
   type LegalizationProgram,
 } from "./dynamic-value-kinds.js";
+import { carrierClosureSubtype, carrierOf, containsDynamic, inCarrierForm } from "./dynamic-carrier-types.js";
 
 export { DynamicValueGap } from "./dynamic-value-gap.js";
-
-/** Walk the data structurally: IR constants may hold bigints, which JSON cannot. */
-export function containsDynamic(value: unknown): boolean {
-  if (value === null || typeof value !== "object") return false;
-  if ((value as { kind?: unknown }).kind === "dynamic") return true;
-  return Object.values(value).some(containsDynamic);
-}
-
-function carrierOf(type: IrType): IrType {
-  return type.kind === "dynamic" ? CARRIER : type;
-}
 
 /** Each value's defining instruction, nested buffers included. */
 function valueDefinitions(fn: IrFunction): Map<IrValueId, IrInstr> {
@@ -129,35 +115,43 @@ export function legalizeDynamicValues(
     ];
   };
 
+  /**
+   * The carrier value of `kind` an entry (a box to the dynamic value, (#7354 Fa) the function-value projection) builds
+   * from its raw `value`; a value of no kind refuses.
+   */
+  const intoCarrier = (instr: IrInstr, value: IrValueId, kind: ReturnType<typeof carrierKindOf>): IrInstr[] => {
+    switch (kind) {
+      case "boolean":
+        return [intrinsic(instr, "js.boolean.box", [value])];
+      // The Null partition has one value, the carrier's null reference.
+      case "null":
+        return [{ kind: "const", value: { kind: "null", ty: CARRIER }, result: instr.result, resultType: CARRIER }];
+      case "number":
+        return [intrinsic(instr, "js.number.box", [value])];
+      // (#7354 Str) A native string is its own carrier payload: the externref that wraps it; (#7354 O2) an ordinary
+      // object and (Fa) a function value's packed closure are one already.
+      case "string":
+      case "object":
+      case "function":
+        return [
+          {
+            kind: "coerce.to_externref",
+            value,
+            result: instr.result,
+            resultType: CARRIER,
+            ...(instr.site === undefined ? {} : { site: instr.site }),
+          },
+        ];
+      default:
+        return gap(`${instr.kind === "call" ? instr.target.name : instr.kind} of a non-primitive value`);
+    }
+  };
+
   const expand = (instr: IrInstr): readonly IrInstr[] => {
     switch (instr.kind) {
-      case "box": {
+      case "box":
         if (instr.toType.kind !== "dynamic") return [instr];
-        switch (carrierKindOf(instr.value, types, definitions, instr.toType.tag)) {
-          case "boolean":
-            return [intrinsic(instr, "js.boolean.box", [instr.value])];
-          // The Null partition has one value, the carrier's null reference.
-          case "null":
-            return [{ kind: "const", value: { kind: "null", ty: CARRIER }, result: instr.result, resultType: CARRIER }];
-          case "number":
-            return [intrinsic(instr, "js.number.box", [instr.value])];
-          // (#7354 Str) A native string is its own carrier payload: the externref that wraps it; (#7354 O2) an ordinary
-          // object is one already.
-          case "string":
-          case "object":
-            return [
-              {
-                kind: "coerce.to_externref",
-                value: instr.value,
-                result: instr.result,
-                resultType: CARRIER,
-                ...(instr.site === undefined ? {} : { site: instr.site }),
-              },
-            ];
-          default:
-            return gap(`box of a non-primitive value`);
-        }
-      }
+        return intoCarrier(instr, instr.value, carrierKindOf(instr.value, types, definitions, instr.toType.tag));
       case "unbox":
         if (!isDynamic(instr.value)) return [instr];
         if (instr.tagId === JS_TAG_IDS.NumberF64) return [intrinsic(instr, "js.number.unbox", [instr.value])];
@@ -211,7 +205,7 @@ export function legalizeDynamicValues(
       case "dyn.undefined":
         return [intrinsic(instr, "js.value.undefined", [])];
       case "dyn.to_string":
-        return stringOf(instr, instr.value, instr.result!);
+        return stringOf(instr, instr.value, "string", instr.result!);
       case "dyn.truthy":
         return [intrinsic(instr, "js.value.to_boolean", [instr.value])];
       case "dyn.to_number":
@@ -228,14 +222,18 @@ export function legalizeDynamicValues(
       }
       // A front-end dynamic helper (`__ir_dyn_lt`, ...) has no runtime declaration; (#7354 Str2-c) `__ir_dyn_add`
       // is the dynamic `+`, expanded here.
-      case "call":
+      // (#7354 Fa) The function-value projection's packed callable is its own carrier payload.
+      case "call": {
         if (instr.target.binding.kind === "runtime" && instr.target.binding.symbol === IR_DYN_ADD_FN)
           return addition(instr, instr.args, instr.result!);
+        const projected = functionValueOperand(instr);
+        if (projected !== undefined) return intoCarrier(instr, projected, carrierKindOf(projected, types, definitions));
         return instr.target.binding.kind === "runtime" &&
           !irRuntimeCallableDeclaration(instr.target) &&
           [instr.resultType, ...instr.args.map((arg) => types.get(arg))].some((type) => type?.kind === "dynamic")
           ? gap(instr.target.name)
           : [instr];
+      }
       // (#7354 X, O1) The carrier already is the native externref value: the exception payload a thrown dynamic
       // value carries and the value an ordinary object's property stores. A coercion to it keeps, and lowers to
       // nothing over the legalized operand, only for an operand of a kind the carrier holds. (A callable pack is
@@ -254,9 +252,7 @@ export function legalizeDynamicValues(
   const mapBuffer = (buffer: readonly IrInstr[]): readonly IrInstr[] =>
     buffer.flatMap((instr) => {
       const nested = mapNestedBuffers(instr, mapBuffer);
-      return expand(nested).map((out) =>
-        out.resultType?.kind === "dynamic" ? ({ ...out, resultType: CARRIER } as IrInstr) : out,
-      );
+      return expand(nested).map(inCarrierForm);
     });
   const legalized: IrFunction = {
     ...fn,
@@ -268,6 +264,7 @@ export function legalizeDynamicValues(
       instrs: mapBuffer(block.instrs),
     })),
     valueCount: builders.valueCount(),
+    ...carrierClosureSubtype(fn),
   };
   // Any `dynamic` left (inside a composite type, an async frame, a closure
   // signature) has no carrier on this projection.

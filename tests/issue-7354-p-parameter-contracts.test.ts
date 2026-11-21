@@ -262,7 +262,9 @@ describe("#7354 P — the parameter and result contracts", () => {
     const { checker, file, f } = declarationOf("function f(v: any): number | undefined { if (v === 1) return 2; }");
     expect(programDynamicContracts(checker, STANDALONE, [file], new AllocSiteRegistry()).result(f)).toBeUndefined();
     const bare = declarationOf("function f(v: any) { if (v === 1) return 2; }");
-    expect(programDynamicContracts(bare.checker, STANDALONE, [bare.file]).result(bare.f)).toEqual({
+    expect(
+      programDynamicContracts(bare.checker, STANDALONE, [bare.file], new AllocSiteRegistry()).result(bare.f),
+    ).toEqual({
       kind: "dynamic",
     });
   });
