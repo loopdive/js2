@@ -103,19 +103,20 @@ export function emitIsUndefF64(body: Instr[]): void {
 }
 
 /**
- * (#7360) Can the f64 `expr` (of Wasm type `type`) hold `undefined`? A `number | undefined` slot carries it as the
+ * (#7360) Can the f64 `node` (of Wasm type `type`) hold `undefined`? A `number | undefined` slot carries it as the
  * {@link UNDEF_F64_BITS} sentinel, so a nullish test (`??`, `??=`) must compare those bits instead of folding to
  * "never nullish". A plain `number` f64 cannot. An ordinary NaN (`0 / 0`, a canonical quiet NaN) does not match the
  * exact bits, but data can produce them: a DataView / Float64Array read of those bits reads as `undefined` (#7367).
  */
-export function f64MayHoldUndefined(ctx: CodegenContext, expr: ts.Expression, type: ValType): boolean {
+export function f64MayHoldUndefined(ctx: CodegenContext, node: ts.Node, type: ValType): boolean {
   if (type.kind !== "f64") return false;
   // A type-only wrapper (`x!`, `x as number`) narrows the static type, not the slot: ask the wrapped operand too.
-  const operand = skipTransparentExpressions(expr);
+  // Only an expression can carry one; a declaration name (#7366) is asked as it is.
+  const operand = ts.isExpression(node) ? skipTransparentExpressions(node) : node;
   return (
     type.undefSentinel === true ||
-    ctx.oracle.nullabilityOf(expr).undefinable ||
-    (operand !== expr && ctx.oracle.nullabilityOf(operand).undefinable)
+    ctx.oracle.nullabilityOf(node).undefinable ||
+    (operand !== node && ctx.oracle.nullabilityOf(operand).undefinable)
   );
 }
 
