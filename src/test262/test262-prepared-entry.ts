@@ -3,6 +3,8 @@ import * as legacy from "../index.js";
 import type { CompileError, CompileOptions, CompileResult } from "../index.js";
 import { analyzeMultiSource } from "../checker/index.js";
 import { normalizeMultiFileName } from "../checker/multi-file-paths.js";
+import type { ts } from "../ts-api.js";
+import { elideDeadBindings } from "./prepared-dead-bindings.js";
 import { runPreparedIrPipelinePresentation, preparedFrontendRejectionObservation } from "../compiler.js";
 import type { PreparedIrPipelinePresentationResult } from "../compiler/ir-program-presentation.js";
 import type { JavaScriptAdapterManifestV1 } from "../adapter-manifest.js";
@@ -10,6 +12,8 @@ import { emittedPhysicalSetupPlan } from "../ir/program-consumer.js";
 import { freezePreparedIrValue } from "../ir/program.js";
 import { failResult } from "../compiler/output.js";
 import { resolveCompileTargetProfile } from "../target-profile.js";
+
+type DeadBindingElision = typeof elideDeadBindings;
 
 export interface RequiredPreparedRequest {
   readonly kind: "prepared-program-required";
@@ -350,6 +354,7 @@ function present(
   entryFile: string,
   options: Test262CompileOptions,
   singleSource = false,
+  elide: DeadBindingElision = elideDeadBindings,
 ): CompileResult {
   const exactFiles = sourceGraph(files, entryFile);
   const profile = resolveCompileTargetProfile(options);
@@ -392,12 +397,17 @@ function present(
         },
       ],
     );
-  const ast = analyzeMultiSource(exactFiles, entryFile, undefined, {
-    allowJs: options.allowJs,
-    skipSemanticDiagnostics: options.skipSemanticDiagnostics,
-    ...(options.platform ? { platform: options.platform } : {}),
-  });
-  if (!completeAnalyzedGraph(exactFiles, entryFile, ast))
+  const analyze = (graph: Record<string, string>) =>
+    analyzeMultiSource(graph, entryFile, undefined, {
+      allowJs: options.allowJs,
+      skipSemanticDiagnostics: options.skipSemanticDiagnostics,
+      ...(options.platform ? { platform: options.platform } : {}),
+    });
+  // #7354 F0 decides on the unelided graph's diagnostics; a graph it changes is analyzed again.
+  const suppliedAst = analyze(exactFiles);
+  const analyzedFiles = elide(exactFiles, suppliedAst, profile, options);
+  const ast = analyzedFiles === exactFiles ? suppliedAst : analyze(analyzedFiles);
+  if (!completeAnalyzedGraph(analyzedFiles, entryFile, ast))
     return failed(
       { kind: "adapter-unsupported", detail: "frontend did not retain the complete supplied name/text graph" },
       [
@@ -411,6 +421,8 @@ function present(
         },
       ],
     );
+  const supplied = new Map(Object.entries(exactFiles).map(([file, text]) => [normalizeMultiFileName(file), text]));
+  const suppliedText = (source: ts.SourceFile): string => supplied.get(normalizeMultiFileName(source.fileName))!;
   // The public single-source compiler always applies its parser-syntax gate,
   // including allowJs. Multi-source calls retain their captured option policy.
   const pipelineOptions = singleSource
@@ -445,7 +457,7 @@ function present(
           backend: profile.backend,
           target: profile.target,
           diagnostics: observed.diagnostics,
-          sources: ast.sourceFiles.map((source) => ({ file: source.fileName, text: source.text })),
+          sources: ast.sourceFiles.map((source) => ({ file: source.fileName, text: suppliedText(source) })),
         }) as RequiredPreparedFrontendFailure)
       : undefined;
     return failed(outcome, outcome.errors, frontendFailure);
@@ -517,12 +529,17 @@ function present(
   return result;
 }
 
-export async function compile(source: string, options?: Test262CompileOptions): Promise<CompileResult> {
+/** `elide` is a test seam only: a test passes the identity to compare the gate's verdict without the elision. */
+export async function compile(
+  source: string,
+  options?: Test262CompileOptions,
+  elide: DeadBindingElision = elideDeadBindings,
+): Promise<CompileResult> {
   if (!selected(options)) return legacy.compile(source, options);
   const captured = strictOptions(undefined, options);
   if (captured.fileName !== undefined && typeof captured.fileName !== "string")
     invalidRequest("fileName must be a string");
-  return present({ [captured.fileName ?? "input.ts"]: source }, captured.fileName ?? "input.ts", captured, true);
+  return present({ [captured.fileName ?? "input.ts"]: source }, captured.fileName ?? "input.ts", captured, true, elide);
 }
 export async function compileMulti(
   files: Record<string, string>,

@@ -21,6 +21,7 @@ import { WASI_NODE_FS_ALIAS_SENTINEL } from "./checker/node-capability-map.js";
 import { generateLinearModule, generateLinearMultiModule } from "./codegen-linear/index.js";
 import { resetCompileDepth } from "./codegen/expressions.js";
 import { resetDerivationFlagCache } from "./derivation-flags.js";
+import { deadBindingElisionApplies } from "./deadcode-elide.js";
 import { generateModule, generateMultiModule } from "./codegen/index.js";
 import type { CodegenOptions } from "./codegen/context/types.js";
 import {
@@ -1766,19 +1767,9 @@ export function compileSourceSync(
 
   processedSource = foldGroundCalls(processedSource, effectiveFileName, options.optimize, isJsMode && !forceTsGrammar);
 
-  // Step 1a: #3418 — host-free targets elide dead pure top-level bindings before
-  // parsing so unreachable bodies do not register host imports. (#6898) The
-  // native regime in a JS environment elides too: which bindings are dead is a
-  // question of the implementation (`targetProfile.nativeRegime`), not of
-  // the embedder. Without it the unused test262 `$262.evalScript` shim kept a
-  // live direct `eval` and put every regime row into runtime-eval mode.
-  // Context-owned declarations remain observable from later Scripts even when
-  // this source never reads them. Private-program dead-binding proofs do not
-  // apply; keep their original source and stable IR inventory intact.
-  if (
-    !options.standaloneScriptVarBindings &&
-    (targetProfile.environment === "none" || targetProfile.environment === "wasi" || targetProfile.nativeRegime)
-  ) {
+  // Step 1a: #3418 — elide dead pure top-level bindings before parsing (which
+  // compiles do, and why: `deadBindingElisionApplies`).
+  if (deadBindingElisionApplies(targetProfile, options.standaloneScriptVarBindings)) {
     const scriptKind = isJsMode && !forceTsGrammar ? ts.ScriptKind.JS : ts.ScriptKind.TS;
     const elision = irIds.elideWithIrIds(processedSource, effectiveFileName, scriptKind, irInventory);
     processedSource = elision.source;
