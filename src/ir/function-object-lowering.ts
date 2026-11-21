@@ -6,11 +6,13 @@ import { ts } from "../ts-api.js";
 import type { IrFunctionBuilder } from "./builder.js";
 import type { IrImportedCallLoweringPlan, IrTopLevelFunctionValueLoweringPlan } from "./ast-lowering-plans.js";
 import type { IrFunctionMemberClosures } from "./function-member-closure-plan.js";
-import { irRuntimeFuncRef } from "./callable-bindings.js";
+import { irIntrinsicFuncRef, irRuntimeFuncRef } from "./callable-bindings.js";
+import { functionObjectName } from "../shared/named-evaluation.js";
 import type { IrUnitId } from "./identity.js";
 import { JS_TAG_IDS } from "./runtime/js-tag-domain.js";
 import { asVal, irDynamic, irVal, type IrType, type IrValueId } from "./nodes.js";
-import { demoteToLegacy } from "./outcomes.js";
+import { demoteToLegacy, IrUnsupportedError } from "./outcomes.js";
+import { describeIrType } from "./describe-ir-type.js";
 
 /** Source-owned plan values shared by top-level and lifted lowering contexts. */
 export interface FunctionValueLoweringPlans {
@@ -92,6 +94,58 @@ export function lowerTopLevelFunctionValue(
   return cx.builder.emitGlobalGet(cache, { kind: "callable", signature: plan.signature });
 }
 
+/**
+ * (#7354 F1b) A Prepared source function is a function object from its creation on: `js.object.init-function` gives
+ * the fresh `closure`'s bag its `length` (OrdinaryFunctionCreate), `name` (SetFunctionName) and, for a constructor,
+ * MakeConstructor's `prototype`. Every site that creates a function value calls this once, right after `closure.new`
+ * (a closure literal, a declaration's value), so the bag is filled once however often the closure later becomes a
+ * dynamic value, and no function value reaches the kernel without one.
+ */
+export function emitFunctionObjectInit(
+  builder: IrFunctionBuilder,
+  closure: IrValueId,
+  name: string,
+  length: number,
+  isConstructor: boolean,
+): void {
+  const type = builder.typeOf(closure);
+  // invariant (producer-promise): callers pass the value `closure.new` just produced — #4502.
+  if (type.kind !== "closure") throw new Error("ir/function-object-lowering: function object init needs its closure");
+  builder.emitCall(
+    irIntrinsicFuncRef("js.object.init-function"),
+    [
+      builder.emitCoerceToExternref(builder.emitCallablePack(closure, type.signature)),
+      builder.emitCoerceToExternref(builder.emitStringConst(name)),
+      builder.emitConst({ kind: "f64", value: length }, irVal({ kind: "f64" })),
+      builder.emitConst({ kind: "bool", value: isConstructor }, irVal({ kind: "i32", boolean: true })),
+    ],
+    null,
+  );
+}
+
+/**
+ * (#7354 F1b) Whether a closure is a function value on this lane: the Prepared native dynamic lane, the one whose
+ * resolver gives a function expression its dynamic signature. There every closure literal is created as a function
+ * object (`initClosureFunctionObject`) and may be stored as a function value.
+ */
+export function createsFunctionObjects(resolver: { readonly dynamicClosureSignature?: unknown } | undefined): boolean {
+  return resolver?.dynamicClosureSignature !== undefined;
+}
+
+/**
+ * A closure literal's function object: `length` counts the parameters before the first default or rest; only a
+ * function expression is a constructor.
+ */
+export function initClosureFunctionObject(
+  builder: IrFunctionBuilder,
+  closure: IrValueId,
+  literal: ts.FunctionExpression | ts.ArrowFunction | ts.MethodDeclaration | ts.AccessorDeclaration,
+): void {
+  const optional = literal.parameters.findIndex((parameter) => parameter.initializer || parameter.dotDotDotToken);
+  const length = optional < 0 ? literal.parameters.length : optional;
+  emitFunctionObjectInit(builder, closure, functionObjectName(literal), length, ts.isFunctionExpression(literal));
+}
+
 export function functionObjectDynamicValue(
   value: IrValueId,
   source: ts.Expression,
@@ -141,6 +195,28 @@ export function concreteIntoDynamic(
   const boxed =
     type.kind === "closure" ? functionObjectDynamicValue(value, source, cx) : cx.boxConcrete(value, type, source);
   return boxed ?? value;
+}
+
+/**
+ * A dynamic member store's key or value onto the carrier: a concrete value boxed, and (#7354 F1b) where closures are
+ * function values (`functionValues`, {@link createsFunctionObjects}) a closure as its function value. A value with
+ * no carrier refuses by name.
+ */
+export function dynamicStoreOperand(
+  value: IrValueId,
+  source: ts.Expression,
+  cx: FunctionObjectLoweringHost,
+  functionValues: boolean,
+): IrValueId {
+  const type = cx.builder.typeOf(value);
+  if (type.kind === "dynamic") return value;
+  const boxed = functionValues ? concreteIntoDynamic(value, source, cx) : cx.boxConcrete(value, type, source);
+  if (boxed !== null && cx.builder.typeOf(boxed).kind === "dynamic") return boxed;
+  throw new IrUnsupportedError(
+    "operand-coercion-unsupported",
+    "build",
+    `ir/from-ast: dynamic member-store operand of ${describeIrType(type)} has no dynamic carrier (${cx.funcName})`,
+  );
 }
 
 export function lowerFunctionObjectMemberCall(

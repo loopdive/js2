@@ -82,9 +82,20 @@ const STRING_PROTOTYPE = [
   "trimRight",
 ];
 
+/**
+ * (#7354 F1b) The keys a read of a source function reaches on Function.prototype and Object.prototype: every key the
+ * catalog gives them but `length` and `name`, which every function value owns from its creation.
+ */
+const FUNCTION_REACHABLE_KEYS = new Set(
+  [...realmStringKeys("%Function.prototype%"), ...OBJECT_PROTOTYPE_KEYS].filter(
+    (key) => key !== "length" && key !== "name",
+  ),
+);
+
 /** The keys a read of each value reaches through built-in prototypes (or, for a string, its own exotic keys). */
 export const BUILTIN_REACHABLE_KEYS = {
   object: OBJECT_PROTOTYPE_KEYS,
+  function: FUNCTION_REACHABLE_KEYS,
   number: new Set([...OBJECT_PROTOTYPE_KEYS, ...NUMBER_PROTOTYPE]),
   boolean: OBJECT_PROTOTYPE_KEYS,
   string: new Set([...OBJECT_PROTOTYPE_KEYS, ...STRING_PROTOTYPE, "length"]),

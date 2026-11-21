@@ -181,6 +181,7 @@ import { irFnctorShapeEquals } from "./fnctor-abi.js";
 import { emitNumberRemainder } from "./remainder-fast-path.js";
 import { lowerModuleInitStatements } from "./module-init-chunk-lowering.js";
 import { someReturnedValue } from "./function-returns.js";
+import { describeIrType } from "./describe-ir-type.js";
 import type { FunctionDeclarationValue } from "./function-declaration-values.js";
 import { sameIrGlobalBinding } from "./abi-bindings.js";
 import { HOST_CALLBACK_WRAP_CAPABILITY_RECORD } from "./runtime-host-capabilities.js";
@@ -4837,33 +4838,6 @@ const nativeNumericDomains = (cx: LowerCtx): boolean => cx.resolver?.nativeNumer
 const laneNumericSlot = (type: IrType, cx: LowerCtx): boolean =>
   nativeNumericDomains(cx) ? isNumericIrSlot(type) : asVal(type)?.kind === "f64";
 
-/** Short debug string for IrType, used in error messages. */
-function describeIrType(t: IrType): string {
-  if (t.kind === "support-ref") return `support-ref<${t.ref.binding.bindingId}>${t.nullable ? "?" : ""}`;
-  if (t.kind === "val") return t.val.kind;
-  if (t.kind === "string") return "string";
-  if (t.kind === "vec") return `vec<${describeIrType(t.elementType)}>${t.nullable ? "?" : ""}`;
-  if (t.kind === "object") {
-    return `object{${t.shape.fields.map((f) => `${f.name}:${describeIrType(f.type)}`).join(",")}}`;
-  }
-  if (t.kind === "closure") {
-    const ps = t.signature.params.map(describeIrType).join(",");
-    return `closure(${ps})->${t.signature.returnType === null ? "void" : describeIrType(t.signature.returnType)}`;
-  }
-  if (t.kind === "callable") {
-    const ps = t.signature.params.map(describeIrType).join(",");
-    return `callable(${ps})->${t.signature.returnType === null ? "void" : describeIrType(t.signature.returnType)}`;
-  }
-  if (t.kind === "class") return `class<${t.shape.className}>`;
-  if (t.kind === "extern") return `extern<${t.className}>`;
-  if (t.kind === "fnctor") return `fnctor<${t.shape.constructorName}>`;
-  // #1926 — union members / boxed inner are IrTypes; recurse.
-  if (t.kind === "union") return `union<${t.members.map(describeIrType).join(",")}>`;
-  // #2949 — dynamic leaf; render the optional tag refinement when present.
-  if (t.kind === "dynamic") return t.tag === undefined ? "dynamic" : `dynamic<tag:${t.tag}>`;
-  return `boxed<${describeIrType(t.inner)}>`;
-}
-
 /**
  * Resolve the IR type for a function param or return.
  *
@@ -6957,15 +6931,8 @@ function lowerDynamicStoreOperand(expr: ts.Expression, cx: LowerCtx): IrValueId 
 }
 
 function boxDynamicStoreOperand(value: IrValueId, expr: ts.Expression, cx: LowerCtx): IrValueId {
-  const type = cx.builder.typeOf(value);
-  if (type.kind === "dynamic") return value;
-  const boxed = boxConcreteToDynamic(value, type, expr, cx);
-  if (boxed !== null) return boxed;
-  throw new IrUnsupportedError(
-    "operand-coercion-unsupported",
-    "build",
-    `ir/from-ast: dynamic member-store operand of ${describeIrType(type)} has no dynamic carrier (${cx.funcName})`,
-  );
+  const functionValues = functionObjects.createsFunctionObjects(cx.resolver);
+  return functionObjects.dynamicStoreOperand(value, expr, functionObjectLoweringHost(cx), functionValues);
 }
 
 /**
@@ -16741,10 +16708,13 @@ function lowerClosureExpressionWithSignature(
   cx.lifted.push(lifted);
   recordSourceMapDerived(cx, liftedIdentity, expr);
 
-  return cx.builder.emitClosureNew(liftedTarget, signature, captureFieldTypes, captureArgs, {
+  const closure = cx.builder.emitClosureNew(liftedTarget, signature, captureFieldTypes, captureArgs, {
     ...(exact?.hostOneShot === true ? { hostOneShot: true } : {}),
     ...(exact?.domCallbackAuthority ? { domCallbackAuthority: exact.domCallbackAuthority } : {}),
   });
+  if (functionObjects.createsFunctionObjects(cx.resolver))
+    functionObjects.initClosureFunctionObject(cx.builder, closure, expr);
+  return closure;
 }
 
 /**

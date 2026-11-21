@@ -3,15 +3,15 @@
  * (#7354 O1) The public source-object functions on the realm. A source program reaches an ordinary object only
  * through the `js.object.*` contracts (`ordinary-object-callables.ts`); each contract it calls binds one function
  * here, whose signature is the contract's and whose algorithm is the realm's own. A row either
- *   - adapts the realm (`create-default`, `get`, (#7354 O3) `set`, (#7354 O2b) `has`): a
- *     function this module reserves, with the contract's signature and a body (`source-object-bodies.ts`) over the
- *     realm's storage, kernel and descriptor packs; or
+ *   - adapts the realm (`create-default`, `get`, (#7354 O3) `set`, (#7354 O2b) `has`, (#7354 F1b) `init-function`):
+ *     a function this module reserves, with the contract's signature and a body (`source-object-bodies.ts`,
+ *     `source-function-object-bodies.ts`) over the realm's storage, kernel and descriptor packs; or
  *   - binds a realm function as it is (`define-data`: the descriptor pack's public define; (#7354 O4)
  *     `create-type-error`: the invocation substrate's TypeError constructor).
  * A contract without a row here has no native source provider yet.
  */
 import type { FunctionReservation, PhysicalModuleReservations } from "../../../wasm/physical/module-reservations.js";
-import type { ValType } from "../../../wasm/model/instructions.js";
+import type { Instr, ValType } from "../../../wasm/model/instructions.js";
 import type { OrdinaryObjectRuntimeFeature } from "../../../ir/runtime/contracts/manifest.js";
 import {
   buildSourceObjectCreateDefinition,
@@ -20,9 +20,13 @@ import {
   buildSourceObjectHasDefinition,
   buildSourceObjectIsErrorDefinition,
   buildSourceObjectErrorFieldDefinition,
+  type SourceObjectCreateOperands,
   type SourceObjectDefinition,
 } from "../../../runtime/wasmgc/values/source-object-bodies.js";
-import type { NativeBuiltinFunctionReservations } from "./native-builtin-functions.js";
+import { buildSourceFunctionInitDefinition } from "../../../runtime/wasmgc/values/source-function-object-bodies.js";
+import { nativeBuiltinFunctionOperands, type NativeBuiltinFunctionReservations } from "./native-builtin-functions.js";
+import { nativeBuiltinFunctionRequestDependencies } from "./native-builtin-function-requests.js";
+import { nativeStringLiteralInstrs } from "./native-string-literals.js";
 import type { NativeErrorReservations } from "./native-errors.js";
 import type { NativeObjectDescriptorReservations } from "./native-object-descriptors.js";
 import type { NativeObjectLayoutReservations } from "./native-object-layouts.js";
@@ -37,23 +41,29 @@ export interface NativeSourceObjectDependencies {
 }
 const EXTERNREF = { kind: "externref" } as const;
 const I32 = { kind: "i32" } as const;
+const F64 = { kind: "f64" } as const;
+function createOperands({ layouts, storage, kernel }: NativeSourceObjectDependencies): SourceObjectCreateOperands {
+  return {
+    objectTypeIdx: layouts.object.typeIndex,
+    objectPrototype: kernel.functions.objectPrototype.handle,
+    createWithPrototype: storage.createWithPrototype.handle,
+  };
+}
 /** An adapter (the contract signature it reserves, its body over the realm's packs) or a bound realm function. */
 type Row =
   | {
       readonly signature: { readonly params: readonly ValType[]; readonly results: readonly ValType[] };
-      readonly body: (dependencies: NativeSourceObjectDependencies) => SourceObjectDefinition;
+      readonly body: (
+        dependencies: NativeSourceObjectDependencies,
+        tx: PhysicalModuleReservations,
+      ) => SourceObjectDefinition;
     }
   | { readonly binds: (dependencies: NativeSourceObjectDependencies) => FunctionReservation };
 /** The contracts the realm serves. A new realm-served contract is one row. */
 const ROWS = {
   "js.object.create-default": {
     signature: { params: [], results: [EXTERNREF] },
-    body: ({ layouts, storage, kernel }) =>
-      buildSourceObjectCreateDefinition({
-        objectTypeIdx: layouts.object.typeIndex,
-        objectPrototype: kernel.functions.objectPrototype.handle,
-        createWithPrototype: storage.createWithPrototype.handle,
-      }),
+    body: (dependencies) => buildSourceObjectCreateDefinition(createOperands(dependencies)),
   },
   "js.object.define-data": { binds: ({ descriptors }) => descriptors.defineData },
   "js.object.create-type-error": { binds: ({ errors }) => errors.newTypeError },
@@ -68,6 +78,8 @@ const ROWS = {
         entryTypeIdx: layouts.propEntry.typeIndex,
         lookup: kernel.functions.lookup.handle,
         defineData: descriptors.defineData.handle,
+        match: kernel.functions.match.handle,
+        bag: kernel.functions.bag.handle,
       }),
   },
   "js.object.has": {
@@ -81,6 +93,22 @@ const ROWS = {
   "js.object.error-field": {
     signature: { params: [EXTERNREF, I32], results: [EXTERNREF] },
     body: ({ errors }) => buildSourceObjectErrorFieldDefinition({ errorTypeIdx: errors.type.typeIndex }),
+  },
+  "js.object.init-function": {
+    signature: { params: [EXTERNREF, EXTERNREF, F64, I32], results: [] },
+    body: (dependencies, tx) => {
+      const strings = nativeBuiltinFunctionRequestDependencies(tx, dependencies.kernel.requests).strings;
+      const key = (text: string): Instr[] => [
+        ...nativeStringLiteralInstrs(tx, strings, text),
+        { op: "extern.convert_any" },
+      ];
+      return buildSourceFunctionInitDefinition({
+        kernel: nativeBuiltinFunctionOperands(tx, dependencies.kernel),
+        create: createOperands(dependencies),
+        prototypeKey: key("prototype"),
+        constructorKey: key("constructor"),
+      });
+    },
   },
 } as const satisfies Readonly<Partial<Record<OrdinaryObjectRuntimeFeature, Row>>>;
 /** A contract the realm serves. */
@@ -169,7 +197,7 @@ export function fillNativeSourceObjectResources(
   if (owner.filled) fail("duplicate canonical fill");
   for (const { feature, token } of pack.served) {
     const row: Row = ROWS[feature];
-    if ("body" in row) tx.fillFunction(token, row.body(owner.dependencies));
+    if ("body" in row) tx.fillFunction(token, row.body(owner.dependencies, tx));
   }
   owner.filled = true;
 }

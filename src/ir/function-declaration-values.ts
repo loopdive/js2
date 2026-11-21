@@ -27,6 +27,7 @@ import {
 } from "./identity.js";
 import { irDynamic, type IrClosureSignature, type IrFunction, type IrType, type IrValueId } from "./nodes.js";
 import { IrUnsupportedError } from "./outcomes.js";
+import { emitFunctionObjectInit } from "./function-object-lowering.js";
 import type { IrModuleInitBindingIntent, IrModuleInitPlan } from "./program/startup.js";
 import type { IrPlanningIdentityContext } from "./planning-identity.js";
 import { JS_TAG_IDS } from "./runtime/js-tag-domain.js";
@@ -146,7 +147,7 @@ export function functionDeclarationValues(
       tdzGlobalRef: null,
       globalName: name,
       tdzGlobalName: null,
-      type: DYNAMIC,
+      type: irDynamic(JS_TAG_IDS.Function),
     };
     return {
       declaration,
@@ -198,6 +199,8 @@ export function emitFunctionDeclarationValues(
   for (const value of values) {
     const signature: IrClosureSignature = { params: value.params, returnType: DYNAMIC };
     const closure = cx.builder.emitClosureNew(liftTrampoline(cx, value, signature), signature, [], []);
+    const { declaration } = value;
+    emitFunctionObjectInit(cx.builder, closure, declaration.name!.text, declaration.parameters.length, true);
     const callable = cx.builder.emitCallablePack(closure, signature);
     const dynamic = cx.builder.emitCall(irRuntimeFuncRef(IR_DYN_CALL_BOX_FN), [callable], irDynamic());
     cx.builder.emitGlobalSet(value.home.globalRef, dynamic!);

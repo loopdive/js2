@@ -66,6 +66,9 @@ const DECLARATIONS: Readonly<Record<OrdinaryObjectRuntimeFeature, IrRuntimeCalla
   "js.object.is-error": declaration("js.object.is-error", [EXTERNAL], [BOOLEAN]),
   // (#7354 M2) An error's `name` (selector 1) or `message` (selector 0) field, each a native string.
   "js.object.error-field": declaration("js.object.error-field", [EXTERNAL, SELECTOR], [EXTERNAL]),
+  // (#7354 F1b) A source function object's own properties, once, right after its closure is created: `length`,
+  // `name` (a native string) and, for a constructor (the Boolean), `prototype` (`source-function-object-bodies.ts`).
+  "js.object.init-function": declaration("js.object.init-function", [EXTERNAL, EXTERNAL, FLAGS, BOOLEAN], []),
 });
 
 /** Exact semantic binding only; neither display names nor runtime aliases qualify. */

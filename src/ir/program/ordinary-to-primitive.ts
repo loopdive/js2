@@ -8,9 +8,10 @@
  * it is skipped too) and `toString` "[object Object]". Calling a method needs calls through a value (slice F2), so a
  * callable one ends the program by name at run time (`js.value.unsupported`); in a program that creates no function
  * value no method can be callable, so only `toString` is consulted and the answer is "[object Object]" or a TypeError.
- * A function value's own `toString` is Function.prototype.toString, the source text the closure does not carry, so
- * its ToPrimitive is the same abort. `@@toPrimitive` (§7.1.1 step 2) is reachable only by naming `Symbol`, and such a
- * program refuses by name.
+ * (#7354 F1b) A function value's absent `toString` is Function.prototype.toString, the source text the closure does
+ * not carry; its one caller here is ToNumber, which reads that text as NaN whatever it is, so the arm's string is a
+ * stand-in no code reads (ToString of a function is `TO_STRING_ARM`'s own arm). `@@toPrimitive` (§7.1.1 step 2) is
+ * reachable only by naming `Symbol`, and such a program refuses by name.
  */
 import type { IrInstr, IrValueId } from "../core/nodes.js";
 import type { LegalizationProgram } from "./dynamic-value-kinds.js";
@@ -34,13 +35,17 @@ export interface ToPrimitiveBuilders extends TypeErrorBuilders {
   readonly unsupported: (result: IrValueId) => IrInstr;
 }
 
-/** OrdinaryToPrimitive of the once-evaluated ordinary `object` with `hint`: its string into `result`, or a TypeError. */
+/**
+ * OrdinaryToPrimitive of the once-evaluated `object` (an ordinary object, or (F1b) a function value) with `hint`: its
+ * string into `result`, or a TypeError.
+ */
 export function ordinaryToPrimitive(
   b: ToPrimitiveBuilders,
   program: LegalizationProgram,
   object: IrValueId,
   hint: ToPrimitiveHint,
   result: IrValueId,
+  kind: "object" | "function",
 ): IrInstr[] {
   if (program.objects.namesSymbol) gap("ToPrimitive of an object in a program that names 'Symbol'");
   // Without a callable kind `valueOf` is skipped whether held or not, so it is not consulted at all: the answers are
@@ -52,7 +57,8 @@ export function ordinaryToPrimitive(
     // The TypeError does not complete; the empty string only gives the arm its value.
     if (name === undefined) return [...typeError(b, "Cannot convert object to primitive value"), b.text("", r)];
     const [text, key, held] = [b.fresh(), b.fresh(), b.fresh()];
-    const absent = (r: IrValueId) => (name === "toString" ? [b.text("[object Object]", r)] : step(index + 1, r));
+    const absent = (r: IrValueId) =>
+      name !== "toString" ? step(index + 1, r) : [b.text(kind === "object" ? "[object Object]" : "", r)];
     return [
       b.text(name, text),
       { kind: "coerce.to_externref", value: text, result: key, resultType: b.carrier },

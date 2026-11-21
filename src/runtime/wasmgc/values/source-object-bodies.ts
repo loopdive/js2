@@ -15,20 +15,24 @@ export interface SourceObjectDefinition {
  * `js.object.create-default`: OrdinaryObjectCreate(%Object.prototype%) with an explicit link to the realm's
  * Object.prototype, so a lookup never meets the storage's implicit-prototype state.
  */
-export function buildSourceObjectCreateDefinition(d: {
+export function buildSourceObjectCreateDefinition(d: SourceObjectCreateOperands): SourceObjectDefinition {
+  return { locals: [], body: sourceObjectCreate(d) };
+}
+
+export interface SourceObjectCreateOperands {
   readonly objectTypeIdx: TypeHandle;
   readonly objectPrototype: FuncHandle;
   readonly createWithPrototype: FuncHandle;
-}): SourceObjectDefinition {
-  return {
-    locals: [],
-    body: [
-      { op: "call", funcIdx: d.objectPrototype },
-      { op: "any.convert_extern" },
-      { op: "ref.cast", typeIdx: d.objectTypeIdx },
-      { op: "call", funcIdx: d.createWithPrototype },
-    ],
-  };
+}
+
+/** The `create-default` instructions, leaving the new object's externref; (#7354 F1b) also a function's prototype. */
+export function sourceObjectCreate(d: SourceObjectCreateOperands): Instr[] {
+  return [
+    { op: "call", funcIdx: d.objectPrototype },
+    { op: "any.convert_extern" },
+    { op: "ref.cast", typeIdx: d.objectTypeIdx },
+    { op: "call", funcIdx: d.createWithPrototype },
+  ];
 }
 
 /**
@@ -70,17 +74,27 @@ const CREATE_DATA_PROPERTY =
  * (#7354 O3) `js.object.set(object, key, value, receiver)`: OrdinarySet (§10.1.9.2) over the kernel's lookup, the walk
  * `get` takes. A writable data property it finds, or none (absent, or a miss at the realm's Object.prototype, which
  * every caller's key refusal makes a true miss), is CreateDataProperty on the receiver through the descriptor pack's
- * define. That agrees with OrdinarySet's `{ [[Value]] }` define of an existing own property because every own
- * property of a source object is writable, enumerable and configurable (a literal's define-data, or this set), and a
- * plain program writes no realm prototype. OrdinarySet's other answers (a setter call, `false` for a read-only or
- * setter-less property) are unreachable from a plain program and trap, as an unknown carrier (status 3) does.
+ * define. That agrees with OrdinarySet's `{ [[Value]] }` define of an existing own property because every writable
+ * own property of a source object is also enumerable and configurable (a literal's define-data, or this set), and a
+ * plain program writes no realm prototype; (#7354 F1b) a function's own property is defined in its bag. A read-only data property it finds (a function's own `length`
+ * or `name`) answers `false`. A setter call or a setter-less accessor is unreachable from a plain program and traps,
+ * as an unknown carrier (status 3) does.
  */
 export function buildSourceObjectSetDefinition(d: {
   readonly entryTypeIdx: TypeHandle;
   readonly lookup: FuncHandle;
   readonly defineData: FuncHandle;
+  readonly match: FuncHandle;
+  readonly bag: FuncHandle;
 }): SourceObjectDefinition {
   const [status, entry] = [4, 5];
+  const entryFlag = (flag: number): Instr[] => [
+    { op: "local.get", index: entry },
+    { op: "ref.as_non_null" },
+    { op: "struct.get", typeIdx: d.entryTypeIdx, fieldIdx: 2 },
+    { op: "i32.const", value: flag },
+    { op: "i32.and" },
+  ];
   return {
     locals: [
       { name: "status", type: { kind: "i32" } },
@@ -96,20 +110,33 @@ export function buildSourceObjectSetDefinition(d: {
       { op: "i32.eq" },
       {
         op: "if",
-        blockType: { kind: "val", type: { kind: "i32" } },
+        blockType: { kind: "empty" },
         then: [
-          { op: "local.get", index: entry },
-          { op: "ref.as_non_null" },
-          { op: "struct.get", typeIdx: d.entryTypeIdx, fieldIdx: 2 },
-          { op: "i32.const", value: flags.accessor | flags.writable },
-          { op: "i32.and" },
-          { op: "i32.const", value: flags.writable },
-          { op: "i32.ne" },
+          ...entryFlag(flags.accessor),
+          { op: "if", blockType: { kind: "empty" }, then: [{ op: "unreachable" }] },
+          ...entryFlag(flags.writable),
+          { op: "i32.eqz" },
+          { op: "if", blockType: { kind: "empty" }, then: [{ op: "i32.const", value: 0 }, { op: "return" }] },
         ],
-        else: [{ op: "local.get", index: status }, { op: "i32.const", value: 2 }, { op: "i32.gt_u" }],
+        else: [
+          { op: "local.get", index: status },
+          { op: "i32.const", value: 2 },
+          { op: "i32.gt_u" },
+          { op: "if", blockType: { kind: "empty" }, then: [{ op: "unreachable" }] },
+        ],
       },
-      { op: "if", blockType: { kind: "empty" }, then: [{ op: "unreachable" }] },
+      // (#7354 F1b) A function's own properties live in its bag (`match` admits only function objects).
       { op: "local.get", index: 3 },
+      { op: "call", funcIdx: d.match },
+      {
+        op: "if",
+        blockType: { kind: "val", type: { kind: "externref" } },
+        then: [
+          { op: "local.get", index: 3 },
+          { op: "call", funcIdx: d.bag },
+        ],
+        else: [{ op: "local.get", index: 3 }],
+      },
       { op: "local.get", index: 1 },
       { op: "local.get", index: 2 },
       { op: "f64.const", value: CREATE_DATA_PROPERTY },
