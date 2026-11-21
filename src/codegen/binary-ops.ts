@@ -88,7 +88,7 @@ import { compileInOperator } from "./binary-ops-in.js";
 import { moduleGlobalIsDynamicButStaticallyPrimitive } from "./declarations/heterogeneous-scalar-var-widening.js";
 import { emitIsUndefF64 } from "./value-tags.js";
 import { hasStaticBigIntOperand } from "./host-bigint-carrier.js";
-import { emitStandaloneAnyBigIntBinary } from "./bigint-any-operand.js"; // (#5383) host-free any op bigint
+import { emitMaybeBigIntLooseEquality, emitStandaloneAnyBigIntBinary } from "./bigint-any-operand.js"; // (#5383, #7373)
 import { emitUninitialisedFieldStrictNullish, readsUninitialisedFieldSlot } from "./uninitialised-field-undefined.js"; // (#5312)
 import { readsUndefinedHoldingVariable } from "./undefined-holding-variable.js"; // (#1058)
 
@@ -1705,6 +1705,7 @@ export function compileBinaryExpression(
 
     // Mixed BigInt + Number/String: comparison and equality operators (#227, #228, #295)
     if (leftIsBigInt !== rightIsBigInt) {
+      const nonBigIntTsType = leftIsBigInt ? rightTsType : leftTsType;
       const isStrictEq = op === ts.SyntaxKind.EqualsEqualsEqualsToken;
       const isStrictNeq = op === ts.SyntaxKind.ExclamationEqualsEqualsToken;
 
@@ -1714,7 +1715,7 @@ export function compileBinaryExpression(
       // boundary is typed `any` even when it is a BigInt (#6642, #7371). Where `ensureExternStrictEqHelper` returns
       // undefined, the fold still answers.
       if (isStrictEq || isStrictNeq) {
-        const nonBigIntMayBeBigInt = typeMayBeBigInt(leftIsBigInt ? rightTsType : leftTsType);
+        const nonBigIntMayBeBigInt = typeMayBeBigInt(nonBigIntTsType);
         // `ensureExternStrictEqHelper` needs `ctx.nativeBoxNumberTypeIdx` /
         // `ctx.nativeBoxBooleanTypeIdx`, which are only set once
         // `addUnionImports` has registered the native-first boxing helpers —
@@ -1750,11 +1751,11 @@ export function compileBinaryExpression(
         op === ts.SyntaxKind.LessThanEqualsToken ||
         op === ts.SyntaxKind.GreaterThanToken ||
         op === ts.SyntaxKind.GreaterThanEqualsToken;
+      const maybeBigIntLooseEq = emitMaybeBigIntLooseEquality(ctx, fctx, expr, leftIsBigInt, nonBigIntTsType);
+      if (maybeBigIntLooseEq !== undefined) return maybeBigIntLooseEq;
 
-      // The i64 comparison below cannot represent arbitrary-width host BigInts
-      // and its f64 conversion also loses integer precision. Let JavaScript
-      // perform the exact abstract equality / relational algorithm whenever a
-      // host is available.
+      // The i64 comparison below cannot represent arbitrary-width host BigInts and its f64 conversion also loses
+      // integer precision. Let JavaScript perform the exact abstract equality / relational algorithm with a host.
 
       // #1827 — BigInt × Number loose (in)equality must use EXACT
       // mathematical-value equality, not an f64 collapse. `f64.convert_i64_s`
@@ -1910,7 +1911,6 @@ export function compileBinaryExpression(
       // (`anyValueTypeIdx < 0`), mirroring emitAnyAdd's host-import ABI rule.
       // Standalone/WASI has no JS host, so it keeps the throw (existing
       // limitation — a native ToNumeric reduction is the follow-up slice).
-      const nonBigIntTsType = leftIsBigInt ? rightTsType : leftTsType;
       const hostBinopCode = bigIntHostBinopOpcode(op);
 
       // (#5383) …and its host-free twin for an `any`/`unknown` operand.
