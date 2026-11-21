@@ -57,6 +57,8 @@ interface PrototypeUse {
   readonly mayPatch: Set<PatchableIntrinsic>;
   /** Names the source stores into, deletes or defines on anything: `x.call = f`, `String = v`. */
   readonly writtenNames: Set<string>;
+  /** (#7354 F1b) Those of them written on `this` or a global-object name: `this.f = v`, `globalThis["f"] = v`. */
+  readonly globalWrittenNames: Set<string>;
   /** The source names a {@link REFLECTIVE_NAMES} route or has a `with` statement. */
   reflective: boolean;
   /** The global object (`this`, `globalThis`, `self`, `window`, `global`) has a use other than an inert one. */
@@ -144,18 +146,21 @@ export function sourceMayWriteBindingUnseen(sourceFile: ts.SourceFile, name: str
 /**
  * (#7354 Fa, F1b) Whether a script binding holds the value its declaration gives it for the whole program: the
  * declaration is the name's only binding site in its file and no identifier of that name is assigned, with no `eval`
- * or `with` (`bindingIsUniqueAndNeverWritten`). Any other write of a script binding is a write of a global object
- * property (`this.f = v`, `globalThis["f"] = v`, `Reflect.set(globalThis, "f", v)`), and only a non-inert `this`, a
- * global-object name or code the source does not spell reaches the global object (a builtin is strict, so it never
- * substitutes it for an `undefined` receiver): so the global object must not escape and no such code may run. A
- * member store of the same name on another object (`assert.f = v`) writes no binding then.
+ * or `with` (`bindingIsUniqueAndNeverWritten`). Any other write of a script binding is a write of a global-object
+ * property, and the global object is reached only through `this`, a global-object name, a reflective route or code
+ * the source does not spell (a builtin is strict, so it never substitutes it for an `undefined` receiver). So no such
+ * code may run, no reflective route may be named, the global object must not escape (into a value, or under a
+ * computed key), and no member of the binding's name may be written on `this` or a global-object name. A member store
+ * of the same name on another object (`assert.f = v`) writes no binding then.
  */
 export function bindingHoldsItsDeclaration(name: ts.Identifier, declaration: ts.Declaration): boolean {
-  const source = declaration.getSourceFile();
+  const use = prototypeUse(declaration.getSourceFile());
   return (
     bindingIsUniqueAndNeverWritten(name, declaration) &&
-    !sourceMayWriteGlobalObject(source) &&
-    !sourceRunsDynamicCode(source)
+    !use.dynamicCode &&
+    !use.reflective &&
+    !use.globalObjectEscapes &&
+    !use.globalWrittenNames.has(name.text)
   );
 }
 
@@ -186,6 +191,7 @@ function prototypeUse(sourceFile: ts.SourceFile): PrototypeUse {
       writes: new Set(),
       mayPatch: new Set(),
       writtenNames: new Set(),
+      globalWrittenNames: new Set(),
       reflective: false,
       globalObjectEscapes: false,
       dynamicCode: false,
@@ -216,6 +222,7 @@ function prototypeUse(sourceFile: ts.SourceFile): PrototypeUse {
         found.globalObjectEscapes = true;
       const written = writtenName(node);
       if (written !== undefined) found.writtenNames.add(written);
+      if (written !== undefined && writesGlobalObject(node)) found.globalWrittenNames.add(written);
       found.unspelledWrite ||= installsUnspelledMember(node);
       if (ts.isStringLiteralLike(node) || (ts.isIdentifier(node) && !isMemberName(node))) {
         found.spelledNames.add(node.text);
@@ -371,6 +378,21 @@ function writtenName(node: ts.Node): string | undefined {
   if (!ts.isCallExpression(node) || !ts.isPropertyAccessExpression(node.expression)) return undefined;
   const key = node.arguments[1];
   return node.expression.name.text === "defineProperty" && key !== undefined ? nameText(key) : undefined;
+}
+
+/** The member write `node` (a `writtenName`) targets `this` or a global-object name. */
+function writesGlobalObject(node: ts.Node): boolean {
+  const receiver =
+    ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node)
+      ? node.expression
+      : ts.isCallExpression(node)
+        ? node.arguments[0]
+        : undefined;
+  const base = receiver && skipOuterExpressions(receiver);
+  return (
+    base !== undefined &&
+    (base.kind === ts.SyntaxKind.ThisKeyword || (ts.isIdentifier(base) && GLOBAL_OBJECT_NAMES.has(base.text)))
+  );
 }
 
 /** `node` is the name of a member read or write (`o.<name>`), not a spelling of the name itself. */

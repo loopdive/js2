@@ -208,11 +208,12 @@ describe("#7354 Fa — function values on the Prepared path", () => {
     ],
     // (#7354 F1) `+=` on a parameter, `+`, `String(f)` and `typeof` of a function value:
     // tests/issue-7354-f1-*.test.ts.
-    // A declaration read as a value is not built yet.
+    // (#7354 F1b) A declaration read as a value whose binding something else writes (the value itself runs:
+    // tests/issue-7354-f1b-*.test.ts).
     [
-      "a function declaration read as a value",
-      "function id(v) { return v; } var g = id;",
-      'identifier "id" is not in scope',
+      "a function declaration read as a value and written",
+      "function id(v) { return v; } var g = id; id = 1;",
+      "function declaration 'id' read as a value is written",
     ],
   ])("refuses %s by name", async (_, program, message) => {
     expect(await refusal(program)).toContain(message);

@@ -109,15 +109,16 @@ describe("#7354 F1 — the function kind", () => {
       `var f = function () { return 1; }; ${use};`,
       "ToString of a function needs Function.prototype.toString",
     ]),
+    // (#7354 F1b) A function value is the realm's object now: only the keys its built-in prototypes hold refuse.
     [
-      "a member read of a function value",
-      "var g = function () {}; var k = g.k; if (k) throw 1;",
-      "member read 'k' of a function needs the realm's function objects",
+      "a member read of a Function.prototype key",
+      "var g = function () {}; var k = g.call; if (k) throw 1;",
+      "member read 'call' of a function needs Function.prototype's properties",
     ],
     [
-      "a member write of a function value",
-      "var g = function () {}; g.k = 1;",
-      "member write 'k' of a function needs the realm's function objects",
+      "a member write of Object.prototype's accessor on a function",
+      "var g = function () {}; g.__proto__ = null;",
+      "member write '__proto__' of a function needs Object.prototype's accessor",
     ],
     // A chunked module-init lowers later statements in another function: the static closure value stays in its own.
     [
