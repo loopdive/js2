@@ -89,12 +89,13 @@ export function symbolComputedKeyFunctionName(key: ts.Expression): string | unde
 }
 
 /**
- * (#5149, #7354 F1b) §10.2.9 for a property key: an identifier, string or number key's text; a constant computed
- * key's value (`['k']`, `[1]`); a decidable symbol's bracketed description ({@link symbolComputedKeyFunctionName});
- * `undefined` for any other computed key; `""` for a private or other key.
+ * (#5149, #7354 F1b) §10.2.9 for a property key: an identifier, private name, string or number key's text; a
+ * constant computed key's value (`['k']`, `[1]`); a decidable symbol's bracketed description
+ * ({@link symbolComputedKeyFunctionName}); `undefined` for any other computed key; `""` for any other key.
  */
 export function propertyKeyFunctionName(key: ts.PropertyName): string | undefined {
-  if (ts.isIdentifier(key) || ts.isStringLiteral(key) || ts.isNumericLiteral(key)) return key.text;
+  if (ts.isIdentifier(key) || ts.isPrivateIdentifier(key) || ts.isStringLiteral(key) || ts.isNumericLiteral(key))
+    return key.text;
   if (!ts.isComputedPropertyName(key)) return "";
   let expr = key.expression;
   while (ts.isParenthesizedExpression(expr)) expr = expr.expression;
@@ -171,10 +172,7 @@ export function functionInstanceName(decl: ts.Node): string | undefined {
   if (ts.isShorthandPropertyAssignment(parent) && parent.objectAssignmentInitializer === node) {
     return parent.name.text;
   }
-  if (ts.isPropertyDeclaration(parent) && parent.initializer === node) {
-    const key = parent.name;
-    return ts.isIdentifier(key) || ts.isPrivateIdentifier(key) || ts.isStringLiteral(key) ? key.text : "";
-  }
+  if (ts.isPropertyDeclaration(parent) && parent.initializer === node) return propertyKeyFunctionName(parent.name);
   if (
     ts.isBinaryExpression(parent) &&
     parent.operatorToken.kind === ts.SyntaxKind.EqualsToken &&

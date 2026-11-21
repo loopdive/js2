@@ -56,7 +56,7 @@ import type { CodegenContext } from "./context/types.js";
 import { ts } from "../ts-api.js";
 import { expectedArgumentCountOfParams } from "../shared/function-expected-argument-count.js";
 import { fnMetaSlotOfMeta, type FnInstanceMeta } from "./function-instance-meta.js";
-import { symbolComputedKeyFunctionName } from "../shared/named-evaluation.js";
+import { propertyKeyFunctionName } from "../shared/named-evaluation.js";
 
 /** A member declaration that can carry `name` / `length` metadata. */
 type MetaBearingMember =
@@ -106,13 +106,9 @@ function isMetaBearingMember(decl: ts.Node): decl is MetaBearingMember {
  */
 function memberNameOf(decl: MetaBearingMember): string | undefined {
   const key = decl.name;
-  let base: string | undefined;
-  if (ts.isIdentifier(key) || ts.isStringLiteral(key) || ts.isNumericLiteral(key)) base = key.text;
-  // (#5149 cluster B) A SYMBOL key is decidable when the symbol was built by a
-  // literal `Symbol("desc")` binding: §10.2.9 names the method `"[desc]"`
-  // (`""` for a description-less symbol). Every other computed key still
-  // declines — see the module header on why declining beats guessing.
-  else if (ts.isComputedPropertyName(key)) base = symbolComputedKeyFunctionName(key.expression);
+  // The shared §10.2.9 key rule (`propertyKeyFunctionName`); a `#private` or BigInt key declines, as an undecidable
+  // computed key does — see the module header on why declining beats guessing.
+  const base = ts.isPrivateIdentifier(key) || ts.isBigIntLiteral(key) ? undefined : propertyKeyFunctionName(key);
   if (base === undefined) return undefined;
   if (ts.isGetAccessorDeclaration(decl)) return `get ${base}`;
   if (ts.isSetAccessorDeclaration(decl)) return `set ${base}`;
