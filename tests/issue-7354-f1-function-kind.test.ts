@@ -112,13 +112,19 @@ describe("#7354 F1 — the function kind", () => {
     // (#7354 F1b) A function value is the realm's object now: only the keys its built-in prototypes hold refuse.
     [
       "a member read of a Function.prototype key",
-      "var g = function () {}; var k = g.call; if (k) throw 1;",
+      "function g() {} var k = g.call;",
       "member read 'call' of a function needs Function.prototype's properties",
     ],
+    // `__proto__` names a reflective route to the global object, so the declaration's binding is not proven its own.
     [
       "a member write of Object.prototype's accessor on a function",
-      "var g = function () {}; g.__proto__ = null;",
-      "member write '__proto__' of a function needs Object.prototype's accessor",
+      "function g() {} g.__proto__ = null;",
+      "function declaration 'g' read as a value is written",
+    ],
+    [
+      "a member write of Object.prototype's accessor on a value that may be a function",
+      "function w(v) { v.__proto__ = null; } w(function () {});",
+      "member write '__proto__' of a value that may be a string or a number or a boolean or a function or an object needs Object.prototype's accessor",
     ],
     // A chunked module-init lowers later statements in another function: the static closure value stays in its own.
     [
