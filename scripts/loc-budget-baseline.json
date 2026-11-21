@@ -1,7 +1,7 @@
 {
   "generated": "2026-11-21",
   "threshold": 1500,
-  "totalCeiling": 1039061,
+  "totalCeiling": 1038991,
   "files": {
     "src/codegen-linear/index.ts": 5791,
     "src/codegen-linear/runtime.ts": 4195,
@@ -104,7 +104,7 @@
     "src/ir/lower-generic.ts": 4569,
     "src/ir/module-bindings.ts": 2936,
     "src/ir/prepared-component-dependencies.ts": 1776,
-    "src/ir/program-consumer.ts": 1532,
+    "src/ir/program-consumer.ts": 1528,
     "src/ir/program-physical-plan.ts": 1525,
     "src/ir/program-source.ts": 1848,
     "src/ir/propagate.ts": 1702,
