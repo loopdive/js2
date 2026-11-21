@@ -3236,3 +3236,67 @@ Module goal now meets the existing trap for a kept restricted declaration and th
 and main are fine. Restricting the never-elide rule to Script or unstated goals needs the goal threaded through
 `elideWithIrIds` and both callers, not a two-line change, so it is in #7445 with the per-goal table. The body of
 #7445 is corrected: `checkRestrictedGlobalLexicals` is gone, and the per-goal behaviour is now stated.
+
+### Review round 4 (2026-11-21)
+
+**Finding.** Round 3's `GOAL_WALKS` ran the Script walk on the SourceFile the real gate then validates. The
+detector memoizes per node: `strictModeCache` and the Module-goal mark are a `WeakMap`/`WeakSet` keyed by node.
+So the Module-goal gate read the Script walk's "not strict" answers, breaking the rule in `predicates.ts` that no
+cached answer may predate the mark. Under the Module goal, `var l = 010;`, `function f(a, a) {}` and `'\07'`
+compiled, and a dead `var d = function (a, a) {}` was elided. Two test262 module negatives
+(`module-code/early-import-eval.js`, `early-import-as-eval.js`) lost their early-error refusal.
+
+**Fix, structural.** Each walk parses the text afresh (`ts.createSourceFile`, same script kind) and discards the
+parse (`frontendErrorOffsets`, `src/test262/prepared-dead-bindings.ts`). Both caches are keyed by node identity,
+so a separate parse cannot write anything the real gate reads. The comment at the parse says why.
+
+**Test seam and property test.** The strict entry's `compile` takes the elision as a test-only third parameter.
+Five option sets: runner, unstated goal, `inferModuleStrictArguments: false` alone, Module goal, and Script with
+semantic diagnostics. For every program of the F0 test file under each set, the gate's verdict with the elision
+must equal its verdict with the identity, except where the bypassed compile was refused only by the backend. A
+program the elision lets compile must then run as node runs it (Script sets).
+
+| mutation | caught by |
+|---|---|
+| round 4's defect: walks back on the real SourceFile | 9 tests, among them the Module-goal property row |
+| round 3's defect: walk only the given options | 10 tests, among them three property rows |
+
+The four round-4 programs are rows too, refused under the Module goal with and without semantic diagnostics.
+
+**Proof.**
+
+- **F0 tests:** 88, green.
+- **Module negatives,** run the IR-lane way (reviewer's `prepneg.mts`: worker options, assembled harness,
+  standalone), 198 files on main, 873efed6e4 and the head:
+  - `early-import-eval.js` and `early-import-as-eval.js` are `REF-FE:early` on all three;
+  - the only changes are the 7 `await` negatives, from back-end to early refusal.
+- **457-file A/B** (`scriptGoal` patch, standalone, main vs head): exactly 7 fail → pass (`class-name-ident-await*`
+  ×4, `reserved-words/await-module`, `labeled/value-await-module*` ×2), 0 regressions.
+- **Wrong answers:**
+  - round-4 `await` programs, 46 × 14 lanes: no new wrong answer vs main on any lane. The 2 left on the Prepared
+    lanes (M12, an `export` with no stated goal) are identical on main.
+  - round-3 attack programs, 30 × 8 lanes: 0 wrong.
+- **Early-error test files, failing tests per side (main / head):**
+
+  | file | main | head |
+  |---|---:|---:|
+  | issue-990 | 2 | 1 |
+  | issue-3632 | 3 | 3 |
+  | issue-2923-eval-const-broaden | 9 | 9 |
+  | 17 others | 0 | 0 |
+
+  `test262-prepared-entry` is 44/44.
+- **Bytes:** ordinary 50 × 2 targets identical to main; Prepared fixtures as before (the same 4 all-dead rows).
+- **Cost** (30 rows of the 411-row sample, Prepared, Script, semantic skipped, median of 3):
+
+  | tree | median | p90 |
+  |---|---:|---:|
+  | main | 33.1 ms | 66.7 ms |
+  | 873efed6e4 | 35.2 ms | 90.4 ms |
+  | head | 39.6 ms | 75.8 ms |
+
+  The two extra parses cost a few ms per row.
+
+**Quality.** `checkReservedIdentifiers` has its JSDoc back. Three shapes are still accepted under the Module goal,
+as on main: `({await}) => 0`, `({await} = {})`, `var g = function await(){}`. They are in #7445. The detector is
+otherwise untouched this round.
