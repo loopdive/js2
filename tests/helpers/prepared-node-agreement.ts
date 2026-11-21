@@ -63,6 +63,27 @@ export async function runPrepared(source: string): Promise<"returned" | "threw">
   }
 }
 
+/**
+ * `source` compiles and validates, and ends at the run-time abort (`js.value.unsupported`) where node returns. The
+ * realm's RuntimeError class is not this vitest context's, so the trap is matched by its class name.
+ */
+export async function abortsAtRunTime(source: string): Promise<void> {
+  expect(() => new Function(source)()).not.toThrow();
+  await yieldToRpc();
+  const result = await compile(source, preparedOptions());
+  expect(errors(result)).toEqual([]);
+  expect(WebAssembly.validate(result.binary)).toBe(true);
+  let trap: unknown;
+  try {
+    const exports = instantiatePreparedArtifact(result).instance.exports;
+    (exports.__module_init as (() => void) | undefined)?.();
+  } catch (error) {
+    trap = error;
+  }
+  expect((trap as Error | undefined)?.constructor.name).toBe("RuntimeError");
+  expect((trap as Error).message).toBe("unreachable");
+}
+
 /** node's `out` for `body` (a script that assigns the string `out`). */
 export const nodeOut = (body: string): string => String(new Function(`${body}\nreturn out;`)());
 

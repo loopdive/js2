@@ -14,6 +14,7 @@ import {
   requiredPreparedEmission,
   type Test262CompileOptions,
 } from "../src/test262/test262-prepared-entry.js";
+import { abortsAtRunTime } from "./helpers/prepared-node-agreement.js";
 
 const options = (fileName: string, target: "standalone" | "gc" = "standalone"): Test262CompileOptions =>
   ({
@@ -145,14 +146,17 @@ describe("#7354 Str 1 — typed strings through the presentation", () => {
       'function h() { var s = "p"; s = s + "q"; return s; }\nh();',
       "mutable binding 's' (string) has no slot representation",
     ],
-    [
-      "the length of a string held in a script var's dynamic home (a member read of the dynamic value)",
-      'var s = "ab";\nif (s.length !== 2) throw 1;',
-      "dynamic operation member read 'length' of a value that may be a string needs its own length and index properties has no Prepared intrinsic",
-    ],
   ])("refuses %s", async (_, source, detail) => {
     expect(await refusal(source)).toContain(detail);
   });
+
+  // (#7354 C2, C2-D1) The home may also hold `undefined` or `null`, whose arm answers, so the string's arm aborts (a
+  // string's own `length` comes with arrays, #7352); it refused at compile time before C2.
+  it(
+    "ends the length of a string held in a script var's dynamic home at the run-time abort",
+    () => abortsAtRunTime('var s = "ab";\nvar n = s.length;'),
+    180_000,
+  );
 
   it("refuses the relational compare of typed strings (no join)", async () => {
     const source =
