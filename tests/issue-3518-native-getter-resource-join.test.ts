@@ -81,7 +81,7 @@ describe("genuine getter demands join native values before reservation", () => {
             },
           },
           {
-            name: "authenticated reservation inventory and retained public refusal",
+            name: "authenticated reservation inventory and public acceptance",
             run: () => {
               expect(f.invocation.uses).toEqual([]);
               expect(f.invocation.getterUses).toHaveLength(1);
@@ -106,9 +106,8 @@ describe("genuine getter demands join native values before reservation", () => {
                 expect(binding[0]!.reference.binding).toEqual({ kind: "runtime", symbol: "__unbox_boolean" });
               } else expect(f.resourceInput.plan.booleans).toBeUndefined();
               const publicAcceptance = acceptPreparedIrProgram(f.program, replayOptions("wasmgc", "standalone"));
-              expect(publicAcceptance.kind).toBe("unsupported");
-              if (publicAcceptance.kind !== "accepted")
-                expect(publicAcceptance.detail).toMatch(/js\.object\.|object|prototype/);
+              // (#7354 O2) The realm serves the accessor define and calls the getter: the program is accepted.
+              expect(publicAcceptance.kind).toBe("accepted");
               expect(f.access.gaps.some((gap) => gap.detail.includes("implicit-prototype companion"))).toBe(true);
             },
           },
