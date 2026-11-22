@@ -34,6 +34,13 @@ describe("#7354 C2 — this", () => {
         " var out = (g() === undefined ? 'y' : 'n') + (h(g) === undefined ? 'y' : 'n') + (w() === undefined ? 'y' : 'n') + (o.m() === undefined ? 'y' : 'n');",
     ],
     [
+      // Fa's static closure call (module-init, exact arity) would read the receiver a method call left in
+      // `__current_this`: where a closure binds `this`, the static value declines and the dispatcher installs `undefined`.
+      "a top-level closure call after a method call: no leftover receiver",
+      "'use strict'; var o = {k: 1}; o.m = function(){ return this.k; }; var x = o.m();" +
+        " var g = function(a){ return this === undefined ? a : 'bad'; }; function h(){ return g; } var out = String(g('y')) + String(x);",
+    ],
+    [
       "a nested call does not change the caller's `this`; a nested function has its own",
       "var p = {k: 2}; p.n = function(){ return this.k; }; var o = {k: 1};" +
         " o.m = function(){ var x = p.n(); var f = function(){ 'use strict'; return this; }; return String(this.k + x) + (f() === undefined ? 'y' : 'n'); };" +
