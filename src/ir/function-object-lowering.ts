@@ -15,6 +15,7 @@ import { JS_TAG_IDS } from "./runtime/js-tag-domain.js";
 import { asVal, irDynamic, irVal, type IrType, type IrValueId } from "./nodes.js";
 import { demoteToLegacy, IrUnsupportedError } from "./outcomes.js";
 import { describeIrType } from "./describe-ir-type.js";
+import { skipOuterExpressions } from "../shared/binding-writes.js";
 
 /** Source-owned plan values shared by top-level and lifted lowering contexts. */
 export interface FunctionValueLoweringPlans {
@@ -317,7 +318,7 @@ export function lowerDynamicMemberCall(
  * {@link lowerBindingCall} does.
  */
 export function callsNonReference(expr: ts.CallExpression, lane: { createsFunctionObjects?(): boolean } | undefined) {
-  const callee = ts.skipOuterExpressions(expr.expression);
+  const callee = skipOuterExpressions(expr.expression);
   return (
     createsFunctionObjects(lane) &&
     !ts.isIdentifier(callee) &&
