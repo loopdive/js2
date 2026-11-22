@@ -423,8 +423,9 @@ export function programDynamicContracts(
 
 /**
  * (#7354 Ty, T) `typeof X` answers "undefined" only for a name that nothing declares: the checker resolves it to no
- * symbol, neither the program's nor the standard library's (its lib declarations are the one list of the globals the
- * language defines; `globalThis` resolves to a symbol without declarations). A
+ * symbol, neither the program's nor the loaded TypeScript lib's (`globalThis` resolves to a symbol without
+ * declarations). The lib stands in for the list of standard globals; it is not exactly that list (see #7354 "Slice T
+ * result", known limits: a later-edition global it does not declare, DOM names it does). A
  * standard global this path does not provide yet (`Math`, `parseInt`, `Object`, …) is not absent: its `typeof`, like
  * every other read of it, refuses by name (an abort body inside a function under the test262 entry), never
  * "undefined" (node says `typeof Math === "object"`). A script's top-level `function Error() {}` is reported by the

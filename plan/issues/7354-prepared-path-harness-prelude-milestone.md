@@ -5438,8 +5438,9 @@ the carrier arm is covered only by the ordinary-bytes comparison).
 ### T follow-up: `typeof` of a standard global (lead request, 2026-11-22)
 
 - **Fixed the wrong value above.** `absentGlobal` (`source-dynamic-contracts.ts`) now calls a name absent only when
-  the checker resolves it to no symbol at all, neither the program's nor the standard library's. The lib
-  declarations are the one list of standard globals. `PREPARED_PROVIDED_GLOBALS` is gone; the new rule covers it.
+  the checker resolves it to no symbol at all, neither the program's nor the loaded TypeScript lib's. The lib stands
+  in for the list of standard globals but is not exactly that list (known limits below). `PREPARED_PROVIDED_GLOBALS`
+  is gone; the new rule covers it.
   - `typeof` of `parseInt`, `Math`, `Object`, `JSON`, `globalThis`, every Error subclass, … refuses by name at top
     level and aborts inside a function.
   - `typeof undefined` / `NaN` / `Infinity`, an undeclared name, and a program `var` named like a global all give
@@ -5457,3 +5458,46 @@ the carrier arm is covered only by the ordinary-bytes comparison).
 - **Sample.** All 46 passes (the 31 base passes plus slice T's 15) re-run through the runner: 46/46 still pass, so no
   false pass was found. Five of them contain `typeof`.
 - Merged `claude/7354-w` `e6931fc15e`. Gates (also with `LOC_GATE_BASE` = main `bbda75a4c4`) exit 0.
+
+### T review round (PR 7398)
+
+- **Write to a named function expression's own name** (must-fix). `(function nm(){ nm = 1; })();` threw
+  `assignment to non-slot binding "nm" — mutation pre-pass should have detected it` out of `compile()`. The defect
+  predates T: `var f = function nm(){ nm = 1; }; f();` threw the same on the base. The name is an immutable binding
+  (§9.1.1.1.5): sloppy code ignores the write, strict code throws a TypeError. Node's answer would need the strict
+  TypeError on this lane, so the write is refused by name instead (`write to the function expression name "nm"`),
+  which is the function's abort body under the test262 entry. The three non-slot write sites (assignment, compound
+  assignment, increment) share one `refuseNonSlotWrite`; any other non-slot write keeps the invariant with its old
+  text. Tests: `tests/issue-7354-t2-function-expression-name.test.ts`, covering both routes, sloppy and strict,
+  `=`/`+=`/`++`, and a read of the name after the write. Ordinary pipeline: byte-identical on the 20 test262 files,
+  26 probes and the three own-name programs, × default and standalone.
+- **from-ast budget.** The seven comment reflows are reverted. T's growth is paid for by moving code:
+  - `moduleInitContainsNestedVar` moves to `src/shared/var-declaration-lists.ts`, beside `isModuleInitVarList`.
+  - `super(args)` becomes `lowerSuperConstructorCall`.
+  - The Prepared element-access call and the non-Reference callee call are one `lowerPreparedValueCallee` in
+    `function-object-lowering.ts`.
+  - `from-ast.ts` ends at 17355 lines (base 17357). `lowerCall` is within its function budget. The #3000 IR class
+    tests fail the same 8 host-lane rows on the base and on the head.
+- **M1 D35** uses assert.js verbatim (checked against `test262/harness/assert.js`). `isNegativeZero`/`isPrimitive`
+  keep node agreement; `formatIdentityFreeValue` is asserted to be the run-time abort.
+
+**Found, not fixed: a runtime-negative test cannot pass on the Prepared path.** Control row (frontmatter `negative:
+phase: runtime, type: Test262Error`, body `throw new Test262Error("x");`) through the runner: `fail`,
+`TypeError (null/undefined access): <description>`.
+- **Cause.** The program compiles and its module-init throws a `WebAssembly.Exception`. But a Prepared artifact
+  exports neither `__exn_tag` nor `__tag` (checked on the head, on W `e6931fc15e` and on main `bbda75a4c4`, from
+  `git archive` copies). So the worker's `extractWasmExceptionMessage` (`scripts/test262-worker.mjs`) cannot read the
+  payload and falls back to its generic label "TypeError (null/undefined access)".
+- **Verdict.** `originalHarnessExceptionMatches` (`scripts/test262-runtime-verdict.mjs`) compares the payload's
+  `name` (unreadable) or the rendered text against `negative.type`. The text does not contain "Test262Error", so the
+  row fails. This predates T.
+- **Sample.** All 14 negative passes are `phase: parse`; no runtime negative passes today, so no sample row was
+  affected.
+
+**Known limits (pre-existing, not ES5, no sample row affected; not fixed here).** The checker's lib is the stand-in
+list of standard globals, and it is not exactly that list:
+- A standard global the loaded lib does not declare (ES2025 additions) still answers "undefined":
+  `var out = typeof Iterator;` gives `"undefined"`; node gives `"function"`.
+- A DOM name the lib does declare now refuses by name instead of answering "undefined" as node does:
+  `var out = typeof window + typeof name;` → `identifier "window" is not in scope in <module-init>`. Likewise
+  `print`, `console`.
