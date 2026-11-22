@@ -248,7 +248,7 @@ function resourceKeys(requests: NativeBuiltinFunctionRequests): readonly string[
     ...requests.requirements.intrinsics.flatMap((row) =>
       ["type", "singleton", "algorithm", "lifted", "getter"].map((role) => key + ":" + row.id + ":" + role),
     ),
-    ...requests.requirements.objects.map((row) => key + ":object:" + row.id),
+    ...(requests.requirements.objects ?? []).map((row) => key + ":object:" + row.id),
   ];
 }
 export function reserveNativeBuiltinFunctionResources(
@@ -346,7 +346,7 @@ export function reserveNativeBuiltinFunctionResources(
   ) as Readonly<Record<FunctionRole, FunctionReservation>>;
   const globals = Object.freeze({ realm, objectPrototype, state, realmReady });
   const objects = Object.freeze(
-    d.requests.requirements.objects.map(({ id }) =>
+    (d.requests.requirements.objects ?? []).map(({ id }) =>
       Object.freeze({ id, global: tx.reserveGlobal(key + ":object:" + id, key + ":" + id, ext, true) }),
     ),
   );
@@ -484,7 +484,7 @@ function operands(
     typeError: dd.errors.newTypeError.handle,
     createWithPrototype: dd.storage.createWithPrototype.handle,
     text: (text) => literal(text),
-    objects: pack.requests.requirements.objects.map((row, index) => ({
+    objects: (pack.requests.requirements.objects ?? []).map((row, index) => ({
       ...row,
       global: tx.physicalIndex(pack.objects[index]!.global),
     })),
@@ -494,6 +494,7 @@ function operands(
     errors: NATIVE_BUILTIN_FUNCTION_LITERALS.slice(3).map((text) => literal(text)),
     entries: pack.entries.map((entry, index) => ({
       ...pack.requests.requirements.intrinsics[index]!,
+      properties: pack.requests.requirements.intrinsics[index]!.properties ?? [],
       typeIdx: entry.type.typeIndex,
       metadataTypeIdx: entry.metadata.type.typeIndex,
       metadataId: entry.metadata.metadata.id,

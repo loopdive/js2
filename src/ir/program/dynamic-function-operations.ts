@@ -121,6 +121,9 @@ export function dynamicConstruct(b: Builders, instr: Construct): IrInstr[] {
   // A callee that holds no function value is always the TypeError, and needs no dispatcher.
   if (!b.kinds.kindsOf(callee).includes("function")) return notConstructor(result);
   const isConstructor = holds(b, instr, callee, ["function"]);
+  // (#7354 G1) Without a source function no dispatcher exists, and a function value is a built-in the realm holds,
+  // whose [[Construct]] through a value is the run-time abort (the dispatcher's own answer for a built-in).
+  const builtin = (r: IrValueId): IrInstr[] => b.abort(instr, r);
   const construct = (r: IrValueId): IrInstr[] => {
     const [prototype, object, answer] = [b.fresh(), b.fresh(), b.fresh()];
     const link = (kind: CarrierKind, s: IrValueId): IrInstr[] =>
@@ -150,7 +153,10 @@ export function dynamicConstruct(b: Builders, instr: Construct): IrInstr[] {
       ),
     ];
   };
-  return [...isConstructor.instrs, b.branch(isConstructor.cond, construct, notConstructor, result, CARRIER)];
+  return [
+    ...isConstructor.instrs,
+    b.branch(isConstructor.cond, b.program.objects.functions ? construct : builtin, notConstructor, result, CARRIER),
+  ];
 }
 
 /**

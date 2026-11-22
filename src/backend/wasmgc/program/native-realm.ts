@@ -323,12 +323,12 @@ function beginRealm(
             : row.prototype!,
       constructible: row.constructible,
       aliases: row.aliases,
-      properties: entry === "native" ? familyProperties(row) : [],
+      ...(entry === "native" ? { properties: familyProperties(row) } : {}),
     };
   });
   const requests = declareNativeBuiltinFunctionRequests(
     tx,
-    { key: key + ":builtins", intrinsics, objects: familyObjects(requirements.description) },
+    { key: key + ":builtins", intrinsics, ...familyObjects(requirements.description) },
     {
       arguments: substrate.arguments,
       argumentPlan: substrate.argumentPlan,

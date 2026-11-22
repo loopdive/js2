@@ -57,6 +57,13 @@ describe("#7354 C2 — this", () => {
         " var out = s(1) + t(1);",
     ],
     [
+      // (#7354 G1) A caught error is an ordinary object: a method stored on it is called with it as `this` (this ended
+      // at the abort while the error was its own kind).
+      "a write to `this` that is a caught error",
+      "function F(){ this.k = 1; } function c(v){ try { v.x; } catch (e) { return e; } } var e = c(null); e.m = F; e.m();" +
+        " var out = String(e.k);",
+    ],
+    [
       "OrdinaryToPrimitive calls toString with the object as `this`",
       "function T(m){ this.m = m; } T.prototype.toString = function(){ return 'T:' + this.m; };" +
         " function s(v){ return '' + v; } var out = s(new T(1));",
@@ -72,10 +79,6 @@ describe("#7354 C2 — this", () => {
     [
       "sloppy code without a receiver, through a local",
       "function w(){ var f = function(){ return this; }; return f(); } w();",
-    ],
-    [
-      "a write to `this` that is a caught error",
-      "function F(){ this.k = 1; } function c(v){ try { v.x; } catch (e) { return e; } } var e = c(null); e.m = F; e.m();",
     ],
     // Without a function value nothing calls through the dispatcher, so no function binds a receiver: F's
     // `this` refuses, and (#7354 U) that refusal is F's, which gets the abort body.

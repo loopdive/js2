@@ -276,12 +276,13 @@ export function fillNativeDynamicValueResources(
       body: [{ op: "local.get", index: 0 }, { op: "any.convert_extern" }, { op: "ref.cast", typeIdx: anyStrTypeIdx }],
     });
   // (#7354 Fa) A function value enters the carrier as a source closure or (G1) as a built-in the realm holds, and every
-  // such carrier descends from the wrapper root: the source closures', or without them the realm's own. The test is
-  // requested only where the source creates or names a function value, and such a program has one of the two.
-  if (pack.isFunction) {
-    if (!closureRoot) fail("the function test needs the source closures' wrapper root");
-    tx.fillFunction(pack.isFunction, { locals: [], body: buildClosureRootTest(0, tx.physicalIndex(closureRoot)) });
-  }
+  // such carrier descends from the wrapper root: the source closures', or without them the realm's own. A program with
+  // neither (it reads a catch binding, which admits the built-ins an error leads to, but has no realm) holds none.
+  if (pack.isFunction)
+    tx.fillFunction(pack.isFunction, {
+      locals: [],
+      body: closureRoot ? buildClosureRootTest(0, tx.physicalIndex(closureRoot)) : [{ op: "i32.const", value: 0 }],
+    });
   if (pack.unsupported) tx.fillFunction(pack.unsupported, { locals: [], body: [{ op: "unreachable" }] });
   owner.filled = true;
 }

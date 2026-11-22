@@ -30,13 +30,17 @@ export function familyProperties(row: NativeRealmIntrinsic): NativeBuiltinProper
   });
 }
 
-/** The held families' ordinary objects, each after the object it links to (catalog order). */
-export function familyObjects(description: NativeRealmDescription): NativeBuiltinObject[] {
-  return heldCatalogRows(description)
+/**
+ * The held families' ordinary objects, each after the object it links to (catalog order), as the kernel's requirement
+ * field: none where the realm holds no family, so such a realm's requirements are what they were.
+ */
+export function familyObjects(description: NativeRealmDescription): { readonly objects?: NativeBuiltinObject[] } {
+  const objects = heldCatalogRows(description)
     .filter((row) => row.heldWith !== undefined && row.callable === undefined)
     .map((row) => ({
       id: row.id,
       prototype: row.prototype === "%Object.prototype%" ? "object-prototype" : row.prototype!,
       properties: familyProperties(row),
     }));
+  return objects.length === 0 ? {} : { objects };
 }

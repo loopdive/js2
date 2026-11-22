@@ -10,7 +10,8 @@
  * `toString` "[object Object]"; (F1b) a function's absent `toString` is Function.prototype.toString, the source text the
  * closure does not carry, which the caller answers (`ToPrimitiveAnswer.text`). In a program that creates no function
  * value no method can be callable, so only `toString` is consulted. `@@toPrimitive` (§7.1.1 step 2) is reachable only
- * by naming `Symbol`, and such a program refuses by name.
+ * by naming `Symbol`, and such a program refuses by name. (#7354 G1) An error's `toString` is the realm's
+ * Error.prototype.toString, which the dispatcher cannot call: recognised by identity and answered here.
  */
 import type { IrInstr, IrType, IrValueId } from "../core/nodes.js";
 import { irClosureMethodReference } from "../core/closure-invocation-callables.js";

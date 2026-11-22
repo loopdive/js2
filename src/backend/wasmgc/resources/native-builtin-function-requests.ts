@@ -14,6 +14,7 @@ import {
 } from "./native-string-literals.js";
 import {
   assertNativeRealmRequirementsIssued,
+  heldCatalogRows,
   type NativeRealmRequirements,
 } from "../../../ir/program/native-realm-requirements.js";
 import type { NativeRealmIntrinsic } from "../../../runtime/contracts/native-realm-catalog.js";
@@ -60,14 +61,14 @@ export interface NativeBuiltinFunctionRequirement {
   /** (#7354 G1) An Error constructor; its [[Construct]] is the call site's, never the kernel's. */
   readonly constructible: boolean;
   readonly aliases: readonly string[];
-  /** (#7354 G1) Own properties beyond `length` and `name`. */
-  readonly properties: readonly NativeBuiltinProperty[];
+  /** (#7354 G1) A family member's own properties beyond `length` and `name`. */
+  readonly properties?: readonly NativeBuiltinProperty[];
 }
 export interface NativeBuiltinFunctionRequirements {
   readonly key: string;
   readonly intrinsics: readonly NativeBuiltinFunctionRequirement[];
   /** (#7354 G1) The held families' ordinary objects, each after the object it links to. */
-  readonly objects: readonly NativeBuiltinObject[];
+  readonly objects?: readonly NativeBuiltinObject[];
 }
 export interface NativeBuiltinFunctionRequestDependencies {
   readonly arguments: NativeArgumentVectorReservations;
@@ -87,7 +88,10 @@ export interface NativePublicBuiltinFunctionRequest {
   readonly signatureId: string;
   readonly metadataId: string;
 }
-/** Full catalog declarations, including unavailable algorithms. This is never a completion grant. */
+/**
+ * Full catalog declarations, including unavailable algorithms: (#7354 G1) every row the realm holds
+ * (`heldCatalogRows`). This is never a completion grant.
+ */
 export interface NativePublicBuiltinFunctionRequests extends NativeBuiltinFunctionRequestIssuer {
   readonly realm: NativeRealmRequirements;
   readonly key: string;
@@ -329,10 +333,9 @@ interface PublicOwner {
 }
 const publicOwners = new WeakMap<NativePublicBuiltinFunctionRequests, PublicOwner>();
 function publicLiterals(tx: PhysicalModuleReservations, owner: PublicOwner) {
-  const catalog = owner.realm.description.catalog;
   const texts = [
     ...new Set(
-      catalog.intrinsics.flatMap((row) => [
+      heldCatalogRows(owner.realm.description).flatMap((row) => [
         ...(row.callable ? [row.callable.initialName] : []),
         ...row.properties.flatMap((property) => [
           ...(property.key.kind === "string" ? [property.key.value] : []),
@@ -353,7 +356,7 @@ export function declareNativePublicBuiltinFunctionRequests(
   authenticate(tx, dependencies);
   const key = realm.description.key + ":public-builtins";
   const intrinsics = Object.freeze(
-    realm.description.catalog.intrinsics.flatMap((intrinsic) => {
+    heldCatalogRows(realm.description).flatMap((intrinsic) => {
       if (!intrinsic.callable) return [];
       if (!Number.isSafeInteger(intrinsic.callable.length) || intrinsic.callable.length < 0)
         fail("dynamic or infinite public builtin length needs its actual algorithm owner");
