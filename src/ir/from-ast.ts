@@ -12847,10 +12847,8 @@ function lowerWithStatement(stmt: ts.WithStatement, cx: LowerCtx): void {
   }
   const receiver = lowerObjectLiteral(stmt.expression, cx);
   const receiverType = cx.builder.typeOf(receiver);
-  if (receiverType.kind !== "object") {
-    // invariant (producer-promise): the lowering just invoked promised this shape — #4502.
-    throw new Error(`ir/from-ast: with target did not lower to an object (${cx.funcName})`);
-  }
+  if (receiverType.kind !== "object")
+    refuseUnselected(cx.unselected, "body-shape-rejected", `ir/from-ast: with target not closed (${cx.funcName})`);
 
   const bodyCx: LowerCtx = { ...cx, scope: new Map(cx.scope) };
   for (const field of receiverType.shape.fields) {

@@ -2,9 +2,9 @@
 //
 // #7354 H2 — the routes to a script binding other than an identifier reference. A script `var` or function declaration
 // is a property of the global object (§9.1.1.4, §16.1.7), so the global object as a value, dynamic code, `with`,
-// `Object.defineProperty` and `delete` reach it too. The Prepared path models only identifier writes
-// (`scriptVarWrites`, module-binding-script-var.ts), which is sound because each of these routes refuses or aborts at
-// its own site. Each program writes the binding through one route, then reads it: it must refuse or end at the
+// `Object.defineProperty`, `delete` and a parameter initializer (§10.2.11) reach it too. The Prepared path models only
+// identifier writes (`preparedBindingRewritten`, module-binding-script-var.ts), which is sound because each of these
+// routes refuses or aborts at its own site. Each program writes the binding through one route, then reads it: it must refuse or end at the
 // run-time abort, never read a stale value. A slice that admits a route replaces its rows with node agreement.
 import { describe, expect, it } from "vitest";
 import { instantiatePreparedArtifact } from "../src/test262/test262-prepared-runtime.js";
@@ -23,6 +23,9 @@ const ROUTES: Record<string, (value: string) => string> = {
   "new Function": (v) => `new Function("f = ${v}")();`,
   "x.constructor": (v) => `(function(){}).constructor("f = ${v}")();`,
   with: (v) => `var o = {}; with (o) { f = ${v}; }`,
+  "with over an empty literal": (v) => `with ({}) { f = ${v}; }`,
+  "with over a literal": (v) => `with ({ a: 1 }) { f = ${v}; }`,
+  "a parameter initializer": (v) => `function p(a = (f = ${v})) { var f; } p();`,
   "sloppy-function `this`": (v) => `(function(){ this.f = ${v}; })();`,
   "Object.defineProperty": (v) => `Object.defineProperty(this, "f", { value: ${v} });`,
   delete: () => `var d = delete f;`,
