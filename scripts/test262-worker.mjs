@@ -38,12 +38,10 @@ import {
 } from "./runtime-bundle.mjs";
 import { poisonRecycleReason } from "./test262-poison-error.mjs";
 import { negativeCompileErrorMatches, negativeCompileSucceededVerdict } from "./negative-verdict.mjs";
-import { asyncRowVerdict, renderHostError, runtimeNegativeThrowAccepted } from "./test262-runtime-verdict.mjs";
+import { asyncRowVerdict, runtimeNegativeThrowAccepted } from "./test262-runtime-verdict.mjs";
 import { hasPinnedEntryValueSelfImport, hasPinnedNamespaceSelfModuleImport } from "./test262-fixture-graph.mjs";
-// (#3613) ONE renderer, shared with tests/test262-runner.ts. The worker's
-// behaviour is unchanged — these bodies moved here verbatim; it is the LOCAL
-// runner that was missing the tryNativeExnRender step.
-import { safeStringifyThrown, thrownErrorKinds, tryNativeExnRender } from "./lib/wasm-exn-render.mjs";
+// (#3613) ONE reader of a thrown value, shared with tests/test262-runner.ts.
+import { readThrownValue, safeStringifyThrown } from "./lib/wasm-exn-render.mjs";
 import {
   startNativeEvalBoundaryObservation,
   NATIVE_EVAL_OBSERVATION_FIELD,
@@ -1815,158 +1813,25 @@ async function doCompile(
   });
 }
 
-/**
- * Extract a human-readable message from a Wasm runtime error.
- * Handles `WebAssembly.Exception` (extracts payload via `__exn_tag`),
- * generic `Error` (pulls `.message` + function-name annotation), and
- * anything else (falls back to `String(err)`). If `instance` is null
- * (e.g. the throw happened during `WebAssembly.instantiate` from a
- * start function), tag lookup is skipped.
- */
-/**
- * (#2870) Stringify a thrown payload WITHOUT ever letting a host TypeError
- * escape. A `--target standalone` module's thrown value is frequently a Wasm-GC
- * error struct (an `anyref` with no JS-reachable `toString`); calling `String()`
- * on it makes the HOST `ToPrimitive` throw `Cannot convert object to primitive
- * value`. Unguarded, that host throw escaped this formatter and was recorded as
- * the test's failure — masking the REAL signature behind a phantom TypeError and
- * collapsing ~2,014 heterogeneous standalone failures onto one string (#2862).
- */
-// (#3613) Behaviour-identical: this body moved verbatim into the SHARED
-// renderer so the local runner cannot drift from it again. The doc comment
-// above is retained for the #2870/#2862 history.
-// oracle-version-exempt: pure de-duplication — the worker's policy is
-// unchanged (it IS the shared policy), so no baseline row can reclassify.
-
-/**
- * (#2962) Render a natively-thrown Wasm-GC payload through the module's own
- * `__exn_render_prepare` / `__exn_render_char` exports (standalone/wasi
- * binaries emit them at finalize) — the module runs the payload through the
- * same `__any_to_string` chain its in-module `String(x)` uses, so an
- * `$Error_struct` renders "TypeError: boom" per §20.5.3.4 and a Test262Error
- * yields its real assertion message. Returns `null` when the exports are
- * absent (JS-host binaries), the payload renders empty, or anything throws —
- * the caller then falls back to the #2870 opaque label. (#3613) NO LONGER
- * "kept in sync with tests/test262-runner.ts" by discipline — both lanes now
- * import the one implementation in scripts/lib/wasm-exn-render.mjs.
- */
+// (#3613, #7354 X) A thrown value is read by the ONE reader every test262 lane uses, `readThrownValue` in
+// scripts/lib/wasm-exn-render.mjs (the #2870 guarded stringification, the #2962 native render, the #6723 linked
+// peers); this worker only supplies its row context.
 
 let currentNativeEvalBoundaryObservation = null;
 
 function extractWasmExceptionMessage(err, instance, observation) {
-  return readThrownValue(err, instance, observation).text;
+  return readWorkerThrown(err, instance, observation).text;
 }
 
-/**
- * (#7354 X) The thrown value's error kinds (`thrownErrorKinds`; none when it was not read) and its text. A
- * runtime-negative verdict reads only the kinds, so a label this reader writes for a value it could not read can
- * never match an expected type.
- */
-function readThrownValue(
+/** The shared reader with this row's linked peers, abort table and boundary observation. */
+function readWorkerThrown(
   err,
   instance,
   observation = currentNativeEvalBoundaryObservation?.reader("negative-match"),
 ) {
-  observation?.("consumer-instance", Boolean(instance));
-  if (err instanceof WebAssembly.Exception) {
-    observation?.("exception-kind", "wasm");
-    let payload = null;
-    let unread = instance ? "the module exports no exception tag" : undefined;
-    if (instance) {
-      let extractionStage = "tag-read";
-      try {
-        const exnTag = instance.exports.__exn_tag;
-        const tag = exnTag ?? instance.exports.__tag;
-        observation?.("consumer-tag", tag ? (exnTag != null ? "__exn_tag" : "__tag") : "no-tag");
-        if (tag) {
-          extractionStage = "getArg";
-          unread = "the module's exception tag does not carry it";
-          payload = err.getArg(tag, 0);
-          unread = undefined;
-          observation?.("extraction", "success");
-          observation?.("payload-category", payload === null ? "null" : typeof payload);
-        }
-      } catch {
-        observation?.("extraction", extractionStage === "getArg" ? "failed" : "tag-read-failed");
-      }
-    } else {
-      observation?.("consumer-tag", "no-instance");
-    }
-    if (payload instanceof Error) {
-      const text = payload.message ?? safeStringifyThrown(payload);
-      observation?.("text-route", "payload-Error");
-      observation?.("reader-text", text);
-      return { kinds: thrownErrorKinds(payload), text };
-    }
-    if (payload != null) {
-      // (#2962) A host-opaque GC payload renders through the module's own
-      // exports before falling back to the #2870 label; host-readable
-      // primitives keep the direct String() path.
-      const t = typeof payload;
-      if (t === "object" || t === "function") {
-        const native = tryNativeExnRender(instance, payload);
-        observation?.("consumer-native", native);
-        // (#6723 D4) The consumer renders a PROVIDER-minted `Test262Error`
-        // (a provider fnctor instance) as the generic "[object Object]": its
-        // `toString` lives on the provider's prototype. Treat that answer as
-        // "not mine" when a linked peer can do better.
-        if (native != null && (native !== "[object Object]" || currentLinkedPeers.length === 0)) {
-          observation?.("text-route", "consumer-native");
-          observation?.("reader-text", native);
-          return { kinds: thrownErrorKinds(payload, native), text: native };
-        }
-        // (#6723) A STANDALONE linked row: the payload may be minted by the
-        // harness provider (a `Test262Error` thrown by `assert.*`), whose GC
-        // layout only the provider's own `__exn_render_*` exports can read.
-        let generic = native;
-        let peerOrdinal = 0;
-        for (const peer of currentLinkedPeers) {
-          const viaPeer = tryNativeExnRender({ exports: peer }, payload);
-          observation?.("linked-peer-ordinal", ++peerOrdinal);
-          observation?.("linked-peer-native", viaPeer);
-          if (viaPeer != null && viaPeer !== "[object Object]") {
-            observation?.("text-route", "linked-peer-native");
-            observation?.("reader-text", viaPeer);
-            return { kinds: thrownErrorKinds(payload, viaPeer), text: viaPeer };
-          }
-          generic ??= viaPeer;
-        }
-        if (generic != null) {
-          observation?.("text-route", "generic-native");
-          observation?.("reader-text", generic);
-          return { kinds: thrownErrorKinds(payload, generic), text: generic };
-        }
-      }
-      const text = safeStringifyThrown(payload);
-      observation?.("text-route", "payload-safe-stringification");
-      observation?.("reader-text", text);
-      return { kinds: thrownErrorKinds(payload), text };
-    }
-    // A null payload is the ordinary codegen's null guard or TDZ throw, or a user `throw null`, so its kind is not
-    // known. Its text stays the label that failing positive rows are bucketed by.
-    const text =
-      unread !== undefined
-        ? `unknown thrown value: ${unread}`
-        : instance
-          ? "TypeError (null/undefined access)"
-          : "wasm exception during module init";
-    observation?.("text-route", "wasm-nullish-label");
-    observation?.("reader-text", text);
-    return { kinds: [], text };
-  }
-  if (err instanceof Error) {
-    observation?.("exception-kind", "host-Error");
-    const info = renderHostError(err, currentAbortBodies);
-    observation?.("text-route", "host-Error");
-    observation?.("reader-text", info);
-    return { kinds: thrownErrorKinds(err), text: info };
-  }
-  observation?.("exception-kind", "non-wasm");
-  const text = safeStringifyThrown(err);
-  observation?.("text-route", "non-wasm-fallback");
-  observation?.("reader-text", text);
-  return { kinds: thrownErrorKinds(err), text };
+  return readThrownValue(err, { instance, peers: currentLinkedPeers, abortBodies: currentAbortBodies, observation });
 }
+
 
 /**
  * (#3469) Standalone host-free async drive + output capture. On
@@ -2280,7 +2145,7 @@ process.on("message", async (msg) => {
   // the TEST262_COMPILER_PATH=ir measurement lane sends; every baselined lane
   // keeps its verdicts (20-row standalone A/B identical; #7447 extends it).
   const prepared = preparedRequest !== undefined;
-  const throwRule = { expectedErrorType, originalHarness, prepared, read: (e, i) => readThrownValue(e, i) };
+  const throwRule = { expectedErrorType, originalHarness, prepared };
   // (#3461) Fast native-harness oracle (host lane). When set, `source` is the
   // body-only `bindingShim + body` unit (the harness was NOT concatenated into
   // it); `harnessPrefix` is run natively in the per-test sandbox before
@@ -2770,7 +2635,7 @@ process.on("message", async (msg) => {
         return;
       }
 
-      if (isRuntimeNegative && runtimeNegativeThrowAccepted(err, null, throwRule)) {
+      if (isRuntimeNegative && runtimeNegativeThrowAccepted(err, readWorkerThrown(err, null), throwRule)) {
         sendOwnedResult({ id, status: "pass", compileMs, execMs, runtimeNegativePass: true, ...compileMetadata });
         return;
       }
@@ -2810,7 +2675,7 @@ process.on("message", async (msg) => {
         moduleInit();
       } catch (initErr) {
         const execMs = performance.now() - execStart;
-        if (isRuntimeNegative && runtimeNegativeThrowAccepted(initErr, instance, throwRule)) {
+        if (isRuntimeNegative && runtimeNegativeThrowAccepted(initErr, readWorkerThrown(initErr, instance), throwRule)) {
           sendOwnedResult({
             id,
             status: "pass",

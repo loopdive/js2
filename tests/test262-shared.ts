@@ -35,6 +35,7 @@ import { test262NeedsTemporalGlobal, test262TemporalLaneEnabled } from "../scrip
 // oracle-version-exempt: #5215 changes callback-completeness evidence only; Test262 scoring is unchanged.
 import { negativeCompileErrorMatches, negativeCompileSucceededVerdict } from "../scripts/negative-verdict.mjs";
 import { runtimeNegativeThrowAccepted } from "../scripts/test262-runtime-verdict.mjs";
+import { readThrownValue } from "../scripts/lib/wasm-exn-render.mjs";
 import { resolveTest262PoolSize } from "../scripts/test262-concurrency.mjs";
 import { getTest262ShardCompletionPath } from "../scripts/validate-test262-completeness.mjs";
 import { discoverFixtureGraph, hasSelfModuleImport } from "../scripts/test262-fixture-graph.mjs";
@@ -56,7 +57,6 @@ import {
   isScriptGoal,
   matchesPathFilter,
   parseMeta,
-  readWasmException,
   shouldSkip,
   standaloneHostImportError,
   test262FixtureRelativePath,
@@ -1216,11 +1216,10 @@ export function runTest262Chunk(chunkIndex: number, totalChunks: number) {
                     );
                   } else if (
                     isRuntimeNegative &&
-                    runtimeNegativeThrowAccepted(execErr, fixtureInstance, {
+                    runtimeNegativeThrowAccepted(execErr, readThrownValue(execErr, { instance: fixtureInstance }), {
                       expectedErrorType: meta.negative!.type,
                       originalHarness: true,
                       prepared: REQUIRED_PREPARED,
-                      read: readWasmException,
                     })
                   ) {
                     // A throw from the start function IS the expected runtime

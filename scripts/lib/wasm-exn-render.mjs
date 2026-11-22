@@ -89,8 +89,7 @@ export function tryNativeExnRender(instance, payload) {
  * @param {any} instance
  * @returns {any}
  */
-export function exceptionPayload(error, instance) {
-  if (typeof WebAssembly === "undefined") return undefined;
+function exceptionPayload(error, instance) {
   if (!(error instanceof WebAssembly.Exception) || !instance) return undefined;
   try {
     const tag = instance.exports?.__exn_tag ?? instance.exports?.__tag;
@@ -101,22 +100,86 @@ export function exceptionPayload(error, instance) {
 }
 
 /**
+ * The npm-compat report's text for a thrown value (`Name: message` for a host-readable error). Display only: no
+ * test262 verdict reads it — those read `readThrownValue`.
+ *
+ * @param {unknown} error
+ * @param {any} [instance]
+ * @returns {string}
+ */
+export function renderHarnessThrownText(error, instance) {
+  const payload = exceptionPayload(error, instance);
+  if (payload !== undefined) {
+    if (payload != null && (typeof payload === "object" || typeof payload === "function")) {
+      const name = payload.name;
+      const message = payload.message;
+      if (typeof name === "string") return `${name}${message ? `: ${String(message)}` : ""}`;
+      const native = tryNativeExnRender(instance, payload);
+      if (native != null) return native;
+    }
+    if (payload !== null) return safeStringifyThrown(payload);
+  }
+  if (error instanceof Error) return `${error.name}: ${error.message}`;
+  return safeStringifyThrown(error);
+}
+
+/**
+ * A trap (`unreachable`, out of bounds, illegal cast, null dereference). A
+ * JavaScript throw leaves Wasm as a `WebAssembly.Exception` carried by the
+ * exception tag, or as the host's own error object, never as this class.
+ *
+ * @param {unknown} err
+ */
+export function isWasmTrap(err) {
+  return err instanceof WebAssembly.RuntimeError;
+}
+
+/**
+ * A host error's message, followed for a trap by its Wasm frames in
+ * trap-first order (#1316/#1317: the leaf is often a tiny lifted helper whose
+ * name alone says nothing without its callers).
+ *
+ * @param {any} err
+ * @param {readonly { name: string, detail: string }[]} [abortBodies]
+ * @returns {string}
+ */
+export function renderHostError(err, abortBodies = []) {
+  let info = err.message ?? String(err);
+  if (!/illegal cast|null|unreachable|out of bounds/.test(info)) return info;
+  const frameRe = /at\s+(\S+)\s+\(wasm:\/\//g;
+  const frames = [];
+  let m;
+  while ((m = frameRe.exec(err.stack ?? "")) !== null) frames.push(m[1]);
+  if (frames.length === 0) return info;
+  // (#7354 U) A Prepared function whose body could not be lowered has the abort as its whole body, so a trap whose
+  // top frame is that function is its abort.
+  const aborted = isWasmTrap(err) ? abortBodies.find((row) => row.name === frames[0]) : undefined;
+  if (aborted) info = `aborted in unlowerable unit ${aborted.name}: ${aborted.detail}`;
+  info = `${info} [in ${frames[0]}()`;
+  // Cap at 3 caller frames so the line stays readable inside the 300-char
+  // `error.substring(0, 300)` truncation downstream.
+  if (frames.length > 1) info += ` ← ${frames.slice(1, 4).join(" ← ")}`;
+  return `${info}]`;
+}
+
+/**
  * (#7354 X) The error kinds of a thrown value that was READ: its `name` and its constructor's name (a
- * `class Test262Error extends Error` instance is named "Error"); none for a primitive or an object with neither.
- * A runtime-negative verdict compares these and never the message, so `new Error("expected a TypeError")` is an
- * `Error`.
+ * `class Test262Error extends Error` instance is named "Error"); none for a primitive or a function (a thrown
+ * constructor is not an instance of it). A runtime-negative verdict compares these and never the message, so
+ * `new Error("expected a TypeError")` is an `Error`.
  *
  * A host-opaque WasmGC payload has neither; `rendered` is then the module's own `String(payload)`
  * (`__exn_render_*`, standalone/wasi), whose §20.5.3.4 form is `name: message`, or the bare name for an empty
- * message, so the kind is the text before the first `": "`. That split is a stopgap: a thrown string or an object
- * whose `toString` renders `"TypeError: x"` reads as a TypeError. The real fix is a kind export in ordinary codegen.
+ * message, so the kind is the text before the first `": "`. That split is a stopgap: on the ordinary lanes the
+ * rendered text of an opaque payload still counts (a thrown string or a `toString` rendering "TypeError: x" reads
+ * as a TypeError) until a kind export replaces it (#7453).
  *
  * @param {unknown} value
  * @param {string} [rendered]
  * @returns {string[]}
  */
-export function thrownErrorKinds(value, rendered) {
-  if (value === null || (typeof value !== "object" && typeof value !== "function")) return [];
+function thrownErrorKinds(value, rendered) {
+  if (value === null || typeof value !== "object") return [];
   let kinds;
   try {
     kinds = [value.name, value.constructor?.name].filter((kind) => typeof kind === "string");
@@ -129,43 +192,108 @@ export function thrownErrorKinds(value, rendered) {
   return [colon < 0 ? rendered : rendered.slice(0, colon)];
 }
 
-/**
- * THE reader for an original-harness thrown value: its error kinds (see `thrownErrorKinds`; none when the value
- * could not be read) and its text. One policy, both lanes:
- *
- *   1. host-readable `.name` on the payload  → `"Name: message"`.
- *   2. host-opaque WasmGC payload → render through the module's own exports.
- *      This is the step the local runner was missing.
- *   3. anything else → the #2870 guarded fallback.
- *
- * @param {unknown} error
- * @param {any} [instance]
- * @returns {{ kinds: string[], text: string }}
- */
-export function readHarnessThrown(error, instance) {
-  const payload = exceptionPayload(error, instance);
-  if (payload !== undefined) {
-    if (payload != null && (typeof payload === "object" || typeof payload === "function")) {
-      const name = payload.name;
-      const message = payload.message;
-      if (typeof name === "string")
-        return { kinds: thrownErrorKinds(payload), text: `${name}${message ? `: ${String(message)}` : ""}` };
-      const native = tryNativeExnRender(instance, payload);
-      if (native != null) return { kinds: thrownErrorKinds(payload, native), text: native };
-    }
-    if (payload !== null) return { kinds: thrownErrorKinds(payload), text: safeStringifyThrown(payload) };
-  }
-  if (error instanceof Error) return { kinds: thrownErrorKinds(error), text: `${error.name}: ${error.message}` };
-  // A WebAssembly.Exception whose payload was not read has no kind; its constructor is the carrier, not the value.
-  if (error instanceof WebAssembly.Exception) return { kinds: [], text: safeStringifyThrown(error) };
-  return { kinds: thrownErrorKinds(error), text: safeStringifyThrown(error) };
+/** A value the reader could not read: no kind, and a text that says what was not read. */
+function unread(text, observation) {
+  observation?.("text-route", "wasm-nullish-label");
+  observation?.("reader-text", text);
+  return { kinds: [], text };
+}
+
+/** The reading of a payload whose text is known. */
+function payloadReading(payload, text, route, observation, rendered) {
+  observation?.("text-route", route);
+  observation?.("reader-text", text);
+  return { kinds: thrownErrorKinds(payload, rendered), text };
 }
 
 /**
- * @param {unknown} error
- * @param {any} [instance]
- * @returns {string}
+ * Read a `WebAssembly.Exception`'s payload through the instance's own tag: `{ payload }`, or `{ missing }` naming
+ * what could not be read.
  */
-export function renderHarnessThrownText(error, instance) {
-  return readHarnessThrown(error, instance).text;
+function tagPayload(error, instance, observation) {
+  if (!instance) {
+    observation?.("consumer-tag", "no-instance");
+    return { missing: "wasm exception during module init" };
+  }
+  let stage = "tag-read";
+  try {
+    const exnTag = instance.exports.__exn_tag;
+    const tag = exnTag ?? instance.exports.__tag;
+    observation?.("consumer-tag", tag ? (exnTag != null ? "__exn_tag" : "__tag") : "no-tag");
+    if (!tag) return { missing: "unknown thrown value: the module exports no exception tag" };
+    stage = "getArg";
+    const payload = error.getArg(tag, 0);
+    observation?.("extraction", "success");
+    observation?.("payload-category", payload === null ? "null" : typeof payload);
+    return { payload };
+  } catch {
+    observation?.("extraction", stage === "getArg" ? "failed" : "tag-read-failed");
+    return {
+      missing:
+        stage === "getArg"
+          ? "unknown thrown value: the module's exception tag does not carry it"
+          : "unknown thrown value: the module exports no exception tag",
+    };
+  }
+}
+
+/**
+ * (#7354 X) THE reader of a thrown value, for every test262 lane: its error kinds (`thrownErrorKinds`; none when it
+ * could not be read) and its text. A runtime-negative verdict reads only the kinds, so a label written for a value
+ * that could not be read can never match an expected type.
+ *
+ * `peers` are the linked harness providers' exports (#6723), `abortBodies` the Prepared abort table (#7354 U),
+ * `observation` the native-eval boundary recorder.
+ *
+ * @param {unknown} error
+ * @param {{ instance?: any, peers?: readonly any[], abortBodies?: readonly any[], observation?: Function }} [context]
+ * @returns {{ kinds: string[], text: string }}
+ */
+export function readThrownValue(error, { instance, peers = [], abortBodies = [], observation } = {}) {
+  observation?.("consumer-instance", Boolean(instance));
+  if (error instanceof WebAssembly.Exception) {
+    observation?.("exception-kind", "wasm");
+    const read = tagPayload(error, instance, observation);
+    if (read.missing !== undefined) return unread(read.missing, observation);
+    const { payload } = read;
+    // A null payload is the ordinary codegen's null guard or TDZ throw, or a user `throw null`, so its kind is not
+    // known. Its text stays the label that failing positive rows are bucketed by.
+    if (payload == null) return unread("TypeError (null/undefined access)", observation);
+    if (payload instanceof Error)
+      return payloadReading(payload, payload.message ?? safeStringifyThrown(payload), "payload-Error", observation);
+    // (#2962) A host-opaque GC payload renders through the module's own
+    // exports before falling back to the #2870 label; host-readable
+    // primitives keep the direct String() path.
+    if (typeof payload === "object" || typeof payload === "function") {
+      const native = tryNativeExnRender(instance, payload);
+      observation?.("consumer-native", native);
+      // (#6723 D4) The consumer renders a PROVIDER-minted `Test262Error`
+      // (a provider fnctor instance) as the generic "[object Object]": its
+      // `toString` lives on the provider's prototype. Treat that answer as
+      // "not mine" when a linked peer can do better.
+      if (native != null && (native !== "[object Object]" || peers.length === 0))
+        return payloadReading(payload, native, "consumer-native", observation, native);
+      // (#6723) A STANDALONE linked row: the payload may be minted by the
+      // harness provider (a `Test262Error` thrown by `assert.*`), whose GC
+      // layout only the provider's own `__exn_render_*` exports can read.
+      let generic = native;
+      let peerOrdinal = 0;
+      for (const peer of peers) {
+        const viaPeer = tryNativeExnRender({ exports: peer }, payload);
+        observation?.("linked-peer-ordinal", ++peerOrdinal);
+        observation?.("linked-peer-native", viaPeer);
+        if (viaPeer != null && viaPeer !== "[object Object]")
+          return payloadReading(payload, viaPeer, "linked-peer-native", observation, viaPeer);
+        generic ??= viaPeer;
+      }
+      if (generic != null) return payloadReading(payload, generic, "generic-native", observation, generic);
+    }
+    return payloadReading(payload, safeStringifyThrown(payload), "payload-safe-stringification", observation);
+  }
+  if (error instanceof Error) {
+    observation?.("exception-kind", "host-Error");
+    return payloadReading(error, renderHostError(error, abortBodies), "host-Error", observation);
+  }
+  observation?.("exception-kind", "non-wasm");
+  return payloadReading(error, safeStringifyThrown(error), "non-wasm-fallback", observation);
 }

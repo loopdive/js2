@@ -6,8 +6,8 @@
 // its message, and never when the reader could not read it.
 import assert from "node:assert/strict";
 import test from "node:test";
-import { readHarnessThrown } from "./lib/wasm-exn-render.mjs";
-import { asyncRowVerdict, renderHostError, runtimeNegativeThrowAccepted } from "./test262-runtime-verdict.mjs";
+import { readThrownValue, renderHostError } from "./lib/wasm-exn-render.mjs";
+import { asyncRowVerdict, runtimeNegativeThrowAccepted } from "./test262-runtime-verdict.mjs";
 
 // Hand-encoded (this CI step installs no packages) so the trap carries real frame names:
 //   (module
@@ -62,11 +62,14 @@ function caught(run) {
   assert.fail("expected a throw");
 }
 
-// The worker renders a host error through the same `renderHostError`; the kind comes from the shared reader.
-const render = (err) => (err instanceof Error ? renderHostError(err) : String(err));
-const read = (err, inst) => ({ kinds: readHarnessThrown(err, inst).kinds, text: render(err) });
+// Every lane reads a thrown value through the one shared reader; a host error's text is `renderHostError`'s.
+const render = (err) => readThrownValue(err).text;
 const accepted = (err, inst, expectedErrorType, prepared) =>
-  runtimeNegativeThrowAccepted(err, inst, { expectedErrorType, originalHarness: true, prepared, read });
+  runtimeNegativeThrowAccepted(err, readThrownValue(err, { instance: inst ?? undefined }), {
+    expectedErrorType,
+    originalHarness: true,
+    prepared,
+  });
 
 const trapInTest262Error = caught(() => instance.exports.trapInTest262Error());
 const trapUnderAssert = caught(() => instance.exports.trapUnderAssert());
@@ -88,13 +91,11 @@ test("#7354 U: a trap whose top frame is an abort-body function names it and its
   const caller = [{ name: "assertThrows", detail: "d" }];
   assert.equal(renderHostError(trapUnderAssert, caller), "unreachable [in Test262Error() ← assertThrows]");
   // An abort is still a trap: it never counts as the expected throw on the Prepared lane.
-  const abortRead = (err) => ({ kinds: [err.name], text: renderHostError(err, table) });
   assert.equal(
-    runtimeNegativeThrowAccepted(trapUnderAssert, instance, {
+    runtimeNegativeThrowAccepted(trapUnderAssert, readThrownValue(trapUnderAssert, { instance, abortBodies: table }), {
       expectedErrorType: "Test262Error",
       originalHarness: true,
       prepared: true,
-      read: abortRead,
     }),
     false,
   );
@@ -114,7 +115,10 @@ for (const [lane, prepared] of [
   test(`${lane}: a trap with no expected type`, () => {
     assert.equal(accepted(trapInTest262Error, instance, undefined, prepared), !prepared);
     assert.equal(
-      runtimeNegativeThrowAccepted(trapInTest262Error, instance, { originalHarness: false, prepared, read }),
+      runtimeNegativeThrowAccepted(trapInTest262Error, readThrownValue(trapInTest262Error, { instance }), {
+        originalHarness: false,
+        prepared,
+      }),
       !prepared,
     );
   });
@@ -188,6 +192,14 @@ for (const [lane, prepared] of [
     assert.equal(accepted(throwing(new Test262Error("TypeError")), instance, "TypeError", prepared), false);
     assert.equal(accepted(throwing(new Test262Error("x")), instance, "Test262Error", prepared), true);
     assert.equal(accepted(new RangeError("not a TypeError"), null, "TypeError", prepared), false);
+  });
+
+  test(`${lane}: a thrown constructor is not an instance of it`, () => {
+    for (const type of TYPES) {
+      const ctor = { TypeError, RangeError, ReferenceError, SyntaxError }[type] ?? class Test262Error {};
+      assert.equal(accepted(throwing(ctor), instance, type, prepared), false, type);
+      assert.equal(accepted(ctor, null, type, prepared), false, type);
+    }
   });
 
   test(`${lane}: a trap matches only by the non-Prepared frame rule (#7447)`, () => {
