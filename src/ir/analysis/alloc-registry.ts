@@ -418,6 +418,15 @@ export class AllocSiteRegistry {
     return this.sites.length;
   }
 
+  /**
+   * (#7354 U) Forget every site minted after the first `size`: a lowering the producer discards and repeats
+   * (`abort-bodies.ts`) leaves no site behind.
+   */
+  truncate(size: number): void {
+    this.sites.length = size;
+    this.meta.length = Math.min(this.meta.length, size);
+  }
+
   /** Snapshot of live sites — for debugging / tooling, not hot paths. */
   liveSites(): AllocSite[] {
     const out: AllocSite[] = [];
