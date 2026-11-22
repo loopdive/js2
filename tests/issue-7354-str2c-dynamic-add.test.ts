@@ -318,7 +318,7 @@ describe("#7354 Str2-c — what dynamic + still refuses by name", () => {
   it.each([["the results of untyped calls", "function f(v) { return v; }\nvar s = f(1) + f(2);"]])(
     "refuses %s",
     async (_label, source) => {
-      // (#7354 U) Without abort bodies: under them the refusal in `w` would be w's abort body.
+      // (#7354 U) Probed without abort bodies, so the refusal keeps its name.
       const result = await compile(source, options(), undefined, "refuse");
       expect(result.success).toBe(false);
       expect(messages(result).join("\n")).toContain("not provably both-number or string-concatenable");

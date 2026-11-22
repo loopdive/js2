@@ -142,12 +142,13 @@ export function prepareOrdinaryObjectAccessResolver(
         carries(ts.isPropertyAssignment(property) ? property.initializer : property.name),
     );
   const visit = (node: ts.Node): void => {
+    const literal =
+      ts.isPropertyAccessExpression(node) && !node.questionDotToken ? ordinaryLiteral(node.expression) : undefined;
     if (
+      literal &&
       ts.isPropertyAccessExpression(node) &&
-      !node.questionDotToken &&
       ts.isIdentifier(node.name) &&
-      ordinaryLiteral(node.expression) &&
-      !storesDynamic(ordinaryLiteral(node.expression)!, node.name.text)
+      !storesDynamic(literal, node.name.text)
     ) {
       const type = checker.getTypeAtLocation(node);
       const parts = type.isUnion() ? type.types : [type];
@@ -159,7 +160,7 @@ export function prepareOrdinaryObjectAccessResolver(
       } else if (parts.length > 0 && parts.every((part) => (part.flags & ts.TypeFlags.BooleanLike) !== 0)) {
         plans.set(node, Object.freeze({ key: node.name.text, resultType: BOOLEAN }));
       } else {
-        const getters = ordinaryLiteral(node.expression)!.properties.filter(
+        const getters = literal.properties.filter(
           (property): property is ts.GetAccessorDeclaration =>
             ts.isGetAccessorDeclaration(property) &&
             ts.isIdentifier(property.name) &&
