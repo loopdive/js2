@@ -207,7 +207,12 @@ function prepareSourceBuiltinResolvers(
     ...prepareConversionResolvers(input.checker, input.sourceFiles, roots),
     ...prepareOrdinaryObjectAccessResolver(input.checker, input.sourceFiles, roots, carries),
     ...(input.policy.target === "standalone" && input.policy.backend === "wasmgc"
-      ? prepareObjectCreateResolver(input.checker, input.sourceFiles, roots)
+      ? {
+          ...prepareObjectCreateResolver(input.checker, input.sourceFiles, roots),
+          // (#7354 T) The one lane capability this path binds: the native number formatter (Str2-c), so a `+` of a
+          // string and a number converts the number like a template does. Every other capability stays unanswered.
+          supportsBackendCapability: (capability: string) => capability === "number-to-string",
+        }
       : {}),
   };
 }

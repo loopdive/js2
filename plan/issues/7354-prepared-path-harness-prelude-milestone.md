@@ -5355,7 +5355,7 @@ strict `typeof this`, argument padding and dropping, argument order, the not-cal
 the checker-typed result used in `+`, `*`, comparisons, conditions, `typeof`; `(o.m)()` keeps its receiver; wrong
 twins. Quality: one predicate, no second call path.
 
-### Cause 3 — `isNaN(v)` (to be confirmed with the lead: `isNaN` is a global function, O1 owns built-ins)
+### Cause 3 — `isNaN(v)` (the lead confirmed it is this slice's: O1 covers only the four `Object` statics)
 JS: `isNaN(v)` is `ToNumber(v)` then NaN test (§19.2.3). Fix: `isNaN` joins the Prepared conversion plans
 (`prepareConversionResolvers`, the `String`/`Number` direct-call proof with its rebinding refusals); the lowering is
 `Number(v)`'s (`lowerPreparedNumberCall`: first argument, extras evaluated, any carrier through
@@ -5364,17 +5364,17 @@ generic `native-global-function-call` capability (that would admit `parseInt`/`e
 bind). Acceptance: numbers incl. NaN/±0/±Infinity, booleans, undefined, null, strings ("", " 12 ", "x"), dynamic
 homes, extra arguments with effects; a script `function isNaN` / `isNaN = …` keeps its refusal; wrong twins.
 
-### Cause 4 — Annex B.3.3 block function at script level (largest risk; last, may be cut)
+### Cause 4 — Annex B.3.3 block function at script level (DEFERRED by the lead, 2026-11-22; sized L, 6 rows, 2–3 would run)
 JS (sloppy): the block binding is initialized at block entry; when the declaration is evaluated its value is copied
 to a var binding `f` (created undefined at script start) unless replacing it with `var f` would be an early error
 (`let f` at top level → no var binding); strict: block-scoped only. Fix sketch: a block-level declaration whose name
 is not read or written inside its own block lowers to "store the closure into `f`'s dynamic script home" at the
 declaration's position; the name joins the script var homes (`irOwnedScriptVarHome`). Any reference inside the
 block, strict code, or a lexical top-level name of the same name refuses by name. Estimate L; not started unless
-1–3 land with budget left.
+1–3 land with budget left. Lead decision: not in this slice.
 
 ### Order and gates
-1 → 2 → 3 (if the lead agrees it is mine) → 4 (optional). Each cause one commit with its
+1 → 2 → 3 (approved); 4 deferred. Each cause one commit with its
 `tests/issue-7354-t2-*.test.ts` file, pushed. Proof per the brief: node agreement + wrong twins, ≥150 probes base vs
 head, ordinary bytes 20 files × 2 targets, `check:prepared-bytes`, the sample through the real runner with mutated
 twins for every new pass, all gates.
