@@ -66,8 +66,9 @@ describe("authentic full-catalog request issuer", () => {
     expect(f.realm.description.catalog.intrinsics).toHaveLength(45);
     expect(f.requests.intrinsics).toHaveLength(44);
     expect(f.requests.requests).toHaveLength(88);
+    // (#7354 O1) 42 before the four native Object statics.
     expect(f.requests.intrinsics.filter((row) => row.intrinsic.callable.implementation === "unavailable")).toHaveLength(
-      42,
+      38,
     );
     expect(requireNativeBuiltinFunctionRequestIssuer(f.tx, f.requests)).toBe(f.requests);
     expect(() => requireNativeBuiltinFunctionRequests(f.tx, asAny(f.requests))).toThrow(
