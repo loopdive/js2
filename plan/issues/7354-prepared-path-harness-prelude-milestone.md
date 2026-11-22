@@ -4966,3 +4966,59 @@ ratchet; dead exports — all pass. `check:compiler-boundaries:inventory` fails 
 - Node 25 (CI's) is not installed here; all numbers are local Node under tsx, not the runner's bundled worker.
 - The 1024 MB column after the base is implied by the 512 MB pass, not run.
 - The 512 MB column was not run for the first, third and fourth commits.
+
+## Slice W plan (2026-11-22, branch `claude/7354-w` from `claude/7354-u` `f8fd70dc1c`)
+
+**Blocker.** 41 of the 47 `propertyHelper.js` rows of the 420-row ES5 sample stop at
+`IrInvariantError: #5092 then arm proved number but lowered as dynamic in isWritable` — thrown OUT of `compile()`
+(not a compile_error row), at `var unlikelyValue = __isArray(obj) && name === "length" ? nonIndexNumericPropertyName : "unlikelyValue"`.
+
+**Minimal repro** (strict Prepared entry, standalone):
+```js
+var e = f(1);
+var n = 4294967295;
+function f(a) { var u = a === 1 ? n : "x"; return u === "x"; }
+```
+
+**Cause.** The Prepared path is unselected, so from-ast's `mixedPrimitiveConditionalClaim` is the only #5092 proof. It
+classifies each arm from the checker (`makeIrPrimitiveExpressionClassifier`: `n` is `number`, following its
+initializer). But since #7354 H a script `var` without a proven typed home lives in the dynamic home whatever the
+checker infers, and a read of it lowers to the dynamic value (`undefined` before its initializer runs — `f(1)` above
+sees exactly that). The two answer different questions: the checker the declared type, from-ast the value's IR
+representation. The proof is the wrong side; the invariant is right (its intent, #5092: a claimed shape whose arm
+does not lower to the proved representation is a selector⇄builder desync). `tryLowerDynamicConditionalValue`, the
+dynamic-carrier join that should own `c ? <dynamic> : <literal>`, misses the shape too: its arm test reads only
+`cx.scope`, and a module home is not in scope. Without the invariant the builder's own `emitBox` guard throws
+("re-boxing a dynamic value is invalid") — no wrong value or invalid Wasm is reachable, only the exception.
+
+**Fix (two edits, one predicate).**
+1. `bindingHoldsDynamic(name, cx)` in `from-ast.ts`: a dynamic slot, else the existing C2 `namesDynamicValue` (dynamic
+   local, or on the Prepared lane the dynamic module home). `tryLowerDynamicConditionalValue`'s inline arm test is
+   replaced by it, so `c ? n : "x"` is the D1 join: `n` passes as-is, `"x"` is boxed — JS's value both before and after
+   the initializer.
+2. `mixedPrimitiveConditionalClaim` refuses the claim when an arm MAY yield the dynamic value:
+   `mayYieldCarrier(arm, bindingHoldsDynamic)`, a new export of `src/ir/analysis/carrier-expression.ts` — the "may"
+   dual of the existing `producesCarrier` ("every value is the carrier"), built on the same `everyYieldedValue` and
+   `isCarrierAddition`. It follows only what passes a value on (conditional arms, comma / `=` right side,
+   `&&`/`||`/`??` operands, a carrier `+`, type projections), so `typeof n`, `-n`, `n === 1` stay claimable (their
+   result has one representation whatever `n` holds). An unclaimed mixed arm such as `c ? n + 1 : "x"` reaches the
+   generic tail's existing named refusal (`ternary branches have different types (dynamic vs string)`), an abort body
+   under slice U's policy.
+
+Reuses: `namesDynamicValue`, `everyYieldedValue`, `isCarrierAddition`, `skipOuterExpressions`. Removes: the
+duplicate slot/local dynamic test in `tryLowerDynamicConditionalValue`. `from-ast.ts` grows by ~4 lines net,
+`lowerCall` not touched. Ordinary pipeline: the module-home arm of `namesDynamicValue` is gated on the Prepared lane
+(`createsFunctionObjects`), so only a dynamic local/slot arm can change there, and that today throws the same
+invariant.
+
+**Acceptance.** Behaviour: the repro gives node's value (both `f` calls), plus a wrong twin; `c ? n + 1 : "x"` is a
+named abort; ≥80 probes base vs head against node — nothing right becomes anything else, 0 wrong, 0 exceptions;
+ordinary pipeline byte-identical on 20 test262 files × default + standalone; `check:prepared-bytes`. Quality: one
+binding predicate shared by the join and the claim, the walker beside its dual in `carrier-expression.ts`, no
+`isWritable`/name special case, invariant untouched.
+
+**Measured with the fix (uncommitted, approximate driver: `assert.js` + `sta.js` + includes + body through the strict
+entry, standalone):** the 41 rows move from the exception to
+`CE ir/from-ast: type override (dynamic) disagrees with annotation (f64) at param functionLength of verifyCallableProperty`
+(a JSDoc `@param {number}` read as an annotation) — the next blocker for all 41. The other 6 rows stop earlier at
+`function declaration 'formatIdentityFreeValue' read as a value is written`, unchanged.
