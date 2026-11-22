@@ -5470,7 +5470,7 @@ the carrier arm is covered only by the ordinary-bytes comparison).
   assignment, increment) share one `refuseNonSlotWrite`; any other non-slot write keeps the invariant with its old
   text. Tests: `tests/issue-7354-t2-function-expression-name.test.ts`, covering both routes, sloppy and strict,
   `=`/`+=`/`++`, and a read of the name after the write. Ordinary pipeline: byte-identical on the 20 test262 files,
-  26 probes and the three own-name programs, × default and standalone.
+  25 probes and the three own-name programs, × default and standalone.
 - **from-ast budget.** The seven comment reflows are reverted. T's growth is paid for by moving code:
   - `moduleInitContainsNestedVar` moves to `src/shared/var-declaration-lists.ts`, beside `isModuleInitVarList`.
   - `super(args)` becomes `lowerSuperConstructorCall`.
