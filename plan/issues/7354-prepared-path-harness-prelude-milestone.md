@@ -5434,3 +5434,26 @@ Causes 1–3 built as planned; cause 4 deferred by the lead.
 construction (the capability answer, the member exclusions, `absent`, `converts`, the carrier ToNumber arm, the
 `isNaN` provided-global entry each have a test that fails without them; the lane gate of `callsNonReference` and of
 the carrier arm is covered only by the ordinary-bytes comparison).
+
+### T follow-up: `typeof` of a standard global (lead request, 2026-11-22)
+
+- **Fixed the wrong value above.** `absentGlobal` (`source-dynamic-contracts.ts`) now calls a name absent only when
+  the checker resolves it to no symbol at all, neither the program's nor the standard library's. The lib
+  declarations are the one list of standard globals. `PREPARED_PROVIDED_GLOBALS` is gone; the new rule covers it.
+  - `typeof` of `parseInt`, `Math`, `Object`, `JSON`, `globalThis`, every Error subclass, … refuses by name at top
+    level and aborts inside a function.
+  - `typeof undefined` / `NaN` / `Infinity`, an undeclared name, and a program `var` named like a global all give
+    node's answer.
+  - A script `function parseInt` still refuses, as it did before this change.
+  - `globalThis` needed the symbol test: the checker resolves it to a symbol with no declarations.
+- **Consequence in the prelude.** `formatIdentityFreeValue` (assert.js:27, `typeof JSON`) now gets the abort body.
+  - A failing assertion therefore ends in that abort instead of a Test262Error. It is still a fail.
+  - Before, the fold picked the `'"' + value + '"'` arm, which is not node's branch.
+- **Pins updated.** Ty: the seven "absent global" rows now use an undeclared name, and every name in the ambient
+  table refuses. U prelude: the abort table and the wrong-value outcome. M1 D35: the `typeof JSON` arm is dropped.
+  C2, O2b, O4: the guard programs name `Symbol`/`Object` without a `typeof` at top level.
+- **Tests.** `tests/issue-7354-t2-typeof-standard-globals.test.ts` (26). All issue-7354 files, 7363, 7331, 7343,
+  7361, prepared entry/runtime and 7188 pass.
+- **Sample.** All 46 passes (the 31 base passes plus slice T's 15) re-run through the runner: 46/46 still pass, so no
+  false pass was found. Five of them contain `typeof`.
+- Merged `claude/7354-w` `e6931fc15e`. Gates (also with `LOC_GATE_BASE` = main `bbda75a4c4`) exit 0.
