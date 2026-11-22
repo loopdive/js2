@@ -5313,3 +5313,59 @@ Changed expectations, and why. Every one of these files goes through the test262
 - The policy-gate and U0 mutations were not re-run.
 - The full sweep with the policy off: half of it was run.
 - The 3518/3526 pin suites.
+
+## Slice X plan — an unread thrown value never matches (2026-11-22, branch `claude/7354-x` from `main` a12f6a4a13)
+
+Not the earlier "T and X" slice (dynamic throw); this one is the runner's runtime-negative verdict.
+
+### Confirmed (real runner, Prepared lane, 35 probe rows next to `language/statements/throw/`)
+
+- The artifact exports `__module_init` only. Every thrown value reaches the worker as the label
+  `TypeError (null/undefined access)`, and `originalHarnessExceptionMatches` substring-matches the expected type
+  against it. Expected `TypeError`: `throw 1`, `throw new Test262Error("x")`, `o.p` on null → **pass**. Expected
+  `Test262Error` with `throw new Test262Error("x")` → fail. `new TypeError/RangeError/…` → compile_error (unknown
+  class). An abort body is a trap and fails (U0).
+- ES5 runtime negatives in all of test262: 16 (12 Test262Error, 3 EvalError, 1 SyntaxError), no TypeError, so no
+  ES5 row can be inflated by this label. Whole corpus: 40, of them 4 TypeError (all module-code).
+
+### Every arm that turns an unread value into a pass
+
+1. Worker `extractWasmExceptionMessage` returns the label for a `WebAssembly.Exception` whose payload is not read:
+   (i) the instance exports no tag (Prepared: always), (ii) `getArg` throws, (iii) the payload is `null`. (iii) is
+   the ordinary codegen's null-payload throw (array null guard #441, TDZ — the latter is a ReferenceError) and also
+   a user `throw null`; the label guesses TypeError for all of them. All lanes.
+2. `safeStringifyThrown`'s fallback labels (`uncaught Wasm-GC exception (non-stringifiable payload)`) are matched
+   by substring too; they carry no type name today, so this is the same hole without a victim yet.
+3. `tests/test262-shared.ts:1217` (fixture lane) is a second copy of the rule:
+   `extractWasmExceptionMessage(…).includes(type)` with the runner's own reader, which has the same label.
+4. Out of scope, reported: `!originalHarness` accepts any throw (no production job sends it; every
+   `test262-shared.ts` job sets `originalHarness: true`); a READ value whose text contains the type
+   (`throw new Test262Error("TypeError")` rendered natively) still passes by substring; trap frame names on the
+   other lanes (#7447).
+
+### (a) Runner soundness — one rule, one place
+
+- The readers (worker, runner) answer `undefined` when they could not read the value; the label is applied by the
+  caller for the error text only. `safeStringifyThrown` splits the same way (`stringifyThrown` → `undefined`).
+- `scripts/test262-runtime-verdict.mjs` owns the rule: an unread value matches no expected type. The worker's
+  two throw arms and the fixture lane (`test262-shared.ts`, which today has its own `.includes`) call it.
+- Error text of an unread value says what was not read (`unknown thrown value: the module exports no exception
+  tag` / `… payload is null`), except that the ordinary lane keeps its null-payload text unless the lead prefers
+  the rename (it is the bucket label of many positive-test failures).
+- Oracle: (iii) can flip ordinary rows that pass by the null label. The standalone baseline has 2 TypeError
+  runtime negatives passing (`module-code/eval-rqstd-abrupt.js`, `top-level-await/module-import-rejection.js`);
+  I run them (and the 2 failing ones) on the ordinary standalone and gc lanes before/after. A flip → ORACLE_VERSION
+  bump with history; none → `oracle-version-exempt:` with that evidence.
+
+### (b) Compiler — large, proposed as its own slice after (a)
+
+- Exporting the tag is one line (`defineExport(…, "__exn_tag", exceptionTag)` after `publishPhysicalExports`),
+  measured: then only i31 numbers (`throw 1` → `1`) and `null` are host-readable. `1.5`, strings, `undefined`, the
+  realm's TypeError (`$Error_struct`, name field) and a C2 `Test262Error` (an ordinary object; no `name`, its
+  constructor is the user function) are opaque GC refs, so the reader still learns no name.
+- The reader needs an in-module export, planned as a physical resource before the freeze: for `$Error_struct` the
+  `name` field, for an ordinary object `[[Get]] constructor` → the function's name, plus a native string char
+  read (the `__exn_render_prepare/char` convention, which `tryNativeExnRender` already reads). With that, a
+  `Test262Error` (ordinary object, constructor `Test262Error`) and a realm `TypeError` (`$Error_struct`) are told
+  apart by kind, not by text. Every Prepared artifact changes bytes; the 4 compile-error rows above need the
+  built-in error classes, which the path does not have.
