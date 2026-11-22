@@ -136,7 +136,8 @@ export function functionDeclarationValues(
     const name = declaration.name!.text;
     const unitId = identity.unitIdByDeclaration.get(declaration)!;
     diagnostic.active = unitId;
-    if (checker.getSymbolAtLocation(declaration.name!)!.declarations!.length > 1)
+    // A JS symbol also lists the member stores of its function (`f.x = 1`), which declare no binding.
+    if (checker.getSymbolAtLocation(declaration.name!)!.declarations!.filter(ts.isFunctionDeclaration).length > 1)
       refuse(name, "has a second declaration");
     const rewritten = scriptBindingRewritten(checker, declaration);
     const { params, returnType } = signatures.get(unitId)!;

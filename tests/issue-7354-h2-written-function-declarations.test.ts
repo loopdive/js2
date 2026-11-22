@@ -65,6 +65,10 @@ describe("#7354 H2 — a written function declaration", () => {
       "function f(){ return 1; } f = 3; var out = ''; try { f(); out = 'no'; } catch (e) { out = 'caught'; }",
     ],
     [
+      "a member store on the function is no second declaration",
+      "function f(){ return 1; } f.x = 2; var g = f; f = function(){ return 3; }; var out = String(g()) + String(g.x) + String(f());",
+    ],
+    [
       "strict code calls with `this` undefined",
       "'use strict'; function f(){ return typeof this; } f = f; var out = f();",
     ],
