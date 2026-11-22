@@ -40,15 +40,6 @@ export function dynamicObjectStatic(b: ObjectStaticBuilders, instr: Call, name: 
   const throwing = (message: string, r: IrValueId) =>
     typeErrorThen({ ...b, carrier: CARRIER }, message, undefinedValue(r));
   /**
-   * The run-time abort, as an arm that does not complete: the abort is a pure intrinsic, and a static whose result is
-   * unused would otherwise drop it and run on as if the define had happened. The throw of its text never runs; it only
-   * keeps the abort live.
-   */
-  const abort = (r: IrValueId): IrInstr[] => [
-    ...b.abort(instr, r),
-    { kind: "throw", value: r, result: null, resultType: null },
-  ];
-  /**
    * A chain over the kinds `value` may hold: `object` answers a served object, the realm's error is the abort, and
    * `other` answers each remaining kind (a primitive, `undefined`, `null`).
    */
@@ -57,7 +48,7 @@ export function dynamicObjectStatic(b: ObjectStaticBuilders, instr: Call, name: 
       instr,
       value,
       r,
-      (kind, s) => (served(kind) ? object(s) : kind === "error" ? abort(s) : other(kind, s)),
+      (kind, s) => (served(kind) ? object(s) : kind === "error" ? b.abort(instr, s) : other(kind, s)),
       b.kinds.kindsOf(value),
       CARRIER,
     );
@@ -70,19 +61,20 @@ export function dynamicObjectStatic(b: ObjectStaticBuilders, instr: Call, name: 
   /**
    * ObjectDefineProperties(object, properties) after ToObject(properties), answering `object`. A number or a Boolean
    * becomes a wrapper without own properties; a string's own index properties need the String object the realm lacks.
-   * `Object.create` takes an `undefined` second argument as no properties at all.
+   * `undefinedMap`: what an `undefined` map is: `Object.defineProperties` throws ToObject's TypeError, `Object.create`
+   * takes it as no properties at all.
    */
-  const defineAll = (object: IrValueId, properties: IrValueId, r: IrValueId, undefinedIsNone = false) =>
+  const defineAll = (object: IrValueId, properties: IrValueId, r: IrValueId, undefinedMap: "TypeError" | "none") =>
     byKind(
       properties,
       (s) => [realmCall("js.object.descriptors-define", [object, properties]), carried(object, s)],
       (kind, s) =>
-        undefinedIsNone && kind === "undefined"
+        undefinedMap === "none" && kind === "undefined"
           ? [carried(object, s)]
           : nullish(kind)
             ? throwing("Cannot convert undefined or null to object", s)
             : kind === "string"
-              ? abort(s)
+              ? b.abort(instr, s)
               : [carried(object, s)],
       r,
     );
@@ -94,7 +86,7 @@ export function dynamicObjectStatic(b: ObjectStaticBuilders, instr: Call, name: 
         withKey(second, (key) => [realmCall("js.object.descriptor-define", [first, key, third!]), carried(first, r)]),
       );
     case "defineProperties":
-      return onObject((r) => defineAll(first, second, r));
+      return onObject((r) => defineAll(first, second, r, "TypeError"));
     case "getOwnPropertyDescriptor":
       return byKind(
         first,
@@ -102,7 +94,7 @@ export function dynamicObjectStatic(b: ObjectStaticBuilders, instr: Call, name: 
         (kind, r) =>
           nullish(kind)
             ? throwing("Cannot convert undefined or null to object", r)
-            : withKey(second, () => (kind === "string" ? abort(r) : [undefinedValue(r)])),
+            : withKey(second, () => (kind === "string" ? b.abort(instr, r) : [undefinedValue(r)])),
         instr.result!,
       );
     case "create":
@@ -120,9 +112,9 @@ export function dynamicObjectStatic(b: ObjectStaticBuilders, instr: Call, name: 
               : kind === "null"
                 ? realmCall("js.object.create-null", [], object)
                 : undefined;
-          if (create) return [create, ...defineAll(object, second, r, true)];
+          if (create) return [create, ...defineAll(object, second, r, "none")];
           return served(kind) || kind === "error"
-            ? abort(r)
+            ? b.abort(instr, r)
             : throwing("Object prototype may only be an Object or null", r);
         },
         b.kinds.kindsOf(first),
