@@ -4880,3 +4880,89 @@ issue checks.
   the owner function's type map (`nativeAsyncCallableValueTypes`) per call use — 3.1 s (15 %) at N = 20, quadratic in
   calls per function. Not per-use re-proof, below the 25 % bar; next slice.
 - The remaining one-time copies and settled walks (#7380 step 5b) and, switch on, the slot probes.
+
+## Perf6 result (2026-11-22, branch `claude/7354-perf6` from `claude/7354-u` `4f8aa95b50`)
+
+One compile of the real prelude (the runner's shim + `assert.js` + `sta.js`) + `assert(true);`, with the runner's
+options, now takes ~7 s and fits a 512 MB heap; before it took ~24 s and ran out of memory at 1024 MB. Five commits,
+one cause each; same binary after every one (sha256 `8c0401d9…6990e4ede`, 80,624 bytes, switch off and on).
+
+### Measurements (tsx, strict Prepared entry, one compile per process, load 1–3 from other agents)
+
+Peak = sampled `heapUsed` (includes uncollected garbage, so it depends on GC timing); the 512/1024 columns are the
+real limit test (`--max-old-space-size`).
+
+| commit | off | off peak | on | on peak | 512 MB | 1024 MB |
+| --- | ---: | ---: | ---: | ---: | --- | --- |
+| base `4f8aa95b50` | 23.7 s | 1,517 MB | 51.3 s | 1,831 MB | OOM | OOM (Mark-Compact at 1,017 MB live) |
+| `ae3f251568` copies return their own frozen products, one ancestor set | 16.9 s | 681 MB | 36.8 s | 724 MB | — | — |
+| `9bd83f8501` settled verdicts / copies stop at known deeply frozen data | 15.6 s | 1,268 MB | 36.8 s | 1,262 MB | pass (18.5 s) | — |
+| `83fad4e49f` Promise source census issued, path record deleted | 10.9 s | 807 MB | 31.5 s | 840 MB | — | — |
+| `63925e7fb6` emission no longer re-plans the physical plan | 8.8 s | 689 MB | 27.5 s | 723 MB | — | — |
+| `c25b421a5c` string plan checked as issued, not re-planned | 7.3 s | 473 MB | 20.8 s | 509 MB | pass off 7.8 s / on 22.1 s | (implied) |
+
+Allocation (inspector sampling incl. collected objects) at the base: ~20 GB allocated per compile — whole-tree compares
+5.4 GB, `immutableCopy` 5.2 GB (a fresh ancestor `Set` per node), `ownerFor` 4.5 GB, settled walks 3.2 GB.
+
+### Each site
+
+| site | what it did | decision | why |
+| --- | --- | --- | --- |
+| `immutableCopy` (`src/ir/program/data.ts`) | deep-copied values that were already its own frozen copies (the program's semantic part inside every snapshot), and allocated a copy of the ancestor set at every node | **returns a deeply frozen value as is**; one ancestor set (add/delete); body split into `copyChildren` | a copy of a deeply frozen copy is an equal tree; membership (`deeplyFrozen`) is permanent because freezing cannot be undone |
+| `isImmutable` walk of the settled verdicts (`src/shared/contracts/settled-verdict.ts`) | re-walked the whole program under every holder (19 walks, 2.9 M nodes) | **stops at data the IR knows is deeply frozen** (`isDeeplyFrozenPreparedIrValue`, injected like `preparedIrFrozenCollectionMembers`); `freezePreparedIrRuntimeValue` records what it froze and skips it next time | same permanent fact; "freeze once, never re-walk" |
+| Promise source census `paths` + `snapshots` + `assertNativePromiseSourceCensusCurrent` (`src/ir/program/native-promise-inventory.ts`) | recorded a path for every object of the program (416,741 rows, only read by the re-proof) and re-collected and compared the census at each use | **deleted**; `assertNativePromiseSourceCensusIssued` (`issuedPacks`) | the census is frozen and borrows a frozen program (Perf3/4/5's argument) |
+| `prepareNativeEmission` re-plans (`src/ir/program-consumer.ts`) | re-ran `planPhysicalSetup` for source closures and async frames and compared; compared the string demands with a deep copy taken at acceptance (`nativeSnapshot`) | **deleted** | plan, program, options and string input are frozen. The formatter branch's re-plan stays (see below), and it covers the one mutable input of `planPhysicalSetup` |
+| `assertNativeStringValueReservationInput`, `ownerFor`, `nativeStringSetup` (`native-string-values.ts`, `program-physical-plan.ts`) | re-planned the whole string plan (fresh census, plan, compare) at each check, plus a settled walk and a demand snapshot compare per `ownerFor` | **`assertNativeStringValuePlanIssued`**: the plan was issued by `planNativeStringValuePhysical` for exactly these demands, invocation requirements and realm literals, under these options (a `WeakMap` provenance lookup); the owner's snapshot and settlement are deleted | the plan and its demands are frozen and derived from a frozen program |
+
+Not removed, reported: the formatter support body (`prepareNativeNumberFormat`) is **not frozen** (checked at run
+time: `formatter.body` unfrozen), so its snapshot compare and the formatter re-plan in `prepareNativeEmission` guard
+a real possibility of mutation between acceptance and fill. Freezing it at creation would let both go (~0.8 s here).
+
+### Remaining profile (head, switch off, ~6.5 s inside `compile` under the profiler)
+
+`acceptPreparedIrProgram` 2.8 s (of it the formatter's `planPhysicalSetup` 1.2 s, `prepareNativeProgramStringInput`
+0.7 s), `materializePhysicalProgram` 3.0 s (lowering 1.6 s; per-emit completion inventories `completedOwner` →
+`ownerFor` / `requireCompleted*` ~1.0 s across ~8 small checks), GC 1.4 s. No single check above 0.4 s self. Candidates
+for a next slice: the per-emit completion inventories (`completedOwner`, once per string literal emit) and
+freezing the formatter body.
+
+### Bytes and tests
+
+- Prelude binary identical after every commit, switch off and on.
+- `check:prepared-bytes`: 804 rows identical base vs head (switch off), and head with the switch on (740 binaries,
+  63 refusals, 1 throw on both).
+- 46 varied programs (30 small programs × standalone + gc target, 12 of them again behind the real prelude, 4
+  prelude + `assert*` bodies; `.tmp/perf6/progs.mts`): 76 outcomes identical base vs head.
+- Ordinary pipeline: 20 test262 files × (default, standalone) identical base vs head (40 binaries).
+
+Tests (each file alone, vitest, switch on):
+
+| file | result |
+| --- | --- |
+| `issue-7354-perf-string-authentication` (modified) | 27/27 |
+| `issue-7354-str-emitter-requests` | 9/9 |
+| `issue-7380-prepared-validator` | 29/29 |
+| `issue-3518-native-promise-inventory` (modified) | 28/28 |
+| `issue-3518-native-boolean-consumer`, `-scanner-value-chain`, `-realm-requirements` | 12/12, 11/11, 25/25 |
+| `issue-7354-f2-calls-through-values` | 8/10 — the same 2 red on the base (refusals now abort bodies, slice U) |
+| `issue-7354-c2-this` | 16/17 — the same 1 red on the base |
+| `issue-3518-native-string-value-materialization` | 11/15 — the same 4 red on the base (Perf4's boundary audit) |
+| `issue-3518-native-getter-resource-join` | 2 suites red, same as on F2's base (`string.const runtime is unavailable`) |
+
+Removed test cases (each mutated an issued plan or a census input after issue, the forged-plan shape #7380 retires):
+`perf-string-authentication` › "refuses retained demands changed between two emits", "refuses a retained plan changed
+between two emits", "refuses a plan changed after many emits"; `native-promise-inventory` › the `stale` half of
+"preserves unused allocation provenance…" and of "checks … producer plan association…", and the two `census.paths`
+assertions.
+
+### Gates
+
+typecheck; LOC and function budget (merge base and `LOC_GATE_BASE` = main `b24e71f5c0`); coercion sites; oracle
+ratchet; dead exports — all pass. `check:compiler-boundaries:inventory` fails on `src/ir/abort-bodies.ts`
+(unclassified target), slice U's new file, not this slice's; no new src file here.
+
+### Not verified
+
+- Node 25 (CI's) is not installed here; all numbers are local Node under tsx, not the runner's bundled worker.
+- The 1024 MB column after the base is implied by the 512 MB pass, not run.
+- The 512 MB column was not run for the first, third and fourth commits.

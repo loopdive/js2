@@ -26,12 +26,7 @@ import {
   assertNativeValueResourcePlanFor,
   type NativeValueResourcePlan,
 } from "../../../ir/program/native-value-resources.js";
-import {
-  freezePreparedIrValue,
-  preparedIrDataMismatch,
-  preparedIrFrozenCollectionMembers,
-} from "../../../ir/program/data.js";
-import { preparedIrSettledVerdicts, type PreparedIrSettlement } from "../../../shared/contracts/settled-verdict.js";
+import { freezePreparedIrValue, preparedIrDataMismatch } from "../../../ir/program/data.js";
 import { PreparedIrProgramInvariantError } from "../../../ir/program/errors.js";
 import type { Instr } from "../../../wasm/model/instructions.js";
 import type {
@@ -408,61 +403,74 @@ export function planNativeStringValuePhysical(
     ...(dynamicValues ? [declareNativeDynamicValueResources(key + ":dynamic", dynamicValues, key)] : []),
     ...(output ? [output] : []),
   ];
+  const plan = freezePreparedIrValue({
+    key,
+    mode: numeric ? "number-boundary" : realmLiterals ? "realm-bootstrap" : "literals",
+    ...(boolean.selection ? { booleans: boolean.selection } : {}),
+    ...(dynamicValues ? { dynamicValues } : {}),
+    ...(equality ? { equality } : {}),
+    ...(output ? { output } : {}),
+    literalRequirements,
+    literalUses: uses,
+    declarations: recipes.flatMap((recipe) => recipe.declarations),
+    reservationSteps: recipes.flatMap((recipe) => recipe.reservationSteps),
+  }) as NativeStringValuePhysicalPlan;
+  issuedPlans.set(plan, { demands, invocationRequirements, realmLiterals });
   return {
     kind: "planned",
     ...(invocationRequirements ? { invocationRequirements } : {}),
     ...(realmLiterals ? { realmLiterals } : {}),
-    plan: freezePreparedIrValue({
-      key,
-      mode: numeric ? "number-boundary" : realmLiterals ? "realm-bootstrap" : "literals",
-      ...(boolean.selection ? { booleans: boolean.selection } : {}),
-      ...(dynamicValues ? { dynamicValues } : {}),
-      ...(equality ? { equality } : {}),
-      ...(output ? { output } : {}),
-      literalRequirements,
-      literalUses: uses,
-      declarations: recipes.flatMap((recipe) => recipe.declarations),
-      reservationSteps: recipes.flatMap((recipe) => recipe.reservationSteps),
-    }) as NativeStringValuePhysicalPlan,
+    plan,
   };
+}
+
+/** What `planNativeStringValuePhysical` planned each plan from (its options are in the plan itself). */
+const issuedPlans = new WeakMap<
+  NativeStringValuePhysicalPlan,
+  {
+    readonly demands: NativeStringValueDemands;
+    readonly invocationRequirements?: NativeInvocationRequirements;
+    readonly realmLiterals?: NativeRealmLiteralPlan;
+  }
+>();
+
+/**
+ * `input.plan` was issued by `planNativeStringValuePhysical` for exactly `input`'s demands, invocation requirements and
+ * realm literals, under `options`. Plan and demands are frozen and derived from a frozen prepared program, so the plan
+ * cannot come to disagree with them: a use checks the issue, never re-plans (#7354 Perf6, as Perf4/Perf5 for the
+ * realm and invocation requirements).
+ */
+export function assertNativeStringValuePlanIssued(
+  input: NativeStringValueReservationInput,
+  options: { readonly utf8Storage: boolean; readonly stringConcatEmptyIdentity?: boolean },
+): void {
+  const issued = issuedPlans.get(input.plan);
+  if (!issued || issued.demands !== input.demands)
+    fail("demand/plan mismatch: the plan was not issued for these demands");
+  if (issued.invocationRequirements !== input.invocationRequirements)
+    fail("missing exact issued invocation requirements");
+  if (issued.realmLiterals !== readNativeRealmLiteralInput(input, options.utf8Storage)?.realmLiterals)
+    fail("missing exact issued realm literals");
+  if (
+    input.plan.literalRequirements.utf8Storage !== options.utf8Storage ||
+    (input.plan.output && input.plan.output.options.emptyIdentity !== (options.stringConcatEmptyIdentity ?? true))
+  )
+    fail("string plan was issued under other options");
 }
 
 interface Owner {
   readonly tx: PhysicalModuleReservations;
   readonly sourceInput: NativeStringValueReservationInput;
   readonly input: NativeStringValueReservationInput;
-  readonly snapshot: unknown;
   readonly rows: readonly NativeStringValueResourceRow[];
   filled: boolean;
-  /** The retained input's checks, settled once it can no longer change (`checkUnlessSettled`). */
-  readonly authentication: PreparedIrSettlement;
 }
 const owners = new WeakMap<NativeStringValueReservations, Owner>();
-// Bound here rather than imported from the IR's binding: the backend reads the IR's frozen collections only through
-// program data, which it already imports.
-const { checkUnlessSettled, settledChecks } = preparedIrSettledVerdicts(preparedIrFrozenCollectionMembers);
-/** A re-plan of the whole program: settled per input object, so the foundation and the reservation share it. */
-const currentInputs = settledChecks<NativeStringValueReservationInput>();
 export function assertNativeStringValueReservationInput(input: NativeStringValueReservationInput): void {
-  currentInputs.check(input, () => checkReservationInput(input));
-}
-function checkReservationInput(input: NativeStringValueReservationInput): void {
-  const realm = readNativeRealmLiteralInput(input, input.plan.literalRequirements.utf8Storage);
-  const outcome = planNativeStringValuePhysical(
-    input.demands,
-    {
-      representation: "native-string",
-      utf8Storage: input.plan.literalRequirements.utf8Storage,
-      stringConcatEmptyIdentity: input.plan.output?.options.emptyIdentity,
-    },
-    input.invocationRequirements,
-    realm?.realmRequirements,
-  );
-  if (outcome.kind !== "planned") fail("input no longer has a materializable string plan");
-  if (outcome.invocationRequirements !== input.invocationRequirements)
-    fail("missing exact issued invocation requirements");
-  if (outcome.realmLiterals !== realm?.realmLiterals) fail("missing exact issued realm literals");
-  same(input.plan, outcome.plan, "demand/plan mismatch");
+  assertNativeStringValuePlanIssued(input, {
+    utf8Storage: input.plan.literalRequirements.utf8Storage,
+    stringConcatEmptyIdentity: input.plan.output?.options.emptyIdentity,
+  });
   if (input.plan.output) {
     if (!input.outputRequirements || input.outputRequirements.demands !== input.demands)
       fail("missing exact output requirements");
@@ -482,10 +490,7 @@ function checkReservationInput(input: NativeStringValueReservationInput): void {
 function ownerFor(tx: PhysicalModuleReservations, pack: NativeStringValueReservations) {
   const owner = owners.get(pack);
   if (!owner || owner.tx !== tx) fail("foreign or copied string value pack");
-  checkUnlessSettled(owner.authentication, owner.input, () => {
-    same(owner.input.demands, owner.snapshot, "changed retained string demands");
-    assertNativeStringValueReservationInput(owner.input);
-  });
+  assertNativeStringValueReservationInput(owner.input);
   const currentRealm = readNativeRealmLiteralInput(owner.sourceInput, owner.input.plan.literalRequirements.utf8Storage);
   if (
     currentRealm?.realmRequirements !== owner.input.realmRequirements ||
@@ -638,10 +643,8 @@ export function reserveNativeStringValueResources(
     tx,
     sourceInput: input,
     input: Object.freeze({ ...input }),
-    snapshot: freezePreparedIrValue(input.demands),
     rows: Object.freeze(orderedRows),
     filled: false,
-    authentication: { settled: undefined },
   });
   return pack;
 }

@@ -5,11 +5,14 @@
 //
 // A leaf of its own, as `dynamic-add-helper.ts` is: the IR's requirement checks and the WasmGC backend's reservation
 // checks both settle through it, and the backend may not import an IR module for that. The one IR fact it needs —
-// which objects are genuine frozen collections — is the caller's (`preparedIrFrozenCollectionMembers`, IR program
-// data), bound once per side with `preparedIrSettledVerdicts`.
+// which objects are genuine frozen collections, and which are already known to be deeply frozen — are the caller's
+// (`preparedIrFrozenCollectionMembers`, `isDeeplyFrozenPreparedIrValue`, IR program data), bound once per side with
+// `preparedIrSettledVerdicts`.
 
 /** The keys and values of a genuine frozen collection, or undefined for any other object. */
 export type FrozenCollectionMembers = (value: object) => readonly unknown[] | undefined;
+/** Whether the IR already knows `value` to be deeply frozen prepared data (a permanent fact). */
+export type DeeplyFrozen = (value: object) => boolean;
 
 /**
  * The own properties (key, value, getter, setter) of `Object.prototype` and `Array.prototype`, the two shared
@@ -66,12 +69,15 @@ export interface PreparedIrSettledVerdicts {
   settledChecks<Input extends object, Output = void>(): PreparedIrSettledChecks<Input, Output>;
 }
 
-export function preparedIrSettledVerdicts(collectionMembers: FrozenCollectionMembers): PreparedIrSettledVerdicts {
+export function preparedIrSettledVerdicts(
+  collectionMembers: FrozenCollectionMembers,
+  deeplyFrozen: DeeplyFrozen,
+): PreparedIrSettledVerdicts {
   const isImmutable = (value: unknown): boolean => {
     const visited = new Set<object>();
     const immutable = (item: unknown): boolean => {
       if (typeof item === "function") return false;
-      if (item === null || typeof item !== "object" || visited.has(item)) return true;
+      if (item === null || typeof item !== "object" || visited.has(item) || deeplyFrozen(item)) return true;
       visited.add(item);
       const members = collectionMembers(item);
       if (members) return members.every(immutable);

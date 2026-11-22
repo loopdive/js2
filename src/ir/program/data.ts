@@ -181,42 +181,37 @@ function isRecursiveIrClassShape(value: object): boolean {
   );
 }
 
-function immutableCopy(
-  value: unknown,
-  ancestors = new Set<object>(),
-  activeCopies = new Map<object, unknown>(),
-): unknown {
+/**
+ * Every value `immutableCopy` returned and every object `freezePreparedIrRuntimeValue` froze. Each is deeply frozen
+ * prepared data and freezing cannot be undone, so membership is permanent: copying such a value again would rebuild an
+ * equal tree (it is returned as is), and a walk asking whether it can still change has its answer.
+ */
+const deeplyFrozen = new WeakSet<object>();
+
+export function isDeeplyFrozenPreparedIrValue(value: object): boolean {
+  return deeplyFrozen.has(value);
+}
+
+function immutableCopy(value: unknown, ancestors: Set<object>, activeCopies: Map<object, unknown>): unknown {
   if (typeof value === "function") invalidPreparedData("prepared data cannot contain executable functions");
-  if (value === null || typeof value !== "object") return value;
+  if (value === null || typeof value !== "object" || deeplyFrozen.has(value)) return value;
   if (ancestors.has(value)) {
     const recursiveShapeCopy = activeCopies.get(value);
     if (recursiveShapeCopy !== undefined && isRecursiveIrClassShape(value)) return recursiveShapeCopy;
     invalidPreparedData("prepared data must be acyclic outside exact IR class shapes");
   }
-  const nextAncestors = new Set(ancestors).add(value);
-  if (FrozenMap.branded(value)) {
-    return preparedIrReadonlyMap(
-      [...value].map(
-        ([key, item]) =>
-          [immutableCopy(key, nextAncestors, activeCopies), immutableCopy(item, nextAncestors, activeCopies)] as const,
-      ),
-    );
-  }
-  if (FrozenSet.branded(value)) {
-    return new FrozenSet([...value].map((item) => immutableCopy(item, nextAncestors, activeCopies)));
-  }
-  if (Array.isArray(value)) return Object.freeze(value.map((item) => immutableCopy(item, nextAncestors, activeCopies)));
-  if (value instanceof Map) {
-    return preparedIrReadonlyMap(
-      [...value].map(
-        ([key, item]) =>
-          [immutableCopy(key, nextAncestors, activeCopies), immutableCopy(item, nextAncestors, activeCopies)] as const,
-      ),
-    );
-  }
-  if (value instanceof Set) {
-    return new FrozenSet([...value].map((item) => immutableCopy(item, nextAncestors, activeCopies)));
-  }
+  ancestors.add(value);
+  const copy = copyChildren(value, (item) => immutableCopy(item, ancestors, activeCopies), activeCopies);
+  ancestors.delete(value);
+  deeplyFrozen.add(copy);
+  return copy;
+}
+
+function copyChildren(value: object, copyItem: (item: unknown) => unknown, activeCopies: Map<object, unknown>): object {
+  if (FrozenMap.branded(value) || value instanceof Map)
+    return preparedIrReadonlyMap([...value].map(([key, item]) => [copyItem(key), copyItem(item)] as const));
+  if (FrozenSet.branded(value) || value instanceof Set) return new FrozenSet([...value].map(copyItem));
+  if (Array.isArray(value)) return Object.freeze(value.map(copyItem));
   const prototype = Object.getPrototypeOf(value);
   if (prototype !== Object.prototype && prototype !== null) {
     invalidPreparedData(`prepared data contains unsupported mutable ${prototype?.constructor?.name ?? "object"}`);
@@ -229,7 +224,7 @@ function immutableCopy(
       invalidPreparedData(`prepared data property ${String(key)} must be a non-executable data property`);
     }
     Object.defineProperty(copy, key, {
-      value: immutableCopy(descriptor.value, nextAncestors, activeCopies),
+      value: copyItem(descriptor.value),
       enumerable: descriptor.enumerable,
       configurable: false,
       writable: false,
@@ -243,7 +238,7 @@ function immutableCopy(
 }
 
 export function freezePreparedIrValue(value: unknown): unknown {
-  return immutableCopy(value);
+  return immutableCopy(value, new Set(), new Map());
 }
 
 // Internal collection slots cannot change on an existing object. Only that
@@ -295,7 +290,7 @@ export function freezePreparedIrRuntimeValue<T>(value: T): T {
         invalidPreparedData("runtime data must be acyclic outside exact IR class shapes");
       return;
     }
-    if (visited.has(item)) return;
+    if (visited.has(item) || deeplyFrozen.has(item)) return;
     active.add(item);
     if (FrozenMap.branded(item)) {
       for (const [key, entry] of item) {
@@ -321,6 +316,7 @@ export function freezePreparedIrRuntimeValue<T>(value: T): T {
     active.delete(item);
     Object.freeze(item);
     visited.add(item);
+    deeplyFrozen.add(item);
   };
   freeze(value);
   return value;
