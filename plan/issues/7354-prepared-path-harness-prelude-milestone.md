@@ -5450,6 +5450,27 @@ by the label). On the Prepared lane 9 are compile errors (html-comment parsing, 
   about this change.
 - Oracle (lead decision after review r1): ORACLE_VERSION 16 → 17 with a history entry; no exemption.
 
+### Review r1 re-run (head `6319f2dc8c` vs `main` a36d229d89 after slice T; same 40 probes + 40 corpus rows)
+
+| lane | probes+corpus pass before → after | corpus (40) pass | flips |
+|---|---|---|---|
+| Prepared (IR) | 6 → 0 | 0 → 0 | the same 6 probes |
+| ordinary standalone (honest) | 45 → 42 | 33 → 33 | the same 3 message probes |
+| ordinary gc (honest) | 45 → 42 | 33 → 33 | the same 3 message probes |
+| ordinary gc (`TEST262_ORACLE_MODE=linked`, CI's host mode) | 44 → 41 | 33 → 33 | the same 3 message probes |
+
+- No corpus row changes verdict on any lane, including the linked mode.
+- Residual rows: `throw "TypeError: x"` passes on all three ordinary runs. The custom-`toString` object passes on
+  standalone and gc honest, and fails on gc linked, both before and after.
+- `runTest262File` (tsx) on `language/statements/break/S12.8_A1_T1.js` (a compile-failure row that threw before),
+  `line-terminators/comment-single-lf.js` and `const/global-use-before-initialization-in-prior-statement.js`, gc and
+  standalone: all 6 pass. `tests/issue-3613-render-parity.test.ts` 7/7, `tests/issue-3003.test.ts` 10/10,
+  `scripts/test262-prepared-trap-verdict.test.mjs` 22/22 (+ a thrown constructor never matches).
+- `scripts/lib/native-eval-boundary-observation.test.mjs`: its pinned source digest no longer admits this
+  checkout's harness on `main` (11 tests fail there identically). With the current digest admitted for one local
+  run (not committed), the 10 reader tests pass; `sendResult snapshots…` fails on `realmCanarySnapshot is not
+  defined`, also on `main`.
+
 ### Left as they are (recorded)
 
 - `!originalHarness` accepts any throw; no production job sends it.
