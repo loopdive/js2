@@ -34,6 +34,7 @@ import {
 import { assertCodegenRegistrationsComplete } from "./codegen/shared.js";
 import { isFatalCodegenDiagnostic } from "./codegen/context/errors.js";
 import type { WasmModule } from "./ir/types.js";
+import type { AbortBodies } from "./ir/abort-bodies.js";
 import {
   prepareIrProgramPresentation,
   beginPreparedPresentationFinalization,
@@ -1119,8 +1120,14 @@ function runPipeline(input: PipelineInput): CompileResult {
   return finalizePipelineModule(input, mod, telemetry, { targetProfile, emitWatOutput, emitSourceMap });
 }
 
-/** Internal productive checkpoint; public entry points keep their existing route. */
-export function runPreparedIrPipelinePresentation(input: PipelineInput): PreparedIrPipelinePresentationResult {
+/**
+ * Internal productive checkpoint; public entry points keep their existing route. `unlowerableBodies` switches on the
+ * abort-body policy (#7354 U, `ir/abort-bodies.ts`) and records its functions.
+ */
+export function runPreparedIrPipelinePresentation(
+  input: PipelineInput,
+  unlowerableBodies?: AbortBodies,
+): PreparedIrPipelinePresentationResult {
   const snapshot = { ...input, options: freezePreparedIrValue(input.options) as CompileOptions };
   const { options, entryAst, multiAst, errors } = snapshot;
   const diagnostics = multiAst ?? {
@@ -1166,6 +1173,7 @@ export function runPreparedIrPipelinePresentation(input: PipelineInput): Prepare
       policy: preparedPresentationPolicy(backendOptions.backend, target),
       deferTopLevelInit: options.deferTopLevelInit === true,
       codeStrictness: preparedCodeStrictness(options.inferModuleStrictArguments),
+      unlowerableBodies,
     },
     backendOptions,
     output: {

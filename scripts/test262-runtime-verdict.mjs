@@ -23,7 +23,7 @@ function isWasmTrap(err) {
  * trap-first order (#1316/#1317: the leaf is often a tiny lifted helper whose
  * name alone says nothing without its callers).
  */
-export function renderHostError(err) {
+export function renderHostError(err, abortBodies = []) {
   let info = err.message ?? String(err);
   if (!/illegal cast|null|unreachable|out of bounds/.test(info)) return info;
   const frameRe = /at\s+(\S+)\s+\(wasm:\/\//g;
@@ -31,6 +31,10 @@ export function renderHostError(err) {
   let m;
   while ((m = frameRe.exec(err.stack ?? "")) !== null) frames.push(m[1]);
   if (frames.length === 0) return info;
+  // (#7354 U) A Prepared function whose body could not be lowered has the abort as its whole body, so a trap whose
+  // top frame is that function is its abort.
+  const aborted = isWasmTrap(err) ? abortBodies.find((row) => row.name === frames[0]) : undefined;
+  if (aborted) info = `aborted in unlowerable unit ${aborted.name}: ${aborted.detail}`;
   info = `${info} [in ${frames[0]}()`;
   // Cap at 3 caller frames so the line stays readable inside the 300-char
   // `error.substring(0, 300)` truncation downstream.

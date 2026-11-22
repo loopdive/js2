@@ -353,6 +353,8 @@ type RecordMetadata = {
   irDualUnits?: number;
   irFallbackCodes?: readonly { code: string; count: number }[];
   reachedTest?: boolean;
+  // (#7354 U) Prepared lane: the functions whose body is the run-time abort (`src/ir/abort-bodies.ts`).
+  abortBodies?: readonly { readonly name: string; readonly line: number; readonly detail: string }[];
   // (#2939/#2940) True when the `fail` is a vacuity correction (harness-wrapper
   // callback never executed). Surfaced in the JSONL so the report tallies the
   // integrity correction separately from genuine fails.
@@ -434,6 +436,7 @@ function baseWorkerMetadata(result: TestResult, reachedTestFallback = false): Re
           irFallbackCodes: (result as { irFallbackCodes?: RecordMetadata["irFallbackCodes"] }).irFallbackCodes,
         }
       : {}),
+    ...((result as RecordMetadata).abortBodies ? { abortBodies: (result as RecordMetadata).abortBodies } : {}),
     ...((result as { vacuous?: boolean }).vacuous ? { vacuous: true } : {}),
     ...((result as { linkedFallback?: boolean }).linkedFallback ? { linkedFallback: true } : {}),
     ...((result as { linkedFallbackReason?: string }).linkedFallbackReason
