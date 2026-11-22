@@ -5933,3 +5933,125 @@ regression probes give the same transitions as before r1 (nothing right became a
 `assert(true);` sha256 e23f5dca… equals the O1 head it now sits on (8085f52549); gates exit 0 (LOC/func also against
 main 42f2df53e2). Sample not re-measured: r1 changes only calls whose receiver is not the [[Get]]'s (detached calls),
 and none of the 12 new passes has one (each was read); `check:prepared-bytes` not re-run.
+
+## Slice O2 plan (2026-11-22, branch `claude/7354-o2` from `claude/7354-p1` eb98b057ec)
+
+Accessor properties on the Prepared path: the realm calls a source getter / setter.
+
+### Reproduced (strict entry, runner options, real prelude, base eb98b057ec)
+
+| row | stops at |
+|---|---|
+| `Object/create/15.2.3.5-4-161.js`, `-186.js` | `unreachable` in the ToPropertyDescriptor helper (`getOrAbort`: the descriptor object's own `value` / `writable` is an accessor) |
+| `Object/create/15.2.3.5-4-19.js` | `unreachable` in `js.object.descriptors-define` (`getOrAbort` on `props.prop`, an accessor) |
+| `Object/create/15.2.3.5-4-233.js`, `defineProperty/15.2.3.6-4-568.js` | `unreachable` in the `js.object.get` adapter (kernel status 3: a source getter) |
+| `defineProperty/15.2.3.6-4-468.js`, `defineProperties/15.2.3.7-5-b-239.js` | `unreachable` in the `js.object.set` adapter (a setter) |
+
+Probes (base): a defineProperty getter read, an inherited getter, a setter write, a descriptor whose field is a
+getter all abort; `get: undefined` reads `undefined` and its descriptor is right. An object-literal accessor refuses
+(`callable … object-getter … is not dispatchable`: its closure takes the checker's typed signature, `number` → f64,
+because it sits in a "descriptor literal"); a dead literal is dropped. `o.x += 1`, `o.x++` refuse at top level
+(`'+=' is capability-deferred`, `PostfixUnaryExpression`) and abort inside a function, accessor or not.
+
+### What exists
+
+- **The one "a getter is a source closure" point** is the kernel's `buildBuiltinFunctionEntryGet`
+  (`builtin-function-property-bodies.ts`): null getter → `undefined`; a built-in function → `callVector` (the kernel's
+  own [[Call]], receiver = the original object); a source closure → status 3 ("needs a mixed callable owner:
+  `callVector` has no source arm yet"). The kernel `get` (`builtin-function-prototype-bodies.ts`) and `getOwn` share
+  it, with the walk's original receiver. Every realm read goes through it: the `js.object.get` adapter (traps on
+  status > 2), `getOrAbort` (traps on 3; ToPropertyDescriptor's six field reads, defineProperties' per-key read),
+  OrdinaryToPrimitive's method reads.
+- **set**: the `js.object.set` adapter (`source-object-bodies.ts`) finds the entry (own, else the kernel `lookup`);
+  an accessor without a setter answers false (strict TypeError at the site, O1), one with a setter is `unreachable`.
+- **ToPropertyDescriptor** reads each field by `has` (status 1) then the kernel `get` on the descriptor object, with
+  the descriptor as receiver: inherited and accessor fields are already in the right order; only the getter call
+  traps. defineProperties snapshots the keys, re-reads each key's `ownDescriptor`, converts every descriptor into a
+  vector, then defines (no partial define on a throw). GOPD (`ownDescriptor`) and `has-own` never read a value.
+- **define**: `js.object.descriptor-define` / `descriptors-define` define accessors through the descriptor pack's
+  `defineAccessor` (ValidateAndApplyPropertyDescriptor, O1's 2,808-case sweep). The object literal lowers each
+  `get x` / `set x` to `js.object.define-accessor(o, key, get|null, null|set, 310|566)` (from-ast
+  `lowerOrdinaryObjectLiteral`; the pack merges the halves), but **the realm has no row for that contract**
+  (pinned as a named gap in `issue-3518-ordinary-object-runtime-providers`).
+- **F2's dispatcher**: `__call_fn_method_N(receiver, callee, …args)` (`native-invocation.ts`, body
+  `closure-method-body.ts`): installs `__current_this`, pads / drops by arity, restores on return and throw, its last
+  arm the "not callable" TypeError (P1: abort for a built-in). Reserved per arity the program's `js.closure.call:N`
+  occurrences name (`native-invocation-requirements.ts` `methodArities`); a dynamic callee selects every source unit
+  (`native-source-closure-callables.ts`) and requires each to be dispatchable (`dynamicCalleeGaps`).
+- **Binding order**: program-consumer reserves the invocation pack (line ~1335) **before** `reserveNativeRealmKernel`
+  (~1349) and fills both after the index freeze, so the kernel can name the dispatcher's handles; no cycle.
+- `native-getter-invocation-requirements.ts` (C1, #3518): a getter proven by its static allocation (a
+  `define-accessor` whose half is a `closure.new`, with a later `js.object.get`) adds method 0 and selects that unit.
+  Its consumer `native-object-get.ts` is reached only from test fixtures; on this lane the C1 uses only add arity 0
+  and unit selection, which the realm use below subsumes. Not reused, not removed (its #3518 fixtures pin it).
+
+### Design
+
+1. **The realm's call of a source accessor is F2's dispatcher, arity 0 for a getter and 1 for a setter.**
+   The kernel gets one builder, `buildAccessorCall(callee, receiver, args)`: `match(callee) == sourceClosureOrdinal ?
+   method:N(receiver, callee, …args) : callVector(callee, receiver, vector(args))`. The entry-get's status-3 arm
+   becomes the arity-0 call (status 1); the set adapter's `unreachable` becomes the arity-1 call, result dropped,
+   answering true. One path in both; the realm holds no entry reference across the call (entry-get returns the
+   call's result; set returns true after it), so a getter that deletes, redefines or grows the object is safe.
+   A stored half is null, a built-in or a source closure (ToPropertyDescriptor's IsCallable; to be confirmed for
+   `get: undefined`, which reads `undefined` today, before relying on it), so the two arms are total.
+2. **`getOrAbort` is removed**: with a source getter now status 1, the kernel `get` on a served object answers
+   1 or 0/2 (absent), never 3 (`lookup` returns 3 only for a carrier that is neither an ordinary nor a function
+   object, and both callers pass a served object). It becomes a plain [[Get]] (`getField`). The `js.object.get`
+   adapter keeps its `> 2` test for that unknown-carrier state only (doc corrected).
+3. **Requirement** (`native-invocation-requirements.ts`): a program that calls an accessor-defining contract
+   (`js.object.define-accessor`, `descriptor-define`, `descriptors-define`; one list beside the declarations in
+   `ordinary-object-callables.ts`) and has source closures sets `realmAccessors`: method arities 0 and 1, every
+   source unit selected and required dispatchable (the same rule as a dynamic callee, one predicate
+   `callsDynamicValues(requirements)` read by the gaps and by `native-source-closure-callables.ts`). It is not a
+   `use` (uses are call-site ABI bindings). No source closure → no getter can exist → nothing reserved.
+4. **Kernel dependency**: `reserveNativeRealmKernel` takes the invocation pack; when `realmAccessors`, the kernel
+   dependencies carry `accessorCalls: { get: method:0, set: method:1 }` (authenticated with the others) and the
+   kernel operands carry the two handles. Absent → the kernel and set bodies are today's bytes.
+5. **Object literal**: (a) a realm row `js.object.define-accessor` binding the descriptor pack's `defineAccessor`, as
+   `define-data` binds `defineData`; (b) on the native dynamic lane an accessor declaration (and a function
+   expression or method inside a literal that has one) takes P's all-dynamic signature
+   (`sourceDynamicClosureSignature` in `source-dynamic-contracts.ts`; its `ownedByDescriptorLiteral` exclusion stays
+   only off this lane); from-ast's guard `ts.isFunctionExpression(expr) ?` widens in place (0 lines); (c)
+   `emitFunctionObjectInit` gives an accessor its function object (`length` 0/1, `name` `get x` / `set x`, not a
+   constructor); its "an accessor is never a value" premise is false since O1's GOPD.
+6. Programs whose closures are not dispatchable (a typed TS signature) now refuse by name when they also call an
+   accessor-defining static: the realm could reach them. Measured on the probe set before building.
+
+### What stays refused / aborts (each sound: no wrong value)
+
+- `o.x += v`, `o.x++` on any member: pre-existing refusal / abort (compound member assignment), not accessor-specific.
+- A built-in function as a getter/setter: `callVector` runs the kernel's algorithm (Function.prototype → undefined,
+  %ThrowTypeError% → TypeError, an Object.prototype method → its `unreachable`, P1).
+- Accessors on the realm's error object and on primitives' wrappers: no own storage (unchanged aborts).
+- `__defineGetter__` / `__lookupGetter__`: Object.prototype keys the realm lacks (unchanged C2-D1 abort/refusal).
+- A closure that is not dispatchable in a program with an accessor-defining static: named refusal.
+- Non-extensible targets: not expressible yet (O3).
+
+### Placement, reuse, removals, size
+
+- New code: `buildAccessorCall` beside `buildBuiltinFunctionEntryGet` (the realm's one [[Call]] dispatch by callee
+  kind); the requirement flag in `native-invocation-requirements.ts`; the accessor-defining list in
+  `ordinary-object-callables.ts`; the kernel dependency in `native-builtin-functions.ts` / `native-realm.ts`;
+  program-consumer passes the pack on an existing line. G1's files are not touched except
+  `native-source-objects.ts` (one row + the set row's operands).
+- Removed: the entry-get status-3 arm (where the dispatcher exists), `getOrAbort` and its two call sites' trap, the
+  set adapter's setter `unreachable`, the define-accessor named gap.
+- Expected: ~+110 / −30 in src; from-ast 0; program-source 0; program-consumer 0. Tests: one new file
+  `issue-7354-o2-accessors.test.ts`; the 3518 runtime-providers gap pin moves.
+
+### Test plan
+
+- Behaviour tests against node, each with a wrong twin, for every hazard in the brief: receiver of an inherited
+  getter; one getter call per read (counter); `o.x = v` value; getter-only write strict TypeError / sloppy silent;
+  throwing getter caught through `get`, defineProperty, create, defineProperties (no partial define); getter that
+  deletes / redefines / grows the object read or defined; hasOwnProperty / propertyIsEnumerable / GOPD never call
+  it; GOPD shape and identity; accessor returning a function called as a method; accessors on functions and on a
+  constructor's prototype with `new`; prototype setter intercepting `child.x = v`; child data shadowing; every
+  accessor↔data redefinition (configurable / non-configurable); `get: undefined`; non-callable `get` TypeError;
+  descriptor fields as accessors / inherited (order counted); object-literal get/set merge, enumerable,
+  configurable, `length` / `name` / no `prototype`. Compound forms pinned as their refusal / abort.
+- O1's 2,808-case sweep regenerated with a counting-getter column; ≥150 probe programs base vs head; the seven rows
+  plus the 411-row sample through the real runner with mutated twins; `check:prepared-bytes` with every difference
+  explained; prelude + `assert(true);` hash unchanged; ordinary pipeline 20 files × 2 targets identical; mutations of
+  each new arm.
