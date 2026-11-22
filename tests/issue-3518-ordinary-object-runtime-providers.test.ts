@@ -15,7 +15,6 @@ import { sourceInput } from "./helpers/typed-program-fixtures.js";
 import { replayOptions, replayProgram } from "./helpers/ir-whole-program-replay.js";
 import { prepareWholeIrProgram } from "../src/ir/program-preparation.js";
 import { encodePreparedIrProgram, decodePreparedIrProgram } from "../src/ir/program-codec.js";
-import { acceptPreparedIrProgram } from "../src/ir/program-consumer.js";
 const policy = { backend: "wasmgc", target: "standalone" } as const;
 
 describe("ordinary object symbolic provider obligations", () => {
@@ -97,11 +96,13 @@ describe("ordinary object symbolic provider obligations", () => {
 
 describe("ordinary getter source symbolic preparation", () => {
   it.each([
-    { label: "getter", members: "get value() {return 7;}", setters: 0 },
-    { label: "getter and setter", members: "get value() {return 7;}, set value(value: number) {}", setters: 1 },
+    // (#7354 O2) Annotated: on this native lane an unannotated accessor takes the all-dynamic signature, whose boxed
+    // result this policy (`box: "unsupported"`) cannot produce.
+    { label: "getter", members: "get value(): number {return 7;}", setters: 0 },
+    { label: "getter and setter", members: "get value(): number {return 7;}, set value(value: number) {}", setters: 1 },
   ])(
-    "transports genuine $label obligations through the codec while refusing the accessor's physical materialization",
-    ({ members, setters }) => {
+    "transports genuine $label obligations through the codec, and the realm serves the accessor",
+    async ({ members, setters }) => {
       const files = {
         "./entry.ts": `export function run() {const object = {${members}}; return object.value;}`,
       };
@@ -145,7 +146,8 @@ describe("ordinary getter source symbolic preparation", () => {
           );
         expect(calls.map((call) => call.target.name)).toEqual([
           "js.object.create-default",
-          ...Array.from({ length: 1 + setters }, () => "js.object.define-accessor"),
+          // (#7354 O2) An accessor is a function object, initialized before its define.
+          ...Array.from({ length: 1 + setters }, () => ["js.object.init-function", "js.object.define-accessor"]).flat(),
           "js.object.get",
         ]);
         expect(program.runtime).toHaveLength(1);
@@ -157,16 +159,13 @@ describe("ordinary getter source symbolic preparation", () => {
             .sort(),
         ).toEqual(expectedFeatures.map((feature) => `native.${feature}`).sort());
         expect(manifest.hostCapabilities).toEqual([]);
-        const result = acceptPreparedIrProgram(program, replayOptions("wasmgc", "standalone"));
-        expect(result.kind, JSON.stringify(result)).toBe("unsupported");
-        if (result.kind !== "unsupported") throw new Error("an accessor definition has no native source provider yet");
-        expect(result.code).toBe("body-shape-rejected");
-        // (#7354 O1) create-default and get have realm providers now; define-accessor is still a named gap.
-        expect(result.detail).toContain("js.object.define-accessor has no native source provider");
-        for (const feature of ["js.object.create-default", "js.object.get"])
-          expect(result.detail).not.toContain(`intrinsic callable ${feature} needs runtime function materialization`);
+        // (#7354 O2) define-accessor binds the realm's accessor define; the realm calls the getter on the read.
+        const outcome = await replayProgram(program, replayOptions("wasmgc", "standalone"));
+        if (outcome.kind !== "ran") throw new Error(`replay ${outcome.kind}`);
+        expect(outcome.run.exports.run()).toBe(7);
       }
     },
+    180_000,
   );
 });
 
