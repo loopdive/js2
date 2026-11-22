@@ -64,7 +64,15 @@ describe("semantic native realm catalog and real selected demands", () => {
     expect(new Set(rows.map((row) => row.id)).size).toBe(rows.length);
     expect(
       rows.filter((row) => row.callable?.implementation !== "unavailable" && row.callable).map((row) => row.id),
-    ).toEqual(["%Function.prototype%", "%ThrowTypeError%"]);
+    ).toEqual([
+      "%Function.prototype%",
+      "%ThrowTypeError%",
+      // (#7354 O1) the Object statics whose call form the Prepared path lowers
+      "%Object.create%",
+      "%Object.defineProperties%",
+      "%Object.defineProperty%",
+      "%Object.getOwnPropertyDescriptor%",
+    ]);
     for (const row of rows) {
       expect(Object.isFrozen(row)).toBe(true);
       if (row.prototype !== null) expect(rows.some((parent) => parent.id === row.prototype)).toBe(true);

@@ -28,6 +28,10 @@ const CONTRACTS = [
   ["js.object.error-field", [REF, { kind: "val", val: { kind: "i32" } }], [REF]],
   // (#7354 C2) OrdinaryHasInstance's prototype-chain walk
   ["js.object.inherits", [REF, REF], [BOOL]],
+  // (#7354 O1) the realm's half of Object.defineProperty / defineProperties / getOwnPropertyDescriptor
+  ["js.object.descriptor-define", [REF, REF, REF], []],
+  ["js.object.descriptors-define", [REF, REF], []],
+  ["js.object.own-descriptor", [REF, REF], [REF]],
 ] as const;
 
 describe("ordinary object semantic contracts", () => {

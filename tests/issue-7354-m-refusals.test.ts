@@ -150,10 +150,12 @@ describe("#7354 M1 — refusals that stay", () => {
       "function f(v){ for (var k in v) {} } f({a:1});",
       "ir/from-ast: unsupported tail statement ForInStatement in f",
     ],
+    // (#7354 O1) Object.defineProperty and its three siblings run (tests/issue-7354-o1-*); a static the catalog does
+    // not mark native stays refused.
     [
-      "G45: Object.defineProperty",
-      "var o = {}; Object.defineProperty(o, 'p', {value:1});",
-      "ir/from-ast: Object.defineProperty is not an admitted Object static (<module-init>)",
+      "G45: an Object static that is not native",
+      "var o = {}; Object.freeze(o);",
+      'ir/from-ast: identifier "Object" is not in scope in <module-init>',
     ],
     [
       "G45: new TypeError",

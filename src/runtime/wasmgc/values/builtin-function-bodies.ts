@@ -369,11 +369,22 @@ export function buildBuiltinFunctionSlotDefinition(
   d: BuiltinFunctionBodyOperands,
   slot: "bag" | "prototype" | "initialName" | "arity",
 ): BuiltinFunctionDefinition {
+  // (#7354 O1) An ordinary object is its own bag, so every own-property role over `bag` is total over the objects a
+  // source program holds: its ordinary objects and its function objects.
+  const ordinaryBag: Instr[] =
+    slot === "bag"
+      ? [
+          get(0),
+          { op: "any.convert_extern" },
+          { op: "ref.test", typeIdx: d.objectTypeIdx },
+          { op: "if", blockType: { kind: "empty" }, then: [get(0), { op: "return" }] },
+        ]
+      : [];
   const body: Instr[] = [
     get(0),
     call(d.match),
     { op: "i32.eqz" },
-    { op: "if", blockType: { kind: "empty" }, then: builtinFailure(d) },
+    { op: "if", blockType: { kind: "empty" }, then: [...ordinaryBag, ...builtinFailure(d)] },
   ];
   if (slot === "bag" || slot === "arity")
     body.push(...builtinRoot(d), {

@@ -71,6 +71,14 @@ const DECLARATIONS: Readonly<Record<OrdinaryObjectRuntimeFeature, IrRuntimeCalla
   "js.object.init-function": declaration("js.object.init-function", [EXTERNAL, EXTERNAL, FLAGS, BOOLEAN], []),
   // (#7354 C2) Whether the second value is on the first's [[Prototype]] chain (OrdinaryHasInstance's walk).
   "js.object.inherits": declaration("js.object.inherits", [EXTERNAL, EXTERNAL], [BOOLEAN]),
+  // (#7354 O1) The realm's half of the `Object` statics, after the caller's kind tests and ToPropertyKey: an object
+  // (ordinary or function), a canonical key, and the descriptor object ToPropertyDescriptor reads, then
+  // DefinePropertyOrThrow (`Object.defineProperty`); ObjectDefineProperties over an object's own enumerable properties
+  // (`Object.defineProperties`, `Object.create`'s second argument); FromPropertyDescriptor of an own property, or
+  // `undefined` (`Object.getOwnPropertyDescriptor`).
+  "js.object.descriptor-define": declaration("js.object.descriptor-define", [EXTERNAL, EXTERNAL, EXTERNAL], []),
+  "js.object.descriptors-define": declaration("js.object.descriptors-define", [EXTERNAL, EXTERNAL], []),
+  "js.object.own-descriptor": declaration("js.object.own-descriptor", [EXTERNAL, EXTERNAL], [EXTERNAL]),
 });
 
 /** Exact semantic binding only; neither display names nor runtime aliases qualify. */
