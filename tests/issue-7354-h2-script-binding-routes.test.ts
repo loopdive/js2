@@ -1,11 +1,12 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 //
-// #7354 H2 — the routes to a script binding other than an identifier reference. A script `var` or function declaration
-// is a property of the global object (§9.1.1.4, §16.1.7), so the global object as a value, dynamic code, `with`,
-// `Object.defineProperty`, `delete` and a parameter initializer (§10.2.11) reach it too. The Prepared path models only
-// identifier writes (`preparedBindingRewritten`, module-binding-script-var.ts), which is sound because each of these
-// routes refuses or aborts at its own site. Each program writes the binding through one route, then reads it: it must refuse or end at the
-// run-time abort, never read a stale value. A slice that admits a route replaces its rows with node agreement.
+// #7354 H2 — the routes to a script binding other than an identifier reference. A script `var` or function
+// declaration is a property of the global object (§9.1.1.4, §16.1.7), so the global object as a value, dynamic code,
+// `with`, `Object.defineProperty`, `delete` and a parameter initializer (§10.2.11) reach it too. The Prepared path
+// models only identifier writes (`preparedBindingRewritten`, module-binding-script-var.ts), which is sound because
+// each of these routes refuses or aborts at its own site. Each program writes the binding through one route, then
+// reads it: it must refuse or end at the run-time abort, never read a stale value. A slice that admits a route
+// replaces its rows with node agreement.
 import { describe, expect, it } from "vitest";
 import { instantiatePreparedArtifact } from "../src/test262/test262-prepared-runtime.js";
 import { compile } from "../src/test262/test262-prepared-entry.js";

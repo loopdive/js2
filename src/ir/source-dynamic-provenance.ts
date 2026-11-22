@@ -161,7 +161,7 @@ export function sourceFunctionCallee(
   return callee !== undefined &&
     ts.isFunctionDeclaration(callee) &&
     callee.body !== undefined &&
-    (callee.name === undefined || !preparedBindingRewritten(checker, callee.name))
+    !preparedBindingRewritten(checker, callee.name!)
     ? callee
     : undefined;
 }

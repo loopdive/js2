@@ -37,7 +37,7 @@ const identifierWritesCache = new WeakMap<ts.Identifier, readonly IdentifierWrit
 
 /**
  * Every write of the script var `declaration` anywhere in its source (its own initializer included), or `undefined`
- * when a `with` / direct `eval` could write it outside checker identity.
+ * when its name is a pattern or a `with` / direct `eval` could write it outside checker identity.
  */
 export function scriptVarWrites(
   checker: ts.TypeChecker,
