@@ -5,6 +5,7 @@
  */
 import type { FuncHandle, Instr, LocalDef, TypeHandle } from "../../../wasm/model/instructions.js";
 import { ORDINARY_OBJECT_DESCRIPTOR_ENCODING as flags } from "./ordinary-object-descriptor-common.js";
+import { PROP_ENTRY_FIELD } from "./object-layouts.js";
 
 export interface SourceObjectDefinition {
   readonly locals: LocalDef[];
@@ -150,7 +151,7 @@ export function buildSourceObjectSetDefinition(d: {
   const entryFlag = (flag: number): Instr[] => [
     { op: "local.get", index: entry },
     { op: "ref.as_non_null" },
-    { op: "struct.get", typeIdx: d.entryTypeIdx, fieldIdx: 2 },
+    { op: "struct.get", typeIdx: d.entryTypeIdx, fieldIdx: PROP_ENTRY_FIELD.flags },
     { op: "i32.const", value: flag },
     { op: "i32.and" },
   ];
@@ -164,7 +165,7 @@ export function buildSourceObjectSetDefinition(d: {
       then: [
         { op: "local.get", index: entry },
         { op: "ref.as_non_null" },
-        { op: "struct.get", typeIdx: d.entryTypeIdx, fieldIdx: 5 },
+        { op: "struct.get", typeIdx: d.entryTypeIdx, fieldIdx: PROP_ENTRY_FIELD.set },
         { op: "ref.is_null" },
         { op: "if", blockType: { kind: "empty" }, then: [{ op: "i32.const", value: 0 }, { op: "return" }] },
         { op: "unreachable" },

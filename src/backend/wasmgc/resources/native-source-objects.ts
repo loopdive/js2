@@ -10,9 +10,8 @@
  *   - binds a realm function as it is (`define-data`: the descriptor pack's public define; (#7354 O4)
  *     `create-type-error`: the invocation substrate's TypeError constructor; (#7354 O1) `create-null`: the storage's
  *     OrdinaryObjectCreate(null)).
- * A contract without a row here has no native source provider yet. (#7354 O1) An adapter may call helpers, functions
- * this module reserves once for every served row that names one (`HELPERS`): only a program that calls such a contract
- * carries them.
+ * A contract without a row here has no native source provider yet. (#7354 O1) An adapter that reads descriptors calls
+ * the record helpers (`RecordHelpers`), reserved once and only for a program that calls such a contract.
  */
 import type { FunctionReservation, PhysicalModuleReservations } from "../../../wasm/physical/module-reservations.js";
 import type { FuncHandle, Instr, ValType } from "../../../wasm/model/instructions.js";
@@ -76,17 +75,21 @@ function literalKey(tx: PhysicalModuleReservations, { kernel }: NativeSourceObje
   return (text: string): Instr[] => [...nativeStringLiteralInstrs(tx, strings, text), { op: "extern.convert_any" }];
 }
 type Signature = { readonly params: readonly ValType[]; readonly results: readonly ValType[] };
-type Helpers = Readonly<Partial<Record<HelperName, FuncHandle>>>;
+/** (#7354 O1) ToBoolean and ToPropertyDescriptor: one function each, reserved once for every adapter that reads descriptors. */
+interface RecordHelpers {
+  readonly toBoolean: FuncHandle;
+  readonly toPropertyDescriptor: FuncHandle;
+}
+type Helpers = RecordHelpers | undefined;
 type Body = (
   dependencies: NativeSourceObjectDependencies,
   tx: PhysicalModuleReservations,
   helpers: Helpers,
 ) => SourceObjectDefinition;
-/** (#7354 O1) The operands of the `Object` statics' bodies: the kernel's roles, the realm's layouts and the helpers. */
+/** (#7354 O1) The operands of the `Object` statics' bodies: the kernel's roles and the realm's layouts. */
 function objectStaticOperands(
   dependencies: NativeSourceObjectDependencies,
   tx: PhysicalModuleReservations,
-  helpers: Helpers,
 ): ObjectStaticOperands {
   const { values, layouts, errors, kernel } = dependencies;
   const k = kernel.functions;
@@ -108,44 +111,32 @@ function objectStaticOperands(
     push: d.push,
     vectorTypeIdx: d.vectorTypeIdx,
     vectorArrayTypeIdx: d.vectorArrayTypeIdx,
-    toBoolean: helpers["to-boolean"]!,
-    toPropertyDescriptor: helpers["to-property-descriptor"]!,
     undefinedValue: [{ op: "global.get", index: d.undefinedGlobal }, { op: "extern.convert_any" }],
     key,
     typeError: (message) => builtinTypeError(d, key(message)),
   };
 }
-/** (#7354 O1) A function the adapters share, and the helpers it calls itself. */
-interface Helper {
-  readonly signature: Signature;
-  readonly helpers: readonly HelperName[];
-  readonly body: Body;
-}
-type HelperName = "to-boolean" | "to-property-descriptor";
-const HELPERS: Readonly<Record<HelperName, Helper>> = {
-  // ToBoolean over the carriers: the dynamic value's own body (`js.value.to_boolean`) on the realm's types.
-  "to-boolean": {
-    signature: { params: [EXTERNREF], results: [I32] },
-    helpers: [],
-    body: ({ values, kernel }, tx) => ({
-      locals: buildToBooleanLocals(),
-      body: buildToBooleanBody({
-        anyValueTypeIdx: values.types.anyValue.typeIndex,
-        internalizeOnce: true,
-        boxNumberTypeIdx: values.types.boxedNumber.typeIndex,
-        boxBooleanTypeIdx: values.types.boxedBoolean.typeIndex,
-        bigIntTypeIdx: undefined,
-        anyStringTypeIdx: nativeBuiltinFunctionRequestDependencies(tx, kernel.requests).strings.layout.anyStrTypeIdx,
-      }),
+const RECORD_SIGNATURES = {
+  toBoolean: { params: [EXTERNREF], results: [I32] },
+  toPropertyDescriptor: { params: [EXTERNREF], results: [I32, EXTERNREF, EXTERNREF, EXTERNREF] },
+} as const;
+/** ToBoolean over the carriers: the dynamic value's own body (`js.value.to_boolean`) on the realm's types. */
+function toBooleanDefinition(
+  { values, kernel }: NativeSourceObjectDependencies,
+  tx: PhysicalModuleReservations,
+): SourceObjectDefinition {
+  return {
+    locals: buildToBooleanLocals(),
+    body: buildToBooleanBody({
+      anyValueTypeIdx: values.types.anyValue.typeIndex,
+      internalizeOnce: true,
+      boxNumberTypeIdx: values.types.boxedNumber.typeIndex,
+      boxBooleanTypeIdx: values.types.boxedBoolean.typeIndex,
+      bigIntTypeIdx: undefined,
+      anyStringTypeIdx: nativeBuiltinFunctionRequestDependencies(tx, kernel.requests).strings.layout.anyStrTypeIdx,
     }),
-  },
-  "to-property-descriptor": {
-    signature: { params: [EXTERNREF], results: [I32, EXTERNREF, EXTERNREF, EXTERNREF] },
-    helpers: ["to-boolean"],
-    body: (dependencies, tx, helpers) =>
-      buildToPropertyDescriptorDefinition(objectStaticOperands(dependencies, tx, helpers)),
-  },
-};
+  };
+}
 /**
  * An adapter (the contract signature it reserves, its body over the realm's packs and the helpers it calls) or a
  * bound realm function.
@@ -154,7 +145,8 @@ type Row =
   | {
       readonly signature: Signature;
       readonly body: Body;
-      readonly helpers?: readonly HelperName[];
+      /** The body calls ToPropertyDescriptor (`RecordHelpers`). */
+      readonly readsDescriptors?: true;
       /** The realm string literals the body reads beyond the catalog's (`native-realm-literals.ts`). */
       readonly literals?: readonly string[];
     }
@@ -222,24 +214,24 @@ const ROWS = {
   },
   "js.object.descriptor-define": {
     signature: { params: [EXTERNREF, EXTERNREF, EXTERNREF], results: [] },
-    helpers: ["to-property-descriptor"],
+    readsDescriptors: true,
     literals: DESCRIPTOR_RECORD_LITERALS,
     body: (dependencies, tx, helpers) =>
-      buildDescriptorDefineDefinition(objectStaticOperands(dependencies, tx, helpers)),
+      buildDescriptorDefineDefinition(objectStaticOperands(dependencies, tx), helpers!.toPropertyDescriptor),
   },
   "js.object.descriptors-define": {
     signature: { params: [EXTERNREF, EXTERNREF], results: [] },
-    helpers: ["to-property-descriptor"],
+    readsDescriptors: true,
     literals: DESCRIPTOR_RECORD_LITERALS,
     body: (dependencies, tx, helpers) =>
-      buildDescriptorsDefineDefinition(objectStaticOperands(dependencies, tx, helpers)),
+      buildDescriptorsDefineDefinition(objectStaticOperands(dependencies, tx), helpers!.toPropertyDescriptor),
   },
   "js.object.own-descriptor": {
     signature: { params: [EXTERNREF, EXTERNREF], results: [EXTERNREF] },
     literals: DESCRIPTOR_RECORD_LITERALS,
-    body: (dependencies, tx, helpers) =>
+    body: (dependencies, tx) =>
       buildOwnDescriptorDefinition(
-        objectStaticOperands(dependencies, tx, helpers),
+        objectStaticOperands(dependencies, tx),
         sourceObjectCreate(createOperands(dependencies)),
         dependencies.descriptors.defineData.handle,
       ),
@@ -270,16 +262,6 @@ const adapterOf = (feature: NativeSourceObjectFeature): Extract<Row, { body: Bod
 export function nativeSourceObjectLiterals(features: readonly OrdinaryObjectRuntimeFeature[]): readonly string[] {
   return [...new Set(features.filter(isServed).flatMap((feature) => adapterOf(feature)?.literals ?? []))];
 }
-/** The helpers `names` call, themselves included, each once, callees first. */
-function helperClosure(names: readonly HelperName[], into: HelperName[] = []): HelperName[] {
-  for (const name of names)
-    if (!into.includes(name)) {
-      helperClosure(HELPERS[name].helpers, into);
-      into.push(name);
-    }
-  return into;
-}
-
 /** The function serving one called contract, under the key its call rows bind. */
 export interface NativeSourceObjectFunction {
   readonly feature: NativeSourceObjectFeature;
@@ -292,8 +274,8 @@ export interface NativeSourceObjectReservations {
 }
 interface Owner {
   readonly tx: PhysicalModuleReservations;
-  /** The helpers the served adapters call, by name. */
-  readonly helpers: ReadonlyMap<HelperName, FunctionReservation>;
+  /** The record helpers, when a served adapter reads descriptors. */
+  readonly helpers?: { readonly toBoolean: FunctionReservation; readonly toPropertyDescriptor: FunctionReservation };
   readonly dependencies: NativeSourceObjectDependencies;
   readonly identities: NativeSourceObjectDependencies;
   filled: boolean;
@@ -329,14 +311,14 @@ export function reserveNativeSourceObjectResources(
           : tx.reserveFunction(key, key, { params: [...row.signature.params], results: [...row.signature.results] });
       return Object.freeze({ feature, key, token });
     });
-  const names = helperClosure(served.flatMap(({ feature }) => adapterOf(feature)?.helpers ?? []));
-  const helpers = new Map(
-    names.map((name) => {
-      const key = realmKey + ":source-objects:helper:" + name;
-      const { params, results } = HELPERS[name].signature;
-      return [name, tx.reserveFunction(key, key, { params: [...params], results: [...results] })] as const;
-    }),
-  );
+  const reserveHelper = (name: keyof typeof RECORD_SIGNATURES) => {
+    const key = realmKey + ":source-objects:helper:" + name;
+    const { params, results } = RECORD_SIGNATURES[name];
+    return tx.reserveFunction(key, key, { params: [...params], results: [...results] });
+  };
+  const helpers = served.some(({ feature }) => adapterOf(feature)?.readsDescriptors)
+    ? { toBoolean: reserveHelper("toBoolean"), toPropertyDescriptor: reserveHelper("toPropertyDescriptor") }
+    : undefined;
   const pack = Object.freeze({ served: Object.freeze(served) });
   owners.set(pack, { tx, helpers, dependencies, identities: Object.freeze({ ...dependencies }), filled: false });
   return pack;
@@ -348,7 +330,10 @@ export function nativeSourceObjectReservationInventory(
   pack: NativeSourceObjectReservations,
 ): readonly FunctionReservation[] {
   const { helpers } = requireOwner(tx, pack);
-  return [...pack.served.filter((row) => adapterOf(row.feature)).map((row) => row.token), ...helpers.values()];
+  return [
+    ...pack.served.filter((row) => adapterOf(row.feature)).map((row) => row.token),
+    ...(helpers ? [helpers.toBoolean, helpers.toPropertyDescriptor] : []),
+  ];
 }
 
 export function fillNativeSourceObjectResources(
@@ -357,9 +342,18 @@ export function fillNativeSourceObjectResources(
 ): void {
   const owner = requireOwner(tx, pack);
   if (owner.filled) fail("duplicate canonical fill");
-  const handles: Helpers = Object.fromEntries([...owner.helpers].map(([name, token]) => [name, token.handle]));
-  for (const [name, token] of owner.helpers)
-    tx.fillFunction(token, HELPERS[name].body(owner.dependencies, tx, handles));
+  const { helpers } = owner;
+  const handles: Helpers = helpers && {
+    toBoolean: helpers.toBoolean.handle,
+    toPropertyDescriptor: helpers.toPropertyDescriptor.handle,
+  };
+  if (helpers) {
+    tx.fillFunction(helpers.toBoolean, toBooleanDefinition(owner.dependencies, tx));
+    tx.fillFunction(
+      helpers.toPropertyDescriptor,
+      buildToPropertyDescriptorDefinition(objectStaticOperands(owner.dependencies, tx), handles!.toBoolean),
+    );
+  }
   for (const { feature, token } of pack.served) {
     const adapter = adapterOf(feature);
     if (adapter) tx.fillFunction(token, adapter.body(owner.dependencies, tx, handles));
@@ -374,7 +368,11 @@ export function requireCompletedNativeSourceObjects(
 ): NativeSourceObjectReservations {
   const owner = requireOwner(tx, pack);
   if (!owner.filled) fail("missing canonical fill");
-  for (const token of [...pack.served.map((row) => row.token), ...owner.helpers.values()])
+  const { helpers } = owner;
+  for (const token of [
+    ...pack.served.map((row) => row.token),
+    ...(helpers ? [helpers.toBoolean, helpers.toPropertyDescriptor] : []),
+  ])
     tx.assertCompletedReservation(token);
   return pack;
 }

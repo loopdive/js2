@@ -22,8 +22,6 @@ export interface DescriptorRecordOperands {
   readonly get: FuncHandle;
   readonly defineData: FuncHandle;
   readonly defineAccessor: FuncHandle;
-  /** ToBoolean of a carrier (`buildToBooleanBody`). */
-  readonly toBoolean: FuncHandle;
   readonly undefinedValue: readonly Instr[];
   /** The externref of a realm string literal. */
   readonly key: (text: string) => Instr[];
@@ -93,9 +91,13 @@ export const DESCRIPTOR_RECORD_LITERALS: readonly string[] = [
 /**
  * ToPropertyDescriptor(attributes) -> (word, value, get, set). A non-object is a TypeError; the realm's error object
  * (whose properties the kernel does not serve) is the run-time abort. Each present field is read once (HasProperty,
- * then Get); `get` / `set` must be callable or `undefined`; accessor and data fields together are a TypeError.
+ * then Get); a flag is its value's ToBoolean (`toBoolean`); `get` / `set` must be callable or `undefined`; accessor and
+ * data fields together are a TypeError.
  */
-export function buildToPropertyDescriptorDefinition(d: DescriptorRecordOperands): SourceObjectDefinition {
+export function buildToPropertyDescriptorDefinition(
+  d: DescriptorRecordOperands,
+  toBoolean: FuncHandle,
+): SourceObjectDefinition {
   const record = descriptorRecordLocals(1);
   const [word, value, getter, setter] = record.slots as [number, number, number, number];
   const field = 5;
@@ -104,7 +106,7 @@ export function buildToPropertyDescriptorDefinition(d: DescriptorRecordOperands)
   const readField = (row: (typeof FIELDS)[number]): Instr[] => {
     const use: Instr[] =
       "flag" in row
-        ? [get(field), call(d.toBoolean), when(addBit(row.flag))]
+        ? [get(field), call(toBoolean), when(addBit(row.flag))]
         : "accessor" in row
           ? [
               get(field),

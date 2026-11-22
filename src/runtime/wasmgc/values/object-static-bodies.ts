@@ -16,9 +16,9 @@ import {
 } from "./descriptor-record-bodies.js";
 import { CREATE_DATA_PROPERTY, type SourceObjectDefinition } from "./source-object-bodies.js";
 import { ORDINARY_OBJECT_DESCRIPTOR_ENCODING as flags } from "./ordinary-object-descriptor-common.js";
+import { I31_HEAP_TYPE } from "./prototype-receiver-bodies.js";
 
 export interface ObjectStaticOperands extends DescriptorRecordOperands {
-  readonly toPropertyDescriptor: FuncHandle;
   readonly ownKeys: FuncHandle;
   readonly ownDescriptor: FuncHandle;
   readonly newVector: FuncHandle;
@@ -34,13 +34,16 @@ const call = (funcIdx: FuncHandle): Instr => ({ op: "call", funcIdx });
 const EXTERNREF = { kind: "externref" } as const;
 
 /** `js.object.descriptor-define(object, key, attributes)`: ToPropertyDescriptor, then DefinePropertyOrThrow. */
-export function buildDescriptorDefineDefinition(d: ObjectStaticOperands): SourceObjectDefinition {
+export function buildDescriptorDefineDefinition(
+  d: ObjectStaticOperands,
+  toPropertyDescriptor: FuncHandle,
+): SourceObjectDefinition {
   const record = descriptorRecordLocals(3);
   return {
     locals: record.locals,
     body: [
       get(2),
-      call(d.toPropertyDescriptor),
+      call(toPropertyDescriptor),
       ...storeDescriptorRecord(record.slots),
       ...definePropertyOrThrow(d, [get(0)], [get(1)], record.slots),
     ],
@@ -53,7 +56,10 @@ export function buildDescriptorDefineDefinition(d: ObjectStaticOperands): Source
  * descriptor defines nothing; the records wait in an argument vector, five entries each (key, value, getter, setter,
  * the word as an i31).
  */
-export function buildDescriptorsDefineDefinition(d: ObjectStaticOperands): SourceObjectDefinition {
+export function buildDescriptorsDefineDefinition(
+  d: ObjectStaticOperands,
+  toPropertyDescriptor: FuncHandle,
+): SourceObjectDefinition {
   const [keys, list, index, key, field] = [2, 3, 4, 5, 6];
   const record = descriptorRecordLocals(7);
   const [word, value, getter, setter] = record.slots as [number, number, number, number];
@@ -118,7 +124,7 @@ export function buildDescriptorsDefineDefinition(d: ObjectStaticOperands): Sourc
       then: [
         ...getOrAbort(d, 1, [get(key)], field),
         get(field),
-        call(d.toPropertyDescriptor),
+        call(toPropertyDescriptor),
         ...storeDescriptorRecord(record.slots),
         ...push([get(key)]),
         ...push([get(value)]),
@@ -139,7 +145,7 @@ export function buildDescriptorsDefineDefinition(d: ObjectStaticOperands): Sourc
     set(setter),
     ...element(list, 4),
     { op: "any.convert_extern" },
-    { op: "ref.cast", typeIdx: -20 },
+    { op: "ref.cast", typeIdx: I31_HEAP_TYPE },
     { op: "i31.get_s" },
     set(word),
     ...definePropertyOrThrow(d, [get(0)], [get(key)], record.slots),
