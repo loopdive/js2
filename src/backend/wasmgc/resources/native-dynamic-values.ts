@@ -275,9 +275,9 @@ export function fillNativeDynamicValueResources(
       locals: [],
       body: [{ op: "local.get", index: 0 }, { op: "any.convert_extern" }, { op: "ref.cast", typeIdx: anyStrTypeIdx }],
     });
-  // (#7354 Fa) A function value enters the carrier only as a source closure, and every source closure carrier
-  // descends from the wrapper root. The test is requested only where the source creates a function value, and such a
-  // program either lowers a closure (so the root exists) or refuses before emission.
+  // (#7354 Fa) A function value enters the carrier as a source closure or (G1) as a built-in the realm holds, and every
+  // such carrier descends from the wrapper root: the source closures', or without them the realm's own. The test is
+  // requested only where the source creates or names a function value, and such a program has one of the two.
   if (pack.isFunction) {
     if (!closureRoot) fail("the function test needs the source closures' wrapper root");
     tx.fillFunction(pack.isFunction, { locals: [], body: buildClosureRootTest(0, tx.physicalIndex(closureRoot)) });

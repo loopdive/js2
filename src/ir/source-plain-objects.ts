@@ -13,6 +13,7 @@
 import { ts } from "../ts-api.js";
 import type { ProgramObjects } from "./program/dynamic-value-kinds.js";
 import { nativeObjectStaticCall } from "./realm-static-call.js";
+import { NATIVE_ERROR_CONSTRUCTORS } from "../runtime/contracts/native-realm-catalog.js";
 
 /** `node` names a member (`x.Symbol`, `{ Symbol: 1 }`), not a binding. */
 const isMemberName = (node: ts.Identifier): boolean =>
@@ -28,7 +29,14 @@ export function programObjects(sourceFiles: readonly ts.SourceFile[], readsDecla
   let present = readsDeclarationValue;
   let functions = readsDeclarationValue;
   let namesSymbol = false;
+  let namesErrors = false;
   const visit = (node: ts.Node): void => {
+    // (#7354 G1) An Error constructor makes objects; a shadowing binding of its name only admits a kind that cannot
+    // occur, which is sound.
+    namesErrors ||=
+      ts.isIdentifier(node) &&
+      (NATIVE_ERROR_CONSTRUCTORS as readonly string[]).includes(node.text) &&
+      !isMemberName(node);
     present ||=
       ts.isObjectLiteralExpression(node) ||
       ts.isFunctionExpression(node) ||
@@ -38,5 +46,5 @@ export function programObjects(sourceFiles: readonly ts.SourceFile[], readsDecla
     ts.forEachChild(node, visit);
   };
   sourceFiles.forEach(visit);
-  return { present, functions, namesSymbol };
+  return { present: present || namesErrors, functions, namesSymbol, namesErrors };
 }

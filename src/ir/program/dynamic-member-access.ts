@@ -1,14 +1,14 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 /**
- * (#7354 O4, O3, M1, M2) A member read or write of the dynamic value with a constant key, as one chain over the
- * receiver's kinds (`MEMBER_ACCESS_ARM`): a TypeError for `undefined` / `null`, the realm's [[Get]] or [[Set]] for an
- * object, the realm's own fields for an error, and for a primitive what its pristine wrapper answers. A key a built-in
- * prototype holds (the realm's prototypes do not hold it yet), a write to an error, or a computed key refuses by name.
+ * (#7354 O4, O3, M1) A member read or write of the dynamic value with a constant key, as one chain over the receiver's
+ * kinds (`MEMBER_ACCESS_ARM`): a TypeError for `undefined` / `null`, the realm's [[Get]] or [[Set]] for an object
+ * ((#7354 G1) an error included), and for a primitive what its pristine wrapper answers. A key a built-in prototype
+ * holds (the realm's prototypes do not hold it yet) or a computed key refuses by name.
  */
 import type { IntrinsicId } from "../core/intrinsics.js";
 import type { IrInstr, IrValueId } from "../core/nodes.js";
 import type { IrType } from "../core/types.js";
-import type { NativeObjectPrototypeMethod } from "../../runtime/contracts/native-realm-catalog.js";
+import { realmMethodId } from "../../runtime/contracts/native-realm-catalog.js";
 import {
   BUILTIN_REACHABLE_KEYS,
   OBJECT_PROTOTYPE_ACCESSOR_KEYS,
@@ -18,7 +18,6 @@ import {
 import { MEMBER_ACCESS_ARM, type CarrierKind } from "./dynamic-value-kinds.js";
 import { realmCall, typeErrorThen, type TypeErrorBuilders } from "./dynamic-realm-calls.js";
 import { gap } from "./dynamic-value-gap.js";
-import type { ERROR_FIELD } from "./dynamic-value-chains.js";
 
 /** The legalization builders a member access is written with. */
 export interface MemberAccessBuilders extends TypeErrorBuilders {
@@ -29,13 +28,14 @@ export interface MemberAccessBuilders extends TypeErrorBuilders {
     args: readonly IrValueId[],
     result?: IrValueId | null,
   ) => IrInstr;
-  readonly errorField: (value: IrValueId, field: keyof typeof ERROR_FIELD, result: IrValueId) => IrInstr[];
   /** (#7354 C2) The run-time abort, a carrier answer. */
   readonly abort: (instr: IrInstr, result: IrValueId) => IrInstr[];
   readonly kindsOf: (value: IrValueId) => readonly CarrierKind[];
   readonly admitted: readonly CarrierKind[];
-  /** (#7354 P1) The realm's Object.prototype method `name` into `result`. */
-  readonly prototypeMethod: (name: NativeObjectPrototypeMethod, result: IrValueId) => IrInstr[];
+  /** (#7354 P1, G1) The realm's built-in function object `id` into `result`. */
+  readonly realmIntrinsic: (id: string, result: IrValueId) => IrInstr[];
+  /** (#7354 G1) A value may be an error: the program holds the Error family (`holdsErrors`). */
+  readonly errors: boolean;
   readonly branch: (
     cond: IrValueId,
     then: (result: IrValueId) => IrInstr[],
@@ -76,7 +76,6 @@ interface Access {
   readonly object: (result: IrValueId, abort: Abort, throwTypeError: ThrowTypeError) => IrInstr[];
   /** (#7354 F1b) A function value: the object's access, but its own `length` and `name` are read only. */
   readonly function: (result: IrValueId, throwTypeError: ThrowTypeError) => IrInstr[];
-  readonly error: (result: IrValueId) => IrInstr[];
   readonly primitive: (kind: CarrierKind, result: IrValueId, throwTypeError: ThrowTypeError) => IrInstr[];
 }
 
@@ -92,8 +91,8 @@ function constantKey(b: MemberAccessBuilders, instr: MemberGet | MemberSet): str
   return constantKeyOf(b.definitions, instr.key) ?? gap(`${instr.kind} with a computed key`);
 }
 
-/** "a number", "an Error". */
-const article = (kind: CarrierKind) => (kind === "error" ? "an Error" : kind === "object" ? "an object" : `a ${kind}`);
+/** "a number", "an object". */
+const article = (kind: CarrierKind) => (kind === "object" ? "an object" : `a ${kind}`);
 const WRAPPER: Readonly<Partial<Record<CarrierKind, string>>> = {
   number: "Number",
   boolean: "Boolean",
@@ -133,8 +132,6 @@ function memberAccess(
         return access.object(r, abort, throwTypeError);
       case "function":
         return access.function(r, throwTypeError);
-      case "error":
-        return access.error(r);
       // Only this arm assumes the built-in prototypes are the specification's (the object arm is the realm's own
       // [[Get]] / [[Set]]): no Prepared program can obtain one to change it (M1, C1; the premise test pins it).
       case "primitive":
@@ -145,34 +142,38 @@ function memberAccess(
 }
 
 /**
- * The keys an error's read answers from its own fields (§20.5.1.1: `message` is its one own property; `name` is
- * Error.prototype's, and the realm's TypeError holds its own). `constructor`, `toString` and V8's own `stack` need
- * Error.prototype's other properties; every other key is absent unless Object.prototype holds it.
+ * (#7354 G1) The keys V8 gives an error or an Error constructor that the specification does not: `stack` (an own
+ * accessor of every error), `captureStackTrace`, `stackTraceLimit`, `prepareStackTrace`. Where a value may be an
+ * error a read of one refuses by name: the realm answers the specification (absent), the engine the test runs
+ * beside answers V8's, and neither answer may pass for the other.
  */
-const ERROR_OWN_KEYS: ReadonlySet<string> = new Set(["name", "message"]);
-const ERROR_PROTOTYPE_KEYS: ReadonlySet<string> = new Set(["constructor", "toString", "stack"]);
+const V8_ERROR_KEYS: ReadonlySet<string> = new Set([
+  "stack",
+  "captureStackTrace",
+  "stackTraceLimit",
+  "prepareStackTrace",
+]);
 
 /** The read of the instruction's key off its once-evaluated receiver into `result`. */
 export function dynamicMemberRead(b: MemberAccessBuilders, instr: MemberGet, result: IrValueId): IrInstr[] {
   const name = constantKey(b, instr);
   // (#7354 P1) A method the realm's Object.prototype holds: an object's or a function's read finds it through the
-  // realm's [[Get]]; a primitive's and an error's prototypes lack it, and no program can change one (M1), so their read
-  // answers Object.prototype's own. The value is a function object, so the function kind must be admitted.
+  // realm's [[Get]]; a primitive's wrapper prototype lacks it, and no program can change one (M1), so its read answers
+  // Object.prototype's own. The value is a function object, so the function kind must be admitted.
   const method = nativeObjectPrototypeMethod(name);
   if (method !== undefined && !b.admitted.includes("function"))
     gap(`member read '${name}' in a program that creates no function value`);
-  /** A key no own field answers: Object.prototype's method, or else absent. */
+  if (b.errors && V8_ERROR_KEYS.has(name))
+    gap(`member read '${name}' (V8's own error property) where a value may be an error`);
+  /** A primitive's read of a key its wrapper lacks: Object.prototype's method, or else absent. */
   const inherited = (r: IrValueId): IrInstr[] =>
-    method !== undefined ? b.prototypeMethod(method, r) : [b.intrinsic(instr, "js.value.undefined", [], r)];
+    method !== undefined
+      ? b.realmIntrinsic(realmMethodId("Object.prototype", method), r)
+      : [b.intrinsic(instr, "js.value.undefined", [], r)];
   const access: Access = {
     operation: `member read '${name}'`,
     resultType: b.carrier,
     missing: (kind) => {
-      // An error's prototypes are built-in ones, so every key they hold is missing, Object.prototype's included.
-      if (kind === "error")
-        return ERROR_PROTOTYPE_KEYS.has(name) || BUILTIN_REACHABLE_KEYS.object.has(name)
-          ? "Error.prototype's properties"
-          : undefined;
       // (#7354 C2) An object's data keys of Object.prototype are answered where the object's own or source-built chain
       // holds them (the object arm); only the accessor would run code the realm lacks.
       if (kind === "object")
@@ -198,8 +199,6 @@ export function dynamicMemberRead(b: MemberAccessBuilders, instr: MemberGet, res
       return [realmCall("js.object.has", [instr.recv, instr.key], found), b.branch(found, get, abort, r, b.carrier)];
     },
     function: (r) => [realmCall("js.object.get", [instr.recv, instr.key, instr.recv], r)],
-    error: (r) =>
-      ERROR_OWN_KEYS.has(name) ? b.errorField(instr.recv, name as keyof typeof ERROR_FIELD, r) : inherited(r),
     primitive: (_kind, r) => inherited(r),
   };
   return memberAccess(b, instr, access, result);
@@ -211,8 +210,7 @@ export function dynamicMemberRead(b: MemberAccessBuilders, instr: MemberGet, res
  * prototypes' other properties are data properties, read only or set on the receiver, which is no object. PutValue
  * ignores that failure in sloppy code and throws a TypeError in strict code. (#7354 M1, C6) An accessor key
  * (`__proto__`) calls its setter instead, which answers `undefined` for a primitive `this` in strict code too
- * (§10.1.9.2, §B.2.2.1.2), so it refuses by name until the realm holds the accessor. (M2) The realm's error has no
- * property storage for a write.
+ * (§10.1.9.2, §B.2.2.1.2), so it refuses by name until the realm holds the accessor.
  */
 export function dynamicMemberWrite(b: MemberAccessBuilders, instr: MemberSet): IrInstr[] {
   const name = constantKey(b, instr);
@@ -234,21 +232,17 @@ export function dynamicMemberWrite(b: MemberAccessBuilders, instr: MemberSet): I
     operation: `member write '${name}'`,
     // (#7354 C2) The write's value is unread, but it is the carrier so that an arm's run-time abort is its answer.
     resultType: b.carrier,
-    // The realm's error has no property storage a write could land in. (#7354 F1, D4) Every other key Object.prototype
-    // holds is a writable data property, so OrdinarySet creates an own property on the receiver (§10.1.9.2 step 2),
-    // as for an absent key; only its accessor's setter would run code the realm lacks.
+    // (#7354 F1, D4) Every key Object.prototype holds but its accessor is a writable data property, so OrdinarySet
+    // creates an own property on the receiver (§10.1.9.2 step 2), as for an absent key; only the accessor's setter
+    // would run code the realm lacks.
     missing: (kind) =>
-      kind === "error"
-        ? "property storage on the realm's error"
-        : MEMBER_ACCESS_ARM[kind] !== "type-error" && OBJECT_PROTOTYPE_ACCESSOR_KEYS.has(name)
-          ? "Object.prototype's accessor"
-          : undefined,
+      MEMBER_ACCESS_ARM[kind] !== "type-error" && OBJECT_PROTOTYPE_ACCESSOR_KEYS.has(name)
+        ? "Object.prototype's accessor"
+        : undefined,
     nullishMessage: (kind) => `Cannot set properties of ${kind} (setting '${name}')`,
     unread,
     object: (r, _abort, throwTypeError) => putValue("object", r, throwTypeError),
     function: (r, throwTypeError) => putValue("function", r, throwTypeError),
-    // Refused above (`missing`): a write never reaches the error arm.
-    error: () => [],
     primitive: (kind, r, throwTypeError) =>
       instr.sloppy === true ? [unread(r)] : throwTypeError(`Cannot create property '${name}' on ${kind}`, r),
   };

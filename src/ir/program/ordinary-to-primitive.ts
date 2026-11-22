@@ -46,6 +46,19 @@ export interface ToPrimitiveBuilders extends TypeErrorBuilders {
   readonly isCallable: ((value: IrValueId, result: IrValueId) => IrInstr) | undefined;
   /** Whether the carrier `value` holds a primitive (none of the program's object kinds), into `result`. */
   readonly isPrimitive: (value: IrValueId, result: IrValueId) => IrInstr[];
+  /**
+   * (#7354 G1) Where a value may be an error: whether `method` is the realm's Error.prototype.toString, into `result`,
+   * and its answer for `object` (`js.object.error-to-string`): a built-in the dispatcher cannot call, written here.
+   */
+  readonly errorToString?: {
+    readonly is: (method: IrValueId, result: IrValueId) => IrInstr[];
+    readonly answer: (object: IrValueId, result: IrValueId) => IrInstr[];
+  };
+  /**
+   * (#7354 G1) Where the program creates no source function, every callable method is a built-in, which the
+   * dispatcher could only abort for: the run-time abort itself, as a carrier answer.
+   */
+  readonly builtinOnly?: (result: IrValueId) => IrInstr[];
 }
 
 /**
@@ -100,9 +113,24 @@ function callIfCallable(
 ): IrInstr[] {
   if (!b.isCallable) return next(result);
   const [method, callable, value, primitive] = [b.fresh(), b.fresh(), b.fresh(), b.fresh()];
-  const call = (r: IrValueId): IrInstr[] => [
-    { kind: "call", target: irClosureMethodReference(0), args: [object, method], result: r, resultType: b.carrier },
-  ];
+  const dispatch = (r: IrValueId): IrInstr[] =>
+    b.builtinOnly
+      ? b.builtinOnly(r)
+      : [
+          {
+            kind: "call",
+            target: irClosureMethodReference(0),
+            args: [object, method],
+            result: r,
+            resultType: b.carrier,
+          },
+        ];
+  const builtin = b.errorToString;
+  const call = (r: IrValueId): IrInstr[] => {
+    if (!builtin) return dispatch(r);
+    const same = b.fresh();
+    return [...builtin.is(method, same), b.branch(same, (s) => builtin.answer(object, s), dispatch, r, b.carrier)];
+  };
   const skip = (r: IrValueId): IrInstr[] => [
     { kind: "coerce.to_externref", value: object, result: r, resultType: b.carrier },
   ];

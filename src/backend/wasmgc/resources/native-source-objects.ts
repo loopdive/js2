@@ -23,9 +23,7 @@ import {
   buildSourceObjectGetDefinition,
   buildSourceObjectSetDefinition,
   buildSourceObjectHasDefinition,
-  buildSourceObjectIsErrorDefinition,
-  buildSourceObjectErrorFieldDefinition,
-  buildSourceObjectPrototypeMethodDefinition,
+  buildSourceObjectIntrinsicDefinition,
   buildSourceObjectHasOwnDefinition,
   sourceObjectCreate,
   type SourceObjectCreateOperands,
@@ -49,7 +47,11 @@ import {
   nativeBuiltinFunctionSingletonBinding,
   type NativeBuiltinFunctionReservations,
 } from "./native-builtin-functions.js";
-import { NATIVE_OBJECT_PROTOTYPE_METHODS, realmMethodId } from "../../../runtime/contracts/native-realm-catalog.js";
+import { NATIVE_VALUE_INTRINSICS } from "../../../runtime/contracts/native-realm-catalog.js";
+import {
+  buildErrorToStringDefinition,
+  buildIsErrorDefinition,
+} from "../../../runtime/wasmgc/values/realm-family-bodies.js";
 import { nativeBuiltinFunctionRequestDependencies } from "./native-builtin-function-requests.js";
 import { nativeStringLiteralInstrs } from "./native-string-literals.js";
 import type { NativeErrorReservations } from "./native-errors.js";
@@ -193,11 +195,25 @@ const ROWS = {
   },
   "js.object.is-error": {
     signature: { params: [EXTERNREF], results: [I32] },
-    body: ({ errors }) => buildSourceObjectIsErrorDefinition({ errorTypeIdx: errors.type.typeIndex }),
+    body: ({ layouts }) => buildIsErrorDefinition({ objectTypeIdx: layouts.object.typeIndex }),
   },
-  "js.object.error-field": {
-    signature: { params: [EXTERNREF, I32], results: [EXTERNREF] },
-    body: ({ errors }) => buildSourceObjectErrorFieldDefinition({ errorTypeIdx: errors.type.typeIndex }),
+  // (#7354 G1) Only a realm that holds the Error family has its error creation, and only it serves the contract.
+  "js.object.create-error": { binds: ({ kernel }) => kernel.errorCreate! },
+  "js.object.error-to-string": {
+    signature: { params: [EXTERNREF], results: [EXTERNREF] },
+    literals: [": "],
+    body: (dependencies, tx) => {
+      const d = nativeBuiltinFunctionOperands(tx, dependencies.kernel);
+      const strings = nativeBuiltinFunctionRequestDependencies(tx, dependencies.kernel.requests).strings.layout;
+      return buildErrorToStringDefinition({
+        get: dependencies.kernel.functions.get.handle,
+        undefinedGlobal: d.undefinedGlobal,
+        anyValueTypeIdx: dependencies.values.types.anyValue.typeIndex,
+        anyStrTypeIdx: strings.anyStrTypeIdx,
+        consStrTypeIdx: strings.consStrTypeIdx,
+        text: literalKey(tx, dependencies),
+      });
+    },
   },
   "js.object.init-function": {
     signature: { params: [EXTERNREF, EXTERNREF, F64, I32], results: [] },
@@ -243,13 +259,14 @@ const ROWS = {
         dependencies.descriptors.defineData.handle,
       ),
   },
-  "js.object.prototype-method": {
+  "js.object.intrinsic": {
     signature: { params: [I32], results: [EXTERNREF] },
     body: ({ kernel }, tx) =>
-      buildSourceObjectPrototypeMethodDefinition({
-        getters: NATIVE_OBJECT_PROTOTYPE_METHODS.map(
-          (name) =>
-            nativeBuiltinFunctionSingletonBinding(tx, kernel, realmMethodId("Object.prototype", name)).getter.handle,
+      buildSourceObjectIntrinsicDefinition({
+        getters: NATIVE_VALUE_INTRINSICS.flatMap((id, selector) =>
+          kernel.entries.some((entry) => entry.id === id)
+            ? [{ selector, getter: nativeBuiltinFunctionSingletonBinding(tx, kernel, id).getter.handle }]
+            : [],
         ),
       }),
   },

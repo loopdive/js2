@@ -41,7 +41,7 @@ import {
 import { legalizeDynamicAllocations } from "./program/dynamic-carrier-types.js";
 import { retargetNumberToString } from "./program/number-to-string-target.js";
 import { programObjects } from "./source-plain-objects.js";
-import { objectStaticOperand } from "./realm-static-call.js";
+import { realmBuiltinOperand } from "./realm-static-call.js";
 import { pristineBuiltinGlobal } from "./builtin-global-binding.js";
 import type { ProgramObjects } from "./program/dynamic-value-kinds.js";
 import type { AllocSiteRegistry } from "./analysis/alloc-registry.js";
@@ -467,7 +467,7 @@ function refuseImplicitDynamicFlows(
   const visit = (node: ts.Node): void => {
     if ((ts.isFunctionExpression(node) || ts.isFunctionDeclaration(node)) && aborted(node)) return;
     const converted = ts.isCallExpression(node.parent) && node.parent.expression !== node && converts(node.parent);
-    const exempt = (e: ts.Expression) => passedOn(e) || converted || objectStaticOperand(e, isPristineGlobal);
+    const exempt = (e: ts.Expression) => passedOn(e) || converted || realmBuiltinOperand(e, isPristineGlobal);
     if (ts.isExpression(node) && !exempt(node) && carries(node)) {
       const contextual = checker.getContextualType(node);
       if (contextual !== undefined && contextual !== any && !landsInCarrier(node, checker, policy, carries))

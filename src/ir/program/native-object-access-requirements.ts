@@ -28,6 +28,8 @@ export interface NativeObjectAccessUse {
   readonly descriptorMask?: number;
   /** (#7354 P1) The property key, when the program spells it as a string constant. */
   readonly constantKey?: string;
+  /** (#7354 G1) A selector contract's constant selector, its last argument (`js.object.intrinsic`'s id). */
+  readonly selector?: number;
 }
 export interface NativeObjectGetterDemand {
   readonly getOccurrence: number;
@@ -295,6 +297,9 @@ function calculate(demands: NativeStringValueDemands) {
       )
         gap("property key needs its actual canonical String/Symbol producer");
     }
+    const lastArgument = call.args.at(-1);
+    const last = lastArgument === undefined ? undefined : original(lastArgument, definitions)?.instruction;
+    const selector = last?.kind === "const" && last.value.kind === "i32" ? last.value.value : undefined;
     uses.push({
       occurrence,
       semanticOccurrence: paired.get(occurrence)!,
@@ -303,6 +308,7 @@ function calculate(demands: NativeStringValueDemands) {
       ...(creationOccurrence === undefined ? {} : { creationOccurrence }),
       ...(descriptorMask === undefined ? {} : { descriptorMask }),
       ...(constantKey === undefined ? {} : { constantKey }),
+      ...(selector === undefined ? {} : { selector }),
     });
   }
   for (const use of uses.filter((row) => row.feature === "js.object.get")) {

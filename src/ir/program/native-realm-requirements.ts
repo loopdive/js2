@@ -1,10 +1,13 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import {
+  NATIVE_ERROR_CONSTRUCTORS,
   NATIVE_OBJECT_PROTOTYPE_METHODS,
   NATIVE_REALM_CATALOG,
-  realmMethodId,
+  NATIVE_VALUE_INTRINSICS,
+  type NativeRealmIntrinsic,
 } from "../../runtime/contracts/native-realm-catalog.js";
 import type { IrUnitId } from "../../shared/contracts/ir-identity.js";
+import { forEachInstrDeep } from "../core/nodes.js";
 import { irNumberConversionCallableDeclaration } from "../runtime/number-conversion-callable.js";
 import { nativeAsyncCallableValueTypes, nativeAsyncCallMismatch } from "../runtime/native-async-callables.js";
 import { freezePreparedIrValue, preparedIrDataMismatch } from "./data.js";
@@ -28,10 +31,12 @@ export interface NativeRealmDescription {
   readonly sourceAllocationOccurrences: readonly number[];
   readonly objectUses: NativeObjectAccessRequirements["uses"];
   /**
-   * (#7354 P1) The catalog ids of the Object.prototype methods the realm holds: all of them where the program reads
-   * one ([[Get]] of its name, or the method itself), none otherwise, since no other read can reach one.
+   * The function values the realm holds beyond its bootstrap pair, in `NATIVE_VALUE_INTRINSICS` order: (#7354 P1) the
+   * Object.prototype methods where the program reads one ([[Get]] of its name, or the method itself), none otherwise,
+   * since no other read can reach one; (#7354 G1) the Error family where the program can observe an error
+   * ({@link heldErrorConstructors}).
    */
-  readonly prototypeMethods: readonly string[];
+  readonly intrinsics: readonly string[];
   readonly numberUses: readonly {
     readonly occurrence: number;
     readonly semanticOccurrence: number;
@@ -104,11 +109,50 @@ function numberUses(access: NativeObjectAccessRequirements): NativeRealmDescript
     });
   });
 }
+type Use = NativeObjectAccessRequirements["uses"][number];
+/** (#7354 G1) The catalog id `js.object.intrinsic` answers for `use`, if `use` is a call of it. */
+const intrinsicOf = (use: Use): string | undefined =>
+  use.feature === "js.object.intrinsic" && use.selector !== undefined
+    ? NATIVE_VALUE_INTRINSICS[use.selector]
+    : undefined;
+const METHOD_IDS = NATIVE_VALUE_INTRINSICS.slice(0, NATIVE_OBJECT_PROTOTYPE_METHODS.length);
+/** The Error constructors' ids and `Error.prototype.toString`'s (Error's own, read only through an error). */
+const ERROR_IDS = NATIVE_ERROR_CONSTRUCTORS.map((name) => `%${name}%`);
+const ERROR_TO_STRING = NATIVE_VALUE_INTRINSICS.at(-1)!;
 /** (#7354 P1) A use that reads a native Object.prototype method: the [[Get]] of its name, or the method itself. */
-const readsPrototypeMethod = (use: NativeObjectAccessRequirements["uses"][number]): boolean =>
-  use.feature === "js.object.prototype-method" ||
+const readsPrototypeMethod = (use: Use): boolean =>
+  METHOD_IDS.includes(intrinsicOf(use) ?? "") ||
   (use.feature === "js.object.get" &&
     (NATIVE_OBJECT_PROTOTYPE_METHODS as readonly (string | undefined)[]).includes(use.constantKey));
+/** Whether some function of `program` binds a caught value: the one way a thrown error becomes a program value. */
+function bindsCaughtValue(program: PreparedIrProgram): boolean {
+  let binds = false;
+  for (const fn of program.ir.functions)
+    for (const block of fn.blocks)
+      for (const root of block.instrs)
+        forEachInstrDeep(root, (instr) => {
+          if (instr.kind === "try" && (instr.catchClause?.payloadSlot ?? -1) >= 0) binds = true;
+        });
+  return binds;
+}
+/**
+ * (#7354 G1) The Error family members the realm holds: the constructors the program names (an intrinsic read of
+ * one), and, where a catch binds a thrown value, `TypeError`, the realm's own errors; with any of them `Error` (every
+ * other one's [[Prototype]], and its prototype's) and `Error.prototype.toString`. Where none is held no code can read
+ * an error: the realm's thrown values reach a program only through a catch binding, and no other error is made.
+ */
+function heldErrorConstructors(uses: readonly Use[], program: PreparedIrProgram): ReadonlySet<string> {
+  const named = new Set(uses.map(intrinsicOf).filter((id): id is string => id !== undefined));
+  const errors = NATIVE_VALUE_INTRINSICS.filter((id) => ERROR_IDS.includes(id) && named.has(id));
+  if (bindsCaughtValue(program)) errors.push("%TypeError%");
+  return errors.length === 0 ? new Set() : new Set(["%Error%", ...errors, ERROR_TO_STRING]);
+}
+/** (#7354 G1) The catalog rows of the realm `description` holds: those of every realm and those its constructors bring. */
+export function heldCatalogRows(description: NativeRealmDescription): readonly NativeRealmIntrinsic[] {
+  return description.catalog.intrinsics.filter(
+    (row) => row.heldWith === undefined || description.intrinsics.includes(row.heldWith),
+  );
+}
 function calculate(
   program: PreparedIrProgram,
   projection: PreparedIrProgramRuntimeProjection,
@@ -126,6 +170,8 @@ function calculate(
     !!source &&
     !!(source.signatures.length || source.shapes.length || source.units.length || source.allocations.length);
   const numbers = numberUses(access);
+  const errors = heldErrorConstructors(access.uses, program);
+  const methods = access.uses.some(readsPrototypeMethod);
   if (!selectedSource && !access.uses.length && !numbers.length) return undefined;
   const anchor = program.inventory.sources.find((row) => row.kind === "entry");
   if (!anchor) fail("missing prepared entry anchor");
@@ -136,9 +182,7 @@ function calculate(
     sourceSignatureIds: source?.signatures.map((row) => row.id) ?? [],
     sourceAllocationOccurrences: source?.allocations.map((row) => row.occurrence) ?? [],
     objectUses: access.uses,
-    prototypeMethods: access.uses.some(readsPrototypeMethod)
-      ? NATIVE_OBJECT_PROTOTYPE_METHODS.map((name) => realmMethodId("Object.prototype", name))
-      : [],
+    intrinsics: NATIVE_VALUE_INTRINSICS.filter((id) => (methods && METHOD_IDS.includes(id)) || errors.has(id)),
     numberUses: numbers,
     unavailable: [
       ...NATIVE_REALM_CATALOG.intrinsics.flatMap((row) =>

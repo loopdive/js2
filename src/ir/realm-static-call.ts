@@ -19,7 +19,7 @@ import {
 } from "./function-object-lowering.js";
 import { IrUnsupportedError } from "./outcomes.js";
 import { JS_TAG_IDS } from "./runtime/js-tag-domain.js";
-import type { NativeObjectStatic } from "../runtime/contracts/native-realm-catalog.js";
+import { NATIVE_ERROR_CONSTRUCTORS, type NativeObjectStatic } from "../runtime/contracts/native-realm-catalog.js";
 import { objectStaticHelper } from "./program/dynamic-object-statics.js";
 import { nativeObjectStatic } from "./program/builtin-prototype-keys.js";
 
@@ -51,9 +51,11 @@ const DESCRIPTOR_DEPTH: Readonly<Record<NativeObjectStatic, readonly number[]>> 
 /**
  * (#7354 O1) The flow rule's exemption: an argument of a native `Object` static, or a descriptor field (name or value)
  * of a literal descriptor or descriptor map passed as one, is taken as a carrier whatever the lib's signature types it
- * (`PropertyDescriptor`'s `enumerable: boolean` does not bind a test262 `enumerable: 1`).
+ * (`PropertyDescriptor`'s `enumerable: boolean` does not bind a test262 `enumerable: 1`); (#7354 G1) so is an argument
+ * of a call or `new` of an Error constructor the realm holds, or a field of a literal passed as one (the lib's
+ * `message?: string` does not bind a message object, which ToString reads through the program).
  */
-export function objectStaticOperand(
+export function realmBuiltinOperand(
   node: ts.Expression,
   isPristineGlobal: (identifier: ts.Identifier) => boolean,
 ): boolean {
@@ -61,6 +63,14 @@ export function objectStaticOperand(
   let depth = 0;
   for (; ts.isPropertyAssignment(operand.parent); depth++) operand = operand.parent.parent;
   const call = operand.parent;
+  if (
+    (ts.isCallExpression(call) || ts.isNewExpression(call)) &&
+    call.arguments?.includes(operand) === true &&
+    ts.isIdentifier(call.expression) &&
+    (NATIVE_ERROR_CONSTRUCTORS as readonly string[]).includes(call.expression.text) &&
+    isPristineGlobal(call.expression)
+  )
+    return true;
   if (!ts.isCallExpression(call)) return false;
   const name = nativeObjectStaticCall(call, isPristineGlobal)?.name;
   const index = call.arguments.indexOf(operand);
