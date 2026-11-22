@@ -63,6 +63,10 @@ describe("#7354 U — a function never entered: node's answer", () => {
       `function o(){ var i = function(){ return ${UNLOWERABLE}; }; return 1; } var out = String(o() + o());`,
     ],
     [
+      "a closure inside a function expression that runs: the innermost function owns the refusal",
+      `var f = function(){ var i = function(){ return ${UNLOWERABLE}; }; return 1; }; var out = String(f() + f());`,
+    ],
+    [
       "the effects its body would have had are not made",
       `var n = 0; function g(){ n = 1; return ${UNLOWERABLE}; } var out = String(n);`,
     ],
