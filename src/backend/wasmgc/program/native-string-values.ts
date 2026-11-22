@@ -436,26 +436,32 @@ const issuedPlans = new WeakMap<
 
 /**
  * `input.plan` was issued by `planNativeStringValuePhysical` for exactly `input`'s demands, invocation requirements and
- * realm literals, under `options`. Plan and demands are frozen and derived from a frozen prepared program, so the plan
- * cannot come to disagree with them: a use checks the issue, never re-plans (#7354 Perf6, as Perf4/Perf5 for the
- * realm and invocation requirements).
+ * realm literals. Plan and demands are frozen and derived from a frozen prepared program, so the plan cannot come to
+ * disagree with them: a use checks the issue, never re-plans (#7354 Perf6, as Perf4/Perf5 for the realm and
+ * invocation requirements).
  */
-export function assertNativeStringValuePlanIssued(
-  input: NativeStringValueReservationInput,
-  options: { readonly utf8Storage: boolean; readonly stringConcatEmptyIdentity?: boolean },
-): void {
+function assertPlanIssuedForInput(input: NativeStringValueReservationInput): void {
   const issued = issuedPlans.get(input.plan);
   if (!issued || issued.demands !== input.demands)
     fail("demand/plan mismatch: the plan was not issued for these demands");
   if (issued.invocationRequirements !== input.invocationRequirements)
     fail("missing exact issued invocation requirements");
-  if (issued.realmLiterals !== readNativeRealmLiteralInput(input, options.utf8Storage)?.realmLiterals)
+  const utf8Storage = input.plan.literalRequirements.utf8Storage;
+  if (issued.realmLiterals !== readNativeRealmLiteralInput(input, utf8Storage)?.realmLiterals)
     fail("missing exact issued realm literals");
+}
+
+/** As `assertPlanIssuedForInput`, for a caller holding its own options: the plan was issued under the same ones. */
+export function assertNativeStringValuePlanIssued(
+  input: NativeStringValueReservationInput,
+  options: { readonly utf8Storage: boolean; readonly stringConcatEmptyIdentity?: boolean },
+): void {
+  assertPlanIssuedForInput(input);
   if (
     input.plan.literalRequirements.utf8Storage !== options.utf8Storage ||
     (input.plan.output && input.plan.output.options.emptyIdentity !== (options.stringConcatEmptyIdentity ?? true))
   )
-    fail("string plan was issued under other options");
+    fail("string plan recipe was issued under other options");
 }
 
 interface Owner {
@@ -467,10 +473,7 @@ interface Owner {
 }
 const owners = new WeakMap<NativeStringValueReservations, Owner>();
 export function assertNativeStringValueReservationInput(input: NativeStringValueReservationInput): void {
-  assertNativeStringValuePlanIssued(input, {
-    utf8Storage: input.plan.literalRequirements.utf8Storage,
-    stringConcatEmptyIdentity: input.plan.output?.options.emptyIdentity,
-  });
+  assertPlanIssuedForInput(input);
   if (input.plan.output) {
     if (!input.outputRequirements || input.outputRequirements.demands !== input.demands)
       fail("missing exact output requirements");
