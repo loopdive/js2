@@ -118,6 +118,8 @@ export function preparedIrDataMismatch(left: unknown, right: unknown): string | 
     if (expected === null || actual === null || typeof expected !== "object" || typeof actual !== "object") {
       return Object.is(expected, actual) ? undefined : path;
     }
+    // Deeply frozen prepared data holds only data, so it equals itself without a walk.
+    if (expected === actual && deeplyFrozen.has(expected)) return undefined;
     const prior = visited.get(expected);
     if (prior?.has(actual)) return undefined;
     if (prior) prior.add(actual);
