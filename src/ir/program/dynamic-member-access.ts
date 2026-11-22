@@ -10,7 +10,7 @@ import type { IrInstr, IrValueId } from "../core/nodes.js";
 import type { IrType } from "../core/types.js";
 import { BUILTIN_REACHABLE_KEYS, OBJECT_PROTOTYPE_ACCESSOR_KEYS, isArrayIndexKey } from "./builtin-prototype-keys.js";
 import { MEMBER_ACCESS_ARM, type CarrierKind } from "./dynamic-value-kinds.js";
-import { realmCall, typeError, type TypeErrorBuilders } from "./dynamic-realm-calls.js";
+import { realmCall, typeErrorThen, type TypeErrorBuilders } from "./dynamic-realm-calls.js";
 import { gap } from "./dynamic-value-gap.js";
 import type { ERROR_FIELD } from "./dynamic-value-chains.js";
 
@@ -108,7 +108,7 @@ function memberAccess(
     gap(`${access.operation} of ${receiver} needs ${missing}`);
   }
   // The TypeError does not complete; the access's unread answer only gives the arm its value.
-  const throwTypeError: ThrowTypeError = (message, r) => [...typeError(b, message), access.unread(r)];
+  const throwTypeError: ThrowTypeError = (message, r) => typeErrorThen(b, message, access.unread(r));
   const abort: Abort = (r) => b.abort(instr, r);
   const arm = (kind: CarrierKind, r: IrValueId): IrInstr[] => {
     if (refused.includes(kind)) return abort(r);

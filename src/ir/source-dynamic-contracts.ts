@@ -53,6 +53,7 @@ import { ownedByDescriptorLiteral } from "./ordinary-object-closure-signatures.j
 import { isTopLevelStatementDeclaration } from "../shared/var-declaration-lists.js";
 import { bindingHoldsItsDeclaration } from "../shared/binding-holds-declaration.js";
 import { functionDeclarationsReadAsValues } from "./function-declaration-values.js";
+import type { CodeStrictness } from "./from-ast.js";
 import { readsAmbientThisGlobal } from "../shared/body-references-own-this.js";
 
 type Carries = SourceDynamicProvenance["carries"];
@@ -250,11 +251,6 @@ export function nativeDynamicLane(policy: SourcePolicy): boolean {
   return dynamicLane(policy, undefined) === "native";
 }
 
-type CodeStrictness = (code: ts.FunctionLikeDeclaration | ts.SourceFile) => {
-  readonly functionCodeStrict?: boolean;
-  readonly ambientThisStrict?: boolean;
-};
-
 /** (#7354 H) The dynamic-value contracts of one program's sources, over its provenance. */
 export interface ProgramDynamicContracts extends SourceDynamicProvenance {
   /** (#7354 F1b) The top-level function declarations read as values (`function-declaration-values.ts`). */
@@ -298,7 +294,7 @@ export interface ProgramDynamicContracts extends SourceDynamicProvenance {
      */
     readonly closuresBindReceivers?: () => boolean;
     /** (#7354 C2) {@link ProgramDynamicContracts.codeStrictness} of a function expression. */
-    readonly closureCodeStrictness?: (expression: ts.FunctionLikeDeclaration) => ReturnType<CodeStrictness>;
+    readonly closureCodeStrictness?: CodeStrictness;
   };
   /**
    * (#7260) The strictness of a function's or a script's code (`functionCodeStrict`), and (#7354 C2) where the code is

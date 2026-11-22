@@ -4,7 +4,7 @@
  * through the `js.object.*` contracts (`ordinary-object-callables.ts`); each contract it calls binds one function
  * here, whose signature is the contract's and whose algorithm is the realm's own. A row either
  *   - adapts the realm (`create-default`, `get`, (#7354 O3) `set`, (#7354 O2b) `has`, (#7354 F1b) `init-function`,
- *     (#7354 C2) `create-with-prototype`, `is-constructor`, `inherits`):
+ *     (#7354 C2) `create-with-prototype`, `inherits`):
  *     a function this module reserves, with the contract's signature and a body (`source-object-bodies.ts`,
  *     `source-function-object-bodies.ts`) over the realm's storage, kernel and descriptor packs; or
  *   - binds a realm function as it is (`define-data`: the descriptor pack's public define; (#7354 O4)
@@ -26,10 +26,7 @@ import {
   type SourceObjectCreateOperands,
   type SourceObjectDefinition,
 } from "../../../runtime/wasmgc/values/source-object-bodies.js";
-import {
-  buildSourceFunctionInitDefinition,
-  buildSourceFunctionIsConstructorDefinition,
-} from "../../../runtime/wasmgc/values/source-function-object-bodies.js";
+import { buildSourceFunctionInitDefinition } from "../../../runtime/wasmgc/values/source-function-object-bodies.js";
 import { nativeBuiltinFunctionOperands, type NativeBuiltinFunctionReservations } from "./native-builtin-functions.js";
 import { nativeBuiltinFunctionRequestDependencies } from "./native-builtin-function-requests.js";
 import { nativeStringLiteralInstrs } from "./native-string-literals.js";
@@ -121,14 +118,6 @@ const ROWS = {
         constructorKey: key("constructor"),
       });
     },
-  },
-  "js.object.is-constructor": {
-    signature: { params: [EXTERNREF], results: [I32] },
-    body: ({ layouts, kernel }) =>
-      buildSourceFunctionIsConstructorDefinition({
-        objectTypeIdx: layouts.object.typeIndex,
-        bag: kernel.functions.bag.handle,
-      }),
   },
   "js.object.inherits": {
     signature: { params: [EXTERNREF, EXTERNREF], results: [I32] },

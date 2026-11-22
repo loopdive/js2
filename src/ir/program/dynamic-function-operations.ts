@@ -11,19 +11,23 @@ import type { IrInstr, IrValueId } from "../core/nodes.js";
 import type { IrType } from "../core/types.js";
 import { irIntrinsicFuncRef } from "../core/callable-bindings.js";
 import { IR_CLOSURE_RECEIVER, irClosureMethodReference } from "../core/closure-invocation-callables.js";
-import { realmCall, typeError } from "./dynamic-realm-calls.js";
+import { realmCall, typeErrorThen } from "./dynamic-realm-calls.js";
 import { gap } from "./dynamic-value-gap.js";
 import { CARRIER, carried, type ChainBuilders } from "./dynamic-value-chains.js";
-import { IS_OBJECT, ORDINARY_CHAIN, type CarrierKind, type LegalizationProgram } from "./dynamic-value-kinds.js";
+import { IS_OBJECT, isOrdinaryObject, type CarrierKind, type LegalizationProgram } from "./dynamic-value-kinds.js";
 
 type CurrentThis = Extract<IrInstr, { kind: "dyn.current_this" }>;
 type Construct = Extract<IrInstr, { kind: "dyn.construct" }>;
 type InstanceOf = Extract<IrInstr, { kind: "dyn.instanceof" }>;
 
+/** The Boolean carrier `instanceof` and the realm's tests answer with (the chains' `TEST_RESULT` is unbranded). */
 const BOOLEAN: IrType = Object.freeze({ kind: "val", val: Object.freeze({ kind: "i32", boolean: true }) });
 
-/** The one legalization's builders, beside the kinds it proves and the program it answers for. */
-type Builders = ChainBuilders & { readonly program: LegalizationProgram };
+/**
+ * The one legalization's builders, beside the program it answers for and the admitted kinds whose values are objects
+ * (`IS_OBJECT`).
+ */
+type Builders = ChainBuilders & { readonly program: LegalizationProgram; readonly objects: readonly CarrierKind[] };
 
 const boolean = (value: boolean, result: IrValueId): IrInstr => ({
   kind: "const",
@@ -48,10 +52,14 @@ function holds(b: Builders, instr: IrInstr, value: IrValueId, of: readonly Carri
 }
 
 /** A TypeError with `message`, then the arm's unread `answer` into `result`. */
-const throwing = (b: Builders, message: string, answer: (result: IrValueId) => IrInstr) => (result: IrValueId) => [
-  ...typeError({ ...b, carrier: CARRIER }, message),
-  answer(result),
-];
+const throwing = (b: Builders, message: string, answer: (result: IrValueId) => IrInstr) => (result: IrValueId) =>
+  typeErrorThen({ ...b, carrier: CARRIER }, message, answer(result));
+
+/** Get(C, "prototype") of the once-evaluated function value `callee` into `prototype` (its own data property). */
+function getPrototype(b: Builders, callee: IrValueId, prototype: IrValueId): IrInstr[] {
+  const [name, key] = [b.fresh(), b.fresh()];
+  return [b.text("prototype", name), carried(name, key), realmCall("js.object.get", [callee, key, callee], prototype)];
+}
 
 /**
  * OrdinaryCallBindThis (§10.2.1.2) over the receiver the dispatcher installed: strict code takes it as is, sloppy
@@ -69,9 +77,8 @@ export function dynamicCurrentThis(b: Builders, instr: CurrentThis): IrInstr[] {
     resultType: CARRIER,
   };
   if (instr.strict) return [read];
-  const objects = b.admitted.filter((kind) => IS_OBJECT[kind]);
-  b.kinds.learn(instr.result!, objects);
-  const { instrs, cond } = holds(b, instr, receiver, objects);
+  b.kinds.learn(instr.result!, b.objects);
+  const { instrs, cond } = holds(b, instr, receiver, b.objects);
   return [
     read,
     ...instrs,
@@ -88,34 +95,36 @@ export function dynamicCurrentThis(b: Builders, instr: CurrentThis): IrInstr[] {
 /**
  * `new C(…args)` (§13.3.5.1.1 EvaluateNew, after its operands): IsConstructor(C), else a TypeError; then [[Construct]]
  * (§10.2.2): OrdinaryCreateFromConstructor reads C's `prototype` once and links the new object to it if it is an
- * object (`ORDINARY_CHAIN`; another object kind is the run-time abort) or else to the realm's Object.prototype; the
- * body runs with the new object as `this` (the dispatcher); an object result (`IS_OBJECT`) replaces the new object.
+ * ordinary object (`isOrdinaryObject`; another object kind is the run-time abort) or else to the realm's
+ * Object.prototype; the body runs with the new object as `this` (the dispatcher); an object result (`IS_OBJECT`)
+ * replaces the new object.
+ *
+ * IsConstructor is the function-kind test: every function value on this lane is a constructor (a declaration or a
+ * function expression). Arrows, methods, accessors, generators and async functions carry no all-dynamic signature, so
+ * F2's dispatchability rule refuses any program that could call one through a value. The slice that admits the first
+ * non-constructor function value adds the test, with a program that reaches it.
  */
 export function dynamicConstruct(b: Builders, instr: Construct): IrInstr[] {
   const { callee, args } = instr;
   const result = instr.result!;
-  const objects = b.admitted.filter((kind) => IS_OBJECT[kind]);
-  b.kinds.learn(result, objects);
+  b.kinds.learn(result, b.objects);
   const notConstructor = throwing(b, "Value is not a constructor", (r) =>
     b.intrinsic(instr, "js.value.undefined", [], r),
   );
-  // Only a function value may be a constructor: a callee that holds none is always the TypeError.
+  // A callee that holds no function value is always the TypeError, and needs no dispatcher.
   if (!b.kinds.kindsOf(callee).includes("function")) return notConstructor(result);
-  const callable = holds(b, instr, callee, ["function"]);
-  const isConstructor = b.fresh();
+  const isConstructor = holds(b, instr, callee, ["function"]);
   const construct = (r: IrValueId): IrInstr[] => {
-    const [name, key, prototype, object, answer] = Array.from({ length: 5 }, b.fresh);
+    const [prototype, object, answer] = [b.fresh(), b.fresh(), b.fresh()];
     const link = (kind: CarrierKind, s: IrValueId): IrInstr[] =>
-      ORDINARY_CHAIN[kind]
+      isOrdinaryObject(kind)
         ? [realmCall("js.object.create-with-prototype", [prototype], s)]
         : IS_OBJECT[kind]
           ? b.abort(instr, s)
           : [realmCall("js.object.create-default", [], s)];
-    const isObject = holds(b, instr, answer, objects);
+    const isObject = holds(b, instr, answer, b.objects);
     return [
-      b.text("prototype", name),
-      carried(name, key),
-      realmCall("js.object.get", [callee, key, callee], prototype),
+      ...getPrototype(b, callee, prototype),
       ...b.kindChain(instr, prototype, object, link, b.admitted, CARRIER),
       {
         kind: "call",
@@ -134,43 +143,30 @@ export function dynamicConstruct(b: Builders, instr: Construct): IrInstr[] {
       ),
     ];
   };
-  return [
-    ...callable.instrs,
-    b.branch(
-      callable.cond,
-      (r) => [realmCall("js.object.is-constructor", [callee], r)],
-      (r) => [boolean(false, r)],
-      isConstructor,
-      BOOLEAN,
-    ),
-    b.branch(isConstructor, construct, notConstructor, result, CARRIER),
-  ];
+  return [...isConstructor.instrs, b.branch(isConstructor.cond, construct, notConstructor, result, CARRIER)];
 }
 
 /**
  * `v instanceof C` (§13.10.2 InstanceofOperator) without `@@hasInstance`, which only a program that names `Symbol`
  * can reach: IsCallable(C), else a TypeError; then OrdinaryHasInstance (§7.3.21): a non-object `v` is not an
- * instance (before `prototype` is read); C's `prototype` must be an object, else a TypeError; and `v`'s chain is
- * walked (`ORDINARY_CHAIN`).
+ * instance (before `prototype` is read); C's `prototype` must be an object, else a TypeError; and an ordinary
+ * object's chain is walked (`isOrdinaryObject`): a function's or an error's holds built-in prototypes alone, which no
+ * Prepared program obtains (M1, C1; tests/issue-7354-m-prototype-premise.test.ts), so no `prototype` is on it.
  */
 export function dynamicInstanceOf(b: Builders, instr: InstanceOf): IrInstr[] {
   if (b.program.objects.namesSymbol) gap("instanceof in a program that names 'Symbol'");
   const { value, target } = instr;
   const result = instr.result!;
-  const objects = b.admitted.filter((kind) => IS_OBJECT[kind]);
   const unread = (r: IrValueId) => boolean(false, r);
   const hasInstance = (r: IrValueId): IrInstr[] => {
     const valueObjects = b.kinds.kindsOf(value).filter((kind) => IS_OBJECT[kind]);
-    if (valueObjects.length === 0) return [unread(r)];
-    const [name, key, prototype] = Array.from({ length: 3 }, b.fresh);
-    const objectValue = holds(b, instr, value, objects);
-    const prototypeObject = holds(b, instr, prototype, objects);
+    const prototype = b.fresh();
+    const objectValue = holds(b, instr, value, b.objects);
+    const prototypeObject = holds(b, instr, prototype, b.objects);
     const walk = (kind: CarrierKind, s: IrValueId): IrInstr[] =>
-      ORDINARY_CHAIN[kind] ? [realmCall("js.object.inherits", [value, prototype], s)] : [unread(s)];
+      isOrdinaryObject(kind) ? [realmCall("js.object.inherits", [value, prototype], s)] : [unread(s)];
     const ordinary = (s: IrValueId): IrInstr[] => [
-      b.text("prototype", name),
-      carried(name, key),
-      realmCall("js.object.get", [target, key, target], prototype),
+      ...getPrototype(b, target, prototype),
       ...prototypeObject.instrs,
       b.branch(
         prototypeObject.cond,

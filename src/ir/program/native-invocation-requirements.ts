@@ -55,6 +55,8 @@ export interface NativeInvocationRequirements {
   readonly getterUses: readonly NativeGetterInvocationUse[];
   readonly methodArities: readonly number[];
   readonly applyVector: boolean;
+  /** (#7354 C2) Some unit reads the installed receiver (`js.closure.receiver`). */
+  readonly receiver: boolean;
   readonly gaps: readonly { readonly unitId: IrUnitId; readonly detail: string }[];
   /** This owner cannot certify other compiler-created callable producers. */
   readonly completionScope: "selected-source-invocation";
@@ -315,6 +317,7 @@ function calculate(
       ]),
     ].sort((a, b) => a - b),
     applyVector: uses.some((use) => use.kind === "apply-vector"),
+    receiver: uses.some((use) => use.kind === "receiver"),
     gaps,
   };
 }

@@ -41,9 +41,9 @@ describe("#7354 C2 — new", () => {
         " var out = ''; for (var i = 0; i < 3; i++) out = out + mk(F, i).m;",
     ],
     [
-      "a non-constructor throws a TypeError, after the arguments are evaluated",
+      "a non-function throws a TypeError after the arguments are evaluated; a function expression constructs",
       "var c = {n: 0}; function g(){ c.n = c.n + 1; return 1; } function mk(C){ try { new C(g()); } catch (e) { return e.name; } return 'none'; }" +
-        " var arrow = function(){}; var out = String(mk(1)) + String(mk({})) + String(mk(undefined)) + String(mk(null)) + String(mk('s')) + String(mk(arrow)) + String(c.n);",
+        " var fexpr = function(){}; var out = String(mk(1)) + String(mk({})) + String(mk(undefined)) + String(mk(null)) + String(mk('s')) + String(mk(fexpr)) + String(c.n);",
     ],
     [
       "the constructor's throw propagates; an unused `new` still runs",

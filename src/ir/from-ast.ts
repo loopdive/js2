@@ -573,6 +573,15 @@ export interface IrExternClassMeta {
  * `resolveClosure`. Those depend on registries that aren't populated
  * until Phase 3, so from-ast doesn't see them.
  */
+/**
+ * (#7260, #7354 C2) The strictness of a piece of code (`functionCodeStrict`, a dynamic PutValue's failure rule) and,
+ * for a function that reads its own `this` from the dispatcher's receiver, the strictness it binds `this` with.
+ */
+export type CodeStrictness = (code: ts.FunctionLikeDeclaration | ts.SourceFile) => {
+  readonly functionCodeStrict?: boolean;
+  readonly ambientThisStrict?: boolean;
+};
+
 export interface IrFromAstResolver extends PreparedAsyncFromAstResolver {
   /** (#7106) Reserve one `<module-init>` chunk function's Wasm name in the module's name space. */
   moduleInitChunkName?(preferred: string): string;
@@ -999,10 +1008,7 @@ export interface IrFromAstResolver extends PreparedAsyncFromAstResolver {
   /** (#7354 F1b) Closures are function values with properties (`function-object-lowering.ts`). */
   createsFunctionObjects?(): boolean;
   /** (#7354 C2) A function expression's code strictness, and the strictness it binds its own `this` with, if any. */
-  closureCodeStrictness?(expression: ts.FunctionLikeDeclaration): {
-    readonly functionCodeStrict?: boolean;
-    readonly ambientThisStrict?: boolean;
-  };
+  readonly closureCodeStrictness?: CodeStrictness;
   /** (#7354 C2) Some closure binds its own `this`: every call of a closure value is the dispatcher's. */
   closuresBindReceivers?(): boolean;
   /** (#7354 U) The function's body is the run-time abort (`abort-bodies.ts`); its statements are not lowered. */
@@ -16399,15 +16405,14 @@ function lowerClosureExpression(expr: IrClosureLiteral, cx: LowerCtx): IrValueId
       demoteToLegacy("body-shape-rejected", "function-member closure source proof is stale");
     return lowerClosureExpressionWithSignature(expr, memberPlan.signature, new Set(), cx, {
       functionMemberClosure: memberPlan,
-      thisStrict: memberPlan.thisStrict,
+      ambientThisStrict: memberPlan.thisStrict,
     });
   }
   const dynamicSignature = ts.isFunctionExpression(expr) ? cx.resolver?.dynamicClosureSignature?.(expr) : undefined;
   if (dynamicSignature)
     return lowerClosureExpressionWithSignature(expr, dynamicSignature, undefined, cx, {
       writtenParameterSlots: true,
-      functionCodeStrict: cx.resolver?.closureCodeStrictness?.(expr).functionCodeStrict,
-      thisStrict: cx.resolver?.closureCodeStrictness?.(expr).ambientThisStrict,
+      ...cx.resolver?.closureCodeStrictness?.(expr),
     });
   // Inference is owned by the actual checker and confined to descriptor
   // literals and their nested closures. Other closure admission is unchanged.
@@ -16856,7 +16861,7 @@ function liftClosureBody(
     functionMemberClosure,
     writtenParameterSlots,
     functionCodeStrict,
-    thisStrict,
+    ambientThisStrict: thisStrict,
   }: ExactClosureLoweringOptions = {},
 ): IrFunction {
   const body = expr.body;
