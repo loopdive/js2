@@ -40,6 +40,15 @@ export function dynamicObjectStatic(b: ObjectStaticBuilders, instr: Call, name: 
   const throwing = (message: string, r: IrValueId) =>
     typeErrorThen({ ...b, carrier: CARRIER }, message, undefinedValue(r));
   /**
+   * The run-time abort, as an arm that does not complete: the abort is a pure intrinsic, and a static whose result is
+   * unused would otherwise drop it and run on as if the define had happened. The throw of its text never runs; it only
+   * keeps the abort live.
+   */
+  const abort = (r: IrValueId): IrInstr[] => [
+    ...b.abort(instr, r),
+    { kind: "throw", value: r, result: null, resultType: null },
+  ];
+  /**
    * A chain over the kinds `value` may hold: `object` answers a served object, the realm's error is the abort, and
    * `other` answers each remaining kind (a primitive, `undefined`, `null`).
    */
@@ -48,7 +57,7 @@ export function dynamicObjectStatic(b: ObjectStaticBuilders, instr: Call, name: 
       instr,
       value,
       r,
-      (kind, s) => (served(kind) ? object(s) : kind === "error" ? b.abort(instr, s) : other(kind, s)),
+      (kind, s) => (served(kind) ? object(s) : kind === "error" ? abort(s) : other(kind, s)),
       b.kinds.kindsOf(value),
       CARRIER,
     );
@@ -73,7 +82,7 @@ export function dynamicObjectStatic(b: ObjectStaticBuilders, instr: Call, name: 
           : nullish(kind)
             ? throwing("Cannot convert undefined or null to object", s)
             : kind === "string"
-              ? b.abort(instr, s)
+              ? abort(s)
               : [carried(object, s)],
       r,
     );
@@ -93,9 +102,7 @@ export function dynamicObjectStatic(b: ObjectStaticBuilders, instr: Call, name: 
         (kind, r) =>
           nullish(kind)
             ? throwing("Cannot convert undefined or null to object", r)
-            : kind === "string"
-              ? b.abort(instr, r)
-              : withKey(second, () => [undefinedValue(r)]),
+            : withKey(second, () => (kind === "string" ? abort(r) : [undefinedValue(r)])),
         instr.result!,
       );
     case "create":
@@ -115,7 +122,7 @@ export function dynamicObjectStatic(b: ObjectStaticBuilders, instr: Call, name: 
                 : undefined;
           if (create) return [create, ...defineAll(object, second, r, true)];
           return served(kind) || kind === "error"
-            ? b.abort(instr, r)
+            ? abort(r)
             : throwing("Object prototype may only be an Object or null", r);
         },
         b.kinds.kindsOf(first),
