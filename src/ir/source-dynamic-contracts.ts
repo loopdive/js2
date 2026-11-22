@@ -41,6 +41,8 @@ import {
 import { legalizeDynamicAllocations } from "./program/dynamic-carrier-types.js";
 import { retargetNumberToString } from "./program/number-to-string-target.js";
 import { programObjects } from "./source-plain-objects.js";
+import { objectStaticOperand } from "./realm-static-call.js";
+import { pristineBuiltinGlobal } from "./builtin-global-binding.js";
 import type { ProgramObjects } from "./program/dynamic-value-kinds.js";
 import type { AllocSiteRegistry } from "./analysis/alloc-registry.js";
 import type { RuntimeManifestPolicy } from "../runtime/contracts/provider-policy.js";
@@ -298,6 +300,8 @@ export interface ProgramDynamicContracts extends SourceDynamicProvenance {
     readonly staticFunctionValue?: (declaration: ts.VariableDeclaration) => boolean;
     /** (#7354 F1b) Closures are function objects (`function-object-lowering.ts`). */
     readonly createsFunctionObjects?: () => boolean;
+    /** (#7354 O1) `pristineBuiltinGlobal`: the identifier reads the unchanged global built-in of its name. */
+    readonly isPristineBuiltinGlobal?: (identifier: ts.Identifier) => boolean;
     /**
      * (#7354 C2) Some function expression binds its own `this` (`closureCodeStrictness`): a direct call of a closure
      * installs no receiver, so then every call of a closure value is the dispatcher's, which installs one.
@@ -388,6 +392,7 @@ export function programDynamicContracts(
             !closuresBindReceivers && staticFunctionValue(policy, sourceFiles, declaration),
           closuresBindReceivers: () => closuresBindReceivers,
           createsFunctionObjects: () => functionObjects,
+          isPristineBuiltinGlobal: pristineBuiltinGlobal(checker, sourceFiles),
           closureCodeStrictness: codeStrictness,
         }
       : {},
@@ -455,13 +460,15 @@ function refuseImplicitDynamicFlows(
   roots: readonly ts.Node[],
   carries: Carries,
   aborted: RefusalOwners["aborted"],
+  isPristineGlobal: (identifier: ts.Identifier) => boolean,
   converts: (call: ts.CallExpression) => boolean,
 ): void {
   const any = checker.getAnyType();
   const visit = (node: ts.Node): void => {
     if ((ts.isFunctionExpression(node) || ts.isFunctionDeclaration(node)) && aborted(node)) return;
     const converted = ts.isCallExpression(node.parent) && node.parent.expression !== node && converts(node.parent);
-    if (ts.isExpression(node) && !passedOn(node) && !converted && carries(node)) {
+    const exempt = (e: ts.Expression) => passedOn(e) || converted || objectStaticOperand(e, isPristineGlobal);
+    if (ts.isExpression(node) && !exempt(node) && carries(node)) {
       const contextual = checker.getContextualType(node);
       if (contextual !== undefined && contextual !== any && !landsInCarrier(node, checker, policy, carries))
         throw ownRefusal(
@@ -570,7 +577,15 @@ function legalizeSourceDynamicValues(
   );
   if (catches) retargeted.forEach((fn) => owned(fn, () => refuseUnadmittedThrows(fn)));
   if (legalized.some((fn, index) => fn !== retargeted[index]))
-    refuseImplicitDynamicFlows(checker, policy, roots, carries, owners.aborted, converts);
+    refuseImplicitDynamicFlows(
+      checker,
+      policy,
+      roots,
+      carries,
+      owners.aborted,
+      pristineBuiltinGlobal(checker, sourceFiles),
+      converts,
+    );
   legalizeDynamicAllocations(legalized, allocations);
   return legalized;
 }

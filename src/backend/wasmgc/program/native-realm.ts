@@ -285,7 +285,7 @@ function beginRealm(
     if (
       !row ||
       !call ||
-      call.implementation === "unavailable" ||
+      (call.implementation !== "function-prototype" && call.implementation !== "throw-type-error") ||
       call.initialName !== "" ||
       call.length !== 0 ||
       row.constructible
@@ -451,7 +451,7 @@ function reserveKernelResources(
     tx,
     key,
     pack.requirements.description.objectUses.map((use) => use.feature),
-    { layouts, storage, descriptors, kernel, errors: pack.substrate.errors },
+    { values: number.values, layouts, storage, descriptors, kernel, errors: pack.substrate.errors },
   );
   return {
     equality,

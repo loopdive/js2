@@ -27,6 +27,18 @@ export const preparedOptions = (): Test262CompileOptions =>
     allowJs: true,
   }) as Test262CompileOptions;
 
+/**
+ * (#7354 O1) The options `scripts/test262-worker.mjs` compiles an original-harness script row with: no semantic
+ * diagnostics (a test262 script passes values the lib's signatures do not admit, e.g. `{get: 1}`), a script goal.
+ */
+export const runnerOptions = (): Test262CompileOptions => ({
+  ...preparedOptions(),
+  skipSemanticDiagnostics: true,
+  deferTopLevelInit: true,
+  scriptGoal: true,
+  inferModuleStrictArguments: false,
+});
+
 /** Error diagnostics only: a catch binding read is a harmless warning (`'e' is of type 'unknown'`). */
 const errors = (result: { errors: readonly { message: string; severity?: string }[] }) =>
   result.errors.filter((error) => error.severity !== "warning").map((error) => error.message);
@@ -39,7 +51,10 @@ const errors = (result: { errors: readonly { message: string; severity?: string 
 export const yieldToRpc = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 25));
 
 /** Compile and run `source` through the strict Prepared entry; it must compile and validate. */
-export async function runPrepared(source: string): Promise<"returned" | "threw"> {
+export async function runPrepared(
+  source: string,
+  options: Test262CompileOptions = preparedOptions(),
+): Promise<"returned" | "threw"> {
   for (const spy of [
     vi.spyOn(gc, "generateModule"),
     vi.spyOn(gc, "generateMultiModule"),
@@ -50,7 +65,7 @@ export async function runPrepared(source: string): Promise<"returned" | "threw">
       throw new Error("strict request entered a direct generator");
     });
   await yieldToRpc();
-  const result = await compile(source, preparedOptions());
+  const result = await compile(source, options);
   expect(errors(result)).toEqual([]);
   expect(requiredPreparedEmission(result)).toBeDefined();
   expect(WebAssembly.validate(result.binary)).toBe(true);
@@ -68,10 +83,13 @@ export async function runPrepared(source: string): Promise<"returned" | "threw">
  * `source` compiles and validates, and ends at the run-time abort (`js.value.unsupported`) where node returns. The
  * realm's RuntimeError class is not this vitest context's, so the trap is matched by its class name.
  */
-export async function abortsAtRunTime(source: string): Promise<void> {
+export async function abortsAtRunTime(
+  source: string,
+  options: Test262CompileOptions = preparedOptions(),
+): Promise<void> {
   expect(() => new Function(source)()).not.toThrow();
   await yieldToRpc();
-  const result = await compile(source, preparedOptions());
+  const result = await compile(source, options);
   expect(errors(result)).toEqual([]);
   expect(WebAssembly.validate(result.binary)).toBe(true);
   let trap: unknown;
@@ -89,11 +107,15 @@ export async function abortsAtRunTime(source: string): Promise<void> {
 export const nodeOut = (body: string): string => String(new Function(`${body}\nreturn out;`)());
 
 /** `body`'s `out` equals node's, and a program asserting a wrong `out` throws. */
-export async function agreesWithNode(body: string, withWrong = true): Promise<void> {
+export async function agreesWithNode(
+  body: string,
+  withWrong = true,
+  options: Test262CompileOptions = preparedOptions(),
+): Promise<void> {
   const expected = nodeOut(body);
   const asserting = (answer: string) => `${body}\nif (out !== ${JSON.stringify(answer)}) throw 1;`;
-  expect(await runPrepared(asserting(expected))).toBe("returned");
-  if (withWrong) expect(await runPrepared(asserting(`${expected}!`))).toBe("threw");
+  expect(await runPrepared(asserting(expected), options)).toBe("returned");
+  if (withWrong) expect(await runPrepared(asserting(`${expected}!`), options)).toBe("threw");
 }
 
 /** `source` throws in node and in the Prepared program. */
@@ -115,8 +137,8 @@ export async function abortBodies(source: string): Promise<string[]> {
  * without abort bodies, under which a refusal inside a function becomes that function's run-time abort
  * ({@link abortBodies}).
  */
-export async function refusal(source: string): Promise<string> {
-  const result = await compile(source, preparedOptions(), undefined, "refuse");
+export async function refusal(source: string, options: Test262CompileOptions = preparedOptions()): Promise<string> {
+  const result = await compile(source, options, undefined, "refuse");
   expect(result.success).toBe(false);
   return errors(result).join("\n");
 }

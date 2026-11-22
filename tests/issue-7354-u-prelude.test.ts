@@ -7,13 +7,9 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { preparedOptions, yieldToRpc } from "./helpers/prepared-node-agreement.js";
+import { runnerOptions, yieldToRpc } from "./helpers/prepared-node-agreement.js";
 import { instantiatePreparedArtifact } from "../src/test262/test262-prepared-runtime.js";
-import {
-  compile,
-  requiredPreparedAbortBodies,
-  type Test262CompileOptions,
-} from "../src/test262/test262-prepared-entry.js";
+import { compile, requiredPreparedAbortBodies } from "../src/test262/test262-prepared-entry.js";
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -27,14 +23,6 @@ const prelude = (): string =>
   ]
     .map((file) => readFileSync(file, "utf8"))
     .join("");
-/** The options `scripts/test262-worker.mjs` compiles an original-harness script row with. */
-const runnerOptions = (): Test262CompileOptions => ({
-  ...preparedOptions(),
-  skipSemanticDiagnostics: true,
-  deferTopLevelInit: true,
-  scriptGoal: true,
-  inferModuleStrictArguments: false,
-});
 
 /** "returned", "threw" (a JavaScript throw) or "trap in <top frame>". */
 async function run(body: string): Promise<{ outcome: string; table: string[] }> {

@@ -5496,6 +5496,190 @@ by the label). On the Prepared lane 9 are compile errors (html-comment parsing, 
 - Every Prepared artifact's bytes change (`check:prepared-bytes`: every row differs by the export; run a sample at
   base and head to show the same outcomes). The 7 ES5 line-terminator rows should then pass.
 
+## Slice O1 result (2026-11-22, branch `claude/7354-o1` from `claude/7354-u` 02f31edc4c)
+
+`Object.defineProperty`, `Object.defineProperties`, `Object.create`, `Object.getOwnPropertyDescriptor` on the Prepared
+path: the call form on the unshadowed global, served by the realm's descriptor pack.
+
+### Built
+
+- **bag** (own commit 25b71efc3d): the kernel's `bag` answers an ordinary object with itself, so every own-property
+  role is total over a program's objects; the set adapter's `match ? bag : self` became `bag`.
+- **Catalog**: `implementation: "native"` for the four ids (`NATIVE_OBJECT_STATICS`, the one list);
+  `builtin-prototype-keys.ts` (the IR's catalog reader) answers `nativeObjectStatic(name)`.
+- **Realm** (`js.object` family, served on demand): `descriptor-define(o, key, attributes)`,
+  `descriptors-define(o, properties)`, `own-descriptor(o, key)`, and a row for the declared `create-null`. Bodies:
+  `descriptor-record-bodies.ts` (ToPropertyDescriptor, one helper function; DefinePropertyOrThrow over the kernel's
+  define roles; FromPropertyDescriptor) and `object-static-bodies.ts` (ObjectDefineProperties reads and converts
+  every descriptor, in own-key order, into an argument vector before the first define). Helpers (ToPropertyDescriptor,
+  ToBoolean = `buildToBooleanBody` on the realm's types) and the descriptor literals are reserved only for a program
+  that calls such a contract (`native-source-objects.ts` `HELPERS`, `nativeSourceObjectLiterals`).
+- **set**: a setter-less accessor answers false (strict: TypeError, sloppy: ignored); a setter call stays the trap
+  (O2). **Strict PutValue** on an object answering false throws `Cannot assign to read only property 'k' of object`:
+  one `putValue` arm parameterised by the kind, shared with F1b's function arm.
+- **Source**: `src/ir/realm-static-call.ts` recognises `Object.m(...)` (unshadowed global, `m` native, closures are
+  function objects); arguments are carriers in source order (`dynamicStoreOperand`), padded with `undefined` to the
+  catalog's `length`, extras evaluated and dropped; one front-end helper call. `program/dynamic-object-statics.ts`
+  expands it in the legalization: the target's kind (a primitive → TypeError, the realm's error → abort), then
+  ToPropertyKey through the program's own `stringOf` (a key's `toString` runs through F2), Properties' ToObject
+  (undefined/null → TypeError, number/Boolean → nothing, string → abort), then the realm contract; `Object.create`
+  links an ordinary object (`create-with-prototype`) or null (`create-null`), a function or error prototype → abort.
+  An abort arm calls the shared abort builder directly: `isSideEffecting` (`src/ir/analysis/effects.ts`) now keeps
+  `js.value.unsupported` alive, so dead-code removal never drops an abort whose result is unused (an unused
+  `Object.create(F);` ran on before). The intrinsic's effect facet stays pure, as its certification requires.
+- "Is this the global `Object`" is one predicate, `pristineBuiltinGlobal` (`src/ir/builtin-global-binding.ts`): the
+  checker's symbol is lib-declared only, no source binds the name at any level (the checker resolves a script's
+  top-level `function Object(){}` reference to the lib symbol), and no source assigns it. The call arm and the flow
+  exemption use it; each shadowing form refuses by name (tests).
+- The flow rule (`source-dynamic-contracts.ts`) takes a native static's arguments and its literal descriptors'
+  fields as carriers (the lib's `PropertyDescriptor` types do not apply); `programObjects` admits the object kind for
+  a program whose objects come only from such a call.
+- `prepare-object-create.ts` (the bounded whole-source `Object.create(null)` plan) is kept and still comes first: the
+  #3518 fixtures (`issue-3518-object-create-null-source-admission`, the no-source realm of
+  `issue-3518-native-object-realm-declarations`) compile typed TypeScript through it on this same lane. **Cleanup for
+  the lead to file**: one route (the static arm also for a typed `const`), then delete the plan and its three from-ast
+  sites (see "Found, not fixed").
+- from-ast 17361 = base (the host is function-object-lowering's; `objectStaticPlanOf` inlined at its one caller);
+  program-source.ts unchanged.
+
+### Differs from the plan (agreed with the lead before building)
+
+- No B-D1 `(this, a0…)` realm function and no value-form `algorithm` wrapper: ToPropertyKey needs the program's
+  Number::toString and ToPrimitive (source closures), which only the source side has, and the specification puts the
+  target's check before it. Slice V1 (built-ins as values) adds the wrapper and `this` with a program that reaches them.
+- Contract names avoid the `js.object.define-` / `create-` prefixes the access/result requirements classify.
+- Body-level tests are source programs (no forged kernel harness, #7380).
+
+### Tests (each file alone, `VITEST_MAX_FORKS=1`, heap 2048)
+
+| file | tests | exit |
+|---|---:|---:|
+| issue-7354-o1-define-property (new, programs 1–11) | 13 | 0 |
+| issue-7354-o1-create-and-define-properties (new, 12–19, aborts, refusals) | 18 | 0 |
+| issue-7354-m-refusals (G45 now `Object.freeze`) | 44 | 0 |
+| issue-7354-s-script-var-define-target (calls run against node) | 12 | 0 |
+| issue-7354-h-script-var-dynamic-home (two rows removed) | 59 | 0 |
+| issue-7354-u-prelude (runner options moved to the helper) | 3 | 0 |
+| issue-3518-ordinary-object-callable-contracts + native-realm-requirements | 80 | 0 |
+| issue-3518-native-object-realm-declarations (four tests retired, count pin deleted) | 21 | 0 |
+| r-provider-census 117; test262-prepared-entry + 7188 50; c2-this 18; o3 + f1b-writes 16; u-abort-bodies 40; native-builtin-functions 36 | | 0 |
+| o4-member-read 16; x-dynamic-throw 59; f2-calls-through-values 10; c2-constructors 20; m-sweep-1/2/3/4 7/7/6/6 | | 0 |
+
+**Retired (lead decision, own commit):** the realm-declarations file's four "executes actual source slots" tests
+(displaced × decoded) failed identically at the base 02f31edc4c and on main: the fixture (`tests/helpers/native-object-realm.ts` `publicRealmSourceRuntime`) lowers `STATE_SOURCE`'s
+bodies by hand with a resolver that knows only unit calls, and since F1b each closure literal on this lane is a
+function object, so `makeCaptured` / `makeEmpty` now hold `string.const "captured"` and a `js.object.init-function`
+call, which that resolver cannot lower (`string.const runtime is unavailable`). The compiler's behaviour is the right
+one; the fixture predates function objects, and #7380 retires such hand-built harnesses. Per retired test, the same
+facts through a real compile: closures returned from a factory and called through values with their own captures
+(13 → 20, 100 → 107), a capture-free closure (3 → 10), distinct identities and a module without imports — the new
+"retired #3518 fixture" tests in `issue-7354-o1-define-property.test.ts` (the source is STATE_SOURCE as a script; the
+four were one test over displaced/decoded, transport details of the hand-built module); function objects of returned
+closures — `issue-7354-f1b-function-objects`; closures as constructors and their prototypes —
+`issue-7354-c2-constructors`. `publicRealmSourceRuntime` and its now-unused imports are deleted from
+`tests/helpers/native-object-realm.ts`. The bare count pin `unavailable` = 42 (which this slice had moved to 38) is
+deleted, not updated (#7380); the catalog's native rows are asserted by identity in
+`issue-3518-native-realm-requirements` (the ids that are not `unavailable`, now including the four statics).
+
+### Proof
+
+- **Sweep (program 20)**: 13 existing kinds (absent; data with writable × enumerable × configurable; accessor with
+  enumerable × configurable) × 216 descriptors (every subset of the six fields, each flag true/false, `value: 2`,
+  fresh getter/setter) = 2,808 cases, expected values from node: **2,808 right, 0 refused, 0 abort, 0 wrong**. A batch
+  with mutated expectations fails 12/12. The non-extensible column is not expressible on this path yet (no
+  `Object.preventExtensions`, slice O3).
+- **Regression**: the 804 proving programs (`check:prepared-bytes`) base vs head: 790 identical bytes; 14 differ —
+  12 realm programs (the bag/set kernel bytes; each run at base and head: same outcome) and rows 47 / 48 (refusal →
+  node's answer: a define that returns, a TypeError on a number). Policy off (`refuse`): 13 differ, the same realm rows
+  and 47 / 48. Every O1 program refuses at the base (`Object.defineProperty is not an admitted Object static`).
+- **Ordinary pipeline**: 20 test262 files (defineProperty, getOwnPropertyDescriptor, create, defineProperties and six
+  language rows) × default + standalone: 40/40 identical.
+- **Mutations** (each alone, probe run): killed — the mixed accessor/data TypeError, IsCallable of get/set, the
+  descriptor's object test, ToBoolean of a flag, the enumerable filter of defineProperties, `create`'s undefined
+  map, the served-kind test, the abort's pin, set's setter-less false, strict PutValue on an object, the flow-rule
+  exemption, the static call admitting the object kind, the ordinary bag arm. The first three survived the first
+  round (the pack throws the same TypeError at define time); the new rows of programs 5 and 12 kill them.
+- **Compile time** (tsx, validator off, load 2–4): prelude + `assert(true);` base 7.6 / 8.3 / 8.6 s, head
+  6.4–7.6 s; prelude + a defineProperty/GOPD test 6.8 s; a realm program with one object 0.8–1.2 s, with all four
+  statics 1.1–1.4 s.
+
+### Sample (411 rows, real runner, default settings)
+
+| | pass | fail | compile_error |
+|---|---:|---:|---:|
+| U + W | 31 | 4 | 376 |
+| O1 | **34** | 6 | 371 |
+| O1c + receiver predicate | 34 | 6 | 371 |
+
+- O1c run: every chunk's row count equals the base's (87 / 107 / 102 / 115); no row changed outcome. The 8 `intl402`
+  rows of the 419-path list are dropped by path-filter discovery at base and head alike. A twin run had realized
+  part of the local `test262/` link farm into real directories of symlinks, which discovery does not descend (107
+  rows became 5); the farm is restored to plain symlinks.
+
+- New passes: `built-ins/Object/create/15.2.3.5-4-152.js`, `language/expressions/object/11.1.5_5-4-1.js`,
+  `language/types/reference/8.7.2-6-s.js`. Each has a mutated twin (last assertion's expected value changed) that
+  FAILS through the same runner. No row that passed or failed at the base changed.
+- New fails: `Object/create/15.2.3.5-4-161.js`, `-233.js`: the run-time abort at a getter (slice O2).
+- The 36 `Object.defineProperty` rows now stop at: own-property test on a script var (`hasOwnProperty`, P1) 20,
+  `Object` not in scope (another static) 8, `TypeError` 7, `Date` 4, `Array` 2, others 1 each.
+- Top compile errors: `formatIdentityFreeValue … is written` 73, isWritable invariant 41, module-init nested var 22,
+  own-property test 21, `TypeError` not in scope 16.
+
+### Found, not fixed
+
+- **Compile time grows superlinearly with the number of functions in one program** (tsx, strict Prepared entry,
+  runner options, validator off; generator `.tmp/sweep.mts` on the branch's worktree, not committed). Program shape: a
+  prelude of 5 function declarations (`t(f)` with a try/catch around `f()`, `fields(d)` reading six members and
+  concatenating, three trivial `G`/`H`/`S`), then per case: one declaration `cI(o)` holding 0–1
+  `Object.defineProperty`, one top-level `var oI = {}`, a call `cI(oI)`, a function expression passed to `t`
+  (closure calling `Object.defineProperty(oI, 'p', {…})` with 1–6 descriptor fields, some reading `H` / `S` as values),
+  a call `fields(Object.getOwnPropertyDescriptor(oI, 'p'))`, a string `===` and a `throw`. Per case: 1 declaration,
+  1 closure, 4–5 calls, 2 object literals.
+  - 12 cases: 17 declarations + 12 closures = 29 functions, ~60 calls: **4.2–6.0 s** per compile (234 runs).
+  - 72 cases: 77 declarations + 72 closures = 149 functions, ~350 calls: **> 500 s** (killed at the 530 s limit; ×5
+    the functions, ×100 the time).
+- **Behaviour change (fixed here): an unused member read that aborts now stops the program.** The shared abort could
+  be dropped as dead code when its result was unused (`function F(){} Object.create(F);` ran to its end). The root
+  fix in `isSideEffecting` also reaches `o.toString;` on a receiver whose read is the abort: it now stops the program,
+  where it silently went on before. That is the right direction (the read was never right). Changed outcomes: none
+  found — the 804 prepared-bytes rows are byte-identical across the fix, and every suite listed above passes.
+- **O1c, fixed: the statics on a function-local object.** A function-local `var o = {}` is a raw externref (#7128
+  open-carrier local), and `concreteIntoDynamic` (behind `dynamicStoreOperand`) did not box one, so each static
+  refused (`… operand of externref has no dynamic carrier`) and, under the abort-body policy, its function aborted.
+  Where closures are function objects, `concreteIntoDynamic` now boxes a raw externref; the legalization proves its
+  kind from its definition (`carrierKindOf`: the realm's `create-default` call) and refuses one it cannot. It is the
+  one operand route for member-store values, construct and call arguments, returns and the statics.
+  `lowerCarrierOperand` is not that route: from-ast-local, demotes instead of refusing by name, boxes no closure as a
+  function value, and serves the #7338 ordinary lane, whose output must not change. Tests: the four statics on a
+  function-local object, a parameter, a call's result (literal and local), in a constructor; each agrees with node
+  and a wrong answer throws. 400 of the 2,808 sweep cases placed inside a function on a local object: 400 right (a
+  mutated 24-case run: 24 wrong).
+  - **Still aborting: a closure over such an object.** It reads the object from its capture, which has no
+    defining `create-default` call, so the legalization refuses the box (`box of a non-primitive value`) and the
+    closure's body is the abort. It needs the captured object to travel as a dynamic value (a dynamic home for a
+    captured open-carrier local), not a wider `carrierKindOf`.
+- **Fixed: `function Object(){} Object.is(1, 1)` answered `true`.** The #7106 static-predicates arm (and the other
+  global-receiver arms of `lowerMethodCall`: `Function.prototype`, `Object.defineProperty`, `JSON.stringify`, `Math`)
+  gate on `isAmbientReceiver`, whose checker answer a script's own top-level declaration fools. On Prepared it now
+  also asks `pristineBuiltinGlobal` through the resolver; it refuses by name (test). Other lanes have no such
+  resolver member and are unchanged; the 804 prepared-bytes rows are byte-identical. `isUnshadowedGlobalExpression`
+  keeps its callers (return and default-parameter `undefined`, the predicates' `undefined` / `NaN` / `Infinity`
+  operands): those globals are non-writable and non-configurable, so only a lexical or module binding shadows them,
+  which it checks. `isNaN` / `String` declared at top level are refused, not fooled.
+- **Cleanup to file: the #7338 statics table** (`objectStaticsRealmOf` in from-ast, `select-object-statics`) still
+  asks `resolver.isAmbientBinding` ("some" quantifier). It should ask the same `pristineBuiltinGlobal`; it touches
+  `select.ts` (at its budget) and the ordinary lane, so it is left to its own change.
+- `Object.create(null)` as a program's only use of `Object` takes the bounded #3518 plan (`prepare-object-create.ts`),
+  whose typed result a dynamic script var cannot hold: `var n = Object.create(null); n.v = 3;` refuses by name
+  (`proven dynamic binding 'n' initializer has no supported carrier`). Turning the plan off on this lane broke the
+  #3518 no-source fixture (a typed `const` then went through the static arm), so it stays; one route for both is
+  cleanup for the lead to file.
+
+### Not verified
+
+- Node 25 (not installed); no legacy `try` was hand-built.
+- The m-sweep, o/o2/o4, str*, ty, t, d1, vg, p, x, f2, c2-constructors suites and the full 3518/3526 pin suites.
+
 ## Slice T plan (2026-11-22, branch `claude/7354-t` from `claude/7354-w` `9e2e91c2d0`)
 
 Top-level shapes the Prepared path refuses, measured on the 411-row sample (U+W tally 31/4/376). Each class was

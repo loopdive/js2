@@ -530,6 +530,10 @@ export function isSideEffecting(i: IrInstr, cache: Map<IrInstr, IrEffects> = new
     // operands must seed DCE liveness. The generic null-result keep rule
     // preserves only the instruction itself, not the definitions it uses.
     i.kind === "dyn.member_set" ||
+    // (#7354 O1) The Prepared run-time abort (`js.value.unsupported`, the legalization's `abort` builder): reordering
+    // it among pure instructions is harmless, so its effect facet stays pure, but it must run even where nothing reads
+    // its text, or an operation the realm cannot do (a define, a link) would silently be skipped.
+    (i.kind === "intrinsic" && i.id === "js.value.unsupported") ||
     // #6921: ToNumber (§7.1.4 → ToPrimitive) and loose `==` with an Object
     // operand (§7.2.14 steps 10-11) run user `valueOf`/`toString` and may
     // throw, so an unused result must still execute. Strict `dyn.eq`

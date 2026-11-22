@@ -110,6 +110,7 @@ import {
   resolveOrdinaryObjectClosureSignature,
 } from "./ordinary-object-closure-signatures.js";
 import { isDirectObjectCreateNullCall } from "../frontend/builtins/prepare-object-create.js";
+import { tryLowerRealmStaticCall } from "./realm-static-call.js";
 
 import { TsCheckerOracle, type TypeOracle } from "../checker/oracle.js";
 import {
@@ -1014,6 +1015,7 @@ export interface IrFromAstResolver extends PreparedAsyncFromAstResolver {
   staticFunctionValue?(declaration: ts.VariableDeclaration): boolean;
   /** (#7354 F1b) Closures are function values with properties (`function-object-lowering.ts`). */
   createsFunctionObjects?(): boolean;
+  isPristineBuiltinGlobal?(identifier: ts.Identifier): boolean; // (#7354 O1) `builtin-global-binding.ts`
   /** (#7354 C2) A function expression's code strictness, and the strictness it binds its own `this` with, if any. */
   readonly closureCodeStrictness?: CodeStrictness;
   /** (#7354 C2) Some closure binds its own `this`: every call of a closure value is the dispatcher's. */
@@ -7710,6 +7712,7 @@ function functionObjectLoweringHost(cx: LowerCtx): functionObjects.FunctionObjec
     dynamicCarrierIsExternref: () =>
       cx.resolver?.dynamicCarrierIsExternref?.() === true && cx.resolver.resolveDynamic?.()?.kind === "externref",
     createsFunctionObjects: () => functionObjects.createsFunctionObjects(cx.resolver),
+    isPristineGlobal: (identifier) => cx.resolver?.isPristineBuiltinGlobal?.(identifier) === true,
     requireOwner: (ownerUnitId) =>
       requireMatchingLoweringPlanOwner("top-level function value", ownerUnitId, cx.ownerUnitId, cx.funcName),
     lowerExpression: (source) => lowerExpr(source, cx, irDynamic()),
@@ -9199,11 +9202,6 @@ function unadmittedObjectDefineProperty(cx: LowerCtx): never {
   return refuseUnselected(cx.unselected, "call-resolution-unsupported", detail);
 }
 
-/** (#7338) The selector's `Object` statics plan, on from-ast's scope and the same program facts. */
-function objectStaticPlanOf(expr: ts.CallExpression, cx: LowerCtx): ObjectStaticPlan | undefined {
-  return objectStaticCallPlan(expr, objectStaticsRealmOf(cx));
-}
-
 function objectStaticsRealmOf(cx: LowerCtx): ObjectStaticsRealm {
   return {
     isAmbientBinding: (node) => cx.resolver?.isAmbientBinding?.(node) === true && cx.scope.get(node.text) === undefined,
@@ -9352,6 +9350,8 @@ function lowerMethodCallWithSourcePlan(
   }
   const objectStatic = tryLowerObjectStaticCall(expr, cx) ?? tryLowerObjectCreateDescriptorMapCall(expr, cx);
   if (objectStatic !== null) return objectStatic;
+  const realmStatic = tryLowerRealmStaticCall(expr, functionObjectLoweringHost(cx));
+  if (realmStatic !== null) return realmStatic;
   const globalFunction = tryLowerAmbientGlobalFunctionCall(expr, cx); // (#7267) `JSON.parse(s);`
   if (globalFunction !== null) return globalFunction;
   const closureInvocation = cx.resolver?.sourceClosureInvocation?.(expr);
@@ -9407,13 +9407,14 @@ function lowerArrayPrototypeBorrowCall(borrow: PrototypeBorrowCall, cx: LowerCtx
  * Is `receiver` the unshadowed ambient global of its name — no scope, module or
  * source binding of it? The self-host stdlib builder has no checker-backed
  * ambient callback; user-source builds do, and an explicit `false` preserves
- * shadow safety.
+ * shadow safety; (#7354 O1) Prepared also asks `builtin-global-binding.ts`.
  */
 function isAmbientReceiver(receiver: ts.Identifier, isDirectModuleBinding: boolean, cx: LowerCtx): boolean {
   return (
     !isDirectModuleBinding &&
     cx.scope.get(receiver.text) === undefined &&
-    cx.resolver?.isAmbientBinding?.(receiver) !== false
+    cx.resolver?.isAmbientBinding?.(receiver) !== false &&
+    cx.resolver?.isPristineBuiltinGlobal?.(receiver) !== false
   );
 }
 
@@ -14891,7 +14892,7 @@ function dynamicLeaves(cx: LowerCtx): CarrierLeaves {
       }
       if (!ts.isPropertyAccessExpression(call.expression)) return false;
       // (#7338) An admitted `Object` static answers the carrier; (#7339) the test row as its plan's answer says.
-      const plan = objectStaticPlanOf(call, cx);
+      const plan = objectStaticCallPlan(call, objectStaticsRealmOf(cx)); // (#7338) the selector's plan
       if (plan?.kind === "call") return true;
       if (plan?.kind === "test") return plan.test.answer === "dynamic";
       // (#7335) A dynamic home's own-property test answers a boolean.
