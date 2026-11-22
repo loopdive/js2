@@ -72,6 +72,10 @@ describe("semantic native realm catalog and real selected demands", () => {
       "%Object.defineProperties%",
       "%Object.defineProperty%",
       "%Object.getOwnPropertyDescriptor%",
+      // (#7354 P1) the Object.prototype methods the realm holds as function objects
+      "%Object.prototype.hasOwnProperty%",
+      "%Object.prototype.isPrototypeOf%",
+      "%Object.prototype.propertyIsEnumerable%",
     ]);
     for (const row of rows) {
       expect(Object.isFrozen(row)).toBe(true);

@@ -11,6 +11,7 @@
  * are listed here from the specification.
  */
 import {
+  NATIVE_OBJECT_PROTOTYPE_METHODS,
   NATIVE_REALM_CATALOG,
   type NativeObjectPrototypeMethod,
   type NativeObjectStatic,
@@ -43,6 +44,10 @@ export function nativeObjectPrototypeMethod(name: string): NativeObjectPrototype
   const callable = NATIVE_REALM_CATALOG.intrinsics.find(({ id }) => id === `%Object.prototype.${name}%`)?.callable;
   return callable?.implementation === "native" ? (name as NativeObjectPrototypeMethod) : undefined;
 }
+
+/** (#7354 P1) The realm's selector of a native Object.prototype method (`js.object.prototype-method`). */
+export const prototypeMethodSelector = (name: NativeObjectPrototypeMethod): number =>
+  NATIVE_OBJECT_PROTOTYPE_METHODS.indexOf(name);
 
 /** The string keys the catalog gives the named intrinsics (Annex B members included). */
 export function realmStringKeys(...intrinsicIds: readonly string[]): ReadonlySet<string> {

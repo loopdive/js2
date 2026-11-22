@@ -15,10 +15,8 @@ import { ordinaryToPrimitive, type ToPrimitiveAnswer, type ToPrimitiveHint } fro
 import { realmCall } from "./dynamic-realm-calls.js";
 import { functionValueOperand } from "./function-value-projection.js";
 import type { OrdinaryObjectRuntimeFeature } from "../runtime/contracts/manifest.js";
-import {
-  NATIVE_OBJECT_PROTOTYPE_METHODS,
-  type NativeObjectPrototypeMethod,
-} from "../../runtime/contracts/native-realm-catalog.js";
+import type { NativeObjectPrototypeMethod } from "../../runtime/contracts/native-realm-catalog.js";
+import { prototypeMethodSelector } from "./builtin-prototype-keys.js";
 import {
   ADD_ROLE,
   IS_OBJECT,
@@ -232,7 +230,7 @@ export function chainBuilders(
     selectorCall("js.object.error-field", [value], ERROR_FIELD[field], result);
   /** (#7354 P1) The realm's Object.prototype method `name` (a built-in function object) into `result`. */
   const prototypeMethod = (name: NativeObjectPrototypeMethod, result: IrValueId): IrInstr[] =>
-    selectorCall("js.object.prototype-method", [], NATIVE_OBJECT_PROTOTYPE_METHODS.indexOf(name), result);
+    selectorCall("js.object.prototype-method", [], prototypeMethodSelector(name), result);
   // A value per admitted kind of the once-evaluated `value`: a chain of tag tests in `KIND_ORDER`, the last kind
   // untested (the chain is total over the kinds), each arm answering into its own value.
   const kindChain = (
