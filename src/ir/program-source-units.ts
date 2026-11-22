@@ -141,7 +141,7 @@ function lowerUnitOnce(
   if (!ts.isFunctionDeclaration(declaration))
     demoteToLegacy("type-resolution-unsupported", `missing declaration producer for ${unit.kind}`);
   const sourceRoots = moduleInit ? (identity.moduleInitPopulationBySourceFile.get(source) ?? []) : declaration;
-  Object.assign(resolver, prepareSourceBuiltinResolvers(input, sourceRoots));
+  Object.assign(resolver, prepareSourceBuiltinResolvers(input, sourceRoots, dynamicContracts.carries));
   const signature = lowering.signatures.get(unit.id);
   const lowered = lowerFunctionAstToIr(declaration, {
     booleanReturnBoundary: sourceBooleanAnyResult(input.checker, declaration) ? declaration : undefined,
@@ -201,10 +201,11 @@ function lowerUnitOnce(
 function prepareSourceBuiltinResolvers(
   input: SourceUnitLowering["input"],
   roots: ts.FunctionDeclaration | readonly ts.Statement[],
+  carries: (expression: ts.Expression) => boolean,
 ) {
   return {
     ...prepareConversionResolvers(input.checker, input.sourceFiles, roots),
-    ...prepareOrdinaryObjectAccessResolver(input.checker, input.sourceFiles, roots),
+    ...prepareOrdinaryObjectAccessResolver(input.checker, input.sourceFiles, roots, carries),
     ...(input.policy.target === "standalone" && input.policy.backend === "wasmgc"
       ? prepareObjectCreateResolver(input.checker, input.sourceFiles, roots)
       : {}),
