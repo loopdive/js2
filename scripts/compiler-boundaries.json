@@ -13346,14 +13346,6 @@
       "nextBoundary": "Pure-AST question whether a function reads its own `this`, shared by codegen's receiver plumbing and the Prepared path's `this` binding (#7354 C2); becomes a frontend fact when the frontend inventory is split from ir-core."
     },
     {
-      "path": "src/shared/binding-holds-declaration.ts",
-      "state": "unmigrated",
-      "layer": "mixed-needs-split",
-      "destination": "ir-core",
-      "owner": "7354-prepared-path",
-      "nextBoundary": "Pure-AST proof that a script binding keeps its declaration's value, shared by Fa's static function values and F1b's declaration homes; becomes a frontend fact when the frontend inventory is split from ir-core."
-    },
-    {
       "path": "src/shared/named-evaluation.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
