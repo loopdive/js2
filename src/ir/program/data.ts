@@ -201,13 +201,14 @@ function immutableCopy(value: unknown, ancestors: Set<object>, activeCopies: Map
     invalidPreparedData("prepared data must be acyclic outside exact IR class shapes");
   }
   ancestors.add(value);
-  const copy = copyChildren(value, (item) => immutableCopy(item, ancestors, activeCopies), activeCopies);
+  const copy = copyChildren(value, ancestors, activeCopies);
   ancestors.delete(value);
   deeplyFrozen.add(copy);
   return copy;
 }
 
-function copyChildren(value: object, copyItem: (item: unknown) => unknown, activeCopies: Map<object, unknown>): object {
+function copyChildren(value: object, ancestors: Set<object>, activeCopies: Map<object, unknown>): object {
+  const copyItem = (item: unknown) => immutableCopy(item, ancestors, activeCopies);
   if (FrozenMap.branded(value) || value instanceof Map)
     return preparedIrReadonlyMap([...value].map(([key, item]) => [copyItem(key), copyItem(item)] as const));
   if (FrozenSet.branded(value) || value instanceof Set) return new FrozenSet([...value].map(copyItem));
@@ -282,6 +283,9 @@ function hasNativeCollectionState(value: object): boolean {
 export function freezePreparedIrRuntimeValue<T>(value: T): T {
   const visited = new Set<object>();
   const active = new Set<object>();
+  // Whether every frozen object also has the shape the settled verdicts accept (a genuine frozen collection, or the
+  // array/record prototype); a foreign array prototype is frozen but must not be reported as deeply frozen data.
+  let settledShapes = true;
   const freeze = (item: unknown): void => {
     if (typeof item === "function") invalidPreparedData("runtime data cannot contain executable functions");
     if (item === null || typeof item !== "object") return;
@@ -293,11 +297,13 @@ export function freezePreparedIrRuntimeValue<T>(value: T): T {
     if (visited.has(item) || deeplyFrozen.has(item)) return;
     active.add(item);
     if (FrozenMap.branded(item)) {
+      settledShapes &&= preparedIrFrozenCollectionMembers(item) !== undefined;
       for (const [key, entry] of item) {
         freeze(key);
         freeze(entry);
       }
     } else if (FrozenSet.branded(item)) {
+      settledShapes &&= preparedIrFrozenCollectionMembers(item) !== undefined;
       for (const entry of item) freeze(entry);
     } else {
       const prototype = Object.getPrototypeOf(item);
@@ -306,6 +312,7 @@ export function freezePreparedIrRuntimeValue<T>(value: T): T {
         (!Array.isArray(item) && prototype !== Object.prototype && prototype !== null)
       )
         invalidPreparedData("runtime data contains mutable or executable context state");
+      settledShapes &&= !Array.isArray(item) || prototype === Array.prototype || prototype === null;
       for (const key of Reflect.ownKeys(item)) {
         const descriptor = Object.getOwnPropertyDescriptor(item, key);
         if (!descriptor || !("value" in descriptor))
@@ -316,8 +323,9 @@ export function freezePreparedIrRuntimeValue<T>(value: T): T {
     active.delete(item);
     Object.freeze(item);
     visited.add(item);
-    deeplyFrozen.add(item);
   };
   freeze(value);
+  // Only after the whole walk: a refusal part-way leaves an ancestor of a visited object unfrozen.
+  if (settledShapes) for (const item of visited) deeplyFrozen.add(item);
   return value;
 }
