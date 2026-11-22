@@ -5122,6 +5122,41 @@ L35 `Math.pow(2, 32) - 1`. Globals: `Array`, `Object`, `Function`, `Math`. Membe
 **Not verified.** Node 25 (CI's version) is not installed here; everything ran on local Node 22 under tsx. The 41-row
 tally is from my driver, not the test262 runner.
 
+### W review round (after the review of `ee578f61ad`; U `02f31edc4c` merged)
+
+- **Q1 — one binding predicate.** `namesDynamicValue`, `bindingHoldsDynamic` and the leaf inside
+  `expressionProducesDynamic` are now one `bindingHoldsDynamic(node, cx)` (local / slot / module global in scope,
+  `this`, the Prepared module home out of scope). One `dynamicLeaves(cx)` factory feeds both `producesCarrier` and
+  the claim's `mayYieldCarrier`; the `new` and `instanceof` arms use the same predicate. `from-ast.ts` is back at
+  its baseline (no growth). Answers that changed, all from abort to node's value (each checked against node, before
+  and after): `"x" + n` and `n + "y"` / `n + 1` over an out-of-scope dynamic home in a function (was "'+' operands
+  not provably both-number or string-concatenable"), and Str2-c's `var g; function w() { g = g + "x"; }` (moved from
+  "still refuses" to a node-agreement test). Nothing that was right changed (101 probes; ordinary pipeline
+  byte-identical).
+- **(a)** `sourceFunctionCallee` (provenance) is the one callee resolution for `callCarries` and `landsInCarrier`.
+  `syntacticAnnotation` (`select-expression-structure.ts`) is the one statement of "only a syntactic annotation
+  types a declaration natively"; `annotationUnder`, `sourceDynamicParameter`, the native result contract and
+  provenance's `localCarries` read it, and `landsInCarrier`'s own `parent.type` check is gone.
+- **(b)** `annotationUnder` takes `IrType`.
+- **Slice P test.** Its two "refuses a JSDoc …" cases (written against the old behaviour) now run and agree with
+  node, with wrong twins.
+- **Object-literal wrong value fixed** (`prepare-ordinary-object-access.ts`): a literal's property read was typed
+  from the checker, so `var pre = f(1); var n = 42; function f(a){ var o = { p: n }; return String(typeof o.p); }`
+  said `"number"` for `undefined` (node: `"undefined"`). The read plan now skips a property whose stored value may be
+  the dynamic one (provenance `carries`, passed in by `program-source-units.ts`); the read stays the dynamic member
+  read. Test added to the W file.
+
+**Known limits (named refusals / aborts today, not wrong values).**
+- A JSDoc'd function EXPRESSION's parameter (`/** @param {number} x */ var fe = function (x) {…}; fe(v)`) is not
+  covered by the parameter contract: "a dynamic value flows into number without a conversion (CallExpression)".
+  Needs the closure parameter contract, a different mechanism.
+- A nested function declaration's parameters: "nested func params must be Identifier-named with annotations", a
+  from-ast gap independent of JSDoc.
+- `/** @type {number} */ var t = 1; t = x;` in a function aborts ("assignment to t …"), exactly as without the tag:
+  from-ast types a local from its initializer. Not a JSDoc issue.
+- `String(o.p === undefined)` over a dynamic read aborts: that strict-equality producer's result is an unbranded
+  i32 ("String() of i32 operand is deferred").
+
 ## Slice U result (2026-11-22, branch `claude/7354-u` from `claude/7354-c2` 8bbebca651; C2 7debc3daf0, Perf5 204d6f575e, Perf6 4521fc831f merged)
 
 Abort bodies: a function whose body the path cannot lower gets the run-time abort as its body instead of refusing the
