@@ -70,6 +70,24 @@ describe("#7354 P1 — what ends at the run-time abort", () => {
       "var h = ({}).hasOwnProperty; t(function(){ h('x'); });",
     ],
     ["a method as a constructor", "var h = ({}).propertyIsEnumerable; t(function(){ new h(); });"],
+    // (review r1) Only `o.m(v)` runs the method's algorithm: a detached call's receiver is not the [[Get]]'s, and JS
+    // throws (ToObject of `undefined`), where the algorithm would have answered `false`.
+    ...[
+      ["isPrototypeOf", "c"],
+      ["hasOwnProperty", "'a'"],
+      ["propertyIsEnumerable", "'a'"],
+    ].flatMap(([method, argument]): [string, string][] => [
+      [
+        `a detached ${method} read into a local`,
+        `function f(p, c){ var m = p.${method}; try { return String(m(${argument})); } catch (e) { return 'T'; } }` +
+          ` var p = {a: 1}; f(p, Object.create(p));`,
+      ],
+      [
+        `a detached ${method} through a comma`,
+        `function f(p, c){ try { return String((0, p.${method})(${argument})); } catch (e) { return 'T'; } }` +
+          ` var p = {a: 1}; f(p, Object.create(p));`,
+      ],
+    ]),
     [
       "a string receiver (the String exotic's own keys)",
       "function id(v){ return v; } id('abc').hasOwnProperty('length');",

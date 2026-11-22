@@ -8,7 +8,9 @@
  * `toString`, which only the program can run (`stringOf`). Called through any other value the built-in is the
  * dispatcher's run-time abort.
  *
- * The receiver of such a call is never `undefined` or `null`: the [[Get]] before it threw.
+ * Only the method-call shape `o.m(v)` is such a call: its receiver is the receiver of the [[Get]] that read the callee,
+ * so it is never `undefined` or `null` (that [[Get]] threw). A detached call (`var h = o.m; h(v)`) has another
+ * receiver and takes the dispatcher.
  */
 import type { IrInstr, IrValueId } from "../core/nodes.js";
 import type { IrType } from "../core/types.js";
@@ -16,25 +18,29 @@ import { closureMethodArity } from "../core/closure-invocation-callables.js";
 import type { NativeObjectPrototypeMethod } from "../../runtime/contracts/native-realm-catalog.js";
 import { nativeObjectPrototypeMethod } from "./builtin-prototype-keys.js";
 import { constantKeyOf } from "./dynamic-member-access.js";
-import { realmCall, typeErrorThen } from "./dynamic-realm-calls.js";
+import { realmCall } from "./dynamic-realm-calls.js";
 import { CARRIER, carried } from "./dynamic-value-chains.js";
 import { MEMBER_ACCESS_ARM, isOrdinaryObject, type CarrierKind } from "./dynamic-value-kinds.js";
 import type { ObjectStaticBuilders } from "./dynamic-object-statics.js";
 
 type Call = Extract<IrInstr, { kind: "call" }>;
+const isObjectCoercible = (kind: CarrierKind): boolean => MEMBER_ACCESS_ARM[kind] !== "type-error";
 
 /** The Boolean the realm's tests answer, boxed into the call's carrier. */
 const BOOLEAN: IrType = Object.freeze({ kind: "val", val: Object.freeze({ kind: "i32", boolean: true }) });
 
-/** The method `call` calls, when it is the dispatcher's call of a [[Get]] of a populated method's name. */
+/** The method `call` calls, when it is `o.m(…)`: the dispatcher's call of a [[Get]] of a populated name on its receiver. */
 export function prototypeMethodOfCall(
   call: Call,
   definitions: ReadonlyMap<IrValueId, IrInstr>,
 ): NativeObjectPrototypeMethod | undefined {
   if (closureMethodArity(call.target.name) === undefined) return undefined;
-  const coerced = definitions.get(call.args[1]!);
-  const callee = coerced?.kind === "coerce.to_externref" ? definitions.get(coerced.value) : coerced;
-  if (callee?.kind !== "dyn.member_get") return undefined;
+  const uncoerced = (value: IrValueId): IrValueId => {
+    const definition = definitions.get(value);
+    return definition?.kind === "coerce.to_externref" ? definition.value : value;
+  };
+  const callee = definitions.get(uncoerced(call.args[1]!));
+  if (callee?.kind !== "dyn.member_get" || callee.recv !== uncoerced(call.args[0]!)) return undefined;
   const name = constantKeyOf(definitions, callee.key);
   return name === undefined ? undefined : nativeObjectPrototypeMethod(name);
 }
@@ -64,12 +70,6 @@ function ownProperty(b: ObjectStaticBuilders, instr: Call, enumerable: boolean, 
       case "object":
       case "function":
         return boxed(b, instr, (s) => b.selectorCall("js.object.has-own", [receiver, key], Number(enumerable), s), r);
-      case "type-error":
-        return typeErrorThen(
-          { ...b, carrier: CARRIER },
-          "Cannot convert undefined or null to object",
-          b.intrinsic(instr, "js.value.undefined", [], r),
-        );
       default:
         return kind === "number" || kind === "boolean" ? boxed(b, instr, constant(false), r) : b.abort(instr, r);
     }
@@ -78,7 +78,8 @@ function ownProperty(b: ObjectStaticBuilders, instr: Call, enumerable: boolean, 
     // A missing argument is `undefined`, whose ToString is "undefined".
     ...(argument === undefined ? [b.text("undefined", text)] : b.stringOf(instr, argument, text)),
     carried(text, key),
-    ...b.kindChain(instr, receiver, result, arm, b.kinds.kindsOf(receiver), CARRIER),
+    // The receiver is no `undefined` or `null` (the module doc), so the chain runs over its other kinds.
+    ...b.kindChain(instr, receiver, result, arm, b.kinds.kindsOf(receiver).filter(isObjectCoercible), CARRIER),
   ];
 }
 
