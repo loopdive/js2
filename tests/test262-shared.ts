@@ -514,6 +514,8 @@ function recordResult(
     ir_dual_units: metadata?.irDualUnits,
     ir_fallback_codes: metadata?.irFallbackCodes,
     reached_test: metadata?.reachedTest ?? false,
+    // (#7354 U) The functions whose body is the run-time abort, with their refusal (Prepared lane only).
+    abort_bodies: metadata?.abortBodies?.map((row) => `${row.name} (L${row.line}): ${row.detail}`),
     // (#2939/#2940) vacuity correction marker (only on `fail` rows it applies to).
     vacuous: metadata?.vacuous || undefined,
     // (#6486) Only ever present on a `linked-harness-fallback` row; truncated
