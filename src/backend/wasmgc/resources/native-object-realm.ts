@@ -9,7 +9,7 @@ import type {
 } from "../../../wasm/physical/module-reservations.js";
 import { preparedIrDataMismatch } from "../../../ir/program/data.js";
 import {
-  assertNativeRealmRequirementsCurrent,
+  assertNativeRealmRequirementsIssued,
   type NativeRealmRequirements,
 } from "../../../ir/program/native-realm-requirements.js";
 import type { NativeVectorResourcePlan } from "../../../ir/program/native-vector-resources.js";
@@ -99,7 +99,7 @@ export function reserveNativeObjectRealmException(
   original: NativeObjectRealmExceptionSelection,
 ): NativeObjectRealmException {
   if (tx.state !== "reserving") fail("exception requires reservation phase");
-  assertNativeRealmRequirementsCurrent(realm);
+  assertNativeRealmRequirementsIssued(realm);
   const selection = exceptionSelection(original);
   if (exceptionBindings.has(tx)) fail("public exception already has an owner");
   tx.assertReservationKeysAvailable(["physical:exception-tag"]);
@@ -121,7 +121,7 @@ export function requireNativeObjectRealmException(
   const owner = exceptions.get(pack);
   if (!owner || owner.tx !== tx || owner.realm !== expectedRealm || exceptionBindings.get(tx) !== pack)
     fail("foreign, copied or substituted public exception owner");
-  assertNativeRealmRequirementsCurrent(owner.realm);
+  assertNativeRealmRequirementsIssued(owner.realm);
   same(exceptionSelection(owner.original), pack.selection, "changed checked exception linkage selection");
   if (tx.state === "reserving") tx.assertReservationKeysAvailable([]);
   else tx.physicalIndex(pack.tag);

@@ -4,6 +4,7 @@ import type { IrUnitId } from "../../shared/contracts/ir-identity.js";
 import { irNumberConversionCallableDeclaration } from "../runtime/number-conversion-callable.js";
 import { nativeAsyncCallableValueTypes, nativeAsyncCallMismatch } from "../runtime/native-async-callables.js";
 import { freezePreparedIrValue, preparedIrDataMismatch } from "./data.js";
+import { issuedPacks } from "./issued-packs.js";
 import type { PreparedIrProgram, PreparedIrProgramRuntimeProjection } from "./prepared-contracts.js";
 import {
   deriveNativeObjectAccessRequirements,
@@ -38,7 +39,9 @@ export interface NativeRealmRequirements {
   readonly access: NativeObjectAccessRequirements;
   readonly description: NativeRealmDescription;
 }
-const issued = new WeakSet<NativeRealmRequirements>();
+const realmPacks = issuedPacks<NativeRealmRequirements>(
+  "native realm requirements: unissued, copied or detached realm requirements",
+);
 function fail(detail: string): never {
   throw Error("native realm requirements: " + detail);
 }
@@ -144,13 +147,7 @@ export function deriveNativeRealmRequirements(
   if (!data) return undefined;
   const description = freezePreparedIrValue(data) as NativeRealmDescription;
   const pack = Object.freeze({ program, projection, ...(source ? { source } : {}), access, description });
-  issued.add(pack);
-  return pack;
+  return realmPacks.issue(pack);
 }
-/**
- * The pack is frozen and derived from a frozen program, so its description cannot come to disagree with the program;
- * only its issue is checked (#7354 Perf4: the re-derivation per call was the realm's last quadratic term).
- */
-export function assertNativeRealmRequirementsCurrent(pack: NativeRealmRequirements): void {
-  if (!issued.has(pack)) fail("unissued, copied or detached realm requirements");
-}
+/** A use checks only that the planner issued the pack (`issued-packs.ts`; #7354 Perf4). */
+export const assertNativeRealmRequirementsIssued = realmPacks.assertIssued;

@@ -5,7 +5,7 @@ import type {
   PreparedIrProgramFailure,
 } from "../../../ir/program/prepared-contracts.js";
 import {
-  assertNativeRealmRequirementsCurrent,
+  assertNativeRealmRequirementsIssued,
   type NativeRealmRequirements,
 } from "../../../ir/program/native-realm-requirements.js";
 import { collectNativeStringValueDemands } from "../../../ir/program/native-string-value-demands.js";
@@ -13,7 +13,7 @@ import { deriveNativeStringOutputRequirements } from "../../../ir/program/native
 import { deriveNativeValueResourcePlan } from "../../../ir/program/native-value-resources.js";
 import {
   planNativeInvocationRequirements,
-  assertNativeInvocationRequirementsCurrent,
+  assertNativeInvocationRequirementsIssued,
   type NativeInvocationRequirements,
 } from "../../../ir/program/native-invocation-requirements.js";
 import {
@@ -150,7 +150,7 @@ export function prepareNativeProgramStringInput(
   realmRequirements?: NativeRealmRequirements,
 ): NativeStringValueReservationInput | PreparedIrProgramFailure | undefined {
   const demands = collectNativeStringValueDemands(program, projection);
-  if (invocationRequirements !== undefined) assertNativeInvocationRequirementsCurrent(invocationRequirements);
+  if (invocationRequirements !== undefined) assertNativeInvocationRequirementsIssued(invocationRequirements);
   const invocation =
     invocationRequirements ??
     (realmRequirements?.source
@@ -239,7 +239,7 @@ function current(tx: PhysicalModuleReservations, pack: NativeRealmReservations):
   if (!owner || owner.tx !== tx || owner.requirements !== pack.requirements || owner.strings !== pack.strings)
     fail("foreign or copied realm owner");
   if (owner.phase === "failed") fail("failed composition has no completion authority");
-  assertNativeRealmRequirementsCurrent(pack.requirements);
+  assertNativeRealmRequirementsIssued(pack.requirements);
   assertNativeStringValueReservationInput(owner.input);
   assertFoundationVectors(owner.input, owner.vectorPlan);
   if (owner.input.realmRequirements !== pack.requirements) fail("substituted realm input identity");

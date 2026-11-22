@@ -8,7 +8,7 @@ import type {
   TagImportReservation,
 } from "../../../wasm/physical/module-reservations.js";
 import type { NativeInvocationRequirements } from "../../../ir/program/native-invocation-requirements.js";
-import { assertNativeInvocationRequirementsCurrent } from "../../../ir/program/native-invocation-requirements.js";
+import { assertNativeInvocationRequirementsIssued } from "../../../ir/program/native-invocation-requirements.js";
 import type { NativeObjectAccessRequirements } from "../../../ir/program/native-object-access-requirements.js";
 import type { NativeValueResourcePlan } from "../../../ir/program/native-value-resources.js";
 import type { NativeVectorResourcePlan } from "../../../ir/program/native-vector-resources.js";
@@ -119,7 +119,7 @@ function authenticate(
   const selected = substrateSelection(dependencies);
   if (selected.value !== undefined)
     requireNativeInvocationSubstrateReservations(tx, selected.value, substrateDependencies(dependencies));
-  assertNativeInvocationRequirementsCurrent(requirements);
+  assertNativeInvocationRequirementsIssued(requirements);
   if (requirements.gaps.length) fail(requirements.gaps.map((gap) => `${gap.unitId}: ${gap.detail}`).join("; "));
   requireNativeSourceClosureTypes(tx, dependencies.source, requirements.source);
   requireNativeValueReservations(tx, dependencies.values, dependencies.valuePlan, dependencies.valueDependencies);

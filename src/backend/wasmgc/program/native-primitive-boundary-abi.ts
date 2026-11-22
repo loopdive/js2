@@ -20,7 +20,7 @@ import { preparedIrDataMismatch } from "../../../ir/program/data.js";
 import { PreparedIrProgramInvariantError } from "../../../ir/program/errors.js";
 import type { NativeStringValueDemands } from "../../../ir/program/native-string-value-demands.js";
 import {
-  assertNativeInvocationRequirementsCurrent,
+  assertNativeInvocationRequirementsIssued,
   type NativeInvocationRequirements,
 } from "../../../ir/program/native-invocation-requirements.js";
 import { objectResultIsBoolean } from "../../../ir/program/native-object-result-values.js";
@@ -53,7 +53,7 @@ export function selectNativeBooleans(
   invocation: NativeInvocationRequirements | undefined,
 ): { readonly selection?: NativeBooleanSelection; readonly gap?: { occurrence: number; detail: string } } {
   if (invocation) {
-    assertNativeInvocationRequirementsCurrent(invocation);
+    assertNativeInvocationRequirementsIssued(invocation);
     if (
       invocation.source.demands.program !== demands.program ||
       invocation.source.demands.projection !== demands.projection
