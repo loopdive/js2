@@ -2,9 +2,8 @@
 //
 // #7354 slice S — a script `var` named as the target of `Object.defineProperty(v, …)` keeps its home on the Prepared
 // whole-program path. TypeScript's binder records the call's first argument as a declaration of the binding; that is a
-// JS property declaration, not a second binding, so the home classifier no longer counts it. The call itself is refused
-// by name where from-ast meets it, because the Prepared path admits no `Object` static yet: the program stops at the
-// construct it lacks, not at `has no exact typed storage: not-direct`.
+// JS property declaration, not a second binding, so the home classifier no longer counts it. (#7354 O1) The call runs
+// now (tests/issue-7354-o1-*): each program checks the property the call defined on the binding.
 import { describe, expect, it } from "vitest";
 import { instantiatePreparedArtifact } from "../src/test262/test262-prepared-runtime.js";
 import {
@@ -60,51 +59,61 @@ async function refusals(source: string | readonly string[]) {
   return messages(result);
 }
 
-const DEFINE = (unit: string) => `ir/from-ast: Object.defineProperty is not an admitted Object static (${unit})`;
+/** Whether node runs `source` to its end. */
+function nodeOutcome(source: string): "returned" | "threw" {
+  try {
+    new Function(source)();
+    return "returned";
+  } catch {
+    return "threw";
+  }
+}
 const NO_HOME = (name: string) => `module binding ${name} has no exact typed storage: not-direct`;
 
 describe("#7354 S — a script var named by Object.defineProperty", () => {
-  // Each refusal is the call's own. Only the top-level, number-var and before-the-declaration rows show the home:
-  // a call inside a function refused at the call before this slice too (its unit fails before module-init asks).
+  // `expected` is node's outcome: the program checks the defined property, or the call throws its TypeError on a
+  // number (a defined `configurable: true` property lets the loop redefine it).
   it.each([
-    ["at top level", 'var obj = {}; Object.defineProperty(obj, "p", { value: 1 });', DEFINE("<module-init>")],
+    [
+      "at top level",
+      'var obj = {}; Object.defineProperty(obj, "p", { value: 1 }); if (obj.p !== 1) throw 1;',
+      "returned",
+    ],
     [
       "in a function",
-      'var obj = {}; function f() { Object.defineProperty(obj, "p", { value: 1 }); } f();',
-      DEFINE("f"),
+      'var obj = {}; function f() { Object.defineProperty(obj, "p", { value: 1 }); } f(); if (obj.p !== 1) throw 1;',
+      "returned",
     ],
     [
       "in a function never called",
-      'var obj = {}; obj.p = 2; function f() { Object.defineProperty(obj, "p", { value: 1 }); }',
-      DEFINE("f"),
+      'var obj = {}; obj.p = 2; function f() { Object.defineProperty(obj, "p", { value: 1 }); } if (obj.p !== 2) throw 1;',
+      "returned",
     ],
     [
       "in a loop",
-      'var obj = {}; for (var i = 0; i < 2; i++) { Object.defineProperty(obj, "p", { value: i }); }',
-      DEFINE("<module-init>"),
+      'var obj = {}; for (var i = 0; i < 2; i++) { Object.defineProperty(obj, "p", { value: i, configurable: true }); }' +
+        " if (obj.p !== 1) throw 1;",
+      "returned",
     ],
     [
       "in a function called before the declaration",
       'f(); var obj = {}; function f() { Object.defineProperty(obj, "p", { value: 1 }); }',
-      DEFINE("f"),
+      "threw",
     ],
-    ["on a number var", 'var n = 1; Object.defineProperty(n, "p", { value: 1 });', DEFINE("<module-init>")],
+    ["on a number var", 'var n = 1; Object.defineProperty(n, "p", { value: 1 });', "threw"],
     [
       "on a number var read as a number",
-      'var n = 1; if (n + 1 !== 2) throw 1; function g() { Object.defineProperty(n, "p", { value: 1 }); }',
-      DEFINE("g"),
+      'var n = 1; if (n + 1 !== 2) throw 1; function g() { Object.defineProperty(n, "p", { value: 1 }); } g();',
+      "threw",
     ],
-  ])("refuses the call %s, not the binding", async (_, program, message) => {
-    expect(await refusals(program)).toEqual([message]);
-  });
-
-  // A var declared before the call is reached, too: the checker's use-before-assignment warning comes first.
-  it("refuses the call before the declaration", async () => {
-    expect(await refusals('Object.defineProperty(obj, "p", { value: 1 }); var obj = {};')).toEqual([
-      "Variable 'obj' is used before being assigned.",
-      DEFINE("<module-init>"),
-    ]);
-  });
+  ])(
+    "runs the call %s on the binding's home",
+    async (_, program, expected) => {
+      expect(nodeOutcome(program)).toBe(expected);
+      expect(await run(program)).toBe(expected);
+    },
+    180_000,
+  );
 
   // The binding the call names keeps the home a member write already had; a program without the call still runs.
   it("runs the same binding given a property by a member write", async () => {

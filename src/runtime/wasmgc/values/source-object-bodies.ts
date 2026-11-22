@@ -5,6 +5,7 @@
  */
 import type { FuncHandle, Instr, LocalDef, TypeHandle } from "../../../wasm/model/instructions.js";
 import { ORDINARY_OBJECT_DESCRIPTOR_ENCODING as flags } from "./ordinary-object-descriptor-common.js";
+import { PROP_ENTRY_FIELD } from "./object-layouts.js";
 
 export interface SourceObjectDefinition {
   readonly locals: LocalDef[];
@@ -118,7 +119,7 @@ export function buildSourceObjectGetDefinition(d: { readonly get: FuncHandle }):
 }
 
 /** A data property's whole descriptor, every attribute present and true, with its value: CreateDataProperty's. */
-const CREATE_DATA_PROPERTY =
+export const CREATE_DATA_PROPERTY =
   flags.writable |
   flags.enumerable |
   flags.configurable |
@@ -133,9 +134,10 @@ const CREATE_DATA_PROPERTY =
  * `{ [[Value]] }` alone, so its attributes stay (a function's non-enumerable `prototype`, a prototype's
  * `constructor`); an inherited writable data property, or none (absent, or a miss at the realm's Object.prototype,
  * which every caller's key refusal makes a true miss), is CreateDataProperty on the receiver. A function's own
- * properties live in its bag, the storage both finds and defines use. A read-only data property (a function's own `length` or `name`) answers `false`. A
- * setter call or a setter-less accessor is unreachable from a plain program and traps, as an unknown carrier
- * (status 3) does. A non-extensible receiver is unreachable too: no Prepared program can make one.
+ * properties live in its bag, the storage both finds and defines use; (#7354 O1) an ordinary object's is itself. A
+ * read-only data property (a function's own `length` or `name`, a property `Object.defineProperty` made read only)
+ * or a setter-less accessor answers `false`; a setter call traps, as an unknown carrier (status 3) does. A
+ * non-extensible receiver is unreachable: no Prepared program can make one yet (`Object.preventExtensions`, slice O3).
  */
 export function buildSourceObjectSetDefinition(d: {
   readonly entryTypeIdx: TypeHandle;
@@ -143,21 +145,32 @@ export function buildSourceObjectSetDefinition(d: {
   readonly findOwn: FuncHandle;
   readonly lookup: FuncHandle;
   readonly defineData: FuncHandle;
-  readonly match: FuncHandle;
   readonly bag: FuncHandle;
 }): SourceObjectDefinition {
   const [status, entry, storage] = [4, 5, 6];
   const entryFlag = (flag: number): Instr[] => [
     { op: "local.get", index: entry },
     { op: "ref.as_non_null" },
-    { op: "struct.get", typeIdx: d.entryTypeIdx, fieldIdx: 2 },
+    { op: "struct.get", typeIdx: d.entryTypeIdx, fieldIdx: PROP_ENTRY_FIELD.flags },
     { op: "i32.const", value: flag },
     { op: "i32.and" },
   ];
-  // A found data property: an accessor traps, a read-only one answers false.
+  // A found property: (#7354 O1) an accessor without a setter answers false, one with a setter is the run-time abort
+  // until the realm calls a source setter (slice O2); a read-only data property answers false.
   const requireWritable: Instr[] = [
     ...entryFlag(flags.accessor),
-    { op: "if", blockType: { kind: "empty" }, then: [{ op: "unreachable" }] },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        { op: "local.get", index: entry },
+        { op: "ref.as_non_null" },
+        { op: "struct.get", typeIdx: d.entryTypeIdx, fieldIdx: PROP_ENTRY_FIELD.set },
+        { op: "ref.is_null" },
+        { op: "if", blockType: { kind: "empty" }, then: [{ op: "i32.const", value: 0 }, { op: "return" }] },
+        { op: "unreachable" },
+      ],
+    },
     ...entryFlag(flags.writable),
     { op: "i32.eqz" },
     { op: "if", blockType: { kind: "empty" }, then: [{ op: "i32.const", value: 0 }, { op: "return" }] },
@@ -178,18 +191,9 @@ export function buildSourceObjectSetDefinition(d: {
       { name: "storage", type: { kind: "externref" } },
     ],
     body: [
-      // A function's own properties live in its bag (`match` admits only function objects).
+      // A function's own properties live in its bag; (#7354 O1) an ordinary object is its own.
       { op: "local.get", index: 3 },
-      { op: "call", funcIdx: d.match },
-      {
-        op: "if",
-        blockType: { kind: "val", type: { kind: "externref" } },
-        then: [
-          { op: "local.get", index: 3 },
-          { op: "call", funcIdx: d.bag },
-        ],
-        else: [{ op: "local.get", index: 3 }],
-      },
+      { op: "call", funcIdx: d.bag },
       { op: "local.tee", index: storage },
       { op: "any.convert_extern" },
       { op: "ref.cast", typeIdx: d.objectTypeIdx },

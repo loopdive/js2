@@ -1,7 +1,8 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 /**
  * (#7354 O2, O2b) What a Prepared program's source allows its ordinary objects (`ProgramObjects`), in one walk. On
- * this path an object literal and (F1b) a constructor's `prototype` are the only producers of an ordinary object, so
+ * this path an object literal, (F1b) a constructor's `prototype` and (O1) a native `Object` static (`Object.create`'s
+ * object, `Object.getOwnPropertyDescriptor`'s record) are the only producers of an ordinary object, so
  * the source decides whether the object kind is admitted. OrdinaryToPrimitive is decided at run time (`ordinary-to-primitive.ts`) and needs to know only
  * whether `@@toPrimitive` is reachable, i.e. whether the program names `Symbol`.
  *
@@ -11,6 +12,7 @@
  */
 import { ts } from "../ts-api.js";
 import type { ProgramObjects } from "./program/dynamic-value-kinds.js";
+import { nativeObjectStaticCall } from "./realm-static-call.js";
 
 /** `node` names a member (`x.Symbol`, `{ Symbol: 1 }`), not a binding. */
 const isMemberName = (node: ts.Identifier): boolean =>
@@ -27,7 +29,10 @@ export function programObjects(sourceFiles: readonly ts.SourceFile[], readsDecla
   let functions = readsDeclarationValue;
   let namesSymbol = false;
   const visit = (node: ts.Node): void => {
-    present ||= ts.isObjectLiteralExpression(node) || ts.isFunctionExpression(node);
+    present ||=
+      ts.isObjectLiteralExpression(node) ||
+      ts.isFunctionExpression(node) ||
+      (ts.isCallExpression(node) && nativeObjectStaticCall(node, () => true) !== undefined);
     functions ||= ts.isFunctionExpression(node) || ts.isArrowFunction(node);
     namesSymbol ||= ts.isIdentifier(node) && node.text === "Symbol" && !isMemberName(node);
     ts.forEachChild(node, visit);

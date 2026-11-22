@@ -37,6 +37,7 @@ import { IR_DYN_ADD_FN } from "../../shared/contracts/dynamic-add-helper.js";
 import { gap } from "./dynamic-value-gap.js";
 import { dynamicMemberRead, dynamicMemberWrite } from "./dynamic-member-access.js";
 import { dynamicConstruct, dynamicCurrentThis, dynamicInstanceOf } from "./dynamic-function-operations.js";
+import { dynamicObjectStatic, objectStaticOfHelper } from "./dynamic-object-statics.js";
 import { CARRIER, additionBuilder, chainBuilders, conversionBuilders, knownKinds } from "./dynamic-value-chains.js";
 import {
   NO_OBJECTS,
@@ -100,6 +101,8 @@ export function legalizeDynamicValues(
   const memberAccess = { ...builders, carrier: CARRIER, definitions, kindsOf: kinds.kindsOf };
   // (#7354 C2) What `this`, `new` and `instanceof` are written with (`dynamic-function-operations.ts`).
   const functionOperations = { ...builders, program, objects: admitted.filter((kind) => IS_OBJECT[kind]) };
+  // (#7354 O1) What a recognised `Object` static is written with (`dynamic-object-statics.ts`).
+  const objectStatics = { ...builders, stringOf };
   const isDynamic = (value: IrValueId): boolean => types.get(value)?.kind === "dynamic";
   const typeofs = typeofComparisons(fn);
   // `!==`/`!=`: the positive test into a fresh value, then its negation into the comparison's result.
@@ -233,6 +236,9 @@ export function legalizeDynamicValues(
       case "call": {
         if (instr.target.binding.kind === "runtime" && instr.target.binding.symbol === IR_DYN_ADD_FN)
           return addition(instr, instr.args, instr.result!);
+        const objectStatic =
+          instr.target.binding.kind === "runtime" ? objectStaticOfHelper(instr.target.binding.symbol) : undefined;
+        if (objectStatic !== undefined) return dynamicObjectStatic(objectStatics, instr, objectStatic);
         // (#7354 F2) Without a function value no callee is callable: every call through a value would be the TypeError.
         if (closureMethodArity(instr.target.name) !== undefined && !admitted.includes("function"))
           return gap(`${instr.target.name} in a program that creates no function value`);
