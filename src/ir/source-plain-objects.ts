@@ -12,7 +12,7 @@
  */
 import { ts } from "../ts-api.js";
 import type { ProgramObjects } from "./program/dynamic-value-kinds.js";
-import { nativeObjectStaticOf } from "./realm-static-call.js";
+import { nativeObjectStaticCall } from "./realm-static-call.js";
 
 /** `node` names a member (`x.Symbol`, `{ Symbol: 1 }`), not a binding. */
 const isMemberName = (node: ts.Identifier): boolean =>
@@ -32,7 +32,7 @@ export function programObjects(sourceFiles: readonly ts.SourceFile[], readsDecla
     present ||=
       ts.isObjectLiteralExpression(node) ||
       ts.isFunctionExpression(node) ||
-      (ts.isCallExpression(node) && nativeObjectStaticOf(node) !== undefined);
+      (ts.isCallExpression(node) && nativeObjectStaticCall(node, () => true) !== undefined);
     functions ||= ts.isFunctionExpression(node) || ts.isArrowFunction(node);
     namesSymbol ||= ts.isIdentifier(node) && node.text === "Symbol" && !isMemberName(node);
     ts.forEachChild(node, visit);

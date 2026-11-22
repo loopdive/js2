@@ -6,8 +6,8 @@
  * is evaluated and dropped, a missing one is `undefined`; the call is one front-end helper, which the dynamic-value
  * legalization expands (`program/dynamic-object-statics.ts`).
  *
- * Sound without a proof that the static is pristine: `Object` is no value on this path (a read or a write of it
- * refuses), so no program can replace `Object.defineProperty`.
+ * The receiver must be the unchanged global `Object` (`builtin-global-binding.ts`: lib-declared only, never assigned);
+ * `Object` is no value on this path (a read refuses), so no program can replace `Object.defineProperty` itself.
  */
 import { ts } from "../ts-api.js";
 import { irRuntimeFuncRef } from "./callable-bindings.js";
@@ -23,24 +23,56 @@ import type { NativeObjectStatic } from "../runtime/contracts/native-realm-catal
 import { objectStaticHelper } from "./program/dynamic-object-statics.js";
 import { nativeObjectStatic } from "./program/builtin-prototype-keys.js";
 
-/** The catalog's native `Object` static `call` names (by syntax alone), with its `length`. */
-function nativeObjectStaticCall(call: ts.CallExpression): ReturnType<typeof nativeObjectStatic> {
+/**
+ * The catalog's native `Object` static `call` names, with its `length`, when the receiver is the unchanged global
+ * `Object` (`isPristineGlobal`, `builtin-global-binding.ts`).
+ */
+export function nativeObjectStaticCall(
+  call: ts.CallExpression,
+  isPristineGlobal: (identifier: ts.Identifier) => boolean,
+): ReturnType<typeof nativeObjectStatic> {
   const callee = call.expression;
   if (!ts.isPropertyAccessExpression(callee) || !ts.isIdentifier(callee.expression)) return undefined;
   if (callee.expression.text !== "Object" || callee.questionDotToken || call.questionDotToken) return undefined;
-  return nativeObjectStatic(callee.name.text);
+  return isPristineGlobal(callee.expression) ? nativeObjectStatic(callee.name.text) : undefined;
 }
 
-/** The catalog's native `Object` static `call` names, by syntax alone. */
-export const nativeObjectStaticOf = (call: ts.CallExpression): NativeObjectStatic | undefined =>
-  nativeObjectStaticCall(call)?.name;
+/**
+ * How deep an argument's object literals hold descriptor fields: a descriptor (`defineProperty`'s third argument) one
+ * level, a map of descriptors (`defineProperties`' and `create`'s second) two; any other argument none.
+ */
+const DESCRIPTOR_DEPTH: Readonly<Record<NativeObjectStatic, readonly number[]>> = {
+  defineProperty: [0, 0, 1],
+  defineProperties: [0, 2],
+  create: [0, 2],
+  getOwnPropertyDescriptor: [0, 0],
+};
+
+/**
+ * (#7354 O1) The flow rule's exemption: an argument of a native `Object` static, or a descriptor field (name or value)
+ * of a literal descriptor or descriptor map passed as one, is taken as a carrier whatever the lib's signature types it
+ * (`PropertyDescriptor`'s `enumerable: boolean` does not bind a test262 `enumerable: 1`).
+ */
+export function objectStaticOperand(
+  node: ts.Expression,
+  isPristineGlobal: (identifier: ts.Identifier) => boolean,
+): boolean {
+  let operand: ts.Expression = node;
+  let depth = 0;
+  for (; ts.isPropertyAssignment(operand.parent); depth++) operand = operand.parent.parent;
+  const call = operand.parent;
+  if (!ts.isCallExpression(call)) return false;
+  const name = nativeObjectStaticCall(call, isPristineGlobal)?.name;
+  const index = call.arguments.indexOf(operand);
+  return name !== undefined && index >= 0 && depth <= (DESCRIPTOR_DEPTH[name][index] ?? 0);
+}
 
 /** The lowered call, or `null` when `call` is not such a static here. */
 export function tryLowerRealmStaticCall(call: ts.CallExpression, host: FunctionObjectLoweringHost): IrValueId | null {
-  const native = nativeObjectStaticCall(call);
-  if (!native || !createsFunctionObjects(host)) return null;
+  if (!createsFunctionObjects(host)) return null;
+  const native = nativeObjectStaticCall(call, host.isPristineGlobal);
+  if (!native) return null;
   const { name, length } = native;
-  if (!host.isUnshadowedGlobal((call.expression as ts.PropertyAccessExpression).expression, "Object")) return null;
   if (call.arguments.some(ts.isSpreadElement))
     throw new IrUnsupportedError(
       "call-resolution-unsupported",

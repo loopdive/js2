@@ -17277,6 +17277,14 @@
       "layer": "ir-program"
     },
     {
+      "path": "src/ir/builtin-global-binding.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "frontend-ts",
+      "owner": "7354-prepared-path",
+      "nextBoundary": "Source-and-checker proof that an identifier reads the unchanged global built-in (#7354 O1); moves with source-dynamic-contracts.ts under frontend/ts."
+    },
+    {
       "path": "src/ir/realm-static-call.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",

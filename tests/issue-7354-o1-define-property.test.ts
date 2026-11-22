@@ -5,7 +5,7 @@
 // test262 runner's options. Each accepted program runs twice against node: its answer returns, a wrong one throws. A
 // TypeError the specification demands is caught by the program itself, so it is part of node's answer.
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { agreesWithNode, nodeOut, runnerOptions } from "./helpers/prepared-node-agreement.js";
+import { agreesWithNode, nodeOut, refusal, runnerOptions } from "./helpers/prepared-node-agreement.js";
 import { compile } from "../src/test262/test262-prepared-entry.js";
 import { CATCHES, FIELDS } from "./helpers/object-static-probes.js";
 
@@ -109,7 +109,10 @@ describe("#7354 O1 — Object.getOwnPropertyDescriptor", () => {
 // (#7354 O1) The real-compile counterpart of the four retired "executes actual source slots" tests of
 // tests/issue-3518-native-object-realm-declarations.test.ts (their STATE_SOURCE, as a script): a closure that captures
 // its factory's parameter and one that captures nothing, each returned as a value and called through it; two closures
-// of one factory keep their own captures and are distinct objects; the standalone module imports nothing.
+// of one factory keep their own captures and are distinct objects; the standalone module imports nothing. Their "a
+// call before initialize traps" fact belongs to the hand-built module, whose realm a test initialised by hand; a
+// compiled program initialises the realm in its module-init before any source code runs, so no source program can
+// call a closure before it.
 describe("#7354 O1 — retired #3518 fixture: closures returned from functions, called through values", () => {
   const body =
     "function makeCaptured(seed){ return function captured(value){ return seed + value; }; }" +
@@ -118,12 +121,53 @@ describe("#7354 O1 — retired #3518 fixture: closures returned from functions, 
     " var out = String(a(7)) + ',' + String(b(7)) + ',' + String(e(3)) + ',' + String(c(2))" +
     " + (a === b ? ',same' : ',distinct') + ',' + a.name + e.name;";
   it("calls each closure with its own capture", async () => agrees(body), SLOW);
+  // The retired tests' `displaced` runs stored strings as UTF-8; the same program under that storage.
+  it(
+    "calls each closure with its own capture under UTF-8 string storage",
+    async () => agreesWithNode(body, true, { ...runnerOptions(), utf8Storage: true }),
+    SLOW,
+  );
   it(
     "emits a module without imports",
     async () => {
       const result = await compile(`${body}\nif (out !== ${JSON.stringify(nodeOut(body))}) throw 1;`, runnerOptions());
       expect(WebAssembly.Module.imports(new WebAssembly.Module(result.binary))).toEqual([]);
     },
+    SLOW,
+  );
+});
+
+// (#7354 O1 review) The native statics apply only to the unchanged global `Object` (`builtin-global-binding.ts`): a
+// program's own binding of the name at any level, or an assignment to it anywhere, leaves `Object.m(…)` to the
+// ordinary paths, which refuse it by name here; node's answer differs from the native static's in each.
+describe("#7354 O1 — a shadowed or assigned Object never takes the native statics", () => {
+  it.each([
+    ["a function declaration before", "function Object(){} var o = {}; Object.defineProperty(o, 'p', {value: 1});"],
+    ["a function declaration after", "var o = {}; Object.create(o); function Object(){ return 1; }"],
+    [
+      "a declaration after, getOwnPropertyDescriptor",
+      "Object.getOwnPropertyDescriptor({a: 1}, 'a'); function Object(){}",
+    ],
+    ["a class declaration after (TDZ)", "Object.defineProperties({}, {}); class Object {}"],
+    ["a var", "var Object = {defineProperty: function(o, k, d){ return 5; }}; Object.defineProperty({}, 'p', {});"],
+    [
+      "an assignment in a function never called",
+      "function never(){ Object = 1; } Object.defineProperty({}, 'p', {value: 1});",
+    ],
+  ])(
+    "%s refuses by name",
+    async (_name, source) => {
+      expect(await refusal(source, runnerOptions())).not.toBe("");
+    },
+    SLOW,
+  );
+  it(
+    "a parameter named Object is the argument",
+    async () =>
+      agrees(
+        "function f(Object){ var o = {}; Object.defineProperty(o, 'p', {value: 1}); return String(o.p); }" +
+          " var out = f({defineProperty: function(){}});",
+      ),
     SLOW,
   );
 });

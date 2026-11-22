@@ -41,7 +41,8 @@ import {
 import { legalizeDynamicAllocations } from "./program/dynamic-carrier-types.js";
 import { retargetNumberToString } from "./program/number-to-string-target.js";
 import { programObjects } from "./source-plain-objects.js";
-import { nativeObjectStaticOf } from "./realm-static-call.js";
+import { objectStaticOperand } from "./realm-static-call.js";
+import { pristineBuiltinGlobal } from "./builtin-global-binding.js";
 import type { ProgramObjects } from "./program/dynamic-value-kinds.js";
 import type { AllocSiteRegistry } from "./analysis/alloc-registry.js";
 import type { RuntimeManifestPolicy } from "../runtime/contracts/provider-policy.js";
@@ -289,6 +290,8 @@ export interface ProgramDynamicContracts extends SourceDynamicProvenance {
     readonly staticFunctionValue?: (declaration: ts.VariableDeclaration) => boolean;
     /** (#7354 F1b) Closures are function objects (`function-object-lowering.ts`). */
     readonly createsFunctionObjects?: () => boolean;
+    /** (#7354 O1) `pristineBuiltinGlobal`: the identifier reads the unchanged global built-in of its name. */
+    readonly isPristineBuiltinGlobal?: (identifier: ts.Identifier) => boolean;
     /**
      * (#7354 C2) Some function expression binds its own `this` (`closureCodeStrictness`): a direct call of a closure
      * installs no receiver, so then every call of a closure value is the dispatcher's, which installs one.
@@ -374,6 +377,7 @@ export function programDynamicContracts(
             !closuresBindReceivers && staticFunctionValue(policy, sourceFiles, declaration),
           closuresBindReceivers: () => closuresBindReceivers,
           createsFunctionObjects: () => functionObjects,
+          isPristineBuiltinGlobal: pristineBuiltinGlobal(checker, sourceFiles),
           closureCodeStrictness: codeStrictness,
         }
       : {},
@@ -451,11 +455,12 @@ function refuseImplicitDynamicFlows(
   roots: readonly ts.Node[],
   carries: Carries,
   aborted: RefusalOwners["aborted"],
+  isPristineGlobal: (identifier: ts.Identifier) => boolean,
 ): void {
   const any = checker.getAnyType();
   const visit = (node: ts.Node): void => {
     if ((ts.isFunctionExpression(node) || ts.isFunctionDeclaration(node)) && aborted(node)) return;
-    if (ts.isExpression(node) && !passedOn(checker, node) && carries(node)) {
+    if (ts.isExpression(node) && !passedOn(node) && !objectStaticOperand(node, isPristineGlobal) && carries(node)) {
       const contextual = checker.getContextualType(node);
       if (contextual !== undefined && contextual !== any && !storedIntoCarrier(node, carries))
         throw ownRefusal(
@@ -477,10 +482,9 @@ function refuseImplicitDynamicFlows(
  * operand of `||`/`&&`, which yields one of its operands): the parent's flow counts. A conditional's test has no
  * contextual type, so skipping it too loses no check.
  */
-function passedOn(checker: ts.TypeChecker, node: ts.Expression): boolean {
+function passedOn(node: ts.Expression): boolean {
   const { parent } = node;
   if (ts.isParenthesizedExpression(parent) || ts.isConditionalExpression(parent)) return true;
-  if (objectStaticOperand(checker, node)) return true;
   if (!ts.isBinaryExpression(parent)) return false;
   const operator = parent.operatorToken.kind;
   return (
@@ -488,21 +492,6 @@ function passedOn(checker: ts.TypeChecker, node: ts.Expression): boolean {
     operator === ts.SyntaxKind.BarBarToken ||
     operator === ts.SyntaxKind.AmpersandAmpersandToken
   );
-}
-
-/**
- * (#7354 O1) An argument of a native `Object` static (`realm-static-call.ts`), or a property value of an object literal
- * that is one (a descriptor, a descriptor map): each is taken as a carrier, whatever the lib's signature types it.
- */
-function objectStaticOperand(checker: ts.TypeChecker, node: ts.Expression): boolean {
-  let operand: ts.Expression = node;
-  // A descriptor's field name (`value`) is typed by the lib's `PropertyDescriptor` too.
-  while (ts.isPropertyAssignment(operand.parent)) operand = operand.parent.parent;
-  const call = operand.parent;
-  if (!ts.isCallExpression(call) || !call.arguments.includes(operand) || !nativeObjectStaticOf(call)) return false;
-  // The global's, as the lib declares it: a program's own `Object` keeps its parameters' types.
-  const global = checker.getSymbolAtLocation((call.expression as ts.PropertyAccessExpression).expression);
-  return !!global?.declarations?.every((declaration) => declaration.getSourceFile().isDeclarationFile);
 }
 
 /**
@@ -565,7 +554,7 @@ function legalizeSourceDynamicValues(
   );
   if (catches) retargeted.forEach((fn) => owned(fn, () => refuseUnadmittedThrows(fn)));
   if (legalized.some((fn, index) => fn !== retargeted[index]))
-    refuseImplicitDynamicFlows(checker, roots, carries, owners.aborted);
+    refuseImplicitDynamicFlows(checker, roots, carries, owners.aborted, pristineBuiltinGlobal(checker, sourceFiles));
   legalizeDynamicAllocations(legalized, allocations);
   return legalized;
 }

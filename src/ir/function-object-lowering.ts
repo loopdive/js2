@@ -46,8 +46,8 @@ export interface FunctionObjectLoweringHost {
    * closures are function objects, a call through a value is the native dispatcher `js.closure.call:N`.
    */
   readonly createsFunctionObjects: () => boolean;
-  /** (#7354 O1) `expression` reads the global `name`: no binding of the program shadows it. */
-  readonly isUnshadowedGlobal: (expression: ts.Expression, name: string) => boolean;
+  /** (#7354 O1) The identifier reads the unchanged global built-in of its name (`builtin-global-binding.ts`). */
+  readonly isPristineGlobal: (identifier: ts.Identifier) => boolean;
   readonly requireOwner: (ownerUnitId: IrUnitId) => void;
   readonly lowerExpression: (source: ts.Expression) => IrValueId;
   readonly boxConcrete: (value: IrValueId, type: IrType, source: ts.Expression) => IrValueId | null;
