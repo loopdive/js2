@@ -343,7 +343,11 @@ import {
 } from "./binding-pattern-plan.js";
 import { lowerPatternPlan, readsNoSource, type PatternLoweringHost } from "./binding-pattern-lowering.js";
 import { literalLeafSource, patternLeafReadsElement, planLiteralPattern } from "./literal-pattern-plan.js";
-import { isInLoopOfOwnFunction, isModuleInitVarList } from "../shared/var-declaration-lists.js";
+import {
+  isInLoopOfOwnFunction,
+  isModuleInitVarList,
+  moduleInitContainsNestedVar,
+} from "../shared/var-declaration-lists.js";
 import { emitLogicalSelect } from "./logical-select.js";
 import { isRepeatedVarBinding } from "./function-local-var.js";
 import { objectIntegrityCallFold } from "./object-integrity.js";
@@ -431,6 +435,7 @@ import {
 import type { ValType } from "./types.js";
 import { coerceIrValueToExternref } from "./value-coercion.js";
 import {
+  emitIsNaN,
   lowerAmbientGlobalFunctionCall,
   type IrAmbientGlobalFunctionCapability,
   type IrAmbientGlobalFunctionName,
@@ -977,6 +982,8 @@ export interface IrFromAstResolver extends PreparedAsyncFromAstResolver {
   builtinProtoMember?(builtin: string, member: string, anchor: ts.Node): "method" | "getter" | undefined;
   /** Exact source-bound Number call; no physical conversion provider is implied. */
   preparedNumberCall?(call: ts.CallExpression): boolean;
+  /** (#7354 T) Exact source-bound `isNaN` call: `Number(v)`'s conversion, then the NaN test. */
+  preparedIsNaNCall?(call: ts.CallExpression): boolean;
   /** Exact current ambient Object.create(null) source call; symbolic provider only. */
   preparedObjectCreateCall?(call: ts.CallExpression): "null" | undefined;
   /** Source-owned ordinary descriptor read; actual allocation provenance is revalidated downstream. */
@@ -1510,26 +1517,6 @@ export interface LoweredFunctionResult {
   readonly liftedUnitProvenance: readonly IrDerivedUnitProvenance[];
   /** Plans actually consumed by this exact source artifact. */
   readonly countedStringAppendPlans?: readonly IrCountedStringAppendLoweringPlan[];
-}
-
-/** A modelled `var` list (`isModuleInitVarList`) has persistent globals; any other `var` still needs hoisting support. */
-function moduleInitContainsNestedVar(statements: readonly ts.Statement[]): boolean {
-  const findVarDecl = (node: ts.Node): boolean => {
-    if (
-      isModuleInitVarList(node) ||
-      ts.isFunctionDeclaration(node) ||
-      ts.isFunctionExpression(node) ||
-      ts.isArrowFunction(node) ||
-      ts.isMethodDeclaration(node)
-    ) {
-      return false;
-    }
-    if (ts.isVariableDeclarationList(node) && (node.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const)) === 0) {
-      return true;
-    }
-    return ts.forEachChild(node, findVarDecl) === true;
-  };
-  return statements.some(findVarDecl);
 }
 
 function nestedSourceScope(
@@ -7687,17 +7674,17 @@ function makePromiseDelayLoweringHost(cx: LowerCtx): IrPromiseDelayLoweringHost 
   };
 }
 
-/** Evaluate the complete argument list before the observable conversion. */
-function lowerPreparedNumberCall(expr: ts.CallExpression, cx: LowerCtx): IrValueId {
+/** Evaluate the complete argument list before the observable conversion; `absent` is ToNumber of no argument. */
+function lowerPreparedNumberCall(expr: ts.CallExpression, cx: LowerCtx, absent = 0): IrValueId {
   if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== expr)
-    return withNodeSourceSite(cx, expr, () => lowerPreparedNumberCall(expr, cx));
+    return withNodeSourceSite(cx, expr, () => lowerPreparedNumberCall(expr, cx, absent));
   if (expr.questionDotToken || expr.arguments.some(ts.isSpreadElement))
     throw new IrInvariantError(
       "selection-preparation-mismatch",
       "build",
       "Number call plan has unsupported argument syntax",
     );
-  if (expr.arguments.length === 0) return cx.builder.emitConst({ kind: "f64", value: 0 }, IR_F64);
+  if (expr.arguments.length === 0) return cx.builder.emitConst({ kind: "f64", value: absent }, IR_F64);
   const first = lowerExpr(expr.arguments[0]!, cx, irVal({ kind: "externref" }));
   // Extra arguments still run, in source order, even though Number ignores
   // their values. In particular, getter conversion follows these effects.
@@ -7706,6 +7693,9 @@ function lowerPreparedNumberCall(expr: ts.CallExpression, cx: LowerCtx): IrValue
   if (type.kind === "val" && type.val.kind === "f64") return first;
   if (type.kind === "val" && type.val.kind === "i32" && type.val.boolean === true)
     return cx.builder.emitUnary("f64.convert_i32_s", first, IR_F64);
+  // (#7354 T) The Prepared lane binds no `js.number.from-value`; its carrier's ToNumber is the legalized one.
+  if (type.kind === "dynamic" && functionObjects.createsFunctionObjects(cx.resolver))
+    return cx.builder.emitDynToNumber(first);
   if (type.kind === "val" && type.val.kind !== "externref" && type.val.kind !== "ref_extern")
     demoteToLegacy("operand-coercion-unsupported", "Number argument requires an exact logical value carrier");
   const external = coerceIrValueToExternref(cx.builder, first);
@@ -7729,6 +7719,32 @@ function functionObjectLoweringHost(cx: LowerCtx): functionObjects.FunctionObjec
     boxConcrete: (value, type, source) => boxConcreteToDynamic(value, type, source, cx),
     symbols: { IR_DYN_CALL_BOX_FN, IR_DYN_CALL_VALUE_FN, IR_DYN_CALL_ARGUMENT_FN },
   };
+}
+
+function lowerSuperConstructorCall(expr: ts.CallExpression, cx: LowerCtx): null {
+  const parentShape = requireSuperParentShape(cx);
+  const self = requireThisValue(cx);
+  if (expr.arguments.length !== parentShape.constructorParams.length) {
+    demoteToLegacy(
+      "call-arity-unsupported",
+      `ir/from-ast: super(...) has ${expr.arguments.length} args, expected ${parentShape.constructorParams.length} in ${cx.funcName}`,
+    );
+  }
+  const args: IrValueId[] = [];
+  for (let i = 0; i < expr.arguments.length; i++) {
+    const expected = parentShape.constructorParams[i]!;
+    const argVal = lowerExpr(expr.arguments[i]!, cx, expected);
+    const argType = cx.builder.typeOf(argVal);
+    if (!irTypeEquals(argType, expected)) {
+      demoteToLegacy(
+        "call-resolution-unsupported",
+        `ir/from-ast: super() arg ${i} is ${describeIrType(argType)}, expected ${describeIrType(expected)} in ${cx.funcName}`,
+      );
+    }
+    args.push(argVal);
+  }
+  cx.builder.emitClassSuperInit(parentShape, self, args);
+  return null;
 }
 
 function lowerCall(expr: ts.CallExpression, cx: LowerCtx, statementPosition = false): IrValueId | null {
@@ -7817,37 +7833,15 @@ function lowerCall(expr: ts.CallExpression, cx: LowerCtx, statementPosition = fa
   // because `super` is a keyword, not an identifier the receiver-lowering can
   // handle. The `this` binding (the allocated subclass instance) and the parent
   // shape (`this` shape's `.parent`) drive the emitted `<parent>_init` call.
-  if (expr.expression.kind === ts.SyntaxKind.SuperKeyword) {
-    const parentShape = requireSuperParentShape(cx);
-    const self = requireThisValue(cx);
-    if (expr.arguments.length !== parentShape.constructorParams.length) {
-      demoteToLegacy(
-        "call-arity-unsupported",
-        `ir/from-ast: super(...) has ${expr.arguments.length} args, expected ${parentShape.constructorParams.length} in ${cx.funcName}`,
-      );
-    }
-    const args: IrValueId[] = [];
-    for (let i = 0; i < expr.arguments.length; i++) {
-      const expected = parentShape.constructorParams[i]!;
-      const argVal = lowerExpr(expr.arguments[i]!, cx, expected);
-      const argType = cx.builder.typeOf(argVal);
-      if (!irTypeEquals(argType, expected)) {
-        demoteToLegacy(
-          "call-resolution-unsupported",
-          `ir/from-ast: super() arg ${i} is ${describeIrType(argType)}, expected ${describeIrType(expected)} in ${cx.funcName}`,
-        );
-      }
-      args.push(argVal);
-    }
-    cx.builder.emitClassSuperInit(parentShape, self, args);
-    return null;
-  }
+  if (expr.expression.kind === ts.SyntaxKind.SuperKeyword) return lowerSuperConstructorCall(expr, cx);
   // #5092 first: `Number(c ? 7 : true)` converts each concrete arm inside the
   // lazy `if`; the source-bound plan (#7106 lever B) sees only what it declined
   // — the same order as the selector's `preparedNumberConversionCall`.
   const mixedPrimitiveWrapper = tryLowerExactMixedPrimitiveWrapperCall(expr, cx);
   if (mixedPrimitiveWrapper !== null) return mixedPrimitiveWrapper;
   if (cx.resolver?.preparedNumberCall?.(expr) === true) return lowerPreparedNumberCall(expr, cx);
+  if (cx.resolver?.preparedIsNaNCall?.(expr) === true)
+    return emitIsNaN(cx.builder, lowerPreparedNumberCall(expr, cx, NaN));
   const functionAccess = expr.expression;
   if (functionObjects.isPreparedFunctionObjectAccess(functionAccess, cx.topLevelFunctionValues)) {
     return functionObjects.lowerFunctionObjectMemberCall(expr, functionAccess, functionObjectLoweringHost(cx));
@@ -7874,8 +7868,8 @@ function lowerCall(expr: ts.CallExpression, cx: LowerCtx, statementPosition = fa
     }
     return r;
   }
-  if (ts.isElementAccessExpression(functionAccess) && functionObjects.createsFunctionObjects(cx.resolver))
-    return functionObjects.lowerFunctionObjectMemberCall(expr, functionAccess, functionObjectLoweringHost(cx));
+  const valueCall = functionObjects.lowerPreparedValueCallee(expr, cx.resolver, () => functionObjectLoweringHost(cx));
+  if (valueCall !== undefined) return valueCall;
   if (!ts.isIdentifier(expr.expression)) {
     demoteToLegacy(
       "call-resolution-unsupported",
@@ -13219,6 +13213,19 @@ function boxForDynamicModuleStorage(value: IrValueId, target: IrType, rhs: ts.Ex
   return boxConcreteToDynamic(value, type, rhs, cx) ?? value;
 }
 
+/**
+ * A write to a binding the mutation pre-pass gave no slot. (#7354 T) A named function expression's own name is such a
+ * binding by design: immutable (§9.1.1.1.5), so a sloppy write is ignored and a strict one throws; it refuses by name.
+ * Anything else is the pre-pass's broken promise.
+ */
+function refuseNonSlotWrite(id: ts.Identifier, what: string, cx: LowerCtx): never {
+  const declaration = cx.checker?.getSymbolAtLocation(id)?.valueDeclaration;
+  if (declaration && ts.isFunctionExpression(declaration))
+    demoteToLegacy("property-write-unsupported", `ir/from-ast: write to the function expression name "${id.text}"`);
+  // invariant (producer-promise): the mutation pre-pass promised a slot binding here — #4502.
+  throw new Error(`ir/from-ast: ${what} "${id.text}" — mutation pre-pass should have detected it (${cx.funcName})`);
+}
+
 /** Write a mutable identifier and return the RHS before any storage boxing. */
 function lowerIdentifierAssignment(id: ts.Identifier, rhs: ts.Expression, cx: LowerCtx): IrValueId {
   if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== id) {
@@ -13294,10 +13301,7 @@ function lowerIdentifierAssignment(id: ts.Identifier, rhs: ts.Expression, cx: Lo
     return newValue;
   }
   if (binding.kind !== "slot") {
-    // invariant (producer-promise): the mutation pre-pass promised a slot binding here — #4502.
-    throw new Error(
-      `ir/from-ast: assignment to non-slot binding "${id.text}" — mutation pre-pass should have detected it (${cx.funcName})`,
-    );
+    refuseNonSlotWrite(id, "assignment to non-slot binding", cx);
   }
   // (#3741) invariant W — an i32-promoted slot's RHS lowers DIRECTLY to an
   // exact i32; it is never an f64 that we then truncate.
@@ -13362,10 +13366,7 @@ function lowerCompoundAssignment(
   }
   const capturedCell = binding.kind === "local" && binding.type.kind === "boxed" ? binding : undefined;
   if (binding.kind !== "slot" && binding.kind !== "moduleGlobal" && !capturedCell) {
-    // invariant (producer-promise): the mutation pre-pass promised a slot binding here — #4502.
-    throw new Error(
-      `ir/from-ast: compound assign to non-slot binding "${id.text}" — mutation pre-pass should have detected it (${cx.funcName})`,
-    );
+    refuseNonSlotWrite(id, "compound assign to non-slot binding", cx);
   }
   const storage = binding.kind === "slot" || binding.kind === "moduleGlobal" ? binding : capturedCell!;
   const capturedCellType = storage.kind === "local" && storage.type.kind === "boxed" ? storage.type : undefined;
@@ -13539,10 +13540,7 @@ function lowerIncrementDecrement(id: ts.Identifier, op: ts.SyntaxKind, cx: Lower
   }
   const capturedCell = binding.kind === "local" && binding.type.kind === "boxed" ? binding : undefined;
   if (binding.kind !== "slot" && binding.kind !== "moduleGlobal" && !capturedCell) {
-    // invariant (producer-promise): the mutation pre-pass promised a slot binding here — #4502.
-    throw new Error(
-      `ir/from-ast: increment/decrement of non-slot "${id.text}" — mutation pre-pass should have detected it (${cx.funcName})`,
-    );
+    refuseNonSlotWrite(id, "increment/decrement of non-slot", cx);
   }
   const storage = binding.kind === "slot" || binding.kind === "moduleGlobal" ? binding : capturedCell!;
   const capturedCellType = storage.kind === "local" && storage.type.kind === "boxed" ? storage.type : undefined;

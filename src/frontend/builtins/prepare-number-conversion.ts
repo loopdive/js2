@@ -4,7 +4,7 @@ import { isCurrentCompilerLibrarySourceFile } from "../../checker/index.js";
 import { isUndeclaredInFile } from "../../shared/ambient-intrinsics.js";
 
 /**
- * Source binding evidence for direct calls `Name(…)` of one ambient conversion constructor; the conversion's
+ * Source binding evidence for direct calls `Name(…)` of one ambient conversion function; the conversion's
  * semantics require their own provider. Admits a call only against the lib declaration, and only while no source
  * file declares the name (the checker reports a script's top-level `function String() {}` as the lib declarations
  * alone) and, unless `escapesRefuse`, the binding is never read as a value anywhere in the program (an alias could
@@ -15,7 +15,7 @@ function ambientConversionCalls(
   checker: ts.TypeChecker,
   sourceFiles: readonly ts.SourceFile[],
   declaration: ts.FunctionDeclaration | readonly ts.Statement[],
-  name: "Number" | "String",
+  name: "Number" | "String" | "isNaN",
   escapesRefuse: boolean,
 ): (call: ts.CallExpression) => boolean {
   const calls = new WeakSet<ts.CallExpression>();
@@ -94,7 +94,8 @@ export function prepareNumberConversionResolver(
  * rebind the ambient `String` (a value read of `String` or `globalThis`, an assignment) refuses by name
  * (tests/issue-7354-str2-to-string.test.ts pins each), while a program's own `String` declaration is not the lib
  * symbol. The harness prelude escapes both (`String: globalThis.String`, `map.call(a, String)`), so the
- * invalidation would deny its every `String(v)`.
+ * invalidation would deny its every `String(v)`. (#7354 T) `isNaN(v)` is `Number(v)`'s ToNumber and a NaN test
+ * (§19.2.3), admitted by the same proof as `String(v)`.
  */
 export function prepareConversionResolvers(
   checker: ts.TypeChecker,
@@ -106,5 +107,6 @@ export function prepareConversionResolvers(
     ...prepareNumberConversionResolver(checker, sourceFiles, declaration),
     isAmbientStringBinding: (node: ts.Identifier): boolean =>
       ts.isCallExpression(node.parent) && node.parent.expression === node && stringCall(node.parent),
+    preparedIsNaNCall: ambientConversionCalls(checker, sourceFiles, declaration, "isNaN", true),
   };
 }

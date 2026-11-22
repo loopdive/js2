@@ -317,11 +317,15 @@ export interface ProgramDynamicContracts extends SourceDynamicProvenance {
    * program that creates no function value nothing calls through the dispatcher, so `this` stays unbound there.
    */
   readonly codeStrictness: CodeStrictness;
-  /** {@link legalizeSourceDynamicValues} for the functions lowered from `roots`. */
+  /**
+   * {@link legalizeSourceDynamicValues} for the functions lowered from `roots`. `converts` names a call that converts
+   * its arguments itself (#7354 T: an admitted `isNaN(v)`), so an argument has no implicit flow into its parameter.
+   */
   readonly legalize: (
     roots: ts.FunctionDeclaration | readonly ts.Statement[],
     functions: readonly IrFunction[],
     owners: RefusalOwners,
+    converts: (call: ts.CallExpression) => boolean,
   ) => readonly IrFunction[];
 }
 
@@ -382,7 +386,7 @@ export function programDynamicContracts(
       ? {
           resolveDynamic: () => ({ kind: "externref" }),
           dynamicCarrierIsExternref: () => true,
-          unresolvedNameIsAbsent: (node) => absentGlobal(checker, sourceFiles, node),
+          unresolvedNameIsAbsent: (node) => absentGlobal(checker, node),
           dynamicClosureSignature: (expression) => sourceDynamicClosureSignature(policy, expression),
           staticFunctionValue: (declaration) =>
             !closuresBindReceivers && staticFunctionValue(policy, sourceFiles, declaration),
@@ -406,7 +410,7 @@ export function programDynamicContracts(
         `function ${declaration.name?.text} returns ${checker.typeToString(result)}, which has no Prepared result contract`,
       );
     },
-    legalize: (roots, functions, owners) =>
+    legalize: (roots, functions, owners, converts) =>
       legalizeSourceDynamicValues(
         checker,
         policy,
@@ -417,35 +421,24 @@ export function programDynamicContracts(
         allocations,
         objects,
         owners,
+        converts,
       ),
   };
 }
 
 /**
- * (#7354 Ty) The Prepared program is closed: its global environment holds the program's own declarations and the
- * providers from-ast's read names, nothing else (no host object). So `typeof X` of a global the program does not
- * declare (only lib declarations, or none at all) answers "undefined". That is a statement about THIS environment,
- * which provides no such global yet, not ECMAScript's answer (node says `typeof Math === "object"`). It is sound
- * because (1) every value, member, call or `new` use of such a name refuses by name, so no program can use what
- * `typeof` denied — tests/issue-7354-ty-typeof-comparisons.test.ts pins that for every name of
- * `AMBIENT_TYPEOF_TAGS`, and the slice that provides one adds it to `PREPARED_PROVIDED_GLOBALS`; and (2) the error
- * is in the safe direction: a test asserting the global exists fails. The shape that could pass falsely is a test
- * whose assertions all sit under `if (typeof X !== "undefined")` (none in ES5; two in later editions, measured).
- * A script's top-level `function Error() {}` is reported by the checker as the lib declarations alone, hence the
- * file check.
+ * (#7354 Ty, T) `typeof X` answers "undefined" only for a name that nothing declares: the checker resolves it to no
+ * symbol, neither the program's nor the loaded TypeScript lib's (`globalThis` resolves to a symbol without
+ * declarations). The lib stands in for the list of standard globals; it is not exactly that list (see #7354 "Slice T
+ * result", known limits: a later-edition global it does not declare, DOM names it does). A
+ * standard global this path does not provide yet (`Math`, `parseInt`, `Object`, …) is not absent: its `typeof`, like
+ * every other read of it, refuses by name (an abort body inside a function under the test262 entry), never
+ * "undefined" (node says `typeof Math === "object"`). A script's top-level `function Error() {}` is reported by the
+ * checker as the lib declarations alone, hence the file check.
  */
-function absentGlobal(checker: ts.TypeChecker, sourceFiles: readonly ts.SourceFile[], node: ts.Identifier): boolean {
-  if (PREPARED_PROVIDED_GLOBALS.has(node.text) || !isUndeclaredInFile(node)) return false;
-  const declarations = checker.getSymbolAtLocation(node)?.declarations ?? [];
-  return !declarations.some((declaration) => sourceFiles.includes(declaration.getSourceFile()));
+function absentGlobal(checker: ts.TypeChecker, node: ts.Identifier): boolean {
+  return isUndeclaredInFile(node) && checker.getSymbolAtLocation(node) === undefined;
 }
-
-/**
- * The lib globals some use of which compiles on this path, so `typeof` must not deny them: it refuses by name until
- * their real answer is wired. `Number` and (#7354 Str2) `String`: direct `Number(v)` / `String(v)` calls
- * (`prepareConversionResolvers`).
- */
-export const PREPARED_PROVIDED_GLOBALS: ReadonlySet<string> = new Set(["Number", "String"]);
 
 /**
  * (#7354 D1) The one rule for a dynamic value leaving the dynamic domain. A
@@ -468,11 +461,14 @@ function refuseImplicitDynamicFlows(
   carries: Carries,
   aborted: RefusalOwners["aborted"],
   isPristineGlobal: (identifier: ts.Identifier) => boolean,
+  converts: (call: ts.CallExpression) => boolean,
 ): void {
   const any = checker.getAnyType();
   const visit = (node: ts.Node): void => {
     if ((ts.isFunctionExpression(node) || ts.isFunctionDeclaration(node)) && aborted(node)) return;
-    if (ts.isExpression(node) && !passedOn(node) && !objectStaticOperand(node, isPristineGlobal) && carries(node)) {
+    const converted = ts.isCallExpression(node.parent) && node.parent.expression !== node && converts(node.parent);
+    const exempt = (e: ts.Expression) => passedOn(e) || converted || objectStaticOperand(e, isPristineGlobal);
+    if (ts.isExpression(node) && !exempt(node) && carries(node)) {
       const contextual = checker.getContextualType(node);
       if (contextual !== undefined && contextual !== any && !landsInCarrier(node, checker, policy, carries))
         throw ownRefusal(
@@ -557,6 +553,7 @@ function legalizeSourceDynamicValues(
   allocations: AllocSiteRegistry,
   objects: ProgramObjects,
   owners: RefusalOwners,
+  converts: (call: ts.CallExpression) => boolean,
 ): readonly IrFunction[] {
   const roots = "kind" in declaration ? [declaration] : declaration;
   if (!nativeDynamicLane(policy)) return functions;
@@ -587,6 +584,7 @@ function legalizeSourceDynamicValues(
       carries,
       owners.aborted,
       pristineBuiltinGlobal(checker, sourceFiles),
+      converts,
     );
   legalizeDynamicAllocations(legalized, allocations);
   return legalized;

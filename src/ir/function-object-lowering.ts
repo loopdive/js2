@@ -15,6 +15,7 @@ import { JS_TAG_IDS } from "./runtime/js-tag-domain.js";
 import { asVal, irDynamic, irVal, type IrType, type IrValueId } from "./nodes.js";
 import { demoteToLegacy, IrUnsupportedError } from "./outcomes.js";
 import { describeIrType } from "./describe-ir-type.js";
+import { skipOuterExpressions } from "../shared/binding-writes.js";
 
 /** Source-owned plan values shared by top-level and lifted lowering contexts. */
 export interface FunctionValueLoweringPlans {
@@ -316,6 +317,26 @@ export function lowerDynamicMemberCall(
   return createsFunctionObjects(cx)
     ? nativeClosureCall(callee, receiver, expr.arguments, cx)
     : applyDynamicCallee(callee, receiver, expr.arguments, notCallable("Value is not callable"), cx);
+}
+
+/**
+ * The Prepared lane's call through the value of a callee that is neither an identifier nor a property access: an
+ * element access (`o[k](…)`, its receiver is `this`), or (#7354 T) a callee that is no Reference — outer parentheses
+ * skipped, so `(o.m)()` keeps its receiver while `(0, o.m)()`, `(c ? o.m : g)()`, `(o.m = g)()`, `f()()` and an IIFE
+ * do not (§13.3.6.1) — called with `this` undefined as {@link lowerBindingCall} does. `undefined` elsewhere.
+ */
+export function lowerPreparedValueCallee(
+  expr: ts.CallExpression,
+  lane: { createsFunctionObjects?(): boolean } | undefined,
+  host: () => FunctionObjectLoweringHost,
+): IrValueId | undefined {
+  if (!createsFunctionObjects(lane)) return undefined;
+  const callee = skipOuterExpressions(expr.expression);
+  if (ts.isElementAccessExpression(expr.expression))
+    return lowerFunctionObjectMemberCall(expr, expr.expression, host());
+  if (ts.isIdentifier(callee) || ts.isPropertyAccessExpression(callee) || ts.isElementAccessExpression(callee))
+    return undefined;
+  return lowerBindingCall(expr, undefined, host());
 }
 
 /**
