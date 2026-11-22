@@ -51,6 +51,8 @@ import { ownedByDescriptorLiteral } from "./ordinary-object-closure-signatures.j
 import { isTopLevelStatementDeclaration } from "../shared/var-declaration-lists.js";
 import { bindingHoldsItsDeclaration } from "../shared/binding-holds-declaration.js";
 import { functionDeclarationsReadAsValues } from "./function-declaration-values.js";
+import type { CodeStrictness } from "./from-ast.js";
+import { readsAmbientThisGlobal } from "../shared/body-references-own-this.js";
 
 type Carries = SourceDynamicProvenance["carries"];
 type Signature = { readonly params: readonly IrType[]; readonly returnType: IrType | null };
@@ -275,7 +277,21 @@ export interface ProgramDynamicContracts extends SourceDynamicProvenance {
     readonly staticFunctionValue?: (declaration: ts.VariableDeclaration) => boolean;
     /** (#7354 F1b) Closures are function objects (`function-object-lowering.ts`). */
     readonly createsFunctionObjects?: () => boolean;
+    /**
+     * (#7354 C2) Some function expression binds its own `this` (`closureCodeStrictness`): a direct call of a closure
+     * installs no receiver, so then every call of a closure value is the dispatcher's, which installs one.
+     */
+    readonly closuresBindReceivers?: () => boolean;
+    /** (#7354 C2) {@link ProgramDynamicContracts.codeStrictness} of a function expression. */
+    readonly closureCodeStrictness?: CodeStrictness;
   };
+  /**
+   * (#7260) The strictness of a function's or a script's code (`functionCodeStrict`), and (#7354 C2) where the code is
+   * a function on the native lane whose closures are function objects and that reads its own `this`, the strictness
+   * it binds `this` with (`ambientThisStrict`, C2-D2): the receiver the dispatcher installed, read once at entry. In a
+   * program that creates no function value nothing calls through the dispatcher, so `this` stays unbound there.
+   */
+  readonly codeStrictness: CodeStrictness;
   /** {@link legalizeSourceDynamicValues} for the functions lowered from `roots`. */
   readonly legalize: (
     roots: ts.FunctionDeclaration | readonly ts.Statement[],
@@ -283,18 +299,39 @@ export interface ProgramDynamicContracts extends SourceDynamicProvenance {
   ) => readonly IrFunction[];
 }
 
-/** `allocations` is the producer's registry: (#7354 Fa) the legalization re-types the closure sites in it. */
+/**
+ * `allocations` is the producer's registry: (#7354 Fa) the legalization re-types the closure sites in it. `input` is
+ * the producer's: its checker, policy and the compiler's answer to the strictness of a piece of code.
+ */
 export function programDynamicContracts(
-  checker: ts.TypeChecker,
-  policy: SourcePolicy,
+  input: {
+    readonly checker: ts.TypeChecker;
+    readonly policy: SourcePolicy;
+    readonly codeStrictness?: (node: ts.FunctionLikeDeclaration | ts.SourceFile) => boolean;
+  },
   sourceFiles: readonly ts.SourceFile[],
   allocations: AllocSiteRegistry,
 ): ProgramDynamicContracts {
+  const { checker, policy } = input;
   // (#7354 O2, O2b) What the source allows its objects: one answer every group asks.
   // (#7354 F1b) A function object's `name` is a native string.
   const functionObjects = nativeDynamicLane(policy) && policy.stringConst?.storage === "native";
   const functionDeclarationValues = functionObjects ? functionDeclarationsReadAsValues(checker, sourceFiles) : [];
   const objects = programObjects(sourceFiles, functionDeclarationValues.length > 0);
+  const codeStrictness: ProgramDynamicContracts["codeStrictness"] = (code) => {
+    const functionCodeStrict = input.codeStrictness?.(code);
+    return functionObjects &&
+      objects.functions &&
+      functionCodeStrict !== undefined &&
+      !ts.isSourceFile(code) &&
+      readsAmbientThisGlobal(code)
+      ? { functionCodeStrict, ambientThisStrict: functionCodeStrict }
+      : { functionCodeStrict };
+  };
+  const bindsReceiver = (node: ts.Node): boolean =>
+    (ts.isFunctionExpression(node) && codeStrictness(node).ambientThisStrict !== undefined) ||
+    ts.forEachChild(node, bindsReceiver) === true;
+  const closuresBindReceivers = functionObjects && sourceFiles.some(bindsReceiver);
   const provenance = sourceDynamicProvenance(
     checker,
     sourceFiles,
@@ -304,6 +341,7 @@ export function programDynamicContracts(
   return {
     ...provenance,
     functionDeclarationValues,
+    codeStrictness,
     parameter: (declaration, parameter) => sourceDynamicParameter(checker, policy, declaration, parameter),
     resolver: nativeDynamicLane(policy)
       ? {
@@ -311,8 +349,11 @@ export function programDynamicContracts(
           dynamicCarrierIsExternref: () => true,
           unresolvedNameIsAbsent: (node) => absentGlobal(checker, sourceFiles, node),
           dynamicClosureSignature: (expression) => sourceDynamicClosureSignature(policy, expression),
-          staticFunctionValue: (declaration) => staticFunctionValue(policy, sourceFiles, declaration),
+          staticFunctionValue: (declaration) =>
+            !closuresBindReceivers && staticFunctionValue(policy, sourceFiles, declaration),
+          closuresBindReceivers: () => closuresBindReceivers,
           createsFunctionObjects: () => functionObjects,
+          closureCodeStrictness: codeStrictness,
         }
       : {},
     result: (declaration) =>

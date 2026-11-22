@@ -15,7 +15,7 @@ import {
   requiredPreparedEmission,
   type Test262CompileOptions,
 } from "../src/test262/test262-prepared-entry.js";
-import { yieldToRpc } from "./helpers/prepared-node-agreement.js";
+import { runPrepared, yieldToRpc } from "./helpers/prepared-node-agreement.js";
 
 const options = (): Test262CompileOptions =>
   ({
@@ -120,20 +120,25 @@ describe("#7354 O3 — a member write of the dynamic value", () => {
     expect(await refusal(source)).toContain(reason);
   });
 
-  // (#7354 M2) In a program that reads a caught value the error kind is admitted, and a write whose receiver may be
-  // that error refuses by name: the realm's error has no property storage for it.
+  // (#7354 M2) In a program that reads a caught value the error kind is admitted. The realm's error has no property
+  // storage, so (#7354 C2, C2-D1) a write whose receiver is that error ends at the run-time abort, and the write's other
+  // kinds answer: these refused at compile time before C2.
   it.each([
-    ["a nullish write", "function f(v) { try { v.x = 1; } catch (e) { return e; } return 1; } var r = f(null);"],
+    ["a nullish write", "function f(v) { try { v.x = 1; } catch (e) { return e.name; } return 1; } var r = f(null);"],
     [
       "a strict write to a primitive",
-      '"use strict"; function f(v) { try { v.x = 1; } catch (e) { return e; } return 1; } var r = f(1);',
+      '"use strict"; function f(v) { try { v.x = 1; } catch (e) { return e.name; } return 1; } var r = f(1);',
     ],
-  ])("refuses %s in a program that reads a caught value", async (_label, source) => {
-    expect(new Function(`${source} return r;`)()).toBeInstanceOf(TypeError);
-    expect(await refusal(source)).toContain(
-      "member write 'x' of a value that may be an Error needs property storage on the realm's error",
-    );
-  });
+  ])(
+    "throws the TypeError for %s in a program that reads a caught value",
+    async (_label, source) => {
+      const asserting = (name: string) => `${source} if (r !== "${name}") throw 1;`;
+      expect(() => new Function(asserting("TypeError"))()).not.toThrow();
+      expect(await runPrepared(asserting("TypeError"))).toBe("returned");
+      expect(await runPrepared(asserting("RangeError"))).toBe("threw");
+    },
+    180_000,
+  );
 });
 
 // (#7354 F1b) The adapter's unit harness (kernel answers forged per call) is gone: what OrdinarySet answers for an own,

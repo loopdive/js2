@@ -167,6 +167,14 @@ export const MEMBER_ACCESS_ARM: Readonly<
 };
 
 /**
+ * (#7354 C2) Whether a kind's values are ordinary objects of the realm's layout: the kind whose member access is the
+ * realm's ordinary [[Get]] / [[Set]] (`MEMBER_ACCESS_ARM` "object"). Their [[Prototype]] links are ordinary objects too
+ * (`create-default`, `create-with-prototype`) up to the realm's Object.prototype, so only such an object can be linked
+ * as [[Construct]]'s prototype, and only its chain is walked by `instanceof`.
+ */
+export const isOrdinaryObject = (kind: CarrierKind): boolean => MEMBER_ACCESS_ARM[kind] === "object";
+
+/**
  * What the dynamic-value legalization asks of a program's source (`src/ir/source-plain-objects.ts` answers it in one
  * walk): whether it builds ordinary objects, so the object kind is admitted, (F1) whether it creates function values,
  * so the function kind is, and (O2b) whether it names `Symbol`, the only way to `@@toPrimitive` and `@@toStringTag`.

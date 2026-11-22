@@ -3,7 +3,8 @@
  * (#7354 O1) The public source-object functions on the realm. A source program reaches an ordinary object only
  * through the `js.object.*` contracts (`ordinary-object-callables.ts`); each contract it calls binds one function
  * here, whose signature is the contract's and whose algorithm is the realm's own. A row either
- *   - adapts the realm (`create-default`, `get`, (#7354 O3) `set`, (#7354 O2b) `has`, (#7354 F1b) `init-function`):
+ *   - adapts the realm (`create-default`, `get`, (#7354 O3) `set`, (#7354 O2b) `has`, (#7354 F1b) `init-function`,
+ *     (#7354 C2) `create-with-prototype`, `inherits`):
  *     a function this module reserves, with the contract's signature and a body (`source-object-bodies.ts`,
  *     `source-function-object-bodies.ts`) over the realm's storage, kernel and descriptor packs; or
  *   - binds a realm function as it is (`define-data`: the descriptor pack's public define; (#7354 O4)
@@ -15,6 +16,8 @@ import type { Instr, ValType } from "../../../wasm/model/instructions.js";
 import type { OrdinaryObjectRuntimeFeature } from "../../../ir/runtime/contracts/manifest.js";
 import {
   buildSourceObjectCreateDefinition,
+  buildSourceObjectCreateWithPrototypeDefinition,
+  buildSourceObjectInheritsDefinition,
   buildSourceObjectGetDefinition,
   buildSourceObjectSetDefinition,
   buildSourceObjectHasDefinition,
@@ -65,6 +68,10 @@ const ROWS = {
     signature: { params: [], results: [EXTERNREF] },
     body: (dependencies) => buildSourceObjectCreateDefinition(createOperands(dependencies)),
   },
+  "js.object.create-with-prototype": {
+    signature: { params: [EXTERNREF], results: [EXTERNREF] },
+    body: (dependencies) => buildSourceObjectCreateWithPrototypeDefinition(createOperands(dependencies)),
+  },
   "js.object.define-data": { binds: ({ descriptors }) => descriptors.defineData },
   "js.object.create-type-error": { binds: ({ errors }) => errors.newTypeError },
   "js.object.get": {
@@ -111,6 +118,14 @@ const ROWS = {
         constructorKey: key("constructor"),
       });
     },
+  },
+  "js.object.inherits": {
+    signature: { params: [EXTERNREF, EXTERNREF], results: [I32] },
+    body: ({ layouts, kernel }, tx) =>
+      buildSourceObjectInheritsDefinition({
+        objectTypeIdx: layouts.object.typeIndex,
+        sameValue: nativeBuiltinFunctionOperands(tx, kernel).sameValue,
+      }),
   },
 } as const satisfies Readonly<Partial<Record<OrdinaryObjectRuntimeFeature, Row>>>;
 /** A contract the realm serves. */

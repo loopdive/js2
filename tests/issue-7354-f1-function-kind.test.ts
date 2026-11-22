@@ -4,9 +4,7 @@
 // and the run-time abort of a ToPrimitive that would call a function (slice F2 calls it). Each accepted program runs
 // twice: with node's answer (returns) and with a wrong one (throws).
 import { describe, expect, it } from "vitest";
-import { instantiatePreparedArtifact } from "../src/test262/test262-prepared-runtime.js";
-import { compile } from "../src/test262/test262-prepared-entry.js";
-import { preparedOptions, refusal, runPrepared, yieldToRpc } from "./helpers/prepared-node-agreement.js";
+import { abortsAtRunTime, refusal, runPrepared } from "./helpers/prepared-node-agreement.js";
 
 const SLOW = 240_000;
 
@@ -16,25 +14,6 @@ async function agrees(source: string, wrong: string): Promise<void> {
   expect(() => new Function(wrong)()).toThrow();
   expect(await runPrepared(source)).toBe("returned");
   expect(await runPrepared(wrong)).toBe("threw");
-}
-
-/** `source` compiles and validates, and ends at the run-time abort (`js.value.unsupported`) where node returns. */
-async function abortsAtRunTime(source: string): Promise<void> {
-  expect(() => new Function(source)()).not.toThrow();
-  await yieldToRpc();
-  const result = await compile(source, preparedOptions());
-  expect(result.errors.filter((error) => error.severity !== "warning")).toEqual([]);
-  expect(WebAssembly.validate(result.binary)).toBe(true);
-  // The realm's RuntimeError class is not this vitest context's, so the trap is matched by its class name.
-  let trap: unknown;
-  try {
-    const exports = instantiatePreparedArtifact(result).instance.exports;
-    (exports.__module_init as (() => void) | undefined)?.();
-  } catch (error) {
-    trap = error;
-  }
-  expect((trap as Error | undefined)?.constructor.name).toBe("RuntimeError");
-  expect((trap as Error).message).toBe("unreachable");
 }
 
 describe("#7354 F1 — the function kind", () => {
@@ -104,6 +83,12 @@ describe("#7354 F1 — the function kind", () => {
     // (#7354 F1b) `+` with a function operand takes its ToPrimitive: without an own method the source text's abort,
     // never a sum.
     ["`+` of a function value through a parameter", "function op(v) { return v + 1; } var x = op(function () {});"],
+    // (#7354 C2, C2-D1) `__proto__`'s setter is the realm's lack, but `undefined` and `null` answer (the TypeError):
+    // a refusal at compile time became the abort of the kinds that cannot answer.
+    [
+      "a member write of Object.prototype's accessor on a value that may be a function",
+      "function w(v) { v.__proto__ = null; } w(function () {});",
+    ],
   ])("ends %s at the run-time abort", (_label, source) => abortsAtRunTime(source), SLOW);
 
   it.each([
@@ -118,11 +103,6 @@ describe("#7354 F1 — the function kind", () => {
       "a member write of Object.prototype's accessor on a function",
       "function g() {} g.__proto__ = null;",
       "function declaration 'g' read as a value is written",
-    ],
-    [
-      "a member write of Object.prototype's accessor on a value that may be a function",
-      "function w(v) { v.__proto__ = null; } w(function () {});",
-      "member write '__proto__' of a value that may be a string or a number or a boolean or a function or an object needs Object.prototype's accessor",
     ],
   ])("refuses %s by name", async (_label, source, message) => {
     expect(await refusal(source)).toContain(message);

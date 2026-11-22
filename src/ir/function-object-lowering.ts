@@ -202,25 +202,70 @@ export function concreteIntoDynamic(
 }
 
 /**
- * A dynamic member store's key or value onto the carrier: a concrete value boxed, and (#7354 F1b) where closures are
- * function values (`functionValues`, {@link createsFunctionObjects}) a closure as its function value. A value with
- * no carrier refuses by name.
+ * A dynamic member store's key or value, or (#7354 C2) a dynamic construct's argument (`role`), onto the carrier: a
+ * concrete value boxed, and (#7354 F1b) where closures are function values ({@link createsFunctionObjects}) a closure
+ * as its function value. A value with no carrier refuses by name.
  */
 export function dynamicStoreOperand(
   value: IrValueId,
   source: ts.Expression,
   cx: FunctionObjectLoweringHost,
-  functionValues: boolean,
+  role: "member-store" | "construct argument",
 ): IrValueId {
   const type = cx.builder.typeOf(value);
   if (type.kind === "dynamic") return value;
-  const boxed = functionValues ? concreteIntoDynamic(value, source, cx) : cx.boxConcrete(value, type, source);
+  const boxed = createsFunctionObjects(cx)
+    ? concreteIntoDynamic(value, source, cx)
+    : cx.boxConcrete(value, type, source);
   if (boxed !== null && cx.builder.typeOf(boxed).kind === "dynamic") return boxed;
   throw new IrUnsupportedError(
     "operand-coercion-unsupported",
     "build",
-    `ir/from-ast: dynamic member-store operand of ${describeIrType(type)} has no dynamic carrier (${cx.funcName})`,
+    `ir/from-ast: dynamic ${role} operand of ${describeIrType(type)} has no dynamic carrier (${cx.funcName})`,
   );
+}
+
+/**
+ * (#7106 S3a, #7354 C2) `new C(…args)` through a value: the callee, then each argument in source order as a dynamic
+ * value, then `dyn.construct`, which the Prepared legalization (`dynamic-function-operations.ts`) or the ordinary
+ * pipeline's resolver lowers. A spread argument refuses.
+ */
+export function lowerDynamicConstruct(expr: ts.NewExpression, cx: FunctionObjectLoweringHost): IrValueId {
+  const callee = cx.lowerExpression(expr.expression);
+  if (cx.builder.typeOf(callee).kind !== "dynamic") {
+    throw new IrUnsupportedError(
+      "constructor-resolution-unsupported",
+      "build",
+      `ir/from-ast: dynamic construct callee "${expr.expression.getText()}" lost its carrier (${cx.funcName})`,
+    );
+  }
+  const args = (expr.arguments ?? []).map((argument) => {
+    if (ts.isSpreadElement(argument)) {
+      throw new IrUnsupportedError(
+        "constructor-arity-unsupported",
+        "build",
+        `ir/from-ast: dynamic construct spread argument escaped selection (${cx.funcName})`,
+      );
+    }
+    return dynamicStoreOperand(cx.lowerExpression(argument), argument, cx, "construct argument");
+  });
+  return cx.builder.emitDynConstruct(callee, args);
+}
+
+/**
+ * (#7106, #7354 C2) The generic `value instanceof target` over two dynamic values: the left operand, then the right,
+ * each a dynamic value (a concrete one boxed), then `dyn.instanceof`.
+ */
+export function lowerDynamicInstanceOf(expr: ts.BinaryExpression, cx: FunctionObjectLoweringHost): IrValueId {
+  const value = concreteIntoDynamic(cx.lowerExpression(expr.left), expr.left, cx);
+  const target = concreteIntoDynamic(cx.lowerExpression(expr.right), expr.right, cx);
+  if (cx.builder.typeOf(value).kind !== "dynamic" || cx.builder.typeOf(target).kind !== "dynamic") {
+    demoteToLegacy(
+      "operand-coercion-unsupported",
+      `ir/from-ast: dynamic instanceof operand lost its dynamic carrier (${cx.funcName})`,
+    );
+  }
+  return cx.builder.emitDynInstanceOf(value, target);
 }
 
 export function lowerFunctionObjectMemberCall(
@@ -279,7 +324,8 @@ export function lowerBindingCall(
   scriptVar: ts.Declaration | undefined,
   cx: FunctionObjectLoweringHost,
 ): IrValueId {
-  const callee = cx.lowerExpression(expr.expression);
+  // (#7354 C2) A local's closure is called as its function value.
+  const callee = functionObjectDynamicValue(cx.lowerExpression(expr.expression), expr.expression, cx);
   if (cx.builder.typeOf(callee).kind !== "dynamic")
     demoteToLegacy("call-resolution-unsupported", `ir/from-ast: dynamic callee lost its carrier in ${cx.funcName}`);
   refuseCallShape(expr, false, "call-resolution-unsupported", "optional/spread dynamic value call is unsupported", cx);

@@ -73,27 +73,28 @@ async function refusal(source: string, target: "standalone" | "gc" = "standalone
   return messages(result).join("\n");
 }
 
-// A dead binding whose initializer refuses when it is kept: the closure reads `this` (slice C2). (#7354 F1) A function
-// expression is a value now, so the closure's body, not its shape, is what refuses.
-const DEAD = "var o = { m: function () { return this; } };";
-const CLOSURE = "'this' reference outside an instance method body";
+// A dead binding whose initializer refuses when it is kept: the closure reads `new.target` ((#7354 C2) it read `this`,
+// which binds now). (#7354 F1) A function expression is a value now, so the closure's body, not its shape, is what
+// refuses.
+const DEAD = "var o = { m: function () { return new.target; } };";
+const CLOSURE = "unsupported expression kind MetaProperty";
 // (#7354 F1) `-` of an object or function value is not lowered yet.
 const MINUS = "unary '-' expects number";
 const SHIM = readFileSync(new URL("../scripts/test262-fyi-runtime.js", import.meta.url), "utf8");
 
 // Programs beside a dropped binding; `@` is the asserted value (1 right, 2 wrong). (#7354 F1) Each dropped closure
-// reads `this`, so the unelided program (the verdict test below) still refuses fast instead of lowering a realm.
+// reads `new.target`, so the unelided program (the verdict test below) still refuses fast instead of lowering a realm.
 const RUNS = [
   ["an unused object with a function-valued property", `${DEAD} var r = 1; if (r !== @) throw 1;`],
-  ["an unused function expression", "var g = function (v) { return this; }; var r = 1; if (r !== @) throw 1;"],
+  ["an unused function expression", "var g = function (v) { return new.target; }; var r = 1; if (r !== @) throw 1;"],
   ["the test262 runtime shim", `${SHIM}var r = 1; if (r !== @) throw 1;`],
   [
     "two unused bindings that name each other",
-    "var a = { f: function () { return (b, this); } }; var b = { g: function () { return (a, this); } }; var r = 1; if (r !== @) throw 1;",
+    "var a = { f: function () { return (b, new.target); } }; var b = { g: function () { return (a, new.target); } }; var r = 1; if (r !== @) throw 1;",
   ],
   [
     "a statement whose declarators are all unused",
-    `var o = { m: function () { return this; } }, k = 2; var r = 1; if (r !== @) throw 1;`,
+    `var o = { m: function () { return new.target; } }, k = 2; var r = 1; if (r !== @) throw 1;`,
   ],
   ["a hoisted function used before its declaration", `if (f() !== @) throw 1; function f() { return 1; } ${DEAD}`],
   ["a unary operator on a primitive literal", `var x = +"3"; ${DEAD} var r = 1; if (r !== @) throw 1;`],
@@ -117,11 +118,11 @@ const KEPT = [
   [
     "only an unused function names it",
     `${DEAD} function unused() { return o.m(); } var r = 1;`,
-    CLOSURE, // (#7354 F2) the method call lowers; the kept closure reads `this`
+    CLOSURE, // (#7354 F2) the method call lowers; the kept closure reads `new.target`
   ],
   [
     "a sibling declarator has an effect (`var a = …, b = f();`)",
-    "function boom(v) { if (v) throw 7; return 0; } var a = { m: function () { return this; } }, b = boom(1);",
+    "function boom(v) { if (v) throw 7; return 0; } var a = { m: function () { return new.target; } }, b = boom(1);",
     CLOSURE,
   ],
   // `-{ valueOf }` calls valueOf (node throws): dropping it would return.
@@ -140,7 +141,7 @@ const KEPT = [
   ['a string literal spells it (`globalThis["o"]`)', `${DEAD} var s = "o"; if (s !== "o") throw 1;`, CLOSURE],
   [
     "a property name spells it",
-    "var m = { f: function () { return this; } }; var p = { m: 1 }; if (p.m !== 1) throw 1;",
+    "var m = { f: function () { return new.target; } }; var p = { m: 1 }; if (p.m !== 1) throw 1;",
     CLOSURE,
   ],
   ["the test262 shim's `print` is called", `${SHIM}print("x");`, 'identifier "console" is not in scope'],
@@ -315,7 +316,7 @@ it("#7354 F0 keeps a goal-dependent early error when the goal is unstated", asyn
 const SCRIPT_ONLY = "var g = function () { return import.meta; };";
 const MODULE_ONLY = "var g = function () { var await; };";
 const BOTH = "var g = function () { await 0; };";
-const LEGAL = "var g = function () { return this; };";
+const LEGAL = "var g = function () { return new.target; };";
 /** The runner's options with the goal flags replaced (`undefined` leaves one unstated). */
 const goalOptions = (scriptGoal: boolean | undefined, inferModule: boolean | undefined) => {
   const { scriptGoal: _s, inferModuleStrictArguments: _m, ...rest } = options() as Record<string, unknown>;

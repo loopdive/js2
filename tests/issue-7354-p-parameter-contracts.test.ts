@@ -133,6 +133,12 @@ describe("#7354 P — an untyped parameter is the dynamic value", () => {
       ["f(true) !== true", "f(true) !== false"],
     ],
     [
+      // (#7354 F1b, F2) A declaration read as a value is its home's function value; the call is the dispatcher's.
+      "a call through a value",
+      `${ID}var g = id;\nif (g(1) !== 1) throw 1;`,
+      ["g(1) !== 1", "g(1) !== 2"],
+    ],
+    [
       "the isNegativeZero helper of harness/assert.js",
       "function isNegativeZero(value) { return value === 0 && 1 / value === -Infinity; }\n" +
         "if (!isNegativeZero(-0)) throw 1;\nif (isNegativeZero(0)) throw 2;\nif (isNegativeZero(true)) throw 3;",
@@ -153,12 +159,6 @@ describe("#7354 P — an untyped parameter is the dynamic value", () => {
       "dynamic operation dyn.arguments_length has no Prepared intrinsic",
     ],
     ["an extra argument", `${ID}if (id(1, 2) !== 1) throw 1;`, "call to id has 2 args, expected 1"],
-    [
-      // (#7354 H) `g` has the dynamic home; a declaration read as a value is slice Fa's.
-      "a call through a value",
-      `${ID}var g = id;\nif (g(1) !== 1) throw 1;`,
-      'identifier "id" is not in scope',
-    ],
     [
       // JSDoc is not checked at runtime: the contract stays dynamic, and from-ast refuses it against a primitive tag.
       "a JSDoc-typed parameter called with a wrong type at top level",
@@ -247,23 +247,32 @@ describe("#7354 P — the parameter and result contracts", () => {
   it("gives an untyped parameter of a host async function no dynamic contract", () => {
     const { checker, file, f } = declarationOf("async function f(n) { return 1; }");
     const host = programDynamicContracts(
-      checker,
-      { backend: "wasmgc", target: "host" },
+      { checker, policy: { backend: "wasmgc", target: "host" } },
       [file],
       new AllocSiteRegistry(),
     );
     expect(host.parameter(f, f.parameters[0]!)).toBeUndefined();
     const sync = declarationOf("function f(n) { return 1; }");
-    const native = programDynamicContracts(sync.checker, STANDALONE, [sync.file], new AllocSiteRegistry());
+    const native = programDynamicContracts(
+      { checker: sync.checker, policy: STANDALONE },
+      [sync.file],
+      new AllocSiteRegistry(),
+    );
     expect(native.parameter(sync.f, sync.f.parameters[0]!)).toEqual({ kind: "dynamic" });
   });
 
   it("keeps an annotated non-any result whose body runs off its end: the annotation is the contract", () => {
     const { checker, file, f } = declarationOf("function f(v: any): number | undefined { if (v === 1) return 2; }");
-    expect(programDynamicContracts(checker, STANDALONE, [file], new AllocSiteRegistry()).result(f)).toBeUndefined();
+    expect(
+      programDynamicContracts({ checker, policy: STANDALONE }, [file], new AllocSiteRegistry()).result(f),
+    ).toBeUndefined();
     const bare = declarationOf("function f(v: any) { if (v === 1) return 2; }");
     expect(
-      programDynamicContracts(bare.checker, STANDALONE, [bare.file], new AllocSiteRegistry()).result(bare.f),
+      programDynamicContracts(
+        { checker: bare.checker, policy: STANDALONE },
+        [bare.file],
+        new AllocSiteRegistry(),
+      ).result(bare.f),
     ).toEqual({
       kind: "dynamic",
     });

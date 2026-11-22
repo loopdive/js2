@@ -36,6 +36,63 @@ export function sourceObjectCreate(d: SourceObjectCreateOperands): Instr[] {
 }
 
 /**
+ * (#7354 C2) `js.object.create-with-prototype(prototype)`: OrdinaryObjectCreate(prototype) for an ordinary object of
+ * this realm, [[Construct]]'s new object. Its caller passes only a value of the object kind; any other prototype is
+ * the realm's Object.prototype (`create-default`) or the run-time abort there.
+ */
+export function buildSourceObjectCreateWithPrototypeDefinition(d: SourceObjectCreateOperands): SourceObjectDefinition {
+  return {
+    locals: [],
+    body: [
+      { op: "local.get", index: 0 },
+      { op: "any.convert_extern" },
+      { op: "ref.cast", typeIdx: d.objectTypeIdx },
+      { op: "call", funcIdx: d.createWithPrototype },
+    ],
+  };
+}
+
+/**
+ * (#7354 C2) `js.object.inherits(object, prototype) -> i32`: OrdinaryHasInstance's walk (§7.3.21 step 6) over an
+ * ordinary object's [[Prototype]] links. Every link of such an object is an explicit ordinary object
+ * (`create-default`, `create-with-prototype`) ending at the realm's Object.prototype, whose link is null, so the walk
+ * meets no other layout.
+ */
+export function buildSourceObjectInheritsDefinition(d: {
+  readonly objectTypeIdx: TypeHandle;
+  readonly sameValue: FuncHandle;
+}): SourceObjectDefinition {
+  const cursor = 2;
+  return {
+    locals: [{ name: "cursor", type: { kind: "externref" } }],
+    body: [
+      { op: "local.get", index: 0 },
+      { op: "local.set", index: cursor },
+      {
+        op: "loop",
+        blockType: { kind: "empty" },
+        body: [
+          { op: "local.get", index: cursor },
+          { op: "any.convert_extern" },
+          { op: "ref.cast", typeIdx: d.objectTypeIdx },
+          { op: "struct.get", typeIdx: d.objectTypeIdx, fieldIdx: 0 },
+          { op: "extern.convert_any" },
+          { op: "local.tee", index: cursor },
+          { op: "ref.is_null" },
+          { op: "if", blockType: { kind: "empty" }, then: [{ op: "i32.const", value: 0 }, { op: "return" }] },
+          { op: "local.get", index: cursor },
+          { op: "local.get", index: 1 },
+          { op: "call", funcIdx: d.sameValue },
+          { op: "if", blockType: { kind: "empty" }, then: [{ op: "i32.const", value: 1 }, { op: "return" }] },
+          { op: "br", depth: 0 },
+        ],
+      },
+      { op: "unreachable" },
+    ],
+  };
+}
+
+/**
  * `js.object.get(object, key, receiver)`: the kernel's [[Get]], whose absent answer already is `undefined`. Its
  * "incomplete parent" state is a miss at the realm's Object.prototype, which does not hold the specification's
  * properties yet: (#7354 O4) every caller refuses the keys Object.prototype defines (`builtin-prototype-keys.ts`), so

@@ -10,7 +10,7 @@ import { legalizeDynamicGlobals } from "./program/dynamic-value-legalization.js"
 import type { TypeOracle } from "../checker/oracle.js";
 import { AllocSiteRegistry } from "./analysis/alloc-registry.js";
 import { irModuleGlobalBindingId, irModuleTdzGlobalBindingId, irSourceGlobalRef } from "./abi-bindings.js";
-import { irUnitFuncRef, irUnitCallableBindingId } from "./callable-bindings.js";
+import { irUnitCallableBindingId } from "./callable-bindings.js";
 import {
   lowerFunctionAstToIr,
   typeNodeToIr,
@@ -41,7 +41,7 @@ import type { IrModuleInitPlan } from "./program/startup.js";
 import { makeModuleInitSynthetic } from "./module-init.js";
 import { isModuleInitGlobalDeclaration, moduleInitBindings } from "./module-init-vars.js";
 import { makeIrIdentityModuleBindingResolver, type IrModuleBindingIdentity } from "./module-bindings.js";
-import type { IrDirectCallLoweringPlan, ModuleBindingGlobal } from "./ast-lowering-plans.js";
+import type { ModuleBindingGlobal } from "./ast-lowering-plans.js";
 import type { PreparedIrFunction as IrFunction, PreparedIrModule as IrModule } from "./runtime/contracts/prepared.js";
 import type { IrType } from "./core/types.js";
 import { freezePreparedIrRuntimeValue, preparedIrDataMismatch } from "./program/data.js";
@@ -1595,7 +1595,7 @@ export function prepareIrProgramSources(
       sourceFiles,
       identityContext: identity,
     });
-    const dynamicContracts = programDynamicContracts(input.checker, input.policy, sourceFiles, allocations);
+    const dynamicContracts = programDynamicContracts(input, sourceFiles, allocations);
     const moduleResolver = makeIrIdentityModuleBindingResolver(
       input.checker,
       {
@@ -1678,19 +1678,16 @@ export function prepareIrProgramSources(
     const closureCallableParameters = new Set(
       [...closureInvocations.values()].flatMap((plan) => plan.callbacks.map((row) => row.parameter.type)),
     );
-    const directCalls = new Map<ts.CallExpression, IrDirectCallLoweringPlan>();
-    for (const use of callGraph.uses) {
-      diagnostic.active = use.ownerUnitId;
-      const signature = signatures.get(use.targetUnitId);
-      const target = identity.terminalByUnitId.get(use.targetUnitId);
-      if (!signature || !target) unsupported(`direct call ${use.bindingId} has no complete target contract`);
-      directCalls.set(use.node, {
-        ownerUnitId: use.ownerUnitId,
-        target: irUnitFuncRef({ unitId: use.targetUnitId, name: target.displayName }),
-        signature,
-      });
-    }
-    prepareSourceDirectCalls(input.checker, sourceFiles, identity, startup, signatures, directCalls, diagnostic);
+    const directCalls = prepareSourceDirectCalls(
+      input.checker,
+      sourceFiles,
+      identity,
+      startup,
+      signatures,
+      callGraph.uses,
+      dynamicContracts.codeStrictness,
+      diagnostic,
+    );
     for (const unit of inventory.terminalUnits) {
       diagnostic.active = unit.id;
       if (functions.some((fn) => fn.unitId === unit.id)) continue;
@@ -1755,7 +1752,7 @@ export function prepareIrProgramSources(
             }),
         funcName: unit.displayName,
         exported: exportedUnits.has(unit.id),
-        functionCodeStrict: input.codeStrictness?.(moduleInit ? source : declaration),
+        ...dynamicContracts.codeStrictness(moduleInit ? source : declaration),
         identityContext: identity,
         checker: input.checker,
         oracle: input.oracle,

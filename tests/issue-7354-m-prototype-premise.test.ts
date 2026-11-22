@@ -3,12 +3,14 @@
 // #7354 M1, C1 — the closed-world premise a member read of a primitive rests on: no Prepared program can obtain a
 // built-in prototype as a value, so no code can change one, and a primitive's member read may answer what the
 // specification's pristine prototypes answer (src/ir/program/dynamic-member-access.ts, `MEMBER_ACCESS_ARM`
-// "primitive"). Each route to a prototype refuses by its exact text here.
+// "primitive"). Each route to a prototype refuses by its exact text here, or (#7354 C2, C2-D1) where a kind beside it
+// answers, ends at the run-time abort before any prototype is a value.
 //
 // The slice that makes any of these routes compile (G1's built-in globals as values, `Object.getPrototypeOf`, ...)
 // must reintroduce a program-wide gate on the primitive arm, or populate the realm's prototypes and read through them.
 import { describe, expect, it } from "vitest";
 import { compile, type Test262CompileOptions } from "../src/test262/test262-prepared-entry.js";
+import { abortsAtRunTime } from "./helpers/prepared-node-agreement.js";
 
 const options = (): Test262CompileOptions =>
   ({
@@ -36,16 +38,6 @@ describe("#7354 M1 — no Prepared program obtains a built-in prototype", () => 
     ["Reflect.getPrototypeOf", "function f(){ return Reflect.getPrototypeOf({}); } f();", notInScope("Reflect")],
     ["globalThis", "function f(){ return globalThis; } f();", notInScope("globalThis")],
     [
-      "a dynamic value's __proto__",
-      "function f(v){ return v.__proto__; } f(1);",
-      "dynamic operation member read '__proto__' of a value that may be a string or a number or a boolean needs String.prototype's properties and Number.prototype's properties and Boolean.prototype's properties has no Prepared intrinsic",
-    ],
-    [
-      "a dynamic value's constructor",
-      "function f(v){ return v.constructor; } f(1);",
-      "dynamic operation member read 'constructor' of a value that may be a string or a number or a boolean needs String.prototype's properties and Number.prototype's properties and Boolean.prototype's properties has no Prepared intrinsic",
-    ],
-    [
       "a number literal's constructor",
       "function f(){ return (1).constructor; } f();",
       "ir/from-ast: property access .constructor on f64 is not in slice 2 (f)",
@@ -55,4 +47,10 @@ describe("#7354 M1 — no Prepared program obtains a built-in prototype", () => 
     expect(result.success).toBe(false);
     expect(result.errors.map((error) => error.message)).toContain(reason);
   });
+
+  // `undefined` and `null` answer these reads (the TypeError), so the kinds that would reach a prototype abort.
+  it.each([
+    ["a dynamic value's __proto__", "function f(v){ return v.__proto__; } f(1);"],
+    ["a dynamic value's constructor", "function f(v){ return v.constructor; } f(1);"],
+  ])("ends %s at the run-time abort", (_label, source) => abortsAtRunTime(source), 180_000);
 });

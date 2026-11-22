@@ -38,7 +38,8 @@ const DYNAMIC: IrType = Object.freeze({ kind: "dynamic" });
 
 /**
  * The top-level function declarations of a single-source program that some identifier reads as a value, in source
- * order. A call's callee and `new`'s constructor are no value reads: a call stays the declaration's direct call.
+ * order. A call's callee is no value read: a call stays the declaration's direct call. (#7354 C2) `new`'s constructor
+ * is one: [[Construct]] takes the function object, its `prototype` included.
  */
 export function functionDeclarationsReadAsValues(
   checker: ts.TypeChecker,
@@ -65,7 +66,7 @@ function readsValue(identifier: ts.Identifier): boolean {
   const { parent } = identifier;
   return !(
     (ts.isFunctionDeclaration(parent) && parent.name === identifier) ||
-    ((ts.isCallExpression(parent) || ts.isNewExpression(parent)) && parent.expression === identifier)
+    (ts.isCallExpression(parent) && parent.expression === identifier)
   );
 }
 

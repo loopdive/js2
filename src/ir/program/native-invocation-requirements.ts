@@ -4,8 +4,8 @@ import type { IrInstr, IrInstrCall, IrValueId, IrType } from "../core/nodes.js";
 import { closureSignatureEquals } from "../core/types.js";
 import type { IrUnitId } from "../../shared/contracts/ir-identity.js";
 import {
-  IR_CLOSURE_VECTOR_APPLY,
   IR_CLOSURE_UNDEFINED,
+  closureInvocationKind,
   closureMethodArity,
 } from "../core/closure-invocation-callables.js";
 import { nativeAsyncCallableValueTypes } from "../runtime/native-async-callables.js";
@@ -30,7 +30,7 @@ import {
 export interface NativeInvocationUse {
   readonly occurrence: number;
   readonly ownerUnitId: IrUnitId;
-  readonly kind: "method" | "apply-vector" | "undefined";
+  readonly kind: NonNullable<ReturnType<typeof closureInvocationKind>>;
   readonly arity?: number;
   /**
    * The callee's own allocation; absent for (#7354 F2) a call through a dynamic value (`dynamicCallee`), which the
@@ -55,6 +55,8 @@ export interface NativeInvocationRequirements {
   readonly getterUses: readonly NativeGetterInvocationUse[];
   readonly methodArities: readonly number[];
   readonly applyVector: boolean;
+  /** (#7354 C2) Some unit reads the installed receiver (`js.closure.receiver`). */
+  readonly receiver: boolean;
   readonly gaps: readonly { readonly unitId: IrUnitId; readonly detail: string }[];
   /** This owner cannot certify other compiler-created callable producers. */
   readonly completionScope: "selected-source-invocation";
@@ -205,16 +207,9 @@ function calculate(
     const call: IrInstrCall = row.instruction,
       binding = call.target.binding;
     if (binding.kind !== "intrinsic") continue;
-    const arity = closureMethodArity(binding.symbol);
-    const kind =
-      arity !== undefined
-        ? "method"
-        : binding.symbol === IR_CLOSURE_VECTOR_APPLY
-          ? "apply-vector"
-          : binding.symbol === IR_CLOSURE_UNDEFINED
-            ? "undefined"
-            : undefined;
+    const kind = closureInvocationKind(binding.symbol);
     if (!kind) continue;
+    const arity = closureMethodArity(binding.symbol);
     const unitId = buffer.ownerUnitId;
     let types = typeMaps.get(unitId);
     if (!types) {
@@ -224,8 +219,8 @@ function calculate(
     }
     if (call.result === null || !external(call.resultType ?? undefined))
       fail("semantic invocation result is not externref");
-    if (kind === "undefined") {
-      if (call.args.length) fail("canonical undefined callable takes no operands");
+    if (kind === "undefined" || kind === "receiver") {
+      if (call.args.length) fail(`canonical ${kind} callable takes no operands`);
       uses.push({ occurrence, ownerUnitId: unitId, kind });
       continue;
     }
@@ -322,6 +317,7 @@ function calculate(
       ]),
     ].sort((a, b) => a - b),
     applyVector: uses.some((use) => use.kind === "apply-vector"),
+    receiver: uses.some((use) => use.kind === "receiver"),
     gaps,
   };
 }

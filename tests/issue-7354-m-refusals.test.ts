@@ -6,54 +6,39 @@
 // The TypeError the legalization raises itself (a nullish member read or write, a strict write to a primitive, an
 // object whose `toString` is not callable) is the realm's error, thrown under the one exception tag. (M2) A catch that
 // reads it reads the error kind of the dynamic value (tests/issue-7354-m-catch-and-tags.test.ts); without a catch it
-// ends the program as node's uncaught TypeError does (below). What a program that reads a caught value still refuses:
-// a member write whose receiver may be that error, and reads of an error's Error.prototype keys.
+// ends the program as node's uncaught TypeError does (below). (#7354 C2, C2-D1) An access refuses at compile time only
+// where no kind the receiver may hold can answer it; beside a kind that answers, a kind the realm cannot answer for (a
+// write to the realm's error, a read of a key only a built-in prototype holds) is the run-time abort.
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { OBJECT_PROTOTYPE_KEYS } from "../src/ir/program/builtin-prototype-keys.js";
-import { gapText, refusal, throwsAsNode } from "./helpers/prepared-node-agreement.js";
+import { abortsAtRunTime, agreesWithNode, gapText, refusal, throwsAsNode } from "./helpers/prepared-node-agreement.js";
 
 afterEach(() => vi.restoreAllMocks());
 
 /** The one form of a member-access refusal: the access, the receiver, and what the realm lacks to answer it. */
 const refused = (operation: string, receiver: string, missing: string) =>
   gapText(`${operation} of ${receiver} needs ${missing}`);
-const mayBe = (kinds: string) => `a value that may be ${kinds}`;
-const WRAPPERS = "String.prototype's properties and Number.prototype's properties and Boolean.prototype's properties";
 
 describe("#7354 M1 — the TypeError the legalization raises", () => {
+  // (#7354 C2) Each of these refused at compile time (M2): the receiver may be the caught error, whose arm cannot
+  // answer, but its other kinds can, so only the error arm is the abort.
   it.each([
-    [
-      "M2: a write whose receiver may be a caught error",
-      '"use strict"; function f(v){ try { v.k = 1; } catch (e) { return e; } } f(1);',
-      refused("member write 'k'", mayBe("an Error"), "property storage on the realm's error"),
-    ],
-    [
-      "M2: an error's constructor",
-      "function f(v){ try { return v.a; } catch (e) { return e.constructor; } } f(null);",
-      refused(
-        "member read 'constructor'",
-        mayBe("a string or a number or a boolean or an Error"),
-        `${WRAPPERS} and Error.prototype's properties`,
+    ["M2: an error's constructor", "function f(v){ try { return v.a; } catch (e) { return e.constructor; } } f(null);"],
+    // V8 gives an error an own `stack`; the realm's error has none, so the read aborts rather than answer undefined.
+    ["M2: an error's stack", "function f(v){ try { return v.a; } catch (e) { return e.stack; } } f(null);"],
+    ["M2: an error's toString", "function f(v){ try { return v.a; } catch (e) { return e.toString; } } f(null);"],
+    ["M2: a write to a caught error", "function f(v){ try { return v.a; } catch (e) { e.k = 1; } } f(null);"],
+  ])("ends %s at the run-time abort", (_label, source) => abortsAtRunTime(source), 180_000);
+
+  // The kinds that answer still answer where the error arm aborts.
+  it(
+    "M2: a strict write whose receiver may be a caught error throws node's TypeError for a number",
+    () =>
+      agreesWithNode(
+        '"use strict"; function f(v){ try { v.k = 1; } catch (e) { return e.name; } return "none"; } var out = ""; out = out + f(1); out = out + f({});',
       ),
-    ],
-    [
-      // V8 gives an error an own `stack`; the realm's error has none, so the read refuses rather than answer undefined.
-      "M2: an error's stack",
-      "function f(v){ try { return v.a; } catch (e) { return e.stack; } } f(null);",
-      refused("member read 'stack'", mayBe("an Error"), "Error.prototype's properties"),
-    ],
-    [
-      "M2: an error's toString",
-      "function f(v){ try { return v.a; } catch (e) { return e.toString; } } f(null);",
-      refused(
-        "member read 'toString'",
-        mayBe("a string or a number or a boolean or an Error"),
-        `${WRAPPERS} and Error.prototype's properties`,
-      ),
-    ],
-  ])("refuses %s", async (_label, source, reason) => {
-    expect(await refusal(source)).toContain(reason);
-  });
+    180_000,
+  );
 
   // No catch anywhere: the TypeError is thrown and ends the program, as in node.
   it.each([
@@ -68,63 +53,61 @@ describe("#7354 M1 — the TypeError the legalization raises", () => {
 });
 
 describe("#7354 M1 — keys a built-in prototype holds", () => {
-  // C3: the catalog's Object.prototype keys are the one list; each refuses on an object receiver.
-  it.each([...OBJECT_PROTOTYPE_KEYS])("refuses a read of Object.prototype's %s off an object", async (key) => {
-    expect(await refusal(`function g(){ var o = {a:1}; return o.${key}; } g();`)).toContain(
-      refused(`member read '${key}'`, "an object", "Object.prototype's properties"),
-    );
-  });
-
-  // A receiver of one known kind names it; one that may hold several kinds names those whose arm refuses (finding 5 of
-  // the M1 review: `{a:1}.constructor` once refused "of a string").
-  const prim = "a string or a number or a boolean";
+  // C3: the catalog's Object.prototype keys are the one list. (#7354 C2) Off an object, a data key is found on the
+  // object's own or source-built chain, else it is Object.prototype's, which the realm lacks: the abort. The accessor
+  // `__proto__` is the only key no object can answer, so it still refuses at compile time.
+  const DATA_KEYS = [...OBJECT_PROTOTYPE_KEYS].filter((key) => key !== "__proto__");
+  it.each(DATA_KEYS)(
+    "ends a read of Object.prototype's %s off an object at the run-time abort",
+    (key) => abortsAtRunTime(`function g(){ var o = {a:1}; return o.${key}; } g();`),
+    180_000,
+  );
+  it(
+    "reads an own property of a key Object.prototype holds",
+    () =>
+      agreesWithNode(
+        "function g(o){ o.toString = 2; o.constructor = 3; return o.toString + o.constructor; } var out = String(g({}));",
+      ),
+    180_000,
+  );
   it.each([
     [
       "A17: a write of __proto__ to an object",
       "function g(){ var o = {a:1}; o.__proto__ = null; } g();",
       refused("member write '__proto__'", "an object", "Object.prototype's accessor"),
     ],
-    // (#7354 F1, D4) A write of Object.prototype's writable data key `toString` creates an own property
-    // (tests/issue-7354-f1-function-kind.test.ts).
     [
-      "B23: a string's length",
-      "function f(v){ return v.length; } f('abc');",
-      refused("member read 'length'", mayBe("a string"), "its own length and index properties"),
-    ],
-    [
-      "B23: a string's index key",
-      "function f(v){ return v['0']; } f('abc');",
-      refused("member read '0'", mayBe("a string"), "its own length and index properties"),
-    ],
-    [
-      "B24: Number.prototype.toFixed",
-      "function f(v){ return v.toFixed; } f(1);",
-      refused("member read 'toFixed'", mayBe("a number"), "Number.prototype's properties"),
-    ],
-    [
-      "B24: String.prototype.charAt",
-      "function f(v){ return v.charAt; } f('a');",
-      refused("member read 'charAt'", mayBe("a string"), "String.prototype's properties"),
-    ],
-    [
-      "B24: Object.prototype.valueOf",
-      "function f(v){ return v.valueOf; } f(true);",
-      refused("member read 'valueOf'", mayBe(prim), WRAPPERS),
-    ],
-    // C6: the `__proto__` accessor's setter answers for a primitive receiver even in strict code.
-    [
-      "C6: a sloppy __proto__ write",
-      "function f(v){ v.__proto__ = 2; } f(1);",
-      refused("member write '__proto__'", mayBe(prim), "Object.prototype's accessor"),
-    ],
-    [
-      "C6: a strict __proto__ write",
-      '"use strict"; function f(v){ v.__proto__ = 2; } f(1);',
-      refused("member write '__proto__'", mayBe(prim), "Object.prototype's accessor"),
+      "a read of __proto__ off an object",
+      "function g(){ var o = {a:1}; return o.__proto__; } g();",
+      refused("member read '__proto__'", "an object", "Object.prototype's accessor"),
     ],
   ])("refuses %s", async (_label, source, reason) => {
     expect(await refusal(source)).toContain(reason);
   });
+
+  // (#7354 C2) Each refused at compile time before: a parameter may also be `undefined` or `null`, whose arm answers
+  // (the TypeError), so the kind that cannot answer is the abort. (#7354 F1, D4) A write of Object.prototype's
+  // writable data key `toString` creates an own property (tests/issue-7354-f1-function-kind.test.ts).
+  it.each([
+    ["B23: a string's length", "function f(v){ return v.length; } f('abc');"],
+    ["B23: a string's index key", "function f(v){ return v['0']; } f('abc');"],
+    ["B24: Number.prototype.toFixed", "function f(v){ return v.toFixed; } f(1);"],
+    ["B24: String.prototype.charAt", "function f(v){ return v.charAt; } f('a');"],
+    ["B24: Object.prototype.valueOf", "function f(v){ return v.valueOf; } f(true);"],
+    // C6: the `__proto__` accessor's setter answers for a primitive receiver even in strict code.
+    ["C6: a sloppy __proto__ write", "function f(v){ v.__proto__ = 2; } f(1);"],
+    ["C6: a strict __proto__ write", '"use strict"; function f(v){ v.__proto__ = 2; } f(1);'],
+  ])("ends %s at the run-time abort", (_label, source) => abortsAtRunTime(source), 180_000);
+
+  // The kinds that answer still answer beside an aborting one.
+  it(
+    "answers a nullish receiver's TypeError where its string arm would abort",
+    () =>
+      agreesWithNode(
+        "function f(v){ try { return v.length; } catch (e) { return 'T'; } } var out = ''; out = out + f(undefined); out = out + f(null);",
+      ),
+    180_000,
+  );
 });
 
 describe("#7354 M1 — refusals that stay", () => {

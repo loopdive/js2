@@ -77,6 +77,8 @@ export interface NativeInvocationReservations {
     readonly extras: GlobalReservation;
   };
   readonly undefinedValue: FunctionReservation;
+  /** (#7354 C2) `js.closure.receiver`: the `__current_this` the dispatcher installed. */
+  readonly receiver?: FunctionReservation;
   readonly isUndefined: FunctionReservation;
   readonly methods: readonly { readonly arity: number; readonly function: FunctionReservation }[];
   readonly applyVector?: FunctionReservation;
@@ -201,6 +203,7 @@ export function reserveNativeInvocationResources(
   tx.assertReservationKeysAvailable([
     ...(borrowedSubstrate.value === undefined ? substratePlan.reservationKeys : []),
     ...["this", "argc", "extras", "undefined", "is-undefined"].map(key),
+    ...(requirements.receiver ? [key("receiver")] : []),
     ...requirements.methodArities.map((arity) => key(`method:${arity}`)),
     ...(requirements.applyVector ? [key("apply-vector")] : []),
   ]);
@@ -227,6 +230,9 @@ export function reserveNativeInvocationResources(
     params: [],
     results: [{ kind: "externref" }],
   });
+  const receiver = requirements.receiver
+    ? tx.reserveFunction(key("receiver"), "__closure_receiver", { params: [], results: [{ kind: "externref" }] })
+    : undefined;
   const isUndefined = tx.reserveFunction(key("is-undefined"), "__closure_is_undefined", {
     params: [{ kind: "externref" }],
     results: [{ kind: "i32" }],
@@ -255,6 +261,7 @@ export function reserveNativeInvocationResources(
     errors,
     globals,
     undefinedValue,
+    ...(receiver ? { receiver } : {}),
     isUndefined,
     methods,
     ...(applyVector ? { applyVector } : {}),
@@ -272,6 +279,7 @@ export function reserveNativeInvocationResources(
         ? nativeInvocationSubstrateReservationInventory(tx, substrate).functions
         : []),
       undefinedValue,
+      ...(receiver ? [receiver] : []),
       isUndefined,
       ...methods.map((row) => row.function),
       ...(applyVector ? [applyVector] : []),
@@ -437,6 +445,8 @@ export function fillNativeInvocationResources(
     locals: [],
     body: [{ op: "global.get", index: state.undefinedGlobal }, { op: "extern.convert_any" }],
   });
+  if (pack.receiver)
+    tx.fillFunction(pack.receiver, { locals: [], body: [{ op: "global.get", index: state.currentThis }] });
   tx.fillFunction(pack.isUndefined, {
     locals: [],
     body: buildClosureUndefinedTest(0, values.types.anyValue.typeIndex),

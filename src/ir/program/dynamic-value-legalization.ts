@@ -36,9 +36,11 @@ import { typeofComparisons } from "./typeof-comparisons.js";
 import { IR_DYN_ADD_FN } from "../../shared/contracts/dynamic-add-helper.js";
 import { gap } from "./dynamic-value-gap.js";
 import { dynamicMemberRead, dynamicMemberWrite } from "./dynamic-member-access.js";
+import { dynamicConstruct, dynamicCurrentThis, dynamicInstanceOf } from "./dynamic-function-operations.js";
 import { CARRIER, additionBuilder, chainBuilders, conversionBuilders, knownKinds } from "./dynamic-value-chains.js";
 import {
   NO_OBJECTS,
+  IS_OBJECT,
   KINDS_OF_TYPEOF,
   OBJECT_TAG,
   TYPEOF_NAME,
@@ -96,6 +98,8 @@ export function legalizeDynamicValues(
   const addition = additionBuilder(builders, conversions);
   // (#7354 O4, O3) What a member read or write is written with (`dynamic-member-access.ts`).
   const memberAccess = { ...builders, carrier: CARRIER, definitions, kindsOf: kinds.kindsOf };
+  // (#7354 C2) What `this`, `new` and `instanceof` are written with (`dynamic-function-operations.ts`).
+  const functionOperations = { ...builders, program, objects: admitted.filter((kind) => IS_OBJECT[kind]) };
   const isDynamic = (value: IrValueId): boolean => types.get(value)?.kind === "dynamic";
   const typeofs = typeofComparisons(fn);
   // `!==`/`!=`: the positive test into a fresh value, then its negation into the comparison's result.
@@ -211,6 +215,12 @@ export function legalizeDynamicValues(
         return dynamicMemberRead(memberAccess, instr, instr.result!);
       case "dyn.member_set":
         return dynamicMemberWrite(memberAccess, instr);
+      case "dyn.current_this":
+        return dynamicCurrentThis(functionOperations, instr);
+      case "dyn.construct":
+        return dynamicConstruct(functionOperations, instr);
+      case "dyn.instanceof":
+        return dynamicInstanceOf(functionOperations, instr);
       case "dyn.eq": {
         if (instr.loose) return gap("dyn.eq (loose)");
         return withSense(instr, instr.negate, (result) => [

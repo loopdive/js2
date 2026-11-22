@@ -26,6 +26,8 @@ const CONTRACTS = [
   // (#7354 M2) the error kind's test and its name / message field read (an i32 selector)
   ["js.object.is-error", [REF], [BOOL]],
   ["js.object.error-field", [REF, { kind: "val", val: { kind: "i32" } }], [REF]],
+  // (#7354 C2) OrdinaryHasInstance's prototype-chain walk
+  ["js.object.inherits", [REF, REF], [BOOL]],
 ] as const;
 
 describe("ordinary object semantic contracts", () => {
