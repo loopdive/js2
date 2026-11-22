@@ -116,7 +116,7 @@ describe("#7354 C2 — instanceof", () => {
   it.each([
     [
       "in a program that names Symbol (@@hasInstance)",
-      "function F(){} var s = typeof Symbol; var x = ({}) instanceof F;",
+      "function F(){} var Symbol = 1; var x = ({}) instanceof F;",
       gapText("instanceof in a program that names 'Symbol'"),
     ],
     [

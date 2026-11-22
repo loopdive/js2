@@ -44,7 +44,8 @@ function isPrimitive(value) {
 function formatIdentityFreeValue(value) {
   switch (value === null ? 'null' : typeof value) {
     case 'string':
-      return typeof JSON !== "undefined" ? JSON.stringify(value) : '"' + value + '"';
+      // (#7354 T) assert.js probes \`typeof JSON\` here, which refuses by name now; its fallback arm is kept.
+      return '"' + value + '"';
     case 'bigint':
       return String(value) + "n";
     case 'number':

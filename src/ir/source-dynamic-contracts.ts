@@ -382,7 +382,7 @@ export function programDynamicContracts(
       ? {
           resolveDynamic: () => ({ kind: "externref" }),
           dynamicCarrierIsExternref: () => true,
-          unresolvedNameIsAbsent: (node) => absentGlobal(checker, sourceFiles, node),
+          unresolvedNameIsAbsent: (node) => absentGlobal(checker, node),
           dynamicClosureSignature: (expression) => sourceDynamicClosureSignature(policy, expression),
           staticFunctionValue: (declaration) =>
             !closuresBindReceivers && staticFunctionValue(policy, sourceFiles, declaration),
@@ -422,30 +422,17 @@ export function programDynamicContracts(
 }
 
 /**
- * (#7354 Ty) The Prepared program is closed: its global environment holds the program's own declarations and the
- * providers from-ast's read names, nothing else (no host object). So `typeof X` of a global the program does not
- * declare (only lib declarations, or none at all) answers "undefined". That is a statement about THIS environment,
- * which provides no such global yet, not ECMAScript's answer (node says `typeof Math === "object"`). It is sound
- * because (1) every value, member, call or `new` use of such a name refuses by name, so no program can use what
- * `typeof` denied — tests/issue-7354-ty-typeof-comparisons.test.ts pins that for every name of
- * `AMBIENT_TYPEOF_TAGS`, and the slice that provides one adds it to `PREPARED_PROVIDED_GLOBALS`; and (2) the error
- * is in the safe direction: a test asserting the global exists fails. The shape that could pass falsely is a test
- * whose assertions all sit under `if (typeof X !== "undefined")` (none in ES5; two in later editions, measured).
- * A script's top-level `function Error() {}` is reported by the checker as the lib declarations alone, hence the
- * file check.
+ * (#7354 Ty, T) `typeof X` answers "undefined" only for a name that nothing declares: the checker resolves it to no
+ * symbol, neither the program's nor the standard library's (its lib declarations are the one list of the globals the
+ * language defines; `globalThis` resolves to a symbol without declarations). A
+ * standard global this path does not provide yet (`Math`, `parseInt`, `Object`, …) is not absent: its `typeof`, like
+ * every other read of it, refuses by name (an abort body inside a function under the test262 entry), never
+ * "undefined" (node says `typeof Math === "object"`). A script's top-level `function Error() {}` is reported by the
+ * checker as the lib declarations alone, hence the file check.
  */
-function absentGlobal(checker: ts.TypeChecker, sourceFiles: readonly ts.SourceFile[], node: ts.Identifier): boolean {
-  if (PREPARED_PROVIDED_GLOBALS.has(node.text) || !isUndeclaredInFile(node)) return false;
-  const declarations = checker.getSymbolAtLocation(node)?.declarations ?? [];
-  return !declarations.some((declaration) => sourceFiles.includes(declaration.getSourceFile()));
+function absentGlobal(checker: ts.TypeChecker, node: ts.Identifier): boolean {
+  return isUndeclaredInFile(node) && checker.getSymbolAtLocation(node) === undefined;
 }
-
-/**
- * The lib globals some use of which compiles on this path, so `typeof` must not deny them: it refuses by name until
- * their real answer is wired. `Number`, (#7354 Str2) `String` and (#7354 T) `isNaN`: direct `Number(v)` /
- * `String(v)` / `isNaN(v)` calls (`prepareConversionResolvers`).
- */
-export const PREPARED_PROVIDED_GLOBALS: ReadonlySet<string> = new Set(["Number", "String", "isNaN"]);
 
 /**
  * (#7354 D1) The one rule for a dynamic value leaving the dynamic domain. A

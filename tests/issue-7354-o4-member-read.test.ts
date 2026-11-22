@@ -76,8 +76,9 @@ const PROGRAMS: readonly [string, string][] = [
   ["a number's absent member", "function g(v) { return v.q; } if (g(1) !== undefined) throw 1;"],
   // (#7354 M1, C1) This program refused under O's plainness rule ("the program names 'Object'").
   [
+    // (#7354 T) The name sits in an uncalled function: `typeof Object` now refuses by name, so that function aborts.
     "a member read in a program that names a prototype global",
-    "var o = { a: 1 }; var t = typeof Object; function g(v) { return v.q; } if (o.a !== 1 || g(1) !== undefined) throw 1;",
+    "var o = { a: 1 }; function n() { return typeof Object; } function g(v) { return v.q; } if (o.a !== 1 || g(1) !== undefined) throw 1;",
   ],
 ];
 
