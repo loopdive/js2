@@ -5497,3 +5497,128 @@ deleted, not updated (#7380); the catalog's native rows are asserted by identity
 
 - Node 25 (not installed); no legacy `try` was hand-built.
 - The m-sweep, o/o2/o4, str*, ty, t, d1, vg, p, x, f2, c2-constructors suites and the full 3518/3526 pin suites.
+
+## Slice P1 plan (2026-11-22, branch `claude/7354-p1` from `claude/7354-o1` 4fc230872a)
+
+`Object.prototype.hasOwnProperty`, `propertyIsEnumerable`, `isPrototypeOf` on the Prepared path.
+
+### Reproduced (strict entry, runner options, real prelude)
+
+| row | stops at (base) |
+|---|---|
+| `Object/defineProperty/15.2.3.6-2-12.js` | `own-property test on a script var planned by neither #7335's arm nor the row (<module-init>)` |
+| `Object/create/15.2.3.5-4-19.js` | same |
+| `Error/prototype/S15.11.3.1_A3_T1.js` | `identifier "Error" is not in scope` (needs G1; P1 does not move it) |
+
+The refusal comes from from-ast's #7339 territory test (`isOwnPropertyTestTerritory`, the ordinary lane's fallback
+row): on this lane the row is never planned, so every `x.hasOwnProperty(k)` on a script var refuses before F2's
+method call is reached. Elsewhere (a parameter) the call already is Get + `js.closure.call:1`, and the Get is C2-D1's
+`has ? get : abort`, so it aborts unless the object owns the key.
+
+### Decision: (i), populate; the built-in's algorithm runs at the call site, behind an identity test
+
+- **Population.** The realm's Object.prototype (the kernel's `objectPrototype`) holds the three methods as data
+  properties `{writable, !enumerable, configurable}`, each a kernel built-in function entry: `typeof` "function", own
+  `length` 1 and `name` (read only), [[Prototype]] %Function.prototype%, no `prototype`, not a constructor. Reads,
+  writes, overrides and `Object.create(null)` chains are the realm's own [[Get]] / OrdinarySet, so a user own
+  property, a user prototype's method or a write `o.hasOwnProperty = …` wins by construction, and
+  `Object.create(null).hasOwnProperty` is `undefined` exactly. No proof of absence anywhere.
+- **The call.** `o.m(args)` stays F2's Get + call. Where the call's callee is that Get with a populated constant key
+  (the legalization sees it defined by `dyn.member_get`), the call expands to
+  `f === %Object.prototype.m%` ? (the built-in's algorithm, written by the legalization) : (the dispatcher call). The
+  test is the run-time identity of the value the Get answered, so an override is simply the else arm.
+- **Why not (ii)** (recognised by receiver kind): it needs a proof that no object owns `m`, no user prototype has it,
+  nothing was assigned to Object.prototype, and it is wrong for a receiver of unknown kind (plan B-D5).
+- **Why the algorithm is not the kernel entry's `(this, vector)` body — how O1's decision carries over.** Step 1 of
+  both predicates is ToPropertyKey(V), which for an object key calls its `toString` / `valueOf` (a source closure,
+  F2's dispatcher) and for a number needs the program's Number::toString: only the source side has them (O1 made the
+  same call for the statics). So the realm still serves contracts over converted operands, and the steps that need
+  the program (ToPropertyKey via the legalization's `stringOf`, the kind tests) are written at the site. The value
+  form (`var h = o.hasOwnProperty; h(k)`, `new h()`) reaches the dispatcher with a built-in callee: its fallback,
+  today the catchable `Value is not callable` TypeError (wrong once a built-in is a value), becomes the run-time abort
+  for a built-in function object (B-D3 / C1: such a kernel entry's algorithm is `unreachable`). V1/P2 replace that
+  abort with a real `(this, vector)` algorithm plus a realm-to-program callback; nothing here has to be undone.
+- **Not populated: `valueOf`, `toLocaleString`, `toString`, `constructor`, `__proto__`, the legacy methods.**
+  `constructor` is %Object%, not a value yet (V1). `valueOf` / `toString` are read by OrdinaryToPrimitive (F2's D6),
+  which models them as absent: populating `valueOf` would send every `"" + o` through the dispatcher's built-in arm,
+  i.e. the abort — a regression. Deviations from plan §5 P1 (it listed `valueOf`) and §6 ("status 2 has no caller
+  left"): status 2 (a miss at Object.prototype) keeps its meaning for these keys.
+
+### What a read of an Object.prototype key becomes
+
+| key | ordinary object | function value | number / boolean / string | error (caught TypeError) |
+|---|---|---|---|---|
+| the three | realm `get` (was `has ? get : abort`) | realm `get` (was abort) | `%Object.prototype.m%` (was abort): no wrapper prototype holds `m` and no program can change one (M1) | abort (unchanged) |
+| `toString`, `valueOf`, `toLocaleString`, `constructor`, legacy methods | `has ? get : abort` (C2-D1, unchanged) | abort (unchanged) | abort (unchanged) | abort (unchanged) |
+| `__proto__` | refusal / abort (unchanged) | same | same | same |
+
+Nothing becomes `undefined` that was not: a populated key misses only on a chain that ends at `null`.
+
+### The algorithm at the site (`this` = the call's receiver, `V` = the first argument or `undefined`)
+
+- `hasOwnProperty` / `propertyIsEnumerable`: `P = ToPropertyKey(V)` first (`stringOf`; a key object's `toString` runs
+  once, a throw is catchable), then by `this`'s kind: ordinary object or function → new realm row
+  `js.object.has-own(o, P, selector)` (kernel `findOwn` over `bag`; selector 1 also tests the enumerable bit; it sees
+  literal, written, defineProperty data / accessor / non-enumerable properties, a function's `length` / `name` /
+  `prototype`, constructor-made properties); number / boolean → `false` (a fresh wrapper owns nothing); string →
+  abort (its `length` and indices need the String exotic, A1); error → abort; `undefined` / `null` → ToObject's
+  TypeError (unreachable: the Get before it threw).
+- `isPrototypeOf`: V not an ordinary object → `false` (step 1, before ToObject(this)); else `js.object.inherits(V, this)`
+  (C2's walk: an ordinary object's chain holds only ordinary objects, so a function, error or primitive `this` answers
+  false by the walk; a function or error V's chain holds only realm prototypes no program can name → `false`).
+- Result: the Boolean carrier.
+
+### Placement, reuse, removals
+
+- Catalog (`native-realm-catalog.ts`): the three rows `implementation: "native"`, one native list beside the statics'
+  (`members()` asks one predicate); `builtin-prototype-keys.ts` reads it (`nativeObjectPrototypeMethod`, beside
+  `nativeObjectStatic`).
+- Realm: `beginRealm` adds kernel entries for the catalog's native Object.prototype methods when the realm description
+  names them (`native-realm-requirements.ts`: a `js.object.get` whose key is that string constant, or the
+  `prototype-method` contract) — on demand, so a program naming none (the prelude) keeps its bytes; the kernel's
+  request check admits that behaviour with the catalog's name / length; the initializer defines each on
+  Object.prototype; the entry's algorithm is `unreachable`. Rows (`native-source-objects.ts`):
+  `js.object.prototype-method(selector) -> externref` (the entry's getter: the identity test and the primitive arm)
+  and `js.object.has-own(o, key, selector) -> i32`; declarations and manifest lines.
+- IR: `src/ir/program/dynamic-prototype-methods.ts` (new, sibling of `dynamic-object-statics.ts`, same shape: one
+  expander, one row per method); the legalization's `call` case +2 lines; `dynamic-member-access.ts` arms per the
+  table (C2-D1's has-or-abort and the function / primitive refusals lose the three keys: the duplicate removed). A
+  program that reads one of the keys but creates no function value refuses by name (the function kind is not
+  admitted there, so `typeof` would fold wrong).
+- Dispatcher (`closure-method-body.ts`, and the apply body): fallback = abort for a closure-root value (every source
+  closure has an arm, so what is left is a built-in), the TypeError otherwise. Only where the realm is populated, if
+  the plumbing is small; else everywhere, with every differing prepared-bytes row explained and run.
+- from-ast: no #7339 territory on the function-object lane (one predicate in `objectStaticsRealmOf`); net ≤ 0 lines,
+  offset by moving code. program-source.ts untouched.
+- Not reused: `buildObjectPrototypeMethodDefinition` (its ToPropertyKey / ToObject / Call0 bindings need the
+  program); its HasOwnProperty step is the kernel's `findOwn`, which `has-own` calls.
+
+### Proving programs (node's answer + a wrong twin, unless A = abort, R = refusal)
+
+1. Own / inherited / absent / `defineProperty` data, accessor (`{get}`), non-enumerable — on a script var, a
+   parameter, a `new C` instance (`this.a`), an `Object.create(p)` child; `propertyIsEnumerable` of each.
+2. Keys `1`, `true`, `undefined`, none, `{toString(){ n++; return 'b'; }}` (n === 1), a throwing `toString` (caught).
+3. Function receivers: `F.hasOwnProperty('prototype' | 'length' | 'name' | 'x')`, after `F.x = 1`;
+   `F.propertyIsEnumerable('length')`.
+4. `C.prototype.isPrototypeOf(new C)`, `({}).isPrototypeOf(c)`, `c.isPrototypeOf(c)`, `p.isPrototypeOf(1)`, two
+   `Object.create` levels.
+5. `Object.create(null)`: `typeof n.hasOwnProperty`; `n.hasOwnProperty('x')` → TypeError (caught).
+6. Overrides: own method on a literal, a user prototype's, `o.hasOwnProperty = 5` then a call → TypeError (caught).
+7. Values: `typeof`, `.length` 1, `.name`, `a.hasOwnProperty === b.hasOwnProperty`, `!== o.propertyIsEnumerable`,
+   `.prototype` undefined, `x instanceof o.hasOwnProperty` → TypeError; A: `var h = o.hasOwnProperty; h('x')`, `new h()`.
+8. Primitives: `(1).hasOwnProperty('x')`, `true.propertyIsEnumerable('x')`, `(1).isPrototypeOf({})`,
+   `typeof (1).hasOwnProperty`; A: `'abc'.hasOwnProperty('length')`; A: a caught TypeError's `hasOwnProperty`.
+9. Positions: loops observed across iterations, unused result with a side-effecting key, try/finally, sloppy and
+   strict. R: a program that creates no function value.
+10. Unchanged: `o.toString` / `o.valueOf` / `o.constructor` abort unless own; `o.__proto__` refuses.
+
+Re-proofs (§6): the premise test gains the routes the new values open (`h.constructor`, `h.__proto__`, `h.call`,
+`(1).hasOwnProperty.constructor`): each aborts or refuses, none yields a prototype. C2-D1 reads of every other
+catalog key, the M1 / C2 tests and O1's define-property tests keep their answers.
+
+### Quality criterion
+
+The catalog is the only list of what is native; one expander module for the three methods, rows not copies; no second
+ToPropertyKey (`stringOf`), no second own-property lookup (the kernel's `findOwn`), no second identity (the kernel
+entry's singleton); from-ast and program-source end no larger than the base; every guard killed by a mutation or
+listed.
