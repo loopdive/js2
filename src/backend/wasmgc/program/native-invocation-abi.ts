@@ -9,7 +9,7 @@
  * does not let a change remove, and a separate source-object module would be a new ir->backend import edge.
  */
 import {
-  assertNativeInvocationRequirementsCurrent,
+  assertNativeInvocationRequirementsIssued,
   planNativeInvocationRequirements,
   type NativeInvocationRequirements,
 } from "../../../ir/program/native-invocation-requirements.js";
@@ -57,7 +57,7 @@ export function nativeStringInvocationRequirements(
   expected?: NativeInvocationRequirements,
 ): NativeInvocationRequirements | undefined {
   if (expected) {
-    assertNativeInvocationRequirementsCurrent(expected);
+    assertNativeInvocationRequirementsIssued(expected);
     if (
       expected.source.demands.program !== demands.program ||
       expected.source.demands.projection !== demands.projection ||
@@ -83,7 +83,7 @@ export function planNativeInvocationInput(
     native?.invocationRequirements ?? (source && planNativeInvocationRequirements(source, { utf8Storage }));
   const gaps: { detail: string; unitId: IrUnitId | undefined }[] = [];
   if (requirements) {
-    assertNativeInvocationRequirementsCurrent(requirements);
+    assertNativeInvocationRequirementsIssued(requirements);
     if (requirements.source !== source) throw new Error("native invocation ABI: different source resource owner");
     for (const gap of requirements.gaps) gaps.push({ detail: gap.detail, unitId: gap.unitId });
     if (native?.plan.mode !== "number-boundary" || !native.valueRequirements)
@@ -118,7 +118,7 @@ export function nativeInvocationAbiBindings(
   requirements: NativeInvocationRequirements,
   declarationOrder: number,
 ): readonly NativeCallAbiBinding[] {
-  assertNativeInvocationRequirementsCurrent(requirements);
+  assertNativeInvocationRequirementsIssued(requirements);
   return nativeCallAbiBindings(
     requirements.source.demands,
     requirements.uses.map((use) => ({

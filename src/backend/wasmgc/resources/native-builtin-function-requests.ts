@@ -13,7 +13,7 @@ import {
   type NativeStringLiteralReservations,
 } from "./native-string-literals.js";
 import {
-  assertNativeRealmRequirementsCurrent,
+  assertNativeRealmRequirementsIssued,
   type NativeRealmRequirements,
 } from "../../../ir/program/native-realm-requirements.js";
 import type { NativeRealmIntrinsic } from "../../../runtime/contracts/native-realm-catalog.js";
@@ -306,7 +306,7 @@ export function declareNativePublicBuiltinFunctionRequests(
   dependencies: NativeBuiltinFunctionRequestDependencies,
 ): NativePublicBuiltinFunctionRequests {
   if (tx.state !== "reserving") fail("public declaration requires reservation phase");
-  assertNativeRealmRequirementsCurrent(realm);
+  assertNativeRealmRequirementsIssued(realm);
   authenticate(tx, dependencies);
   const key = realm.description.key + ":public-builtins";
   const intrinsics = Object.freeze(
@@ -361,7 +361,7 @@ export function requireNativePublicBuiltinFunctionRequests(
   const owner = publicOwners.get(pack);
   if (!owner || owner.tx !== tx || (expectedRealm !== undefined && owner.realm !== expectedRealm))
     fail("foreign or copied public request issuer");
-  assertNativeRealmRequirementsCurrent(owner.realm);
+  assertNativeRealmRequirementsIssued(owner.realm);
   authenticate(tx, owner.dependencies);
   for (const role of ["arguments", "argumentPlan", "strings"] as const)
     if (owner.dependencies[role] !== owner.identities[role]) fail("changed public dependency identities");
