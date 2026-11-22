@@ -59,8 +59,8 @@ export type NativePromiseSourceCensus = NativePromiseSourceCensusEvidence &
     | { readonly required: false; readonly anchorUnitId?: never }
     | { readonly required: true; readonly anchorUnitId: IrUnitId }
   );
-const censuses = issuedPacks<NativePromiseSourceCensus>(
-  "native Promise inventory: uncollected source census (not issued by collectNativePromiseSourceCensus)",
+const censuses = issuedPacks<NativePromiseSourceCensus>(() =>
+  invalid("uncollected source census (not issued by collectNativePromiseSourceCensus)"),
 );
 
 /** Descriptive census only. The live coordinator authenticates the whole program before acting on it. */
