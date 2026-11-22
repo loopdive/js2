@@ -7868,12 +7868,8 @@ function lowerCall(expr: ts.CallExpression, cx: LowerCtx, statementPosition = fa
   }
   const calleeName = expr.expression.text;
 
-  // Slice 3 (#1169c): local-binding lookups WIN over top-level callees
-  // because the source-level identifier resolution puts inner-scope
-  // names first. The dispatcher picks one of three paths:
-  //   - `local` binding whose IrType is closure/callable → closure.call
-  //   - `nestedFunc` binding → direct call with prepended captures
-  //   - top-level callee in calleeTypes → vanilla `call`
+  // Slice 3 (#1169c): a scope binding wins over a top-level callee of the same name, as source-level identifier
+  // resolution puts inner-scope names first.
   const binding = cx.scope.get(calleeName);
   if (binding?.kind === "local" && (binding.type.kind === "closure" || binding.type.kind === "callable")) {
     // (#7354 C2) A direct closure call installs no receiver; where a closure may read one, the dispatcher's call does.
@@ -7886,9 +7882,7 @@ function lowerCall(expr: ts.CallExpression, cx: LowerCtx, statementPosition = fa
     binding?.kind === "moduleGlobal" && binding.functionValue?.in === cx.builder && binding.functionValue;
   if (staticValue && expr.arguments.length === staticValue.signature.params.length)
     return lowerClosureCall(staticValue.value, staticValue.signature, expr.arguments, cx, statementPosition);
-  if (binding?.kind === "nestedFunc") {
-    return lowerNestedFuncCall(binding, expr.arguments, cx);
-  }
+  if (binding?.kind === "nestedFunc") return lowerNestedFuncCall(binding, expr.arguments, cx);
   // (#7106 S1g, propertyHelper; #7272) propertyHelper's certified aliases:
   // every operand as a carrier, then the lane's native provider — never the
   // generic bound or dynamic call. The uncurried predicates take
