@@ -22,6 +22,7 @@ import { isModuleInitVarList, isTopLevelStatementDeclaration } from "../shared/v
 import { skipOuterExpressions } from "../shared/binding-writes.js";
 import { scriptVarWrites } from "./module-binding-script-var.js";
 import { irOwnedScriptVarHome } from "./module-binding-script-var-home.js";
+import { syntacticAnnotation } from "./select-expression-structure.js";
 import type { IrModuleBindingDeclaration, IrScriptVarHome } from "./module-bindings.js";
 
 type Carries = (expression: ts.Expression) => boolean;
@@ -65,15 +66,18 @@ export function sourceDynamicProvenance(
   const classify = irOwnedScriptVarHome(checker, sourceFiles, dynamicCarrier ? storesCarry : undefined);
   const scriptVarHome = (declaration: IrModuleBindingDeclaration) =>
     once(homes, declaration, "dynamic", () => classify(declaration));
-  // from-ast is the authority on a local: it types the local from the value it is created with and refuses a
-  // later store of another type. So the local holds the dynamic value exactly when that first value may be it; a
-  // local without an initializer (a catch binding too) starts as `undefined`.
+  // from-ast is the authority on a local: it types the local from the value it is created with (or its syntactic
+  // annotation, never a JSDoc tag: `syntacticAnnotation`) and refuses a later store of another type. So an
+  // unannotated local holds the dynamic value exactly when that first value may be it; a local without an
+  // initializer (a catch binding too) starts as `undefined`.
   const localCarries = (declaration: ts.VariableDeclaration): boolean =>
     once(
       locals,
       declaration,
       true,
-      () => declaration.initializer === undefined || carries(declaration.initializer, declaration),
+      () =>
+        syntacticAnnotation(declaration) === undefined &&
+        (declaration.initializer === undefined || carries(declaration.initializer, declaration)),
     );
 
   const bindingCarries = (node: ts.Identifier, self: ts.VariableDeclaration | undefined): boolean => {
@@ -95,8 +99,8 @@ export function sourceDynamicProvenance(
     return localCarries(declaration);
   };
   const callCarries = (call: ts.CallExpression): boolean => {
-    const callee = checker.getSymbolAtLocation(call.expression)?.valueDeclaration;
-    if (callee === undefined || !ts.isFunctionDeclaration(callee) || callee.body === undefined) return true;
+    const callee = sourceFunctionCallee(checker, call);
+    if (callee === undefined) return true;
     return once(results, callee, true, () => resultIsDynamic(callee, (value) => carries(value)));
   };
   // Fail-closed: a kind not modelled here may be the dynamic value.
@@ -143,4 +147,13 @@ export function sourceDynamicProvenance(
     }
   };
   return { scriptVarHome, carries: (expression) => carries(expression) };
+}
+
+/** The source function declaration with a body that `call` calls directly, if any. */
+export function sourceFunctionCallee(
+  checker: ts.TypeChecker,
+  call: ts.CallExpression,
+): ts.FunctionDeclaration | undefined {
+  const callee = checker.getSymbolAtLocation(call.expression)?.valueDeclaration;
+  return callee !== undefined && ts.isFunctionDeclaration(callee) && callee.body !== undefined ? callee : undefined;
 }

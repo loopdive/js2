@@ -47,7 +47,12 @@ import type { RuntimeManifestPolicy } from "../runtime/contracts/provider-policy
 import type { ValType } from "../wasm/model/instructions.js";
 import { functionBodyAlwaysTerminates, irFunctionBodyReturnsValue } from "./select.js";
 import { someReturnedValue } from "./function-returns.js";
-import { sourceDynamicProvenance, type SourceDynamicProvenance } from "./source-dynamic-provenance.js";
+import {
+  sourceDynamicProvenance,
+  sourceFunctionCallee,
+  type SourceDynamicProvenance,
+} from "./source-dynamic-provenance.js";
+import { syntacticAnnotation } from "./select-expression-structure.js";
 import { isUndeclaredInFile } from "../shared/ambient-intrinsics.js";
 import { ownedByDescriptorLiteral } from "./ordinary-object-closure-signatures.js";
 import { isTopLevelStatementDeclaration } from "../shared/var-declaration-lists.js";
@@ -124,9 +129,8 @@ function dynamicLane(policy: SourcePolicy, declaration: ts.FunctionDeclaration |
 
 /**
  * The dynamic (or host Promise) contract of a parameter, if its lane admits one; natively also an unannotated one.
- * (#7354 W2) Only a syntactic annotation types a parameter natively: a JSDoc `@param` is a comment, and JavaScript
- * callers may pass anything, so the parameter holds the dynamic value whatever the checker reads from the tag.
- * from-ast takes this contract over the tag (`annotationUnder`), and provenance asks it of a parameter read.
+ * (#7354 W2) Only a syntactic annotation types a parameter natively (`syntacticAnnotation`): under a JSDoc `@param`
+ * it holds the dynamic value whatever the checker reads from the tag. Provenance asks it of a parameter read.
  */
 function sourceDynamicParameter(
   checker: ts.TypeChecker,
@@ -135,7 +139,7 @@ function sourceDynamicParameter(
   parameter: ts.ParameterDeclaration,
 ): IrType | undefined {
   const lane = dynamicLane(policy, declaration);
-  const annotation = parameter.type;
+  const annotation = syntacticAnnotation(parameter);
   if (annotation === undefined) return lane === "native" ? { kind: "dynamic" } : undefined;
   if (annotatedAny(checker, annotation)) return lane ? checkerAny(checker, parameter.name) : undefined;
   if (lane !== "host-async") return undefined;
@@ -164,8 +168,9 @@ function sourceDynamicResult(
   const result = checker.getReturnTypeOfSignature(signature);
   if (lane === "native") {
     // The producer refuses a declaration without a body before it asks for a contract.
-    const dynamic = declaration.type
-      ? annotatedAny(checker, declaration.type) && result === any
+    const annotation = syntacticAnnotation(declaration);
+    const dynamic = annotation
+      ? annotatedAny(checker, annotation) && result === any
       : uncheckedResult(declaration.body!, result === any, carries);
     return dynamic ? { kind: "dynamic" } : undefined;
   }
@@ -499,17 +504,15 @@ function passedOn(node: ts.Expression): boolean {
  * `value` lands where the dynamic value is held, whatever the checker types that place: stored by a plain `=` into a
  * binding that may hold it, or (#7354 W2) the initializer of such a binding, an argument for a parameter whose
  * contract is dynamic, a value returned from a function whose result is. The checker reads the type of the last
- * three from a JSDoc tag, which is a comment (`sourceDynamicParameter`); a syntactically annotated binding,
- * parameter or result is typed by its annotation, so its contract is never dynamic and the flow stays checked.
+ * three from a JSDoc tag, which is a comment (`syntacticAnnotation`); a syntactically annotated binding, parameter
+ * or result never holds the dynamic value, so the flow into it stays checked.
  */
 function landsInCarrier(value: ts.Expression, checker: ts.TypeChecker, policy: SourcePolicy, carries: Carries) {
   const { parent } = value;
   if (ts.isBinaryExpression(parent))
     return parent.right === value && parent.operatorToken.kind === ts.SyntaxKind.EqualsToken && carries(parent.left);
   if (ts.isVariableDeclaration(parent))
-    return (
-      parent.initializer === value && parent.type === undefined && ts.isIdentifier(parent.name) && carries(parent.name)
-    );
+    return parent.initializer === value && ts.isIdentifier(parent.name) && carries(parent.name);
   if (ts.isReturnStatement(parent)) {
     const owner = ts.findAncestor(parent, ts.isFunctionLike);
     return (
@@ -519,8 +522,8 @@ function landsInCarrier(value: ts.Expression, checker: ts.TypeChecker, policy: S
     );
   }
   if (!ts.isCallExpression(parent) || parent.expression === value) return false;
-  const callee = checker.getSymbolAtLocation(parent.expression)?.valueDeclaration;
-  if (callee === undefined || !ts.isFunctionDeclaration(callee)) return false;
+  const callee = sourceFunctionCallee(checker, parent);
+  if (callee === undefined) return false;
   const parameter = callee.parameters[parent.arguments.indexOf(value)];
   return parameter !== undefined && sourceDynamicParameter(checker, policy, callee, parameter)?.kind === "dynamic";
 }

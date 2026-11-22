@@ -1805,7 +1805,7 @@ export function lowerFunctionAstToIr(
       : isVoidReturn
         ? null
         : resolveIrType(
-            annotationUnder(options.returnTypeOverride ?? undefined, fn.type, effectiveReturnTypeNode),
+            annotationUnder(options.returnTypeOverride ?? undefined, fn, effectiveReturnTypeNode),
             options.returnTypeOverride ?? undefined,
             `return type of ${name}`,
           );
@@ -1852,7 +1852,7 @@ export function lowerFunctionAstToIr(
     return {
       name: p.name.text,
       type: resolveIrType(
-        annotationUnder(override, p.type, effectiveIrParamTypeNode(p)),
+        annotationUnder(override, p, effectiveIrParamTypeNode(p)),
         override,
         `param ${p.name.text} of ${name}`,
       ),

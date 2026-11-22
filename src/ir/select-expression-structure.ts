@@ -6,6 +6,7 @@ import { skipTransparentExpressions } from "../shared/transparent-expressions.js
 import { literalFieldName } from "./fnctor-field-writes.js";
 import type { IrImportedFunctionResolver, IrResolvedFunctionTarget } from "./imported-functions.js";
 import type { IrSelectionOptions } from "./select.js";
+import type { IrType } from "./core/types.js";
 import { realmStringKeys } from "./program/builtin-prototype-keys.js";
 
 /**
@@ -86,17 +87,27 @@ export function effectiveIrReturnTypeNode(fn: ts.SignatureDeclaration): ts.TypeN
 }
 
 /**
- * The type node a contract `override` is checked against: the `effective` node above, except that (#7354 W2) a
- * dynamic contract wins over a JSDoc tag, which is a comment, not an annotation (the rule is
- * `sourceDynamicParameter`'s; #7106's externref-slot projection of a JSDoc parameter is a case of it). A
- * `syntactic` annotation is still checked against the contract.
+ * (#7354 W2) What types a declaration on the native dynamic lane: its syntactic annotation only. A JSDoc tag is a
+ * comment (JavaScript callers may pass anything), so it types no parameter, result or binding there. The parameter
+ * and result contracts, provenance and the implicit-flow rule all read it.
+ */
+export function syntacticAnnotation(
+  declaration: ts.ParameterDeclaration | ts.VariableDeclaration | ts.SignatureDeclaration,
+): ts.TypeNode | undefined {
+  return declaration.type;
+}
+
+/**
+ * The type node a contract `override` is checked against: the `effective` node above, except that a dynamic
+ * contract wins over a JSDoc tag ({@link syntacticAnnotation}; #7106's externref-slot projection of a JSDoc
+ * parameter is a case of it). A syntactic annotation is still checked against the contract.
  */
 export function annotationUnder(
-  override: { readonly kind: string } | undefined,
-  syntactic: ts.TypeNode | undefined,
+  override: IrType | undefined,
+  declaration: ts.ParameterDeclaration | ts.SignatureDeclaration,
   effective: ts.TypeNode | undefined,
 ): ts.TypeNode | undefined {
-  return override?.kind === "dynamic" && syntactic === undefined ? undefined : effective;
+  return override?.kind === "dynamic" && syntacticAnnotation(declaration) === undefined ? undefined : effective;
 }
 
 function resolveFunctionObjectReceiver(
