@@ -4,8 +4,9 @@
 // (src/ir/realm-static-call.ts, src/ir/program/dynamic-object-statics.ts, the realm's descriptor bodies), with the
 // test262 runner's options. Each accepted program runs twice against node: its answer returns, a wrong one throws. A
 // TypeError the specification demands is caught by the program itself, so it is part of node's answer.
-import { afterEach, describe, it, vi } from "vitest";
-import { agreesWithNode, runnerOptions } from "./helpers/prepared-node-agreement.js";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { agreesWithNode, nodeOut, runnerOptions } from "./helpers/prepared-node-agreement.js";
+import { compile } from "../src/test262/test262-prepared-entry.js";
 import { CATCHES, FIELDS } from "./helpers/object-static-probes.js";
 
 afterEach(() => vi.restoreAllMocks());
@@ -103,4 +104,26 @@ describe("#7354 O1 — Object.getOwnPropertyDescriptor", () => {
         " + String(Object.getOwnPropertyDescriptor(1, 'p')) + String(Object.getOwnPropertyDescriptor(true, 'toString'));",
     ],
   ])("%s", async (_name, body) => agrees(body), SLOW);
+});
+
+// (#7354 O1) The real-compile counterpart of the four retired "executes actual source slots" tests of
+// tests/issue-3518-native-object-realm-declarations.test.ts (their STATE_SOURCE, as a script): a closure that captures
+// its factory's parameter and one that captures nothing, each returned as a value and called through it; two closures
+// of one factory keep their own captures and are distinct objects; the standalone module imports nothing.
+describe("#7354 O1 — retired #3518 fixture: closures returned from functions, called through values", () => {
+  const body =
+    "function makeCaptured(seed){ return function captured(value){ return seed + value; }; }" +
+    " function makeEmpty(){ return function empty(value){ return value + 7; }; }" +
+    " var a = makeCaptured(13), b = makeCaptured(100), e = makeEmpty(), c = makeCaptured(21);" +
+    " var out = String(a(7)) + ',' + String(b(7)) + ',' + String(e(3)) + ',' + String(c(2))" +
+    " + (a === b ? ',same' : ',distinct') + ',' + a.name + e.name;";
+  it("calls each closure with its own capture", async () => agrees(body), SLOW);
+  it(
+    "emits a module without imports",
+    async () => {
+      const result = await compile(`${body}\nif (out !== ${JSON.stringify(nodeOut(body))}) throw 1;`, runnerOptions());
+      expect(WebAssembly.Module.imports(new WebAssembly.Module(result.binary))).toEqual([]);
+    },
+    SLOW,
+  );
 });

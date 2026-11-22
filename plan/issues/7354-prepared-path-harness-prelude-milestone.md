@@ -5199,16 +5199,25 @@ path: the call form on the unshadowed global, served by the realm's descriptor p
 | issue-7354-h-script-var-dynamic-home (two rows removed) | 59 | 0 |
 | issue-7354-u-prelude (runner options moved to the helper) | 3 | 0 |
 | issue-3518-ordinary-object-callable-contracts + native-realm-requirements | 80 | 0 |
-| issue-3518-native-object-realm-declarations (count 42 → 38) | 21/25 | 1 |
+| issue-3518-native-object-realm-declarations (four tests retired, count pin deleted) | 21 | 0 |
 | r-provider-census 117; test262-prepared-entry + 7188 50; c2-this 18; o3 + f1b-writes 16; u-abort-bodies 40; native-builtin-functions 36 | | 0 |
 | o4-member-read 16; x-dynamic-throw 59; f2-calls-through-values 10; c2-constructors 20; m-sweep-1/2/3/4 7/7/6/6 | | 0 |
 
-The realm-declarations file's four "executes actual source slots" tests fail identically at the base 02f31edc4c and
-on main: the fixture (`tests/helpers/native-object-realm.ts` `publicRealmSourceRuntime`) lowers `STATE_SOURCE`'s
+**Retired (lead decision, own commit):** the realm-declarations file's four "executes actual source slots" tests
+(displaced × decoded) failed identically at the base 02f31edc4c and on main: the fixture (`tests/helpers/native-object-realm.ts` `publicRealmSourceRuntime`) lowers `STATE_SOURCE`'s
 bodies by hand with a resolver that knows only unit calls, and since F1b each closure literal on this lane is a
 function object, so `makeCaptured` / `makeEmpty` now hold `string.const "captured"` and a `js.object.init-function`
 call, which that resolver cannot lower (`string.const runtime is unavailable`). The compiler's behaviour is the right
-one; the fixture predates function objects. CI's `quality` runs that file because this diff changes its count pin.
+one; the fixture predates function objects, and #7380 retires such hand-built harnesses. Per retired test, the same
+facts through a real compile: closures returned from a factory and called through values with their own captures
+(13 → 20, 100 → 107), a capture-free closure (3 → 10), distinct identities and a module without imports — the new
+"retired #3518 fixture" tests in `issue-7354-o1-define-property.test.ts` (the source is STATE_SOURCE as a script; the
+four were one test over displaced/decoded, transport details of the hand-built module); function objects of returned
+closures — `issue-7354-f1b-function-objects`; closures as constructors and their prototypes —
+`issue-7354-c2-constructors`. `publicRealmSourceRuntime` and its now-unused imports are deleted from
+`tests/helpers/native-object-realm.ts`. The bare count pin `unavailable` = 42 (which this slice had moved to 38) is
+deleted, not updated (#7380); the catalog's native rows are asserted by identity in
+`issue-3518-native-realm-requirements` (the ids that are not `unavailable`, now including the four statics).
 
 ### Proof
 
