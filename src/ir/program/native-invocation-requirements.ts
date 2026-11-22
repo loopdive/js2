@@ -10,11 +10,7 @@ import {
 } from "../core/closure-invocation-callables.js";
 import { nativeAsyncCallableValueTypes } from "../runtime/native-async-callables.js";
 import type { NativeSourceClosureRequirements } from "./native-source-closure-requirements.js";
-import {
-  collectNativePromiseSourceCensus,
-  assertNativePromiseSourceCensusCurrent,
-  type NativePromiseSourceCensus,
-} from "./native-promise-inventory.js";
+import { collectNativePromiseSourceCensus, type NativePromiseSourceCensus } from "./native-promise-inventory.js";
 import { freezePreparedIrValue, preparedIrDataMismatch } from "./data.js";
 import {
   deriveNativeObjectAccessRequirements,
@@ -404,16 +400,18 @@ export function assertNativeInvocationRequirementsIssued(pack: NativeInvocationR
 
 /**
  * The validator's check (#7380; accepted-program stage, under `JS2WASM_VALIDATE_PREPARED`): the issued pack equals a
- * fresh derivation from its source and a fresh Promise census.
+ * fresh derivation from its source, the Promise census's gap included.
  */
 export function assertNativeInvocationRequirementsCurrent(pack: NativeInvocationRequirements): void {
   assertNativeInvocationRequirementsIssued(pack);
-  assertNativePromiseSourceCensusCurrent(pack.runtimeCreated);
+  const { program, projection } = pack.source.demands;
   const data = calculate(pack.source, pack.objectAccess, pack.objectResults);
-  data.gaps.push(...runtimeCreatedGaps(pack.runtimeCreated));
+  data.gaps.push(
+    ...runtimeCreatedGaps(collectNativePromiseSourceCensus(program, projection, pack.runtimeCreated.options)),
+  );
   if (
-    pack.runtimeCreated.program !== pack.source.demands.program ||
-    pack.runtimeCreated.projection !== pack.source.demands.projection ||
+    pack.runtimeCreated.program !== program ||
+    pack.runtimeCreated.projection !== projection ||
     pack.completionScope !== "selected-source-invocation" ||
     pack.key !== `${pack.source.key}:invocation` ||
     preparedIrDataMismatch(data, {

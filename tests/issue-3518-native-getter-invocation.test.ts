@@ -39,18 +39,18 @@ beforeAll(() => {
 afterEach(() => new Promise<void>((resolve) => setImmediate(resolve)));
 afterAll(() => vi.unstubAllEnvs());
 
-function mutableProgram() {
+function mutableProgram(program = original) {
   const projection = {
-    ...original.runtime[0]!,
+    ...program.runtime[0]!,
     prepared: {
-      ...original.runtime[0]!.prepared,
-      functions: structuredClone(original.runtime[0]!.prepared.functions),
+      ...program.runtime[0]!.prepared,
+      functions: structuredClone(program.runtime[0]!.prepared.functions),
     },
   };
   return {
-    ...original,
-    ir: { ...original.ir, functions: structuredClone(original.ir.functions) },
-    allocations: structuredClone(original.allocations),
+    ...program,
+    ir: { ...program.ir, functions: structuredClone(program.ir.functions) },
+    allocations: structuredClone(program.allocations),
     runtime: [projection],
   };
 }
@@ -186,6 +186,16 @@ describe("C1-authenticated semantic getter invocation requirements", () => {
       expect(() => assertNativeInvocationRequirementsCurrent(f.invocation!)).toThrow();
     },
   );
+  // (#7354 Perf5) A seeded invalid plan for the validator (#7380 acceptance 3): the source call is no invocation any
+  // more, which the derivation accepts, so only the validator's comparison with the issued uses refuses it.
+  it("the validator refuses requirements whose call population changed after planning", () => {
+    const f = getterRequirements(mutableProgram(prepareGetterProgram(CALL_SOURCE)));
+    expect(() => assertNativeInvocationRequirementsCurrent(f.invocation!)).not.toThrow();
+    const call = f.source.demands.occurrences[f.invocation!.uses[0]!.occurrence]!.instruction;
+    if (call.kind !== "call") throw new Error("the invocation use lost its call");
+    Object.assign(call, { target: { ...call.target, binding: { kind: "intrinsic", symbol: "test.no-invocation" } } });
+    expect(() => assertNativeInvocationRequirementsCurrent(f.invocation!)).toThrow("stale invocation source");
+  });
   it("reports unsupported getter result conversion before physical reservation", () => {
     const f = getterRequirements(
       prepareGetterProgram(`export function run() {
@@ -333,7 +343,9 @@ describe("issued method-zero reservation and actual source-body dispatch", () =>
     if (kind === "function") f.pack.methods[0]!.function.object.name += "changed";
     if (kind === "global") f.pack.globals.argc.object.mutable = false;
     if (kind === "dependency") f.dependencies.source = { ...f.sourceOwner.types };
-    expect(() => nativeInvocationGetterDispatch(f.tx, f.pack, f.access)).toThrow();
+    // (#7354 Perf4) A ledger alteration is refused by the layout audit at the next phase boundary, not per query.
+    if (kind === "dependency") expect(() => nativeInvocationGetterDispatch(f.tx, f.pack, f.access)).toThrow();
+    else expect(() => f.tx.freezeReservations()).toThrow("altered");
   });
   it("refuses a same-signature function with a different original slot key", () => {
     const f = getterInvocationFixture(original),
