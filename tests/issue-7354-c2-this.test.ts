@@ -44,6 +44,12 @@ describe("#7354 C2 — this", () => {
       "function F(){ return this.k; } var o = {k: 6}; o.m = F; var out = String(o.m());",
     ],
     [
+      "a closure's own strictness: a sloppy write to a primitive is ignored, a strict one throws",
+      "var s = function(v){ v.k = 1; return 'ignored'; };" +
+        " var t = function(v){ 'use strict'; try { v.k = 1; } catch (e) { return e.name; } return 'none'; };" +
+        " var out = s(1) + t(1);",
+    ],
+    [
       "OrdinaryToPrimitive calls toString with the object as `this`",
       "function T(m){ this.m = m; } T.prototype.toString = function(){ return 'T:' + this.m; };" +
         " function s(v){ return '' + v; } var out = s(new T(1));",
@@ -69,10 +75,16 @@ describe("#7354 C2 — this", () => {
   it.each([
     [
       "a direct call of a declaration that reads `this`",
-      "function F(){ return this; } F();",
+      "function F(){ return this; } var g = function(){ return 1; }; if (g() !== 1) throw 2; F();",
       "a direct call of F installs no receiver for its 'this'",
     ],
     ["`this` at top level", "var x = this;", "'this' reference outside an instance method body (<module-init>)"],
+    // Without a function value nothing calls through the dispatcher, so no function binds a receiver.
+    [
+      "`this` in a program that creates no function value",
+      "function F(){ this.a = 1; } var x = 1;",
+      "'this' reference outside an instance method body (F)",
+    ],
   ])("refuses %s", async (_label, source, reason) => {
     expect(await refusal(source)).toContain(reason);
   });

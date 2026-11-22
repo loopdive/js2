@@ -292,7 +292,8 @@ export interface ProgramDynamicContracts extends SourceDynamicProvenance {
   /**
    * (#7260) The strictness of a function's or a script's code (`functionCodeStrict`), and (#7354 C2) where the code is
    * a function on the native lane whose closures are function objects and that reads its own `this`, the strictness
-   * it binds `this` with (`ambientThisStrict`, C2-D2): the receiver the dispatcher installed, read once at entry.
+   * it binds `this` with (`ambientThisStrict`, C2-D2): the receiver the dispatcher installed, read once at entry. In a
+   * program that creates no function value nothing calls through the dispatcher, so `this` stays unbound there.
    */
   readonly codeStrictness: CodeStrictness;
   /** {@link legalizeSourceDynamicValues} for the functions lowered from `roots`. */
@@ -323,7 +324,11 @@ export function programDynamicContracts(
   const objects = programObjects(sourceFiles, functionDeclarationValues.length > 0);
   const codeStrictness: ProgramDynamicContracts["codeStrictness"] = (code) => {
     const functionCodeStrict = input.codeStrictness?.(code);
-    return functionObjects && functionCodeStrict !== undefined && !ts.isSourceFile(code) && readsAmbientThisGlobal(code)
+    return functionObjects &&
+      objects.functions &&
+      functionCodeStrict !== undefined &&
+      !ts.isSourceFile(code) &&
+      readsAmbientThisGlobal(code)
       ? { functionCodeStrict, ambientThisStrict: functionCodeStrict }
       : { functionCodeStrict };
   };

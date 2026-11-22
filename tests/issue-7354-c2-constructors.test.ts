@@ -54,7 +54,8 @@ describe("#7354 C2 — new", () => {
 
   it(
     "ends at the run-time abort where the prototype is a function (the realm cannot link one)",
-    () => abortsAtRunTime("function F(){} F.prototype = function(){}; new F();"),
+    // Linking to Object.prototype instead would answer `k` wrongly (undefined), so the abort is the answer here.
+    () => abortsAtRunTime("function F(){} var p = function(){}; p.k = 1; F.prototype = p; var k = new F().k;"),
     SLOW,
   );
 
@@ -73,6 +74,14 @@ describe("#7354 C2 — new", () => {
 
 describe("#7354 C2 — instanceof", () => {
   it.each([
+    [
+      "a program without a function value: every `new` is the TypeError",
+      "function mk(C){ try { new C(); } catch (e) { return e.name; } return 'none'; } var out = String(mk(1)) + String(mk('s'));",
+    ],
+    [
+      "a primitive literal on the left of instanceof",
+      "function F(){} var out = (1 instanceof F ? 'y' : 'n') + ('s' instanceof F ? 'y' : 'n');",
+    ],
     [
       "every kind on the left: an instance is one, nothing else is",
       "function F(){} function t(v){ return v instanceof F ? 'y' : 'n'; } function c(v){ try { v.x; } catch (e) { return e; } }" +
