@@ -60,5 +60,13 @@ describe("#7354 M1 — no Prepared program obtains a built-in prototype", () => 
   it.each([
     ["a dynamic value's __proto__", "function f(v){ return v.__proto__; } f(1);"],
     ["a dynamic value's constructor", "function f(v){ return v.constructor; } f(1);"],
+    // (#7354 P1) The routes a populated Object.prototype method opens: it is a built-in function object, and every key
+    // that would lead from it to a prototype (Function.prototype's, Object.prototype's accessor) aborts.
+    ...(["constructor", "__proto__", "call"] as const).flatMap((key) =>
+      ["({})", "1"].map((receiver): [string, string] => [
+        `a method of ${receiver}'s ${key}`,
+        `var fv = function(){ return 1; }; fv(); function f(v){ return v.hasOwnProperty.${key}; } f(${receiver});`,
+      ]),
+    ),
   ])("ends %s at the run-time abort", (_label, source) => abortsAtRunTime(source), 180_000);
 });
