@@ -97,7 +97,6 @@ import {
 } from "./analysis/operand-admissibility.js"; // (#7144)
 import { producesCarrier } from "./analysis/carrier-expression.js";
 import { IR_CLOSURE_UNDEFINED } from "./core/closure-invocation-callables.js";
-import type { CodeStrictness } from "./source-dynamic-contracts.js";
 import {
   fixedClosureParameters,
   lowerSourceClosureInvocation,
@@ -573,6 +572,15 @@ export interface IrExternClassMeta {
  * `resolveClosure`. Those depend on registries that aren't populated
  * until Phase 3, so from-ast doesn't see them.
  */
+/**
+ * (#7260, #7354 C2) The strictness of a piece of code (`functionCodeStrict`, a dynamic PutValue's failure rule) and,
+ * for a function that reads its own `this` from the dispatcher's receiver, the strictness it binds `this` with.
+ */
+export type CodeStrictness = (code: ts.FunctionLikeDeclaration | ts.SourceFile) => {
+  readonly functionCodeStrict?: boolean;
+  readonly ambientThisStrict?: boolean;
+};
+
 export interface IrFromAstResolver extends PreparedAsyncFromAstResolver {
   /** (#7106) Reserve one `<module-init>` chunk function's Wasm name in the module's name space. */
   moduleInitChunkName?(preferred: string): string;

@@ -51,6 +51,7 @@ import { ownedByDescriptorLiteral } from "./ordinary-object-closure-signatures.j
 import { isTopLevelStatementDeclaration } from "../shared/var-declaration-lists.js";
 import { bindingHoldsItsDeclaration } from "../shared/binding-holds-declaration.js";
 import { functionDeclarationsReadAsValues } from "./function-declaration-values.js";
+import type { CodeStrictness } from "./from-ast.js";
 import { readsAmbientThisGlobal } from "../shared/body-references-own-this.js";
 
 type Carries = SourceDynamicProvenance["carries"];
@@ -238,12 +239,6 @@ function staticFunctionValue(
 export function nativeDynamicLane(policy: SourcePolicy): boolean {
   return dynamicLane(policy, undefined) === "native";
 }
-
-/** {@link ProgramDynamicContracts.codeStrictness}. */
-export type CodeStrictness = (code: ts.FunctionLikeDeclaration | ts.SourceFile) => {
-  readonly functionCodeStrict?: boolean;
-  readonly ambientThisStrict?: boolean;
-};
 
 /** (#7354 H) The dynamic-value contracts of one program's sources, over its provenance. */
 export interface ProgramDynamicContracts extends SourceDynamicProvenance {

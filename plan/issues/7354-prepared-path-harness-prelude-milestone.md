@@ -4734,9 +4734,9 @@ review: is-constructor's bit read (unkillable: every function value is a constru
 a value of no object kind (`holds` folds it). No survivors left in the C2 code.
 
 Bytes: ordinary pipeline, 22 test262 files (new, instanceof, this, function-code) × default + standalone: 44/44
-identical vs F2 1de4a6f2e7 (again after review). `check:prepared-bytes` (804 rows) vs 1de4a6f2e7, after review: 4
-differ — 46 (the write chain's carrier answer) and 180 (the invocation pack now reserves `__closure_receiver` beside
-`__closure_undefined`), each run on base and head with the same outcome; 204 compiles and ends at the abort (was a
+identical vs F2 1de4a6f2e7 (again after review). `check:prepared-bytes` (804 rows) vs 1de4a6f2e7, after review round
+2: 3 differ — 46 (the write chain's carrier answer, run on base and head with the same outcome; `__closure_receiver` is
+reserved only where a unit reads the receiver, so 180 is identical again); 204 compiles and ends at the abort (was a
 refusal, C2-D1); 214 refuses by a later name (`js.closure.call:1 in a program that creates no function value`). The
 init-body rows 53, 74, 581 are identical again. Regression set re-run after review: the same counts.
 
