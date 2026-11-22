@@ -12,10 +12,12 @@
 // sees JavaScript's answer.
 //
 // Who owns a refusal (one rule, `ordinaryOwner`): the innermost function expression or script-level function
-// declaration around the refused construct that is neither async nor a generator. A refusal inside an arrow, a method,
-// an accessor, a nested declaration, an async function or a generator belongs to the function around it: those are
-// lowered with their enclosing function (or have a body other than an ordinary call frame), and aborting the
-// enclosing function never runs them either. A refusal with no such owner (top-level code) stays the program's.
+// declaration around the refused construct. A refusal inside an arrow, a method, an accessor or a nested declaration
+// belongs to the function around it: those are lowered with their enclosing function, and aborting the enclosing
+// function never runs them either. A refusal with no such owner (top-level code) stays the program's. Async functions
+// and generators refuse before any body is lowered (a declaration in signature planning, an expression in its
+// enclosing function), so none is an owner today; the slice that lowers one must exclude it here, as its call runs no
+// body.
 
 import { ts } from "../ts-api.js";
 import type { IrFunctionBuilder } from "./builder.js";
@@ -40,11 +42,7 @@ export interface AbortBodyRow {
 function ordinaryOwner(node: ts.Node): OrdinaryFunction | undefined {
   // A transform may hand the lowering a clone; ownership is the original node's, so a retry meets the same owner.
   for (let current: ts.Node | undefined = ts.getOriginalNode(node); current; current = current.parent)
-    if (
-      (ts.isFunctionExpression(current) || (ts.isFunctionDeclaration(current) && ts.isSourceFile(current.parent))) &&
-      !current.asteriskToken &&
-      !current.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword)
-    )
+    if (ts.isFunctionExpression(current) || (ts.isFunctionDeclaration(current) && ts.isSourceFile(current.parent)))
       return current;
   return undefined;
 }
