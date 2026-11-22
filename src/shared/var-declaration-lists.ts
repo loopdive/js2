@@ -114,3 +114,23 @@ function catchParameterIsRedeclared(clause: ts.CatchClause, list: ts.VariableDec
   const parameterNames = new Set(names(parameter));
   return list.declarations.some((declaration) => names(declaration.name).some((name) => parameterNames.has(name)));
 }
+
+/** A modelled `var` list (`isModuleInitVarList`) has persistent globals; any other `var` still needs hoisting support. */
+export function moduleInitContainsNestedVar(statements: readonly ts.Statement[]): boolean {
+  const findVarDecl = (node: ts.Node): boolean => {
+    if (
+      isModuleInitVarList(node) ||
+      ts.isFunctionDeclaration(node) ||
+      ts.isFunctionExpression(node) ||
+      ts.isArrowFunction(node) ||
+      ts.isMethodDeclaration(node)
+    ) {
+      return false;
+    }
+    if (ts.isVariableDeclarationList(node) && (node.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const)) === 0) {
+      return true;
+    }
+    return ts.forEachChild(node, findVarDecl) === true;
+  };
+  return statements.some(findVarDecl);
+}

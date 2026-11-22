@@ -342,7 +342,11 @@ import {
 } from "./binding-pattern-plan.js";
 import { lowerPatternPlan, readsNoSource, type PatternLoweringHost } from "./binding-pattern-lowering.js";
 import { literalLeafSource, patternLeafReadsElement, planLiteralPattern } from "./literal-pattern-plan.js";
-import { isInLoopOfOwnFunction, isModuleInitVarList } from "../shared/var-declaration-lists.js";
+import {
+  isInLoopOfOwnFunction,
+  isModuleInitVarList,
+  moduleInitContainsNestedVar,
+} from "../shared/var-declaration-lists.js";
 import { emitLogicalSelect } from "./logical-select.js";
 import { isRepeatedVarBinding } from "./function-local-var.js";
 import { objectIntegrityCallFold } from "./object-integrity.js";
@@ -1511,26 +1515,6 @@ export interface LoweredFunctionResult {
   readonly liftedUnitProvenance: readonly IrDerivedUnitProvenance[];
   /** Plans actually consumed by this exact source artifact. */
   readonly countedStringAppendPlans?: readonly IrCountedStringAppendLoweringPlan[];
-}
-
-/** A modelled `var` list (`isModuleInitVarList`) has persistent globals; any other `var` still needs hoisting support. */
-function moduleInitContainsNestedVar(statements: readonly ts.Statement[]): boolean {
-  const findVarDecl = (node: ts.Node): boolean => {
-    if (
-      isModuleInitVarList(node) ||
-      ts.isFunctionDeclaration(node) ||
-      ts.isFunctionExpression(node) ||
-      ts.isArrowFunction(node) ||
-      ts.isMethodDeclaration(node)
-    ) {
-      return false;
-    }
-    if (ts.isVariableDeclarationList(node) && (node.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const)) === 0) {
-      return true;
-    }
-    return ts.forEachChild(node, findVarDecl) === true;
-  };
-  return statements.some(findVarDecl);
 }
 
 function nestedSourceScope(
@@ -7734,6 +7718,32 @@ function functionObjectLoweringHost(cx: LowerCtx): functionObjects.FunctionObjec
   };
 }
 
+function lowerSuperConstructorCall(expr: ts.CallExpression, cx: LowerCtx): null {
+  const parentShape = requireSuperParentShape(cx);
+  const self = requireThisValue(cx);
+  if (expr.arguments.length !== parentShape.constructorParams.length) {
+    demoteToLegacy(
+      "call-arity-unsupported",
+      `ir/from-ast: super(...) has ${expr.arguments.length} args, expected ${parentShape.constructorParams.length} in ${cx.funcName}`,
+    );
+  }
+  const args: IrValueId[] = [];
+  for (let i = 0; i < expr.arguments.length; i++) {
+    const expected = parentShape.constructorParams[i]!;
+    const argVal = lowerExpr(expr.arguments[i]!, cx, expected);
+    const argType = cx.builder.typeOf(argVal);
+    if (!irTypeEquals(argType, expected)) {
+      demoteToLegacy(
+        "call-resolution-unsupported",
+        `ir/from-ast: super() arg ${i} is ${describeIrType(argType)}, expected ${describeIrType(expected)} in ${cx.funcName}`,
+      );
+    }
+    args.push(argVal);
+  }
+  cx.builder.emitClassSuperInit(parentShape, self, args);
+  return null;
+}
+
 function lowerCall(expr: ts.CallExpression, cx: LowerCtx, statementPosition = false): IrValueId | null {
   if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== expr)
     return withNodeSourceSite(cx, expr, () => lowerCall(expr, cx, statementPosition));
@@ -7754,10 +7764,13 @@ function lowerCall(expr: ts.CallExpression, cx: LowerCtx, statementPosition = fa
     makePromiseDelayLoweringHost(cx),
   );
   if (promiseDelay !== undefined) return promiseDelay;
-  // Optional call (`fn?.()` / `obj?.method()`, #1281). The IR has no short-circuit primitive for nullable callees, and
-  // at this point we haven't yet lowered the callee/receiver to inspect its IrType. The safe path is to throw to legacy,
-  // where `compileOptionalCallExpression` already emits the null-guarded `if/else` block. The optional PROPERTY-ACCESS
-  // path (`obj?.prop`) gets the IR fast-path; full optional-call IR support is a follow-up.
+  // Optional call (`fn?.()` / `obj?.method()`, #1281). The IR has no
+  // short-circuit primitive for nullable callees, and at this point we
+  // haven't yet lowered the callee/receiver to inspect its IrType. The
+  // safe path is to throw to legacy, where `compileOptionalCallExpression`
+  // already emits the null-guarded `if/else` block. The optional
+  // PROPERTY-ACCESS path (`obj?.prop`) gets the IR fast-path; full
+  // optional-call IR support is a follow-up.
   if (expr.questionDotToken) {
     demoteToLegacy("call-resolution-unsupported", `ir/from-ast: optional call (?.()) not in slice 11 (${cx.funcName})`);
   }
@@ -7812,37 +7825,15 @@ function lowerCall(expr: ts.CallExpression, cx: LowerCtx, statementPosition = fa
     lowerExpression: (expression, expected) => lowerExpr(expression, cx, expected),
   });
   if (preparedPromiseAll !== undefined) return preparedPromiseAll;
-  // #3000-E: `super(args)` — a derived constructor chaining to its parent's `_init`. Intercepted BEFORE the
-  // property-access / identifier dispatch below because `super` is a keyword, not an identifier the receiver-lowering
-  // can handle. The `this` binding (the allocated subclass instance) and the parent shape (`this` shape's `.parent`)
-  // drive the emitted `<parent>_init` call.
-  if (expr.expression.kind === ts.SyntaxKind.SuperKeyword) {
-    const parentShape = requireSuperParentShape(cx);
-    const self = requireThisValue(cx);
-    if (expr.arguments.length !== parentShape.constructorParams.length) {
-      demoteToLegacy(
-        "call-arity-unsupported",
-        `ir/from-ast: super(...) has ${expr.arguments.length} args, expected ${parentShape.constructorParams.length} in ${cx.funcName}`,
-      );
-    }
-    const args: IrValueId[] = [];
-    for (let i = 0; i < expr.arguments.length; i++) {
-      const expected = parentShape.constructorParams[i]!;
-      const argVal = lowerExpr(expr.arguments[i]!, cx, expected);
-      const argType = cx.builder.typeOf(argVal);
-      if (!irTypeEquals(argType, expected)) {
-        demoteToLegacy(
-          "call-resolution-unsupported",
-          `ir/from-ast: super() arg ${i} is ${describeIrType(argType)}, expected ${describeIrType(expected)} in ${cx.funcName}`,
-        );
-      }
-      args.push(argVal);
-    }
-    cx.builder.emitClassSuperInit(parentShape, self, args);
-    return null;
-  }
-  // #5092 first: `Number(c ? 7 : true)` converts each concrete arm inside the lazy `if`; the source-bound plan (#7106
-  // lever B) sees only what it declined — the same order as the selector's `preparedNumberConversionCall`.
+  // #3000-E: `super(args)` — a derived constructor chaining to its parent's
+  // `_init`. Intercepted BEFORE the property-access / identifier dispatch below
+  // because `super` is a keyword, not an identifier the receiver-lowering can
+  // handle. The `this` binding (the allocated subclass instance) and the parent
+  // shape (`this` shape's `.parent`) drive the emitted `<parent>_init` call.
+  if (expr.expression.kind === ts.SyntaxKind.SuperKeyword) return lowerSuperConstructorCall(expr, cx);
+  // #5092 first: `Number(c ? 7 : true)` converts each concrete arm inside the
+  // lazy `if`; the source-bound plan (#7106 lever B) sees only what it declined
+  // — the same order as the selector's `preparedNumberConversionCall`.
   const mixedPrimitiveWrapper = tryLowerExactMixedPrimitiveWrapperCall(expr, cx);
   if (mixedPrimitiveWrapper !== null) return mixedPrimitiveWrapper;
   if (cx.resolver?.preparedNumberCall?.(expr) === true) return lowerPreparedNumberCall(expr, cx);
@@ -7858,24 +7849,24 @@ function lowerCall(expr: ts.CallExpression, cx: LowerCtx, statementPosition = fa
   if (globalFunction !== null) return globalFunction;
   const builtinProtoDescriptor = lowerBuiltinProtoMember(expr, cx.builder, builtinProtoMemberLane(cx)); // (#7294)
   if (builtinProtoDescriptor !== null) return builtinProtoDescriptor;
-  // Slice 4 (#1169d): method call — `<recv>.<methodName>(args)`. The receiver must lower to an IrType.class; the method
-  // must exist on the class shape and be non-void (slice 4 only handles methods with a returning result in expression
-  // position).
+  // Slice 4 (#1169d): method call — `<recv>.<methodName>(args)`. The
+  // receiver must lower to an IrType.class; the method must exist on
+  // the class shape and be non-void (slice 4 only handles methods with
+  // a returning result in expression position).
   if (ts.isPropertyAccessExpression(expr.expression)) {
     const r = lowerMethodCallWithSourcePlan(expr, cx);
     if (r === null) {
-      // Unreachable: in expression position (statementPosition=false) every void arm throws before returning null
-      // (#2856 added the null returns for statement position only).
+      // Unreachable: in expression position (statementPosition=false) every
+      // void arm throws before returning null (#2856 added the null returns
+      // for statement position only).
       unsupportedVoidCallExpression(
         `ir/from-ast: method call produced no result in expression position (${cx.funcName})`,
       );
     }
     return r;
   }
-  if (ts.isElementAccessExpression(functionAccess) && functionObjects.createsFunctionObjects(cx.resolver))
-    return functionObjects.lowerFunctionObjectMemberCall(expr, functionAccess, functionObjectLoweringHost(cx));
-  if (functionObjects.callsNonReference(expr, cx.resolver))
-    return functionObjects.lowerBindingCall(expr, undefined, functionObjectLoweringHost(cx));
+  const valueCall = functionObjects.lowerPreparedValueCallee(expr, cx.resolver, () => functionObjectLoweringHost(cx));
+  if (valueCall !== undefined) return valueCall;
   if (!ts.isIdentifier(expr.expression)) {
     demoteToLegacy(
       "call-resolution-unsupported",
@@ -7899,9 +7890,11 @@ function lowerCall(expr: ts.CallExpression, cx: LowerCtx, statementPosition = fa
   if (staticValue && expr.arguments.length === staticValue.signature.params.length)
     return lowerClosureCall(staticValue.value, staticValue.signature, expr.arguments, cx, statementPosition);
   if (binding?.kind === "nestedFunc") return lowerNestedFuncCall(binding, expr.arguments, cx);
-  // (#7106 S1g, propertyHelper; #7272) propertyHelper's certified aliases: every operand as a carrier, then the lane's
-  // native provider — never the generic bound or dynamic call. The uncurried predicates take `dyn.own_property`; the
-  // stored statics make the object-runtime call an `Object` static's row makes (`emitObjectRuntimeCall`, #7338).
+  // (#7106 S1g, propertyHelper; #7272) propertyHelper's certified aliases:
+  // every operand as a carrier, then the lane's native provider — never the
+  // generic bound or dynamic call. The uncurried predicates take
+  // `dyn.own_property`; the stored statics make the object-runtime call an
+  // `Object` static's row makes (`emitObjectRuntimeCall`, #7338).
   const alias = certifiedAliasCall(expr, (name) => cx.scope.has(name));
   if (alias !== undefined && cx.resolver?.stringIsExternref?.() !== true) {
     const carriers = expr.arguments.map((argument) => lowerCarrierOperand(argument, alias.method, cx));
@@ -7957,9 +7950,10 @@ function lowerCall(expr: ts.CallExpression, cx: LowerCtx, statementPosition = fa
       `ir/from-ast: exact fnctor native-string boundary disagrees with its direct-call plan (${cx.funcName})`,
     );
   }
-  // Slice 8a (#1169g): spread args with statically-known sources (ArrayLiteralExpression with no nested spread). Expand
-  // at compile time to one IR arg per literal element. The pre-expansion arity check below counts spread elements as
-  // their literal element count.
+  // Slice 8a (#1169g): spread args with statically-known sources
+  // (ArrayLiteralExpression with no nested spread). Expand at compile
+  // time to one IR arg per literal element. The pre-expansion arity
+  // check below counts spread elements as their literal element count.
   const expandedArgExprs = expandStaticSpreadArgs(expr.arguments, cx);
   const underArity = planUnderArityDirectCall(expr, direct, expandedArgExprs.length, cx);
   if (expandedArgExprs.length !== calleeSig.params.length && underArity === null) {
@@ -13219,6 +13213,19 @@ function boxForDynamicModuleStorage(value: IrValueId, target: IrType, rhs: ts.Ex
 }
 
 /** Write a mutable identifier and return the RHS before any storage boxing. */
+/**
+ * A write to a binding the mutation pre-pass gave no slot. (#7354 T) A named function expression's own name is such a
+ * binding by design: immutable (§9.1.1.1.5), so a sloppy write is ignored and a strict one throws; it refuses by name.
+ * Anything else is the pre-pass's broken promise.
+ */
+function refuseNonSlotWrite(id: ts.Identifier, what: string, cx: LowerCtx): never {
+  const declaration = cx.checker?.getSymbolAtLocation(id)?.valueDeclaration;
+  if (declaration && ts.isFunctionExpression(declaration))
+    demoteToLegacy("property-write-unsupported", `ir/from-ast: write to the function expression name "${id.text}"`);
+  // invariant (producer-promise): the mutation pre-pass promised a slot binding here — #4502.
+  throw new Error(`ir/from-ast: ${what} "${id.text}" — mutation pre-pass should have detected it (${cx.funcName})`);
+}
+
 function lowerIdentifierAssignment(id: ts.Identifier, rhs: ts.Expression, cx: LowerCtx): IrValueId {
   if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== id) {
     return withMutationSourceSite(cx, id, () => lowerIdentifierAssignment(id, rhs, cx));
@@ -13293,10 +13300,7 @@ function lowerIdentifierAssignment(id: ts.Identifier, rhs: ts.Expression, cx: Lo
     return newValue;
   }
   if (binding.kind !== "slot") {
-    // invariant (producer-promise): the mutation pre-pass promised a slot binding here — #4502.
-    throw new Error(
-      `ir/from-ast: assignment to non-slot binding "${id.text}" — mutation pre-pass should have detected it (${cx.funcName})`,
-    );
+    refuseNonSlotWrite(id, "assignment to non-slot binding", cx);
   }
   // (#3741) invariant W — an i32-promoted slot's RHS lowers DIRECTLY to an
   // exact i32; it is never an f64 that we then truncate.
@@ -13361,10 +13365,7 @@ function lowerCompoundAssignment(
   }
   const capturedCell = binding.kind === "local" && binding.type.kind === "boxed" ? binding : undefined;
   if (binding.kind !== "slot" && binding.kind !== "moduleGlobal" && !capturedCell) {
-    // invariant (producer-promise): the mutation pre-pass promised a slot binding here — #4502.
-    throw new Error(
-      `ir/from-ast: compound assign to non-slot binding "${id.text}" — mutation pre-pass should have detected it (${cx.funcName})`,
-    );
+    refuseNonSlotWrite(id, "compound assign to non-slot binding", cx);
   }
   const storage = binding.kind === "slot" || binding.kind === "moduleGlobal" ? binding : capturedCell!;
   const capturedCellType = storage.kind === "local" && storage.type.kind === "boxed" ? storage.type : undefined;
@@ -13538,10 +13539,7 @@ function lowerIncrementDecrement(id: ts.Identifier, op: ts.SyntaxKind, cx: Lower
   }
   const capturedCell = binding.kind === "local" && binding.type.kind === "boxed" ? binding : undefined;
   if (binding.kind !== "slot" && binding.kind !== "moduleGlobal" && !capturedCell) {
-    // invariant (producer-promise): the mutation pre-pass promised a slot binding here — #4502.
-    throw new Error(
-      `ir/from-ast: increment/decrement of non-slot "${id.text}" — mutation pre-pass should have detected it (${cx.funcName})`,
-    );
+    refuseNonSlotWrite(id, "increment/decrement of non-slot", cx);
   }
   const storage = binding.kind === "slot" || binding.kind === "moduleGlobal" ? binding : capturedCell!;
   const capturedCellType = storage.kind === "local" && storage.type.kind === "boxed" ? storage.type : undefined;

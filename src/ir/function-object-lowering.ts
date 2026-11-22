@@ -312,19 +312,23 @@ export function lowerDynamicMemberCall(
 }
 
 /**
- * (#7354 T) On the Prepared lane, a call whose callee is no Reference — neither an identifier nor a property / element
- * access, outer parentheses skipped, so `(o.m)()` keeps its receiver while `(0, o.m)()`, `(c ? o.m : g)()`,
- * `(o.m = g)()`, `f()()` and an IIFE do not (§13.3.6.1) — calls the callee's value with `this` undefined, as
- * {@link lowerBindingCall} does.
+ * The Prepared lane's call through the value of a callee that is neither an identifier nor a property access: an
+ * element access (`o[k](…)`, its receiver is `this`), or (#7354 T) a callee that is no Reference — outer parentheses
+ * skipped, so `(o.m)()` keeps its receiver while `(0, o.m)()`, `(c ? o.m : g)()`, `(o.m = g)()`, `f()()` and an IIFE
+ * do not (§13.3.6.1) — called with `this` undefined as {@link lowerBindingCall} does. `undefined` elsewhere.
  */
-export function callsNonReference(expr: ts.CallExpression, lane: { createsFunctionObjects?(): boolean } | undefined) {
+export function lowerPreparedValueCallee(
+  expr: ts.CallExpression,
+  lane: { createsFunctionObjects?(): boolean } | undefined,
+  host: () => FunctionObjectLoweringHost,
+): IrValueId | undefined {
+  if (!createsFunctionObjects(lane)) return undefined;
   const callee = skipOuterExpressions(expr.expression);
-  return (
-    createsFunctionObjects(lane) &&
-    !ts.isIdentifier(callee) &&
-    !ts.isPropertyAccessExpression(callee) &&
-    !ts.isElementAccessExpression(callee)
-  );
+  if (ts.isElementAccessExpression(expr.expression))
+    return lowerFunctionObjectMemberCall(expr, expr.expression, host());
+  if (ts.isIdentifier(callee) || ts.isPropertyAccessExpression(callee) || ts.isElementAccessExpression(callee))
+    return undefined;
+  return lowerBindingCall(expr, undefined, host());
 }
 
 /**
