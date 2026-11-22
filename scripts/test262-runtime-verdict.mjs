@@ -49,6 +49,9 @@ export function renderHostError(err, abortBodies = []) {
  * never a label the reader writes for a value it could not read (it then reads no kind): a pass needs the thrown
  * value positively known to be of that type. `read(err, instance)` is the lane's reader, `{ kinds, text }`.
  */
+// oracle-version-exempt: only runtime negatives are scored here, and all 40 in test262 were run before/after on the
+// ordinary standalone, ordinary gc and Prepared lanes: no row flips (#7354 "Slice X result"). The removed passes are
+// probe programs (a message or a fallback label naming the type), not corpus rows.
 function originalHarnessExceptionMatches(err, instance, expectedErrorType, read) {
   if (!expectedErrorType) return true;
   const { kinds, text } = read(err, instance);

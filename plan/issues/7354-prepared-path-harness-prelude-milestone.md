@@ -5369,3 +5369,102 @@ Not the earlier "T and X" slice (dynamic throw); this one is the runner's runtim
   `Test262Error` (ordinary object, constructor `Test262Error`) and a realm `TypeError` (`$Error_struct`) are told
   apart by kind, not by text. Every Prepared artifact changes bytes; the 4 compile-error rows above need the
   built-in error classes, which the path does not have.
+
+Lead decision: (a) alone now, plus item 2 (match the read KIND, never the message); (b) is slice X2 below.
+
+## Slice X result (2026-11-22, branch `claude/7354-x`; (a) = `fb4619b92f` + the oracle note)
+
+### Built
+
+- **One rule**, `originalHarnessExceptionMatches` in `scripts/test262-runtime-verdict.mjs`: a runtime negative
+  passes only when the expected type is one of the KINDS the lane's reader read — the thrown value's `name` or its
+  constructor's name. Message text never counts, and a value the reader could not read has no kind, so the label
+  written for it cannot match by construction.
+- **Readers report `{ kinds, text }`**; the old text functions are now `.text` of them:
+  - worker `readThrownValue` (`extractWasmExceptionMessage` wraps it);
+  - runner `readWasmException` (fixture lane);
+  - shared `readHarnessThrown` (local runner).
+  - No kind: no tag export (every Prepared artifact), a payload the tag does not carry, no instance, a null
+    payload (the ordinary null-guard/TDZ throw or `throw null`).
+- `thrownErrorKinds` (`scripts/lib/wasm-exn-render.mjs`) is the one kind reader. For a host-opaque WasmGC payload
+  it splits the module's own `String(payload)` (`__exn_render_*`) at the first `": "` (whole text when none),
+  because standalone ordinary codegen exports nothing else. The real fix is a kind export there (ordinary bytes
+  change); not in this slice.
+- Callers of the rule: the worker's instantiate and `__module_init` arms, the fixture lane (its `.includes` copy is
+  gone), the local runner (its `originalNegativeMatches` copy is gone).
+- Unread text names what was not read: `unknown thrown value: the module exports no exception tag` / `… the
+  module's exception tag does not carry it`. The null-payload text `TypeError (null/undefined access)` is unchanged.
+
+### Real runner, before (`main` a12f6a4a13) → after; 40 probe rows + the 40 runtime negatives of test262 per lane
+
+Probes are next to `language/statements/throw/` (deleted after the runs). Matrix: expected {TypeError,
+Test262Error, ReferenceError, SyntaxError, RangeError} × thrown {matching `new X`, a different error, `throw 1`,
+`new Test262Error`, nothing, an abort body (`arguments.length`), `null.p`}.
+
+| lane | before pass | after pass | flips |
+|---|---:|---:|---|
+| Prepared (IR) | 6 | 0 | 6 probes → fail (below) |
+| ordinary standalone | 45 | 42 | 3 probes → fail |
+| ordinary gc (honest) | 45 | 42 | 3 probes → fail |
+
+- Prepared, removed false passes (expected TypeError): `throw 1`, `throw new Test262Error("x")`, `null.p`,
+  `throw "TypeError: x"`, `throw new Test262Error("TypeError")`, `throw {toString(){return "TypeError: x"}}`.
+  All now fail as `unknown thrown value: the module exports no exception tag`. No Prepared row passes; the abort
+  body fails as the abort, `new TypeError/RangeError/…/Error` is a compile_error (unknown class), nothing thrown
+  fails `expected runtime … but succeeded`.
+- Ordinary standalone and gc, removed false passes (expected TypeError, matched by message): `new Error("TypeError:
+  x")` → `Error`, `new RangeError("not a TypeError")` → `RangeError`, `new Test262Error("TypeError")` →
+  `Test262Error`. A real `new TypeError` and `null.p` still pass. Every other matrix cell keeps its verdict;
+  `*-matching` passes for all five types.
+- **Residual, on BOTH ordinary lanes** (not standalone only: the JS-environment lane runs the same native core and
+  exports the same `__exn_render_*`): `throw "TypeError: x"` and an object whose `toString` returns
+  `"TypeError: x"` still pass, because the module's rendering is the only reader. Needs the kind export.
+- **The 40 runtime negatives of test262: 0 flips on all three lanes.** Standalone 33 pass before and after (incl.
+  all 12 ES5 Test262Error rows); gc 31 → 31; Prepared 0 → 0 (7 compile and throw `new Test262Error`: the 7
+  `language/line-terminators/comment-*` rows; they fail, unread, before and after).
+
+### Positive tests and the sample
+
+- Positive rows cannot flip by construction (only the runtime-negative verdict reads kinds). Status diff, ordinary
+  standalone: the first 70 rows of `mw-01` 70 pass → 70 pass; the 5 baseline rows bucketed `TypeError
+  (null/undefined access)` fail → fail. Their text: 1 unchanged (null payload), 4 now `unknown thrown value: the
+  module's exception tag does not carry it` (a payload from another module's tag, e.g. the eval provider).
+- 411-row ES5 sample, Prepared lane, default settings, base and head each run: 31 pass / 4 fail / 376
+  compile_error on both; 0 rows changed.
+
+### ES5 runtime negatives
+
+16 in test262 (12 Test262Error, 3 EvalError, 1 SyntaxError; no TypeError, so no published ES5 number was inflated
+by the label). On the Prepared lane 9 are compile errors (html-comment parsing, eval) and 7 throw
+`new Test262Error()` and fail as unread; X2 lets those 7 pass.
+
+### Gates and tests
+
+- `node --test scripts/test262-prepared-trap-verdict.test.mjs`: 20/20 (6 new: unread × 5 types × 4 unread forms
+  never pass; kind match passes; message, string, primitive never; a trap only by the non-Prepared frame rule).
+- `scripts/lib/native-eval-boundary-observation.test.mjs`: the new worker-reader kind test passes; the other 11
+  fail identically on `main` here (`frozen source digest must actually admit the controls`), so they say nothing
+  about this change.
+- Oracle: no corpus row flips (above), so `oracle-version-exempt:` beside the rule, no ORACLE_VERSION bump.
+
+### Left as they are (recorded)
+
+- `!originalHarness` accepts any throw; no production job sends it.
+- A trap on the non-Prepared lanes still matches by frame names in its text (#7447).
+- The residual above (thrown string / custom `toString` on the ordinary lanes).
+- The gc lane was measured in the honest oracle mode, not CI's linked harness. Node 25 is not installed here.
+
+## Slice X2 plan (not started) — the Prepared artifact names what it threw
+
+- Export the exception tag as `__exn_tag` (one `defineExport` after `publishPhysicalExports` in
+  `materializePhysicalProgram`, `src/ir/program-consumer.ts`), the ordinary lane's convention.
+- Add an in-module kind reader, reserved as a physical resource before the freeze (and counted as a support
+  function, so the "unowned function" receipt check holds):
+  - `$Error_struct` (the realm's TypeError, `createErrorStructType`) → its `name` field;
+  - an ordinary object → `[[Get]] constructor` → the function's name (a C2 `Test262Error` has no own `name`);
+  - anything else → no kind;
+  - the name string read out through the `__exn_render_prepare`/`__exn_render_char` convention, which the
+    worker's `tryNativeExnRender` already reads — or, better, a dedicated kind export so the runner no longer
+    splits rendered text.
+- Every Prepared artifact's bytes change (`check:prepared-bytes`: every row differs by the export; run a sample at
+  base and head to show the same outcomes). The 7 ES5 line-terminator rows should then pass.
