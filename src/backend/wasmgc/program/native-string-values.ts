@@ -424,7 +424,10 @@ export function planNativeStringValuePhysical(
   };
 }
 
-/** What `planNativeStringValuePhysical` planned each plan from (its options are in the plan itself). */
+/**
+ * What `planNativeStringValuePhysical` planned each plan from (its options are in the plan itself). A provenance map,
+ * not `issuedPacks`: a use also checks which demands and dependencies the plan was issued for.
+ */
 const issuedPlans = new WeakMap<
   NativeStringValuePhysicalPlan,
   {
