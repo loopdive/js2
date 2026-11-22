@@ -14,7 +14,7 @@ import {
   type NativeSourceClosureTypes,
 } from "./native-source-closures.js";
 import {
-  assertNativeRealmRequirementsCurrent,
+  assertNativeRealmRequirementsIssued,
   type NativeRealmRequirements,
 } from "../../../ir/program/native-realm-requirements.js";
 
@@ -137,7 +137,7 @@ function realmEntries(
   realm: NativeRealmRequirements,
 ) {
   requireNativeSourceClosureTypes(tx, types, types.requirements);
-  assertNativeRealmRequirementsCurrent(realm);
+  assertNativeRealmRequirementsIssued(realm);
   if (realm.source !== types.requirements) fail("realm belongs to a different source owner");
   return resolveSourceEntries(tx, types, slots, new Set(realm.description.sourceUnits));
 }

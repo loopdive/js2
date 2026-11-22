@@ -30,12 +30,11 @@ import { forEachPreparedIrInstruction } from "./runtime/prepared-instructions.js
 import {
   planNativeInvocationRequirements,
   assertNativeInvocationRequirementsIssued,
-  assertNativeInvocationRequirementsCurrent,
   type NativeInvocationRequirements,
 } from "./program/native-invocation-requirements.js";
 import {
   deriveNativeRealmRequirements,
-  assertNativeRealmRequirementsCurrent,
+  assertNativeRealmRequirementsIssued,
   type NativeRealmRequirements,
 } from "./program/native-realm-requirements.js";
 import {
@@ -422,14 +421,6 @@ export function acceptedPhysicalSetupPlan(accepted: AcceptedPreparedIrProgram): 
   return record.physical;
 }
 
-/** The currentness of the accepted invocation requirements (the accepted-program validator stage). */
-export function verifyAcceptedNativeInvocation(accepted: AcceptedPreparedIrProgram): void {
-  const record = acceptances.get(accepted);
-  if (!record)
-    programInvariant("invalid-transaction-capability", "acceptance was not produced by acceptPreparedIrProgram");
-  if (record.nativeInvocation) assertNativeInvocationRequirementsCurrent(record.nativeInvocation);
-}
-
 /** Function index of the startup adapter this emission constructed, if any. */
 export function emittedStartupAdapterIndex(emitted: EmittedPreparedIrProgram): number | undefined {
   return startupAdapters.get(emitted)?.startupAdapterIndex;
@@ -536,7 +527,7 @@ function prepareNativeEmission(accepted: AcceptedPreparedIrProgram, plan: Physic
   if (Boolean(record.nativeRealm) !== Boolean(plan.nativeRealm))
     emissionFailed("realm acceptance/physical plan mismatch");
   if (record.nativeRealm) {
-    assertNativeRealmRequirementsCurrent(record.nativeRealm);
+    assertNativeRealmRequirementsIssued(record.nativeRealm);
     if (
       record.nativeRealm !== record.nativeStrings?.realmRequirements ||
       record.nativeRealm.source !== record.sourceClosures ||

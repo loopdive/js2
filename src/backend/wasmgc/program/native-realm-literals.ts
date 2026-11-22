@@ -1,6 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import {
-  assertNativeRealmRequirementsCurrent,
+  assertNativeRealmRequirementsIssued,
   type NativeRealmRequirements,
 } from "../../../ir/program/native-realm-requirements.js";
 import type { IrStringEncoding } from "../../../ir/core/string-types.js";
@@ -25,7 +25,7 @@ export function planNativeRealmLiterals(
   requirements: NativeRealmRequirements,
   utf8Storage: boolean,
 ): NativeRealmLiteralPlan {
-  assertNativeRealmRequirementsCurrent(requirements);
+  assertNativeRealmRequirementsIssued(requirements);
   if (typeof utf8Storage !== "boolean") fail("invalid encoding selection");
   const prior = cache.get(requirements)?.get(utf8Storage);
   if (prior) return prior;

@@ -4647,9 +4647,10 @@ brand dispatch: arrays, #7352), 6 `verifyProperty … is written`, 14 pass, 5 ot
 
 ## Perf5 result (2026-11-22, branch `claude/7354-perf5` from `claude/7354-f2` `1de4a6f2e7`)
 
-The invocation requirements are no longer re-derived at every use. Two commits: `3e670a6858` (the per-use sites take
-an O(1) issue check; the re-derivation runs once, in a new accepted-program validator stage) and `eac330ed5f` (that
-check compares once; a seeded stale plan is refused only by that comparison).
+The invocation requirements are no longer re-derived: every use checks only that the planner issued the pack, as
+Perf4 did for the realm. The first two commits kept the re-derivation once per compile in a validator stage; review
+round 1 deleted it (see the end of this section). The measurements below were taken with that stage present; it ran
+only with the switch on (0.14 s at N = 10).
 
 ### Measurements (strict Prepared entry, standalone, tsx, one command at a time, load 2–3 from another agent)
 
@@ -4684,58 +4685,60 @@ settled-verdict immutability walk 5.6 s (2.3 s under `assertNativeStringValueRes
 `nativeCallAbiBindings` 3.1 s. Switch on (N = 10): the validator's invocation check costs 0.14 s; the on-only cost is
 `hasNativeCollectionState` (6.0 s, the slot probes) and `same` in `native-string-values.ts` (4.1 s).
 
-### Each site
+### Each site (final, after review round 1)
 
 | site | what it did | decision | why |
 | --- | --- | --- | --- |
-| `assertNativeInvocationRequirementsCurrent` at 8 uses (`authenticate`, `resolveEntries`, `nativeStringInvocationRequirements`, `planNativeInvocationInput`, `nativeInvocationAbiBindings`, `selectNativeBooleans`, `prepareNativeProgramStringInput`, `prepareNativeEmission`) | per use: the census's whole-program snapshot compare, a fresh census, a fresh derivation, two compares | **`assertNativeInvocationRequirementsIssued`** (a `WeakSet` lookup) | The pack and the program it was derived from are frozen (Perf3), so it cannot go stale between uses; the same argument Perf4 made for the realm requirements. |
-| the re-derivation itself | — | **the accepted-program validator stage** (`verifyAcceptedNativeInvocation`, called by `runIrProgramDriver` after acceptance, under the switch): once per compile | The one place that compares. Checked by a probe: with the check made to throw, a compile with the switch on fails with `prepared validator (accepted program): …`, with it off compiles. |
-| the census self-check inside it, and the snapshot `WeakMap` | a second compare (the census against its whole-program snapshot) and a snapshot equal to the frozen pack by construction | **deleted** from the invocation check; the snapshot became the issue `WeakSet` | One comparison: a fresh census's gap joins the fresh derivation, compared with the issued uses/gaps. `assertNativePromiseSourceCensusCurrent` stays for its own consumer (`observeNativeStringValueProducer`). The runtime-created gap text has one helper (`runtimeCreatedGaps`) for planning and checking. |
+| `assertNativeInvocationRequirementsCurrent` at 8 uses (`authenticate`, `resolveEntries`, `nativeStringInvocationRequirements`, `planNativeInvocationInput`, `nativeInvocationAbiBindings`, `selectNativeBooleans`, `prepareNativeProgramStringInput`, `prepareNativeEmission`) | per use: the census's whole-program snapshot compare, a fresh census, a fresh derivation, two compares | **`assertNativeInvocationRequirementsIssued`** (issue lookup) | The pack and the program it was derived from are frozen (Perf3), so it cannot go stale; Perf4's argument for the realm. |
+| the re-derive-and-compare check itself and its snapshot `WeakMap` | — | **deleted**, with no validator stage | A stale plan cannot arise in a real compile, so a check for it is a defensive branch; #7380 §2 adds no currentness check. Perf3 and Perf4 deleted their siblings outright. |
+| realm `assertNativeRealmRequirementsCurrent` (an issue lookup since Perf4) | — | **renamed `assertNativeRealmRequirementsIssued`** (18 references in 8 files, mechanical) | One name pattern for the two sibling checks. |
+| the two `WeakSet` + fail bodies | the same shape twice | **one helper**, `issuedPacks(refusal)` in `src/ir/program/issued-packs.ts` (`issue` / `assertIssued`) | Both planners register through it; refusal texts unchanged. |
 
 ### Tests (each file alone, `VITEST_MAX_FORKS=1`, switch on)
 
+After review round 1, merged with `main` `77631faba5`:
+
 | file | result |
 | --- | --- |
+| `issue-3518-native-getter-invocation` (modified) | 37/37, exit 0 |
 | `issue-7354-f2-calls-through-values` | 10/10, exit 0 |
-| `issue-7354-fa-function-values` | 44/44, exit 0 |
-| `issue-3518-native-builtin-functions` | 36/36, exit 0 |
-| `issue-3518-native-getter-invocation` (modified) | 43/43, exit 0 |
-| `issue-3518-native-invocation-consumer` | 61/61, exit 0 |
-| `issue-3518-native-object-get-owner` | 64/64, exit 0 |
-| `issue-3518-builtin-request-literal-authentication` | 24/24, exit 0 |
-| `issue-3525-public-prepared-driver` | 16/16, exit 0 |
-| `issue-7364-prepared-empty-program` | 11/11, exit 0 |
-| `issue-3518-native-getter-results` | 19/21, exit 1 — same 2 red on the base (`string.const runtime is unavailable`) |
-| `issue-3518-native-getter-resource-join` | 13 + 2 skipped, 2 suites fail, exit 1 — same on the base (same error) |
-| `issue-3518-native-object-realm-declarations` | 21/25, exit 1 — same 4 red on the base (same error) |
-| `issue-3518-native-invocation-substrate` | 41/45, exit 1 — same 4 red on the base (post-completion mutation, Perf4's boundary audit) |
-| `issue-3518-native-realm-requirements` | 24/25, exit 1 — same 1 red on the base (`js.object.init-function` realm row) |
-| `issue-3518-native-realm-source-integration` | 22/24, exit 1 — same 2 red on the base |
+| `issue-3518-native-realm-requirements` (renamed call) | 24/25, exit 1 — the same 1 red as on the F2 base (`js.object.init-function` realm row) |
+
+Before review round 1 (commits `3e670a6858`, `eac330ed5f`, on the F2 base): fa-function-values 44/44,
+native-builtin-functions 36/36, invocation-consumer 61/61, object-get-owner 64/64, builtin-request-literal-authentication
+24/24, 3525-public-prepared-driver 16/16, 7364-prepared-empty-program 11/11 (all exit 0). Red there and identically
+red on the F2 base: getter-results 2 (`string.const runtime is unavailable`), getter-resource-join 2 suites (same),
+object-realm-declarations 4 (same), invocation-substrate 4 (post-completion mutation, Perf4's boundary audit),
+realm-source-integration 2.
 
 Changes in `issue-3518-native-getter-invocation`:
-- New: "the validator refuses requirements whose call population changed after planning" — a seeded invalid plan for
-  the validator (#7380 acceptance 3): a source call made a non-invocation, which the derivation accepts, so only the
-  comparison refuses it (`stale invocation source`). Kill check: with the comparison removed this case fails and the
-  other 42 pass; before this case no test in the file noticed (the existing stale-provenance cases are refused by the
-  derivation's own checks).
-- "refuses changed function/global ownership/layout" were red on the base (Perf4 moved the ledger audit to the phase
-  boundaries); they now expect the refusal at `freezeReservations` ("altered").
+- Deleted: "refuses stale actual %s provenance after the paired positive" (5 cases) and its `mutableProgram` helper.
+  Each edited a `structuredClone`d program after planning and asserted the deleted check (the forged-plan shape Perf3
+  removed). The positive calls now use `assertNativeInvocationRequirementsIssued`.
+- "refuses changed function/global ownership/layout" were red on the F2 base (Perf4 moved the ledger audit to the
+  phase boundaries); they now expect the refusal at `freezeReservations` ("altered"). The reviewer confirmed these.
 
 ### Bytes and gates
 
-- `check:prepared-bytes`: all 804 rows identical, base vs head, switch off; and base on vs head on (both commits).
-- 109 F2 probe programs (`f2set.p`) and 71 F2 regression programs (`reg.p`) through the strict entry: identical
-  (binary sha or refusal text).
-- Ordinary pipeline: F2's 20 test262 files × (default, standalone) identical.
-- Gates, each bare: typecheck, LOC, function budget (both also with `LOC_GATE_BASE` = main `d6a09c082d`), coercion
-  sites, oracle ratchet, dead exports.
+- `check:prepared-bytes`, after review round 1: all 804 rows identical, `main` `77631faba5` vs head (file-copy A/B of
+  the 11 changed files), switch off; head with the switch on equals main off.
+- Before review round 1, vs the F2 base: the 804 rows (off and on), 109 F2 probe programs, 71 F2 regression programs,
+  and F2's 20 test262 files × (default, standalone) through the ordinary pipeline, all identical.
+- Gates, each bare: typecheck, dead exports, LOC and function budget with `LOC_GATE_BASE` = main `77631faba5`;
+  before round 1 also coercion sites and oracle ratchet.
+
+### Review round 1 (lead)
+
+Correctness met (218 programs identical; 3,188 per-use checks, none stale or unfrozen; 85.7 → 21.0 s). Quality not
+met, fixed: (1) the kept re-derive-and-compare check and its accepted-program stage are deleted; (2) the new
+seeded-stale test is deleted (forged-plan shape); (3) one name pattern and one helper for the invocation and realm
+issue checks.
 
 ### Not verified, left
 
 - Node 25 (CI's version) is not installed here.
+- Timings were not re-measured after round 1: the deleted stage ran only with the switch on.
 - Compile time is still superlinear (5 → 10 → 20 closures: ×2.2, ×2.3–3). Candidate: `nativeCallAbiBindings` rebuilds
   the owner function's type map (`nativeAsyncCallableValueTypes`) per call use — 3.1 s (15 %) at N = 20, quadratic in
   calls per function. Not per-use re-proof, below the 25 % bar; next slice.
 - The remaining one-time copies and settled walks (#7380 step 5b) and, switch on, the slot probes.
-- No test proves the driver calls the validator stage (only the probe above); a stale plan cannot arise in a real
-  compile, so such a test would need a forged plan.

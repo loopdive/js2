@@ -9,7 +9,7 @@ import type { PreparedIrProgram } from "../src/ir/program/prepared-contracts.js"
 import { deriveNativeObjectAccessRequirements } from "../src/ir/program/native-object-access-requirements.js";
 import {
   planNativeInvocationRequirements,
-  assertNativeInvocationRequirementsCurrent,
+  assertNativeInvocationRequirementsIssued,
 } from "../src/ir/program/native-invocation-requirements.js";
 import {
   nativeInvocationGetterDispatch,
@@ -39,21 +39,6 @@ beforeAll(() => {
 afterEach(() => new Promise<void>((resolve) => setImmediate(resolve)));
 afterAll(() => vi.unstubAllEnvs());
 
-function mutableProgram(program = original) {
-  const projection = {
-    ...program.runtime[0]!,
-    prepared: {
-      ...program.runtime[0]!.prepared,
-      functions: structuredClone(program.runtime[0]!.prepared.functions),
-    },
-  };
-  return {
-    ...program,
-    ir: { ...program.ir, functions: structuredClone(program.ir.functions) },
-    allocations: structuredClone(program.allocations),
-    runtime: [projection],
-  };
-}
 function unchanged<T>(module: unknown, run: () => T): T {
   const before = structuredClone(module);
   const result = run();
@@ -99,7 +84,7 @@ describe("C1-authenticated semantic getter invocation requirements", () => {
     expect(allocation.rawAllocationId).toBe(demand.rawAllocationId);
     expect(allocation.allocationId).toBe(demand.allocationId);
     expect(f.source.shapes.find((row) => row.id === use.shapeId)!.captures).toHaveLength(1);
-    expect(() => assertNativeInvocationRequirementsCurrent(invocation)).not.toThrow();
+    expect(() => assertNativeInvocationRequirementsIssued(invocation)).not.toThrow();
   });
   it.each([false, true])(
     "retains an actual returned callable without declaring it a getter target, decoded=%s",
@@ -146,7 +131,7 @@ describe("C1-authenticated semantic getter invocation requirements", () => {
   });
   it("rejects a copied C1 pack after the real issuer positive", () => {
     const f = getterRequirements(original);
-    expect(() => assertNativeInvocationRequirementsCurrent(f.invocation!)).not.toThrow();
+    expect(() => assertNativeInvocationRequirementsIssued(f.invocation!)).not.toThrow();
     expect(() =>
       planNativeInvocationRequirements(f.source, { utf8Storage: false, objectAccess: { ...f.access } }),
     ).toThrow(/unissued|detached/);
@@ -158,43 +143,6 @@ describe("C1-authenticated semantic getter invocation requirements", () => {
     expect(() =>
       planNativeInvocationRequirements(f.source, { utf8Storage: false, objectAccess: other.access }),
     ).toThrow("different prepared program/projection/allocation owner");
-  });
-  it.each(["capture", "allocation", "Get receiver", "descriptor getter", "instruction identity"] as const)(
-    "refuses stale actual %s provenance after the paired positive",
-    (mutation) => {
-      const f = getterRequirements(mutableProgram());
-      expect(() => assertNativeInvocationRequirementsCurrent(f.invocation!)).not.toThrow();
-      const demand = f.access.getters[0]!;
-      const index =
-        mutation === "Get receiver"
-          ? demand.getOccurrence
-          : mutation === "descriptor getter"
-            ? demand.definitionOccurrence
-            : demand.allocationOccurrence;
-      const occurrence = f.source.demands.occurrences[index]!,
-        instruction = occurrence.instruction;
-      if (mutation === "instruction identity") {
-        const buffer = f.source.demands.buffers[occurrence.bufferIndex]!;
-        (buffer.instructions as unknown[])[occurrence.instructionIndex] = structuredClone(instruction);
-      } else if (instruction.kind === "closure.new") {
-        Object.assign(instruction, mutation === "capture" ? { captures: [] } : { alloc: undefined });
-      } else if (instruction.kind === "call") {
-        const args = [...instruction.args];
-        args[2] = args[1]!;
-        Object.assign(instruction, { args });
-      } else throw new Error("mutation missed its actual positive instruction");
-      expect(() => assertNativeInvocationRequirementsCurrent(f.invocation!)).toThrow();
-    },
-  );
-  // (#7354 Perf5) A seeded invalid plan for the validator (#7380 acceptance 3): the source call is no invocation any
-  // more, which the derivation accepts, so only the validator's comparison with the issued uses refuses it.
-  it("the validator refuses requirements whose call population changed after planning", () => {
-    const f = getterRequirements(mutableProgram(prepareGetterProgram(CALL_SOURCE)));
-    expect(() => assertNativeInvocationRequirementsCurrent(f.invocation!)).not.toThrow();
-    const call = f.source.demands.occurrences[f.invocation!.uses[0]!.occurrence]!.instruction;
-    if (call.kind !== "call") throw new Error("the invocation use lost its call");
-    Object.assign(call, { target: { ...call.target, binding: { kind: "intrinsic", symbol: "test.no-invocation" } } });
-    expect(() => assertNativeInvocationRequirementsCurrent(f.invocation!)).toThrow("stale invocation source");
   });
   it("reports unsupported getter result conversion before physical reservation", () => {
     const f = getterRequirements(

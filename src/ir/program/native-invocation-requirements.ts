@@ -11,7 +11,8 @@ import {
 import { nativeAsyncCallableValueTypes } from "../runtime/native-async-callables.js";
 import type { NativeSourceClosureRequirements } from "./native-source-closure-requirements.js";
 import { collectNativePromiseSourceCensus, type NativePromiseSourceCensus } from "./native-promise-inventory.js";
-import { freezePreparedIrValue, preparedIrDataMismatch } from "./data.js";
+import { freezePreparedIrValue } from "./data.js";
+import { issuedPacks } from "./issued-packs.js";
 import {
   deriveNativeObjectAccessRequirements,
   type NativeObjectAccessRequirements,
@@ -58,7 +59,9 @@ export interface NativeInvocationRequirements {
   /** This owner cannot certify other compiler-created callable producers. */
   readonly completionScope: "selected-source-invocation";
 }
-const issued = new WeakSet<NativeInvocationRequirements>();
+const invocationPacks = issuedPacks<NativeInvocationRequirements>(
+  "native invocation requirements: unissued or copied invocation requirements",
+);
 function fail(detail: string): never {
   throw new Error(`native invocation requirements: ${detail}`);
 }
@@ -341,7 +344,11 @@ export function planNativeInvocationRequirements(
     target: projection.target,
     utf8Storage: options.utf8Storage,
   });
-  data.gaps.push(...runtimeCreatedGaps(runtimeCreated));
+  if (runtimeCreated.required)
+    data.gaps.push({
+      unitId: runtimeCreated.anchorUnitId,
+      detail: "runtime-created Promise settlement callables need their issued producer/fill association",
+    });
   const pack = Object.freeze({
     key: `${source.key}:invocation`,
     source,
@@ -351,19 +358,7 @@ export function planNativeInvocationRequirements(
     ...(freezePreparedIrValue(data) as typeof data),
     completionScope: "selected-source-invocation" as const,
   });
-  issued.add(pack);
-  return pack;
-}
-
-function runtimeCreatedGaps(census: NativePromiseSourceCensus): NativeInvocationRequirements["gaps"] {
-  return census.required
-    ? [
-        {
-          unitId: census.anchorUnitId,
-          detail: "runtime-created Promise settlement callables need their issued producer/fill association",
-        },
-      ]
-    : [];
+  return invocationPacks.issue(pack);
 }
 
 function needsObjectResultProof(source: NativeSourceClosureRequirements): boolean {
@@ -389,38 +384,5 @@ function needsObjectResultProof(source: NativeSourceClosureRequirements): boolea
   return false;
 }
 
-/**
- * The check every use makes, O(1): `pack` was issued by `planNativeInvocationRequirements`. A use does not re-derive
- * it: the pack and the prepared program it was derived from are frozen (#7354 Perf3), so it cannot go stale. The
- * validator re-proves that once per compile (`assertNativeInvocationRequirementsCurrent`).
- */
-export function assertNativeInvocationRequirementsIssued(pack: NativeInvocationRequirements): void {
-  if (!issued.has(pack)) fail("unissued or copied invocation requirements");
-}
-
-/**
- * The validator's check (#7380; accepted-program stage, under `JS2WASM_VALIDATE_PREPARED`): the issued pack equals a
- * fresh derivation from its source, the Promise census's gap included.
- */
-export function assertNativeInvocationRequirementsCurrent(pack: NativeInvocationRequirements): void {
-  assertNativeInvocationRequirementsIssued(pack);
-  const { program, projection } = pack.source.demands;
-  const data = calculate(pack.source, pack.objectAccess, pack.objectResults);
-  data.gaps.push(
-    ...runtimeCreatedGaps(collectNativePromiseSourceCensus(program, projection, pack.runtimeCreated.options)),
-  );
-  if (
-    pack.runtimeCreated.program !== program ||
-    pack.runtimeCreated.projection !== projection ||
-    pack.completionScope !== "selected-source-invocation" ||
-    pack.key !== `${pack.source.key}:invocation` ||
-    preparedIrDataMismatch(data, {
-      uses: pack.uses,
-      getterUses: pack.getterUses,
-      methodArities: pack.methodArities,
-      applyVector: pack.applyVector,
-      gaps: pack.gaps,
-    }) !== undefined
-  )
-    fail("stale invocation source, population or scope");
-}
+/** A use checks only that the planner issued the pack (`issued-packs.ts`). */
+export const assertNativeInvocationRequirementsIssued = invocationPacks.assertIssued;

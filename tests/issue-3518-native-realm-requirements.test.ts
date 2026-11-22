@@ -4,7 +4,7 @@ import { setImmediate } from "node:timers/promises";
 import { NATIVE_REALM_CATALOG } from "../src/runtime/contracts/native-realm-catalog.js";
 import {
   deriveNativeRealmRequirements,
-  assertNativeRealmRequirementsCurrent,
+  assertNativeRealmRequirementsIssued,
 } from "../src/ir/program/native-realm-requirements.js";
 import {
   planNativeRealmLiterals,
@@ -139,7 +139,7 @@ describe("semantic native realm catalog and real selected demands", () => {
     expect(r.description.catalog).toEqual(NATIVE_REALM_CATALOG);
     expect(r.description.completionScope).toBe("native-realm-bootstrap");
     expect(r.description.unavailable.length).toBeGreaterThan(40);
-    expect(() => assertNativeRealmRequirementsCurrent(r)).not.toThrow();
+    expect(() => assertNativeRealmRequirementsIssued(r)).not.toThrow();
   });
   it("selects a constructed typed-IR no-source object demand through genuine preparation", () => {
     const program = prepareBackendRealmProgram();
@@ -175,7 +175,7 @@ describe("semantic native realm catalog and real selected demands", () => {
   it("rejects copied realm packs, foreign projections and foreign source issuers", () => {
     const a = selected(),
       b = selected();
-    expect(() => assertNativeRealmRequirementsCurrent({ ...a.requirements })).toThrow(/unissued|copied/);
+    expect(() => assertNativeRealmRequirementsIssued({ ...a.requirements })).toThrow(/unissued|copied/);
     expect(() => deriveNativeRealmRequirements(a.program, b.projection)).toThrow();
     expect(() => deriveNativeRealmRequirements(a.program, a.projection, b.requirements.source)).toThrow(
       /foreign|detached/,
