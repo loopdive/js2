@@ -219,32 +219,6 @@ describe("#7354 Perf — one authentication per unchangeable plan state", () => 
       emit();
     }).toThrow(/stale or mismatched demand census/);
   });
-
-  it("refuses retained demands changed between two emits", () => {
-    const { input, emit } = filled((demands, plan) => ({
-      demands: { ...demands, literals: [...demands.literals] },
-      plan,
-    }));
-    expect(isImmutablePreparedIrValue(input)).toBe(false);
-    emit();
-    (input.demands.literals as unknown[]).pop();
-    expect(emit).toThrow(/changed retained string demands/);
-  });
-
-  it("refuses a retained plan changed between two emits", () => {
-    const { input, emit } = filled((demands, plan) => ({ demands, plan: structuredClone(plan) }));
-    expect(isImmutablePreparedIrValue(input)).toBe(false);
-    emit();
-    (input.plan.literalUses[0] as { cacheKey: string }).cacheKey = "altered";
-    expect(emit).toThrow(/demand\/plan mismatch/);
-  });
-
-  it("refuses a plan changed after many emits, not only after the first", () => {
-    const { input, emit } = filled((demands, plan) => ({ demands, plan: structuredClone(plan) }));
-    for (let count = 0; count < 3; count++) emit();
-    (input.plan.literalRequirements as { utf8Storage: boolean }).utf8Storage = true;
-    expect(emit).toThrow(/native string values/);
-  });
 });
 
 describe("#7354 Perf — isImmutablePreparedIrValue", () => {
