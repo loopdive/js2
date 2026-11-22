@@ -5167,8 +5167,13 @@ path: the call form on the unshadowed global, served by the realm's descriptor p
   ToPropertyKey through the program's own `stringOf` (a key's `toString` runs through F2), Properties' ToObject
   (undefined/null → TypeError, number/Boolean → nothing, string → abort), then the realm contract; `Object.create`
   links an ordinary object (`create-with-prototype`) or null (`create-null`), a function or error prototype → abort.
-  An abort arm ends in a throw of the abort's text, which never runs: the abort is a pure intrinsic and an unused
-  `Object.create(F);` dropped it before (found by a test).
+  An abort arm calls the shared abort builder directly: `isSideEffecting` (`src/ir/analysis/effects.ts`) now keeps
+  `js.value.unsupported` alive, so dead-code removal never drops an abort whose result is unused (an unused
+  `Object.create(F);` ran on before). The intrinsic's effect facet stays pure, as its certification requires.
+- "Is this the global `Object`" is one predicate, `pristineBuiltinGlobal` (`src/ir/builtin-global-binding.ts`): the
+  checker's symbol is lib-declared only, no source binds the name at any level (the checker resolves a script's
+  top-level `function Object(){}` reference to the lib symbol), and no source assigns it. The call arm and the flow
+  exemption use it; each shadowing form refuses by name (tests).
 - The flow rule (`source-dynamic-contracts.ts`) takes a native static's arguments and its literal descriptors'
   fields as carriers (the lib's `PropertyDescriptor` types do not apply); `programObjects` admits the object kind for
   a program whose objects come only from such a call.
@@ -5270,15 +5275,20 @@ deleted, not updated (#7380); the catalog's native rows are asserted by identity
   - 12 cases: 17 declarations + 12 closures = 29 functions, ~60 calls: **4.2–6.0 s** per compile (234 runs).
   - 72 cases: 77 declarations + 72 closures = 149 functions, ~350 calls: **> 500 s** (killed at the 530 s limit; ×5
     the functions, ×100 the time).
-- **The shared `abort` builder of `dynamic-value-chains.ts` can be dropped as dead code.** `js.value.unsupported` is a
-  certified-pure intrinsic (`src/ir/analysis/intrinsics.ts` rejects one with effects), and DCE removes pure
-  instructions whose result is unused. It bites when (a) the abort is the whole expansion of an operation, i.e. the
-  value's proven kinds leave only arms that abort (or are otherwise pure), so no effectful sibling arm keeps the
-  enclosing `if` alive, and (b) the operation's result is unused (statement position). Then the program runs on as if
-  the operation had succeeded. Found here as `function F(){} Object.create(F);` (the prototype's kind is proven
-  `function`, one arm, the abort) running to its end; the statics now end each abort arm in a never-run `throw` of its
-  text. Member access has not hit it so far because its aborting arms always sit beside a realm call or a throw; a
-  write whose receiver is proven to be only a kind that aborts would.
+- **Fixed here:** the shared abort could be dropped as dead code when its result was unused (`function F(){}
+  Object.create(F);` ran to its end). The root fix in `isSideEffecting` changes one more program: an unused member
+  read that aborts (`o.toString;` on a receiver whose read is the abort) now stops the program, where it silently
+  went on before. The 804 prepared-bytes rows are byte-identical across the fix.
+- **A function-local object refuses every native static**: `function f(){ var o = {}; Object.defineProperty(o, …) }`
+  → `dynamic Object static argument operand of externref has no dynamic carrier (f)`. A function-local `var o = {}` is
+  a raw `$Object` externref local (#7128 open-carrier local), not a dynamic value, and the static arm's operand path
+  (`dynamicStoreOperand`) does not box an externref. The member-write arm and `lowerCarrierOperand` do
+  (`emitBox(value, irDynamic())`); the same box on an externref argument in `realm-static-call.ts` is the smallest
+  fix (not built). A closure capturing such an object refuses the same way.
+- **#7106 `Object.is` is fooled by a top-level `function Object(){}`**: the static-predicates host uses
+  `isUnshadowedGlobalExpression`, which misses a script's own declaration. `isNaN` / `String` declared at top level
+  are refused, not fooled. The #7338 statics table still uses `resolver.isAmbientBinding`; moving it and #7106 to
+  `pristineBuiltinGlobal` touches `select.ts` and the ordinary lane, so it is left to its own change.
 - `Object.create(null)` as a program's only use of `Object` takes the bounded #3518 plan (`prepare-object-create.ts`),
   whose typed result a dynamic script var cannot hold: `var n = Object.create(null); n.v = 3;` refuses by name
   (`proven dynamic binding 'n' initializer has no supported carrier`). Turning the plan off on this lane broke the
