@@ -13212,7 +13212,6 @@ function boxForDynamicModuleStorage(value: IrValueId, target: IrType, rhs: ts.Ex
   return boxConcreteToDynamic(value, type, rhs, cx) ?? value;
 }
 
-/** Write a mutable identifier and return the RHS before any storage boxing. */
 /**
  * A write to a binding the mutation pre-pass gave no slot. (#7354 T) A named function expression's own name is such a
  * binding by design: immutable (§9.1.1.1.5), so a sloppy write is ignored and a strict one throws; it refuses by name.
@@ -13226,6 +13225,7 @@ function refuseNonSlotWrite(id: ts.Identifier, what: string, cx: LowerCtx): neve
   throw new Error(`ir/from-ast: ${what} "${id.text}" — mutation pre-pass should have detected it (${cx.funcName})`);
 }
 
+/** Write a mutable identifier and return the RHS before any storage boxing. */
 function lowerIdentifierAssignment(id: ts.Identifier, rhs: ts.Expression, cx: LowerCtx): IrValueId {
   if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== id) {
     return withMutationSourceSite(cx, id, () => lowerIdentifierAssignment(id, rhs, cx));
