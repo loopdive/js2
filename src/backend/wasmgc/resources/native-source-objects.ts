@@ -7,7 +7,8 @@
  *     (#7354 C2) `create-with-prototype`, `inherits`):
  *     a function this module reserves, with the contract's signature and a body (`source-object-bodies.ts`,
  *     `source-function-object-bodies.ts`) over the realm's storage, kernel and descriptor packs; or
- *   - binds a realm function as it is (`define-data`: the descriptor pack's public define; (#7354 O4)
+ *   - binds a realm function as it is (`define-data`, (#7354 O2) `define-accessor`: the descriptor pack's public
+ *     defines; (#7354 O4)
  *     `create-type-error`: the invocation substrate's TypeError constructor; (#7354 O1) `create-null`: the storage's
  *     OrdinaryObjectCreate(null)).
  * A contract without a row here has no native source provider yet. (#7354 O1) An adapter that reads descriptors calls
@@ -170,6 +171,7 @@ const ROWS = {
   },
   "js.object.create-null": { binds: ({ storage }) => storage.createNull },
   "js.object.define-data": { binds: ({ descriptors }) => descriptors.defineData },
+  "js.object.define-accessor": { binds: ({ descriptors }) => descriptors.defineAccessor },
   "js.object.create-type-error": { binds: ({ errors }) => errors.newTypeError },
   "js.object.get": {
     signature: { params: [EXTERNREF, EXTERNREF, EXTERNREF], results: [EXTERNREF] },
@@ -177,15 +179,7 @@ const ROWS = {
   },
   "js.object.set": {
     signature: { params: [EXTERNREF, EXTERNREF, EXTERNREF, EXTERNREF], results: [I32] },
-    body: ({ layouts, kernel, descriptors }, tx) =>
-      buildSourceObjectSetDefinition({
-        entryTypeIdx: layouts.propEntry.typeIndex,
-        objectTypeIdx: layouts.object.typeIndex,
-        findOwn: nativeBuiltinFunctionOperands(tx, kernel).findOrdinary,
-        lookup: kernel.functions.lookup.handle,
-        defineData: descriptors.defineData.handle,
-        bag: kernel.functions.bag.handle,
-      }),
+    body: ({ kernel }, tx) => buildSourceObjectSetDefinition(nativeBuiltinFunctionOperands(tx, kernel)),
   },
   "js.object.has": {
     signature: { params: [EXTERNREF, EXTERNREF], results: [I32] },

@@ -86,6 +86,17 @@ const DECLARATIONS: Readonly<Record<OrdinaryObjectRuntimeFeature, IrRuntimeCalla
   "js.object.has-own": declaration("js.object.has-own", [EXTERNAL, EXTERNAL, SELECTOR], [BOOLEAN]),
 });
 
+/**
+ * (#7354 O2) The contracts that can store a function value as an accessor half: the object literal's `get` / `set`
+ * and the descriptor statics. The realm calls such a half on a later [[Get]] / [[Set]].
+ */
+const ACCESSOR_DEFINING: ReadonlySet<string> = new Set<OrdinaryObjectRuntimeFeature>([
+  "js.object.define-accessor",
+  "js.object.descriptor-define",
+  "js.object.descriptors-define",
+]);
+export const definesAccessors = (symbol: string): boolean => ACCESSOR_DEFINING.has(symbol);
+
 /** Exact semantic binding only; neither display names nor runtime aliases qualify. */
 export function irOrdinaryObjectCallableDeclaration(ref: IrFuncRef): IrRuntimeCallableDeclaration | undefined {
   if (ref.binding.kind !== "intrinsic" || !Object.hasOwn(DECLARATIONS, ref.binding.symbol)) return undefined;

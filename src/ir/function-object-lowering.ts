@@ -110,9 +110,8 @@ export function lowerTopLevelFunctionValue(
  * (SetFunctionName, codegen's §10.2.9 answer) and, for a constructor (a function declaration or expression),
  * MakeConstructor's `prototype`. Every site that creates a function value calls this once, right after `closure.new`
  * (a closure literal, a declaration's value), so the bag is filled once however often the closure later becomes a
- * dynamic value, and no function value reaches the kernel without one. An accessor gets none: it is a value only
- * through a property descriptor, which no Prepared program can obtain (`__lookupGetter__` is an Object.prototype key,
- * refused); a getter in an object literal reaches this (tests/issue-3518-ordinary-object-runtime-providers.test.ts).
+ * dynamic value, and no function value reaches the kernel without one. (#7354 O2) An object literal's accessor is
+ * one too (`Object.getOwnPropertyDescriptor` reads it): named `get k` / `set k`, not a constructor.
  * A function whose name is a computed key the compiler cannot evaluate refuses by name.
  */
 export function emitFunctionObjectInit(
@@ -120,8 +119,9 @@ export function emitFunctionObjectInit(
   closure: IrValueId,
   fn: ts.FunctionDeclaration | ts.FunctionExpression | ts.ArrowFunction | ts.MethodDeclaration | ts.AccessorDeclaration,
 ): void {
-  if (ts.isAccessor(fn)) return;
-  const name = ts.isMethodDeclaration(fn) ? propertyKeyFunctionName(fn.name) : functionInstanceName(fn);
+  const key =
+    ts.isMethodDeclaration(fn) || ts.isAccessor(fn) ? propertyKeyFunctionName(fn.name) : functionInstanceName(fn);
+  const name = key === undefined ? key : (ts.isGetAccessor(fn) ? "get " : ts.isSetAccessor(fn) ? "set " : "") + key;
   if (name === undefined)
     throw new IrUnsupportedError(
       "type-resolution-unsupported",

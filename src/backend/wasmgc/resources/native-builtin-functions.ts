@@ -81,6 +81,8 @@ export interface NativeBuiltinFunctionDependencies {
   readonly descriptorDependencies: NativeObjectDescriptorDependencies;
   /** The program's one exception tag: a kernel failure is a source-catchable throw. */
   readonly exception: TagReservation | TagImportReservation;
+  /** (#7354 O2) The program's dispatchers a source getter / setter is called through (`nativeInvocationAccessorCalls`). */
+  readonly accessorCalls?: { readonly get: FunctionReservation; readonly set: FunctionReservation };
 }
 const functionRoles = [
   "initialize",
@@ -163,12 +165,10 @@ function same(a: unknown, b: unknown, detail: string): void {
 }
 function dependencies(tx: PhysicalModuleReservations, d: NativeBuiltinFunctionDependencies) {
   assertBuiltinFunctionDataRecord(d);
+  const roles = ["requests", "closures", "closurePlan", "descriptors", "descriptorDependencies", "exception"];
   if (
-    Object.keys(d).length !== 6 ||
-    Object.keys(d).some(
-      (key) =>
-        !["requests", "closures", "closurePlan", "descriptors", "descriptorDependencies", "exception"].includes(key),
-    )
+    Object.keys(d).length !== roles.length + (d.accessorCalls ? 1 : 0) ||
+    Object.keys(d).some((key) => !roles.includes(key) && key !== "accessorCalls")
   )
     fail("unexpected dependency input");
   if (d.exception.kind !== "tag" && d.exception.kind !== "tag-import") fail("exception is not a tag");
@@ -433,7 +433,8 @@ function operands(
   owner: Owner,
 ): BuiltinFunctionPrototypeOperands {
   const input = nativeBuiltinFunctionRequestDependencies(tx, pack.requests),
-    dd = owner.dependencies.descriptorDependencies;
+    dd = owner.dependencies.descriptorDependencies,
+    calls = owner.dependencies.accessorCalls;
   const lookup = dd.storageDependencies.lookupDependencies,
     values = dd.sameValueDependencies.values;
   const literal = (text: string, external = true): Instr[] => [
@@ -488,6 +489,12 @@ function operands(
     lookup: pack.functions.lookup.handle,
     isExtensible: pack.functions.isExtensible.handle,
     sameValue: dd.sameValue.sameValue.handle,
+    ...(calls && {
+      accessorCalls: {
+        source: [calls.get.handle, calls.set.handle],
+        builtin: [pack.functions.method0.handle, pack.functions.method1.handle],
+      },
+    }),
   };
 }
 /**

@@ -6,6 +6,8 @@
 import type { FuncHandle, Instr, LocalDef, TypeHandle } from "../../../wasm/model/instructions.js";
 import { ORDINARY_OBJECT_DESCRIPTOR_ENCODING as flags } from "./ordinary-object-descriptor-common.js";
 import { PROP_ENTRY_FIELD } from "./object-layouts.js";
+import { buildAccessorCall } from "./builtin-function-property-bodies.js";
+import type { BuiltinFunctionPrototypeOperands } from "./builtin-function-prototype-bodies.js";
 
 export interface SourceObjectDefinition {
   readonly locals: LocalDef[];
@@ -97,9 +99,9 @@ export function buildSourceObjectInheritsDefinition(d: {
  * `js.object.get(object, key, receiver)`: the kernel's [[Get]], whose absent answer already is `undefined`. Its
  * "incomplete parent" state is a miss at the realm's Object.prototype, which does not hold the specification's
  * properties yet: (#7354 O4) every caller refuses the keys Object.prototype defines (`builtin-prototype-keys.ts`), so
- * a miss there is a true miss and answers `undefined` too. Its "not an object" state (3), and any status outside the
- * kernel's four, traps: every object a source program reaches was built by `create-default` on this realm's
- * Object.prototype.
+ * a miss there is a true miss and answers `undefined` too. (#7354 O2) A getter has run inside the kernel (status 1).
+ * Its "unknown carrier" state (3), and any status outside the kernel's four, traps: every caller passes an ordinary
+ * or function object of this realm.
  */
 export function buildSourceObjectGetDefinition(d: { readonly get: FuncHandle }): SourceObjectDefinition {
   return {
@@ -136,18 +138,14 @@ export const CREATE_DATA_PROPERTY =
  * which every caller's key refusal makes a true miss), is CreateDataProperty on the receiver. A function's own
  * properties live in its bag, the storage both finds and defines use; (#7354 O1) an ordinary object's is itself. A
  * read-only data property (a function's own `length` or `name`, a property `Object.defineProperty` made read only)
- * or a setter-less accessor answers `false`; a setter call traps, as an unknown carrier (status 3) does. A
- * non-extensible receiver is unreachable: no Prepared program can make one yet (`Object.preventExtensions`, slice O3).
+ * or a setter-less accessor answers `false`; (#7354 O2) an accessor's setter is called with the receiver and the
+ * value (`buildAccessorCall`), answering `true`. Without `accessorCalls` no source closure can be a setter and a
+ * setter call traps. A non-extensible receiver is unreachable: no Prepared program can make one yet
+ * (`Object.preventExtensions`, slice O3).
  */
-export function buildSourceObjectSetDefinition(d: {
-  readonly entryTypeIdx: TypeHandle;
-  readonly objectTypeIdx: TypeHandle;
-  readonly findOwn: FuncHandle;
-  readonly lookup: FuncHandle;
-  readonly defineData: FuncHandle;
-  readonly bag: FuncHandle;
-}): SourceObjectDefinition {
-  const [status, entry, storage] = [4, 5, 6];
+export function buildSourceObjectSetDefinition(d: BuiltinFunctionPrototypeOperands): SourceObjectDefinition {
+  const [status, entry, storage, setter] = [4, 5, 6, 7];
+  const calls = d.accessorCalls;
   const entryFlag = (flag: number): Instr[] => [
     { op: "local.get", index: entry },
     { op: "ref.as_non_null" },
@@ -155,20 +153,27 @@ export function buildSourceObjectSetDefinition(d: {
     { op: "i32.const", value: flag },
     { op: "i32.and" },
   ];
-  // A found property: (#7354 O1) an accessor without a setter answers false, one with a setter is the run-time abort
-  // until the realm calls a source setter (slice O2); a read-only data property answers false.
+  // A found property: (#7354 O1) an accessor without a setter answers false, (#7354 O2) one with a setter calls it
+  // and answers true; a read-only data property answers false.
+  const setterField: Instr[] = [
+    { op: "local.get", index: entry },
+    { op: "ref.as_non_null" },
+    { op: "struct.get", typeIdx: d.entryTypeIdx, fieldIdx: PROP_ENTRY_FIELD.set },
+  ];
+  const callSetter: Instr[] = calls
+    ? [...buildAccessorCall(d, calls, setter, 3, [2]), { op: "drop" }, { op: "i32.const", value: 1 }, { op: "return" }]
+    : [{ op: "unreachable" }];
   const requireWritable: Instr[] = [
     ...entryFlag(flags.accessor),
     {
       op: "if",
       blockType: { kind: "empty" },
       then: [
-        { op: "local.get", index: entry },
-        { op: "ref.as_non_null" },
-        { op: "struct.get", typeIdx: d.entryTypeIdx, fieldIdx: PROP_ENTRY_FIELD.set },
+        ...setterField,
+        ...(calls ? ([{ op: "extern.convert_any" }, { op: "local.tee", index: setter }] satisfies Instr[]) : []),
         { op: "ref.is_null" },
         { op: "if", blockType: { kind: "empty" }, then: [{ op: "i32.const", value: 0 }, { op: "return" }] },
-        { op: "unreachable" },
+        ...callSetter,
       ],
     },
     ...entryFlag(flags.writable),
@@ -189,6 +194,7 @@ export function buildSourceObjectSetDefinition(d: {
       { name: "status", type: { kind: "i32" } },
       { name: "entry", type: { kind: "ref_null", typeIdx: d.entryTypeIdx } },
       { name: "storage", type: { kind: "externref" } },
+      ...(calls ? [{ name: "setter", type: { kind: "externref" } } satisfies LocalDef] : []),
     ],
     body: [
       // A function's own properties live in its bag; (#7354 O1) an ordinary object is its own.
@@ -198,7 +204,7 @@ export function buildSourceObjectSetDefinition(d: {
       { op: "any.convert_extern" },
       { op: "ref.cast", typeIdx: d.objectTypeIdx },
       { op: "local.get", index: 1 },
-      { op: "call", funcIdx: d.findOwn },
+      { op: "call", funcIdx: d.findOrdinary },
       { op: "local.tee", index: entry },
       { op: "ref.is_null" },
       { op: "i32.eqz" },

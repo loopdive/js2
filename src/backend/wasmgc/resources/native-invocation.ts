@@ -331,6 +331,19 @@ export function nativeInvocationGetterDispatch(
   return selected[0]!.function;
 }
 
+/** (#7354 O2) The dispatchers the realm calls a source getter (arity 0) and setter (arity 1) through, if it may. */
+export function nativeInvocationAccessorCalls(
+  tx: PhysicalModuleReservations,
+  pack: NativeInvocationReservations,
+): { readonly get: FunctionReservation; readonly set: FunctionReservation } | undefined {
+  requireNativeInvocationReservations(tx, pack);
+  if (!pack.requirements.realmAccessors) return undefined;
+  const method = (arity: number) => pack.methods.find((row) => row.arity === arity)?.function;
+  const [get, set] = [method(0), method(1)];
+  if (!get || !set) fail("realm accessor calls lack their method reservations");
+  return Object.freeze({ get, set });
+}
+
 export function nativeInvocationFunctions(
   tx: PhysicalModuleReservations,
   pack: NativeInvocationReservations,
@@ -439,7 +452,7 @@ export function fillNativeInvocationResources(
       literal.kind === "global"
         ? { kind: "global" as const, index: tx.physicalIndex(literal.global) }
         : { kind: "callable" as const, handle: literal.function.handle },
-    ...(builtinMethods ? { builtinRootTypeIdx: owner.layout.rootTypeIdx } : {}),
+    ...(builtinMethods || pack.requirements.realmAccessors ? { builtinRootTypeIdx: owner.layout.rootTypeIdx } : {}),
   };
   if (owner.borrowedSubstrate.value === undefined) fillNativeInvocationSubstrateResources(tx, owner.substrate);
   else requireCompletedNativeInvocationSubstrate(tx, owner.substrate, substrateDependencies(owner.dependencies));

@@ -48,20 +48,12 @@ function isServedObject(d: DescriptorRecordOperands, local: number): Instr[] {
 }
 
 /**
- * [[Get]] of `key` on the object in `object` into `result`. A getter is a source closure the realm cannot call until
- * slice O2 (kernel status 3): the run-time abort, never a skipped read.
+ * [[Get]] of a present `key` on the served object in `object` into `result`. (#7354 O2) A getter runs (the kernel
+ * calls it with `object` as the receiver), so the status is "present"; the kernel's other statuses (absent, unknown
+ * carrier) cannot occur for a key just found present on a served object.
  */
-export function getOrAbort(d: DescriptorRecordOperands, object: number, key: Instr[], result: number): Instr[] {
-  return [
-    get(object),
-    ...key,
-    get(object),
-    call(d.get),
-    set(result),
-    n(3),
-    { op: "i32.eq" },
-    when([{ op: "unreachable" }]),
-  ];
+export function getField(d: DescriptorRecordOperands, object: number, key: Instr[], result: number): Instr[] {
+  return [get(object), ...key, get(object), call(d.get), set(result), { op: "drop" }];
 }
 
 /** The TypeError messages of ToPropertyDescriptor (V8's, without the offending value). */
@@ -125,7 +117,7 @@ export function buildToPropertyDescriptorDefinition(
       call(d.has),
       n(1),
       { op: "i32.eq" },
-      when([...addBit(row.present), ...getOrAbort(d, 0, d.key(row.name), field), ...use]),
+      when([...addBit(row.present), ...getField(d, 0, d.key(row.name), field), ...use]),
     ];
   };
   const bits = (mask: number): Instr[] => [get(word), n(mask), { op: "i32.and" }, n(0), { op: "i32.ne" }];

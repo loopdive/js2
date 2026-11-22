@@ -55,6 +55,14 @@ export interface BuiltinFunctionBodyOperands {
   readonly nameKey: readonly Instr[];
   readonly errors: readonly (readonly Instr[])[];
   readonly entries: readonly BuiltinFunctionEntryOperands[];
+  /**
+   * (#7354 O2) Where a source closure can be an accessor half: per arity (0 a getter, 1 a setter) the program's
+   * dispatcher `(receiver, callee, …args)` and the kernel's own call of a built-in `(callee, receiver, …args)`.
+   */
+  readonly accessorCalls?: {
+    readonly source: readonly [FuncHandle, FuncHandle];
+    readonly builtin: readonly [FuncHandle, FuncHandle];
+  };
 }
 export type BuiltinFunctionDefinition = { locals: LocalDef[]; body: Instr[] };
 /** (#7354 P1) A writable, non-enumerable, configurable data property's descriptor word, every field present. */

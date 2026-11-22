@@ -33,7 +33,7 @@ export function programObjects(sourceFiles: readonly ts.SourceFile[], readsDecla
       ts.isObjectLiteralExpression(node) ||
       ts.isFunctionExpression(node) ||
       (ts.isCallExpression(node) && nativeObjectStaticCall(node, () => true) !== undefined);
-    functions ||= ts.isFunctionExpression(node) || ts.isArrowFunction(node);
+    functions ||= ts.isFunctionExpression(node) || ts.isArrowFunction(node) || ts.isAccessor(node);
     namesSymbol ||= ts.isIdentifier(node) && node.text === "Symbol" && !isMemberName(node);
     ts.forEachChild(node, visit);
   };

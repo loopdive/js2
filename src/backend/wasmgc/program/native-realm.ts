@@ -73,7 +73,11 @@ import {
   type NativeClosureDeclarationPlan,
 } from "../resources/native-closures.js";
 import { requireNativeSourceClosureTypes, type NativeSourceClosureTypes } from "../resources/native-source-closures.js";
-import { nativeInvocationFunctions, type NativeInvocationReservations } from "../resources/native-invocation.js";
+import {
+  nativeInvocationAccessorCalls,
+  nativeInvocationFunctions,
+  type NativeInvocationReservations,
+} from "../resources/native-invocation.js";
 import {
   reserveNativeStringEqualityResources,
   fillNativeStringEqualityResources,
@@ -129,6 +133,7 @@ import {
   fillNativeBuiltinFunctionResources,
   requireCompletedNativeBuiltinFunctionKernel,
   nativeBuiltinFunctionReservationInventory,
+  type NativeBuiltinFunctionDependencies,
 } from "../resources/native-builtin-functions.js";
 
 import {
@@ -368,6 +373,7 @@ function reserveKernelResources(
   pack: NativeRealmReservations,
   owner: Owner,
   exception: TagReservation | TagImportReservation,
+  accessorCalls: NativeBuiltinFunctionDependencies["accessorCalls"],
 ) {
   const number = pack.strings.number,
     valuePlan = owner.input.valueRequirements,
@@ -445,6 +451,7 @@ function reserveKernelResources(
     descriptors,
     descriptorDependencies,
     exception,
+    ...(accessorCalls && { accessorCalls }),
   };
   const kernel = reserveNativeBuiltinFunctionResources(tx, kernelDependencies);
   const sourceObjects = reserveNativeSourceObjectResources(
@@ -482,6 +489,7 @@ export function reserveNativeRealmKernel(
   pack: NativeRealmReservations,
   exception: TagReservation | TagImportReservation | undefined,
   sourceTypes?: NativeSourceClosureTypes,
+  invocation?: NativeInvocationReservations,
 ) {
   const owner = current(tx, pack);
   if (tx.state !== "reserving" || owner.phase !== "foundation") fail("invalid or duplicate kernel reservation phase");
@@ -497,7 +505,8 @@ export function reserveNativeRealmKernel(
   } else if (sourceTypes !== undefined) fail("unexpected source owner for no-source realm");
   owner.phase = "reserving-kernel";
   try {
-    owner.kernel = reserveKernelResources(tx, pack, owner, exception);
+    const accessorCalls = invocation && nativeInvocationAccessorCalls(tx, invocation);
+    owner.kernel = reserveKernelResources(tx, pack, owner, exception, accessorCalls);
     owner.phase = "reserved";
     return owner.kernel.kernel;
   } catch (error) {
