@@ -25,6 +25,8 @@ import {
   buildSourceObjectHasDefinition,
   buildSourceObjectIsErrorDefinition,
   buildSourceObjectErrorFieldDefinition,
+  buildSourceObjectPrototypeMethodDefinition,
+  buildSourceObjectHasOwnDefinition,
   sourceObjectCreate,
   type SourceObjectCreateOperands,
   type SourceObjectDefinition,
@@ -42,7 +44,12 @@ import {
   type ObjectStaticOperands,
 } from "../../../runtime/wasmgc/values/object-static-bodies.js";
 import { builtinTypeError } from "../../../runtime/wasmgc/values/builtin-function-bodies.js";
-import { nativeBuiltinFunctionOperands, type NativeBuiltinFunctionReservations } from "./native-builtin-functions.js";
+import {
+  nativeBuiltinFunctionOperands,
+  nativeBuiltinFunctionSingletonBinding,
+  type NativeBuiltinFunctionReservations,
+} from "./native-builtin-functions.js";
+import { NATIVE_OBJECT_PROTOTYPE_METHODS } from "../../../runtime/contracts/native-realm-catalog.js";
 import { nativeBuiltinFunctionRequestDependencies } from "./native-builtin-function-requests.js";
 import { nativeStringLiteralInstrs } from "./native-string-literals.js";
 import type { NativeErrorReservations } from "./native-errors.js";
@@ -235,6 +242,23 @@ const ROWS = {
         sourceObjectCreate(createOperands(dependencies)),
         dependencies.descriptors.defineData.handle,
       ),
+  },
+  "js.object.prototype-method": {
+    signature: { params: [I32], results: [EXTERNREF] },
+    body: ({ kernel }, tx) =>
+      buildSourceObjectPrototypeMethodDefinition({
+        getters: NATIVE_OBJECT_PROTOTYPE_METHODS.map(
+          (name) => nativeBuiltinFunctionSingletonBinding(tx, kernel, `%Object.prototype.${name}%`).getter.handle,
+        ),
+      }),
+  },
+  "js.object.has-own": {
+    signature: { params: [EXTERNREF, EXTERNREF, I32], results: [I32] },
+    body: ({ layouts, kernel }) =>
+      buildSourceObjectHasOwnDefinition({
+        entryTypeIdx: layouts.propEntry.typeIndex,
+        findOwn: kernel.functions.findOwn.handle,
+      }),
   },
 } as const satisfies Readonly<Partial<Record<OrdinaryObjectRuntimeFeature, Row>>>;
 /** A contract the realm serves. */

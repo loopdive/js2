@@ -279,7 +279,7 @@ function beginRealm(
     { vectors, vectorPlan, strings: strings.strings },
     declareNativeInvocationSubstrateResources(shared, vectors.base ? { vectorBaseKey: vectors.base.key } : {}),
   );
-  const intrinsics = requirements.description.catalog.bootstrap.map((id, index) => {
+  const bootstrap = requirements.description.catalog.bootstrap.map((id, index) => {
     const row = requirements.description.catalog.intrinsics.find((row) => row.id === id),
       call = row?.callable;
     if (
@@ -305,6 +305,26 @@ function beginRealm(
       aliases: row.aliases,
     };
   });
+  // (#7354 P1) The Object.prototype methods a program reads, each a built-in function object on that prototype.
+  const methods = requirements.description.prototypeMethods.map((id, index) => {
+    const row = requirements.description.catalog.intrinsics.find((row) => row.id === id),
+      call = row?.callable;
+    if (!row || call?.implementation !== "native") fail("populated method is not native in the catalog");
+    const ordinal = bootstrap.length + index;
+    return {
+      id,
+      behavior: "object-prototype-method" as const,
+      signatureId: "realm:signature:" + ordinal,
+      metadataId: "realm:metadata:" + ordinal,
+      initialName: call.initialName,
+      initialLength: call.length,
+      userFormalCount: 0,
+      prototype: "function-prototype" as const,
+      constructible: false as const,
+      aliases: row.aliases,
+    };
+  });
+  const intrinsics = [...bootstrap, ...methods];
   const requests = declareNativeBuiltinFunctionRequests(
     tx,
     { key: key + ":builtins", intrinsics },

@@ -12,6 +12,7 @@ import {
   BUILTIN_FUNCTION_PROTOTYPE_FIELD,
   BUILTIN_FUNCTION_INITIAL_NAME_FIELD,
 } from "./builtin-function-layouts.js";
+import { ORDINARY_OBJECT_DESCRIPTOR_ENCODING as flags } from "./ordinary-object-descriptor-common.js";
 
 export interface BuiltinFunctionEntryOperands {
   readonly typeIdx: number;
@@ -25,7 +26,8 @@ export interface BuiltinFunctionEntryOperands {
   readonly initialName: readonly Instr[];
   readonly initialLength: number;
   readonly userFormalCount: number;
-  readonly behavior: "function-prototype" | "throw-type-error";
+  /** (#7354 P1) An `object-prototype-method` is a data property of the realm's Object.prototype. */
+  readonly behavior: "function-prototype" | "throw-type-error" | "object-prototype-method";
 }
 export interface BuiltinFunctionBodyOperands {
   readonly rootTypeIdx: number;
@@ -55,6 +57,14 @@ export interface BuiltinFunctionBodyOperands {
   readonly entries: readonly BuiltinFunctionEntryOperands[];
 }
 export type BuiltinFunctionDefinition = { locals: LocalDef[]; body: Instr[] };
+/** (#7354 P1) A writable, non-enumerable, configurable data property's descriptor word, every field present. */
+const OBJECT_PROTOTYPE_METHOD_WORD =
+  flags.writable |
+  flags.configurable |
+  flags.writableSpecified |
+  flags.enumerableSpecified |
+  flags.configurableSpecified |
+  flags.hasValue;
 const get = (index: number): Instr => ({ op: "local.get", index });
 const global = (index: number): Instr => ({ op: "global.get", index });
 const call = (funcIdx: FuncHandle): Instr => ({ op: "call", funcIdx });
@@ -205,6 +215,18 @@ export function buildBuiltinFunctionInitializer(d: BuiltinFunctionBodyOperands):
       [{ op: "f64.const", value: entry.initialLength }],
       [...entry.initialName, { op: "extern.convert_any" }],
     );
+    // (#7354 P1) A method is Object.prototype's writable, non-enumerable, configurable data property, keyed by its name.
+    if (entry.behavior === "object-prototype-method")
+      body.push(
+        global(d.objectPrototype),
+        ...structuredClone(entry.initialName),
+        { op: "extern.convert_any" },
+        global(entry.singleton),
+        { op: "extern.convert_any" },
+        { op: "f64.const", value: OBJECT_PROTOTYPE_METHOD_WORD },
+        call(d.defineDataBody),
+        { op: "drop" },
+      );
     if (entry.behavior === "throw-type-error")
       body.push(
         ...bag(),
@@ -284,11 +306,22 @@ export function buildBuiltinFunctionLiftedDefinition(
     ],
   };
 }
+/**
+ * %Function.prototype% answers `undefined`, %ThrowTypeError% throws its TypeError; (#7354 P1) an Object.prototype
+ * method called through a value is the run-time abort: its algorithm needs the program's ToPropertyKey, so the
+ * Prepared path writes it where a call reads the method (`dynamic-prototype-methods.ts`).
+ */
 export function buildBuiltinFunctionAlgorithmDefinition(
   d: BuiltinFunctionBodyOperands,
   behavior: BuiltinFunctionEntryOperands["behavior"],
 ): BuiltinFunctionDefinition {
-  return { locals: [], body: behavior === "function-prototype" ? builtinUndefined(d) : builtinFailure(d, 2) };
+  const body: Instr[] =
+    behavior === "function-prototype"
+      ? builtinUndefined(d)
+      : behavior === "throw-type-error"
+        ? builtinFailure(d, 2)
+        : [{ op: "unreachable" }];
+  return { locals: [], body };
 }
 export function buildBuiltinFunctionCallDefinition(d: BuiltinFunctionBodyOperands): BuiltinFunctionDefinition {
   return {

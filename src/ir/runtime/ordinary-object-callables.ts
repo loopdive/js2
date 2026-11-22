@@ -79,6 +79,11 @@ const DECLARATIONS: Readonly<Record<OrdinaryObjectRuntimeFeature, IrRuntimeCalla
   "js.object.descriptor-define": declaration("js.object.descriptor-define", [EXTERNAL, EXTERNAL, EXTERNAL], []),
   "js.object.descriptors-define": declaration("js.object.descriptors-define", [EXTERNAL, EXTERNAL], []),
   "js.object.own-descriptor": declaration("js.object.own-descriptor", [EXTERNAL, EXTERNAL], [EXTERNAL]),
+  // (#7354 P1) The built-in function object the realm's Object.prototype holds for the native method `selector` (its
+  // index in `NATIVE_OBJECT_PROTOTYPE_METHODS`), and HasOwnProperty of a canonical key on an ordinary or function
+  // object, also requiring the enumerable attribute when `selector` is 1.
+  "js.object.prototype-method": declaration("js.object.prototype-method", [SELECTOR], [EXTERNAL]),
+  "js.object.has-own": declaration("js.object.has-own", [EXTERNAL, EXTERNAL, SELECTOR], [BOOLEAN]),
 });
 
 /** Exact semantic binding only; neither display names nor runtime aliases qualify. */

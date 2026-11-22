@@ -1,5 +1,5 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
-import { NATIVE_REALM_CATALOG } from "../../runtime/contracts/native-realm-catalog.js";
+import { NATIVE_OBJECT_PROTOTYPE_METHODS, NATIVE_REALM_CATALOG } from "../../runtime/contracts/native-realm-catalog.js";
 import type { IrUnitId } from "../../shared/contracts/ir-identity.js";
 import { irNumberConversionCallableDeclaration } from "../runtime/number-conversion-callable.js";
 import { nativeAsyncCallableValueTypes, nativeAsyncCallMismatch } from "../runtime/native-async-callables.js";
@@ -23,6 +23,11 @@ export interface NativeRealmDescription {
   readonly sourceSignatureIds: readonly string[];
   readonly sourceAllocationOccurrences: readonly number[];
   readonly objectUses: NativeObjectAccessRequirements["uses"];
+  /**
+   * (#7354 P1) The catalog ids of the Object.prototype methods the realm holds: all of them where the program reads
+   * one ([[Get]] of its name, or the method itself), none otherwise, since no other read can reach one.
+   */
+  readonly prototypeMethods: readonly string[];
   readonly numberUses: readonly {
     readonly occurrence: number;
     readonly semanticOccurrence: number;
@@ -95,6 +100,11 @@ function numberUses(access: NativeObjectAccessRequirements): NativeRealmDescript
     });
   });
 }
+/** (#7354 P1) A use that reads a native Object.prototype method: the [[Get]] of its name, or the method itself. */
+const readsPrototypeMethod = (use: NativeObjectAccessRequirements["uses"][number]): boolean =>
+  use.feature === "js.object.prototype-method" ||
+  (use.feature === "js.object.get" &&
+    (NATIVE_OBJECT_PROTOTYPE_METHODS as readonly (string | undefined)[]).includes(use.constantKey));
 function calculate(
   program: PreparedIrProgram,
   projection: PreparedIrProgramRuntimeProjection,
@@ -122,6 +132,9 @@ function calculate(
     sourceSignatureIds: source?.signatures.map((row) => row.id) ?? [],
     sourceAllocationOccurrences: source?.allocations.map((row) => row.occurrence) ?? [],
     objectUses: access.uses,
+    prototypeMethods: access.uses.some(readsPrototypeMethod)
+      ? NATIVE_OBJECT_PROTOTYPE_METHODS.map((name) => `%Object.prototype.${name}%`)
+      : [],
     numberUses: numbers,
     unavailable: [
       ...NATIVE_REALM_CATALOG.intrinsics.flatMap((row) =>

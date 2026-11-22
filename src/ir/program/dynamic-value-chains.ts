@@ -14,6 +14,11 @@ import { PREPARED_NUMBER_TO_STRING } from "./number-to-string-target.js";
 import { ordinaryToPrimitive, type ToPrimitiveAnswer, type ToPrimitiveHint } from "./ordinary-to-primitive.js";
 import { realmCall } from "./dynamic-realm-calls.js";
 import { functionValueOperand } from "./function-value-projection.js";
+import type { OrdinaryObjectRuntimeFeature } from "../runtime/contracts/manifest.js";
+import {
+  NATIVE_OBJECT_PROTOTYPE_METHODS,
+  type NativeObjectPrototypeMethod,
+} from "../../runtime/contracts/native-realm-catalog.js";
 import {
   ADD_ROLE,
   IS_OBJECT,
@@ -209,14 +214,25 @@ export function chainBuilders(
     const text = fresh();
     return [intrinsic(instr, "js.value.unsupported", [], text), carried(text, result)];
   };
-  /** (#7354 M2) The once-evaluated error `value`'s `field`, a native string carrier, into `result`. */
-  const errorField = (value: IrValueId, field: keyof typeof ERROR_FIELD, result: IrValueId): IrInstr[] => {
-    const selector = fresh();
+  /** The realm's `feature` on `args` and, last, the constant `selector`, into `result`. */
+  const selectorCall = (
+    feature: OrdinaryObjectRuntimeFeature,
+    args: readonly IrValueId[],
+    selector: number,
+    result: IrValueId,
+  ): IrInstr[] => {
+    const value = fresh();
     return [
-      { kind: "const", value: { kind: "i32", value: ERROR_FIELD[field] }, result: selector, resultType: I32 },
-      realmCall("js.object.error-field", [value, selector], result),
+      { kind: "const", value: { kind: "i32", value: selector }, result: value, resultType: I32 },
+      realmCall(feature, [...args, value], result),
     ];
   };
+  /** (#7354 M2) The once-evaluated error `value`'s `field`, a native string carrier, into `result`. */
+  const errorField = (value: IrValueId, field: keyof typeof ERROR_FIELD, result: IrValueId): IrInstr[] =>
+    selectorCall("js.object.error-field", [value], ERROR_FIELD[field], result);
+  /** (#7354 P1) The realm's Object.prototype method `name` (a built-in function object) into `result`. */
+  const prototypeMethod = (name: NativeObjectPrototypeMethod, result: IrValueId): IrInstr[] =>
+    selectorCall("js.object.prototype-method", [], NATIVE_OBJECT_PROTOTYPE_METHODS.indexOf(name), result);
   // A value per admitted kind of the once-evaluated `value`: a chain of tag tests in `KIND_ORDER`, the last kind
   // untested (the chain is total over the kinds), each arm answering into its own value.
   const kindChain = (
@@ -254,7 +270,9 @@ export function chainBuilders(
     branch,
     concat,
     abort,
+    selectorCall,
     errorField,
+    prototypeMethod,
     kindChain,
     valueCount: () => valueCount,
   };

@@ -52,6 +52,13 @@ related: [7188, 2949, 3526, 3527, 3518, 7106, 7349, 7350, 7352]
 # 2026-11-21 (slices M1 + M2, corrected after review): the figures above are per slice. Against main this PR grows
 # src/ir/program-source.ts by 0 and src/ir/from-ast.ts by 16 (three lowering arms: `isRawExternrefReceiver`, the
 # member write's externref receiver, the object-literal box in `boxConcreteToDynamic`).
+# 2026-11-22 (slice P1): src/ir/program-consumer.ts +1, the one argument that tells the dispatcher's fill whether the
+# realm holds built-in methods (its abort arm; the arm itself is in closure-method-body.ts), read from the realm
+# requirements at the only place both owners meet; that line takes materializePhysicalProgram from 300 to 301 lines
+# (func-budget-allow below). src/ir/from-ast.ts shrinks (the descriptor-definition lowering moved to
+# open-object-carrier.ts).
+func-budget-allow:
+  - src/ir/program-consumer.ts::materializePhysicalProgram
 loc-budget-allow:
   - src/ir/program-consumer.ts
   - src/ir/program-physical-plan.ts

@@ -8,7 +8,13 @@
 import type { IntrinsicId } from "../core/intrinsics.js";
 import type { IrInstr, IrValueId } from "../core/nodes.js";
 import type { IrType } from "../core/types.js";
-import { BUILTIN_REACHABLE_KEYS, OBJECT_PROTOTYPE_ACCESSOR_KEYS, isArrayIndexKey } from "./builtin-prototype-keys.js";
+import type { NativeObjectPrototypeMethod } from "../../runtime/contracts/native-realm-catalog.js";
+import {
+  BUILTIN_REACHABLE_KEYS,
+  OBJECT_PROTOTYPE_ACCESSOR_KEYS,
+  isArrayIndexKey,
+  nativeObjectPrototypeMethod,
+} from "./builtin-prototype-keys.js";
 import { MEMBER_ACCESS_ARM, type CarrierKind } from "./dynamic-value-kinds.js";
 import { realmCall, typeErrorThen, type TypeErrorBuilders } from "./dynamic-realm-calls.js";
 import { gap } from "./dynamic-value-gap.js";
@@ -27,6 +33,9 @@ export interface MemberAccessBuilders extends TypeErrorBuilders {
   /** (#7354 C2) The run-time abort, a carrier answer. */
   readonly abort: (instr: IrInstr, result: IrValueId) => IrInstr[];
   readonly kindsOf: (value: IrValueId) => readonly CarrierKind[];
+  readonly admitted: readonly CarrierKind[];
+  /** (#7354 P1) The realm's Object.prototype method `name` into `result`. */
+  readonly prototypeMethod: (name: NativeObjectPrototypeMethod, result: IrValueId) => IrInstr[];
   readonly branch: (
     cond: IrValueId,
     then: (result: IrValueId) => IrInstr[],
@@ -71,11 +80,16 @@ interface Access {
   readonly primitive: (kind: CarrierKind, result: IrValueId, throwTypeError: ThrowTypeError) => IrInstr[];
 }
 
-/** The string a once-boxed constant key holds; any other key refuses by name. */
+/** The string a once-boxed constant `key` holds, if it is one. */
+export function constantKeyOf(definitions: ReadonlyMap<IrValueId, IrInstr>, key: IrValueId): string | undefined {
+  const box = definitions.get(key);
+  const text = box?.kind === "box" ? definitions.get(box.value) : undefined;
+  return text?.kind === "string.const" ? text.value : undefined;
+}
+
+/** The access's constant key; any other key refuses by name. */
 function constantKey(b: MemberAccessBuilders, instr: MemberGet | MemberSet): string {
-  const box = b.definitions.get(instr.key);
-  const text = box?.kind === "box" ? b.definitions.get(box.value) : undefined;
-  return text?.kind === "string.const" ? text.value : gap(`${instr.kind} with a computed key`);
+  return constantKeyOf(b.definitions, instr.key) ?? gap(`${instr.kind} with a computed key`);
 }
 
 /** "a number", "an Error". */
@@ -141,6 +155,15 @@ const ERROR_PROTOTYPE_KEYS: ReadonlySet<string> = new Set(["constructor", "toStr
 /** The read of the instruction's key off its once-evaluated receiver into `result`. */
 export function dynamicMemberRead(b: MemberAccessBuilders, instr: MemberGet, result: IrValueId): IrInstr[] {
   const name = constantKey(b, instr);
+  // (#7354 P1) A method the realm's Object.prototype holds: an object's or a function's read finds it through the
+  // realm's [[Get]]; a primitive's and an error's prototypes lack it, and no program can change one (M1), so their read
+  // answers Object.prototype's own. The value is a function object, so the function kind must be admitted.
+  const method = nativeObjectPrototypeMethod(name);
+  if (method !== undefined && !b.admitted.includes("function"))
+    gap(`member read '${name}' in a program that creates no function value`);
+  /** A key no own field answers: Object.prototype's method, or else absent. */
+  const inherited = (r: IrValueId): IrInstr[] =>
+    method !== undefined ? b.prototypeMethod(method, r) : [b.intrinsic(instr, "js.value.undefined", [], r)];
   const access: Access = {
     operation: `member read '${name}'`,
     resultType: b.carrier,
@@ -166,7 +189,8 @@ export function dynamicMemberRead(b: MemberAccessBuilders, instr: MemberGet, res
     nullishMessage: (kind) => `Cannot read properties of ${kind} (reading '${name}')`,
     unread: (r) => b.intrinsic(instr, "js.value.undefined", [], r),
     // (#7354 C2) A key Object.prototype holds: `js.object.has` finds it only on the object's own or source-built
-    // chain, which [[Get]] answers exactly; a miss means the answer is Object.prototype's, which the realm lacks.
+    // chain, which [[Get]] answers exactly; a miss means the answer is Object.prototype's, which the realm lacks
+    // ((#7354 P1) but for the methods it holds, which [[Get]] finds there).
     object: (r, abort) => {
       const get = (s: IrValueId) => [realmCall("js.object.get", [instr.recv, instr.key, instr.recv], s)];
       if (!BUILTIN_REACHABLE_KEYS.object.has(name)) return get(r);
@@ -175,10 +199,8 @@ export function dynamicMemberRead(b: MemberAccessBuilders, instr: MemberGet, res
     },
     function: (r) => [realmCall("js.object.get", [instr.recv, instr.key, instr.recv], r)],
     error: (r) =>
-      ERROR_OWN_KEYS.has(name)
-        ? b.errorField(instr.recv, name as keyof typeof ERROR_FIELD, r)
-        : [b.intrinsic(instr, "js.value.undefined", [], r)],
-    primitive: (_kind, r) => [b.intrinsic(instr, "js.value.undefined", [], r)],
+      ERROR_OWN_KEYS.has(name) ? b.errorField(instr.recv, name as keyof typeof ERROR_FIELD, r) : inherited(r),
+    primitive: (_kind, r) => inherited(r),
   };
   return memberAccess(b, instr, access, result);
 }

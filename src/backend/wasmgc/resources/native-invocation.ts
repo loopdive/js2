@@ -393,12 +393,16 @@ function entries(
   });
 }
 
-/** Bodies are shared canonical recipes; only the existing unit owner supplies lifted slots. */
+/**
+ * Bodies are shared canonical recipes; only the existing unit owner supplies lifted slots. (#7354 P1)
+ * `builtinMethods`: the realm holds built-in methods a program can call through a value (`ClosureInvocationFailure`).
+ */
 export function fillNativeInvocationResources(
   tx: PhysicalModuleReservations,
   pack: NativeInvocationReservations,
   callables: NativeSourceClosureCallables,
   exception: TagReservation | TagImportReservation,
+  builtinMethods = false,
 ): void {
   const owner = requireOwner(tx, pack);
   if (owner.filled) fail("duplicate fill");
@@ -435,6 +439,7 @@ export function fillNativeInvocationResources(
       literal.kind === "global"
         ? { kind: "global" as const, index: tx.physicalIndex(literal.global) }
         : { kind: "callable" as const, handle: literal.function.handle },
+    ...(builtinMethods ? { builtinRootTypeIdx: owner.layout.rootTypeIdx } : {}),
   };
   if (owner.borrowedSubstrate.value === undefined) fillNativeInvocationSubstrateResources(tx, owner.substrate);
   else requireCompletedNativeInvocationSubstrate(tx, owner.substrate, substrateDependencies(owner.dependencies));
