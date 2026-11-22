@@ -5921,3 +5921,15 @@ listed.
 5. The `materializePhysicalProgram` grant stays: `nativeSourceClosureCallableBindings` answers the source-closure
    owner's authenticated callable pack (compared by `requireNativeSourceClosureCallables`), and whether the realm holds
    built-in methods is the realm's fact; carrying it there would mix the two owners.
+6. CI `quality` (s-script-var-define-target): the two pinned refusals of `o.hasOwnProperty('p')` on a script var now
+   run where the program has a function value (node's answer and a wrong twin, plus a define-target var); without one
+   the program refuses by the new name. f1b-function-objects pinned `a.hasOwnProperty` off a function as a refusal: it
+   now reads Object.prototype's method (node agreement), and the refusal row moved to `a.valueOf`, a key the realm
+   lacks. No other Prepared test pins one of the three keys (grep).
+
+Verified after r1: p1-own-property 18, p1-method-values 20, m-prototype-premise 18, 3518-native-realm-requirements 25,
+s-script-var-define-target 14, f1b-function-objects 9, 7339-own-property-rows 28 (each alone, exit 0); the 216
+regression probes give the same transitions as before r1 (nothing right became anything else); prelude +
+`assert(true);` sha256 e23f5dca… equals the O1 head it now sits on (8085f52549); gates exit 0 (LOC/func also against
+main 42f2df53e2). Sample not re-measured: r1 changes only calls whose receiver is not the [[Get]]'s (detached calls),
+and none of the 12 new passes has one (each was read); `check:prepared-bytes` not re-run.
