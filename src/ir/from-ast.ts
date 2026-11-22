@@ -430,6 +430,7 @@ import {
 import type { ValType } from "./types.js";
 import { coerceIrValueToExternref } from "./value-coercion.js";
 import {
+  emitIsNaN,
   lowerAmbientGlobalFunctionCall,
   type IrAmbientGlobalFunctionCapability,
   type IrAmbientGlobalFunctionName,
@@ -976,6 +977,8 @@ export interface IrFromAstResolver extends PreparedAsyncFromAstResolver {
   builtinProtoMember?(builtin: string, member: string, anchor: ts.Node): "method" | "getter" | undefined;
   /** Exact source-bound Number call; no physical conversion provider is implied. */
   preparedNumberCall?(call: ts.CallExpression): boolean;
+  /** (#7354 T) Exact source-bound `isNaN` call: `Number(v)`'s conversion, then the NaN test. */
+  preparedIsNaNCall?(call: ts.CallExpression): boolean;
   /** Exact current ambient Object.create(null) source call; symbolic provider only. */
   preparedObjectCreateCall?(call: ts.CallExpression): "null" | undefined;
   /** Source-owned ordinary descriptor read; actual allocation provenance is revalidated downstream. */
@@ -7685,17 +7688,17 @@ function makePromiseDelayLoweringHost(cx: LowerCtx): IrPromiseDelayLoweringHost 
   };
 }
 
-/** Evaluate the complete argument list before the observable conversion. */
-function lowerPreparedNumberCall(expr: ts.CallExpression, cx: LowerCtx): IrValueId {
+/** Evaluate the complete argument list before the observable conversion; `absent` is ToNumber of no argument. */
+function lowerPreparedNumberCall(expr: ts.CallExpression, cx: LowerCtx, absent = 0): IrValueId {
   if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== expr)
-    return withNodeSourceSite(cx, expr, () => lowerPreparedNumberCall(expr, cx));
+    return withNodeSourceSite(cx, expr, () => lowerPreparedNumberCall(expr, cx, absent));
   if (expr.questionDotToken || expr.arguments.some(ts.isSpreadElement))
     throw new IrInvariantError(
       "selection-preparation-mismatch",
       "build",
       "Number call plan has unsupported argument syntax",
     );
-  if (expr.arguments.length === 0) return cx.builder.emitConst({ kind: "f64", value: 0 }, IR_F64);
+  if (expr.arguments.length === 0) return cx.builder.emitConst({ kind: "f64", value: absent }, IR_F64);
   const first = lowerExpr(expr.arguments[0]!, cx, irVal({ kind: "externref" }));
   // Extra arguments still run, in source order, even though Number ignores
   // their values. In particular, getter conversion follows these effects.
@@ -7704,6 +7707,9 @@ function lowerPreparedNumberCall(expr: ts.CallExpression, cx: LowerCtx): IrValue
   if (type.kind === "val" && type.val.kind === "f64") return first;
   if (type.kind === "val" && type.val.kind === "i32" && type.val.boolean === true)
     return cx.builder.emitUnary("f64.convert_i32_s", first, IR_F64);
+  // (#7354 T) The Prepared lane binds no `js.number.from-value`; its carrier's ToNumber is the legalized one.
+  if (type.kind === "dynamic" && functionObjects.createsFunctionObjects(cx.resolver))
+    return cx.builder.emitDynToNumber(first);
   if (type.kind === "val" && type.val.kind !== "externref" && type.val.kind !== "ref_extern")
     demoteToLegacy("operand-coercion-unsupported", "Number argument requires an exact logical value carrier");
   const external = coerceIrValueToExternref(cx.builder, first);
@@ -7806,11 +7812,10 @@ function lowerCall(expr: ts.CallExpression, cx: LowerCtx, statementPosition = fa
     lowerExpression: (expression, expected) => lowerExpr(expression, cx, expected),
   });
   if (preparedPromiseAll !== undefined) return preparedPromiseAll;
-  // #3000-E: `super(args)` — a derived constructor chaining to its parent's
-  // `_init`. Intercepted BEFORE the property-access / identifier dispatch below
-  // because `super` is a keyword, not an identifier the receiver-lowering can
-  // handle. The `this` binding (the allocated subclass instance) and the parent
-  // shape (`this` shape's `.parent`) drive the emitted `<parent>_init` call.
+  // #3000-E: `super(args)` — a derived constructor chaining to its parent's `_init`. Intercepted BEFORE the
+  // property-access / identifier dispatch below because `super` is a keyword, not an identifier the receiver-lowering
+  // can handle. The `this` binding (the allocated subclass instance) and the parent shape (`this` shape's `.parent`)
+  // drive the emitted `<parent>_init` call.
   if (expr.expression.kind === ts.SyntaxKind.SuperKeyword) {
     const parentShape = requireSuperParentShape(cx);
     const self = requireThisValue(cx);
@@ -7836,12 +7841,13 @@ function lowerCall(expr: ts.CallExpression, cx: LowerCtx, statementPosition = fa
     cx.builder.emitClassSuperInit(parentShape, self, args);
     return null;
   }
-  // #5092 first: `Number(c ? 7 : true)` converts each concrete arm inside the
-  // lazy `if`; the source-bound plan (#7106 lever B) sees only what it declined
-  // — the same order as the selector's `preparedNumberConversionCall`.
+  // #5092 first: `Number(c ? 7 : true)` converts each concrete arm inside the lazy `if`; the source-bound plan (#7106
+  // lever B) sees only what it declined — the same order as the selector's `preparedNumberConversionCall`.
   const mixedPrimitiveWrapper = tryLowerExactMixedPrimitiveWrapperCall(expr, cx);
   if (mixedPrimitiveWrapper !== null) return mixedPrimitiveWrapper;
   if (cx.resolver?.preparedNumberCall?.(expr) === true) return lowerPreparedNumberCall(expr, cx);
+  if (cx.resolver?.preparedIsNaNCall?.(expr) === true)
+    return emitIsNaN(cx.builder, lowerPreparedNumberCall(expr, cx, NaN));
   const functionAccess = expr.expression;
   if (functionObjects.isPreparedFunctionObjectAccess(functionAccess, cx.topLevelFunctionValues)) {
     return functionObjects.lowerFunctionObjectMemberCall(expr, functionAccess, functionObjectLoweringHost(cx));
@@ -7852,16 +7858,14 @@ function lowerCall(expr: ts.CallExpression, cx: LowerCtx, statementPosition = fa
   if (globalFunction !== null) return globalFunction;
   const builtinProtoDescriptor = lowerBuiltinProtoMember(expr, cx.builder, builtinProtoMemberLane(cx)); // (#7294)
   if (builtinProtoDescriptor !== null) return builtinProtoDescriptor;
-  // Slice 4 (#1169d): method call — `<recv>.<methodName>(args)`. The
-  // receiver must lower to an IrType.class; the method must exist on
-  // the class shape and be non-void (slice 4 only handles methods with
-  // a returning result in expression position).
+  // Slice 4 (#1169d): method call — `<recv>.<methodName>(args)`. The receiver must lower to an IrType.class; the method
+  // must exist on the class shape and be non-void (slice 4 only handles methods with a returning result in expression
+  // position).
   if (ts.isPropertyAccessExpression(expr.expression)) {
     const r = lowerMethodCallWithSourcePlan(expr, cx);
     if (r === null) {
-      // Unreachable: in expression position (statementPosition=false) every
-      // void arm throws before returning null (#2856 added the null returns
-      // for statement position only).
+      // Unreachable: in expression position (statementPosition=false) every void arm throws before returning null
+      // (#2856 added the null returns for statement position only).
       unsupportedVoidCallExpression(
         `ir/from-ast: method call produced no result in expression position (${cx.funcName})`,
       );
@@ -7895,11 +7899,9 @@ function lowerCall(expr: ts.CallExpression, cx: LowerCtx, statementPosition = fa
   if (staticValue && expr.arguments.length === staticValue.signature.params.length)
     return lowerClosureCall(staticValue.value, staticValue.signature, expr.arguments, cx, statementPosition);
   if (binding?.kind === "nestedFunc") return lowerNestedFuncCall(binding, expr.arguments, cx);
-  // (#7106 S1g, propertyHelper; #7272) propertyHelper's certified aliases:
-  // every operand as a carrier, then the lane's native provider — never the
-  // generic bound or dynamic call. The uncurried predicates take
-  // `dyn.own_property`; the stored statics make the object-runtime call an
-  // `Object` static's row makes (`emitObjectRuntimeCall`, #7338).
+  // (#7106 S1g, propertyHelper; #7272) propertyHelper's certified aliases: every operand as a carrier, then the lane's
+  // native provider — never the generic bound or dynamic call. The uncurried predicates take `dyn.own_property`; the
+  // stored statics make the object-runtime call an `Object` static's row makes (`emitObjectRuntimeCall`, #7338).
   const alias = certifiedAliasCall(expr, (name) => cx.scope.has(name));
   if (alias !== undefined && cx.resolver?.stringIsExternref?.() !== true) {
     const carriers = expr.arguments.map((argument) => lowerCarrierOperand(argument, alias.method, cx));
@@ -7955,10 +7957,9 @@ function lowerCall(expr: ts.CallExpression, cx: LowerCtx, statementPosition = fa
       `ir/from-ast: exact fnctor native-string boundary disagrees with its direct-call plan (${cx.funcName})`,
     );
   }
-  // Slice 8a (#1169g): spread args with statically-known sources
-  // (ArrayLiteralExpression with no nested spread). Expand at compile
-  // time to one IR arg per literal element. The pre-expansion arity
-  // check below counts spread elements as their literal element count.
+  // Slice 8a (#1169g): spread args with statically-known sources (ArrayLiteralExpression with no nested spread). Expand
+  // at compile time to one IR arg per literal element. The pre-expansion arity check below counts spread elements as
+  // their literal element count.
   const expandedArgExprs = expandStaticSpreadArgs(expr.arguments, cx);
   const underArity = planUnderArityDirectCall(expr, direct, expandedArgExprs.length, cx);
   if (expandedArgExprs.length !== calleeSig.params.length && underArity === null) {

@@ -190,10 +190,12 @@ function lowerUnitOnce(
       "invalid-prepared-data",
       `certified native Promise-delay ${unit.id} fabricated support bodies or provenance`,
     );
-  const functions = dynamicContracts.legalize(sourceRoots, [lowered.main, ...lowered.lifted], {
-    declarationOf: (id) => identity.declarationByUnitId.get(id),
-    aborted: (fn) => abortBodies?.has(fn) === true,
-  });
+  const functions = dynamicContracts.legalize(
+    sourceRoots,
+    [lowered.main, ...lowered.lifted],
+    { declarationOf: (id) => identity.declarationByUnitId.get(id), aborted: (fn) => abortBodies?.has(fn) === true },
+    (call) => resolver.preparedIsNaNCall?.(call) === true,
+  );
   return { lowered, functions };
 }
 

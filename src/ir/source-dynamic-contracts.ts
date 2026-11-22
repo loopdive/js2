@@ -313,11 +313,15 @@ export interface ProgramDynamicContracts extends SourceDynamicProvenance {
    * program that creates no function value nothing calls through the dispatcher, so `this` stays unbound there.
    */
   readonly codeStrictness: CodeStrictness;
-  /** {@link legalizeSourceDynamicValues} for the functions lowered from `roots`. */
+  /**
+   * {@link legalizeSourceDynamicValues} for the functions lowered from `roots`. `converts` names a call that converts
+   * its arguments itself (#7354 T: an admitted `isNaN(v)`), so an argument has no implicit flow into its parameter.
+   */
   readonly legalize: (
     roots: ts.FunctionDeclaration | readonly ts.Statement[],
     functions: readonly IrFunction[],
     owners: RefusalOwners,
+    converts: (call: ts.CallExpression) => boolean,
   ) => readonly IrFunction[];
 }
 
@@ -401,7 +405,7 @@ export function programDynamicContracts(
         `function ${declaration.name?.text} returns ${checker.typeToString(result)}, which has no Prepared result contract`,
       );
     },
-    legalize: (roots, functions, owners) =>
+    legalize: (roots, functions, owners, converts) =>
       legalizeSourceDynamicValues(
         checker,
         policy,
@@ -412,6 +416,7 @@ export function programDynamicContracts(
         allocations,
         objects,
         owners,
+        converts,
       ),
   };
 }
@@ -437,10 +442,10 @@ function absentGlobal(checker: ts.TypeChecker, sourceFiles: readonly ts.SourceFi
 
 /**
  * The lib globals some use of which compiles on this path, so `typeof` must not deny them: it refuses by name until
- * their real answer is wired. `Number` and (#7354 Str2) `String`: direct `Number(v)` / `String(v)` calls
- * (`prepareConversionResolvers`).
+ * their real answer is wired. `Number`, (#7354 Str2) `String` and (#7354 T) `isNaN`: direct `Number(v)` /
+ * `String(v)` / `isNaN(v)` calls (`prepareConversionResolvers`).
  */
-export const PREPARED_PROVIDED_GLOBALS: ReadonlySet<string> = new Set(["Number", "String"]);
+export const PREPARED_PROVIDED_GLOBALS: ReadonlySet<string> = new Set(["Number", "String", "isNaN"]);
 
 /**
  * (#7354 D1) The one rule for a dynamic value leaving the dynamic domain. A
@@ -462,11 +467,13 @@ function refuseImplicitDynamicFlows(
   roots: readonly ts.Node[],
   carries: Carries,
   aborted: RefusalOwners["aborted"],
+  converts: (call: ts.CallExpression) => boolean,
 ): void {
   const any = checker.getAnyType();
   const visit = (node: ts.Node): void => {
     if ((ts.isFunctionExpression(node) || ts.isFunctionDeclaration(node)) && aborted(node)) return;
-    if (ts.isExpression(node) && !passedOn(node) && carries(node)) {
+    const converted = ts.isCallExpression(node.parent) && node.parent.expression !== node && converts(node.parent);
+    if (ts.isExpression(node) && !passedOn(node) && !converted && carries(node)) {
       const contextual = checker.getContextualType(node);
       if (contextual !== undefined && contextual !== any && !landsInCarrier(node, checker, policy, carries))
         throw ownRefusal(
@@ -551,6 +558,7 @@ function legalizeSourceDynamicValues(
   allocations: AllocSiteRegistry,
   objects: ProgramObjects,
   owners: RefusalOwners,
+  converts: (call: ts.CallExpression) => boolean,
 ): readonly IrFunction[] {
   const roots = "kind" in declaration ? [declaration] : declaration;
   if (!nativeDynamicLane(policy)) return functions;
@@ -574,7 +582,7 @@ function legalizeSourceDynamicValues(
   );
   if (catches) retargeted.forEach((fn) => owned(fn, () => refuseUnadmittedThrows(fn)));
   if (legalized.some((fn, index) => fn !== retargeted[index]))
-    refuseImplicitDynamicFlows(checker, policy, roots, carries, owners.aborted);
+    refuseImplicitDynamicFlows(checker, policy, roots, carries, owners.aborted, converts);
   legalizeDynamicAllocations(legalized, allocations);
   return legalized;
 }
