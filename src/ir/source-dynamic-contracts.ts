@@ -66,6 +66,15 @@ export function checkerAny(checker: ts.TypeChecker, node: ts.Node): IrType | und
   return checker.getTypeAtLocation(node) === checker.getAnyType() ? { kind: "dynamic" } : undefined;
 }
 
+/** The scalar a number, boolean or string checker type lowers to. */
+export function checkerScalar(checker: ts.TypeChecker, node: ts.Node): IrType | undefined {
+  const type = checker.getTypeAtLocation(node);
+  if ((type.flags & ts.TypeFlags.NumberLike) !== 0) return { kind: "val", val: { kind: "f64" } };
+  if ((type.flags & ts.TypeFlags.BooleanLike) !== 0) return { kind: "val", val: { kind: "i32", boolean: true } };
+  if ((type.flags & ts.TypeFlags.StringLike) !== 0) return { kind: "string" };
+  return undefined;
+}
+
 function annotatedAny(checker: ts.TypeChecker, annotation: ts.TypeNode | undefined): boolean {
   return annotation !== undefined && checker.getTypeFromTypeNode(annotation) === checker.getAnyType();
 }

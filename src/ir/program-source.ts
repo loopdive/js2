@@ -1,10 +1,11 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
 import { ts } from "../ts-api.js";
-import { sourceBooleanAnyResult, assertSourceBooleanAnyReturns } from "../frontend/boolean-return-boundary.js";
+import { sourceBooleanAnyResult } from "../frontend/boolean-return-boundary.js";
 import { preparedIrProgramCallableResults } from "./program-callable-contract.js";
 import { prepareSourceClosureInvocations } from "./source-closure-invocation.js";
-import { checkerAny, programDynamicContracts, type ProgramDynamicContracts } from "./source-dynamic-contracts.js";
+import { checkerScalar, programDynamicContracts, type ProgramDynamicContracts } from "./source-dynamic-contracts.js";
+import { lowerSourceUnit, type SourceUnitLowering } from "./program-source-units.js";
 import type { TypedIrProgramInput } from "./program/input-contracts.js";
 import { legalizeDynamicGlobals } from "./program/dynamic-value-legalization.js";
 import type { TypeOracle } from "../checker/oracle.js";
@@ -14,7 +15,6 @@ import { irUnitCallableBindingId } from "./callable-bindings.js";
 import {
   lowerFunctionAstToIr,
   typeNodeToIr,
-  type IrFromAstResolver,
   type IrFunctionSourceMapContext,
   type IrSourceMapNodeProjection,
 } from "./from-ast.js";
@@ -38,7 +38,6 @@ import type { IrProgramCallableBindingRecord } from "./program/callable-bindings
 import { buildIrUnitTypeMap, lowerTypeToIrType } from "./propagate.js";
 import { buildIrModuleInitPlan } from "./module-init-plan.js";
 import type { IrModuleInitPlan } from "./program/startup.js";
-import { makeModuleInitSynthetic } from "./module-init.js";
 import { isModuleInitGlobalDeclaration, moduleInitBindings } from "./module-init-vars.js";
 import { makeIrIdentityModuleBindingResolver, type IrModuleBindingIdentity } from "./module-bindings.js";
 import type { ModuleBindingGlobal } from "./ast-lowering-plans.js";
@@ -56,10 +55,6 @@ import { postStartupCallableUnits } from "./program-startup-proof.js";
 import { prepareSourceDirectCalls } from "./program-source-direct-calls.js";
 import { functionDeclarationValues, type FunctionValueGlobal } from "./function-declaration-values.js";
 import { makeIrPromiseDelayResolver } from "./promise-delay.js";
-import { prepareOrdinaryObjectAccessResolver } from "../frontend/builtins/prepare-ordinary-object-access.js";
-import { prepareConversionResolvers } from "../frontend/builtins/prepare-number-conversion.js";
-import { prepareObjectCreateResolver } from "../frontend/builtins/prepare-object-create.js";
-import { prepareNativeStringOutputResolver } from "../frontend/builtins/prepare-string-output.js";
 import { prepareNativeAsyncSourceFamilies, type NativeAsyncSourceFamilies } from "./program-native-async-source.js";
 import {
   collectIrPromiseDelayOwners,
@@ -967,14 +962,6 @@ function unsupported(detail: string): never {
   throw new IrUnsupportedError("type-resolution-unsupported", "build", detail);
 }
 
-function checkerScalar(checker: ts.TypeChecker, node: ts.Node): IrType | undefined {
-  const type = checker.getTypeAtLocation(node);
-  if ((type.flags & ts.TypeFlags.NumberLike) !== 0) return { kind: "val", val: { kind: "f64" } };
-  if ((type.flags & ts.TypeFlags.BooleanLike) !== 0) return { kind: "val", val: { kind: "i32", boolean: true } };
-  if ((type.flags & ts.TypeFlags.StringLike) !== 0) return { kind: "string" };
-  return undefined;
-}
-
 /** Shared logical callable conversion; this does not issue a physical carrier. */
 function checkerCallableType(checker: ts.TypeChecker, input: ts.Type, where: string): IrType | null {
   const active = new Set<ts.Type>();
@@ -1425,21 +1412,6 @@ function prepareSourceFunctionSignatures(
   }
 }
 
-/** Build each original source body once, before any backend context or allocator exists. */
-/** Combine source-owned call/read plans; no physical provider is selected here. */
-function prepareSourceBuiltinResolvers(
-  input: IrProgramSourceInput,
-  roots: ts.FunctionDeclaration | readonly ts.Statement[],
-) {
-  return {
-    ...prepareConversionResolvers(input.checker, input.sourceFiles, roots),
-    ...prepareOrdinaryObjectAccessResolver(input.checker, input.sourceFiles, roots),
-    ...(input.policy.target === "standalone" && input.policy.backend === "wasmgc"
-      ? prepareObjectCreateResolver(input.checker, input.sourceFiles, roots)
-      : {}),
-  };
-}
-
 /** Preserve exact original lifted provenance before admitting derived records. */
 function appendLiftedSourceProvenance(
   provenanceRecords: ReturnType<typeof lowerFunctionAstToIr>["liftedUnitProvenance"],
@@ -1688,109 +1660,41 @@ export function prepareIrProgramSources(
       dynamicContracts.codeStrictness,
       diagnostic,
     );
-    for (const unit of inventory.terminalUnits) {
-      diagnostic.active = unit.id;
-      if (functions.some((fn) => fn.unitId === unit.id)) continue;
-      const family = nativeFamily?.functions.get(unit.id);
-      if (family) nativeFamily!.assertCurrent(unit.id);
-      const resolveBinding = (node: ts.Identifier, writeValue?: ts.Expression): ModuleBindingGlobal | undefined => {
-        let symbol = input.checker.getSymbolAtLocation(node);
-        if (!symbol) return undefined;
-        const imported = (symbol.flags & ts.SymbolFlags.Alias) !== 0;
-        if (imported) symbol = input.checker.getAliasedSymbol(symbol);
-        const declaration = symbol.valueDeclaration;
-        const global = declaration ? globalByDeclaration.get(declaration) : undefined;
-        if (!global) return undefined;
-        if (writeValue && (imported || !global.identity.mutable))
-          unsupported(`write to immutable module binding ${node.text}`);
-        return {
-          ...global.binding,
-          ownerUnitId: unit.id,
-          ...(postStartupUnits.has(unit.id) ? { omitTdzReadCheck: true as const } : {}),
-        };
-      };
-      const resolver: IrFromAstResolver = {
-        sourceClosureInvocation: (expression) => closureInvocations.get(expression),
-        sourceClosureCallableParameter: (node) => closureCallableParameters.has(node),
-        resolveModuleBinding: resolveBinding,
-        moduleInitFunctionValues: () => functionValues,
-        preparedAsyncAwaitSite: (awaitExpression) => {
-          const host = input.policy.backend === "wasmgc" && input.policy.target === "host";
-          const resultType =
-            (host ? checkerAny(input.checker, awaitExpression) : undefined) ??
-            checkerScalar(input.checker, awaitExpression);
-          const operandType = (host ? checkerAny(input.checker, awaitExpression.expression) : undefined) ??
-            checkerScalar(input.checker, awaitExpression.expression) ?? {
-              kind: "val" as const,
-              val: { kind: "externref" as const },
-            };
-          return resultType ? { resultType, operandType } : null;
-        },
-        ...family?.resolver,
-        ...dynamicContracts.resolver,
-      };
-      const source = identity.sourceFileBySourceId.get(unit.sourceId)!;
-      const moduleInit = unit.kind === "module-init";
-      const declaration = moduleInit
-        ? makeModuleInitSynthetic(identity.moduleInitPopulationBySourceFile.get(source) ?? [])
-        : identity.declarationByUnitId.get(unit.id)!;
-      if (!ts.isFunctionDeclaration(declaration)) unsupported(`missing declaration producer for ${unit.kind}`);
-      const sourceRoots = moduleInit ? (identity.moduleInitPopulationBySourceFile.get(source) ?? []) : declaration;
-      Object.assign(resolver, prepareSourceBuiltinResolvers(input, sourceRoots));
-      const signature = signatures.get(unit.id);
-      const lowered = lowerFunctionAstToIr(declaration, {
-        booleanReturnBoundary: sourceBooleanAnyResult(input.checker, declaration) ? declaration : undefined,
-        ownerUnitId: unit.id,
-        ...(sourceMapProjector === undefined
-          ? {}
-          : {
-              sourceMap: Object.freeze<IrFunctionSourceMapContext>({
+    const units: SourceUnitLowering = {
+      input,
+      identity,
+      allocations,
+      dynamicContracts,
+      signatures,
+      bodyResults,
+      globals,
+      globalByDeclaration,
+      postStartupUnits,
+      exportedUnits,
+      closureInvocations,
+      closureCallableParameters,
+      functionValues,
+      directCalls,
+      nativeFamily,
+      nativeStringValues,
+      nativeStringOutput,
+      promiseDelaysBySource: nativeDelay ? promiseDelaysBySource : undefined,
+      certifiedDelays,
+      sourceMap:
+        sourceMapProjector === undefined
+          ? undefined
+          : (unit) =>
+              Object.freeze<IrFunctionSourceMapContext>({
                 source: sourceMapSources!.get(unit.sourceId)!,
                 donorUnitId: unit.id,
                 project: sourceMapProjector.project,
               }),
-            }),
-        funcName: unit.displayName,
-        exported: exportedUnits.has(unit.id),
-        ...dynamicContracts.codeStrictness(moduleInit ? source : declaration),
-        identityContext: identity,
-        checker: input.checker,
-        oracle: input.oracle,
-        allocRegistry: allocations,
-        directCalls,
-        resolver:
-          nativeStringOutput && !family
-            ? { ...resolver, ...prepareNativeStringOutputResolver(input.checker, declaration) }
-            : resolver,
-        ...(nativeStringValues ? { stringNumericCoercion: "number-boundary" as const } : {}),
-        numericThrow: "number-boundary",
-        unselected: true,
-        ...(nativeDelay ? { promiseDelays: promiseDelaysBySource.get(source) } : {}),
-        ...(family ? { logicalVectorTypes: family.logicalVectorTypes } : {}),
-        ...(moduleInit
-          ? {
-              moduleInitUnit: true,
-              returnTypeOverride: null,
-              moduleBindings: new Map(
-                globals
-                  .filter((global) => global.identity.sourceId === unit.sourceId)
-                  .map((global) => [global.binding.globalName, { ...global.binding, ownerUnitId: unit.id }]),
-              ),
-            }
-          : { paramTypeOverrides: signature!.params, returnTypeOverride: bodyResults.get(unit.id)! }),
-        numericLocalScalarForDecl: (declaration) =>
-          checkerScalar(input.checker, declaration)?.kind === "val" &&
-          (input.checker.getTypeAtLocation(declaration).flags & ts.TypeFlags.NumberLike) !== 0
-            ? "number"
-            : undefined,
-      });
-      assertSourceBooleanAnyReturns(input.checker, declaration, lowered.main);
-      if (certifiedDelays.has(unit.id) && (lowered.lifted.length !== 0 || lowered.liftedUnitProvenance.length !== 0))
-        throw new PreparedIrProgramInvariantError(
-          "invalid-prepared-data",
-          `certified native Promise-delay ${unit.id} fabricated support bodies or provenance`,
-        );
-      functions.push(...dynamicContracts.legalize(sourceRoots, [lowered.main, ...lowered.lifted]));
+    };
+    for (const unit of inventory.terminalUnits) {
+      diagnostic.active = unit.id;
+      if (functions.some((fn) => fn.unitId === unit.id)) continue;
+      const { lowered, functions: legalized } = lowerSourceUnit(units, unit);
+      functions.push(...legalized);
       appendLiftedSourceProvenance(lowered.liftedUnitProvenance, inventory, unit, derivedUnits);
       if (derivedSourceRows !== undefined) appendSourceMapDerivedRows(derivedSourceRows, lowered, identity, unit);
     }
