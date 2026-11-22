@@ -87,7 +87,6 @@ const ROWS = {
         findOwn: nativeBuiltinFunctionOperands(tx, kernel).findOrdinary,
         lookup: kernel.functions.lookup.handle,
         defineData: descriptors.defineData.handle,
-        match: kernel.functions.match.handle,
         bag: kernel.functions.bag.handle,
       }),
   },

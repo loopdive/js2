@@ -143,7 +143,6 @@ export function buildSourceObjectSetDefinition(d: {
   readonly findOwn: FuncHandle;
   readonly lookup: FuncHandle;
   readonly defineData: FuncHandle;
-  readonly match: FuncHandle;
   readonly bag: FuncHandle;
 }): SourceObjectDefinition {
   const [status, entry, storage] = [4, 5, 6];
@@ -178,18 +177,9 @@ export function buildSourceObjectSetDefinition(d: {
       { name: "storage", type: { kind: "externref" } },
     ],
     body: [
-      // A function's own properties live in its bag (`match` admits only function objects).
+      // A function's own properties live in its bag; (#7354 O1) an ordinary object is its own.
       { op: "local.get", index: 3 },
-      { op: "call", funcIdx: d.match },
-      {
-        op: "if",
-        blockType: { kind: "val", type: { kind: "externref" } },
-        then: [
-          { op: "local.get", index: 3 },
-          { op: "call", funcIdx: d.bag },
-        ],
-        else: [{ op: "local.get", index: 3 }],
-      },
+      { op: "call", funcIdx: d.bag },
       { op: "local.tee", index: storage },
       { op: "any.convert_extern" },
       { op: "ref.cast", typeIdx: d.objectTypeIdx },
