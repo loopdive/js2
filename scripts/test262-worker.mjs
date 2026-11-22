@@ -1832,7 +1832,6 @@ function readWorkerThrown(
   return readThrownValue(err, { instance, peers: currentLinkedPeers, abortBodies: currentAbortBodies, observation });
 }
 
-
 /**
  * (#3469) Standalone host-free async drive + output capture. On
  * `--target standalone` there is no host `console` import (kept out so the
@@ -2635,7 +2634,8 @@ process.on("message", async (msg) => {
         return;
       }
 
-      if (isRuntimeNegative && runtimeNegativeThrowAccepted(err, readWorkerThrown(err, null), throwRule)) {
+      const thrown = readWorkerThrown(err, null, currentNativeEvalBoundaryObservation?.reader("instantiate"));
+      if (isRuntimeNegative && runtimeNegativeThrowAccepted(err, thrown, throwRule)) {
         sendOwnedResult({ id, status: "pass", compileMs, execMs, runtimeNegativePass: true, ...compileMetadata });
         return;
       }
@@ -2643,7 +2643,7 @@ process.on("message", async (msg) => {
       sendOwnedResult({
         id,
         status: "fail",
-        error: extractWasmExceptionMessage(err, null, currentNativeEvalBoundaryObservation?.reader("instantiate")),
+        error: thrown.text,
         isException: true,
         instantiateError: true,
         compileMs,
@@ -2675,7 +2675,12 @@ process.on("message", async (msg) => {
         moduleInit();
       } catch (initErr) {
         const execMs = performance.now() - execStart;
-        if (isRuntimeNegative && runtimeNegativeThrowAccepted(initErr, readWorkerThrown(initErr, instance), throwRule)) {
+        const thrown = readWorkerThrown(
+          initErr,
+          instance,
+          currentNativeEvalBoundaryObservation?.reader("deferred-module-init"),
+        );
+        if (isRuntimeNegative && runtimeNegativeThrowAccepted(initErr, thrown, throwRule)) {
           sendOwnedResult({
             id,
             status: "pass",
@@ -2689,11 +2694,7 @@ process.on("message", async (msg) => {
         sendOwnedResult({
           id,
           status: "fail",
-          error: extractWasmExceptionMessage(
-            initErr,
-            instance,
-            currentNativeEvalBoundaryObservation?.reader("deferred-module-init"),
-          ),
+          error: thrown.text,
           isException: true,
           compileMs,
           execMs,

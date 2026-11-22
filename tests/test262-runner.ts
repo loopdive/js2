@@ -24,7 +24,11 @@ import { runtimeNegativeThrowAccepted } from "../scripts/test262-runtime-verdict
 // (#3613) ONE renderer for a thrown Wasm payload, shared with the CI worker.
 // Two copies "kept in sync" by a comment is exactly how the local lane came to
 // report the opaque #2870 label where CI reported the real assertion text.
-import { readThrownValue, safeStringifyThrown as sharedSafeStringifyThrown } from "../scripts/lib/wasm-exn-render.mjs";
+import {
+  readThrownValue,
+  renderHarnessThrownText,
+  safeStringifyThrown as sharedSafeStringifyThrown,
+} from "../scripts/lib/wasm-exn-render.mjs";
 import { isModuleGoal, isScriptGoal } from "../scripts/test262-module-goal.mjs";
 // (#5353) ONE Temporal gate + ONE cache-dir rule, shared with the sharded lane.
 import {
@@ -4447,7 +4451,7 @@ async function runOriginalHarnessVariant(
       }
     } catch (error) {
       compileMs = performance.now() - compileStarted;
-      const detail = extractWasmExceptionMessage(error, undefined);
+      const detail = renderHarnessThrownText(error);
       const isCompileNegative = Boolean(meta.negative) && meta.negative?.phase !== "runtime";
       return {
         pass: isCompileNegative && negativeCompileErrorMatches(meta.negative?.type, [], detail),

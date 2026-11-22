@@ -1,7 +1,8 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 //
-// Runtime-phase verdict rules of scripts/test262-worker.mjs that depend only on
-// the thrown value, so they can be tested without a compiler bundle (#7354 U0).
+// Runtime-phase verdict rules of every test262 lane (the worker, the fixture lane,
+// the local runner) that depend only on the thrown value, so they can be tested
+// without a compiler bundle (#7354 U0, X).
 //
 // A Wasm trap is never a JavaScript throw. Its message carries the frame names
 // (`unreachable [in Test262Error() ← assert]`), so a name match on the rendered

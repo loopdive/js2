@@ -89,7 +89,7 @@ export function tryNativeExnRender(instance, payload) {
  * @param {any} instance
  * @returns {any}
  */
-function exceptionPayload(error, instance) {
+export function exceptionPayload(error, instance) {
   if (!(error instanceof WebAssembly.Exception) || !instance) return undefined;
   try {
     const tag = instance.exports?.__exn_tag ?? instance.exports?.__tag;
@@ -100,8 +100,8 @@ function exceptionPayload(error, instance) {
 }
 
 /**
- * The npm-compat report's text for a thrown value (`Name: message` for a host-readable error). Display only: no
- * test262 verdict reads it — those read `readThrownValue`.
+ * A `Name: message` text for a thrown value, used by the npm-compat report, the dogfood lanes and the local
+ * runner's compile-crash detail. No runtime-negative verdict reads it: those read `readThrownValue`'s kinds.
  *
  * @param {unknown} error
  * @param {any} [instance]
@@ -215,12 +215,13 @@ function tagPayload(error, instance, observation) {
     observation?.("consumer-tag", "no-instance");
     return { missing: "wasm exception during module init" };
   }
+  const noTag = { missing: "unknown thrown value: the module exports no exception tag" };
   let stage = "tag-read";
   try {
     const exnTag = instance.exports.__exn_tag;
     const tag = exnTag ?? instance.exports.__tag;
     observation?.("consumer-tag", tag ? (exnTag != null ? "__exn_tag" : "__tag") : "no-tag");
-    if (!tag) return { missing: "unknown thrown value: the module exports no exception tag" };
+    if (!tag) return noTag;
     stage = "getArg";
     const payload = error.getArg(tag, 0);
     observation?.("extraction", "success");
@@ -228,12 +229,9 @@ function tagPayload(error, instance, observation) {
     return { payload };
   } catch {
     observation?.("extraction", stage === "getArg" ? "failed" : "tag-read-failed");
-    return {
-      missing:
-        stage === "getArg"
-          ? "unknown thrown value: the module's exception tag does not carry it"
-          : "unknown thrown value: the module exports no exception tag",
-    };
+    return stage === "getArg"
+      ? { missing: "unknown thrown value: the module's exception tag does not carry it" }
+      : noTag;
   }
 }
 

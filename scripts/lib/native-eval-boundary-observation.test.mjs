@@ -222,9 +222,9 @@ test("fallback tag is read once and repeated readers keep separate ordinals", ()
   const reader = makeReader(undefined, [], observer);
   assert.equal(reader(row.error, row.instance), "TypeError known");
   assert.equal(reader(row.error, row.instance, observer.reader("deferred-module-init")), "TypeError known");
-  // The negative-type matcher (scripts/test262-runtime-verdict.mjs) reads
-  // through the worker's default "negative-match" reader.
-  assert(worker.includes("runtimeNegativeThrowAccepted(initErr, readWorkerThrown(initErr, instance), throwRule)"));
+  // The negative-type matcher (scripts/test262-runtime-verdict.mjs) takes the
+  // reading the arm already made for its error text: one read per throw.
+  assert(worker.includes("runtimeNegativeThrowAccepted(initErr, thrown, throwRule)"));
   assert.deepEqual(row.calls, ["__exn_tag", "__tag", "getArg", "__exn_tag", "__tag", "getArg"]);
   const snapshot = observer.snapshot();
   assert.equal(snapshot.invocations, 2);

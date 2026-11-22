@@ -5383,7 +5383,7 @@ Lead decision: (a) alone now, plus item 2 (match the read KIND, never the messag
 - **One reader** (review r1): `readThrownValue` in `scripts/lib/wasm-exn-render.mjs` returns `{ kinds, text }` for
   every test262 lane. The worker passes its row context (linked peers, abort table, observation); the runner's
   `extractWasmExceptionMessage`, the fixture lane and the local runner call it directly. The worker's, runner's and
-  harness's own readers are deleted; `renderHarnessThrownText` stays only as the npm-compat report's display text.
+  harness's own readers are deleted; `renderHarnessThrownText` stays as `Name: message` display text (npm-compat, dogfood, the local compile-crash detail); `exceptionPayload` stays exported for the octane worker.
   - No kind: no tag export (every Prepared artifact), a payload the tag does not carry, no instance, a null
     payload (the ordinary null-guard/TDZ throw or `throw null`), a primitive, a function (`throw TypeError`).
   - For a host-opaque WasmGC payload the kind is the module's own `String(payload)` (`__exn_render_*`) up to the

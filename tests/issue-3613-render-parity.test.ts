@@ -39,7 +39,7 @@ import { describe, expect, it } from "vitest";
 import { compile } from "../src/index.js";
 import { readThrownValue, tryNativeExnRender } from "../scripts/lib/wasm-exn-render.mjs";
 import { restoreHostBuiltins } from "./test262-restore-builtins.js";
-import { extractWasmExceptionMessage, runTest262File } from "./test262-runner.js";
+import { runTest262File } from "./test262-runner.js";
 
 const HARNESS_AVAILABLE = existsSync(join(__dirname, "..", "test262", "harness", "assert.js"));
 if (!HARNESS_AVAILABLE && process.env.CI) {
@@ -96,21 +96,6 @@ describe("#3613 both lanes render the SAME thrown payload identically", () => {
     expect(text).not.toContain("non-stringifiable payload");
     // The error KIND must survive too — the runtime-negative verdict matches it.
     expect(kinds).toEqual(["TypeError"]);
-  });
-
-  it("agrees with extractWasmExceptionMessage (the CI worker's renderer) on the same payload", async () => {
-    const instance = await instantiateStandalone();
-    let caught: unknown;
-    try {
-      (instance.exports as { test: () => number }).test();
-    } catch (e) {
-      caught = e;
-    }
-    const localPath = readThrownValue(caught, { instance }).text;
-    const workerPath = extractWasmExceptionMessage(caught, instance);
-    // Same thrown value ⇒ same reported message. This single assertion is what
-    // would have caught the drift.
-    expect(localPath).toBe(workerPath);
   });
 
   it("the native renderer is the mechanism (removing it reproduces the opaque label)", async () => {
