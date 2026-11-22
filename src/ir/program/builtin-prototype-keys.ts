@@ -13,6 +13,7 @@
 import {
   NATIVE_OBJECT_PROTOTYPE_METHODS,
   NATIVE_REALM_CATALOG,
+  realmMethodId,
   type NativeObjectPrototypeMethod,
   type NativeObjectStatic,
   type NativeRealmProperty,
@@ -23,6 +24,16 @@ const propertiesOf = (intrinsicIds: readonly string[]): readonly NativeRealmProp
 const stringKeys = (properties: readonly NativeRealmProperty[]): ReadonlySet<string> =>
   new Set(properties.flatMap(({ key }) => (key.kind === "string" ? [key.value] : [])));
 
+/** The catalog `length` of every callable the catalog marks native, by id: built once, read per member access. */
+const NATIVE_LENGTHS: ReadonlyMap<string, number> = new Map(
+  NATIVE_REALM_CATALOG.intrinsics.flatMap(({ id, callable }) =>
+    callable?.implementation === "native" ? [[id, callable.length] as const] : [],
+  ),
+);
+/** The catalog `length` of `parent.name` when the catalog marks it native. */
+const nativeLength = (parent: string, name: string): number | undefined =>
+  NATIVE_LENGTHS.get(realmMethodId(parent, name));
+
 /**
  * (#7354 O1) `Object.<name>` with its catalog `length` when the catalog marks it native (`NATIVE_OBJECT_STATICS`): the
  * IR's one read of which statics the Prepared path lowers.
@@ -30,20 +41,16 @@ const stringKeys = (properties: readonly NativeRealmProperty[]): ReadonlySet<str
 export function nativeObjectStatic(
   name: string,
 ): { readonly name: NativeObjectStatic; readonly length: number } | undefined {
-  const callable = NATIVE_REALM_CATALOG.intrinsics.find(({ id }) => id === `%Object.${name}%`)?.callable;
-  return callable?.implementation === "native"
-    ? { name: name as NativeObjectStatic, length: callable.length }
-    : undefined;
+  const length = nativeLength("Object", name);
+  return length === undefined ? undefined : { name: name as NativeObjectStatic, length };
 }
 
 /**
  * (#7354 P1) `name` when the catalog marks `%Object.prototype.<name>%` native: the realm's Object.prototype holds it as
  * a built-in function object (`NATIVE_OBJECT_PROTOTYPE_METHODS`).
  */
-export function nativeObjectPrototypeMethod(name: string): NativeObjectPrototypeMethod | undefined {
-  const callable = NATIVE_REALM_CATALOG.intrinsics.find(({ id }) => id === `%Object.prototype.${name}%`)?.callable;
-  return callable?.implementation === "native" ? (name as NativeObjectPrototypeMethod) : undefined;
-}
+export const nativeObjectPrototypeMethod = (name: string): NativeObjectPrototypeMethod | undefined =>
+  nativeLength("Object.prototype", name) === undefined ? undefined : (name as NativeObjectPrototypeMethod);
 
 /** (#7354 P1) The realm's selector of a native Object.prototype method (`js.object.prototype-method`). */
 export const prototypeMethodSelector = (name: NativeObjectPrototypeMethod): number =>

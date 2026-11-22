@@ -5894,10 +5894,30 @@ listed.
 - Top compile errors: `formatIdentityFreeValue … is written` 73, `Array` not in scope 46, module-init nested var 22,
   `+` operands 19, `TypeError` not in scope 17.
 
-### Known limits
+### Known limits / accepted debt
 
+- **Detached calls abort.** `var h = o.hasOwnProperty; h('a')`, `(0, p.isPrototypeOf)(c)`, `new o.hasOwnProperty()` and
+  `o.hasOwnProperty.call(...)` end at the run-time abort where JS throws a catchable TypeError or returns a value. Not
+  a regression: the base aborted at the read. Closes with P2 (`call` / `apply`) and a callable built-in function
+  object (a `(this, vector)` algorithm that can call back into the program).
+- **The flow-rule change turns some compile refusals into run-time aborts**: a method call on a dynamic receiver
+  takes its arguments as carriers, so e.g. `s.charAt(o.k)`, `s.indexOf(o.k)` compile and abort at the read of
+  `charAt` / `indexOf` (String.prototype is not populated). No wrong value in 18 probes (review r1).
 - A program that reads one of the methods but creates no function value refuses by name
   (`var o = {a: 1}; var out = typeof o.hasOwnProperty;`).
-- `new h()` with a method value aborts (JS: TypeError); IsConstructor still is the function-kind test.
 - A method call on a raw-externref receiver (`({}).isPrototypeOf(c)` or a `{…}` inside a closure) is from-ast's
   pre-existing "method call on externref not in slice 4" refusal / abort body.
+
+### Review r1 (PR 7403): fixes
+
+1. Blocker fixed: only the method-call shape runs the algorithm (`prototypeMethodOfCall` also requires the call's
+   receiver to be the [[Get]]'s receiver); a detached call takes the dispatcher's abort. The nullish-receiver arm is
+   gone: that receiver threw at its [[Get]], so the chain runs over the receiver's other kinds. Tests: the reviewer's
+   two programs and the same two for `hasOwnProperty` / `propertyIsEnumerable` (p1-method-values).
+2. One requirement builder in `beginRealm` for the bootstrap entries and the methods.
+3. One id helper, `realmMethodId` (catalog); `nativeObjectStatic` and `nativeObjectPrototypeMethod` read one
+   `nativeLength(parent, name)`.
+4. That read is a Map built once (`NATIVE_LENGTHS`), not a catalog scan per member access.
+5. The `materializePhysicalProgram` grant stays: `nativeSourceClosureCallableBindings` answers the source-closure
+   owner's authenticated callable pack (compared by `requireNativeSourceClosureCallables`), and whether the realm holds
+   built-in methods is the realm's fact; carrying it there would mix the two owners.

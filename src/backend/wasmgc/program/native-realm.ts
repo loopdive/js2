@@ -61,6 +61,7 @@ import {
 import {
   declareNativeBuiltinFunctionRequests,
   requireNativeBuiltinFunctionRequests,
+  type NativeBuiltinFunctionBehavior,
   type NativeBuiltinFunctionRequests,
 } from "../resources/native-builtin-function-requests.js";
 import {
@@ -279,52 +280,31 @@ function beginRealm(
     { vectors, vectorPlan, strings: strings.strings },
     declareNativeInvocationSubstrateResources(shared, vectors.base ? { vectorBaseKey: vectors.base.key } : {}),
   );
-  const bootstrap = requirements.description.catalog.bootstrap.map((id, index) => {
-    const row = requirements.description.catalog.intrinsics.find((row) => row.id === id),
+  const catalog = requirements.description.catalog;
+  // The bootstrap's two functions, then (#7354 P1) the Object.prototype methods the program reads: one entry each.
+  const intrinsics = [...catalog.bootstrap, ...requirements.description.prototypeMethods].map((id, index) => {
+    const row = catalog.intrinsics.find((row) => row.id === id),
       call = row?.callable;
-    if (
-      !row ||
-      !call ||
-      (call.implementation !== "function-prototype" && call.implementation !== "throw-type-error") ||
-      call.initialName !== "" ||
-      call.length !== 0 ||
-      row.constructible
-    )
-      fail("catalog bootstrap lacks its supported canonical behavior");
+    const behavior = index < catalog.bootstrap.length ? call?.implementation : "object-prototype-method";
+    const supported =
+      behavior === "object-prototype-method"
+        ? call?.implementation === "native"
+        : behavior === "function-prototype" || behavior === "throw-type-error";
+    if (!row || !call || !supported || row.constructible) fail("catalog row lacks its supported canonical behavior");
+    const entry = behavior as NativeBuiltinFunctionBehavior;
     return {
-      id: call.implementation,
-      behavior: call.implementation,
+      id: entry === "object-prototype-method" ? id : entry,
+      behavior: entry,
       signatureId: "realm:signature:" + index,
       metadataId: "realm:metadata:" + index,
       initialName: call.initialName,
       initialLength: call.length,
       userFormalCount: 0,
-      prototype:
-        call.implementation === "function-prototype" ? ("object-prototype" as const) : ("function-prototype" as const),
+      prototype: entry === "function-prototype" ? ("object-prototype" as const) : ("function-prototype" as const),
       constructible: false as const,
       aliases: row.aliases,
     };
   });
-  // (#7354 P1) The Object.prototype methods a program reads, each a built-in function object on that prototype.
-  const methods = requirements.description.prototypeMethods.map((id, index) => {
-    const row = requirements.description.catalog.intrinsics.find((row) => row.id === id),
-      call = row?.callable;
-    if (!row || call?.implementation !== "native") fail("populated method is not native in the catalog");
-    const ordinal = bootstrap.length + index;
-    return {
-      id,
-      behavior: "object-prototype-method" as const,
-      signatureId: "realm:signature:" + ordinal,
-      metadataId: "realm:metadata:" + ordinal,
-      initialName: call.initialName,
-      initialLength: call.length,
-      userFormalCount: 0,
-      prototype: "function-prototype" as const,
-      constructible: false as const,
-      aliases: row.aliases,
-    };
-  });
-  const intrinsics = [...bootstrap, ...methods];
   const requests = declareNativeBuiltinFunctionRequests(
     tx,
     { key: key + ":builtins", intrinsics },

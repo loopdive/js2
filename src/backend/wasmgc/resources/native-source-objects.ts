@@ -49,7 +49,7 @@ import {
   nativeBuiltinFunctionSingletonBinding,
   type NativeBuiltinFunctionReservations,
 } from "./native-builtin-functions.js";
-import { NATIVE_OBJECT_PROTOTYPE_METHODS } from "../../../runtime/contracts/native-realm-catalog.js";
+import { NATIVE_OBJECT_PROTOTYPE_METHODS, realmMethodId } from "../../../runtime/contracts/native-realm-catalog.js";
 import { nativeBuiltinFunctionRequestDependencies } from "./native-builtin-function-requests.js";
 import { nativeStringLiteralInstrs } from "./native-string-literals.js";
 import type { NativeErrorReservations } from "./native-errors.js";
@@ -248,7 +248,8 @@ const ROWS = {
     body: ({ kernel }, tx) =>
       buildSourceObjectPrototypeMethodDefinition({
         getters: NATIVE_OBJECT_PROTOTYPE_METHODS.map(
-          (name) => nativeBuiltinFunctionSingletonBinding(tx, kernel, `%Object.prototype.${name}%`).getter.handle,
+          (name) =>
+            nativeBuiltinFunctionSingletonBinding(tx, kernel, realmMethodId("Object.prototype", name)).getter.handle,
         ),
       }),
   },

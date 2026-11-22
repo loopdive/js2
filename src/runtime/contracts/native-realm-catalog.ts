@@ -168,11 +168,12 @@ const functionMethods: readonly Method[] = [
   ["call", 1, ["IsCallable", "Call"]],
   ["toString", 0, ["HostHasSourceTextAvailable", "SourceText", "InitialName", "IsCallable"]],
 ];
-const methodId = (parent: string, name: string) => `%${parent}.${name}%`;
+/** The catalog id of the member `name` of the intrinsic `parent` (`%Object.prototype.hasOwnProperty%`). */
+export const realmMethodId = (parent: string, name: string) => `%${parent}.${name}%`;
 function members(parent: string, rows: readonly Method[], legacy = false): NativeRealmIntrinsic[] {
   return rows.map(([name, length, requires]) =>
     callable(
-      methodId(parent, name),
+      realmMethodId(parent, name),
       name,
       length,
       parent + "." + name,
@@ -185,7 +186,7 @@ function members(parent: string, rows: readonly Method[], legacy = false): Nativ
   );
 }
 const methodProperties = (parent: string, rows: readonly Method[]) =>
-  rows.map(([name]) => reference(name, methodId(parent, name)));
+  rows.map(([name]) => reference(name, realmMethodId(parent, name)));
 function freeze<T>(value: T): T {
   if (value && typeof value === "object") {
     Object.values(value).forEach(freeze);

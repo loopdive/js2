@@ -1,5 +1,9 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
-import { NATIVE_OBJECT_PROTOTYPE_METHODS, NATIVE_REALM_CATALOG } from "../../runtime/contracts/native-realm-catalog.js";
+import {
+  NATIVE_OBJECT_PROTOTYPE_METHODS,
+  NATIVE_REALM_CATALOG,
+  realmMethodId,
+} from "../../runtime/contracts/native-realm-catalog.js";
 import type { IrUnitId } from "../../shared/contracts/ir-identity.js";
 import { irNumberConversionCallableDeclaration } from "../runtime/number-conversion-callable.js";
 import { nativeAsyncCallableValueTypes, nativeAsyncCallMismatch } from "../runtime/native-async-callables.js";
@@ -133,7 +137,7 @@ function calculate(
     sourceAllocationOccurrences: source?.allocations.map((row) => row.occurrence) ?? [],
     objectUses: access.uses,
     prototypeMethods: access.uses.some(readsPrototypeMethod)
-      ? NATIVE_OBJECT_PROTOTYPE_METHODS.map((name) => `%Object.prototype.${name}%`)
+      ? NATIVE_OBJECT_PROTOTYPE_METHODS.map((name) => realmMethodId("Object.prototype", name))
       : [],
     numberUses: numbers,
     unavailable: [
