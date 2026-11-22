@@ -7748,13 +7748,10 @@ function lowerCall(expr: ts.CallExpression, cx: LowerCtx, statementPosition = fa
     makePromiseDelayLoweringHost(cx),
   );
   if (promiseDelay !== undefined) return promiseDelay;
-  // Optional call (`fn?.()` / `obj?.method()`, #1281). The IR has no
-  // short-circuit primitive for nullable callees, and at this point we
-  // haven't yet lowered the callee/receiver to inspect its IrType. The
-  // safe path is to throw to legacy, where `compileOptionalCallExpression`
-  // already emits the null-guarded `if/else` block. The optional
-  // PROPERTY-ACCESS path (`obj?.prop`) gets the IR fast-path; full
-  // optional-call IR support is a follow-up.
+  // Optional call (`fn?.()` / `obj?.method()`, #1281). The IR has no short-circuit primitive for nullable callees, and
+  // at this point we haven't yet lowered the callee/receiver to inspect its IrType. The safe path is to throw to legacy,
+  // where `compileOptionalCallExpression` already emits the null-guarded `if/else` block. The optional PROPERTY-ACCESS
+  // path (`obj?.prop`) gets the IR fast-path; full optional-call IR support is a follow-up.
   if (expr.questionDotToken) {
     demoteToLegacy("call-resolution-unsupported", `ir/from-ast: optional call (?.()) not in slice 11 (${cx.funcName})`);
   }
@@ -7873,6 +7870,8 @@ function lowerCall(expr: ts.CallExpression, cx: LowerCtx, statementPosition = fa
   }
   if (ts.isElementAccessExpression(functionAccess) && functionObjects.createsFunctionObjects(cx.resolver))
     return functionObjects.lowerFunctionObjectMemberCall(expr, functionAccess, functionObjectLoweringHost(cx));
+  if (functionObjects.callsNonReference(expr, cx.resolver))
+    return functionObjects.lowerBindingCall(expr, undefined, functionObjectLoweringHost(cx));
   if (!ts.isIdentifier(expr.expression)) {
     demoteToLegacy(
       "call-resolution-unsupported",

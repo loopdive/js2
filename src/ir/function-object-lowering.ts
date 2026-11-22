@@ -311,6 +311,22 @@ export function lowerDynamicMemberCall(
 }
 
 /**
+ * (#7354 T) On the Prepared lane, a call whose callee is no Reference — neither an identifier nor a property / element
+ * access, outer parentheses skipped, so `(o.m)()` keeps its receiver while `(0, o.m)()`, `(c ? o.m : g)()`,
+ * `(o.m = g)()`, `f()()` and an IIFE do not (§13.3.6.1) — calls the callee's value with `this` undefined, as
+ * {@link lowerBindingCall} does.
+ */
+export function callsNonReference(expr: ts.CallExpression, lane: { createsFunctionObjects?(): boolean } | undefined) {
+  const callee = ts.skipOuterExpressions(expr.expression);
+  return (
+    createsFunctionObjects(lane) &&
+    !ts.isIdentifier(callee) &&
+    !ts.isPropertyAccessExpression(callee) &&
+    !ts.isElementAccessExpression(callee)
+  );
+}
+
+/**
  * (#7106 Stage 4) `f(…)` through a binding that holds a dynamic value (`func()` in assert.js's `assert.throws`): a
  * dynamic local or parameter, or a script `var`'s dynamic home (`scriptVar`, its declaration). No Reference base, so
  * thisArgument is `undefined` (§13.3.6.2). The callee is evaluated first, then the arguments, then IsCallable.
