@@ -6,7 +6,14 @@
 // that function, uncatchably, and the entry's table names it with its refusal. Top-level code, async functions and
 // generators still refuse at compile time, by the same text as without the policy.
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { agreesWithNode, nodeOut, preparedOptions, refusal, yieldToRpc } from "./helpers/prepared-node-agreement.js";
+import {
+  abortBodies,
+  agreesWithNode,
+  nodeOut,
+  preparedOptions,
+  refusal,
+  yieldToRpc,
+} from "./helpers/prepared-node-agreement.js";
 import { instantiatePreparedArtifact } from "../src/test262/test262-prepared-runtime.js";
 import { compile, requiredPreparedAbortBodies } from "../src/test262/test262-prepared-entry.js";
 
@@ -17,14 +24,6 @@ const SLOW = 240_000;
 const UNLOWERABLE = "/a/";
 const REGEXP_REFUSAL = (unit: string) => `ir/from-ast: RegExp literal has no provider (${unit})`;
 const COMPUTED_KEY_REFUSAL = "dynamic operation dyn.member_get with a computed key has no Prepared intrinsic";
-
-/** `source`'s abort table as `name: detail` rows. */
-async function abortTable(source: string): Promise<string[]> {
-  await yieldToRpc();
-  const result = await compile(source, preparedOptions());
-  expect(result.success).toBe(true);
-  return requiredPreparedAbortBodies(result)!.map((row) => `${row.name}: ${row.detail}`);
-}
 
 /** `source` compiles, validates, and traps in the abort body of `name`, which its table lists. */
 async function abortsIn(source: string, name: string): Promise<void> {
@@ -91,7 +90,7 @@ describe("#7354 U — the table", () => {
     "names each aborted function with its first refusal, in source order",
     async () => {
       expect(
-        await abortTable(
+        await abortBodies(
           `function a(){ return ${UNLOWERABLE}; } function b(v){ var r = ${UNLOWERABLE}; return v[0]; }` +
             " function c(v){ return v[0]; } var x = 1;",
         ),
@@ -104,7 +103,7 @@ describe("#7354 U — the table", () => {
     "names the closure, not the function around it, and not a same-named declaration",
     async () => {
       expect(
-        await abortTable(
+        await abortBodies(
           `function g(){ return 1; } function h(){ var g = function(){ return ${UNLOWERABLE}; }; return g; } var x = 1;`,
         ),
       ).toEqual([`h__closure_0: ${REGEXP_REFUSAL("h__closure_0")}`]);
@@ -114,7 +113,7 @@ describe("#7354 U — the table", () => {
 
   it(
     "is empty for a program without such a function",
-    async () => expect(await abortTable("var x = 1; function f(v){ return v + 1; } x = f(x);")).toEqual([]),
+    async () => expect(await abortBodies("var x = 1; function f(v){ return v + 1; } x = f(x);")).toEqual([]),
     SLOW,
   );
 });

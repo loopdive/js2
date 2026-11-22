@@ -10,6 +10,7 @@ import * as linear from "../../src/codegen-linear/index.js";
 import { instantiatePreparedArtifact } from "../../src/test262/test262-prepared-runtime.js";
 import {
   compile,
+  requiredPreparedAbortBodies,
   requiredPreparedEmission,
   type Test262CompileOptions,
 } from "../../src/test262/test262-prepared-entry.js";
@@ -99,6 +100,14 @@ export async function agreesWithNode(body: string, withWrong = true): Promise<vo
 export async function throwsAsNode(source: string): Promise<void> {
   expect(() => new Function(source)()).toThrow(TypeError);
   expect(await runPrepared(source)).toBe("threw");
+}
+
+/** (#7354 U) The functions of `source`, which must compile, whose body is the run-time abort: `name: refusal`. */
+export async function abortBodies(source: string): Promise<string[]> {
+  await yieldToRpc();
+  const result = await compile(source, preparedOptions());
+  expect(errors(result)).toEqual([]);
+  return requiredPreparedAbortBodies(result)!.map((row) => `${row.name}: ${row.detail}`);
 }
 
 /** The error diagnostics of `source`, which must not compile. */
