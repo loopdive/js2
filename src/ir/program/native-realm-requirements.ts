@@ -39,9 +39,7 @@ export interface NativeRealmRequirements {
   readonly access: NativeObjectAccessRequirements;
   readonly description: NativeRealmDescription;
 }
-const realmPacks = issuedPacks<NativeRealmRequirements>(
-  "native realm requirements: unissued, copied or detached realm requirements",
-);
+const realmPacks = issuedPacks<NativeRealmRequirements>(() => fail("unissued, copied or detached realm requirements"));
 function fail(detail: string): never {
   throw Error("native realm requirements: " + detail);
 }

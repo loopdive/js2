@@ -61,8 +61,8 @@ export interface NativeInvocationRequirements {
   /** This owner cannot certify other compiler-created callable producers. */
   readonly completionScope: "selected-source-invocation";
 }
-const invocationPacks = issuedPacks<NativeInvocationRequirements>(
-  "native invocation requirements: unissued or copied invocation requirements",
+const invocationPacks = issuedPacks<NativeInvocationRequirements>(() =>
+  fail("unissued or copied invocation requirements"),
 );
 function fail(detail: string): never {
   throw new Error(`native invocation requirements: ${detail}`);

@@ -4969,6 +4969,19 @@ ratchet; dead exports — all pass. `check:compiler-boundaries:inventory` fails 
 - The 1024 MB column after the base is implied by the 512 MB pass, not run.
 - The 512 MB column was not run for the first, third and fourth commits.
 
+### Perf6 review round and follow-ups (same branch)
+
+- Review fixes: runtime data is flagged deeply frozen only after the whole walk and only in the shapes the settled
+  verdicts accept; the Promise producer observation checks the string plan's issue (options compared only where a
+  caller holds its own) instead of re-planning; `issuedPacks` refuses with each planner's own error.
+- (a) Partial: the formatter support body is frozen at creation and its snapshot copy/compares are gone. The manifest
+  itself cannot be frozen in place (`support.providers` is a live `Map`), so the fresh-manifest compare and the
+  formatter re-plan stay.
+- (b) `preparedIrDataMismatch` answers equal at once for a deeply frozen value compared with itself.
+- (c) Not done: the per-emit completion checks (`completedOwner`, ~0.8 s) read the mutable module ledger, which
+  emission keeps writing between phases; only the boundary audit would cover a later change, so they stay.
+- Prelude after these: off 6.2–7.3 s, on 18.7–19.5 s, both pass at 512 MB; binary and the 804 rows unchanged.
+
 ## Slice U result (2026-11-22, branch `claude/7354-u` from `claude/7354-c2` 8bbebca651; C2 7debc3daf0, Perf5 204d6f575e, Perf6 4521fc831f merged)
 
 Abort bodies: a function whose body the path cannot lower gets the run-time abort as its body instead of refusing the
