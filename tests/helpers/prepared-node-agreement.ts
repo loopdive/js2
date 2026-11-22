@@ -110,9 +110,13 @@ export async function abortBodies(source: string): Promise<string[]> {
   return requiredPreparedAbortBodies(result)!.map((row) => `${row.name}: ${row.detail}`);
 }
 
-/** The error diagnostics of `source`, which must not compile. */
+/**
+ * The error diagnostics of `source`, which must not compile: the name the path refuses it by. (#7354 U) Compiled
+ * without abort bodies, under which a refusal inside a function becomes that function's run-time abort
+ * ({@link abortBodies}).
+ */
 export async function refusal(source: string): Promise<string> {
-  const result = await compile(source, preparedOptions());
+  const result = await compile(source, preparedOptions(), undefined, "refuse");
   expect(result.success).toBe(false);
   return errors(result).join("\n");
 }

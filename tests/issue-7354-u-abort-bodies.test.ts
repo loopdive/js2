@@ -179,10 +179,10 @@ describe("#7354 U — what still refuses at compile time, by the same text", () 
     ["an async function", `async function a(){ return ${UNLOWERABLE}; }`, "complete synchronous numeric or Boolean"],
     ["an early error in a function body", `function g(){ "use strict"; var eval = 1; }`, "'eval' in strict mode"],
   ])("%s", async (_label, source, text) => {
-    const refused = await refusal(source);
-    expect(refused).toContain(text);
-    const result = await compile(source, preparedOptions(), undefined, "refuse");
-    expect(result.errors.map((error) => error.message).join("\n")).toContain(text);
+    const withAbortBodies = await compile(source, preparedOptions());
+    expect(withAbortBodies.success).toBe(false);
+    expect(withAbortBodies.errors.map((error) => error.message).join("\n")).toContain(text);
+    expect(await refusal(source)).toContain(text);
   });
 
   it("without the policy, the program with the aborted function is refused by the body's text", async () => {
