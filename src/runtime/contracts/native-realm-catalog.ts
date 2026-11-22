@@ -117,7 +117,7 @@ const objectStatics: readonly Method[] = [
  * (#7354 O1) The `Object` statics whose call form the Prepared path lowers: the realm's descriptor bodies serve them
  * (`object-static-bodies.ts`). The one list of what is native; every other row is `unavailable`.
  */
-export const NATIVE_OBJECT_STATICS = Object.freeze([
+const NATIVE_OBJECT_STATICS = Object.freeze([
   "create",
   "defineProperties",
   "defineProperty",

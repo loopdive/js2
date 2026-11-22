@@ -19,27 +19,25 @@ import {
 } from "./function-object-lowering.js";
 import { IrUnsupportedError } from "./outcomes.js";
 import { JS_TAG_IDS } from "./runtime/js-tag-domain.js";
-import { NATIVE_REALM_CATALOG, type NativeObjectStatic } from "../runtime/contracts/native-realm-catalog.js";
+import type { NativeObjectStatic } from "../runtime/contracts/native-realm-catalog.js";
 import { objectStaticHelper } from "./program/dynamic-object-statics.js";
+import { nativeObjectStatic } from "./program/builtin-prototype-keys.js";
 
 /** The catalog's native `Object` static `call` names (by syntax alone), with its `length`. */
-function nativeObjectStatic(call: ts.CallExpression): { name: NativeObjectStatic; length: number } | undefined {
+function nativeObjectStaticCall(call: ts.CallExpression): ReturnType<typeof nativeObjectStatic> {
   const callee = call.expression;
   if (!ts.isPropertyAccessExpression(callee) || !ts.isIdentifier(callee.expression)) return undefined;
   if (callee.expression.text !== "Object" || callee.questionDotToken || call.questionDotToken) return undefined;
-  const row = NATIVE_REALM_CATALOG.intrinsics.find((intrinsic) => intrinsic.id === `%Object.${callee.name.text}%`);
-  return row?.callable?.implementation === "native"
-    ? { name: callee.name.text as NativeObjectStatic, length: row.callable.length }
-    : undefined;
+  return nativeObjectStatic(callee.name.text);
 }
 
 /** The catalog's native `Object` static `call` names, by syntax alone. */
 export const nativeObjectStaticOf = (call: ts.CallExpression): NativeObjectStatic | undefined =>
-  nativeObjectStatic(call)?.name;
+  nativeObjectStaticCall(call)?.name;
 
 /** The lowered call, or `null` when `call` is not such a static here. */
 export function tryLowerRealmStaticCall(call: ts.CallExpression, host: FunctionObjectLoweringHost): IrValueId | null {
-  const native = nativeObjectStatic(call);
+  const native = nativeObjectStaticCall(call);
   if (!native || !createsFunctionObjects(host)) return null;
   const { name, length } = native;
   if (!host.isUnshadowedGlobal((call.expression as ts.PropertyAccessExpression).expression, "Object")) return null;

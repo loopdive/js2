@@ -10,12 +10,29 @@
  * reader, `src/ir/realm-keys.ts` re-exports them); the wrapper prototypes are not in the catalog yet, so their keys
  * are listed here from the specification.
  */
-import { NATIVE_REALM_CATALOG, type NativeRealmProperty } from "../../runtime/contracts/native-realm-catalog.js";
+import {
+  NATIVE_REALM_CATALOG,
+  type NativeObjectStatic,
+  type NativeRealmProperty,
+} from "../../runtime/contracts/native-realm-catalog.js";
 
 const propertiesOf = (intrinsicIds: readonly string[]): readonly NativeRealmProperty[] =>
   NATIVE_REALM_CATALOG.intrinsics.filter(({ id }) => intrinsicIds.includes(id)).flatMap(({ properties }) => properties);
 const stringKeys = (properties: readonly NativeRealmProperty[]): ReadonlySet<string> =>
   new Set(properties.flatMap(({ key }) => (key.kind === "string" ? [key.value] : [])));
+
+/**
+ * (#7354 O1) `Object.<name>` with its catalog `length` when the catalog marks it native (`NATIVE_OBJECT_STATICS`): the
+ * IR's one read of which statics the Prepared path lowers.
+ */
+export function nativeObjectStatic(
+  name: string,
+): { readonly name: NativeObjectStatic; readonly length: number } | undefined {
+  const callable = NATIVE_REALM_CATALOG.intrinsics.find(({ id }) => id === `%Object.${name}%`)?.callable;
+  return callable?.implementation === "native"
+    ? { name: name as NativeObjectStatic, length: callable.length }
+    : undefined;
+}
 
 /** The string keys the catalog gives the named intrinsics (Annex B members included). */
 export function realmStringKeys(...intrinsicIds: readonly string[]): ReadonlySet<string> {

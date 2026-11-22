@@ -422,6 +422,8 @@
         "src/runtime/wasmgc/values/ordinary-object-access-bodies.ts",
         "src/runtime/wasmgc/values/source-object-bodies.ts",
         "src/runtime/wasmgc/values/source-function-object-bodies.ts",
+        "src/runtime/wasmgc/values/descriptor-record-bodies.ts",
+        "src/runtime/wasmgc/values/object-static-bodies.ts",
         "src/runtime/wasmgc/values/ordinary-object-descriptor-accessor.ts",
         "src/runtime/wasmgc/values/ordinary-object-descriptor-common.ts",
         "src/runtime/wasmgc/values/ordinary-object-descriptor-data.ts",
@@ -15351,6 +15353,16 @@
       "layer": "native-runtime"
     },
     {
+      "path": "src/runtime/wasmgc/values/descriptor-record-bodies.ts",
+      "state": "clean",
+      "layer": "native-runtime"
+    },
+    {
+      "path": "src/runtime/wasmgc/values/object-static-bodies.ts",
+      "state": "clean",
+      "layer": "native-runtime"
+    },
+    {
       "path": "src/runtime/wasmgc/values/ordinary-object-descriptor-accessor.ts",
       "state": "clean",
       "layer": "native-runtime"
@@ -17258,6 +17270,19 @@
       "path": "src/ir/program/dynamic-function-operations.ts",
       "state": "clean",
       "layer": "ir-program"
+    },
+    {
+      "path": "src/ir/program/dynamic-object-statics.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
+      "path": "src/ir/realm-static-call.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "7354-prepared-path",
+      "nextBoundary": "Source recognition of a native Object static's call form (#7354 O1) beside its symbolic helper call; the TypeScript half moves with from-ast's frontend half."
     },
     {
       "path": "src/ir/program/builtin-prototype-keys.ts",

@@ -8,7 +8,8 @@
  * program's own ToString, which can call a key's `toString`), in the specification's order.
  */
 import type { IrInstr, IrValueId } from "../core/nodes.js";
-import { NATIVE_OBJECT_STATICS, type NativeObjectStatic } from "../../runtime/contracts/native-realm-catalog.js";
+import type { NativeObjectStatic } from "../../runtime/contracts/native-realm-catalog.js";
+import { nativeObjectStatic } from "./builtin-prototype-keys.js";
 import { realmCall, typeErrorThen } from "./dynamic-realm-calls.js";
 import { CARRIER, carried, type ChainBuilders } from "./dynamic-value-chains.js";
 import { MEMBER_ACCESS_ARM, type CarrierKind } from "./dynamic-value-kinds.js";
@@ -18,8 +19,7 @@ const HELPER_PREFIX = "__ir_object_static:";
 export const objectStaticHelper = (name: NativeObjectStatic): string => HELPER_PREFIX + name;
 /** The static a helper symbol names, if it is one. */
 export function objectStaticOfHelper(symbol: string): NativeObjectStatic | undefined {
-  const name = symbol.startsWith(HELPER_PREFIX) ? symbol.slice(HELPER_PREFIX.length) : undefined;
-  return NATIVE_OBJECT_STATICS.find((row) => row === name);
+  return symbol.startsWith(HELPER_PREFIX) ? nativeObjectStatic(symbol.slice(HELPER_PREFIX.length))?.name : undefined;
 }
 
 /** The legalization's builders, with its ToString (`stringOf`, ToPropertyKey here). */
