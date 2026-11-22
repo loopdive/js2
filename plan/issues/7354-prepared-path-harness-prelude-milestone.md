@@ -5172,10 +5172,11 @@ path: the call form on the unshadowed global, served by the realm's descriptor p
 - The flow rule (`source-dynamic-contracts.ts`) takes a native static's arguments and its literal descriptors'
   fields as carriers (the lib's `PropertyDescriptor` types do not apply); `programObjects` admits the object kind for
   a program whose objects come only from such a call.
-- `prepare-object-create.ts` (the bounded whole-source `Object.create(null)` plan) is not installed where closures are
-  function objects (it pre-empted the static arm and refused `var n = Object.create(null); n.v = 3;`). It is kept:
-  the typed lane (`tests/issue-3518-object-create-null-source-admission.test.ts`) uses it. **Cleanup for the lead to
-  file**: once the typed lane takes the static arm too, delete `prepare-object-create.ts` and its three from-ast sites.
+- `prepare-object-create.ts` (the bounded whole-source `Object.create(null)` plan) is kept and still comes first: the
+  #3518 fixtures (`issue-3518-object-create-null-source-admission`, the no-source realm of
+  `issue-3518-native-object-realm-declarations`) compile typed TypeScript through it on this same lane. **Cleanup for
+  the lead to file**: one route (the static arm also for a typed `const`), then delete the plan and its three from-ast
+  sites (see "Found, not fixed").
 - from-ast 17361 = base (the host is function-object-lowering's; `objectStaticPlanOf` inlined at its one caller);
   program-source.ts unchanged.
 
@@ -5200,9 +5201,14 @@ path: the call form on the unshadowed global, served by the realm's descriptor p
 | issue-3518-ordinary-object-callable-contracts + native-realm-requirements | 80 | 0 |
 | issue-3518-native-object-realm-declarations (count 42 → 38) | 21/25 | 1 |
 | r-provider-census 117; test262-prepared-entry + 7188 50; c2-this 18; o3 + f1b-writes 16; u-abort-bodies 40; native-builtin-functions 36 | | 0 |
+| o4-member-read 16; x-dynamic-throw 59; f2-calls-through-values 10; c2-constructors 20; m-sweep-1/2/3/4 7/7/6/6 | | 0 |
 
-The realm-declarations file's four "executes actual source slots" tests fail identically at the base 02f31edc4c
-(`string.const runtime is unavailable`); CI's `quality` runs that file because this diff modifies it.
+The realm-declarations file's four "executes actual source slots" tests fail identically at the base 02f31edc4c and
+on main: the fixture (`tests/helpers/native-object-realm.ts` `publicRealmSourceRuntime`) lowers `STATE_SOURCE`'s
+bodies by hand with a resolver that knows only unit calls, and since F1b each closure literal on this lane is a
+function object, so `makeCaptured` / `makeEmpty` now hold `string.const "captured"` and a `js.object.init-function`
+call, which that resolver cannot lower (`string.const runtime is unavailable`). The compiler's behaviour is the right
+one; the fixture predates function objects. CI's `quality` runs that file because this diff changes its count pin.
 
 ### Proof
 
@@ -5244,10 +5250,31 @@ The realm-declarations file's four "executes actual source slots" tests fail ide
 
 ### Found, not fixed
 
-- Compile time grows superlinearly with the functions in one program: the sweep's 12 cases (36 functions) compile in
-  ~4.5 s, 72 cases in more than 500 s.
-- `dynamic-value-chains.ts` `abort` is a pure intrinsic: an arm made of it alone is dropped where the result is unused.
-  The member-access arms always sit beside an effectful arm so far; the statics pin theirs (above).
+- **Compile time grows superlinearly with the number of functions in one program** (tsx, strict Prepared entry,
+  runner options, validator off; generator `.tmp/sweep.mts` on the branch's worktree, not committed). Program shape: a
+  prelude of 5 function declarations (`t(f)` with a try/catch around `f()`, `fields(d)` reading six members and
+  concatenating, three trivial `G`/`H`/`S`), then per case: one declaration `cI(o)` holding 0–1
+  `Object.defineProperty`, one top-level `var oI = {}`, a call `cI(oI)`, a function expression passed to `t`
+  (closure calling `Object.defineProperty(oI, 'p', {…})` with 1–6 descriptor fields, some reading `H` / `S` as values),
+  a call `fields(Object.getOwnPropertyDescriptor(oI, 'p'))`, a string `===` and a `throw`. Per case: 1 declaration,
+  1 closure, 4–5 calls, 2 object literals.
+  - 12 cases: 17 declarations + 12 closures = 29 functions, ~60 calls: **4.2–6.0 s** per compile (234 runs).
+  - 72 cases: 77 declarations + 72 closures = 149 functions, ~350 calls: **> 500 s** (killed at the 530 s limit; ×5
+    the functions, ×100 the time).
+- **The shared `abort` builder of `dynamic-value-chains.ts` can be dropped as dead code.** `js.value.unsupported` is a
+  certified-pure intrinsic (`src/ir/analysis/intrinsics.ts` rejects one with effects), and DCE removes pure
+  instructions whose result is unused. It bites when (a) the abort is the whole expansion of an operation, i.e. the
+  value's proven kinds leave only arms that abort (or are otherwise pure), so no effectful sibling arm keeps the
+  enclosing `if` alive, and (b) the operation's result is unused (statement position). Then the program runs on as if
+  the operation had succeeded. Found here as `function F(){} Object.create(F);` (the prototype's kind is proven
+  `function`, one arm, the abort) running to its end; the statics now end each abort arm in a never-run `throw` of its
+  text. Member access has not hit it so far because its aborting arms always sit beside a realm call or a throw; a
+  write whose receiver is proven to be only a kind that aborts would.
+- `Object.create(null)` as a program's only use of `Object` takes the bounded #3518 plan (`prepare-object-create.ts`),
+  whose typed result a dynamic script var cannot hold: `var n = Object.create(null); n.v = 3;` refuses by name
+  (`proven dynamic binding 'n' initializer has no supported carrier`). Turning the plan off on this lane broke the
+  #3518 no-source fixture (a typed `const` then went through the static arm), so it stays; one route for both is
+  cleanup for the lead to file.
 
 ### Not verified
 
