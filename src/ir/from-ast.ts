@@ -96,7 +96,7 @@ import {
   type OperandFamily,
   type PrimitiveProof,
 } from "./analysis/operand-admissibility.js"; // (#7144)
-import { producesCarrier } from "./analysis/carrier-expression.js";
+import { mayYieldCarrier, producesCarrier } from "./analysis/carrier-expression.js";
 import { IR_CLOSURE_UNDEFINED } from "./core/closure-invocation-callables.js";
 import {
   fixedClosureParameters,
@@ -6963,6 +6963,12 @@ function namesDynamicValue(name: ts.Identifier, cx: LowerCtx): boolean {
   );
 }
 
+/** {@link namesDynamicValue}, or a dynamic slot: what a read of `name` lowers to is the dynamic value. */
+function bindingHoldsDynamic(name: ts.Identifier, cx: LowerCtx): boolean {
+  const binding = cx.scope.get(name.text);
+  return binding?.kind === "slot" ? (binding.asType ?? binding.type).kind === "dynamic" : namesDynamicValue(name, cx);
+}
+
 /**
  * (#7106) Lower an element access's key ONCE to its vec index (`emitVecIndex`:
  * negative for a key that names no element), together with the counted-loop
@@ -13811,6 +13817,14 @@ function mixedPrimitiveConditionalClaim(
   cx: LowerCtx,
 ): MixedPrimitiveConditionalProof | null {
   if (!cx.checker) return null;
+  // (#7354 W) The checker types a script var by its declaration, but its dynamic home yields the dynamic value
+  // (`undefined` before the initializer runs): an arm that may yield it has no single primitive representation.
+  // The bounded arm grammar has no `this` and no call; for those the sound "may" answer is yes.
+  const leaves = {
+    binding: (node: ts.Node) => !ts.isIdentifier(node) || bindingHoldsDynamic(node, cx),
+    call: () => true,
+  };
+  if (mayYieldCarrier(expr.whenTrue, leaves) || mayYieldCarrier(expr.whenFalse, leaves)) return null;
   const classifyPrimitive = makeIrPrimitiveExpressionClassifier(cx.checker);
   const classifyDeclared = makeIrDeclaredPrimitiveExpressionClassifier(cx.checker);
   const shadowed = (name: string) => cx.scope.has(name);
@@ -13937,15 +13951,7 @@ function tryLowerDynamicConditionalValue(expr: ts.ConditionalExpression, cx: Low
   const dynamicArm = (arm: ts.Expression): boolean => {
     const e = peelParensExpr(arm);
     if (ts.isConditionalExpression(e)) return isDynamicConditionalValueShape(e);
-    if (!ts.isIdentifier(e)) return false;
-    const binding = cx.scope.get(e.text);
-    const logical =
-      binding?.kind === "slot"
-        ? (binding.asType ?? binding.type)
-        : binding?.kind === "local"
-          ? binding.type
-          : undefined;
-    return logical?.kind === "dynamic";
+    return ts.isIdentifier(e) && bindingHoldsDynamic(e, cx);
   };
   const isDynamicConditionalValueShape = (e: ts.ConditionalExpression): boolean => {
     const trueDynamic = dynamicArm(e.whenTrue);
