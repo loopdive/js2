@@ -120,24 +120,13 @@ describe("#7354 Fa — function values on the Prepared path", () => {
 
   // What the slice leaves to its neighbours, each pinned by its name so the slice that admits it updates this list.
   it.each([
-    // A call through a value whose callee is not known statically is a dynamic call (slice Fb).
-    [
-      "a call from another function",
-      "var f = function (a) { return a; }; function h() { return f(1); } h();",
-      'direct call to "f" has no exact AST-site plan in h',
-    ],
-    [
-      "a call before the declaration",
-      "if (f(1) !== 1) throw 1; var f = function (a) { return a; };",
-      'direct call to "f" has no exact AST-site plan in <module-init>',
-    ],
+    // (#7354 F2) A call from another function, before the declaration, or with another arity is the dispatcher's
+    // (tests/issue-7354-f2-calls-through-values).
     [
       "a second store into the binding",
       "var f = function (a) { return a; }; f = function (a) { return 2; }; f(1);",
       'assignment to module binding "f" (dynamic) got closure(dynamic)->dynamic',
     ],
-    // JavaScript pads a missing argument with `undefined` and drops an extra one; the static call does neither yet.
-    ["a call with a missing argument", "var f = function (a) { return a; }; f();", "closure call arity mismatch"],
     // Function objects: `this`, `arguments` and properties (slice C).
     [
       "`this` in the body",

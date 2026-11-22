@@ -336,7 +336,7 @@ function entries(
   pack: NativeInvocationReservations,
 ): NativeClosureMethodEntry[] {
   const { values } = owner.dependencies;
-  return callables.entries.map((row) => {
+  const arms = callables.entries.map((row): NativeClosureMethodEntry => {
     const info = row.signature.info;
     const booleanResult =
       objectResultIsBoolean(row.source.closureSubtype?.signature.returnType) &&
@@ -370,6 +370,18 @@ function entries(
             ],
           },
     };
+  });
+  // (#7354 F2) An arm is a function of its types alone (it calls through the closure's own funcref): its allocation,
+  // self and lifted function types, which fix its parameters, and whether its result is boxed as a Boolean. Closures
+  // with the same key share one arm, so a dispatcher over every source closure (a call through a dynamic value) grows
+  // with the program's signatures, not with its closures.
+  const seen = new Set<string>();
+  return arms.filter((arm) => {
+    const boolean = arm.result.kind === "value" && arm.result.boxBoolean !== undefined;
+    const key = `${arm.allocationTypeIdx}:${arm.selfTypeIdx}:${arm.funcTypeIdx}:${boolean}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
   });
 }
 

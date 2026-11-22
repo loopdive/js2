@@ -146,7 +146,13 @@ describe("#7354 M1 — refusals that stay", () => {
       "function f(v){ return Object.prototype.toString.call(v); } var s = typeof Symbol; f({});",
       gapText("Object.prototype.toString of an object in a program that names 'Symbol'"),
     ],
-    ["G45: a method call", "function f(v){ return v.m(); } f({});", gapText("__ir_dyn_method_call_0")],
+    // (#7354 F2) A method call is a Get and a call through its value; without a function value it is always the
+    // TypeError (tests/issue-7354-f2-calls-through-values).
+    [
+      "G45: a method call",
+      "function f(v){ return v.m(); } f({});",
+      gapText("js.closure.call:0 in a program that creates no function value"),
+    ],
     // (#7354 M1) This threw out of compile() ("internal capability violation"): the Prepared path has no selector.
     ["G45: v.a += 1", "function f(v){ v.a += 1; } f({a:1});", "binary operator '+=' is capability-deferred in f"],
     [

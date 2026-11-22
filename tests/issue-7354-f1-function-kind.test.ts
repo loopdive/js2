@@ -78,10 +78,11 @@ describe("#7354 F1 — the function kind", () => {
     SLOW,
   );
 
-  // D6: Function.prototype.toString (the source text) and a call of a conversion method are not built yet. Where the
-  // value may only be a function, that refuses at compile time (below); where it may also be a kind that answers (a
-  // parameter, a caught value), that kind answers and the function ends at the run-time abort. A kind that answers
-  // wrongly throws 1 before the abort, so each row of the function kind's conversion tables changed alone fails here.
+  // D6: Function.prototype.toString (the source text) is not built. A function value's ToString without an own
+  // conversion method ends at the run-time abort ((#7354 F2) an own method is called: it is a run-time fact of the
+  // value, so even a value that may only be a function compiles). Where the value may also be a kind that answers (a
+  // parameter, a caught value), that kind answers first: a kind that answers wrongly throws 1 before the abort, so
+  // each row of the function kind's conversion tables changed alone fails here.
   it.each([
     [
       "`+` through a parameter that is also a number and a string",
@@ -96,21 +97,16 @@ describe("#7354 F1 — the function kind", () => {
       "ToString of a caught function value",
       'var f = function () {}; var c; try { throw f; } catch (e) { c = e; } if (c !== f) throw 1; var s = "" + c;',
     ],
-    // (#7354 F1b) `+` with a function operand concatenates (ADD_ROLE): its ToString is the abort, never a sum.
+    ...["f + 1", "String(f)"].map((use) => [
+      `ToString of a value that is only a function (${use})`,
+      `var f = function () { return 1; }; ${use};`,
+    ]),
+    // (#7354 F1b) `+` with a function operand takes its ToPrimitive: without an own method the source text's abort,
+    // never a sum.
     ["`+` of a function value through a parameter", "function op(v) { return v + 1; } var x = op(function () {});"],
-    // (Lead ruling) Whether an object's property holds a function is a run-time fact of that object.
-    [
-      "ToPrimitive with an own callable toString",
-      'var o = { toString: function () { return "x"; } }; var s = "" + o; if (s !== "x") throw 1;',
-    ],
   ])("ends %s at the run-time abort", (_label, source) => abortsAtRunTime(source), SLOW);
 
   it.each([
-    ...['"" + f', 'f + ""', "f + 1", 'String(f) + ""', 'try { var t = "" + f; } catch (e) {}'].map((use) => [
-      `ToString of a value that is only a function (${use})`,
-      `var f = function () { return 1; }; ${use};`,
-      "ToString of a function needs Function.prototype.toString",
-    ]),
     // (#7354 F1b) A function value is the realm's object now: only the keys its built-in prototypes hold refuse.
     [
       "a member read of a Function.prototype key",
@@ -127,13 +123,6 @@ describe("#7354 F1 — the function kind", () => {
       "a member write of Object.prototype's accessor on a value that may be a function",
       "function w(v) { v.__proto__ = null; } w(function () {});",
       "member write '__proto__' of a value that may be a string or a number or a boolean or a function or an object needs Object.prototype's accessor",
-    ],
-    // A chunked module-init lowers later statements in another function: the static closure value stays in its own.
-    [
-      "a static closure call across module-init chunks",
-      Array.from({ length: 20 }, (_, i) => `var c${i} = function (x) { return x; };`).join(" ") +
-        ` if (${Array.from({ length: 20 }, (_, i) => `c${i}(1) !== 1`).join(" || ")}) throw 1;`,
-      'direct call to "c0" has no exact AST-site plan',
     ],
   ])("refuses %s by name", async (_label, source, message) => {
     expect(await refusal(source)).toContain(message);

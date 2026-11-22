@@ -11,12 +11,12 @@ import { INTRINSIC_SIGNATURE_VERSION, INTRINSIC_DEFINITIONS, type IntrinsicId } 
 import { forEachInstrDeep, type IrFunction, type IrInstr, type IrValueId } from "../core/nodes.js";
 import type { IrType } from "../core/types.js";
 import { PREPARED_NUMBER_TO_STRING } from "./number-to-string-target.js";
-import { ordinaryToPrimitive, type ToPrimitiveHint } from "./ordinary-to-primitive.js";
+import { ordinaryToPrimitive, type ToPrimitiveAnswer, type ToPrimitiveHint } from "./ordinary-to-primitive.js";
 import { realmCall } from "./dynamic-realm-calls.js";
 import { functionValueOperand } from "./function-value-projection.js";
-import { gap } from "./dynamic-value-gap.js";
 import {
   ADD_ROLE,
+  IS_OBJECT,
   KIND_TEST,
   TO_NUMBER_ARM,
   TO_STRING_ARM,
@@ -38,8 +38,8 @@ export const ERROR_FIELD = { message: 0, name: 1 } as const;
 /**
  * (#7354 Str2-c) The kind each value of `fn` is proven to hold: a box to the dynamic value proves its operand's, (F1)
  * the function-value projection its packed callable's, (F1b) a read of a declaration's home a function, and
- * the legalization records a concatenation's result as a string (`learn`). Any other value may hold every admitted
- * kind.
+ * the legalization records a concatenation's result as a string and (F2) a ToPrimitive's result as a primitive
+ * (`learn`). Any other value may hold every admitted kind.
  */
 export function knownKinds(
   fn: IrFunction,
@@ -47,7 +47,7 @@ export function knownKinds(
   definitions: ReadonlyMap<IrValueId, IrInstr>,
   admitted: readonly CarrierKind[],
 ) {
-  const known = new Map<IrValueId, CarrierKind>();
+  const known = new Map<IrValueId, readonly CarrierKind[]>();
   for (const block of fn.blocks)
     for (const root of block.instrs)
       forEachInstrDeep(root, (i) => {
@@ -60,14 +60,11 @@ export function knownKinds(
               : i.kind === "global.get"
                 ? carrierKindOf(i.result!, types, definitions)
                 : undefined;
-        if (kind && kind !== "dynamic") known.set(i.result!, kind);
+        if (kind && kind !== "dynamic") known.set(i.result!, [kind]);
       });
   return {
-    kindsOf: (value: IrValueId): readonly CarrierKind[] => {
-      const kind = known.get(value);
-      return kind ? [kind] : admitted;
-    },
-    learn: (value: IrValueId, kind: CarrierKind) => known.set(value, kind),
+    kindsOf: (value: IrValueId): readonly CarrierKind[] => known.get(value) ?? admitted,
+    learn: (value: IrValueId, kinds: readonly CarrierKind[]) => known.set(value, kinds),
   };
 }
 export type KnownKinds = ReturnType<typeof knownKinds>;
@@ -247,35 +244,55 @@ export function chainBuilders(
 }
 type ChainBuilders = ReturnType<typeof chainBuilders>;
 
+/** Which of OrdinaryToPrimitive's two receivers a `to-primitive` kind is. */
+const receiverKind = (kind: CarrierKind): "object" | "function" => (kind === "function" ? "function" : "object");
+
+/** The carrier value `value` (a native string or a carrier value) into `result`, unchanged. */
+const carried = (value: IrValueId, result: IrValueId): IrInstr => ({
+  kind: "coerce.to_externref",
+  value,
+  result,
+  resultType: CARRIER,
+});
+
 /**
- * (#7354 Str2, O2b) The conversions of the dynamic value: ToString (`stringOf`, one arm per kind the value may hold,
- * `TO_STRING_ARM`) and ToNumber (`TO_NUMBER_ARM`). An object's arm of either is its OrdinaryToPrimitive
- * (`ordinary-to-primitive.ts`).
+ * (#7354 Str2, O2b, F2) The conversions of the dynamic value: ToString (`stringOf`, one arm per kind the value may
+ * hold, `TO_STRING_ARM`), ToNumber (`TO_NUMBER_ARM`) and `+`'s ToPrimitive (`primitiveOf`). The arm of an object and
+ * of a function value is its OrdinaryToPrimitive (`ordinary-to-primitive.ts`), whose primitive each conversion
+ * finishes in its own way (`ToPrimitiveAnswer`).
  */
 export function conversionBuilders(builders: ChainBuilders, program: LegalizationProgram) {
   const { kinds, admitted, intrinsic, fresh, anyKind, text, branch, concat, errorField, kindChain } = builders;
   const unsupported = (instr: IrInstr, r: IrValueId) => intrinsic(instr, "js.value.unsupported", [], r);
-  const toPrimitive = (instr: IrInstr, value: IrValueId, hint: ToPrimitiveHint, result: IrValueId): IrInstr[] => {
-    const isCallable = admitted.includes("function")
-      ? (method: IrValueId, r: IrValueId) => intrinsic(instr, "js.value.is_function", [method], r)
-      : undefined;
+  const nan = (r: IrValueId): IrInstr => ({
+    kind: "const",
+    value: { kind: "f64", value: NaN },
+    result: r,
+    resultType: F64,
+  });
+  /** The kinds a conversion method's result answers with (§7.1.1.1 step 2.b.ii): every admitted one but objects. */
+  const primitives = admitted.filter((kind) => !IS_OBJECT[kind]);
+  const toPrimitive = (
+    instr: IrInstr,
+    value: IrValueId,
+    hint: ToPrimitiveHint,
+    result: IrValueId,
+    kind: CarrierKind,
+    answer: ToPrimitiveAnswer,
+  ): IrInstr[] => {
     const b = {
       carrier: CARRIER,
       fresh,
       text,
       branch,
-      isCallable,
-      unsupported: (r: IrValueId) => unsupported(instr, r),
+      isCallable: admitted.includes("function")
+        ? (method: IrValueId, r: IrValueId) => intrinsic(instr, "js.value.is_function", [method], r)
+        : undefined,
+      isPrimitive: (v: IrValueId, r: IrValueId) => anyKind(instr, primitives, v, r),
     };
-    return ordinaryToPrimitive(b, program, value, hint, result);
+    return ordinaryToPrimitive(b, program, value, hint, result, receiverKind(kind), answer);
   };
-  const toStringArm = (
-    instr: IrInstr,
-    kind: CarrierKind,
-    value: IrValueId,
-    hint: ToPrimitiveHint,
-    result: IrValueId,
-  ): IrInstr[] => {
+  const toStringArm = (instr: IrInstr, kind: CarrierKind, value: IrValueId, result: IrValueId): IrInstr[] => {
     switch (TO_STRING_ARM[kind]) {
       case "as-string":
         return [intrinsic(instr, "js.value.as_string", [value], result)];
@@ -316,56 +333,91 @@ export function conversionBuilders(builders: ChainBuilders, program: Legalizatio
           concat(head, messageText, result),
         ];
       }
+      // (F1b) A function's absent `toString` is the source text, which the closure does not carry: the run-time abort.
       case "to-primitive":
-        return toPrimitive(instr, value, hint, result);
-      // (#7354 F1, D6) Function.prototype.toString answers the source text, which the closure does not carry: the
-      // run-time abort, reached only where the value may also be a kind that answers (`stringOf`).
-      case "function-source":
-        return [unsupported(instr, result)];
+        return toPrimitive(instr, value, "string", result, kind, {
+          type: STRING,
+          text: (source, r) => [source === undefined ? unsupported(instr, r) : text(source, r)],
+          primitive: (primitive, r) => stringOf(instr, primitive, r, primitives),
+        });
     }
   };
-  // ToString of the once-evaluated `value` after a ToPrimitive with `hint`: only the arms of the kinds it may hold. A
-  // value no arm of which can answer refuses at compile time.
-  const stringOf = (instr: IrInstr, value: IrValueId, hint: ToPrimitiveHint, result: IrValueId): IrInstr[] => {
-    const held = kinds.kindsOf(value);
-    if (held.every((kind) => TO_STRING_ARM[kind] === "function-source"))
-      gap("ToString of a function needs Function.prototype.toString");
-    return kindChain(instr, value, result, (kind, r) => toStringArm(instr, kind, value, hint, r), held);
-  };
-  // ToNumber of the once-evaluated `value`: the primitive unboxer, or NaN for an object (ToNumber of
-  // "[object Object]"; the string itself is not read, but its ToPrimitive may throw) and (M2) for an error.
+  // ToString of the once-evaluated `value`: only the arms of the kinds it may hold (`held`).
+  const stringOf = (
+    instr: IrInstr,
+    value: IrValueId,
+    result: IrValueId,
+    held: readonly CarrierKind[] = kinds.kindsOf(value),
+  ): IrInstr[] => kindChain(instr, value, result, (kind, r) => toStringArm(instr, kind, value, r), held);
+  // ToNumber of the once-evaluated `value`: the primitive unboxer, an object's or a function's ToPrimitive (any text a
+  // built-in method answers reads as NaN), or (M2) NaN for an error.
   const toNumber = (instr: IrInstr, value: IrValueId, result: IrValueId): IrInstr[] => {
     const held = kinds.kindsOf(value);
-    const unbox = (r: IrValueId): IrInstr[] => [intrinsic(instr, "js.number.unbox", [value], r)];
+    const unbox = (v: IrValueId, r: IrValueId): IrInstr[] => [intrinsic(instr, "js.number.unbox", [v], r)];
     const converted = held.filter((kind) => TO_NUMBER_ARM[kind] !== "unbox");
-    if (converted.length === 0) return unbox(result);
-    const nan = (kind: CarrierKind, r: IrValueId): IrInstr[] => [
-      ...(TO_NUMBER_ARM[kind] === "to-primitive" ? toPrimitive(instr, value, "number", fresh()) : []),
-      { kind: "const", value: { kind: "f64", value: NaN }, result: r, resultType: F64 },
-    ];
-    const toNan = (r: IrValueId) => kindChain(instr, value, r, nan, converted, F64);
-    if (converted.length === held.length) return toNan(result);
+    if (converted.length === 0) return unbox(value, result);
+    const arm = (kind: CarrierKind, r: IrValueId): IrInstr[] =>
+      TO_NUMBER_ARM[kind] === "to-primitive"
+        ? toPrimitive(instr, value, "number", r, kind, { type: F64, text: (_, s) => [nan(s)], primitive: unbox })
+        : [nan(r)];
+    const convert = (r: IrValueId) => kindChain(instr, value, r, arm, converted, F64);
+    if (converted.length === held.length) return convert(result);
     const cond = fresh();
-    return [...anyKind(instr, converted, value, cond), branch(cond, toNan, unbox, result, F64)];
+    return [...anyKind(instr, converted, value, cond), branch(cond, convert, (r) => unbox(value, r), result, F64)];
   };
-  return { stringOf, toNumber };
+  /**
+   * (#7354 F2) `+`'s ToPrimitive (hint default, read as number) of the once-evaluated `value`: a carrier of a primitive
+   * kind, which `learn` records for the addition's roles. A value that may hold no object is its own primitive.
+   */
+  const primitiveOf = (instr: IrInstr, value: IrValueId): { readonly instrs: IrInstr[]; readonly value: IrValueId } => {
+    const held = kinds.kindsOf(value);
+    if (!held.some((kind) => ADD_ROLE[kind] === "to-primitive")) return { instrs: [], value };
+    const result = fresh();
+    const answer: ToPrimitiveAnswer = {
+      type: CARRIER,
+      text: (source, r) => {
+        const string = fresh();
+        return [source === undefined ? unsupported(instr, string) : text(source, string), carried(string, r)];
+      },
+      primitive: (primitive, r) => [carried(primitive, r)],
+    };
+    const instrs = kindChain(
+      instr,
+      value,
+      result,
+      (kind, r) =>
+        ADD_ROLE[kind] === "to-primitive" ? toPrimitive(instr, value, "number", r, kind, answer) : [carried(value, r)],
+      held,
+      CARRIER,
+    );
+    // Without a callable kind no conversion method runs, so an object's primitive is a built-in method's text.
+    const answers: readonly CarrierKind[] = admitted.includes("function") ? primitives : ["string"];
+    kinds.learn(
+      result,
+      admitted.filter((kind) => answers.includes(kind) || (held.includes(kind) && ADD_ROLE[kind] !== "to-primitive")),
+    );
+    return { instrs, value: result };
+  };
+  return { stringOf, toNumber, primitiveOf };
 }
 
 /**
- * (#7354 Str2-c) The dynamic `+` of two once-evaluated operands (`ADD_ROLE`): a string (or, O2b, an object's
- * ToPrimitive) on either side concatenates their ToStrings, otherwise the ToNumbers are summed; either answer is
- * boxed back into the carrier. An operand of a known kind takes only its own arms: a known string makes the whole
- * addition a concatenation without a test, and only a side that may hold a string is tested.
+ * (#7354 Str2-c, F2) The dynamic `+` of two once-evaluated operands (`ADD_ROLE`): each operand's ToPrimitive first
+ * (`primitiveOf`, left then right), then a string on either side concatenates their ToStrings, otherwise the ToNumbers
+ * are summed; either answer is boxed back into the carrier. An operand of a known kind takes only its own arms: a
+ * known string makes the whole addition a concatenation without a test, and only a side that may hold a string is
+ * tested.
  */
-export function additionBuilder(builders: ChainBuilders, stringOf: ReturnType<typeof conversionBuilders>["stringOf"]) {
+export function additionBuilder(builders: ChainBuilders, conversions: ReturnType<typeof conversionBuilders>) {
   const { kinds, intrinsic, fresh, kindTest, branch, disjunction } = builders;
+  const { stringOf, primitiveOf } = conversions;
   const concat = (instr: IrInstr, operands: readonly IrValueId[], r: IrValueId): IrInstr[] => {
     const [left, right, text] = [fresh(), fresh(), fresh()];
     return [
-      ...stringOf(instr, operands[0]!, "number", left),
-      ...stringOf(instr, operands[1]!, "number", right),
+      ...stringOf(instr, operands[0]!, left),
+      ...stringOf(instr, operands[1]!, right),
       builders.concat(left, right, text),
-      { kind: "coerce.to_externref", value: text, result: r, resultType: CARRIER },
+      carried(text, r),
     ];
   };
   const sum = (instr: IrInstr, operands: readonly IrValueId[], r: IrValueId): IrInstr[] => {
@@ -377,16 +429,19 @@ export function additionBuilder(builders: ChainBuilders, stringOf: ReturnType<ty
       intrinsic(instr, "js.number.box", [total], r),
     ];
   };
-  return (instr: IrInstr, operands: readonly IrValueId[], result: IrValueId): IrInstr[] => {
+  return (instr: IrInstr, values: readonly IrValueId[], result: IrValueId): IrInstr[] => {
+    const converted = values.map((value) => primitiveOf(instr, value));
+    const prelude = converted.flatMap((operand) => operand.instrs);
+    const operands = converted.map((operand) => operand.value);
     const roles = operands.map((value) => kinds.kindsOf(value).map((kind) => ADD_ROLE[kind]));
     if (roles.some((role) => role.every((r) => r === "concat"))) {
       // A concatenation is a known string to the next `+` of a chain (`"a" + v + "b"`). Legalization meets a value's
       // definition before its uses, so the next site reads this.
-      kinds.learn(result, "string");
-      return concat(instr, operands, result);
+      kinds.learn(result, ["string"]);
+      return [...prelude, ...concat(instr, operands, result)];
     }
     // The front end makes a `+` dynamic only over an operand of unknown kind (`emitDynamicAdd` in from-ast), which
-    // may hold a string, so at least one operand is tested here.
+    // may hold a string (an object's primitive may too), so at least one operand is tested here.
     const { instrs, cond } = disjunction(
       operands.flatMap((value) =>
         kinds
@@ -396,6 +451,7 @@ export function additionBuilder(builders: ChainBuilders, stringOf: ReturnType<ty
       ),
     );
     return [
+      ...prelude,
       ...instrs,
       branch(
         cond,

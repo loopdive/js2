@@ -117,7 +117,7 @@ const KEPT = [
   [
     "only an unused function names it",
     `${DEAD} function unused() { return o.m(); } var r = 1;`,
-    "dynamic operation __ir_dyn_method_call_0 has no Prepared intrinsic",
+    CLOSURE, // (#7354 F2) the method call lowers; the kept closure reads `this`
   ],
   [
     "a sibling declarator has an effect (`var a = …, b = f();`)",

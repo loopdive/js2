@@ -192,7 +192,9 @@ export function collectNativePromiseSourceCensus(
   const census = Object.freeze({
     program,
     projection,
-    options,
+    // (#7354 F2) Frozen, so a pack holding the census (the invocation requirements) can settle its currentness check
+    // (`settled-verdict.ts`) instead of re-deriving it at every use.
+    options: Object.freeze({ ...options }),
     ...selection,
     demands,
     supportFunctions: Object.freeze(supportFunctions),

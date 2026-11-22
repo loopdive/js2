@@ -26,7 +26,7 @@ describe("#7354 F1 — ToPrimitive and Object.prototype's keys", () => {
   );
 
   // ToString's hint is "string": `toString` first, so the realm's answers "[object Object]" before `valueOf` is
-  // consulted, callable or not (`+` would call it first: the run-time abort, tests/issue-7354-f1-function-kind).
+  // consulted, callable or not (`+` calls it first, tests/issue-7354-f2-calls-through-values).
   const STRING_HINT = "var o = { valueOf: function () { return 2; } }; var s = String(o);\n";
   it(
     "converts with the string hint, never reaching a callable valueOf",

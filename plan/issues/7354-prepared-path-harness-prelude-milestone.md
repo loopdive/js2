@@ -4544,3 +4544,103 @@ two files per vitest run), plus `issue-3518-native-realm-requirements` and `issu
   (~2.5 s over 4 realm compiles). Switch off, 120 closures: `immutableCopy` / `freezePreparedIrValue` (2.2 s over two
   compiles), the settled-verdict walk (1.8 s, `ownerFor`'s first authentication among it), `prepareNativeEmission`'s
   compare (0.6 s). All one-time per compile; #7380 step 5b.
+
+## Slice F2 result (2026-11-21, branch `claude/7354-f2`; F plan §7)
+
+Base: `claude/7354-f1b` 1dc914867d; then `main` cddf65be4d (Perf4) and `claude/7354-f1b` ecf35485c1 (review round 1)
+merged in.
+
+### Built
+
+- **The call ABI.** A call through a value on the Prepared lane (closures are function objects, `createsFunctionObjects`)
+  is one `js.closure.call:N(receiver, callee, …args)` (`function-object-lowering.ts` `nativeClosureCall`), every
+  operand a carrier, result a dynamic value (tested at run time like a parameter). The native dispatcher installs
+  `receiver` in `__current_this` for the call (restored after, also on a throw), pads missing arguments with
+  `undefined` and drops extras by the callee's arity, and throws its catchable TypeError ("Value is not callable",
+  the realm's error layout) for anything that is no source closure. A bare call passes `undefined`; a method call the
+  receiver. C2 binds `this` from `__current_this` at entry (C2-D2) — nothing more is needed from the call side.
+- **Planner (ported from Fb, PR 7326, as content).** `native-invocation-requirements.ts`: a callee that is no packed
+  allocation is a `dynamicCallee` use; every source closure must be dispatchable (fixed parameters, carrier
+  parameters/result) or the program refuses by name; `native-source-closure-callables.ts` selects every source unit
+  for such a use; `native-invocation.ts` shares one dispatcher arm per (allocation type, signature).
+- **Method calls.** A method call on a dynamic receiver and an element-access call (`o["m"](…)`) are the member's
+  [[Get]] on the once-evaluated receiver, then that call with the receiver as `this` (`lowerDynamicMemberCall`, the
+  one body the codegen-plan path `lowerFunctionObjectMemberCall` also uses). Every arity; the `/2` brand-dispatch
+  refusal and `__ir_dyn_method_call_N` are gone on this lane; the ordinary pipeline keeps brand dispatch.
+- **Calls through a script var / declaration value.** The dynamic home is called in any position and from module-init
+  (whose scope binds the home); Fa's static closure call stays for an exact-arity call, any other arity is the
+  dispatcher's.
+- **D6's call arm** (`ordinary-to-primitive.ts`): each method in hint order is Got; a callable one is called with the
+  object as `this` (`js.closure.call:0`); a primitive result answers (`IS_OBJECT`, a new row table in
+  `dynamic-value-kinds.ts`); a non-callable method or an object result goes on. The caller finishes the primitive
+  (`ToPrimitiveAnswer`): ToString its string, ToNumber its number, `+` a carrier. `ADD_ROLE` object/function =
+  "to-primitive": `+` takes both operands' ToPrimitive first (left, right), then concat/sum on primitives
+  (`knownKinds` now records kind sets). `TO_STRING_ARM.function` = "to-primitive": an own `toString` answers; an
+  absent one is the source-text abort at run time (was a compile-time refusal for a value known to be a function).
+- **Refusals.** `call through a value with a spread argument`; `dynamic operation js.closure.call:N in a program that
+  creates no function value has no Prepared intrinsic` (every such call would be the TypeError).
+- **Perf (needed to make the slice runnable).** The promise census inside the invocation requirements kept its options
+  unfrozen, so the pack never settled and every native string literal re-derived the whole invocation plan: a program
+  with 15 method calls compiled in 45 s, now 8 s; the assert-shaped program 18 s → 5 s.
+- **Quality.** from-ast −11 lines vs F1b (the binding call's body moved to `lowerBindingCall`; four copies of the
+  `.replace(/_/g, "")` shape test became `isUnderscoreStripReplace`, select −5); legalization 347 lines (M1: 350); no
+  grant.
+
+### Differs from the plan
+
+- Fb's `TESTED_AT_RUN_TIME` admission is not needed: the call's result is typed dynamic directly.
+- Plan §11 text kept for programs with no closure became the legalization's own refusal (named, not a physical gap).
+- A function's ToString now goes through ToPrimitive (plan §5's "F2: exact" for own methods); the compile-time
+  refusal "ToString of a function needs Function.prototype.toString" is gone (F1 pins moved to the run-time abort).
+- The not-callable TypeError message is the dispatcher's fixed "Value is not callable", not node's "x is not a
+  function" (one literal in the dispatcher; behaviour and kind match).
+
+### Proof
+
+Tests (each file in full, exit 0, on the merged state): f2-calls-through-values + f1-function-kind 22/22, fa-function-values + m-refusals 85/85, x-dynamic-throw + 7363-prepared-eval-refusal 151/151,
+f0-dead-top-level-bindings 88/88, f1b-function-object-writes + f1-to-primitive 6/6; before the F1b merge also
+o2b-to-primitive + str2c-dynamic-add 47/47, f1b-declaration-values + f1b-function-objects 15/15,
+3518-native-builtin-functions + m-refusals 77/77, 7106-ir-dynamic-method-wrapper + 7117 14/14. Pins moved: Fa (3 rows
+now run), X and 7363 (the new refusal), M G45, F0 (the kept closure now reaches `this`). Node 25: not available on
+this machine.
+
+Sweep (`.tmp/f2/gen.mjs`): 6 callee forms (declaration value, expression, method on a function object, on an object,
+object-literal method, element key) × 5 positions × arity 0–3 × fewer/equal/more arguments (extra-argument side
+effects counted), plus non-callable callees through a parameter and as members, receiver-once and evaluation order:
+68 programs (34 + wrong twins), all equal node. ToPrimitive probes 22 + calls/methods 19.
+
+Regression (base F1b vs head, strict Prepared entry, node's answer): F1b's set 71 + 560 sweep + 109 F2 programs =
+740: no base-correct program changes; 3 ABORT → OK (F1b's own callable `valueOf`/`toString` rows), 14 ABORT → OK,
+83 REF → OK, 1 REF → ABORT (`"" + g`, g without own toString: the source-text abort), 0 wrong, 0 invalid Wasm,
+0 exceptions.
+
+Mutations (each alone, killed): `ADD_ROLE.object` → concat; `IS_OBJECT.error`/`.function` → false;
+`TO_STRING_ARM.function` → name; the static closure's arity check; the lane routing of method calls / element calls
+(tests); the no-function-value refusal (m-refusals). Removed as a survivor: a void-result guard on the static call (no
+static value is void). Survivors by design: the dispatcher arm dedupe and the census freeze (equal output, perf).
+
+Bytes: ordinary pipeline, 20 test262 files × default + standalone: identical. `check:prepared-bytes` (804 rows) vs
+F1b: 3 rows differ — 180 now compiles (`var g = id; g(1)`, runs), 214 and 531 refuse by a new name.
+
+### Sample (411 rows, real prelude)
+
+272 `unknown class "Test262Error" in assert` (C2), 73 `function declaration 'formatIdentityFreeValue' read as a value is
+written`, 41 `empty array 'failures' escapes before its element type is closed (verifyProperty)` (was `.sameValue/3`
+brand dispatch: arrays, #7352), 6 `verifyProperty … is written`, 14 pass, 5 other.
+
+### Not verified
+
+- Node 25 (not installed here); the dispatcher's guard is a standard `try_table`, as every user `try` on this regime.
+- The remaining existing m/o/str/ty/t/h/d1/vg/p test files and r-provider-census after the merges.
+- Restoring `__current_this` (after a return, after a throw, across nested calls) cannot be observed until C2 admits
+  `this` in a function body: C2's tests must cover it.
+- Compile time: 20 closures plus a 20-term `+` chain took 80 s for one compile (68 s under the profiler). Cause: 47 s
+  are `assertNativeInvocationRequirementsCurrent`, which re-collects the whole program's promise census
+  (`assertNativePromiseSourceCensusCurrent` → `collectNativePromiseSourceCensus` + `preparedIrDataMismatch`) at every
+  unsettled call — the invocation owner's `authenticate` / `requireOwner` and `resolveEntries` in
+  `native-invocation.ts` / `native-source-closure-callables.ts` (perf lane).
+- `var g = 1; g()` (a typed number home) refuses with the misleading `direct call to "g" has no exact AST-site plan`,
+  unchanged from the base.
+- Review round 1 (lead): findings 1-5 fixed — explicit dispatcher-arm key; one `packedCallable` helper; the binding
+  call's doc names both lanes; the lane picks the call before any not-callable text is built; one lane predicate
+  (`createsFunctionObjects`, read through the host).

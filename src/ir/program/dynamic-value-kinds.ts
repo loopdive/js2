@@ -62,13 +62,14 @@ export const KIND_TEST: Readonly<
 
 /**
  * How ToString (§7.1.17) answers each kind, in the order a chain tests them: the native string it carries, the number
- * formatter, "true"/"false", the kind's own name, (M2) an error's Error.prototype.toString, (O2b) an object's
- * OrdinaryToPrimitive (`ordinary-to-primitive.ts`), or (F1) a function's Function.prototype.toString, its source text,
- * which no closure carries (a compile-time refusal for a value known to be a function, else the run-time abort). The last kind is reached untested because the chain is total over
- * this table; an object stays last, the complement of the others.
+ * formatter, "true"/"false", the kind's own name, (M2) an error's Error.prototype.toString, or (O2b) an object's and
+ * (F2) a function's OrdinaryToPrimitive (`ordinary-to-primitive.ts`), which calls an own conversion method; a
+ * function's absent `toString` is Function.prototype.toString, its source text, which no closure carries (the
+ * run-time abort). The last kind is reached untested because the chain is total over this table; an object stays
+ * last, the complement of the others.
  */
 export const TO_STRING_ARM: Readonly<
-  Record<CarrierKind, "as-string" | "format" | "boolean" | "name" | "error" | "to-primitive" | "function-source">
+  Record<CarrierKind, "as-string" | "format" | "boolean" | "name" | "error" | "to-primitive">
 > = {
   string: "as-string",
   number: "format",
@@ -76,25 +77,40 @@ export const TO_STRING_ARM: Readonly<
   undefined: "name",
   null: "name",
   error: "error",
-  function: "function-source",
+  function: "to-primitive",
   object: "to-primitive",
 };
 export const KIND_ORDER = Object.keys(TO_STRING_ARM) as readonly CarrierKind[];
 
 /**
- * How `+` (§13.15.3) takes each kind after ToPrimitive: a string makes the addition a concatenation, any other kind is
- * summed through ToNumber. An object's ToPrimitive is a string or a TypeError (`ordinary-to-primitive.ts`); (M2) an
- * error's is its Error.prototype.toString string; (F1) a function's is its source text or the abort.
+ * How `+` (§13.15.3) takes each kind: a string makes the addition a concatenation, and any other primitive is summed
+ * through ToNumber; (F2) an object's and a function's role is their ToPrimitive's (`ordinary-to-primitive.ts`), taken
+ * first. (M2) An error's ToPrimitive is its Error.prototype.toString string, which no program can change.
  */
-export const ADD_ROLE: Readonly<Record<CarrierKind, "concat" | "numeric">> = {
+export const ADD_ROLE: Readonly<Record<CarrierKind, "concat" | "numeric" | "to-primitive">> = {
   number: "numeric",
   boolean: "numeric",
   string: "concat",
   undefined: "numeric",
   null: "numeric",
   error: "concat",
-  function: "concat",
-  object: "concat",
+  function: "to-primitive",
+  object: "to-primitive",
+};
+
+/**
+ * (#7354 F2) Whether each kind's values are objects: a conversion method's result of such a kind does not answer
+ * ToPrimitive, which goes on to the next method (§7.1.1.1 step 2.b.ii).
+ */
+export const IS_OBJECT: Readonly<Record<CarrierKind, boolean>> = {
+  number: false,
+  boolean: false,
+  string: false,
+  undefined: false,
+  null: false,
+  error: true,
+  function: true,
+  object: true,
 };
 
 /**

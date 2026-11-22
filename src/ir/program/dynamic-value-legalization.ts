@@ -47,6 +47,7 @@ import {
   type LegalizationProgram,
 } from "./dynamic-value-kinds.js";
 import { functionValueOperand } from "./function-value-projection.js";
+import { closureMethodArity } from "../core/closure-invocation-callables.js";
 import { carrierClosureSubtype, carrierOf, containsDynamic, inCarrierForm } from "./dynamic-carrier-types.js";
 
 export { DynamicValueGap } from "./dynamic-value-gap.js";
@@ -90,8 +91,9 @@ export function legalizeDynamicValues(
   const kinds = knownKinds(fn, types, definitions, admitted);
   const builders = chainBuilders(fn, allocations, kinds, admitted);
   const { intrinsic, fresh, kindTest, anyKind, text, errorField, kindChain } = builders;
-  const { stringOf, toNumber } = conversionBuilders(builders, program);
-  const addition = additionBuilder(builders, stringOf);
+  const conversions = conversionBuilders(builders, program);
+  const { stringOf, toNumber } = conversions;
+  const addition = additionBuilder(builders, conversions);
   // (#7354 O4, O3) What a member read or write is written with (`dynamic-member-access.ts`).
   const memberAccess = { ...builders, carrier: CARRIER, definitions, kindsOf: kinds.kindsOf };
   const isDynamic = (value: IrValueId): boolean => types.get(value)?.kind === "dynamic";
@@ -200,7 +202,7 @@ export function legalizeDynamicValues(
       case "dyn.undefined":
         return [intrinsic(instr, "js.value.undefined", [])];
       case "dyn.to_string":
-        return stringOf(instr, instr.value, "string", instr.result!);
+        return stringOf(instr, instr.value, instr.result!);
       case "dyn.truthy":
         return [intrinsic(instr, "js.value.to_boolean", [instr.value])];
       case "dyn.to_number":
@@ -221,6 +223,9 @@ export function legalizeDynamicValues(
       case "call": {
         if (instr.target.binding.kind === "runtime" && instr.target.binding.symbol === IR_DYN_ADD_FN)
           return addition(instr, instr.args, instr.result!);
+        // (#7354 F2) Without a function value no callee is callable: every call through a value would be the TypeError.
+        if (closureMethodArity(instr.target.name) !== undefined && !admitted.includes("function"))
+          return gap(`${instr.target.name} in a program that creates no function value`);
         const projected = functionValueOperand(instr);
         if (projected !== undefined) return intoCarrier(instr, projected, carrierKindOf(projected, types, definitions));
         return instr.target.binding.kind === "runtime" &&

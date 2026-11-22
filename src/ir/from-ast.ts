@@ -124,6 +124,7 @@ import {
   IR_DYN_STRING_REPLACE_FN,
 } from "../codegen/dyn-ops.js";
 import { irDynamicMethodCallHelperName, irDynamicMethodCallNeedsWrapper } from "./dynamic-method-call-names.js";
+import { isUnderscoreStripReplace } from "./dynamic-string-parser-shape.js";
 import {
   type PrototypeBorrowCall,
   irArrayPrototypeBorrowHelperName,
@@ -7688,6 +7689,7 @@ function functionObjectLoweringHost(cx: LowerCtx): functionObjects.FunctionObjec
     funcName: cx.funcName,
     dynamicCarrierIsExternref: () =>
       cx.resolver?.dynamicCarrierIsExternref?.() === true && cx.resolver.resolveDynamic?.()?.kind === "externref",
+    createsFunctionObjects: () => functionObjects.createsFunctionObjects(cx.resolver),
     requireOwner: (ownerUnitId) =>
       requireMatchingLoweringPlanOwner("top-level function value", ownerUnitId, cx.ownerUnitId, cx.funcName),
     lowerExpression: (source) => lowerExpr(source, cx, irDynamic()),
@@ -7839,6 +7841,8 @@ function lowerCall(expr: ts.CallExpression, cx: LowerCtx, statementPosition = fa
     }
     return r;
   }
+  if (ts.isElementAccessExpression(functionAccess) && functionObjects.createsFunctionObjects(cx.resolver))
+    return functionObjects.lowerFunctionObjectMemberCall(expr, functionAccess, functionObjectLoweringHost(cx));
   if (!ts.isIdentifier(expr.expression)) {
     demoteToLegacy(
       "call-resolution-unsupported",
@@ -7857,10 +7861,11 @@ function lowerCall(expr: ts.CallExpression, cx: LowerCtx, statementPosition = fa
   if (binding?.kind === "local" && (binding.type.kind === "closure" || binding.type.kind === "callable")) {
     return lowerClosureCall(binding.value, binding.type.signature, expr.arguments, cx, statementPosition);
   }
-  if (binding?.kind === "moduleGlobal" && binding.functionValue?.in === cx.builder) {
-    const { value, signature } = binding.functionValue;
-    return lowerClosureCall(value, signature, expr.arguments, cx, statementPosition);
-  }
+  // (#7354 F2) A call of another arity is the dispatcher's (through the home below), which pads and drops arguments.
+  const staticValue =
+    binding?.kind === "moduleGlobal" && binding.functionValue?.in === cx.builder && binding.functionValue;
+  if (staticValue && expr.arguments.length === staticValue.signature.params.length)
+    return lowerClosureCall(staticValue.value, staticValue.signature, expr.arguments, cx, statementPosition);
   if (binding?.kind === "nestedFunc") {
     return lowerNestedFuncCall(binding, expr.arguments, cx);
   }
@@ -7884,25 +7889,18 @@ function lowerCall(expr: ts.CallExpression, cx: LowerCtx, statementPosition = fa
   // selector's order: those aliases are script `var`s in a dynamic module home too, but keep legacy's provider).
   const bindingLogicalType =
     binding?.kind === "slot" ? (binding.asType ?? binding.type) : binding?.kind === "local" ? binding.type : undefined;
-  // (#7287) …or a script `var` in its dynamic home (`print`); (#7354 F1b) a declaration's value home keeps its call.
+  // (#7287) …or a script `var` in its dynamic home (`print`); (#7354 F1b) a declaration's value home keeps its call;
+  // (F2) on the Prepared lane in any position and also from module-init, whose scope binds the home.
+  const lane = functionObjects.createsFunctionObjects(cx.resolver);
+  const inHome = (callee: ts.Identifier) => cx.resolver?.resolveModuleBinding?.(callee)?.type.kind === "dynamic";
   const dynamicModuleCallee =
-    binding === undefined &&
+    (binding === undefined || (lane && binding.kind === "moduleGlobal")) &&
     !cx.directCalls?.has(expr) &&
-    isStatementDynamicModuleCall(
-      expr,
-      (callee) => cx.resolver?.resolveModuleBinding?.(callee)?.type.kind === "dynamic",
-    );
+    (lane ? inHome(expr.expression) : isStatementDynamicModuleCall(expr, inHome));
   if (bindingLogicalType?.kind === "dynamic" || dynamicModuleCallee) {
-    const callee = lowerExpr(expr.expression, cx, irDynamic());
-    if (cx.builder.typeOf(callee).kind !== "dynamic") {
-      demoteToLegacy("call-resolution-unsupported", `ir/from-ast: dynamic callee lost its carrier in ${cx.funcName}`);
-    }
-    const message = dynamicModuleCallee
-      ? functionObjects.scriptVarCalleeNotCallableMessages(
-          cx.checker && localValueDeclaration(expr.expression, cx.checker),
-        )
-      : undefined;
-    return functionObjects.lowerDynamicValueCall(expr, callee, functionObjectLoweringHost(cx), message);
+    const scriptVar =
+      dynamicModuleCallee && cx.checker ? localValueDeclaration(expr.expression, cx.checker) : undefined;
+    return functionObjects.lowerBindingCall(expr, scriptVar, functionObjectLoweringHost(cx));
   }
   const imported = cx.importedCalls?.get(expr);
   if (imported) return lowerImportedCall(expr, imported, cx, statementPosition);
@@ -9914,20 +9912,15 @@ function lowerMethodCall(expr: ts.CallExpression, cx: LowerCtx, statementPositio
   }
 
   if (recvType.kind === "dynamic") {
+    if (functionObjects.createsFunctionObjects(cx.resolver))
+      // (#7354 F2) [[Get]], then the call with `this`.
+      return functionObjects.lowerDynamicMemberCall(expr, expr.expression, () => recv, functionObjectLoweringHost(cx));
     // Preserve the static property name for the host-side ordinary-class
     // bridge. IR's dynamic runtime helper intentionally accepts an arbitrary
     // key at execution time, so the finalizer otherwise cannot know which
     // compiled class methods need `__member_kind_*`/`__call_*` exports.
     cx.hostDynamicClassMethodNames?.add(methodName);
-    const firstArgumentText = expr.arguments[0]?.getText();
-    const isNarrowStringReplace =
-      methodName === "replace" &&
-      expr.arguments.length === 2 &&
-      expr.arguments[0]!.kind === ts.SyntaxKind.RegularExpressionLiteral &&
-      firstArgumentText === "/_/g" &&
-      ts.isStringLiteralLike(expr.arguments[1]!) &&
-      expr.arguments[1]!.text === "";
-    if (isNarrowStringReplace) {
+    if (isUnderscoreStripReplace(expr)) {
       const replacement = lowerExpr(expr.arguments[1]!, cx, { kind: "string" });
       const replacementType = cx.builder.typeOf(replacement);
       if (replacementType.kind !== "string") {
@@ -10074,15 +10067,7 @@ function lowerMethodCall(expr: ts.CallExpression, cx: LowerCtx, statementPositio
   // the active string backend. Returns null when the method isn't supported
   // by Phase 1 (caller falls through to the existing `string` arm below).
   if (recvType.kind === "string") {
-    const exactFnctorStringReplace =
-      methodName === "replace" &&
-      cx.resolver?.fnctorNativeStringReplace?.(expr) === true &&
-      expr.arguments.length === 2 &&
-      expr.arguments[0]!.kind === ts.SyntaxKind.RegularExpressionLiteral &&
-      expr.arguments[0]!.getText() === "/_/g" &&
-      ts.isStringLiteralLike(expr.arguments[1]!) &&
-      expr.arguments[1]!.text === "";
-    if (exactFnctorStringReplace) {
+    if (isUnderscoreStripReplace(expr) && cx.resolver?.fnctorNativeStringReplace?.(expr) === true) {
       const replacement = lowerExpr(expr.arguments[1]!, cx, { kind: "string" });
       const replacementType = cx.builder.typeOf(replacement);
       if (replacementType.kind !== "string") {
