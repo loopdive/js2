@@ -182,14 +182,19 @@ function isRecursiveIrClassShape(value: object): boolean {
 }
 
 /**
- * Every value `immutableCopy` returned. Each is deeply frozen and built only from such values, so copying one again
- * would rebuild an equal tree: it is returned as is.
+ * Every value `immutableCopy` returned and every object `freezePreparedIrRuntimeValue` froze. Each is deeply frozen
+ * prepared data and freezing cannot be undone, so membership is permanent: copying such a value again would rebuild an
+ * equal tree (it is returned as is), and a walk asking whether it can still change has its answer.
  */
-const immutableCopies = new WeakSet<object>();
+const deeplyFrozen = new WeakSet<object>();
+
+export function isDeeplyFrozenPreparedIrValue(value: object): boolean {
+  return deeplyFrozen.has(value);
+}
 
 function immutableCopy(value: unknown, ancestors: Set<object>, activeCopies: Map<object, unknown>): unknown {
   if (typeof value === "function") invalidPreparedData("prepared data cannot contain executable functions");
-  if (value === null || typeof value !== "object" || immutableCopies.has(value)) return value;
+  if (value === null || typeof value !== "object" || deeplyFrozen.has(value)) return value;
   if (ancestors.has(value)) {
     const recursiveShapeCopy = activeCopies.get(value);
     if (recursiveShapeCopy !== undefined && isRecursiveIrClassShape(value)) return recursiveShapeCopy;
@@ -198,7 +203,7 @@ function immutableCopy(value: unknown, ancestors: Set<object>, activeCopies: Map
   ancestors.add(value);
   const copy = copyChildren(value, (item) => immutableCopy(item, ancestors, activeCopies), activeCopies);
   ancestors.delete(value);
-  immutableCopies.add(copy);
+  deeplyFrozen.add(copy);
   return copy;
 }
 
@@ -285,7 +290,7 @@ export function freezePreparedIrRuntimeValue<T>(value: T): T {
         invalidPreparedData("runtime data must be acyclic outside exact IR class shapes");
       return;
     }
-    if (visited.has(item)) return;
+    if (visited.has(item) || deeplyFrozen.has(item)) return;
     active.add(item);
     if (FrozenMap.branded(item)) {
       for (const [key, entry] of item) {
@@ -311,6 +316,7 @@ export function freezePreparedIrRuntimeValue<T>(value: T): T {
     active.delete(item);
     Object.freeze(item);
     visited.add(item);
+    deeplyFrozen.add(item);
   };
   freeze(value);
   return value;
