@@ -44,6 +44,13 @@ describe("#7354 W — a conditional arm read from a dynamic home", () => {
     await agreesWithNode(program('function f(a) { return String(a === 1 ? -n : "x") + String(a === 2 ? n : "y"); }'));
   });
 
+  // The carrier equality's result was an unbranded i32, so a boolean-proved arm over it threw the invariant too.
+  it("gives node's value for an equality arm over the dynamic home", async () => {
+    await agreesWithNode(
+      program('function f(a) { return String(a === 1 ? n === 1 : 7) + String(a !== 1 ? "s" : s !== s) + ";"; }'),
+    );
+  });
+
   it("refuses by name an arm that may yield the dynamic value through `+`", async () => {
     expect(await abortBodies(program('function f(a) { var u = a === 1 ? n + 1 : "x"; return typeof u; }'))).toEqual([
       "f: ir/from-ast: ternary branches have different types (dynamic vs string) in f",
