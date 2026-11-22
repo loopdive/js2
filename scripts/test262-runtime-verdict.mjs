@@ -33,6 +33,8 @@ export function renderHostError(err, abortBodies = []) {
   if (frames.length === 0) return info;
   // (#7354 U) A Prepared function whose body could not be lowered has the abort as its whole body, so a trap whose
   // top frame is that function is its abort.
+  // oracle-version-exempt: only the error TEXT of a trap changes, and only for a row that carries an abort table
+  // (the Prepared lane with abort bodies, new in this slice); no row's pass/fail scoring changes.
   const aborted = isWasmTrap(err) ? abortBodies.find((row) => row.name === frames[0]) : undefined;
   if (aborted) info = `aborted in unlowerable unit ${aborted.name}: ${aborted.detail}`;
   info = `${info} [in ${frames[0]}()`;
