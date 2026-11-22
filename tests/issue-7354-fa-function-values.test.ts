@@ -17,7 +17,7 @@ import {
   requiredPreparedEmission,
   type Test262CompileOptions,
 } from "../src/test262/test262-prepared-entry.js";
-import { yieldToRpc } from "./helpers/prepared-node-agreement.js";
+import { abortsAtRunTime, yieldToRpc } from "./helpers/prepared-node-agreement.js";
 
 const options = (target: "standalone" | "gc" = "standalone"): Test262CompileOptions =>
   ({
@@ -127,12 +127,7 @@ describe("#7354 Fa — function values on the Prepared path", () => {
       "var f = function (a) { return a; }; f = function (a) { return 2; }; f(1);",
       'assignment to module binding "f" (dynamic) got closure(dynamic)->dynamic',
     ],
-    // Function objects: `this`, `arguments` and properties (slice C).
-    [
-      "`this` in the body",
-      "var f = function () { return this; }; f();",
-      "'this' reference outside an instance method body",
-    ],
+    // Function objects: `arguments` and properties (slice C). (#7354 C2) `this` binds: tests/issue-7354-c2-this.test.ts.
     [
       "`arguments` in the body",
       "var f = function () { return arguments.length; }; f();",
@@ -208,6 +203,10 @@ describe("#7354 Fa — function values on the Prepared path", () => {
     expect(await refusal(program)).toContain(message);
   });
 
+  // (#7354 C2) Sloppy `this` without a receiver would be the global object, which the realm lacks: the run-time abort.
+  it("ends a sloppy function value's `this` without a receiver at the run-time abort", () =>
+    abortsAtRunTime("var f = function () { return this; }; f();"));
+
   // The ABI join admits a closure only as a lifted closure body's `__self`: a nested function taking a captured
   // closure as a parameter (annotated TypeScript, so it reaches the join) still needs a boundary producer.
   it(
@@ -251,7 +250,11 @@ describe("#7354 Fa — the closure contracts", () => {
     };
     const program = ts.createProgram(names, { noLib: true, allowJs: true }, host);
     const files = names.map((name) => program.getSourceFile(name)!);
-    const contracts = programDynamicContracts(program.getTypeChecker(), policy, files, new AllocSiteRegistry());
+    const contracts = programDynamicContracts(
+      { checker: program.getTypeChecker(), policy },
+      files,
+      new AllocSiteRegistry(),
+    );
     const declarations: ts.VariableDeclaration[] = [];
     const visit = (node: ts.Node): void => {
       if (ts.isVariableDeclaration(node) && node.initializer && ts.isFunctionExpression(node.initializer))
