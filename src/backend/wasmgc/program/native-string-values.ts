@@ -30,6 +30,7 @@ import {
   freezePreparedIrValue,
   preparedIrDataMismatch,
   preparedIrFrozenCollectionMembers,
+  isDeeplyFrozenPreparedIrValue,
 } from "../../../ir/program/data.js";
 import { preparedIrSettledVerdicts, type PreparedIrSettlement } from "../../../shared/contracts/settled-verdict.js";
 import { PreparedIrProgramInvariantError } from "../../../ir/program/errors.js";
@@ -440,7 +441,10 @@ interface Owner {
 const owners = new WeakMap<NativeStringValueReservations, Owner>();
 // Bound here rather than imported from the IR's binding: the backend reads the IR's frozen collections only through
 // program data, which it already imports.
-const { checkUnlessSettled, settledChecks } = preparedIrSettledVerdicts(preparedIrFrozenCollectionMembers);
+const { checkUnlessSettled, settledChecks } = preparedIrSettledVerdicts(
+  preparedIrFrozenCollectionMembers,
+  isDeeplyFrozenPreparedIrValue,
+);
 /** A re-plan of the whole program: settled per input object, so the foundation and the reservation share it. */
 const currentInputs = settledChecks<NativeStringValueReservationInput>();
 export function assertNativeStringValueReservationInput(input: NativeStringValueReservationInput): void {
