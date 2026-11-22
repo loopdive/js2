@@ -35,7 +35,8 @@ export interface NativeRealmIntrinsic {
     readonly initialName: string;
     readonly length: number;
     readonly algorithm: string;
-    readonly implementation: "function-prototype" | "throw-type-error" | "unavailable";
+    /** (#7354 O1) `native`: the Prepared path lowers the built-in's call form (`src/ir/realm-static-call.ts`). */
+    readonly implementation: "function-prototype" | "throw-type-error" | "native" | "unavailable";
     readonly requires: readonly string[];
   };
 }
@@ -112,6 +113,19 @@ const objectStatics: readonly Method[] = [
   ["setPrototypeOf", 2, ["RequireObjectCoercible", "SetPrototypeOf"]],
   ["values", 1, ["ToObject", "EnumerableOwnProperties", "CreateArrayFromList"]],
 ];
+/**
+ * (#7354 O1) The `Object` statics whose call form the Prepared path lowers: the realm's descriptor bodies serve them
+ * (`object-static-bodies.ts`). The one list of what is native; every other row is `unavailable`.
+ */
+export const NATIVE_OBJECT_STATICS = Object.freeze([
+  "create",
+  "defineProperties",
+  "defineProperty",
+  "getOwnPropertyDescriptor",
+] as const);
+export type NativeObjectStatic = (typeof NATIVE_OBJECT_STATICS)[number];
+const isNativeObjectStatic = (name: string): name is NativeObjectStatic =>
+  (NATIVE_OBJECT_STATICS as readonly string[]).includes(name);
 const objectMethods: readonly Method[] = [
   ["hasOwnProperty", 1, ["ToPropertyKey", "ToObject", "HasOwnProperty"]],
   ["isPrototypeOf", 1, ["ToObject", "GetPrototypeOf", "SameValue"]],
@@ -139,7 +153,17 @@ const functionMethods: readonly Method[] = [
 const methodId = (parent: string, name: string) => `%${parent}.${name}%`;
 function members(parent: string, rows: readonly Method[], legacy = false): NativeRealmIntrinsic[] {
   return rows.map(([name, length, requires]) =>
-    callable(methodId(parent, name), name, length, parent + "." + name, requires, [], false, "unavailable", legacy),
+    callable(
+      methodId(parent, name),
+      name,
+      length,
+      parent + "." + name,
+      requires,
+      [],
+      false,
+      parent === "Object" && isNativeObjectStatic(name) ? "native" : "unavailable",
+      legacy,
+    ),
   );
 }
 const methodProperties = (parent: string, rows: readonly Method[]) =>

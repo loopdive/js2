@@ -118,7 +118,7 @@ export function buildSourceObjectGetDefinition(d: { readonly get: FuncHandle }):
 }
 
 /** A data property's whole descriptor, every attribute present and true, with its value: CreateDataProperty's. */
-const CREATE_DATA_PROPERTY =
+export const CREATE_DATA_PROPERTY =
   flags.writable |
   flags.enumerable |
   flags.configurable |
@@ -133,9 +133,10 @@ const CREATE_DATA_PROPERTY =
  * `{ [[Value]] }` alone, so its attributes stay (a function's non-enumerable `prototype`, a prototype's
  * `constructor`); an inherited writable data property, or none (absent, or a miss at the realm's Object.prototype,
  * which every caller's key refusal makes a true miss), is CreateDataProperty on the receiver. A function's own
- * properties live in its bag, the storage both finds and defines use. A read-only data property (a function's own `length` or `name`) answers `false`. A
- * setter call or a setter-less accessor is unreachable from a plain program and traps, as an unknown carrier
- * (status 3) does. A non-extensible receiver is unreachable too: no Prepared program can make one.
+ * properties live in its bag, the storage both finds and defines use; (#7354 O1) an ordinary object's is itself. A
+ * read-only data property (a function's own `length` or `name`, a property `Object.defineProperty` made read only)
+ * or a setter-less accessor answers `false`; a setter call traps, as an unknown carrier (status 3) does. A
+ * non-extensible receiver is unreachable: no Prepared program can make one yet (`Object.preventExtensions`, slice O3).
  */
 export function buildSourceObjectSetDefinition(d: {
   readonly entryTypeIdx: TypeHandle;
@@ -153,10 +154,22 @@ export function buildSourceObjectSetDefinition(d: {
     { op: "i32.const", value: flag },
     { op: "i32.and" },
   ];
-  // A found data property: an accessor traps, a read-only one answers false.
+  // A found property: (#7354 O1) an accessor without a setter answers false, one with a setter is the run-time abort
+  // until the realm calls a source setter (slice O2); a read-only data property answers false.
   const requireWritable: Instr[] = [
     ...entryFlag(flags.accessor),
-    { op: "if", blockType: { kind: "empty" }, then: [{ op: "unreachable" }] },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        { op: "local.get", index: entry },
+        { op: "ref.as_non_null" },
+        { op: "struct.get", typeIdx: d.entryTypeIdx, fieldIdx: 5 },
+        { op: "ref.is_null" },
+        { op: "if", blockType: { kind: "empty" }, then: [{ op: "i32.const", value: 0 }, { op: "return" }] },
+        { op: "unreachable" },
+      ],
+    },
     ...entryFlag(flags.writable),
     { op: "i32.eqz" },
     { op: "if", blockType: { kind: "empty" }, then: [{ op: "i32.const", value: 0 }, { op: "return" }] },
