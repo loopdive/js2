@@ -5252,6 +5252,12 @@ deleted, not updated (#7380); the catalog's native rows are asserted by identity
 |---|---:|---:|---:|
 | U + W | 31 | 4 | 376 |
 | O1 | **34** | 6 | 371 |
+| O1c + receiver predicate | 34 | 6 | 371 |
+
+- O1c run: every chunk's row count equals the base's (87 / 107 / 102 / 115); no row changed outcome. The 8 `intl402`
+  rows of the 419-path list are dropped by path-filter discovery at base and head alike. A twin run had realized
+  part of the local `test262/` link farm into real directories of symlinks, which discovery does not descend (107
+  rows became 5); the farm is restored to plain symlinks.
 
 - New passes: `built-ins/Object/create/15.2.3.5-4-152.js`, `language/expressions/object/11.1.5_5-4-1.js`,
   `language/types/reference/8.7.2-6-s.js`. Each has a mutated twin (last assertion's expected value changed) that
@@ -5275,20 +5281,37 @@ deleted, not updated (#7380); the catalog's native rows are asserted by identity
   - 12 cases: 17 declarations + 12 closures = 29 functions, ~60 calls: **4.2–6.0 s** per compile (234 runs).
   - 72 cases: 77 declarations + 72 closures = 149 functions, ~350 calls: **> 500 s** (killed at the 530 s limit; ×5
     the functions, ×100 the time).
-- **Fixed here:** the shared abort could be dropped as dead code when its result was unused (`function F(){}
-  Object.create(F);` ran to its end). The root fix in `isSideEffecting` changes one more program: an unused member
-  read that aborts (`o.toString;` on a receiver whose read is the abort) now stops the program, where it silently
-  went on before. The 804 prepared-bytes rows are byte-identical across the fix.
-- **A function-local object refuses every native static**: `function f(){ var o = {}; Object.defineProperty(o, …) }`
-  → `dynamic Object static argument operand of externref has no dynamic carrier (f)`. A function-local `var o = {}` is
-  a raw `$Object` externref local (#7128 open-carrier local), not a dynamic value, and the static arm's operand path
-  (`dynamicStoreOperand`) does not box an externref. The member-write arm and `lowerCarrierOperand` do
-  (`emitBox(value, irDynamic())`); the same box on an externref argument in `realm-static-call.ts` is the smallest
-  fix (not built). A closure capturing such an object refuses the same way.
-- **#7106 `Object.is` is fooled by a top-level `function Object(){}`**: the static-predicates host uses
-  `isUnshadowedGlobalExpression`, which misses a script's own declaration. `isNaN` / `String` declared at top level
-  are refused, not fooled. The #7338 statics table still uses `resolver.isAmbientBinding`; moving it and #7106 to
-  `pristineBuiltinGlobal` touches `select.ts` and the ordinary lane, so it is left to its own change.
+- **Behaviour change (fixed here): an unused member read that aborts now stops the program.** The shared abort could
+  be dropped as dead code when its result was unused (`function F(){} Object.create(F);` ran to its end). The root
+  fix in `isSideEffecting` also reaches `o.toString;` on a receiver whose read is the abort: it now stops the program,
+  where it silently went on before. That is the right direction (the read was never right). Changed outcomes: none
+  found — the 804 prepared-bytes rows are byte-identical across the fix, and every suite listed above passes.
+- **O1c, fixed: the statics on a function-local object.** A function-local `var o = {}` is a raw externref (#7128
+  open-carrier local), and `concreteIntoDynamic` (behind `dynamicStoreOperand`) did not box one, so each static
+  refused (`… operand of externref has no dynamic carrier`) and, under the abort-body policy, its function aborted.
+  Where closures are function objects, `concreteIntoDynamic` now boxes a raw externref; the legalization proves its
+  kind from its definition (`carrierKindOf`: the realm's `create-default` call) and refuses one it cannot. It is the
+  one operand route for member-store values, construct and call arguments, returns and the statics.
+  `lowerCarrierOperand` is not that route: from-ast-local, demotes instead of refusing by name, boxes no closure as a
+  function value, and serves the #7338 ordinary lane, whose output must not change. Tests: the four statics on a
+  function-local object, a parameter, a call's result (literal and local), in a constructor; each agrees with node
+  and a wrong answer throws. 400 of the 2,808 sweep cases placed inside a function on a local object: 400 right (a
+  mutated 24-case run: 24 wrong).
+  - **Still aborting: a closure over such an object.** It reads the object from its capture, which has no
+    defining `create-default` call, so the legalization refuses the box (`box of a non-primitive value`) and the
+    closure's body is the abort. It needs the captured object to travel as a dynamic value (a dynamic home for a
+    captured open-carrier local), not a wider `carrierKindOf`.
+- **Fixed: `function Object(){} Object.is(1, 1)` answered `true`.** The #7106 static-predicates arm (and the other
+  global-receiver arms of `lowerMethodCall`: `Function.prototype`, `Object.defineProperty`, `JSON.stringify`, `Math`)
+  gate on `isAmbientReceiver`, whose checker answer a script's own top-level declaration fools. On Prepared it now
+  also asks `pristineBuiltinGlobal` through the resolver; it refuses by name (test). Other lanes have no such
+  resolver member and are unchanged; the 804 prepared-bytes rows are byte-identical. `isUnshadowedGlobalExpression`
+  keeps its callers (return and default-parameter `undefined`, the predicates' `undefined` / `NaN` / `Infinity`
+  operands): those globals are non-writable and non-configurable, so only a lexical or module binding shadows them,
+  which it checks. `isNaN` / `String` declared at top level are refused, not fooled.
+- **Cleanup to file: the #7338 statics table** (`objectStaticsRealmOf` in from-ast, `select-object-statics`) still
+  asks `resolver.isAmbientBinding` ("some" quantifier). It should ask the same `pristineBuiltinGlobal`; it touches
+  `select.ts` (at its budget) and the ordinary lane, so it is left to its own change.
 - `Object.create(null)` as a program's only use of `Object` takes the bounded #3518 plan (`prepare-object-create.ts`),
   whose typed result a dynamic script var cannot hold: `var n = Object.create(null); n.v = 3;` refuses by name
   (`proven dynamic binding 'n' initializer has no supported carrier`). Turning the plan off on this lane broke the
