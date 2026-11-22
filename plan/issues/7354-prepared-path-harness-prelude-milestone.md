@@ -5380,18 +5380,21 @@ Lead decision: (a) alone now, plus item 2 (match the read KIND, never the messag
   passes only when the expected type is one of the KINDS the lane's reader read — the thrown value's `name` or its
   constructor's name. Message text never counts, and a value the reader could not read has no kind, so the label
   written for it cannot match by construction.
-- **Readers report `{ kinds, text }`**; the old text functions are now `.text` of them:
-  - worker `readThrownValue` (`extractWasmExceptionMessage` wraps it);
-  - runner `readWasmException` (fixture lane);
-  - shared `readHarnessThrown` (local runner).
+- **One reader** (review r1): `readThrownValue` in `scripts/lib/wasm-exn-render.mjs` returns `{ kinds, text }` for
+  every test262 lane. The worker passes its row context (linked peers, abort table, observation); the runner's
+  `extractWasmExceptionMessage`, the fixture lane and the local runner call it directly. The worker's, runner's and
+  harness's own readers are deleted; `renderHarnessThrownText` stays only as the npm-compat report's display text.
   - No kind: no tag export (every Prepared artifact), a payload the tag does not carry, no instance, a null
-    payload (the ordinary null-guard/TDZ throw or `throw null`).
-- `thrownErrorKinds` (`scripts/lib/wasm-exn-render.mjs`) is the one kind reader. For a host-opaque WasmGC payload
-  it splits the module's own `String(payload)` (`__exn_render_*`) at the first `": "` (whole text when none),
-  because standalone ordinary codegen exports nothing else. The real fix is a kind export there (ordinary bytes
-  change); not in this slice.
-- Callers of the rule: the worker's instantiate and `__module_init` arms, the fixture lane (its `.includes` copy is
-  gone), the local runner (its `originalNegativeMatches` copy is gone).
+    payload (the ordinary null-guard/TDZ throw or `throw null`), a primitive, a function (`throw TypeError`).
+  - For a host-opaque WasmGC payload the kind is the module's own `String(payload)` (`__exn_render_*`) up to the
+    first `": "` (whole text when none): message text of an opaque payload still counts on the ordinary lanes
+    until X2 / #7453 gives them a kind export.
+- The rule takes the reading (`runtimeNegativeThrowAccepted(err, thrown, …)`), so a lane reads once. Callers: the
+  worker's instantiate and `__module_init` arms, the fixture lane (its `.includes` copy is gone), the local runner
+  (its `originalNegativeMatches` copy is gone; its compile-failure arm now uses `negativeCompileErrorMatches`, the
+  worker's compile-phase rule — the r0 branch still called the deleted function there and threw).
+- A trap's text is the reader's (`renderHostError`, frame names) on every lane; the local runner no longer hands
+  the rule its source-annotated detail.
 - Unread text names what was not read: `unknown thrown value: the module exports no exception tag` / `… the
   module's exception tag does not carry it`. The null-payload text `TypeError (null/undefined access)` is unchanged.
 
@@ -5445,14 +5448,17 @@ by the label). On the Prepared lane 9 are compile errors (html-comment parsing, 
 - `scripts/lib/native-eval-boundary-observation.test.mjs`: the new worker-reader kind test passes; the other 11
   fail identically on `main` here (`frozen source digest must actually admit the controls`), so they say nothing
   about this change.
-- Oracle: no corpus row flips (above), so `oracle-version-exempt:` beside the rule, no ORACLE_VERSION bump.
+- Oracle (lead decision after review r1): ORACLE_VERSION 16 → 17 with a history entry; no exemption.
 
 ### Left as they are (recorded)
 
 - `!originalHarness` accepts any throw; no production job sends it.
 - A trap on the non-Prepared lanes still matches by frame names in its text (#7447).
-- The residual above (thrown string / custom `toString` on the ordinary lanes).
-- The gc lane was measured in the honest oracle mode, not CI's linked harness. Node 25 is not installed here.
+- The residual above: message text of an opaque payload still counts on the ordinary lanes until X2 (#7453).
+- `scripts/wasm-exec-worker.mjs` (the local `tests/test262-vitest.test.ts` lane) accepts any throw on a runtime
+  negative and has its own reader copy (`extractWasmExceptionInfo`). Routing it needs the expected type plumbed
+  through `ExecPool.run` and its own before/after measurement; not done.
+- Node 25 is not installed here.
 
 ## Slice X2 plan (not started) — the Prepared artifact names what it threw
 
