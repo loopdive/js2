@@ -58,6 +58,7 @@ import { syntacticAnnotation } from "./select-expression-structure.js";
 import { isUndeclaredInFile } from "../shared/ambient-intrinsics.js";
 import { isTopLevelStatementDeclaration } from "../shared/var-declaration-lists.js";
 import { bindingHoldsItsDeclaration } from "../shared/binding-holds-declaration.js";
+import { ownedByDescriptorLiteral } from "./ordinary-object-closure-signatures.js";
 import { functionDeclarationsReadAsValues } from "./function-declaration-values.js";
 import type { CodeStrictness } from "./from-ast.js";
 import { readsAmbientThisGlobal } from "../shared/body-references-own-this.js";
@@ -206,16 +207,21 @@ function sourceBooleanResult(
  * callers include calls through values (`js.closure.call:N` passes and returns the carrier), so, as for an
  * unannotated declaration's parameters, no call site types it. A parameter list with a default, a rest element or
  * a pattern, and a generator or async literal, have no such contract. (#7354 O2) An object literal's `get` / `set`
- * accessor is such a value too: the realm calls it through the dispatcher, and a program reaches it as a value
- * through `Object.getOwnPropertyDescriptor`; so is a function expression inside such a literal.
+ * accessor is such a value too (the realm calls it through the dispatcher, a program reads it through
+ * `Object.getOwnPropertyDescriptor`), and so is a function expression inside such a literal, both on the lane of
+ * their enclosing function declaration: in an exported one (a typed #3518 program) they keep the checker's
+ * signature ({@link ownedByDescriptorLiteral}).
  */
 function sourceDynamicClosureSignature(
   policy: SourcePolicy,
   expression: ts.FunctionLikeDeclaration,
 ): { readonly params: readonly IrType[]; readonly returnType: IrType } | undefined {
+  const descriptorLiteral = ts.isAccessor(expression) || ownedByDescriptorLiteral(expression);
   if (
     !nativeDynamicLane(policy) ||
     !(ts.isFunctionExpression(expression) || ts.isAccessor(expression)) ||
+    (descriptorLiteral &&
+      dynamicLane(policy, ts.findAncestor(expression.parent, ts.isFunctionDeclaration)) !== "native") ||
     expression.type !== undefined ||
     expression.asteriskToken !== undefined ||
     expression.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword) ||

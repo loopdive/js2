@@ -96,10 +96,8 @@ describe("ordinary object symbolic provider obligations", () => {
 
 describe("ordinary getter source symbolic preparation", () => {
   it.each([
-    // (#7354 O2) Annotated: on this native lane an unannotated accessor takes the all-dynamic signature, whose boxed
-    // result this policy (`box: "unsupported"`) cannot produce.
-    { label: "getter", members: "get value(): number {return 7;}", setters: 0 },
-    { label: "getter and setter", members: "get value(): number {return 7;}, set value(value: number) {}", setters: 1 },
+    { label: "getter", members: "get value() {return 7;}", setters: 0 },
+    { label: "getter and setter", members: "get value() {return 7;}, set value(value: number) {}", setters: 1 },
   ])(
     "transports genuine $label obligations through the codec, and the realm serves the accessor",
     async ({ members, setters }) => {
@@ -146,8 +144,7 @@ describe("ordinary getter source symbolic preparation", () => {
           );
         expect(calls.map((call) => call.target.name)).toEqual([
           "js.object.create-default",
-          // (#7354 O2) An accessor is a function object, initialized before its define.
-          ...Array.from({ length: 1 + setters }, () => ["js.object.init-function", "js.object.define-accessor"]).flat(),
+          ...Array.from({ length: 1 + setters }, () => "js.object.define-accessor"),
           "js.object.get",
         ]);
         expect(program.runtime).toHaveLength(1);

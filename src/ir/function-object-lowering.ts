@@ -111,7 +111,8 @@ export function lowerTopLevelFunctionValue(
  * MakeConstructor's `prototype`. Every site that creates a function value calls this once, right after `closure.new`
  * (a closure literal, a declaration's value), so the bag is filled once however often the closure later becomes a
  * dynamic value, and no function value reaches the kernel without one. (#7354 O2) An object literal's accessor is
- * one too (`Object.getOwnPropertyDescriptor` reads it): named `get k` / `set k`, not a constructor.
+ * one too (`Object.getOwnPropertyDescriptor` reads it): named `get k` / `set k`, not a constructor. An accessor with
+ * the checker's typed signature (a typed #3518 program, `sourceDynamicClosureSignature`) keeps none, as before O2.
  * A function whose name is a computed key the compiler cannot evaluate refuses by name.
  */
 export function emitFunctionObjectInit(
@@ -119,6 +120,10 @@ export function emitFunctionObjectInit(
   closure: IrValueId,
   fn: ts.FunctionDeclaration | ts.FunctionExpression | ts.ArrowFunction | ts.MethodDeclaration | ts.AccessorDeclaration,
 ): void {
+  const type = builder.typeOf(closure);
+  // invariant (producer-promise): callers pass the value `closure.new` just produced — #4502.
+  if (type.kind !== "closure") throw new Error("ir/function-object-lowering: function object init needs its closure");
+  if (ts.isAccessor(fn) && type.signature.returnType?.kind !== "dynamic") return;
   const key =
     ts.isMethodDeclaration(fn) || ts.isAccessor(fn) ? propertyKeyFunctionName(fn.name) : functionInstanceName(fn);
   const name = key === undefined ? key : (ts.isGetAccessor(fn) ? "get " : ts.isSetAccessor(fn) ? "set " : "") + key;
@@ -128,9 +133,6 @@ export function emitFunctionObjectInit(
       "build",
       "the name of a function under a computed key needs the key's value",
     );
-  const type = builder.typeOf(closure);
-  // invariant (producer-promise): callers pass the value `closure.new` just produced — #4502.
-  if (type.kind !== "closure") throw new Error("ir/function-object-lowering: function object init needs its closure");
   const isConstructor = ts.isFunctionDeclaration(fn) || ts.isFunctionExpression(fn);
   builder.emitCall(
     irIntrinsicFuncRef("js.object.init-function"),
