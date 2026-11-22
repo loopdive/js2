@@ -134,8 +134,9 @@ describe("semantic native realm catalog and real selected demands", () => {
     expect(r.source!.units).toHaveLength(1);
     expect(r.description.sourceUnits).toEqual(r.source!.units.map((row) => row.unitId));
     expect(r.description.sourceAllocationOccurrences.length).toBeGreaterThan(0);
-    expect(r.description.objectUses).toEqual([]);
-    expect(r.access.uses).toEqual([]);
+    // The source closure is a function object (F1a), so its creation is the one object use.
+    expect(r.description.objectUses.map((row) => row.feature)).toEqual(["js.object.init-function"]);
+    expect(r.access.uses).toEqual(r.description.objectUses);
     expect(r.description.catalog).toEqual(NATIVE_REALM_CATALOG);
     expect(r.description.completionScope).toBe("native-realm-bootstrap");
     expect(r.description.unavailable.length).toBeGreaterThan(40);
