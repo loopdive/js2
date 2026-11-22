@@ -58,6 +58,14 @@ describe("#7354 T — isNaN", () => {
     );
   });
 
+  // The shared conversion: `Number(v)` of a dynamic value was a physical-plan refusal (`js.number.from-value`).
+  it("converts a dynamic value through Number(v) as node does", async () => {
+    await agreesWithNode(
+      `${ID}var hits = 0;\nvar o = { valueOf: function () { hits = hits + 1; return 7; } };\nvar out = "";\n` +
+        `${OTHERS.map((v) => `out = out + Number(id(${v})) + ",";`).join("\n")}\nout = out + Number(id(o)) + hits;`,
+    );
+  });
+
   it("does not take a program's own isNaN for the global one", async () => {
     expect(await refusal('function isNaN(v) { return "mine"; }\nvar out = isNaN(NaN) + isNaN(1);\n')).toContain(
       'direct call to "isNaN" has no exact AST-site plan in <module-init>',
