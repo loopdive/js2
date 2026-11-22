@@ -12,8 +12,10 @@ import { emittedPhysicalSetupPlan } from "../ir/program-consumer.js";
 import { freezePreparedIrValue } from "../ir/program.js";
 import { failResult } from "../compiler/output.js";
 import { resolveCompileTargetProfile } from "../target-profile.js";
+import { AbortBodies, type AbortBodyRow } from "../ir/abort-bodies.js";
 
 type DeadBindingElision = typeof elideDeadBindings;
+type UnlowerableBodies = "abort" | "refuse";
 
 export interface RequiredPreparedRequest {
   readonly kind: "prepared-program-required";
@@ -276,6 +278,7 @@ interface ResultRecord {
   readonly binary?: Uint8Array;
   readonly adapterManifest?: JavaScriptAdapterManifestV1;
   readonly hostImportInventory?: NonNullable<CompileResult["hostImportInventory"]>;
+  readonly abortBodies?: readonly AbortBodyRow[];
 }
 const results = new WeakMap<CompileResult, ResultRecord>();
 function current(result: CompileResult): ResultRecord | undefined {
@@ -316,6 +319,13 @@ export function requiredPreparedFinalArtifactObservation(result: CompileResult):
 export function requiredPreparedFailure(result: CompileResult): RequiredPreparedFailure | undefined {
   return current(result)?.outcome;
 }
+/**
+ * (#7354 U) The functions of a compiled program whose body is the run-time abort, in source order. A trap whose top
+ * frame is one of their names is that abort.
+ */
+export function requiredPreparedAbortBodies(result: CompileResult): readonly AbortBodyRow[] | undefined {
+  return current(result)?.abortBodies;
+}
 /** Only the shared compiler's real syntax/early branch can supply this observation. */
 export function requiredPreparedFrontendFailure(result: CompileResult): RequiredPreparedFrontendFailure | undefined {
   return current(result)?.frontendFailure;
@@ -355,6 +365,7 @@ function present(
   options: Test262CompileOptions,
   singleSource = false,
   elide: DeadBindingElision = elideDeadBindings,
+  unlowerableBodies: UnlowerableBodies = "abort",
 ): CompileResult {
   const exactFiles = sourceGraph(files, entryFile);
   const profile = resolveCompileTargetProfile(options);
@@ -429,7 +440,10 @@ function present(
     ? (freezePreparedIrValue({ ...options, strictJsSyntax: true }) as Test262CompileOptions)
     : options;
   const errors: CompileError[] = [];
-  const outcome = runPreparedIrPipelinePresentation({
+  // This entry measures how far the path reaches: a body it cannot lower aborts when run instead of refusing all.
+  const abortBodies = unlowerableBodies === "abort" ? new AbortBodies() : undefined;
+  const outcome = runPreparedIrPipelinePresentation(
+    {
     userSourceFiles: ast.sourceFiles,
     entryAst: {
       sourceFile: ast.entryFile,
@@ -445,7 +459,9 @@ function present(
     diagnosticAnchor: ast.entryFile,
     runEarlyErrorsOnAllowJs: singleSource || options.enforceJsEarlyErrors === true,
     options: pipelineOptions,
-  });
+    },
+    abortBodies,
+  );
   if (outcome.kind === "output-failed") {
     // Query immediately for this call's actual outcome. No duplicate early-error
     // detection, text/name inference, registration API or decoded certificate.
@@ -525,21 +541,27 @@ function present(
     hostImportInventory: freezePreparedIrValue(result.hostImportInventory) as NonNullable<
       CompileResult["hostImportInventory"]
     >,
+    ...(abortBodies ? { abortBodies: freezePreparedIrValue(abortBodies.rows()) as readonly AbortBodyRow[] } : {}),
   });
   return result;
 }
 
-/** `elide` is a test seam only: a test passes the identity to compare the gate's verdict without the elision. */
+/**
+ * `elide` and `unlowerableBodies` are test seams only: a test passes the identity to compare the gate's verdict without
+ * the elision, and "refuse" to compare the program's refusal without abort bodies.
+ */
 export async function compile(
   source: string,
   options?: Test262CompileOptions,
   elide: DeadBindingElision = elideDeadBindings,
+  unlowerableBodies: UnlowerableBodies = "abort",
 ): Promise<CompileResult> {
   if (!selected(options)) return legacy.compile(source, options);
   const captured = strictOptions(undefined, options);
   if (captured.fileName !== undefined && typeof captured.fileName !== "string")
     invalidRequest("fileName must be a string");
-  return present({ [captured.fileName ?? "input.ts"]: source }, captured.fileName ?? "input.ts", captured, true, elide);
+  const file = captured.fileName ?? "input.ts";
+  return present({ [file]: source }, file, captured, true, elide, unlowerableBodies);
 }
 export async function compileMulti(
   files: Record<string, string>,

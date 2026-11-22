@@ -74,6 +74,28 @@ test("the trap renders its frames, so a name match sees the expected type", () =
   assert.equal(render(trapUnderAssert), "unreachable [in Test262Error() ← assertThrows]");
 });
 
+test("#7354 U: a trap whose top frame is an abort-body function names it and its refusal", () => {
+  const table = [{ name: "Test262Error", detail: "RegExp literal has no provider" }];
+  assert.equal(
+    renderHostError(trapUnderAssert, table),
+    "aborted in unlowerable unit Test262Error: RegExp literal has no provider [in Test262Error() ← assertThrows]",
+  );
+  // Only the top frame is the abort: a listed caller is not.
+  const caller = [{ name: "assertThrows", detail: "d" }];
+  assert.equal(renderHostError(trapUnderAssert, caller), "unreachable [in Test262Error() ← assertThrows]");
+  // An abort is still a trap: it never counts as the expected throw on the Prepared lane.
+  const abortRender = (err) => renderHostError(err, table);
+  assert.equal(
+    runtimeNegativeThrowAccepted(trapUnderAssert, instance, {
+      expectedErrorType: "Test262Error",
+      originalHarness: true,
+      prepared: true,
+      render: abortRender,
+    }),
+    false,
+  );
+});
+
 for (const [lane, prepared] of [
   ["Prepared", true],
   ["non-Prepared", false],

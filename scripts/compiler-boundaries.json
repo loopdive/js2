@@ -17188,6 +17188,22 @@
       "nextBoundary": "Checker-certified `any` parameter/result contracts of the Prepared source producer (#7354 D1); moves with program-source.ts under frontend/ts."
     },
     {
+      "path": "src/ir/abort-bodies.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "frontend-ts",
+      "owner": "7354",
+      "nextBoundary": "Abort bodies of the Prepared source producer (#7354 U): AST ownership of a refusal and the retry record; moves with program-source.ts under frontend/ts, the one-block body builder with from-ast's IR half."
+    },
+    {
+      "path": "src/ir/program-source-units.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "frontend-ts",
+      "owner": "7354",
+      "nextBoundary": "The per-unit body producer moved out of prepareIrProgramSources (#7354 U); moves with program-source.ts under frontend/ts."
+    },
+    {
       "path": "src/ir/function-returns.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",

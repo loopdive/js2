@@ -1274,9 +1274,12 @@ function classifyHostImportLeak(importNames) {
 function buildResultMetadata(result, reachedTest) {
   const imports = summarizeImports(result?.imports);
   const hostImportLeakClass = classifyHostImportLeak(imports);
+  // (#7354 U) Prepared lane: the functions whose body is the run-time abort, on every row of a compiled program.
+  const abortBodies = result ? compilerBundle.requiredPreparedAbortBodies(result) : undefined;
   return {
     ...(imports.length > 0 ? { imports } : {}),
     ...(hostImportLeakClass ? { hostImportLeakClass } : {}),
+    ...(abortBodies?.length ? { abortBodies } : {}),
     ...summarizeIrRoute(result?.irOutcomes),
     reachedTest,
   };
@@ -1934,7 +1937,7 @@ function extractWasmExceptionMessage(
   }
   if (err instanceof Error) {
     observation?.("exception-kind", "host-Error");
-    const info = renderHostError(err);
+    const info = renderHostError(err, currentAbortBodies);
     observation?.("text-route", "host-Error");
     observation?.("reader-text", info);
     return info;
@@ -2025,6 +2028,9 @@ function captureNativeStdout(exp, append) {
  * host-free async drain. Empty for every unlinked row.
  */
 let currentLinkedPeers = [];
+
+/** (#7354 U) The abort-body functions of the Prepared row being executed, for trap rendering. Empty elsewhere. */
+let currentAbortBodies = [];
 
 function standaloneLinkedPeers(target, result, importObj) {
   if (target !== "standalone") return [];
@@ -2227,6 +2233,7 @@ process.on("message", async (msg) => {
         "requiredPreparedEmission",
         "requiredPreparedFinalArtifactObservation",
         "requiredPreparedFrontendFailure",
+        "requiredPreparedAbortBodies",
       ]) {
         if (typeof compilerBundle[capability] !== "function")
           throw new Error(`PREPARED_TRANSPORT_INVALID: compiler bundle lacks strict capability ${capability}`);
@@ -2678,6 +2685,7 @@ process.on("message", async (msg) => {
     }
 
     currentLinkedPeers = [];
+    currentAbortBodies = compilerBundle.requiredPreparedAbortBodies(result) ?? [];
     try {
       // (#4162) The ONE shared instantiate seam. Standalone goes module-first
       // (import list inspectable → #2928 E6 provider attachment); the host lane

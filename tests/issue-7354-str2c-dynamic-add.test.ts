@@ -312,7 +312,8 @@ describe("#7354 Str2-c — what dynamic + still refuses by name", () => {
     ["the results of untyped calls", "function f(v) { return v; }\nvar s = f(1) + f(2);"],
     ["a dynamic global and a literal, written from a function", 'var g; function w() { g = g + "x"; }\nw();'],
   ])("refuses %s", async (_label, source) => {
-    const result = await compile(source, options());
+    // (#7354 U) Without abort bodies: under them the refusal in `w` would be w's abort body.
+    const result = await compile(source, options(), undefined, "refuse");
     expect(result.success).toBe(false);
     expect(messages(result).join("\n")).toContain("not provably both-number or string-concatenable");
   });

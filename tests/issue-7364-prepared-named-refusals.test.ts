@@ -25,6 +25,8 @@ const options = (): Test262CompileOptions =>
     allowJs: true,
   }) as Test262CompileOptions;
 
+// (#7354 U) These programs compile without abort bodies: under them a refusal inside a function becomes that
+// function's abort body, and these cases are about the refusal's code.
 describe("#7364 — Prepared-path refusals instead of invariant crashes", () => {
   it.each([
     ["a literal's .exec", 'var m = /a/.exec("a");'],
@@ -34,7 +36,7 @@ describe("#7364 — Prepared-path refusals instead of invariant crashes", () => 
     // Read, so the #3418 dead-binding elision (#7354 F0) keeps the statement.
     ["a literal bound to a var", "var r = /a/; var t = r;"],
   ])("refuses a RegExp literal without a provider: %s", async (_label, source) => {
-    const result = await compile(source, options());
+    const result = await compile(source, options(), undefined, "refuse");
     expect(result.success).toBe(false);
     expect(result.errors.map((error) => [error.code, error.message])).toEqual([
       ["regexp-constructor-unsupported", expect.stringContaining("RegExp literal has no provider")],
@@ -43,7 +45,7 @@ describe("#7364 — Prepared-path refusals instead of invariant crashes", () => 
 
   it("refuses an unadmitted Object.defineProperty by the selector's code", async () => {
     const source = 'function f() { var o = {}; Object.defineProperty(o, "x", { value: 1 }); }\nf();';
-    const result = await compile(source, options());
+    const result = await compile(source, options(), undefined, "refuse");
     expect(result.success).toBe(false);
     expect(result.errors.map((error) => [error.code, error.message])).toEqual([
       [

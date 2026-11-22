@@ -77,6 +77,9 @@ describe("#7354 C2 — this", () => {
       "a write to `this` that is a caught error",
       "function F(){ this.k = 1; } function c(v){ try { v.x; } catch (e) { return e; } } var e = c(null); e.m = F; e.m();",
     ],
+    // Without a function value nothing calls through the dispatcher, so no function binds a receiver: F's
+    // `this` refuses, and (#7354 U) that refusal is F's, which gets the abort body.
+    ["`this` in a program that creates no function value", "function F(){ this.a = 1; } var x = 1; F();"],
   ])("ends %s at the run-time abort", (_label, source) => abortsAtRunTime(source), SLOW);
 
   it.each([
@@ -86,12 +89,6 @@ describe("#7354 C2 — this", () => {
       "a direct call of F installs no receiver for its 'this'",
     ],
     ["`this` at top level", "var x = this;", "'this' reference outside an instance method body (<module-init>)"],
-    // Without a function value nothing calls through the dispatcher, so no function binds a receiver.
-    [
-      "`this` in a program that creates no function value",
-      "function F(){ this.a = 1; } var x = 1;",
-      "'this' reference outside an instance method body (F)",
-    ],
   ])("refuses %s", async (_label, source, reason) => {
     expect(await refusal(source)).toContain(reason);
   });

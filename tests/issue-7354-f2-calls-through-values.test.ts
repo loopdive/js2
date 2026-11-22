@@ -4,7 +4,7 @@
 // receiver with the receiver as `this`, and OrdinaryToPrimitive calling an own conversion method. Each accepted
 // program runs twice: with node's answer (returns) and with a wrong one (throws); a refusal is asserted by its text.
 import { describe, expect, it } from "vitest";
-import { refusal, runPrepared } from "./helpers/prepared-node-agreement.js";
+import { abortBodies, abortsAtRunTime, refusal, runPrepared } from "./helpers/prepared-node-agreement.js";
 
 const SLOW = 240_000;
 
@@ -55,10 +55,13 @@ describe("#7354 F2 — calls through a value", () => {
     SLOW,
   );
 
+  // (#7354 U) The refusal is h's, so h gets the run-time abort as its body, named by that refusal.
   it("refuses a call through a value in a program without a function value by name", async () => {
-    expect(await refusal("function h(v) { try { return v(); } catch (e) { return 1; } } h(1);")).toContain(
-      "js.closure.call:0 in a program that creates no function value",
-    );
+    const source = "function h(v) { try { return v(); } catch (e) { return 1; } } h(1);";
+    expect(await abortBodies(source)).toEqual([
+      "h: dynamic operation js.closure.call:0 in a program that creates no function value has no Prepared intrinsic",
+    ]);
+    await abortsAtRunTime(source);
   });
 });
 
@@ -94,11 +97,17 @@ describe("#7354 F2 — method calls on a dynamic receiver", () => {
     SLOW,
   );
 
-  it.each([
-    ["a spread argument through a value", "function f(v) { return v(...[1]); } f(function (x) { return x; });"],
-    ["a spread argument in a method call", "var o = {}; o.m = function (x) { return x; }; o.m(...[1]);"],
-  ])("refuses %s by name", async (_label, source) => {
-    expect(await refusal(source)).toContain("call through a value with a spread argument");
+  it("refuses a spread argument in a method call by name", async () => {
+    expect(await refusal("var o = {}; o.m = function (x) { return x; }; o.m(...[1]);")).toContain(
+      "call through a value with a spread argument",
+    );
+  });
+
+  // (#7354 U) Inside a function the refusal is the function's: it gets the abort body, named by that refusal.
+  it("names a spread argument through a value inside a function", async () => {
+    expect(await abortBodies("function f(v) { return v(...[1]); } f(function (x) { return x; });")).toEqual([
+      expect.stringMatching(/^f: .*call through a value with a spread argument/),
+    ]);
   });
 });
 

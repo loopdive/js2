@@ -15,13 +15,19 @@ import { instantiateWithRuntime } from "./equivalence/helpers.js";
 import { ts } from "../src/ts-api.js";
 import { instantiatePreparedArtifact } from "../src/test262/test262-prepared-runtime.js";
 import {
-  compile,
+  compile as preparedCompile,
   compileMulti,
   requiredPreparedEmission,
   requiredPreparedFrontendFailure,
   type Test262CompileOptions,
 } from "../src/test262/test262-prepared-entry.js";
 import { yieldToRpc } from "./helpers/prepared-node-agreement.js";
+
+// The elision is measured by where the path refuses: these programs keep or drop a binding whose function body
+// refuses. (#7354 U) Under abort bodies that body would compile to the run-time abort instead, so they are compiled
+// without them (the entry's test seam), as the elision's verdicts were stated.
+const compile = (source: string, options: Test262CompileOptions, elide?: Parameters<typeof preparedCompile>[2]) =>
+  preparedCompile(source, options, elide, "refuse");
 
 // The runner's options for a Script test (scripts/test262-worker.mjs): semantic diagnostics skipped, goal stated.
 const options = (target: "standalone" | "gc" = "standalone"): Test262CompileOptions =>

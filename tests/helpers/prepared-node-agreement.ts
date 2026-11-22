@@ -10,6 +10,7 @@ import * as linear from "../../src/codegen-linear/index.js";
 import { instantiatePreparedArtifact } from "../../src/test262/test262-prepared-runtime.js";
 import {
   compile,
+  requiredPreparedAbortBodies,
   requiredPreparedEmission,
   type Test262CompileOptions,
 } from "../../src/test262/test262-prepared-entry.js";
@@ -101,9 +102,21 @@ export async function throwsAsNode(source: string): Promise<void> {
   expect(await runPrepared(source)).toBe("threw");
 }
 
-/** The error diagnostics of `source`, which must not compile. */
-export async function refusal(source: string): Promise<string> {
+/** (#7354 U) The functions of `source`, which must compile, whose body is the run-time abort: `name: refusal`. */
+export async function abortBodies(source: string): Promise<string[]> {
+  await yieldToRpc();
   const result = await compile(source, preparedOptions());
+  expect(errors(result)).toEqual([]);
+  return requiredPreparedAbortBodies(result)!.map((row) => `${row.name}: ${row.detail}`);
+}
+
+/**
+ * The error diagnostics of `source`, which must not compile: the name the path refuses it by. (#7354 U) Compiled
+ * without abort bodies, under which a refusal inside a function becomes that function's run-time abort
+ * ({@link abortBodies}).
+ */
+export async function refusal(source: string): Promise<string> {
+  const result = await compile(source, preparedOptions(), undefined, "refuse");
   expect(result.success).toBe(false);
   return errors(result).join("\n");
 }
