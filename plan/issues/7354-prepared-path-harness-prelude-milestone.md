@@ -4982,6 +4982,181 @@ ratchet; dead exports — all pass. `check:compiler-boundaries:inventory` fails 
   emission keeps writing between phases; only the boundary audit would cover a later change, so they stay.
 - Prelude after these: off 6.2–7.3 s, on 18.7–19.5 s, both pass at 512 MB; binary and the 804 rows unchanged.
 
+## Slice W plan (2026-11-22, branch `claude/7354-w` from `claude/7354-u` `f8fd70dc1c`)
+
+**Blocker.** 41 of the 47 `propertyHelper.js` rows of the 420-row ES5 sample stop at
+`IrInvariantError: #5092 then arm proved number but lowered as dynamic in isWritable` — thrown OUT of `compile()`
+(not a compile_error row), at `var unlikelyValue = __isArray(obj) && name === "length" ? nonIndexNumericPropertyName : "unlikelyValue"`.
+
+**Minimal repro** (strict Prepared entry, standalone):
+```js
+var e = f(1);
+var n = 4294967295;
+function f(a) { var u = a === 1 ? n : "x"; return u === "x"; }
+```
+
+**Cause.** The Prepared path is unselected, so from-ast's `mixedPrimitiveConditionalClaim` is the only #5092 proof. It
+classifies each arm from the checker (`makeIrPrimitiveExpressionClassifier`: `n` is `number`, following its
+initializer). But since #7354 H a script `var` without a proven typed home lives in the dynamic home whatever the
+checker infers, and a read of it lowers to the dynamic value (`undefined` before its initializer runs — `f(1)` above
+sees exactly that). The two answer different questions: the checker the declared type, from-ast the value's IR
+representation. The proof is the wrong side; the invariant is right (its intent, #5092: a claimed shape whose arm
+does not lower to the proved representation is a selector⇄builder desync). `tryLowerDynamicConditionalValue`, the
+dynamic-carrier join that should own `c ? <dynamic> : <literal>`, misses the shape too: its arm test reads only
+`cx.scope`, and a module home is not in scope. Without the invariant the builder's own `emitBox` guard throws
+("re-boxing a dynamic value is invalid") — no wrong value or invalid Wasm is reachable, only the exception.
+
+**Fix (two edits, one predicate).**
+1. `bindingHoldsDynamic(name, cx)` in `from-ast.ts`: a dynamic slot, else the existing C2 `namesDynamicValue` (dynamic
+   local, or on the Prepared lane the dynamic module home). `tryLowerDynamicConditionalValue`'s inline arm test is
+   replaced by it, so `c ? n : "x"` is the D1 join: `n` passes as-is, `"x"` is boxed — JS's value both before and after
+   the initializer.
+2. `mixedPrimitiveConditionalClaim` refuses the claim when an arm MAY yield the dynamic value:
+   `mayYieldCarrier(arm, bindingHoldsDynamic)`, a new export of `src/ir/analysis/carrier-expression.ts` — the "may"
+   dual of the existing `producesCarrier` ("every value is the carrier"), built on the same `everyYieldedValue` and
+   `isCarrierAddition`. It follows only what passes a value on (conditional arms, comma / `=` right side,
+   `&&`/`||`/`??` operands, a carrier `+`, type projections), so `typeof n`, `-n`, `n === 1` stay claimable (their
+   result has one representation whatever `n` holds). An unclaimed mixed arm such as `c ? n + 1 : "x"` reaches the
+   generic tail's existing named refusal (`ternary branches have different types (dynamic vs string)`), an abort body
+   under slice U's policy.
+
+Reuses: `namesDynamicValue`, `everyYieldedValue`, `isCarrierAddition`, `skipOuterExpressions`. Removes: the
+duplicate slot/local dynamic test in `tryLowerDynamicConditionalValue`. `from-ast.ts` grows by ~4 lines net,
+`lowerCall` not touched. Ordinary pipeline: the module-home arm of `namesDynamicValue` is gated on the Prepared lane
+(`createsFunctionObjects`), so only a dynamic local/slot arm can change there, and that today throws the same
+invariant.
+
+**Acceptance.** Behaviour: the repro gives node's value (both `f` calls), plus a wrong twin; `c ? n + 1 : "x"` is a
+named abort; ≥80 probes base vs head against node — nothing right becomes anything else, 0 wrong, 0 exceptions;
+ordinary pipeline byte-identical on 20 test262 files × default + standalone; `check:prepared-bytes`. Quality: one
+binding predicate shared by the join and the claim, the walker beside its dual in `carrier-expression.ts`, no
+`isWritable`/name special case, invariant untouched.
+
+**Measured with the fix (uncommitted, approximate driver: `assert.js` + `sta.js` + includes + body through the strict
+entry, standalone):** the 41 rows move from the exception to
+`CE ir/from-ast: type override (dynamic) disagrees with annotation (f64) at param functionLength of verifyCallableProperty`
+(a JSDoc `@param {number}` read as an annotation) — the next blocker for all 41. The other 6 rows stop earlier at
+`function declaration 'formatIdentityFreeValue' read as a value is written`, unchanged.
+
+## Slice W result (2026-11-22, branch `claude/7354-w`; W1 = `d9e4906343` + `9e0d351a50`)
+
+**W1a — dynamic-home arm (`d9e4906343`).** As planned: `bindingHoldsDynamic` (from-ast) is the arm test of the D1
+join and the leaf of the claim's new check; `mayYieldCarrier` sits beside `producesCarrier` in
+`src/ir/analysis/carrier-expression.ts` and shares its walk (one `yieldsCarrier` / `yieldedValues` traversal with an
+`every` / `some` quantifier; the "some" side additionally passes through `&&` / `||` / `??` and type projections).
+
+**W1b — carrier equality brand (`9e0d351a50`).** The probes found a second route to the same invariant:
+`c ? n === 1 : 7` — the bounded grammar proves the arm `boolean` (it is), but `emitDynEq`'s result was a bare `i32`,
+so `irTypeIsBoolean` failed and the invariant was thrown out of `compile()`. The lowering was the wrong side here:
+`dyn.eq` now carries the boolean brand, as its siblings `dyn.instanceof` and the dyn own-property test already did.
+The brand is erasable under `irTypeEquals` (boolean-brand.ts), so no join or verifier changes.
+
+**How invariants surface on this lane.** An `IrInvariantError` from from-ast reaches `runIrProgramDriver`, which
+rethrows it as `IrProgramDriverInvariantError` by design ("Exceptions stay fatal"); no catch was added. After W1 no
+probe reaches one.
+
+| Proof | Result |
+| --- | --- |
+| `tests/issue-7354-w-dynamic-home-conditional.test.ts` (6, node agreement + wrong twin; refusal by text) | 6/6 head, 6/6 fail on base |
+| 101 own probes (dynamic-home arms of every bounded kind × literal arms, try/catch/finally, loops, NaN / −0, `String`/`Number` wrappers), strict entry, base → head | exception 28 → 0; right 12 → 38; wrong 0 → 0; no right→other |
+| Ordinary pipeline, 20 test262 files (10 propertyHelper rows + 10 of `l20`) × default + standalone | byte-identical |
+| Ordinary pipeline, the 101 probes × default + standalone | byte-identical |
+| `check:prepared-bytes` | pass |
+| 2949-s5-2 / s5-3 / slice2 / slice3b, 4523, 6921, 7354-t, 7354-d1 | only the `dyn.eq` result-type pin changed (updated); the other failures are identical on the base (slice U's pending expectations) |
+
+The 41 rows now stop at `CE ir/from-ast: type override (dynamic) disagrees with annotation (f64) at param
+functionLength of verifyCallableProperty` (W2).
+
+### W2 — a JSDoc tag is a comment (`a612dbe004`, after merging slice U `56d405c3ca`)
+
+**Cause.** The native lane's parameter contract (`sourceDynamicParameter`) types a parameter only by a syntactic
+annotation, so a `@param {number}` parameter is dynamic. Three readers took the tag as an annotation anyway:
+from-ast's `resolveIrType` (via `effectiveIr{Param,Return}TypeNode` → "type override (dynamic) disagrees with
+annotation (f64)"), provenance `bindingCarries` (a JSDoc parameter is checker `number`, so it "did not carry"), and
+the implicit-flow rule (the tag is the argument's or the return's contextual type).
+
+**Fix.** The rule is stated once, on `sourceDynamicParameter`; each reader consults the contract it produces.
+`annotationUnder` (`select-expression-structure.ts`, beside `effectiveIr*TypeNode`) lets a dynamic contract win over
+a JSDoc node for parameters and results; #7106's `jsDocExternref` special case is an instance of it and is removed.
+`sourceDynamicProvenance` takes the parameter contract as a callback. The flow rule's `storedIntoCarrier` became
+`landsInCarrier`: also the un-annotated initializer of a carrier binding, an argument for a dynamic-contract
+parameter, a value returned from a dynamic-result function. A syntactic annotation keeps its contract and its flow
+check (tested). `from-ast.ts` net +0 for W2.
+
+| Proof | Result |
+| --- | --- |
+| `tests/issue-7354-w2-jsdoc-is-a-comment.test.ts` (7: `@param` / `@returns` / `@type` local / `@type` script var, with string, undefined and object callers — node agreement + wrong twin; a TS annotation still types and still refuses a dynamic argument) | 7/7; the `@param` and `@returns` cases fail on W1 head |
+| W test file after the U merge | 6/6 |
+| 101 W1 probes, strict entry | unchanged vs W1 (0 exceptions, 0 wrong) |
+| Ordinary pipeline: 20 test262 files + 7 JSDoc programs (incl. #7106's bracketed / `{object}` / `{*}` params) + 101 probes, × default + standalone | byte-identical to W1 head |
+| 7106-s1d-jsdoc-logical, 7272 isWritable, 7135, 7354 d1 / h / t / u-abort / u-prelude / m-refusals / f2 / c2-this / str2c | all pass |
+| typecheck, LOC + func budget (merge base and `LOC_GATE_BASE` = main `2b9f6f6e48`), coercion sites, oracle ratchet, dead exports, boundaries inventory, `check:prepared-bytes` | pass |
+
+**Tally.** All 41 rows now stop at `CE ir/from-ast: identifier "Array" is not in scope in <module-init>`; the other 6
+`propertyHelper` rows still stop at `function declaration 'formatIdentityFreeValue' read as a value is written`
+(approximate driver: `assert.js` + `sta.js` + includes + body through the strict entry, standalone, with the runner's
+`skipSemanticDiagnostics` / `deferTopLevelInit`; not the runner itself).
+
+**Found, not fixed.**
+- Ordinary pipeline, wrong value: `/** @param {number} x */ export function h(x) { return x + 1; }` compiled with
+  `compile(src, { fileName: "test.js", allowJs: true })` (default target): `h("a")` called from JS returns `NaN`
+  (a number); node returns `"a1"`. With `skipSemanticDiagnostics: true` (the test262 runner's setting) an internal
+  `f("a")` of the same function also returns `NaN`, and `typeof f("a")` is `"number"`. Standalone: not verified (my
+  harness could not instantiate the standalone binary).
+- Prepared: a `@type {number}` script var whose every store is typed still gets the f64 home from the tag, so
+  `/** @type {number} */ var t = "s";` (semantic diagnostics off) is refused by name
+  (`module binding 't' initializer is string but its global is f64`). A dynamic store moves it to the dynamic home
+  and gives node's value (tested).
+
+**Fatal invariants.** Unchanged by design (`runIrProgramDriver` rethrows). I know of no invariant site the Prepared
+lane still reaches by construction; the remaining #5092 sites fire only under the env-gated tamper seams.
+
+**W3 candidate (measured, not started).** `propertyHelper.js`'s module-init reads, in order: L27 `Array.isArray`;
+L28 `Object.defineProperty`; L29 `Object.getOwnPropertyDescriptor`; L30 `Object.getOwnPropertyNames`;
+L31 `Function.prototype.call.bind(Array.prototype.join)`; L32 `…bind(Array.prototype.push)`;
+L33 `…bind(Object.prototype.hasOwnProperty)`; L34 `…bind(Object.prototype.propertyIsEnumerable)`;
+L35 `Math.pow(2, 32) - 1`. Globals: `Array`, `Object`, `Function`, `Math`. Members: `Array.isArray`,
+`Array.prototype.{join,push}`, `Object.{defineProperty,getOwnPropertyDescriptor,getOwnPropertyNames}`,
+`Object.prototype.{hasOwnProperty,propertyIsEnumerable}`, `Function.prototype.call.bind`, `Math.pow`.
+
+**Not verified.** Node 25 (CI's version) is not installed here; everything ran on local Node 22 under tsx. The 41-row
+tally is from my driver, not the test262 runner.
+
+### W review round (after the review of `ee578f61ad`; U `02f31edc4c` merged)
+
+- **Q1 — one binding predicate.** `namesDynamicValue`, `bindingHoldsDynamic` and the leaf inside
+  `expressionProducesDynamic` are now one `bindingHoldsDynamic(node, cx)` (local / slot / module global in scope,
+  `this`, the Prepared module home out of scope). One `dynamicLeaves(cx)` factory feeds both `producesCarrier` and
+  the claim's `mayYieldCarrier`; the `new` and `instanceof` arms use the same predicate. `from-ast.ts` is back at
+  its baseline (no growth). Answers that changed, all from abort to node's value (each checked against node, before
+  and after): `"x" + n` and `n + "y"` / `n + 1` over an out-of-scope dynamic home in a function (was "'+' operands
+  not provably both-number or string-concatenable"), and Str2-c's `var g; function w() { g = g + "x"; }` (moved from
+  "still refuses" to a node-agreement test). Nothing that was right changed (101 probes; ordinary pipeline
+  byte-identical).
+- **(a)** `sourceFunctionCallee` (provenance) is the one callee resolution for `callCarries` and `landsInCarrier`.
+  `syntacticAnnotation` (`select-expression-structure.ts`) is the one statement of "only a syntactic annotation
+  types a declaration natively"; `annotationUnder`, `sourceDynamicParameter`, the native result contract and
+  provenance's `localCarries` read it, and `landsInCarrier`'s own `parent.type` check is gone.
+- **(b)** `annotationUnder` takes `IrType`.
+- **Slice P test.** Its two "refuses a JSDoc …" cases (written against the old behaviour) now run and agree with
+  node, with wrong twins.
+- **Object-literal wrong value fixed** (`prepare-ordinary-object-access.ts`): a literal's property read was typed
+  from the checker, so `var pre = f(1); var n = 42; function f(a){ var o = { p: n }; return String(typeof o.p); }`
+  said `"number"` for `undefined` (node: `"undefined"`). The read plan now skips a property whose stored value may be
+  the dynamic one (provenance `carries`, passed in by `program-source-units.ts`); the read stays the dynamic member
+  read. Test added to the W file.
+
+**Known limits (named refusals / aborts today, not wrong values).**
+- A JSDoc'd function EXPRESSION's parameter (`/** @param {number} x */ var fe = function (x) {…}; fe(v)`) is not
+  covered by the parameter contract: "a dynamic value flows into number without a conversion (CallExpression)".
+  Needs the closure parameter contract, a different mechanism.
+- A nested function declaration's parameters: "nested func params must be Identifier-named with annotations", a
+  from-ast gap independent of JSDoc.
+- `/** @type {number} */ var t = 1; t = x;` in a function aborts ("assignment to t …"), exactly as without the tag:
+  from-ast types a local from its initializer. Not a JSDoc issue.
+- `String(o.p === undefined)` over a dynamic read aborts: that strict-equality producer's result is an unbranded
+  i32 ("String() of i32 operand is deferred").
+
 ## Slice U result (2026-11-22, branch `claude/7354-u` from `claude/7354-c2` 8bbebca651; C2 7debc3daf0, Perf5 204d6f575e, Perf6 4521fc831f merged)
 
 Abort bodies: a function whose body the path cannot lower gets the run-time abort as its body instead of refusing the

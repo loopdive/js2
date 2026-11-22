@@ -305,16 +305,23 @@ describe("#7354 Str2-c — dynamic + statements, order, loops and +=", () => {
   });
 });
 
+// (#7354 W) A script var's dynamic home read from a function is a dynamic `+` operand too (one binding predicate).
+it("adds a dynamic global and a literal, written from a function, as node does", async () => {
+  const source = 'var g; function w() { g = g + "x"; }\nw(); w();\n';
+  expect(await run(`${source}if (g !== "undefinedxx") throw 1;`)).toBe("returned");
+  expect(await run(`${source}if (g !== "undefinedx") throw 1;`)).toBe("threw");
+});
+
 describe("#7354 Str2-c — what dynamic + still refuses by name", () => {
   // The front end makes a `+` dynamic only over operands it knows are dynamic values (parameters, dynamic vars);
   // the result of a call to an untyped function is not one of them yet.
-  it.each([
-    ["the results of untyped calls", "function f(v) { return v; }\nvar s = f(1) + f(2);"],
-    ["a dynamic global and a literal, written from a function", 'var g; function w() { g = g + "x"; }\nw();'],
-  ])("refuses %s", async (_label, source) => {
-    // (#7354 U) Without abort bodies: under them the refusal in `w` would be w's abort body.
-    const result = await compile(source, options(), undefined, "refuse");
-    expect(result.success).toBe(false);
-    expect(messages(result).join("\n")).toContain("not provably both-number or string-concatenable");
-  });
+  it.each([["the results of untyped calls", "function f(v) { return v; }\nvar s = f(1) + f(2);"]])(
+    "refuses %s",
+    async (_label, source) => {
+      // (#7354 U) Probed without abort bodies, so the refusal keeps its name.
+      const result = await compile(source, options(), undefined, "refuse");
+      expect(result.success).toBe(false);
+      expect(messages(result).join("\n")).toContain("not provably both-number or string-concatenable");
+    },
+  );
 });
