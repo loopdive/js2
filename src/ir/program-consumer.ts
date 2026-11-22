@@ -171,7 +171,6 @@ interface AcceptanceRecord {
   readonly physical: PhysicalSetupPlan;
   /** Exact issued dependencies; never deep-clone the native-value plan. */
   readonly nativeStrings?: NativeStringValueReservationInput;
-  readonly nativeSnapshot?: unknown;
   readonly nativeNumberFormat?: AcceptedNativeNumberFormat;
   readonly sourceClosures?: NativeSourceClosureRequirements;
   readonly nativeInvocation?: NativeInvocationRequirements;
@@ -394,7 +393,7 @@ export function acceptPreparedIrProgram(
     accepted,
     Object.freeze({
       physical: physical.plan,
-      ...(nativeStrings ? { nativeStrings, nativeSnapshot: freezePreparedIrValue(nativeStrings.demands) } : {}),
+      ...(nativeStrings ? { nativeStrings } : {}),
       ...(nativeNumberFormat ? { nativeNumberFormat } : {}),
       ...(sourceClosures ? { sourceClosures } : {}),
       ...(nativeInvocation ? { nativeInvocation } : {}),
@@ -556,15 +555,6 @@ function prepareNativeEmission(accepted: AcceptedPreparedIrProgram, plan: Physic
       preparedIrDataMismatch(description, plan.sourceClosures) !== undefined
     )
       emissionFailed("source closure input differs from its accepted physical plan");
-    const current = planPhysicalSetup(
-      program,
-      accepted.options,
-      runtime,
-      record.nativeStrings,
-      record.nativeNumberFormat,
-    );
-    if (current.kind !== "planned" || preparedIrDataMismatch(current.plan, plan) !== undefined)
-      emissionFailed("source closure physical plan is no longer current");
   }
   if (Boolean(record.nativeNumberFormat) !== Boolean(plan.nativeNumberFormat))
     emissionFailed("formatter acceptance/physical plan mismatch");
@@ -586,8 +576,6 @@ function prepareNativeEmission(accepted: AcceptedPreparedIrProgram, plan: Physic
   if (record.nativeStrings) {
     if (record.nativeStrings.demands.program !== program || record.nativeStrings.demands.projection !== runtime)
       emissionFailed("native demands belong to another program/projection");
-    if (preparedIrDataMismatch(record.nativeStrings.demands, record.nativeSnapshot) !== undefined)
-      emissionFailed("native demands changed after acceptance");
     if (record.nativeStrings.valueRequirements)
       assertNativeValueResourcePlanFor(record.nativeStrings.valueRequirements, program, runtime, "native-string");
   }
@@ -624,17 +612,6 @@ function prepareNativeEmission(accepted: AcceptedPreparedIrProgram, plan: Physic
     );
     if (preparedIrDataMismatch(fresh, plan.nativeNumberFormat.resources) !== undefined)
       emissionFailed("formatter resources or scratch join changed");
-  }
-  if (plan.asyncFrames || plan.hostNumberBoundary) {
-    const current = planPhysicalSetup(
-      program,
-      accepted.options,
-      runtime,
-      record.nativeStrings,
-      record.nativeNumberFormat,
-    );
-    if (current.kind !== "planned" || preparedIrDataMismatch(current.plan, plan) !== undefined)
-      emissionFailed("async physical plan is no longer current");
   }
   let abi: ProgramAbiMap | undefined;
   if (native || plan.asyncFrames || plan.hostNumberBoundary) {
