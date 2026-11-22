@@ -5505,6 +5505,194 @@ deleted, not updated (#7380); the catalog's native rows are asserted by identity
 - Node 25 (not installed); no legacy `try` was hand-built.
 - The m-sweep, o/o2/o4, str*, ty, t, d1, vg, p, x, f2, c2-constructors suites and the full 3518/3526 pin suites.
 
+## Slice T plan (2026-11-22, branch `claude/7354-t` from `claude/7354-w` `9e2e91c2d0`)
+
+Top-level shapes the Prepared path refuses, measured on the 411-row sample (U+W tally 31/4/376). Each class was
+reproduced with its rows (driver: shim + `assert.js` + `sta.js` + includes + body through the strict entry with the
+runner's options) and minimised. "Next" is what the row meets with the fix applied locally (uncommitted probe).
+
+| # | class (rows) | cause | next with the fix |
+|---|---|---|---|
+| 1 | `'+' … (string/number)` (14 of 19) | the Prepared resolver answers no `supportsBackendCapability`, so `additiveOperandsProvable` sees `numberToString: false` and refuses every string + number, also typed (`var z = 2; "a" + z`; in a function it is an abort) | 9 rows run to the end (`returned`); 5 meet `new Object/Number/Boolean/String` (O1) |
+| 1' | `'+' … (string/unprovable)` (5) | the operand is `new RegExp(…)` | RegExp — dropped |
+| 2 | `only direct calls supported` (12) | a callee that is no identifier or member (`(function(){…})()`, `function(){…}()`, `w()(1)`) is refused; F2's call through a value exists but only for bindings | 4 run (`do-while`/`while` A14_T2, 10.4.3-1-12gs/-43gs); 3 annexB function-code rows abort at run time (a function declaration in a `switch` inside the IIFE); 5 meet built-ins (`apply`, `bind`, `Object.defineProperty`, a JSDoc-typed call) |
+| 3 | `direct call to "isNaN"/"parseInt" has no exact AST-site plan` (7) | the ambient-global-function admission needs a lane capability and a lib-only binding test; the Prepared resolver answers neither | `isNaN(null * undefined)` (1) and `isNaN(x)` over a dynamic home (1) can run; 4 meet `new Boolean/Number/String` or `Number.NaN`; `parseInt` meets `new String` |
+| 4 | `unsupported body statement FunctionDeclaration` (6) | Annex B.3.3 function in a block / `case` / `if` clause at script level | 2–3 (`switch-case-global-update`, `…existing-block-fn-update`, `…skip-early-err`); the three `existing-var-update` rows then meet a `function f` beside `var f` (H's repeated-binding refusal) |
+| — | `module-init … nested var` (22) | all 22 are `for (var p in o)` heads over objects from `Object.defineProperty/create`, `String.prototype.*` | for-in is lane O5 (#7377) and the objects are O1 — **dropped** |
+| — | `assignment to undeclared identifier` (4) | sloppy implicit global / ReferenceError / non-writable `NaN = true` | needs the global object and a catchable ReferenceError — **dropped** |
+| — | `compound assign RHS … (got string)` (2) | `x ^= "1"` | both rows then meet `new String/Boolean` — **dropped** |
+
+### Cause 1 — string + number on the Prepared lane
+JS: `"a" + n` is ToString(n) concatenated (§13.15.3). The formatter is already admitted on standalone (Str2-c), and
+templates/`String(n)` already reach it (`retargetNumberToString`). Fix: the Prepared source resolver answers the lane
+capability `number-to-string` on wasmgc standalone, exactly where the formatter's support batch exists
+(`prepare-number-format.ts`); one answer in `prepareSourceBuiltinResolvers` (`program-source-units.ts`), no other
+capability. Reuses: `additiveOperandsProvable`, the existing concat lowering, the formatter. Must NOT: answer other
+capabilities (regexp, JSON, object statics) the Prepared presentation does not bind. Acceptance: string + number /
+boolean / string in each position (top level, function, value, condition, `+=`, unused with a throwing operand), NaN,
+±0, ±Infinity, 1e21, 0.1 — node's string, wrong twin throws; `+` over a dynamic home unchanged; gc target unchanged
+(refuses as before). Quality: one line, no new predicate.
+
+### Cause 2 — a call whose callee is not a Reference
+JS: `(function(){…})()`, `f()()`, `(0, g)()`, `(c ? a : b)()` evaluate the callee to a value and call it with
+`this` = undefined (§13.3.6.1: not a Reference → thisValue undefined); member callees keep their receiver, and
+`(o.m)()` is still a Reference (parentheses do not drop it). Fix: on the Prepared lane (`createsFunctionObjects`) a
+callee that, outer parentheses skipped, is neither an identifier nor a member access is F2's `lowerBindingCall`
+(callee first, then arguments, then the dispatcher's IsCallable TypeError). The predicate goes beside
+`lowerBindingCall` in `function-object-lowering.ts`; from-ast gets one call and stays at its size (something moves
+out). Must NOT: route a parenthesized member access there (wrong `this`); change the ordinary pipeline (gated on the
+lane). Acceptance: IIFE / named function expression / unparenthesized / call result / comma / conditional callee,
+strict `typeof this`, argument padding and dropping, argument order, the not-callable TypeError caught by `try`,
+the checker-typed result used in `+`, `*`, comparisons, conditions, `typeof`; `(o.m)()` keeps its receiver; wrong
+twins. Quality: one predicate, no second call path.
+
+### Cause 3 — `isNaN(v)` (the lead confirmed it is this slice's: O1 covers only the four `Object` statics)
+JS: `isNaN(v)` is `ToNumber(v)` then NaN test (§19.2.3). Fix: `isNaN` joins the Prepared conversion plans
+(`prepareConversionResolvers`, the `String`/`Number` direct-call proof with its rebinding refusals); the lowering is
+`Number(v)`'s (`lowerPreparedNumberCall`: first argument, extras evaluated, any carrier through
+`js.number.from-value`) then `f64.ne` with itself. `isNaN()` with no argument stays refused. Must NOT: answer the
+generic `native-global-function-call` capability (that would admit `parseInt`/`escape` shapes this path cannot
+bind). Acceptance: numbers incl. NaN/±0/±Infinity, booleans, undefined, null, strings ("", " 12 ", "x"), dynamic
+homes, extra arguments with effects; a script `function isNaN` / `isNaN = …` keeps its refusal; wrong twins.
+
+### Cause 4 — Annex B.3.3 block function at script level (DEFERRED by the lead, 2026-11-22; sized L, 6 rows, 2–3 would run)
+JS (sloppy): the block binding is initialized at block entry; when the declaration is evaluated its value is copied
+to a var binding `f` (created undefined at script start) unless replacing it with `var f` would be an early error
+(`let f` at top level → no var binding); strict: block-scoped only. Fix sketch: a block-level declaration whose name
+is not read or written inside its own block lowers to "store the closure into `f`'s dynamic script home" at the
+declaration's position; the name joins the script var homes (`irOwnedScriptVarHome`). Any reference inside the
+block, strict code, or a lexical top-level name of the same name refuses by name. Estimate L; not started unless
+1–3 land with budget left. Lead decision: not in this slice.
+
+### Order and gates
+1 → 2 → 3 (approved); 4 deferred. Each cause one commit with its
+`tests/issue-7354-t2-*.test.ts` file, pushed. Proof per the brief: node agreement + wrong twins, ≥150 probes base vs
+head, ordinary bytes 20 files × 2 targets, `check:prepared-bytes`, the sample through the real runner with mutated
+twins for every new pass, all gates.
+
+## Slice T result (2026-11-22, branch `claude/7354-t` from `claude/7354-w` `9e2e91c2d0`)
+
+Causes 1–3 built as planned; cause 4 deferred by the lead.
+
+- **1, string + number** (`5e1182f267`). `prepareSourceBuiltinResolvers` (`program-source-units.ts`) answers the one
+  lane capability `number-to-string` on wasmgc standalone; every other capability stays unanswered.
+- **2, a callee that is no Reference** (`cd322edd40`, `07d3134763`). `callsNonReference` beside `lowerBindingCall`
+  (`function-object-lowering.ts`): on the Prepared lane a callee that, outer parentheses and TS wrappers skipped
+  (the shared `skipOuterExpressions`), is neither an identifier nor a property/element access is F2's call through a
+  value with `this` undefined. No existing "is this a Reference" predicate was found (grep). `(o.m)()` and
+  `(o["m"])()` stay refused by name. Sloppy `this` inside such a callee is the run-time abort (C2's), not undefined.
+- **3, isNaN** (`73e66c0c69`). `isNaN` joins the conversion plans (`prepareConversionResolvers`, the `String` proof);
+  from-ast lowers it as `Number(v)`'s conversion (`lowerPreparedNumberCall`, now with the ToNumber of no argument as
+  a parameter: `isNaN()` is true) and `emitIsNaN`, now shared with the ordinary ambient arm. Two things the plan did
+  not foresee: (a) the flow rule refused the dynamic argument (lib `isNaN(number: number)`), so `legalize` takes
+  `converts` (an admitted call converts its own arguments; one call site passes the plan); (b) the Prepared lane
+  binds no `js.number.from-value`, so a dynamic operand of `Number(v)` was a physical-plan refusal — on the Prepared
+  lane (`createsFunctionObjects`) it is now the legalized carrier ToNumber (`dyn.to_number`). `Number(v)` of a
+  dynamic value therefore runs too (tested). `isNaN` joins `PREPARED_PROVIDED_GLOBALS`: `typeof isNaN` refuses by
+  name. `parseInt` is not done: it needs a Prepared-bound native scanner provider (a census admission like
+  Str2-c's formatter), not the conversion mechanism.
+- from-ast.ts ends at its base size (17357; comment reflows pay for the three calls); program-source.ts untouched.
+
+| test file (each alone) | tests | exit |
+|---|---|---|
+| issue-7354-t2-string-number-add (new) | 7 | 0 (6 fail on base) |
+| issue-7354-t2-non-reference-callee (new) | 8 | 0 |
+| issue-7354-t2-isnan (new) | 9 | 0 |
+| issue-7363-prepared-eval-refusal (changed: the named IIFE now runs; node agreement + wrong twin) | 91 | 0 |
+| all 52 other issue-7354-* files, 7331, prepared-entry/-runtime, 7188 (batched, 1 fork) | all | 0 |
+
+- **Probes**: 202 (3 causes × top / function / argument / condition / loop / statement positions; runner options),
+  base → head: right 0 → 154, refused 152 → 42, abort 50 → 6. Moves: refused→right 108, abort→right 46,
+  refused→abort 2. 0 wrong, 0 invalid Wasm, 0 exceptions, nothing right became anything else.
+- **Ordinary pipeline**: 20 test262 files + 50 probes × default + standalone byte-identical. `check:prepared-bytes`:
+  all 804 rows identical to the base.
+- **Sample** (411 rows, real runner, default settings): 31/4/376 → **46 / 8 / 357**. New passes (15), each with a
+  mutated twin (last `!==` flipped) that FAILS through the same runner (15/15): compound-assignment
+  S11.13.2_A2.1_T1.6, A3.2_T9, A3.2_T10, A3.2_T11; do-while S12.6.1_A14_T2; while S12.6.2_A14_T2; for S12.6.3_A12.1_T2;
+  line-terminators between-tokens-cr; function-code 10.4.3-1-12gs, 10.4.3-1-43gs; unsigned-right-shift
+  S11.7.3_A5.1_T1; prefix-increment S11.4.4_A3_T4; multiplication S11.5.1_A3_T1.4; subtraction S11.6.2_A2.3_T1;
+  white-space S7.2_A4.4_T2. New fails (4, run-time aborts): three annexB function-code rows (a function declaration
+  in a `switch` inside the IIFE) and toLocaleLowerCase S15.5.4.17_A1_T5. Top errors: 73 `formatIdentityFreeValue`,
+  44 `Array`, 37 `Object.defineProperty`, 22 nested var (for-in), 17 `Object`.
+- Gates: typecheck, LOC and func budget (merge base and `LOC_GATE_BASE` = main `bbda75a4c4`), coercion sites,
+  oracle ratchet, dead exports, import cycles, boundaries inventory — all exit 0.
+
+**Found, not fixed (pre-existing, wrong value).** `typeof parseInt + typeof Math + typeof Object` is
+`"undefinedundefinedundefined"` on the Prepared path (node: `functionobjectfunction`): `absentGlobal`
+(`source-dynamic-contracts.ts`) takes every lib global outside `PREPARED_PROVIDED_GLOBALS` for an absent one.
+
+**Not verified.** Node 25 (not installed; local Node 22). Mutation runs beyond the guards the tests kill by
+construction (the capability answer, the member exclusions, `absent`, `converts`, the carrier ToNumber arm, the
+`isNaN` provided-global entry each have a test that fails without them; the lane gate of `callsNonReference` and of
+the carrier arm is covered only by the ordinary-bytes comparison).
+
+### T follow-up: `typeof` of a standard global (lead request, 2026-11-22)
+
+- **Fixed the wrong value above.** `absentGlobal` (`source-dynamic-contracts.ts`) now calls a name absent only when
+  the checker resolves it to no symbol at all, neither the program's nor the loaded TypeScript lib's. The lib stands
+  in for the list of standard globals but is not exactly that list (known limits below). `PREPARED_PROVIDED_GLOBALS`
+  is gone; the new rule covers it.
+  - `typeof` of `parseInt`, `Math`, `Object`, `JSON`, `globalThis`, every Error subclass, … refuses by name at top
+    level and aborts inside a function.
+  - `typeof undefined` / `NaN` / `Infinity`, an undeclared name, and a program `var` named like a global all give
+    node's answer.
+  - A script `function parseInt` still refuses, as it did before this change.
+  - `globalThis` needed the symbol test: the checker resolves it to a symbol with no declarations.
+- **Consequence in the prelude.** `formatIdentityFreeValue` (assert.js:27, `typeof JSON`) now gets the abort body.
+  - A failing assertion therefore ends in that abort instead of a Test262Error. It is still a fail.
+  - Before, the fold picked the `'"' + value + '"'` arm, which is not node's branch.
+- **Pins updated.** Ty: the seven "absent global" rows now use an undeclared name, and every name in the ambient
+  table refuses. U prelude: the abort table and the wrong-value outcome. M1 D35: the `typeof JSON` arm is dropped.
+  C2, O2b, O4: the guard programs name `Symbol`/`Object` without a `typeof` at top level.
+- **Tests.** `tests/issue-7354-t2-typeof-standard-globals.test.ts` (26). All issue-7354 files, 7363, 7331, 7343,
+  7361, prepared entry/runtime and 7188 pass.
+- **Sample.** All 46 passes (the 31 base passes plus slice T's 15) re-run through the runner: 46/46 still pass, so no
+  false pass was found. Five of them contain `typeof`.
+- Merged `claude/7354-w` `e6931fc15e`. Gates (also with `LOC_GATE_BASE` = main `bbda75a4c4`) exit 0.
+
+### T review round (PR 7398)
+
+- **Write to a named function expression's own name** (must-fix). `(function nm(){ nm = 1; })();` threw
+  `assignment to non-slot binding "nm" — mutation pre-pass should have detected it` out of `compile()`. The defect
+  predates T: `var f = function nm(){ nm = 1; }; f();` threw the same on the base. The name is an immutable binding
+  (§9.1.1.1.5): sloppy code ignores the write, strict code throws a TypeError. Node's answer would need the strict
+  TypeError on this lane, so the write is refused by name instead (`write to the function expression name "nm"`),
+  which is the function's abort body under the test262 entry. The three non-slot write sites (assignment, compound
+  assignment, increment) share one `refuseNonSlotWrite`; any other non-slot write keeps the invariant with its old
+  text. Tests: `tests/issue-7354-t2-function-expression-name.test.ts`, covering both routes, sloppy and strict,
+  `=`/`+=`/`++`, and a read of the name after the write. Ordinary pipeline: byte-identical on the 20 test262 files,
+  25 probes and the three own-name programs, × default and standalone.
+- **from-ast budget.** The seven comment reflows are reverted. T's growth is paid for by moving code:
+  - `moduleInitContainsNestedVar` moves to `src/shared/var-declaration-lists.ts`, beside `isModuleInitVarList`.
+  - `super(args)` becomes `lowerSuperConstructorCall`.
+  - The Prepared element-access call and the non-Reference callee call are one `lowerPreparedValueCallee` in
+    `function-object-lowering.ts`.
+  - `from-ast.ts` ends at 17355 lines (base 17357). `lowerCall` is within its function budget. The #3000 IR class
+    tests fail the same 8 host-lane rows on the base and on the head.
+- **M1 D35** uses assert.js verbatim (checked against `test262/harness/assert.js`). `isNegativeZero`/`isPrimitive`
+  keep node agreement; `formatIdentityFreeValue` is asserted to be the run-time abort.
+
+**Found, not fixed: a runtime-negative test cannot pass on the Prepared path.** Control row (frontmatter `negative:
+phase: runtime, type: Test262Error`, body `throw new Test262Error("x");`) through the runner: `fail`,
+`TypeError (null/undefined access): <description>`.
+- **Cause.** The program compiles and its module-init throws a `WebAssembly.Exception`. But a Prepared artifact
+  exports neither `__exn_tag` nor `__tag` (checked on the head, on W `e6931fc15e` and on main `bbda75a4c4`, from
+  `git archive` copies). So the worker's `extractWasmExceptionMessage` (`scripts/test262-worker.mjs`) cannot read the
+  payload and falls back to its generic label "TypeError (null/undefined access)".
+- **Verdict.** `originalHarnessExceptionMatches` (`scripts/test262-runtime-verdict.mjs`) compares the payload's
+  `name` (unreadable) or the rendered text against `negative.type`. The text does not contain "Test262Error", so the
+  row fails. This predates T.
+- **Sample.** All 14 negative passes are `phase: parse`; no runtime negative passes today, so no sample row was
+  affected.
+
+**Known limits (pre-existing, not ES5, no sample row affected; not fixed here).** The checker's lib is the stand-in
+list of standard globals, and it is not exactly that list:
+- A standard global the loaded lib does not declare (ES2025 additions) still answers "undefined":
+  `var out = typeof Iterator;` gives `"undefined"`; node gives `"function"`.
+- A DOM name the lib does declare now refuses by name instead of answering "undefined" as node does:
+  `var out = typeof window + typeof name;` → `identifier "window" is not in scope in <module-init>`. Likewise
+  `print`, `console`.
+
 ## Slice P1 plan (2026-11-22, branch `claude/7354-p1` from `claude/7354-o1` 4fc230872a)
 
 `Object.prototype.hasOwnProperty`, `propertyIsEnumerable`, `isPrototypeOf` on the Prepared path.

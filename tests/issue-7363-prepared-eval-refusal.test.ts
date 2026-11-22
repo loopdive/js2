@@ -13,6 +13,7 @@ import { irRuntimeFuncRef } from "../src/ir/core/callable-bindings.js";
 import { compile, type Test262CompileOptions } from "../src/test262/test262-prepared-entry.js";
 import { ts } from "../src/ts-api.js";
 import { createTestIrFunctionIdentityFactory } from "./helpers/ir-identities.js";
+import { agreesWithNode } from "./helpers/prepared-node-agreement.js";
 
 const options = {
   wholeProgram: Object.freeze({ kind: "prepared-program-required" as const, version: 1 as const }),
@@ -100,13 +101,13 @@ describe("#7363 slice 1 — an eval statement on the Prepared path refuses by na
     ["a block const", '{ const eval = 1; eval("1"); }', ordinaryCall("<module-init>")],
     ["a loop head let", 'function f() { for (let eval = 0; eval < 1; eval++) { eval("1"); } }', ordinaryCall("f")],
     ["a switch let", 'function f() { switch (1) { case 1: let eval = 1; default: eval("1"); } }', ordinaryCall("f")],
-    [
-      "a named function expression",
-      '(function eval() { eval("1"); })();',
-      "ir/from-ast: only direct calls supported in Phase 2 (<module-init>)",
-    ],
   ])("does not take %s for the global eval", async (_label, source, gap) => {
     expect(await gaps(source)).toEqual([gap]);
+  });
+
+  // (#7354 T) The IIFE used to refuse as a call through a value; now it runs, and `eval` is the expression itself.
+  it("does not take a named function expression for the global eval", async () => {
+    await agreesWithNode("var d = 0;\n(function eval(x) { d = d + x; if (d < 3) eval(1); })(1);\nvar out = 'd' + d;");
   });
 
   // `class eval` is a SyntaxError (class code is strict), which the front end reports before any lowering.

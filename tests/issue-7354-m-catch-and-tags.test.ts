@@ -6,9 +6,34 @@
 // (tests/helpers/prepared-node-agreement.ts). A sub-check whose receiver may be nullish runs in a `catch` that does
 // not read its binding: such a catch catches the synthesized TypeError (one exception tag).
 import { afterEach, describe, it, vi } from "vitest";
-import { agreesWithNode } from "./helpers/prepared-node-agreement.js";
+import { abortsAtRunTime, agreesWithNode } from "./helpers/prepared-node-agreement.js";
 
 afterEach(() => vi.restoreAllMocks());
+
+// assert.js's helpers, verbatim (test262/harness/assert.js).
+const D35_HELPERS = `function isNegativeZero(value) {
+  return value === 0 && 1 / value === -Infinity;
+}
+
+function isPrimitive(value) {
+  return !value || (typeof value !== 'object' && typeof value !== 'function');
+}
+
+function formatIdentityFreeValue(value) {
+  switch (value === null ? 'null' : typeof value) {
+    case 'string':
+      return typeof JSON !== "undefined" ? JSON.stringify(value) : '"' + value + '"';
+    case 'bigint':
+      return String(value) + "n";
+    case 'number':
+      if (isNegativeZero(value)) return '-0';
+      // falls through
+    case 'boolean':
+    case 'undefined':
+    case 'null':
+      return String(value);
+  }
+}`;
 
 const PROGRAMS: readonly (readonly [string, string])[] = [
   [
@@ -32,33 +57,9 @@ var o = {};
 var out = g(o) ? "yes" : "no";`,
   ],
   [
-    "D35: assert.js's isNegativeZero, isPrimitive, formatIdentityFreeValue verbatim",
-    `function isNegativeZero(value) {
-  return value === 0 && 1 / value === -Infinity;
-}
-
-function isPrimitive(value) {
-  return !value || (typeof value !== 'object' && typeof value !== 'function');
-}
-
-function formatIdentityFreeValue(value) {
-  switch (value === null ? 'null' : typeof value) {
-    case 'string':
-      return typeof JSON !== "undefined" ? JSON.stringify(value) : '"' + value + '"';
-    case 'bigint':
-      return String(value) + "n";
-    case 'number':
-      if (isNegativeZero(value)) return '-0';
-      // falls through
-    case 'boolean':
-    case 'undefined':
-    case 'null':
-      return String(value);
-  }
-}
-var out = String(formatIdentityFreeValue(1)) + String(formatIdentityFreeValue("s")) + String(formatIdentityFreeValue(null)) +
-  String(formatIdentityFreeValue(-0)) + String(formatIdentityFreeValue({})) + String(isPrimitive({})) + String(isPrimitive(1)) +
-  String(isNegativeZero(-0));`,
+    "D35: assert.js's isNegativeZero and isPrimitive verbatim",
+    `${D35_HELPERS}
+var out = String(isPrimitive({})) + String(isPrimitive(1)) + String(isNegativeZero(-0)) + String(isNegativeZero(0));`,
   ],
   [
     "E37, C1: Object.prototype.toString.call of each kind, String(v) beside a primitive member read",
@@ -85,4 +86,12 @@ out = out + String(o.m) + String(o.w);`,
 
 describe("#7354 M1 — nullish receivers, catches, tags and positions", () => {
   it.each(PROGRAMS)("%s", async (_name, body) => agreesWithNode(body), 300_000);
+
+  // (#7354 T) `typeof JSON` refuses by name (JSON is a standard global this path does not provide), so
+  // formatIdentityFreeValue's body is the abort: a call of it ends the run where node returns.
+  it(
+    "D35: assert.js's formatIdentityFreeValue verbatim is the abort",
+    async () => abortsAtRunTime(`${D35_HELPERS}\nvar out = String(formatIdentityFreeValue(1));`),
+    300_000,
+  );
 });

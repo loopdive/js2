@@ -66,9 +66,10 @@ async function run(source: string): Promise<"returned" | "threw"> {
 const PROGRAMS: readonly { name: string; source: string; answers: [string, string] }[] = [
   {
     // `typeof Object` made this program refuse under O's old static plainness rule (removed by M1, C1).
+    // (#7354 T) The name sits in an uncalled function: `typeof Object` now refuses by name, so that function aborts.
     name: "ToString, `+` and ToNumber of a plain object in a program that names 'Object'",
     source:
-      "function f(a) { return 1 / a; } var o = { a: 1 }; var t = typeof Object;" +
+      "function f(a) { return 1 / a; } var o = { a: 1 }; function n() { return typeof Object; }" +
       " if ('' + o !== @A) throw 1; if (o + '!' !== @A + '!') throw 2; if ((+o === +o) !== false) throw 3;" +
       " if ((f(o) === f(o)) !== false) throw 4;",
     answers: ["'[object Object]'", "'[object]'"],
@@ -138,8 +139,9 @@ describe("#7354 O2b — OrdinaryToPrimitive of an ordinary object", () => {
     expect(await run(source.replace("r !==", "r ==="))).toBe("threw");
   }, 180_000);
 
+  // (#7354 T) The name sits in an uncalled function: `typeof Symbol` now refuses by name, so that function aborts.
   it("refuses by name in a program that names 'Symbol'", async () => {
-    const result = await compile("var o = { a: 1 }; var s = typeof Symbol; var t = '' + o;", options());
+    const result = await compile("var o = { a: 1 }; function n() { return typeof Symbol; } var t = '' + o;", options());
     expect(result.success).toBe(false);
     expect(messages(result).join("\n")).toContain("ToPrimitive of an object in a program that names 'Symbol'");
   });

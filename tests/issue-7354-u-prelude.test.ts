@@ -48,6 +48,8 @@ describe.skipIf(!TEST262)("#7354 U — the real prelude", () => {
       expect(await run("assert.sameValue(1, 1);\n")).toEqual({
         outcome: "returned",
         table: [
+          // (#7354 T) `typeof JSON` refuses by name: JSON is a standard global this path does not provide.
+          'formatIdentityFreeValue: ir/from-ast: identifier "JSON" is not in scope in formatIdentityFreeValue',
           "compareArray: dynamic operation dyn.member_get with a computed key has no Prepared intrinsic",
           '<module-init>__closure_10: ir/from-ast: identifier "Array" is not in scope in <module-init>__closure_10',
         ],
@@ -56,9 +58,11 @@ describe.skipIf(!TEST262)("#7354 U — the real prelude", () => {
     SLOW,
   );
 
+  // (#7354 T) A failed assertion formats its message with formatIdentityFreeValue, whose body is the abort: the run
+  // ends there, uncatchably, instead of with Test262Error.
   it(
-    "a wrong value is a JavaScript throw",
-    async () => expect((await run("assert.sameValue(1, 2);\n")).outcome).toBe("threw"),
+    "a wrong value ends the run in the message formatter's abort",
+    async () => expect((await run("assert.sameValue(1, 2);\n")).outcome).toBe("trap in formatIdentityFreeValue"),
     SLOW,
   );
 
