@@ -2,7 +2,7 @@
 import { PreparedIrProgramInvariantError } from "../../../ir/program/errors.js";
 import { freezePreparedIrValue, preparedIrDataMismatch } from "../../../ir/program/data.js";
 import {
-  assertNativePromiseSourceCensusCurrent,
+  assertNativePromiseSourceCensusIssued,
   type NativePromiseSourceCensus,
   type CarrierEvidence,
   type PromiseLookupFacts,
@@ -100,7 +100,7 @@ export function observeNativeStringValueProducer(
   source: NativePromiseSourceCensus,
   input: NativeStringValueReservationInput,
 ): NativeCarrierProducerObservation {
-  assertNativePromiseSourceCensusCurrent(source);
+  assertNativePromiseSourceCensusIssued(source);
   const { program, projection, options } = source;
   const demands = input.demands,
     fresh = source.demands;
