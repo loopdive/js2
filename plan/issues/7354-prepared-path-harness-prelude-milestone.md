@@ -4644,3 +4644,118 @@ brand dispatch: arrays, #7352), 6 `verifyProperty … is written`, 14 pass, 5 ot
 - Review round 1 (lead): findings 1-5 fixed — explicit dispatcher-arm key; one `packedCallable` helper; the binding
   call's doc names both lanes; the lane picks the call before any not-callable text is built; one lane predicate
   (`createsFunctionObjects`, read through the host).
+
+## Slice C2 result (2026-11-22, branch `claude/7354-c2` from `claude/7354-f2` cebb122ea1; F2 review fixes 1de4a6f2e7 and `main` d6a09c082d merged)
+
+`new`, `this` and `instanceof` on plain functions; C2-D1 first.
+
+### Built
+
+- **C2-D1** (`dynamic-member-access.ts`): an access refuses at compile time only when no kind the receiver may hold can
+  answer; each lacking arm is the run-time abort (`js.value.unsupported`, shared as `abort` in `dynamic-value-chains.ts`).
+  An object's read of an Object.prototype data key is `js.object.has ? get : abort`; `__proto__` keeps its refusal
+  where no kind answers. An intrinsic is pure, so the abort's text is the arm's answer (an unused abort was dropped as
+  dead code); a write's unread answer became the carrier for that reason.
+- **Realm rows** (`native-source-objects.ts`, js.object family, no `js.function.*`): `js.object.is-constructor` (reads the
+  `hasConstruct` bit `init-function` now records in a constructor's bag: the one source of truth), `js.object.inherits`
+  (the OrdinaryHasInstance walk over ordinary links), a row for the declared `js.object.create-with-prototype`.
+- **`js.closure.receiver`**: the invocation substrate's `__current_this`, beside `js.closure.undefined`;
+  `closureInvocationKind` is now the one reading of the family's spellings (requirements, callables, string values).
+- **Legalization** (`dynamic-function-operations.ts`, new, three one-line `expand` cases): `this` (strict: the receiver;
+  sloppy: object kinds as is, else the abort — `IS_OBJECT`), `new` (function-kind test → is-constructor → TypeError
+  `Value is not a constructor` after the arguments; one Get of `prototype`; link by the new row `ORDINARY_CHAIN` (an
+  ordinary object) / `IS_OBJECT` (another object: abort) / else `create-default`; F2's `js.closure.call:N(obj, C, …)`;
+  an `IS_OBJECT` result replaces the object), `instanceof` (callable right operand else TypeError; a non-object left
+  is false before the Get; a non-object `prototype` is a TypeError; `ORDINARY_CHAIN` kinds walk, function/error answer
+  false by the M1 premise; a program naming `Symbol` refuses).
+- **Producer**: `programDynamicContracts(input, …).codeStrictness` yields `functionCodeStrict` and, for a function on the
+  native lane of a program that creates a function value and reads its own `this` (`readsAmbientThisGlobal`, moved to
+  `src/shared/body-references-own-this.ts`), `ambientThisStrict`; function expressions get both through
+  `closureCodeStrictness` (a closure's own strictness also fixes its member writes, which refused before). A direct call
+  of a `this`-binding declaration refuses (`a direct call of F installs no receiver for its 'this'`) in
+  `program-source-direct-calls.ts`, which now also takes the call-graph loop (offset). Where a closure binds its own
+  `this`, a call of a closure local goes through the dispatcher, and Fa's static closure value declines.
+- **from-ast**: `namesDynamicValue` gates `new` and `instanceof` (a dynamic local or a dynamic module home on the lane);
+  `lowerDynamicConstruct` / `lowerDynamicInstanceOf` moved to `function-object-lowering.ts`; `liftClosureBody` binds
+  `this` from one `thisStrict` option. from-ast 17388 → 17364 lines, program-source 1838 → 1835 (vs 1de4a6f2e7), no grant.
+- `new F` reads F as a value (`functionDeclarationsReadAsValues`), so F gets its declaration home. Before/after:
+  `function F(){} var o = new F();` `unknown class "F" in <module-init>` → runs; `function F(){ return this; } F();`
+  `'this' reference outside …` → `a direct call of F installs no receiver for its 'this'`; sta.js + `Test262Error('m')`
+  `instanceof RHS class "Test262Error" has no projected shape` → the direct-call refusal.
+
+### Differs from the plan
+
+- No `construct:N` realm functions / `constructArities` / `readsReceiver`: the legalization emits F2's dispatcher call,
+  which the planner picks up from the projection. No IR-level receiverless pass: the check is on the direct-call plans.
+- Local closure calls: the plan named only Fa's static call; a closure local's direct call also skips the dispatcher
+  (`function w(){ var f = function(){ 'use strict'; return this; }; return f(); }` answered the stale receiver): fixed
+  by the program-wide `closuresBindReceivers` rule.
+- `this` binds only where the program creates a function value: elsewhere nothing reaches the dispatcher, and a bound
+  `this` met physical gaps.
+
+### Proof
+
+| file | exit | tests |
+|---|---|---|
+| issue-7354-c2-constructors (new) | 0 | 19 |
+| issue-7354-c2-this (new) | 0 | 17 |
+| issue-7354-m-refusals + 3518-ordinary-object-callable-contracts | 0 | 93 |
+| issue-7354-m-prototype-premise + f1-function-kind | 0 | 24 |
+| issue-7354-o3-member-write + str-strings | 0 | 32 |
+| issue-7354-o4-member-read | 0 | 16 |
+| issue-7354-f0-dead-top-level-bindings | 0 | 88 |
+| issue-7354-fa-function-values + p-parameter-contracts | 0 | 44 + 26 |
+| (unmodified) f1b-declaration-values, f2-calls-through-values + f1b-function-objects, x-dynamic-throw + f1b-function-object-writes | 0 | 11, 18, 62 |
+
+Pins moved (step 1, C2-D1): m-refusals (M2 error constructor/stack/toString, B23/B24 wrapper keys, C6 `__proto__` on
+primitives → aborts; the M2 strict write → node agreement; Object.prototype data keys off an object → aborts, `__proto__`
+read/write stay refusals), m-prototype-premise (`v.__proto__`, `v.constructor` → aborts), o3 (writes beside a caught
+error → node agreement), o4 and str (a string var's `length`, `o.toString` → aborts), f1-function-kind (`v.__proto__ =`
+→ abort). Later: F0 (its refusing initializer reads `new.target`), Fa (`this` → abort), P (a call through a
+declaration's value runs; that row was red on the F2 base already).
+
+Sweep (`new`, `instanceof` left/right, `this` identity, `this.k` read/write, `.constructor`) × 9 values (declaration,
+expression, object, 1, "s", undefined, null, caught TypeError, instance) × sloppy/strict, each in a loop, unused and
+as a value: 126 programs, 108 node's answer, 18 the abort (`.constructor` of non-instances, writes to a caught error),
+0 wrong, 0 invalid, 0 exceptions. Regression set (F2's 109 + 71 + 68, a quarter of its 560-sweep, 110 C2/D probes = 502)
+on base and head: AGREE→AGREE 338, REF→REF 69, ABORT→ABORT 1, REF→AGREE 84, REF→ABORT 10; nothing that was right on
+the base is anything else.
+
+Mutations (each alone, probe run): killed — `ORDINARY_CHAIN` object/function/error rows, the any-kind rule, the object
+arm's `has`, the strict bit, the receiverless refusal, the `Symbol` refusal, the closure-call dispatcher rule, `new` as
+a value read, the no-function-kind construct shortcut, the function-prototype abort, init's `hasConstruct`, the
+non-object-prototype TypeError, the callable right-operand TypeError, both result arms of construct, a closure's code
+strictness. Survivors: is-constructor's bit read (no non-constructor function value is dispatchable today: methods and
+arrows carry typed signatures, refused by F2's dispatchability rule), the `instanceof` left-operand shortcut for a
+value of no object kind (equivalent: the chain answers false), Fa's static-closure decline (every probe meets the
+module-init local guard first).
+
+Bytes: ordinary pipeline, 22 test262 files (new, instanceof, this, function-code) × default + standalone: 44/44
+identical vs F2 1de4a6f2e7. `check:prepared-bytes` (804 rows) vs 1de4a6f2e7: 7 differ — 53, 74, 180, 581 (init body:
+the `hasConstruct` bit) and 46, 581 (the write chain's carrier answer), each run on base and head with the same
+outcome (plus a run variant of 46 and 581); 204 compiles and ends at the abort (was a refusal, C2-D1); 214 refuses by a
+later name (`js.closure.call:1 in a program that creates no function value`).
+
+Gates (bare, exit 0): typecheck, LOC and function budgets (also `LOC_GATE_BASE` = main d6a09c082d), coercion-sites,
+oracle-ratchet, dead-exports, import-cycles, compiler-boundaries `--mode inventory --base d6a09c082d`
+(`dynamic-function-operations.ts` classified clean ir-program; `body-references-own-this.ts` moved to src/shared).
+
+### Sample (411 rows, real prelude)
+
+| first gap | F2 base | C2 |
+|---|---|---|
+| `unknown class "Test262Error" in assert` | 272 | 0 |
+| `dyn.member_get with a computed key` (compareArray's `b[i]`, arrays #7352) | 0 | 271 (+2 behind a switch parse note) |
+| `a direct call of f1 installs no receiver for its 'this'` (10.4.3-1-29-s) | 0 | 1 |
+| `formatIdentityFreeValue … is written` | 73 | 73 (+1 parse note) |
+| `empty array 'failures' escapes …` | 41 | 41 |
+| `verifyProperty … is written` | 6 | 6 |
+| pass (all negatives) | 14 | 14 |
+
+No positive row passes. The step-past tally (behind `b[i]`) was not measured.
+
+### Not verified
+
+- Node 25 (not installed); no legacy exception instruction was hand-built (the dispatcher's own `try_table` guards).
+- The other m/o/str2/ty/t/h/d1/vg tests and r-provider-census after the merges; the 3518 runtime-provider suites.
+- The prelude's `assert.throws` verbatim (it stops at compareArray before `assert` can run).
