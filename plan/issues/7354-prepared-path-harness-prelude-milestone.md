@@ -5313,3 +5313,68 @@ Changed expectations, and why. Every one of these files goes through the test262
 - The policy-gate and U0 mutations were not re-run.
 - The full sweep with the policy off: half of it was run.
 - The 3518/3526 pin suites.
+
+## Slice T plan (2026-11-22, branch `claude/7354-t` from `claude/7354-w` `9e2e91c2d0`)
+
+Top-level shapes the Prepared path refuses, measured on the 411-row sample (U+W tally 31/4/376). Each class was
+reproduced with its rows (driver: shim + `assert.js` + `sta.js` + includes + body through the strict entry with the
+runner's options) and minimised. "Next" is what the row meets with the fix applied locally (uncommitted probe).
+
+| # | class (rows) | cause | next with the fix |
+|---|---|---|---|
+| 1 | `'+' … (string/number)` (14 of 19) | the Prepared resolver answers no `supportsBackendCapability`, so `additiveOperandsProvable` sees `numberToString: false` and refuses every string + number, also typed (`var z = 2; "a" + z`; in a function it is an abort) | 9 rows run to the end (`returned`); 5 meet `new Object/Number/Boolean/String` (O1) |
+| 1' | `'+' … (string/unprovable)` (5) | the operand is `new RegExp(…)` | RegExp — dropped |
+| 2 | `only direct calls supported` (12) | a callee that is no identifier or member (`(function(){…})()`, `function(){…}()`, `w()(1)`) is refused; F2's call through a value exists but only for bindings | 4 run (`do-while`/`while` A14_T2, 10.4.3-1-12gs/-43gs); 3 annexB function-code rows abort at run time (a function declaration in a `switch` inside the IIFE); 5 meet built-ins (`apply`, `bind`, `Object.defineProperty`, a JSDoc-typed call) |
+| 3 | `direct call to "isNaN"/"parseInt" has no exact AST-site plan` (7) | the ambient-global-function admission needs a lane capability and a lib-only binding test; the Prepared resolver answers neither | `isNaN(null * undefined)` (1) and `isNaN(x)` over a dynamic home (1) can run; 4 meet `new Boolean/Number/String` or `Number.NaN`; `parseInt` meets `new String` |
+| 4 | `unsupported body statement FunctionDeclaration` (6) | Annex B.3.3 function in a block / `case` / `if` clause at script level | 2–3 (`switch-case-global-update`, `…existing-block-fn-update`, `…skip-early-err`); the three `existing-var-update` rows then meet a `function f` beside `var f` (H's repeated-binding refusal) |
+| — | `module-init … nested var` (22) | all 22 are `for (var p in o)` heads over objects from `Object.defineProperty/create`, `String.prototype.*` | for-in is lane O5 (#7377) and the objects are O1 — **dropped** |
+| — | `assignment to undeclared identifier` (4) | sloppy implicit global / ReferenceError / non-writable `NaN = true` | needs the global object and a catchable ReferenceError — **dropped** |
+| — | `compound assign RHS … (got string)` (2) | `x ^= "1"` | both rows then meet `new String/Boolean` — **dropped** |
+
+### Cause 1 — string + number on the Prepared lane
+JS: `"a" + n` is ToString(n) concatenated (§13.15.3). The formatter is already admitted on standalone (Str2-c), and
+templates/`String(n)` already reach it (`retargetNumberToString`). Fix: the Prepared source resolver answers the lane
+capability `number-to-string` on wasmgc standalone, exactly where the formatter's support batch exists
+(`prepare-number-format.ts`); one answer in `prepareSourceBuiltinResolvers` (`program-source-units.ts`), no other
+capability. Reuses: `additiveOperandsProvable`, the existing concat lowering, the formatter. Must NOT: answer other
+capabilities (regexp, JSON, object statics) the Prepared presentation does not bind. Acceptance: string + number /
+boolean / string in each position (top level, function, value, condition, `+=`, unused with a throwing operand), NaN,
+±0, ±Infinity, 1e21, 0.1 — node's string, wrong twin throws; `+` over a dynamic home unchanged; gc target unchanged
+(refuses as before). Quality: one line, no new predicate.
+
+### Cause 2 — a call whose callee is not a Reference
+JS: `(function(){…})()`, `f()()`, `(0, g)()`, `(c ? a : b)()` evaluate the callee to a value and call it with
+`this` = undefined (§13.3.6.1: not a Reference → thisValue undefined); member callees keep their receiver, and
+`(o.m)()` is still a Reference (parentheses do not drop it). Fix: on the Prepared lane (`createsFunctionObjects`) a
+callee that, outer parentheses skipped, is neither an identifier nor a member access is F2's `lowerBindingCall`
+(callee first, then arguments, then the dispatcher's IsCallable TypeError). The predicate goes beside
+`lowerBindingCall` in `function-object-lowering.ts`; from-ast gets one call and stays at its size (something moves
+out). Must NOT: route a parenthesized member access there (wrong `this`); change the ordinary pipeline (gated on the
+lane). Acceptance: IIFE / named function expression / unparenthesized / call result / comma / conditional callee,
+strict `typeof this`, argument padding and dropping, argument order, the not-callable TypeError caught by `try`,
+the checker-typed result used in `+`, `*`, comparisons, conditions, `typeof`; `(o.m)()` keeps its receiver; wrong
+twins. Quality: one predicate, no second call path.
+
+### Cause 3 — `isNaN(v)` (to be confirmed with the lead: `isNaN` is a global function, O1 owns built-ins)
+JS: `isNaN(v)` is `ToNumber(v)` then NaN test (§19.2.3). Fix: `isNaN` joins the Prepared conversion plans
+(`prepareConversionResolvers`, the `String`/`Number` direct-call proof with its rebinding refusals); the lowering is
+`Number(v)`'s (`lowerPreparedNumberCall`: first argument, extras evaluated, any carrier through
+`js.number.from-value`) then `f64.ne` with itself. `isNaN()` with no argument stays refused. Must NOT: answer the
+generic `native-global-function-call` capability (that would admit `parseInt`/`escape` shapes this path cannot
+bind). Acceptance: numbers incl. NaN/±0/±Infinity, booleans, undefined, null, strings ("", " 12 ", "x"), dynamic
+homes, extra arguments with effects; a script `function isNaN` / `isNaN = …` keeps its refusal; wrong twins.
+
+### Cause 4 — Annex B.3.3 block function at script level (largest risk; last, may be cut)
+JS (sloppy): the block binding is initialized at block entry; when the declaration is evaluated its value is copied
+to a var binding `f` (created undefined at script start) unless replacing it with `var f` would be an early error
+(`let f` at top level → no var binding); strict: block-scoped only. Fix sketch: a block-level declaration whose name
+is not read or written inside its own block lowers to "store the closure into `f`'s dynamic script home" at the
+declaration's position; the name joins the script var homes (`irOwnedScriptVarHome`). Any reference inside the
+block, strict code, or a lexical top-level name of the same name refuses by name. Estimate L; not started unless
+1–3 land with budget left.
+
+### Order and gates
+1 → 2 → 3 (if the lead agrees it is mine) → 4 (optional). Each cause one commit with its
+`tests/issue-7354-t2-*.test.ts` file, pushed. Proof per the brief: node agreement + wrong twins, ≥150 probes base vs
+head, ordinary bytes 20 files × 2 targets, `check:prepared-bytes`, the sample through the real runner with mutated
+twins for every new pass, all gates.
