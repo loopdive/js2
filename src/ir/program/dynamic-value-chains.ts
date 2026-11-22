@@ -37,7 +37,7 @@ export const ERROR_FIELD = { message: 0, name: 1 } as const;
 
 /**
  * (#7354 Str2-c) The kind each value of `fn` is proven to hold: a box to the dynamic value proves its operand's, (F1)
- * the function-value projection its packed callable's, and
+ * the function-value projection its packed callable's, (F1b) a read of a declaration's home a function, and
  * the legalization records a concatenation's result as a string (`learn`). Any other value may hold every admitted
  * kind.
  */
@@ -57,7 +57,9 @@ export function knownKinds(
             ? carrierKindOf(i.value, types, definitions, i.toType.tag)
             : projected !== undefined
               ? carrierKindOf(projected, types, definitions)
-              : undefined;
+              : i.kind === "global.get"
+                ? carrierKindOf(i.result!, types, definitions)
+                : undefined;
         if (kind && kind !== "dynamic") known.set(i.result!, kind);
       });
   return {

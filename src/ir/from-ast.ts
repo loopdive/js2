@@ -180,6 +180,9 @@ import type {
 import { irFnctorShapeEquals } from "./fnctor-abi.js";
 import { emitNumberRemainder } from "./remainder-fast-path.js";
 import { lowerModuleInitStatements } from "./module-init-chunk-lowering.js";
+import { someReturnedValue } from "./function-returns.js";
+import { describeIrType } from "./describe-ir-type.js";
+import type { FunctionDeclarationValue } from "./function-declaration-values.js";
 import { sameIrGlobalBinding } from "./abi-bindings.js";
 import { HOST_CALLBACK_WRAP_CAPABILITY_RECORD } from "./runtime-host-capabilities.js";
 import {
@@ -907,6 +910,8 @@ export interface IrFromAstResolver extends PreparedAsyncFromAstResolver {
    * module declarations return undefined.
    */
   resolveModuleBinding?(node: ts.Identifier, writeValue?: ts.Expression): ModuleBindingGlobal | undefined;
+  /** (#7354 F1b) The function declarations a script's module-init makes as values (`function-declaration-values.ts`). */
+  moduleInitFunctionValues?(): readonly FunctionDeclarationValue[];
   /**
    * #3791, #7106 lever R — the host-free `.test` / `.exec` bridge, over the
    * in-module carrier helpers' canonical receiver-first externref ABI.
@@ -989,6 +994,8 @@ export interface IrFromAstResolver extends PreparedAsyncFromAstResolver {
   dynamicClosureSignature?(expression: ts.FunctionExpression): IrClosureSignature | undefined;
   /** (#7354 Fa) The script `var` holds its function-expression initializer from its declaration on. */
   staticFunctionValue?(declaration: ts.VariableDeclaration): boolean;
+  /** (#7354 F1b) Closures are function values with properties (`function-object-lowering.ts`). */
+  createsFunctionObjects?(): boolean;
   /**
    * (#7106 Stage 4) True when this lane lowers `recv.<method>(…arity args)` on
    * a dynamic receiver through the `__ir_dyn_mcall_<m>_<n>` brand-dispatch
@@ -4833,33 +4840,6 @@ const nativeNumericDomains = (cx: LowerCtx): boolean => cx.resolver?.nativeNumer
 const laneNumericSlot = (type: IrType, cx: LowerCtx): boolean =>
   nativeNumericDomains(cx) ? isNumericIrSlot(type) : asVal(type)?.kind === "f64";
 
-/** Short debug string for IrType, used in error messages. */
-function describeIrType(t: IrType): string {
-  if (t.kind === "support-ref") return `support-ref<${t.ref.binding.bindingId}>${t.nullable ? "?" : ""}`;
-  if (t.kind === "val") return t.val.kind;
-  if (t.kind === "string") return "string";
-  if (t.kind === "vec") return `vec<${describeIrType(t.elementType)}>${t.nullable ? "?" : ""}`;
-  if (t.kind === "object") {
-    return `object{${t.shape.fields.map((f) => `${f.name}:${describeIrType(f.type)}`).join(",")}}`;
-  }
-  if (t.kind === "closure") {
-    const ps = t.signature.params.map(describeIrType).join(",");
-    return `closure(${ps})->${t.signature.returnType === null ? "void" : describeIrType(t.signature.returnType)}`;
-  }
-  if (t.kind === "callable") {
-    const ps = t.signature.params.map(describeIrType).join(",");
-    return `callable(${ps})->${t.signature.returnType === null ? "void" : describeIrType(t.signature.returnType)}`;
-  }
-  if (t.kind === "class") return `class<${t.shape.className}>`;
-  if (t.kind === "extern") return `extern<${t.className}>`;
-  if (t.kind === "fnctor") return `fnctor<${t.shape.constructorName}>`;
-  // #1926 — union members / boxed inner are IrTypes; recurse.
-  if (t.kind === "union") return `union<${t.members.map(describeIrType).join(",")}>`;
-  // #2949 — dynamic leaf; render the optional tag refinement when present.
-  if (t.kind === "dynamic") return t.tag === undefined ? "dynamic" : `dynamic<tag:${t.tag}>`;
-  return `boxed<${describeIrType(t.inner)}>`;
-}
-
 /**
  * Resolve the IR type for a function param or return.
  *
@@ -6953,15 +6933,8 @@ function lowerDynamicStoreOperand(expr: ts.Expression, cx: LowerCtx): IrValueId 
 }
 
 function boxDynamicStoreOperand(value: IrValueId, expr: ts.Expression, cx: LowerCtx): IrValueId {
-  const type = cx.builder.typeOf(value);
-  if (type.kind === "dynamic") return value;
-  const boxed = boxConcreteToDynamic(value, type, expr, cx);
-  if (boxed !== null) return boxed;
-  throw new IrUnsupportedError(
-    "operand-coercion-unsupported",
-    "build",
-    `ir/from-ast: dynamic member-store operand of ${describeIrType(type)} has no dynamic carrier (${cx.funcName})`,
-  );
+  const functionValues = functionObjects.createsFunctionObjects(cx.resolver);
+  return functionObjects.dynamicStoreOperand(value, expr, functionObjectLoweringHost(cx), functionValues);
 }
 
 /**
@@ -7907,14 +7880,14 @@ function lowerCall(expr: ts.CallExpression, cx: LowerCtx, statementPosition = fa
       alias.result === "boolean" ? irBool() : irDynamic(),
     );
   }
-  // (#7106 Stage 4) `func()` where `func` is a dynamic-carrier binding. After
-  // the propertyHelper alias arms, in the selector's order: those aliases are
-  // script `var`s in a dynamic module home too, but keep legacy's provider.
+  // (#7106 Stage 4) `func()` where `func` is a dynamic-carrier binding, after the propertyHelper alias arms (the
+  // selector's order: those aliases are script `var`s in a dynamic module home too, but keep legacy's provider).
   const bindingLogicalType =
     binding?.kind === "slot" ? (binding.asType ?? binding.type) : binding?.kind === "local" ? binding.type : undefined;
-  // (#7287) …or a script `var` in its dynamic module home (the prelude's `print`).
+  // (#7287) …or a script `var` in its dynamic home (`print`); (#7354 F1b) a declaration's value home keeps its call.
   const dynamicModuleCallee =
     binding === undefined &&
+    !cx.directCalls?.has(expr) &&
     isStatementDynamicModuleCall(
       expr,
       (callee) => cx.resolver?.resolveModuleBinding?.(callee)?.type.kind === "dynamic",
@@ -16460,19 +16433,11 @@ type IrClosureLiteral =
   | ts.SetAccessorDeclaration;
 
 function assertUndefinedOnlyVoidClosure(expr: IrClosureLiteral, cx: LowerCtx): void {
-  const refuse: () => never = () =>
+  if (!expr.body || !ts.isBlock(expr.body) || someReturnedValue(expr.body, () => true))
     demoteToLegacy(
       "body-shape-rejected",
       `ir/from-ast: void closure value-bearing return requires an actual returned-value representation (${cx.funcName})`,
     );
-  if (!expr.body || !ts.isBlock(expr.body)) refuse();
-  const visit = (node: ts.Node): void => {
-    // A nested function's return is not a completion of this function.
-    if (ts.isFunctionLike(node)) return;
-    if (ts.isReturnStatement(node) && node.expression !== undefined) refuse();
-    ts.forEachChild(node, visit);
-  };
-  visit(expr.body);
 }
 
 function lowerClosureExpression(expr: IrClosureLiteral, cx: LowerCtx): IrValueId {
@@ -16744,10 +16709,13 @@ function lowerClosureExpressionWithSignature(
   cx.lifted.push(lifted);
   recordSourceMapDerived(cx, liftedIdentity, expr);
 
-  return cx.builder.emitClosureNew(liftedTarget, signature, captureFieldTypes, captureArgs, {
+  const closure = cx.builder.emitClosureNew(liftedTarget, signature, captureFieldTypes, captureArgs, {
     ...(exact?.hostOneShot === true ? { hostOneShot: true } : {}),
     ...(exact?.domCallbackAuthority ? { domCallbackAuthority: exact.domCallbackAuthority } : {}),
   });
+  if (functionObjects.createsFunctionObjects(cx.resolver))
+    functionObjects.emitFunctionObjectInit(cx.builder, closure, expr);
+  return closure;
 }
 
 /**

@@ -48,14 +48,14 @@ import { someReturnedValue } from "./function-returns.js";
 import { sourceDynamicProvenance, type SourceDynamicProvenance } from "./source-dynamic-provenance.js";
 import { isUndeclaredInFile } from "../shared/ambient-intrinsics.js";
 import { ownedByDescriptorLiteral } from "./ordinary-object-closure-signatures.js";
-import { bindingIsUniqueAndNeverWritten } from "../shared/binding-writes.js";
 import { isTopLevelStatementDeclaration } from "../shared/var-declaration-lists.js";
-import { sourceMayWriteBindingUnseen, sourceMayWriteGlobalObject } from "../shared/intrinsic-prototype-writes.js";
+import { bindingHoldsItsDeclaration } from "../shared/binding-holds-declaration.js";
+import { functionDeclarationsReadAsValues } from "./function-declaration-values.js";
 
 type Carries = SourceDynamicProvenance["carries"];
 type Signature = { readonly params: readonly IrType[]; readonly returnType: IrType | null };
 /** A program global as the source producer holds it: only its storage type matters here. */
-type SourcePolicy = Pick<RuntimeManifestPolicy, "backend" | "target">;
+type SourcePolicy = Pick<RuntimeManifestPolicy, "backend" | "target" | "stringConst">;
 type DynamicLane = "host-async" | "native" | undefined;
 const DYNAMIC: IrType = Object.freeze({ kind: "dynamic" });
 const IR_BOOLEAN_RESULT: IrType = Object.freeze({ kind: "val", val: Object.freeze({ kind: "i32", boolean: true }) });
@@ -209,14 +209,11 @@ function sourceDynamicClosureSignature(
 
 /**
  * (#7354 Fa) A script `var` that holds its function-expression initializer from its declaration on: a top-level
- * statement's declarator of the program's only source, whose binding nothing else writes. The proof is the shared,
- * name-based one: the declarator is the name's only binding site in the file and no identifier of that name is
- * assigned, with no `eval` or `with` (`bindingIsUniqueAndNeverWritten`, so an Annex B block-level function of the
- * same name declines too); no route that is no identifier write reaches it (`sourceMayWriteBindingUnseen`:
- * `this.f = v`, `globalThis["f"] = v`, `Function`, a reflective route); and the global object does not escape,
- * which could write it under a computed name. from-ast keeps the closure on the binding's module-init scope entry
- * when it lowers the store, so only module-init code after the declaration, outside every function, sees it: there
- * the slot holds exactly that closure, and a call through the name is the closure's direct call.
+ * statement's declarator of the program's only source, whose binding nothing else writes
+ * (`bindingHoldsItsDeclaration`; an Annex B block-level function of the same name is a second binding site, so it
+ * declines too). from-ast keeps the closure on the binding's module-init scope entry when it lowers the store, so
+ * only module-init code after the declaration, outside every function, sees it: there the slot holds exactly that
+ * closure, and a call through the name is the closure's direct call.
  */
 function staticFunctionValue(
   policy: SourcePolicy,
@@ -233,12 +230,7 @@ function staticFunctionValue(
     !ts.isIdentifier(name)
   )
     return false;
-  const source = declaration.getSourceFile();
-  return (
-    bindingIsUniqueAndNeverWritten(name, declaration) &&
-    !sourceMayWriteBindingUnseen(source, name.text) &&
-    !sourceMayWriteGlobalObject(source)
-  );
+  return bindingHoldsItsDeclaration(name, declaration);
 }
 
 /** The lane has the native dynamic carrier (wasmgc standalone). */
@@ -248,6 +240,8 @@ export function nativeDynamicLane(policy: SourcePolicy): boolean {
 
 /** (#7354 H) The dynamic-value contracts of one program's sources, over its provenance. */
 export interface ProgramDynamicContracts extends SourceDynamicProvenance {
+  /** (#7354 F1b) The top-level function declarations read as values (`function-declaration-values.ts`). */
+  readonly functionDeclarationValues: readonly ts.FunctionDeclaration[];
   /** The dynamic (or host Promise) contract of a parameter of `declaration`, if any. */
   readonly parameter: (declaration: ts.FunctionDeclaration, parameter: ts.ParameterDeclaration) => IrType | undefined;
   /** The dynamic result contract of `declaration`, or natively its Boolean carrier, if any. */
@@ -279,6 +273,8 @@ export interface ProgramDynamicContracts extends SourceDynamicProvenance {
     readonly dynamicClosureSignature?: (expression: ts.FunctionExpression) => Signature | undefined;
     /** (#7354 Fa) {@link staticFunctionValue}. */
     readonly staticFunctionValue?: (declaration: ts.VariableDeclaration) => boolean;
+    /** (#7354 F1b) Closures are function objects (`function-object-lowering.ts`). */
+    readonly createsFunctionObjects?: () => boolean;
   };
   /** {@link legalizeSourceDynamicValues} for the functions lowered from `roots`. */
   readonly legalize: (
@@ -295,7 +291,10 @@ export function programDynamicContracts(
   allocations: AllocSiteRegistry,
 ): ProgramDynamicContracts {
   // (#7354 O2, O2b) What the source allows its objects: one answer every group asks.
-  const objects = programObjects(sourceFiles);
+  // (#7354 F1b) A function object's `name` is a native string.
+  const functionObjects = nativeDynamicLane(policy) && policy.stringConst?.storage === "native";
+  const functionDeclarationValues = functionObjects ? functionDeclarationsReadAsValues(checker, sourceFiles) : [];
+  const objects = programObjects(sourceFiles, functionDeclarationValues.length > 0);
   const provenance = sourceDynamicProvenance(
     checker,
     sourceFiles,
@@ -304,6 +303,7 @@ export function programDynamicContracts(
   );
   return {
     ...provenance,
+    functionDeclarationValues,
     parameter: (declaration, parameter) => sourceDynamicParameter(checker, policy, declaration, parameter),
     resolver: nativeDynamicLane(policy)
       ? {
@@ -312,6 +312,7 @@ export function programDynamicContracts(
           unresolvedNameIsAbsent: (node) => absentGlobal(checker, sourceFiles, node),
           dynamicClosureSignature: (expression) => sourceDynamicClosureSignature(policy, expression),
           staticFunctionValue: (declaration) => staticFunctionValue(policy, sourceFiles, declaration),
+          createsFunctionObjects: () => functionObjects,
         }
       : {},
     result: (declaration) =>

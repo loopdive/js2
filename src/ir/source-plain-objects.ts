@@ -1,8 +1,8 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 /**
  * (#7354 O2, O2b) What a Prepared program's source allows its ordinary objects (`ProgramObjects`), in one walk. On
- * this path an object literal is the only producer of an ordinary object, so the source decides whether the object
- * kind is admitted. OrdinaryToPrimitive is decided at run time (`ordinary-to-primitive.ts`) and needs to know only
+ * this path an object literal and (F1b) a constructor's `prototype` are the only producers of an ordinary object, so
+ * the source decides whether the object kind is admitted. OrdinaryToPrimitive is decided at run time (`ordinary-to-primitive.ts`) and needs to know only
  * whether `@@toPrimitive` is reachable, i.e. whether the program names `Symbol`.
  *
  * (#7354 M1, C1) No question about the built-in prototypes is asked here: no Prepared program can obtain one as a
@@ -17,12 +17,17 @@ const isMemberName = (node: ts.Identifier): boolean =>
   (ts.isPropertyAccessExpression(node.parent) && node.parent.name === node) ||
   ((ts.isPropertyAssignment(node.parent) || ts.isMethodDeclaration(node.parent)) && node.parent.name === node);
 
-export function programObjects(sourceFiles: readonly ts.SourceFile[]): ProgramObjects {
-  let present = false;
-  let functions = false;
+/**
+ * `readsDeclarationValue`: (#7354 F1b) a function declaration is read as a value (`function-declaration-values.ts`).
+ * Such a function, like a function expression, is a constructor whose `prototype` is an ordinary object the source
+ * spells nowhere, so either one admits the object kind too.
+ */
+export function programObjects(sourceFiles: readonly ts.SourceFile[], readsDeclarationValue: boolean): ProgramObjects {
+  let present = readsDeclarationValue;
+  let functions = readsDeclarationValue;
   let namesSymbol = false;
   const visit = (node: ts.Node): void => {
-    present ||= ts.isObjectLiteralExpression(node);
+    present ||= ts.isObjectLiteralExpression(node) || ts.isFunctionExpression(node);
     functions ||= ts.isFunctionExpression(node) || ts.isArrowFunction(node);
     namesSymbol ||= ts.isIdentifier(node) && node.text === "Symbol" && !isMemberName(node);
     ts.forEachChild(node, visit);

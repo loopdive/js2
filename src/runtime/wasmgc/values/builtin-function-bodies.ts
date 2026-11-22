@@ -15,6 +15,8 @@ import {
 
 export interface BuiltinFunctionEntryOperands {
   readonly typeIdx: number;
+  /** The closure metadata type this carrier extends; `match` excludes its subtypes from the source arm. */
+  readonly metadataTypeIdx: number;
   readonly metadataId: number;
   readonly liftedTypeIdx: number;
   readonly singleton: number;
@@ -59,13 +61,31 @@ const call = (funcIdx: FuncHandle): Instr => ({ op: "call", funcIdx });
 export function builtinUndefined(d: BuiltinFunctionBodyOperands): Instr[] {
   return [global(d.undefinedGlobal), { op: "extern.convert_any" }];
 }
+/** Throw a TypeError carrying `message` (an externref string) on the kernel's exception tag. */
+export function builtinTypeError(
+  d: Pick<BuiltinFunctionBodyOperands, "typeError" | "exceptionTag">,
+  message: readonly Instr[],
+): Instr[] {
+  return [...structuredClone(message), call(d.typeError), { op: "throw", tagIdx: d.exceptionTag }];
+}
 export function builtinFailure(d: BuiltinFunctionBodyOperands, ordinal = 0): Instr[] {
-  return [...structuredClone(d.errors[ordinal]!), call(d.typeError), { op: "throw", tagIdx: d.exceptionTag }];
+  return builtinTypeError(d, d.errors[ordinal]!);
 }
 export function builtinRoot(d: BuiltinFunctionBodyOperands, local = 0): Instr[] {
   return [get(local), { op: "any.convert_extern" }, { op: "ref.cast", typeIdx: d.rootTypeIdx }];
 }
+/** (#7354 C) `match`'s answer for a source closure: one ordinal after the builtin entries. */
+export function sourceClosureOrdinal(d: Pick<BuiltinFunctionBodyOperands, "entries">): number {
+  return d.entries.length + 1;
+}
+/**
+ * The function-object ordinal of a value: a builtin entry's (1..n) when it is that entry's own singleton of this
+ * realm, {@link sourceClosureOrdinal} for a source closure, 0 otherwise. A source closure is the closure root without
+ * builtin metadata: every builtin carrier, a clone or forgery included, is a metadata subtype, and no source capture
+ * layout can coincide with it (`requireSourceMetadataSeparation`), so the exclusion keeps forgeries out of both arms.
+ */
 export function buildBuiltinFunctionMatchDefinition(d: BuiltinFunctionBodyOperands): BuiltinFunctionDefinition {
+  const metadataTypes = [...new Set(d.entries.map((entry) => entry.metadataTypeIdx))];
   return {
     locals: [{ name: "candidate", type: { kind: "anyref" } }],
     body: [
@@ -105,9 +125,50 @@ export function buildBuiltinFunctionMatchDefinition(d: BuiltinFunctionBodyOperan
           ],
         },
       ]),
-      { op: "i32.const", value: 0 },
+      get(1),
+      { op: "ref.test", typeIdx: d.rootTypeIdx },
+      ...metadataTypes.flatMap((typeIdx): Instr[] => [
+        get(1),
+        { op: "ref.test", typeIdx },
+        { op: "i32.eqz" },
+        { op: "i32.and" },
+      ]),
+      {
+        op: "if",
+        blockType: { kind: "val", type: { kind: "i32" } },
+        then: [{ op: "i32.const", value: sourceClosureOrdinal(d) }],
+        else: [{ op: "i32.const", value: 0 }],
+      },
     ],
   };
+}
+/**
+ * OrdinaryFunctionCreate's `length`, then SetFunctionName's `name`: non-writable, non-enumerable, configurable data
+ * properties (descriptor word 0xbc). Builtin and (#7354 C) source functions share it; each supplies the object it
+ * defines on, the define function (both answer an externref, dropped) and the f64 length and externref name.
+ */
+export function buildFunctionLengthNameSeed(
+  d: Pick<BuiltinFunctionBodyOperands, "lengthKey" | "nameKey" | "boxNumber">,
+  target: () => Instr[],
+  define: FuncHandle,
+  length: readonly Instr[],
+  name: readonly Instr[],
+): Instr[] {
+  return [
+    ...target(),
+    ...structuredClone(d.lengthKey),
+    ...structuredClone(length),
+    call(d.boxNumber),
+    { op: "f64.const", value: 0xbc },
+    call(define),
+    { op: "drop" },
+    ...target(),
+    ...structuredClone(d.nameKey),
+    ...structuredClone(name),
+    { op: "f64.const", value: 0xbc },
+    call(define),
+    { op: "drop" },
+  ];
 }
 export function buildBuiltinFunctionInitializer(d: BuiltinFunctionBodyOperands): BuiltinFunctionDefinition {
   const allocate: Instr[] = [
@@ -137,22 +198,13 @@ export function buildBuiltinFunctionInitializer(d: BuiltinFunctionBodyOperands):
       { op: "ref.as_non_null" },
       { op: "struct.get", typeIdx: entry.typeIdx, fieldIdx: CLOSURE_BAG_FIELD_IDX },
     ];
-    const body: Instr[] = [
-      ...bag(),
-      ...structuredClone(d.lengthKey),
-      { op: "f64.const", value: entry.initialLength },
-      call(d.boxNumber),
-      { op: "f64.const", value: 0xbc },
-      call(d.defineDataBody),
-      { op: "drop" },
-      ...bag(),
-      ...structuredClone(d.nameKey),
-      ...structuredClone(entry.initialName),
-      { op: "extern.convert_any" },
-      { op: "f64.const", value: 0xbc },
-      call(d.defineDataBody),
-      { op: "drop" },
-    ];
+    const body = buildFunctionLengthNameSeed(
+      d,
+      bag,
+      d.defineDataBody,
+      [{ op: "f64.const", value: entry.initialLength }],
+      [...entry.initialName, { op: "extern.convert_any" }],
+    );
     if (entry.behavior === "throw-type-error")
       body.push(
         ...bag(),
@@ -352,6 +404,10 @@ export function buildBuiltinFunctionSlotDefinition(
           ],
         },
       );
-  if (slot === "prototype" || slot === "initialName") body.push({ op: "unreachable" });
+  // `match` admitted the value and no builtin singleton is it, so it is a source closure, whose [[Prototype]] is the
+  // realm's %Function.prototype% (#7354 C); a source closure has no [[InitialName]].
+  if (slot === "prototype")
+    body.push(global(d.entries[0]!.singleton), { op: "ref.as_non_null" }, { op: "extern.convert_any" });
+  if (slot === "initialName") body.push({ op: "unreachable" });
   return { locals: [], body };
 }

@@ -100,8 +100,8 @@ export const ADD_ROLE: Readonly<Record<CarrierKind, "concat" | "numeric">> = {
 /**
  * How ToNumber (§7.1.4) answers each kind: the primitive unboxer (a number its payload, a Boolean 0/1, `undefined`
  * NaN, `null` 0), (O2b) an object's ToPrimitive, a string that reads as NaN, or (M2) NaN for an error, whose
- * ToPrimitive is "TypeError: …" and cannot throw, and (F1) NaN for a function: its ToPrimitive is its source text (a
- * function value has no own `valueOf`/`toString` until the realm holds function objects), never a number.
+ * ToPrimitive is "TypeError: …" and cannot throw. (F1b) A function's is its ToPrimitive too: an own `valueOf` or
+ * `toString` may answer, and without one it is the source text, which reads as NaN.
  */
 export const TO_NUMBER_ARM: Readonly<Record<CarrierKind, "unbox" | "to-primitive" | "nan">> = {
   number: "unbox",
@@ -110,7 +110,7 @@ export const TO_NUMBER_ARM: Readonly<Record<CarrierKind, "unbox" | "to-primitive
   undefined: "unbox",
   null: "unbox",
   error: "nan",
-  function: "nan",
+  function: "to-primitive",
   object: "to-primitive",
 };
 
@@ -134,11 +134,11 @@ export const OBJECT_TAG: Readonly<Record<CarrierKind, string>> = {
  * (#7354 O4, O3) How a member read (GetValue) and a member write (PutValue) take each receiver
  * kind: both ToObject the base, so `undefined` and `null` throw a TypeError; an object is the realm's [[Get]] or
  * [[Set]]; a primitive reaches only built-in prototypes (`builtin-prototype-keys.ts`), which no Prepared program can
- * obtain to change (M1, C1); (M2) an error is the realm's TypeError, whose `name` and `message` are its fields; (F1) a
- * function value refuses until the realm's kernel knows a source closure as an object.
+ * obtain to change (M1, C1); (M2) an error is the realm's TypeError, whose `name` and `message` are its fields; (F1b) a
+ * function value is the realm's [[Get]] / [[Set]] on its closure, whose own `length` and `name` are read only.
  */
 export const MEMBER_ACCESS_ARM: Readonly<
-  Record<CarrierKind, "type-error" | "object" | "primitive" | "error" | "function-objects">
+  Record<CarrierKind, "type-error" | "object" | "primitive" | "error" | "function">
 > = {
   number: "primitive",
   boolean: "primitive",
@@ -146,7 +146,7 @@ export const MEMBER_ACCESS_ARM: Readonly<
   undefined: "type-error",
   null: "type-error",
   error: "error",
-  function: "function-objects",
+  function: "function",
   object: "object",
 };
 
@@ -193,8 +193,9 @@ export function admittedKinds(program: LegalizationProgram): readonly CarrierKin
  * `js.boolean.box`), `null` (its tag or the null constant, the carrier's null reference), the dynamic value itself, a
  * native string (its own payload), a number (an f64 or `js.number.box`), (#7354 O2) the ordinary object
  * `js.object.create-default` answered (whatever its tag: a function-local object's member access boxes the externref
- * it holds without one), (#7354 Fa) a function value (a packed callable), or, through a coercion or the function-value
- * projection, its operand's kind. Any other value has none.
+ * it holds without one), (#7354 Fa) a function value (a packed callable, or (F1b) the dynamic value under the Function
+ * tag a declaration's home holds), or, through a coercion or the function-value projection, its operand's kind. Any
+ * other value has none.
  */
 export function carrierKindOf(
   value: IrValueId,
@@ -207,7 +208,8 @@ export function carrierKindOf(
   const produced = (id: IntrinsicId) => definition?.kind === "intrinsic" && definition.id === id;
   if (boxTag === JS_TAG_IDS.Boolean || produced("js.boolean.box")) return "boolean";
   if (boxTag === JS_TAG_IDS.Null || (definition?.kind === "const" && definition.value.kind === "null")) return "null";
-  if (type?.kind === "dynamic" || type?.kind === "string") return type.kind;
+  if (type?.kind === "dynamic") return type.tag === JS_TAG_IDS.Function ? "function" : "dynamic";
+  if (type?.kind === "string") return type.kind;
   if (type?.kind === "callable") return "function";
   if ((type?.kind === "val" && type.val.kind === "f64") || produced("js.number.box")) return "number";
   if (

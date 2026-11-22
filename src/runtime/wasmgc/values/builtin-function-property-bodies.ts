@@ -3,6 +3,7 @@ import type { Instr, FuncHandle } from "../../../wasm/model/instructions.js";
 import {
   builtinFailure,
   builtinUndefined,
+  sourceClosureOrdinal,
   type BuiltinFunctionBodyOperands,
   type BuiltinFunctionDefinition,
 } from "./builtin-function-bodies.js";
@@ -91,9 +92,16 @@ export function buildBuiltinFunctionEntryGet(
         { op: "local.tee", index: getter },
         { op: "ref.is_null" },
         { op: "if", blockType: empty, then: [n(1), ...builtinUndefined(d), { op: "return" }] },
+        // A getter that is no builtin function, (#7354 C) a source closure included, needs a mixed callable owner:
+        // `callVector` has no source arm yet.
         get(getter),
         call(d.match),
         { op: "i32.eqz" },
+        get(getter),
+        call(d.match),
+        n(sourceClosureOrdinal(d)),
+        { op: "i32.eq" },
+        { op: "i32.or" },
         { op: "if", blockType: empty, then: [n(3), ...builtinUndefined(d), { op: "return" }] },
         n(1),
         get(getter),

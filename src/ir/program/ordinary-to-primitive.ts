@@ -8,9 +8,11 @@
  * it is skipped too) and `toString` "[object Object]". Calling a method needs calls through a value (slice F2), so a
  * callable one ends the program by name at run time (`js.value.unsupported`); in a program that creates no function
  * value no method can be callable, so only `toString` is consulted and the answer is "[object Object]" or a TypeError.
- * A function value's own `toString` is Function.prototype.toString, the source text the closure does not carry, so
- * its ToPrimitive is the same abort. `@@toPrimitive` (§7.1.1 step 2) is reachable only by naming `Symbol`, and such a
- * program refuses by name.
+ * (#7354 F1b) A function value's absent `toString` is Function.prototype.toString, the source text the closure does
+ * not carry; a function reaches this builder only from ToNumber, which reads any text that is no number as NaN and
+ * reads no string at all here, so the object's "[object Object]" stands for it (ToString of a function is
+ * `TO_STRING_ARM`'s own arm). `@@toPrimitive` (§7.1.1 step 2) is
+ * reachable only by naming `Symbol`, and such a program refuses by name.
  */
 import type { IrInstr, IrValueId } from "../core/nodes.js";
 import type { LegalizationProgram } from "./dynamic-value-kinds.js";
@@ -34,7 +36,10 @@ export interface ToPrimitiveBuilders extends TypeErrorBuilders {
   readonly unsupported: (result: IrValueId) => IrInstr;
 }
 
-/** OrdinaryToPrimitive of the once-evaluated ordinary `object` with `hint`: its string into `result`, or a TypeError. */
+/**
+ * OrdinaryToPrimitive of the once-evaluated `object` (an ordinary object, or (F1b) a function value) with `hint`: its
+ * string into `result`, or a TypeError.
+ */
 export function ordinaryToPrimitive(
   b: ToPrimitiveBuilders,
   program: LegalizationProgram,

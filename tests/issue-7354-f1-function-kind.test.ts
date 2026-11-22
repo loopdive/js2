@@ -96,6 +96,8 @@ describe("#7354 F1 — the function kind", () => {
       "ToString of a caught function value",
       'var f = function () {}; var c; try { throw f; } catch (e) { c = e; } if (c !== f) throw 1; var s = "" + c;',
     ],
+    // (#7354 F1b) `+` with a function operand concatenates (ADD_ROLE): its ToString is the abort, never a sum.
+    ["`+` of a function value through a parameter", "function op(v) { return v + 1; } var x = op(function () {});"],
     // (Lead ruling) Whether an object's property holds a function is a run-time fact of that object.
     [
       "ToPrimitive with an own callable toString",
@@ -109,15 +111,22 @@ describe("#7354 F1 — the function kind", () => {
       `var f = function () { return 1; }; ${use};`,
       "ToString of a function needs Function.prototype.toString",
     ]),
+    // (#7354 F1b) A function value is the realm's object now: only the keys its built-in prototypes hold refuse.
     [
-      "a member read of a function value",
-      "var g = function () {}; var k = g.k; if (k) throw 1;",
-      "member read 'k' of a function needs the realm's function objects",
+      "a member read of a Function.prototype key",
+      "function g() {} var k = g.call;",
+      "member read 'call' of a function needs Function.prototype's properties",
+    ],
+    // `__proto__` names a reflective route to the global object, so the declaration's binding is not proven its own.
+    [
+      "a member write of Object.prototype's accessor on a function",
+      "function g() {} g.__proto__ = null;",
+      "function declaration 'g' read as a value is written",
     ],
     [
-      "a member write of a function value",
-      "var g = function () {}; g.k = 1;",
-      "member write 'k' of a function needs the realm's function objects",
+      "a member write of Object.prototype's accessor on a value that may be a function",
+      "function w(v) { v.__proto__ = null; } w(function () {});",
+      "member write '__proto__' of a value that may be a string or a number or a boolean or a function or an object needs Object.prototype's accessor",
     ],
     // A chunked module-init lowers later statements in another function: the static closure value stays in its own.
     [

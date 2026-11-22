@@ -93,16 +93,7 @@ export function legalizeDynamicValues(
   const { stringOf, toNumber } = conversionBuilders(builders, program);
   const addition = additionBuilder(builders, stringOf);
   // (#7354 O4, O3) What a member read or write is written with (`dynamic-member-access.ts`).
-  const memberAccess = {
-    carrier: CARRIER,
-    definitions,
-    fresh,
-    text,
-    intrinsic,
-    errorField,
-    kindsOf: kinds.kindsOf,
-    kindChain,
-  };
+  const memberAccess = { ...builders, carrier: CARRIER, definitions, kindsOf: kinds.kindsOf };
   const isDynamic = (value: IrValueId): boolean => types.get(value)?.kind === "dynamic";
   const typeofs = typeofComparisons(fn);
   // `!==`/`!=`: the positive test into a fresh value, then its negation into the comparison's result.

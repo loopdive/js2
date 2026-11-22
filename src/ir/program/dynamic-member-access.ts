@@ -25,6 +25,13 @@ export interface MemberAccessBuilders extends TypeErrorBuilders {
   ) => IrInstr;
   readonly errorField: (value: IrValueId, field: keyof typeof ERROR_FIELD, result: IrValueId) => IrInstr[];
   readonly kindsOf: (value: IrValueId) => readonly CarrierKind[];
+  readonly branch: (
+    cond: IrValueId,
+    then: (result: IrValueId) => IrInstr[],
+    else_: (result: IrValueId) => IrInstr[],
+    result: IrValueId,
+    resultType?: IrType,
+  ) => IrInstr;
   readonly kindChain: (
     instr: IrInstr,
     value: IrValueId,
@@ -56,6 +63,8 @@ interface Access {
   /** The answer of an arm whose value no code reads (after a throw, or a sloppy write's ignored failure). */
   readonly unread: (result: IrValueId) => IrInstr;
   readonly object: (result: IrValueId) => IrInstr;
+  /** (#7354 F1b) A function value: the object's access, but its own `length` and `name` are read only. */
+  readonly function: (result: IrValueId, throwTypeError: ThrowTypeError) => IrInstr[];
   readonly error: (result: IrValueId) => IrInstr[];
   readonly primitive: (kind: CarrierKind, result: IrValueId, throwTypeError: ThrowTypeError) => IrInstr[];
 }
@@ -88,14 +97,11 @@ function memberAccess(
   result: IrValueId,
 ): IrInstr[] {
   const kinds = b.kindsOf(instr.recv);
-  // (#7354 F1) The realm's kernel does not know a source closure as an object yet.
-  const lacks = (kind: CarrierKind) =>
-    MEMBER_ACCESS_ARM[kind] === "function-objects" ? "the realm's function objects" : access.missing(kind);
-  const refused = kinds.filter((kind) => lacks(kind) !== undefined);
+  const refused = kinds.filter((kind) => access.missing(kind) !== undefined);
   if (refused.length > 0) {
     const receiver =
       kinds.length === 1 ? article(kinds[0]!) : `a value that may be ${refused.map(article).join(" or ")}`;
-    const missing = [...new Set(refused.map((kind) => lacks(kind)!))].join(" and ");
+    const missing = [...new Set(refused.map((kind) => access.missing(kind)!))].join(" and ");
     gap(`${access.operation} of ${receiver} needs ${missing}`);
   }
   // The TypeError does not complete; the access's unread answer only gives the arm its value.
@@ -106,15 +112,14 @@ function memberAccess(
         return throwTypeError(access.nullishMessage(kind), r);
       case "object":
         return [access.object(r)];
+      case "function":
+        return access.function(r, throwTypeError);
       case "error":
         return access.error(r);
       // Only this arm assumes the built-in prototypes are the specification's (the object arm is the realm's own
       // [[Get]] / [[Set]]): no Prepared program can obtain one to change it (M1, C1; the premise test pins it).
       case "primitive":
         return access.primitive(kind, r, throwTypeError);
-      // Refused above (`lacks`): no access reaches a function value's arm.
-      case "function-objects":
-        return [];
     }
   };
   return b.kindChain(instr, instr.recv, result, arm, kinds, access.resultType);
@@ -143,6 +148,8 @@ export function dynamicMemberRead(b: MemberAccessBuilders, instr: MemberGet, res
           : undefined;
       if (kind === "object")
         return BUILTIN_REACHABLE_KEYS.object.has(name) ? "Object.prototype's properties" : undefined;
+      if (kind === "function")
+        return BUILTIN_REACHABLE_KEYS.function.has(name) ? "Function.prototype's properties" : undefined;
       if (MEMBER_ACCESS_ARM[kind] !== "primitive") return undefined;
       const reachable = BUILTIN_REACHABLE_KEYS[kind as keyof typeof BUILTIN_REACHABLE_KEYS];
       // A string's own `length` and indexed characters come with arrays (#7352).
@@ -153,6 +160,7 @@ export function dynamicMemberRead(b: MemberAccessBuilders, instr: MemberGet, res
     nullishMessage: (kind) => `Cannot read properties of ${kind} (reading '${name}')`,
     unread: (r) => b.intrinsic(instr, "js.value.undefined", [], r),
     object: (r) => realmCall("js.object.get", [instr.recv, instr.key, instr.recv], r),
+    function: (r) => [realmCall("js.object.get", [instr.recv, instr.key, instr.recv], r)],
     error: (r) =>
       ERROR_OWN_KEYS.has(name)
         ? b.errorField(instr.recv, name as keyof typeof ERROR_FIELD, r)
@@ -194,6 +202,22 @@ export function dynamicMemberWrite(b: MemberAccessBuilders, instr: MemberSet): I
     nullishMessage: (kind) => `Cannot set properties of ${kind} (setting '${name}')`,
     unread,
     object: (r) => realmCall("js.object.set", [instr.recv, instr.key, instr.value, instr.recv], r),
+    // (#7354 F1b) OrdinarySet answers `false` for the own read-only `length` and `name`: PutValue ignores that in
+    // sloppy code and throws a TypeError in strict code.
+    function: (r, throwTypeError) => {
+      const set = realmCall("js.object.set", [instr.recv, instr.key, instr.value, instr.recv], r);
+      if (instr.sloppy === true) return [set];
+      return [
+        set,
+        b.branch(
+          r,
+          (s) => [unread(s)],
+          (s) => throwTypeError(`Cannot assign to read only property '${name}' of function`, s),
+          b.fresh(),
+          BOOLEAN,
+        ),
+      ];
+    },
     // Refused above (`missing`): a write never reaches the error arm.
     error: () => [],
     primitive: (kind, r, throwTypeError) =>

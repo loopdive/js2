@@ -52,6 +52,8 @@ interface PrototypeUse {
   readonly mayPatch: Set<PatchableIntrinsic>;
   /** Names the source stores into, deletes or defines on anything: `x.call = f`, `String = v`. */
   readonly writtenNames: Set<string>;
+  /** (#7354 F1b) Those of them written on `this` or a global-object name: `this.f = v`, `globalThis["f"] = v`. */
+  readonly globalWrittenNames: Set<string>;
   /** The source names a {@link REFLECTIVE_NAMES} route or has a `with` statement. */
   reflective: boolean;
   /** The global object (`this`, `globalThis`, `self`, `window`, `global`) has a use other than an inert one. */
@@ -136,6 +138,26 @@ export function sourceMayWriteBindingUnseen(sourceFile: ts.SourceFile, name: str
   return use.dynamicCode || use.reflective || use.writtenNames.has(name);
 }
 
+/**
+ * (#7354 F1b) The routes this scan sees to the global object's properties, which are the script bindings: code the
+ * source does not spell, a reflective route, the global object escaping, and the names written as members of `this`
+ * or a global-object name (`binding-holds-declaration.ts` asks).
+ */
+export function globalObjectWriteRoutes(sourceFile: ts.SourceFile): {
+  readonly dynamicCode: boolean;
+  readonly reflective: boolean;
+  readonly escapes: boolean;
+  readonly writtenNames: ReadonlySet<string>;
+} {
+  const use = prototypeUse(sourceFile);
+  return {
+    dynamicCode: use.dynamicCode,
+    reflective: use.reflective,
+    escapes: use.globalObjectEscapes,
+    writtenNames: use.globalWrittenNames,
+  };
+}
+
 /** Whether a member may be installed under a name the source does not spell ({@link installsUnspelledMember}). */
 export function sourceMayWriteUnspelledMember(sourceFile: ts.SourceFile): boolean {
   return prototypeUse(sourceFile).unspelledWrite;
@@ -163,6 +185,7 @@ function prototypeUse(sourceFile: ts.SourceFile): PrototypeUse {
       writes: new Set(),
       mayPatch: new Set(),
       writtenNames: new Set(),
+      globalWrittenNames: new Set(),
       reflective: false,
       globalObjectEscapes: false,
       dynamicCode: false,
@@ -193,6 +216,7 @@ function prototypeUse(sourceFile: ts.SourceFile): PrototypeUse {
         found.globalObjectEscapes = true;
       const written = writtenName(node);
       if (written !== undefined) found.writtenNames.add(written);
+      if (written !== undefined && writesGlobalObject(node)) found.globalWrittenNames.add(written);
       found.unspelledWrite ||= installsUnspelledMember(node);
       if (ts.isStringLiteralLike(node) || (ts.isIdentifier(node) && !isMemberName(node))) {
         found.spelledNames.add(node.text);
@@ -348,6 +372,21 @@ function writtenName(node: ts.Node): string | undefined {
   if (!ts.isCallExpression(node) || !ts.isPropertyAccessExpression(node.expression)) return undefined;
   const key = node.arguments[1];
   return node.expression.name.text === "defineProperty" && key !== undefined ? nameText(key) : undefined;
+}
+
+/** The member write `node` (a `writtenName`) targets `this` or a global-object name. */
+function writesGlobalObject(node: ts.Node): boolean {
+  const receiver =
+    ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node)
+      ? node.expression
+      : ts.isCallExpression(node)
+        ? node.arguments[0]
+        : undefined;
+  const base = receiver && skipOuterExpressions(receiver);
+  return (
+    base !== undefined &&
+    (base.kind === ts.SyntaxKind.ThisKeyword || (ts.isIdentifier(base) && GLOBAL_OBJECT_NAMES.has(base.text)))
+  );
 }
 
 /** `node` is the name of a member read or write (`o.<name>`), not a spelling of the name itself. */

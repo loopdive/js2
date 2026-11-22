@@ -103,6 +103,7 @@ export function fillBuiltinTransportControls(f: Fixture, controls: ReturnType<ty
     entries: [
       {
         typeIdx: entry.type.typeIndex,
+        metadataTypeIdx: entry.metadata.type.typeIndex,
         metadataId: entry.metadata.metadata.id,
         liftedTypeIdx: entry.metadata.signature.liftedFuncTypeIndex,
         singleton: tx.physicalIndex(g.singleton),

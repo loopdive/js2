@@ -4,6 +4,7 @@ import { ts } from "../ts-api.js";
 import { irModuleGlobalBindingId, irModuleTdzGlobalBindingId } from "./abi-bindings.js";
 import { irUnitCallableBindingId } from "./callable-bindings.js";
 import { createIrBindingId, type IrBindingId, type IrSourceId } from "./identity.js";
+import { functionValueBindings } from "./function-declaration-values.js";
 import { moduleBindingDeclarations } from "./module-bindings.js";
 import { isModuleInitGlobalDeclaration, moduleBindingDeclarationOrder } from "./module-init-vars.js";
 import type { IrPlanningIdentityContext } from "./planning-identity.js";
@@ -62,6 +63,8 @@ export interface BuildIrModuleInitPlanInput {
   readonly identityContext: IrPlanningIdentityContext;
   readonly target: IrModuleInitTarget;
   readonly deferTopLevelInit: boolean;
+  /** (#7354 F1b) The declarations read as values whose homes this script's bindings hold. */
+  readonly functionValues?: readonly ts.FunctionDeclaration[];
 }
 
 export interface LegacyModuleInitStaticEntry {
@@ -430,6 +433,11 @@ export function buildIrModuleInitPlan(input: BuildIrModuleInitPlanInput): IrModu
   }
 
   bindings.push(...nestedVarBindings(sourceFile, sourceId, declarationOrder, declarationOrdinal, redeclared));
+  bindings.push(
+    ...functionValueBindings(sourceFile, input.functionValues ?? [], declarationOrder.length, (ordinal) =>
+      irModuleGlobalBindingId(sourceId, ordinal),
+    ),
+  );
 
   const functions = sourceFile.statements.filter(ts.isFunctionDeclaration);
   for (const declaration of collectReassignedTopLevelFunctions(sourceFile, checker)) {
