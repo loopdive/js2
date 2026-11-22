@@ -42,10 +42,10 @@ export interface FunctionObjectLoweringHost {
   readonly funcName: string;
   readonly dynamicCarrierIsExternref: () => boolean;
   /**
-   * (#7354 F2) Where closures are function objects ({@link createsFunctionObjects}), a call through a value is the
-   * native dispatcher `js.closure.call:N`.
+   * (#7354 F2) The resolver's answer, read through {@link createsFunctionObjects} like the resolver's own: where
+   * closures are function objects, a call through a value is the native dispatcher `js.closure.call:N`.
    */
-  readonly nativeClosureCalls: boolean;
+  readonly createsFunctionObjects: () => boolean;
   readonly requireOwner: (ownerUnitId: IrUnitId) => void;
   readonly lowerExpression: (source: ts.Expression) => IrValueId;
   readonly boxConcrete: (value: IrValueId, type: IrType, source: ts.Expression) => IrValueId | null;
@@ -144,7 +144,7 @@ export function emitFunctionObjectInit(
 /**
  * (#7354 F1b) Whether a closure is a function value with properties on this lane: the Prepared native dynamic lane
  * with native strings (`source-dynamic-contracts.ts`). There every closure literal that can become a value is created
- * as a function object (`initClosureFunctionObject`) and may be stored as a member.
+ * as a function object (`emitFunctionObjectInit`) and may be stored as a member.
  */
 export function createsFunctionObjects(resolver: { createsFunctionObjects?(): boolean } | undefined): boolean {
   return resolver?.createsFunctionObjects?.() === true;
@@ -214,7 +214,9 @@ export function dynamicStoreOperand(
 ): IrValueId {
   const type = cx.builder.typeOf(value);
   if (type.kind === "dynamic") return value;
-  const boxed = cx.nativeClosureCalls ? concreteIntoDynamic(value, source, cx) : cx.boxConcrete(value, type, source);
+  const boxed = createsFunctionObjects(cx)
+    ? concreteIntoDynamic(value, source, cx)
+    : cx.boxConcrete(value, type, source);
   if (boxed !== null && cx.builder.typeOf(boxed).kind === "dynamic") return boxed;
   throw new IrUnsupportedError(
     "operand-coercion-unsupported",
@@ -294,7 +296,7 @@ export function lowerDynamicMemberCall(
     cx,
   );
   const value = lowerReceiver();
-  const receiver = cx.nativeClosureCalls ? functionObjectDynamicValue(value, access.expression, cx) : value;
+  const receiver = createsFunctionObjects(cx) ? functionObjectDynamicValue(value, access.expression, cx) : value;
   const keySource = ts.isPropertyAccessExpression(access) ? undefined : access.argumentExpression;
   const key = keySource
     ? functionObjectDynamicValue(cx.lowerExpression(keySource), keySource, cx)
@@ -303,15 +305,18 @@ export function lowerDynamicMemberCall(
         irDynamic(JS_TAG_IDS.String),
       );
   const callee = cx.builder.emitDynMemberGet(receiver, key);
-  return applyDynamicCallee(callee, receiver, expr.arguments, notCallable("Value is not callable"), cx);
+  return createsFunctionObjects(cx)
+    ? nativeClosureCall(callee, receiver, expr.arguments, cx)
+    : applyDynamicCallee(callee, receiver, expr.arguments, notCallable("Value is not callable"), cx);
 }
 
 /**
  * (#7106 Stage 4) `f(…)` through a binding that holds a dynamic value (`func()` in assert.js's `assert.throws`): a
- * dynamic local or parameter, or a script `var`'s dynamic home (`scriptVar`, its declaration, which picks the
- * not-callable text, {@link scriptVarCalleeNotCallableMessages}). No Reference base, so thisArgument is `undefined`
- * (§13.3.6.2). The callee is evaluated first, then the arguments, then IsCallable — legacy's bare dynamic call order
- * and its `called value is not a function` TypeError — and `__apply_closure` installs the undefined receiver as
+ * dynamic local or parameter, or a script `var`'s dynamic home (`scriptVar`, its declaration). No Reference base, so
+ * thisArgument is `undefined` (§13.3.6.2). The callee is evaluated first, then the arguments, then IsCallable.
+ * (#7354 F2) On the Prepared lane that is the native dispatcher's call (`nativeClosureCall`); on the ordinary pipeline
+ * it is legacy's bare dynamic call — its `called value is not a function` TypeError, whose text the declaration picks
+ * ({@link scriptVarCalleeNotCallableMessages}), and `__apply_closure` installing the undefined receiver as
  * `__current_this` for the callee's duration, as legacy's bare-call receiver reset does.
  */
 export function lowerBindingCall(
@@ -325,7 +330,9 @@ export function lowerBindingCall(
     demoteToLegacy("call-resolution-unsupported", `ir/from-ast: dynamic callee lost its carrier in ${cx.funcName}`);
   refuseCallShape(expr, false, "call-resolution-unsupported", "optional/spread dynamic value call is unsupported", cx);
   const receiver = cx.builder.emitDynUndefined();
-  return applyDynamicCallee(callee, receiver, expr.arguments, scriptVarCalleeNotCallableMessages(scriptVar), cx);
+  return createsFunctionObjects(cx)
+    ? nativeClosureCall(callee, receiver, expr.arguments, cx)
+    : applyDynamicCallee(callee, receiver, expr.arguments, scriptVarCalleeNotCallableMessages(scriptVar), cx);
 }
 
 /** An optional call, or (#7354 F2: by its own name on the Prepared lane) a spread argument, has no call through a value. */
@@ -340,7 +347,7 @@ function refuseCallShape(
   if (!optionalAccess && !expr.questionDotToken && !spread) return;
   demoteToLegacy(
     reason,
-    cx.nativeClosureCalls && spread
+    createsFunctionObjects(cx) && spread
       ? `ir/from-ast: call through a value with a spread argument (${cx.funcName})`
       : text,
   );
@@ -381,7 +388,6 @@ function applyDynamicCallee(
   notCallableMessages: NotCallableMessages,
   cx: FunctionObjectLoweringHost,
 ): IrValueId {
-  if (cx.nativeClosureCalls) return nativeClosureCall(callee, receiver, argumentSources, cx);
   const args = cx.builder.emitCall(irRuntimeFuncRef("__objvec_new"), [], irVal({ kind: "externref" }));
   if (args === null) throw new Error("native argument vector returned void");
   for (const argument of argumentSources) {

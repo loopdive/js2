@@ -74,14 +74,19 @@ function external(type: IrType | undefined): boolean {
   );
 }
 
-/** The callee is a packed source allocation (`callableAllocation` then reconciles it), not a dynamic value. */
+/**
+ * The packed callable `value` was erased from (its logical type and its pack's definition), which
+ * `callableAllocation` reconciles with its allocation; (#7354 F2) a callee without one is a dynamic value.
+ */
 function packedCallable(
   value: IrValueId,
   defs: ReadonlyMap<IrValueId, IrInstr>,
   types: ReadonlyMap<IrValueId, IrType>,
-): boolean {
+): { readonly type: Extract<IrType, { kind: "callable" }>; readonly pack: IrInstr | undefined } | undefined {
   const erased = defs.get(value);
-  return erased?.kind === "coerce.to_externref" && types.get(erased.value)?.kind === "callable";
+  if (erased?.kind !== "coerce.to_externref") return undefined;
+  const type = types.get(erased.value);
+  return type?.kind === "callable" ? { type, pack: defs.get(erased.value) } : undefined;
 }
 
 /**
@@ -111,10 +116,9 @@ function callableAllocation(
   types: ReadonlyMap<IrValueId, IrType>,
   role: string,
 ) {
-  const erased = defs.get(value);
-  const packed = erased?.kind === "coerce.to_externref" ? defs.get(erased.value) : undefined;
-  const type = erased?.kind === "coerce.to_externref" ? types.get(erased.value) : undefined;
-  if (type?.kind !== "callable") fail(`${role} lost its actual logical callable signature`);
+  const callable = packedCallable(value, defs, types);
+  if (!callable) fail(`${role} lost its actual logical callable signature`);
+  const { type, pack: packed } = callable;
   const allocation = packed?.kind === "coerce.to_externref" ? defs.get(packed.value) : undefined;
   if (allocation?.kind !== "closure.new" || allocation.liftedFunc.binding.kind !== "unit")
     fail(`${role} is not its selected source allocation`);

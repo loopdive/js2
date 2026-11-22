@@ -379,12 +379,14 @@ function entries(
           },
     };
   });
-  // (#7354 F2) An arm is a function of its types alone (it calls through the closure's own funcref), so closures of
-  // one allocation type and lifted signature share one arm: a dispatcher over every source closure (a call through a
-  // dynamic value) grows with the program's signatures, not with its closures.
+  // (#7354 F2) An arm is a function of its types alone (it calls through the closure's own funcref): its allocation,
+  // self and lifted function types, which fix its parameters, and whether its result is boxed as a Boolean. Closures
+  // with the same key share one arm, so a dispatcher over every source closure (a call through a dynamic value) grows
+  // with the program's signatures, not with its closures.
   const seen = new Set<string>();
   return arms.filter((arm) => {
-    const key = JSON.stringify(arm);
+    const boolean = arm.result.kind === "value" && arm.result.boxBoolean !== undefined;
+    const key = `${arm.allocationTypeIdx}:${arm.selfTypeIdx}:${arm.funcTypeIdx}:${boolean}`;
     if (seen.has(key)) return false;
     seen.add(key);
     return true;

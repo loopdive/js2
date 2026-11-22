@@ -4400,19 +4400,35 @@ reflective name), 41 `dynamic method .sameValue/3 has no brand-dispatch wrapper`
 - **Q3.** The result-carrier refusal is deleted. The accessor skip stays: an object-literal getter reaches it on the
   real entry (`var o = { get x() { return 1; } };` runs) and the 3518 runtime-providers getter test pins it.
 - **Q4 fixed.** `src/shared/binding-holds-declaration.ts`; the scan exposes `globalObjectWriteRoutes`.
-- **Q5 rebutted, kept.** (i) `reflective`: `x.constructor` reaches `Function`, also as `x[k]` with `k` a string
-  literal elsewhere, so a narrowing needs a key-flow proof; (ii) escape: once the global object is a value,
-  `Object.assign` / `defineProperties` maps write a binding without a spelled member write of its name, which the
-  scan does not track; (iii) another binding of the name is the shared name-based proof (Fa); a symbol-based proof is
-  not cheap. All three stay refusals.
+- **Q5 kept.** (i) The reflective clause guards `x.constructor` reaching `Function`, unreachable on this branch
+  (every `.constructor` read refuses); C2 must re-examine it. (ii) The escape clause guards a write through the
+  global object as a value, unreachable on this branch; the built-ins-as-values and `Object`-statics slices must
+  re-examine it. (iii) Another binding of the name: the shared name-based proof (Fa); a symbol-based proof is not
+  cheap.
 - **Q6 fixed.** Refusal tests kill each predicate clause (`Function(...)`, `f.constructor(...)`, `return this`), the
   callee exclusion (`f()` beside an escaping `this` meets the `this` refusal, not the proof), and `ADD_ROLE.function`
   (an abort test in f1-function-kind).
 - Main merged (cddf65be4d, Perf4's `try_table` helpers). `quality`'s Node-25 failure is main's; Node 25 not run here.
 
 Re-measured on the merged head: every touched test file in full, exit 0; gates 0 (budgets also against main; from-ast
-−32, program-source −10 vs main); prepared bytes vs main: the same 10 rows as above; ordinary 40/40 identical;
-regression set 652 programs: no base-correct program changes, 3 D6 aborts; sample tally unchanged.
+−32, program-source −10 vs main); prepared bytes vs main: the same 10 rows as above; regression set 652 programs:
+no base-correct program changes, 3 D6 aborts; sample tally unchanged.
+
+Ordinary pipeline: the 20-file byte check is identical to main, but B2 changes the ordinary pipeline too: a function
+under a constant computed key (`{ ['k']: function () {} }`, a method `['k']() {}`, a class field `1 = function ()
+{}`) is named by its key (`"k"`, `"1"`; was `""` or no metadata), so those programs' bytes and `.name` results change
+(improvements). The reviewer measured 316 programs × 2 targets (no result that was right changed) and 113 test262
+files (0 pass → fail).
+
+Review round 2: `memberNameOf` and the class-field arm use `propertyKeyFunctionName`. Name tests run: issue-5157
+default-export names, 4436, 4437, computed-props, issue-computed-props — pass; issue-4617 fails 2 tests on main
+unchanged. Known limits (as on main): `o[1].name` read directly gives `""` in the ordinary pipeline while the same
+function read through a parameter gives `"1"`; getter/setter, class-field and object-literal method names under
+non-constant computed keys are wrong (`var k = "z"; ({ [k]() {} })` gives `""`, node `"z"`); passing a function read
+under a numeric method key (`g(o[1])` for `{ [1]() {} }`, also `{ 1n() {} }`, `class C { 0x10() {} }`) traps with
+"Cannot access property on null". Review round 3: the comments in `function-instance-meta-methods.ts` say what is
+declined now (non-constant computed, BigInt, private); the second identical shorthand arm in `functionInstanceName`
+is gone. "C2" in `binding-holds-declaration.ts` is the class slice of this issue (constructors, `new`, `.constructor`).
 
 ## Perf4 result (2026-11-21, branch `claude/7354-perf4` from `claude/7354-perf3` `db3c4a256f`)
 
@@ -4616,3 +4632,15 @@ brand dispatch: arrays, #7352), 6 `verifyProperty … is written`, 14 pass, 5 ot
 
 - Node 25 (not installed here); the dispatcher's guard is a standard `try_table`, as every user `try` on this regime.
 - The remaining existing m/o/str/ty/t/h/d1/vg/p test files and r-provider-census after the merges.
+- Restoring `__current_this` (after a return, after a throw, across nested calls) cannot be observed until C2 admits
+  `this` in a function body: C2's tests must cover it.
+- Compile time: 20 closures plus a 20-term `+` chain took 80 s for one compile (68 s under the profiler). Cause: 47 s
+  are `assertNativeInvocationRequirementsCurrent`, which re-collects the whole program's promise census
+  (`assertNativePromiseSourceCensusCurrent` → `collectNativePromiseSourceCensus` + `preparedIrDataMismatch`) at every
+  unsettled call — the invocation owner's `authenticate` / `requireOwner` and `resolveEntries` in
+  `native-invocation.ts` / `native-source-closure-callables.ts` (perf lane).
+- `var g = 1; g()` (a typed number home) refuses with the misleading `direct call to "g" has no exact AST-site plan`,
+  unchanged from the base.
+- Review round 1 (lead): findings 1-5 fixed — explicit dispatcher-arm key; one `packedCallable` helper; the binding
+  call's doc names both lanes; the lane picks the call before any not-callable text is built; one lane predicate
+  (`createsFunctionObjects`, read through the host).
