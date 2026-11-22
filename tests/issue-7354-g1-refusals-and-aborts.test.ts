@@ -55,6 +55,13 @@ describe("#7354 G1 — refusals by name", () => {
       "globalThis.TypeError = 1; var t = TypeError;",
       'ir/from-ast: identifier "globalThis" is not in scope in <module-init>',
     ],
+    // Function.prototype's `caller` / `arguments` setter throws; a write that silently landed (as it did before G1,
+    // unobservable while `assert.throws(TypeError, …)` could not run) answers wrong.
+    [
+      "a write to a function's caller",
+      "'use strict'; function f(){} f.caller = 1;",
+      gapText("member write 'caller' of a function needs Function.prototype's accessor"),
+    ],
     [
       "a read of an undeclared name",
       "var x = undeclaredQ;",

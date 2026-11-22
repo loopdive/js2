@@ -64,10 +64,17 @@ export function realmStringKeys(...intrinsicIds: readonly string[]): ReadonlySet
 /** The string keys `Object.prototype` owns (§20.1.3, Annex B.2.2 included). */
 export const OBJECT_PROTOTYPE_KEYS = realmStringKeys("%Object.prototype%");
 
+const accessorKeys = (...intrinsicIds: readonly string[]): ReadonlySet<string> =>
+  stringKeys(propertiesOf(intrinsicIds).filter((property) => property.kind === "accessor"));
+
 /** (#7354 M1, C6) The string keys `Object.prototype` holds as accessor properties (Annex B.2.2.1 `__proto__`). */
-export const OBJECT_PROTOTYPE_ACCESSOR_KEYS = stringKeys(
-  propertiesOf(["%Object.prototype%"]).filter((property) => property.kind === "accessor"),
-);
+export const OBJECT_PROTOTYPE_ACCESSOR_KEYS = accessorKeys("%Object.prototype%");
+
+/**
+ * (#7354 G1) The accessor keys `Function.prototype` adds on a function's chain: `caller` and `arguments`, whose
+ * setter is %ThrowTypeError% (§10.2.4, AddRestrictedFunctionProperties).
+ */
+export const FUNCTION_PROTOTYPE_ACCESSOR_KEYS = accessorKeys("%Function.prototype%");
 
 const NUMBER_PROTOTYPE = ["toExponential", "toFixed", "toPrecision"];
 const STRING_PROTOTYPE = [

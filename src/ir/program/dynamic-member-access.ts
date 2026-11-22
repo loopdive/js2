@@ -11,6 +11,7 @@ import type { IrType } from "../core/types.js";
 import { realmMethodId } from "../../runtime/contracts/native-realm-catalog.js";
 import {
   BUILTIN_REACHABLE_KEYS,
+  FUNCTION_PROTOTYPE_ACCESSOR_KEYS,
   OBJECT_PROTOTYPE_ACCESSOR_KEYS,
   isArrayIndexKey,
   nativeObjectPrototypeMethod,
@@ -233,12 +234,16 @@ export function dynamicMemberWrite(b: MemberAccessBuilders, instr: MemberSet): I
     // (#7354 C2) The write's value is unread, but it is the carrier so that an arm's run-time abort is its answer.
     resultType: b.carrier,
     // (#7354 F1, D4) Every key Object.prototype holds but its accessor is a writable data property, so OrdinarySet
-    // creates an own property on the receiver (§10.1.9.2 step 2), as for an absent key; only the accessor's setter
-    // would run code the realm lacks.
-    missing: (kind) =>
-      MEMBER_ACCESS_ARM[kind] !== "type-error" && OBJECT_PROTOTYPE_ACCESSOR_KEYS.has(name)
-        ? "Object.prototype's accessor"
-        : undefined,
+    // creates an own property on the receiver (§10.1.9.2 step 2), as for an absent key; only an accessor's setter
+    // would run code the realm lacks: Object.prototype's, and (#7354 G1) a function's Function.prototype `caller` /
+    // `arguments`, whose setter throws (a write that silently landed would answer wrong).
+    missing: (kind) => {
+      if (MEMBER_ACCESS_ARM[kind] === "type-error") return undefined;
+      if (OBJECT_PROTOTYPE_ACCESSOR_KEYS.has(name)) return "Object.prototype's accessor";
+      return kind === "function" && FUNCTION_PROTOTYPE_ACCESSOR_KEYS.has(name)
+        ? "Function.prototype's accessor"
+        : undefined;
+    },
     nullishMessage: (kind) => `Cannot set properties of ${kind} (setting '${name}')`,
     unread,
     object: (r, _abort, throwTypeError) => putValue("object", r, throwTypeError),
