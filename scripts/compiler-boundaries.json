@@ -2241,6 +2241,11 @@
       "layer": "backend-wasmgc"
     },
     {
+      "path": "src/ir/program/issued-packs.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
       "path": "src/ir/program/native-value-resources.ts",
       "state": "clean",
       "layer": "ir-program"

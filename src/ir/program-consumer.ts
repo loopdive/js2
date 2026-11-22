@@ -29,12 +29,12 @@
 import { forEachPreparedIrInstruction } from "./runtime/prepared-instructions.js";
 import {
   planNativeInvocationRequirements,
-  assertNativeInvocationRequirementsCurrent,
+  assertNativeInvocationRequirementsIssued,
   type NativeInvocationRequirements,
 } from "./program/native-invocation-requirements.js";
 import {
   deriveNativeRealmRequirements,
-  assertNativeRealmRequirementsCurrent,
+  assertNativeRealmRequirementsIssued,
   type NativeRealmRequirements,
 } from "./program/native-realm-requirements.js";
 import {
@@ -527,7 +527,7 @@ function prepareNativeEmission(accepted: AcceptedPreparedIrProgram, plan: Physic
   if (Boolean(record.nativeRealm) !== Boolean(plan.nativeRealm))
     emissionFailed("realm acceptance/physical plan mismatch");
   if (record.nativeRealm) {
-    assertNativeRealmRequirementsCurrent(record.nativeRealm);
+    assertNativeRealmRequirementsIssued(record.nativeRealm);
     if (
       record.nativeRealm !== record.nativeStrings?.realmRequirements ||
       record.nativeRealm.source !== record.sourceClosures ||
@@ -538,7 +538,7 @@ function prepareNativeEmission(accepted: AcceptedPreparedIrProgram, plan: Physic
   if (Boolean(record.nativeInvocation) !== Boolean(plan.nativeInvocation))
     emissionFailed("native invocation acceptance/physical plan mismatch");
   if (record.nativeInvocation) {
-    assertNativeInvocationRequirementsCurrent(record.nativeInvocation);
+    assertNativeInvocationRequirementsIssued(record.nativeInvocation);
     if (
       record.nativeInvocation.source !== record.sourceClosures ||
       record.nativeStrings?.invocationRequirements !== record.nativeInvocation ||
