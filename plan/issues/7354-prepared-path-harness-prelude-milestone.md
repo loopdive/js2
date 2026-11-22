@@ -5022,3 +5022,32 @@ entry, standalone):** the 41 rows move from the exception to
 `CE ir/from-ast: type override (dynamic) disagrees with annotation (f64) at param functionLength of verifyCallableProperty`
 (a JSDoc `@param {number}` read as an annotation) — the next blocker for all 41. The other 6 rows stop earlier at
 `function declaration 'formatIdentityFreeValue' read as a value is written`, unchanged.
+
+## Slice W result (2026-11-22, branch `claude/7354-w`; W1 = `d9e4906343` + `9e0d351a50`)
+
+**W1a — dynamic-home arm (`d9e4906343`).** As planned: `bindingHoldsDynamic` (from-ast) is the arm test of the D1
+join and the leaf of the claim's new check; `mayYieldCarrier` sits beside `producesCarrier` in
+`src/ir/analysis/carrier-expression.ts` and shares its walk (one `yieldsCarrier` / `yieldedValues` traversal with an
+`every` / `some` quantifier; the "some" side additionally passes through `&&` / `||` / `??` and type projections).
+
+**W1b — carrier equality brand (`9e0d351a50`).** The probes found a second route to the same invariant:
+`c ? n === 1 : 7` — the bounded grammar proves the arm `boolean` (it is), but `emitDynEq`'s result was a bare `i32`,
+so `irTypeIsBoolean` failed and the invariant was thrown out of `compile()`. The lowering was the wrong side here:
+`dyn.eq` now carries the boolean brand, as its siblings `dyn.instanceof` and the dyn own-property test already did.
+The brand is erasable under `irTypeEquals` (boolean-brand.ts), so no join or verifier changes.
+
+**How invariants surface on this lane.** An `IrInvariantError` from from-ast reaches `runIrProgramDriver`, which
+rethrows it as `IrProgramDriverInvariantError` by design ("Exceptions stay fatal"); no catch was added. After W1 no
+probe reaches one.
+
+| Proof | Result |
+| --- | --- |
+| `tests/issue-7354-w-dynamic-home-conditional.test.ts` (6, node agreement + wrong twin; refusal by text) | 6/6 head, 6/6 fail on base |
+| 101 own probes (dynamic-home arms of every bounded kind × literal arms, try/catch/finally, loops, NaN / −0, `String`/`Number` wrappers), strict entry, base → head | exception 28 → 0; right 12 → 38; wrong 0 → 0; no right→other |
+| Ordinary pipeline, 20 test262 files (10 propertyHelper rows + 10 of `l20`) × default + standalone | byte-identical |
+| Ordinary pipeline, the 101 probes × default + standalone | byte-identical |
+| `check:prepared-bytes` | pass |
+| 2949-s5-2 / s5-3 / slice2 / slice3b, 4523, 6921, 7354-t, 7354-d1 | only the `dyn.eq` result-type pin changed (updated); the other failures are identical on the base (slice U's pending expectations) |
+
+The 41 rows now stop at `CE ir/from-ast: type override (dynamic) disagrees with annotation (f64) at param
+functionLength of verifyCallableProperty` (W2).
