@@ -1,7 +1,7 @@
 {
   "generated": "2026-11-22",
   "threshold": 1500,
-  "totalCeiling": 1041133,
+  "totalCeiling": 1041179,
   "files": {
     "src/codegen-linear/index.ts": 5791,
     "src/codegen-linear/runtime.ts": 4195,
@@ -98,7 +98,7 @@
     "src/ir/backend/porffor/assembler.ts": 1516,
     "src/ir/builder.ts": 2316,
     "src/ir/core/nodes.ts": 2599,
-    "src/ir/from-ast.ts": 17357,
+    "src/ir/from-ast.ts": 17355,
     "src/ir/identity.ts": 1517,
     "src/ir/integration.ts": 10940,
     "src/ir/lower-generic.ts": 4569,
