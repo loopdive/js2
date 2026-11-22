@@ -49,7 +49,12 @@ import type { RuntimeManifestPolicy } from "../runtime/contracts/provider-policy
 import type { ValType } from "../wasm/model/instructions.js";
 import { functionBodyAlwaysTerminates, irFunctionBodyReturnsValue } from "./select.js";
 import { someReturnedValue } from "./function-returns.js";
-import { sourceDynamicProvenance, type SourceDynamicProvenance } from "./source-dynamic-provenance.js";
+import {
+  sourceDynamicProvenance,
+  sourceFunctionCallee,
+  type SourceDynamicProvenance,
+} from "./source-dynamic-provenance.js";
+import { syntacticAnnotation } from "./select-expression-structure.js";
 import { isUndeclaredInFile } from "../shared/ambient-intrinsics.js";
 import { ownedByDescriptorLiteral } from "./ordinary-object-closure-signatures.js";
 import { isTopLevelStatementDeclaration } from "../shared/var-declaration-lists.js";
@@ -124,7 +129,11 @@ function dynamicLane(policy: SourcePolicy, declaration: ts.FunctionDeclaration |
   return policy.target === "standalone" && !has(ts.SyntaxKind.ExportKeyword) ? "native" : undefined;
 }
 
-/** The dynamic (or host Promise) contract of a parameter, if its lane admits one; natively also an unannotated one. */
+/**
+ * The dynamic (or host Promise) contract of a parameter, if its lane admits one; natively also an unannotated one.
+ * (#7354 W2) Only a syntactic annotation types a parameter natively (`syntacticAnnotation`): under a JSDoc `@param`
+ * it holds the dynamic value whatever the checker reads from the tag. Provenance asks it of a parameter read.
+ */
 function sourceDynamicParameter(
   checker: ts.TypeChecker,
   policy: SourcePolicy,
@@ -132,7 +141,7 @@ function sourceDynamicParameter(
   parameter: ts.ParameterDeclaration,
 ): IrType | undefined {
   const lane = dynamicLane(policy, declaration);
-  const annotation = parameter.type;
+  const annotation = syntacticAnnotation(parameter);
   if (annotation === undefined) return lane === "native" ? { kind: "dynamic" } : undefined;
   if (annotatedAny(checker, annotation)) return lane ? checkerAny(checker, parameter.name) : undefined;
   if (lane !== "host-async") return undefined;
@@ -161,8 +170,9 @@ function sourceDynamicResult(
   const result = checker.getReturnTypeOfSignature(signature);
   if (lane === "native") {
     // The producer refuses a declaration without a body before it asks for a contract.
-    const dynamic = declaration.type
-      ? annotatedAny(checker, declaration.type) && result === any
+    const annotation = syntacticAnnotation(declaration);
+    const dynamic = annotation
+      ? annotatedAny(checker, annotation) && result === any
       : uncheckedResult(declaration.body!, result === any, carries);
     return dynamic ? { kind: "dynamic" } : undefined;
   }
@@ -361,6 +371,7 @@ export function programDynamicContracts(
     sourceFiles,
     nativeDynamicLane(policy),
     (declaration, carries) => sourceDynamicResult(checker, policy, declaration, carries) !== undefined,
+    (declaration, parameter) => sourceDynamicParameter(checker, policy, declaration, parameter)?.kind === "dynamic",
   );
   return {
     ...provenance,
@@ -446,12 +457,13 @@ export const PREPARED_PROVIDED_GLOBALS: ReadonlySet<string> = new Set(["Number",
  * wrote. The Prepared path has no checked unbox yet (a mismatch must convert or
  * throw, never pass), so the flow refuses by name. A store into a binding that
  * itself holds the dynamic value is no such flow, whatever the checker types
- * that binding. An operator that converts explicitly (`+v`, `v * 2`, `v === w`)
- * gives its operand no contextual type; the legalization expresses it or
- * refuses it by name.
+ * that binding (`landsInCarrier`). An operator that converts explicitly (`+v`,
+ * `v * 2`, `v === w`) gives its operand no contextual type; the legalization
+ * expresses it or refuses it by name.
  */
 function refuseImplicitDynamicFlows(
   checker: ts.TypeChecker,
+  policy: SourcePolicy,
   roots: readonly ts.Node[],
   carries: Carries,
   aborted: RefusalOwners["aborted"],
@@ -462,7 +474,7 @@ function refuseImplicitDynamicFlows(
     if ((ts.isFunctionExpression(node) || ts.isFunctionDeclaration(node)) && aborted(node)) return;
     if (ts.isExpression(node) && !passedOn(node) && !objectStaticOperand(node, isPristineGlobal) && carries(node)) {
       const contextual = checker.getContextualType(node);
-      if (contextual !== undefined && contextual !== any && !storedIntoCarrier(node, carries))
+      if (contextual !== undefined && contextual !== any && !landsInCarrier(node, checker, policy, carries))
         throw ownRefusal(
           new IrUnsupportedError(
             "type-resolution-unsupported",
@@ -495,17 +507,31 @@ function passedOn(node: ts.Expression): boolean {
 }
 
 /**
- * `value` is stored by a plain `=` into a binding that may hold the dynamic value. (An initializer has a contextual
- * type only under an annotation, and an annotated binding is typed by it: from-ast refuses the dynamic store.)
+ * `value` lands where the dynamic value is held, whatever the checker types that place: stored by a plain `=` into a
+ * binding that may hold it, or (#7354 W2) the initializer of such a binding, an argument for a parameter whose
+ * contract is dynamic, a value returned from a function whose result is. The checker reads the type of the last
+ * three from a JSDoc tag, which is a comment (`syntacticAnnotation`); a syntactically annotated binding, parameter
+ * or result never holds the dynamic value, so the flow into it stays checked.
  */
-function storedIntoCarrier(value: ts.Expression, carries: Carries): boolean {
+function landsInCarrier(value: ts.Expression, checker: ts.TypeChecker, policy: SourcePolicy, carries: Carries) {
   const { parent } = value;
-  return (
-    ts.isBinaryExpression(parent) &&
-    parent.right === value &&
-    parent.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
-    carries(parent.left)
-  );
+  if (ts.isBinaryExpression(parent))
+    return parent.right === value && parent.operatorToken.kind === ts.SyntaxKind.EqualsToken && carries(parent.left);
+  if (ts.isVariableDeclaration(parent))
+    return parent.initializer === value && ts.isIdentifier(parent.name) && carries(parent.name);
+  if (ts.isReturnStatement(parent)) {
+    const owner = ts.findAncestor(parent, ts.isFunctionLike);
+    return (
+      owner !== undefined &&
+      ts.isFunctionDeclaration(owner) &&
+      sourceDynamicResult(checker, policy, owner, carries)?.kind === "dynamic"
+    );
+  }
+  if (!ts.isCallExpression(parent) || parent.expression === value) return false;
+  const callee = sourceFunctionCallee(checker, parent);
+  if (callee === undefined) return false;
+  const parameter = callee.parameters[parent.arguments.indexOf(value)];
+  return parameter !== undefined && sourceDynamicParameter(checker, policy, callee, parameter)?.kind === "dynamic";
 }
 
 /**
@@ -554,7 +580,14 @@ function legalizeSourceDynamicValues(
   );
   if (catches) retargeted.forEach((fn) => owned(fn, () => refuseUnadmittedThrows(fn)));
   if (legalized.some((fn, index) => fn !== retargeted[index]))
-    refuseImplicitDynamicFlows(checker, roots, carries, owners.aborted, pristineBuiltinGlobal(checker, sourceFiles));
+    refuseImplicitDynamicFlows(
+      checker,
+      policy,
+      roots,
+      carries,
+      owners.aborted,
+      pristineBuiltinGlobal(checker, sourceFiles),
+    );
   legalizeDynamicAllocations(legalized, allocations);
   return legalized;
 }
