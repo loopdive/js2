@@ -96,7 +96,7 @@ import {
   type OperandFamily,
   type PrimitiveProof,
 } from "./analysis/operand-admissibility.js"; // (#7144)
-import { mayYieldCarrier, producesCarrier } from "./analysis/carrier-expression.js";
+import { type CarrierLeaves, mayYieldCarrier, producesCarrier } from "./analysis/carrier-expression.js";
 import { annotationUnder } from "./select-expression-structure.js";
 import { IR_CLOSURE_UNDEFINED } from "./core/closure-invocation-callables.js";
 import {
@@ -6952,21 +6952,20 @@ function boxDynamicStoreOperand(value: IrValueId, expr: ts.Expression, cx: Lower
   return functionObjects.dynamicStoreOperand(value, expr, functionObjectLoweringHost(cx), "member-store");
 }
 
-/** (#7354 C2) `name` holds a dynamic value: a dynamic local, or on the Prepared lane a dynamic module home. */
-function namesDynamicValue(name: ts.Identifier, cx: LowerCtx): boolean {
-  const binding = cx.scope.get(name.text);
-  if (binding?.kind === "local") return binding.type.kind === "dynamic";
+/**
+ * A read of `node` lowers to the dynamic value: a dynamic local, slot or module global in scope, (#7106 Stage 4) a
+ * `this` bound through `dyn.current_this`, or (#7354 C2) on the Prepared lane a dynamic module home out of scope.
+ */
+function bindingHoldsDynamic(node: ts.Identifier | ts.ThisExpression, cx: LowerCtx): boolean {
+  const binding = cx.scope.get(ts.isIdentifier(node) ? node.text : "this");
+  if (binding?.kind === "local" || binding?.kind === "moduleGlobal") return binding.type.kind === "dynamic";
+  if (binding?.kind === "slot") return (binding.asType ?? binding.type).kind === "dynamic";
   return (
-    (binding === undefined || binding.kind === "moduleGlobal") &&
+    binding === undefined &&
+    ts.isIdentifier(node) &&
     functionObjects.createsFunctionObjects(cx.resolver) &&
-    cx.resolver?.resolveModuleBinding?.(name)?.type.kind === "dynamic"
+    cx.resolver?.resolveModuleBinding?.(node)?.type.kind === "dynamic"
   );
-}
-
-/** {@link namesDynamicValue}, or a dynamic slot: what a read of `name` lowers to is the dynamic value. */
-function bindingHoldsDynamic(name: ts.Identifier, cx: LowerCtx): boolean {
-  const binding = cx.scope.get(name.text);
-  return binding?.kind === "slot" ? (binding.asType ?? binding.type).kind === "dynamic" : namesDynamicValue(name, cx);
 }
 
 /**
@@ -8451,10 +8450,10 @@ function lowerNewExpression(expr: ts.NewExpression, cx: LowerCtx): IrValueId {
   }
   const className = expr.expression.text;
   // (#7106 S3a, S3c, #7354 C2) `new <a value>(args)` → `dyn.construct`: a dynamic local or module home
-  // (`namesDynamicValue`), or a self-guarded constructor's function-object plan.
+  // (`bindingHoldsDynamic`), or a self-guarded constructor's function-object plan.
   const functionValueCallee =
     cx.scope.get(className) === undefined && cx.topLevelFunctionValues?.get(expr.expression) !== undefined;
-  if (namesDynamicValue(expr.expression, cx) || functionValueCallee)
+  if (bindingHoldsDynamic(expr.expression, cx) || functionValueCallee)
     return functionObjects.lowerDynamicConstruct(expr, functionObjectLoweringHost(cx));
   if (cx.resolver?.isDirectModuleBinding?.(expr.expression) === true) {
     demoteToLegacy(
@@ -13819,11 +13818,7 @@ function mixedPrimitiveConditionalClaim(
   if (!cx.checker) return null;
   // (#7354 W) The checker types a script var by its declaration, but its dynamic home yields the dynamic value
   // (`undefined` before the initializer runs): an arm that may yield it has no single primitive representation.
-  // The bounded arm grammar has no `this` and no call; for those the sound "may" answer is yes.
-  const leaves = {
-    binding: (node: ts.Node) => !ts.isIdentifier(node) || bindingHoldsDynamic(node, cx),
-    call: () => true,
-  };
+  const leaves = dynamicLeaves(cx);
   if (mayYieldCarrier(expr.whenTrue, leaves) || mayYieldCarrier(expr.whenFalse, leaves)) return null;
   const classifyPrimitive = makeIrPrimitiveExpressionClassifier(cx.checker);
   const classifyDeclared = makeIrDeclaredPrimitiveExpressionClassifier(cx.checker);
@@ -14772,8 +14767,8 @@ function lowerInstanceOf(expr: ts.BinaryExpression, cx: LowerCtx): IrValueId {
   const className = expr.right.text;
   // (#7106) `<dynamic> instanceof <dynamic parameter>`: both carriers, then
   // legacy's generic runtime operator (`dyn.instanceof`).
-  // (#7354 C2) …or, on the Prepared lane, `<any> instanceof <a dynamic value>` (`namesDynamicValue`).
-  if (cx.resolver?.dynamicInstanceOfAtLegacyParity?.(expr) === true || namesDynamicValue(expr.right, cx))
+  // (#7354 C2) …or, on the Prepared lane, `<any> instanceof <a dynamic value>` (`bindingHoldsDynamic`).
+  if (cx.resolver?.dynamicInstanceOfAtLegacyParity?.(expr) === true || bindingHoldsDynamic(expr.right, cx))
     return functionObjects.lowerDynamicInstanceOf(expr, functionObjectLoweringHost(cx));
   if (cx.scope.get(className) !== undefined) {
     // A local binding shadows the class name — the selector rejects this
@@ -14881,19 +14876,14 @@ function peelParensExpr(e: ts.Expression): ts.Expression {
   return inner;
 }
 
-/** from-ast's carrier leaves (`producesCarrier`): the bindings it lowered as the carrier, the calls that answer one. */
 function expressionProducesDynamic(expr: ts.Expression, cx: LowerCtx): boolean {
-  return producesCarrier(expr, {
-    binding: (node) => {
-      if (!ts.isIdentifier(node)) {
-        // (#7106 Stage 4) A `this` bound through `dyn.current_this` is the carrier.
-        const self = cx.scope.get("this");
-        return self?.kind === "local" && self.type.kind === "dynamic";
-      }
-      const binding = cx.scope.get(node.text);
-      if (binding?.kind === "local" || binding?.kind === "moduleGlobal") return binding.type.kind === "dynamic";
-      return binding?.kind === "slot" && (binding.asType ?? binding.type).kind === "dynamic";
-    },
+  return producesCarrier(expr, dynamicLeaves(cx));
+}
+
+/** from-ast's carrier leaves: the bindings it lowered as the carrier, the calls that answer one. */
+function dynamicLeaves(cx: LowerCtx): CarrierLeaves {
+  return {
+    binding: (node) => bindingHoldsDynamic(node, cx),
     call: (call) => {
       if (ts.isIdentifier(call.expression)) {
         // (#7106 Stage 4) A call THROUGH a dynamic binding (`format(actual)`)
@@ -14915,7 +14905,7 @@ function expressionProducesDynamic(expr: ts.Expression, cx: LowerCtx): boolean {
     // (#7066) A claimed #5092 mixed-primitive conditional lowers to the carrier (`lowerConditional`).
     conditional: (conditional) => mixedPrimitiveConditionalClaim(conditional, cx) !== null,
     addsAsCarrier: (operand) => primitiveWrapperConstruction(operand, cx) !== undefined,
-  });
+  };
 }
 
 /** A `+` operand that adds as the carrier: a dynamic value, or a fresh wrapper's ToPrimitive. */

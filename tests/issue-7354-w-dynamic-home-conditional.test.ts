@@ -51,6 +51,11 @@ describe("#7354 W — a conditional arm read from a dynamic home", () => {
     );
   });
 
+  // One binding predicate for the join, the claim and `+`: a `+` over an out-of-scope dynamic home was refused.
+  it("adds a dynamic home as node does", async () => {
+    await agreesWithNode(program('function f(a) { var t = n + "y"; return "x" + n + t + (n + 1) + ";"; }'));
+  });
+
   it("refuses by name an arm that may yield the dynamic value through `+`", async () => {
     expect(await abortBodies(program('function f(a) { var u = a === 1 ? n + 1 : "x"; return typeof u; }'))).toEqual([
       "f: ir/from-ast: ternary branches have different types (dynamic vs string) in f",
