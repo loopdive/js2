@@ -85,6 +85,20 @@ export function effectiveIrReturnTypeNode(fn: ts.SignatureDeclaration): ts.TypeN
   return fn.type ?? ts.getJSDocReturnType(fn);
 }
 
+/**
+ * The type node a contract `override` is checked against: the `effective` node above, except that (#7354 W2) a
+ * dynamic contract wins over a JSDoc tag, which is a comment, not an annotation (the rule is
+ * `sourceDynamicParameter`'s; #7106's externref-slot projection of a JSDoc parameter is a case of it). A
+ * `syntactic` annotation is still checked against the contract.
+ */
+export function annotationUnder(
+  override: { readonly kind: string } | undefined,
+  syntactic: ts.TypeNode | undefined,
+  effective: ts.TypeNode | undefined,
+): ts.TypeNode | undefined {
+  return override?.kind === "dynamic" && syntactic === undefined ? undefined : effective;
+}
+
 function resolveFunctionObjectReceiver(
   node: ts.Identifier,
   resolver: IrImportedFunctionResolver | undefined,

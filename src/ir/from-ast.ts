@@ -97,6 +97,7 @@ import {
   type PrimitiveProof,
 } from "./analysis/operand-admissibility.js"; // (#7144)
 import { mayYieldCarrier, producesCarrier } from "./analysis/carrier-expression.js";
+import { annotationUnder } from "./select-expression-structure.js";
 import { IR_CLOSURE_UNDEFINED } from "./core/closure-invocation-callables.js";
 import {
   fixedClosureParameters,
@@ -349,7 +350,6 @@ import {
   mixedPrimitiveConditionalArms,
   type MixedPrimitiveConditionalArms as MixedPrimitiveConditionalProof,
   effectiveIrParamTypeNode,
-  jsDocParamIsExternrefCandidate,
   functionBodyReferencesArguments,
   directCallPublishesArgc,
   effectiveIrReturnTypeNode,
@@ -1804,7 +1804,11 @@ export function lowerFunctionAstToIr(
       ? ({ kind: "class", shape: options.constructorInitClassShape! } as IrType)
       : isVoidReturn
         ? null
-        : resolveIrType(effectiveReturnTypeNode, options.returnTypeOverride ?? undefined, `return type of ${name}`);
+        : resolveIrType(
+            annotationUnder(options.returnTypeOverride ?? undefined, fn.type, effectiveReturnTypeNode),
+            options.returnTypeOverride ?? undefined,
+            `return type of ${name}`,
+          );
   // #1372 — binding-pattern params: synthesize a stable internal name
   // (`__pattern_param_<idx>`) so the IR `addParam` machinery has a regular
   // identifier to bind, then emit destructuring reads (object.get / vec.get
@@ -1845,14 +1849,10 @@ export function lowerFunctionAstToIr(
         `ir/from-ast: rest/default/optional param not in Phase 1 IR scope (${name})`,
       );
     }
-    // (#7106 item 1) A JSDoc position the planner projected to the dynamic
-    // carrier off legacy's registered externref slot is authoritative over
-    // the JSDoc node (`@param {string} [functionName]` is externref there).
-    const jsDocExternref = override?.kind === "dynamic" && jsDocParamIsExternrefCandidate(p);
     return {
       name: p.name.text,
       type: resolveIrType(
-        jsDocExternref ? undefined : effectiveIrParamTypeNode(p),
+        annotationUnder(override, p.type, effectiveIrParamTypeNode(p)),
         override,
         `param ${p.name.text} of ${name}`,
       ),

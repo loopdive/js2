@@ -35,13 +35,15 @@ export interface SourceDynamicProvenance {
 
 /**
  * The provenance of a program's `sourceFiles`. Without a `dynamicCarrier` on the lane no script `var` gets the
- * dynamic home. `resultIsDynamic` is the unannotated-result contract, which asks `carries` of each returned value.
+ * dynamic home. `resultIsDynamic` is the unannotated-result contract, which asks `carries` of each returned value;
+ * `parameterIsDynamic` the parameter contract.
  */
 export function sourceDynamicProvenance(
   checker: ts.TypeChecker,
   sourceFiles: readonly ts.SourceFile[],
   dynamicCarrier: boolean,
   resultIsDynamic: (declaration: ts.FunctionDeclaration, carries: Carries) => boolean,
+  parameterIsDynamic: (declaration: ts.FunctionDeclaration, parameter: ts.ParameterDeclaration) => boolean,
 ): SourceDynamicProvenance {
   const any = checker.getAnyType();
   const homes = new Map<IrModuleBindingDeclaration, IrScriptVarHome | undefined>();
@@ -78,9 +80,11 @@ export function sourceDynamicProvenance(
     const declaration = checker.getSymbolAtLocation(node)?.valueDeclaration;
     if (declaration === undefined) return true;
     if (declaration === self) return false;
-    // An untyped or `any` parameter is checker `any` (above); an annotated one is typed by its annotation, and the
-    // flow rule checks every argument against it.
-    if (ts.isParameter(declaration)) return false;
+    // An untyped or `any` parameter is checker `any` (above); a syntactically annotated one is typed by its
+    // annotation, and the flow rule checks every argument against it. (#7354 W2) A JSDoc-tagged one is not: the
+    // parameter contract says whether it holds the dynamic value.
+    if (ts.isParameter(declaration))
+      return ts.isFunctionDeclaration(declaration.parent) && parameterIsDynamic(declaration.parent, declaration);
     if (!ts.isVariableDeclaration(declaration)) return true;
     // A top-level declaration's storage is a global, whose home the classifier names: only a script `var` of the
     // program can have the dynamic home (a lexical, ES-module or ambient global is typed by its declaration, and
