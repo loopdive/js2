@@ -12,6 +12,7 @@ import { instantiatePreparedArtifact } from "../src/test262/test262-prepared-run
 import {
   compile,
   compileMulti,
+  requiredPreparedAbortBodies,
   requiredPreparedEmission,
   type Test262CompileOptions,
 } from "../src/test262/test262-prepared-entry.js";
@@ -174,8 +175,18 @@ describe("#7354 Str2 — String(x) on the Prepared path", () => {
       "test.js",
       options(),
     );
-    expect(result.success).toBe(false);
-    expect(messages(result).join("\n")).toContain('direct call to "String" has no exact AST-site plan');
+    // (#7354 U) The refusal is f's: f's body is the run-time abort, named by it, and the call of f ends there.
+    expect(messages(result)).toEqual([]);
+    expect(requiredPreparedAbortBodies(result)!.map((row) => row.detail)).toEqual([
+      expect.stringContaining('direct call to "String" has no exact AST-site plan'),
+    ]);
+    let trap: unknown;
+    try {
+      (instantiatePreparedArtifact(result).instance.exports.__module_init as (() => void) | undefined)?.();
+    } catch (error) {
+      trap = error;
+    }
+    expect((trap as Error | undefined)?.constructor.name).toBe("RuntimeError");
   });
 
   // (#7354 Str2-c) The native formatter is admitted: a typed number, a dynamic operand's number arm, and a template

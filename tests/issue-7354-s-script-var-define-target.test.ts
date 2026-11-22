@@ -43,10 +43,14 @@ async function run(source: string): Promise<"returned" | "threw"> {
   }
 }
 
+/**
+ * The names the path refuses `source` by. (#7354 U) A single source compiles without abort bodies: under them a
+ * refusal inside a function becomes that function's abort body, and these cases are about the name of the refusal.
+ */
 async function refusals(source: string | readonly string[]) {
   const result =
     typeof source === "string"
-      ? await compile(source, options())
+      ? await compile(source, options(), undefined, "refuse")
       : await compileMulti(
           Object.fromEntries(source.map((text, index) => [`s${index}.js`, text])),
           `s${source.length - 1}.js`,
