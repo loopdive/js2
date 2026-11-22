@@ -72,6 +72,11 @@ describe("#7354 T — isNaN", () => {
     );
   });
 
+  // An absent global's `typeof` is "undefined"; `isNaN` now compiles here, so its `typeof` must not say that.
+  it("refuses typeof isNaN by name", async () => {
+    expect(await refusal("var t = typeof isNaN;\n")).toContain('identifier "isNaN" is not in scope in <module-init>');
+  });
+
   it("refuses a program that writes isNaN", async () => {
     expect(await refusal("isNaN = function (v) { return 1; };\nvar r = isNaN(NaN);\n")).toContain(
       'assignment to undeclared identifier "isNaN"',

@@ -5378,3 +5378,59 @@ block, strict code, or a lexical top-level name of the same name refuses by name
 `tests/issue-7354-t2-*.test.ts` file, pushed. Proof per the brief: node agreement + wrong twins, ≥150 probes base vs
 head, ordinary bytes 20 files × 2 targets, `check:prepared-bytes`, the sample through the real runner with mutated
 twins for every new pass, all gates.
+
+## Slice T result (2026-11-22, branch `claude/7354-t` from `claude/7354-w` `9e2e91c2d0`)
+
+Causes 1–3 built as planned; cause 4 deferred by the lead.
+
+- **1, string + number** (`5e1182f267`). `prepareSourceBuiltinResolvers` (`program-source-units.ts`) answers the one
+  lane capability `number-to-string` on wasmgc standalone; every other capability stays unanswered.
+- **2, a callee that is no Reference** (`cd322edd40`, `07d3134763`). `callsNonReference` beside `lowerBindingCall`
+  (`function-object-lowering.ts`): on the Prepared lane a callee that, outer parentheses and TS wrappers skipped
+  (the shared `skipOuterExpressions`), is neither an identifier nor a property/element access is F2's call through a
+  value with `this` undefined. No existing "is this a Reference" predicate was found (grep). `(o.m)()` and
+  `(o["m"])()` stay refused by name. Sloppy `this` inside such a callee is the run-time abort (C2's), not undefined.
+- **3, isNaN** (`73e66c0c69`). `isNaN` joins the conversion plans (`prepareConversionResolvers`, the `String` proof);
+  from-ast lowers it as `Number(v)`'s conversion (`lowerPreparedNumberCall`, now with the ToNumber of no argument as
+  a parameter: `isNaN()` is true) and `emitIsNaN`, now shared with the ordinary ambient arm. Two things the plan did
+  not foresee: (a) the flow rule refused the dynamic argument (lib `isNaN(number: number)`), so `legalize` takes
+  `converts` (an admitted call converts its own arguments; one call site passes the plan); (b) the Prepared lane
+  binds no `js.number.from-value`, so a dynamic operand of `Number(v)` was a physical-plan refusal — on the Prepared
+  lane (`createsFunctionObjects`) it is now the legalized carrier ToNumber (`dyn.to_number`). `Number(v)` of a
+  dynamic value therefore runs too (tested). `isNaN` joins `PREPARED_PROVIDED_GLOBALS`: `typeof isNaN` refuses by
+  name. `parseInt` is not done: it needs a Prepared-bound native scanner provider (a census admission like
+  Str2-c's formatter), not the conversion mechanism.
+- from-ast.ts ends at its base size (17357; comment reflows pay for the three calls); program-source.ts untouched.
+
+| test file (each alone) | tests | exit |
+|---|---|---|
+| issue-7354-t2-string-number-add (new) | 7 | 0 (6 fail on base) |
+| issue-7354-t2-non-reference-callee (new) | 8 | 0 |
+| issue-7354-t2-isnan (new) | 9 | 0 |
+| issue-7363-prepared-eval-refusal (changed: the named IIFE now runs; node agreement + wrong twin) | 91 | 0 |
+| all 52 other issue-7354-* files, 7331, prepared-entry/-runtime, 7188 (batched, 1 fork) | all | 0 |
+
+- **Probes**: 202 (3 causes × top / function / argument / condition / loop / statement positions; runner options),
+  base → head: right 0 → 154, refused 152 → 42, abort 50 → 6. Moves: refused→right 108, abort→right 46,
+  refused→abort 2. 0 wrong, 0 invalid Wasm, 0 exceptions, nothing right became anything else.
+- **Ordinary pipeline**: 20 test262 files + 50 probes × default + standalone byte-identical. `check:prepared-bytes`:
+  all 804 rows identical to the base.
+- **Sample** (411 rows, real runner, default settings): 31/4/376 → **46 / 8 / 357**. New passes (15), each with a
+  mutated twin (last `!==` flipped) that FAILS through the same runner (15/15): compound-assignment
+  S11.13.2_A2.1_T1.6, A3.2_T9, A3.2_T10, A3.2_T11; do-while S12.6.1_A14_T2; while S12.6.2_A14_T2; for S12.6.3_A12.1_T2;
+  line-terminators between-tokens-cr; function-code 10.4.3-1-12gs, 10.4.3-1-43gs; unsigned-right-shift
+  S11.7.3_A5.1_T1; prefix-increment S11.4.4_A3_T4; multiplication S11.5.1_A3_T1.4; subtraction S11.6.2_A2.3_T1;
+  white-space S7.2_A4.4_T2. New fails (4, run-time aborts): three annexB function-code rows (a function declaration
+  in a `switch` inside the IIFE) and toLocaleLowerCase S15.5.4.17_A1_T5. Top errors: 73 `formatIdentityFreeValue`,
+  44 `Array`, 37 `Object.defineProperty`, 22 nested var (for-in), 17 `Object`.
+- Gates: typecheck, LOC and func budget (merge base and `LOC_GATE_BASE` = main `bbda75a4c4`), coercion sites,
+  oracle ratchet, dead exports, import cycles, boundaries inventory — all exit 0.
+
+**Found, not fixed (pre-existing, wrong value).** `typeof parseInt + typeof Math + typeof Object` is
+`"undefinedundefinedundefined"` on the Prepared path (node: `functionobjectfunction`): `absentGlobal`
+(`source-dynamic-contracts.ts`) takes every lib global outside `PREPARED_PROVIDED_GLOBALS` for an absent one.
+
+**Not verified.** Node 25 (not installed; local Node 22). Mutation runs beyond the guards the tests kill by
+construction (the capability answer, the member exclusions, `absent`, `converts`, the carrier ToNumber arm, the
+`isNaN` provided-global entry each have a test that fails without them; the lane gate of `callsNonReference` and of
+the carrier arm is covered only by the ordinary-bytes comparison).
