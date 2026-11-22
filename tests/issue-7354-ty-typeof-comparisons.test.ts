@@ -15,6 +15,7 @@ import { instantiatePreparedArtifact } from "../src/test262/test262-prepared-run
 import {
   compile,
   compileMulti,
+  requiredPreparedAbortBodies,
   requiredPreparedEmission,
   type Test262CompileOptions,
 } from "../src/test262/test262-prepared-entry.js";
@@ -57,8 +58,12 @@ async function run(source: string, warnings: readonly string[] = []): Promise<"r
   }
 }
 
+/**
+ * The name the path refuses `source` by. (#7354 U) Compiled without abort bodies: under them a refusal inside a
+ * function becomes that function's abort body, which never runs the refused use either.
+ */
 async function refusal(source: string, target: "standalone" | "gc" = "standalone") {
-  const result = await compile(source, options(target));
+  const result = await compile(source, options(target), undefined, "refuse");
   expect(result.success).toBe(false);
   return messages(result).join("\n");
 }
@@ -302,8 +307,18 @@ describe("#7354 Ty — typeof of an absent global on the Prepared path", () => {
       "test.js",
       options(),
     );
-    expect(result.success).toBe(false);
-    expect(messages(result).join("\n")).toContain('identifier "Y" is not in scope in g');
+    // (#7354 U) The refusal is g's: g's body is the run-time abort, named by it, and the call of g ends there.
+    expect(messages(result)).toEqual([]);
+    expect(requiredPreparedAbortBodies(result)!.map((row) => row.detail)).toEqual([
+      expect.stringContaining('identifier "Y" is not in scope in g'),
+    ]);
+    let trap: unknown;
+    try {
+      (instantiatePreparedArtifact(result).instance.exports.__module_init as (() => void) | undefined)?.();
+    } catch (error) {
+      trap = error;
+    }
+    expect((trap as Error | undefined)?.constructor.name).toBe("RuntimeError");
   });
 
   it("refuses typeof of a let in its TDZ by name", async () => {
@@ -338,7 +353,8 @@ describe("#7354 Ty — typeof of an absent global on the Prepared path", () => {
         ...(tag === "function" ? [`${name}();`, `new ${name}();`] : []),
       ];
       for (const use of uses) {
-        const result = await compile(`function f(v) { ${use} return v; }\nf(1);`, options());
+        // (#7354 U) Without abort bodies, under which f's refused use would be f's abort body (never the use).
+        const result = await compile(`function f(v) { ${use} return v; }\nf(1);`, options(), undefined, "refuse");
         expect(
           result.success,
           `${name} is now provided on the Prepared path (\`${use}\` compiles): add it to PREPARED_PROVIDED_GLOBALS ` +

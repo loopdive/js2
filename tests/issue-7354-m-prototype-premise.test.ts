@@ -10,7 +10,7 @@
 // must reintroduce a program-wide gate on the primitive arm, or populate the realm's prototypes and read through them.
 import { describe, expect, it } from "vitest";
 import { compile, type Test262CompileOptions } from "../src/test262/test262-prepared-entry.js";
-import { abortsAtRunTime } from "./helpers/prepared-node-agreement.js";
+import { abortBodies, abortsAtRunTime } from "./helpers/prepared-node-agreement.js";
 
 const options = (): Test262CompileOptions =>
   ({
@@ -42,11 +42,19 @@ describe("#7354 M1 — no Prepared program obtains a built-in prototype", () => 
       "function f(){ return (1).constructor; } f();",
       "ir/from-ast: property access .constructor on f64 is not in slice 2 (f)",
     ],
-  ])("refuses %s", async (_label, source, reason) => {
-    const result = await compile(source, options());
-    expect(result.success).toBe(false);
-    expect(result.errors.map((error) => error.message)).toContain(reason);
-  });
+  ])(
+    "refuses %s",
+    async (_label, source, reason) => {
+      const result = await compile(source, options(), undefined, "refuse");
+      expect(result.success).toBe(false);
+      expect(result.errors.map((error) => error.message)).toContain(reason);
+      // (#7354 U) Under abort bodies the refusal is f's: f's body is the run-time abort, so the program still never
+      // obtains the prototype.
+      expect(await abortBodies(source)).toEqual([`f: ${reason}`]);
+      await abortsAtRunTime(source);
+    },
+    180_000,
+  );
 
   // `undefined` and `null` answer these reads (the TypeError), so the kinds that would reach a prototype abort.
   it.each([

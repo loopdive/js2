@@ -59,6 +59,8 @@ loc-budget-allow:
   - src/ir/program-source.ts
   - src/ir/from-ast.ts
   - src/compiler/ir-program-presentation.ts
+import-cycles-allow:
+  - ir->frontend: 9 # 2026-11-22 (#7354 U step 1): a split, no new dependency: the unit body producer moved from src/ir/program-source.ts to src/ir/program-source-units.ts with its frontend imports; both files still need frontend/boolean-return-boundary.ts, so that one edge is counted twice
 ---
 
 # #7354 — Prepared IR path, milestone 1
@@ -5051,3 +5053,148 @@ probe reaches one.
 
 The 41 rows now stop at `CE ir/from-ast: type override (dynamic) disagrees with annotation (f64) at param
 functionLength of verifyCallableProperty` (W2).
+
+## Slice U result (2026-11-22, branch `claude/7354-u` from `claude/7354-c2` 8bbebca651; C2 7debc3daf0, Perf5 204d6f575e, Perf6 4521fc831f merged)
+
+Abort bodies: a function whose body the path cannot lower gets the run-time abort as its body instead of refusing the
+whole program. Switched on only by `src/test262/test262-prepared-entry.ts`.
+
+### Built (plan §5 steps)
+
+- Step 1: the per-unit body producer moved out of `prepareIrProgramSources` into `src/ir/program-source-units.ts`
+  (`lowerSourceUnit`). `checkerScalar` moved beside `checkerAny` in `source-dynamic-contracts.ts`. program-source.ts
+  1835 → 1746 lines.
+- Step 2: `src/ir/abort-bodies.ts`, one module.
+  - `ordinaryOwner`, the one owner rule: the innermost function expression or script-level function declaration
+    that is neither async nor a generator.
+  - `ownRefusal` / `owningRefusals` tag a named refusal with its owner, innermost first. Anything but an
+    `IrUnsupportedError` passes through.
+  - `abortBody(builder, closureSubtype?)` is the one builder.
+  - `AbortBodies` is the policy and its record. Its `lower` is the retry: on an owned refusal it records the owner,
+    truncates the allocation registry, and lowers the unit again. A refusal no function owns, or whose owner already
+    has the abort body (a signature refusal), stays the program's.
+  - `AllocSiteRegistry.truncate`.
+- Steps 3–4: `lowerFunctionAstToIr` and `liftClosureBody` each ask `resolver.abortedBody(fn)` once their parameters
+  exist, and return the abort body instead of the statements. The closure lift site tags its refusals
+  (`owningRefusals`). from-ast is net 0 lines: the two copies of the closure's `finish` metadata became one
+  `closureSubtype`, and two comments were merged.
+- Step 5: `legalize(roots, functions, owners)`. A gap is the refusal of the function it was met in. The flow rule tags
+  the innermost function around the expression and skips functions that have the abort body.
+- Step 6: `requiredPreparedAbortBodies(result)`: rows of unit, Wasm name, line, column, code and detail, in source
+  order. It is exported from the compiler bundle and the worker requires it.
+  - The worker writes the rows into every row's metadata (`abort_bodies` in the JSONL).
+  - `renderHostError(err, rows)` renders a trap whose top frame is a listed function as
+    `aborted in unlowerable unit <name>: <detail> [in …]`.
+- Step 7: `runPreparedIrPipelinePresentation(input, unlowerableBodies?)` → preparation input `unlowerableBodies` →
+  `SourceUnitLowering.abortBodies`. The entry passes `new AbortBodies()`. Its `compile` has a test seam,
+  `unlowerableBodies: "abort" | "refuse"`.
+
+### Differs from the plan
+
+- The module is `src/ir/abort-bodies.ts`, not `src/ir/program/`. Its users (from-ast, the producer, the source
+  legalization) sit in `src/ir/`.
+- The table returns through the policy object (`AbortBodies.rows()`), not through `IrProgramSourcePreparation`. The
+  source preparation is captured into the sealed `PreparedIrProgram`, and the AST-owned record has no place there.
+- The abort body is the `unreachable` terminator alone (U-D6's alternative). `js.value.unsupported` is pure, so an
+  unused result is dead code. The trap's top frame is the function itself, which the table names.
+- There is no wrapper at `liftNestedFunction`. An unannotated nested declaration refuses in the enclosing function's
+  context (plan §4: the enclosing function aborts), and no JS source reaches that lift.
+- The abort check lives inside the two lift functions, after the parameters, so the abort body reuses their
+  parameter construction. That is one line each, and the call site changes one call.
+
+### Tests
+
+| file | tests | exit |
+|---|---|---|
+| issue-7354-u-abort-bodies (new) | 40 | 0 |
+| issue-7354-u-prelude (new; the real prelude, 3 compiles) | 3 | 0 |
+| scripts/test262-prepared-trap-verdict.test.mjs (+1) | 14 | 0 |
+| scripts/test262-compiler-path.test.mjs (capability list +1) | 23 | 0 |
+| every other issue-7354-* file, each alone (42) | all | 0 |
+| es5-assignment/compound, 7106, 7188, 7361, 7363, 7364 ×2, 7380 ×2, test262-prepared-entry/runtime | all | 0 |
+
+Changed expectations, and why. Every one of these files goes through the test262 entry, where the policy is on.
+- A refusal inside a function that the test only names is now probed without abort bodies. These use the shared
+  `refusal()` and the local helpers of D1, Fa, F0, H, H2, O, P, S, Str, Str2c, T, Ty, X, 7363, 7364 and es5-assignment.
+- Where the point is what the program does, the expectation is now the abort body: C2 this, C2 constructors, F2 ×2,
+  F1b, M1 premise, Str2 multi-file, Ty multi-file.
+- Stale rows that are red on the C2 base too were removed, each with a comment: H ×2 and T ×1 (lowered since F1b);
+  7363 ×1 (C2 refuses the receiverless call first).
+
+### Proof
+
+- Sweep (§7; `.tmp/gen-sweep.mjs`): 3 refusal classes (from-ast, legalization gap, flow) × 5 forms × 10 uses ×
+  sloppy/strict = 384 programs, run with the policy on.
+  - Results: 84 node answers, 84 wrong twins thrown, 138 aborts where node enters the function, 78 refused.
+  - The 78 refusals are all top-level shapes of the harness itself, such as `w()(1)` and `new (expr)`.
+  - 0 wrong answers, 0 aborts where node does not enter the function, 0 invalid Wasm, 0 exceptions.
+- Flow rule (TypeScript): inside a function it aborts; at top level it refuses with the same text; the rule skips an
+  aborted closure.
+- Regression, policy off vs the C2 base 7debc3daf0: 267 programs (half the sweep, plus 75 proving and probe
+  programs). Results and bytes are identical. With the policy on, every program the base compiled is byte-identical.
+- `check:prepared-bytes` (804 rows) vs 7debc3daf0: 756 identical, 48 differ.
+  - 46 went from a refusal to compiling with an abort at the entry of the aborted function, which node's run enters.
+  - 1 (585) went from a refusal to returning node's answer.
+  - 1 (203) refuses later, by its physical-gap name.
+  - All 48 were run (`.tmp/pbcheck.mts`).
+- Ordinary pipeline: 20 test262 files × (default, standalone) produce identical bytes.
+- Mutations, killed:
+  - the flow rule's skip of aborted functions;
+  - the innermost-first owner (killed by the new closure-in-a-function-expression probe).
+- Mutations that survive:
+  - the registry truncation: the leftover sites are inert in every probe;
+  - the async/generator exclusion: today generators and async functions refuse before any function can own them,
+    through program-wide signature planning or the enclosing function. It is kept because an aborted generator would
+    be wrong, since calling it runs no body.
+  - The native-family / Promise-delay exclusion was not exercised.
+- Removed as implied by another check: the module-init exclusion, because a module-init has no declaration.
+
+### Sample (411 rows, real runner, at the runner's DEFAULT settings: 512 MB worker, 30 s per row, after Perf6)
+
+| | pass | fail | compile_error |
+|---|---:|---:|---:|
+| before U (C2) | 14 | 0 | 397 |
+| U + Perf6 | **31** (14 negatives + **17 positives**) | 4 | 376 |
+
+- Positive passes: asi S7.9_A6.1_T10, S7.9_A10_T7; assignment/white-space; compound-assignment/srshift-whitespace;
+  identifiers/start-dollar-sign; harness/assert-notsamevalue-notsame; variable/S12.2_A4; try/S12.14_A11_T2;
+  function-code/10.4.3-1-31gs, S10.2.1_A5.1_T1, 10.4.3-1-10-s; literals/numeric S7.8.3_A3.4_T1, A4.2_T5, A3.3_T7;
+  literals/string S7.8.4_A4.2_T4; types/reference/8.7.2-8-s; white-space/between-space.
+- Each was read. 15 carry the prelude's two abort bodies, compareArray (`b[i]`) and compareArray.format (`Array`).
+  None names compareArray and none includes a harness file (K1 by reading; the node-entry script was not built).
+- All 17 have a mutated twin: the last checked value changed, or for the two asi rows a computed flip. All 17 twins
+  FAIL through the same runner.
+- The 4 fails are `aborted in unlowerable unit …`: `arguments` ×3, and an assignment to an undeclared identifier.
+- Top compile errors:
+
+  | rows | first refusal |
+  |---:|---|
+  | 73 | `formatIdentityFreeValue … is written` |
+  | 41 | isWritable invariant (below) |
+  | 36 | `Object.defineProperty` |
+  | 22 | module-init nested var |
+  | 17 | `Object` |
+
+- Before Perf6, at default settings, the 22 compiling rows died with OOM (SIGABRT, 512 MB). At measurement settings
+  (3072 MB, 300 s — not CI's) they gave the same 17 passes. The runner compile then took 48–87 s; after Perf6 it is
+  20–27 s and fits 512 MB.
+- CI's IR job sets `TEST262_WORKER_MAX_OLD_SPACE_SIZE=1024` (`test262-sharded.yml`). The row limit is 30 s, hard-coded
+  in tests/test262-shared.ts. A tsx prelude compile on the pre-Perf6 head OOMed at 1024 MB and passed at 1536 MB.
+
+### Found, not fixed (own slice)
+
+- `ir/from-ast: #5092 then arm proved number but lowered as dynamic in isWritable` (propertyHelper.js) is an
+  `IrInvariantError`.
+  - Through `compile()` it is an exception: `IrProgramDriverInvariantError` from `ir-program-driver.ts:25`.
+    Repro: test262/harness/propertyHelper.js alone with the runner's options.
+  - In the runner it becomes a compile_error row (41 rows).
+  - Without the policy, an earlier unit (verifyProperty) refuses first.
+  - No minimal program was found in 15 minutes.
+
+### Not verified
+
+- Node 25 (not installed).
+- The K1 node-entry script: entry was checked by reading the 17 rows.
+- The policy-gate and U0 mutations were not re-run.
+- The full sweep with the policy off: half of it was run.
+- The 3518/3526 pin suites.

@@ -198,7 +198,9 @@ describe("#7354 X — throw and catch with the Prepared dynamic value", () => {
     // (#7354 M2) "a member read of a dynamic value (a TypeError on null)" left this table: the realm's TypeError is a
     // kind of the dynamic value (tests/issue-7354-m2-caught-errors.test.ts).
   ])("refuses %s before it reaches a catch", async (_label, source, expected) => {
-    const result = await compile(source, options());
+    // (#7354 U) Without abort bodies: under them the refused throw's function gets the abort body, whose trap no
+    // catch sees either.
+    const result = await compile(source, options(), undefined, "refuse");
     expect(
       result.success,
       "a new payload kind reaches a catch: add its kind to TYPEOF_KIND (src/ir/program/dynamic-value-legalization.ts) " +

@@ -81,8 +81,8 @@ export function lowerSourceUnit(lowering: SourceUnitLowering, unit: TerminalUnit
   // A native async family's or a certified Promise-delay's frame is planned around the bodies it holds.
   const abortBodies = family || lowering.certifiedDelays.has(unit.id) ? undefined : lowering.abortBodies;
   if (!abortBodies) return lowerUnitOnce(lowering, unit, family, undefined);
-  const declaration = unit.kind === "module-init" ? undefined : identity.declarationByUnitId.get(unit.id);
-  const result = abortBodies.lower(lowering.allocations, declaration as ts.FunctionDeclaration | undefined, () =>
+  // A script's module-init has no declaration: a refusal no function inside it owns stays the program's.
+  const result = abortBodies.lower(lowering.allocations, identity.declarationByUnitId.get(unit.id), () =>
     lowerUnitOnce(lowering, unit, family, abortBodies),
   );
   abortBodies.report(result.functions, (id) => identity.declarationByUnitId.get(id));

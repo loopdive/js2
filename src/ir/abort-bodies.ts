@@ -99,7 +99,7 @@ export class AbortBodies {
    * owns (`unitDeclaration` is the unit's own, absent for top-level code), or owned by a function that has the abort
    * body already (its signature, not its body, refused), stays the program's.
    */
-  lower<T>(allocations: AllocSiteRegistry, unitDeclaration: ts.FunctionDeclaration | undefined, lower: () => T): T {
+  lower<T>(allocations: AllocSiteRegistry, unitDeclaration: ts.Node | undefined, lower: () => T): T {
     for (;;) {
       const mark = allocations.size;
       try {

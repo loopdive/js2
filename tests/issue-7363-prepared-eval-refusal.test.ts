@@ -33,9 +33,14 @@ const DYNAMIC_CALL =
   "dynamic operation js.closure.call:1 in a program that creates no function value has no Prepared intrinsic";
 const PATTERN = "whole-program binding pattern requires the existing destructuring producer";
 
-/** The compile's refusals. The checker's remarks on a binding named `eval` are warnings and are left out. */
+/**
+ * The compile's refusals. The checker's remarks on a binding named `eval` are warnings and are left out. (#7354 U)
+ * Without abort bodies, under which an eval refused inside a function becomes that function's abort body.
+ */
 const gaps = async (source: string) =>
-  (await compile(source, options)).errors.filter((error) => error.severity === "error").map((error) => error.message);
+  (await compile(source, options, undefined, "refuse")).errors
+    .filter((error) => error.severity === "error")
+    .map((error) => error.message);
 
 describe("#7363 slice 1 — an eval statement on the Prepared path refuses by name", () => {
   it.each([
@@ -45,7 +50,8 @@ describe("#7363 slice 1 — an eval statement on the Prepared path refuses by na
     ["the indirect (0, eval) spelling", '(0, eval)("1");', "<module-init>"],
     // Not lexical: what the global binding holds when the call runs is slice 2's question.
     ["a write through globalThis", 'function f() { eval("1"); }\nglobalThis.eval = function (x) { return x; };', "f"],
-    ["a write through this", 'function f() { eval("1"); }\nthis.eval = function (x) { return x; };\nf();', "f"],
+    // (#7354 C2) "a write through this" (`this.eval = …` beside `f()`) now refuses first at the receiverless direct
+    // call of f, which reads `this` through the eval.
     ["an alias of the global", 'eval("1");\nvar e = eval;', "<module-init>"],
     ["an eval property", 'eval("1");\nvar o = {};\no.eval = 1;', "<module-init>"],
     ["the name as a string", 'eval("1");\nvar key = "eval";', "<module-init>"],

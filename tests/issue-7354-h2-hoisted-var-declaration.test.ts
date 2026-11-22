@@ -42,8 +42,12 @@ async function run(source: string, fileName = "test.js"): Promise<"returned" | "
   }
 }
 
+/**
+ * The name the path refuses `source` by. (#7354 U) Compiled without abort bodies: under them a refusal inside a
+ * function becomes that function's abort body, and these cases are about the name of the refusal.
+ */
 async function refusal(source: string) {
-  const result = await compile(source, options("test.js"));
+  const result = await compile(source, options("test.js"), undefined, "refuse");
   expect(result.success).toBe(false);
   return messages(result).join("\n");
 }

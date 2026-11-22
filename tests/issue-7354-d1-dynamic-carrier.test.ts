@@ -56,8 +56,12 @@ async function run(source: string): Promise<number> {
   return (instantiatePreparedArtifact(result).instance.exports.main as () => number)();
 }
 
+/**
+ * The name the path refuses `source` by. (#7354 U) Compiled without abort bodies: under them a refusal inside `main`
+ * becomes main's abort body, and these cases are about the name of the refusal.
+ */
 async function refusal(source: string, target: "standalone" | "gc" = "standalone"): Promise<string> {
-  const result = await compile(source, options(target));
+  const result = await compile(source, options(target), undefined, "refuse");
   expect(result.success).toBe(false);
   return messages(result).join("\n");
 }
