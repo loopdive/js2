@@ -6,6 +6,7 @@ import { preparedIrProgramCallableResults } from "./program-callable-contract.js
 import { prepareSourceClosureInvocations } from "./source-closure-invocation.js";
 import { checkerScalar, programDynamicContracts, type ProgramDynamicContracts } from "./source-dynamic-contracts.js";
 import { lowerSourceUnit, type SourceUnitLowering } from "./program-source-units.js";
+import type { AbortBodies } from "./abort-bodies.js";
 import type { TypedIrProgramInput } from "./program/input-contracts.js";
 import { legalizeDynamicGlobals } from "./program/dynamic-value-legalization.js";
 import type { TypeOracle } from "../checker/oracle.js";
@@ -849,6 +850,11 @@ export interface IrProgramSourceInput {
   readonly deferTopLevelInit: boolean;
   readonly codeStrictness?: (node: ts.FunctionLikeDeclaration | ts.SourceFile) => boolean;
   /**
+   * (#7354 U) Present: a function whose body cannot be lowered gets the run-time abort as its body and is recorded
+   * here (`abort-bodies.ts`). Absent: the program is refused. Only the test262 Prepared entry switches it on.
+   */
+  readonly unlowerableBodies?: AbortBodies;
+  /**
    * Explicit frontend lowering selection; not provider availability or
    * permission to emit. Omission preserves historical source lowering.
    */
@@ -1689,6 +1695,7 @@ export function prepareIrProgramSources(
                 donorUnitId: unit.id,
                 project: sourceMapProjector.project,
               }),
+      abortBodies: input.unlowerableBodies,
     };
     for (const unit of inventory.terminalUnits) {
       diagnostic.active = unit.id;

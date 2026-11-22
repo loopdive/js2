@@ -18,6 +18,7 @@ import type { IrDirectCallLoweringPlan, ModuleBindingGlobal } from "./ast-loweri
 import type { PreparedIrFunction as IrFunction } from "./runtime/contracts/prepared.js";
 import type { IrType } from "./core/types.js";
 import { demoteToLegacy } from "./outcomes.js";
+import type { AbortBodies } from "./abort-bodies.js";
 import { PreparedIrProgramInvariantError } from "./program/errors.js";
 import type { RuntimeManifestPolicy } from "../runtime/contracts/provider-policy.js";
 import type { FunctionValueGlobal } from "./function-declaration-values.js";
@@ -63,16 +64,38 @@ export interface SourceUnitLowering {
   readonly certifiedDelays: ReadonlyMap<IrUnitId, IrPromiseDelayLoweringPlan>;
   /** The source-map context of a unit's body, when a source map is captured. */
   readonly sourceMap: ((unit: TerminalUnit) => IrFunctionSourceMapContext) | undefined;
+  /** (#7354 U) The `unlowerableBodies` policy, when switched on. */
+  readonly abortBodies: AbortBodies | undefined;
 }
 
+type LoweredSourceUnit = {
+  readonly lowered: ReturnType<typeof lowerFunctionAstToIr>;
+  readonly functions: readonly IrFunction[];
+};
+
 /** `unit`'s body lowered from its AST, and its functions legalized. */
-export function lowerSourceUnit(
-  lowering: SourceUnitLowering,
-  unit: TerminalUnit,
-): { readonly lowered: ReturnType<typeof lowerFunctionAstToIr>; readonly functions: readonly IrFunction[] } {
-  const { input, identity, dynamicContracts, nativeFamily } = lowering;
+export function lowerSourceUnit(lowering: SourceUnitLowering, unit: TerminalUnit): LoweredSourceUnit {
+  const { identity, nativeFamily } = lowering;
   const family = nativeFamily?.functions.get(unit.id);
   if (family) nativeFamily!.assertCurrent(unit.id);
+  // A native async family's or a certified Promise-delay's frame is planned around the bodies it holds.
+  const abortBodies = family || lowering.certifiedDelays.has(unit.id) ? undefined : lowering.abortBodies;
+  if (!abortBodies) return lowerUnitOnce(lowering, unit, family, undefined);
+  const declaration = unit.kind === "module-init" ? undefined : identity.declarationByUnitId.get(unit.id);
+  const result = abortBodies.lower(lowering.allocations, declaration as ts.FunctionDeclaration | undefined, () =>
+    lowerUnitOnce(lowering, unit, family, abortBodies),
+  );
+  abortBodies.report(result.functions, (id) => identity.declarationByUnitId.get(id));
+  return result;
+}
+
+function lowerUnitOnce(
+  lowering: SourceUnitLowering,
+  unit: TerminalUnit,
+  family: ReturnType<NativeAsyncSourceFamilies["functions"]["get"]>,
+  abortBodies: AbortBodies | undefined,
+): LoweredSourceUnit {
+  const { input, identity, dynamicContracts } = lowering;
   const resolveBinding = (node: ts.Identifier, writeValue?: ts.Expression): ModuleBindingGlobal | undefined => {
     let symbol = input.checker.getSymbolAtLocation(node);
     if (!symbol) return undefined;
@@ -108,6 +131,7 @@ export function lowerSourceUnit(
     },
     ...family?.resolver,
     ...dynamicContracts.resolver,
+    ...(abortBodies ? { abortedBody: (fn) => abortBodies.has(fn) } : {}),
   };
   const source = identity.sourceFileBySourceId.get(unit.sourceId)!;
   const moduleInit = unit.kind === "module-init";
@@ -166,7 +190,11 @@ export function lowerSourceUnit(
       "invalid-prepared-data",
       `certified native Promise-delay ${unit.id} fabricated support bodies or provenance`,
     );
-  return { lowered, functions: dynamicContracts.legalize(sourceRoots, [lowered.main, ...lowered.lifted]) };
+  const functions = dynamicContracts.legalize(sourceRoots, [lowered.main, ...lowered.lifted], {
+    declarationOf: (id) => identity.declarationByUnitId.get(id),
+    aborted: (fn) => abortBodies?.has(fn) === true,
+  });
+  return { lowered, functions };
 }
 
 /** Combine source-owned call/read plans; no physical provider is selected here. */

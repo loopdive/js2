@@ -45,6 +45,7 @@ import {
 import { lowerNativeConsoleLine } from "./console-lowering.js";
 import { boxNativeInKey, lowerNativeIn } from "./native-in.js";
 import * as functionObjects from "./function-object-lowering.js";
+import { abortBody, owningRefusals } from "./abort-bodies.js";
 import { expressionIsDefinitelyBoolean } from "./select-expression-structure.js";
 import { skipTransparentExpressions, unwrapTypeErasedExpression } from "../shared/transparent-expressions.js";
 import { constBindingNumber, isStaticArrayIndex, staticElementKey } from "../shared/array-index-key.js";
@@ -1004,6 +1005,8 @@ export interface IrFromAstResolver extends PreparedAsyncFromAstResolver {
   };
   /** (#7354 C2) Some closure binds its own `this`: every call of a closure value is the dispatcher's. */
   closuresBindReceivers?(): boolean;
+  /** (#7354 U) The function's body is the run-time abort (`abort-bodies.ts`); its statements are not lowered. */
+  abortedBody?(fn: ts.FunctionLikeDeclaration): boolean;
   /**
    * (#7106 Stage 4) True when this lane lowers `recv.<method>(…arity args)` on
    * a dynamic receiver through the `__ir_dyn_mcall_<m>_<n>` brand-dispatch
@@ -1737,9 +1740,7 @@ export function lowerFunctionAstToIr(
       "ir/from-ast: function declaration without a name (and no options.funcName supplied)",
     );
   }
-  if (!fn.body) {
-    demoteToLegacy("body-shape-rejected", `ir/from-ast: function ${name} has no body`);
-  }
+  if (!fn.body) demoteToLegacy("body-shape-rejected", `ir/from-ast: function ${name} has no body`);
   validateLogicalVectorFacts(fn, options.logicalVectorTypes, name);
   const logicalVectorConsumed = options.logicalVectorTypes === undefined ? undefined : new Set<ts.Node>();
 
@@ -1928,6 +1929,7 @@ export function lowerFunctionAstToIr(
     constructorInitSelf = builder.addParam("__self", selfType);
     scope.set("this", { kind: "local", value: constructorInitSelf, type: selfType });
   }
+  if (options.resolver?.abortedBody?.(fn)) return { main: abortBody(builder), lifted: [], liftedUnitProvenance: [] };
 
   builder.openBlock();
 
@@ -16656,9 +16658,10 @@ function lowerClosureExpressionWithSignature(
     }
   }
 
-  // Lift body. The lifted function takes (__self: IrType.closure,
-  // ...sig.params) and reads captures via `closure.cap`.
-  const lifted = liftClosureBody(liftedIdentity, expr, signature, captures, captureFieldTypes, cx, exact);
+  // Lift body: the lifted function takes (__self: IrType.closure, ...sig.params) and reads captures via `closure.cap`.
+  const lifted = owningRefusals(expr, () =>
+    liftClosureBody(liftedIdentity, expr, signature, captures, captureFieldTypes, cx, exact),
+  );
   cx.lifted.push(lifted);
   recordSourceMapDerived(cx, liftedIdentity, expr);
 
@@ -16901,6 +16904,14 @@ function liftClosureBody(
     } else if (ts.isIdentifier(p.name)) scope.set(name, { kind: "local", value: v, type: t });
     else pendingDestructures.push({ pattern: p.name, value: v });
   }
+  const closureSubtype: NonNullable<IrFunction["closureSubtype"]> = {
+    signature,
+    captureFieldTypes: [...captureFieldTypes],
+    ...fixedClosureParameters(expr, signature),
+    ...(hostOneShot ? { hostOneShot: true } : {}),
+    ...(domCallbackAuthority ? { domCallbackAuthority } : {}),
+  };
+  if (cx.resolver?.abortedBody?.(expr)) return abortBody(builder, closureSubtype);
 
   builder.openBlock();
   if (functionMemberClosure) {
@@ -16949,8 +16960,7 @@ function liftClosureBody(
     }
   }
 
-  // Read each capture out of __self. captureFieldTypes is parallel to
-  // captures; lifted body sees captures at index 0..N-1.
+  // Read each capture out of __self (captureFieldTypes is parallel to captures, at index 0..N-1).
   if (sourceScope)
     withGeneratedSourceSite(sourceScope, "binding-scaffold", expr, () =>
       lowerClosureCaptureBindings(captures, captureFieldTypes, selfV, builder, scope),
@@ -17026,13 +17036,7 @@ function liftClosureBody(
       }
       lowerDiscardedExpression(body, innerCx);
       terminateImplicitSourceReturn(innerCx, []);
-      return builder.finish({
-        signature,
-        captureFieldTypes: [...captureFieldTypes],
-        ...fixedClosureParameters(expr, signature),
-        ...(hostOneShot ? { hostOneShot: true } : {}),
-        ...(domCallbackAuthority ? { domCallbackAuthority } : {}),
-      });
+      return builder.finish(closureSubtype);
     }
     // Concise body — wrap as `return <expr>`.
     const v = lowerExpr(body, innerCx, signature.returnType);
@@ -17057,13 +17061,7 @@ function liftClosureBody(
     lowerStatementList(body.statements, innerCx);
   }
 
-  return builder.finish({
-    signature,
-    captureFieldTypes: [...captureFieldTypes],
-    ...fixedClosureParameters(expr, signature),
-    ...(hostOneShot ? { hostOneShot: true } : {}),
-    ...(domCallbackAuthority ? { domCallbackAuthority } : {}),
-  });
+  return builder.finish(closureSubtype);
 }
 
 /**

@@ -31,6 +31,8 @@ import { ts } from "../ts-api.js";
 import type { IrType } from "./core/types.js";
 import type { IrFunction } from "./core/nodes.js";
 import { IrUnsupportedError } from "./outcomes.js";
+import { ownRefusal } from "./abort-bodies.js";
+import type { IrUnitId } from "./identity.js";
 import {
   DynamicValueGap,
   legalizeDynamicValues,
@@ -309,7 +311,16 @@ export interface ProgramDynamicContracts extends SourceDynamicProvenance {
   readonly legalize: (
     roots: ts.FunctionDeclaration | readonly ts.Statement[],
     functions: readonly IrFunction[],
+    owners: RefusalOwners,
   ) => readonly IrFunction[];
+}
+
+/** (#7354 U) What the legalization needs to give its refusals an owner (`abort-bodies.ts`). */
+export interface RefusalOwners {
+  /** The declaration a lowered function was lowered from. */
+  readonly declarationOf: (unit: IrUnitId) => ts.Node | undefined;
+  /** The function's body is the abort: its statements were never lowered, so no rule reads them. */
+  readonly aborted: (fn: ts.FunctionLikeDeclaration) => boolean;
 }
 
 /**
@@ -383,7 +394,7 @@ export function programDynamicContracts(
         `function ${declaration.name?.text} returns ${checker.typeToString(result)}, which has no Prepared result contract`,
       );
     },
-    legalize: (roots, functions) =>
+    legalize: (roots, functions, owners) =>
       legalizeSourceDynamicValues(
         checker,
         policy,
@@ -393,6 +404,7 @@ export function programDynamicContracts(
         sourceFiles,
         allocations,
         objects,
+        owners,
       ),
   };
 }
@@ -437,16 +449,25 @@ export const PREPARED_PROVIDED_GLOBALS: ReadonlySet<string> = new Set(["Number",
  * gives its operand no contextual type; the legalization expresses it or
  * refuses it by name.
  */
-function refuseImplicitDynamicFlows(checker: ts.TypeChecker, roots: readonly ts.Node[], carries: Carries): void {
+function refuseImplicitDynamicFlows(
+  checker: ts.TypeChecker,
+  roots: readonly ts.Node[],
+  carries: Carries,
+  aborted: RefusalOwners["aborted"],
+): void {
   const any = checker.getAnyType();
   const visit = (node: ts.Node): void => {
+    if ((ts.isFunctionExpression(node) || ts.isFunctionDeclaration(node)) && aborted(node)) return;
     if (ts.isExpression(node) && !passedOn(node) && carries(node)) {
       const contextual = checker.getContextualType(node);
       if (contextual !== undefined && contextual !== any && !storedIntoCarrier(node, carries))
-        throw new IrUnsupportedError(
-          "type-resolution-unsupported",
-          "build",
-          `a dynamic value flows into ${checker.typeToString(contextual)} without a conversion (${ts.SyntaxKind[node.parent.kind]})`,
+        throw ownRefusal(
+          new IrUnsupportedError(
+            "type-resolution-unsupported",
+            "build",
+            `a dynamic value flows into ${checker.typeToString(contextual)} without a conversion (${ts.SyntaxKind[node.parent.kind]})`,
+          ),
+          node,
         );
     }
     ts.forEachChild(node, visit);
@@ -507,21 +528,31 @@ function legalizeSourceDynamicValues(
   sourceFiles: readonly ts.SourceFile[],
   allocations: AllocSiteRegistry,
   objects: ProgramObjects,
+  owners: RefusalOwners,
 ): readonly IrFunction[] {
   const roots = "kind" in declaration ? [declaration] : declaration;
   if (!nativeDynamicLane(policy)) return functions;
   // (#7354 Str2) Number::toString has one binding on this lane, typed or dynamic (number-to-string-target.ts).
   const retargeted = functions.map(retargetNumberToString);
   const catches = sourceFiles.some(readsCatchPayload);
-  let legalized: readonly IrFunction[];
-  try {
-    legalized = retargeted.map((fn) => legalizeDynamicValues(fn, allocations, { objects, catches }));
-    if (catches) retargeted.forEach(refuseUnadmittedThrows);
-  } catch (error) {
-    if (!(error instanceof DynamicValueGap)) throw error;
-    throw new IrUnsupportedError("type-resolution-unsupported", "build", error.message);
-  }
-  if (legalized.some((fn, index) => fn !== retargeted[index])) refuseImplicitDynamicFlows(checker, roots, carries);
+  // A gap is the refusal of the function it was met in.
+  const owned = <T>(fn: IrFunction, step: () => T): T => {
+    try {
+      return step();
+    } catch (error) {
+      if (!(error instanceof DynamicValueGap)) throw error;
+      throw ownRefusal(
+        new IrUnsupportedError("type-resolution-unsupported", "build", error.message),
+        owners.declarationOf(fn.unitId),
+      );
+    }
+  };
+  const legalized = retargeted.map((fn) =>
+    owned(fn, () => legalizeDynamicValues(fn, allocations, { objects, catches })),
+  );
+  if (catches) retargeted.forEach((fn) => owned(fn, () => refuseUnadmittedThrows(fn)));
+  if (legalized.some((fn, index) => fn !== retargeted[index]))
+    refuseImplicitDynamicFlows(checker, roots, carries, owners.aborted);
   legalizeDynamicAllocations(legalized, allocations);
   return legalized;
 }
