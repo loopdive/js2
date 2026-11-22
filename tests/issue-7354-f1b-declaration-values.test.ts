@@ -5,7 +5,7 @@
 // twice: with node's answer (returns) and with a wrong one (throws); a refusal is asserted by its exact text.
 import { describe, expect, it } from "vitest";
 import { compile } from "../src/test262/test262-prepared-entry.js";
-import { preparedOptions, refusal, runPrepared } from "./helpers/prepared-node-agreement.js";
+import { abortBodies, preparedOptions, refusal, runPrepared } from "./helpers/prepared-node-agreement.js";
 
 const SLOW = 240_000;
 
@@ -85,12 +85,6 @@ describe("#7354 F1b — function declarations as values", () => {
       "function f() {} var g = f; function w() { return this; }",
       "function declaration 'f' read as a value is written",
     ],
-    // A callee is no value read: with `f` only called, the program meets the `this` refusal, not the binding proof.
-    [
-      "only called beside an escaping global object",
-      "function f() { return 1; } function w() { return this; } f();",
-      "'this' reference outside an instance method body (w)",
-    ],
     [
       "in a script that runs no top-level code",
       "function k() { return k2; } function k2() { return 1; }",
@@ -98,6 +92,14 @@ describe("#7354 F1b — function declarations as values", () => {
     ],
   ])("refuses a declaration %s by name", async (_label, source, message) => {
     expect(await refusal(source)).toContain(message);
+  });
+
+  // A callee is no value read: with `f` only called, the program meets the `this` refusal, not the binding proof.
+  // (#7354 U) That refusal is w's, which is never called: w gets the abort body and the program runs.
+  it("meets no binding proof for a declaration only called beside an escaping global object", async () => {
+    const source = "function f() { return 1; } function w() { return this; } if (f() !== 1) throw 1;";
+    expect(await abortBodies(source)).toEqual(["w: ir/from-ast: 'this' reference outside an instance method body (w)"]);
+    expect(await runPrepared(source)).toBe("returned");
   });
 
   it("refuses a declaration with a typed parameter read as a value by name", async () => {
