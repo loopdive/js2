@@ -41,6 +41,7 @@ import {
 import { legalizeDynamicAllocations } from "./program/dynamic-carrier-types.js";
 import { retargetNumberToString } from "./program/number-to-string-target.js";
 import { programObjects } from "./source-plain-objects.js";
+import { nativeObjectStaticOf } from "./realm-static-call.js";
 import type { ProgramObjects } from "./program/dynamic-value-kinds.js";
 import type { AllocSiteRegistry } from "./analysis/alloc-registry.js";
 import type { RuntimeManifestPolicy } from "../runtime/contracts/provider-policy.js";
@@ -454,7 +455,7 @@ function refuseImplicitDynamicFlows(
   const any = checker.getAnyType();
   const visit = (node: ts.Node): void => {
     if ((ts.isFunctionExpression(node) || ts.isFunctionDeclaration(node)) && aborted(node)) return;
-    if (ts.isExpression(node) && !passedOn(node) && carries(node)) {
+    if (ts.isExpression(node) && !passedOn(checker, node) && carries(node)) {
       const contextual = checker.getContextualType(node);
       if (contextual !== undefined && contextual !== any && !storedIntoCarrier(node, carries))
         throw ownRefusal(
@@ -476,9 +477,10 @@ function refuseImplicitDynamicFlows(
  * operand of `||`/`&&`, which yields one of its operands): the parent's flow counts. A conditional's test has no
  * contextual type, so skipping it too loses no check.
  */
-function passedOn(node: ts.Expression): boolean {
+function passedOn(checker: ts.TypeChecker, node: ts.Expression): boolean {
   const { parent } = node;
   if (ts.isParenthesizedExpression(parent) || ts.isConditionalExpression(parent)) return true;
+  if (objectStaticOperand(checker, node)) return true;
   if (!ts.isBinaryExpression(parent)) return false;
   const operator = parent.operatorToken.kind;
   return (
@@ -486,6 +488,21 @@ function passedOn(node: ts.Expression): boolean {
     operator === ts.SyntaxKind.BarBarToken ||
     operator === ts.SyntaxKind.AmpersandAmpersandToken
   );
+}
+
+/**
+ * (#7354 O1) An argument of a native `Object` static (`realm-static-call.ts`), or a property value of an object literal
+ * that is one (a descriptor, a descriptor map): each is taken as a carrier, whatever the lib's signature types it.
+ */
+function objectStaticOperand(checker: ts.TypeChecker, node: ts.Expression): boolean {
+  let operand: ts.Expression = node;
+  // A descriptor's field name (`value`) is typed by the lib's `PropertyDescriptor` too.
+  while (ts.isPropertyAssignment(operand.parent)) operand = operand.parent.parent;
+  const call = operand.parent;
+  if (!ts.isCallExpression(call) || !call.arguments.includes(operand) || !nativeObjectStaticOf(call)) return false;
+  // The global's, as the lib declares it: a program's own `Object` keeps its parameters' types.
+  const global = checker.getSymbolAtLocation((call.expression as ts.PropertyAccessExpression).expression);
+  return !!global?.declarations?.every((declaration) => declaration.getSourceFile().isDeclarationFile);
 }
 
 /**

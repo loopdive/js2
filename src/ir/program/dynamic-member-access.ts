@@ -64,7 +64,7 @@ interface Access {
   /** The answer of an arm whose value no code reads (after a throw, or a sloppy write's ignored failure). */
   readonly unread: (result: IrValueId) => IrInstr;
   /** (#7354 C2) `abort`: the run-time abort, for an answer only a built-in prototype the realm lacks holds. */
-  readonly object: (result: IrValueId, abort: Abort) => IrInstr[];
+  readonly object: (result: IrValueId, abort: Abort, throwTypeError: ThrowTypeError) => IrInstr[];
   /** (#7354 F1b) A function value: the object's access, but its own `length` and `name` are read only. */
   readonly function: (result: IrValueId, throwTypeError: ThrowTypeError) => IrInstr[];
   readonly error: (result: IrValueId) => IrInstr[];
@@ -116,7 +116,7 @@ function memberAccess(
       case "type-error":
         return throwTypeError(access.nullishMessage(kind), r);
       case "object":
-        return access.object(r, abort);
+        return access.object(r, abort, throwTypeError);
       case "function":
         return access.function(r, throwTypeError);
       case "error":
@@ -199,6 +199,15 @@ export function dynamicMemberWrite(b: MemberAccessBuilders, instr: MemberSet): I
     const ok = b.fresh();
     return { ok, instr: realmCall("js.object.set", [instr.recv, instr.key, instr.value, instr.recv], ok) };
   };
+  // (#7354 F1b, O1) OrdinarySet answers `false` for a read-only data property (a function's own `length` and `name`,
+  // one `Object.defineProperty` made read only, an inherited one) and a setter-less accessor: PutValue ignores that in
+  // sloppy code and throws a TypeError in strict code.
+  const putValue = (kind: "object" | "function", r: IrValueId, throwTypeError: ThrowTypeError): IrInstr[] => {
+    const { ok, instr: write } = set();
+    if (instr.sloppy === true) return [write, unread(r)];
+    const readOnly = (s: IrValueId) => throwTypeError(`Cannot assign to read only property '${name}' of ${kind}`, s);
+    return [write, b.branch(ok, (s) => [unread(s)], readOnly, r, b.carrier)];
+  };
   const access: Access = {
     operation: `member write '${name}'`,
     // (#7354 C2) The write's value is unread, but it is the carrier so that an arm's run-time abort is its answer.
@@ -214,23 +223,8 @@ export function dynamicMemberWrite(b: MemberAccessBuilders, instr: MemberSet): I
           : undefined,
     nullishMessage: (kind) => `Cannot set properties of ${kind} (setting '${name}')`,
     unread,
-    object: (r) => [set().instr, unread(r)],
-    // (#7354 F1b) OrdinarySet answers `false` for the own read-only `length` and `name`: PutValue ignores that in
-    // sloppy code and throws a TypeError in strict code.
-    function: (r, throwTypeError) => {
-      const { ok, instr: write } = set();
-      if (instr.sloppy === true) return [write, unread(r)];
-      return [
-        write,
-        b.branch(
-          ok,
-          (s) => [unread(s)],
-          (s) => throwTypeError(`Cannot assign to read only property '${name}' of function`, s),
-          r,
-          b.carrier,
-        ),
-      ];
-    },
+    object: (r, _abort, throwTypeError) => putValue("object", r, throwTypeError),
+    function: (r, throwTypeError) => putValue("function", r, throwTypeError),
     // Refused above (`missing`): a write never reaches the error arm.
     error: () => [],
     primitive: (kind, r, throwTypeError) =>

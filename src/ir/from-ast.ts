@@ -109,6 +109,7 @@ import {
   resolveOrdinaryObjectClosureSignature,
 } from "./ordinary-object-closure-signatures.js";
 import { isDirectObjectCreateNullCall } from "../frontend/builtins/prepare-object-create.js";
+import { tryLowerRealmStaticCall } from "./realm-static-call.js";
 
 import { TsCheckerOracle, type TypeOracle } from "../checker/oracle.js";
 import {
@@ -7715,6 +7716,7 @@ function functionObjectLoweringHost(cx: LowerCtx): functionObjects.FunctionObjec
     dynamicCarrierIsExternref: () =>
       cx.resolver?.dynamicCarrierIsExternref?.() === true && cx.resolver.resolveDynamic?.()?.kind === "externref",
     createsFunctionObjects: () => functionObjects.createsFunctionObjects(cx.resolver),
+    isUnshadowedGlobal: (expression, name) => isUnshadowedGlobalExpression(expression, name, cx),
     requireOwner: (ownerUnitId) =>
       requireMatchingLoweringPlanOwner("top-level function value", ownerUnitId, cx.ownerUnitId, cx.funcName),
     lowerExpression: (source) => lowerExpr(source, cx, irDynamic()),
@@ -9200,11 +9202,6 @@ function unadmittedObjectDefineProperty(cx: LowerCtx): never {
   return refuseUnselected(cx.unselected, "call-resolution-unsupported", detail);
 }
 
-/** (#7338) The selector's `Object` statics plan, on from-ast's scope and the same program facts. */
-function objectStaticPlanOf(expr: ts.CallExpression, cx: LowerCtx): ObjectStaticPlan | undefined {
-  return objectStaticCallPlan(expr, objectStaticsRealmOf(cx));
-}
-
 function objectStaticsRealmOf(cx: LowerCtx): ObjectStaticsRealm {
   return {
     isAmbientBinding: (node) => cx.resolver?.isAmbientBinding?.(node) === true && cx.scope.get(node.text) === undefined,
@@ -9351,7 +9348,10 @@ function lowerMethodCallWithSourcePlan(
   if (functionObjects.isPreparedFunctionObjectAccess(expr.expression, cx.topLevelFunctionValues)) {
     return functionObjects.lowerFunctionObjectMemberCall(expr, expr.expression, functionObjectLoweringHost(cx));
   }
-  const objectStatic = tryLowerObjectStaticCall(expr, cx) ?? tryLowerObjectCreateDescriptorMapCall(expr, cx);
+  const objectStatic =
+    tryLowerObjectStaticCall(expr, cx) ??
+    tryLowerObjectCreateDescriptorMapCall(expr, cx) ??
+    tryLowerRealmStaticCall(expr, functionObjectLoweringHost(cx));
   if (objectStatic !== null) return objectStatic;
   const globalFunction = tryLowerAmbientGlobalFunctionCall(expr, cx); // (#7267) `JSON.parse(s);`
   if (globalFunction !== null) return globalFunction;
@@ -14897,7 +14897,7 @@ function expressionProducesDynamic(expr: ts.Expression, cx: LowerCtx): boolean {
       }
       if (!ts.isPropertyAccessExpression(call.expression)) return false;
       // (#7338) An admitted `Object` static answers the carrier; (#7339) the test row as its plan's answer says.
-      const plan = objectStaticPlanOf(call, cx);
+      const plan = objectStaticCallPlan(call, objectStaticsRealmOf(cx)); // (#7338) the selector's plan
       if (plan?.kind === "call") return true;
       if (plan?.kind === "test") return plan.test.answer === "dynamic";
       // (#7335) A dynamic home's own-property test answers a boolean.

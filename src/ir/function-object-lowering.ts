@@ -46,6 +46,8 @@ export interface FunctionObjectLoweringHost {
    * closures are function objects, a call through a value is the native dispatcher `js.closure.call:N`.
    */
   readonly createsFunctionObjects: () => boolean;
+  /** (#7354 O1) `expression` reads the global `name`: no binding of the program shadows it. */
+  readonly isUnshadowedGlobal: (expression: ts.Expression, name: string) => boolean;
   readonly requireOwner: (ownerUnitId: IrUnitId) => void;
   readonly lowerExpression: (source: ts.Expression) => IrValueId;
   readonly boxConcrete: (value: IrValueId, type: IrType, source: ts.Expression) => IrValueId | null;
@@ -210,7 +212,7 @@ export function dynamicStoreOperand(
   value: IrValueId,
   source: ts.Expression,
   cx: FunctionObjectLoweringHost,
-  role: "member-store" | "construct argument",
+  role: "member-store" | "construct argument" | "Object static argument",
 ): IrValueId {
   const type = cx.builder.typeOf(value);
   if (type.kind === "dynamic") return value;
