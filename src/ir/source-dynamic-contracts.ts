@@ -524,6 +524,11 @@ function landsInCarrier(value: ts.Expression, checker: ts.TypeChecker, policy: S
     );
   }
   if (!ts.isCallExpression(parent) || parent.expression === value) return false;
+  // (#7354 F2, P1) A method call on a dynamic receiver is the [[Get]], then the dispatcher's call, which takes every
+  // argument as a carrier whatever the lib types the method (`o.hasOwnProperty(k)`'s `PropertyKey`).
+  const access = parent.expression;
+  if ((ts.isPropertyAccessExpression(access) || ts.isElementAccessExpression(access)) && carries(access.expression))
+    return true;
   const callee = sourceFunctionCallee(checker, parent);
   if (callee === undefined) return false;
   const parameter = callee.parameters[parent.arguments.indexOf(value)];

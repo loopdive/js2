@@ -26,6 +26,8 @@ export interface NativeObjectAccessUse {
   /** A real create-call occurrence, not a fabricated structural allocation ID. */
   readonly creationOccurrence?: number;
   readonly descriptorMask?: number;
+  /** (#7354 P1) The property key, when the program spells it as a string constant. */
+  readonly constantKey?: string;
 }
 export interface NativeObjectGetterDemand {
   readonly getOccurrence: number;
@@ -281,8 +283,10 @@ function calculate(demands: NativeStringValueDemands) {
       else if (feature === "js.object.define-accessor" && !(descriptorMask & 768))
         fail("accessor descriptor has no explicit getter/setter presence");
     }
+    let constantKey: string | undefined;
     if (!feature.startsWith("js.object.create-")) {
       const key = original(call.args[1]!, definitions)?.instruction;
+      if (key?.kind === "string.const") constantKey = key.value;
       const keyType = key?.resultType;
       if (
         key?.kind !== "string.const" &&
@@ -298,6 +302,7 @@ function calculate(demands: NativeStringValueDemands) {
       feature,
       ...(creationOccurrence === undefined ? {} : { creationOccurrence }),
       ...(descriptorMask === undefined ? {} : { descriptorMask }),
+      ...(constantKey === undefined ? {} : { constantKey }),
     });
   }
   for (const use of uses.filter((row) => row.feature === "js.object.get")) {

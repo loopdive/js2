@@ -38,6 +38,7 @@ import { gap } from "./dynamic-value-gap.js";
 import { dynamicMemberRead, dynamicMemberWrite } from "./dynamic-member-access.js";
 import { dynamicConstruct, dynamicCurrentThis, dynamicInstanceOf } from "./dynamic-function-operations.js";
 import { dynamicObjectStatic, objectStaticOfHelper } from "./dynamic-object-statics.js";
+import { dynamicPrototypeMethodCall, prototypeMethodOfCall } from "./dynamic-prototype-methods.js";
 import { CARRIER, additionBuilder, chainBuilders, conversionBuilders, knownKinds } from "./dynamic-value-chains.js";
 import {
   NO_OBJECTS,
@@ -101,7 +102,8 @@ export function legalizeDynamicValues(
   const memberAccess = { ...builders, carrier: CARRIER, definitions, kindsOf: kinds.kindsOf };
   // (#7354 C2) What `this`, `new` and `instanceof` are written with (`dynamic-function-operations.ts`).
   const functionOperations = { ...builders, program, objects: admitted.filter((kind) => IS_OBJECT[kind]) };
-  // (#7354 O1) What a recognised `Object` static is written with (`dynamic-object-statics.ts`).
+  // (#7354 O1, P1) What a recognised `Object` static (`dynamic-object-statics.ts`) or a call of an Object.prototype
+  // method the realm holds (`dynamic-prototype-methods.ts`) is written with.
   const objectStatics = { ...builders, stringOf };
   const isDynamic = (value: IrValueId): boolean => types.get(value)?.kind === "dynamic";
   const typeofs = typeofComparisons(fn);
@@ -242,6 +244,8 @@ export function legalizeDynamicValues(
         // (#7354 F2) Without a function value no callee is callable: every call through a value would be the TypeError.
         if (closureMethodArity(instr.target.name) !== undefined && !admitted.includes("function"))
           return gap(`${instr.target.name} in a program that creates no function value`);
+        const method = prototypeMethodOfCall(instr, definitions);
+        if (method !== undefined) return dynamicPrototypeMethodCall(objectStatics, instr, method);
         const projected = functionValueOperand(instr);
         if (projected !== undefined) return intoCarrier(instr, projected, carrierKindOf(projected, types, definitions));
         return instr.target.binding.kind === "runtime" &&

@@ -17277,6 +17277,11 @@
       "layer": "ir-program"
     },
     {
+      "path": "src/ir/program/dynamic-prototype-methods.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
       "path": "src/ir/builtin-global-binding.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",

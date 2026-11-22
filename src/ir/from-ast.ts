@@ -366,7 +366,6 @@ import {
   admittedOwnPropertyCallMethod,
 } from "./select.js";
 import type { OwnPropertyMethod } from "./dynamic-home-open-object.js";
-import type { DescriptorDefinition } from "./descriptor-literal.js";
 import { lowerObjectCreateDescriptorMapCall } from "./object-create-call.js";
 import {
   isOwnPropertyTestTerritory,
@@ -382,7 +381,7 @@ import {
   emitObjectStaticCall,
   emitOpenCarrierObject,
   emitOwnPropertyTest,
-  type ObjectStaticDefinitionValues,
+  descriptorDefinitionValues,
 } from "./open-object-carrier.js";
 import {
   isStatementDynamicModuleCall,
@@ -9210,25 +9209,13 @@ function objectStaticsRealmOf(cx: LowerCtx): ObjectStaticsRealm {
     // (#7339) The test row's territory. The selector reads the same resolver identity: its `valueKind` is `dynamic`
     // exactly when `resolveModuleBindingGlobal` types the global `dynamic`. #7335's arm runs before the row and records
     // every call it admits, so in a claimed unit the record equals the selector's live predicate; a disagreement
-    // throws in `tryLowerObjectStaticCall`.
-    isDynamicModuleBinding: (id) => cx.resolver?.resolveModuleBinding?.(id)?.type.kind === "dynamic",
+    // throws in `tryLowerObjectStaticCall`. (#7354 P1) Where calls through values are function-object calls, an
+    // own-property test is the language's method call (`dynamic-prototype-methods.ts`): no territory.
+    isDynamicModuleBinding: (id) =>
+      !functionObjects.createsFunctionObjects(cx.resolver) &&
+      cx.resolver?.resolveModuleBinding?.(id)?.type.kind === "dynamic",
     existingArmAdmits: (call) => admittedOwnPropertyCallMethod(call) !== undefined,
     classifyPrimitive: (e) => (cx.checker ? makeIrPrimitiveExpressionClassifier(cx.checker)(e) : undefined),
-  };
-}
-
-/** A define's key (a literal stays static) and field values, each as a carrier (#7338, #7276). */
-function lowerDescriptorDefinition(
-  { key, fields }: DescriptorDefinition,
-  callName: string,
-  cx: LowerCtx,
-): ObjectStaticDefinitionValues {
-  return {
-    key: typeof key === "string" ? key : lowerCarrierOperand(key, callName, cx),
-    fields: fields.map(({ name, initializer }) => ({
-      name,
-      value: lowerCarrierOperand(initializer, callName, cx),
-    })),
   };
 }
 
@@ -9269,7 +9256,9 @@ function tryLowerObjectStaticCall(expr: ts.CallExpression, cx: LowerCtx): IrValu
       ? cx.builder.emitBox(emitNewPlainObject(cx.builder, irVal({ kind: "externref" })), irDynamic())
       : lowerCarrierOperand(operand.expr, name, cx),
   );
-  const defined = definitions.map((definition) => lowerDescriptorDefinition(definition, name, cx));
+  const defined = definitions.map((d) =>
+    descriptorDefinitionValues(d, (operand) => lowerCarrierOperand(operand, name, cx)),
+  );
   return emitObjectStaticCall(cx.builder, plan.call, values, defined);
 }
 
@@ -9281,7 +9270,8 @@ function tryLowerObjectCreateDescriptorMapCall(expr: ts.CallExpression, cx: Lowe
       supportsBackendCapability: (capability) => cx.resolver?.supportsBackendCapability?.(capability) === true,
       isLibOnlyBinding: (node) => cx.resolver?.isLibOnlyBinding?.(node) === true,
     },
-    lowerDefinition: (definition) => lowerDescriptorDefinition(definition, "Object.create", cx),
+    lowerDefinition: (d) =>
+      descriptorDefinitionValues(d, (operand) => lowerCarrierOperand(operand, "Object.create", cx)),
   });
 }
 
